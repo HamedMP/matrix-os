@@ -72,6 +72,10 @@ function preview(message: CanonicalChatMessage): string | null {
   return text?.type === "text" ? text.text.trim().slice(0, 280) || null : null;
 }
 
+function isProjectSetupInterview(context: unknown) {
+  return parseJson<CanonicalChatRun["context"]>(context)?.projectSetupDraft?.mode === "interview";
+}
+
 function railTransitionForActivity(activity: CanonicalChatRunActivity): {
   runStatus: "running" | "waiting_for_approval" | "waiting_for_input";
   attention: "none" | "approval_required" | "input_required";
@@ -184,11 +188,13 @@ export class ChatRunLifecycleRepository {
       .where("chat_runs.driver_kind", "=", input.driverKind)
       .where("chat_runs.instance_id", "=", input.instanceId)
       .where(sql<boolean>`chat_runs.context_snapshot -> 'agent' IS NULL`)
-      // Never revive a native session from before an intervening Agent run.
+      .where(sql<boolean>`chat_runs.context_snapshot #>> '{projectSetupDraft,mode}' IS DISTINCT FROM 'interview'`)
+      // Rebuild history after an Agent or interview run that used a separate session.
       .where(sql<boolean>`NOT EXISTS (
         SELECT 1 FROM chat_runs AS agent_boundary
         WHERE agent_boundary.chat_id = chat_runs.chat_id
-          AND agent_boundary.context_snapshot -> 'agent' IS NOT NULL
+          AND (agent_boundary.context_snapshot -> 'agent' IS NOT NULL
+            OR agent_boundary.context_snapshot #>> '{projectSetupDraft,mode}' = 'interview')
           AND agent_boundary.history_boundary_seq >= chat_runs.history_boundary_seq
       )`)
       // Returning to a former root must not revive a session missing completed
@@ -530,6 +536,7 @@ export class ChatRunLifecycleRepository {
         .where("id", "=", input.messageId)
         .forUpdate()
         .executeTakeFirst();
+      const interview = isProjectSetupInterview(run.context_snapshot);
       let next: CanonicalChatMessage;
       let inserted = false;
       let baseOffset = 0;
@@ -565,7 +572,7 @@ export class ChatRunLifecycleRepository {
         await trx.updateTable("chat_messages").set({
           parts: jsonb(next.parts),
           byte_count: encoded.encode(JSON.stringify(next)).byteLength,
-          search_text: messageSearchText(next),
+          search_text: interview ? "" : messageSearchText(next),
         }).where("id", "=", next.id).execute();
       } else {
         const latest = await trx.selectFrom("chat_messages")
@@ -595,7 +602,7 @@ export class ChatRunLifecycleRepository {
           run_id: next.runId ?? null,
           parts: jsonb(next.parts),
           byte_count: encoded.encode(JSON.stringify(next)).byteLength,
-          search_text: messageSearchText(next),
+          search_text: interview ? "" : messageSearchText(next),
           ...messageAttribution(next),
           created_at: next.createdAt,
         }).execute();
@@ -612,7 +619,7 @@ export class ChatRunLifecycleRepository {
       await trx.updateTable("chats").set({
         revision,
         ...(inserted ? { message_count: sql<number>`message_count + 1` } : {}),
-        last_message_preview: preview(next),
+        ...(interview ? {} : { last_message_preview: preview(next) }),
         updated_at: createdAt,
       }).where("id", "=", chatId).execute();
       await this.appendOutbox(trx, owner, chatId, revision, "run.message", {
@@ -620,7 +627,7 @@ export class ChatRunLifecycleRepository {
         messageId: input.messageId,
         // Recovery can replace part boundaries; use the existing invalidation
         // fallback rather than pretending it is a single-part live delta.
-        ...(input.snapshot ? {} : { messageDelta: {
+        ...(input.snapshot || interview ? {} : { messageDelta: {
           message: { ...next, parts: [{ type: "text", text: delta }] },
           partIndex: next.parts.length - 1,
           offset: (next.parts.at(-1) as { text: string }).text.length - delta.length,
@@ -666,6 +673,7 @@ export class ChatRunLifecycleRepository {
       }
       const existing = await trx.selectFrom("chat_messages").selectAll()
         .where("id", "=", input.messageId).forUpdate().executeTakeFirst();
+      const interview = isProjectSetupInterview(run.context_snapshot);
       let next: CanonicalChatMessage;
       let inserted = false;
       let replay = false;
@@ -694,7 +702,7 @@ export class ChatRunLifecycleRepository {
           await trx.updateTable("chat_messages").set({
             parts: jsonb(next.parts),
             byte_count: encoded.encode(JSON.stringify(next)).byteLength,
-            search_text: messageSearchText(next),
+            search_text: interview ? "" : messageSearchText(next),
           }).where("id", "=", next.id).execute();
         }
       } else {
@@ -723,7 +731,7 @@ export class ChatRunLifecycleRepository {
           run_id: next.runId ?? null,
           parts: jsonb(next.parts),
           byte_count: encoded.encode(JSON.stringify(next)).byteLength,
-          search_text: messageSearchText(next),
+          search_text: interview ? "" : messageSearchText(next),
           ...messageAttribution(next),
           created_at: next.createdAt,
         }).execute();
@@ -783,6 +791,7 @@ export class ChatRunLifecycleRepository {
       if (!ACTIVE_RUNS.includes(current.status as typeof ACTIVE_RUNS[number])) {
         return { run: toRun(current), transitioned: false };
       }
+      const interview = isProjectSetupInterview(current.context_snapshot);
       const expectedState = input.outcome === "completed" ? "committed" : "failed";
       const pendingRows = await trx.selectFrom("chat_messages").selectAll()
         .where("chat_id", "=", input.chatId)
@@ -812,7 +821,7 @@ export class ChatRunLifecycleRepository {
             state: expectedState,
             parts: jsonb(finalized.parts),
             byte_count: encoded.encode(JSON.stringify(finalized)).byteLength,
-            search_text: messageSearchText(finalized),
+            search_text: interview ? "" : messageSearchText(finalized),
           }).where("id", "=", pending.id).execute();
           finalizedOutput = finalized;
         }
@@ -839,7 +848,7 @@ export class ChatRunLifecycleRepository {
           run_id: output.runId ?? null,
           parts: jsonb(output.parts),
           byte_count: encoded.encode(JSON.stringify(output)).byteLength,
-          search_text: messageSearchText(output),
+          search_text: interview ? "" : messageSearchText(output),
           ...messageAttribution(output),
           created_at: output.createdAt,
         }).execute();
@@ -874,7 +883,7 @@ export class ChatRunLifecycleRepository {
         revision,
         ...(finalizedOutput === undefined ? {} : {
           ...(insertedOutput ? { message_count: sql<number>`message_count + 1` } : {}),
-          last_message_preview: preview(finalizedOutput),
+          ...(interview ? {} : { last_message_preview: preview(finalizedOutput) }),
         }),
         attention: input.outcome === "failed" ? "failed" : "none",
         updated_at: completedAt,

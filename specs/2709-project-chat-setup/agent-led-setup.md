@@ -1,6 +1,6 @@
 # Agent-led project setup in Chat
 
-Status: proposed for product review
+Status: approved for implementation on November 24, 2026
 
 Tracking: [ENG-538](https://linear.app/matrix-os/issue/ENG-538/guide-personal-project-setup-through-project-chat)
 
@@ -38,13 +38,25 @@ Example. In **Release Notes**, the user says, “Draft customer release notes fr
 - The setup interview uses a restricted, scoped Agent run. Resolve the selected provider through the existing Chat catalog and enforce its setup tool permissions at run admission. Fail closed for runtimes that cannot supply those constraints. Provider eligibility and the exact restricted tool surface must be verified before release.
 - Keep existing Chat appearance in Electron Desktop and Web, including the composer, assistant messages, and choices below their reply. Render the approved question or summary. Keep the internal instructions and structured payload out of Chat.
 
+### API and compatibility
+
+| Existing route | Request authority | Agent effect |
+| --- | --- | --- |
+| `GET /api/projects/:projectId/setup` and `GET /api/chats/:chatId/project-setup` | Authenticated owner of a personal project and its primary checkout | Read the current draft. |
+| `POST /api/projects/:projectId/setup` | Same owner and checkout, with the selected Chat model and an explicit setup start | Start one interview or resume the same draft. |
+| `PATCH /api/chats/:chatId/project-setup` | Same owner and checkout, bound to the current draft revision and an action-specific schema | Submit or retry an answer, read a validated reply, or use an existing explicit configuration action. |
+
+The response adds an optional interview field. Existing saved drafts stay readable. Validate the full interview with a matching Gateway and client because older clients parse setup responses strictly.
+
+Claude Code supports the interview through a fresh, text-only process. Matrix AI Pi supports it through the existing broker with an empty tool set. Codex and other runtimes need a verified tool-free execution path before becoming eligible. A user can choose a compatible model and retry the same answer.
+
 ## Approaches
 
 1. **Recommended: one resumable Agent turn per answer.** Reuse canonical Chat admission, model selection, transcript and the project-owned setup draft. Each turn produces the next question or a review proposal using a scoped, validated result. Turn boundaries permit retry or returning from Settings without relying on a live model process. The product can keep saving, connector actions and audit history in their current paths.
 2. **Long-lived Agent session using native questions.** This also lets the Agent direct the conversation. Native question projection already exists, but process timeouts, cross-provider differences and resuming after Settings make this a larger change.
 3. **Agent wording on the current sequence.** This would improve suggested examples, while the application would still decide what information each reply contains and ask every phase in order. It does not meet the requirement to use the user's answers to decide what to ask next.
 
-The requester selected a follow-up stack layer. Approach 1 is the proposed implementation design, subject to review and a provider spike for the restricted run and rendering path.
+The requester approved approach 1 in a follow-up stack layer. The provider spike will verify the restricted execution and rendering path before live acceptance.
 
 ## Acceptance
 

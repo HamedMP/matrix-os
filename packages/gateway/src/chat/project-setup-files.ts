@@ -66,8 +66,9 @@ export async function inspectProjectSetupFiles(workspace: ProjectSetupWorkspace,
 
 /** No overwrites. Each completed exclusive create survives a later-file failure. */
 export async function saveProjectSetupFiles(workspace: ProjectSetupWorkspace, current: ProjectSetupDraft): Promise<ProjectSetupDraft> {
-  if (current.step !== "review" || current.proposals.length < 2 || current.generation?.status === "running"
-    || (current.answers.skillInstructions && !current.skill)) throw new ProjectSetupError("invalid");
+  if (current.step !== "review" || (!current.interview && current.proposals.length < 2) || current.generation?.status === "running"
+    || (current.interview && ["pending", "failed", "unavailable"].includes(current.generation?.status ?? ""))
+    || (!current.interview && current.answers.skillInstructions && !current.skill)) throw new ProjectSetupError("invalid");
   validateProposals(current);
   const draft = structuredClone(current);
   for (const [index, file] of draft.proposals.entries()) {

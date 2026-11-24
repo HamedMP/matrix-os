@@ -45,10 +45,10 @@ export function createProjectSetupRoutes(options: { service: SetupRouteService |
   routes.post("/api/projects/:projectId/setup", limit, async context => {
     context.header("Cache-Control", "no-store");
     try {
-      const { owner, service } = authenticated(context);
+      const { owner, principal, service } = authenticated(context);
       const projectId = ProjectIdSchema.parse(context.req.param("projectId"));
       const input = ProjectSetupStartRequestSchema.parse(await context.req.json());
-      return context.json(ProjectSetupResponseSchema.parse(await service.start(owner, projectId, input)), 201);
+      return context.json(ProjectSetupResponseSchema.parse(await service.start(owner, projectId, input, principal)), 201);
     } catch (error: unknown) { return failed(context, error); }
   });
   routes.get("/api/chats/:chatId/project-setup", async context => {

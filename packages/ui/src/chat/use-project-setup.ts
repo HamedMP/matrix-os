@@ -32,6 +32,16 @@ function canonicalSetupSelection(selection: CanonicalChatModelSelection): Canoni
   };
 }
 
+function waitingForSetupReply(draft: ProjectSetupDraft | null) {
+  return draft?.generation?.status === "running"
+    || Boolean(draft?.interview && draft.generation?.status === "pending");
+}
+
+function setupReplyFailed(draft: ProjectSetupDraft | null) {
+  return Boolean(draft?.interview
+    && (draft.generation?.status === "failed" || draft.generation?.status === "unavailable"));
+}
+
 /** Chat owns accepted setup state. This hook holds only the currently scoped view. */
 export function useProjectSetup(options: Options) {
   const { client, scope, projectId, chatId, eligible, selection } = options;
@@ -78,21 +88,23 @@ export function useProjectSetup(options: Options) {
       request.current = controller;
       const signal = AbortSignal.any([session.controller.signal, controller.signal]);
       const current = () => !signal.aborted && lifetime.current === session;
-      setState((previous) => ({ ...previous, identity, pending: true, error: null }));
+      setState((previous) => ({ ...previous, identity, introduction: navigate && !chatId, pending: true, error: null }));
       try {
         const result = ProjectSetupResponseSchema.parse(await operation(signal));
         if (!current()) return false;
-        if (result.draft && result.draft.projectId !== projectId) throw new Error("Setup scope mismatch");
+        if (result.draft && (result.draft.projectId !== projectId || (chatId && result.draft.chatId !== chatId)))
+          throw new Error("Setup scope mismatch");
+        if (navigate && !result.draft) throw new Error("Setup draft unavailable");
         const next = {
           identity,
           draft: result.draft,
-          introduction: !result.draft && navigate,
+          introduction: false,
           pending: false,
           error: null,
         };
         stateRef.current = next;
         setState(next);
-        if (navigate && result.draft) openChat(result.draft.chatId);
+        if (navigate && result.draft && result.draft.chatId !== chatId) openChat(result.draft.chatId);
         changed();
         return true;
       } catch (error: unknown) {
@@ -108,7 +120,7 @@ export function useProjectSetup(options: Options) {
         if (request.current === controller) request.current = null;
       }
     },
-    [client, eligible, identity, projectId],
+    [chatId, client, eligible, identity, projectId],
   );
 
   const reload = useCallback(() => {
@@ -125,16 +137,25 @@ export function useProjectSetup(options: Options) {
     }
     return attempt.current.requestId;
   };
-  const start = () =>
-    client && projectId
-      ? run((signal) => client.get(`/api/projects/${encodeURIComponent(projectId)}/setup`, signal), true)
-      : Promise.resolve(false);
+  const strictSelection = selection ? canonicalSetupSelection(selection) : undefined;
+  const start = async () => {
+    if (!client || !projectId) return false;
+    const payload = {
+      mode: "interview",
+      ...(strictSelection ? { currentSelection: strictSelection } : {}),
+    };
+    const body = { ...payload, clientRequestId: requestId(JSON.stringify(["start", payload])) };
+    return run((signal) => client.post(`/api/projects/${encodeURIComponent(projectId)}/setup`, body, signal), true);
+  };
   const dispatch = async (action: ProjectSetupAction): Promise<boolean> => {
     const draft = stateRef.current.draft;
     if (!client || !draft || draft.projectId !== projectId) return false;
-    const canonicalAction = action.type === "generate"
-      ? { ...action, selection: canonicalSetupSelection(action.selection) }
-      : action;
+    const followUp = action.type === "stage_skill" || (action.type === "choose_mcp" && action.choice === "skip");
+    const canonicalAction = followUp && draft.interview && strictSelection
+      ? { ...action, selection: strictSelection }
+      : "selection" in action && action.selection
+        ? { ...action, selection: canonicalSetupSelection(action.selection) }
+        : action;
     const body = {
       baseRevision: draft.revision,
       clientRequestId: requestId(JSON.stringify([draft.revision, canonicalAction])),
@@ -146,35 +167,51 @@ export function useProjectSetup(options: Options) {
     if (accepted) attempt.current = null;
     return accepted;
   };
-  const pendingService = currentState.draft?.mcp.state === "pending" ? currentState.draft.mcp.service : undefined;
+  const draft = currentState.draft;
+  const pendingService = draft?.mcp.state === "pending" ? draft.mcp.service : undefined;
   const mcpReviewKey = pendingService ? JSON.stringify([identity, pendingService]) : null;
-  const mcpHandoff = Boolean(currentState.draft?.step === "review" && mcpReviewKey
-    && reviewMcpKey !== mcpReviewKey && !currentState.draft.generation);
+  const mcpHandoff = Boolean(mcpReviewKey && (draft?.interview
+    ? draft.interview.mcpHandoff
+    : draft?.step === "review" && reviewMcpKey !== mcpReviewKey && !draft.generation));
   const continueToReview = async () => {
     if (!mcpHandoff || !await dispatch({ type: "prepare_review" })) return false;
     setReviewMcpKey(mcpReviewKey);
     return true;
   };
+  const active = Boolean(draft && draft.step !== "saved");
+  const waiting = waitingForSetupReply(draft);
+  const canAnswer = active && !currentState.pending && !waiting && !setupReplyFailed(draft)
+    && (!mcpHandoff || Boolean(draft?.interview));
+  const retryInterview = () =>
+    strictSelection && setupReplyFailed(stateRef.current.draft)
+      ? dispatch({ type: "interview_retry", selection: strictSelection })
+      : Promise.resolve(false);
+  const syncGeneration = useEffectEvent(() => {
+    if (!request.current) void dispatch({ type: "sync_generation" });
+  });
+  useEffect(() => {
+    if (!eligible || !waiting) return;
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      if (attempts >= 60) {
+        window.clearInterval(timer);
+        return;
+      }
+      attempts += 1;
+      syncGeneration();
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [eligible, identity, waiting, draft?.generation?.runId]);
+
   const answer = async (text: string): Promise<boolean> => {
-    if (!text.trim() || !client || !projectId || mcpHandoff) return false;
-    if (stateRef.current.draft?.step === "review")
+    const current = stateRef.current.draft;
+    const reply = text.trim();
+    if (!current || !reply || !canAnswer || waitingForSetupReply(current) || setupReplyFailed(current)) return false;
+    if (current.interview)
+      return dispatch({ type: "interview_answer", text: reply, ...(strictSelection ? { selection: strictSelection } : {}) });
+    if (current.step === "review")
       return dispatch({ type: "revise", field: "guidance", text: text.trim() });
-    if (stateRef.current.draft) return dispatch({ type: "answer", text: text.trim() });
-    if (!stateRef.current.introduction) return false;
-    const payload = {
-      answer: text.trim(),
-      ...(selection ? { currentSelection: canonicalSetupSelection(selection) } : {}),
-    };
-    const body = {
-      clientRequestId: requestId(JSON.stringify(["start", payload])),
-      ...payload,
-    };
-    const accepted = await run(
-      (signal) => client.post(`/api/projects/${encodeURIComponent(projectId)}/setup`, body, signal),
-      true,
-    );
-    if (accepted) attempt.current = null;
-    return accepted;
+    return dispatch({ type: "answer", text: reply });
   };
   const dismiss = () => {
     request.current?.abort();
@@ -191,7 +228,9 @@ export function useProjectSetup(options: Options) {
     continueToReview,
     dispatch,
     reload,
-    active: currentState.introduction || Boolean(currentState.draft && currentState.draft.step !== "saved"),
+    active,
+    canAnswer,
+    retryInterview,
   };
 }
 export type ProjectSetupController = ReturnType<typeof useProjectSetup>;

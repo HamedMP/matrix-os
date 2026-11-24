@@ -8,6 +8,14 @@ const answer = z.string().trim().min(1).max(4096);
 const markdown = z.string().min(1).max(PROJECT_SKILL_FILE_MAX_BYTES)
   .refine(text => new TextEncoder().encode(text).byteLength <= PROJECT_SKILL_FILE_MAX_BYTES);
 const revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+export const ProjectSetupInterviewFocusSchema = z.enum(["intent", "guidance", "skill", "mcp", "review"]);
+export const ProjectSetupInterviewSchema = z.object({
+  focus: ProjectSetupInterviewFocusSchema,
+  suggestions: z.array(z.string().trim().min(1).max(160)).max(3),
+  recommendedService: z.string().trim().min(1).max(80).optional(),
+  mcpHandoff: z.literal(true).optional(),
+}).strict();
+export type ProjectSetupInterview = z.infer<typeof ProjectSetupInterviewSchema>;
 
 export const ProjectSetupFileSchema = z.object({
   path: ProjectAgentConfigFileSchema,
@@ -26,34 +34,45 @@ export const ProjectSetupDraftSchema = z.object({
   revision,
   step: z.enum(["guidance", "skill", "skill_instructions", "mcp", "review", "saved"]),
   currentQuestionMessageId: z.string().min(1).max(160),
-  answers: z.object({ purpose: answer, guidance: answer.optional(), skillInstructions: answer.optional() }).strict(),
-  skill: z.object({ name: ProjectAgentContextNameSchema, path: ProjectAgentConfigFileSchema, content: markdown }).strict().optional(),
+  answers: z.object({ purpose: answer.or(z.literal("")), guidance: answer.optional(), skillInstructions: answer.optional() }).strict(),
+  skill: z.object({
+    name: ProjectAgentContextNameSchema,
+    path: ProjectAgentConfigFileSchema,
+    content: markdown,
+    source: z.literal("user").optional(),
+  }).strict().optional(),
   proposals: z.array(ProjectSetupFileSchema).max(3),
   mcp: z.object({ state: z.enum(["not_requested", "pending", "skipped"]), service: z.string().trim().min(1).max(80).optional() }).strict(),
   generation: z.object({ runId: z.string().max(160).optional(), sourceRevision: revision.optional(), status: z.enum(["pending", "running", "completed", "failed", "unavailable"]) }).strict().optional(),
+  interview: ProjectSetupInterviewSchema.optional(),
   updatedAt: z.iso.datetime({ offset: true }),
-}).strict();
+}).strict().refine(draft => Boolean(draft.interview || draft.answers.purpose));
 export type ProjectSetupDraft = z.infer<typeof ProjectSetupDraftSchema>;
 
 export const ProjectSetupActionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("answer"), text: answer }).strict(),
   z.object({ type: z.literal("choose_skill"), choice: z.enum(["create", "skip"]) }).strict(),
-  z.object({ type: z.literal("stage_skill"), content: markdown }).strict(),
-  z.object({ type: z.literal("choose_mcp"), choice: z.enum(["connect", "skip"]), service: z.string().trim().min(1).max(80).optional() }).strict(),
+  z.object({ type: z.literal("stage_skill"), content: markdown, selection: CanonicalChatModelSelectionSchema.optional() }).strict(),
+  z.object({
+    type: z.literal("choose_mcp"), choice: z.enum(["connect", "skip"]),
+    service: z.string().trim().min(1).max(80).optional(), selection: CanonicalChatModelSelectionSchema.optional(),
+  }).strict(),
   z.object({ type: z.literal("revise"), field: z.enum(["purpose", "guidance", "skillInstructions"]), text: answer }).strict(),
   z.object({ type: z.literal("review_file"), path: ProjectAgentConfigFileSchema, content: markdown }).strict(),
   z.object({ type: z.literal("prepare_review") }).strict(),
   z.object({ type: z.literal("generate"), selection: CanonicalChatModelSelectionSchema }).strict(),
+  z.object({ type: z.literal("interview_answer"), text: answer, selection: CanonicalChatModelSelectionSchema.optional() }).strict(),
+  z.object({ type: z.literal("interview_retry"), selection: CanonicalChatModelSelectionSchema }).strict(),
   z.object({ type: z.literal("sync_generation") }).strict(),
   z.object({ type: z.literal("save") }).strict(),
 ]);
 export type ProjectSetupAction = z.infer<typeof ProjectSetupActionSchema>;
 
-export const ProjectSetupStartRequestSchema = z.object({
-  clientRequestId: CanonicalChatRequestIdSchema,
-  answer,
-  currentSelection: CanonicalChatModelSelectionSchema.optional(),
-}).strict();
+const startFields = { clientRequestId: CanonicalChatRequestIdSchema, currentSelection: CanonicalChatModelSelectionSchema.optional() };
+export const ProjectSetupStartRequestSchema = z.union([
+  z.object({ ...startFields, answer }).strict(),
+  z.object({ ...startFields, mode: z.literal("interview") }).strict(),
+]);
 export type ProjectSetupStartRequest = z.infer<typeof ProjectSetupStartRequestSchema>;
 
 export const ProjectSetupUpdateRequestSchema = z.object({

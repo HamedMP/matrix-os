@@ -20,6 +20,7 @@ import { resolveManagedPiSelection } from "./managed-pi-route.js";
 import { createManagedPiSystemPrompt, ManagedPiPersonalityError, type ManagedPiPersonalityConfig } from "./managed-pi-system-prompt.js";
 import { fundedChatError, type FundedChatFailureReason } from "./funded-chat-error.js";
 import { awaitManagedPiCleanup, createManagedPiRunCancellation } from "./managed-pi-cancellation.js";
+import { validateProjectSetupInterviewInput } from "./project-setup-interview-context.js";
 
 const StateSchema = z.object({ runtimeHandle: z.string().regex(/^runtime_[a-f0-9]{32}$/), executionGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/) }).strict();
 // Match the supervisor's typed runtime.bot errors; never log its reply or error text.
@@ -113,7 +114,9 @@ export function createManagedPiRuntime(deps: {
     });
   }
   async function execute(input: CanonicalProviderRunInput<State>, run: Active): Promise<CanonicalProviderRunEvent> {
-    const cancellation = createManagedPiRunCancellation([input.signal, deps.lifetime, run.cancellation.signal]);
+    const interview = input.context?.projectSetupDraft?.mode === "interview";
+    const deadline = interview ? AbortSignal.timeout(90_000) : undefined;
+    const cancellation = createManagedPiRunCancellation([input.signal, deps.lifetime, run.cancellation.signal, ...(deadline ? [deadline] : [])]);
     const { signal } = cancellation;
     const cancelled = (): CanonicalProviderRunEvent => run.stopCause === "lease_lost"
       ? { type: "run.completed", outcome: "failed", error: { code: "run_failed", safeMessage: "Matrix AI could not finish this request. Check progress before trying again.", retryable: false, recoveryActions: [] } }
@@ -138,7 +141,8 @@ export function createManagedPiRuntime(deps: {
       await cancellation.wait(() => run.inputs!.revalidate());
       stage = "admission";
       run.binding = await cancellation.wait(() => deps.admission.admit({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, resolved }), binding => deps.admission.release(binding.runtimeHandle));
-      if (Boolean(run.binding.projectSetupDraft) !== run.setupDraft || (run.setupDraft && run.binding.capabilities.length)) throw new BotBrokerActionError("not_granted");
+      if (Boolean(run.binding.projectSetupDraft) !== run.setupDraft || (run.setupDraft && run.binding.capabilities.length)
+        || input.context?.projectSetupDraft?.mode !== run.binding.projectSetupDraft?.mode) throw new BotBrokerActionError("not_granted");
       if (signal.aborted || run.stopping) return cancelled();
       run.renewal = deps.admission.startRenewal(run.binding, error => {
         console.warn("[managed-pi] runtime renewal failed", diagnosticErrorName(error));
@@ -153,16 +157,16 @@ export function createManagedPiRuntime(deps: {
           current: () => active.get(input.runId) === run && !run.stopping && !run.finished && !signal.aborted,
           publish: event => run.queue.push({ kind: "canonical", event }) });
       }
-      const isolatedTurn = await cancellation.wait(async () => deps.isolatedChat?.claim(run.binding!));
+      const isolatedTurn = interview ? undefined : await cancellation.wait(async () => deps.isolatedChat?.claim(run.binding!));
       stage = "tool_setup";
       if (!run.isolated && !run.setupDraft) await cancellation.wait(async () => deps.ownerTools?.open(run.binding!, event => run.queue.push({ kind: "canonical", event })), async () => deps.ownerTools?.closeRun(input.runId));
       stage = "run_spec";
       run.spec = BotRunSpecSchema.parse({ route: resolved.route,
-        systemPrompt: await cancellation.wait(() => systemPrompt(input)),
-        capabilities: run.setupDraft ? [] : run.binding.capabilities, limits: run.isolated ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
+        systemPrompt: interview ? "Help the owner plan this project's setup using only the supplied facts. Return the requested structured text." : await cancellation.wait(() => systemPrompt(input)),
+        capabilities: run.setupDraft ? [] : run.binding.capabilities, limits: (run.isolated || interview) ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         ...(isolatedTurn ? { isolatedTurn } : {}),
         turn: { kind: "prompt", text: run.inputs.prompt(input.prompt), ...(run.inputs.imageCount ? { imageCount: run.inputs.imageCount } : {}) } });
-      run.queue.push({ kind: "state", state: { runtimeHandle: run.binding.runtimeHandle, executionGeneration: run.binding.executionGeneration } });
+      if (!interview) run.queue.push({ kind: "state", state: { runtimeHandle: run.binding.runtimeHandle, executionGeneration: run.binding.executionGeneration } });
       if (signal.aborted || run.stopping) return cancelled();
       await cancellation.wait(() => run.inputs!.revalidate());
       await cancellation.wait(async () => deps.assertSource?.(run.binding!, signal));
@@ -247,6 +251,7 @@ export function createManagedPiRuntime(deps: {
       const input = parseCanonicalProviderRunInput(value);
       if (input.owner.type !== "personal" || input.sharedScopeId || input.parts.some((part) => part.type !== "text" && part.type !== "attachment_reference" && !(part.type === "resource_reference" && ["agent", "chat"].includes(part.resource.kind) && input.context))) throw new Error("Unsupported Matrix AI input");
       const setupDraft = input.context?.projectSetupDraft !== undefined;
+      if (input.context?.projectSetupDraft?.mode === "interview") validateProjectSetupInterviewInput(input, "default");
       if (setupDraft && (input.resumeState || input.continuationId || input.parts.some(part => part.type !== "text"))) throw new Error("Unsupported project setup input");
       if (active.has(input.runId) || active.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new Error("Matrix AI capacity unavailable");
       const run: Active = { ownerId: input.owner.ownerId, chatId: input.chatId, stopping: false, finished: false, isolated: false, setupDraft, cancellation: new AbortController(), queue: createCanonicalCliEventQueue<Event>(2048) };

@@ -332,7 +332,9 @@ function ConversationTurn({
   if(turn.routineReceipt)return <RoutineReceipt {...turn.routineReceipt} sourceChatId={callbacks.browserChatId} onOpenChat={callbacks.openChat}/>;
   const hasWork = turn.work.length > 0;
   const timeline = turn.timeline;
-  const setupReply = projectSetup?.messageId && projectSetup.messageId === turn.final?.id ? projectSetup : undefined;
+  const setupReply = projectSetup?.messageId
+    && (projectSetup.messageId === turn.final?.id || projectSetup.messageId === turn.user?.id)
+    ? projectSetup : undefined;
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} scheduled={scheduled}/> : null}
@@ -469,7 +471,7 @@ export function ConversationTranscript({
         <BotUnassignedMessageBody runIds={turns.flatMap(turn => turn.runIds ?? [])}
           requestIds={visibleTurns.flatMap(({ visibility }) => visibility.pendingRequestIds)}/>
         <RoutineMessageReadNotice/>
-        {projectSetup?.controls && !turns.some(turn => turn.final?.id === projectSetup.messageId) ? (
+        {projectSetup?.controls && !turns.some(turn => turn.final?.id === projectSetup.messageId || turn.user?.id === projectSetup.messageId) ? (
           <p role="status" className="text-xs text-[var(--text-secondary)]">Updating project setup…</p>
         ) : null}
         {afterTurns}

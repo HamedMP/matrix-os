@@ -51,6 +51,14 @@ export class ChatDetailRepository {
     const messageRows = await this.kysely.selectFrom("chat_messages").selectAll()
       .where("chat_id", "=", parsedChatId)
       .where("seq", "<", beforeSeq)
+      // Apply the private-run boundary before pagination, even if the matching
+      // Run would fall outside this page's bounded run projection.
+      .where(sql<boolean>`NOT EXISTS (
+        SELECT 1 FROM chat_runs AS interview_run
+        WHERE interview_run.chat_id = chat_messages.chat_id
+          AND interview_run.turn_id = chat_messages.turn_id
+          AND interview_run.context_snapshot #>> '{projectSetupDraft,mode}' = 'interview'
+      )`)
       .orderBy("seq", "desc")
       .limit(limit + 1)
       .execute();

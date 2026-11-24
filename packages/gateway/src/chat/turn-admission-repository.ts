@@ -46,6 +46,7 @@ async function admitOwnedChatTurn(deps: TurnAdmissionDependencies, ownerInput: C
     const message = CanonicalChatMessageSchema.parse(input.message);
     const turn = CanonicalChatTurnSchema.parse(input.turn);
     const run = CanonicalChatRunSchema.parse(input.run);
+    const interview = run.context?.projectSetupDraft?.mode === "interview";
     if (message.chatId !== input.chatId || turn.chatId !== input.chatId || run.chatId !== input.chatId
       || turn.inputMessageId !== message.id || message.turnId !== turn.id || message.runId !== undefined
       || (source ? message.role !== "system" || message.purpose !== "system" || message.actorId !== undefined
@@ -106,7 +107,7 @@ async function admitOwnedChatTurn(deps: TurnAdmissionDependencies, ownerInput: C
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
       if (await deps.activeRunQuery(trx, input.chatId)) throw new ChatBusyError(input.chatId);
-      if (!run.context?.agent && current.bound_instance_id && (current.bound_instance_id !== run.instanceId
+      if (!interview && !run.context?.agent && current.bound_instance_id && (current.bound_instance_id !== run.instanceId
         || current.bound_driver_kind !== run.driverKind)) {
         throw new ChatProviderInstanceLockedError(input.chatId);
       }
@@ -128,7 +129,7 @@ async function admitOwnedChatTurn(deps: TurnAdmissionDependencies, ownerInput: C
         run_id: message.runId ?? null,
         parts: jsonb(message.parts),
         byte_count: encoded.encode(JSON.stringify(message)).byteLength,
-        search_text: messageSearchText(message),
+        search_text: interview ? "" : messageSearchText(message),
         ...messageAttribution(message),
         created_at: message.createdAt,
       }).execute();
@@ -194,8 +195,8 @@ async function admitOwnedChatTurn(deps: TurnAdmissionDependencies, ownerInput: C
       const updated = await trx.updateTable("chats").set({
         revision,
         message_count: sql<number>`message_count + 1`,
-        last_message_preview: deps.preview(message),
-        ...(!run.context?.agent ? {
+        ...(interview ? {} : { last_message_preview: deps.preview(message) }),
+        ...(!interview && !run.context?.agent ? {
           current_selection: jsonb(run.selection),
           bound_driver_kind: current.bound_driver_kind ?? run.driverKind,
           bound_instance_id: current.bound_instance_id ?? run.instanceId,

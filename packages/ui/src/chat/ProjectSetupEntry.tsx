@@ -16,7 +16,7 @@ export function ProjectSetupEntry({ onStart, pending = false }: { onStart: () =>
       <div className="min-w-0">
         <p className="text-lg font-semibold leading-snug">Tell the AI how you work</p>
         <p className="mt-1 text-sm" style={mutedStyle}>
-          Add project guidance or create a skill you can reuse.
+          Set project instructions, add reusable skills, or connect tools.
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -41,43 +41,19 @@ export function ProjectSetupIntroduction({
       className="mx-auto w-full max-w-[768px] space-y-7 px-6 py-8 text-sm leading-5"
       data-slot="project-setup-introduction"
     >
-      <ProjectSetupProgress projectName={projectName} />
-      <div className="space-y-2.5" data-slot="project-setup-first-reply">
-        <p>What are you using {projectName} for?</p>
-        <p>Pick a starting point or tell me in your own words.</p>
-        <div className="flex flex-wrap gap-2">
-          {["A portfolio site", "Documentation", "An internal tool"].map((text) => (
-            <Action
-              key={text}
-              disabled={setup.pending}
-              onClick={() => {
-                void setup.answer(text);
-              }}
-            >
-              {text}
-            </Action>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5 text-xs" style={mutedStyle}>
-          <Action variant="ghost" disabled={setup.pending} onClick={setup.dismiss}>
-            Skip for now
-          </Action>
-          <span>You can come back to setup from this project.</span>
-        </div>
-      </div>
+      <ProjectSetupProgress projectName={projectName} agentLed />
+      {setup.pending ? <p role="status" style={mutedStyle}>Starting project setup…</p> : null}
       {setup.error ? (
-        <div className="mt-3 space-y-2">
+        <div className="space-y-2">
           <p className="text-xs" role="alert">
             {setup.error}
           </p>
-          <Action
-            disabled={setup.pending}
-            onClick={() => {
-              void setup.start();
-            }}
-          >
-            Try again
-          </Action>
+          <div className="flex flex-wrap gap-2">
+            <Action disabled={setup.pending} onClick={() => { void setup.start(); }}>
+              Try again
+            </Action>
+            <Action variant="ghost" onClick={setup.dismiss}>Skip for now</Action>
+          </div>
         </div>
       ) : null}
     </div>

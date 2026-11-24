@@ -1765,7 +1765,7 @@ export async function createGateway(config: GatewayConfig) {
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
     credentialKey: toolOutputKey, runtimeOwnerIds: terminalRuntimeOwnerIds,
-    collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
+    collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots, listProjectSetupMcpServices: customMcp.listProjectSetupMcpServices,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
     canonicalChatProviderCatalog, aiProviderService, botServices,
     providerSettingsStore: createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity),

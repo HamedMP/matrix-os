@@ -13,7 +13,11 @@ function projectSetupProgress(draft: ProjectSetupDraft | null): ProgressState[] 
   return ["complete", skills, draft.mcp.state === "skipped" ? "skipped" : "current"];
 }
 
-export function ProjectSetupProgress({ projectName, draft = null }: { projectName: string; draft?: ProjectSetupDraft | null }) {
+export function ProjectSetupProgress({ projectName, draft = null, agentLed = Boolean(draft?.interview) }: {
+  projectName: string;
+  draft?: ProjectSetupDraft | null;
+  agentLed?: boolean;
+}) {
   return (
     <header className="min-w-0 space-y-4">
       <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
@@ -21,7 +25,7 @@ export function ProjectSetupProgress({ projectName, draft = null }: { projectNam
         <ChevronRight aria-hidden size={12} className="shrink-0" />
         <span className="shrink-0">Project setup</span>
       </p>
-      <nav aria-label="Project setup progress">
+      {!agentLed ? <nav aria-label="Project setup progress">
         <ol className="grid w-full max-w-[434px] grid-cols-3 gap-2 text-xs">
           {projectSetupProgress(draft).map((state, index) => (
             <li
@@ -38,12 +42,13 @@ export function ProjectSetupProgress({ projectName, draft = null }: { projectNam
             </li>
           ))}
         </ol>
-      </nav>
+      </nav> : null}
     </header>
   );
 }
 
 export function ProjectSetupAcceptedNote({ draft }: { draft: ProjectSetupDraft }) {
+  if (draft.interview) return null;
   const note = draft.step === "skill" ? "Working preferences added"
     : draft.step === "mcp" && draft.skill ? `Project skill staged · ${draft.skill.name}`
     : draft.step === "mcp" && draft.answers.skillInstructions ? "Skill description added"
@@ -56,9 +61,16 @@ export function ProjectSetupAcceptedNote({ draft }: { draft: ProjectSetupDraft }
   ) : null;
 }
 
-export function projectSetupAnswerPlaceholder(introduction: boolean, step?: SetupStep, mcpHandoff = false): string | undefined {
+export function projectSetupAnswerPlaceholder(
+  introduction: boolean,
+  step?: SetupStep,
+  mcpHandoff = false,
+  agentLed = false,
+): string | undefined {
+  if (step === "saved") return undefined;
+  if (agentLed) return step === "review" ? "Tell me what to change…" : "Reply to the agent…";
   if (mcpHandoff) return "Continue in MCP Settings or review below…";
-  if (introduction) return "Type your own answer…";
+  if (introduction) return "Waiting for the first reply…";
   switch (step) {
     case "guidance": return "Describe how you want the AI to work…";
     case "skill":

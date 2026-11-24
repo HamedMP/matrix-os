@@ -1,20 +1,200 @@
+import { link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Hono } from "hono";
+import { openProjectSetupWorkspace } from "../../packages/gateway/src/chat/project-setup-workspace.js";
+import { registerCustomMcpGatewayRoutes } from "../../packages/gateway/src/integrations/custom-mcp/gateway-routes.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KyselyPGlite } from "kysely-pglite";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { adapter, catalog, owner, principal } from "./chat-orchestrator-test-support.js";
+import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
+import { appendProjectSetupTranscript } from "../../packages/gateway/src/chat/project-setup-transcript.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
-import { initialProjectSetup } from "../../packages/gateway/src/chat/project-setup-state.js";
+import { applyProjectSetupInterview, beginProjectSetupInterview, initialProjectSetup, transitionProjectSetupInterview } from "../../packages/gateway/src/chat/project-setup-state.js";
 import { generateProjectSetup, syncProjectSetupGeneration } from "../../packages/gateway/src/chat/project-setup-generation.js";
+import { ProjectSetupService } from "../../packages/gateway/src/chat/project-setup-service.js";
+import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
+import { jsonb } from "../../packages/gateway/src/chat/records.js";
 
 const selection = { instanceId: "codex_default", model: "gpt-5.6-sol" };
 const executionRootFingerprint = "a".repeat(64);
+
+it("rejects image embeds in Agent-generated setup replies and file proposals", () => {
+  const context = { project: { name: "Operations" }, skills: [], instructionFiles: [], mcpServices: [] };
+  const draft = beginProjectSetupInterview(initialProjectSetup("chat_images", "project_ops", "Store operations", "msg_setup"));
+  const base = { reply: "Review the suggested project setup.", focus: "review", suggestions: [],
+    answers: { guidance: "Confirm the handoff with the next lead." } };
+  const image = "![Equipment diagram](https://assets.example.com/floor-plan.png)";
+  for (const generated of [
+    { ...base, reply: image, review: {} },
+    { ...base, review: { guidance: '<PICTURE><img src="https://assets.example.com/floor-plan.png"></PICTURE>' } },
+    { ...base, review: { skill: { name: "shift-handoff", description: "Store handoff", instructions: image } } },
+  ]) {
+    expect(() => applyProjectSetupInterview(draft, JSON.stringify(generated), context)).toThrow();
+  }
+});
+
+it("keeps the selected Skill manifest intact and lets the user remove a Skill from review", () => {
+  const context = { project: { name: "Operations" }, skills: [], instructionFiles: [], mcpServices: [] };
+  const draft = beginProjectSetupInterview(initialProjectSetup("chat_skills", "project_ops", "Store operations", "msg_setup"));
+  const question = applyProjectSetupInterview(draft, JSON.stringify({
+    reply: "Would you like to choose a skill for store handoffs?", focus: "skill", suggestions: [],
+  }), context).draft;
+  const selected = "---\nname: shift-handoff\ndescription: Store handoff\n---\n\nConfirm break coverage with the next lead.\n"
+    + "\n![Equipment diagram](https://assets.example.com/floor-plan.png)\n";
+  const staged = transitionProjectSetupInterview(question, { type: "stage_skill", content: selected }).draft;
+  const diagnose = {
+    reply: "Review your handoff skill.", focus: "review", suggestions: [],
+    review: { skill: { name: "unwanted-skill", description: "Different skill", instructions: "Perform another action." } },
+  };
+  const review = applyProjectSetupInterview(staged, JSON.stringify(diagnose), context).draft;
+  expect(review.proposals).toEqual([expect.objectContaining({ path: ".agents/skills/shift-handoff/SKILL.md", content: selected })]);
+  const dropSkill = JSON.stringify({
+    ...diagnose, reply: "We’ll proceed without a skill.", review: { skill: null },
+  });
+  const revised = applyProjectSetupInterview(review, dropSkill, context).draft;
+  expect(revised.skill).toBeUndefined();
+  expect(revised.proposals).toEqual([]);
+
+  const partiallySaved = { ...review, proposals: review.proposals.map(file => ({ ...file, status: "saved" as const })) };
+  expect(applyProjectSetupInterview(partiallySaved, dropSkill, context).draft.proposals).toEqual(partiallySaved.proposals);
+});
+
+it("clears a previously generated Skill when the owner corrects the proposal", () => {
+  const context = { project: { name: "Operations" }, skills: [], instructionFiles: [], mcpServices: [] };
+  const draft = beginProjectSetupInterview(initialProjectSetup("chat_skills", "project_ops", "Store operations", "msg_setup"));
+  const review = applyProjectSetupInterview(draft, JSON.stringify({
+    reply: "Review the handoff skill.", focus: "review", suggestions: [],
+    answers: { skillInstructions: "Confirm break coverage." },
+    review: { skill: { name: "shift-handoff", description: "Store handoff", instructions: "Confirm break coverage." } },
+  }), context).draft;
+  const revised = applyProjectSetupInterview(review, JSON.stringify({
+    reply: "We’ll proceed without a skill.", focus: "review", suggestions: [],
+    answers: { skillInstructions: null }, review: {},
+  }), context).draft;
+  expect(revised.skill).toBeUndefined();
+  expect(revised.proposals).toEqual([]);
+});
+
 describe("admitted project setup generation", () => {
   let pg: InstanceType<typeof KyselyPGlite>;
   let repository: ChatRepository;
   beforeEach(async () => { pg = await createTestPGlite(); repository = new ChatRepository(pg.dialect); await repository.bootstrap(); });
   afterEach(async () => { await repository.kysely.destroy(); });
+  it("uses scoped project facts and one accepted answer per Agent turn, then preserves the reviewed instructions", async () => {
+    const selection = { instanceId: "pi_default", model: "gpt-5.6-sol" };
+    const available = catalog();
+    available.instances[0]!.driverKind = "matrix_pi";
+    available.instances[0]!.id = selection.instanceId;
+    const catalogs = { getCatalog: async () => available };
+    const roots: ChatExecutionRootResolver = {
+      resolve: async (_owner, ref) => {
+        if (ref.kind !== "project") throw new Error("Expected project root");
+        return { ref, fingerprint: executionRootFingerprint, primaryWorkspaceRoot: "/safe/project", projectSlug: ref.projectId };
+      },
+      revalidate: async (scope, resolved) => roots.resolve(scope, resolved.ref),
+    };
+    const opening = { reply: "Which customers should receive the release notes?", focus: "intent", suggestions: ["All customers", "Beta customers"] };
+    const accepted = "Draft updates for beta customers from Linear. Ask before publishing.";
+    const review = { reply: "I’ll draft for beta customers and ask before publishing.", focus: "review", suggestions: [], recommendedService: "Linear",
+      answers: { purpose: "Draft beta release notes", guidance: "Ask before publishing" }, review: { guidance: "# Project guidance\n\nAsk before publishing." } };
+    const reviewWithoutMcp = { ...review, reply: "I’ll keep the release checklist and continue without an MCP connection.", recommendedService: undefined };
+    const storeOpening = { reply: "What part of a store shift would you like to make easier?", focus: "intent", suggestions: ["Shift handoff"] };
+    const start = vi.fn(async function* () {
+      const output = [opening, review, reviewWithoutMcp, storeOpening][start.mock.calls.length - 1];
+      yield { type: "assistant.delta" as const, messageId: "result", delta: JSON.stringify(output) };
+      yield { type: "run.completed" as const, outcome: "completed" as const };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository, catalog: catalogs, executionRoots: roots,
+      adapters: new CanonicalChatProviderRegistry([{ ...adapter(start), driverKind: "matrix_pi" }]),
+    });
+    const existingInstructions = "# Our release notes process";
+    const create = vi.fn(async (_path: string, _content: string) => {});
+    const service = new ProjectSetupService({
+      repository, homePath: "/tmp/project-setup-tests", executionRoots: roots,
+      openWorkspace: async (_owner, projectId) => ({
+        fingerprint: "b".repeat(64), executionRootFingerprint, projectSlug: projectId, create, close: async () => {}, revalidate: async () => {},
+        read: async path => projectId === "project_a" && path === "AGENTS.md" ? existingInstructions : null,
+        interviewContext: async () => projectId === "project_a"
+          ? { project: { name: "Release Notes", source: { type: "github", repository: "test-org/release-notes" } },
+            instructionFiles: ["AGENTS.md"], skills: [], mcpServices: [{ name: "Linear", connection: "authorization_required" }] }
+          : { project: { name: "Store Operations" }, instructionFiles: [], skills: [], mcpServices: [] },
+      }),
+      generation: { repository, orchestrator, catalog: catalogs },
+    });
+    try {
+      expect((await service.getProject(owner, "project_a")).draft).toBeNull();
+      expect(start).not.toHaveBeenCalled();
+      const first = await service.start(owner, "project_a", { mode: "interview", clientRequestId: "req_interview_start", currentSelection: selection }, principal);
+      const chatId = first.draft!.chatId;
+      await orchestrator.drain();
+      const sync = (revision: number, name: string, id = chatId) => service.update(principal, owner, id, {
+        baseRevision: revision, clientRequestId: `req_sync_${name}`, action: { type: "sync_generation" },
+      });
+      // Simulate worker loss after canonical admission but before the setup row linked the run.
+      await repository.kysely.updateTable("chat_project_setups")
+        .set({ draft: jsonb({ ...first.draft, updatedAt: new Date(Date.now() - 61_000).toISOString(), generation: { status: "pending" } }) })
+        .where("chat_id", "=", chatId).execute();
+      const recovered = await sync(first.draft!.revision, "recovered");
+      expect(recovered.draft?.generation).toMatchObject({ status: "running", runId: first.draft?.generation?.runId });
+      expect(start).toHaveBeenCalledTimes(1);
+      const opened = await sync(recovered.draft!.revision, "opening");
+      expect(opened.draft?.interview?.suggestions).toEqual(opening.suggestions);
+      const response = await service.update(principal, owner, chatId, { baseRevision: opened.draft!.revision,
+        clientRequestId: "req_interview_answer", action: { type: "interview_answer", text: accepted, selection } });
+      await orchestrator.drain();
+      const result = await sync(response.draft!.revision, "review");
+      const secondClient = await sync(response.draft!.revision, "review_second_client");
+      expect(secondClient.draft).toEqual(result.draft);
+      expect(result.draft?.step).toBe("review");
+      expect(result.draft?.answers.guidance).toBe("Ask before publishing");
+      expect(result.draft?.proposals.map(file => file.path)).toEqual(["AGENTS.md", "CLAUDE.md"]);
+      expect(result.draft?.proposals[0]).toMatchObject({ content: existingInstructions, status: "already_present" });
+      expect(result.draft?.mcp.state).toBe("not_requested");
+      expect(create).not.toHaveBeenCalled();
+      const page = await repository.getDetailPage(owner, chatId, { limit: 40 });
+      const humanAnswer = page?.messages.filter(message => message.purpose === "discussion" && message.parts[0]?.type === "text" && message.parts[0].text === accepted);
+      expect(humanAnswer).toHaveLength(1);
+      expect(page?.messages.find(message => message.id === result.draft?.currentQuestionMessageId)).toMatchObject({
+        role: "assistant", parts: [{ type: "text", text: review.reply }], turnId: humanAnswer?.[0]?.turnId,
+      });
+      const wires = await repository.kysely.selectFrom("chat_runs").select("context_snapshot").where("chat_id", "=", chatId).execute();
+      expect(wires).toHaveLength(2);
+      expect(wires).toEqual(Array.from({ length: 2 }, () => expect.objectContaining({
+        context_snapshot: expect.objectContaining({ projectSetupDraft: expect.objectContaining({ mode: "interview" }) }),
+      })));
+      expect(page?.runs).toEqual([]);
+      expect(start.mock.calls.map(call => JSON.stringify(call))).toEqual([expect.stringContaining("test-org/release-notes"), expect.stringContaining(accepted)]);
+      expect(start.mock.calls.every(call => !JSON.stringify(call).includes(existingInstructions))).toBe(true);
+      const connect = await service.update(principal, owner, chatId, { baseRevision: result.draft!.revision,
+        clientRequestId: "req_mcp_connect", action: { type: "choose_mcp", choice: "connect", service: "Linear" } });
+      expect(connect.draft?.mcp).toEqual({ state: "pending", service: "Linear" });
+      const skip = await service.update(principal, owner, chatId, { baseRevision: connect.draft!.revision,
+        clientRequestId: "req_mcp_skip", action: { type: "choose_mcp", choice: "skip", selection } });
+      expect(skip.draft?.mcp).toEqual({ state: "skipped" });
+      await orchestrator.drain();
+      const resultWithoutMcp = await sync(skip.draft!.revision, "review_without_mcp");
+      expect(resultWithoutMcp.draft?.mcp).toEqual({ state: "skipped" });
+      expect(JSON.stringify(start.mock.calls.at(-1))).toContain('"requestedConnection":{"state":"skipped"}'.replaceAll('"', '\\"'));
+      const saved = await service.update(principal, owner, chatId, { baseRevision: resultWithoutMcp.draft!.revision,
+        clientRequestId: "req_interview_save", action: { type: "save" } });
+      expect(saved.draft?.step).toBe("saved");
+      expect(create.mock.calls).toEqual([["CLAUDE.md", "@AGENTS.md\n"]]);
+      expect((await service.getProject(owner, "project_b")).draft).toBeNull();
+      const store = await service.start(owner, "project_b", { mode: "interview", clientRequestId: "req_store_start", currentSelection: selection }, principal);
+      await orchestrator.drain();
+      const storeOpened = await sync(store.draft!.revision, "store_opening", store.draft!.chatId);
+      expect(storeOpened.draft?.interview?.suggestions).toEqual(storeOpening.suggestions);
+      const storeRequest = JSON.stringify(start.mock.calls.at(-1));
+      expect(storeRequest).toContain("Store Operations");
+      expect(storeRequest).not.toContain("Release Notes");
+      expect(storeRequest).not.toContain(accepted);
+    } finally { await orchestrator.close(); }
+  });
   it("starts a fresh restricted run instead of resuming a broader native session and binds its result", async () => {
     await repository.create(owner, { id: "chat_setup", clientRequestId: "req_create", title: "Project setup", projectId: "project_a" });
     const start = vi.fn(async function* () {
@@ -94,5 +274,123 @@ describe("admitted project setup generation", () => {
     const generation = await generateProjectSetup({ repository, orchestrator: { admitTurn }, catalog: { getCatalog: async () => catalog() } }, principal, owner,
       initialProjectSetup("chat_setup", "project_a", "Portfolio", "msg_question"), selection, "req_generate", executionRootFingerprint);
     expect(generation.status).toBe("unavailable"); expect(admitTurn).not.toHaveBeenCalled();
+  });
+  it("keeps interview wire text out of Chat preview, search and streamed message chunks", async () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const chatId = snapshot.chat.id;
+    await repository.create(owner, { id: chatId, title: "Release notes", clientRequestId: "req_setup_preview_test" });
+    const ownerText = "Use the changelog for each release.";
+    await repository.kysely.transaction().execute(trx =>
+      appendProjectSetupTranscript(trx, owner, chatId, [{ role: "user", text: ownerText }], async () => undefined));
+    const sourceRun = snapshot.runs[0]!;
+    const run = { ...sourceRun, historyBoundarySeq: 1,
+      context: { version: 1 as const, requestHash: "a".repeat(64), chats: [],
+        projectSetupDraft: { mode: "interview" as const, revision: 1 } } };
+    const turn = { ...snapshot.turns[0]!, baseMessageSeq: 1 };
+    await repository.admitTurn(owner, {
+      chatId, baseRevision: 1, turn, run, adapterState: { schemaVersion: 1, state: { sessionId: "interview_wire" } },
+      message: { ...snapshot.messages[0]!, seq: 2,
+        parts: [{ type: "text", text: "internalsetupinstruction" }] },
+    });
+    const admitted = await repository.get(owner, chatId);
+    expect.soft(admitted?.chat.lastMessagePreview).toBe(ownerText);
+    expect.soft(admitted?.providerBinding).toBeUndefined();
+
+    const delta = '{"reply":"internalsetuppayload"}';
+    await repository.appendAssistantDelta(owner, {
+      chatId, runId: run.id, messageId: "msg_interview_raw", delta, createdAt: run.createdAt,
+    });
+    expect.soft((await repository.get(owner, chatId))?.chat.lastMessagePreview).toBe(ownerText);
+    await repository.finishRun(owner, {
+      chatId, runId: run.id, outcome: "completed", completedAt: run.createdAt,
+    });
+    expect.soft((await repository.get(owner, chatId))?.chat.lastMessagePreview).toBe(ownerText);
+    await expect.soft(repository.getLatestAdapterStateForChat(owner, { chatId, driverKind: run.driverKind,
+      instanceId: run.instanceId, schemaVersion: 1, executionRootFingerprint: run.executionRootFingerprint! })).resolves.toBeNull();
+    await expect.soft(repository.search(owner, "internalsetupinstruction")).resolves.toEqual([]);
+    await expect.soft(repository.search(owner, "internalsetuppayload")).resolves.toEqual([]);
+    await expect.soft(repository.search(owner, "changelog")).resolves.toHaveLength(1);
+    const detail = await repository.getDetailPage(owner, chatId, { limit: 1 });
+    expect.soft(detail?.messages.flatMap(({ parts }) => parts)).toEqual([{ type: "text", text: ownerText }]);
+    expect.soft(detail?.nextBeforeSeq).toBeUndefined();
+    const events = await repository.kysely.selectFrom("chat_outbox").select("payload").execute();
+    expect(JSON.stringify(events)).not.toMatch(/internalsetup(?:instruction|payload)/);
+  });
+});
+
+describe("project setup context", () => {
+  const owner = { type: "personal", ownerId: "owner_setup" } as const;
+  let home: string | undefined;
+  afterEach(async () => { if (home) await rm(home, { recursive: true, force: true }); home = undefined; });
+
+  it.runIf(process.platform === "linux")("reads bounded names from the pinned, owner-scoped checkout with safe GitHub identity", async () => {
+    home = await mkdtemp(join(tmpdir(), "matrix-setup-context-"));
+    const root = join(home, "allowed");
+    const other = join(home, "other");
+    await mkdir(join(root, ".agents/skills/release-review"), { recursive: true });
+    await mkdir(join(other, ".agents/skills/private-skill"), { recursive: true });
+    await writeFile(join(root, "AGENTS.md"), "PRIVATE_INSTRUCTIONS_DO_NOT_SEND");
+    await writeFile(join(root, ".agents/skills/release-review/SKILL.md"), "PRIVATE_SKILL_CONTENT_DO_NOT_SEND");
+    await writeFile(join(other, "AGENTS.md"), "PRIVATE_OTHER_PROJECT");
+    await writeFile(join(other, ".agents/skills/private-skill/SKILL.md"), "PRIVATE_OTHER_SKILL");
+    await symlink(join(other, ".agents/skills/private-skill"), join(root, ".agents/skills/private-skill"));
+    await link(join(other, "AGENTS.md"), join(root, "CLAUDE.md"));
+    await writeFile(join(root, ".mcp.json"), '{"mcpServers":{"SecretMcpName":{"url":"https://secret.example.com"}}}');
+    const project = { id: "proj_github", slug: "allowed", name: "Acorn site", description: "A team website", kind: "github" as const,
+      localPath: root, remote: "https://ACCOUNT_SECRET@github.com/finna/acorn", github: { owner: "finna", repo: "acorn" } };
+    const roots = createChatExecutionRootResolver({ homePath: home, projects: {
+      getProjectById: async (scope, id) => scope.id === owner.ownerId && id === project.id
+        ? { ok: true, project } : { ok: false, status: 404, error: "missing" },
+      resolveProjectWorkingDirectory: async entry => entry.localPath,
+    }, worktrees: { getWorktree: async () => ({ ok: false, status: 404, error: "missing" }) } });
+    const mcp = vi.fn(async () => [{ name: "Linear", connection: "connected" as const }]);
+    await expect(openProjectSetupWorkspace(roots, home, { ...owner, ownerId: "different_owner" }, project.id, mcp)).rejects.toThrow();
+    expect(mcp).not.toHaveBeenCalled();
+    const workspace = await openProjectSetupWorkspace(roots, home, owner, project.id, mcp);
+    try {
+      expect(await workspace.interviewContext!()).toEqual({
+        project: { name: "Acorn site", description: "A team website", source: { type: "github", repository: "finna/acorn" } },
+        instructionFiles: ["AGENTS.md"],
+        skills: [{ name: "release-review", path: ".agents/skills/release-review/SKILL.md" }],
+        mcpServices: [{ name: "Linear", connection: "connected" }],
+      });
+    } finally { await workspace.close(); }
+  });
+
+  it("projects broker status and catalog names without forwarding URLs, tool metadata, or cross-owner access", async () => {
+    const fetcher = vi.fn<typeof fetch>(async url => new Response(JSON.stringify(String(url).endsWith("/catalog") ? {
+      presets: [
+        { name: "Linear", url: "https://linear.example.com/mcp", auth: "oauth", description: "CATALOG_RAW" },
+        { name: "Stripe", url: "https://stripe.example.com/mcp", auth: "oauth" },
+        { name: "Read docs", url: "https://docs.example.com/mcp", auth: "none" },
+      ],
+    } : [
+      { name: "My Linear", url: "https://linear.example.com/mcp", enabled: true, status: "ready", tools: [{ inputSchema: "PRIVATE_DETAILS" }] },
+      { name: "Stripe", url: "https://stripe.example.com/mcp", enabled: true, status: "auth_required" },
+      { name: "Stripe", url: "https://different.example.com/mcp", enabled: true, status: "ready" },
+      { name: "Disabled", url: "https://disabled.example.com/mcp", enabled: false, status: "disabled" },
+      { name: "Manual", url: "https://other.example.com/mcp", enabled: true, status: "degraded" },
+    ])));
+    const registration = registerCustomMcpGatewayRoutes(new Hono(), {
+      homePath: tmpdir(), clerkUserId: owner.ownerId, fetchInterviewInventory: fetcher,
+      platformProxy: { internalPlatformUrl: "https://platform.example.com", handle: "workspace-dev", token: "machine-token", request: vi.fn() },
+    });
+    try {
+      expect(await registration.listProjectSetupMcpServices({ ...owner, ownerId: "other-owner" })).toEqual([]);
+      expect(fetcher).not.toHaveBeenCalled();
+      expect(await registration.listProjectSetupMcpServices(owner)).toEqual([
+        { name: "Linear", connection: "connected" },
+        { name: "Stripe", connection: "authorization_required" },
+        { name: "Manual", connection: "unconfirmed" },
+        { name: "Read docs", connection: "unconfirmed" },
+      ]);
+      expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual([
+        "https://platform.example.com/internal/containers/workspace-dev/mcp-servers",
+        "https://platform.example.com/internal/containers/workspace-dev/mcp-servers/catalog",
+      ]);
+      for (const [, options] of fetcher.mock.calls) {
+        expect(options).toMatchObject({ method: "GET", redirect: "error", signal: expect.any(AbortSignal) });
+      }
+    } finally { registration.stop(); }
   });
 });

@@ -21,6 +21,7 @@ import type { ChatExecutionRootResolver, ResolvedChatExecutionRoot } from "./exe
 import { CanonicalChatOrchestrationError, mapRepositoryError, safeError, requirementsFor } from "./orchestration-input.js";
 import { loadChatResumeState } from "./resume-checkpoint.js";
 import { unsupportedAgentPermissionMode } from "./agent-permission.js";
+import { supportsProjectSetupInterviewProvider } from "./project-setup-interview-context.js";
 import { performance } from "node:perf_hooks";
 import { chatSendTimingsEnabled, createChatSendTimer, type ChatSendTimer } from "./send-timing.js";
 
@@ -50,7 +51,7 @@ export interface TurnAdmissionOptions {
 export const PROJECT_SETUP_DRAFTING = Symbol("project-setup-drafting");
 
 export interface CanonicalTurnProvenance {
-  [PROJECT_SETUP_DRAFTING]?: { revision: number };
+  [PROJECT_SETUP_DRAFTING]?: { revision: number; mode?: never } | { revision: number; mode: "interview"; prompt: string };
   [ROUTINE_DIRECT_DISPATCH]?: RoutineDirectDispatch;
   routineCreationProof?: string;
   previewTurnProof?: string;
@@ -94,6 +95,14 @@ async function admitTimedTurn(
     deps.assertOpen();
     await deps.assertPersonalExecutionAllowed(owner, chatId);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
+    const setup = provenance?.[PROJECT_SETUP_DRAFTING];
+    const interview = setup?.mode === "interview" ? setup : undefined;
+    if (interview && (owner.type !== "personal" || principal.userId !== owner.ownerId
+      || input.executionRoot?.kind !== "project" || input.permissionMode !== "supervised"
+      || input.routineCreation || input.parts.some(part => part.type !== "text")
+      || !interview.prompt.trim() || Buffer.byteLength(interview.prompt) > 60 * 1024)) {
+      throw new CanonicalChatOrchestrationError(safeError("authorization_failed", "Project setup is unavailable."), 400);
+    }
     if (input.routineCreation && (owner.type !== "personal" || principal.userId !== owner.ownerId)) {
       throw new CanonicalChatOrchestrationError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
     }
@@ -115,9 +124,9 @@ async function admitTimedTurn(
       return mapRepositoryError(new ChatBusyError(chatId));
     }
     const record = await deps.repository.get(owner, chatId);
-    if (!record) return mapRepositoryError(new ChatNotFoundError(chatId));
+    if (!record || (interview && (!record.projectId || record.chat.collaboration))) return mapRepositoryError(new ChatNotFoundError(chatId));
     let prepared;
-    try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
+    try { prepared = interview ? undefined : await deps.agentContext?.prepare(owner, chatId, input); }
     catch (error: unknown) { return mapRepositoryError(error); }
     const effective = { ...input, ...prepared };
     timer?.mark("admission_pre_catalog", phaseStartedAt);
@@ -134,7 +143,7 @@ async function admitTimedTurn(
     const validated = validateChatProviderSelection({
       catalog,
       selection: effective.selection,
-      ...(!prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
+      ...(!interview && !prepared?.context?.agent && record.providerBinding ? { boundInstanceId: record.providerBinding.instanceId } : {}),
       requirements,
     });
     if (!validated.ok) {
@@ -144,6 +153,10 @@ async function admitTimedTurn(
       throw new CanonicalChatOrchestrationError(agentModeError ?? validated.error, validated.error.code === "provider_instance_locked" ? 409 : 400);
     }
     const adapter = deps.adapters.get(validated.instance.driverKind);
+    if (interview && (!supportsProjectSetupInterviewProvider(validated.instance.driverKind)
+      || input.interactionMode !== (validated.instance.driverKind === "matrix_pi" ? "default" : "review"))) {
+      throw new CanonicalChatOrchestrationError(safeError("provider_unavailable", "This Provider is unavailable for project setup.", false, ["select_provider"]), 400);
+    }
     if (!adapter) {
       throw new CanonicalChatOrchestrationError(
         safeError("provider_unavailable", "The selected Provider cannot run yet.", false, ["select_provider"]),
@@ -191,7 +204,7 @@ async function admitTimedTurn(
         );
       }
     }
-    const resumeState = prepared?.context?.agent || provenance?.[PROJECT_SETUP_DRAFTING] ? undefined : await loadChatResumeState({
+    const resumeState = prepared?.context?.agent || setup ? undefined : await loadChatResumeState({
       repository: deps.repository, owner, chatId, adapter,
       instanceId: validated.instance.id,
       selection: validated.selection, interactionMode: effective.interactionMode, permissionMode: effective.permissionMode,
@@ -201,13 +214,14 @@ async function admitTimedTurn(
     });
     let sessionContext: CanonicalChatRun["context"];
     try {
-      sessionContext = await prepareChatSessionContext({
+      sessionContext = interview ? undefined : await prepareChatSessionContext({
         repository: deps.repository, owner, chatId, throughSeq: record.chat.messageCount,
         requestHash, instanceId: validated.instance.id, resumeState, context: routineCreationContext(input, prepared?.context),
       });
     } catch (error: unknown) { return mapRepositoryError(error); }
-    if (provenance?.[PROJECT_SETUP_DRAFTING]) {
-      sessionContext = { version: 1, requestHash, chats: [], ...sessionContext, projectSetupDraft: provenance[PROJECT_SETUP_DRAFTING] };
+    if (setup) {
+      sessionContext = { version: 1, requestHash, chats: [], ...sessionContext,
+        projectSetupDraft: { revision: setup.revision, ...(interview ? { mode: "interview" } : {}) } };
     }
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
@@ -372,7 +386,7 @@ async function admitTimedTurn(
           adapter,
           resolvedRoot,
           resumeState,
-          undefined,
+          interview?.prompt,
           admissionKey,
         );
         // Startup may fail before a provider issues the capability. Disposal

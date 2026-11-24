@@ -31,6 +31,8 @@ function controller(dispatch = vi.fn(async () => true), value = draft): ProjectS
     eligible: true,
     introduction: false,
     active: true,
+    canAnswer: true,
+    retryInterview: vi.fn(async () => true),
     pending: false,
     error: null,
     dispatch,
@@ -52,14 +54,70 @@ it("allows skipping the setup offer without starting Chat", () => {
   expect(start).toHaveBeenCalledOnce();
 });
 
-it("shows the first question as part of the project setup conversation", () => {
+it("shows start progress without injecting a scripted question or suggestions", () => {
   const setup = controller();
-  render(<ProjectSetupIntroduction projectName="Portfolio" setup={{ ...setup, draft: null, introduction: true }} />);
-  expect(screen.getByRole("navigation", { name: "Project setup progress" })).toBeTruthy();
-  expect(screen.getByText("Guidance").closest("li")?.getAttribute("aria-current")).toBe("step");
+  render(<ProjectSetupIntroduction projectName="Portfolio" setup={{ ...setup, draft: null, introduction: true, pending: true }} />);
   expect(screen.getByText("Project setup")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "A portfolio site" }));
-  expect(setup.answer).toHaveBeenCalledWith("A portfolio site");
+  expect(screen.getByRole("status").textContent).toContain("Starting project setup");
+  expect(screen.queryByRole("button", { name: "A portfolio site" })).toBeNull();
+});
+
+it("renders only the Agent's suggestions through the same answer action", () => {
+  const setup = controller(undefined, {
+    ...draft, step: "guidance", proposals: [],
+    interview: { focus: "intent", suggestions: ["Draft customer release notes", "Run a changelog review"] },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Draft customer release notes" }));
+  expect(setup.answer).toHaveBeenCalledExactlyOnceWith("Draft customer release notes");
+  expect(screen.queryByRole("button", { name: "Keep changes small" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Connect Linear" })).toBeNull();
+});
+
+it("reuses the confirmed MCP Settings flow only for the Agent's scoped recommendation", () => {
+  const open = vi.fn();
+  const dispatch = vi.fn(async () => true);
+  render(<ProjectSetupControls setup={controller(dispatch, {
+    ...draft, step: "review", interview: { focus: "review", suggestions: [], recommendedService: "GitHub" },
+  })} transport={null} onOpenMcpSettings={open} />);
+  fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
+  expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type: "choose_mcp", choice: "connect", service: "GitHub" });
+  expect(open).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Connect Linear" })).toBeNull();
+});
+
+it("keeps Save behind the review handoff and records an explicit MCP skip", () => {
+  const open = vi.fn();
+  const setup = controller(undefined, {
+    ...draft,
+    interview: { focus: "review", suggestions: [], recommendedService: "GitHub", mcpHandoff: true },
+    mcp: { state: "pending", service: "GitHub" },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} onOpenMcpSettings={open} />);
+  expect(screen.queryByRole("button", { name: "Save project setup" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Open MCP Settings" }));
+  expect(open).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole("button", { name: "Continue without connecting" }));
+  expect(setup.dispatch).toHaveBeenCalledExactlyOnceWith({ type: "choose_mcp", choice: "skip" });
+  expect(setup.answer).not.toHaveBeenCalled();
+});
+
+it("finishes an approved tools-only setup without proposing files", () => {
+  const dispatch = vi.fn(async () => true);
+  render(<ProjectSetupControls setup={controller(dispatch, {
+    ...draft, proposals: [], interview: { focus: "review", suggestions: [] },
+  })} transport={null} />);
+  expect(screen.queryByRole("button", { name: "Edit Markdown" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
+  expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type: "save" });
+});
+
+it("keeps editing and save controls unavailable while the Agent is resolving a revision", () => {
+  render(<ProjectSetupControls setup={controller(undefined, {
+    ...draft, interview: { focus: "review", suggestions: [] }, generation: { status: "running" },
+  })} transport={null} />);
+  expect(screen.getByRole("status").textContent).toContain("Preparing the next reply");
+  expect(screen.queryByRole("button", { name: "Save project setup" })).toBeNull();
 });
 
 it("asks for an explicit Settings handoff after choosing Linear", async () => {
