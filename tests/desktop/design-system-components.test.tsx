@@ -21,6 +21,7 @@ import {
   type CheckedState,
   type MenuEntry,
 } from "../../desktop/src/renderer/src/design/ds";
+import { DESKTOP_Z_INDEX } from "../../desktop/src/renderer/src/design/layering";
 
 afterEach(cleanup);
 
@@ -78,9 +79,15 @@ describe("design-system Checkbox", () => {
     expect(box.getAttribute("aria-checked")).toBe("false");
   });
 
-  it("is a native button, so Space and Enter activate it", () => {
-    render(<Harness initial={false} />);
-    expect(screen.getByRole("checkbox", { name: "Select all" }).tagName).toBe("BUTTON");
+  it("toggles with Space and Enter without reaching a parent key handler", () => {
+    const onParentKeyDown = vi.fn();
+    render(<div onKeyDown={onParentKeyDown}><Harness initial={false} /></div>);
+    const box = screen.getByRole("checkbox", { name: "Select all" });
+    expect(fireEvent.keyDown(box, { key: " " })).toBe(false);
+    expect(box.getAttribute("aria-checked")).toBe("true");
+    expect(fireEvent.keyDown(box, { key: "Enter" })).toBe(false);
+    expect(box.getAttribute("aria-checked")).toBe("false");
+    expect(onParentKeyDown).not.toHaveBeenCalled();
   });
 });
 
@@ -170,6 +177,14 @@ describe("design-system DropdownMenu", () => {
     expect(items.at(-1)?.textContent).toContain("Move to Trash");
     fireEvent.click(items.at(-1)!);
     expect(onTrash).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("design-system popover layering", () => {
+  it("puts menus on the shared popover layer", () => {
+    render(<DropdownMenu trigger={<button type="button">Open</button>} entries={[{ kind: "item", id: "a", label: "A", onSelect: vi.fn() }]} />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Open" }), { button: 0, ctrlKey: false });
+    expect(screen.getByRole("menu").style.zIndex).toBe(String(DESKTOP_Z_INDEX.popover));
   });
 });
 

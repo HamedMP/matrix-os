@@ -8,4 +8,4 @@ export { Input } from "./Input";
 export { ContextMenu, DropdownMenu, type MenuEntry } from "./Menu";
 export { Switch } from "./Switch";
 export { LineTabs, pillTabClass, rovingIndex, SegmentedControl, TabPanel, type SegmentOption, type TabItem } from "./Tabs";
-export { Tooltip, tooltipContentClass } from "./Tooltip";
+export { Tooltip, tooltipContentClass, tooltipLayerStyle } from "./Tooltip";

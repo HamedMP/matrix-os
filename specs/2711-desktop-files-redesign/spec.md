@@ -42,6 +42,7 @@ Components live in `desktop/src/renderer/src/design/ds/` and follow the library'
 - **P2** Actions on existing APIs: context menu, inline rename, Move to…, copy/cut/paste, duplicate, trash with undo, search, New menu, upload tray, download.
 - **P3** Trash page and all states and dialogs; remove the Trash modal; turn the flag into the default.
 - **P4** Approved backend items, each behind its own flag with gateway tests.
+- **Public docs** A separate PR in `FinnaAI/matrix-os-site` under `content/docs/` describes the redesigned Files (locations, views, selection, details, Trash) and ships when P3 makes the redesign the default. Docs are not published while the redesign is behind the flag.
 
 The old Files UI remains the default until P3 ships, so no partial UI reaches users.
 
@@ -52,6 +53,7 @@ The old Files UI remains the default until P3 ships, so no partial UI reaches us
 - Existing preview, QuickOpen, sharing and download keep working with the flag on and off.
 - `pnpm --dir desktop typecheck`, the relevant Vitest suites, `bun run check:patterns` and react-doctor pass.
 - Every PR has Electron Desktop screenshots and a recording next to the matching mockup.
+- The public-docs PR in `FinnaAI/matrix-os-site` is merged when the flag becomes the default.
 
 ## Security, failure modes and resources
 

@@ -1,5 +1,5 @@
 import { Check, Minus } from "lucide-react";
-import type { ComponentProps, MouseEvent } from "react";
+import type { ComponentProps, KeyboardEvent, MouseEvent } from "react";
 import { cn } from "../../lib/cn";
 import { Icon } from "./Icon";
 
@@ -13,11 +13,11 @@ export function Checkbox({
   className,
   disabled,
   onClick,
+  onKeyDown,
   ...props
 }: Omit<ComponentProps<"button">, "onChange" | "role" | "aria-checked"> & {
   checked: CheckedState;
-  /** Space and Enter reach this through the button's native click. */
-  onCheckedChange?: (next: boolean, event: MouseEvent<HTMLButtonElement>) => void;
+  onCheckedChange?: (next: boolean, event: MouseEvent<HTMLButtonElement> | KeyboardEvent<HTMLButtonElement>) => void;
 }) {
   const marked = checked !== false;
   return (
@@ -30,6 +30,15 @@ export function Checkbox({
       onClick={(event) => {
         onClick?.(event);
         if (!event.defaultPrevented) onCheckedChange?.(checked !== true, event);
+      }}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (event.defaultPrevented || (event.key !== " " && event.key !== "Enter")) return;
+        // Handled here (not by the native click) so the key never also reaches a
+        // parent row that uses Space for its own selection.
+        event.preventDefault();
+        event.stopPropagation();
+        onCheckedChange?.(checked !== true, event);
       }}
       className={cn(
         "ds-focus grid size-4 shrink-0 place-content-center rounded-[4px] border bg-ds-background text-ds-primary shadow-ds-xs",

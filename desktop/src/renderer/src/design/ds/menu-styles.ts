@@ -1,8 +1,9 @@
 // Design-library menu look (components/ui/menu-styles.ts), mapped to ds- tokens.
 // One card, one row, one label, one divider for dropdowns, context menus and submenus.
 
+// Stacking comes from DESKTOP_Z_INDEX.popover, applied as a style by Menu.tsx.
 export const menuSurface =
-  "z-[100] min-w-45 overflow-x-hidden overflow-y-auto rounded-lg border border-ds-border bg-ds-popover p-1 font-ds-sans text-ds-foreground shadow-ds-lg fade-in";
+  "min-w-45 overflow-x-hidden overflow-y-auto rounded-lg border border-ds-border bg-ds-popover p-1 font-ds-sans text-ds-foreground shadow-ds-lg fade-in";
 
 /** Highlight follows hover and keyboard; inner radius 12 − 4 padding = 8. */
 export const menuItem = [

@@ -2,7 +2,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import * as RadixTooltip from "@radix-ui/react-tooltip";
 import type { ComponentProps, ReactNode } from "react";
 import { cn } from "../../lib/cn";
-import { tooltipContentClass } from "./Tooltip";
+import { tooltipContentClass, tooltipLayerStyle } from "./Tooltip";
 
 // Design-library Button: primary is neutral, destructive is coral, sizes 28 · 32 · 36px,
 // every size an 8px radius. Focus is the shared gold ring.
@@ -74,7 +74,7 @@ export function IconButton({
     <RadixTooltip.Root>
       <RadixTooltip.Trigger asChild>{button}</RadixTooltip.Trigger>
       <RadixTooltip.Portal>
-        <RadixTooltip.Content sideOffset={6} className={tooltipContentClass}>
+        <RadixTooltip.Content sideOffset={6} className={tooltipContentClass} style={tooltipLayerStyle}>
           {label}
           {shortcut ? <span className="ml-1.5 opacity-70">{shortcut}</span> : null}
         </RadixTooltip.Content>

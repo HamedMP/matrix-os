@@ -3,6 +3,7 @@ import * as RadixDropdown from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronRight } from "lucide-react";
 import type { ElementType, ReactElement, ReactNode } from "react";
 import { cn } from "../../lib/cn";
+import { DESKTOP_Z_INDEX } from "../layering";
 import { Icon } from "./Icon";
 import { menuCheck, menuItem, menuItemDestructive, menuItemWithCheck, menuLabel, menuSeparator, menuShortcut, menuSurface } from "./menu-styles";
 
@@ -18,6 +19,8 @@ export type MenuEntry =
   | { kind: "separator"; id: string }
   | { kind: "submenu"; id: string; label: string; icon?: ReactNode; entries: MenuEntry[] }
   | { kind: "radio"; id: string; value: string; onValueChange: (value: string) => void; options: Array<{ value: string; label: string; icon?: ReactNode }> };
+
+const POPOVER_LAYER = { zIndex: DESKTOP_Z_INDEX.popover };
 
 interface MenuKit {
   Item: ElementType;
@@ -74,7 +77,7 @@ function renderEntries(kit: MenuKit, entries: MenuEntry[], depth: number): React
               <Icon icon={ChevronRight} size="xs" className="ml-auto" />
             </kit.SubTrigger>
             <kit.Portal>
-              <kit.SubContent sideOffset={4} className={menuSurface}>{renderEntries(kit, entry.entries, depth + 1)}</kit.SubContent>
+              <kit.SubContent sideOffset={4} className={menuSurface} style={POPOVER_LAYER}>{renderEntries(kit, entry.entries, depth + 1)}</kit.SubContent>
             </kit.Portal>
           </kit.Sub>
         );
@@ -98,7 +101,7 @@ export function DropdownMenu({
     <RadixDropdown.Root modal={false} onOpenChange={onOpenChange}>
       <RadixDropdown.Trigger asChild>{trigger}</RadixDropdown.Trigger>
       <RadixDropdown.Portal>
-        <RadixDropdown.Content align={align} sideOffset={6} className={menuSurface}>
+        <RadixDropdown.Content align={align} sideOffset={6} className={menuSurface} style={POPOVER_LAYER}>
           {renderEntries(DROPDOWN_KIT, entries, 0)}
         </RadixDropdown.Content>
       </RadixDropdown.Portal>
@@ -120,7 +123,7 @@ export function ContextMenu({
     <RadixContextMenu.Root onOpenChange={onOpenChange}>
       <RadixContextMenu.Trigger asChild>{children}</RadixContextMenu.Trigger>
       <RadixContextMenu.Portal>
-        {entries.length > 0 ? <RadixContextMenu.Content className={menuSurface}>{renderEntries(CONTEXT_KIT, entries, 0)}</RadixContextMenu.Content> : null}
+        {entries.length > 0 ? <RadixContextMenu.Content className={menuSurface} style={POPOVER_LAYER}>{renderEntries(CONTEXT_KIT, entries, 0)}</RadixContextMenu.Content> : null}
       </RadixContextMenu.Portal>
     </RadixContextMenu.Root>
   );
