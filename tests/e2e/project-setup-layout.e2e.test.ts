@@ -22,6 +22,7 @@ beforeAll(async () => {
     alias: {
       "@matrix-os/brand/marks": join(root, "packages/brand/src/marks.ts"),
       "@matrix-os/brand/tokens": join(root, "packages/brand/src/tokens.ts"),
+      "@matrix-os/brand/themes": join(root, "packages/brand/src/themes"),
       "@matrix-os/brand": join(root, "packages/brand/src/index.ts"),
       "@": join(root, "shell/src"),
     },
