@@ -87,6 +87,15 @@ export function integrationActionFailure(c: Context, err: unknown, service: stri
       { status: 429, headers: { "Retry-After": String(retryAfter) } },
     );
   }
+  if (service === "figma" && upstreamStatus === 403) {
+    // A forbidden response can mean missing scopes, inaccessible files, or an
+    // invalid/expired provider token. Status alone cannot identify the cause.
+    console.error("[integrations] permission denied for figma action");
+    return c.json({
+      error: "Integration access was denied. Check account permissions or reconnect the integration.",
+      code: "integration_permission_required",
+    }, 403);
+  }
   if (isTimeoutError(err)) {
     console.error(`[integrations] callAction timeout for ${service}/${action}`);
     return c.json({ error: "Integration call timed out" }, 504);

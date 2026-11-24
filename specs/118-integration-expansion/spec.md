@@ -46,6 +46,31 @@ revision. Missing, stale, disabled, or mismatched state fails closed.
 - Session clients use capped TTL/LRU reuse; stale/failing clients are isolated,
   and shutdown sends best-effort MCP session DELETE drains.
 
+### Figma action permission failures (ENG-261)
+
+After authenticated owner/account/action admission, both managed `/call` and
+scoped `/read-call` preserve a Figma upstream HTTP 403 as HTTP 403 with safe code
+`integration_permission_required` and guidance to check account permissions or
+reconnect. SDK `statusCode`, SDK `rawResponse.status`, and legacy `status` are
+recognized by the shared outcome mapper. Raw provider bodies, messages, scopes,
+tokens, paths, and resource identifiers never enter this response.
+
+A 403 does **not** prove missing scopes: invalid/expired credentials and file
+access restrictions can also deny an action. Do not infer a specific scope cause
+from untrusted error text, expire the Matrix session, or automatically expand
+OAuth grants. The [official file endpoint contract](https://developers.figma.com/docs/rest-api/file-endpoints/)
+requires `file_content:read` for file and node reads; the broader `files:read` is
+[deprecated](https://developers.figma.com/docs/rest-api/scopes/).
+
+`tests/integrations/figma-permission-errors.test.ts` exercises real registered
+routes, verified owner identity and persisted account selection against fixture
+provider errors. Unauthenticated/foreign-account/invalid-parameter requests must
+never reach the provider; non-Figma failures, upstream 401, rate limits, timeouts,
+connection failures, successful results and usage accounting retain their
+existing behavior. User OAuth reauthorization, a real permitted Figma read, and
+visible error guidance across supported surfaces remain separate live gates.
+Public user documentation ships in a separate `FinnaAI/matrix-os-site` PR.
+
 ## Authentication matrix
 
 | Mode | Stored platform-side | Notes |
