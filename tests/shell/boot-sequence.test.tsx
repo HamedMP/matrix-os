@@ -222,6 +222,39 @@ describe("BootSequence", () => {
     );
   });
 
+  it("lets a free owner in a device sign-in start their build from the passive path", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    let started = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.startsWith("/api/journey")) {
+        const state: JourneyState = started
+          ? { phase: "provisioning", detail: "Building your Matrix computer.", nextAction: { kind: "wait" } }
+          : { phase: "install_choices_required", detail: "Set up your free Matrix computer.", nextAction: { kind: "start_provision" } };
+        return Response.json(state);
+      }
+      if (url === "/api/auth/provision-runtime") {
+        started = true;
+        return Response.json({ runtime: "metal", status: "provisioning" }, { status: 202 });
+      }
+      return Response.json({}, { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <BootSequence completionRedirect="/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK" passivePostCheckout>
+        <div data-testid="shell">SHELL</div>
+      </BootSequence>,
+    );
+
+    expect(await screen.findByText("Set up your free Matrix computer.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+    await waitFor(() => expect(requests.some(({ url }) => url === "/api/auth/provision-runtime")).toBe(true));
+    const provision = requests.find(({ url }) => url === "/api/auth/provision-runtime");
+    expect(JSON.parse(String(provision?.init?.body))).toEqual({ developerTools: [] });
+  });
+
   it("stops automatic app-session retries on a permanent client error", async () => {
     let appSessionAttempts = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {

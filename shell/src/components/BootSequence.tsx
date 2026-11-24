@@ -465,6 +465,26 @@ function BootSequenceInner({
         </BootShell>
       );
     case "install_choices_required":
+      // The free plan takes no install choices: the journey asks for a direct
+      // start, which a device sign-in (passive path) must still be able to make.
+      if (passivePostCheckout && !provisioningOutcomeAmbiguous && state.nextAction.kind === "start_provision") {
+        return (
+          <BootShell activeStep="computer">
+            <h1 className="text-lg font-medium text-forest">Set up your Matrix computer</h1>
+            <p className="max-w-sm text-sm">{state.detail}</p>
+            {installError ? <p className="max-w-sm text-sm text-ember">{installError}</p> : null}
+            <button
+              type="button"
+              disabled={working}
+              onClick={() => void startProvision([])}
+              className="inline-flex items-center gap-2 rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-60"
+              style={{ backgroundColor: c.deep, color: lightFg, padding: "0.5rem 1rem" }}
+            >
+              {working ? <Spinner /> : null} Set up
+            </button>
+          </BootShell>
+        );
+      }
       if (passivePostCheckout || provisioningOutcomeAmbiguous) {
         return (
           <BootShell activeStep="computer">

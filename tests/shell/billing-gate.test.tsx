@@ -92,6 +92,19 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
 
+function computerList(slots: string[]) {
+  const items = slots.map((slot) => ({
+    handle: "owner",
+    runtimeSlot: slot,
+    label: slot === "primary" ? "Main Computer" : "Additional Computer",
+    availability: "available",
+    kind: "customer",
+    gatewayPath: slot === "primary" ? "/vm/owner" : `/vm/owner?runtime=${slot}`,
+    capabilities: [],
+  }));
+  return { items, hasMore: false, limit: 20, selectedSlot: null };
+}
+
 describe("BillingGate", () => {
   beforeEach(async () => {
     vi.resetModules();
@@ -183,7 +196,9 @@ describe("BillingGate", () => {
             nextAction: { kind: "retry_provision" },
             failure: { retryable: true, attempt: 1 },
           }
-        : { access: { runtimeProxyAllowed: true, reason: "active" } };
+        : url.startsWith("/api/auth/computers")
+          ? computerList(["primary"])
+          : { access: { runtimeProxyAllowed: true, reason: "active" } };
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
     });
     vi.resetModules();
@@ -198,6 +213,44 @@ describe("BillingGate", () => {
     await waitFor(() => expect(navigationState.redirect).toHaveBeenCalledWith("/", "replace"));
     expect(screen.queryByTestId("add-computer-onboarding")).toBeNull();
     expect(addComputerRender).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["owns another computer", ["primary", "studio"], false],
+    ["has a saved add-computer flow (checkout return)", ["primary"], true],
+  ] as const)("keeps the add-computer flow for an owner whose primary failed but who %s", async (_name, slots, draft) => {
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/?billing=setup&handoff=add-computer");
+    window.sessionStorage.clear();
+    if (draft) window.sessionStorage.setItem("matrix:add-computer-draft:v2", JSON.stringify({ name: "Studio", slot: "studio" }));
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const body = url.startsWith("/api/journey")
+        ? {
+            phase: "provisioning_failed",
+            detail: "Setting up your computer ran into a problem.",
+            nextAction: { kind: "retry_provision" },
+            failure: { retryable: true, attempt: 1 },
+          }
+        : url.startsWith("/api/auth/computers")
+          ? computerList([...slots])
+          : { access: { runtimeProxyAllowed: true, reason: "active" } };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+    render(
+      <BillingGate platformSessionActive>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByTestId("add-computer-onboarding")).toBeTruthy();
+    expect(navigationState.redirect).not.toHaveBeenCalled();
+    window.sessionStorage.clear();
   });
 
   it("keeps the full signup handoff visible while marked billing status resolves", async () => {
