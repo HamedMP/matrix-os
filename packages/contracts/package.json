@@ -24,6 +24,7 @@
     "./data-imports": "./src/data-imports.ts",
     "./command-preview-policy": "./src/command-preview-policy.mjs",
     "./preview-pair": "./src/preview-pair.ts",
+    "./desktop-link": "./src/desktop-link.ts",
     "./preview-pair-artifact": "./src/preview-pair-artifact.ts",
     "./preview-pair-control": "./src/preview-pair-control.ts",
     "./preview-pair-launch": "./src/preview-pair-launch.ts",

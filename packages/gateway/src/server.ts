@@ -1729,7 +1729,7 @@ export async function createGateway(config: GatewayConfig) {
 
   herdrViewers = registerTerminalSockets({
     app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership, workspaceSessionRuntimeBridge,
-    terminalRuntimeOwnerIds, chatRepository, terminalWorkspaceProjectAdmission, terminalAgents, herdrSessions,
+    terminalRuntimeOwnerIds, chatRepository, terminalWorkspaceProjectAdmission, terminalAgents, herdrSessions, ownerDatabase: kyselyInstance,
     captureTerminalEvent, getPrincipal: requireRequestPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
   });
