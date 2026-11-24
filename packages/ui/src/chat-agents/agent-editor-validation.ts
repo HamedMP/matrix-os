@@ -21,7 +21,7 @@ export function agentEditorValidation({ draft, editing, models, catalog, catalog
   const recipeBot = editing !== "new" && Boolean(editing.recipeRef);
   const managedCustom = retainedManaged === true || (editing !== "new" && isManagedCustomBot(editing));
   const hermesOnly = draft.recipe?.skills.includes("matrix-jev-email-triage") === true;
-  const editableRecipe = !recipeBot || managedCustom;
+
   const managedAgent = retainedManaged === false ? false : recipeBot || retainedManaged === true || (editing === "new" && !hermesOnly);
   const subscriptionNew = editing === "new" && retainedManaged !== false && !hermesOnly && managedCreation;
   const eligibleModels = managedAgent ? matrixBotSelectableModelChoices(models, catalog, recipeBot || subscriptionNew) : customAgentModelChoices(models);
@@ -38,7 +38,7 @@ export function agentEditorValidation({ draft, editing, models, catalog, catalog
   const targetManaged = managedCreation && !hermesOnly && ["matrix_pi_default", "matrix_chatgpt_plan"].includes(draft.selection?.instanceId ?? "");
   if (editing === "new" && retainedManaged !== undefined && retainedManaged !== targetManaged)
     errors.model = "Restore the original model to finish this Bot safely. After setup, change its model through the supported Bot settings.";
-  if (editableRecipe && draft.recipe) {
+  if (draft.recipe) {
     const parsed = ChatAgentRecipeSchema.safeParse(draft.recipe);
     if (!parsed.success) {
       if (parsed.error.issues.some(issue => issue.path[0] === "output")) errors.output = draft.recipe.output.trim()
@@ -52,5 +52,5 @@ export function agentEditorValidation({ draft, editing, models, catalog, catalog
     if (!recipeSkillsFit(draft.recipe.skills, recipeCatalog?.skills ?? [])) errors.recipe = "These skills are too large to use together. Remove a selected skill.";
     if (managedCustom && hermesOnly) errors.recipe = "Remove the unavailable skill before saving this bot.";
   }
-  return { errors, valid: Object.keys(errors).length === 0, recipeBot, managedCustom, editableRecipe, hermesOnly, managedAgent, subscriptionNew };
+  return { errors, valid: Object.keys(errors).length === 0, recipeBot, managedCustom, hermesOnly, managedAgent, subscriptionNew };
 }

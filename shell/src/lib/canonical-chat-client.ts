@@ -263,8 +263,8 @@ export function createCanonicalShellChatClient(options: {
       const id = CanonicalChatIdSchema.parse(chatId);
       const query = new URLSearchParams({ limit: "200" });
       if (cursor !== undefined) query.set("cursor", CanonicalChatApiCursorSchema.parse(cursor));
-      if (includeSetupProposals) query.set("botCreationVersion", "1");
-      return CanonicalChatDetailResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?${query}`, true)));
+      const path = `/api/chats/${encodeURIComponent(id)}?${query}`;
+      return CanonicalChatDetailResponseSchema.parse(await request(chatMessageVersionUrl(includeSetupProposals ? chatBotCreationVersionUrl(path) : path, true)));
     },
     async updateReadState(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);

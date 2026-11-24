@@ -36,7 +36,7 @@ it("opens Daily Brief setup without creating, sending or opening a Chat before e
   const client = fixture(), open = vi.fn(), start = vi.fn();
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenBotChat={open} onStartChat={start} />);
   fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
-  await screen.findByRole("dialog", { name: "Set up Personal Daily Brief" });
+  await screen.findByRole("region", { name: "Set up Personal Daily Brief" });
   expect((screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement).value).toBe("Personal Daily Brief");
   expect(screen.getByRole("combobox", { name: "Bot model" }).textContent).toContain("Matrix AI");
   expect(screen.queryByRole("option", { name: /Codex/ })).toBeNull();
@@ -49,7 +49,7 @@ it("creates a deliberate new Daily Brief even when an existing recipe Bot is sav
   const client = fixture([legacy, bot]), open = vi.fn();
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenBotChat={open} />);
   fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
-  await screen.findByRole("dialog", { name: "Set up Personal Daily Brief" });
+  await screen.findByRole("region", { name: "Set up Personal Daily Brief" });
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Another briefing" } });
   fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(open).toHaveBeenCalledWith("chat_dailybrief"));
@@ -180,9 +180,9 @@ it("retries a failed explicit Daily Brief creation with the same operation and p
   const client = fixture(), open = vi.fn(); client.calls.instantiate.mockRejectedValueOnce(new Error("unavailable"));
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenBotChat={open} />);
   fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
-  await screen.findByRole("dialog", { name: "Set up Personal Daily Brief" });
+  await screen.findByRole("region", { name: "Set up Personal Daily Brief" });
   fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
-  await screen.findByText("Bot could not be created. Try again.");
+  await screen.findByText("Creation could not be confirmed. Retry to finish the same bot.");
   expect(open).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(open).toHaveBeenCalledWith("chat_dailybrief"));
@@ -197,7 +197,7 @@ it("uses a fresh operation for a separately confirmed Daily Brief creation inten
   await waitFor(() => expect(screen.getByRole("button", { name: "Create bot" })).toHaveProperty("disabled", false));
   expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
   fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
-  await screen.findByText("Bot could not be created. Try again.");
+  await screen.findByText("Creation could not be confirmed. Retry to finish the same bot.");
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   fireEvent.click(screen.getByRole("button", { name: "Personal Daily Brief" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Create bot" })).toHaveProperty("disabled", false));
@@ -217,7 +217,7 @@ it("clears an old-owner Daily Brief setup and suppresses its pending completion 
   fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(client.calls.instantiate).toHaveBeenCalledOnce());
   rerender(<ChatAgentsPanel client={next} onClose={vi.fn()} onOpenBotChat={open} />);
-  expect(screen.queryByRole("dialog", { name: "Set up Personal Daily Brief" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Set up Personal Daily Brief" })).toBeNull();
   await act(async () => { finish({ chatId: "chat_old_owner", agent: { ...saved, recipeRef: { recipeId: recipe.recipeId, version: recipe.version } } }); });
   expect(open).not.toHaveBeenCalled();
   expect(next.calls.instantiate).not.toHaveBeenCalled();

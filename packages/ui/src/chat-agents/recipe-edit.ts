@@ -1,4 +1,4 @@
-import { isManagedCustomBot, type ChatAgent, type ChatAgentRecipe } from "@matrix-os/contracts";
+import { type ChatAgent, type ChatAgentRecipe } from "@matrix-os/contracts";
 
 /** Editable fields exclude broker-stamped authority; unchanged edits must not rebind it. */
 export function editableAgentRecipe(agent: ChatAgent): ChatAgentRecipe | undefined {
@@ -8,5 +8,5 @@ export function editableAgentRecipe(agent: ChatAgent): ChatAgentRecipe | undefin
 }
 
 export function agentRecipePatch(agent: ChatAgent, draft: ChatAgentRecipe | null | undefined): { recipe?: ChatAgentRecipe | null } {
-  return (agent.recipeRef && !isManagedCustomBot(agent)) || draft === undefined || JSON.stringify(draft) === JSON.stringify(editableAgentRecipe(agent)) ? {} : { recipe: draft };
+  return draft === undefined || JSON.stringify(draft) === JSON.stringify(editableAgentRecipe(agent)) ? {} : { recipe: draft };
 }

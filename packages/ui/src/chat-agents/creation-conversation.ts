@@ -15,7 +15,12 @@ export interface CreationConversationClient {
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
   cancelRun(chatId: string, runId: string, clientRequestId: string): Promise<unknown>;
 }
+export type SetupQuestion = Extract<CanonicalChatDetailResponse["activities"][number], { type: "bot.setup.question" }>;
 export type CreationConversationState = {
+  question: SetupQuestion | null;
+  questions: SetupQuestion[];
+  openingMessageId?: string;
+  retryIntent?: "open" | "reply";
   detail: CanonicalChatDetailResponse | null;
   busy: boolean;
   error: string;
@@ -40,14 +45,18 @@ export function createCreationConversation(options: {
   client: CreationConversationClient;
   sessionId: string;
   isCurrent(): boolean;
+  canAdmit?(): boolean;
   onProposal(proposal: BotDraftProposal): boolean;
   onChange(state: CreationConversationState): void;
 }) {
-  let current: CreationConversationState = { detail: null, busy: false, error: "", activeRunId: null };
+  let current: CreationConversationState = { detail: null, busy: false, error: "", activeRunId: null, question: null, questions: [] };
   let chat: CanonicalChatRecord | null = null;
   const createRequestId = requestId();
   let attempt: { text: string; snapshot: BotCreationSnapshot; selection: CanonicalChatModelSelection; input: CanonicalCreateChatTurnRequest } | null = null;
   let admittedRunId: string | null = null;
+  let admittedRevision: number | null = null;
+  let opened = false;
+  let failed: { text: string; snapshot: BotCreationSnapshot; selection: CanonicalChatModelSelection } | null = null;
   let deadline = 0;
   let refreshing = false;
   let disposed = false;
@@ -69,7 +78,7 @@ export function createCreationConversation(options: {
   }
   function loseAccess() {
     update({
-      detail: null, busy: false, activeRunId: null, accessLost: true,
+      detail: null, busy: false, activeRunId: null, accessLost: true, question: null, questions: [],
       error: "Private setup Chat is unavailable. Reopen the editor to start a new conversation."
     });
   }
@@ -80,13 +89,21 @@ export function createCreationConversation(options: {
       update({ busy: false, error: "Drafting is taking longer than expected. Check this Chat before sending another request." });
       return;
     }
+    const readRunId = admittedRunId;
     refreshing = true;
     try {
       const detail = await options.client.detail(chat.chat.id);
       if (!live()) return;
-      if (!acceptRecord(detail.record)) return;
+      if (!acceptRecord(detail.record) || readRunId !== admittedRunId) return;
+      const run = detail.runs.find(value => value.id === admittedRunId);
+      let question: SetupQuestion | null = null;
       for (const activity of detail.activities) {
-        if (activity.type !== "bot.draft.proposed" || activity.runId !== admittedRunId) continue;
+        if (activity.chatId !== chat.chat.id || activity.runId !== admittedRunId) continue;
+        if (activity.type === "bot.setup.question" && activity.sessionId === options.sessionId
+          && activity.baseDraftRevision === admittedRevision && run?.status === "completed") {
+          question = activity;
+        }
+        if (activity.type !== "bot.draft.proposed") continue;
         const parsed = BotDraftProposalSchema.safeParse({
           proposalId: activity.proposalId, sessionId: activity.sessionId,
           baseDraftRevision: activity.baseDraftRevision, patch: activity.patch
@@ -96,10 +113,11 @@ export function createCreationConversation(options: {
         if (seenProposals.length > 100) seenProposals.shift();
         if (!options.onProposal(parsed.data)) update({ error: "Your configuration changed while Matrix AI was drafting. Keep your current changes and send another request." });
       }
-      const run = detail.runs.find(value => value.id === admittedRunId);
+      const questions = question && !current.questions.some(item => item.id === question.id)
+        ? [...current.questions.slice(-99), question] : current.questions;
       const terminal = run && ["completed", "failed", "aborted"].includes(run.status);
       update({
-        detail, ...(terminal ? {
+        detail, question, questions, ...(terminal ? {
           busy: false, activeRunId: null,
           ...(run.status === "failed" ? { error: "Matrix AI could not finish this request. Your configuration is still here." } : {})
         } : {})
@@ -116,7 +134,7 @@ export function createCreationConversation(options: {
     } finally { refreshing = false; }
   }
   async function send(text: string, snapshotValue: BotCreationSnapshot, selection: CanonicalChatModelSelection): Promise<boolean> {
-    if (!live() || current.busy || current.activeRunId || !text.trim() || text.length > 8_000 || snapshotValue.sessionId !== options.sessionId) return false;
+    if (!live() || options.canAdmit?.() === false || current.busy || current.activeRunId || !text.trim() || text.length > 8_000 || snapshotValue.sessionId !== options.sessionId) return false;
     const checked = BotCreationSnapshotSchema.safeParse(snapshotValue);
     if (!checked.success) {
       update({ error: "Review your draft fields before asking Matrix AI to make changes." });
@@ -128,7 +146,7 @@ export function createCreationConversation(options: {
       update({ error: "The previous request could not be confirmed. Retry that same request before sending changed configuration." });
       return false;
     }
-    update({ busy: true, error: "" });
+    update({ busy: true, error: "", question: null, retryIntent: undefined });
     let accepted = false;
     try {
       if (!chat) {
@@ -149,22 +167,52 @@ export function createCreationConversation(options: {
           }
         };
       }
+      if (options.canAdmit?.() === false) {
+        update({ error: "Setup paused before sending. You can retry this request." });
+        return false;
+      }
       const admitted = await options.client.admitTurn(chat.chat.id, attempt.input);
       if (!live()) return false;
       if (!acceptRecord(admitted.record)) return false;
       admittedRunId = admitted.run.id;
+      admittedRevision = snapshot.draftRevision;
       attempt = null;
+      failed = null;
       deadline = Date.now() + MAX_POLL_DURATION_MS;
       accepted = true;
-      update({ activeRunId: admitted.run.id });
+      update({ activeRunId: admitted.run.id, ...(snapshot.intent === "open" ? { openingMessageId: admitted.message?.id } : {}) });
       return true;
     } catch (failure: unknown) {
       if (live()) {
+        if ([401, 403, 404].includes(safeHttpStatus(failure) ?? 0)) {
+          loseAccess();
+          return false;
+        }
         console.warn("[bot-creation] Conversation admission failed:", failure instanceof Error ? failure.name : "UnknownError");
         update({ error: "Matrix AI could not accept this request. Your message and configuration are still here. Retry the same request." });
       }
       return false;
-    } finally { if (!accepted) update({ busy: false }); }
+    } finally {
+      if (!accepted && live()) {
+        failed = { text, snapshot, selection };
+        update({ busy: false, retryIntent: snapshot.intent ?? "reply" });
+      }
+    }
+  }
+  async function retry() {
+    if (!failed || !current.retryIntent) return false;
+    return send(failed.text, failed.snapshot, failed.selection);
+  }
+  async function open(snapshot: BotCreationSnapshot, selection: CanonicalChatModelSelection) {
+    if (opened || !live() || options.canAdmit?.() === false) return false;
+    opened = true;
+    return send("Start agent setup.", { ...snapshot, intent: "open" }, selection);
+  }
+  async function replyToQuestion(value: string, snapshot: BotCreationSnapshot, selection: CanonicalChatModelSelection) {
+    const question = current.question;
+    if (!question || question.runId !== admittedRunId || question.baseDraftRevision !== snapshot.draftRevision
+      || !question.suggestedReplies.includes(value)) return false;
+    return send(value, { ...snapshot, intent: "reply" }, selection);
   }
   async function abort() {
     if (!live() || !chat || !current.activeRunId) return;
@@ -178,5 +226,5 @@ export function createCreationConversation(options: {
       }
     }
   }
-  return { state: () => current, isCurrent: live, send, refresh, abort, activate: () => { disposed = false; }, dispose: () => { disposed = true; } };
+  return { state: () => current, isCurrent: live, send, open, retry, replyToQuestion, refresh, abort, activate: () => { disposed = false; }, dispose: () => { disposed = true; } };
 }

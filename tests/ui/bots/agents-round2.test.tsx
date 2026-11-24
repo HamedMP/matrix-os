@@ -26,7 +26,7 @@ it("creates a new agent with a concrete Matrix AI choice, without coding or Auto
   render(<ChatAgentsPanel client={client} onClose={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
   fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
-  const dialog = within(screen.getByRole("dialog", { name: "New Agent" }));
+  const dialog = within(screen.getByRole("region", { name: "New Agent" }));
   const picker = dialog.getByRole("combobox", { name: "Model" });
   await waitFor(() => expect(picker).toHaveProperty("disabled", false));
   expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
@@ -41,7 +41,7 @@ it("does not fall back to an available coding agent when Matrix AI is disabled",
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} onSetup={setup}/>);
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
   fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
-  const dialog = within(screen.getByRole("dialog", { name: "New Agent" }));
+  const dialog = within(screen.getByRole("region", { name: "New Agent" }));
   const picker = dialog.getByRole("combobox", { name: "Model" });
   expect(picker).toHaveProperty("disabled", true);
   expect(within(picker).queryByRole("option", { name: /undefined/ })).toBeNull();

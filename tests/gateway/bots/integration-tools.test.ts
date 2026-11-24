@@ -703,6 +703,19 @@ describe("bot integration tools", () => {
 
 describe("group integration isolation", () => {
   const group = { scopeId: "scope-company", actorId: "user_member", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime" };
+  it("keeps supplemental integration declarations in the direct Chat", async () => {
+    const { client } = setup();
+    const ref = { recipeId: RECIPE.recipeId, version: RECIPE.version };
+    const extra = { service: "slack", effects: ["read"] as const, required: false };
+    const tools = createBotIntegrationTools({ client, transact: fixtureTransactions(), recipes: createBotRecipeCatalog([RECIPE]),
+      agents: { get: vi.fn(async () => ({ id: BOT, recipeRef: ref }) as never) },
+      resolveProcedure: async () => ({ ...RECIPE, integrations: [...RECIPE.integrations, extra] }) });
+    expect(await tools.inventory({ ...binding, group }, { service: "slack" })).toMatchObject({
+      content: [{ type: "text", text: "This bot has no connected services for this task." }],
+    });
+    expect(client.inventory).not.toHaveBeenCalled();
+    await expect(tools.declaredEffects(OWNER, BOT, "slack")).resolves.toEqual(["read"]);
+  });
   it("refuses private workflow access prompts before reading the owner's connections", async () => {
     await grant(WORK);
     const { tools, client } = setup();

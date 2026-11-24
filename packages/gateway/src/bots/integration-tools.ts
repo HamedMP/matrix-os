@@ -14,6 +14,7 @@ import type {BotExecutor} from "./repositories/shared.js";
  * network call.
  */
 import { createHash } from "node:crypto";
+import { resolveRuntimeProcedure } from "./custom-procedure.js";
 import { storeBotGmailAttachment } from "./integration-attachment.js";
 import { parseSharedGmailAttachmentParams, sharedGmailAttachmentResult } from "./shared-integration-attachment.js";
 import type { BotAudience, BotEffect, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
@@ -110,11 +111,11 @@ export function createBotIntegrationTools(deps: {
   }
 
   /** The effects the bot's recipe declares for a service; nothing for an undeclared service. */
-  async function declaredEffects(ownerId: string, botId: string, service: string): Promise<readonly BotEffect[]> {
+  async function declaredEffects(ownerId: string, botId: string, service: string, shared = false): Promise<readonly BotEffect[]> {
     const agent = await deps.agents.get({ type: "personal", ownerId }, botId);
     if (!agent?.recipeRef) return [];
     try {
-      return (deps.resolveProcedure ? await deps.resolveProcedure(ownerId, agent) : deps.recipes.resolve(agent.recipeRef)).integrations.find((entry) => entry.service === service)?.effects ?? [];
+      return (await resolveRuntimeProcedure(deps, ownerId, agent, !shared)).integrations.find((entry) => entry.service === service)?.effects ?? [];
     } catch (error: unknown) {
       console.warn("[bots] recipe unavailable for grants:", error instanceof Error ? error.name : "UnknownError");
       return [];
@@ -251,7 +252,7 @@ export function createBotIntegrationTools(deps: {
       let integrations: ReadonlyArray<{ service: string; effects: readonly BotEffect[]; required: boolean }> = [];
       if (agent?.recipeRef) {
         try {
-          integrations = (deps.resolveProcedure ? await deps.resolveProcedure(binding.ownerId, agent) : deps.recipes.resolve(agent.recipeRef)).integrations;
+          integrations = (await resolveRuntimeProcedure(deps, binding.ownerId, agent, !binding.group)).integrations;
         } catch (error: unknown) {
           console.warn("[bots] recipe unavailable for inventory:", error instanceof Error ? error.name : "UnknownError");
         }
@@ -306,7 +307,7 @@ export function createBotIntegrationTools(deps: {
     /** `integration.call`: one action on a granted account. */
     async call(binding: BotRuntimeBinding, args: CallArgs, signal?: AbortSignal): Promise<BotToolResult> {
       if(deps.enrolledSlack?.owns(args.connectionId)){
-        if(!(await declaredEffects(binding.ownerId,binding.botId,"slack")).includes("read"))throw new BotBrokerActionError("denied");
+        if(!(await declaredEffects(binding.ownerId,binding.botId,"slack",Boolean(binding.group))).includes("read"))throw new BotBrokerActionError("denied");
         await qualifySource(binding,signal);
         return deps.enrolledSlack.call(binding,args,AbortSignal.any([AbortSignal.timeout(15_000),...(signal?[signal]:[])]));
       }
@@ -317,7 +318,7 @@ export function createBotIntegrationTools(deps: {
       if (!effect) throw new BotBrokerActionError("invalid_arguments");
       // Group effects need an explicit group approval flow; the private owner prompt is never reused.
       if (binding.group && effect !== "read") throw new BotBrokerActionError("denied");
-      const declared = await declaredEffects(binding.ownerId, binding.botId, args.service);
+      const declared = await declaredEffects(binding.ownerId, binding.botId, args.service, Boolean(binding.group));
       // A bot never exceeds what its recipe declares for a service.
       if (!declared.includes(effect)) throw new BotBrokerActionError("denied");
       const connected = await inventory(binding.ownerId, signal);

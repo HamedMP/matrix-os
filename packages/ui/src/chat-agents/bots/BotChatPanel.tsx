@@ -83,7 +83,7 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
     consumeRailDetails?.(railDetailsRequest.sequence);
   }, [shown, agentId, chatId, client, railDetailsRequest, consumeRailDetails]);
   useEffect(() => {
-    if (!agentId || !chatId || !bots || !client) return;
+    if (!shown || !agentId || !chatId || !bots || !client) return;
     let current = true;
     const refresh = async () => {
       try {
@@ -119,7 +119,7 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
     void refresh();
     const timer = setInterval(() => setTick((value) => value + 1), REFRESH_INTERVAL_MS);
     return () => { current = false; clearInterval(timer); };
-  }, [agentId, chatId, bots, client, tick, refreshKey]);
+  }, [agentId, chatId, bots, client, tick, refreshKey, shown]);
   const changeModel = async (selection: CanonicalChatModelSelection) => {
     if (!agent || !client || modelPending || catalogLoading) return;
     const sequence = ++selectionSequence.current;
@@ -135,7 +135,10 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
     } finally { if (selectionSequence.current === sequence) setModelPending(false); }
   };
   const details = shown && agentId && chatId && bots && showAuthority ? <BotDetailsPanel chatId={chatId} agent={agent} agentId={agentId} authority={authority} bots={bots} catalog={catalog} catalogLoading={catalogLoading} pending={modelPending}
-    tasks={tasks} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} hosted={Boolean(detailsContainer)} onModelChange={selection => { void changeModel(selection); }} onClose={() => setShowAuthority(false)} onEdit={() => setShowEdit(true)} onChanged={() => setTick(value => value + 1)}/> : null;
+    tasks={tasks} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} hosted={Boolean(detailsContainer)} onModelChange={selection => { void changeModel(selection); }} onClose={() => setShowAuthority(false)} onEdit={() => {
+      if (client?.setupChat && navigation && agent) navigation.open({ client, view: "library", requestedAgentId: agent.id, onSetup });
+      else setShowEdit(true);
+    }} onChanged={() => setTick(value => value + 1)}/> : null;
   const identity = shown && agentId && chatId && bots ? <div className="matrix-bot-identity-bar flex min-w-0 items-center gap-3 px-3 py-1" data-hosted={headerContainer ? "true" : undefined}>
       {headerLeading}
       <AgentAvatar id={agentId} name={name ?? "Your bot"} size="small" />
