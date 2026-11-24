@@ -128,14 +128,25 @@ export function FolderPane({
     onDetailsOpenChange(true);
   }, [byPath, navigate, onDetailsOpenChange]);
 
+  const sections = useMemo(() => {
+    const folderCount = visible.filter((entry) => entry.type === "directory").length;
+    return [folderCount, visible.length - folderCount].filter((size) => size > 0);
+  }, [visible]);
   const nav = useEntryNavigation({
     order,
     names,
     columns: () => (view === "grid" ? gridColumnCount(folderGridRef.current) : 1),
+    sections: view === "grid" ? sections : undefined,
     onOpen: openEntry,
   });
 
-  const uploads = useFileUploads({ api, browserScope: `${runtimeSlot}|${authGeneration}`, currentPath: path, enabled: !readOnly, onUploaded: reload });
+  // The upload controller must outlive folder navigation (queued files would be
+  // dropped if it were recreated), so it gets a stable callback that reloads
+  // whichever folder is current.
+  const reloadRef = useRef(reload);
+  useEffect(() => { reloadRef.current = reload; }, [reload]);
+  const onUploaded = useCallback(() => reloadRef.current(), []);
+  const uploads = useFileUploads({ api, browserScope: `${runtimeSlot}|${authGeneration}`, currentPath: path, enabled: !readOnly, onUploaded });
   const enqueue = useCallback((files: File[], destination = path) => uploads.enqueue(files, destination), [path, uploads]);
 
   const goBack = () => { if (history.backPath !== null) { history.moveBack(); onPathChange(history.backPath); } };

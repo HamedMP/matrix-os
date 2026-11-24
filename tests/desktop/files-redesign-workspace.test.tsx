@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FilesWorkspaceV2 from "../../desktop/src/renderer/src/features/files/redesign/FilesWorkspaceV2";
 import { activeNavIdForPath, buildFilesNav, pathForNavId } from "../../desktop/src/renderer/src/features/files/redesign/files-locations";
-import { typeaheadMatch } from "../../desktop/src/renderer/src/features/files/redesign/use-entry-navigation";
+import { gridMove, typeaheadMatch } from "../../desktop/src/renderer/src/features/files/redesign/use-entry-navigation";
 import { useBrowserViewPreference } from "../../desktop/src/renderer/src/features/files/browser-view-preference";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
@@ -34,7 +34,8 @@ function makeApi() {
     return { entries: [] };
   });
   const post = vi.fn(async () => ({ ok: true }));
-  return { get, getText: vi.fn(async () => "# Notes"), getBlob: vi.fn(async () => new Blob([])), post, forRuntime: vi.fn(() => ({ post, get })), baseUrl: "https://app.matrix-os.com" };
+  const putBytes = vi.fn(async () => ({ path: "uploaded" }));
+  return { get, getText: vi.fn(async () => "# Notes"), getBlob: vi.fn(async () => new Blob([])), post, putBytes, forRuntime: vi.fn(() => ({ post, get })), baseUrl: "https://app.matrix-os.com" };
 }
 
 function renderWorkspace() {
@@ -59,6 +60,19 @@ describe("Files redesign locations", () => {
     expect(activeNavIdForPath("apps/team-tracker")).toBeNull();
     expect(pathForNavId("location:data")).toBe("data");
     expect(pathForNavId("trash")).toBeNull();
+  });
+
+  it("moves by visual row inside each grid section", () => {
+    // Folders: 2 cards (row 0). Files: 4 cards (rows 0-1). Three columns.
+    const sections = [2, 4];
+    expect(gridMove(0, 1, sections, 3)).toBe(2);
+    expect(gridMove(1, 1, sections, 3)).toBe(3);
+    expect(gridMove(2, -1, sections, 3)).toBe(0);
+    expect(gridMove(4, -1, sections, 3)).toBe(1);
+    expect(gridMove(2, 1, sections, 3)).toBe(5);
+    expect(gridMove(4, 1, sections, 3)).toBe(5);
+    expect(gridMove(5, 1, sections, 3)).toBe(5);
+    expect(gridMove(0, -1, sections, 3)).toBe(0);
   });
 
   it("jumps to the next name that starts with the typed prefix", () => {
@@ -169,6 +183,31 @@ describe("Files redesign workspace", () => {
     expect(screen.queryByRole("button", { name: "Upload files" })).toBeNull();
     expect(screen.queryByRole("button", { name: "New" })).toBeNull();
     expect(screen.getAllByText("Managed").length).toBeGreaterThan(0);
+  });
+
+  it("opens the focused file with Enter even when another file is selected", async () => {
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("option", { name: "README.md" }));
+    await screen.findByRole("complementary", { name: "Details for README.md" });
+    fireEvent.keyDown(screen.getByRole("option", { name: "report.pdf" }), { key: "Enter" });
+    expect(await screen.findByRole("complementary", { name: "Details for report.pdf" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "report.pdf" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("keeps queued uploads when navigating to another folder", async () => {
+    api.putBytes = vi.fn(() => new Promise(() => undefined)) as never;
+    useConnection.setState({ api: api as never });
+    renderWorkspace();
+    await screen.findByRole("option", { name: "README.md" });
+    const files = ["one", "two", "three", "four", "five"].map((name) => new File(["x"], `${name}.txt`, { type: "text/plain" }));
+    fireEvent.change(screen.getByLabelText("Choose files to upload"), { target: { files } });
+    expect(await screen.findByText(/^four\.txt:/)).toBeTruthy();
+    await waitFor(() => expect(api.putBytes).toHaveBeenCalledTimes(3));
+    fireEvent.click(screen.getByRole("button", { name: "Apps" }));
+    await screen.findByRole("option", { name: "team-tracker" });
+    expect(screen.getByText(/^one\.txt:/)).toBeTruthy();
+    expect(screen.getByText(/^four\.txt:/)).toBeTruthy();
+    expect(api.putBytes).toHaveBeenCalledTimes(3);
   });
 
   it("drops the previous computer's listing after a runtime switch", async () => {

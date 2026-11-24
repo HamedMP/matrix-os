@@ -12,6 +12,37 @@ export function gridColumnCount(element: HTMLElement | null): number {
   return Math.max(1, count);
 }
 
+/**
+ * Next index one visual row up (`rows` = -1) or down (+1) in a grid made of
+ * consecutive sections (Folders, Files) that each start on a new row. Keeps
+ * the column where possible, clamps to the shorter row, and stays put at the edges.
+ */
+export function gridMove(index: number, rows: 1 | -1, sections: readonly number[], columns: number): number {
+  let start = 0;
+  let section = 0;
+  while (section < sections.length - 1 && index >= start + sections[section]!) {
+    start += sections[section]!;
+    section += 1;
+  }
+  const size = sections[section] ?? 0;
+  const local = index - start;
+  const column = local % columns;
+  const row = Math.floor(local / columns);
+  const lastRow = Math.floor((size - 1) / columns);
+  if (rows > 0) {
+    if (row < lastRow) return start + Math.min((row + 1) * columns + column, size - 1);
+    if (section + 1 < sections.length) return start + size + Math.min(column, sections[section + 1]! - 1);
+    return index;
+  }
+  if (row > 0) return start + (row - 1) * columns + column;
+  if (section > 0) {
+    const previous = sections[section - 1]!;
+    const previousStart = start - previous;
+    return previousStart + Math.min(Math.floor((previous - 1) / columns) * columns + column, previous - 1);
+  }
+  return index;
+}
+
 /** Index of the first name starting with `prefix`, searching after `from` and wrapping. */
 export function typeaheadMatch(names: readonly string[], prefix: string, from: number): number {
   const needle = prefix.toLocaleLowerCase();
@@ -33,12 +64,15 @@ export function useEntryNavigation({
   order,
   names,
   columns,
+  sections,
   onOpen,
 }: {
   order: readonly string[];
   names: readonly string[];
   /** Returns how many entries sit in one visual row (1 for the list). */
   columns: () => number;
+  /** Grid only: sizes of consecutive sections that each start a new row. */
+  sections?: readonly number[];
   onOpen: (path: string) => void;
 }) {
   const [storedSelection, setSelection] = useState<SelectionState>(EMPTY_SELECTION);
@@ -75,6 +109,8 @@ export function useEntryNavigation({
     switch (event.key) {
       case "Enter":
         event.preventDefault();
+        // Open what is focused: make it the selection so details follow it.
+        if (selection.selected.length !== 1 || selection.selected[0] !== path) setSelection(clickSelection(selection, path, order));
         onOpen(path);
         return;
       case " ":
@@ -86,8 +122,8 @@ export function useEntryNavigation({
         event.preventDefault();
         setSelection(clearSelection());
         return;
-      case "ArrowDown": move(index + step); return;
-      case "ArrowUp": move(index - step); return;
+      case "ArrowDown": move(step > 1 && sections ? gridMove(index, 1, sections, step) : index + step); return;
+      case "ArrowUp": move(step > 1 && sections ? gridMove(index, -1, sections, step) : index - step); return;
       case "ArrowRight": if (step > 1) move(index + 1); return;
       case "ArrowLeft": if (step > 1) move(index - 1); return;
       case "Home": move(0); return;
@@ -104,7 +140,7 @@ export function useEntryNavigation({
         setSelection(clickSelection(selection, order[match]!, order));
       }
     }
-  }, [columns, focus, names, onOpen, order, selection, setSelection]);
+  }, [columns, focus, names, onOpen, order, sections, selection]);
 
   const handlersFor = useCallback((index: number): EntryHandlers => ({
     onClick: (event: MouseEvent<HTMLElement>) => {

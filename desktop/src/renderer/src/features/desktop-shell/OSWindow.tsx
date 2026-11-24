@@ -275,6 +275,7 @@ export function TopBar({
   leftPaneWidth,
   rightPaneWidth,
   actionsBeforeRightPane = false,
+  gestureWidth,
   showSidebarTrigger = false,
   sidebarTriggerLabel,
   onClose,
@@ -293,6 +294,8 @@ export function TopBar({
   leftPaneWidth?: number;
   rightPaneWidth?: number;
   actionsBeforeRightPane?: boolean;
+  /** Width of the window-drag layer from the left edge; full width when omitted. */
+  gestureWidth?: number;
   showSidebarTrigger?: boolean;
   sidebarTriggerLabel?: string;
   onClose?: () => void;
@@ -318,7 +321,7 @@ export function TopBar({
       {onDragStart ? (
         <div
           data-os-window-gesture-layer
-          style={actionsBeforeRightPane ? { right: alignedRightWidth } : undefined}
+          style={gestureWidth !== undefined ? { width: gestureWidth, right: "auto" } : actionsBeforeRightPane ? { right: alignedRightWidth } : undefined}
           data-testid="desktop-window-drag-handle"
           className="pointer-events-auto absolute inset-0 z-20"
           onPointerDown={onDragStart}

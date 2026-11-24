@@ -199,6 +199,14 @@ describe("Electron OS window chrome", () => {
     expect(title.parentElement?.className).toContain("text-[15px]");
   });
 
+  it("limits the drag layer to the sidebar so pane toolbars under it stay clickable", () => {
+    render(<TopBar chromePlacement="sidebar" sidebarWidth={240} gestureWidth={240}
+      showWindowControls={false} onDragStart={vi.fn()} />);
+    const handle = screen.getByTestId("desktop-window-drag-handle") as HTMLElement;
+    expect(handle.style.width).toBe("240px");
+    expect(handle.style.right).toBe("auto");
+  });
+
   it("leaves the inspector tab row unobstructed and puts Chat actions before it", () => {
     render(<TopBar title="Design review" leftPaneWidth={240} rightPaneWidth={400}
       actionsBeforeRightPane rightActions={<button>Hide inspector</button>}

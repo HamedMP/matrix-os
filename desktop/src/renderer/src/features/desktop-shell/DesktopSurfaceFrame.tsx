@@ -283,6 +283,7 @@ export default function DesktopSurfaceFrame({
           showWindowControls={isWindow}
           chromePlacement={sidebarOwnsChrome ? "sidebar" : "full-width"}
           sidebarWidth={filesRedesign ? FILES_SIDEBAR_WIDTH : sidebarOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
+          gestureWidth={filesRedesign ? FILES_SIDEBAR_WIDTH : undefined}
           onClose={onClose}
           onMinimize={onMinimize}
           onMaximize={onMaximize}
