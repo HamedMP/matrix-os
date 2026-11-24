@@ -20,12 +20,10 @@ export function CanonicalNewChatContent({ projectId, showWelcome = projectId ===
   onSelect: (prompt: string) => void;
   pending?: { turns: ConversationTurnPresentation[]; copyText: (text: string) => Promise<void> };
 }) {
-  if (pending?.turns.length) return (
-    <div data-slot="chat-pending-draft" className="flex min-h-0 flex-1 flex-col">
-      <ConversationTranscript turns={pending.turns} callbacks={{ copyText: pending.copyText }} />
-      <div className="mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5">{composer}</div>
-    </div>
-  );
+  // The pending transcript replaces only the area above the composer, so the
+  // composer keeps its draft state (selected skills) if the send fails.
+  const transcript = pending?.turns.length
+    ? <ConversationTranscript turns={pending.turns} callbacks={{ copyText: pending.copyText }} /> : undefined;
   return showWelcome ? (
     <ChatNewChatContent
       logo={<BrandLogo size={28} color="currentColor" className="block" testId="chat-welcome-matrix-logo" />}
@@ -34,10 +32,11 @@ export function CanonicalNewChatContent({ projectId, showWelcome = projectId ===
       composer={composer}
       wrapHero={(children) => <ChatProviderOnboarding>{children}</ChatProviderOnboarding>}
       onSelect={onSelect}
+      body={transcript}
     />
   ) : (
-    <div className={cn("flex min-h-0 flex-col pb-5", PROJECT_LANDING_CONTENT_CLASS)}>
-      <div data-slot="chat-project-draft-scroll" className="min-h-0 overflow-y-auto"><ChatProviderOnboarding /></div>
+    <div className={cn("flex min-h-0 flex-col pb-5", transcript && "flex-1", PROJECT_LANDING_CONTENT_CLASS)}>
+      {transcript ?? <div data-slot="chat-project-draft-scroll" className="min-h-0 overflow-y-auto"><ChatProviderOnboarding /></div>}
       <div className="shrink-0">{composer}</div>
     </div>
   );
