@@ -242,18 +242,41 @@ describe('metal idle sleeper', () => {
     expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
   });
 
-  it('sleeper leaves running on suspend failure', async () => {
+  it('sleeper leaves running on suspend failure, keeping the saved wake in case the host suspended it anyway', async () => {
     const id = await seedMachine();
+    const scheduledAt = new Date(NOW.getTime() + HOUR);
     const { sleeper: s, stop } = sleeper({
-      lifecycle: { ok: true, status: { ...IDLE, nextScheduledAt: new Date(NOW.getTime() + HOUR).toISOString() } },
+      lifecycle: { ok: true, status: { ...IDLE, nextScheduledAt: scheduledAt.toISOString() } },
     });
     stop.mockResolvedValueOnce({ state: 'failed', code: 'provider_unavailable' });
 
     await s.tick(NOW);
 
     expect(stop).toHaveBeenCalledTimes(1);
-    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null, idleGuardAt: null });
+    const wakeAt = new Date(scheduledAt.getTime() - SCHEDULED_WAKE_LEAD_MS).toISOString();
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: wakeAt, idleGuardAt: null });
     expect(logs).toContainEqual({ event: 'sleep_suspend_failed', fields: { machineId: id, code: 'provider_unavailable' } });
+  });
+
+  it('a suspend whose answer was lost still wakes the VM for its scheduled job', async () => {
+    const id = await seedMachine();
+    const scheduledAt = new Date(NOW.getTime() + HOUR);
+    let asleep = false;
+    const { sleeper: s, stop, ensureRunning } = sleeper({
+      lifecycle: async () => (asleep ? { ok: false, code: 'asleep' }
+        : { ok: true, status: { ...IDLE, nextScheduledAt: scheduledAt.toISOString() } }),
+    });
+    // hostd suspended the VM, but its answer never arrived.
+    stop.mockImplementationOnce(async () => { asleep = true; throw new DOMException('timed out', 'TimeoutError'); });
+
+    await s.tick(NOW);
+    await s.tick(new Date(NOW.getTime() + 6 * MINUTE));
+    const wakeAt = new Date(scheduledAt.getTime() - SCHEDULED_WAKE_LEAD_MS);
+    expect(await machine(id)).toMatchObject({ status: 'suspended', nextWakeAt: wakeAt.toISOString() });
+
+    await s.tick(wakeAt);
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
   });
 
   it('lifecycle timeout skips the machine this tick', async () => {
@@ -464,13 +487,14 @@ describe('metal idle sleeper', () => {
     expect(readLifecycle).toHaveBeenCalledTimes(1);
   });
 
-  it('never wakes a paid VM through the scheduled wake pass', async () => {
-    await seedMachine({ paid: true, overrides: { status: 'suspended', nextWakeAt: ago(MINUTE) } });
+  it('still wakes a VM put to sleep while free after its owner moves to a paid plan', async () => {
+    const id = await seedMachine({ paid: true, overrides: { status: 'suspended', nextWakeAt: ago(MINUTE) } });
     const { sleeper: s, ensureRunning } = sleeper();
 
     await s.tick(NOW);
 
-    expect(ensureRunning).not.toHaveBeenCalled();
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
   });
 
   it('owner activity that arrives while the suspend runs cancels it and resumes the VM', async () => {
@@ -488,6 +512,24 @@ describe('metal idle sleeper', () => {
     expect(ensureRunning).toHaveBeenCalledTimes(1);
     expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
     expect(logs).toContainEqual({ event: 'sleep_cancelled_activity', fields: { machineId: id } });
+  });
+
+  it('a cancelled suspend keeps the saved wake until the resume is confirmed', async () => {
+    const scheduledAt = new Date(NOW.getTime() + HOUR);
+    const id = await seedMachine();
+    const { sleeper: s, stop, ensureRunning } = sleeper({
+      lifecycle: { ok: true, status: { ...IDLE, nextScheduledAt: scheduledAt.toISOString() } },
+    });
+    stop.mockImplementationOnce(async () => {
+      await db.executor.updateTable('user_machines').set({ last_activity_at: NOW }).where('machine_id', '=', id).execute();
+      return { state: 'stopping' };
+    });
+    ensureRunning.mockResolvedValueOnce({ state: 'failed', code: 'provider_unavailable' });
+
+    await s.tick(NOW);
+
+    const wakeAt = new Date(scheduledAt.getTime() - SCHEDULED_WAKE_LEAD_MS).toISOString();
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: wakeAt });
   });
 
   it('runs due scheduled wakes in parallel, so one slow VM does not hold up the others', async () => {

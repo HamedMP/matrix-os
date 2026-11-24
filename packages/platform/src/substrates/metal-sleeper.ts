@@ -23,7 +23,8 @@ import type { LifecycleRead } from './metal-lifecycle-reader.js';
  * - `next_wake_at` (60 s before the next scheduled job) is recorded before the
  *   suspend; a wake time already past means the runtime stays awake.
  * - Any lifecycle failure (timeout, non-2xx, schema failure) skips the runtime
- *   for this tick. Paid runtimes are never touched.
+ *   for this tick. Paid runtimes are never put to sleep; a wake saved while
+ *   free is still honored after an upgrade.
  *
  * Every state change is a compare-and-set on (status, generation), so a
  * runtime replaced, deleted, or woken concurrently is never overwritten.
@@ -186,7 +187,7 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       .where('m.status', '=', ASLEEP_STATUS)
       .where('m.deleted_at', 'is', null)
       .where('m.next_wake_at', '<=', now)
-      .where(ownedByFreePlan(now))
+      // No plan check: a wake saved while free is honored after an upgrade; plans gate only new sleep.
       .orderBy('m.next_wake_at').orderBy('m.machine_id')
       .limit(WAKES_PER_TICK)
       .execute();
@@ -296,7 +297,7 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       return;
     }
 
-    // On any failure the runtime keeps running; the record stays running with no scheduled wake.
+    // Clears the saved wake, only once the VM is known to be running (never after an unconfirmed suspend).
     const release = () => db.executor.updateTable('user_machines').set({ next_wake_at: null })
       .where('machine_id', '=', machine.machineId)
       .where('generation', '=', machine.generation)
@@ -315,13 +316,12 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       outcome = await substrate.stop(refFor(machine), signal);
     } catch (error: unknown) {
       if (signal.aborted) throw error;
+      // The answer may be lost after hostd suspended the VM: keep the saved wake for the asleep path.
       log('sleep_suspend_failed', { machineId: machine.machineId, code: errorCode(error) });
-      await release();
       return;
     }
     if (outcome.state === 'failed') {
       log('sleep_suspend_failed', { machineId: machine.machineId, code: outcome.code });
-      await release();
       return;
     }
 
@@ -344,10 +344,10 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       if (current && !current.deletedAt && current.generation === machine.generation && current.status === 'running') {
         // The owner came back during the suspend: resume the VM right away.
         log('sleep_cancelled_activity', { machineId: machine.machineId });
-        await release();
         const { result } = await wakeOnDemandRuntime(db, substrate, current, { now: clock, signal,
           log: (message, detail) => log('sleep_cancel_resume_error', { machineId: machine.machineId, message, ...detail }) });
-        if (result.state !== 'running') log('sleep_cancel_resume_pending', { machineId: machine.machineId, state: result.state });
+        if (result.state === 'running') await release();
+        else log('sleep_cancel_resume_pending', { machineId: machine.machineId, state: result.state });
         return;
       }
       // The host still sleeps the VM; the ingress reports it asleep and the next request wakes it.
