@@ -3,6 +3,7 @@
 // terminal by status on the left, the terminal on screen on the right.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Toaster } from "sonner";
+import { Button } from "@matrix-os/ui";
 import { SquareTerminal, X } from "lucide-react";
 import type { MatrixComputer } from "@matrix-os/contracts";
 import { invoke } from "../../lib/operator";
@@ -22,7 +23,7 @@ import { useTerminalWindow, type TerminalWindowView } from "./use-terminal-windo
 import { isTerminalWindowShortcut } from "../../../../shared/terminal-window";
 import { computerMachineId, localRowKey, sshMachineId, terminalRowTarget } from "./use-terminal-status";
 import { AddMachineDialog, RemoveMachineDialog } from "./AddMachineDialog";
-import type { LocalCreateFailure, LocalMachine } from "../../../../shared/local-terminals";
+import { compareCoreVersions, LOCAL_TERMINAL_VERSION, type LocalCreateFailure, type LocalMachine } from "../../../../shared/local-terminals";
 import { TerminalPaneTree, type PaneInfo } from "./TerminalPaneTree";
 import { TerminalTabBar, type ActiveSpaceChip } from "./TerminalTabBar";
 import { defaultSpaceColor, spaceId } from "./SidebarSpaces";
@@ -138,14 +139,48 @@ const SSH_STATE_COLOR: Record<LocalMachine["state"], string> = {
 };
 
 /** What to do about an ssh machine the core cannot use now: log in or check its key in a terminal, or dial again. */
-function SshMachineStatus({ machine, view }: { machine: LocalMachine; view: TerminalWindowView }) {
-  if (machine.state === "connected" || machine.state === "connecting") return null;
+/** The line under a machine about its core: why the last update did not run, or how old it is. */
+function coreStatusText(state: { unsupported: boolean; changed: boolean; failed: boolean; version?: string }): string {
+  if (state.unsupported) return "Not updated: the app can't update the core on this machine (Windows). Update it there.";
+  if (state.changed) return "Not updated: this name now belongs to a different machine. Check it, then try again.";
+  if (state.failed) return "Couldn't update its core.";
+  return `Its core is ${state.version}; this app has ${LOCAL_TERMINAL_VERSION}.`;
+}
+
+/** The machine's core is older than the app's: offer to bring it up to date (spec 2706 layer 8). */
+function MachineCoreStatus({ machine, view }: { machine: LocalMachine; view: TerminalWindowView }) {
+  const busy = view.ssh.coreBusy.includes(machine.name);
+  const failed = view.ssh.coreFailed.includes(machine.name);
+  const changed = view.ssh.coreChanged.includes(machine.name);
+  const unsupported = view.ssh.coreUnsupported.includes(machine.name);
+  const older = machine.version ? (compareCoreVersions(machine.version, LOCAL_TERMINAL_VERSION) ?? 0) < 0 : false;
+  if (!busy && !failed && !older) return null;
   return (
+    <div role="status" className="flex flex-wrap items-center gap-1.5 px-3 pb-1.5 pl-9 text-[12px]">
+      {busy ? <span>Updating its core…</span> : (
+        <>
+          <span>{coreStatusText({ unsupported, changed, failed, version: machine.version })}</span>
+          <Button type="button" variant="secondary" size="sm" onClick={() => { void view.ssh.update(machine); }}>
+            {failed ? "Try again" : "Update core"}
+          </Button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SshMachineStatus({ machine, view }: { machine: LocalMachine; view: TerminalWindowView }) {
+  if (machine.state === "connected" || machine.state === "connecting") return <MachineCoreStatus machine={machine} view={view} />;
+  // A failed core update stays visible next to the connection actions.
+  return (
+    <>
+    <MachineCoreStatus machine={machine} view={view} />
     <div role="status" className="flex flex-wrap items-center gap-1.5 px-3 pb-1.5 pl-9">
       <button type="button" className={buttonClass} style={outlined} onClick={() => { void view.openMachineLogin(machine.name); }}>Open in terminal</button>
       {view.sshLoginFailed === machine.name ? <span role="alert" className="text-[12px]">Couldn't open a terminal. Try again.</span> : null}
       <button type="button" className={buttonClass} style={outlined} onClick={() => { void view.ssh.connect(machine.name); }}>Retry</button>
     </div>
+    </>
   );
 }
 
@@ -179,7 +214,7 @@ function sidebarMachines(view: TerminalWindowView, onRemove: (name: string) => v
     id: sshMachineId(machine.name),
     name: machine.name,
     kind: "ssh",
-    detail: `${machine.target} · ${SSH_STATE_LABEL[machine.state]}`,
+    detail: `${machine.target} · ${SSH_STATE_LABEL[machine.state]}${machine.version ? ` · core ${machine.version}` : ""}`,
     dotColor: SSH_STATE_COLOR[machine.state],
     available: true,
     onCreate: () => view.createLocal({ machine: machine.name }),
@@ -406,7 +441,8 @@ export default function TerminalWindowApp() {
         onPick={(key) => { view.picker.close(); view.select(key); }} />
       <RenameTerminalDialog target={view.renaming} onRename={view.rename} onClose={() => view.setRenaming(null)} />
       <CloseTerminalDialog target={view.closing} onConfirm={view.close} onClose={() => view.setClosing(null)} />
-      <AddMachineDialog open={adding} onAdd={view.ssh.add} onOpenSsh={view.openSshLogin} loadPeers={view.ssh.tailscalePeers} onClose={() => setAdding(false)} />
+      <AddMachineDialog open={adding} onAdd={view.ssh.add} onOpenSsh={view.openSshLogin} loadPeers={view.ssh.tailscalePeers}
+        onInstall={view.ssh.install} onClose={() => setAdding(false)} />
       <RemoveMachineDialog name={removing} onConfirm={view.ssh.remove} onClose={() => setRemoving(null)} />
     </div>
   );

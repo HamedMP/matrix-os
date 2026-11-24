@@ -243,28 +243,28 @@ Added 2026-11-22 (Hamed):
   there. Attachments end on a lost line; the window offers to attach again, and
   refreshes each machine's line state while visible.
 - **Core on added machines** (layer 8): adding a machine installs the same
-  pinned herdr-core the app ships, if it has none or an older one, and every
-  connect keeps it current. `machine.add` over RPC does not install (only the
-  CLI's `--install` copies its own binary), so the app does it:
-  - over the same ssh options, into `~/.local/bin` (no sudo), choosing the
-    build by `uname -sm` (linux and macOS, x64 and arm64) from the pinned
-    `desktop/herdr-core.json`, verifying its SHA-256 before it runs;
-  - an upgrade writes to a temporary file in that directory, verifies it, and
-    renames it into place, then asks the remote core to restart; herdr-core
-    keeps terminals across `server restart`, otherwise the person is asked
-    first because their sessions would end;
-  - the previous binary is kept beside it for rollback; nothing outside that
-    install directory is touched;
-  - each machine row shows its core version and update state, with a clear
-    error when install fails.
-  - Bounds and failures: the upload of the binary (scp over the same ssh
-    options) times out after 2 minutes and the whole install after 3; one
-    install or upgrade runs per machine at a time (a second request waits for
-    it, then sees the result); an interrupted upload leaves only
-    `~/.local/bin/.herdr-core.<random>.tmp`, which the next attempt removes
-    before writing, and the installed binary changes only by the final
-    rename. A failed install leaves the machine added and listed with the
-    error and a Retry.
+  pinned herdr-core the app ships, if it has none or an older one, and the
+  person can bring an older one up to date. herdr-core's own CLI already does
+  this over the same ssh line, so the app reuses it rather than copying
+  binaries itself (checked 2026-11-22: `machine add --install` copies its own
+  version when the machine has none or an older one, and `machine update`
+  replaces it and restarts it there while its terminals keep running):
+  - the app runs its bundled core's CLI against its private core:
+    `machine add --install --name <name> -- <target>` (or `--via <line>` from
+    the custom ssh fields), and `machine update -- <name>`; arguments are
+    separate argv elements, never a shell line;
+  - the version installed is the one the app bundles (pinned in
+    `desktop/herdr-core.json` and checked by SHA-256 when the app is built);
+    herdr-core chooses the build for the machine's OS and architecture and
+    installs it into the account's home, without sudo;
+  - each machine row shows its core version; an older one offers
+    **Update core**; the Add form offers **Install core there** when the
+    machine has no core or an incompatible one;
+  - one install or update runs per machine at a time, with a 3-minute limit;
+    a failure is logged in the main process and shown as a fixed message with
+    Try again; the machine stays listed.
+  - Rollback: herdr-core's update keeps terminals running; a person can run
+    `hc machine update` from an older app to return to its version.
 
 ### Remote speed
 

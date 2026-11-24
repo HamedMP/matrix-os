@@ -51,7 +51,7 @@ describe("herdr-core machines", () => {
       "nonsense",
     ] }));
     expect(await listMachines(connection)).toEqual([
-      { name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false },
+      { name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false, version: "0.1.21" },
       { name: "lab", target: "lab[2J", state: "connecting", temporary: false },
     ]);
   });
@@ -59,7 +59,7 @@ describe("herdr-core machines", () => {
   it("adds a machine with only a target and a name, waiting long enough for an ssh dial", async () => {
     const { connection, calls } = core(() => ({ name: "10.0.0.7", target: "can@10.0.0.7", host: "x", id: "y", version: "0.1.21" }));
     expect(await addMachine(connection, { target: "can@10.0.0.7" })).toEqual({
-      ok: true, machine: { name: "10.0.0.7", target: "can@10.0.0.7", state: "connected", temporary: false },
+      ok: true, machine: { name: "10.0.0.7", target: "can@10.0.0.7", state: "connected", temporary: false, version: "0.1.21" },
     });
     expect(calls).toEqual([["machine.add", { target: "can@10.0.0.7", name: "10.0.0.7" }, 30_000]]);
   });

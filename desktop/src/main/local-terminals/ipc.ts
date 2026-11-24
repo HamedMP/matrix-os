@@ -83,6 +83,14 @@ export function registerLocalTerminalIpc(
       try { await host.connectMachine(name); return { ok: true }; }
       catch (error: unknown) { logFailure("local-terminal:machine-connect", error); return { ok: false }; }
     },
+    "local-terminal:machine-install": async ({ target, name, ssh }) => {
+      try { return await host.installMachine({ target, name, ...(ssh ? { ssh } : {}) }); }
+      catch (error: unknown) { logFailure("local-terminal:machine-install", error); return { ok: false, reason: "unavailable" }; }
+    },
+    "local-terminal:machine-update": async ({ name, target, coreId, ssh }) => {
+      try { return await host.updateMachine({ name, target, ...(coreId ? { coreId } : {}), ...(ssh ? { ssh } : {}) }); }
+      catch (error: unknown) { logFailure("local-terminal:machine-update", error); return { ok: false, reason: "unavailable" }; }
+    },
     "local-terminal:tailscale-peers": async () => {
       try { return await host.tailscalePeers(); }
       catch (error: unknown) { logFailure("local-terminal:tailscale-peers", error); return { status: "unavailable" }; }

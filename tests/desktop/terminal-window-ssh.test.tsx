@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React, { StrictMode } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
@@ -9,6 +9,7 @@ vi.mock("@desktop/renderer/src/features/terminal/TerminalView", () => ({
 }));
 
 import TerminalWindowApp from "@desktop/renderer/src/features/terminal-window/TerminalWindowApp";
+import { useSshMachines } from "@desktop/renderer/src/features/terminal-window/use-ssh-machines";
 
 // Spec 2706 layer 7: add a machine reached over ssh from the sidebar, as in
 // Herdr; its terminals show under it, and a host key or password only the
@@ -24,7 +25,8 @@ const fact = (id: string, title: string) => ({ id, title, status: null, statusAt
 
 function installOperator(options: {
   peers?: unknown;
-  machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean;
+  machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean; failUpdate?: string[]; changedUpdate?: string[]; unsupportedUpdate?: string[];
+  holdInstall?: Promise<void>;
 } = {}) {
   let machines = options.machines ?? [];
   const invoke = vi.fn(async (channel: string, payload: unknown) => {
@@ -44,6 +46,18 @@ function installOperator(options: {
         machines = machines.filter((machine) => machine.name !== (payload as { name: string }).name); return { ok: true };
       case "local-terminal:tailscale-peers": return options.peers ?? { status: "missing" };
       case "local-terminal:machine-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t8" };
+      case "local-terminal:machine-install": {
+        await options.holdInstall;
+        const { target, name } = payload as { target: string; name: string };
+        machines = [...machines, { name, target, state: "connected", temporary: false }];
+        return { ok: true };
+      }
+      case "local-terminal:machine-update": {
+        const { name } = payload as { name: string };
+        if (options.changedUpdate?.includes(name)) return { ok: false, reason: "changed" };
+        if (options.unsupportedUpdate?.includes(name)) return { ok: false, reason: "unsupported" };
+        return options.failUpdate?.includes(name) ? { ok: false, reason: "failed" } : { ok: true };
+      }
       case "local-terminal:ssh-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t9" };
       case "local-terminal:create": return { status: "ready", id: "vps/t5" };
       default: return { ok: true };
@@ -244,6 +258,108 @@ describe("Terminal window ssh machines", () => {
     render(<TerminalWindowApp />);
     fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
     expect(await within(await screen.findByRole("dialog", { name: "Add machine" })).findByText("Tailscale is logged out on this Mac.")).toBeTruthy();
+  });
+
+  // Spec 2706 layer 8: install and keep current the app's core on added machines.
+  it("installs the app's core on a machine that has none", async () => {
+    const invoke = installOperator({ add: () => ({ ok: false, reason: "hc_missing" }) });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "ssh address" }), { target: { value: "me@fresh-box:2222" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Install core there" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-install", { target: "me@fresh-box:2222", name: "fresh-box" }));
+    expect(await within(machinesList()).findByText(/me@fresh-box:2222 · Connected/)).toBeTruthy();
+  });
+
+  // Fault detected (Greptile, #3579): the form took another Add while an install ran, and lost its result.
+  it("holds the form while the core installs", async () => {
+    let finish: () => void = () => undefined;
+    const invoke = installOperator({ add: () => ({ ok: false, reason: "hc_missing" }), holdInstall: new Promise<void>((resolve) => { finish = resolve; }) });
+    render(<TerminalWindowApp />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add machine…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add machine" });
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "ssh address" }), { target: { value: "me@fresh-box" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Install core there" }));
+    expect(await within(dialog).findByRole("button", { name: "Installing…" })).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Add" }).hasAttribute("disabled")).toBe(true);
+    expect(within(dialog).getByRole("textbox", { name: "ssh address" }).hasAttribute("disabled")).toBe(true);
+    fireEvent.submit(within(dialog).getByRole("button", { name: "Add" }).closest("form")!);
+    expect(invoke.mock.calls.filter(([channel]) => channel === "local-terminal:machine-add")).toHaveLength(1);
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add machine" })).toBeNull());
+  });
+
+  // Review on #3579: an update refused because the name now belongs to another machine says so.
+  it("says when an update was refused because the name now belongs to a different machine", async () => {
+    installOperator({ changedUpdate: ["vps"], machines: [{ name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false, version: "0.1.14" } as never] });
+    render(<TerminalWindowApp />);
+    const machines = await screen.findByRole("list", { name: "Machines" });
+    fireEvent.click(await within(machines).findByRole("button", { name: "Update core" }));
+    expect(await within(machines).findByText("Not updated: this name now belongs to a different machine. Check it, then try again.")).toBeTruthy();
+  });
+
+  // Fault detected (Greptile, #3579): a removed Windows machine's warning came back on the next machine with its name.
+  it("forgets a machine's Windows and changed-machine notes once it is removed", async () => {
+    installOperator({ unsupportedUpdate: ["win"], machines: [{ name: "win", target: "me@winbox", state: "connected", temporary: false }] });
+    const { result } = renderHook(() => useSshMachines());
+    await act(async () => { await result.current.update({ name: "win", target: "me@winbox", state: "connected", temporary: false }); });
+    expect(result.current.coreUnsupported).toEqual(["win"]);
+    await act(async () => { await result.current.remove("win"); });
+    expect(result.current.coreUnsupported).toEqual([]);
+    expect(result.current.coreChanged).toEqual([]);
+  });
+
+  // Nima, #3579/#3662: a Windows target is refused with a clear reason, not a generic failure.
+  it("says when a machine's core cannot be updated from here", async () => {
+    installOperator({ unsupportedUpdate: ["win"], machines: [{ name: "win", target: "me@winbox", state: "connected", temporary: false, version: "0.1.14" } as never] });
+    render(<TerminalWindowApp />);
+    const machines = await screen.findByRole("list", { name: "Machines" });
+    fireEvent.click(await within(machines).findByRole("button", { name: "Update core" }));
+    expect(await within(machines).findByText("Not updated: the app can't update the core on this machine (Windows). Update it there.")).toBeTruthy();
+  });
+
+  it("shows a machine's core version and updates an older one", async () => {
+    const invoke = installOperator({ machines: [{ name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false, version: "0.1.14" } as never] });
+    render(<TerminalWindowApp />);
+    const machines = await screen.findByRole("list", { name: "Machines" });
+    expect(await within(machines).findByText("can@10.0.0.7 · Connected · core 0.1.14")).toBeTruthy();
+    const update = within(machines).getByRole("button", { name: "Update core" });
+    // Fault detected (Greptile, #3579): a hand-styled native button; it is the shared Button now.
+    expect(update.classList.contains("matrix-btn")).toBe(true);
+    fireEvent.click(update);
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("local-terminal:machine-update", { name: "vps", target: "can@10.0.0.7" }));
+  });
+
+  // Fault detected (Greptile, #3579): one machine's success cleared another's update error, and a dropped line hid it.
+  it("keeps each machine's core update error, also while its line is down", async () => {
+    installOperator({
+      failUpdate: ["one"],
+      machines: [
+        { name: "one", target: "me@one", state: "unreachable", temporary: false, version: "0.1.14" },
+        { name: "two", target: "me@two", state: "connected", temporary: false, version: "0.1.14" },
+      ] as never,
+    });
+    render(<TerminalWindowApp />);
+    const machines = await screen.findByRole("list", { name: "Machines" });
+    const updates = await within(machines).findAllByRole("button", { name: "Update core" });
+    fireEvent.click(updates[0]!);
+    expect(await within(machines).findByText("Couldn't update its core.")).toBeTruthy();
+    fireEvent.click(within(machines).getByRole("button", { name: "Update core" }));
+    await waitFor(() => expect(within(machines).getAllByText("Couldn't update its core.")).toHaveLength(1));
+    expect(within(machines).getByRole("button", { name: "Open in terminal" })).toBeTruthy();
+  });
+
+  // Fault detected (Greptile, #3579): a removed machine's update error came back on another machine that took its name.
+  it("forgets a machine's core update error once it is removed", async () => {
+    installOperator({ failUpdate: ["vps"], machines: [{ name: "vps", target: "me@old", state: "connected", temporary: false }] });
+    const { result } = renderHook(() => useSshMachines());
+    await act(async () => { await result.current.update({ name: "vps", target: "me@old", state: "connected", temporary: false }); });
+    expect(result.current.coreFailed).toEqual(["vps"]);
+    await act(async () => { await result.current.remove("vps"); });
+    expect(result.current.coreFailed).toEqual([]);
   });
 
   it("offers to log in or dial again when a machine needs the person", async () => {

@@ -32,6 +32,8 @@ function setup(authorized = true) {
     sshLogin: vi.fn(async (): Promise<string | null> => "t4"),
     tailscalePeers: vi.fn(async () => ({ status: "ready", peers: [] })),
     machineLogin: vi.fn(async (): Promise<string | null> => "t6"),
+    installMachine: vi.fn(async () => ({ ok: true })),
+    updateMachine: vi.fn(async (): Promise<unknown> => ({ ok: true })),
   };
   const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
   const authorize = vi.fn(() => authorized);
@@ -60,6 +62,8 @@ describe("local terminal IPC", () => {
       "local-terminal:machines": {}, "local-terminal:machine-add": { target: "vps" }, "local-terminal:machine-remove": { name: "vps" },
       "local-terminal:machine-connect": { name: "vps" }, "local-terminal:ssh-login": { target: "vps", cols: 80, rows: 24 },
       "local-terminal:tailscale-peers": {}, "local-terminal:machine-login": { name: "vps", cols: 80, rows: 24 },
+      "local-terminal:machine-install": { target: "vps", name: "vps" },
+      "local-terminal:machine-update": { name: "vps", target: "me@vps" },
     };
     for (const channel of LOCAL_TERMINAL_INVOKE_CHANNELS) {
       await expect(invoke(channel, valid[channel]), channel).rejects.toThrow("invalid request");
@@ -109,6 +113,21 @@ describe("local terminal IPC", () => {
     expect(await invoke("local-terminal:ssh-login", { target: "can@10.0.0.7", cols: 80, rows: 24 })).toEqual({ status: "ready", id: "t4" });
     expect(host.sshLogin).toHaveBeenCalledWith("can@10.0.0.7", { cols: 80, rows: 24 }, undefined);
     await expect(invoke("local-terminal:ssh-login", { target: "-oProxyCommand=sh", cols: 80, rows: 24 })).rejects.toThrow("invalid request");
+  });
+
+  // Spec 2706 layer 8.
+  it("installs and updates a machine's core with validated fields only", async () => {
+    const { host, invoke } = setup();
+    expect(await invoke("local-terminal:machine-install", { target: "me@box", name: "box", ssh: { port: 2222 } })).toEqual({ ok: true });
+    expect(host.installMachine).toHaveBeenCalledWith({ target: "me@box", name: "box", ssh: { port: 2222 } });
+    await expect(invoke("local-terminal:machine-install", { target: "me@box", name: "box", via: "sh -c x" })).rejects.toThrow("invalid request");
+    await expect(invoke("local-terminal:machine-update", { name: "-x", target: "me@box" })).rejects.toThrow("invalid request");
+    // The update names the machine it was picked as: without its target it is refused.
+    await expect(invoke("local-terminal:machine-update", { name: "box" })).rejects.toThrow("invalid request");
+    expect(await invoke("local-terminal:machine-update", { name: "box", target: "me@box" })).toEqual({ ok: true });
+    expect(host.updateMachine).toHaveBeenCalledWith({ name: "box", target: "me@box" });
+    host.updateMachine.mockRejectedValueOnce(new Error("down"));
+    expect(await invoke("local-terminal:machine-update", { name: "box", target: "me@box" })).toEqual({ ok: false, reason: "unavailable" });
   });
 
   it("removes a finished terminal, and reports a refusal as not done", async () => {
