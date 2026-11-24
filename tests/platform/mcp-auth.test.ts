@@ -65,6 +65,14 @@ describe("hosted MCP OAuth access token verification", () => {
     await expect(setup().verify(await sign({ iat: now + 3, nbf: now + 3 }))).resolves.toMatchObject({ userId: "user_abc123" });
   });
 
+  it("never applies clock skew to expiry, so recently expired tokens get a renewable 401", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    for (const exp of [now, now - 2]) {
+      await expect(setup().verify(await sign({ iat: now - 300, nbf: now - 300, exp })))
+        .rejects.toMatchObject({ status: 401, code: "invalid_token" });
+    }
+  });
+
   it.each([
     ["session token", () => signSession()],
     ["session token with a resource audience", () => signSession({ aud: resourceUrl, client_id: "client_test", scope: "matrix:computer" })],

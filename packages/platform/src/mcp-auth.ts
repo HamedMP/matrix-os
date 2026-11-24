@@ -31,7 +31,7 @@ export const DEFAULT_MCP_REQUIRED_SCOPES: readonly string[] = ["matrix:computer"
 const OAUTH_ACCESS_TOKEN_TYP = "at+jwt";
 /** Clerk's signed `cat` header for session and M2M JWTs (mirrors @clerk/backend). */
 const NON_OAUTH_CATEGORIES = new Map([["cl_B7d4PD111AAA", "session"], ["cl_B7d4PD333AAA", "m2m"]]);
-/** Clerk's default verification clock skew. */
+/** Clerk's default verification clock skew, for nbf/iat only; expiry is enforced without skew. */
 const CLOCK_TOLERANCE_SECONDS = 5;
 const JWT_FORMAT = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const DIAGNOSTICS_PER_MINUTE = 30;
@@ -231,6 +231,9 @@ export function createMcpTokenVerifier(options: McpTokenVerifierOptions): (token
       if (protectedHeader.cat !== undefined && NON_OAUTH_CATEGORIES.has(String(protectedHeader.cat))) {
         throw new Rejection("token_category");
       }
+      // Skew applies to nbf/iat only. An expired token must get a 401 the client can renew on,
+      // not a downstream tool error after admission.
+      if (typeof payload.exp === "number" && payload.exp <= now) throw new Rejection("expired");
       if (!audienceIncludes(payload.aud, options.resourceUrl)) throw new Rejection("audience");
       // `sid` is allowed: Clerk OAuth access tokens record the authorizing session. The signed `typ`
       // plus `client_id` and the resource audience are what make this an OAuth token, not a session.
