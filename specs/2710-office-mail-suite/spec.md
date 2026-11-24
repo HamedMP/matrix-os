@@ -45,7 +45,10 @@ Web Mobile and Native Mobile: out of scope for the POC.
      schema the agent emits; operations are validated before they are applied.
 2. **Engine in apps**: default apps are isolated pnpm projects, so the engine source is
    mirrored to `home/apps/_shared/office-engine/` by `scripts/sync-office-engine.mjs`.
-   A test fails when the mirror is stale. Apps import it by relative path.
+   Apps import it by relative path. The mirror is generated and git-ignored, never
+   committed: app builds, `scripts/build-default-apps.mjs`, the vitest global setup and
+   the dev scripts regenerate it first. It ships in the host bundle's `home/`, so the
+   owner's computer rebuilds apps from that copy (see `packages/office/README.md`).
 3. **App bridge**: new `window.MatrixOS.files.*` (list, stat, read, write with version
    check) backed by `/api/bridge/files/*`, limited to first-party apps whose manifest
    declares the `files` permission. "Open with": Files writes an open request for the

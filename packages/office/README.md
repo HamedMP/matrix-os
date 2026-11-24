@@ -143,15 +143,27 @@ records the edits as one proposal; `workbook.listChanges()`,
 Default apps are isolated pnpm projects that are rebuilt on the owner's
 machine, where this package does not exist. `scripts/sync-office-engine.mjs`
 copies `packages/office/src/**` byte for byte to
-`home/apps/_shared/office-engine/`.
+`home/apps/_shared/office-engine/`. The copy is generated and git-ignored:
+never edit or commit it.
+
+It is regenerated (up-to-date files are skipped) by everything that needs it:
+
+| Path | What runs the sync |
+| --- | --- |
+| Tests | vitest global setup `tests/helpers/office-engine-global-setup.ts` |
+| Dev | `bun run dev`, `dev:gateway`, `dev:mobile-shell`, `dev:source` |
+| One app | `pnpm build` / `pnpm dev` in an office app run `home/apps/_shared/ensure-office-engine.mjs` |
+| All apps | `scripts/build-default-apps.mjs`, before building any app |
+| Docker image, docker dev, host bundle | `scripts/build-default-apps.mjs` (and the docker dev entrypoint before seeding a home) |
+| Owner's computer | Nothing: the copy ships in the host bundle's `home/` and template manifest; `ensure-office-engine.mjs` only checks it is there |
 
 ```bash
-node scripts/sync-office-engine.mjs          # after any change under src/
+node scripts/sync-office-engine.mjs          # regenerate by hand
 node scripts/sync-office-engine.mjs --check  # exit 1 when the mirror is stale
 ```
 
-Never edit the mirror. `tests/office/engine-mirror.test.ts` fails while it is
-stale, so run the sync and commit the mirror with the source change.
+`tests/office/engine-mirror.test.ts` checks the generator and each of these
+paths.
 
 ## Checks
 

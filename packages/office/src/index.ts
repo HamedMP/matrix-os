@@ -18,8 +18,8 @@
  * | agent   | `./agent/index.js`           | `AgentModule`        |
  *
  * Inside the workspace they are also reachable as `@matrix-os/office/docx`
- * and so on (see `package.json`). Default apps import the mirrored copy under
- * `home/apps/_shared/office-engine/` by relative path.
+ * and so on (see `package.json`). Default apps import the generated,
+ * git-ignored copy under `home/apps/_shared/office-engine/` by relative path.
  */
 
 export { OFFICE_ERROR_CODES, OfficeError, isOfficeError } from "./errors.js";
