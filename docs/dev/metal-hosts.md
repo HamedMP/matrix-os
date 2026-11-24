@@ -99,8 +99,11 @@ host-booted kernel, `ptp_kvm`, `phc2sys-kvm.service`, the guest agent and its
 vsock bridge). The builder's phase callbacks go to a receiver on
 `10.78.0.1:9480` for the length of the build. A throwaway clone then checks
 the guest settings and talks to the guest agent over vsock (stats and trim)
-before the LV is renamed `golden-<bundle-version>` and made read-only.
-Metadata: `/var/lib/matrix-hostd/golden/<version>.json`.
+before the LV is made read-only, its metadata is written
+(`/var/lib/matrix-hostd/golden/<version>.json`), and only then is it renamed
+`golden-<bundle-version>`. One build runs per host at a time (a lock under
+`/run/lock`); a second one exits with an error. The build directory is removed
+afterwards unless `--keep-on-failure` keeps a failed one for inspection.
 
 ## Smoke
 
