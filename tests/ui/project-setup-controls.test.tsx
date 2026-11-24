@@ -32,6 +32,7 @@ function controller(dispatch = vi.fn(async () => true), value = draft): ProjectS
     introduction: false,
     active: true,
     canAnswer: true,
+    replyPollingExhausted: false,
     retryInterview: vi.fn(async () => true),
     pending: false,
     error: null,
@@ -224,10 +225,12 @@ it("says the skill description is accepted without claiming that a skill file ex
   expect(screen.queryByText(/skill ready/i)).toBeNull();
 });
 
-it("can recover a generation that completes after polling stops without starting another run", async () => {
+it.each(["legacy", "interview"] as const)("recovers %s generation after polling stops without starting another run", async (mode) => {
   vi.useFakeTimers();
   try {
-    const running = { ...draft, generation: { runId: "run_draft", status: "running" as const } };
+    const completed: ProjectSetupDraft = mode === "interview" ? { ...draft, interview: { focus: "review", suggestions: [] } } : draft;
+    const running = { ...completed, generation: { runId: "run_draft", status: "running" as const } };
+    const button = mode === "interview" ? "Check reply status" : "Check draft status";
     const client = {
       get: vi.fn(async () => ({ draft: running })),
       post: vi.fn(async () => ({ draft: running })),
@@ -239,11 +242,12 @@ it("can recover a generation that completes after polling stops without starting
     }
     render(<Review />);
     await act(async () => {});
+    if (mode === "interview") expect(screen.queryByRole("button", { name: button })).toBeNull();
     await act(async () => { await vi.advanceTimersByTimeAsync(125_000); });
     expect(client.patch).toHaveBeenCalledTimes(60);
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(true);
-    client.patch.mockResolvedValueOnce({ draft });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Check draft status" })); });
+    expect(screen.queryByRole<HTMLButtonElement>("button", { name: "Save project setup" })?.disabled ?? true).toBe(true);
+    client.patch.mockResolvedValueOnce({ draft: completed });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: button })); });
     expect(client.patch).toHaveBeenCalledTimes(61);
     expect(client.patch.mock.calls.map(([, body]) => body)).toEqual(
       Array.from({ length: 61 }, () => expect.objectContaining({ action: { type: "sync_generation" } })),

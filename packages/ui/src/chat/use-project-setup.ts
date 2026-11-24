@@ -180,6 +180,10 @@ export function useProjectSetup(options: Options) {
   };
   const active = Boolean(draft && draft.step !== "saved");
   const waiting = waitingForSetupReply(draft);
+  const [exhaustedGeneration, setExhaustedGeneration] = useState<string | null>(null);
+  const pollingGeneration = eligible && waiting
+    ? JSON.stringify([identity, draft?.revision, draft?.generation?.runId])
+    : null;
   const canAnswer = active && !currentState.pending && !waiting && !setupReplyFailed(draft)
     && (!mcpHandoff || Boolean(draft?.interview));
   const retryInterview = () =>
@@ -190,18 +194,19 @@ export function useProjectSetup(options: Options) {
     if (!request.current) void dispatch({ type: "sync_generation" });
   });
   useEffect(() => {
-    if (!eligible || !waiting) return;
+    if (!pollingGeneration) return;
     let attempts = 0;
     const timer = window.setInterval(() => {
       if (attempts >= 60) {
         window.clearInterval(timer);
+        setExhaustedGeneration(pollingGeneration);
         return;
       }
       attempts += 1;
       syncGeneration();
     }, 2_000);
     return () => window.clearInterval(timer);
-  }, [eligible, identity, waiting, draft?.generation?.runId]);
+  }, [pollingGeneration]);
 
   const answer = async (text: string): Promise<boolean> => {
     const current = stateRef.current.draft;
@@ -230,6 +235,7 @@ export function useProjectSetup(options: Options) {
     reload,
     active,
     canAnswer,
+    replyPollingExhausted: Boolean(pollingGeneration && pollingGeneration === exhaustedGeneration),
     retryInterview,
   };
 }

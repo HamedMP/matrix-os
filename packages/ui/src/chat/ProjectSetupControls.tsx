@@ -179,11 +179,9 @@ function ProjectSetupControlsScoped({
           <>
             <p role="status" style={mutedStyle}>Preparing the next reply…</p>
             {setup.error ? <p role="alert" className="text-xs">{setup.error}</p> : null}
-            <div className="flex flex-wrap gap-2">
-              {setup.error ? (
-                <Action disabled={busy} onClick={() => { void setup.reload(); }}>Reload setup</Action>
-              ) : null}
-            </div>
+            {setup.error || setup.replyPollingExhausted ? (
+              <Action disabled={busy} onClick={() => dispatch({ type: "sync_generation" })}>Check reply status</Action>
+            ) : null}
           </>
         ) : (
           <>
