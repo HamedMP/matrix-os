@@ -117,6 +117,7 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
+import { logAppDomainUpstreamFailure } from './app-domain-upstream-log.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
@@ -307,6 +308,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         redirect: 'manual',
         signal: AbortSignal.timeout(authShellProxyTimeoutMs),
       });
+      if (response.status >= 500) logAppDomainUpstreamFailure('auth-shell', c, response.status);
       const responseHeaders = sanitizeProxyResponseHeaders(response.headers);
       if (!proxyOpts.preserveUpstreamCacheHeaders) {
         applyNoStoreResponseHeaders(responseHeaders);
@@ -1017,6 +1019,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           dispatcher: customerVpsProxyDispatcher,
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
         shouldReleaseRuntimeProxyTimeout(c.req.method, path));
+        if (isAppDomain && upstream.status >= 500) {
+          logAppDomainUpstreamFailure('runtime', c, upstream.status, runningMachine.handle);
+        }
         if (isCodeDomain && upstream.status >= 500) {
           logCodeDomainUpstreamFailure({
             handle: runningMachine.handle,
