@@ -5,6 +5,7 @@ import { migrateProjectGitOperationsV13 } from "./project-git-operations.js";
 import { migrateCollaborationCutoverV14 } from "./cutover.js";
 import { migrateTerminalBindingsV15 } from "./terminal-bindings.js";
 import { migrateProviderRouteBindingsV17 } from "./run-account-binding.js";
+import { migrateTeamTerminalLabelsV18 } from "./team-terminal-labels.js";
 import { migrateCapabilityGrantsV8 } from "./policy-migrations.js";
 import { migrateRuntimeIdentityV9 } from "./runtime-identity.js";
 import { sql, type Kysely, type Transaction } from "kysely";
@@ -546,4 +547,5 @@ export const COLLABORATION_VERSIONED_MIGRATIONS: readonly CollaborationVersioned
   { version: 15, run: migrateTerminalBindingsV15 },
   { version: 16, run: migrateCollaborativeAppsV16 },
   { version: 17, run: migrateProviderRouteBindingsV17 },
+  { version: 18, run: migrateTeamTerminalLabelsV18 },
 ];

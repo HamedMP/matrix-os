@@ -136,6 +136,8 @@ export interface CollaborationRouteOptions {
   chatExecutionAdapter?: CollaborationChatExecutionAdapter;
   terminalAdapter?: CollaborationTerminalAdapter;
   terminalDispatcher?: CollaborationTerminalDispatcher;
+  /** Spec 2710: the owner's tab name for a canonical terminal id; absent means it is shown by id. */
+  teamTerminalName?(terminalId: string): Promise<string | null>;
   projectLifecycle?: Pick<
     ReturnType<typeof createCollaborationProjectLifecycle>,
     "apply" | "getOperation"
