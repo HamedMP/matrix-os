@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
 import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.js";
+import { writeCodexVersionFixture } from "./helpers/codex-version-fixture.js";
 import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
 const homes: string[] = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
@@ -17,7 +18,7 @@ async function fixture(native: boolean, denied = false) {
     terminateTab: vi.fn(), writeInput: vi.fn(), listWorkspaces: vi.fn(async () => []),
   };
   const manager = createAgentSessionManager({ homePath, resolveNativeCodexSubscription, terminalRuntime,
-    agentLauncher: createAgentLauncher({ runtimeHome: homePath, codexExecutable: "/tmp/synthetic-codex" }),
+    agentLauncher: createAgentLauncher({ runtimeHome: homePath, codexExecutable: await writeCodexVersionFixture(homePath) }),
     worktreeManager: createWorktreeManager({ homePath, runCommand: vi.fn() }), idGenerator: () => "sess_native_fixture" });
   return { manager, resolveNativeCodexSubscription, terminalRuntime };
 }

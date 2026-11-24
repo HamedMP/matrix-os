@@ -5,7 +5,6 @@ import { promisify } from "node:util";
 import { z } from "zod/v4";
 import {
   AgentModelOptionSchema,
-  CODEX_VERIFIED_VERSION,
   ProviderModelReferenceSchema,
   type AgentModelOption,
 } from "@matrix-os/contracts";
@@ -13,7 +12,7 @@ import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { createDetectionCache, credentialFileFingerprint, executableFingerprint } from "./agent-detection-cache.js";
 import { homedir } from "node:os";
 import { nativeCodexLaunchPolicy, type NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
-import { codexExecContractStatus } from "./coding-agents/codex-version.js";
+import { CODEX_APP_SERVER_CONTRACT, verifiedCodexWorkspaceVersion } from "./coding-agents/codex-app-server-version.js";
 import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_CORE_MCP_CALL_TOOLS, MATRIX_CORE_MCP_DISCOVERY_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, MATRIX_MCP_RUN_TOKEN_ENV, codexMatrixMcpConfigArgs, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
 import { MATRIX_INTEGRATION_DISCOVERY_TOOLS, MATRIX_INTEGRATION_ACTION_TOOLS } from "./chat/integration-tool-authority.js";
 import { INTEGRATION_READ_GUIDANCE } from "./chat/integration-read-guidance.js";
@@ -97,7 +96,7 @@ export interface AgentLaunchSpec {
 type CommandRunner = (
   command: string,
   args: string[],
-  options: { cwd: string; timeout: number; env?: Record<string, string> },
+  options: { cwd: string; timeout: number; env?: Record<string, string>; inheritEnv?: false },
 ) => Promise<{ stdout: string; stderr: string }>;
 
 const execFileAsync = promisify(execFile);
@@ -153,7 +152,7 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
     timeout: options.timeout,
     encoding: "utf-8",
     maxBuffer: 1024 * 1024,
-    env: options.env ? { ...process.env, ...options.env } : process.env,
+    env: options.inheritEnv === false ? options.env : { ...process.env, ...options.env },
   });
   return { stdout, stderr };
 };
@@ -161,12 +160,6 @@ const defaultRunCommand: CommandRunner = async (command, args, options) => {
 function firstLine(value: string): string | undefined {
   const line = value.split("\n").map((part) => part.trim()).find(Boolean);
   return line || undefined;
-}
-
-function isExactVerifiedCodexVersion(version: string | undefined): boolean {
-  if (!version) return false;
-  const status = codexExecContractStatus(version);
-  return status.status === "verified" && status.version === CODEX_VERIFIED_VERSION;
 }
 
 function promptArgs(prompt?: string): string[] {
@@ -423,7 +416,7 @@ function workspaceCompatibility(
   version: string | undefined,
 ): AgentWorkspaceCompatibility {
   if (id !== "codex") return "not_applicable";
-  return isExactVerifiedCodexVersion(version) ? "compatible" : "unsupported";
+  return verifiedCodexWorkspaceVersion(version) ? "compatible" : "unsupported";
 }
 
 function unavailableAgentStatus(
@@ -493,13 +486,25 @@ function codexCoreMcp(input: AgentLaunchInput, env: Record<string, string>): str
   return codexMatrixMcpConfigArgs(core.scope);
 }
 
-export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
+function prepareAgentLaunch(input: AgentLaunchInput) {
   const parsed = SupportedAgentSchema.parse(input.agent);
   const command = parsed === "codex" && input.codexExecutable
     ? CodexExecutableSchema.parse(input.codexExecutable)
     : AGENTS[parsed].command;
-  const nativePolicy = input.nativeCodexSubscription ? nativeCodexLaunchPolicy(input, buildAgentRuntimeEnvironment(input.runtimeHome)) : undefined;
-  const env = nativePolicy?.env ?? buildAgentRuntimeEnvironment(input.runtimeHome);
+  const baseEnv = buildAgentRuntimeEnvironment(input.runtimeHome);
+  const nativePolicy = input.nativeCodexSubscription ? nativeCodexLaunchPolicy(input, baseEnv) : undefined;
+  return { parsed, command, env: nativePolicy?.env ?? baseEnv, nativePolicy };
+}
+
+export function buildAgentLaunch(input: AgentLaunchInput, expectedCodexVersion?: string): AgentLaunchSpec {
+  return buildPreparedAgentLaunch(input, prepareAgentLaunch(input), expectedCodexVersion);
+}
+
+function buildPreparedAgentLaunch(
+  input: AgentLaunchInput,
+  { parsed, command, env, nativePolicy }: ReturnType<typeof prepareAgentLaunch>,
+  expectedCodexVersion?: string,
+): AgentLaunchSpec {
   const coreArgs = parsed === "codex" ? codexCoreMcp(input, env) : [];
   switch (parsed) {
     case "claude":
@@ -517,6 +522,7 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
           ...promptArgs(codexPrompt(input.prompt, input.mode)),
         ];
         if (!input.providerEventPath) return { command, args, cwd: input.cwd, env };
+        if (!expectedCodexVersion) throw new Error("Codex provider version is not verified");
         const providerEventPath = ProviderEventPathSchema.parse(input.providerEventPath);
         const appServerConfig = Buffer.from(
           JSON.stringify(codexAppServerConfig(input)),
@@ -527,7 +533,7 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
           args: [
             CODEX_APP_SERVER_RUNNER_PATH,
             providerEventPath,
-            CODEX_VERIFIED_VERSION,
+            expectedCodexVersion,
             command,
             ...(nativePolicy?.args ?? []),
             ...coreArgs,
@@ -565,15 +571,19 @@ export function createAgentLauncher(options: {
       : AGENTS[id].command;
   }
 
+  async function readVersion(
+    command: string, directory: string, env: Record<string, string>, inheritEnv?: false,
+  ): Promise<string | undefined> {
+    const { stdout, stderr } = await runCommand(command, ["--version"], {
+      cwd: directory, timeout: DETECT_TIMEOUT_MS, env, inheritEnv,
+    });
+    return firstLine(stdout) ?? firstLine(stderr);
+  }
+
   async function probeInstallation(id: SupportedAgent): Promise<AgentStatus> {
     const config = AGENTS[id];
     try {
-      const result = await runCommand(commandFor(id), ["--version"], {
-        cwd,
-        timeout: DETECT_TIMEOUT_MS,
-        env: detectEnv,
-      });
-      const version = firstLine(result.stdout) ?? firstLine(result.stderr);
+      const version = await readVersion(commandFor(id), cwd, detectEnv);
       const compatibility = workspaceCompatibility(id, version);
       return {
         id,
@@ -723,12 +733,27 @@ export function createAgentLauncher(options: {
     /** @deprecated Use detectAgentInstallations for executable availability. */
     detectAgents: detectAgentInstallations,
 
-    buildLaunch(input: AgentLaunchInput): AgentLaunchSpec {
-      return buildAgentLaunch({
+    async buildLaunch(input: AgentLaunchInput): Promise<AgentLaunchSpec> {
+      const launchInput = {
         ...input,
         runtimeHome: input.runtimeHome ?? options.runtimeHome,
         codexExecutable: input.codexExecutable ?? options.codexExecutable,
-      });
+      };
+      const prepared = prepareAgentLaunch(launchInput);
+      if (prepared.parsed !== "codex" || !launchInput.providerEventPath) {
+        return buildPreparedAgentLaunch(launchInput, prepared);
+      }
+      // Use the environment the runner will inherit. The runner checks the
+      // same version again before spawning app-server.
+      const output = await readVersion(
+        prepared.command, launchInput.cwd, prepared.env, prepared.nativePolicy ? false : undefined,
+      );
+      const version = verifiedCodexWorkspaceVersion(output);
+      if (!version || (launchInput.codexRoutinePrivate &&
+        !Object.hasOwn(CODEX_APP_SERVER_CONTRACT.routineProtocolsByVersion, version))) {
+        throw new Error("Codex provider version is not verified");
+      }
+      return buildPreparedAgentLaunch(launchInput, prepared, version);
     },
   };
 }

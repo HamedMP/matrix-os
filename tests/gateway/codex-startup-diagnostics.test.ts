@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.js";
+import { writeCodexVersionFixture } from "./helpers/codex-version-fixture.js";
 import { createAgentSandbox } from "../../packages/gateway/src/agent-sandbox.js";
 import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
 import { createProjectManager } from "../../packages/gateway/src/project-manager.js";
@@ -62,7 +63,7 @@ describe("Codex startup failure evidence", () => {
     const terminalRuntime = createTestTerminalRuntime({ operations, stopFails });
     const worktreeManager = createWorktreeManager({ homePath });
     const manager = createAgentSessionManager({ homePath, worktreeManager,
-      agentLauncher: createAgentLauncher(), terminalRuntime });
+      agentLauncher: createAgentLauncher({ codexExecutable: await writeCodexVersionFixture(homePath) }), terminalRuntime });
     const reconciler = createCodingAgentSessionStopReconciler();
     const publisher = createWorkspaceEventPublisher({ eventStore: createWorkspaceEventStore({ homePath }),
       onSessionStopped: (session) => reconciler.handleSessionStopped(session) });
@@ -114,7 +115,7 @@ describe("Codex startup failure evidence", () => {
     });
     const worktreeManager = createWorktreeManager({ homePath });
     const manager = createAgentSessionManager({ homePath, worktreeManager,
-      agentLauncher: createAgentLauncher(), terminalRuntime });
+      agentLauncher: createAgentLauncher({ codexExecutable: await writeCodexVersionFixture(homePath) }), terminalRuntime });
     const workspace = createWorkspaceSessionOrchestrator({ homePath,
       projectManager: createProjectManager({ homePath }), worktreeManager,
       agentSessionManager: manager, agentSandbox: createAgentSandbox({ homePath, getUid: () => 1000 }),

@@ -15,8 +15,7 @@ import type { RequestPrincipal } from "../request-principal.js";
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { parseCodexExecJsonLine } from "./codex-events.js";
 import { completionEvents } from "./codex-terminal-events.js";
-import { codexExecContractStatus } from "./codex-version.js";
-import { codexAppServerContractStatus } from "./codex-app-server-version.js";
+import { verifiedCodexWorkspaceVersion } from "./codex-app-server-version.js";
 import { CodexExecutableSchema, codexExecutableFromEnv } from "./codex-executable.js";
 import type { CodingAgentProviderEventBatch } from "./provider-adapter.js";
 import { runtimeUnavailable, type RuntimeSupervision } from "./codex-runtime-supervision.js";
@@ -146,12 +145,7 @@ export function createCodexEventBridge(options: {
         timeout: VERSION_TIMEOUT_MS,
         signal,
       });
-      const versionOutput = result.stdout || result.stderr;
-      const execStatus = codexExecContractStatus(versionOutput);
-      const appServerStatus = codexAppServerContractStatus(versionOutput);
-      ok = execStatus.status === "verified" &&
-        appServerStatus.status === "verified" &&
-        execStatus.version === appServerStatus.version;
+      ok = verifiedCodexWorkspaceVersion(result.stdout || result.stderr) !== undefined;
     } catch (error: unknown) {
       if (
         signal.aborted ||

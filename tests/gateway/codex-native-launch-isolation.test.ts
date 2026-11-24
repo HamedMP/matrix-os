@@ -15,7 +15,7 @@ describe("native Codex final launch isolation", () => {
   it("pins native auth/config and prevents inherited environment in the verified runner", () => {
     for (const [key, value] of Object.entries(hostile)) vi.stubEnv(key, value);
     for (const providerEventPath of ["/tmp/owner/events.jsonl"]) {
-      const launch = buildAgentLaunch({ ...base, providerEventPath, nativeCodexSubscription: { codexHome: "/tmp/owner/.codex", expectedPrincipalFingerprint: "a".repeat(64), expectedConsentRevision: 1, expectedConfigurationFingerprint: "b".repeat(64), expectedHarnessInstanceId: "codex_owner_openai_profile", expectedAccountId: "owner_codex" } });
+      const launch = buildAgentLaunch({ ...base, providerEventPath, nativeCodexSubscription: { codexHome: "/tmp/owner/.codex", expectedPrincipalFingerprint: "a".repeat(64), expectedConsentRevision: 1, expectedConfigurationFingerprint: "b".repeat(64), expectedHarnessInstanceId: "codex_owner_openai_profile", expectedAccountId: "owner_codex" } }, "0.162.1");
       expect(launch.inheritEnv).toBe(false);
       expect(launch.env.HOME).toBe(base.runtimeHome);
       expect(launch.env.CODEX_HOME).toBe("/tmp/owner/.codex");
@@ -28,7 +28,7 @@ describe("native Codex final launch isolation", () => {
   });
   it("forwards only the exact opt-in send timing flag to the isolated native runner", () => {
     const native = { codexHome: "/tmp/owner/.codex", expectedPrincipalFingerprint: "a".repeat(64), expectedConsentRevision: 1, expectedConfigurationFingerprint: "b".repeat(64), expectedHarnessInstanceId: "codex_owner_openai_profile", expectedAccountId: "owner_codex" };
-    const launch = () => buildAgentLaunch({ ...base, providerEventPath: "/tmp/owner/events.jsonl", nativeCodexSubscription: native });
+    const launch = () => buildAgentLaunch({ ...base, providerEventPath: "/tmp/owner/events.jsonl", nativeCodexSubscription: native }, "0.162.1");
     expect(launch().env.MATRIX_CODEX_SEND_TIMINGS).toBeUndefined();
     vi.stubEnv("MATRIX_CODEX_SEND_TIMINGS", "true");
     expect(launch().env.MATRIX_CODEX_SEND_TIMINGS).toBeUndefined();
@@ -45,7 +45,7 @@ describe("native Codex final launch isolation", () => {
   it("rejects native mode without owner home and incompatible provider model references", () => {
     expect(() => buildAgentLaunch({ ...base, nativeCodexSubscription: { codexHome: "/tmp/owner/.codex", expectedPrincipalFingerprint: "a".repeat(64), expectedConsentRevision: 1, expectedConfigurationFingerprint: "b".repeat(64), expectedHarnessInstanceId: "codex_owner_openai_profile", expectedAccountId: "owner_codex" } })).toThrow();
     expect(() => buildAgentLaunch({ ...base, providerEventPath: "/tmp/owner/events.jsonl", runtimeHome: undefined, nativeCodexSubscription: { codexHome: "/tmp/owner/.codex", expectedPrincipalFingerprint: "a".repeat(64), expectedConsentRevision: 1, expectedConfigurationFingerprint: "b".repeat(64), expectedHarnessInstanceId: "codex_owner_openai_profile", expectedAccountId: "owner_codex" } })).toThrow();
-    expect(() => buildAgentLaunch({ ...base, providerEventPath: "/tmp/owner/events.jsonl", model: "openrouter/gpt-5", nativeCodexSubscription: { codexHome: "/tmp/owner/.codex", expectedPrincipalFingerprint: "a".repeat(64), expectedConsentRevision: 1, expectedConfigurationFingerprint: "b".repeat(64), expectedHarnessInstanceId: "codex_owner_openai_profile", expectedAccountId: "owner_codex" } })).toThrow();
+    expect(() => buildAgentLaunch({ ...base, providerEventPath: "/tmp/owner/events.jsonl", model: "openrouter/gpt-5", nativeCodexSubscription: { codexHome: "/tmp/owner/.codex", expectedPrincipalFingerprint: "a".repeat(64), expectedConsentRevision: 1, expectedConfigurationFingerprint: "b".repeat(64), expectedHarnessInstanceId: "codex_owner_openai_profile", expectedAccountId: "owner_codex" } }, "0.162.1")).toThrow();
   });
   it.each([false, true])("real background synthetic child honors inheritEnv=%s", async inheritEnv => {
     const dir = await mkdtemp(join(tmpdir(), "codex-env-")); dirs.push(dir);
