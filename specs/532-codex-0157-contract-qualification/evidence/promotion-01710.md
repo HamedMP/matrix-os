@@ -17,7 +17,7 @@ Same machine, same account, `app-server --stdio` `model/list`:
 
 The host-bundle build downloads and checksums the exact Linux binary, verifies its version, and stages it as `bin/matrix-codex`. On the first upgrade, the running predecessor already backs up and installs flat host binaries before restarting the supervisor. Its rollback restores the prior scoped binary or removes the new file when the predecessor had none. Codex needs no separate network installation during the service stop.
 
-The scope supervisor checks the release binary and mounts only that file read-only into the shared Chat runtime. The optional Terminal installation and its account state remain independently managed. An owner can still update their Terminal CLI without changing the shared Chat pin.
+The scope supervisor checks the release binary and mounts only that file read-only into the shared Chat runtime. On a managed VPS with the previous 0.162.1 Terminal install, the native Chat selector also uses the release binary for both catalog discovery and execution. It leaves the Terminal CLI and its account state in place. A later Terminal upgrade is detected by the native catalog and credential caches. Native Chat still applies its compatibility checks, and shared Chat continues using the release pin.
 
 ## Settings device login
 

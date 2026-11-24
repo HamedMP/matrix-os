@@ -2,6 +2,8 @@ import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOpti
 import { z } from "zod/v4";
 import type { AgentProviderSummary } from "@matrix-os/contracts";
 import { performance } from "node:perf_hooks";
+import { executableFingerprint } from "../agent-detection-cache.js";
+import { codexExecutableDependencies } from "../coding-agents/codex-executable.js";
 import type { CodingModelCatalogProjection } from "./provider-catalog.js";
 import { CODEX_CHAT_SPEED_OPTION, CODEX_CHAT_STANDARD_SPEED, CODEX_DEFAULT_SERVICE_TIER } from "./codex-chat-speed.js";
 import { recordCodexCatalogTiming, type CodexCatalogTimingResult } from "./send-timing.js";
@@ -317,23 +319,24 @@ export function createCodexModelCatalogSource(options: {
     Math.min(options.terminateGraceMs ?? DEFAULT_TERMINATE_GRACE_MS, 5_000),
   );
   const spawnProcess = options.spawnProcess ?? (nodeSpawn as SpawnProcess);
+  const dependencies = codexExecutableDependencies(options.executable, options.environment?.MATRIX_NODE_PREFIX);
   const staleWindowMs = Math.max(cacheTtlMs, CODEX_CATALOG_STALE_WINDOW_MS);
-  type Cached = { expiresAt: number; staleUntil: number; authority: string; value: CodingModelCatalogProjection };
-  type Entry = { cached: Cached | null; failedUntil: number };
+  type Cached = { expiresAt: number; staleUntil: number; value: CodingModelCatalogProjection };
+  type Entry = { authority: string; cached: Cached | null; failedUntil: number };
   // Runtime metadata is owner-scoped, with bounded FIFO retention. A deleted
   // entry also fences any lookup that started before confirmed login.
   const entries = new Map<string | null, Entry>();
   let unconfirmedChildExit: Promise<void> | null = null;
   let pending: { entry: Entry; promise: Promise<CodingModelCatalogProjection> } | null = null;
 
-  const startLookup = (key: string | null, current: Entry, authority: string): Promise<CodingModelCatalogProjection> => {
+  const startLookup = (key: string | null, current: Entry): Promise<CodingModelCatalogProjection> => {
     const promise = fetchCodexModelsWithRetry({
       executable: options.executable, cwd: options.cwd, environment: options.environment,
       timeoutMs, terminateGraceMs, maxAttempts, retryDelayMs, spawnProcess,
     }).then(value => {
       if (entries.get(key) === current) {
         const now = Date.now();
-        current.cached = { expiresAt: now + cacheTtlMs, staleUntil: now + staleWindowMs, authority, value };
+        current.cached = { expiresAt: now + cacheTtlMs, staleUntil: now + staleWindowMs, value };
         current.failedUntil = 0;
       }
       return value;
@@ -355,23 +358,22 @@ export function createCodexModelCatalogSource(options: {
   type Read = { value: CodingModelCatalogProjection; result: CodexCatalogTimingResult };
   const read = async (provider: AgentProviderSummary, principal?: { userId: string }): Promise<Read> => {
     const key = principal?.userId ?? null;
+    const executableState = dependencies.length > 0 ? await executableFingerprint([options.executable], dependencies) : "";
+    const authority = `${provider.authStatus}:${provider.installStatus}:${executableState}`;
     let entry = entries.get(key);
-    if (!entry) {
-      if (entries.size >= 64) entries.delete(entries.keys().next().value!);
-      entry = { cached: null, failedUntil: 0 };
+    // An auth/install change or Terminal update also fences a pending lookup.
+    if (!entry || entry.authority !== authority) {
+      if (!entry && entries.size >= 64) entries.delete(entries.keys().next().value!);
+      entry = { authority, cached: null, failedUntil: 0 };
       entries.set(key, entry);
     }
     const now = Date.now();
-    // A catalog verified under another provider auth/install state is never
-    // reused, fresh or stale. Confirmed login also deletes the entry outright.
-    const authority = `${provider.authStatus}:${provider.installStatus}`;
-    if (entry.cached && entry.cached.authority !== authority) entry.cached = null;
     if (entry.cached && entry.cached.expiresAt > now) return { value: entry.cached.value, result: "cache_hit" };
     if (entry.cached && entry.cached.staleUntil > now) {
       // One native child at a time across owners: a refresh starts only when
       // none is pending, no failure backoff applies, and no exit is unconfirmed.
       if (!pending && entry.failedUntil <= now && !unconfirmedChildExit) {
-        startLookup(key, entry, authority).catch((error: unknown) => {
+        startLookup(key, entry).catch((error: unknown) => {
           console.warn("[chat-providers] Codex catalog background refresh failed",
             error instanceof Error ? error.name : "UnknownError");
         });
@@ -386,7 +388,7 @@ export function createCodexModelCatalogSource(options: {
       return read(provider, principal);
     }
     if (entry.failedUntil > now || unconfirmedChildExit) throw new Error("Codex model catalog unavailable");
-    return { value: await startLookup(key, entry, authority), result: "lookup" };
+    return { value: await startLookup(key, entry), result: "lookup" };
   };
   const source = async (provider: AgentProviderSummary, principal?: { userId: string }): Promise<CodingModelCatalogProjection | null> => {
     if (provider.kind !== "codex" && provider.id !== "codex") return null;
