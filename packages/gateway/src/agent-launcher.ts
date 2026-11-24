@@ -8,7 +8,7 @@ import {
   ProviderModelReferenceSchema,
   type AgentModelOption,
 } from "@matrix-os/contracts";
-import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
+import { CodexExecutableSchema, codexExecutableDependencies } from "./coding-agents/codex-executable.js";
 import { createDetectionCache, credentialFileFingerprint, executableFingerprint } from "./agent-detection-cache.js";
 import { homedir } from "node:os";
 import { nativeCodexLaunchPolicy, type NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
@@ -640,7 +640,8 @@ export function createAgentLauncher(options: {
   // (installed, missing, signed in, signed out) may be served while refreshing.
   const servableWhenStale = (result: DetectionResult) => result.agents.every(agent =>
     agent.installState !== "unknown" && agent.authState !== "error" && agent.workspaceCompatibility !== "unsupported");
-  const probedExecutables = () => executableFingerprint(SupportedAgentSchema.options.map(commandFor));
+  const codexDependencies = codexExecutableDependencies(options.codexExecutable ?? "", detectEnv.MATRIX_NODE_PREFIX);
+  const probedExecutables = () => executableFingerprint(SupportedAgentSchema.options.map(commandFor), codexDependencies);
   const installationScans = createDetectionCache<DetectionResult>({
     scan: () => Promise.all(SupportedAgentSchema.options.map(probeInstallation)).then((agents) => ({ agents })),
     now, freshMs: DETECT_CACHE_TTL_MS, staleMs: DETECT_STALE_WINDOW_MS, servableWhenStale,
@@ -656,7 +657,7 @@ export function createAgentLauncher(options: {
     // Executables plus credential files: never serve a stale "signed in" after a logout outside Matrix.
     fingerprint: async () => {
       const [executables, credentials] = await Promise.all([
-        executableFingerprint([commandFor("claude"), commandFor("codex")]), credentialFileFingerprint(credentialFiles()),
+        executableFingerprint([commandFor("claude"), commandFor("codex")], codexDependencies), credentialFileFingerprint(credentialFiles()),
       ]);
       return executables === null || credentials === null ? null : `${executables}#${credentials}`;
     },
