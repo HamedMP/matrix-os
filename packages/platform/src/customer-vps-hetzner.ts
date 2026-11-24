@@ -46,6 +46,7 @@ export interface HetznerServer {
   publicIPv6?: string;
   labels?: Record<string, string>;
   createActionId?: number;
+  deleteProtected?: boolean;
 }
 
 export interface HetznerImage {
@@ -192,6 +193,7 @@ function mapServer(server: {
   server_type?: { name?: unknown };
   public_net?: { ipv4?: { ip?: unknown }; ipv6?: { ip?: unknown } };
   labels?: unknown;
+  protection?: { delete?: unknown };
 }): HetznerServer {
   if (!server || typeof server.id !== 'number' || typeof server.status !== 'string') {
     throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
@@ -202,6 +204,7 @@ function mapServer(server: {
     serverType: typeof server.server_type?.name === 'string' ? server.server_type.name : undefined,
     publicIPv4: typeof server.public_net?.ipv4?.ip === 'string' ? server.public_net.ipv4.ip : undefined,
     publicIPv6: typeof server.public_net?.ipv6?.ip === 'string' ? server.public_net.ipv6.ip : undefined,
+    ...(typeof server.protection?.delete === 'boolean' ? { deleteProtected: server.protection.delete } : {}),
     labels: server.labels && typeof server.labels === 'object'
       ? Object.fromEntries(
           Object.entries(server.labels as Record<string, unknown>)

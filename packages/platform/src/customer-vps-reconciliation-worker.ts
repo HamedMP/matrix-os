@@ -58,9 +58,21 @@ export async function runCustomerVpsReconciliationPass(deps: {
   customerVpsProxyDispatcher?: import('undici').Dispatcher;
   /** Read at run time: the capture hook is installed after the worker starts. */
   getBillingRuntimeCaptureEvent: () => BillingRuntimeCaptureEvent | undefined;
+  reconcileBillingSuspensions?: () => Promise<void>;
   sweepPrivatePreviews?: () => Promise<PrivatePreviewSweepResult>;
+  sweepUnpaidVps?: () => Promise<{ checked: number; queued: number; failed: number; backupMissing: number }>;
 }): Promise<void> {
   const { db, customerVpsService } = deps;
+  if (deps.sweepUnpaidVps) {
+    try {
+      const result = await deps.sweepUnpaidVps();
+      if (result.queued > 0 || result.failed > 0 || result.backupMissing > 0) {
+        console.log(`[platform] unpaid VPS retention checked=${result.checked} queued=${result.queued} failed=${result.failed} backupMissing=${result.backupMissing}`);
+      }
+    } catch (error: unknown) {
+      logPlatformRouteError('unpaid VPS retention sweep', error);
+    }
+  }
   try {
     const result = await customerVpsService.reconcileProvisioning();
     if (result.checked > 0) {
@@ -84,6 +96,13 @@ export async function runCustomerVpsReconciliationPass(deps: {
     }
   } catch (err: unknown) {
     logPlatformRouteError('billing runtime action reconciliation', err);
+  }
+  if (deps.reconcileBillingSuspensions) {
+    try {
+      await deps.reconcileBillingSuspensions();
+    } catch (error: unknown) {
+      logPlatformRouteError('customer VPS billing suspension reconciliation', error);
+    }
   }
   try {
     const thirtyDaysAgoIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();

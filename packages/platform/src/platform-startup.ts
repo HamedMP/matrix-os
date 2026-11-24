@@ -1116,7 +1116,16 @@ async function startPlatformServerWithCleanup(
     }
     const reconciliationIntervalMs = Number(process.env.CUSTOMER_VPS_RECONCILIATION_INTERVAL_MS ?? 60_000);
     if (backgroundWorkersEnabled && reconciliationIntervalMs > 0) {
+      const { createConfiguredUnpaidVpsRetention } = await import('./unpaid-vps-retention-dependencies.js');
+      const sweepUnpaidVps = createConfiguredUnpaidVpsRetention({
+        db, env: process.env, getServer: serverId => baseHetzner.getServer(serverId),
+        r2: coreRepoObjectStore, prefixRoot: customerVpsConfig.r2PrefixRoot,
+      });
       const service = customerVpsService;
+      const { createBillingSuspensionReconciliation } = await import('./customer-vps-billing-suspension.js');
+      const reconcileBillingSuspensions = createBillingSuspensionReconciliation({
+        db, service, getServer: serverId => baseHetzner.getServer(serverId),
+      });
       const sweepPrivatePreviews = createPrivatePreviewSweep({
         db,
         service,
@@ -1133,6 +1142,8 @@ async function startPlatformServerWithCleanup(
           customerVpsProxyDispatcher,
           getBillingRuntimeCaptureEvent: () => billingRuntimeCaptureEvent,
           sweepPrivatePreviews,
+          sweepUnpaidVps,
+          reconcileBillingSuspensions,
         }),
       });
     }

@@ -1,5 +1,19 @@
 # Starter trial and unpaid runtime retention
 
+## Three-day VPS retention after billing ends
+
+[MAT-112](https://linear.app/matrix-os/issue/MAT-112/send-grace-emails-on-subscription-cancellation) tracks billing grace and recovery copies.
+
+After Matrix publishes the updated policy and gives any required notice, set `MATRIX_UNPAID_VPS_RETENTION_STARTS_AT` to its effective UTC timestamp. The dedicated platform worker processes billing losses starting on or after that time. Earlier billing losses and unconverted trials started before that time continue through the reviewed cleanup process below.
+
+For an ended subscription or failed renewal, the worker queues deletion after the three-day grace period. The clock starts when the paid term or unpaid trial ends or the renewal first fails, as applicable. The worker honors a later recorded grace deadline or paid-through date. Live Stripe payment or a replacement subscription for the same computer stops cleanup.
+
+The worker checks exact owner, runtime slot, Hetzner server identity, outstanding checkout, billing overrides, shared ownership, and the home manifest and database snapshot in R2. The home manifest must be at most 24 hours old and the database snapshot at most two hours old. For a VPS confirmed off after a recent completed suspension for the same subscription, measure freshness at suspension. Stale or missing recovery copies leave the VPS available for review. The machine tombstone and provider deletion job commit together under the existing billing and account deletion locks. Hetzner confirmation determines when VPS costs stop. Matrix retains account, billing and recovery records.
+
+Recurring reconciliation also rechecks a bounded batch of completed billing suspensions and shuts down provider drift when the slot remains unpaid. A pending runtime action or restored billing eligibility stops that shutdown.
+
+Publish matching customer-facing billing documentation in the Matrix OS site repository before enabling the setting.
+
 Starter receives a fourteen-day card-required trial. Builder and Max retain their three-day trial duration. Existing checkout promises are preserved. Public trial/retention documentation and Terms live in the separate private site repository and ship with its own PR.
 
 ## Unpaid trial retention policy

@@ -20,7 +20,7 @@ export async function retryCustomerVpsProviderDeletions(options: {
       options.signal?.throwIfAborted();
       await options.authorize?.(deletion);
       await provider.deleteServer(deletion.providerServerId);
-      if ((options.confirmAbsence || deletion.reason === "rejected_snapshot_recovery_clone")
+      if ((options.confirmAbsence || deletion.reason === "rejected_snapshot_recovery_clone" || deletion.reason === "unpaid_retention")
         && await provider.getServer(deletion.providerServerId)) throw new Error("Provider server deletion has not completed");
       await options.authorize?.(deletion);
       await markProviderDeletionCompleted(db, deletion.id, now().toISOString());
