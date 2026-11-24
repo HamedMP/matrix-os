@@ -269,6 +269,16 @@ As a person who moves between Matrix surfaces, I want shared sessions to preserv
 
 ## Success Criteria *(mandatory)*
 
+### Discussion synchronization repair (ENG-29)
+
+- A successful note appears immediately for its author, including when AI messages occupy intervening Chat sequence numbers.
+- Displayed posts do not advance the fetched-page cursor: older unseen notes remain retrievable through the existing bounded pagination.
+- An invalidation received during a page read schedules a trailing read; the subscription waits for that read before acknowledging the invalidation.
+- Actor/runtime/scope changes fence pending reads, posts, and follow-up work. Read receipts advance only through fetched notes.
+- Verify sparse sequences, delayed page/event races, duplicate delivery, pagination, and identity changes with production-hook regressions, then verify owner/peer visibility on reviewed Web and Electron runtimes.
+- This repairs the existing journey; it does not change permissions, storage, API contracts, pagination policy, or the separation of Discussion from AI prompts. The earlier missing-note incident remains unproven without its exact note and resource.
+- Ask collaboration owners to review this recovery behavior with the PR. Existing public documentation remains accurate; no new product capability needs a site documentation change.
+
 ### Measurable Outcomes
 
 - **SC-001**: Every supported shared-Chat surface exposes exactly one primary conversation composer, and 100% of its authorized submissions enter the existing AI flow without a mode-selection step.
