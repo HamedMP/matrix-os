@@ -1,6 +1,7 @@
 # Organization AI usage
 
-Status: Draft. The owner answered Q1–Q7 on 16 November 2026; Q8 is open. Ticket:
+Status: Draft. The owner answered Q1–Q7 on 16 November 2026 and Q8 on 24 November 2026. No
+questions are open. Ticket:
 [ENG-500](https://linear.app/matrix-os/issue/ENG-500/organization-ai-usage-dashboard-and-leaderboard).
 Builds on: ENG-440 personal AI usage (`specs/651-ai-usage/`), ENG-494 AI Insights package,
 ENG-29 Collaboration & Sharing (`specs/2689-collaborative-app-sharing/`), ENG-490 Share popover
@@ -12,8 +13,9 @@ records), spec 530 org drive (precedent for org data held on one member's comput
 An organization turns on AI usage reporting. From then on, everyone in the org sees the same
 dashboard: org totals, a named leaderboard, awards, and filters by tool, model and date range.
 The org admin also sees reporting health across the company. Each member's Matrix desktop app
-reads their coding-agent history on that device and reports daily counters for org work. Prompts
-and content never leave the device.
+reads their coding-agent history on that device, and each member's Matrix computer reads the
+history of agents run there. Both report daily counters for org work. Prompts and content never
+leave the machine they were created on.
 
 Phase 1 is the Matrix org (Hamed, Nima, Johan).
 
@@ -33,6 +35,9 @@ Phase 1 is the Matrix org (Hamed, Nima, Johan).
   admin can delete them.
 - **Q6:** Hamed's Matrix computer hosts the org app for now.
 - **Q7:** Constitution Principle I is amended in this PR (version 2.6.0) with the organization work data scope.
+- **Q8 (24 November):** agents run on a member's Matrix computer (for example
+  `matrix run -- claude`) count in phase 1. Each Matrix computer reports its own native agent
+  history, alongside the desktop app.
 
 These decisions depart from two existing rules. This spec scopes them as follows:
 
@@ -68,12 +73,13 @@ These decisions depart from two existing rules. This spec scopes them as follows
 | Former member | Nothing | Past rows stay, labelled "former member" |
 | Outsider | Nothing | None |
 | Platform | Org membership, routing and relay metadata. Never the usage rows | None |
-| The member alone | Private view: all usage on their device, org and personal | Nothing from the private view leaves the device or their own Matrix computer |
+| The member alone | Private view: all usage on their desktop device and their Matrix computer, org and personal | Nothing from the private view leaves the machine it was computed on |
 
 ## What is collected
 
-Built on the member's device by the Matrix desktop app, using the AI Insights package. Only
-sessions matching the org's rule are counted. The receiver validates every report with a strict
+Built on the machine where the agents ran, using the AI Insights package: by the Matrix desktop
+app on a member's device, or by the gateway on a member's Matrix computer. Each machine is a
+separate reporting device. Only sessions matching the org's rule are counted. The receiver validates every report with a strict
 Zod schema and rejects unknown fields.
 
 `OrgUsageReport` v1:
@@ -84,10 +90,10 @@ Zod schema and rejects unknown fields.
 | `orgId` | Clerk org ID |
 | `ruleDigest` | Digest of the org rule the report was computed with |
 | `member` | `{actorId, name, email, imageUrl}` from the member's signed-in Matrix account (display only; see "Identity") |
-| `device` | Random per-install ID. Never the hostname |
+| `device` | `{id, kind}`: random per-install ID (never the hostname); `kind` is `desktop` or `matrix-computer` |
 | `generatedAt`, `timeZone` | ISO timestamp; IANA zone used for day buckets |
 | `range` | `{from, to}` local days, at most 90 |
-| `producer` | `{name: "matrix-desktop", version, insightsVersion, pricingVersion}` |
+| `producer` | `{name: "matrix-desktop" \| "matrix-gateway", version, insightsVersion, pricingVersion}` |
 | `coverage[]` | `{harness, found, sessions, issues}`; "not found" is never shown as zero |
 | `days[]` | `{day, harness, model, input, cachedInput, cacheWrite, output, requests, usd \| null, unpriced}` |
 | `activity[]` | `{day, harness, sessions}` |
@@ -109,7 +115,7 @@ person, not the org's usage.
 
 - In phase 1, a report is written through the shared-app path as the signed-in member. The
   collaboration layer verifies the actor and audits every write.
-- Name, email and avatar are display fields. The desktop app takes them from the member's own
+- Name, email and avatar are display fields. Both reporters take them from the member's own
   signed-in account. Phase 2 reads them on the server from the org membership projection
   (`organization_memberships.display_name/email/image_url`), and the report no longer carries
   them.
@@ -120,16 +126,17 @@ person, not the org's usage.
 ## Keeping personal usage out
 
 **The org rule (`git-owners`).** The admin keeps a list of Git owners for the org (for example
-`github.com/FinnaAI`, `github.com/HamedMP`). For each session, the desktop app finds the repo of
+`github.com/FinnaAI`, `github.com/HamedMP`). For each session, the reporter finds the repo of
 the session's working directory and reads its remotes from `.git/config` locally, without
 running Git. It then normalises each remote to host/owner. The session counts only if one of
 them is on the list. Repo names and paths are used only for that local check. Sessions that do
-not match are skipped and never leave the device in any form.
+not match are skipped and never leave the machine in any form. On a Matrix computer the check
+runs against the repos in the owner's home, where those agents ran.
 
 **The private view.** Settings → AI usage, the existing personal panel (ENG-440), gains an
 "Org work / Everything" toggle. "Everything" shows all usage on the device to the member only.
-It is computed locally (or by the member's own Matrix computer, as today) and never sent to the
-org.
+It is computed on the machine that holds the history and never sent to the org. On Web Canvas
+and Web Desktop it shows the Matrix computer; on Electron Desktop it shows both.
 
 The report carries the rule digest. The dashboard leaves out reports computed with an old rule
 until the device reports again with the current one.
@@ -137,20 +144,24 @@ until the device reports again with the current one.
 ## How a member knows reporting is on
 
 - **Notice:** when the admin turns reporting on, or a member joins an org that has it on, the
-  desktop app shows a one-time notice. It says what is collected, what is never collected, the
+  member sees a one-time notice in Electron Desktop and in the web OS views (shown once per
+  member, recorded on their Matrix computer). It says what is collected, what is never collected, the
   Git owner list, and that everyone in the org sees the leaderboard, including name and email.
-- **Indicator:** Settings → AI usage shows "Reporting org AI usage to <org>", the last report
-  time, a "Report now" button, and "What was sent", which shows the exact last payload.
+- **Indicator:** Settings → AI usage shows "Reporting org AI usage to <org>" for each reporting
+  device (this Mac, this Matrix computer), the last report time, a "Report now" button, and "What
+  was sent", which shows the exact last payload.
 - **Dashboard header:** shows the rule, and that everyone in the org sees the leaderboard.
 - Members cannot pause reporting (Q2). Admins can exclude a member.
 
 ## Data flow and source of truth
 
 ```
-member device (Matrix desktop app)      host computer (Hamed's VPS)            everyone in the org
-AI Insights reads local history  ──▶  Org AI usage app (shared to org)  ──▶  open app from launcher
-applies org rule, builds report        owner Postgres, app schema              via shared-app relay
-writes as the signed-in member         rows keyed by org + actor + device
+member device (Matrix desktop app) ─┐
+                                    ├─▶ host computer (Hamed's VPS)          ──▶ everyone in the org
+member's Matrix computer (gateway) ─┘   Org AI usage app (shared to org)          open app from launcher
+AI Insights reads native history        owner Postgres, app schema                via shared-app relay
+applies org rule, builds report         rows keyed by org + actor + device
+writes as the signed-in member
 ```
 
 - **Org view source of truth:** the app's tables in the host's owner Postgres, held as delegated
@@ -164,8 +175,8 @@ writes as the signed-in member         rows keyed by org + actor + device
 - **What shared apps cannot do:** restrict writes or settings to admins, or stamp the writer on a
   row. Phase 1 accepts this for one trusted org; every write is audited with its real actor.
   Phase 2 moves writes and admin settings to server-enforced routes.
-- **Personal AI usage (ENG-440)** stays separate. The org reporter reads the same local history,
-  but sends only org-rule rollups, and only to the org app.
+- **Personal AI usage (ENG-440)** stays separate. The org reporters read the same local history,
+  but send only org-rule rollups, and only to the org app.
 
 ### Storage (declared app tables)
 
@@ -191,6 +202,30 @@ writes as the signed-in member         rows keyed by org + actor + device
   existing query/mutation routes as the signed-in member. If it cannot, bring forward the phase 2
   host route (`PUT /api/org-ai-usage/:orgId/devices/:deviceId/report`) through the same
   collaboration relay.
+
+## The Matrix computer reporter (phase 1, Q8)
+
+- Lives in the member's gateway, in a new `packages/gateway/src/org-ai-usage/` module next to
+  `packages/gateway/src/ai-usage/`. It uses the same `ai-insights` library call and the same
+  `OrgUsageReport` v1 schema as the desktop reporter; only the device kind and producer differ.
+- **Reads native agent roots only** (`~/.claude/projects`, `~/.codex/sessions`, and the other
+  AI Insights harness roots under the owner's home). It never reads the ENG-440 Mac backup root
+  or `system/ai-usage-sources.json` extra sources, so Mac history synced to the VPS is not
+  counted twice.
+- **Startup:** starts after the owner database, the request principal and the org membership
+  client are ready; first run 5 minutes after boot, then every 24 hours, and on "Report now".
+  Runs are coalesced. The timer and any in-flight run are cancelled on gateway shutdown.
+- **Org discovery:** uses the existing platform membership assertions (fail closed, cached to
+  expiry) to find the owner's orgs, and the shared-app directory to find an active
+  `org-ai-usage` share. If reporting is off or the member is excluded, it does nothing.
+- **Writes:** through the same path the spike picks for the desktop reporter, as the runtime
+  owner. The spike must prove this for a runtime-authenticated caller as well as for the
+  desktop main process; if the shared-app routes need a Clerk browser session, both reporters use
+  the brought-forward host report route, authenticated by a platform-issued runtime assertion
+  for the member.
+- **State:** device ID, notice acknowledgement, last payload and last error are kept in the
+  owner Postgres (one row per org, `ON CONFLICT` upsert), not in memory.
+- On failure, keep the last report, show a safe error in Settings → AI usage, and retry next run.
 
 ## The dashboard
 
@@ -218,9 +253,9 @@ Modelled on the reference dashboard:
 
 | Surface | UI | Behavior | State/recovery | Automated tests | Real evidence |
 | --- | --- | --- | --- | --- | --- |
-| Web Canvas | required (dashboard) | required | required | required | required |
-| Web Desktop | required (dashboard; private-view toggle in Settings) | required | required | required | required |
-| Electron Desktop | required (dashboard, reporter notice and indicator, private-view toggle) | required | required | required | required |
+| Web Canvas | required (dashboard; notice, Matrix computer indicator and private-view toggle in Settings) | required | required | required | required |
+| Web Desktop | required (dashboard; notice, Matrix computer indicator and private-view toggle in Settings) | required | required | required | required |
+| Electron Desktop | required (dashboard, notice, indicators for this Mac and the Matrix computer, private-view toggle) | required | required | required | required |
 | Web Mobile | required (responsive dashboard) | required | required | required | required |
 | Native Mobile | N/A: shared apps do not run there (spec 2689); needs reviewer approval | N/A | N/A | N/A | N/A |
 
@@ -236,6 +271,7 @@ Phase 1 uses the existing shared-app routes. It adds a route only if the spike f
 | `/api/collaboration/scopes/:scopeId/apps/:appId[/view\|/assets\|/actions]` (host gateway) | Launch session, active share, fresh membership, exact-build readiness | No |
 | `/api/collaboration/apps/:appId/readiness\|share` (host gateway) | Host owner only | No |
 | Desktop reporter IPC (`ai-usage:org-status`, `ai-usage:org-report-now`, `ai-usage:org-last-payload`) | Trusted main frame, current signed-in runtime generation (existing AI usage IPC pattern) | No |
+| `GET /api/ai-usage/org/status`, `GET /api/ai-usage/org/last-payload`, `POST /api/ai-usage/org/report-now`, `POST /api/ai-usage/org/notice-ack` (member's own gateway, Matrix computer reporter) | Runtime owner only, like `GET /api/ai-usage`; `bodyLimit` 1 KB on POSTs; report-now limited to once per 10 minutes | No |
 
 Phase 2 (proposed):
 
@@ -272,9 +308,12 @@ only.
 ## Failure modes
 
 - **Host offline:** the dashboard shows the shared-app unavailable state. Devices retry next run.
-- **Two devices for one member:** one row per device, summed per day. If the same history is
-  copied between devices (for example the ENG-440 Mac → Matrix sync), only the device where it
-  was created reports it. The reporter reads only native agent roots, never recovered backups.
+- **Two devices for one member:** one row per device (for example a Mac and a Matrix computer),
+  summed per day. If the same history is copied between devices (for example the ENG-440 Mac →
+  Matrix sync), only the device where it was created reports it. Both reporters read only native
+  agent roots, never recovered backups.
+- **Matrix computer asleep, restarting or updating:** the run is skipped and retried at the next
+  boot or interval; the dashboard shows that device's last report time.
 - **Concurrent reports:** last write wins per device row. A revision conflict is retried once.
 - **Uncertain save:** the existing `clientRequestId` replay prevents duplicates.
 - **Rule changed:** reports made under the old rule leave the totals until the next run.
@@ -289,8 +328,9 @@ only.
 
 - Report at most 512 KB; stored summary at most 128 KB per device; 90-day window; at most 5
   devices per member.
-- The reporter runs at most once per 10 minutes per org, with the existing AI usage scan budgets
-  for file size and time, and is cancellable.
+- Each reporter runs at most once per 10 minutes per org, with the existing AI usage scan
+  budgets for file size and time, and is cancellable. On a Matrix computer it runs at low
+  priority and never more than one scan at a time.
 - Phase 1 reads in pages of 6 rows, which works for orgs of up to about 50. Phase 2 aggregates on
   the server, with a 60 s cache per org, range and filter, at most 4 concurrent builds per host,
   and a 10 s statement timeout.
@@ -310,18 +350,23 @@ only.
 5. An outsider with the link gets the no-access state.
 6. The private view shows all usage to its owner, and nothing beyond org-rule rollups reaches the
    org app (network capture during a run).
-7. Cost shows coverage % and the estimate label; unpriced is never $0.
-8. Live evidence for every surface in the matrix, per the repo evidence gate.
+7. An agent run on a member's Matrix computer in an org repo appears on the dashboard under that
+   member, as a separate "Matrix computer" device, with no manual step. Mac history synced to
+   that Matrix computer by ENG-440 is not counted again.
+8. Cost shows coverage % and the estimate label; unpriced is never $0.
+9. Live evidence for every surface in the matrix, per the repo evidence gate.
 
 Tests: the AI Insights contract test (its output parsed by Matrix's Zod schema), rule-matching
-tests on real `.git/config` shapes (HTTPS, SSH, multiple remotes, no remote), reporter scheduling
-and cancellation, app tests for validation, aggregation, awards and filters, and the
+tests on real `.git/config` shapes (HTTPS, SSH, multiple remotes, no remote), scheduling and
+cancellation for both reporters, a root-selection test proving the Matrix computer reporter skips
+the Mac backup root, app tests for validation, aggregation, awards and filters, and the
 owner/member/outsider journey on the real shared-app path.
 
 ## Phased plan
 
 **Phase 1: the Matrix org**
-0. Spike: can the Electron main process write to a shared app as the signed-in member?
+0. Spike: can the Electron main process, and the member's gateway, write to a shared app as the
+   signed-in member?
 1. AI Insights: a library function `orgReport({ rule, since })` with `git-owners` matching, plus
    a contract doc. npm release.
 2. Matrix: `OrgUsageReport` v1 Zod schema in `packages/contracts/src/org-ai-usage/`.
@@ -329,11 +374,13 @@ owner/member/outsider journey on the real shared-app path.
    awards, filters, admin panel.
 4. Matrix desktop: the reporter, the notice, the Settings indicator, "What was sent", and the
    private-view toggle.
-5. Host bundle to Hamed's computer (dev channel, scoped deploy) and a desktop build for the three
-   of us. Hamed shares the app and sets the owner list.
+5. Matrix gateway: the Matrix computer reporter and its owner-only routes, plus the same notice,
+   indicator and private-view toggle in the web Settings → AI usage (Q8).
+6. Host bundle to all three Matrix computers (dev channel, scoped deploys) and a desktop build for
+   the three of us. Hamed shares the app and sets the owner list.
 
-Because the dashboard waits for automatic reporting (Q3), phase 1 includes the desktop reporter.
-It is unlikely to land within this week.
+Because the dashboard waits for automatic reporting (Q3), phase 1 includes both reporters. It is
+unlikely to land within this week.
 
 **Phase 2: real orgs**
 Admin-only policy on the platform, server-stamped identity and admin-only routes on the host,
@@ -358,8 +405,10 @@ Each phase ships with a separate public docs PR in `FinnaAI/matrix-os-site`.
   Insights parser, `pricingVersion` per member, coverage %, and the estimate label.
 - **Personal usage leaking in** through personal repos under an org-listed owner. Mitigation: the
   owner list is visible to every member, and the admin should list org-only owners.
-- **Agents run on Matrix computers are missed** in phase 1, because the desktop app only reads
-  the device it runs on. Much of our own agent use runs there (Q8).
+- **Double counting** between a Mac and its Matrix computer. Mitigation: native roots only on
+  both reporters, plus acceptance check 7.
+- **Load on Matrix computers.** A scan competes with the owner's own agents. Mitigation: low
+  priority, one scan at a time, the existing scan budgets.
 - **No desktop app, no data.** Members without it, or who rarely open it, under-report. The
   dashboard shows "last reported" and "not reporting" openly.
 - **Phase 1 trust gaps:** any member can edit any row or the settings in the shared app (audited,
@@ -378,12 +427,9 @@ Each phase ships with a separate public docs PR in `FinnaAI/matrix-os-site`.
 - Org admin and Core MCP owner (ENG-458): the admin policy route and the member-notice pattern.
 - AI Insights owner (ENG-494): `orgReport`, rule matching and release.
 - Desktop owner: the reporter in the Electron main process.
+- Gateway owner: the Matrix computer reporter, its startup wiring and owner-only routes (Q8).
 - Whoever owns the constitution: the 2.6.0 amendment.
 
 ## Open questions for the owner
 
-**Q8. Usage from agents run on a Matrix computer**
-- (a) **Recommended:** include it in phase 1. Each member's Matrix computer runs the same
-  reporter over its own native agent history (never the Mac backups, to avoid double counting).
-  The same spike decides how it writes to the host.
-- (b) Phase 2: desktop devices only for now.
+None. Q1–Q8 are recorded under "Owner decisions".
