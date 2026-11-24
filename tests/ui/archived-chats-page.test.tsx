@@ -179,3 +179,18 @@ it("labels an archived search result with its project and archive day the same w
   expect(archivedChatContextLabel(at(40 * day), "Portfolio")).toBe(`Portfolio · Archived ${old.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`);
   expect(archivedChatContextLabel({ chat: { archivedAt: null, updatedAt: old.toISOString() } })).toBe(`Archived ${old.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`);
 });
+
+it("labels yesterday by calendar day across a daylight-saving change", () => {
+  const previousTz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  vi.useFakeTimers();
+  try {
+    // US clocks fall back on 1 Nov 2026, so that local day is 25 hours long.
+    vi.setSystemTime(new Date(2026, 10, 2, 0, 30));
+    const archivedAt = new Date(2026, 10, 1, 0, 30).toISOString();
+    expect(archivedChatContextLabel({ chat: { archivedAt, updatedAt: archivedAt } })).toBe("Archived yesterday");
+  } finally {
+    vi.useRealTimers();
+    if (previousTz === undefined) delete process.env.TZ; else process.env.TZ = previousTz;
+  }
+});

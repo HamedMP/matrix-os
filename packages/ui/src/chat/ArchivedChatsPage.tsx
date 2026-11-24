@@ -26,8 +26,10 @@ const indexProjects = (projects: readonly Project[]) => indexEntries(projects.fl
 function dateLabel(date: Date) {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  // Calendar arithmetic: a local day can be 23 or 25 hours long around daylight-saving changes.
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
   if (date.getTime() >= today) return "Today";
-  if (date.getTime() >= today - 86400_000) return "Yesterday";
+  if (date.getTime() >= yesterday) return "Yesterday";
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 /** Search sub-line for an archived chat, shared by both desktop search popovers. */
