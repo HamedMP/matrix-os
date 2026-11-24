@@ -129,6 +129,8 @@ jobs:
         id: runner
         env:
           POOL_HEARTBEAT: ${{ vars.MATRIX_CI_POOL_HEARTBEAT }}
+          # Reads this run attempt's start time, when `vars` was resolved.
+          GITHUB_TOKEN: ${{ github.token }}
           # Fork PR code never reaches the self-hosted pool.
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
