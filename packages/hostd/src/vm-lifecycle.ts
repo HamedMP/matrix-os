@@ -226,6 +226,9 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   const log = deps.log ?? ((event, fields) => console.error(JSON.stringify({ event, ...fields })));
   const inflight = new Map<string, { kind: string; promise: Promise<unknown>; accepted: Promise<void> }>();
   let allocation: Promise<unknown> = Promise.resolve();
+  // Every create() call from entry until it settles, so idle() also waits for
+  // a create that is still allocating its record. Capped by maxInFlight.
+  const creates = new Set<Promise<unknown>>();
 
   const vmUnit = (id: string) => `matrix-vm@${id}.service`;
   const restoreUnit = (id: string) => `matrix-vm-restore@${id}.service`;
@@ -432,7 +435,20 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     return { dataPercent, metadataPercent };
   }
 
-  async function create(spec: CreateVmSpec): Promise<VmRecord> {
+  function create(spec: CreateVmSpec): Promise<VmRecord> {
+    if (creates.size >= cfg.maxInFlight) {
+      return Promise.reject(new LifecycleError("busy", "too many VM operations in flight"));
+    }
+    const pending = createVm(spec);
+    creates.add(pending);
+    const forget = () => {
+      creates.delete(pending);
+    };
+    pending.then(forget, forget);
+    return pending;
+  }
+
+  async function createVm(spec: CreateVmSpec): Promise<VmRecord> {
     validateSpec(spec);
     // Allocation is serialized host-wide so two creates never share an address or a machine.
     const claim = allocation.then(async () => {
@@ -465,6 +481,10 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
           maxMetadataPercent: cfg.poolMaxMetadataPercent,
         });
         throw new LifecycleError("capacity", "thin pool is too full for a new VM");
+      }
+      // Admit before saving: a create refused as busy must not leave a record.
+      if (inflight.size >= cfg.maxInFlight) {
+        throw new LifecycleError("busy", "too many VM operations in flight");
       }
       const address = await allocateAddress();
       const record: VmRecord = {
@@ -499,7 +519,9 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     const { record, fresh, address, extend } = await claim;
     if (!fresh) return record;
 
-    return enqueue(record.id, "create", async () => {
+    let started = false;
+    const work = enqueue(record.id, "create", async () => {
+      started = true;
       try {
         await sh([
           "lvcreate", "--snapshot", "--setactivationskip", "n", "--activate", "y",
@@ -522,6 +544,16 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
         throw new LifecycleError("failed", "VM creation failed", { cause: error });
       }
     });
+    try {
+      return await work;
+    } catch (error: unknown) {
+      // Refused at the queue after the record was saved: drop the record (no
+      // disk exists yet) so a retry creates afresh instead of finding it stuck.
+      if (!started && error instanceof LifecycleError && error.code === "busy") {
+        await store.remove(record.id);
+      }
+      throw error;
+    }
   }
 
   async function coldBoot(record: VmRecord): Promise<VmRecord> {
@@ -722,8 +754,8 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   }
 
   async function idle(): Promise<void> {
-    while (inflight.size > 0) {
-      await Promise.allSettled([...inflight.values()].map((entry) => entry.promise));
+    while (inflight.size > 0 || creates.size > 0) {
+      await Promise.allSettled([...creates, ...[...inflight.values()].map((entry) => entry.promise)]);
     }
     await allocation;
   }
@@ -748,10 +780,10 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
         options.onAccepted,
       ),
     async resume(id, budgetMs, fence = {}) {
+      // Concurrent callers share the wake; each waits for health on its own budget.
       const deadline = clock.now() + Math.max(0, budgetMs);
-      return enqueue(id, fencedKind("resume", fence), async () =>
-        waitHealthy(await wake(await loadFenced(id, fence)), deadline),
-      );
+      const record = await enqueue(id, fencedKind("resume", fence), async () => wake(await loadFenced(id, fence)));
+      return waitHealthy(record, deadline);
     },
     stop: (id) => enqueue(id, "stop", async () => stop(await load(id))),
     destroy: (id) => enqueue(id, "destroy", () => destroy(id)),

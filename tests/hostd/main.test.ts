@@ -309,6 +309,18 @@ describe("hostd main", () => {
     expect(logs).toContain("hostd.drain_timeout");
   });
 
+  it("close stops accepting at once and bounds the whole shutdown, including a stuck memory loop", async () => {
+    const logs: string[] = [];
+    hostd = await startHostd(config, overrides({ drainTimeoutMs: 50, log: (event) => logs.push(event) }));
+    hostd.memory.stop = () => new Promise<void>(() => undefined);
+    const closing = hostd.close();
+    await new Promise((r) => setImmediate(r));
+    expect(hostd.api.listening).toBe(false);
+    expect(hostd.ingress.server.listening).toBe(false);
+    await closing;
+    expect(logs).toContain("hostd.drain_timeout");
+  });
+
   it("main loads config from the environment, fails closed, and drains on SIGTERM", async () => {
     const taken = createHttpsServer(tls);
     await new Promise<void>((r) => taken.listen(0, "127.0.0.1", r));
@@ -376,6 +388,8 @@ describe("hostd main (production defaults)", () => {
       updatedAt: "2026-11-21T00:00:00.000Z",
     };
     await store.put(vm);
+    // The VM is live, so startup reconcile keeps its running record.
+    active.add(`matrix-vm@${vm.id}.service`);
     // Only the exec is faked: no host command may run in a test.
     hostd = await startHostd(config, { exec, lifecycleConfig: { trimSettleMs: 0 } });
     await hostd.memory.tick();

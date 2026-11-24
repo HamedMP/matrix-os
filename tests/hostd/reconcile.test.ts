@@ -165,23 +165,58 @@ describe("startup reconciliation", () => {
     await expect(store.get(ID)).resolves.toMatchObject({ state: "failed" });
   });
 
-  it("still marks an active VM running when Cloud Hypervisor cannot be asked about a pause", async () => {
+  it("marks an active VM stopped, so a wake cold-boots it, when Cloud Hypervisor cannot be asked about a pause", async () => {
     await store.put(record("suspending"));
     active.add(`matrix-vm@${ID}.service`);
     const logs: string[] = [];
     const failing = (): ChClient => ({ ...ch(), info: async () => Promise.reject(new Error("socket gone")) });
     await reconcileVms({ store, exec, ch: failing, snapshotsDir, log: (event) => logs.push(event) });
-    await expect(store.get(ID)).resolves.toMatchObject({ state: "running" });
+    await expect(store.get(ID)).resolves.toMatchObject({ state: "stopped", snapshot: null });
     expect(logs).toContain("reconcile.unpause_failed");
     expect(chEvents).toEqual(["close"]);
+  });
+
+  it("marks a paused VM stopped, not running, when its resume request fails", async () => {
+    await store.put(record("resuming", { snapshot: { dir: "/s", takenAt: UPDATED, chVersion: "v54.1" } }));
+    active.add(`matrix-vm-restore@${ID}.service`);
+    chState = "Paused";
+    const failing = (): ChClient => ({ ...ch(), resume: async () => Promise.reject(new Error("resume refused")) });
+    await reconcileVms({ store, exec, ch: failing, snapshotsDir, log: () => undefined });
+    await expect(store.get(ID)).resolves.toMatchObject({ state: "stopped", snapshot: null });
+  });
+
+  it("marks a running record whose units are inactive (host reboot, crash mid-stop) stopped", async () => {
+    await store.put(record("running", { snapshot: { dir: "/s", takenAt: UPDATED, chVersion: "v54.1" } }));
+    await run();
+    await expect(store.get(ID)).resolves.toMatchObject({ state: "stopped", snapshot: null });
+    expect(execCalls).toEqual([
+      ["systemctl", "is-active", `matrix-vm@${ID}.service`],
+      ["systemctl", "is-active", `matrix-vm-restore@${ID}.service`],
+    ]);
+  });
+
+  it("leaves a running record alone when its unit is active or systemd cannot be queried", async () => {
+    await store.put(record("running"));
+    active.add(`matrix-vm@${ID}.service`);
+    await run();
+    await expect(store.get(ID)).resolves.toMatchObject({ state: "running", updatedAt: UPDATED });
+
+    active.clear();
+    execThrows = true;
+    const logs: string[] = [];
+    await reconcileVms({ store, exec, ch: () => ch(), snapshotsDir, log: (event) => logs.push(event) });
+    await expect(store.get(ID)).resolves.toMatchObject({ state: "running", updatedAt: UPDATED });
+    expect(logs).toContain("reconcile.query_failed");
+    expect(chEvents).toEqual([]);
   });
 
   it("leaves settled records alone", async () => {
     for (const [i, state] of (["running", "suspended", "stopped", "failed"] as const).entries()) {
       await store.put(record(state, { id: `vm_${String(i).repeat(24)}` }));
     }
+    active.add(`matrix-vm@vm_${"0".repeat(24)}.service`);
     await run();
-    expect(execCalls).toEqual([]);
+    expect(execCalls).toEqual([["systemctl", "is-active", `matrix-vm@vm_${"0".repeat(24)}.service`]]);
     expect((await store.list()).map((r) => r.updatedAt)).toEqual([UPDATED, UPDATED, UPDATED, UPDATED]);
   });
 });

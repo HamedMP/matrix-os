@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import { join } from "node:path";
 
 // Per-VM state of record on this host: one JSON file per VM at
@@ -160,12 +161,30 @@ export async function writeFileAtomic(path: string, data: string, mode = 0o600):
   }
 }
 
+// lstat that treats a path removed since readdir (a concurrent put() renamed
+// its temp file, or remove() deleted the VM) as absent. Other errors surface.
+async function lstatIfPresent(path: string): Promise<Stats | null> {
+  try {
+    return await lstat(path);
+  } catch (error: unknown) {
+    if (errnoCode(error) === "ENOENT") return null;
+    throw error;
+  }
+}
+
 async function sweepStaleTemps(dir: string, now: number): Promise<void> {
-  for (const name of await readdir(dir)) {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch (error: unknown) {
+    if (errnoCode(error) === "ENOENT") return;
+    throw error;
+  }
+  for (const name of names) {
     if (!name.endsWith(TEMP_SUFFIX)) continue;
     const path = join(dir, name);
-    const info = await lstat(path);
-    if (!info.isFile() || now - info.mtimeMs < STALE_TEMP_MS) continue;
+    const info = await lstatIfPresent(path);
+    if (info === null || !info.isFile() || now - info.mtimeMs < STALE_TEMP_MS) continue;
     try {
       await unlink(path);
     } catch (error: unknown) {
@@ -231,8 +250,8 @@ export function createVmStore(dir: string, options: VmStoreOptions = {}): VmStor
       const records: VmRecord[] = [];
       for (const name of names.sort()) {
         if (!isVmId(name)) continue;
-        const info = await lstat(join(dir, name));
-        if (!info.isDirectory()) continue;
+        const info = await lstatIfPresent(join(dir, name));
+        if (info === null || !info.isDirectory()) continue;
         await sweepStaleTemps(join(dir, name), now);
         const record = await get(name);
         if (record !== null) records.push(record);

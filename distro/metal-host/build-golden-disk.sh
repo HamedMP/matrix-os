@@ -5,10 +5,11 @@
 # (distro/customer-vps/golden-snapshot-builder-cloud-init.yaml: installs and
 # activates the host bundle, runs matrix-golden-snapshot-sanitize, powers off)
 # plus the S7 guest settings and the guest agent (guest/metal-guest-setup.sh).
-# Then boots a throwaway clone to validate the result and only then renames
-# the LV to its final name and makes it read-only. Idempotent: an existing
-# read-only golden for the version is left alone; a half-built one from an
-# earlier run is discarded and rebuilt. Needs provision-host.sh first.
+# Then boots a throwaway clone to validate the result, makes the LV read-only,
+# writes its metadata, and only then gives it its final name. Idempotent: an
+# existing read-only golden with metadata is left alone; a half-built one from
+# an earlier run is discarded and rebuilt. One build at a time per host (a
+# lock). Needs provision-host.sh first.
 #
 # Usage: sudo distro/metal-host/build-golden-disk.sh <bundle-version>
 #          [--bundle-url URL] [--bundle-sha256 HEX] [--keep-on-failure]
@@ -33,6 +34,8 @@ readonly BUILDER_IP=10.78.3.254 BUILDER_MAC=52:54:00:78:03:fe BUILDER_TAP=mxgbui
 readonly VALIDATE_IP=10.78.3.253 VALIDATE_MAC=52:54:00:78:03:fd VALIDATE_TAP=mxgval0
 readonly CALLBACK_ADDR=10.78.0.1 CALLBACK_PORT=9480
 readonly BUILD_TIMEOUT_S=4500 VALIDATE_TIMEOUT_S=600
+# One build at a time per host: builds share the builder and validation taps.
+readonly LOCK_FILE=/run/lock/matrix-golden-build.lock
 
 log() { printf 'build-golden-disk: %s\n' "$*"; }
 die() { printf 'build-golden-disk: %s\n' "$*" >&2; exit 1; }
@@ -58,6 +61,10 @@ for need in "$KERNEL" "$INITRD" "$BASE_IMAGE" "$GUEST_AGENT" "$CH"; do
 done
 ip link show "$BRIDGE" >/dev/null 2>&1 || die "bridge $BRIDGE missing (run provision-host.sh)"
 
+# Held on fd 9 until the process exits, so it covers the EXIT trap's cleanup too.
+exec 9>"$LOCK_FILE"
+flock --nonblock 9 || die "another golden build is running on this host"
+
 golden="golden-$version"
 building="$golden-building"
 validate="$golden-validate"
@@ -66,12 +73,15 @@ build_unit="matrix-golden-build-$unit_suffix.service"
 validate_unit="matrix-golden-validate-$unit_suffix.service"
 callback_unit="matrix-golden-callback-$unit_suffix.service"
 work="$STATE_DIR/golden/$version"
+meta="$STATE_DIR/golden/$version.json"
 serial_dir=/var/log/matrix-vm
 
 lv_attr() { lvs --noheadings -o lv_attr "$VG/$1" 2>/dev/null | tr -d ' '; }
 
 if [ -n "$(lv_attr "$golden")" ]; then
   [ "$(lv_attr "$golden" | cut -c2)" = r ] || die "$VG/$golden exists but is writable; inspect it before rebuilding"
+  [ -f "$meta" ] || die "$VG/$golden exists but $meta is missing; inspect it before rebuilding"
+  rm -rf -- "$work"
   log "$VG/$golden already built (read-only); nothing to do"
   exit 0
 fi
@@ -96,12 +106,16 @@ cleanup() {
   stop_vm_units
   remove_lv "$validate"
   if [ "$succeeded" = 0 ]; then
+    # Metadata is written just before the final rename: without the final LV
+    # it describes nothing.
+    if [ -z "$(lv_attr "$golden")" ]; then rm -f -- "$meta"; fi
     if [ "$keep_on_failure" = 1 ]; then
       log "keeping $VG/$building and $work for inspection"
-    else
-      remove_lv "$building"
+      return
     fi
+    remove_lv "$building"
   fi
+  rm -rf -- "$work"
 }
 trap cleanup EXIT
 
@@ -299,10 +313,13 @@ remove_lv "$validate"
 log "validation clone passed"
 
 # --- seal -------------------------------------------------------------------------
-lvrename "$VG" "$building" "$golden" >/dev/null
-lvchange --quiet --permission r "$VG/$golden"
-[ "$(lv_attr "$golden" | cut -c2)" = r ] || die "could not make $VG/$golden read-only"
-python3 -I - "$STATE_DIR/golden/$version.json" "$version" "$bundle_url" "$bundle_sha256" <<'PY'
+# Read-only and described before it gets its final name, so the final name
+# only ever exists for a finished golden; a failure here leaves "building",
+# which cleanup removes.
+chown root:disk "$(readlink -f "/dev/$VG/$building")"
+lvchange --quiet --permission r "$VG/$building"
+[ "$(lv_attr "$building" | cut -c2)" = r ] || die "could not make $VG/$building read-only"
+python3 -I - "$meta" "$version" "$bundle_url" "$bundle_sha256" <<'PY'
 import json, os, sys
 from datetime import datetime, timezone
 out, version, url, sha = sys.argv[1:]
@@ -315,5 +332,6 @@ with open(tmp, "w") as handle:
 os.chmod(tmp, 0o644)
 os.replace(tmp, out)
 PY
+lvrename "$VG" "$building" "$golden" >/dev/null
 succeeded=1
 log "built $VG/$golden (read-only)"

@@ -368,6 +368,25 @@ describe("hostd API", () => {
     await expect(store.get(created.id)).resolves.toMatchObject({ state: "suspended" });
   });
 
+  it("accepts generation 0 as an expectedGeneration for a VM created at generation 0", async () => {
+    const app = api();
+    const created = (await (await send(app, "POST", "/v1/vms", { body: { ...body, generation: 0 }, headers: auth })).json()) as {
+      id: string;
+    };
+    await expect(store.get(created.id)).resolves.toMatchObject({ generation: 0 });
+    const suspended = await send(app, "POST", `/v1/vms/${created.id}/suspend`, { body: { expectedGeneration: 0 }, headers: auth });
+    expect(suspended.status).toBe(202);
+    await lifecycle.idle();
+    await expect(store.get(created.id)).resolves.toMatchObject({ state: "suspended" });
+    const resumed = await send(app, "POST", `/v1/vms/${created.id}/resume`, {
+      body: { budgetMs: 1000, expectedGeneration: 0 },
+      headers: auth,
+    });
+    expect(await resumed.json()).toEqual({ state: "running" });
+    const negative = await send(app, "POST", `/v1/vms/${created.id}/suspend`, { body: { expectedGeneration: -1 }, headers: auth });
+    expect(negative.status).toBe(400);
+  });
+
   it("resume and suspend with a matching expectedGeneration act on the VM", async () => {
     const app = api();
     const created = (await (await send(app, "POST", "/v1/vms", { body, headers: auth })).json()) as { id: string };
@@ -387,7 +406,7 @@ describe("hostd API", () => {
     await store.put(record());
     const app = api();
     const path = `/v1/vms/${record().id}`;
-    for (const expectedGeneration of [0, -1, 1.5, "1"]) {
+    for (const expectedGeneration of [-1, 1.5, "1"]) {
       const resume = await send(app, "POST", `${path}/resume`, { body: { budgetMs: 1, expectedGeneration }, headers: auth });
       expect(resume.status).toBe(400);
       const suspend = await send(app, "POST", `${path}/suspend`, { body: { expectedGeneration }, headers: auth });

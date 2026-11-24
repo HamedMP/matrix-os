@@ -1,17 +1,14 @@
 ---
-description: Draft user-facing Desktop release notes (release-notes/<version>.json) from PRs merged since the last release on a channel, validate them, and commit after approval.
-argument-hint: [version] [dev | canary | beta | stable]
+name: release-notes
+description: Draft user-facing Desktop release notes (release-notes/<version>.json) for the What's New dialog from PRs merged since the last release on a channel, validate them with the schema, show the draft for approval, and commit before the release build. Use when promoting or preparing a Desktop release, or when asked for release notes or a changelog for users.
 ---
 
 # Release Notes
 
-Usage: `/release-notes [version] [dev | canary | beta | stable]`
-
-Arguments:
-
-```text
-$ARGUMENTS
-```
+Use this skill when preparing or promoting a Matrix OS Desktop release, when
+asked to write release notes or a user-facing changelog, or when invoked as
+`release-notes`. The request may name a version and a channel; by default it
+covers the version in `desktop/package.json` on the `canary` channel.
 
 ## Goal
 

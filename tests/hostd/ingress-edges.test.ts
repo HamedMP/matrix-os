@@ -338,6 +338,20 @@ describe("host ingress edges", () => {
     expect(raw.endsWith("no")).toBe(true);
   });
 
+  it("closes the client promptly when the VM declines an upgrade and then drops mid-body", async () => {
+    const vm = createHttpsServer(tls);
+    vm.on("upgrade", (_req, socket: Socket) => {
+      socket.write("HTTP/1.1 403 Forbidden\r\ncontent-length: 100\r\n\r\npartial", () => socket.destroy());
+    });
+    // A long idle timeout: only the dropped upstream may close the client.
+    await start({ upstreamPort: await listen(vm), idleTimeoutMs: 60_000 });
+    const started = Date.now();
+    const raw = await rawTls(upgradeRequest());
+    expect(raw).toMatch(/^HTTP\/1.1 403 Forbidden/);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    await expect.poll(() => has("ingress.declined_upgrade_relay_failed")).toBe(true);
+  });
+
   it("forwards bytes sent with the upgrade in both directions and times out an idle upgraded socket", async () => {
     let fromClient = "";
     const vm = createHttpsServer(tls);

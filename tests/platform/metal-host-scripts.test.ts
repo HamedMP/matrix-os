@@ -201,6 +201,48 @@ describe("metal host scripts", () => {
     }
   });
 
+  it("installs lvm2 before provisioning touches storage", async () => {
+    const provision = await readFile(`${DIR}/provision-host.sh`, "utf8");
+    const packages = /for pkg in ([^;]+); do/.exec(provision)?.[1]?.split(/\s+/) ?? [];
+    expect(packages).toContain("lvm2");
+    expect(provision.indexOf("for pkg in")).toBeLessThan(provision.indexOf("pvcreate"));
+  });
+
+  it("holds a host-wide lock from before any golden build check or cleanup until the process exits", async () => {
+    const build = await readFile(`${DIR}/build-golden-disk.sh`, "utf8");
+    const lock = build.indexOf("flock --nonblock 9");
+    expect(lock).toBeGreaterThan(0);
+    expect(build).toMatch(/exec 9>"?\$LOCK_FILE"?/);
+    // Before the already-built check, the first cleanup, and the EXIT trap.
+    expect(lock).toBeLessThan(build.indexOf('if [ -n "$(lv_attr "$golden")" ]; then'));
+    expect(lock).toBeLessThan(build.indexOf("# A previous run that died mid-way"));
+    expect(lock).toBeLessThan(build.indexOf("trap cleanup EXIT"));
+  });
+
+  it("seals the golden read-only with its metadata before giving it the final name", async () => {
+    const build = await readFile(`${DIR}/build-golden-disk.sh`, "utf8");
+    const seal = build.slice(build.indexOf("# --- seal"));
+    const readOnly = seal.indexOf('lvchange --quiet --permission r "$VG/$building"');
+    const metadata = seal.indexOf('"$meta"');
+    const rename = seal.indexOf('lvrename "$VG" "$building" "$golden"');
+    expect(readOnly).toBeGreaterThan(0);
+    expect(metadata).toBeGreaterThan(readOnly);
+    expect(rename).toBeGreaterThan(metadata);
+    expect(seal.indexOf("succeeded=1")).toBeGreaterThan(rename);
+    // A finished golden needs its metadata; a failed run leaves none behind.
+    const done = build.slice(build.indexOf('if [ -n "$(lv_attr "$golden")" ]; then'), build.indexOf("stop_vm_units() {"));
+    expect(done).toContain('[ -f "$meta" ]');
+    const cleanup = build.slice(build.indexOf("cleanup() {"), build.indexOf("trap cleanup EXIT"));
+    expect(cleanup).toContain('rm -f -- "$meta"');
+  });
+
+  it("removes the golden build directory unless asked to keep a failed build", async () => {
+    const build = await readFile(`${DIR}/build-golden-disk.sh`, "utf8");
+    const cleanup = build.slice(build.indexOf("cleanup() {"), build.indexOf("trap cleanup EXIT"));
+    expect(cleanup).toContain('rm -rf -- "$work"');
+    expect(cleanup.indexOf("keep_on_failure")).toBeLessThan(cleanup.indexOf('rm -rf -- "$work"'));
+  });
+
   it("renders the unchanged golden builder cloud-init plus the S7 guest settings", async () => {
     const out = join(work, "builder.mime");
     await run("python3", [

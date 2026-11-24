@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { connect, createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createGuestAgent,
@@ -117,18 +117,57 @@ describe("guest agent transport", () => {
     sig.emit("SIGTERM");
   });
 
-  it("main --stdio serves one connection, and a failing system trim answers unavailable", async () => {
-    const stdin = new PassThrough();
-    const stdout = new PassThrough();
-    let out = "";
-    stdout.on("data", (c: Buffer) => (out += c.toString()));
-    const proc = { ...signals(), stdin, stdout } as AgentProcess;
-    const done = main(["--stdio"], proc);
-    // Unprivileged: /proc/sys/vm/drop_caches is not writable, so the trim fails closed.
-    stdin.end('{"op":"trim"}\n');
+  it("main --stdio serves one connection through the agent it is given, never the host's real trim", async () => {
+    const run = async (trim: () => Promise<void>) => {
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      let out = "";
+      stdout.on("data", (c: Buffer) => (out += c.toString()));
+      const proc = { ...signals(), stdin, stdout } as AgentProcess;
+      const done = main(["--stdio"], proc, () => fixture(trim));
+      stdin.end('{"op":"trim"}\n');
+      await done;
+      return JSON.parse(out.trim()) as unknown;
+    };
+    let trims = 0;
+    await expect(run(async () => void (trims += 1))).resolves.toEqual({ ok: true });
+    expect(trims).toBe(1);
+    await expect(run(() => Promise.reject(new Error("EACCES")))).resolves.toEqual({ error: "unavailable" });
+  });
+
+  it("drops a peer that reads none of its replies for the idle timeout", async () => {
+    const input = new PassThrough();
+    const output = new Writable({ highWaterMark: 64, write: () => undefined });
+    const done = serveConnection(fixture(), input, output, { idleMs: 30 });
+    input.write('{"op":"stats"}\n'.repeat(50));
     await done;
-    const expected = process.getuid?.() === 0 ? { ok: true } : { error: "unavailable" };
-    expect(JSON.parse(out.trim())).toEqual(expected);
+    expect(output.destroyed).toBe(true);
+  });
+
+  it("bounds unread replies: a peer that never reads stalls the agent instead of growing its output buffer", async () => {
+    const input = new PassThrough();
+    const held: Array<() => void> = [];
+    let written = 0;
+    const output = new Writable({
+      highWaterMark: 256,
+      write(chunk: Buffer, _encoding, callback) {
+        written += 1;
+        held.push(() => callback());
+      },
+    });
+    const done = serveConnection(fixture(), input, output);
+    input.write('{"op":"stats"}\n'.repeat(200));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(output.writableLength).toBeLessThanOrEqual(256 + 128);
+    // The peer reads: every reply is delivered, in order.
+    while (written < 200) {
+      held.shift()?.();
+      await new Promise((r) => setImmediate(r));
+    }
+    for (const release of held.splice(0)) release();
+    input.end();
+    await done;
+    expect(written).toBe(200);
   });
 
   it("main prints usage with exit code 2 for bad arguments, and runMain exits 1 on a startup failure", async () => {
