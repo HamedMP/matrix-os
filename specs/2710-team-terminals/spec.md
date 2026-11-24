@@ -171,6 +171,26 @@ name via the participant resolver). If implementation shows a platform change is
 required, it becomes its own layer and must merge and deploy to the platform
 before the live preview (see Preview plan).
 
+## Computers: VPS and owned machines
+
+Team computers can be hosted VPSes or platform-enrolled owned machines
+([2707 owned machines](https://github.com/HamedMP/matrix-os/pull/3560),
+ENG-524). Both go through the same platform API, and the Team section
+treats them the same way:
+
+- Discovery uses only `GET /api/collaboration/shared`, which returns
+  scope, owner and runtime IDs. It never uses handles, IPs or substrate fields.
+- Tickets and streams go through the platform relay. 2707 sends every
+  runtime call, including the collaboration relay, through
+  `substrates.resolveUpstream`, so an owned machine behind a tunnel is
+  reached exactly like a VPS.
+- The computer label is chosen by the owner at share time. It defaults to
+  the label the owner's client already shows for that computer, is
+  bounded to 64 characters, and is stored with the scope. The owner home
+  returns it on hydration, so no platform field is needed.
+- An offline owned machine shows as offline (`host_offline`) in the same way
+  as a stopped VPS.
+
 ## Security architecture
 
 ### Auth matrix
@@ -179,8 +199,9 @@ before the live preview (see Preview plan).
 | --- | --- | --- | --- |
 | `POST /api/collaboration/runtimes/:runtimeId/scopes/preflight` (`kind:"terminal"`) | Owner client | Owner runtime proof (existing `ownerRuntimeIdentity`) | Actor is owner of the runtime, is a current member of `organizationId`, and the tab is live (incarnation verified). Returns an HMAC confirmation token (60 s). |
 | `POST /api/collaboration/runtimes/:runtimeId/scopes` (`kind:"terminal"`) | Owner client | Owner runtime proof + confirmation token | Same as preflight, plus an exact token/incarnation match. Creates scope + binding + grants in one transaction; idempotent on `clientRequestId`. |
-| `PATCH` / `DELETE /api/collaboration/scopes/:scopeId/members/:actorId` (existing) | Owner client | Owner runtime proof | Owner only. Changes a role or revokes a member. Revision enforced in the `UPDATE`; increments `authority_generation`. |
-| `POST /api/collaboration/scopes/:scopeId/audience` (new; adds people or switches between org-wide and people) | Owner client | Owner runtime proof | Owner only. Uses `expectedRevision`; idempotent on `clientRequestId`. |
+| `POST` / `PATCH` / `DELETE /api/collaboration/scopes/:scopeId/grants[/:grantId]` (existing preset grants) | Owner client | Owner direct session on the scope | Owner only (`manage_members`). Audience is `organization` or one `member`; preset `viewer` or `contributor` (shown as Editor). Revision is enforced in the `UPDATE`; every mutation increments `auth_epoch`, and the commit hook re-authorizes the scope's live sockets. |
+| `POST /api/collaboration/scopes/:scopeId/grants/:grantId/accept` (existing) | Member client | Accept-only direct session for that exact grant | The addressee of a member grant, or any current org member for an organization grant. |
+| `PATCH /api/collaboration/scopes/:scopeId/terminal` `{contributorControl}` (existing) | Owner client | Owner direct session | Owner only. Sharing with an editor records the opt-in; removing the last editor withdraws it. |
 | `POST /api/collaboration/scopes/:scopeId/terminal/actions` `{type:"input_mode"}` (existing route, new action) | Owner client | Owner runtime proof | Owner only. |
 | `POST /api/collaboration/scopes/:scopeId/lifecycle` `{archive}` (existing; unshare) | Owner client | Owner runtime proof | Owner only. Increments the authority generation and closes every collaborator socket. |
 | `GET /api/collaboration/shared` | Member client | Clerk session at the platform (existing) | Platform: metadata for scopes whose directory entry targets the actor or the actor's current organization. Grants nothing on the home. |
@@ -268,7 +289,7 @@ whatever the shell user can read; rule 2 discloses this.
 | Owner revokes a person or unshares | Transaction commits the role/lifecycle change and increments `authority_generation`. After commit, `notifyScopeRevoked(scopeId, actorId?)` sends `revoked` and closes the sockets (1008). | Socket closed ≤ 1 s after commit. Later input is rejected immediately through `revalidate()`. The 5 s watchdog is a backstop. |
 | Editor → viewer | The authority generation increments. Sockets stay open and the actor gets `terminal.role`. | Next input frame rejected; UI goes read-only on receipt. |
 | Owner takes control | The lease is held by the owner, and the input mode changes to `owner`. | Next editor frame rejected `input_paused`. |
-| Removed from organization | The membership assertion expires (platform-set TTL; the plan records the exact value). `revalidate()` refuses expired assertions and re-checks; the watchdog closes sockets whose evidence lapsed. | ≤ assertion TTL + 5 s. Target ≤ 30 s, verified in tests. |
+| Removed from organization | The membership assertion expires (platform-set TTL; the plan records the exact value). `revalidate()` refuses expired assertions and re-checks; the watchdog closes sockets whose evidence lapsed. | Organization evidence lasts 20 s (`COLLABORATION_DIRECT_LIMITS.organizationEvidenceTtlSeconds`), plus the 5 s watchdog: ≤ 25 s. |
 | Tab exits or is closed | Exit is published, sockets close with 1000, scope → archived, binding removed. | Immediate. |
 | Owner gateway restart | All collaborator sockets drop; clients reconnect with fresh tickets; mode resets to `shared`. | Reconnect after backoff. |
 | Silent network partition | The existing registry sweep evicts connections with no heartbeat for `STALE_AFTER_MS` (30 s), and the presence entry goes with it. | Sweep interval. |
@@ -395,6 +416,7 @@ connection store (2706 rule).
 | 3 | Gateway presence and attribution | new `terminal-presence.ts`, `terminal-events.ts`, terminal events publisher | Presence/attribution frames, owner feed, caps, shutdown drain |
 | 4 | Desktop owner | `desktop/.../terminal-window/` (new `share/` folder), main-process IPC | Share dialog, shared badge, presence strip, take control, audience management |
 | 5 | Desktop member + docs | `desktop/.../terminal-window/` (new `team/` folder), `packages/ui` decorations helper, `docs/` | Team section, shared pane, read-only UX, gutter marks; user docs |
+| 6 | Share a whole computer | gateway computer scope + desktop | Members see every tab on the computer and editors can open tabs; same roles, revocation and caps |
 
 Every layer stays under 3000 additions and 50 files.
 `TerminalWindowSidebar.tsx` (317 LOC) and `use-terminal-window.ts` (450 LOC)
@@ -408,10 +430,11 @@ get new code only through extracted modules, so they stay under 500 lines.
 - **Full-shell blast radius:** an editor can read the owner's credentials. The
   recommended targets are team VMs. A sandboxed terminal profile (121 S07) is a
   possible later hardening and is not in this stack.
-- **Share a whole computer** (members see every tab and can create tabs) is
-  deferred to a follow-up. In this stack, computers appear under Team only as
-  groupings of terminals that were shared one by one.
-- **Web Desktop/Web Canvas N/A** needs reviewer approval. Follow-up: put the
+- **Share a whole computer** (members see every tab and editors can open
+  tabs) is layer 6, approved 2026-11-24. Layers 2–5 group individually
+  shared terminals under their computer; layer 6 adds the computer scope.
+- **Web Desktop/Web Canvas N/A** was approved by Hamed on 2026-11-24 with the
+  rationale under Surfaces. Follow-up: put the
   shared sidebar from `packages/ui` in the web Terminal app.
 
 ## Out of scope
