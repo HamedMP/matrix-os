@@ -124,7 +124,11 @@ npx --yes @finnaai/matrix --version
 pnpm dlx @finnaai/matrix --version
 brew update && brew info finnaai/tap/matrix
 MATRIX_VERSION=0.3.23 sh scripts/install.sh
-npm install -g @finnaai/matrix@0.3.23 --prefix "$(mktemp -d)"   # must finish and leave a working bin/matrix
+# The npm global install, checked through its own binary rather than `matrix` on PATH
+NPM_PREFIX="$(mktemp -d)"
+npm install -g @finnaai/matrix@0.3.23 --prefix "$NPM_PREFIX"
+test "$("$NPM_PREFIX/bin/matrix" --version)" = "0.3.23"
+rm -rf "$NPM_PREFIX"
 matrix --version
 matrix update --help
 matrix update --check --json
