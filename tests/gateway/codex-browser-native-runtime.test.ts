@@ -11,7 +11,7 @@ import { codexProviderEventPath } from "../../packages/gateway/src/coding-agents
 async function waitFor(check:()=>Promise<boolean>){const end=Date.now()+6000;while(Date.now()<end){if(await check())return;await new Promise(r=>setTimeout(r,20));}throw new Error("Fixture wait expired");}
 async function stop(child:ChildProcess){if(child.exitCode!==null||child.signalCode!==null)return;const closed=new Promise<void>(r=>child.once("close",()=>r()));child.kill("SIGTERM");await closed;}
 async function readNativeTrace(path:string){let text:string;try{text=await readFile(path,'utf8');}catch(error:unknown){if(error&&typeof error==='object'&&'code' in error&&error.code==='ENOENT')return[];throw error;}const records=text.trim();return records?records.split('\n').map(x=>JSON.parse(x)):[];}
-async function renewalAbortRig(phase:"close"|"start"){
+async function renewalAbortRig(phase:"close"|"start"|"in_place"){
  const home=await mkdtemp('/tmp/mx-browser-renewal-abort-'),fake=join(home,'native.mjs'),trace=join(home,'trace.jsonl');
  await writeFile(fake,String.raw`import {createInterface} from 'node:readline';
 import {appendFile,readFile} from 'node:fs/promises';
@@ -28,8 +28,11 @@ for await(const line of createInterface({input:process.stdin})){
   await log({event:'resume_wait',generation});
   if(process.env.SYNTHETIC_PHASE==='start')setTimeout(()=>reply(m.id,{thread:{id:'native-renewal-thread'}}),1000);
   else reply(m.id,{thread:{id:'native-renewal-thread'}});
- }else if(m.method==='mcpServerStatus/list')reply(m.id,{data:[{name:'matrix_shared_browser',runtimeStatus:'connected',tools:{shared_browser:{}}}]});
- else if(m.method==='turn/start'){
+ }else if(m.method==='mcpServerStatus/list'){
+  const prior=(await readFile(trace,'utf8')).match(/"event":"turn"/g)?.length??0;
+  const ready=()=>reply(m.id,{data:[{name:'matrix_shared_browser',runtimeStatus:'connected',tools:{shared_browser:{}}}]});
+  if(process.env.SYNTHETIC_PHASE==='in_place'&&prior>0){await log({event:'mcp_wait',generation});setTimeout(ready,1000);}else ready();
+ }else if(m.method==='turn/start'){
   await log({event:'turn',generation});reply(m.id,{turn:{id:'native-turn-'+generation}});
   process.stdout.write(JSON.stringify({method:'turn/completed',params:{turn:{id:'native-turn-'+generation,status:'completed',items:[]}}})+'\n');
  }
@@ -94,7 +97,9 @@ for await(const line of createInterface({input:process.stdin})){
   const control=createCodexControlClient({homePath:home});
   if(mode==='restricted'){
    await waitFor(async()=> (await readTrace()).some(x=>x.event==='turn'));
-   const rows=await readTrace();expect(rows[1].params.config['mcp_servers.matrix_shared_browser']).toEqual({command:'/opt/matrix/runtime/node/bin/node',args:['/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js'],enabled:false});expect(calls).toEqual([]);return;
+   const rows=await readTrace();
+   expect(rows[1].params.developerInstructions).not.toContain("mcp__matrix_shared_browser__shared_browser");
+   expect(rows[1].params.config['mcp_servers.matrix_shared_browser']).toEqual({command:'/opt/matrix/runtime/node/bin/node',args:['/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js'],enabled:false});expect(calls).toEqual([]);return;
   }
   await new Promise(r=>setTimeout(r,100));expect(await readTrace()).toEqual([]);
   if(mode==='catalog_failed'){
@@ -106,26 +111,33 @@ for await(const line of createInterface({input:process.stdin})){
   expect(calls).toEqual(['Bearer '+'a'.repeat(43)]);
   await control.submitTurn({sessionId:'sess_browser_native',turnId:'turn_browser_second',prompt:'Next synthetic',modelOptions:[],browser:{attemptId:randomUUID(),token:'b'.repeat(43),gatewayPort:address.port}});
   await waitFor(async()=> (await readTrace()).filter(x=>x.event==='turn').length===2);
-  const rows=await readTrace();expect(rows.map(x=>x.event)).toEqual(['spawn','thread/start','turn','closed','spawn','thread/resume','turn']);
-  expect(rows[3].pid).toBe(rows[0].pid);expect(rows[4].pid).not.toBe(rows[0].pid);
-  expect(rows[5].params.threadId).toBe('native-browser-thread');expect(calls).toEqual(['Bearer '+'a'.repeat(43),'Bearer '+'b'.repeat(43)]);
+  // A same-gateway follow-up renews the per-run bearer in place: no app-server
+  // restart or thread/resume, Browser MCP re-verified with the new bearer.
+  const rows=await readTrace();expect(rows.map(x=>x.event)).toEqual(['spawn','thread/start','turn','turn']);
+  expect(rows[3].pid).toBe(rows[0].pid);expect(calls).toEqual(['Bearer '+'a'.repeat(43),'Bearer '+'b'.repeat(43)]);
+  const browserPointer = rows[1].params.developerInstructions.split("\n\n").at(-1) ?? "";
+  expect(Buffer.byteLength(browserPointer)).toBeLessThan(180);
+  expect(browserPointer).toContain("mcp__matrix_shared_browser__shared_browser");
+  expect(browserPointer).toContain("status");
   await control.submitTurn({sessionId:'sess_browser_native',turnId:'turn_browser_restricted',prompt:'Restricted synthetic',modelOptions:[]});
   await waitFor(async()=> (await readTrace()).filter(x=>x.event==='turn').length===3);
   const restrictedRows=await readTrace();expect(restrictedRows.at(-2).params.config['mcp_servers.matrix_shared_browser']).toEqual({command:'/opt/matrix/runtime/node/bin/node',args:['/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js'],enabled:false});expect(calls).toHaveLength(2);
   const persisted=JSON.stringify(restrictedRows)+await readFile(event,'utf8')+Buffer.from(config,'base64').toString();expect(persisted).not.toContain('a'.repeat(43));expect(persisted).not.toContain('b'.repeat(43));
-  expect(rows[1].params.config['mcp_servers.matrix_shared_browser'].env_vars).toEqual(['MATRIX_SHARED_BROWSER_TOKEN','MATRIX_SHARED_BROWSER_GATEWAY_PORT']);
+  expect(rows[1].params.config['mcp_servers.matrix_shared_browser'].env_vars).toEqual(['MATRIX_SHARED_BROWSER_TOKEN_FILE','MATRIX_SHARED_BROWSER_GATEWAY_PORT']);
  }catch(error){throw new Error('Synthetic native browser regression failed: '+String(error)+' '+diagnostics);}
  finally{await stop(child);await new Promise<void>(r=>gateway.close(()=>r()));await rm(home,{recursive:true,force:true});}
 },15000);
-it.each(["close", "start"] as const)("accepts public cancellation during native child %s renewal and never dispatches the admitted turn",async phase=>{
+it.each(["close", "start", "in_place"] as const)("accepts public cancellation during native child %s renewal and never dispatches the admitted turn",async phase=>{
  const rig=await renewalAbortRig(phase);const control=createCodexControlClient({homePath:rig.home,timeoutMs:3000});
- const lease=(attemptId:string)=>({attemptId,token:'a'.repeat(43),gatewayPort:18765});
+ // A different gateway port cannot be renewed in place, so close/start still exercise the restart path.
+ const lease=(attemptId:string,gatewayPort=18765)=>({attemptId,token:'a'.repeat(43),gatewayPort});
  try{
   await new Promise(resolve=>setTimeout(resolve,100));
   await control.prepareBrowser!({sessionId:'sess_renewal_abort',browser:lease(rig.attemptId),signal:AbortSignal.timeout(5000)});
   await waitFor(async()=> (await readNativeTrace(rig.trace)).some(row=>row.event==='turn'&&row.generation===1));
-  await control.submitTurn({sessionId:'sess_renewal_abort',turnId:'turn_renewal_second',prompt:'Must not run',modelOptions:[],browser:lease(randomUUID())});
-  await waitFor(async()=> (await readNativeTrace(rig.trace)).some(row=>row.event===(phase==='close'?'close_requested':'resume_wait')&&row.generation===(phase==='close'?1:2)));
+  await control.submitTurn({sessionId:'sess_renewal_abort',turnId:'turn_renewal_second',prompt:'Must not run',modelOptions:[],browser:lease(randomUUID(),phase==='in_place'?18765:18766)});
+  const waitEvent=phase==='close'?'close_requested':phase==='start'?'resume_wait':'mcp_wait';
+  await waitFor(async()=> (await readNativeTrace(rig.trace)).some(row=>row.event===waitEvent&&row.generation===(phase==='start'?2:1)));
   await control.interruptTurn({sessionId:'sess_renewal_abort',clientRequestId:`req_abort_${phase}`});
   await waitFor(async()=>rig.child.exitCode!==null||rig.child.signalCode!==null);
   expect((await readNativeTrace(rig.trace)).filter(row=>row.event==='turn')).toEqual([

@@ -199,6 +199,16 @@ describe("Electron OS window chrome", () => {
     expect(title.parentElement?.className).toContain("text-[15px]");
   });
 
+  it("leaves the inspector tab row unobstructed and puts Chat actions before it", () => {
+    render(<TopBar title="Design review" leftPaneWidth={240} rightPaneWidth={400}
+      actionsBeforeRightPane rightActions={<button>Hide inspector</button>}
+      showWindowControls={false} onDragStart={vi.fn()} />);
+    const grid=screen.getByTestId("os-window-chrome-grid");
+    expect((grid as HTMLElement).style.gridTemplateColumns).toBe("240px minmax(0, 1fr) 400px");
+    expect(grid.lastElementChild?.contains(screen.getByRole("button",{name:"Hide inspector"}))).toBe(false);
+    expect((screen.getByTestId("desktop-window-drag-handle") as HTMLElement).style.right).toBe("400px");
+  });
+
   it("keeps the inspector toggle anchored while the inspector opens and closes", () => {
     const { rerender } = render(
       <TopBar

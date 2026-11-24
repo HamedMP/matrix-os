@@ -74,6 +74,7 @@ describe("provider-neutral conversation transcript", () => {
 
     const code = container.querySelector("pre code") as HTMLElement;
     expect(code.textContent).toBe(longLine);
+    expect(container.querySelector('[data-slot="message-scroller-content"]')?.className).toContain("justify-end");
     const codeBlock = code.closest("pre")?.parentElement as HTMLElement;
     const assistantBubbleContent = code.closest('[data-slot="bubble-content"]') as HTMLElement;
     expect(assistantBubbleContent.className).toContain("w-full");

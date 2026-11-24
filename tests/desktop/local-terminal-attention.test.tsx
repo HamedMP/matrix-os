@@ -56,12 +56,19 @@ it("observes core completion while hidden before focus returns", async () => {
   const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   const focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
   const previous = window.operator;
-  window.operator = { invoke: vi.fn(async () => ({ status: "ready", terminals: [{ id: "t7", title: "agent-a", status }] })), on: () => () => undefined };
+  // Spec 2706: the trusted core pushes herdr-core's events; nothing is polled.
+  const listeners: Array<(payload: unknown) => void> = [];
+  const fact = () => ({ id: "t7", title: "agent-a", status, statusAt: 1, turn: 0, seenTurn: null, finished: false });
+  window.operator = {
+    invoke: vi.fn(async () => ({ status: "ready", terminals: [fact()] })),
+    on: (channel: string, callback: (payload: unknown) => void) => { if (channel === "local-terminal:facts") listeners.push(callback); return () => undefined; },
+  };
   try {
     render(<LocalAttentionFromCore />);
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     visibility.mockReturnValue("hidden"); focus.mockReturnValue(false); status = "done";
-    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    act(() => { for (const listener of listeners) listener({ terminals: [fact()] }); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     // sonner renders the toast on the next macrotask.
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(screen.getByTestId("terminal-attention").textContent).toContain("agent-a finished");

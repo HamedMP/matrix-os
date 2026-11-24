@@ -209,8 +209,8 @@ describe("Codex provider contract checker", () => {
     })).toThrow("Codex 0.160.2 is not verified");
   });
 
-  it("retains reviewed Codex schemas through 0.171.0", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.171.0");
+  it("retains reviewed Codex schemas through 0.172.0", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.172.0");
     expect(contract.verifiedVersions["0.162.1"]).toEqual(contract.verifiedVersions["0.162.0"]);
     expect(appServerContract.verifiedVersions["0.162.1"]).toEqual(appServerContract.verifiedVersions["0.162.0"]);
     expect(contract.verifiedVersions["0.156.0"]).toEqual({
@@ -240,7 +240,7 @@ describe("Codex provider contract checker", () => {
     expect(contract.verifiedVersions["0.160.1"]).toEqual(contract.verifiedVersions["0.160.0"]);
     expect(appServerContract.verifiedVersions["0.160.1"]).toEqual(appServerContract.verifiedVersions["0.160.0"]);
     expect(contract.verifiedVersions["0.166.0"]).toEqual(contract.verifiedVersions["0.165.0"]);
-    expect(appServerContract.latestVerifiedVersion).toBe("0.171.0");
+    expect(appServerContract.latestVerifiedVersion).toBe("0.172.0");
     expect(contract.verifiedVersions["0.167.1"]).toEqual(contract.verifiedVersions["0.167.0"]);
     expect(appServerContract.verifiedVersions["0.167.1"]).toEqual(appServerContract.verifiedVersions["0.167.0"]);
     expect(contract.verifiedVersions["0.167.2"]).toEqual(contract.verifiedVersions["0.167.1"]);
@@ -289,7 +289,7 @@ describe("Codex provider contract checker", () => {
       "mcpServer/elicitation/request": "62f54dddd212962a5658c2ffe6009edcbead3a9c6890fd8f2b313a6b155ef2d8",
       "item/started": "1cf755b3b0248c131b3cce5356815d36693f883465cc466732e37545c7176f6d",
       "item/completed": "eb0ef6d56c7b04e2bc7965790427397d7968475fb05dcc5cbd623028f6ab845e",
-      "turn/completed": "b6bd55f1da742df68c275dd2e016f76152bd705b223ef4fc5652446b3be6b3df",
+      "turn/completed": "89bf8943994c4d1313dc0e6d17d4f4c47056257d136d1c3e6ca8bbbc97268276",
     });
   });
 

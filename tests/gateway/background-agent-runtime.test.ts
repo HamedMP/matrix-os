@@ -41,6 +41,15 @@ async function harness(options: { delayHandshake?: boolean } = {}) {
 }
 
 describe("background agent runtime", () => {
+  it("sweeps dead runners' Browser bearer directories at startup and keeps the timer bounded", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-background-sweep-"));
+    homes.push(homePath);
+    const sweepBrowserTokens = vi.fn(async () => 0);
+    const runtime = createBackgroundAgentRuntime({ homePath, runCommand: vi.fn(async () => ({ stdout: "", stderr: "" })), withLock, sweepBrowserTokens });
+    runtimes.push(runtime);
+    await vi.waitFor(() => expect(sweepBrowserTokens).toHaveBeenCalledTimes(1));
+  });
+
   it("supervises a private launch independently of terminal tabs", async () => {
     const h = await harness();
     const ref = await h.runtime.start({ sessionId: "sess_test", launch: h.launch });

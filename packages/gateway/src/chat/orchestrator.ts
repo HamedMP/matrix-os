@@ -563,7 +563,7 @@ export class CanonicalChatOrchestrator {
     }
   }
 
-  private async dispatch(
+  private dispatch(
     owner: ChatOwner,
     message: CanonicalChatMessage,
     run: CanonicalChatRun,
@@ -576,6 +576,25 @@ export class CanonicalChatOrchestrator {
     nativeScheduled?: NativeScheduledPhaseIdentity,
   ): Promise<void> {
     const sendTiming = chatSendTimingsEnabled() ? createChatDispatchTimer(run.id, run.driverKind) : undefined;
+    const go = () => this.dispatchRun(owner, message, run, adapter, controller, resolvedRoot, resumeState,
+      promptOverride, sharedScopeId, nativeScheduled, sendTiming);
+    // Sub-stages recorded deep in the launch path join this run via the timing context.
+    return sendTiming ? sendTiming.run(go) : go();
+  }
+
+  private async dispatchRun(
+    owner: ChatOwner,
+    message: CanonicalChatMessage,
+    run: CanonicalChatRun,
+    adapter: CanonicalChatProviderAdapter,
+    controller: AbortController,
+    resolvedRoot?: ResolvedChatExecutionRoot,
+    resumeState?: unknown,
+    promptOverride?: string,
+    sharedScopeId?: string,
+    nativeScheduled?: NativeScheduledPhaseIdentity,
+    sendTiming?: ReturnType<typeof createChatDispatchTimer>,
+  ): Promise<void> {
     const startedAt = (this.options.now ?? (() => new Date()))().toISOString();
     let cleanupUnconfirmed = false;
     let lastKnownState: unknown;

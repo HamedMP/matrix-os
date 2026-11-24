@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
-import { createChatSendTimer, recordCodexCatalogTiming, recordCodexRunnerLink } from "../../packages/gateway/src/chat/send-timing.js";
+import { captureChatSendStage, outsideChatSendTiming, createChatSendTimer, recordChatSendStage, recordCodexCatalogTiming, recordCodexRunnerLink, startChatSendStage, timeChatSendStage } from "../../packages/gateway/src/chat/send-timing.js";
 import { codexCatalogFixture, codexProvider } from "../helpers/codex-model-catalog-fixture.js";
 import { createCodexSendTiming } from "../../packages/gateway/src/coding-agents/codex-send-timing.mjs";
 
@@ -61,6 +61,7 @@ describe("Chat send timings", () => {
 
   async function send(clientRequestId: string) {
     const provider = adapter(async function* () {
+      await timeChatSendStage("session_start", async () => undefined);
       yield { type: "assistant.delta", delta: "private assistant reply" };
       yield { type: "run.completed", outcome: "completed" };
     });
@@ -105,6 +106,7 @@ describe("Chat send timings", () => {
       const dispatch = events.filter((event) => !event.traceId).map((event) => [event.runId, event.stage]);
       expect(dispatch).toEqual([
         [admitted.run.id, "dispatch_prepare"],
+        [admitted.run.id, "session_start"],
         [admitted.run.id, "first_provider_event"],
         [admitted.run.id, "first_displayable_text"],
       ]);
@@ -152,5 +154,39 @@ describe("Chat send timings", () => {
       recordCodexCatalogTiming("lookup", 5);
       expect(capture.lines).toEqual([]);
     } finally { capture.restore(); }
+  });
+
+  it("attributes launch and identity sub-stages to the active send or dispatch only", async () => {
+    const capture = captureTimings();
+    try {
+      await timeChatSendStage("codex_identity_observe", async () => undefined);
+      vi.stubEnv("MATRIX_CODEX_SEND_TIMINGS", "1");
+      await timeChatSendStage("codex_identity_observe", async () => undefined);
+      expect(startChatSendStage()).toBeUndefined();
+      expect(captureChatSendStage()).toBeUndefined();
+      expect(capture.lines).toEqual([]);
+      const timer = createChatSendTimer("req_private_substage");
+      let later: ReturnType<typeof captureChatSendStage>;
+      await timer.run(async () => {
+        await timeChatSendStage("catalog_settings_snapshot", async () => undefined);
+        recordChatSendStage("claude_identity", startChatSendStage());
+        later = captureChatSendStage();
+      });
+      later!("provider_event_file_first_line", 0);
+      const events = capture.events();
+      expect(events.map((event) => event.stage)).toEqual(["catalog_settings_snapshot", "claude_identity", "provider_event_file_first_line"]);
+      expect(new Set(events.map((event) => event.traceId)).size).toBe(1);
+      expect(capture.lines.join(" ")).not.toMatch(/req_private_substage/);
+    } finally { capture.restore(); }
+  });
+
+  it("runs long-lived callbacks outside the active send so they never inherit its trace", async () => {
+    vi.stubEnv("MATRIX_CODEX_SEND_TIMINGS", "1");
+    const timer = createChatSendTimer("req_private_outside");
+    await timer.run(async () => {
+      expect(startChatSendStage()).toBeDefined();
+      expect(outsideChatSendTiming(() => startChatSendStage())).toBeUndefined();
+      expect(outsideChatSendTiming(() => captureChatSendStage())).toBeUndefined();
+    });
   });
 });

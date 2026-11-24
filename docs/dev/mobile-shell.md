@@ -440,6 +440,87 @@ Point the app at a stand-in for `/api/account/*` (for example the platform route
 module mounted on an in-memory service) or use a disposable identity, as the
 rollout doc requires.
 
+## Native beta releases
+
+Two manual GitHub Actions workflows build and submit reviewed `main`:
+
+| Workflow | Build profile | Submit profile | Destination |
+| --- | --- | --- | --- |
+| `mobile-ios-testflight.yml` (Mobile iOS TestFlight) | `production` | `testflight` | App Store Connect / TestFlight |
+| `mobile-android-internal.yml` (Mobile Android Internal Testing) | `production` | `play-internal` | Google Play internal testing, completed release |
+
+Open **Actions**, select the workflow, choose **Run workflow**, and select
+`main`. Other branches are refused. Merges, tags and PRs never trigger these
+workflows. Each platform has its own concurrency group; a new request does not
+cancel a running release. GitHub may replace an older pending run with a newer
+request, so do not use repeated dispatches as a release queue.
+
+Both GitHub jobs run on Ubuntu. EAS runs the native iOS compilation on its
+macOS workers and Android compilation on Linux; a GitHub macOS runner is needed
+only if we switch to local iOS compilation (`eas build --local` or Xcode).
+These workflows use EAS build resources under the project's existing plan.
+
+### One-time owner setup
+
+1. Create GitHub environments `mobile-ios-testflight` and
+   `mobile-android-internal`. Restrict deployments to `main`, configure required
+   reviewers as appropriate, and add `EXPO_TOKEN` to each environment for an Expo
+   account/robot with access to the existing `finnaai/matrix-os-mobile` project.
+   This is separate from the OTA workflow environments.
+2. Keep app build variables in EAS's **production** environment, including
+   `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, the production PostHog configuration,
+   and Android's `GOOGLE_SERVICES_JSON` file variable. CI does not copy secret
+   files into the repository or build upload.
+3. Complete signing and submission setup privately using
+   `pnpm dlx eas-cli@24.8.0 credentials --platform ios` and the Android equivalent
+   from `apps/mobile`. Reuse the existing signing keys. iOS requires an existing
+   distribution certificate/provisioning profile and an EAS-managed App Store
+   Connect API key for the app/team configured in `eas.json`; Apple ID/password
+   prompts cannot run in CI. Android requires an existing upload keystore and
+   an EAS-managed Google service-account key permitted to release this app to
+   testing tracks. The app must exist in each store console.
+4. Ensure each platform can build with the `production` profile in
+   noninteractive mode. The workflow uses `--freeze-credentials`, so missing or
+   expired signing credentials require owner repair through the official EAS
+   credential flow. Keep keys, certificates and service-account JSON in EAS or
+   approved secret storage, outside source control and upload archives.
+
+The production build profile keeps remote version auto-increment and the
+production OTA channel. A beta submission does not publish an OTA update or
+change the public store release. TestFlight builds still require Apple
+processing, compliance and appropriate tester-group assignment. Google Play's
+`completed` status applies only to the internal track; check console processing
+and tester availability after submission.
+
+### Results and recovery
+
+Mobile Jest checks run before a credentialed build. The shared
+`scripts/ci/mobile-store-release.sh` waits for the build and verifies the
+returned project, platform, successful status and source commit before passing
+its exact ID to `eas submit --wait`. The job summary links the commit, build and
+submission dashboard. A successful workflow proves EAS submission completion;
+verify installation from TestFlight / Play internal testing separately.
+
+Raw EAS JSON/logs remain in a private temporary directory and are removed on
+exit; signed artifact URLs and credential details are never published as
+workflow artifacts. Use the EAS dashboard for worker diagnostics. A failed
+build never reaches submission. If submission alone fails, repair the account
+or configuration and reuse the recorded build from `apps/mobile`:
+
+```sh
+pnpm dlx eas-cli@24.8.0 submit --platform ios --profile testflight --id <verified-build-id> --wait --non-interactive
+pnpm dlx eas-cli@24.8.0 submit --platform android --profile play-internal --id <verified-build-id> --wait --non-interactive
+```
+
+Re-running a workflow creates a new build and increments its build number.
+Cancelling/timing out the GitHub job may leave a remote EAS build/submission
+running; check EAS before retrying. Rotate/revoke Expo tokens through the Expo
+account and update both GitHub environment secrets. Store-key rotation and
+revocation belong to the account owner through Apple/Google and EAS credential
+management; preserve working signing keys and testing-only access. Public
+App Store review and Google Play production promotion remain separate human
+release decisions.
+
 ## Over-the-Air Updates (EAS Update)
 
 OTA landed in v0.2.1. Builds published before it shipped without `expo-updates`

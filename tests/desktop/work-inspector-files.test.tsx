@@ -153,7 +153,8 @@ describe("Work Files inspector composition", () => {
     expect(await screen.findByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Files" })).toBeTruthy();
     expect(await screen.findByTestId("files-listing")).toBeTruthy();
-    expect(screen.queryByText("Matrix Home")).toBeNull();
+    expect(screen.getByText("Matrix Home")).toBeTruthy();
+    await waitFor(() => expect(useConnection.getState().api!.get).toHaveBeenCalledWith("/api/files/list?path="));
   });
 
   it("forwards the selected Project Chat detail and worktree through the actual Work composition", async () => {

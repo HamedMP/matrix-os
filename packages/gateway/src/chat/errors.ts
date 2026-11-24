@@ -19,6 +19,13 @@ export class ChatBusyError extends Error {
   }
 }
 
+export class ChatBulkArchiveLimitError extends Error {
+  constructor() {
+    super("Project archive exceeds the bounded Undo response");
+    this.name = "ChatBulkArchiveLimitError";
+  }
+}
+
 export class ChatProviderInstanceLockedError extends Error {
   constructor(readonly chatId: string) {
     super("Provider Instance is locked");
