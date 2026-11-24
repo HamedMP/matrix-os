@@ -396,6 +396,54 @@ it("shows project Chats five at a time, with start times and the open Chat alway
   expect(within(projectsNav).queryByRole("button", { name: "Show more France chats" })).toBeNull();
 });
 
+it.each([false, true])("shows pinned and recent Chat start dates in the Web rail (mobile=%s)", async (mobile) => {
+  const pinned = projectConversation(2, "");
+  pinned.canonicalRecord!.chat.userState = { readThroughSeq: 0, pinned: true, muted: false };
+  const recent = projectConversation(3, "");
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [], items: [], nextCursor: null })));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
+    mobile={mobile} conversations={[pinned, recent]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="user_owner/runtime/dates" /></OrganizationStateProvider>);
+  for (const [title, age, startedAt] of [["Chat 2", "2h", pinned.canonicalRecord!.chat.createdAt],
+    ["Chat 3", "3h", recent.canonicalRecord!.chat.createdAt]]) {
+    const date = within(screen.getByRole("button", { name: title })).getByText(age);
+    expect(date.tagName).toBe("TIME");
+    expect(date.getAttribute("datetime")).toBe(startedAt);
+  }
+});
+
+it("keeps visible Chat dates current after another window takes focus", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  vi.setSystemTime("2026-11-24T12:00:00Z");
+  try {
+    const pinned = projectConversation(2, "");
+    pinned.canonicalRecord!.chat.userState = { readThroughSeq: 0, pinned: true, muted: false };
+    const recent = projectConversation(3, "");
+    vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ projects: [], items: [], nextCursor: null })));
+    const app = (active: boolean, visible: boolean) => <OrganizationStateProvider value={{ status: "none", organizationId: null }}>
+      <ChatApp messages={[]} busy={false} connected active={active} visible={visible} conversations={[pinned, recent]}
+        onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} authorityKey="user_owner/runtime/unfocused-dates" />
+    </OrganizationStateProvider>;
+    const view = render(app(true, true));
+    const age = (title: string) => screen.getByRole("button", { name: title }).querySelector("time")?.textContent;
+    expect(age("Chat 2")).toBe("2h");
+    await act(async () => view.rerender(app(false, true)));
+    act(() => vi.advanceTimersByTime(60 * 60_000));
+    expect(age("Chat 2")).toBe("3h");
+    expect(age("Chat 3")).toBe("4h");
+    view.rerender(app(false, false));
+    act(() => vi.advanceTimersByTime(60 * 60_000));
+    expect(age("Chat 2")).toBe("3h");
+    view.rerender(app(false, true));
+    expect(age("Chat 2")).toBe("4h");
+  } finally {
+    cleanup();
+    vi.useRealTimers();
+  }
+});
+
 it("matches project Chats by project slug as well as id", async () => {
   renderChatApp([projectConversation(1, "france")]);
   const projectsNav = await screen.findByRole("navigation", { name: "Projects" });

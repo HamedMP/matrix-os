@@ -158,6 +158,20 @@ afterEach(() => {
 });
 
 describe("WorkRail", () => {
+  it("shows start dates for pinned and recent Chats as well as project Chats", async () => {
+    setup();
+    await screen.findByRole("button", { name: "Pinned global" });
+    for (const [title, startedAt] of [
+      ["Pinned global", pinned.chat.createdAt], ["Recent global", recent.chat.createdAt],
+    ]) {
+      const date = screen.getByRole("button", { name: title }).querySelector("time");
+      expect(date, `${title} has a visible start date`).not.toBeNull();
+      expect(date?.getAttribute("datetime")).toBe(startedAt);
+      expect(date?.textContent).not.toBe("");
+      expect(date?.getAttribute("title")).toMatch(/^Started /);
+    }
+  });
+
   it.each(["missing", "unavailable"])("keeps all older-Gateway fallback chats reachable with independent paging when navigation pages are %s", async availability => {
     const done = Array.from({ length: 37 }, (_, index) => record(`chat_legacy_done_${index}`, `Legacy done ${index}`, { updatedAt: "2026-08-28T10:00:00.000Z" }));
     const working = Array.from({ length: 13 }, (_, index) => record(`chat_legacy_working_${index}`, `Legacy working ${index}`, { updatedAt: "2026-08-28T10:00:00.000Z", activeRunStatus: "running" }));
