@@ -4,10 +4,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./ch-client": "./src/ch-client.ts"
+    "./ch-client": "./src/ch-client.ts",
+    "./guest-client": "./src/guest-client.ts",
+    "./memory-controller": "./src/memory-controller.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:guest-agent": "esbuild src/guest-agent/agent.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/guest-agent/agent.mjs"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.15",
