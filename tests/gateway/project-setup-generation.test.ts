@@ -103,6 +103,24 @@ it("clears a previously generated Skill when the owner corrects the proposal", (
   expect(revised.proposals).toEqual([]);
 });
 
+it("supplies complete pending file drafts and the latest correction to the interview", () => {
+  const context = { project: { name: "Portfolio" }, skills: [], instructionFiles: [], mcpServices: [] };
+  const draft = beginProjectSetupInterview(initialProjectSetup("chat_archive", "archive", "Illustrations", "msg_setup"));
+  const guidance = "# Project guidance\n" + "Preserve the release notes and shipped defaults.\n".repeat(35) + "Ask before publishing.\n";
+  const skill = "---\nname: release-check\ndescription: Review a release\n---\n" + "Check the diff and summarize test results.\n".repeat(35) + "Keep dated review notes.\n";
+  draft.proposals = [
+    { path: "AGENTS.md", content: guidance, status: "pending" },
+    { path: ".agents/skills/release-check/SKILL.md", content: skill, status: "pending" },
+  ];
+  const correction = { role: "user" as const, text: "Only change release recipients to the design team." };
+  const data = JSON.parse(projectSetupInterviewPrompt(draft, context, [correction]).split("\n").at(-1)!);
+  expect(data.reviewedDraft).toEqual(draft.proposals.map(({ path, content }) => ({ path, content })));
+  expect(data.transcript).toEqual([correction]);
+
+  draft.proposals[0]!.content = "a".repeat(58 * 1024);
+  expect(() => projectSetupInterviewPrompt(draft, context, [correction])).toThrow();
+});
+
 it("asks for a short actionable reply and accepts complete legacy answers and details", () => {
   const context = { project: { name: "Illustration archive" }, skills: [], instructionFiles: [], mcpServices: [] };
   const draft = beginProjectSetupInterview(initialProjectSetup("chat_archive", "archive", "Illustrations", "msg_setup"));
@@ -317,12 +335,12 @@ describe("admitted project setup generation", () => {
       initialProjectSetup("chat_setup", "project_a", "Portfolio", "msg_question"), selection, "req_generate", executionRootFingerprint);
     expect(generation.status).toBe("unavailable"); expect(admitTurn).not.toHaveBeenCalled();
   });
-  it("keeps interview wire text out of Chat preview, search and streamed message chunks", async () => {
+  it("keeps interview wire text out of Chat preview, search, unread state and streamed message chunks", async () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const chatId = snapshot.chat.id;
     await repository.create(owner, { id: chatId, title: "Release notes", clientRequestId: "req_setup_preview_test" });
     const ownerText = "Use the changelog for each release.";
-    await repository.kysely.transaction().execute(trx =>
+    const ownerMessageId = await repository.kysely.transaction().execute(trx =>
       appendProjectSetupTranscript(trx, owner, chatId, [{ role: "user", text: ownerText }], async () => undefined));
     const sourceRun = snapshot.runs[0]!;
     const run = { ...sourceRun, historyBoundarySeq: 1,
@@ -346,7 +364,13 @@ describe("admitted project setup generation", () => {
     await repository.finishRun(owner, {
       chatId, runId: run.id, outcome: "completed", completedAt: run.createdAt,
     });
-    expect.soft((await repository.get(owner, chatId))?.chat.lastMessagePreview).toBe(ownerText);
+    const completed = await repository.get(owner, chatId);
+    expect.soft(completed?.chat.lastMessagePreview).toBe(ownerText);
+    const internal = await repository.kysely.selectFrom("chat_messages").select("state")
+      .where("id", "=", "msg_interview_raw").executeTakeFirstOrThrow();
+    expect.soft(internal.state).toBe("committed");
+    expect.soft(completed?.readState).toMatchObject({ unread: false, latestIncomingSeq: 0 });
+    expect.soft((await repository.list(owner, { limit: 1, unreadOnly: true })).items).toEqual([]);
     await expect.soft(repository.getLatestAdapterStateForChat(owner, { chatId, driverKind: run.driverKind,
       instanceId: run.instanceId, schemaVersion: 1, executionRootFingerprint: run.executionRootFingerprint! })).resolves.toBeNull();
     await expect.soft(repository.search(owner, "internalsetupinstruction")).resolves.toEqual([]);
@@ -357,6 +381,14 @@ describe("admitted project setup generation", () => {
     expect.soft(detail?.nextBeforeSeq).toBeUndefined();
     const events = await repository.kysely.selectFrom("chat_outbox").select("payload").execute();
     expect(JSON.stringify(events)).not.toMatch(/internalsetup(?:instruction|payload)/);
+
+    await repository.kysely.transaction().execute(trx => appendProjectSetupTranscript(trx, owner, chatId, [
+      { role: "assistant", anchorMessageId: ownerMessageId, text: "Who reviews the changelog?" },
+    ], async () => undefined));
+    const incoming = (await repository.list(owner, { limit: 1, unreadOnly: true })).items[0];
+    expect(incoming?.readState).toMatchObject({ unread: true, latestIncomingSeq: 4 });
+    const read = await repository.updateReadState(owner, chatId, { type: "mark_read", throughSeq: 4, baseVersion: 0 });
+    expect(read.readState).toMatchObject({ unread: false, latestIncomingSeq: 4 });
   });
 });
 
