@@ -83,9 +83,11 @@ export interface WorkspaceZellijTarget {
 
 export interface WorkspaceZellijLifecycle {
   resolveWorkspaceTarget(logicalSessionName: string): Promise<WorkspaceZellijTarget>;
+  /** `deadline` (epoch ms) caps every command the start makes, killing it at that time. */
   ensureWorkspaceSession(
     logicalSessionName: string,
     size: { cols: number; rows: number },
+    options?: { deadline?: number },
   ): Promise<WorkspaceZellijTarget>;
   deleteWorkspaceSession(logicalSessionName: string): Promise<void>;
 }
@@ -184,7 +186,11 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       // before returning. Re-probing with `list-panes` scales with every pane
       // in a migrated workspace and can exceed this adapter's fixed timeout
       // even though the owned runtime is already ready.
-      await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size);
+      if (options.deadline === undefined) {
+        await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size);
+      } else {
+        await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size, { deadline: options.deadline });
+      }
       return;
     }
     const sessionName = logicalSessionName;

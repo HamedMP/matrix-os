@@ -17,7 +17,8 @@ export interface NativeTabCompletion {
   settlementToken: string; outcome: "never-dispatched" | "settled" | "uncertain";
 }
 export interface NativeTerminalHosts {
-  inspect(reference: TerminalNativeHostRef): Promise<{ status: "running" | "stopped" | "unknown" }>;
+  /** `deadline` (epoch ms) caps the supervisor query; past it, inspect fails instead of reporting "unknown". */
+  inspect(reference: TerminalNativeHostRef, options?: { deadline?: number }): Promise<{ status: "running" | "stopped" | "unknown" }>;
   stop(reference: TerminalNativeHostRef): Promise<{ status: "stopped" | "unknown" }>;
   attachCommand(reference: TerminalNativeHostRef): Promise<string[]>;
 }
@@ -26,7 +27,7 @@ export function createNativeTerminalHosts(options: { homePath: string; runtimeRo
   const home = resolve(options.homePath), runtimeRoot = resolve(options.runtimeRoot ?? "/opt/matrix/terminal-runtime"), uid = process.getuid?.();
   if (uid === undefined) throw new Error("Terminal host unavailable");
   const namespace = resolve(options.namespaceRoot ?? `/run/user/${uid}`), exec = promisify(execFile);
-  const run: TerminalManagerCommand = options.runCommand ?? ((command, args) => exec(command, args, { timeout: 15000, maxBuffer: 512 * 1024, encoding: "utf8",
+  const run: TerminalManagerCommand = options.runCommand ?? ((command, args, runOptions) => exec(command, args, { timeout: runOptions?.timeoutMs ?? 15000, maxBuffer: 512 * 1024, encoding: "utf8",
     env: { PATH: process.env.PATH, HOME: home, XDG_RUNTIME_DIR: `/run/user/${uid}`, DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${uid}/bus` } }));
   async function descriptor(input: TerminalNativeHostRef) {
     const reference = TerminalNativeHostRefSchema.parse({ path: input.path, generation: input.generation }), directory = dirname(reference.path);
@@ -37,9 +38,17 @@ export function createNativeTerminalHosts(options: { homePath: string; runtimeRo
     return descriptor;
   }
   return {
-    async inspect(reference) {
-      try { const value = await descriptor(reference); return { status: (await inspectTerminalHostUnit(terminalHostUnit(value.launchId), run)).running ? "running" : "stopped" }; }
-      catch (error) { console.warn("[terminal-runtime] Native host state unknown", error instanceof Error ? error.name : "UnknownError"); return { status: "unknown" }; }
+    async inspect(reference, inspectOptions = {}) {
+      const { deadline } = inspectOptions;
+      const timeoutMs = deadline === undefined ? undefined : Math.min(15_000, deadline - Date.now());
+      if (timeoutMs !== undefined && timeoutMs <= 0) throw new TerminalRuntimeError("unavailable", "Terminal host inspection timed out");
+      const boundedRun: TerminalManagerCommand = timeoutMs === undefined ? run : (command, args) => run(command, args, { timeoutMs });
+      try { const value = await descriptor(reference); return { status: (await inspectTerminalHostUnit(terminalHostUnit(value.launchId), boundedRun)).running ? "running" : "stopped" }; }
+      catch (error) {
+        // A query cut short by the caller's deadline says nothing about the host.
+        if (deadline !== undefined && Date.now() >= deadline) throw new TerminalRuntimeError("unavailable", "Terminal host inspection timed out");
+        console.warn("[terminal-runtime] Native host state unknown", error instanceof Error ? error.name : "UnknownError"); return { status: "unknown" };
+      }
     },
     async stop(reference) { const value = await descriptor(reference); return stopTerminalHostUnit(terminalHostUnit(value.launchId), run); },
     async attachCommand(reference) {

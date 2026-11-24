@@ -476,7 +476,10 @@ export class TerminalRuntime {
         // Stop fences survive restart. Restore must never rerun a native launch or recover proof.
         if (tab.nativeHost?.stopRequested) continue;
         const nativeHost = tab.nativeHost;
-        if (nativeHost && (!this.nativeHosts || (await sessionScoped(() => this.nativeHosts!.inspect(nativeHost))).status !== "running")) {
+        if (nativeHost && (!this.nativeHosts
+          || (await sessionScoped(() => this.nativeHosts!.inspect(nativeHost, ...bounded))).status !== "running")) {
+          // An answer that arrived past the deadline is not proof the host ended.
+          checkDeadline();
           await this.store.markTabExited({ workspaceId, tabId: tab.id });
           continue;
         }
