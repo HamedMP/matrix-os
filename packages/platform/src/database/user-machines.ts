@@ -1,4 +1,5 @@
 import { sql } from 'kysely';
+import type { SubstrateKind } from '@matrix-os/contracts';
 import { ordinaryMachinePredicate } from '../customer-vps-ordinary-machines.js';
 import type { NewUserMachine, PlatformDB, UserMachineRecord } from '../db.js';
 import {
@@ -389,7 +390,7 @@ export async function listStaleUserMachines(
   statuses: string[],
   olderThanIso: string,
   limit: number,
-  options: { ordinaryOnly?: boolean } = {},
+  options: { ordinaryOnly?: boolean; substrate?: SubstrateKind } = {},
 ): Promise<UserMachineRecord[]> {
   await db.ready;
   if (statuses.length === 0) return [];
@@ -400,6 +401,7 @@ export async function listStaleUserMachines(
     .where('provisioned_at', '<', olderThanIso)
     .where('deleted_at', 'is', null);
   if (options.ordinaryOnly) query = query.where(ordinaryMachinePredicate);
+  if (options.substrate) query = query.where('substrate', '=', options.substrate);
   const rows = await query.orderBy('provisioned_at')
     .limit(limit)
     .execute();

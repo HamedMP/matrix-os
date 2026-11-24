@@ -77,6 +77,7 @@ describe('platform schema registration (S01 foundation)', () => {
   it('registers core migration steps in their original order with the channel independently tracked', () => {
     expect(PLATFORM_MIGRATION_STEPS.map((step) => step.name)).toEqual([
       'identity',
+      'metal-hosts',
       'user-machines',
       'ai-funded',
       'ai-credit-history',

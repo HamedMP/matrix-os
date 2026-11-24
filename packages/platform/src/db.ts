@@ -108,6 +108,8 @@ export interface UserMachinesTable {
   private_address: Generated<string | null>;
   last_activity_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   started_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  metal_host_id: Generated<string | null>;
+  metal_vm_id: Generated<string | null>;
 }
 
 export interface AiFundedGlobalPolicyTable {
@@ -859,6 +861,8 @@ export interface PlatformDatabase {
   users: UsersTable;
   containers: ContainersTable;
   user_machines: UserMachinesTable;
+  metal_hosts: import('./database/migrations/metal-hosts.js').MetalHostsTable;
+  metal_vm_deletions: import('./database/migrations/metal-hosts.js').MetalVmDeletionsTable;
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
@@ -1041,6 +1045,10 @@ export interface UserMachineRecord {
   privateAddress: string | null;
   lastActivityAt: string | null;
   startedAt: string | null;
+  /** Metal substrate host (metal_hosts.id); null for every other substrate. */
+  metalHostId: string | null;
+  /** hostd VM id on that host; null until the VM is created. */
+  metalVmId: string | null;
 }
 
 export type BillingCheckoutAttemptStatus = 'creating' | 'open' | 'paid' | 'expired' | 'abandoned';
@@ -1346,6 +1354,8 @@ export interface NewUserMachine {
   privateAddress?: string | null;
   lastActivityAt?: string | null;
   startedAt?: string | null;
+  metalHostId?: string | null;
+  metalVmId?: string | null;
 }
 
 export interface NewProviderDeletionQueueRecord {

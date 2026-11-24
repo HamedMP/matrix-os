@@ -82,6 +82,8 @@ export function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineR
     privateAddress: row.private_address,
     lastActivityAt: toIsoTimestamp(row.last_activity_at),
     startedAt: toIsoTimestamp(row.started_at),
+    metalHostId: row.metal_host_id,
+    metalVmId: row.metal_vm_id,
   };
 }
 
@@ -131,6 +133,8 @@ export function toUserMachineRow(record: NewUserMachine): Insertable<UserMachine
     private_address: record.privateAddress ?? null,
     last_activity_at: record.lastActivityAt ?? null,
     started_at: record.startedAt ?? null,
+    metal_host_id: record.metalHostId ?? null,
+    metal_vm_id: record.metalVmId ?? null,
   };
 }
 
@@ -180,6 +184,8 @@ export function toUserMachineUpdate(values: Partial<NewUserMachine>): Updateable
   if (values.privateAddress !== undefined) update.private_address = values.privateAddress;
   if (values.lastActivityAt !== undefined) update.last_activity_at = values.lastActivityAt;
   if (values.startedAt !== undefined) update.started_at = values.startedAt;
+  if (values.metalHostId !== undefined) update.metal_host_id = values.metalHostId;
+  if (values.metalVmId !== undefined) update.metal_vm_id = values.metalVmId;
   return update;
 }
 

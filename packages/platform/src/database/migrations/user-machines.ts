@@ -103,7 +103,7 @@ export async function migrateUserMachines(db: PlatformMigrationExecutor): Promis
 async function migrateRuntimeSubstrates(db: PlatformMigrationExecutor): Promise<void> {
   await sql`
     ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS substrate TEXT NOT NULL DEFAULT 'vps'
-      CONSTRAINT user_machines_substrate_check CHECK (substrate IN ('vps', 'container'))
+      CONSTRAINT user_machines_substrate_check CHECK (substrate IN ('vps', 'container', 'metal'))
   `.execute(db);
   await sql`
     ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS generation INTEGER NOT NULL DEFAULT 1
@@ -117,6 +117,55 @@ async function migrateRuntimeSubstrates(db: PlatformMigrationExecutor): Promise<
     CREATE UNIQUE INDEX IF NOT EXISTS idx_user_machines_clerk_active_container
     ON user_machines(clerk_user_id)
     WHERE substrate = 'container' AND deleted_at IS NULL
+  `.execute(db);
+  await migrateMetalSubstrate(db);
+}
+
+/**
+ * Spec 2691 (ENG-520): a `metal` runtime is a VM on a Matrix-operated host and
+ * must name that host. Databases migrated before this step carry the
+ * vps/container substrate check, which is replaced in place; every existing row
+ * is `vps` or `container`, so the wider check validates. The host check is
+ * added NOT VALID and then validated, so a populated table never blocks
+ * startup on an unexpected row and fresh and upgraded databases converge on
+ * the same validated definitions.
+ */
+async function migrateMetalSubstrate(db: PlatformMigrationExecutor): Promise<void> {
+  await sql`
+    ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS metal_host_id TEXT
+      CONSTRAINT user_machines_metal_host_id_fkey REFERENCES metal_hosts(id)
+  `.execute(db);
+  await sql`ALTER TABLE user_machines ADD COLUMN IF NOT EXISTS metal_vm_id TEXT`.execute(db);
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'user_machines'::regclass
+          AND conname = 'user_machines_substrate_check'
+          AND pg_get_constraintdef(oid) LIKE '%''metal''%'
+      ) THEN
+        ALTER TABLE user_machines DROP CONSTRAINT IF EXISTS user_machines_substrate_check;
+        ALTER TABLE user_machines
+          ADD CONSTRAINT user_machines_substrate_check
+          CHECK (substrate IN ('vps', 'container', 'metal'));
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'user_machines'::regclass
+          AND conname = 'user_machines_metal_host_check'
+      ) THEN
+        ALTER TABLE user_machines
+          ADD CONSTRAINT user_machines_metal_host_check
+          CHECK (substrate <> 'metal' OR metal_host_id IS NOT NULL) NOT VALID;
+        ALTER TABLE user_machines VALIDATE CONSTRAINT user_machines_metal_host_check;
+      END IF;
+    END $$
+  `.execute(db);
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_user_machines_metal_host
+    ON user_machines(metal_host_id)
+    WHERE metal_host_id IS NOT NULL AND deleted_at IS NULL
   `.execute(db);
 }
 
