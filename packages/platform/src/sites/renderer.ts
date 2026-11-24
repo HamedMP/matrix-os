@@ -1,6 +1,7 @@
 import type { SiteRecord } from '@matrix-os/contracts';
 import { desktopFonts, desktopPalette } from '@matrix-os/brand/tokens';
 import { emailAuthPageContext, EMAIL_SESSION_SCRIPT } from './email-auth-page.js';
+import { frameDataBridge, pageDataHandler } from './renderer-data-bridge.js';
 const escape = (text: string) => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const encoded = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64');
 const SANDBOX = 'allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox';
@@ -61,10 +62,11 @@ button.addEventListener('click',async()=>{const match=readClaim();if(!match||but
 export function sitePage(site: SiteRecord): string {
     const reference = site.id;
     return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(site.title)}</title><meta name="description" content="${escape(site.description)}"><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}body{background:#fff}</style></head><body><iframe title="${escape(site.title)}" sandbox="${SANDBOX}" referrerpolicy="no-referrer" src="/${reference}/frame"></iframe><script>
-const frame=document.querySelector('iframe');let inFlight=false;
+const frame=document.querySelector('iframe');let inFlight=false;${pageDataHandler(site)}
 window.addEventListener('message',async(event)=>{
  if(event.source!==frame.contentWindow||event.origin!=='null'||event.ports.length!==1)return;
- const port=event.ports[0];const payload=event.data;
+ const port=event.ports[0];const payload=event.data;${site.accessMode === 'public' ? `
+ if(payload&&payload.type==='matrix-site-data'){await relayData(port,payload.request);return}` : ''}
  if(!payload||payload.type!=='matrix-site-submit'||typeof payload.formId!=='string'||payload.formId.length>64||typeof payload.idempotencyKey!=='string'||payload.idempotencyKey.length>128){port.close();return}
  if(inFlight){port.postMessage({error:'Try again later'});port.close();return}
  inFlight=true;
@@ -98,7 +100,7 @@ window.MatrixOS=Object.freeze({site:Object.freeze({data,submit:(formId,fields,op
  const channel=new MessageChannel();const timeout=setTimeout(()=>{channel.port1.close();reject(Error('Submissions are unavailable'))},11000);
  channel.port1.onmessage=event=>{clearTimeout(timeout);channel.port1.close();event.data?.accepted?resolve({accepted:true}):reject(Error(event.data?.error==='Try again later'?'Try again later':'Submissions are unavailable'))};
  parent.postMessage({type:'matrix-site-submit',formId,fields,idempotencyKey:options.idempotencyKey||crypto.randomUUID()},'https://matrix.page',[channel.port2]);
-})})})})();</script>`;
+})})${frameDataBridge(site)}})})();</script>`;
     // Bootstrap must precede all app code; the opaque origin only has this public bridge.
     if (/<head(?:\s[^>]*)?>/i.test(html))
         return html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}${bootstrap}`);

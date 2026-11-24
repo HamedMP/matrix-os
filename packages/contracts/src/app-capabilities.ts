@@ -14,6 +14,8 @@ export const MAX_APP_DATABASE_REPLY_BYTES = 8 * 1024 * 1024;
 /** Exact JSON body limits of the existing structured database and legacy KV endpoints. */
 export const MAX_APP_DATABASE_REQUEST_BYTES = 1_000_000;
 export const MAX_APP_KV_REQUEST_BYTES = 1_000_000;
+/** Envelope prefix for typed `readData`/`writeData` values; owner and public-site bridges share stored rows. */
+export const APP_BRIDGE_STORED_VALUE_PREFIX = "__matrix_os_value_v1__:";
 export function appIntegrationReplyBytes(service: string, action: string): number {
   if (service === "gmail" && action === "get_attachment") return 1536 * 1024;
   //512KiB source text may require six JSON bytes per escaped ASCII character.
