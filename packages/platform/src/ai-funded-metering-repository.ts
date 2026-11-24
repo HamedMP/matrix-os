@@ -15,6 +15,7 @@ import { CleanupSchema, cleanupExpiredReservations as cleanupReservations } from
 import {
   FUNDED_TOKEN_PATTERN,
   FundedReferenceSchema,
+  advanceMonthWindow,
   exactInteger,
   hashesEqual,
   parseModels,
@@ -164,9 +165,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         : undefined;
       if (machine.provisioning_class !== "customer" && !preview) throw new AiFundedPolicyError("access_disabled");
       await trx.executor.updateTable("ai_funded_runtime_balances").set({
-        month_period_start: currentPeriod,
-        month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_spent_microusd ELSE 0 END`,
-        month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_reserved_microusd ELSE 0 END`,
+        ...advanceMonthWindow(currentPeriod),
         updated_at: checkedAt,
       }).where("machine_id", "=", identity.machineId)
         .where("owner_id", "=", identity.ownerId)
@@ -726,9 +725,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       }
       const currentPeriod = utcMonthStart(checked);
       const currentBalance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
-        month_period_start: currentPeriod,
-        month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_spent_microusd ELSE 0 END`,
-        month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_reserved_microusd ELSE 0 END`,
+        ...advanceMonthWindow(currentPeriod),
         updated_at: checkedAt,
       }).where("machine_id", "=", locator.machine_id).returningAll().executeTakeFirstOrThrow();
       const { promotionalDebit, addonDebit, attributed } = await reservationDebitSplit(
@@ -902,9 +899,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         throw new AiFundedPolicyError("reservation_closed");
       }
       const reset = await trx.executor.updateTable("ai_funded_runtime_balances").set({
-        month_period_start: currentPeriod,
-        month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_spent_microusd ELSE 0 END`,
-        month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${currentPeriod} THEN month_reserved_microusd ELSE 0 END`,
+        ...advanceMonthWindow(currentPeriod),
         updated_at: checkedAt,
       }).where("machine_id", "=", locator.machine_id).returning("machine_id").executeTakeFirst();
       if (!reset) throw new AiFundedPolicyError("access_disabled");

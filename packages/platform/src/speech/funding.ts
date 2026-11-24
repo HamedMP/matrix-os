@@ -7,7 +7,7 @@ import type { Transaction } from "kysely";
 import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { PlatformDatabase } from "../db.js";
-import { recordUsageFunding } from "../ai-funded-metering-helpers.js";
+import { advanceMonthWindow, recordUsageFunding } from "../ai-funded-metering-helpers.js";
 import { AiFundedPolicyError } from "../ai-funded-policy-errors.js";
 import {
   debitAttributedPromotionalGrants,
@@ -226,9 +226,7 @@ export function createAiFundedSpeechFundingPort(options: {
           .where("runtime_slot", "=", input.identity.runtimeSlot)
           .forUpdate().executeTakeFirst()
         : await trx.updateTable("ai_funded_runtime_balances").set({
-          month_period_start: periodStart,
-          month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${periodStart} THEN month_spent_microusd ELSE 0 END`,
-          month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${periodStart} THEN month_reserved_microusd ELSE 0 END`,
+          ...advanceMonthWindow(periodStart),
           updated_at: checkedAt,
         }).where("machine_id", "=", input.identity.machineId)
           .where("owner_id", "=", input.identity.ownerId)
@@ -286,7 +284,8 @@ export function createAiFundedSpeechFundingPort(options: {
         promotional_reserved_microusd: 0,
         addon_reserved_microusd: 0,
         actual_microusd: null,
-        period_start: periodStart,
+        // General-budget speech belongs to the runtime's window, which can be newer than this clock.
+        period_start: allowance ? periodStart : reserved.month_period_start,
         status: "reserved",
         created_at: checkedAt,
         started_at: null,
