@@ -53,7 +53,8 @@ export function registerSitePublicDataRoute(app: Hono, options: {
         flights++;
         try {
             const site = await options.service.resolve(reference.data);
-            if (!site || site.accessMode !== 'public' || !site.activeVersion) return c.json({ error: 'Site unavailable' }, 404);
+            // Links published before visitor data shipped have no owner opt-in and serve no app data.
+            if (!site || site.accessMode !== 'public' || !site.activeVersion || !site.publicData) return c.json({ error: 'Site unavailable' }, 404);
             // Visitor budgets are per source and site, so one site's traffic never spends another's.
             const visitorKey = `${site.id}\0${source}`;
             if (!perSource.check(visitorKey) || (write && !perSourceWrites.check(visitorKey)) || !perSite.check(site.id))

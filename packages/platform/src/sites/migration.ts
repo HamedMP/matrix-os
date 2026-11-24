@@ -32,6 +32,9 @@ export async function migrateSites(db: PlatformMigrationExecutor): Promise<void>
     // Generation 2 installed this named check through ADD COLUMN. Replacing it
     // explicitly is required for existing publications; IF NOT EXISTS alone
     // would leave the old two-mode constraint in place.
+    // 2694: links published before visitor data keep NULL, so they never start serving app data
+    // until the owner publishes them again.
+    await sql `ALTER TABLE public_sites ADD COLUMN IF NOT EXISTS public_data_enabled_at TEXT`.execute(db);
     await sql `ALTER TABLE public_sites DROP CONSTRAINT IF EXISTS public_sites_access_mode_check`.execute(db);
     await sql `ALTER TABLE public_sites ADD CONSTRAINT public_sites_access_mode_check
       CHECK (access_mode IN ('public','private_link','private_email'))`.execute(db);

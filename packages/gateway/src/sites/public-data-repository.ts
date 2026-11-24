@@ -81,7 +81,20 @@ export class SitePublicDataRepository {
   constructor(private readonly db: Kysely<any>, private readonly options: {
     resolveApp(appSlug: string): Promise<SitePublicAppRecord | null>;
     retention?: { maxEntriesPerSite: number; maxAgeDays: number };
+    maxResponseBytes?: number;
   }) {}
+
+  private get maxResponseBytes(): number { return this.options.maxResponseBytes ?? SITE_PUBLIC_DATA_RESPONSE_MAX_BYTES; }
+
+  /**
+   * Postgres measures a read before any row reaches the gateway, so one large table cannot fill
+   * the owner's gateway memory. Reads run in a repeatable-read snapshot, so the rows fetched next
+   * are the rows measured here.
+   */
+  private async assertFits(trx: Transaction<any>, query: RawBuilder<unknown>): Promise<void> {
+    const size = await sql<{ bytes: string | number }>`SELECT COALESCE(SUM(octet_length(row_to_json(page)::text)), 0)::bigint AS bytes FROM (${query}) page`.execute(trx);
+    if (Number(size.rows[0]?.bytes ?? 0) > this.maxResponseBytes) throw new SitePublicDataError("unavailable");
+  }
 
   /** Owner-only table; no route reads it in v1. Run on the owned setup connection. */
   static async bootstrap(db: Kysely<any>): Promise<void> {
@@ -107,7 +120,7 @@ export class SitePublicDataRepository {
       console.warn("[sites] Public data request failed", error instanceof Error ? error.name : "UnknownError", state ?? "");
       throw new SitePublicDataError("unavailable");
     }
-    if (Buffer.byteLength(JSON.stringify(outcome.result ?? null)) > SITE_PUBLIC_DATA_RESPONSE_MAX_BYTES) {
+    if (Buffer.byteLength(JSON.stringify(outcome.result ?? null)) > this.maxResponseBytes) {
       throw new SitePublicDataError("unavailable");
     }
     return outcome;
@@ -118,7 +131,10 @@ export class SitePublicDataRepository {
     if (request.kind === "kvRead" || request.kind === "kvWrite") {
       return this.transaction(capability, async (trx, log) => {
         if (request.kind === "kvRead") {
-          const row = await sql<{ value: string | null }>`SELECT value FROM public._kv WHERE app = ${appSlug} AND key = ${request.key}`.execute(trx);
+          // The size check and the value come from one statement; an oversized value never leaves Postgres.
+          const row = await sql<{ value: string | null; bytes: string | number | null }>`SELECT CASE WHEN octet_length(value) <= ${this.maxResponseBytes} THEN value END AS value,
+ octet_length(value) AS bytes FROM public._kv WHERE app = ${appSlug} AND key = ${request.key}`.execute(trx);
+          if (Number(row.rows[0]?.bytes ?? 0) > this.maxResponseBytes) throw new SitePublicDataError("unavailable");
           return { result: { value: row.rows[0]?.value ?? null }, changed: null };
         }
         const before = await this.writeKv(trx, appSlug, request.key, request.value);
@@ -136,6 +152,7 @@ export class SitePublicDataRepository {
     if (!Object.hasOwn(app.tables, action.table)) throw new SitePublicDataError("invalid");
     const target = sql`${identifier(appSlug)}.${identifier(action.table)}`;
     const changed = { app: appSlug, key: action.table };
+    const readOnly = action.action === "find" || action.action === "findOne" || action.action === "count";
     return this.transaction(capability, async (trx, log) => {
       const record = (op: LogEntry["op"], before: Row | null, after: Row | null) => {
         log.push({ table: action.table, rowId: String((after ?? before)?.id ?? ""), op, before, after });
@@ -143,11 +160,15 @@ export class SitePublicDataRepository {
       switch (action.action) {
         case "find": {
           const limit = Math.max(1, Math.min(action.limit ?? SITE_PUBLIC_DATA_MAX_ROWS, SITE_PUBLIC_DATA_MAX_ROWS));
-          const rows = await sql<Row>`SELECT * FROM ${target}${whereClause(action.filter)}${orderClause(action.orderBy)} LIMIT ${limit} OFFSET ${action.offset ?? 0}`.execute(trx);
+          const page = sql`SELECT * FROM ${target}${whereClause(action.filter)}${orderClause(action.orderBy)} LIMIT ${limit} OFFSET ${action.offset ?? 0}`;
+          await this.assertFits(trx, page);
+          const rows = await sql<Row>`${page}`.execute(trx);
           return { result: rows.rows, changed: null };
         }
         case "findOne": {
-          const rows = await sql<Row>`SELECT * FROM ${target} WHERE id = ${action.id} LIMIT 1`.execute(trx);
+          const one = sql`SELECT * FROM ${target} WHERE id = ${action.id} LIMIT 1`;
+          await this.assertFits(trx, one);
+          const rows = await sql<Row>`${one}`.execute(trx);
           return { result: rows.rows[0] ?? null, changed: null };
         }
         case "count": {
@@ -199,7 +220,7 @@ export class SitePublicDataRepository {
           return { result: { ok: true }, changed };
         }
       }
-    });
+    }, readOnly);
   }
 
   /**
@@ -221,8 +242,10 @@ export class SitePublicDataRepository {
     return { value: existing.value };
   }
 
-  private async transaction(capability: SitePublicDataCapability, work: (trx: Transaction<any>, log: LogEntry[]) => Promise<SitePublicDataResult>): Promise<SitePublicDataResult> {
+  private async transaction(capability: SitePublicDataCapability, work: (trx: Transaction<any>, log: LogEntry[]) => Promise<SitePublicDataResult>, readOnly = false): Promise<SitePublicDataResult> {
     return this.db.transaction().execute(async (trx) => {
+      // Must be the first statement: the size check and the rows it measured share one snapshot.
+      if (readOnly) await sql`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`.execute(trx);
       await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
       await sql`SET LOCAL lock_timeout = '2s'`.execute(trx);
       const log: LogEntry[] = [];
