@@ -1,10 +1,24 @@
 // IPC for local terminals. Every channel is Terminal-window-only; requests are
 // validated here again, and failures reach the renderer as fixed outcomes.
+import { z } from "zod/v4";
 import { INVOKE_CHANNELS, type InvokeRequest, type InvokeResponse } from "../../shared/ipc-contract";
-import { LOCAL_TERMINAL_INVOKE_CHANNELS } from "../../shared/local-terminals";
+import { LOCAL_TERMINAL_INVOKE_CHANNELS, type LocalCreateFailure } from "../../shared/local-terminals";
 import { describeError } from "./describe-error";
-import { HcCallError } from "./hc-client";
-import type { LocalTerminalHost } from "./host";
+import { HcCallError, HcProtocolError } from "./hc-client";
+import { LocalTerminalFolderError, type LocalTerminalHost } from "./host";
+
+/** A failed start as a bounded kind for the window; the error itself stays in this log. */
+export function localCreateFailure(error: unknown): LocalCreateFailure {
+  if (error instanceof HcCallError) return "refused";
+  // An answer the core sent that does not have the expected shape is unexpected too.
+  if (error instanceof HcProtocolError || error instanceof z.ZodError) return "protocol";
+  if (error instanceof LocalTerminalFolderError) return "folder";
+  const message = error instanceof Error ? error.message : "";
+  if (/did not answer|timed out/.test(message)) return "timeout";
+  if (/busy/.test(message)) return "busy";
+  if (/disconnected/.test(message)) return "disconnected";
+  return "unknown";
+}
 
 interface IpcMainLike {
   handle(channel: string, listener: (event: unknown, payload: unknown) => Promise<unknown> | unknown): void;
@@ -43,7 +57,11 @@ export function registerLocalTerminalIpc(
       try {
         const id = await host.create({ cols, rows }, { ...(agent ? { agent } : {}), ...(folder ? { folder } : {}), ...(machine ? { machine } : {}) });
         return id ? { status: "ready", id } : { status: "rate-limited" };
-      } catch (error: unknown) { logFailure("local-terminal:create", error); return unavailable(); }
+      } catch (error: unknown) {
+        logFailure("local-terminal:create", error);
+        const status = unavailable();
+        return status.status === "unavailable" ? { ...status, reason: localCreateFailure(error) } : status;
+      }
     },
     "local-terminal:kill": async ({ id }) => {
       try { await host.kill(id); return { ok: true }; }

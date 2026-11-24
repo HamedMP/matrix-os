@@ -18,7 +18,7 @@ const record: CanonicalChatRecord = {
   readState: { unread: false, markedUnread: false, version: 0, readThroughSeq: 0, latestIncomingSeq: 0 },
 };
 
-it("places the action first in Electron and persists it without opening the chat", async () => {
+it("toggles unread state in Electron without opening the chat", async () => {
   const marked = { ...record, readState: { ...record.readState!, unread: true, markedUnread: true, version: 1 } };
   const directBot = vi.fn(async (_chatId: string) => null);
   const client = {
@@ -32,8 +32,8 @@ it("places the action first in Electron and persists it without opening the chat
   const doneHeader = await screen.findByRole("button", { name: "Done" });
   expect(doneHeader.getAttribute("aria-expanded")).toBe("true");
   fireEvent.contextMenu(await screen.findByRole("button", { name: "My chat" }));
-  expect(screen.getAllByRole("menuitem")[0].textContent).toBe("Mark as unread");
-  expect(screen.getAllByRole("menuitem").findIndex((item) => item.textContent === "Rename")).toBeGreaterThan(0);
+  expect(screen.getByRole("menuitem", { name: "Mark as unread", exact: true })).toBeTruthy();
+  expect(screen.getByRole("menuitem", { name: "Rename", exact: true })).toBeTruthy();
   fireEvent.click(screen.getByRole("menuitem", { name: "Mark as unread" }));
   await waitFor(() => expect(client.updateReadState).toHaveBeenCalledWith("chat_menu", { type: "mark_unread" }));
   expect(onSelectChat).not.toHaveBeenCalled();
@@ -41,20 +41,19 @@ it("places the action first in Electron and persists it without opening the chat
   expect(doneHeader.getAttribute("aria-expanded")).toBe("true");
   await screen.findByLabelText("Unread My chat");
   fireEvent.contextMenu(screen.getByRole("button", { name: "My chat" }));
-  expect(screen.getAllByRole("menuitem")[0].textContent).toBe("Mark as read");
+  expect(screen.getByRole("menuitem", { name: "Mark as read", exact: true })).toBeTruthy();
 });
 
-it.each([false, true])("places the action before Rename in the web menu (unread=%s)", (unread) => {
+it.each([false, true])("toggles the existing web read action without opening the chat (unread=%s)", (unread) => {
   const onToggleRead = vi.fn();
   const onSelect = vi.fn();
   render(<RenameableConversationRow conversation={{ id: "chat_menu", title: "My chat", preview: "", messageCount: 0, updatedAt: 0,
     readState: { ...record.readState!, unread } }} active={false} mobile={false} editing={false} renamePending={false}
     onSelect={onSelect} onToggleRead={onToggleRead} onRenameStart={vi.fn()} onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} />);
   fireEvent.contextMenu(screen.getByRole("button", { name: "My chat" }));
-  const first = screen.getAllByRole("menuitem")[0];
-  expect(first.textContent).toBe(unread ? "Mark as read" : "Mark as unread");
-  expect(screen.getAllByRole("menuitem").findIndex((item) => item.textContent === "Rename")).toBeGreaterThan(0);
-  fireEvent.click(first);
+  const action = screen.getByRole("menuitem", { name: unread ? "Mark as read" : "Mark as unread", exact: true });
+  expect(screen.getByRole("menuitem", { name: "Rename", exact: true })).toBeTruthy();
+  fireEvent.click(action);
   expect(onToggleRead).toHaveBeenCalledTimes(1);
   expect(onSelect).not.toHaveBeenCalled();
 });

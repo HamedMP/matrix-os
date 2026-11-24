@@ -1,5 +1,5 @@
-import { useShellAuthIdentity } from "@/lib/shell-auth-identity";
 import { useEffect, useState } from "react";
+import type { FileResourceRef } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { RenameableConversation } from "./ChatTitleRename";
 
@@ -26,8 +26,10 @@ export interface WebProjectsState {
 
 /** The owner's projects on the routed computer; a former computer's or account's list is never shown. */
 export function useWebProjects(gatewayUrl: string, scopeKey: string): WebProjectsState {
-  const { userId, sessionId } = useShellAuthIdentity();
-  const identity = `${userId ?? "self-hosted"}\n${sessionId ?? ""}\n${scopeKey}\n${gatewayUrl}`;
+  // The caller's authority scope already includes the verified owner, session,
+  // runtime, and authority epoch. Reading Clerk here would crash self-hosted
+  // Chat, which deliberately has no ClerkProvider.
+  const identity = `${scopeKey}\n${gatewayUrl}`;
   const [result, setResult] = useState<ProjectsResult | null>(null);
   const [attempt, setAttempt] = useState(0);
   const key = `${identity}\n${attempt}`;
@@ -69,4 +71,10 @@ export function projectChats<T extends RenameableConversation>(chats: readonly T
     const projectId = chat.canonicalRecord?.projectId;
     return projectId !== undefined && (projectId === project.id || projectId === project.slug);
   });
+}
+
+/** Existing Gateway file endpoints resolve verified slugs; canonical chats retain immutable IDs. */
+export function toGatewayProjectFileResource(resource: FileResourceRef | undefined, project?: Pick<WebProject, "id" | "slug">): FileResourceRef | undefined {
+  return resource?.kind === "project" && project && (resource.projectId === project.id || resource.projectId === project.slug)
+    ? { ...resource, projectId: project.slug } : resource;
 }

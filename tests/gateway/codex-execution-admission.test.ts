@@ -1,4 +1,4 @@
-import { markSessionStartClean } from "../../packages/gateway/src/coding-agents/session-start-cleanup-proof.js";
+import { markSessionStartClean, markSessionStopConfirmed } from "../../packages/gateway/src/coding-agents/session-start-cleanup-proof.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,11 +19,12 @@ async function fixture() {
   let source = "owner_openai_profile";
   let account = "native_account";
   let method: "terminal" | "api_key" = "terminal";
+  let consentRevision = 1;
   const save = async () => {
     await mkdir(join(homePath, "system/ai-providers"), { recursive: true });
     await writeFile(join(homePath, "system/ai-providers/settings.json"), JSON.stringify({
       schemaVersion: 1, revision, harnesses: [{ id: "codex", driverId: "codex", harness: "codex", displayName: "Codex", accentColor: null,
-        enabled, selectedAccountId: account, accessSourceId: source, nativeAccountGeneration: createHash("sha256").update("private_owner_profile_A").digest("hex"), nativeAccountConsentRevision: 1, route: { kind: "fixed", providerId: "openai", modelId: "openai/gpt-5.6" } }],
+        enabled, selectedAccountId: account, accessSourceId: source, nativeAccountGeneration: createHash("sha256").update("private_owner_profile_A").digest("hex"), nativeAccountConsentRevision: consentRevision, route: { kind: "fixed", providerId: "openai", modelId: "openai/gpt-5.6" } }],
       accountProfiles: [], gatewayPolicy: null, receipts: [],
     }));
   };
@@ -42,7 +43,7 @@ async function fixture() {
     },
   };
   await save();
-  return { homePath, options, save, bumpOtherSettings: async () => { revision++; await save(); }, admission: createCodexExecutionAdmission(options), change: (value: { principal?: string; enabled?: boolean; available?: boolean; source?: string; account?: string; method?: "terminal" | "api_key" }) => {
+  return { homePath, options, save, bumpOtherSettings: async () => { revision++; await save(); }, admission: createCodexExecutionAdmission(options), bumpConsent: async () => { consentRevision++; revision++; await save(); }, change: (value: { principal?: string; enabled?: boolean; available?: boolean; source?: string; account?: string; method?: "terminal" | "api_key" }) => {
     if (value.principal !== undefined) principal = value.principal;
     if (value.enabled !== undefined) { enabled = value.enabled; revision++; }
     if (value.available !== undefined) available = value.available;
@@ -295,3 +296,133 @@ it("does not let an API-key clean failure release a native subscription session"
   const release = await admission.prepareRevocation(); await release();
   expect(stopSession).toHaveBeenCalledExactlyOnceWith("sess_subscription_proof");
 });
+
+describe("one full native admission per send", () => {
+  it("confirms a same-send receipt without re-projecting the Settings snapshot", async () => {
+    const f = await fixture();
+    const getSnapshot = vi.spyOn(f.options, "getSnapshot");
+    const admission = createCodexExecutionAdmission(f.options);
+    const { binding, receipt } = await admission.startWithReceipt("owner", "sess_receipt");
+    expect(binding).toEqual(expect.any(String));
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+    await expect(admission.confirm("owner", receipt, "sess_receipt")).resolves.toBeUndefined();
+    const followUp = await admission.validateWithReceipt("owner", binding, "sess_receipt");
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
+    await expect(admission.confirm("owner", followUp, "sess_receipt")).resolves.toBeUndefined();
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
+  });
+  it.each(["disabled", "revoked", "principal", "key", "owner", "revocation"])("still fails closed on confirm after %s", async kind => {
+    const f = await fixture();
+    const admission = createCodexExecutionAdmission(f.options);
+    const { receipt } = await admission.startWithReceipt("owner", "sess_receipt");
+    const revocable = createCodexExecutionAdmission({ ...f.options, stopSession: async () => undefined });
+    const revocableReceipt = (await revocable.startWithReceipt("owner", "sess_receipt_revocable")).receipt;
+    let user = "owner";
+    if (kind === "disabled") { f.change({ enabled: false }); await f.save(); }
+    else if (kind === "revoked") f.change({ available: false });
+    else if (kind === "principal") f.change({ principal: "private_owner_profile_B" });
+    else if (kind === "key") f.change({ method: "api_key" });
+    else if (kind === "owner") user = "collaborator";
+    else await revocable.prepareRevocation(); // draining until finished: new authority must be refused
+    if (kind === "revocation") { await expect(revocable.confirm("owner", revocableReceipt, "sess_receipt")).rejects.toThrow("unavailable"); return; }
+    await expect(admission.confirm(user, receipt, "sess_receipt")).rejects.toThrow("unavailable");
+  });
+  it("falls back to the full check for a foreign, expired, or other-admission receipt", async () => {
+    const f = await fixture();
+    const getSnapshot = vi.spyOn(f.options, "getSnapshot");
+    const admission = createCodexExecutionAdmission(f.options);
+    const other = createCodexExecutionAdmission(f.options);
+    const { receipt } = await other.startWithReceipt("owner", "sess_receipt");
+    getSnapshot.mockClear();
+    await expect(admission.confirm("owner", receipt, "sess_receipt")).resolves.toBeUndefined();
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+    await expect(admission.confirm("owner", { forged: true } as never, "sess_receipt")).rejects.toThrow("unavailable");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const fresh = (await admission.startWithReceipt("owner", "sess_receipt")).receipt;
+      getSnapshot.mockClear();
+      vi.setSystemTime(Date.now() + 31_000);
+      await expect(admission.confirm("owner", fresh, "sess_receipt")).resolves.toBeUndefined();
+      expect(getSnapshot).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe("launch admission reuses the same send's receipt", () => {
+  it("confirms the session's fresh receipt at launch without another snapshot projection", async () => {
+    const f = await fixture();
+    const getSnapshot = vi.spyOn(f.options, "getSnapshot");
+    const admission = createCodexExecutionAdmission(f.options);
+    const { receipt } = await admission.startWithReceipt("owner", "sess_launch");
+    await admission.confirm("owner", receipt, "sess_launch");
+    const intent = await admission.validateLaunch("owner", "sess_launch");
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+    expect(intent).toMatchObject({ expectedPrincipalFingerprint: createHash("sha256").update("private_owner_profile_A").digest("hex"),
+      expectedConsentRevision: 1, expectedHarnessInstanceId: "codex", expectedAccountId: "native_account" });
+    // A different session never borrows it.
+    await expect(admission.validateLaunch("owner", "sess_other")).rejects.toThrow("unavailable");
+  });
+  it.each(["principal", "disabled"])("still refuses launch after %s", async kind => {
+    const f = await fixture();
+    const admission = createCodexExecutionAdmission(f.options);
+    await admission.startWithReceipt("owner", "sess_launch");
+    if (kind === "principal") f.change({ principal: "private_owner_profile_B" });
+    else { f.change({ enabled: false }); await f.save(); }
+    await expect(admission.validateLaunch("owner", "sess_launch")).rejects.toThrow("unavailable");
+  });
+});
+
+describe("receipts never cost availability", () => {
+  it("falls back to the full check after an unrelated Settings write instead of failing the send", async () => {
+    const f = await fixture();
+    const getSnapshot = vi.spyOn(f.options, "getSnapshot");
+    const admission = createCodexExecutionAdmission(f.options);
+    const { receipt } = await admission.startWithReceipt("owner", "sess_write");
+    await f.bumpOtherSettings();
+    await expect(admission.confirm("owner", receipt, "sess_write")).resolves.toBeUndefined();
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
+    await expect(admission.validateLaunch("owner", "sess_write")).resolves.toMatchObject({ expectedConsentRevision: 1 });
+  });
+  it("never launches on a stale consent revision after a consent-only change", async () => {
+    const f = await fixture();
+    const admission = createCodexExecutionAdmission(f.options);
+    await admission.startWithReceipt("owner", "sess_consent");
+    await f.bumpConsent();
+    // The consent revision is part of the configuration binding, so the full
+    // check refuses the old session binding exactly as before receipts.
+    await expect(admission.validateLaunch("owner", "sess_consent")).rejects.toThrow("unavailable");
+    const fresh = createCodexExecutionAdmission(f.options);
+    await fresh.startWithReceipt("owner", "sess_consent_new");
+    await expect(fresh.validateLaunch("owner", "sess_consent_new")).resolves.toMatchObject({ expectedConsentRevision: 2 });
+  });
+  it("binds a receipt to its session", async () => {
+    const f = await fixture();
+    const getSnapshot = vi.spyOn(f.options, "getSnapshot");
+    const admission = createCodexExecutionAdmission(f.options);
+    const { receipt } = await admission.startWithReceipt("owner", "sess_bound");
+    await admission.confirm("owner", receipt, "sess_elsewhere");
+    expect(getSnapshot).toHaveBeenCalledTimes(2);
+  });
+  it("keeps at most 64 session receipts, oldest first out", async () => {
+    const f = await fixture();
+    const getSnapshot = vi.spyOn(f.options, "getSnapshot");
+    const admission = createCodexExecutionAdmission(f.options);
+    for (let index = 0; index < 65; index++) await admission.startWithReceipt("owner", `sess_cap_${index}`);
+    getSnapshot.mockClear();
+    await admission.validateLaunch("owner", "sess_cap_64");
+    expect(getSnapshot).toHaveBeenCalledTimes(0);
+    await admission.validateLaunch("owner", "sess_cap_0");
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+  });
+  it("drops a session's receipt when the session is released", async () => {
+    const f = await fixture();
+    const getSnapshot = vi.spyOn(f.options, "getSnapshot");
+    const admission = createCodexExecutionAdmission(f.options);
+    await admission.startWithReceipt("owner", "sess_released");
+    await admission.releaseStoppedSession("owner", "sess_released", markSessionStopConfirmed({}, "owner", "sess_released"));
+    getSnapshot.mockClear();
+    await expect(admission.validateLaunch("owner", "sess_released")).rejects.toThrow("unavailable");
+    expect(getSnapshot).toHaveBeenCalledTimes(1);
+  });
+});
+

@@ -1,5 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { createCodexNativeAccountMetadataReader, type CodexNativeAccountMetadataReader } from "../ai-providers/codex-native-account-metadata.js";
+import { createCodexNativeAccountMetadataReader, type CodexNativeAccountMetadataReader, type CodexNativeAccountObservation } from "../ai-providers/codex-native-account-metadata.js";
+
+/**
+ * Admission-time native identity reuse window (owner review: ENG-540). One
+ * file-backed private identity proof serves Chat catalog and execution
+ * admission for up to 10 minutes while the auth.json digest, executable, and
+ * Codex config are unchanged (rechecked on every reuse). Login, logout, remove,
+ * and revocation drop it. Runner thread/turn account proofs re-prove the live
+ * account before turn/start and remain the execution authority.
+ */
+const ADMISSION_IDENTITY_REUSE_MS = 10 * 60_000;
 import type { NativeProviderProfileGuard } from "../ai-providers/native-provider-profile-guard.js";
 import type { ProviderSettingsStore } from "../ai-providers/provider-settings-store.js";
 import { createCodexExecutionAdmission } from "../coding-agents/codex-execution-admission.js";
@@ -17,30 +27,44 @@ export function createNativeCodexRuntime(options: {
   getRuntime(): Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession" | "withSessionStart"> | null | undefined;
 }) {
   let reader: ReturnType<typeof createCodexNativeAccountMetadataReader> | undefined;
-  const readAccount: CodexNativeAccountMetadataReader = async readOptions => {
-    if (!options.executable) return null;
+  async function guardedRead<T>(observe: (current: CodexNativeAccountMetadataReader) => Promise<T>, unavailable: T): Promise<T> {
+    if (!options.executable) return unavailable;
     try {
       reader ??= createCodexNativeAccountMetadataReader({
         executable: options.executable, cwd: options.homePath, environment: options.environment(),
+        identityReuseMs: ADMISSION_IDENTITY_REUSE_MS,
       });
       await options.profileGuard.assertReadable("codex");
-      const metadata = await reader(readOptions);
+      const result = await observe(reader);
       await options.profileGuard.assertReadable("codex");
-      return metadata;
+      return result;
     } catch (error) {
       console.warn("[provider-settings] Native Codex identity unavailable:", error instanceof Error ? error.name : "UnknownError");
-      return null;
+      return unavailable;
     }
-  };
+  }
+  const readAccount: CodexNativeAccountMetadataReader = readOptions => guardedRead(current => current(readOptions), null);
+  readAccount.observeIdentity = () => guardedRead<CodexNativeAccountObservation>(async current => {
+    if (current.observeIdentity) return current.observeIdentity();
+    const metadata = await current({ includeUsage: false });
+    return { metadata, state: metadata ? "observed" : "unavailable" };
+  }, { metadata: null, state: "unavailable" });
+  // This synchronous classification reads only the private verifier's outcome;
+  // it performs no observation and supplies no execution authority.
+  readAccount.identityFailureState = metadata => reader?.identityFailureState?.(metadata) ?? "unavailable";
+  // Settings login/logout/remove/revocation drop the reused admission identity.
+  readAccount.invalidateIdentity = () => { reader?.invalidateIdentity?.(); };
   const admission = createCodexExecutionAdmission({
     homePath: options.homePath,
     isOwner: userId => options.ownerIds.includes(userId),
     getSnapshot: async () => {
       const settings = options.getSettings();
       if (!settings) throw new Error("Provider settings are unavailable");
-      return settings.getSnapshot({ includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
+      // Execution admission only consults the Codex row; Claude/Hermes probes add latency only.
+      return settings.getSnapshot({ includeNativeAccountMetadata: true, includeNativeAccountUsage: false, nativeAccountHarnesses: ["codex"] });
     },
-    readNativeAccount: readAccount,
+    // Identity admission never depends on optional allowance metadata.
+    readNativeAccount: () => readAccount({ includeUsage: false }),
     assertProfileAvailable: () => options.profileGuard.assertReadable("codex"),
     stopSession: async sessionId => {
       const runtime = options.getRuntime();
@@ -52,6 +76,10 @@ export function createNativeCodexRuntime(options: {
   return {
     admission,
     readAccount,
+    /** Login, logout, and executable changes must not serve a reused admission identity. */
+    invalidateIdentity: () => { reader?.invalidateIdentity?.(); },
+    /** Wrap a login/logout invalidation hook so it also drops the reused identity. */
+    withIdentityInvalidation: (invalidate: () => void) => () => { invalidate(); reader?.invalidateIdentity?.(); },
     // Public workspace starts share the thread runtime and its exact cleanup
     // proofs. Reserve before sandbox preparation; final manager dispatch still
     // revalidates the registered binding through resolveSubscription below.

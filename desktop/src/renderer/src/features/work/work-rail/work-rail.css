@@ -9,11 +9,11 @@
 
 /* Rail-only aliases preserve every custom theme's semantic palette. */
 .matrix-chat-work-rail {
-  --matrix-chat-rail-text: var(--sidebar-foreground);
+  --matrix-chat-rail-text: var(--text-primary);
   --matrix-chat-rail-muted: var(--text-secondary);
-  --matrix-chat-rail-hover: var(--sidebar-accent);
-  --matrix-chat-rail-current: var(--sidebar-accent);
-  --matrix-chat-rail-current-border: var(--sidebar-border);
+  --matrix-chat-rail-hover: var(--bg-hover);
+  --matrix-chat-rail-current: var(--bg-hover);
+  --matrix-chat-rail-current-border: var(--border-default);
   --matrix-chat-rail-current-shadow: var(--shadow-1);
   --matrix-chat-rail-count: var(--text-tertiary);
   --matrix-chat-rail-success: var(--success);

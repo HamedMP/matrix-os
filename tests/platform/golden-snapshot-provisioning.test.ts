@@ -99,6 +99,39 @@ describe('golden snapshot provisioning activation', () => {
     expect(getGoldenSnapshotServerProfile('cax31')).toEqual({ architecture: 'arm', diskGb: 160 });
   });
 
+  it('sizes cx23 preview machines at their 40 GB disk', () => {
+    expect(getGoldenSnapshotServerProfile('cx23')).toEqual({ architecture: 'x86', diskGb: 40 });
+  });
+
+  it('refuses a test snapshot taken on a larger disk for a cx23 preview', async () => {
+    const snapshotId = await readySnapshot('v2', 302, true);
+    await db.executor.updateTable('golden_snapshots').set({ image_disk_gb: 80 })
+      .where('snapshot_id', '=', snapshotId).execute();
+    const createServer = vi.fn();
+    const service = createCustomerVpsService({
+      db,
+      config: loadCustomerVpsConfig({
+        PLATFORM_SECRET: 'platform-secret', MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
+        CUSTOMER_VPS_IMAGE_VERSION: 'v2',
+        S3_ACCESS_KEY_ID: 'access-key',
+        S3_SECRET_ACCESS_KEY: 'secret-key',
+        S3_ENDPOINT: 'https://r2.example',
+        HETZNER_SERVER_TYPE: 'cpx22',
+      }),
+      hetzner: createMockHetznerClient({ createServer }),
+      systemStore: createMockCustomerVpsSystemStore(),
+      now: () => new Date('2026-07-03T00:01:00.000Z'),
+    });
+
+    await expect(service.provisionPreview({
+      clerkUserId: 'user_preview_small_disk',
+      handle: 'pr-5631',
+      runtimeSlot: 'pr-5631',
+      testSnapshotId: snapshotId,
+    })).rejects.toMatchObject({ code: 'snapshot_clone_rejected' });
+    expect(createServer).not.toHaveBeenCalled();
+  });
+
   it('normalizes Postgres BIGINT provider image ids before exact preview comparison', () => {
     expect(normalizePreviewTestProviderImageId('422202690')).toBe(422202690);
   });

@@ -41,6 +41,7 @@ export function buildWorkRailSearchResults(
   records: readonly ChatNavigationRecord[],
   projects: readonly Project[],
   query: string,
+  limit = MAX_WORK_RAIL_SEARCH_RESULTS,
 ): WorkRailSearchResult[] {
   const projectByReference = new Map<string, Project>();
   for (const project of projects) {
@@ -50,7 +51,14 @@ export function buildWorkRailSearchResults(
   const normalized = query.trim().toLocaleLowerCase();
   const seen = new Set<string>();
   const results: WorkRailSearchResult[] = [];
-  const newestFirst = [...records].sort(compareCanonicalChatActivity);
+  const newestFirst = [...records].sort((left, right) => {
+    if (left.chat.lifecycle === "archived" && right.chat.lifecycle === "archived") {
+      const archiveOrder = Date.parse(right.chat.archivedAt ?? right.chat.updatedAt)
+        - Date.parse(left.chat.archivedAt ?? left.chat.updatedAt);
+      if (archiveOrder) return archiveOrder;
+    }
+    return compareCanonicalChatActivity(left, right);
+  });
   for (const record of newestFirst) {
     if (seen.has(record.chat.id)) continue;
     seen.add(record.chat.id);
@@ -70,7 +78,7 @@ export function buildWorkRailSearchResults(
       driverKind ? providerLabel(driverKind) : undefined,
     ].filter(Boolean).join(" · ");
     results.push({ record, ...(project ? { project } : {}), contextLabel });
-    if (results.length === MAX_WORK_RAIL_SEARCH_RESULTS) break;
+    if (results.length === limit) break;
   }
   const duplicateCounts = new Map<string, number>();
   for (const result of results) {
@@ -125,14 +133,11 @@ export function buildWorkRailModel(
   const doneDisplay: ChatNavigationRecord[] = [];
   const placed = new Set<string>();
   for (const record of records) {
-    if (placed.has(record.chat.id) || excluded.has(record.chat.id)) continue;
+    if (placed.has(record.chat.id) || excluded.has(record.chat.id) || record.chat.lifecycle !== "active") continue;
     placed.add(record.chat.id);
+    if (record.projectId) groupByProjectReference.get(record.projectId)?.chats.push(record);
     if (record.chat.userState?.pinned) {
       pinned.push(record);
-      continue;
-    }
-    if (record.projectId) {
-      groupByProjectReference.get(record.projectId)?.chats.push(record);
       continue;
     }
     const group = resolveCanonicalChatLifecycleGroup(record);
