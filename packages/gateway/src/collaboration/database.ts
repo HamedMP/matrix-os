@@ -3,6 +3,7 @@ import type { CollaborationRuntimeIdentityTable } from "./runtime-identity.js";
 import type { CollaborationGitOperationsTable } from "./project-git-operations.js";
 import type { CollaborationTerminalBindingsTable } from "./terminal-bindings.js";
 import type { CollaborationTeamTerminalLabelsTable } from "./team-terminal-labels.js";
+import type { CollaborationTeamComputerScopesTable, CollaborationTeamComputerSharesTable } from "./team-computer-share.js";
 import { applyCollaborationBaseSchema, COLLABORATION_VERSIONED_MIGRATIONS } from "./database-migrations.js";
 import type { ChatDatabase } from "../chat/database.js";
 
@@ -392,6 +393,8 @@ export interface CollaborationDatabase {
   collaboration_app_bindings: CollaborationAppBindingsTable;
   collaboration_terminal_bindings: CollaborationTerminalBindingsTable;
   collaboration_team_terminal_labels: CollaborationTeamTerminalLabelsTable;
+  collaboration_team_computer_shares: CollaborationTeamComputerSharesTable;
+  collaboration_team_computer_scopes: CollaborationTeamComputerScopesTable;
   collaboration_resource_catalog: CollaborationResourceCatalogTable;
   collaboration_upload_stages: CollaborationUploadStagesTable;
   collaboration_upload_parts: CollaborationUploadPartsTable;

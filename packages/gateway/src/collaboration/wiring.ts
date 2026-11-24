@@ -76,6 +76,8 @@ import { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
 import { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 import { TeamTerminalInputModes } from "./team-terminal-input-mode.js";
 import { TeamTerminalService } from "./team-terminal-service.js";
+import { TeamComputerShareService } from "./team-computer-share.js";
+import { PRESET_POLICY_VERSION } from "./repository-shared.js";
 import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocket-route.js";
 import { createProjectTransitionJournal } from "./project-transition.js";
 import { createProjectFence } from "./project-fence.js";
@@ -371,6 +373,8 @@ export async function createGatewayCollaboration(options: {
   let terminalEventRegistry: CollaborationTerminalEventRegistry | undefined;
   let teamTerminalInputModes: TeamTerminalInputModes | undefined;
   let teamTerminals: TeamTerminalService | undefined;
+  let teamComputers: TeamComputerShareService | undefined;
+  let teamComputerTimer: ReturnType<typeof setInterval> | undefined;
   let teamTerminalInfo: ((terminalId: string) => Promise<{ name: string; size?: { cols: number; rows: number } } | null>) | undefined;
   let projectSharing: ProjectSharingService | undefined;
   let projectChatAssignments: ProjectChatAssignmentCoordinator | undefined;
@@ -703,6 +707,9 @@ export async function createGatewayCollaboration(options: {
       runtime: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["runtime"];
       executionEligibility: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["executionEligibility"];
       connectOutput: NonNullable<ConstructorParameters<typeof CollaborationTerminalEventRegistry>[0]["connectOutput"]>;
+      /** Spec 2710 layer 6: the owner's live tabs, and a new one in the main workspace. */
+      listTerminals?(): Promise<string[]>;
+      openTerminal?(): Promise<string>;
       /** Spec 2710: the owner's tab name and grid, shown to members under Team. */
       terminalInfo?(terminalId: string): Promise<{ name: string; size?: { cols: number; rows: number } } | null>;
     }): { available: true } {
@@ -748,6 +755,42 @@ export async function createGatewayCollaboration(options: {
         startTimers: options.startTimers,
       });
       teamTerminalInfo = input.terminalInfo;
+      if (input.listTerminals && input.openTerminal && options.config.ownerId) {
+        const adapter = terminalAdapter;
+        const evaluator = new CollaborationCapabilityEvaluator({ db: options.db, grants: capabilities, organizationPrecondition });
+        teamComputers = new TeamComputerShareService({
+          db: options.db,
+          ownerId: options.config.ownerId,
+          listTerminals: input.listTerminals,
+          openTerminal: input.openTerminal,
+          terminals: {
+            preflight: (request) => adapter.preflight(request),
+            shareTerminal: (request) => adapter.shareTerminal(request),
+            get: (scopeId, terminalId) => adapter.get(scopeId, terminalId),
+            setContributorControl: (request) => adapter.setContributorControl(request),
+          },
+          grants: {
+            list: (scopeId) => capabilities.listGrants(scopeId),
+            create: (request) => evaluator.createGrant({ ...request, policyVersion: PRESET_POLICY_VERSION }),
+            patch: (request) => evaluator.patchGrantPreset(request),
+            revoke: (request) => evaluator.revokeGrant(request),
+          },
+          scopeRevision: async (scopeId) => Number((await repository.getScope(scopeId))?.revision ?? 0),
+          committed: async (scopeId) => {
+            await eventRegistry.broadcastScope(scopeId);
+            await terminalEventRegistry?.reauthorizeScope(scopeId);
+          },
+        });
+        if (options.startTimers !== false) {
+          // New tabs on a shared computer are shared within one interval.
+          teamComputerTimer = setInterval(() => {
+            void teamComputers?.sync().catch((error: unknown) => {
+              console.warn("[team-computer] sync failed", error instanceof Error ? error.name : "UnknownError");
+            });
+          }, 15_000);
+          teamComputerTimer.unref?.();
+        }
+      }
       teamTerminals = new TeamTerminalService({
         registry: terminalEventRegistry,
         inputModes: teamTerminalInputModes,
@@ -865,6 +908,7 @@ export async function createGatewayCollaboration(options: {
         ...(resourceServices ? { resources: resourceServices } : {}),
         ...(standaloneScope ? { standaloneScope } : {}),
         ...(teamTerminalInfo ? { teamTerminalInfo } : {}),
+        ...(teamComputers ? { teamComputers } : {}),
         ...(organizationDrive ? { organizationDrive } : {}),
         ...(collaborativeAppReadiness ? { collaborativeAppReadiness } : {}),
         onScopeCommitted: async (scopeId) => {
@@ -969,6 +1013,9 @@ export async function createGatewayCollaboration(options: {
       eventRegistry.shutdown();
       terminalEventRegistry?.shutdown();
       terminalEventRegistry = undefined;
+      if (teamComputerTimer) clearInterval(teamComputerTimer);
+      teamComputerTimer = undefined;
+      teamComputers = undefined;
       teamTerminals?.close();
       teamTerminals = undefined;
       teamTerminalInputModes?.clear();
@@ -1021,6 +1068,9 @@ export async function createGatewayCollaboration(options: {
       eventRegistry.shutdown();
       terminalEventRegistry?.shutdown();
       terminalEventRegistry = undefined;
+      if (teamComputerTimer) clearInterval(teamComputerTimer);
+      teamComputerTimer = undefined;
+      teamComputers = undefined;
       teamTerminals?.close();
       teamTerminals = undefined;
       teamTerminalInputModes?.clear();

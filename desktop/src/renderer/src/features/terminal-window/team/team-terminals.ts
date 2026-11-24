@@ -4,6 +4,7 @@
 // computer, so a hosted VPS and an owned machine read exactly the same way.
 import {
   CollaborationDiscoveryResponseSchema,
+  TeamComputerTabCreatedSchema,
   TeamTerminalProjectionSchema,
   type CollaborationRole,
   type TeamTerminalProjection,
@@ -135,4 +136,11 @@ export function groupTeamTerminals(terminals: readonly TeamTerminal[]): Array<{ 
     groups.set(id, group);
   }
   return [...groups.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+/** Spec 2710 layer 6: an editor of a shared computer opens a new tab there; it comes back shared. */
+export async function openTeamComputerTab(api: TeamTerminalsApi, fromScopeId: string): Promise<string> {
+  return TeamComputerTabCreatedSchema.parse(await api.post(
+    `/api/collaboration/scopes/${encodeURIComponent(fromScopeId)}/terminal/team/tabs`, {},
+  )).scopeId;
 }
