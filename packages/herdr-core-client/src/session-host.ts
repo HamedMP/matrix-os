@@ -53,6 +53,9 @@ export type HerdrSessionHostStatus = "ready" | "unsupported" | HerdrTransportFai
 // app, so these wait for an explicit retry instead of a timer.
 const WAITS_FOR_RETRY: ReadonlySet<HerdrSessionHostStatus> = new Set(["not-installed", "unsupported", "not-enabled"]);
 
+/** What to start instead of the computer's own shell at home. */
+export interface HerdrLaunch { argv?: string[]; line?: string; cwd?: string; name?: string }
+
 export interface HerdrSessionHostOptions {
   /** A byte stream to `herdr-core connect` on the computer. Rejects with HerdrTransportError when it can say why. */
   open(): Promise<HcSocket>;
@@ -200,9 +203,19 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
     status: (): HerdrSessionHostStatus => status,
     list: sessions.list,
 
-    /** Starts that computer's own shell in its home directory. Returns null when too many were started just now. */
-    create(size: { cols: number; rows: number }): Promise<string | null> {
-      return sessions.run({ size, env: { TERM: "xterm-256color", COLORTERM: "truecolor" }, no_parent: true, no_notify: true, wait: false });
+    /**
+     * Starts that computer's own shell in its home directory, or (`launch`) a
+     * program or shell line in a folder there. Returns null when too many were
+     * started just now. Callers validate `launch`; the far end checks it again.
+     */
+    create(size: { cols: number; rows: number }, launch: HerdrLaunch = {}): Promise<string | null> {
+      return sessions.run({
+        ...(launch.argv ? { argv: launch.argv } : {}),
+        ...(launch.line ? { line: launch.line } : {}),
+        ...(launch.cwd ? { cwd: launch.cwd } : {}),
+        ...(launch.name ? { name: launch.name } : {}),
+        size, env: { TERM: "xterm-256color", COLORTERM: "truecolor" }, no_parent: true, no_notify: true, wait: false,
+      }, { deadlineMs: options.callTimeoutMs ?? CALL_TIMEOUT_MS });
     },
 
     kill: sessions.kill,

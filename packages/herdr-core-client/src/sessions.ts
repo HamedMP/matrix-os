@@ -139,13 +139,19 @@ export function createHcSessions(options: {
     return attachment != null;
   }
 
-  async function start(params: Record<string, unknown>): Promise<string | null> {
+  async function start(params: Record<string, unknown>, deadline: number | undefined): Promise<string | null> {
+    // Starts run one at a time; one that waited past its caller's deadline is never sent,
+    // and the core gets only the time it has left.
+    const left = deadline === undefined ? undefined : deadline - now();
+    if (left !== undefined && left <= 0) throw new Error("terminal start expired");
     const core = await options.ensure();
     const time = now();
     creates = creates.filter((started) => time - started < CREATE_WINDOW_MS);
     if (creates.length >= MAX_CREATES_PER_WINDOW) return null;
     creates.push(time);
-    return RanSchema.parse(await core.call("terminal.run", params)).address;
+    const remaining = deadline === undefined ? undefined : deadline - now();
+    if (remaining !== undefined && remaining <= 0) throw new Error("terminal start expired");
+    return RanSchema.parse(await core.call("terminal.run", params, remaining)).address;
   }
 
   return {
@@ -177,8 +183,9 @@ export function createHcSessions(options: {
     },
 
     /** Starts a terminal with these `terminal.run` params. Returns null when too many were started just now. */
-    run(params: Record<string, unknown>): Promise<string | null> {
-      const next = creation.then(() => start(params));
+    run(params: Record<string, unknown>, timing: { deadlineMs?: number } = {}): Promise<string | null> {
+      const deadline = timing.deadlineMs === undefined ? undefined : now() + timing.deadlineMs;
+      const next = creation.then(() => start(params, deadline));
       // The chain itself never rejects; each caller still sees and handles its own
       // outcome through `next`, so the chain only keeps the order.
       creation = next.then(() => undefined, (error: unknown) => { void error; });

@@ -131,6 +131,27 @@ export function desktopLinkProofMessage(input: DesktopLinkProof & { revision: nu
   return proofMessage("matrix-desktop-link-v1", [input.ownerId, input.machineId, input.deviceId, input.revision, input.nonce]);
 }
 
+// --- Terminal refs ----------------------------------------------------------
+
+/**
+ * Terminals on a linked desktop report under a workspace id of their own per desktop,
+ * so refs from two desktops (both with a `t1`) never collide, and every OS view
+ * can tell a desktop terminal from a Matrix one by its id alone. Ten zero digits
+ * then "mac" in hex, which random workspace ids practically never start with,
+ * then the first 16 hex digits of the device id.
+ */
+export const DESKTOP_LINK_WORKSPACE_PREFIX = "tws_000000000064736b";
+const DESKTOP_LINK_WORKSPACE = /^tws_000000000064736b([0-9a-f]{16})$/;
+
+export function desktopLinkWorkspaceId(deviceId: string): string {
+  return `${DESKTOP_LINK_WORKSPACE_PREFIX}${deviceId.slice(0, 16)}`;
+}
+
+/** The device-id prefix a desktop workspace id names, or null for any other workspace. */
+export function desktopLinkDevicePrefix(workspaceId: string | null | undefined): string | null {
+  return workspaceId ? DESKTOP_LINK_WORKSPACE.exec(workspaceId)?.[1] ?? null : null;
+}
+
 // --- What the desktop exposes -------------------------------------------------
 
 /**

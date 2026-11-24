@@ -419,3 +419,46 @@ describe("Desktop link service after pairing and account changes", () => {
     await until(() => !registry.online(pairing.key.deviceId));
   });
 });
+
+describe("Desktop link service consent (D2)", () => {
+  function owner(origin: string, consent: { ask: (computer: string, request: unknown) => Promise<boolean>; fullAccess: () => Promise<boolean> }, core = createFakeHerdrCore()) {
+    const pairing = testPairing(origin);
+    const userData = mkdtempSync(join(tmpdir(), "desktop-link-"));
+    cleanup.push(() => rmSync(userData, { recursive: true, force: true }));
+    const service = createDesktopLinkService({
+      pairing, credential: async () => ownerJwt(), consent: { ask: (computer, request) => consent.ask(computer, request), fullAccess: consent.fullAccess },
+      openCore: async () => core.connect(), preferences: createDesktopLinkPreferenceStore(userData, () => {}),
+      home: tmpdir(), deviceName: "desktop", app: { version: "0.9.0", os: "macOS" },
+      createSocket: (url, headers) => new WebSocket(url, { headers } as never) as unknown as DesktopLinkSocket, log: () => {},
+    });
+    cleanup.push(() => service.dispose());
+    return { pairing, service, core };
+  }
+
+  it("asks the owner, names the computer, and nothing runs when the owner declines", async () => {
+    const { origin, registry } = await computer();
+    const ask = vi.fn(async () => false);
+    const { pairing, service, core } = owner(origin, { ask, fullAccess: async () => false });
+    await pairing.pair();
+    await service.start();
+    await service.enable("primary", "matrix-demo");
+    await until(() => registry.online(pairing.key.deviceId));
+    const adapter = registry.adapter(pairing.key.deviceId)!;
+    await expect(adapter.create({ cols: 80, rows: 24 }, { argv: ["uname", "-a"] })).rejects.toThrow();
+    expect(core.calls.some((call) => call.method === "terminal.run")).toBe(false);
+    expect(ask).toHaveBeenCalledWith("matrix-demo", { kind: "run", command: "uname -a", cwd: realpathSync(tmpdir()) });
+  });
+
+  it("runs without asking while Full Access is allowed for this pairing", async () => {
+    const { origin, registry } = await computer();
+    const ask = vi.fn(async () => false);
+    const { pairing, service, core } = owner(origin, { ask, fullAccess: async () => true });
+    await pairing.pair();
+    await service.start();
+    await service.enable("primary", "matrix-demo");
+    await until(() => registry.online(pairing.key.deviceId));
+    await registry.adapter(pairing.key.deviceId)!.create({ cols: 80, rows: 24 }, { argv: ["uname"] });
+    expect(core.calls.some((call) => call.method === "terminal.run")).toBe(true);
+    expect(ask).not.toHaveBeenCalled();
+  });
+});

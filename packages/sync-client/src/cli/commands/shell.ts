@@ -9,7 +9,7 @@ import { requireCliAuthToken } from "../auth-state.js";
 const TERMINAL_WORKSPACE_ID = /^tws_[0-9a-f]{32}$/;
 const TERMINAL_TAB_ID = /^tt_[0-9a-f]{32}$/;
 const PROJECT_ID = /^proj_[0-9a-f]{16,64}$/;
-const SHELL_USAGE = "Usage: matrix shell list|new|connect|rm|run|get|read|send|keys|interrupt|wait|wait-children|label|report|templates [--project <project>] [--tab <tab>]";
+const SHELL_USAGE = "Usage: matrix shell list|new|connect|rm|run|get|read|send|keys|interrupt|wait|wait-children|label|report|templates|machine [--project <project>] [--tab <tab>]";
 
 export const commonArgs = {
   profile: { type: "string", required: false },
@@ -267,6 +267,7 @@ export const shellCommand = defineCommand({
     label: () => import("./shell-orchestration.js").then((module) => module.shellLabelCommand),
     report: () => import("./shell-orchestration.js").then((module) => module.shellReportCommand),
     "wait-children": () => import("./shell-orchestration.js").then((module) => module.shellWaitChildrenCommand),
+    machine: () => import("./shell-machine.js").then((module) => module.shellMachineCommand),
   },
   run: ({ rawArgs }) => {
     if (!rawArgs?.length) console.log(SHELL_USAGE);
