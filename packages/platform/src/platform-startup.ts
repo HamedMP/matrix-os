@@ -868,22 +868,25 @@ async function startPlatformServerWithCleanup(
   const storageConfig = resolvePlatformObjectStorage(process.env);
   let createR2Client: GatewayR2ClientModule['createR2Client'] | undefined;
   if (storageConfig.primary && platformSecret) {
-    const [r2ClientModule, { createInternalSyncRoutes }] = await Promise.all([
-      importRuntimeModule<GatewayR2ClientModule>('./r2-client.js'),
-      import('./internal-sync-routes.js'),
-    ]);
+    const r2ClientModule = await importRuntimeModule<GatewayR2ClientModule>('./r2-client.js');
     createR2Client = r2ClientModule.createR2Client;
     const r2 = await createR2Client(storageConfig.primary);
-    internalSyncRoutes = createInternalSyncRoutes({
-      db,
-      r2,
-      platformSecret,
-      r2PrefixRoot: process.env.R2_PREFIX_ROOT ?? 'matrixos-sync',
-    });
     customerVpsObjectStore = r2;
     hostBundleObjectStore = r2;
     coreRepoObjectStore = r2;
     primaryStorageGate = createR2CapabilityGate({ storage: r2 });
+  }
+  if (platformSecret) {
+    // Mounted even without owner sync storage, so a guest's restore gate gets a
+    // storage answer instead of falling through to session routing's 401.
+    const { createConfiguredInternalSyncRoutes } = await import('./internal-sync-routes.js');
+    internalSyncRoutes = createConfiguredInternalSyncRoutes({
+      db,
+      r2: coreRepoObjectStore ?? null,
+      platformSecret,
+      r2PrefixRoot: process.env.R2_PREFIX_ROOT ?? 'matrixos-sync',
+      env: process.env,
+    });
   }
 
   if (storageConfig.bundles) {

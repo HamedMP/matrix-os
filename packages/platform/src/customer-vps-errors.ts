@@ -13,6 +13,10 @@ export type CustomerVpsFailureCode =
   | 'registration_rejected'
   | 'registration_timeout'
   | 'retry_exhausted'
+  /** Journey only: a free build start inside the per-owner throttle window. */
+  | 'retry_throttled'
+  /** Journey only: a failed computer that once ran; a rebuild would retire it. */
+  | 'support_required'
   | 'unknown';
 
 export class CustomerVpsError extends Error {
