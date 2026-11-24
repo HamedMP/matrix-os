@@ -906,6 +906,8 @@ function ChatAppContent({
                     return <div key={`tg-${id}`}><ToolCallGroup tools={group.messages} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/>{review}</div>;
                   }
                   const msg = group.message;
+                  const setupControls = msg.id === projectSetup.messageId ? projectSetup.controls : null;
+                  const setupReply = setupControls && projectSetup.active && projectSetup.draft?.interview && msg.role === "assistant";
                   return (
                     <div key={msg.id}>
                       {msg.id === projectSetup.messageId ? projectSetup.note : null}
@@ -946,7 +948,7 @@ function ChatAppContent({
                             return onSubmitApproval(runId, approvalId, decision, browserChoice).then(done => { if (!done) throw new Error("ApprovalUnavailable"); }).finally(() => setSubmittingApprovalId(null));
                           } : undefined}
                         />
-                      ) : (
+                      ) : setupReply ? null : (
                     <AssistantBubble
                       content={msg.content}
                       attachments={msg.attachments}
@@ -956,7 +958,7 @@ function ChatAppContent({
                       onAction={submitWithHermesSetup}
                     />
                       )}
-                    {msg.id === projectSetup.messageId && projectSetup.controls ? <div className="mt-2.5">{projectSetup.controls}</div> : null}
+                    {setupControls ? <div className={setupReply ? undefined : "mt-2.5"}>{setupControls(setupReply ? msg.content : undefined)}</div> : null}
                     <ChatContextReceipt context={ChatRunContextSchema.safeParse(msg.metadata?.chatRunContext).data} />
                     <BotTranscriptRunState placement={botTranscript} index={groupIndex}/>
                     {review}

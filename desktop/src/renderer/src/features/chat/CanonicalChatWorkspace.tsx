@@ -1289,7 +1289,7 @@ function CanonicalChatWorkspaceContent({
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <SourceChatRoutines client={client.agents} chat={controller.detail.record.chat}
-              projectSetup={projectSetup.draft ? { header: projectSetup.header, note: projectSetup.note, controls: projectSetup.controls, messageId: setupMessageId } : undefined}
+              projectSetup={projectSetup.draft ? { header: projectSetup.header, note: projectSetup.note, controls: projectSetup.renderControls, messageId: setupMessageId, compactReply: projectSetup.active && Boolean(projectSetup.draft.interview) } : undefined}
               ordinary={!directBotId && !botIdentityUnknown && !explicitSharedRoute && controller.detail.record.chat.id === routedComposerChatId}
               identity={admissionIdentity} revision={botEventRevision} turns={transcript} callbacks={{
               openChat: selectChat,

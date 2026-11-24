@@ -1,5 +1,7 @@
 import { Check, ChevronRight } from "lucide-react";
-import type { ProjectSetupDraft } from "@matrix-os/contracts";
+import { PROJECT_SETUP_COMPACT_ANSWER_LENGTH, PROJECT_SETUP_PRIMARY_REPLY_LENGTH, type ProjectSetupDraft } from "@matrix-os/contracts";
+import ReactMarkdown from "react-markdown";
+import { ProjectSetupActionButton as Action } from "./ProjectSetupAction.js";
 
 type SetupStep = ProjectSetupDraft["step"];
 type ProgressState = "current" | "incomplete" | "complete" | "skipped" | "described";
@@ -13,18 +15,24 @@ function projectSetupProgress(draft: ProjectSetupDraft | null): ProgressState[] 
   return ["complete", skills, draft.mcp.state === "skipped" ? "skipped" : "current"];
 }
 
-export function ProjectSetupProgress({ projectName, draft = null, agentLed = Boolean(draft?.interview) }: {
+export function ProjectSetupProgress({ projectName, draft = null, agentLed = Boolean(draft?.interview), onLeaveSetup }: {
   projectName: string;
   draft?: ProjectSetupDraft | null;
   agentLed?: boolean;
+  onLeaveSetup?: () => void;
 }) {
   return (
     <header className="min-w-0 space-y-4">
-      <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
-        <span className="truncate">{projectName}</span>
-        <ChevronRight aria-hidden size={12} className="shrink-0" />
-        <span className="shrink-0">Project setup</span>
-      </p>
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+          <span className="truncate">{projectName}</span>
+          <ChevronRight aria-hidden size={12} className="shrink-0" />
+          <span className="shrink-0">Project setup</span>
+        </p>
+        {agentLed && draft && draft.step !== "saved" && onLeaveSetup ? (
+          <Action variant="ghost" onClick={onLeaveSetup}>Cancel setup</Action>
+        ) : null}
+      </div>
       {!agentLed ? <nav aria-label="Project setup progress">
         <ol className="grid w-full max-w-[434px] grid-cols-3 gap-2 text-xs">
           {projectSetupProgress(draft).map((state, index) => (
@@ -68,7 +76,7 @@ export function projectSetupAnswerPlaceholder(
   agentLed = false,
 ): string | undefined {
   if (step === "saved") return undefined;
-  if (agentLed) return step === "review" ? "Tell me what to change…" : "Reply to the agent…";
+  if (agentLed) return step === "review" ? "Tell me what to change…" : "Write your own answer…";
   if (mcpHandoff) return "Continue in MCP Settings or review below…";
   if (introduction) return "Waiting for the first reply…";
   switch (step) {
@@ -79,4 +87,46 @@ export function projectSetupAnswerPlaceholder(
     case "review": return "Tell Matrix what to change…";
     default: return undefined;
   }
+}
+
+const setupSentences = new Intl.Segmenter(undefined, { granularity: "sentence" });
+const plainReply = /^[^\r\n<>`#*_\[\]]+$/u;
+
+export function projectSetupReplyContent(replyText: string, review: boolean) {
+  const text = replyText.trim();
+  const firstParagraph = text.split(/\r?\n\s*\r?\n/u, 1)[0] ?? "";
+  const fits = ({ segment }: Intl.SegmentData) => {
+    const candidate = segment.trim();
+    return candidate.length > 0 && candidate.length <= PROJECT_SETUP_PRIMARY_REPLY_LENGTH && plainReply.test(candidate);
+  };
+  const first = [...setupSentences.segment(firstParagraph)].find(fits);
+  const isQuestion = ({ segment }: Intl.SegmentData) => /[?？]$/u.test(segment.trim());
+  // Prefer the intended next action in Review and a primary question already
+  // supplied in the opening paragraph. Older replies often introduce it later.
+  const needsQuestion = !review && !(first && isQuestion(first));
+  const questions = needsQuestion ? [...setupSentences.segment(text)].filter(isQuestion) : [];
+  const main = questions.length > 0 ? questions.find(fits) : first;
+  if (!main) return { prompt: undefined, detail: text };
+  const detail = [text.slice(0, main.index).trim(), text.slice(main.index + main.segment.length).trim()]
+    .filter(Boolean).join("\n\n");
+  return { prompt: main.segment.trim(), detail };
+}
+
+export function isCompactSetupAnswer(text: string): boolean {
+  return !/[\r\n]/u.test(text)
+    && text.replace(/[^\p{ASCII}]/gu, "xx").length <= PROJECT_SETUP_COMPACT_ANSWER_LENGTH;
+}
+
+export const disclosureStyle = "w-fit cursor-pointer text-xs font-medium text-[var(--text-secondary,var(--muted-foreground))] hover:underline";
+
+export function ProjectSetupReplyDetails({ detail, label }: { detail: string; label: string }) {
+  if (!detail) return null;
+  return (
+    <details className="min-w-0">
+      <summary className={disclosureStyle}>{label}</summary>
+      <div className="mt-2 space-y-2 break-words leading-relaxed">
+        <ReactMarkdown skipHtml components={{ img: () => null }}>{detail}</ReactMarkdown>
+      </div>
+    </details>
+  );
 }

@@ -74,6 +74,59 @@ it("renders only the Agent's suggestions through the same answer action", () => 
   expect(screen.queryByRole("button", { name: "Connect Linear" })).toBeNull();
 });
 
+it("shows one active question and keeps longer answers and the original context expandable", () => {
+  const longAnswer = "Collect review feedback from the entire on-call rotation before changing the release process.";
+  const replyText = "Let's set up your research project. I’ll help with release guidance and make it clear what you can leave to a later conversation.\n\nWhat should get reviewed? Who should sign off?";
+  const setup = controller(undefined, {
+    ...draft, step: "guidance", proposals: [],
+    interview: { focus: "guidance", suggestions: [longAnswer, "Release notes", "Support docs"] },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} replyText={replyText} />);
+  expect(screen.getByText("What should get reviewed?").closest("details")).toBeNull();
+  expect(screen.getByText(/Who should sign off/).closest("details")?.open).toBe(false);
+  expect(screen.getByText(/let.s set up your research project/i).closest("details")?.open).toBe(false);
+  expect(screen.getByRole("button", { name: "Release notes" })).toBeTruthy();
+  const longChoice = screen.getByText(longAnswer).closest("button")!;
+  const choices = longChoice.closest("details")!;
+  expect(choices.open).toBe(false);
+  expect(choices.querySelector("summary")?.textContent).toBe("More answers");
+  choices.open = true;
+  fireEvent.click(longChoice);
+  expect(setup.answer).toHaveBeenCalledExactlyOnceWith(longAnswer);
+});
+
+it("keeps a wide localized choice and a long service name fully actionable", () => {
+  const service = "Atlassian (Jira, Confluence)";
+  const answer = "发布时必须征求市场和合规团队的批准";
+  const setup = controller(undefined, {
+    ...draft, step: "mcp", proposals: [],
+    interview: { focus: "mcp", suggestions: [answer], recommendedService: service },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} onOpenMcpSettings={vi.fn()} />);
+  const serviceChoice = screen.getByText(`Connect ${service}`).closest("button")!;
+  expect(serviceChoice.closest("details")?.open).toBe(false);
+  expect(screen.getByText(answer).closest("details")?.open).toBe(false);
+  serviceChoice.closest("details")!.open = true;
+  fireEvent.click(serviceChoice);
+  expect(setup.dispatch).toHaveBeenCalledExactlyOnceWith({ type: "choose_mcp", choice: "connect", service });
+});
+
+const oversizedQuestion = "How should the release checklist handle overlapping requests from different teams when an approval arrives just before a deadline?";
+it.each([
+  [oversizedQuestion, oversizedQuestion],
+  [`A quick note.\n\n${oversizedQuestion}`, oversizedQuestion],
+  ["A quick note.\n\nWho owns the **final review**?", "Who owns the final review?"],
+])("keeps an outlier question intact with an explicit read-and-reply fallback (%s)", (replyText, question) => {
+  const setup = controller(undefined, {
+    ...draft, step: "guidance", proposals: [],
+    interview: { focus: "guidance", suggestions: [] },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} replyText={replyText} />);
+  const details = screen.getByText("Read the agent’s question").closest("details")!;
+  expect(details.open).toBe(false);
+  expect(details.textContent).toContain(question);
+});
+
 it("reuses the confirmed MCP Settings flow only for the Agent's scoped recommendation", () => {
   const open = vi.fn();
   const dispatch = vi.fn(async () => true);

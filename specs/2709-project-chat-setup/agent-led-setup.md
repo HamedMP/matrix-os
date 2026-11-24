@@ -24,6 +24,13 @@ The existing design uses Chat for presentation but the application chooses the q
 
 Example. In **Release Notes**, the user says, “Draft customer release notes from Linear. Ask me before publishing.” The Agent can record the purpose and publishing constraint, acknowledge the Linear requirement, and ask what should count as ready for the release checklist. In **Store Operations**, a different answer can lead to a shift-handoff Skill and no MCP recommendation. Entering all the requirements in one reply may take either project directly to review.
 
+## Focus within each Chat turn
+
+- Lead each active turn with one short question or next step. Offer at most three short, complete replies or actions at a glance. Keep the ordinary composer available for an answer in the owner's own words or a correction to earlier answers.
+- Ask the Agent to return a plain lead of up to 100 characters, up to three suggestions of 32 characters each, and optional Markdown details. Accept longer bounded legacy replies so a wording miss can still preserve the accepted answer. Web Desktop and Electron apply the same presentation fallback to old or unusually verbose replies. Keep longer answers and secondary actions available in full through an expandable control so the displayed answer and the submitted answer have the same meaning.
+- Keep full Markdown in Review. Saving and leaving setup remain explicit actions. A failed turn retains the accepted answer and draft, and Retry processes that answer without creating another user message. The existing Settings handoff remains the place to authorize MCP.
+- Verify both renderers with two project contexts, a correction, a failed turn and recovery, explicit saving, and Skill selection in a new project Chat. Record which runs used test fixtures and which used an authorized provider.
+
 ## Review, resumption, and availability
 
 - Full guidance is ready for review when the Agent can summarize the project purpose and work preferences from the owner's answers. The owner can say they have no special rules. Ask a follow-up only when a missing answer would change the proposed guidance. Skill and MCP are optional. If the user explicitly wants only one configuration item, review just that item and leave the rest undecided.

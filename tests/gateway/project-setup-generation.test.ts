@@ -13,7 +13,7 @@ import { appendProjectSetupTranscript } from "../../packages/gateway/src/chat/pr
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
-import { applyProjectSetupInterview, beginProjectSetupInterview, initialProjectSetup, transitionProjectSetupInterview } from "../../packages/gateway/src/chat/project-setup-state.js";
+import { applyProjectSetupInterview, beginProjectSetupInterview, initialProjectSetup, projectSetupInterviewPrompt, transitionProjectSetupInterview } from "../../packages/gateway/src/chat/project-setup-state.js";
 import { generateProjectSetup, syncProjectSetupGeneration } from "../../packages/gateway/src/chat/project-setup-generation.js";
 import { ProjectSetupService } from "../../packages/gateway/src/chat/project-setup-service.js";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
@@ -101,6 +101,22 @@ it("clears a previously generated Skill when the owner corrects the proposal", (
   }), context).draft;
   expect(revised.skill).toBeUndefined();
   expect(revised.proposals).toEqual([]);
+});
+
+it("requests one short adaptive question and preserves separate explanation and full answers", () => {
+  const context = { project: { name: "Illustration archive" }, skills: [], instructionFiles: [], mcpServices: [] };
+  const draft = beginProjectSetupInterview(initialProjectSetup("chat_archive", "archive", "Illustrations", "msg_setup"));
+  const prompt = projectSetupInterviewPrompt(draft, context, []);
+  expect(prompt).toContain("one short primary question");
+  expect(prompt).toContain("32 characters");
+  const reply = "What will readers find in the archive?";
+  const details = "Start with the public collection. Permissions and metadata can be discussed later.";
+  const longAnswer = "The public collection plus an internal catalog for managing clearance.";
+  const result = applyProjectSetupInterview(draft, JSON.stringify({
+    reply, details, focus: "intent", suggestions: [longAnswer, "Public collection", "Public collection"],
+  }), context);
+  expect(result.assistantText).toBe(`${reply}\n\n${details}`);
+  expect(result.draft.interview?.suggestions).toEqual([longAnswer, "Public collection"]);
 });
 
 describe("admitted project setup generation", () => {

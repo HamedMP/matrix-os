@@ -8,6 +8,9 @@ const answer = z.string().trim().min(1).max(4096);
 const markdown = z.string().min(1).max(PROJECT_SKILL_FILE_MAX_BYTES)
   .refine(text => new TextEncoder().encode(text).byteLength <= PROJECT_SKILL_FILE_MAX_BYTES);
 const revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+export const PROJECT_SETUP_PRIMARY_REPLY_LENGTH = 100;
+export const PROJECT_SETUP_COMPACT_ANSWER_LENGTH = 32;
+
 export const ProjectSetupInterviewFocusSchema = z.enum(["intent", "guidance", "skill", "mcp", "review"]);
 export const ProjectSetupInterviewSchema = z.object({
   focus: ProjectSetupInterviewFocusSchema,

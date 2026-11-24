@@ -195,27 +195,30 @@ export function useDesktopProjectSetup({
       return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await blob.arrayBuffer());
     },
   };
+  const leaveSetup = project ? () => openWorkProject(project) : undefined;
   const introductionVisible = setup.introduction || Boolean(launch?.requested && !setup.draft);
   const projectName = project?.name ?? "this project";
+  const renderControls = setupEligible ? (replyText?: string) => (
+    <ProjectSetupControls
+      setup={view}
+      transport={transport}
+      selection={selection}
+      onOpenMcpSettings={openMcpSettings}
+      replyText={replyText}
+      mcpSettingsOpen={mcpSettingsOpen}
+      markdownEdits={markdownEdits}
+      onOpenFile={openFile}
+      {...sources}
+    />
+  ) : null;
   return {
     ...view,
     introductionVisible,
     placeholder: projectSetupAnswerPlaceholder(introductionVisible, setup.draft?.step, setup.mcpHandoff, Boolean(setup.draft?.interview)),
     note: setup.draft ? <ProjectSetupAcceptedNote draft={setup.draft} /> : null,
-    header: setup.draft ? <ProjectSetupProgress projectName={projectName} draft={setup.draft} /> : null,
-    controls: setupEligible ? (
-      <ProjectSetupControls
-        setup={view}
-        transport={transport}
-        selection={selection}
-        onOpenMcpSettings={openMcpSettings}
-        onLeaveSetup={project ? () => openWorkProject(project) : undefined}
-        mcpSettingsOpen={mcpSettingsOpen}
-        markdownEdits={markdownEdits}
-        onOpenFile={openFile}
-        {...sources}
-      />
-    ) : null,
+    header: setup.draft ? <ProjectSetupProgress projectName={projectName} draft={setup.draft} onLeaveSetup={leaveSetup} /> : null,
+    controls: renderControls?.() ?? null,
+    renderControls,
     introductionContent:
       introductionVisible ? (
         <ProjectSetupIntroduction projectName={projectName} setup={{ ...view, pending: setup.pending || selectionLoading }} />

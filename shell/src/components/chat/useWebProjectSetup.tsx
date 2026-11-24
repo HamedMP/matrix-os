@@ -151,8 +151,8 @@ export function useWebProjectSetup({
     awaitingMessage: Boolean(messageId && !messages.some(message => message.id === messageId)),
     placeholder: projectSetupAnswerPlaceholder(setup.introduction, draft?.step, setup.mcpHandoff, Boolean(draft?.interview)),
     note: draft ? <ProjectSetupAcceptedNote draft={draft} /> : null,
-    header: draft ? <ProjectSetupProgress projectName={projectName} draft={draft} /> : null,
-    controls: eligible ? (
+    header: draft ? <ProjectSetupProgress projectName={projectName} draft={draft} onLeaveSetup={leaveSetup} /> : null,
+    controls: eligible ? (replyText?: string) => (
       <ShellFileAuthority>
         {(authority) => (
           <ProjectSetupControls
@@ -162,7 +162,7 @@ export function useWebProjectSetup({
             selection={selection}
             markdownEdits={markdownEdits}
             onOpenMcpSettings={navigation?.openMcpSettings}
-            onLeaveSetup={leaveSetup}
+            replyText={replyText}
             mcpSettingsOpen={navigation?.mcpSettingsOpen}
             onOpenFile={(path) => openFile(path, authority)}
             {...sources}

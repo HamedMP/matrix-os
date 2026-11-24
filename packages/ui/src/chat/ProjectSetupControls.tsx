@@ -13,6 +13,7 @@ import type { ProjectSetupController, ProjectSetupTransport } from "./use-projec
 import { ProjectSetupActionButton as Action, borderStyle, mutedStyle } from "./ProjectSetupAction.js";
 import { ProjectSetupMarkdown, type ProjectSetupMarkdownState } from "./ProjectSetupMarkdown.js";
 import { ProjectSetupReviewSummary } from "./ProjectSetupReviewSummary.js";
+import { ProjectSetupReplyDetails, projectSetupReplyContent, isCompactSetupAnswer, disclosureStyle } from "./ProjectSetupProgress.js";
 export { ProjectSetupEntry, ProjectSetupIntroduction } from "./ProjectSetupEntry.js";
 
 interface Props extends ProjectSkillSourceActions {
@@ -20,7 +21,7 @@ interface Props extends ProjectSkillSourceActions {
   transport: ProjectSetupTransport | null;
   selection?: CanonicalChatModelSelection | null;
   onOpenMcpSettings?: () => void;
-  onLeaveSetup?: () => void;
+  replyText?: string;
   mcpSettingsOpen?: boolean;
   markdownEdits?: {
     files: Readonly<Record<string, ProjectSetupMarkdownState>>;
@@ -51,7 +52,7 @@ function ProjectSetupControlsScoped({
   transport,
   selection,
   onOpenMcpSettings,
-  onLeaveSetup,
+  replyText,
   mcpSettingsOpen = false,
   markdownEdits,
   onOpenFile,
@@ -91,6 +92,27 @@ function ProjectSetupControlsScoped({
     transport, showConnectionCard || showReview ? pendingService : undefined, mcpSettingsOpen,
   );
   const busy = setup.pending || reading;
+  const reply = interview && replyText ? projectSetupReplyContent(replyText, draft.step === "review") : null;
+  const replyPrompt = reply?.prompt ? <p className="leading-relaxed">{reply.prompt}</p> : null;
+  const replyDetails = reply?.detail ? <ProjectSetupReplyDetails detail={reply.detail} label={
+    reply.prompt ? "More details" : draft.step === "review" ? "Read the agent’s reply" : "Read the agent’s question"
+  } /> : null;
+  const suggestions = interview && draft.step !== "saved" && !showConnectionCard ? interview.suggestions : [];
+  const connectLabel = recommendedService ? `Connect ${recommendedService}` : "Open MCP Settings";
+  const longConnection = Boolean(interview && !isCompactSetupAnswer(connectLabel));
+  const reservedActions = Number(offerSkill) + (longConnection ? 1 : 2) * Number(offerConnection) + Number(showReview);
+  const shortAnswers = suggestions.filter(isCompactSetupAnswer)
+    .slice(0, Math.max(0, 3 - reservedActions));
+  const moreAnswers = suggestions.filter(text => !shortAnswers.includes(text));
+  const answerChoices = (choices: string[]) => (
+    <div className="flex flex-wrap gap-2" aria-label="Suggested answers" role="group">
+      {choices.map((text) => (
+        <Action key={text} disabled={busy} onClick={() => { void setup.answer(text); }}>
+          <span className="min-w-0 whitespace-normal break-words">{text}</span>
+        </Action>
+      ))}
+    </div>
+  );
   const needsSkillDraft = Boolean(draft.answers.skillInstructions && !draft.skill);
   const revisionFields: Array<"purpose" | "guidance" | "skillInstructions"> = draft.answers.skillInstructions
     ? ["purpose", "guidance", "skillInstructions"]
@@ -98,6 +120,14 @@ function ProjectSetupControlsScoped({
   const dispatch = (action: Parameters<ProjectSetupController["dispatch"]>[0]) => {
     void setup.dispatch(action);
   };
+
+  const connect = recommendedService ? (
+    <Action disabled={busy || !onOpenMcpSettings} onClick={() => dispatch({ type: "choose_mcp", choice: "connect", service: recommendedService })}>
+      <span className="min-w-0 whitespace-normal break-words">{connectLabel}</span>
+    </Action>
+  ) : onOpenMcpSettings ? (
+    <Action disabled={busy || mcpSettingsOpen} onClick={onOpenMcpSettings}>{connectLabel}</Action>
+  ) : null;
 
   const stage = async (prepare: (signal: AbortSignal) => ReturnType<typeof importProjectSkill>) => {
     if (busy || sourceRequest.current) return;
@@ -144,6 +174,7 @@ function ProjectSetupControlsScoped({
   if (interview && draft.step !== "saved" && (awaitingReply || replyFailed)) {
     return (
       <div className="space-y-2 text-sm" data-slot="project-setup-controls">
+        {replyPrompt}{replyDetails}
         {awaitingReply ? (
           <>
             <p role="status" style={mutedStyle}>Preparing the next reply…</p>
@@ -152,7 +183,6 @@ function ProjectSetupControlsScoped({
               {setup.error ? (
                 <Action disabled={busy} onClick={() => { void setup.reload(); }}>Reload setup</Action>
               ) : null}
-              {onLeaveSetup ? <Action variant="ghost" disabled={busy} onClick={onLeaveSetup}>Skip for now</Action> : null}
             </div>
           </>
         ) : (
@@ -164,7 +194,6 @@ function ProjectSetupControlsScoped({
               <Action disabled={busy || !selection} onClick={() => { void setup.retryInterview(); }}>
                 Retry with selected model
               </Action>
-              {onLeaveSetup ? <Action variant="ghost" disabled={busy} onClick={onLeaveSetup}>Skip for now</Action> : null}
             </div>
             {setup.error ? <p role="alert" className="text-xs">{setup.error}</p> : null}
           </>
@@ -174,15 +203,9 @@ function ProjectSetupControlsScoped({
   }
   return (
     <div className="min-w-0 space-y-3 text-sm" data-slot="project-setup-controls" aria-busy={busy}>
-      {interview && draft.step !== "saved" && !showConnectionCard && interview.suggestions.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {interview.suggestions.map((text) => (
-            <Action key={text} disabled={busy} onClick={() => { void setup.answer(text); }}>
-              <span className="min-w-0 whitespace-normal break-words">{text}</span>
-            </Action>
-          ))}
-        </div>
-      ) : null}
+      {replyPrompt}
+      {reply && !reply.prompt ? replyDetails : null}
+      {shortAnswers.length ? answerChoices(shortAnswers) : null}
       {!interview && draft.step !== "saved" ? (
         <Action variant="ghost" disabled={busy || awaitingReply} onClick={() => { void setup.start(); }}>
           Continue with Agent
@@ -215,20 +238,19 @@ function ProjectSetupControlsScoped({
             {!interview ? <Action disabled={busy} onClick={() => dispatch({ type: "choose_skill", choice: "create" })}>
               Create a skill
             </Action> : null}
-            <Action disabled={busy} onClick={() => setSource("import")}>
-              Import SKILL.md
-            </Action>
-            {loadInstalledSkills && readInstalledSkill ? (
-              <Action disabled={busy} onClick={() => setSource("installed")}>
-                Choose installed skill
-              </Action>
-            ) : null}
+            {!interview ? <SkillSourceButtons {...{ busy, setSource, loadInstalledSkills, readInstalledSkill }} /> : null}
             <Action disabled={busy} variant={interview ? "ghost" : undefined} onClick={() => interview
               ? void setup.answer("Continue without a skill.")
               : dispatch({ type: "choose_skill", choice: "skip" })}>
-              {interview ? "Continue without a skill" : "Skip for now"}
+              {interview ? "Skip skill" : "Skip for now"}
             </Action>
           </div>
+          {interview ? <details key={`skill:${draft.currentQuestionMessageId}`}>
+            <summary className={disclosureStyle}>Use an existing skill</summary>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <SkillSourceButtons {...{ busy, setSource, loadInstalledSkills, readInstalledSkill }} />
+            </div>
+          </details> : null}
           {source === "import" ? (
             <ImportSkillForm
               busy={busy}
@@ -278,18 +300,16 @@ function ProjectSetupControlsScoped({
       {offerConnection && !showConnectionCard ? (
         <>
           <div className="flex flex-wrap gap-2">
-            {recommendedService ? (
-              <Action disabled={busy || !onOpenMcpSettings} onClick={() => dispatch({ type: "choose_mcp", choice: "connect", service: recommendedService })}>
-                Connect {recommendedService}
-              </Action>
-            ) : onOpenMcpSettings ? (
-              <Action disabled={busy || mcpSettingsOpen} onClick={onOpenMcpSettings}>Open MCP Settings</Action>
-            ) : null}
+            {!longConnection ? connect : null}
             <Action disabled={busy} onClick={() => dispatch({ type: "choose_mcp", choice: "skip" })}>
               Skip for now
             </Action>
           </div>
-          <p className="text-xs" style={mutedStyle}>Connections are managed for this computer. Tool approvals still apply.</p>
+          {interview ? <details>
+            <summary className={disclosureStyle}>{longConnection ? "Review connection" : "Connection details"}</summary>
+            {longConnection && connect ? <div className="mt-2">{connect}</div> : null}
+            <p className="mt-1 text-xs" style={mutedStyle}>Connections are managed for this computer. Tool approvals still apply.</p>
+          </details> : <p className="text-xs" style={mutedStyle}>Connections are managed for this computer. Tool approvals still apply.</p>}
         </>
       ) : null}
       {showConnectionCard ? (
@@ -300,12 +320,12 @@ function ProjectSetupControlsScoped({
               ? `${pendingService} is connected on this computer.`
               : "Awaiting MCP authorization"}
           </p>
-          {!connected ? <p className="text-xs">
+          {!interview && !connected ? <p className="text-xs">
             Find {pendingService} under Add services in MCP Settings. Approve access there, then return here.
           </p> : null}
           <div className="flex flex-wrap gap-2">
             {onOpenMcpSettings && !connected ? <Action variant="primary" disabled={busy || mcpSettingsOpen} onClick={onOpenMcpSettings}>Open MCP Settings</Action> : null}
-            <Action disabled={busy || mcpSettingsOpen} onClick={() => { void checkConnection(); }}>Check connection</Action>
+            {!interview ? <Action disabled={busy || mcpSettingsOpen} onClick={() => { void checkConnection(); }}>Check connection</Action> : null}
             <Action variant={connected ? "primary" : "ghost"} disabled={busy} onClick={() => {
               if (interview) void setup.answer("Continue setup with the MCP connection I selected.");
               else void setup.continueToReview();
@@ -314,8 +334,20 @@ function ProjectSetupControlsScoped({
               Continue without connecting
             </Action> : null}
           </div>
+          {interview ? <details>
+            <summary className={disclosureStyle}>Connection details</summary>
+            {!connected ? <p className="my-2 text-xs">Find {pendingService} under Add services in MCP Settings. Approve access there, then return here.</p> : null}
+            <Action disabled={busy || mcpSettingsOpen} onClick={() => { void checkConnection(); }}>Check connection</Action>
+          </details> : null}
         </section>
       ) : null}
+      {moreAnswers.length ? (
+        <details key={draft.currentQuestionMessageId}>
+          <summary className={disclosureStyle}>More answers</summary>
+          <div className="mt-2">{answerChoices(moreAnswers)}</div>
+        </details>
+      ) : null}
+      {reply?.prompt ? replyDetails : null}
       {showReview ? (
         <>
           {!interview ? <ProjectSetupReviewSummary draft={draft} connected={connected} /> : null}
@@ -465,5 +497,19 @@ function ProjectSetupControlsScoped({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function SkillSourceButtons({ busy, setSource, loadInstalledSkills, readInstalledSkill }: ProjectSkillSourceActions & {
+  busy: boolean;
+  setSource: (source: "import" | "installed") => void;
+}) {
+  return (
+    <>
+      <Action disabled={busy} onClick={() => setSource("import")}>Import SKILL.md</Action>
+      {loadInstalledSkills && readInstalledSkill ? (
+        <Action disabled={busy} onClick={() => setSource("installed")}>Choose installed skill</Action>
+      ) : null}
+    </>
   );
 }

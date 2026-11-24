@@ -39,11 +39,15 @@ if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !built)
 const evidence = process.env.MATRIX_PROJECT_SETUP_EVIDENCE_DIR ?? join(root, "output/project-chat-setup-fixture");
 const project = { id: "proj_setup_atlas", slug: "atlas", name: "Atlas setup fixture", kind: "scratch" };
 const openingQuestion = "What should readers be able to find in the Atlas illustration archive?";
+const openingDetail = "We can choose publishing rules after we decide what the archive is for.";
+const longOpeningChoice = "Publish the full archive only after checking licensing with its contributors.";
 const purpose = "Build a public illustration archive. Keep changes small, ask before publishing, and use Linear for releases.";
 const skillQuestion = "What should the release checklist verify before an illustration goes public?";
-const skillSuggestion = "Review the diff and collect the test results.";
-const toolQuestion = "I can use Linear to look up approved release work. Would you like to connect it?";
-const reviewReply = "I drafted the archive guidance and release checklist. Review the Markdown before saving.";
+const skillSuggestion = "Run release checks";
+const toolQuestion = "Would you like to connect Linear?";
+const reviewReply = "Review the setup before saving.";
+const correction = "Make the archive private to the design team.";
+const correctedReply = "Review the private archive setup.";
 const internalPrompt = "Project setup interview.";
 const internalReply = '{"reply":"Unprojected proposal","focus":"review","suggestions":[]}';
 const savedReply = "Your project setup files are saved.";
@@ -189,11 +193,11 @@ function setupFixture() {
     start(input: unknown) {
       const body = ProjectSetupStartRequestSchema.parse(input);
       if (!("mode" in body) || body.mode !== "interview") throw new Error("Expected an explicit Agent setup start");
-      const messageId = append("Set up this project with Chat.", openingQuestion);
+      const messageId = append("Set up this project with Chat.", `${openingQuestion}\n\n${openingDetail}`);
       draft = {
         ...initialProjectSetup(chatId, project.id, project.name, messageId),
         answers: { purpose: "" },
-        interview: { focus: "intent", suggestions: ["Publish an illustration archive", "Share works in progress"] },
+        interview: { focus: "intent", suggestions: ["Publish an illustration archive", "Share works in progress", longOpeningChoice] },
         generation: { status: "completed" },
       };
       return ProjectSetupResponseSchema.parse({ draft, record: record() });
@@ -215,7 +219,7 @@ function setupFixture() {
         next.answers.skillInstructions = action.text;
         next.interview = { focus: "mcp", suggestions: [], recommendedService: "Linear" };
         next.step = "mcp";
-        next.currentQuestionMessageId = append(action.text, toolQuestion);
+        next.currentQuestionMessageId = append(action.text, `I can use Linear to look up approved release work. ${toolQuestion}`);
       } else if (action.type === "choose_mcp" && action.choice === "connect" && next.interview) {
         expect(action.service).toBe("Linear");
         next.mcp = { state: "pending", service: action.service };
@@ -235,6 +239,12 @@ function setupFixture() {
         );
         append(internalPrompt, internalReply, "run_setup_interview");
         next.currentQuestionMessageId = append(action.text, reviewReply);
+      } else if (action.type === "interview_answer" && next.interview?.focus === "review") {
+        expect(action.text).toBe(correction);
+        next.answers.purpose = correction;
+        next.proposals = next.proposals.map(file => file.path === "AGENTS.md"
+          ? { ...file, content: `${file.content}\n${correction}\n` } : file);
+        next.currentQuestionMessageId = append(action.text, correctedReply);
       } else if (action.type === "save") {
         for (const file of next.proposals) {
           files.set(file.path, file.content);
@@ -400,6 +410,11 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     await page.getByText(openingQuestion, { exact: true }).waitFor({ timeout: 8_000 });
     expect(state.draft?.chatId).toBe(chatId);
     await page.getByRole("button", { name: "Publish an illustration archive", exact: true }).waitFor();
+    expect(await page.getByRole("button", { name: longOpeningChoice, exact: true }).count()).toBe(0);
+    await page.getByText("More answers", { exact: true }).click();
+    await page.getByRole("button", { name: longOpeningChoice, exact: true }).waitFor();
+    await page.getByText("More answers", { exact: true }).click();
+    expect(await page.getByText(openingDetail, { exact: true }).isVisible()).toBe(false);
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-custom-answer.png") });
     const composer = page.locator('[contenteditable="true"]').last();
     const messages = page.getByRole("region", { name: "Messages", exact: true });
@@ -438,11 +453,18 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     expect(state.draft?.mcp.state).toBe("pending");
     expect(await page.getByRole("button", { name: "Open MCP Settings", exact: true }).count()).toBe(0);
     expect(state.files.size).toBe(0);
+    await composer.fill(correction);
+    await composer.press("Enter");
+    await messages.getByText(correctedReply, { exact: true }).waitFor();
+    expect(state.draft?.answers.purpose).toBe(correction);
+    await page.getByRole("region", { name: "Review AGENTS.md", exact: true }).getByText(correction, { exact: true }).waitFor();
+    expect(state.files.size).toBe(0);
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-review.png") });
     await page.getByRole("button", { name: "Save project setup", exact: true }).click();
     await page.getByText(savedReply, { exact: true }).waitFor();
     expect([...state.files.keys()].sort()).toEqual([".agents/skills/release-check/SKILL.md", "AGENTS.md", "CLAUDE.md"]);
     expect(state.actions).toContain("save");
+    expect(state.files.get("AGENTS.md")).toContain(correction);
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-saved.png") });
     await openProject();
     await page.getByRole("button", { name: "Agent configuration", exact: true }).click();
