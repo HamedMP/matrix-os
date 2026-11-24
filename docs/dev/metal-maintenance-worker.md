@@ -38,11 +38,7 @@ Known limits:
 
 ## Deployment
 
-- **Preview** (`.github/workflows/preview-platform.yml`): when the deployed PR revision has both `METAL_HOSTS_ENABLED` and `MATRIX_FREE_TIER_SLEEP_ENABLED`, the step "Deploy preview metal maintenance worker" renders a worker for that PR, `${CLOUD_RUN_PREVIEW_SERVICE}-worker-pr<n>`:
-  - built from that exact revision (image digest, env, secrets), using `scripts/render-platform-worker-service.mjs --role-worker --metal-scope`;
-  - internal ingress, min and max 1 instance, CPU always allocated, never public.
-  - A redeploy without metal or the sleeper deletes that PR's worker, and so does closing the PR. gcloud listing errors fail the step rather than leaking a worker.
-  - The renderer allows the relaxed contract and the metal scope only for a revision with `PLATFORM_PREVIEW=true`.
+- **Preview**: no preview workflow deploys a metal maintenance worker yet. A preview platform runs these passes only if an operator deploys a worker rendered with `scripts/render-platform-worker-service.mjs --role-worker --metal-scope` from that preview revision; without one, preview free VMs never sleep and failed builds are reaped only by the journey and provision read paths. The renderer allows the relaxed contract and the metal scope only for a revision with `PLATFORM_PREVIEW=true`. Automated per-PR preview workers land with the preview CI change.
 - **Production** (`.github/workflows/platform-cloud-run.yml`): the existing dedicated worker (`<service>-worker`) switches to `PLATFORM_ROLE=worker` (all scope) only when the repository variable `PLATFORM_WORKER_ROLE_ENABLED` is `true`. The verify step checks that the deployed role matches the variable. Until then, production is unchanged. Metal also needs the metal env on the production web revision, which the worker copies.
 
 ## Placement thresholds

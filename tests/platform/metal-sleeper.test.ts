@@ -473,6 +473,72 @@ describe('metal idle sleeper', () => {
     expect(ensureRunning).not.toHaveBeenCalled();
   });
 
+  it('owner activity that arrives while the suspend runs cancels it and resumes the VM', async () => {
+    const id = await seedMachine();
+    const { sleeper: s, stop, ensureRunning } = sleeper();
+    stop.mockImplementationOnce(async () => {
+      // An owner request reaches the VM after the sleep claim, before the host suspends it.
+      await db.executor.updateTable('user_machines').set({ last_activity_at: NOW }).where('machine_id', '=', id).execute();
+      return { state: 'stopping' };
+    });
+
+    await s.tick(NOW);
+
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
+    expect(logs).toContainEqual({ event: 'sleep_cancelled_activity', fields: { machineId: id } });
+  });
+
+  it('runs due scheduled wakes in parallel, so one slow VM does not hold up the others', async () => {
+    for (let index = 0; index < 3; index += 1) {
+      await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago(MINUTE) } });
+    }
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { sleeper: s, ensureRunning } = sleeper();
+    ensureRunning.mockImplementation(async () => { started += 1; await gate; return { state: 'running' }; });
+
+    const tick = s.tick(NOW);
+    await vi.waitFor(() => expect(started).toBe(3), { timeout: 1_000 });
+    release();
+    await tick;
+  });
+
+  it('decides on the current time, not the tick start, when the next job is close', async () => {
+    const id = await seedMachine();
+    // The wake phase took 2 minutes; the next job is 2.5 minutes after the tick started.
+    let clock = 0;
+    const { sleeper: s, stop } = sleeper({
+      elapsedMs: () => clock,
+      lifecycle: async () => {
+        clock += 2 * MINUTE;
+        return { ok: true, status: { ...IDLE, nextScheduledAt: new Date(NOW.getTime() + 2.5 * MINUTE).toISOString() } };
+      },
+    });
+
+    await s.tick(NOW);
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
+  });
+
+  it('never sleeps a free-plan owner whose active operator override grants a paid plan', async () => {
+    const id = await seedMachine();
+    const owner = (await machine(id)).clerkUserId;
+    await db.executor.insertInto('billing_entitlement_overrides').values({ id: 'override_paid', clerk_user_id: owner,
+      plan_slug: 'internal', status: 'active', max_runtime_slots: 1, included_runtime_slots: 1, addon_runtime_slots: 0,
+      default_server_type: 'cpx22', allowed_server_types: '["cpx22"]', reason: 'support', created_by: 'operator',
+      expires_at: null, revoked_at: null, created_at: ago(HOUR) }).execute();
+    const { sleeper: s, stop } = sleeper();
+
+    await s.tick(NOW);
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(await machine(id)).toMatchObject({ status: 'running' });
+  });
+
   it('concurrent ticks share one pass', async () => {
     await seedMachine();
     let release!: () => void;
