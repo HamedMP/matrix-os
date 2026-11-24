@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import type { PlatformDB } from '../db.js';
 import { AiFundedPolicyError } from '../ai-funded-policy-errors.js';
-import { freeMetalMachine } from './free-runtime.js';
 
 /**
  * Funded AI for free metal runtimes (spec 2691 D2, ENG-520 Task P7; ported
@@ -78,7 +77,10 @@ export function nextUtcDay(now: Date): { at: string; afterSeconds: number } {
  * Today's funded spend of free runtimes, read from the funded reservation
  * ledger: settled work at its actual cost, active holds at their full hold,
  * expired holds at their hold because their cost is unknown, released holds
- * at nothing. The created_at index bounds the scan to today's reservations.
+ * at nothing. A reservation counts by its `free_funded` mark, recorded at
+ * creation, not by the owner's current plan, so an upgrade later the same day
+ * never frees spending already made. The created_at index bounds the scan to
+ * today's reservations.
  */
 export async function readDailyFundedSpend(executor: Executor, now: Date): Promise<number> {
   const result = await sql<{ spent: string | number }>`
@@ -88,7 +90,7 @@ export async function readDailyFundedSpend(executor: Executor, now: Date): Promi
       ELSE GREATEST(r.reserved_microusd, COALESCE(r.actual_microusd, 0))
     END), 0) AS spent
     FROM ai_funded_usage_reservations r
-    WHERE r.created_at >= ${utcDayStart(now)} AND ${freeMetalMachine('r.machine_id')}
+    WHERE r.created_at >= ${utcDayStart(now)} AND r.free_funded
   `.execute(executor);
   return Number(result.rows[0]?.spent ?? 0);
 }

@@ -46,13 +46,15 @@ function harness(dbs: () => PlatformDB, clock: { now: Date }) {
     } }));
     const { credential } = await repo.issueRuntimeCredential(identity);
     let n = 0;
-    const lostUsage = async () => {
+    const lostUsage = async (options: { holdMode?: boolean } = {}) => {
       n += 1;
       const auth = await repo.authorize({ credential: credential.token, requestId: `request_${n}`, modelId: MODEL,
-        maxCostMicrousd: 1_000, billingMode: 'usage', ...(input.free ? {} : { billingPolicy: 'postpaid' as const }) });
+        maxCostMicrousd: 1_000, ...(options.holdMode ? {} : { billingMode: 'usage' as const }),
+        ...(input.free ? {} : { billingPolicy: 'postpaid' as const }) });
       const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
       const start = await repo.startReservation({ ...key, executionId: `execution_${n}` });
-      await repo.recordTerminalOutcome({ contractVersion: 1, ...key, ...identity, requestId: `request_${n}`,
+      // A hold-mode request has no usage report to lose: it is dispatched and never finalized.
+      if (!options.holdMode) await repo.recordTerminalOutcome({ contractVersion: 1, ...key, ...identity, requestId: `request_${n}`,
         startedAt: start.startedAt, expiresAt: start.expiresAt, executionId: `execution_${n}`,
         terminalState: 'completed', terminalAt: clock.now.toISOString(), outcome: 'usage_unknown' });
       return { key, hold: auth.reservation.reservedMicrousd, expiresAt: start.expiresAt };
@@ -108,6 +110,25 @@ describe('free prepaid requests with unknown usage', () => {
     expect(await owner.repo.cleanupExpiredReservations({ limit: 100 })).toBe(0);
     await expect(owner.next()).resolves.toMatchObject({ authorized: true });
     await expect(assertFundedConservativeFence(db.executor)).resolves.toBeUndefined();
+  });
+
+  it('a free hold-mode request (no billingMode) whose final report was lost is still resolved by cleanup', async () => {
+    const owner = await runtime({ free: true });
+    const { key, expiresAt } = await owner.lostUsage({ holdMode: true });
+    pastGrace(expiresAt);
+    expect(await owner.repo.cleanupExpiredReservations({ limit: 100 })).toBe(1);
+    expect(await owner.row(key.reservationId)).not.toMatchObject({ status: 'in_flight' });
+    await expect(owner.next()).resolves.toMatchObject({ authorized: true });
+  });
+
+  it('keeps a free request in the daily ceiling after its owner upgrades the same day', async () => {
+    const owner = await runtime({ free: true });
+    const { hold } = await owner.lostUsage();
+    expect(await readDailyFundedSpend(db.executor, time.now)).toBe(hold);
+    // The Stripe webhook replaces the free entitlement with a paid one.
+    await db.executor.updateTable('billing_entitlements').set({ source: 'stripe', plan_slug: 'matrix_starter' })
+      .where('clerk_user_id', '=', owner.identity.ownerId).execute();
+    expect(await readDailyFundedSpend(db.executor, time.now)).toBe(hold);
   });
 
   it('keeps the hold reserved and blocking when a legacy relay finalizes conservatively', async () => {

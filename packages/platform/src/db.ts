@@ -183,6 +183,8 @@ export interface AiFundedPriorityClaimsTable {
 }
 
 export interface AiFundedUsageReservationsTable {
+  /** The free plan funded this reservation (spec 2691), recorded at creation. */
+  free_funded: Generated<boolean>;
   terminal_outcome: Generated<string | null>;
   charge_waiver: Generated<string | null>;
   customer_charge_release: Generated<string | null>;

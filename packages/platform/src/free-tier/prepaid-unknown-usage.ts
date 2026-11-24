@@ -32,10 +32,12 @@ export const FREE_PREPAID_UNKNOWN_USAGE_GRACE_MS = 10 * 60_000;
 
 /**
  * True for a reservation row that is a free runtime's prepaid usage hold: usage
- * billing with no postpaid policy, on a free metal runtime.
+ * billing with no postpaid policy, on a free metal runtime. Never NULL: a
+ * hold-mode row (no billingMode) is false, so `NOT freePrepaidHold()` keeps it
+ * in the ordinary cleanup instead of leaving it reserved forever.
  */
 export function freePrepaidHold() {
-  return sql<boolean>`(ai_funded_usage_reservations.authorization_response::jsonb #>> '{reservation,billingMode}' = 'usage'
+  return sql<boolean>`(COALESCE(ai_funded_usage_reservations.authorization_response::jsonb #>> '{reservation,billingMode}', '') = 'usage'
     AND ai_funded_usage_reservations.authorization_response::jsonb #> '{reservation,billingPolicy}' IS NULL
     AND ${freeMetalMachine('ai_funded_usage_reservations.machine_id')})`;
 }

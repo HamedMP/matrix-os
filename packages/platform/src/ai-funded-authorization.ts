@@ -329,6 +329,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         pricing_version: null,
         period_start: periodStart,
         status: "reserved",
+        free_funded: free,
         created_at: checkedAt,
         started_at: null,
         expires_at: expiresAt,
