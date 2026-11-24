@@ -3,7 +3,7 @@ import type { EffectiveShortcuts, ShortcutActionId } from "@matrix-os/contracts/
 import { isCarriedByMatcher } from "../shortcuts/input-matcher";
 import { isShortcutActionAvailable } from "../shortcuts/shortcut-availability";
 import type { ZoomAction } from "./zoom";
-import type { TerminalWindowCommand } from "../../shared/terminal-window";
+import { terminalWindowKeys, type TerminalWindowCommand } from "../../shared/terminal-window";
 import { terminalWindowMenuItems } from "./terminal-menu-items";
 
 type MenuEventSender = (channel: string, payload: unknown) => void;
@@ -100,7 +100,15 @@ export function createAppMenuTemplate({
   terminalWindow,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const isMac = platform === "darwin";
-  const item: ShortcutItemFactory = (id, label) => createShortcutItems(shortcuts, () => runShortcut(id), id, label);
+  // While the Terminal window has focus its own commands own their keys: a main-window item that
+  // shares one (Settings on a key moved onto New Terminal) keeps its place without the key.
+  const terminalKeys = terminalWindow ? terminalWindowKeys(shortcuts, isMac) : null;
+  const menuShortcuts: EffectiveShortcuts = terminalKeys
+    ? Object.fromEntries(Object.entries(shortcuts).map(([id, bindings]) => [
+      id, id.startsWith("terminal-window.") ? bindings : bindings.filter((binding) => !terminalKeys.has(binding)),
+    ])) as EffectiveShortcuts
+    : shortcuts;
+  const item: ShortcutItemFactory = (id, label) => createShortcutItems(menuShortcuts, () => runShortcut(id), id, label);
   const mainOnly = (items: MenuItemConstructorOptions[]) => (terminalWindow ? [] : items);
   const viewSubmenu: MenuItemConstructorOptions[] = [
     ...mainOnly([
@@ -148,12 +156,14 @@ export function createAppMenuTemplate({
   };
   // Quit takes the platform's quit key back once no action claims it.
   const quitKey = isMac ? "Cmd+Q" : "Ctrl+Q";
-  const quitKeyFree = !Object.values(shortcuts).some((bindings) => bindings?.includes(quitKey));
+  // Only the actions in the menu being built count: a Terminal window command on Cmd+Q holds it only there.
+  const quitKeyFree = !Object.entries(shortcuts).some(([id, bindings]) =>
+    (terminalWindow !== undefined || !id.startsWith("terminal-window.")) && bindings?.includes(quitKey));
   const quitAccelerator = quitKeyFree ? { accelerator: quitKey } : {};
   const settingsItems = item("nav.settings", "Settings…");
   const closeAppItems = item("app.close", "Close Selected App");
   const newItems: MenuItemConstructorOptions[] = terminalWindow
-    ? terminalWindowMenuItems(terminalWindow.command, terminalWindow.close, isMac)
+    ? terminalWindowMenuItems(shortcuts, terminalWindow.command, terminalWindow.close, isMac)
     : [
     ...item("tabs.new-context", "New"),
     ...item("chat.new-thread", "New Agent Thread"),

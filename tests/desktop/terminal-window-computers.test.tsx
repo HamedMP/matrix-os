@@ -258,6 +258,19 @@ describe("Terminal window computers", () => {
     expect(screen.getByTestId("terminal-view").textContent).toBe(`${WEB_WS}:${TAB_4}`);
   });
 
+  // Spec 2706: the overview previews a Matrix terminal's screen through its gateway.
+  it("previews a computer terminal's screen in the overview", async () => {
+    fetchMock.mockImplementation(async (url: string) => (String(url).includes("/read")
+      ? json({ screen: "deploying…\nstep 3/5 done\n", history: "", lines: 0 })
+      : json(workspace([]))));
+    render(<TerminalWindowApp />);
+    await stream("primary", [tabFacts(TAB_1, "deploy")]);
+    act(() => emit("terminal-window:command", { command: "overview" }));
+    const overview = await screen.findByRole("main", { name: "Overview" });
+    await waitFor(() => expect(within(overview).getByLabelText("deploy preview").textContent).toBe("deploying…\nstep 3/5 done"));
+    expect(requests()).toContain(`GET ${HOST}/api/terminal/workspaces/${WS}/tabs/${TAB_1}/read?lines=0`);
+  });
+
   it("attaches the chosen tab on its own computer without touching the app-wide selection, and marks it seen", async () => {
     render(<TerminalWindowApp />);
     await stream("primary", []);

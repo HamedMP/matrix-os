@@ -17,15 +17,16 @@ import type { TerminalSidebarRow } from "@matrix-os/ui/terminal-status-sidebar";
 import type { TerminalMachinesState } from "./use-terminal-machines";
 import { localSessionName, type LocalTerminalsNotice, type LocalTerminalsState } from "./use-local-terminals";
 import { LocalTerminalAttention } from "./LocalTerminalAttention";
-import { TerminalWindowSidebar, type SidebarMachine } from "./TerminalWindowSidebar";
+import { TerminalWindowSidebar, filterRows, type SidebarMachine } from "./TerminalWindowSidebar";
 import { CloseTerminalDialog, RenameTerminalDialog, TerminalPicker } from "./TerminalWindowDialogs";
 import { useTerminalWindow, type TerminalWindowView } from "./use-terminal-window";
-import { isTerminalWindowShortcut } from "../../../../shared/terminal-window";
 import { computerMachineId, localRowKey, sshMachineId, terminalRowTarget } from "./use-terminal-status";
 import { AddMachineDialog, RemoveMachineDialog } from "./AddMachineDialog";
 import { compareCoreVersions, LOCAL_TERMINAL_VERSION, type LocalCreateFailure, type LocalMachine } from "../../../../shared/local-terminals";
 import { TerminalPaneTree, type PaneInfo } from "./TerminalPaneTree";
 import { TerminalTabBar, type ActiveSpaceChip } from "./TerminalTabBar";
+import { TerminalOverview } from "./TerminalOverview";
+import { useTerminalPreviews } from "./use-terminal-previews";
 import { defaultSpaceColor, spaceId } from "./SidebarSpaces";
 import { createFailureText } from "./computer-terminals";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
@@ -242,8 +243,9 @@ function EmptyPane({ signedIn }: { signedIn: boolean }) {
  * streams live, not only the focused one. Disposed with its pane.
  */
 // Memoized: the window redraws on every status event, and a terminal must not redraw with it.
-const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequest, onPaneAction }: {
+const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequest, onPaneAction, reservedKeys }: {
   sessionName: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
+  reservedKeys(event: KeyboardEvent): boolean;
 }) {
   const [manager, setManager] = useState<AttachManager | null>(null);
   useEffect(() => {
@@ -254,7 +256,7 @@ const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequ
   }, []);
   if (!manager) return null;
   return <TerminalView sessionName={sessionName} attachManager={manager} active focused={focused} findRequest={findRequest}
-    onPaneAction={onPaneAction} reservedKeys={isTerminalWindowShortcut}
+    onPaneAction={onPaneAction} reservedKeys={reservedKeys}
     // The pane header holds the pane buttons, so the terminal's own controls bar is not repeated.
     controlsHost={null} />;
 });
@@ -313,8 +315,9 @@ function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
         // A session change remounts each pane so it attaches again with the new credentials.
         return (
           <>
-            <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused}
-              findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction} />
+            {/* Not focused while the overview covers it, so uncovering hands the keyboard back without reattaching. */}
+            <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused && !view.overview.open}
+              findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction} reservedKeys={view.reservedKeys} />
             {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
           </>
         );
@@ -360,6 +363,8 @@ export default function TerminalWindowApp() {
   const machines = useMemo(() => sidebarMachines(view, setRemoving), [view]);
   const rowsByKey = useMemo(() => new Map(view.status.rows.map((row) => [row.key, row])), [view.status.rows]);
   const { prefs } = view.sidebar;
+  const overviewRows = useMemo(() => filterRows(view.status.rows, prefs.filter), [prefs.filter, view.status.rows]);
+  const previews = useTerminalPreviews({ rows: overviewRows, enabled: view.overview.open, api: view.cloud.api });
   const activeSpace = useMemo<ActiveSpaceChip | null>(() => {
     const filter = prefs.filter;
     if (!filter) return null;
@@ -431,9 +436,21 @@ export default function TerminalWindowApp() {
           onAddMachine={view.local.state.status === "ready" ? () => setAdding(true) : undefined}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <TerminalTabBar space={activeSpace} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
+          <TerminalTabBar space={activeSpace} overview={{ open: view.overview.open, onToggle: view.overview.toggle }} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
             icon={(row) => paneInfoFor(row, "Terminal").icon} onSelect={view.select} onClose={view.closeTab} onNew={view.newTerminal} />
-          <ActivePane view={view} />
+          {/* The overview covers the panes instead of replacing them: their terminals stay attached and
+              keep their output (a finished terminal cannot be attached again), but take no input. */}
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col" inert={view.overview.open} data-covered={view.overview.open ? "" : undefined}>
+              <ActivePane view={view} />
+            </div>
+            {view.overview.open ? (
+              <div className="absolute inset-0 flex min-h-0 min-w-0">
+                <TerminalOverview rows={overviewRows} previews={previews} selectedKey={view.selectedKey} now={view.now}
+                  spaceLabel={activeSpace?.label ?? null} onOpen={view.overview.openTerminal} onRename={view.rename} />
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
       <StatusBar view={view} />

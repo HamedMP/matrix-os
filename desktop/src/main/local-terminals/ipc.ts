@@ -135,6 +135,10 @@ export function registerLocalTerminalIpc(
       try { return { status: "ready", terminals: await host.watch() }; }
       catch (error: unknown) { logFailure("local-terminal:watch", error); return unavailable(); }
     },
+    "local-terminal:read": async ({ id }) => {
+      try { return { ok: true, text: await host.read(id) }; }
+      catch (error: unknown) { logFailure("local-terminal:read", error); return { ok: false }; }
+    },
     "local-terminal:seen": async ({ id }) => {
       try { await host.seen(id); return { ok: true }; }
       catch (error: unknown) { logFailure("local-terminal:seen", error); return { ok: false }; }
