@@ -602,3 +602,48 @@ describe("thin pool read under an LVM lock", () => {
     await expect(pending).rejects.toMatchObject({ code: "capacity" });
   });
 });
+
+describe("queue admission, shutdown drain, and per-caller wake budgets", () => {
+  it("refuses a create with busy without leaving a stuck creating record, and a retry succeeds", async () => {
+    const a = await make().create(spec);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const lifecycle = make({ trim: () => gate }, { maxInFlight: 1 });
+    const suspending = lifecycle.suspend(a.id);
+    const other = { ...spec, machineId: "machine-2", handle: "bob" };
+    await expect(lifecycle.create(other)).rejects.toMatchObject({ code: "busy" });
+    expect((await store.list()).filter((r) => r.machineId === "machine-2")).toEqual([]);
+    release();
+    await suspending;
+    await expect(lifecycle.create(other)).resolves.toMatchObject({ machineId: "machine-2", state: "running" });
+  });
+
+  it("idle waits for a create that is still allocating its record", async () => {
+    const lifecycle = make();
+    let created = false;
+    const creating = lifecycle.create(spec).then((vm) => {
+      created = true;
+      return vm;
+    });
+    await lifecycle.idle();
+    expect(created).toBe(true);
+    await expect(creating).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("gives each concurrent resume its own health wait, in either order", async () => {
+    let healthyAt = 0;
+    const lifecycle = make({ gatewayHealth: async () => clockT >= healthyAt });
+    const vm = await lifecycle.create(spec);
+
+    await lifecycle.stop(vm.id);
+    healthyAt = clockT + 2000;
+    const [short, long] = await Promise.all([lifecycle.resume(vm.id, 500), lifecycle.resume(vm.id, 5000)]);
+    expect([short, long]).toEqual(["starting", "running"]);
+
+    await lifecycle.stop(vm.id);
+    healthyAt = clockT + 2000;
+    const [long2, short2] = await Promise.all([lifecycle.resume(vm.id, 5000), lifecycle.resume(vm.id, 500)]);
+    expect([long2, short2]).toEqual(["running", "starting"]);
+    expect(execCalls.filter((c) => c[1] === "start" && c[2] === `matrix-vm@${vm.id}.service`)).toHaveLength(3);
+  });
+});
