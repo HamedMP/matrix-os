@@ -46,6 +46,30 @@ describe("JourneyGate", () => {
     expect(getByText("Booting your computer")).toBeTruthy();
   });
 
+  it("lets a free-plan owner start building their computer without plans", () => {
+    const onRetry = jest.fn();
+    const { getByText, getByTestId, queryByTestId } = render(
+      <JourneyGate
+        result={ok({ phase: "install_choices_required", detail: "Set up your free Matrix computer.", nextAction: { kind: "start_provision" } })}
+        onRetry={onRetry}
+        onOpenUrl={noop}
+      />,
+    );
+    expect(getByText("Set up your Matrix computer")).toBeTruthy();
+    expect(getByText("Set up your free Matrix computer.")).toBeTruthy();
+    expect(queryByTestId("journey-open-plans")).toBeNull();
+    fireEvent.press(getByTestId("journey-start"));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("keeps the existing hand-off screen for install choices that are not a free start", () => {
+    const { queryByTestId, getByTestId } = render(
+      <JourneyGate result={ok({ phase: "install_choices_required", nextAction: { kind: "choose_default_installs" } })} onRetry={noop} onOpenUrl={noop} />,
+    );
+    expect(queryByTestId("journey-start")).toBeNull();
+    expect(getByTestId("journey-loading")).toBeTruthy();
+  });
+
   it("offers retry on a retryable failure", () => {
     const onRetry = jest.fn();
     const { getByTestId } = render(

@@ -26,7 +26,6 @@ import {
   type PlatformDB,
   getContainer,
   getContainerByClerkId,
-  getActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
@@ -58,9 +57,6 @@ import { CustomerVpsError } from './customer-vps-errors.js';
 import {
   buildCustomerVpsProxyUrl,
 } from './profile-routing.js';
-import {
-  getRuntimeAccessDecision,
-} from './billing.js';
 import { getRuntimeEntitlementDecision, getRuntimeEntitlementDecisionForUser, resolveEffectiveBillingEntitlement, stripeBillingEntitlementsEnabled } from './runtime-entitlement.js';
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { createAccountDeletionBillingWebhookGuard } from './account-deletion/billing-webhook-guard.js';
@@ -71,6 +67,7 @@ import { createRedditConversionsClient } from './reddit-conversions.js';
 import { createPrebillingProvisioningCoordinator } from './prebilling-provisioning.js';
 import { loadPrebillingProvisioningConfig } from './prebilling-provisioning-config.js';
 import { createJourneyRoutes, createJourneyUserResolver } from './journey-routes.js';
+import { createJourneyProvisioner } from './journey-provisioning.js';
 import {
   sanitizeProxyResponseHeaders,
 } from './proxy-headers.js';
@@ -595,46 +592,17 @@ export function createApp(deps: {
   // Onboarding journey (spec 092): one server-owned signup-to-ready state every
   // surface renders from. Triggers provisioning through the same building blocks
   // as /api/auth/provision-runtime so billing and identity checks stay identical.
-  async function provisionRuntimeForJourney(clerkUserId: string, runtimeSlot: string): Promise<void> {
-    if (!deps.customerVpsService) {
-      throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
-    }
-    if (stripeBillingEntitlementsEnabled(appEnv)) {
-      const checkedAt = new Date();
-      const entitlement = await resolveEffectiveBillingEntitlement(db, clerkUserId, checkedAt, runtimeSlot, appEnv);
-      if (!getRuntimeAccessDecision(entitlement, checkedAt).runtimeProxyAllowed) {
-        throw new CustomerVpsError(402, 'billing_required', 'Billing upgrade required');
-      }
-    }
-    const identity = await selectProvisionIdentityForClerkUser(db, clerkUserId, appEnv);
-    if (!identity) {
-      throw new CustomerVpsError(409, 'invalid_state', 'Handle unavailable');
-    }
-    const existingMachine = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
-    const provisioned = await deps.customerVpsService.provision({
-      handle: identity.handle,
-      clerkUserId,
-      runtimeSlot,
-      ...(existingMachine?.status === 'failed' ? { developerTools: existingMachine.developerTools } : {}),
-    });
-    await ensureProvisionedPlatformUser(db, {
-      clerkUserId,
-      handle: identity.handle,
-      displayName: identity.displayName,
-      email: identity.email,
-      runtimeId: `vps:${provisioned.machineId}`,
-    });
-    if (matrixProvisioner) {
-      try {
-        await matrixProvisioner.provisionUser(identity.handle);
-      } catch (matrixErr: unknown) {
-        console.error(
-          `[matrix] Failed to provision Matrix accounts for ${identity.handle}:`,
-          matrixErr instanceof Error ? matrixErr.message : String(matrixErr),
-        );
-      }
-    }
-  }
+  const provisionRuntimeForJourney = createJourneyProvisioner({
+    db,
+    appEnv,
+    customerVpsService: deps.customerVpsService,
+    freeRuntimeProvisioner: deps.freeTier?.provisioner,
+    matrixProvisioner,
+    stripeBillingEntitlementsEnabled,
+    resolveEffectiveBillingEntitlement,
+    selectProvisionIdentityForClerkUser,
+    ensureProvisionedPlatformUser,
+  });
 
   const privatePreviewAccess = createPrivatePreviewAccess({
     env: appEnv,
@@ -651,7 +619,9 @@ export function createApp(deps: {
   app.route('/', createJourneyRoutes({
     db,
     resolveUserId: resolveJourneyUser,
-    provisionRuntime: deps.customerVpsService ? provisionRuntimeForJourney : undefined,
+    provisionRuntime: provisionRuntimeForJourney,
+    resolveFreePlanEligibility: deps.freeTier?.provisioner?.isEligible,
+    reconcileStaleRuntime: deps.freeTier?.provisioner?.reconcileStaleRuntime,
     resumePrebillingPreparation: prebilling
       ? (input) => prebilling.resumePreparation(input)
       : undefined,
