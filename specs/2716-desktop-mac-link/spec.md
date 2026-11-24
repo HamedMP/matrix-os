@@ -150,8 +150,13 @@ it, for VPS and owned computers alike.
    the link carries numbered streams, one at a time: gateway
    `{"t":"open","stream":n}` → the Mac connects to its core socket and pipes;
    gateway `{"t":"close","stream":n}` or Mac `{"t":"end","stream":n}` ends it.
-   Binary frames always belong to the current stream; bytes that arrive after
-   a stream ended are dropped. WebSocket ordering makes this unambiguous.
+   The two directions are ordered separately, so each direction marks its own
+   switch: gateway → Mac binary after `open(n)` belongs to `n` (the Mac queues
+   it until its core connection is up); Mac → gateway binary belongs to `n`
+   only after the Mac's `{"t":"opened","stream":n}`, which the Mac sends after
+   it stopped piping every earlier stream. The gateway drops Mac bytes that
+   arrive between its `open(n)` and that `opened(n)`, so a late reply from an
+   old stream never reaches a new handshake.
 4. **Control (text frames).** `ping`/`pong` every 15 s from both ends;
    `{"t":"state","terminalsFromComputer":n}` gateway → Mac for the status
    header; `{"t":"bye","reason":...}` before a clean close (Mac: `disabled`,
