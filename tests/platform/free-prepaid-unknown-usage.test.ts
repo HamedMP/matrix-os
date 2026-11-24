@@ -3,7 +3,8 @@ import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-f
 import { initializeCustomerFundedStarterPolicy } from '../../packages/platform/src/customer-funded-starter-policy.js';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { FREE_MANAGED_MODEL_ID, readDailyFundedSpend } from '../../packages/platform/src/free-tier/funded-policy.js';
-import { FREE_PREPAID_UNKNOWN_USAGE_GRACE_MS } from '../../packages/platform/src/free-tier/prepaid-unknown-usage.js';
+import { FREE_PREPAID_UNKNOWN_USAGE_GRACE_MS, releaseUnknownFreeHolds } from '../../packages/platform/src/free-tier/prepaid-unknown-usage.js';
+import { sql } from 'kysely';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { createScopedPlatformDbs, freeTierPostgresUrl, type ScopedPlatformDbs } from './free-tier-postgres-helper.js';
 import { assertFundedConservativeFence } from '../../packages/platform/src/database/funded-conservative-fence.js';
@@ -111,6 +112,23 @@ describe('free prepaid requests with unknown usage', () => {
     expect(await owner.repo.cleanupExpiredReservations({ limit: 100 })).toBe(0);
     await expect(owner.next()).resolves.toMatchObject({ authorized: true });
     await expect(assertFundedConservativeFence(db.executor)).resolves.toBeUndefined();
+  });
+
+  it('moves the sweep past holds whose stored data is bad, so a later valid hold is still released', async () => {
+    const owner = await runtime({ free: true });
+    const { key, expiresAt } = await owner.lostUsage();
+    // Two older copies whose captured authorization names another reservation and owner: each release fails as a data error.
+    for (const n of [1, 2]) {
+      await sql`INSERT INTO ai_funded_usage_reservations
+        SELECT (jsonb_populate_record(NULL::ai_funded_usage_reservations, to_jsonb(r) || jsonb_build_object(
+          'reservation_id', ${`bad_reservation_${n}`}::text, 'request_id', ${`bad_request_${n}`}::text, 'owner_id', ${`user_bad${n}`}::text,
+          'expires_at', (r.expires_at::timestamptz - make_interval(mins => ${n}))::text))).*
+        FROM ai_funded_usage_reservations r WHERE r.reservation_id = ${key.reservationId}`.execute(db.executor);
+    }
+    pastGrace(expiresAt);
+    await releaseUnknownFreeHolds({ db, now: () => new Date(time.now) }, 2);
+    await releaseUnknownFreeHolds({ db, now: () => new Date(time.now) }, 2);
+    expect(await owner.row(key.reservationId)).toMatchObject({ status: 'expired' });
   });
 
   it('a free hold-mode request (no billingMode) whose final report was lost is still resolved by cleanup', async () => {

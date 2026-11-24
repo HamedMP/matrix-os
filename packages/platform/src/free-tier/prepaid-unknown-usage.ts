@@ -70,10 +70,23 @@ function isDataError(error: unknown): boolean {
  * and moves it out of `in_flight` with a status-guarded update, so concurrent
  * instances and a racing exact settlement resolve each request once.
  */
+type SweepCursor = { expiresAt: string; reservationId: string };
+// Where the last sweep stopped, per database: rows that keep failing rotate behind later ones, as in paid cleanup.
+const sweepCursors = new WeakMap<PlatformDB, SweepCursor>();
+
 export async function releaseUnknownFreeHolds(options: { db: PlatformDB; now: () => Date }, limit: number): Promise<number> {
   const due = () => new Date(options.now().getTime() - FREE_PREPAID_UNKNOWN_USAGE_GRACE_MS).toISOString();
-  const candidates = await unresolved(options.db.executor, due()).select(['reservation_id', 'owner_id', 'machine_id'])
-    .orderBy('expires_at').orderBy('reservation_id').limit(limit).execute();
+  const page = (after?: SweepCursor, count = limit, through?: SweepCursor) => {
+    let query = unresolved(options.db.executor, due()).select(['reservation_id', 'owner_id', 'machine_id', 'expires_at']);
+    if (after) query = query.where(sql<boolean>`(expires_at, reservation_id) > (${after.expiresAt}, ${after.reservationId})`);
+    if (through) query = query.where(sql<boolean>`(expires_at, reservation_id) <= (${through.expiresAt}, ${through.reservationId})`);
+    return query.orderBy('expires_at').orderBy('reservation_id').limit(count).execute();
+  };
+  const cursor = sweepCursors.get(options.db);
+  const candidates = await page(cursor);
+  if (cursor && candidates.length < limit) candidates.push(...await page(undefined, limit - candidates.length, cursor));
+  const last = candidates.at(-1);
+  if (last) sweepCursors.set(options.db, { expiresAt: last.expires_at, reservationId: last.reservation_id });
   let released = 0;
   for (const candidate of candidates) {
     try {
