@@ -322,23 +322,55 @@ export class CollaborationTerminalEventRegistry {
     return null;
   }
 
-  /** Sends one already-validated frame to every presence subscriber of a scope; failures evict. */
-  sendPresence(scopeId: string, value: string): void {
+  /** Whether a connection is still open, so a late async join cannot add a closed socket. */
+  hasConnection(connectionId: string): boolean {
+    return this.connections.has(connectionId);
+  }
+
+  /**
+   * Sends one already-validated frame to every presence subscriber of a scope.
+   * Each recipient is re-authorized first, as output is; a revoked, slow or
+   * failing recipient is removed instead of queuing more.
+   */
+  async sendPresence(scopeId: string, value: string): Promise<void> {
     const runtime = this.runtimes.get(scopeId);
     if (!runtime) return;
-    const dead: TerminalConnection[] = [];
-    for (const connectionId of runtime.connections) {
+    const dead: Array<{ connection: TerminalConnection; revoked: boolean }> = [];
+    for (const connectionId of [...runtime.connections]) {
       const connection = this.connections.get(connectionId);
       if (!connection?.presence) continue;
+      try {
+        const context = await this.options.authorize(connection.scopeId, connection.actorId);
+        if (context.resourceKind !== "terminal" || context.authorityGeneration !== connection.authorityGeneration) {
+          dead.push({ connection, revoked: true });
+          continue;
+        }
+      } catch (error: unknown) {
+        console.warn("[collaboration-terminal-events] presence authorization failed", error instanceof Error ? error.name : "UnknownError");
+        dead.push({ connection, revoked: true });
+        continue;
+      }
+      if (!this.connections.has(connectionId)) continue;
+      if (bufferedAmount(connection.socket) > MAX_BUFFERED_BYTES) {
+        dead.push({ connection, revoked: false });
+        continue;
+      }
       try {
         connection.socket.send(value);
         connection.lastSentAt = this.now().getTime();
       } catch (error: unknown) {
         console.warn("[collaboration-terminal-events] presence send failed", error instanceof Error ? error.name : "UnknownError");
-        dead.push(connection);
+        dead.push({ connection, revoked: false });
       }
     }
-    for (const connection of dead) this.remove(connection, 1011, "Unavailable");
+    for (const { connection, revoked } of dead) {
+      if (revoked) {
+        this.sendBestEffort(connection, unavailableFrame(connection, runtime, "revoked"));
+        this.remove(connection, 1008, "Revoked");
+      } else {
+        this.remove(connection, 1011, "Unavailable");
+      }
+    }
   }
 
   sweep(at: Date): void {

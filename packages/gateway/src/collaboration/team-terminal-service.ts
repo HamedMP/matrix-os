@@ -20,7 +20,7 @@ const NAME_TTL_MS = 5 * 60_000;
 const MAX_OWNER_LISTENERS = 8;
 const CANONICAL_TERMINAL_ID = /^(tws_[a-f0-9]{32}):(tt_[a-f0-9]{32})$/;
 
-type Registry = Pick<CollaborationTerminalEventRegistry, "observe" | "subscribePresence" | "liveTerminal" | "scopeForTerminal" | "sendPresence">;
+type Registry = Pick<CollaborationTerminalEventRegistry, "observe" | "subscribePresence" | "liveTerminal" | "scopeForTerminal" | "sendPresence" | "hasConnection">;
 
 export class TeamTerminalService implements CollaborationTerminalConnectionObserver {
   readonly presence: TeamTerminalPresence;
@@ -47,7 +47,8 @@ export class TeamTerminalService implements CollaborationTerminalConnectionObser
 
   joined(input: Parameters<CollaborationTerminalConnectionObserver["joined"]>[0]): void {
     void Promise.all([this.displayName(input.actorId), this.displayName(input.ownerId)]).then(([displayName]) => {
-      if (this.closed || !this.options.registry.liveTerminal(input.scopeId)) return;
+      // The name lookup is async: the socket may have closed (and left) meanwhile.
+      if (this.closed || !this.options.registry.hasConnection(input.connectionId) || !this.options.registry.liveTerminal(input.scopeId)) return;
       this.presence.join(input.scopeId, input.connectionId, { actorId: input.actorId, displayName, role: input.role, ownerId: input.ownerId });
     });
   }
@@ -75,14 +76,15 @@ export class TeamTerminalService implements CollaborationTerminalConnectionObser
     this.presence.noteInput(scopeId, actorId, { ...describeTerminalInput(data), outputSeq: live.sequence });
   }
 
+
   /** The owner typed in their own tab; it counts only while collaborators watch it. */
-  noteOwnerInput(ref: { workspaceId: string; tabId: string }, data: string, actorId?: string): void {
+  noteOwnerInput(ref: { workspaceId: string; tabId: string }, input: { bytes: number; enter: boolean }, actorId?: string): void {
     const scopeId = this.options.registry.scopeForTerminal(`${ref.workspaceId}:${ref.tabId}`);
     if (!scopeId) return;
     const live = this.options.registry.liveTerminal(scopeId);
     if (!live) return;
     // The tab socket's authenticated person; on an owner computer that is the owner.
-    this.presence.noteInput(scopeId, actorId ?? live.ownerId, { ...describeTerminalInput(data), outputSeq: live.sequence });
+    this.presence.noteInput(scopeId, actorId ?? live.ownerId, { bytes: input.bytes, enter: input.enter, outputSeq: live.sequence });
   }
 
   inputModeChanged(scopeId: string): void {
@@ -149,7 +151,9 @@ export class TeamTerminalService implements CollaborationTerminalConnectionObser
       console.warn("[team-terminal] presence frame rejected", frame.error.name);
       return;
     }
-    this.options.registry.sendPresence(scopeId, JSON.stringify(frame.data));
+    void this.options.registry.sendPresence(scopeId, JSON.stringify(frame.data)).catch((error: unknown) => {
+      console.warn("[team-terminal] presence delivery failed", error instanceof Error ? error.name : "UnknownError");
+    });
     this.notifyOwner();
   }
 

@@ -13,6 +13,7 @@ const incarnation = `terminal-${"a".repeat(32)}`;
 function setup() {
   let observer: CollaborationTerminalConnectionObserver | undefined;
   const subscribed = new Set<string>();
+  const closedConnections = new Set<string>();
   const sent: string[] = [];
   let sequence = 7;
   const registry = {
@@ -21,7 +22,8 @@ function setup() {
     liveTerminal: vi.fn((id: string) => id === scopeId
       ? { terminalId: `${workspaceId}:${tabId}`, incarnation, ownerId: "user_owner", sequence } : null),
     scopeForTerminal: vi.fn((terminalId: string) => terminalId === `${workspaceId}:${tabId}` ? scopeId : null),
-    sendPresence: vi.fn((_scope: string, value: string) => { sent.push(value); }),
+    sendPresence: vi.fn(async (_scope: string, value: string) => { sent.push(value); }),
+    hasConnection: vi.fn((connectionId: string) => !closedConnections.has(connectionId)),
   };
   const inputModes = new TeamTerminalInputModes();
   const names: Record<string, string> = { user_owner: "Nima", user_yuhan: "Yuhan", user_sam: "Sam" };
@@ -30,7 +32,7 @@ function setup() {
     resolveParticipant: async (actorId) => ({ actorId, displayName: names[actorId] ?? "Someone" }),
   });
   return {
-    service, registry, inputModes, sent, subscribed,
+    service, registry, inputModes, sent, subscribed, closedConnections,
     observer: () => observer!,
     setSequence: (value: number) => { sequence = value; },
     lastFrame: () => CollaborationTeamTerminalPresenceFrameSchema.parse(JSON.parse(sent.at(-1)!)),
@@ -56,7 +58,7 @@ describe("TeamTerminalService (spec 2710)", () => {
     fixture.service.subscribe(scopeId, "c1");
     fixture.service.noteSharedInput(scopeId, "user_yuhan", "npm test\r");
     fixture.setSequence(9);
-    fixture.service.noteOwnerInput({ workspaceId, tabId }, "y", "user_owner");
+    fixture.service.noteOwnerInput({ workspaceId, tabId }, { bytes: 1, enter: false }, "user_owner");
     fixture.inputModes.set(scopeId, incarnation, "owner");
     fixture.service.inputModeChanged(scopeId);
     const frame = fixture.lastFrame();
@@ -69,7 +71,7 @@ describe("TeamTerminalService (spec 2710)", () => {
 
   it("ignores owner typing in a tab nobody is watching", () => {
     const fixture = setup();
-    fixture.service.noteOwnerInput({ workspaceId: `tws_${"9".repeat(32)}`, tabId }, "ls\r");
+    fixture.service.noteOwnerInput({ workspaceId: `tws_${"9".repeat(32)}`, tabId }, { bytes: 3, enter: true });
     expect(fixture.sent).toEqual([]);
   });
 
@@ -92,6 +94,17 @@ describe("TeamTerminalService (spec 2710)", () => {
     fixture.service.close();
     expect(fixture.registry.observe).toHaveBeenLastCalledWith(undefined);
     hub.shutdown();
+  });
+
+  it("does not add a watcher whose socket closed while their name was looked up (Greptile on #3676)", async () => {
+    const fixture = setup();
+    fixture.observer().joined({ scopeId, connectionId: "c1", actorId: "user_yuhan", role: "editor", ownerId: "user_owner" });
+    await vi.waitFor(() => expect(fixture.service.presence.has(scopeId)).toBe(true));
+    fixture.closedConnections.add("c2");
+    fixture.observer().joined({ scopeId, connectionId: "c2", actorId: "user_sam", role: "viewer", ownerId: "user_owner" });
+    fixture.observer().left(scopeId, "c2");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fixture.service.presence.state(scopeId, "shared").participants.map((p) => p.actorId)).toEqual(["user_owner", "user_yuhan"]);
   });
 
   it("bounds owner feed listeners", () => {
