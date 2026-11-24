@@ -1,4 +1,5 @@
 import { retryCustomerVpsProviderDeletions } from "./customer-vps-provider-deletions.js";
+import { enqueueMetalVmDeletion } from "./substrates/metal-vm-deletions.js";
 import type { UserMachineRecord } from './db.js';
 import {
   claimUserMachineDelete,
@@ -521,7 +522,19 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     },
 
     async delete(machineId) {
-      const row = await claimUserMachineDelete(deps.db, machineId, now().toISOString());
+      const deletedAt = now();
+      // A metal VM has no Hetzner server: the soft delete and its VM teardown
+      // entry commit together, and the metal drainer destroys the VM.
+      const row = await runInPlatformTransaction(deps.db, async (trx) => {
+        const claimed = await claimUserMachineDelete(trx, machineId, deletedAt.toISOString());
+        if (claimed?.substrate === 'metal' && claimed.metalHostId) {
+          await enqueueMetalVmDeletion(trx, {
+            metalHostId: claimed.metalHostId, machineId, generation: claimed.generation,
+            metalVmId: claimed.metalVmId, reason: 'delete', now: deletedAt,
+          });
+        }
+        return claimed;
+      });
       if (!row) {
         const existing = await getUserMachine(deps.db, machineId);
         if (existing && !existing.deletedAt) {

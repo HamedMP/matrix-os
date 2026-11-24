@@ -52,6 +52,19 @@ describe('customer VPS registration for metal runtimes', () => {
   let db: PlatformDB;
   const { createService } = useCustomerVpsFixture((value) => { db = value!; });
 
+  it('deleting a metal machine queues its VM teardown with the soft delete, and never calls Hetzner', async () => {
+    const { service, hetzner } = createService();
+    await insertMetalRow(db, { status: 'running' });
+
+    await expect(service.delete(METAL_MACHINE_ID)).resolves.toMatchObject({ deleted: true, machineId: METAL_MACHINE_ID });
+
+    expect((await getUserMachine(db, METAL_MACHINE_ID))?.status).toBe('deleted');
+    expect(await db.executor.selectFrom('metal_vm_deletions')
+      .select(['machine_id', 'metal_host_id', 'metal_vm_id', 'reason', 'completed_at']).execute())
+      .toEqual([{ machine_id: METAL_MACHINE_ID, metal_host_id: 'host-a', metal_vm_id: 'vm_0123456789abcdef01234567', reason: 'delete', completed_at: null }]);
+    expect(hetzner.deleteServer).not.toHaveBeenCalled();
+  });
+
   it('registration accepts metal with serverRef and rejects a wrong serverRef', async () => {
     const { service, systemStore } = createService();
     await insertMetalRow(db);

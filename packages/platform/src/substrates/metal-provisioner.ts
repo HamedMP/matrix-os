@@ -5,7 +5,7 @@ import { AccountDeletionAdmissionError, withAccountDeletionAdmission } from '../
 import { createRegistrationToken, type RegistrationToken } from '../customer-vps-auth.js';
 import { renderCloudInitTemplate } from '../customer-vps-cloud-init.js';
 import type { CustomerVpsConfig } from '../customer-vps-config.js';
-import { DEFAULT_CLOUD_INIT_TEMPLATE, buildHostConfig } from '../customer-vps-host-config.js';
+import { buildHostConfig } from '../customer-vps-host-config.js';
 import { hostBundleUrlForImageVersion } from '../customer-vps-host-bundle.js';
 import { ClerkUserIdSchema, CustomerHandleSchema, RuntimeSlotSchema } from '../customer-vps-schema.js';
 import { toUserMachineRow } from '../database/user-machine-records.js';
@@ -113,7 +113,12 @@ export interface MetalProvisionerDeps {
   config: CustomerVpsConfig;
   /** The platform's public app origin (appOrigin(env)); omitted means the gateway default. */
   publicAppOrigin?: string;
-  cloudInitTemplate?: string;
+  /**
+   * The customer VPS cloud-init template (loadCustomerVpsCloudInitTemplate).
+   * Required: the golden clone has no owner home or Postgres, and only this
+   * template restores them and starts registration.
+   */
+  cloudInitTemplate: string;
   now?: () => Date;
   machineIdFactory?: () => string;
   tokenFactory?: (now: Date, ttlMs: number) => RegistrationToken;
@@ -195,6 +200,9 @@ async function mapBounded<T, R>(items: readonly T[], limit: number, fn: (item: T
 
 export function createMetalProvisioner(deps: MetalProvisionerDeps) {
   const { db, config } = deps;
+  if (typeof deps.cloudInitTemplate !== 'string' || deps.cloudInitTemplate.trim() === '') {
+    throw new Error('Metal provisioning requires the customer VPS cloud-init template');
+  }
   const now = deps.now ?? (() => new Date());
   const log = deps.log ?? defaultLog;
   const machineIdFactory = deps.machineIdFactory ?? randomUUID;
@@ -328,7 +336,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
         bundleRef,
       );
       const userData = withMetalServerEnv(
-        renderCloudInitTemplate(deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE, {
+        renderCloudInitTemplate(deps.cloudInitTemplate, {
           ...hostConfig,
           // The clone already holds this exact bundle and its host
           // prerequisites; naming it as the snapshot source lets cloud-init's
@@ -572,17 +580,37 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
     }
     const at = now();
     try {
-      await runInPlatformTransaction(db, async (trx) => {
-        await trx.executor.updateTable('user_machines')
+      const kept = await runInPlatformTransaction(db, async (trx) => {
+        const failed = await trx.executor.updateTable('user_machines')
           .set({ status: 'failed', failure_code: 'provider_unavailable', failure_at: at.toISOString() })
           .where('machine_id', '=', machineId)
           .where('status', '=', 'provisioning')
           .where('deleted_at', 'is', null)
-          .execute();
+          .returning('machine_id')
+          .executeTakeFirst();
+        if (!failed) {
+          // A record whose reply was lost may have committed, and the guest may
+          // have registered since: a live row holding this VM keeps it.
+          const live = await trx.executor.selectFrom('user_machines')
+            .select('machine_id')
+            .where('machine_id', '=', machineId)
+            .where('metal_host_id', '=', host.id)
+            .where('metal_vm_id', '=', vm.id)
+            .where('status', '=', 'running')
+            .where('deleted_at', 'is', null)
+            .forUpdate()
+            .executeTakeFirst();
+          if (live) return true;
+        }
         await enqueueMetalVmDeletion(trx, {
           metalHostId: host.id, machineId, generation: 1, metalVmId: vm.id, reason: 'create_unrecorded', now: at,
         });
+        return false;
       });
+      if (kept) {
+        log('create_record_recovered', { machineId, hostId: host.id });
+        return { machineId };
+      }
     } catch (error: unknown) {
       // The row stays provisioning without a VM id: registration refuses it, and
       // reconcileStale fails it and queues teardown (found by listing) after the window.

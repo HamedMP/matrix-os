@@ -84,6 +84,35 @@ function commitThenFailFirstVmRecord(db: PlatformDB): PlatformDB {
   return { ...db, executor: db.executor.withPlugin(plugin), transaction: (fn) => db.transaction(fn) };
 }
 
+/**
+ * Every VM-record update commits but reports an error (lost replies). After the
+ * first commit the guest registers, so the row is running with this VM.
+ */
+function commitThenFailEveryVmRecordWithRegistration(db: PlatformDB, machineId: string): PlatformDB {
+  const recordQueries = new Set<QueryId>();
+  let registered = false;
+  const plugin: KyselyPlugin = {
+    transformQuery({ node, queryId }) {
+      const text = JSON.stringify(node);
+      if (node.kind === 'UpdateQueryNode' && text.includes('"metal_vm_id"') && text.includes('"private_address"')) {
+        recordQueries.add(queryId);
+      }
+      return node;
+    },
+    async transformResult({ queryId, result }) {
+      if (recordQueries.delete(queryId)) {
+        if (!registered) {
+          registered = true;
+          await db.executor.updateTable('user_machines').set({ status: 'running' }).where('machine_id', '=', machineId).execute();
+        }
+        throw new Error('connection terminated after commit');
+      }
+      return result;
+    },
+  };
+  return { ...db, executor: db.executor.withPlugin(plugin), transaction: (fn) => db.transaction(fn) };
+}
+
 /** Makes the next `failures` updates that set user_machines.metal_vm_id fail inside Postgres. */
 async function failVmRecordUpdates(db: PlatformDB, failures: number) {
   await sql.raw('CREATE SEQUENCE vm_record_failures').execute(db.executor);
@@ -221,6 +250,16 @@ describe('metal provisioner', () => {
       log: () => undefined,
     });
   }
+
+  it('refuses to compose without the real cloud-init template, since the minimal default never finishes first boot', () => {
+    const deps = {
+      db, hosts: createMetalHostsRepository(db.kysely), clientFor: () => { throw new Error('unused'); },
+      goldenVersion: GOLDEN, config: createTestConfig(),
+    };
+    expect(() => createMetalProvisioner(deps as unknown as Parameters<typeof createMetalProvisioner>[0])).toThrow('cloud-init template');
+    expect(() => createMetalProvisioner({ ...deps, cloudInitTemplate: '  ' } as unknown as Parameters<typeof createMetalProvisioner>[0]))
+      .toThrow('cloud-init template');
+  });
 
   it('places on the host with the most headroom', async () => {
     const tight = await addHost('host-a', { memoryAvailableMiB: 40_000 });
@@ -562,6 +601,16 @@ describe('metal provisioner', () => {
     expect(await db.executor.selectFrom('metal_vm_deletions').select('id').execute()).toEqual([]);
   });
 
+  it('keeps a VM the guest registered while every record reply was lost, instead of queueing its teardown', async () => {
+    await addHost('host-a', { memoryAvailableMiB: 60_000 });
+
+    expect(await provisioner({ db: commitThenFailEveryVmRecordWithRegistration(db, MACHINE_ID) })
+      .provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' }))
+      .toEqual({ machineId: MACHINE_ID });
+    expect(await getUserMachine(db, MACHINE_ID)).toMatchObject({ status: 'running', metalVmId: 'vm_0123456789abcdef01234567' });
+    expect(await db.executor.selectFrom('metal_vm_deletions').select('id').execute()).toEqual([]);
+  });
+
   it('still treats a row holding a different VM id as superseded', async () => {
     await addHost('host-a', { memoryAvailableMiB: 60_000 });
     await sql.raw(`
@@ -696,6 +745,7 @@ describe('metal provisioner', () => {
       clientFor: () => fakes.get('host-a')!.client,
       goldenVersion: GOLDEN,
       config: createTestConfig(),
+      cloudInitTemplate: template,
       now: () => new Date('2026-11-21T14:00:00.000Z'),
     });
 
