@@ -1,7 +1,7 @@
 import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 import { z } from "zod/v4";
 import { MANAGED_WORKERS_AI_MODEL_IDS } from "#funded-ai";
-import { canonicalEncodedByteLength } from "#canonical-chat-primitives";
+import { canonicalBoundedText, canonicalEncodedByteLength } from "#canonical-chat-primitives";
 import { BOT_IMAGE_MAX_BASE64_CHARS, BotToolCapabilitySchema, BotToolErrorCodeSchema } from "#bots/broker";
 import { BotIdSchema } from "#bots/ids";
 import { BotRecipeRefSchema } from "#bots/bot";
@@ -95,6 +95,7 @@ export const BotRunSpecSchema = z.object({
   route: BotModelRouteSchema,
   systemPrompt: SystemPromptSchema,
   slackThreadReference: SlackThreadReferenceSchema.optional(),
+  selectedChatReference: canonicalBoundedText(16_384, 16_384).optional(),
   capabilities: CapabilitiesSchema,
   limits: BotRunLimitsSchema,
   isolatedTurn: IsolatedBotTurnSchema.optional(),
@@ -112,6 +113,7 @@ export const BotWorkerCommandSchema = z.discriminatedUnion("kind", [
     route: BotModelRouteSchema,
     systemPrompt: SystemPromptSchema,
     slackThreadReference: SlackThreadReferenceSchema.optional(),
+  selectedChatReference: canonicalBoundedText(16_384, 16_384).optional(),
     capabilities: CapabilitiesSchema,
     limits: BotRunLimitsSchema,
   isolatedTurn: IsolatedBotTurnSchema.optional(),

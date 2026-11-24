@@ -1,5 +1,5 @@
 import { sql, type Kysely, type Transaction } from "kysely";
-import { hasCompanyDriveMaterial } from "../chat/drive-sharing-guard.js";
+import { hasAudienceRestrictedChatMaterial } from "../chat/drive-sharing-guard.js";
 import type { ChatOwner, ChatOutboxEvent, ChatRecord } from "../chat/records.js";
 import type { ChatRepository } from "../chat/repository.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
@@ -225,7 +225,7 @@ export function createProjectChatAssignmentCoordinator(options: {
       || current.scope.resource_id !== record.chat.id) {
       throw new ProjectInheritanceError("conflict");
     }
-    if (await hasCompanyDriveMaterial(trx, record.chat.id)) {
+    if (await hasAudienceRestrictedChatMaterial(trx, record.chat.id)) {
       throw new ProjectInheritanceError("resource_blocked");
     }
     const updatedScope = await trx.updateTable("collaboration_scopes").set({

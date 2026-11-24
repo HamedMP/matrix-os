@@ -428,9 +428,12 @@ function ChatAppContent({
     }
     if (directBotId) {
       if (!botPresentation || !botPresentation.available) return Promise.resolve(false);
+      const resources = botPresentation.kind === "custom"
+        ? [...(mentionOptions?.resources ?? []), ...botExecution.consentResources]
+        : mentionOptions?.resources;
       return onSubmit(text, files, { displayText: text, instanceId: botPresentation.selection.instanceId, model: botPresentation.selection.model,
         interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.kind === "custom" ? mentionOptions?.permissionMode ?? botPresentation.permissionMode : "default", modelOptions: botPresentation.selection.options ?? [],
-        ...((botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources)?.length ? { resources: botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources } : {}),
+        ...(resources?.length ? { resources } : {}),
         ...(mentionOptions?.clientRequestId ? { clientRequestId: mentionOptions.clientRequestId } : {}),
         ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
       });

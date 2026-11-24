@@ -1,4 +1,4 @@
-import { hasCompanyDriveMaterial } from "./drive-sharing-guard.js";
+import { hasAudienceRestrictedChatMaterial } from "./drive-sharing-guard.js";
 import { ChatDriveContextError } from "./drive-context.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
@@ -36,7 +36,7 @@ export function createProductionChatDriveContext(options: {
             if (!options.repository)
                 throw new ChatDriveContextError();
             const source = await options.repository.get(owner, chatId);
-            if (!source || await hasCompanyDriveMaterial(options.repository.kysely, chatId))
+            if (!source || await hasAudienceRestrictedChatMaterial(options.repository.kysely, chatId))
                 throw new ChatDriveContextError();
         }, routes: createChatDriveToolRoutes({ service }), close() { client?.close(); } };
 }
