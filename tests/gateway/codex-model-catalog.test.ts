@@ -125,7 +125,7 @@ describe("Codex model catalog projection", () => {
         ],
         inputModalities: ["text", "image"],
         serviceTiers: [{ id: "priority", name: "Fast", description: "Priority capacity" }],
-        defaultServiceTier: "priority",
+        defaultServiceTier: null,
       }, {
         id: "hidden-model",
         model: "hidden-model",
@@ -152,9 +152,10 @@ describe("Codex model catalog projection", () => {
         defaultValue: "low",
         values: [{ value: "low" }, { value: "high" }],
       }, {
-        id: "service_tier",
-        defaultValue: "priority",
-        values: [{ value: "priority", label: "Fast" }],
+        id: "codex_speed",
+        defaultValue: "standard",
+        placement: "composer",
+        values: [{ value: "standard", label: "Standard" }, { value: "priority", label: "Fast" }],
       }],
     });
   });

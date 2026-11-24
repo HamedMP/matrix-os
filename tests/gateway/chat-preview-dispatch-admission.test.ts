@@ -178,7 +178,7 @@ describe("Preview turn dispatch admission", () => {
     pending.push(result); return { result, chatId };
   }
 
-  it("rechecks owner capacity when nine admitted Preview turns resume together", async () => {
+  it("allows nine admitted Preview turns for one owner to resume together", async () => {
     const { orchestrator, entered, gate, cleanup } = setup();
     const turns = [];
     try {
@@ -189,37 +189,33 @@ describe("Preview turn dispatch admission", () => {
       expect(orchestrator.activeCount).toBe(0);
       gate.resolve();
       const outcomes = await Promise.all(turns.map(turn => turn.result));
-      expect(orchestrator.activeCount).toBe(8);
-      expect(outcomes.filter(value => value.accepted)).toHaveLength(8);
-      const rejectedIndex = outcomes.findIndex(value => !value.accepted);
-      const rejected = outcomes[rejectedIndex]!;
-      expect(rejected).toMatchObject({ accepted: false, error: { status: 503,
-        safeError: { code: "run_unavailable", safeMessage: "Chat execution is temporarily busy.", retryable: true } } });
-      expect((await repository.exportChat(owner, turns[rejectedIndex]!.chatId))?.runs[0]?.status).toBe("failed");
-      expect(cleanup.mock.calls).toEqual([[turns[rejectedIndex]!.chatId]]);
+      expect(orchestrator.activeCount).toBe(9);
+      expect(outcomes.filter(value => value.accepted)).toHaveLength(9);
+      expect(cleanup).not.toHaveBeenCalled();
     } finally { gate.resolve(); }
   });
 
-  it("rechecks global capacity filled by ordinary admissions while a Preview redemption waits", async () => {
+  it("reserves one global slot while Preview redemption waits alongside 63 ordinary runs", async () => {
     const { orchestrator, entered, gate, cleanup } = setup();
     const held = await begin(orchestrator, "global_held");
     try {
       await vi.waitFor(() => expect(entered).toHaveLength(1));
-      for (let index = 0; index < 64; index++) {
-        const actor = { ...owner, ownerId: `global_owner_${Math.floor(index / 8)}` };
-        const turn = await begin(orchestrator, `global_${index}`, actor, false);
+      for (let index = 0; index < 63; index++) {
+        const turn = await begin(orchestrator, `global_${index}`, owner, false);
         expect((await turn.result).accepted).toBe(true);
         await vi.waitFor(() => expect(executions).toHaveLength(index + 1));
       }
-      expect(orchestrator.activeCount).toBe(64);
-      gate.resolve();
-      expect(await held.result).toMatchObject({ accepted: false, error: { status: 503,
+      expect(orchestrator.activeCount).toBe(63);
+      const overflow = await begin(orchestrator, "global_overflow", owner, false);
+      expect(await overflow.result).toMatchObject({ accepted: false, error: { status: 503,
         safeError: { code: "run_unavailable", safeMessage: "Chat execution is temporarily busy." } } });
+      expect((await repository.exportChat(owner, overflow.chatId))?.runs).toEqual([]);
+      gate.resolve();
+      expect((await held.result).accepted).toBe(true);
       expect(orchestrator.activeCount).toBe(64);
-      expect((await repository.exportChat(owner, held.chatId))?.runs[0]?.status).toBe("failed");
-      expect(cleanup.mock.calls).toEqual([[held.chatId]]);
+      expect(cleanup).not.toHaveBeenCalled();
     } finally { gate.resolve(); }
-  });
+  }, 60_000);
 
   it("fails an admitted Preview run if shutdown begins during redemption", async () => {
     const { orchestrator, entered, gate, cleanup } = setup();

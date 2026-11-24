@@ -145,9 +145,18 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # npm versions are immutable: the exact tarball must install and run through
+  # npm (macOS and Linux) and through the Homebrew formula before it is published.
+  install-smoke:
+    name: Install smoke
+    needs: package
+    uses: ./.github/workflows/cli-install-smoke.yml
+    with:
+      artifact: cli-npm-package
+
   publish:
     name: Publish CLI to npm
-    needs: package
+    needs: [package, install-smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

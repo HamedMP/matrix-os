@@ -107,7 +107,7 @@ describe("Web Chat Agents page", () => {
     fireEvent.click(within(agents).getByRole("button", { name: "Close Chat sidebar" }));
     expect(sidebar.className).toContain("w-0");
     fireEvent.click(within(agents).getByRole("button", { name: "Open Chat sidebar" }));
-    expect(sidebar.className).toContain("w-[260px]");
+    expect(sidebar.className).toContain("w-[240px]");
   });
 
   it.each([false, true])("preserves the transcript and draft across Templates and Agents management (mobile=%s)", async (mobile) => {

@@ -737,7 +737,7 @@ describe("TerminalPane scrolling", () => {
     }
   });
 
-  it("renders the durable observer snapshot for a terminal tab", async () => {
+  it.each([0, 55])("renders the durable observer snapshot when attach announces cursor %s", async (nextSeq) => {
     render(
       <TerminalPane
         paneId="pane-presentation-reset"
@@ -757,14 +757,14 @@ describe("TerminalPane scrolling", () => {
     const terminal = createdTerminals[0]!;
     await act(async () => {
       socket.onmessage?.({
-        data: JSON.stringify(attachedFrame(0)),
+        data: JSON.stringify(attachedFrame(nextSeq)),
       });
       socket.onmessage?.({
         data: JSON.stringify({
           type: "snapshot",
           terminalRef: TERMINAL_REF,
           revision: 1,
-          seq: 0,
+          seq: Math.max(0, nextSeq - 1),
           ansi: "durable snapshot",
           canonicalSize: { cols: 120, rows: 42 },
           viewport: { top: 0, rows: 42 },
@@ -773,6 +773,16 @@ describe("TerminalPane scrolling", () => {
     });
 
     expect(terminal.write).toHaveBeenCalledWith("durable snapshot");
+    await act(async () => {
+      socket.onmessage?.({ data: JSON.stringify(outputFrame(Math.max(1, nextSeq), "continued output")) });
+      socket.onmessage?.({ data: JSON.stringify({
+        type: "snapshot", terminalRef: TERMINAL_REF, revision: 1,
+        seq: Math.max(0, nextSeq - 1), ansi: "duplicate stale snapshot",
+        canonicalSize: { cols: 120, rows: 42 }, viewport: { top: 0, rows: 42 },
+      }) });
+    });
+    expect(terminal.write).toHaveBeenCalledWith("continued output");
+    expect(terminal.write).not.toHaveBeenCalledWith("duplicate stale snapshot");
   });
 
   it("waits for a measurable hard pane instead of attaching with a destructive fallback", async () => {

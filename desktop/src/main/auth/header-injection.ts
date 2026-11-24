@@ -6,12 +6,13 @@
 
 import { DESKTOP_DEV_RENDERER_HOST } from "../renderer-url";
 import type { DesktopAnalyticsDetail } from "../../shared/desktop-analytics";
+import { DESKTOP_REQUEST_SESSION_HEADER, desktopRequestSessionKey, type DesktopRequestSession } from "../../shared/request-session";
 
 interface WebRequestLike {
   onBeforeSendHeaders(
     listener: (
       details: { url: string; requestHeaders: Record<string, string> },
-      callback: (response: { requestHeaders: Record<string, string> }) => void,
+      callback: (response: { requestHeaders: Record<string, string>; cancel?: boolean }) => void,
     ) => void,
   ): void;
   onHeadersReceived(
@@ -145,9 +146,20 @@ export function installHeaderInjection(
   getToken: () => string | null,
   getGatewayOrigin: () => string | null,
   rendererOrigin: string,
+  getSession?: () => DesktopRequestSession | null,
 ): void {
   rendererSession.webRequest.onBeforeSendHeaders((details, callback) => {
     const gatewayOrigin = getGatewayOrigin();
+    const scopeHeaders = Object.keys(details.requestHeaders).filter(key => key.toLowerCase() === DESKTOP_REQUEST_SESSION_HEADER.toLowerCase());
+    if (scopeHeaders.length) {
+      const requested = details.requestHeaders[scopeHeaders[0]!];
+      for (const key of scopeHeaders) delete details.requestHeaders[key];
+      const current = getSession?.();
+      if (scopeHeaders.length !== 1 || !current || requested !== desktopRequestSessionKey(current) || !shouldInjectAuth(details.url, gatewayOrigin)) {
+        callback({ cancel: true, requestHeaders: details.requestHeaders });
+        return;
+      }
+    }
     const token = getToken();
     if (token && shouldInjectAuth(details.url, gatewayOrigin)) {
       details.requestHeaders["Authorization"] = `Bearer ${token}`;
@@ -270,6 +282,7 @@ export function installGatewayCors(
       responseHeaders["Access-Control-Allow-Headers"] = [
         [
           "Authorization, Content-Type, x-runtime-slot, X-Matrix-Filename, X-Conversations-Token, X-Matrix-Chat-Metadata, X-Matrix-Chat-Import-Source, X-Matrix-Chat-Protocol, Last-Event-ID",
+          DESKTOP_REQUEST_SESSION_HEADER,
           ...COLLABORATION_REQUEST_HEADERS,
         ].join(", "),
       ];

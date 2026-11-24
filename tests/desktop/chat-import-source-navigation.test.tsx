@@ -48,7 +48,8 @@ describe("import origin in ordinary Chat navigation", () => {
     render(<WorkRail client={client} projects={[]} active onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()} onSelectChat={vi.fn()} onCollapse={vi.fn()}/>);
     await screen.findByRole("button", { name: "claude" });
     expect(screen.getByRole("img", { name: "Imported from Claude Code" })).toBeTruthy();
-    fireEvent.change(screen.getByRole("combobox", { name: "Chat source" }), { target: { value: "claude" } });
+    fireEvent.click(screen.getByRole("button", { name: "Filter chats" }));
+    fireEvent.change(await screen.findByRole("combobox", { name: "Chat source" }), { target: { value: "claude" } });
     await waitFor(() => expect(screen.queryByRole("button", { name: "codex" })).toBeNull());
     expect(screen.getByRole("button", { name: "claude" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "plain" })).toBeNull();

@@ -1,8 +1,8 @@
 ---
-triggers: ["build app", "create app", "Matrix app", "redesign app", "Postgres app"]
+triggers: ["build app", "create app", "Matrix app", "redesign app", "Postgres app", "Matrix landing page"]
 name: matrix-app-builder
 description: Build Matrix OS apps as Vite React TypeScript projects with matrix.json manifests, Matrix theme integration, Postgres-backed app data, and production build verification.
-version: 1.5.0
+version: 1.5.1
 author: Matrix OS
 license: MIT
 platforms: [linux, macos]
@@ -17,7 +17,7 @@ metadata:
 
 ## When to Use
 
-Use this when the user asks to build, create, fix, redesign, or publish a Matrix OS app.
+Use this when the user asks to build, create, fix, redesign, or publish a Matrix OS app or its landing page.
 
 For a shared/team app, or converting a personal app for organization use, load
 `matrix-collaborative-app-builder` from the installed catalog. If collaboration
@@ -46,10 +46,10 @@ keep this skill's design, packaging and visual verification guidance.
 
 ## Design workflow
 
-1. Read [Visual references and style intake](references/visual-references.md), the craft reference, and the user’s images/links or existing DESIGN.md. Invite a style or inspiration screenshot when the direction is unclear. When available, delegate bounded similar-app screenshot research to one or two subagents, inspect the actual images, and select a task-appropriate direction. Offer annotated alternatives when useful or requested; continue independent work and use the user’s delegated default without a mandatory approval checkpoint.
-2. Save a short app `DESIGN.md`: primary task, visual family and palette, layout and density, semantic tokens, typography/spacing, true data and state behavior, and one useful motion recipe with a reduced-motion variant. Keep it updated as the implementation changes.
-3. Build one complete vertical slice against the owner's real Postgres through `window.MatrixOS.db`: read → create/edit → confirm or restore on failure → reopen. Verify it before expanding secondary screens. Never use convincing fake records to conceal a missing data path.
-4. Inspect the running app in the available Matrix surfaces, refine the largest hierarchy or interaction problem, and inspect again. Check keyboard and reduced motion, not just the default screenshot. Record skills loaded, surface, viewport, theme, states, persistence result, and screenshot/recording evidence; report unavailable evidence explicitly.
+1. Read [Visual references and style intake](references/visual-references.md), the craft reference, the existing app UI and DESIGN.md if present, and the user’s images or links before choosing a direction. Invite a style or inspiration screenshot when the direction is unclear. When available, delegate bounded similar-app screenshot research to one or two subagents, inspect the actual images, and select a task-appropriate direction. Offer annotated alternatives when useful or requested; continue independent work and use the user’s delegated default without a mandatory approval checkpoint.
+2. Save a short app `DESIGN.md`: audience, primary task, visual family and palette, responsive layout and density, semantic tokens, typography and spacing, components, data and state behavior, and one useful motion recipe with a reduced-motion variant. Keep it updated as the implementation changes.
+3. Build one complete vertical slice against the owner's real Postgres through `window.MatrixOS.db`: read, create/edit/delete as appropriate, confirm or restore on failure, then reopen. Verify loading, empty and error states before expanding secondary screens. Never use convincing fake records to conceal a missing data path.
+4. Inspect the running app in the available Matrix surfaces, refine the largest hierarchy or interaction problem, and inspect again. Check keyboard and focus behavior, reduced motion, and smooth interactions across viewport sizes. Record skills loaded, surface, viewport, theme, states, persistence result, and screenshot/recording evidence; report unavailable evidence explicitly.
 
 For apps and matching landing pages, read [Responsive layout and verification](references/responsive-layout.md). Compose for actual app container width across varied Matrix windows and mobile screens; verify the listed widths and retain all meaningful fields/actions.
 

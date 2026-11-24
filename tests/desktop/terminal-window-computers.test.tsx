@@ -297,8 +297,29 @@ describe("Terminal window computers", () => {
     render(<TerminalWindowApp />);
     await stream("primary", [tabFacts(TAB_1, "build")]);
     fireEvent.click(await screen.findByRole("button", { name: "New terminal on neo" }));
-    expect(await screen.findByText("Couldn't start a terminal. Try again.")).toBeTruthy();
+    // ENG-521 canary report: the row says what kind of failure it was (here the computer's 503),
+    // never what the computer said.
+    expect(await screen.findByText("Couldn't start a terminal: the computer had an error (503). Try again.")).toBeTruthy();
     expect(within(sidebar()).getByRole("button", { name: /build/ })).toBeTruthy();
+  });
+
+  // Fault detected (Greptile, #3639): a successful answer that was not JSON lost its reason.
+  it("says when a computer answers a new terminal with something that is not JSON", async () => {
+    fetchMock.mockImplementation(async (url: string) => (String(url).endsWith("/ensure")
+      ? new Response("<html>gateway</html>", { status: 200, headers: { "content-type": "text/html" } })
+      : json(workspace([]))));
+    render(<TerminalWindowApp />);
+    await stream("primary", [tabFacts(TAB_1, "build")]);
+    fireEvent.click(await screen.findByRole("button", { name: "New terminal on neo" }));
+    expect(await screen.findByText("Couldn't start a terminal: the computer's answer wasn't understood. It may need an update.")).toBeTruthy();
+  });
+
+  it("says when a computer's answer to a new terminal is not understood", async () => {
+    fetchMock.mockImplementation(async (url: string) => (String(url).endsWith("/ensure") ? json({ workspace: { id: "not-a-workspace-id" } }) : json(workspace([]))));
+    render(<TerminalWindowApp />);
+    await stream("primary", [tabFacts(TAB_1, "build")]);
+    fireEvent.click(await screen.findByRole("button", { name: "New terminal on neo" }));
+    expect(await screen.findByText("Couldn't start a terminal: the computer's answer wasn't understood. It may need an update.")).toBeTruthy();
   });
 
   // Fault detected (Greptile, #3567): a refused credential while starting a terminal failed silently.
