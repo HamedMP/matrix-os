@@ -251,7 +251,7 @@ function ChatAppContent({
   mobile = false,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
-  const railNowMs = useMinuteClock(active && visible);
+  const railNowMs = useMinuteClock(visible);
   // Explicit computer changes take effect immediately. The fallback is fixed
   // at mount so shared-chat history routes cannot silently retarget the rail.
   const [mountedGatewayUrl] = useState(getGatewayUrl);
