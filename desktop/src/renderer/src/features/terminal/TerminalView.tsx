@@ -127,6 +127,12 @@ interface TerminalViewProps {
    * keeps one live terminal at a time.
    */
   attachManager?: AttachManager;
+  /**
+   * Where this view's saved screen is kept, when the session name alone does not
+   * identify the terminal: a Herdr terminal has the same name on every computer.
+   * Defaults to the session name; the socket always addresses `sessionName`.
+   */
+  snapshotKey?: string;
   /** Takes keyboard focus when it attaches or becomes focused. Defaults to `active`. */
   focused?: boolean;
   /**
@@ -179,9 +185,11 @@ export default function TerminalView({
   findRequest = 0,
   onPaneAction,
   attachManager: attachManagerProp,
+  snapshotKey: snapshotKeyProp,
   focused,
   reservedKeys,
 }: TerminalViewProps) {
+  const snapshotKey = snapshotKeyProp ?? sessionName;
   // The size last sent to the attachment: a pixel change that keeps the grid, or a focus change, sends nothing,
   // so the program never gets a resize (and redraws its prompt) for nothing.
   const sentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
@@ -530,7 +538,7 @@ export default function TerminalView({
       console.warn("[terminal] webgl unavailable:", err instanceof Error ? err.message : String(err));
     }
     fit.fit();
-    const cached = (attachManagerProp ?? getAttachManager()).getCachedBuffer(sessionName);
+    const cached = (attachManagerProp ?? getAttachManager()).getCachedBuffer(snapshotKey);
     if (cached) terminal.write(cached);
     termRef.current = terminal;
     fitRef.current = fit;
@@ -596,7 +604,7 @@ export default function TerminalView({
       }
       const manager = (attachManagerProp ?? getAttachManager());
       try {
-        manager.cacheBuffer(sessionName, serialize.serialize());
+        manager.cacheBuffer(snapshotKey, serialize.serialize());
       } catch (err: unknown) {
         console.warn("[terminal] buffer snapshot failed:", err instanceof Error ? err.message : String(err));
       }
@@ -605,7 +613,7 @@ export default function TerminalView({
       termRef.current = null;
       setSearch(null);
     };
-  }, [attachManagerProp, copyTerminalTextWithFeedback, sendDisplayFacts, sendSize, sessionName]);
+  }, [attachManagerProp, copyTerminalTextWithFeedback, sendDisplayFacts, sendSize, sessionName, snapshotKey]);
 
   useEffect(() => {
     const terminal = termRef.current;

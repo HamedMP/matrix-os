@@ -243,8 +243,8 @@ function EmptyPane({ signedIn }: { signedIn: boolean }) {
  * streams live, not only the focused one. Disposed with its pane.
  */
 // Memoized: the window redraws on every status event, and a terminal must not redraw with it.
-const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequest, onPaneAction, reservedKeys }: {
-  sessionName: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
+const PaneTerminal = memo(function PaneTerminal({ sessionName, snapshotKey, focused, findRequest, onPaneAction, reservedKeys }: {
+  sessionName: string; snapshotKey: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
   reservedKeys(event: KeyboardEvent): boolean;
 }) {
   const [manager, setManager] = useState<AttachManager | null>(null);
@@ -255,7 +255,7 @@ const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequ
     return () => created.dispose();
   }, []);
   if (!manager) return null;
-  return <TerminalView sessionName={sessionName} attachManager={manager} active focused={focused} findRequest={findRequest}
+  return <TerminalView sessionName={sessionName} snapshotKey={snapshotKey} attachManager={manager} active focused={focused} findRequest={findRequest}
     onPaneAction={onPaneAction} reservedKeys={reservedKeys}
     // The pane header holds the pane buttons, so the terminal's own controls bar is not repeated.
     controlsHost={null} />;
@@ -316,7 +316,9 @@ function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
         return (
           <>
             {/* Not focused while the overview covers it, so uncovering hands the keyboard back without reattaching. */}
-            <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused && !view.overview.open}
+            {/* A Herdr terminal has the same session name on every computer: its saved screen is kept per row. */}
+            <PaneTerminal key={`${leaf.terminal}|${view.cloud.attachEpoch}`} sessionName={sessionName} snapshotKey={leaf.terminal}
+              focused={focused && !view.overview.open}
               findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction} reservedKeys={view.reservedKeys} />
             {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
           </>
