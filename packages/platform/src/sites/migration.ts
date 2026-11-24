@@ -1,5 +1,7 @@
 import { sql } from 'kysely';
 import type { PlatformMigrationExecutor } from '../database/migration-types.js';
+/** Bump with every schema change: the runner skips a scope whose generation is already recorded. */
+export const SITES_SCHEMA_REVISION = { generation: 4, fingerprint: 'public-app-sites-public-data-opt-in-v4' } as const;
 export async function migrateSites(db: PlatformMigrationExecutor): Promise<void> {
     await sql `CREATE TABLE IF NOT EXISTS public_sites (
   id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, machine_id TEXT NOT NULL, app_slug TEXT NOT NULL,
