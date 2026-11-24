@@ -24,7 +24,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it("lets the Web Chat sidebar list shrink below its content so it scrolls", () => {
   render(<ChatApp messages={[]} busy={false} connected conversations={[]}
     onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} />);
-  const sidebar = screen.getByRole("textbox", { name: "Search chats" }).closest("aside")!;
+  const sidebar = screen.getByRole("button", { name: "Search chats" }).closest("aside")!;
   const list = sidebar.querySelector("[data-slot=scroll-area]")!;
   // A flex-1 child keeps min-height:auto and grows to fit every row unless it may shrink.
   expect(list.className.split(/\s+/)).toContain("min-h-0");

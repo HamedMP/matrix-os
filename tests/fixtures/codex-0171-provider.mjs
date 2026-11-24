@@ -1,5 +1,5 @@
-// Fake Codex 0.171.0 app-server for runner compatibility tests. Every frame the runner
-// sends is validated against the retained exact 0.171.0 client schema, and every
+// Fake Codex app-server for runner compatibility tests. Every frame the runner
+// sends is validated against the retained exact client schema, and every
 // notification this fixture emits is validated against the server schema, so neither
 // side can drift from the published protocol. Invalid frames fail the run; the fixture
 // never repairs them.
@@ -8,12 +8,18 @@ import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { createInterface } from "node:readline";
 
-const schema = JSON.parse(gunzipSync(readFileSync(new URL("./codex-0171/app-server-schema-0171.json.gz", import.meta.url))).toString("utf8"));
+const qualification = process.env.CODEX_FIXTURE_QUALIFICATION === "0172" ? "0172" : "0171";
+const schema = JSON.parse(gunzipSync(readFileSync(new URL(
+  `./codex-${qualification}/app-server-schema-${qualification}.json.gz`, import.meta.url,
+))).toString("utf8"));
 const ajv = new Ajv({ schemaId: "auto", unknownFormats: "ignore", logger: false });
 const check = name => ajv.compile({ $ref: "#/definitions/" + name, definitions: schema.definitions });
 const clientRequest = check("ClientRequest"), clientNotification = check("ClientNotification"), serverNotification = check("ServerNotification");
 const status = process.env.CODEX_0171_FIXTURE_STATUS === "failed" ? "failed" : "completed";
 const threadId = "native-thread-0171", turnId = "native-turn-0171";
+const error = qualification === "0172"
+  ? { message: "private spend limit detail", codexErrorInfo: "projectSpendLimitExceeded", additionalDetails: null }
+  : { message: "private bio policy detail", codexErrorInfo: "bioPolicy", additionalDetails: null };
 
 function reject(reason) {
   process.stderr.write(`codex-0171 fixture rejected ${reason}\n`);
@@ -46,7 +52,7 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
       notify({ method: "item/completed", params: { threadId, turnId, item, completedAtMs: 2, ...(item === answer ? { contentTokenCount: 8 } : {}) } });
     }
     notify({ method: "turn/completed", params: { threadId, turn: { id: turnId, status, items: [tool, answer], itemsView: "full", startedAt: null, completedAt: null, durationMs: null,
-      error: status === "failed" ? { message: "private bio policy detail", codexErrorInfo: "bioPolicy", additionalDetails: null } : null } } });
+      error: status === "failed" ? error : null } } });
     process.exit(0);
   } else {
     reject(`unexpected request ${message.method}`);

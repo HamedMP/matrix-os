@@ -538,8 +538,21 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               activeConversationTitle={chatState.activeConversationTitle}
               onRenameConversation={chatState.renameConversation}
               onDeleteConversation={chatState.deleteConversation}
+              loadNavigationPage={chatState.navigationPage}
+              chatReadStateUpdates={chatState.chatReadStateUpdates}
+              searchConversations={chatState.searchConversations}
+              navigationUpdatedAt={chatState.navigationUpdatedAt}
+              onArchiveConversation={chatState.archiveConversation}
+              onRestoreConversation={chatState.restoreConversation}
+              onListArchivedConversations={chatState.listArchivedConversations}
+              onArchiveProjectChats={chatState.archiveProjectChats}
+              onRestoreArchivedChats={chatState.restoreArchivedChats}
+              sideChatClient={chatState.sideChatClient}
+                archiveClient={chatState.archiveClient}
+                chatRowActions={chatState.chatRowActions}
+              terminalSessionIds={chatState.terminalSessionIds}
               onSubmit={chatState.submitMessage}
-              agentClient={chatState.agentClient} agentSummaryClient={chatState.agentSummaryClient} authorityKey={chatState.authorityKey} gatewayUrl={chatState.gatewayUrl} composerIdentity={chatState.composerIdentity} isCurrentAuthority={chatState.isCurrentAuthority} navigationFresh={chatState.navigationFresh} navigationClassifications={chatState.navigationClassifications} botEventRevision={chatState.botEventRevision} routineOriginChat={chatState.routineOriginChat} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn} onSteerQueuedTurn={chatState.steerQueuedTurn} canSteerQueuedTurns={chatState.canSteerQueuedTurns} chatProjectId={chatState.chatProjectId} projectSkillRootAvailable={chatState.projectSkillRootAvailable} onSetChatProject={chatState.setChatProject} navigationTruncated={chatState.navigationTruncated} chatChangeRevision={chatState.chatChangeRevision} chatRunStatusChange={chatState.chatRunStatusChange}
+              agentClient={chatState.agentClient} agentSummaryClient={chatState.agentSummaryClient} authorityKey={chatState.authorityKey} gatewayUrl={chatState.gatewayUrl} composerIdentity={chatState.composerIdentity} isCurrentAuthority={chatState.isCurrentAuthority} navigationFresh={chatState.navigationFresh} navigationClassifications={chatState.navigationClassifications} botEventRevision={chatState.botEventRevision} routineOriginChat={chatState.routineOriginChat} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn} onSteerQueuedTurn={chatState.steerQueuedTurn} canSteerQueuedTurns={chatState.canSteerQueuedTurns} chatProjectId={chatState.chatProjectId} chatFileScope={chatState.chatFileScope} projectSkillRootAvailable={chatState.projectSkillRootAvailable} onSetChatProject={chatState.setChatProject} navigationTruncated={chatState.navigationTruncated} chatChangeRevision={chatState.chatChangeRevision} chatRunStatusChange={chatState.chatRunStatusChange}
               onSubmitApproval={chatState.submitApproval}
                 browserPermissions={chatState.browserPermissions}
               onSubmitInput={chatState.submitInput}

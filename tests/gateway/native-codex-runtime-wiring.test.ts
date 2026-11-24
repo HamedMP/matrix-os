@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { CodexExecutionAdmissionOptions } from "../../packages/gateway/src/coding-agents/codex-execution-admission.js";
 const mocks = vi.hoisted(() => ({
-  reader: vi.fn(), createReader: vi.fn(), createAdmission: vi.fn(),
+  reader: Object.assign(vi.fn(), { observeIdentity: vi.fn(), identityFailureState: vi.fn() }), createReader: vi.fn(), createAdmission: vi.fn(),
   admission: { validateLaunch: vi.fn(), releaseStoppedSession: vi.fn() },
 }));
 vi.mock("../../packages/gateway/src/ai-providers/codex-native-account-metadata.js", () => ({
@@ -29,6 +29,28 @@ function fixture() {
   return { runtime, guard, getSettings, getRuntime, admissionOptions };
 }
 describe("native Codex runtime wiring", () => {
+  it.each(["signed_out", "changed", "unavailable"])("preserves the guarded %s observation classification", async state => {
+    const { runtime, guard } = fixture();
+    mocks.reader.observeIdentity.mockResolvedValue({ metadata: null, state });
+    expect(await runtime.readAccount.observeIdentity!()).toEqual({ metadata: null, state });
+    expect(mocks.reader.observeIdentity).toHaveBeenCalledOnce();
+    expect(mocks.reader).not.toHaveBeenCalled();
+    expect(guard.assertReadable).toHaveBeenCalledTimes(2);
+    mocks.reader.identityFailureState.mockReturnValue("changed");
+    const observation = { accountLabel: "fixture" } as never;
+    expect(runtime.readAccount.identityFailureState!(observation)).toBe("changed");
+    expect(mocks.reader.identityFailureState).toHaveBeenCalledWith(observation);
+  });
+  it("drops a confirmed classification if the profile becomes unavailable during observation", async () => {
+    const { runtime, guard } = fixture();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      mocks.reader.observeIdentity.mockResolvedValue({ metadata: null, state: "signed_out" });
+      guard.assertReadable.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("private-detail"));
+      expect(await runtime.readAccount.observeIdentity!()).toEqual({ metadata: null, state: "unavailable" });
+      expect(JSON.stringify(warning.mock.calls)).not.toContain("private-detail");
+    } finally { warning.mockRestore(); }
+  });
   it("guards both sides of metadata observation and shares one owner-scoped reader", async () => {
     const { runtime, guard } = fixture();
     const observation = { accountLabel: "fixture" };
