@@ -495,6 +495,9 @@ importers:
       '@matrix-os/brand':
         specifier: workspace:*
         version: link:../packages/brand
+      '@matrix-os/herdr-core-client':
+        specifier: workspace:*
+        version: link:../packages/herdr-core-client
       '@matrix-os/ui':
         specifier: workspace:*
         version: link:../packages/ui
@@ -884,6 +887,19 @@ importers:
       wrangler:
         specifier: ^4.49.1
         version: 4.95.0(@cloudflare/workers-types@4.20260530.1)(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+
+  packages/herdr-core-client:
+    dependencies:
+      zod:
+        specifier: ^4.6.6
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: ^25.5.0
+        version: 25.5.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
   packages/hostd:
     dependencies:

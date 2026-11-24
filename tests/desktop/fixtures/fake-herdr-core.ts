@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { encodeFrame, HC_FRAME, HcFrameDecoder } from "@desktop/main/local-terminals/hc-protocol";
+import { encodeFrame, HC_FRAME, HcFrameDecoder } from "@matrix-os/herdr-core-client/protocol";
 
 /** An in-memory herdr-core speaking the documented protocol. */
 export function fakeCore(options: { version?: string; generation?: number; hello?: Record<string, unknown> } = {}) {

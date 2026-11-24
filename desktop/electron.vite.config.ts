@@ -42,7 +42,7 @@ export default defineConfig((): UserConfig => ({
   main: {
     // Workspace contracts and the collaboration direct client export TypeScript
     // source. Bundle them so Electron never loads raw TypeScript at runtime.
-    plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts", "@matrix-os/ui", "@finnaai/matrix"] })],
+    plugins: [externalizeDepsPlugin({ exclude: ["zod", "@matrix-os/contracts", "@matrix-os/herdr-core-client", "@matrix-os/ui", "@finnaai/matrix"] })],
     define: {
       __MAC_VERIFICATION_SUPPORT_SHA256__: JSON.stringify(readMacVerificationSupportPin(resolve(__dirname, "build/mac-verification-support"))),
       __MATRIX_DESKTOP_BUILD_SOURCE__: JSON.stringify(readDesktopBuildSource(resolve(__dirname, ".."), process.env)),
