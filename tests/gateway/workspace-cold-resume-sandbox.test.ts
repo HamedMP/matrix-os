@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAgentSandbox } from "../../packages/gateway/src/agent-sandbox.js";
 import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.js";
+import { writeCodexVersionFixture } from "./helpers/codex-version-fixture.js";
 import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
 import { createWorkspaceSessionOrchestrator } from "../../packages/gateway/src/workspace-session-orchestrator.js";
 import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
@@ -37,7 +38,7 @@ describe("cold resume with retained workspace sandbox", () => {
     const agentSessionManager = createAgentSessionManager({
       homePath,
       worktreeManager: createWorktreeManager({ homePath }),
-      agentLauncher: createAgentLauncher({ runtimeHome: homePath }),
+      agentLauncher: createAgentLauncher({ runtimeHome: homePath, codexExecutable: await writeCodexVersionFixture(homePath) }),
       terminalRuntime,
     });
     const orchestrator = createWorkspaceSessionOrchestrator({

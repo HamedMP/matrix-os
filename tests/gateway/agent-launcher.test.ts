@@ -401,7 +401,7 @@ describe("agent-launcher", () => {
     const launcher = createAgentLauncher({ runCommand, codexExecutable });
 
     await launcher.detectAgentCredentials();
-    const launch = launcher.buildLaunch({
+    const launch = await launcher.buildLaunch({
       agent: "codex",
       cwd: "/home/matrix/home/projects/repo",
       prompt: "fix tests",
@@ -620,10 +620,10 @@ describe("agent-launcher", () => {
     });
   });
 
-  it("launches agents with the Matrix runtime home so CLI auth files are visible", () => {
+  it("launches agents with the Matrix runtime home so CLI auth files are visible", async () => {
     const launcher = createAgentLauncher({ runtimeHome: "/home/matrix/home" });
 
-    const launch = launcher.buildLaunch({
+    const launch = await launcher.buildLaunch({
       agent: "codex",
       cwd: "/home/matrix/home/projects/repo/worktrees/wt_123",
       prompt: "fix tests",
@@ -748,7 +748,7 @@ describe("agent-launcher", () => {
       providerThreadId: "native_thread_persisted_1",
       providerEventPath: "/tmp/codex-events.jsonl",
       sandbox: { enabled: true, mode: "workspace-write", writableRoots: [] },
-    });
+    }, CODEX_VERIFIED_VERSION);
 
     expect(codexAppServerSettings(launch.args)).toMatchObject({
       providerThreadId: "native_thread_persisted_1",

@@ -743,7 +743,7 @@ describe("Codex app-server control runtime", () => {
       modelOptions: codexChatRunnerModelOptions([
         { id: "effort", value: "low" }, { id: "service_tier", value: "priority" },
       ]),
-    }) : {
+    }, CODEX_VERIFIED_VERSION) : {
       command: process.execPath,
       args: [runnerPath, eventPath, process.version.slice(1), process.execPath, fakeCodexPath, config],
     };

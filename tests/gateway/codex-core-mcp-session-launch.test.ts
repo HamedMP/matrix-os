@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createAgentSessionManager } from "../../packages/gateway/src/agent-session-manager.js";
 import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.js";
+import { writeCodexVersionFixture } from "./helpers/codex-version-fixture.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager.js";
 
@@ -23,7 +24,7 @@ async function fixture(createTabFails = false, clock = { now: 0 }) {
     terminateTab: vi.fn(async () => undefined), writeInput: vi.fn(), listWorkspaces: vi.fn(async () => []),
   };
   const manager = createAgentSessionManager({ homePath, terminalRuntime,
-    agentLauncher: createAgentLauncher({ runtimeHome: homePath, codexExecutable: "/tmp/synthetic-codex" }),
+    agentLauncher: createAgentLauncher({ runtimeHome: homePath, codexExecutable: await writeCodexVersionFixture(homePath) }),
     worktreeManager: createWorktreeManager({ homePath, runCommand: vi.fn() }), idGenerator: () => "sess_core_fixture",
     issueMatrixCoreMcp: ({ ownerId, sessionId, readOnly }) => {
       const grant = registry.issue({ owner: { type: "personal", ownerId }, runId: sessionId, scope: readOnly ? "discovery" : "call" });
