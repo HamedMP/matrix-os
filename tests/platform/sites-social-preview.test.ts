@@ -239,6 +239,7 @@ describe('sites schema upgrade', () => {
       // Simulate a platform deployed before this change: columns absent, sites marker at generation 2.
       await sql`ALTER TABLE public_sites DROP COLUMN social_title, DROP COLUMN social_description, DROP COLUMN social_image_path`.execute(upgraded);
       await sql`UPDATE platform_schema_revisions SET generation = 2, fingerprint = 'public-app-sites-private-links-v2' WHERE scope = 'sites'`.execute(upgraded);
+      await sql`DELETE FROM platform_schema_revisions WHERE scope = 'sites-social'`.execute(upgraded);
       await runPlatformStartupMigrations(upgraded);
       const columns = await sql<{ column_name: string }>`SELECT column_name FROM information_schema.columns
         WHERE table_name = 'public_sites' AND column_name LIKE 'social_%' ORDER BY column_name`.execute(upgraded);

@@ -9,6 +9,8 @@ import { withSiteOwnerAdmission, eraseOwnerSites, eraseOwnerSiteRegistry } from 
 import { SiteError } from '../../packages/platform/src/sites/types.js';
 import { markSiteLegacyPrivate, seedLegacyAccessLink } from './site-legacy-access-links.js';
 import { migrateSites } from '../../packages/platform/src/sites/migration.js';
+import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
+import { createSitePublicRoutes } from '../../packages/platform/src/sites/public-routes.js';
 const postgresUrl = process.env.MATRIX_TEST_POSTGRES_URL;
 const postgres = postgresUrl ? describe : describe.skip;
 postgres('public sites independent PostgreSQL sessions', () => {
@@ -33,6 +35,67 @@ postgres('public sites independent PostgreSQL sessions', () => {
         if (admin) {
             await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
             await admin.end();
+        }
+    });
+    it('keeps the serving invitation revision intact across candidate startup and traffic rollback', async () => {
+        // Real previous-revision state: invitation generation 3, no preview columns.
+        await sql`UPDATE platform_schema_revisions SET generation = 3,
+            fingerprint = 'public-app-sites-email-invitations-v3' WHERE scope = 'sites'`.execute(dbA.executor);
+        await sql`DELETE FROM platform_schema_revisions WHERE scope = 'sites-social'`.execute(dbA.executor);
+        await sql`ALTER TABLE public_sites DROP COLUMN social_title, DROP COLUMN social_description, DROP COLUMN social_image_path`.execute(dbA.executor);
+        const before = await sql`SELECT * FROM platform_schema_revisions WHERE scope = 'sites'`.execute(dbB.executor);
+        await runPlatformStartupMigrations(dbA.kysely);
+        // The still-serving revision and a traffic rollback read this same marker.
+        expect((await sql`SELECT * FROM platform_schema_revisions WHERE scope = 'sites'`.execute(dbB.executor)).rows).toEqual(before.rows);
+        expect((await sql`SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'sites-social'`.execute(dbB.executor)).rows)
+            .toEqual([{ generation: 1, fingerprint: 'public-app-sites-social-previews-v1' }]);
+        await runPlatformStartupMigrations(dbB.kysely);
+        expect((await sql`SELECT * FROM platform_schema_revisions WHERE scope = 'sites'`.execute(dbA.executor)).rows).toEqual(before.rows);
+        await sql`SELECT social_title, social_description, social_image_path FROM public_sites`.execute(dbB.executor);
+    });
+    it('preserves an already-recorded generation 4 without rewriting its migration history', async () => {
+        await sql`UPDATE platform_schema_revisions SET generation = 4,
+            fingerprint = 'public-app-sites-social-previews-v4' WHERE scope = 'sites'`.execute(dbA.executor);
+        await sql`DELETE FROM platform_schema_revisions WHERE scope = 'sites-social'`.execute(dbA.executor);
+        const before = await sql`SELECT * FROM platform_schema_revisions WHERE scope = 'sites'`.execute(dbA.executor);
+        await runPlatformStartupMigrations(dbB.kysely);
+        expect((await sql`SELECT * FROM platform_schema_revisions WHERE scope = 'sites'`.execute(dbA.executor)).rows).toEqual(before.rows);
+        expect((await sql`SELECT generation FROM platform_schema_revisions WHERE scope = 'sites-social'`.execute(dbA.executor)).rows)
+            .toEqual([{ generation: 1 }]);
+    });
+    it.each(['private_email', 'unpublished'] as const)('does not render metadata saved after a public site becomes %s', async transition => {
+        const publisher = { ...owner, appSlug: `social-${transition.replaceAll('_', '-')}` };
+        const reader = createSitesService({ db: dbA, emailCapability: async () => true,
+            storage: { async putObject() { return {}; }, async getObject() { return { body: null }; } } });
+        const writer = createSitesService({ db: dbB, emailCapability: async () => true });
+        const site = await reader.deploy(publisher, { title: 'Public title', config: {}, files: [
+            { path: 'index.html', contentType: 'text/html', body: Buffer.from('public').toString('base64') },
+            { path: 'private-card.png', contentType: 'image/png', body: Buffer.from('image').toString('base64') },
+        ] });
+        const app = createSitePublicRoutes({ service: reader, edgeSecret: 'e'.repeat(40), submit: async () => ({ accepted: true }) });
+        const headers = { 'x-matrix-sites-edge': 'e'.repeat(40) };
+        expect(await (await app.request(`/${site.id}`, { headers })).text()).toContain('property="og:title" content="Public title"');
+        const resolved = Promise.withResolvers<void>(), resume = Promise.withResolvers<void>();
+        const original = reader.resolve;
+        const pause = vi.spyOn(reader, 'resolve').mockImplementation(async reference => {
+            const result = await original(reference);
+            resolved.resolve(); await resume.promise; return result;
+        });
+        const response = app.request(`/${site.id}`, { headers });
+        await resolved.promise;
+        try {
+            if (transition === 'private_email') await writer.patch(publisher, { accessMode: transition, baseRevision: site.revision });
+            else await writer.unpublish(publisher, site.revision);
+            await writer.updateSocial(publisher, { title: 'Private secret title', description: 'Private secret description', imagePath: 'private-card.png' });
+            resume.resolve();
+            const result = await response, html = await result.text();
+            expect(html).not.toContain('Private secret');
+            expect(html).not.toContain('private-card.png');
+            expect(html).not.toContain('og:');
+            expect(result.status).toBe(404);
+        } finally {
+            resume.resolve(); pause.mockRestore(); await response;
+            await dbA.executor.deleteFrom('public_sites').where('id', '=', site.id).execute();
         }
     });
     it('upgrades existing publications to generation 3 without changing old access and enforces invitation state', async () => {

@@ -56,15 +56,6 @@ async function socialImageOptions(db: PlatformDB, siteId: string, versionId: str
         ORDER BY 1 LIMIT 200`.execute(db.executor);
     return result.rows.map(row => row.path).filter(path => SiteSocialImagePathSchema.safeParse(path).success);
 }
-/** One boolean per public render: is this exact path a raster image in the build? */
-async function socialImagePresent(db: PlatformDB, siteId: string, versionId: string | null, path: string): Promise<boolean> {
-    if (!versionId || !SiteSocialImagePathSchema.safeParse(path).success) return false;
-    const result = await sql<{ present: boolean }>`SELECT EXISTS (SELECT 1
-        FROM public_site_versions v CROSS JOIN LATERAL jsonb_array_elements(v.files) AS entry
-        WHERE v.id = ${versionId} AND v.site_id = ${siteId} AND entry->>'path' = ${path}
-          AND entry->>'contentType' IN (${sql.join([...SITE_SOCIAL_IMAGE_TYPES])})) AS present`.execute(db.executor);
-    return result.rows[0]?.present === true;
-}
 function socialSettings(row: Selectable<SitesTable>, imageOptions: string[]): SiteSocialSettings {
     return SiteSocialSettingsSchema.parse({ title: row.social_title, description: row.social_description,
         imagePath: row.social_image_path, imageOptions });
@@ -329,13 +320,23 @@ export function createSitesService(options: {
             return socialSettings(next, imageOptions);
         }, env));
     }
-    /** Public preview for a resolved site; a stale image (dropped by a redeploy) is omitted. */
+    /** Visibility, overrides and active-build image membership share one PostgreSQL snapshot. */
     async function publicSocial(site: SiteRecord) {
-        const row = await db.executor.selectFrom('public_sites').select(['social_title', 'social_description', 'social_image_path'])
-            .where('id', '=', site.id).executeTakeFirst();
-        if (!row) return undefined;
-        // Check against the version the page will reference, not a newer row state.
-        const imagePath = row.social_image_path && await socialImagePresent(db, site.id, site.activeVersion, row.social_image_path)
+        const result = await sql<{ social_title: string | null; social_description: string | null; social_image_path: string | null; image_present: boolean }>`
+            SELECT s.social_title, s.social_description, s.social_image_path,
+                EXISTS (SELECT 1 FROM public_site_versions v
+                    CROSS JOIN LATERAL jsonb_array_elements(v.files) AS entry
+                    WHERE v.id = s.active_version AND v.site_id = s.id
+                        AND entry->>'path' = s.social_image_path
+                        AND entry->>'contentType' IN (${sql.join([...SITE_SOCIAL_IMAGE_TYPES])})) AS image_present
+            FROM public_sites s WHERE s.id = ${site.id}
+                AND s.status = 'published' AND s.access_mode = 'public'
+                AND s.revision = ${site.revision}
+                AND s.active_version IS NOT DISTINCT FROM ${site.activeVersion}`.execute(db.executor);
+        const row = result.rows[0];
+        // Reject the entire stale render, including fallback HTML metadata.
+        if (!row) throw new SiteError('not_found');
+        const imagePath = row.image_present && SiteSocialImagePathSchema.safeParse(row.social_image_path).success
             ? row.social_image_path : null;
         return { title: row.social_title, description: row.social_description, imagePath };
     }
