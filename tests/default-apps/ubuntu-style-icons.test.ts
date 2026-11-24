@@ -62,6 +62,7 @@ describe("distinct bundled app artwork", () => {
       "expense-tracker": "home/apps/expense-tracker/matrix.json",
       todo: "home/apps/todo/matrix.json",
       docs: "home/apps/docs/matrix.json",
+      sheets: "home/apps/sheets/matrix.json",
     };
     for (const [stem, path] of Object.entries(manifests)) {
       const manifest = JSON.parse(await readFile(path, "utf8")) as { icon: string };

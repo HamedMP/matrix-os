@@ -1,0 +1,268 @@
+/*
+ * Sheets grid: the formula bar, text inputs, popups, menus and notices.
+ * The variables come from `.sheet-grid` in sheet-grid.css.
+ */
+
+/* ---------------------------------------------------------------- formula bar */
+
+.sg-bar {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  height: 30px;
+  border-bottom: 1px solid var(--app-border, #d0d0d0);
+  background: var(--sg-bg);
+}
+
+.sg-bar__name {
+  width: 96px;
+  flex: none;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--app-border, #d0d0d0);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.sg-bar__name:focus-visible {
+  outline: 2px solid var(--sg-accent-ink);
+  outline-offset: -2px;
+}
+
+.sg-bar__fx {
+  display: flex;
+  align-items: center;
+  flex: none;
+  padding: 0 8px;
+  color: var(--sg-head-fg);
+  font-style: italic;
+  user-select: none;
+}
+
+.sg-bar__input {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- text inputs */
+
+.sg-input {
+  position: relative;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: var(--sg-bg);
+  color: var(--sg-fg);
+}
+
+.sg-input--bar {
+  width: 100%;
+  height: 100%;
+}
+
+.sg-input--cell {
+  position: absolute;
+  z-index: 6;
+  border: 2px solid var(--sg-accent-ink);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
+}
+
+.sg-input--cell.is-invalid {
+  border-color: var(--app-danger, #c0392b);
+}
+
+.sg-input__mirror,
+.sg-input__field {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 3px 4px;
+  border: 0;
+  overflow: hidden;
+  font: inherit;
+  line-height: 19px;
+  letter-spacing: normal;
+  white-space: pre;
+  text-align: left;
+}
+
+.sg-input--bar .sg-input__mirror,
+.sg-input--bar .sg-input__field {
+  padding: 5px 6px;
+}
+
+.sg-input__mirror {
+  pointer-events: none;
+  color: var(--sg-fg);
+  visibility: hidden;
+}
+
+.sg-input.has-references .sg-input__mirror {
+  visibility: visible;
+}
+
+.sg-input__field {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  caret-color: var(--sg-fg);
+}
+
+/* With references the coloured layer shows the text; the field keeps caret and selection. */
+.sg-input.has-references .sg-input__field {
+  color: transparent;
+}
+
+.sg-input--bar .sg-input__field:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--sg-accent-ink);
+}
+
+.sg-ref-text--0 { color: var(--sg-ref-0); }
+.sg-ref-text--1 { color: var(--sg-ref-1); }
+.sg-ref-text--2 { color: var(--sg-ref-2); }
+.sg-ref-text--3 { color: var(--sg-ref-3); }
+.sg-ref-text--4 { color: var(--sg-ref-4); }
+.sg-ref-text--5 { color: var(--sg-ref-5); }
+.sg-ref-text--6 { color: var(--sg-ref-6); }
+
+/* ---------------------------------------------------------------- popups */
+
+.sg-popup {
+  position: absolute;
+  z-index: 8;
+  min-width: 220px;
+  max-width: 420px;
+  border: 1px solid var(--app-border, #d0d0d0);
+  border-radius: 6px;
+  background: var(--sg-bg);
+  color: var(--sg-fg);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+  font-size: 12px;
+  cursor: default;
+}
+
+.sg-popup__list {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+}
+
+.sg-popup__option {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.sg-popup__option.is-active {
+  background: color-mix(in srgb, var(--sg-accent-ink) 18%, transparent);
+}
+
+.sg-popup__name {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.sg-popup__summary {
+  color: var(--sg-head-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sg-popup__hint {
+  padding: 6px 8px;
+  white-space: normal;
+}
+
+.sg-popup__arg.is-active {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.sg-menu {
+  position: absolute;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid var(--app-border, #d0d0d0);
+  border-radius: 8px;
+  background: var(--sg-bg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 20%);
+  cursor: default;
+}
+
+.sg-menu__item {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--sg-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sg-menu__item.is-separated {
+  margin-top: 4px;
+  border-top: 1px solid var(--sg-line);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  padding-top: 8px;
+}
+
+.sg-menu__item:hover:not(:disabled),
+.sg-menu__item:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--sg-accent-ink) 16%, transparent);
+}
+
+.sg-menu__item:disabled {
+  color: var(--sg-head-fg);
+  opacity: 0.6;
+  cursor: default;
+}
+
+.sg-notice {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: min(520px, 90%);
+  padding: 8px 12px;
+  transform: translateX(-50%);
+  border: 1px solid var(--app-border, #d0d0d0);
+  border-radius: 8px;
+  background: var(--sg-bg);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+}
+
+.sg-notice__close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sg-head-fg);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sg-notice__close:focus-visible {
+  outline: 2px solid var(--sg-accent-ink);
+}

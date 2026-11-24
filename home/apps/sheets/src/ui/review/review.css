@@ -1,0 +1,216 @@
+/* Change review panel and grid markup. Uses the shared --app-* tokens only. */
+
+.sheets-review {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  height: 100%;
+  padding: 8px;
+  box-sizing: border-box;
+  color: var(--app-fg);
+  font: inherit;
+}
+
+.sheets-review__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sheets-review__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.sheets-review__markup {
+  margin-left: auto;
+}
+
+.sheets-review__markup[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 16%, transparent);
+  color: var(--oui-accent-ink, var(--app-primary));
+}
+
+.sheets-review__bar {
+  flex-wrap: wrap;
+}
+
+.sheets-review__notice {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: var(--app-radius, 6px);
+  background: color-mix(in srgb, var(--app-warning, #d99a1b) 14%, transparent);
+  font-size: 0.85rem;
+}
+
+.sheets-review__selection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
+.sheets-review__groups {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sheets-review__group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.sheets-review__group-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* The title takes its own line in a narrow panel; the count and actions wrap below it. */
+  flex: 1 1 100%;
+}
+
+.sheets-review__group-meta {
+  color: var(--app-muted-fg);
+  font-size: 0.8rem;
+}
+
+.sheets-review__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sheets-review__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--app-border) 60%, transparent);
+}
+
+.sheets-review__item.is-current {
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 10%, transparent);
+}
+
+.sheets-review__check .oui-checkbox__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.sheets-review__go {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--app-radius, 6px);
+}
+
+.sheets-review__go:focus-visible {
+  outline: 2px solid var(--oui-accent-ink, var(--app-primary));
+}
+
+.sheets-review__where {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--app-muted-fg);
+}
+
+.sheets-review__address {
+  font-weight: 600;
+  color: var(--app-fg);
+}
+
+.sheets-review__values {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.sheets-review__value {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.sheets-review__value--old {
+  color: var(--app-danger, #c0392b);
+}
+
+.sheets-review__value--new {
+  color: var(--app-success, #2e7d32);
+  text-decoration: none;
+}
+
+.sheets-review__formula {
+  font-size: 0.78rem;
+  color: var(--app-muted-fg);
+}
+
+.sheets-review__arrow {
+  color: var(--app-muted-fg);
+}
+
+.sheets-review__summary {
+  font-size: 0.85rem;
+}
+
+.sheets-review__item-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.sheets-review__item-actions .oui-button {
+  padding: 2px 8px;
+  font-size: 0.8rem;
+}
+
+.sheets-review__more {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--app-muted-fg);
+}
+
+/* Grid markup: the old value struck through before the new one. */
+.sheet-grid.sheets-markup .sg-cell[data-markup-old]::before {
+  content: attr(data-markup-old);
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--app-danger, #c0392b);
+  text-decoration: line-through;
+}
+
+.sheet-grid.sheets-markup .sg-cell[data-markup-old] .sg-cell__text {
+  color: var(--app-success, #2e7d32);
+  font-weight: 600;
+}

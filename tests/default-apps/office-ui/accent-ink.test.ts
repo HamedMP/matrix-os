@@ -20,6 +20,10 @@ const APP_SHEETS: Record<string, string> = {
   "docs/styles.css": read("docs", "src", "styles.css"),
   "docs/editor.css": read("docs", "src", "editor", "editor.css"),
   "docs/review.css": read("docs", "src", "ui", "review", "review.css"),
+  "sheets/styles.css": read("sheets", "src", "styles.css"),
+  "sheets/review.css": read("sheets", "src", "ui", "review", "review.css"),
+  "sheets/sheet-grid.css": read("sheets", "src", "grid", "sheet-grid.css"),
+  "sheets/sheet-grid-chrome.css": read("sheets", "src", "grid", "sheet-grid-chrome.css"),
 };
 
 type Rgb = [number, number, number];
