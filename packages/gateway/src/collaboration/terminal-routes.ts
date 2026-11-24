@@ -44,24 +44,25 @@ export function registerTerminalRoutes(routes: Hono, options: CollaborationRoute
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     const dispatcher = requireTerminalDispatcher(options.terminalDispatcher);
     const terminal = await dispatcher.read(context);
-    const [owner, computerLabel, terminalName] = await Promise.all([
+    const [owner, computerLabel, info] = await Promise.all([
       options.resolveParticipant(context.ownerId).catch((error: unknown) => {
         console.warn("[collaboration-terminal] owner lookup failed", error instanceof Error ? error.name : "UnknownError");
         return { actorId: context.ownerId, displayName: "Organization member" };
       }),
       readTeamTerminalLabel(options.repository.db, scopeId),
-      options.teamTerminalName ? options.teamTerminalName(context.resourceId) : Promise.resolve(null),
+      options.teamTerminalInfo ? options.teamTerminalInfo(context.resourceId) : Promise.resolve(null),
     ]);
     return c.json(TeamTerminalProjectionSchema.parse({
       scopeId,
       incarnation: terminal.incarnation,
       // A tab name that is not safe display text falls back rather than failing the projection.
-      terminalName: TeamTerminalProjectionSchema.shape.terminalName.safeParse(terminalName).data ?? "Terminal",
+      terminalName: TeamTerminalProjectionSchema.shape.terminalName.safeParse(info?.name).data ?? "Terminal",
       ...(computerLabel ? { computerLabel } : {}),
       owner: owner.actorId === context.ownerId ? owner : { actorId: context.ownerId, displayName: "Organization member" },
       role: context.role,
       status: terminal.status,
       inputMode: dispatcher.inputMode(scopeId, terminal.incarnation),
+      ...(TeamTerminalProjectionSchema.shape.size.safeParse(info?.size).data ? { size: info!.size } : {}),
     }));
   }));
 

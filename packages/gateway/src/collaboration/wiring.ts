@@ -371,7 +371,7 @@ export async function createGatewayCollaboration(options: {
   let terminalEventRegistry: CollaborationTerminalEventRegistry | undefined;
   let teamTerminalInputModes: TeamTerminalInputModes | undefined;
   let teamTerminals: TeamTerminalService | undefined;
-  let teamTerminalName: ((terminalId: string) => Promise<string | null>) | undefined;
+  let teamTerminalInfo: ((terminalId: string) => Promise<{ name: string; size?: { cols: number; rows: number } } | null>) | undefined;
   let projectSharing: ProjectSharingService | undefined;
   let projectChatAssignments: ProjectChatAssignmentCoordinator | undefined;
   let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
@@ -703,8 +703,8 @@ export async function createGatewayCollaboration(options: {
       runtime: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["runtime"];
       executionEligibility: ConstructorParameters<typeof CollaborationTerminalAdapter>[0]["executionEligibility"];
       connectOutput: NonNullable<ConstructorParameters<typeof CollaborationTerminalEventRegistry>[0]["connectOutput"]>;
-      /** Spec 2710: the owner's tab name, shown to members under Team. */
-      terminalName?(terminalId: string): Promise<string | null>;
+      /** Spec 2710: the owner's tab name and grid, shown to members under Team. */
+      terminalInfo?(terminalId: string): Promise<{ name: string; size?: { cols: number; rows: number } } | null>;
     }): { available: true } {
       if (registered || closing || terminalAdapter) {
         throw new Error("Shared terminal must be initialized exactly once before route registration");
@@ -747,7 +747,7 @@ export async function createGatewayCollaboration(options: {
         connectOutput: input.connectOutput,
         startTimers: options.startTimers,
       });
-      teamTerminalName = input.terminalName;
+      teamTerminalInfo = input.terminalInfo;
       teamTerminals = new TeamTerminalService({
         registry: terminalEventRegistry,
         inputModes: teamTerminalInputModes,
@@ -864,7 +864,7 @@ export async function createGatewayCollaboration(options: {
         ...(executionPolicies ? { executionPolicies } : {}),
         ...(resourceServices ? { resources: resourceServices } : {}),
         ...(standaloneScope ? { standaloneScope } : {}),
-        ...(teamTerminalName ? { teamTerminalName } : {}),
+        ...(teamTerminalInfo ? { teamTerminalInfo } : {}),
         ...(organizationDrive ? { organizationDrive } : {}),
         ...(collaborativeAppReadiness ? { collaborativeAppReadiness } : {}),
         onScopeCommitted: async (scopeId) => {

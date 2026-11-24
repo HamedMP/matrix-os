@@ -33,6 +33,11 @@ import { ShareTerminalDialog, type ShareTarget } from "./share/ShareTerminalDial
 import { TeamPaneControl } from "./share/TeamPaneControl";
 import { setTeamInputMode } from "./share/team-share";
 import { useTeamCollaboration, type TeamCollaboration } from "./share/use-team-collaboration";
+import { TeamSpaces } from "./team/TeamSpaces";
+import { TeamPaneBar } from "./team/TeamPaneBar";
+import { useTeamTerminals } from "./team/use-team-terminals";
+import { teamComputerName, teamScopeFromKey, teamSessionName } from "./team/team-terminals";
+import { teamSession } from "./team/team-session-store";
 
 const AVAILABILITY_LABEL: Record<MatrixComputer["availability"], string> = {
   available: "Available",
@@ -231,6 +236,8 @@ function EndedNotice({ title, onClose }: { title: string; onClose(): void }) {
 
 /** The terminal a pane shows, by its sidebar row key. */
 function paneSessionName(key: string): string | null {
+  const shared = teamScopeFromKey(key);
+  if (shared) return teamSessionName(shared);
   const target = terminalRowTarget(key);
   if (!target) return null;
   return target.kind === "local" ? localSessionName(target.id) : terminalRefKey(target.ref);
@@ -279,6 +286,16 @@ function Panes({ view, tab, team, onShare }: { view: TerminalWindowView; tab: Pa
   return (
     <TerminalPaneTree tab={tab}
       paneInfo={(leaf) => {
+        const shared = teamScopeFromKey(leaf.terminal);
+        if (shared) {
+          const projection = teamSession(shared)?.projection;
+          return {
+            title: projection?.terminalName ?? "Shared terminal",
+            ...(projection ? { detail: teamComputerName(projection) } : {}),
+            icon: <SquareTerminal size={13} aria-hidden="true" style={secondaryText} />,
+            extra: <TeamPaneBar scopeId={shared} now={view.now} />,
+          };
+        }
         const info = paneInfoFor(rows.get(leaf.terminal), leaf.terminal === view.selectedKey && view.localTerminal ? view.localTerminal.title : "Terminal");
         const extra = teamControl(view, leaf.terminal, info.title, team, onShare);
         return extra ? { ...info, extra } : info;
@@ -337,6 +354,7 @@ export default function TerminalWindowApp() {
   const [removing, setRemoving] = useState<string | null>(null);
   const [sharing, setSharing] = useState<ShareTarget | null>(null);
   const team = useTeamCollaboration(view.ready?.platformHost ?? null, view.ready?.sessionKey ?? "");
+  const teamTerminals = useTeamTerminals(team, view.ready !== null);
   const machines = useMemo(() => sidebarMachines(view, setRemoving), [view]);
   const rowsByKey = useMemo(() => new Map(view.status.rows.map((row) => [row.key, row])), [view.status.rows]);
   const { prefs } = view.sidebar;
@@ -376,6 +394,8 @@ export default function TerminalWindowApp() {
         <TerminalWindowSidebar
           machines={machines}
           machinesStatus={<MatrixStatus state={view.machines.state} onRetry={view.machines.retry} />}
+          team={<TeamSpaces state={teamTerminals.state} selectedKey={view.selectedKey} onOpen={view.select}
+            onAccept={teamTerminals.accept} onRetry={teamTerminals.retry} />}
           expandedSpaces={prefs.expandedSpaces}
           onToggleSpaceExpanded={view.sidebar.toggleSpaceExpanded}
           onOpenInTab={view.openInTab}
