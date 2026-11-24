@@ -51,7 +51,9 @@ const exec: Exec = async (argv) => {
   if (argv[0] === "lvs" && argv.includes("data_percent,metadata_percent")) return { code: 0, stdout: "  10.00  5.00\n", stderr: "" };
   if (argv[0] === "lvs" && argv.includes("lv_size")) return { code: 0, stdout: "  21474836480\n", stderr: "" };
   if (argv[1] === "is-active") return { code: active.has(argv[2]!) ? 0 : 3, stdout: "", stderr: "" };
-  return { code: argv[0] === "lvs" ? 5 : 0, stdout: "", stderr: "" };
+  // lvs of a VM disk: exit 5 with LVM's "no such LV" message.
+  if (argv[0] === "lvs") return { code: 5, stdout: "", stderr: '  Failed to find logical volume "vmvg/mx-x"\n' };
+  return { code: 0, stdout: "", stderr: "" };
 };
 
 function ch(): ChClient {
