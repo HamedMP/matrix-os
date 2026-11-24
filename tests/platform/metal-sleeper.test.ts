@@ -483,7 +483,7 @@ describe('metal idle sleeper', () => {
 
     await s.tick(NOW);
 
-    expect(SLEEP_PASS_BUDGET_MS).toBe(45_000);
+    expect(SLEEP_PASS_BUDGET_MS).toBe(30_000);
     expect(readLifecycle).toHaveBeenCalledTimes(1);
   });
 
@@ -546,6 +546,53 @@ describe('metal idle sleeper', () => {
     await vi.waitFor(() => expect(started).toBe(3), { timeout: 1_000 });
     release();
     await tick;
+  });
+
+  it('starts every due scheduled wake of a tick at once, so slow VMs cannot queue the rest', async () => {
+    for (let index = 0; index < 8; index += 1) {
+      await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago(MINUTE) } });
+    }
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { sleeper: s, ensureRunning } = sleeper();
+    ensureRunning.mockImplementation(async () => { started += 1; await gate; return { state: 'running' }; });
+
+    const tick = s.tick(NOW);
+    await vi.waitFor(() => expect(started).toBe(8), { timeout: 1_000 });
+    release();
+    await tick;
+  });
+
+  it('counts the wake phase against the pass budget, so the pass ends before the next tick', async () => {
+    await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago(MINUTE) } });
+    await seedMachine();
+    let clock = 0;
+    const { sleeper: s, ensureRunning, readLifecycle } = sleeper({ elapsedMs: () => clock });
+    ensureRunning.mockImplementation(async () => { clock += SLEEP_PASS_BUDGET_MS; return { state: 'running' }; });
+
+    await s.tick(NOW);
+
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    expect(readLifecycle).not.toHaveBeenCalled();
+  });
+
+  it('stops waiting for a stalled suspend, keeping the saved wake', async () => {
+    const scheduledAt = new Date(NOW.getTime() + HOUR);
+    const id = await seedMachine();
+    const { sleeper: s, stop } = sleeper({
+      suspendWaitMs: 20,
+      lifecycle: { ok: true, status: { ...IDLE, nextScheduledAt: scheduledAt.toISOString() } },
+    });
+    stop.mockImplementationOnce(async (_ref, signal: AbortSignal) => new Promise<StopRuntimeResult>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }));
+
+    await s.tick(NOW);
+
+    const wakeAt = new Date(scheduledAt.getTime() - SCHEDULED_WAKE_LEAD_MS).toISOString();
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: wakeAt });
+    expect(logs).toContainEqual({ event: 'sleep_suspend_failed', fields: { machineId: id, code: 'TimeoutError' } });
   });
 
   it('decides on the current time, not the tick start, when the next job is close', async () => {

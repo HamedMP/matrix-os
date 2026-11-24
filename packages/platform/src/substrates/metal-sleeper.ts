@@ -43,12 +43,18 @@ export const LIFECYCLE_ALERT_AFTER_MS = 6 * 60 * 60_000;
 export const LIFECYCLE_ALERT_REPEAT_MS = 60 * 60_000;
 export const SLEEP_CANDIDATES_PER_TICK = 50;
 export const WAKES_PER_TICK = 20;
-/** Scheduled wakes run this many at a time, so one slow or unreachable VM cannot hold up the others. */
-export const WAKE_CONCURRENCY = 5;
+/** Every due wake of a tick runs at once, so the wake phase takes at most one wake timeout (25 s). */
+export const WAKE_CONCURRENCY = 20;
 /** A checked candidate rotates behind the others until this long has passed, so runtimes skipped every tick cannot starve the scan. */
 export const SLEEP_RECHECK_AFTER_MS = 5 * 60_000;
-/** The sleep pass starts no new candidate after this long, so a slow pass cannot hold off the next scheduled wakes. */
-export const SLEEP_PASS_BUDGET_MS = 45_000;
+/**
+ * No sleep candidate starts once this long has passed since the pass began
+ * (wake phase included). With the 10 s lifecycle read and the suspend wait
+ * below, a pass ends inside the 60 s interval, so the next tick's wakes run.
+ */
+export const SLEEP_PASS_BUDGET_MS = 30_000;
+/** The platform waits this long for hostd's suspend answer; a late answer is handled as a lost one. */
+export const SUSPEND_WAIT_MS = 15_000;
 /** A failing scheduled wake is retried after 1 min, doubling up to this cap, so failures rotate behind fresh wakes. */
 export const WAKE_RETRY_BASE_MS = 60_000;
 export const WAKE_RETRY_MAX_MS = 15 * 60_000;
@@ -75,6 +81,8 @@ export interface MetalSleeperDeps {
   elapsedMs?: () => number;
   /** Billing catalogs for the effective-plan check (defaults to process.env). */
   env?: NodeJS.ProcessEnv;
+  /** Overrides SUSPEND_WAIT_MS (tests). */
+  suspendWaitMs?: number;
 }
 
 export interface MetalSleeper {
@@ -313,7 +321,8 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     }
     let outcome: Awaited<ReturnType<OnDemandRuntimeSubstrate['stop']>>;
     try {
-      outcome = await substrate.stop(refFor(machine), signal);
+      outcome = await substrate.stop(refFor(machine),
+        AbortSignal.any([signal, AbortSignal.timeout(deps.suspendWaitMs ?? SUSPEND_WAIT_MS)]));
     } catch (error: unknown) {
       if (signal.aborted) throw error;
       // The answer may be lost after hostd suspended the VM: keep the saved wake for the asleep path.
@@ -357,7 +366,7 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     if (verdict.guard) log('idle_guard_suspended', { machineId: machine.machineId, busyReasons: read.status.busyReasons });
   }
 
-  async function sleepIdle(now: Date, clock: () => Date, signal: AbortSignal): Promise<void> {
+  async function sleepIdle(now: Date, clock: () => Date, startedAt: number, signal: AbortSignal): Promise<void> {
     const nowMs = now.getTime();
     // A running metal runtime with no awake stamp (provisioned or recovered before the sleeper ran) starts its clock now.
     await db.executor.updateTable('user_machines').set({ awake_since: now })
@@ -369,7 +378,6 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     const idleBefore = new Date(nowMs - IDLE_SLEEP_AFTER_MS);
     const settledBefore = new Date(nowMs - WAKE_SETTLE_MS);
     const recheckBefore = new Date(nowMs - SLEEP_RECHECK_AFTER_MS);
-    const startedAt = elapsedMs();
     const rows = await db.executor.selectFrom('user_machines as m').selectAll('m')
       .where('m.substrate', '=', 'metal')
       .where('m.status', '=', 'running')
@@ -415,7 +423,7 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     const clock = () => new Date(now.getTime() + Math.max(0, elapsedMs() - passStart));
     await db.ready;
     await wakeDue(now, signal);
-    if (!signal.aborted) await sleepIdle(now, clock, signal);
+    if (!signal.aborted) await sleepIdle(now, clock, passStart, signal);
   }
 
   return {
