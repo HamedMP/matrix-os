@@ -119,4 +119,39 @@ describe("funded AI monthly budget window at a month change", () => {
     await repo.startReservation(locator);
     await expect(repo.settleReservation({ ...locator, actualCostMicrousd: 100 })).resolves.toMatchObject({ status: "settled" });
   });
+
+  // Settlement reads its clock after its locks, but a replica whose clock is
+  // behind can still settle with a clock from before midnight.
+  async function spendInSeptember() {
+    const { periodStart: _period, ...first } = await authorize("request_spent", AFTER_MIDNIGHT);
+    await repo.startReservation(first);
+    await repo.settleReservation({ ...first, actualCostMicrousd: 100 });
+  }
+
+  it("a usage-mode settlement with a clock from before midnight is charged to the new month's window", async () => {
+    await spendInSeptember();
+    const { periodStart: _period, ...locator } = await authorize("request_usage", AFTER_MIDNIGHT, "usage");
+    await repo.startReservation(locator);
+
+    clock = new Date(BEFORE_MIDNIGHT);
+    await expect(repo.settleReservation({ ...locator, actualCostMicrousd: 60 })).resolves.toMatchObject({ status: "settled" });
+
+    expect(await balance()).toEqual({ period: SEPTEMBER, spent: 160, monthReserved: 0, reserved: 0 });
+  });
+
+  it("a speech settlement with a clock from before midnight is charged to the new month's window", async () => {
+    await spendInSeptember();
+    let speechClock = AFTER_MIDNIGHT;
+    const speech = createAiFundedSpeechFundingPort({ allowedSources: ["addon"], credentialHashSecret: "s".repeat(32),
+      reservationIdFactory: () => "speech_late_2", now: () => new Date(speechClock) });
+    const reservation = await db.transaction((trx) => speech.reserve(trx.executor, { identity,
+      requestId: `sp_${Date.parse(AFTER_MIDNIGHT)}_monthwindowbbbb`, policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe", maximumCostMicrousd: 50 }));
+    await db.transaction((trx) => speech.start(trx.executor, reservation.reservationId));
+
+    speechClock = BEFORE_MIDNIGHT;
+    await db.transaction((trx) => speech.settle(trx.executor, reservation.reservationId, { mode: "exact", actualCostMicrousd: 40 }));
+
+    expect(await balance()).toEqual({ period: SEPTEMBER, spent: 140, monthReserved: 0, reserved: 0 });
+  });
 });
