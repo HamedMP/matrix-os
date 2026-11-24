@@ -132,6 +132,8 @@ describe('session routing to owned machines', () => {
     const legacy = await app(db).request('/api/auth/computers', { headers: CLERK_SESSION });
     expect((await legacy.json() as { items: unknown[] }).items).toEqual([]);
     const current = await app(db).request('/api/auth/computers?include=owned', { headers: CLERK_SESSION });
+    const unsupported = await app(db).request('/api/auth/computers?include=everything', { headers: CLERK_SESSION });
+    expect(unsupported.status).toBe(400);
     expect((await current.json() as { items: unknown[] }).items).toMatchObject([
       { kind: 'owned', label: 'Own Computer', availability: 'available', runtimeSlot: SLOT },
     ]);

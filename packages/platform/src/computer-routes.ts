@@ -11,6 +11,7 @@ import {
   type MatrixComputerVersionLabel,
 } from '@matrix-os/contracts';
 import { Hono, type Context } from 'hono';
+import { z } from 'zod/v4';
 import { bodyLimit } from 'hono/body-limit';
 
 import type { ClerkAuth } from './clerk-auth.js';
@@ -34,6 +35,8 @@ import { issueSyncJwt } from './sync-jwt.js';
 import { isAppDomainHost, isCodeDomainHost } from './ws-upgrade.js';
 
 const COMPUTER_LIST_LIMIT = 20;
+/** Spec 2707: owned computers are opt-in so released clients keep their strict list. */
+const ComputerListQuerySchema = z.object({ include: z.literal('owned').optional() });
 const COMPUTER_QUERY_LIMIT = COMPUTER_LIST_LIMIT + 1;
 const COMPUTER_CAPABILITIES = ['matrixComputerInventoryV1'] as const;
 const RUNTIME_SELECTION_BODY_LIMIT = 1024;
@@ -161,6 +164,11 @@ export function createComputerRoutes(opts: {
   }
 
   routes.get('/api/auth/computers', async (c) => {
+    const query = ComputerListQuerySchema.safeParse({ include: c.req.query('include') });
+    if (!query.success) {
+      opts.applyNoStoreHeaders(c);
+      return c.json({ error: 'Invalid request' }, 400);
+    }
     if (!opts.platformJwtSecret && !opts.clerkAuth) {
       opts.applyNoStoreHeaders(c);
       return c.json({ error: 'Computers unavailable' }, 503);
@@ -196,7 +204,7 @@ export function createComputerRoutes(opts: {
         identity.userId,
         COMPUTER_QUERY_LIMIT,
         requestedSelectedSlot ?? undefined,
-        { includeOwned: c.req.query('include') === 'owned' },
+        { includeOwned: query.data.include === 'owned' },
       );
       const projected = records.flatMap((record) => {
         const computer = projectComputer(record);
