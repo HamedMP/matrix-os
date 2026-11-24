@@ -470,8 +470,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       setDetail(null);
       return;
     }
-    // A send that just opened its new Chat already holds the admitted detail.
-    if (detailRef.current?.record.chat.id === activeChatId) return;
+    // Read after the event subscription above starts tracking this Chat.
+    // A send's admission snapshot can predate events received in the draft view.
     void loadDetail(activeChatId);
   }, [activeChatId, loadDetail]);
 
@@ -658,8 +658,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         turnAdmitted = true;
         if (draftSendAttempt.current?.clientRequestId === draftRequestId) draftSendAttempt.current = null;
         mentionRequests.accepted(requestScope, admitted.turn.clientRequestId);
-        // Confirmation may already have opened a new Chat; it still takes the
-        // admitted detail so the transcript needs no extra read.
+        // Seed the transcript immediately, including when confirmation already opened it.
         if (canSelectAdmittedChat() || activeChatIdRef.current === record.chat.id) {
           activeChatIdRef.current = record.chat.id;
           setActiveChatId(record.chat.id);
@@ -675,15 +674,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             setDetail(next);
           }
         }
-        // A live event stream carries the list and detail changes this send
-        // causes; re-read only when it cannot. A new Chat still reads once
-        // unless admission returned its full detail: a fast run's events may
-        // have passed while it was unselected.
+        // New Chats catch up in the selection effect. Existing Chats need a
+        // post-send read only if the live stream can't carry the changes.
         if (eventSource.connectionState() !== "open") {
           await loadList();
-          if (activeChatIdRef.current === record.chat.id) await loadDetail(record.chat.id);
-        } else if (sourceChatId === undefined && !admitted.recoveredDetail && activeChatIdRef.current === record.chat.id) {
-          await loadDetail(record.chat.id);
+          if (sourceChatId !== undefined && activeChatIdRef.current === record.chat.id) await loadDetail(record.chat.id);
         }
         return isCurrent();
       } catch (error: unknown) {
