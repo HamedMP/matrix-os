@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createClerkAuth } from '../../packages/platform/src/clerk-auth.js';
-import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import { insertContainer, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createApp } from '../../packages/platform/src/main.js';
 import { appDomainPathClass } from '../../packages/platform/src/app-domain-upstream-log.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
@@ -62,6 +62,35 @@ describe('app-domain upstream 5xx logging', () => {
     expect(res.status).toBe(500);
     expect(errors.find((entry) => entry.includes('runtime upstream')))
       .toBe('[platform] app-domain runtime upstream status=500 method=POST path_class=/ server_action=true handle=alice');
+  });
+
+  it('logs a runtime 500 on an explicit /vm/<handle> route', async () => {
+    await insertUserMachine(db, {
+      machineId: 'machine-alice', clerkUserId: 'user_alice', handle: 'alice', status: 'running',
+      hetznerServerId: 4242, publicIPv4: '203.0.113.50', imageVersion: 'matrix-os-host-dev', provisionedAt: '2026-11-01T00:00:00.000Z',
+    });
+
+    const res = await platform().request('/vm/alice/api/projects?token=secret', { headers: CLERK_SESSION });
+
+    expect(res.status).toBe(500);
+    expect(errors.find((entry) => entry.includes('runtime upstream')))
+      .toBe('[platform] app-domain runtime upstream status=500 method=GET path_class=/vm/* server_action=false handle=alice');
+    expect(errors.join('\n')).not.toContain('secret');
+  });
+
+  it('logs a legacy container runtime 500 with the container handle', async () => {
+    process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED = 'true';
+    try {
+      await insertContainer(db, { handle: 'alice', clerkUserId: 'user_alice', port: 5001, shellPort: 6001, status: 'running' });
+
+      const res = await platform().request('/api/projects', { headers: CLERK_SESSION });
+
+      expect(res.status).toBe(500);
+      expect(errors.find((entry) => entry.includes('runtime upstream')))
+        .toBe('[platform] app-domain runtime upstream status=500 method=GET path_class=/api/projects server_action=false handle=alice');
+    } finally {
+      delete process.env.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED;
+    }
   });
 
   it('logs a route class, never user content from the path', () => {

@@ -840,6 +840,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           dispatcher: customerVpsProxyDispatcher,
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
         shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath));
+        if (upstream.status >= 500) logAppDomainUpstreamFailure('runtime', c, upstream.status, machine.handle);
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
@@ -1250,6 +1251,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           dispatcher: containerProxyDispatcher,
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
         shouldReleaseRuntimeProxyTimeout(c.req.method, path));
+        if (isAppDomain && upstream.status >= 500) {
+          logAppDomainUpstreamFailure('runtime', c, upstream.status, record.handle);
+        }
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
