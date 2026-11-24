@@ -1,4 +1,4 @@
-import { createCodexCredentialFileProofReader } from "./codex-credential-file-proof.js";
+import { codexNativeGenerationSource, createCodexCredentialFileEvidenceReader, type CodexCredentialFileEvidence } from "./codex-credential-file-proof.js";
 import { bindNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import { recordCodexIdentityReuse } from "../chat/send-timing.js";
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
@@ -118,6 +118,8 @@ export function createCodexNativeAccountMetadataReader(input: {
   executable: string; cwd: string; environment: Record<string, string>; now?: () => Date;
   timeoutMs?: number; terminateGraceMs?: number; spawnProcess?: SpawnProcess;
   readCredentialFileProof?: () => Promise<string | null>;
+  /** Exact bytes plus stable account identity; preferred over `readCredentialFileProof`. */
+  readCredentialFileEvidence?: () => Promise<CodexCredentialFileEvidence | null>;
   /**
    * Opt-in, owner-reviewed: reuse one file-backed private identity proof for up
    * to this long after the app-server proved it (capped at
@@ -132,7 +134,11 @@ export function createCodexNativeAccountMetadataReader(input: {
   readConfigFingerprint?: () => Promise<string | null>;
 }): CodexNativeAccountMetadataReader {
   if (!input.environment.HOME || input.environment.HOME !== input.cwd) throw new Error("Native account runtime scope is required");
-  const readCredentialFileProof = input.readCredentialFileProof ?? createCodexCredentialFileProofReader({ homePath: input.cwd, codexHome: input.environment.CODEX_HOME, allowApiKey: true });
+  const injectedProof = input.readCredentialFileProof;
+  const readCredentialFileEvidence = input.readCredentialFileEvidence ?? (injectedProof
+    ? async () => { const proof = await injectedProof(); return proof ? { proof, identity: null } : null; }
+    : createCodexCredentialFileEvidenceReader({ homePath: input.cwd, codexHome: input.environment.CODEX_HOME, allowApiKey: true }));
+  const readCredentialFileProof = async () => (await readCredentialFileEvidence())?.proof ?? null;
   let pending: Promise<CodexNativeAccountMetadata | null> | null = null;
   let identityPending: Promise<CodexNativeAccountObservation> | null = null;
   let completionPending: Promise<CodexNativeAccountMetadata | null> | null = null;
@@ -157,7 +163,7 @@ export function createCodexNativeAccountMetadataReader(input: {
   // one reader per runtime owner. Replaced by each new proof, dropped on any
   // mismatch, expiry, invalidation, or failed fresh account read. Failed reads
   // never record an entry.
-  let recentIdentity: { value: CodexNativeAccountMetadata; proof: string; credentialProof: string; executable: string; provenAt: number } | null = null;
+  let recentIdentity: { value: CodexNativeAccountMetadata; proof: string; generation: string; credentialProof: string; executable: string; provenAt: number } | null = null;
   let identityEpoch = 0;
   const withinReuse = (provenAt: number, time: number) => time >= provenAt && time - provenAt < reuseMs;
   const reusableIdentity = async (): Promise<CodexNativeAccountMetadata | null> => {
@@ -185,7 +191,7 @@ export function createCodexNativeAccountMetadataReader(input: {
       checkedAt: at.toISOString(), staleAfter: new Date(time + OBSERVATION_FRESHNESS_MS).toISOString(),
     };
     principals.set(value, recent.proof);
-    bindIdentity(value, recent.proof, recent.credentialProof, true);
+    bindIdentity(value, recent.proof, recent.credentialProof, true, recent.generation);
     recent.value = value;
     return value;
   };
@@ -193,7 +199,8 @@ export function createCodexNativeAccountMetadataReader(input: {
     Date.parse(value.checkedAt) <= time && Date.parse(value.staleAfter) > time
     && (!value.usage?.resetsAt || Date.parse(value.usage.resetsAt) > time);
   // Bound verifier for one observation. A restamped reuse binds the same proof.
-  const bindIdentity = (value: CodexNativeAccountMetadata, proof: string, credentialProof: string | null, fileBackend: boolean) => {
+  // `generation` is the durable account identity persisted as consent (ENG-523).
+  const bindIdentity = (value: CodexNativeAccountMetadata, proof: string, credentialProof: string | null, fileBackend: boolean, generation: string) => {
     bindNativeAccountMetadata(value, async () => {
       identityFailures.delete(value);
       const requestedAt = (input.now ?? (() => new Date()))().getTime();
@@ -238,7 +245,7 @@ export function createCodexNativeAccountMetadataReader(input: {
       valid = valid && freshAt(value, (input.now ?? (() => new Date()))().getTime());
       if (!valid && cached === value) cached = null;
       return valid;
-    }, proof, { credentialIdentityBound: fileBackend && Boolean(credentialProof) });
+    }, proof, { credentialIdentityBound: fileBackend && Boolean(credentialProof), generation });
   };
   const startVerification = (): Promise<CodexNativeAccountMetadata | null> => {
     const observation = { state: "unavailable" as CodexNativeObservationState };
@@ -297,6 +304,7 @@ export function createCodexNativeAccountMetadataReader(input: {
       let buffer = "";
       let bytes = 0;
       let credentialProof: string | null = null;
+      let credentialIdentity: string | null = null;
       let fileBackend = false;
       let account: unknown;
       let accountObservedAt: Date | undefined;
@@ -363,7 +371,9 @@ export function createCodexNativeAccountMetadataReader(input: {
             const config = z.object({ config: z.object({ cli_auth_credentials_store: z.unknown().optional() }) }).safeParse(message.result);
             fileBackend = !message.error && config.success && config.data.config.cli_auth_credentials_store === "file";
             void (async () => {
-              credentialProof = fileBackend ? await readCredentialFileProof() : null;
+              const evidence = fileBackend ? await readCredentialFileEvidence() : null;
+              credentialProof = evidence?.proof ?? null;
+              credentialIdentity = evidence?.identity ?? null;
               if (fileBackend && credentialProof !== tentativeCredentialProof) { if (observation) observation.state = "changed"; finish(); return; }
               send(2, "account/read", { refreshToken: false });
             })().catch((error: unknown) => {
@@ -413,12 +423,13 @@ export function createCodexNativeAccountMetadataReader(input: {
               if (value && (principal?.type === "apiKey" || principal?.type === "chatgpt" && (principal.id || credentialProof))) {
                 const proof = JSON.stringify({ principal, ...(credentialProof ? { credentialProof } : {}) });
                 principals.set(value, proof);
+                const generation = codexNativeGenerationSource({ principal, credentialProof, credentialIdentity });
                 // Only file-backed proofs can be cheaply rechecked; an invalidation
                 // after this read started must not repopulate reuse.
                 if (reuseMs > 0 && fileBackend && credentialProof && executableAtStart && readEpoch === identityEpoch) {
-                  recentIdentity = { value, proof, credentialProof, executable: executableAtStart, provenAt: finalAccountObservedAt.getTime() };
+                  recentIdentity = { value, proof, generation, credentialProof, executable: executableAtStart, provenAt: finalAccountObservedAt.getTime() };
                 }
-                bindIdentity(value, proof, credentialProof, fileBackend);
+                bindIdentity(value, proof, credentialProof, fileBackend, generation);
               }
               finish(value);
             })().catch((error: unknown) => {

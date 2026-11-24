@@ -4,12 +4,16 @@ import { AllowanceMeter } from "./AllowanceMeter.js";
 import { connectedAccountLabel, providerName, shortDate, usageLines } from "./utils.js";
 
 /** Connected presentation consumes observed identity and usage, never inferred plan limits. */
-export function ConnectedAccountCard({ harness, account, source, action, disabled, onRefresh, saved = false }: {
+export function ConnectedAccountCard({ harness, account, source, action, disabled, onRefresh, saved = false, savedReason = "sign_in", showRefresh = true }: {
   harness: ProviderHarnessInstance;
   account?: ProviderAccount;
   source?: ProviderAccessSource;
   action?: ReactNode;
   saved?: boolean;
+  /** Why a saved account is not connected: it needs sign-in, or it is only Off. */
+  savedReason?: "sign_in" | "off";
+  /** Off when the owning panel already offers its own "Check again" action. */
+  showRefresh?: boolean;
   disabled: boolean;
   onRefresh: () => void;
 }) {
@@ -34,6 +38,8 @@ export function ConnectedAccountCard({ harness, account, source, action, disable
       </div>}
       <div className="matrix-ap-account-actions">{action}</div>
     </div>
-    {!action || !usage || source?.usage.kind === "unavailable" ? <button type="button" className="matrix-ap-link-button" disabled={disabled} onClick={onRefresh}>Check account again</button> : null}
+    {saved ? <p className="matrix-ap-help">{savedReason === "off" ? "Codex is off on this Computer. Reconnect to turn it back on."
+      : "Sign in again so Chat can use this account."}</p> : null}
+    {showRefresh && (!action || !usage || source?.usage.kind === "unavailable") ? <button type="button" className="matrix-ap-link-button" disabled={disabled} onClick={onRefresh}>Check account again</button> : null}
   </section>;
 }

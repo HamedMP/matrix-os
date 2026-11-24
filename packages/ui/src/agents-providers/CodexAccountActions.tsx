@@ -20,7 +20,7 @@ export function CodexAccountActions({ account, harnessId, scopeOwner, disabled, 
   const dialog = useRef<HTMLElement | null>(null);
   const close = () => { if (!running.current) setState(value => ({ ...value, intent: null, error: false })); };
   useDialogFocus(dialog, state.intent !== null, close);
-  if (!account || account.authState !== "authenticated" || !canLogout) return null;
+  if (!account || account.authState !== "authenticated") return null;
   const confirm = async () => {
     if (disabled || running.current || !state.intent) return;
     running.current = scope;
@@ -43,11 +43,13 @@ export function CodexAccountActions({ account, harnessId, scopeOwner, disabled, 
   };
   const blocked = disabled || state.pending;
   const change = state.intent === "change";
-  return <div className="matrix-ap-workflow-actions" role="group" aria-label="Codex account actions">
-    {canChangeAccount ? <button className="matrix-ap-button" type="button" disabled={blocked}
+  // Secondary actions share the panel's single connection action row.
+  return <div className="matrix-ap-action-group" role="group" aria-label="Codex account actions">
+    <button className="matrix-ap-button" type="button" disabled={blocked} onClick={onRefresh}>Check again</button>
+    {canLogout && canChangeAccount ? <button className="matrix-ap-button" type="button" disabled={blocked}
       onClick={() => setState(value => ({ ...value, intent: "change", error: false }))}>Change account</button> : null}
-    <button className="matrix-ap-link-button" type="button" aria-label={`Log out ${account.displayName}`} disabled={blocked}
-      onClick={() => setState(value => ({ ...value, intent: "logout", error: false }))}>Log out</button>
+    {canLogout ? <button className="matrix-ap-button" type="button" aria-label={`Log out ${account.displayName}`} disabled={blocked}
+      onClick={() => setState(value => ({ ...value, intent: "logout", error: false }))}>Log out</button> : null}
     {state.intent ? <div className="matrix-ap-dialog-backdrop"><section ref={dialog} className="matrix-ap-dialog" role="dialog" aria-modal="true" aria-label={change ? "Change Codex account?" : "Log out of Codex?"}>
       <h3>{change ? "Change Codex account?" : "Log out of Codex?"}</h3>
       <p>This logs out {account.displayName} from Codex on this Computer and stops its active Codex work. Your chats and projects stay. The separate ChatGPT connection for Matrix Chat and Bots stays unchanged.</p>
