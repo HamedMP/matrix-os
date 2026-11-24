@@ -1,0 +1,735 @@
+{
+  "file": "model.xlsx",
+  "valid": true,
+  "errors": [],
+  "parts": 12,
+  "sheetNames": [
+    "Assumptions",
+    "Projection",
+    "Summary"
+  ],
+  "sharedStrings": 28,
+  "definedNames": {},
+  "totalCells": 146,
+  "totalFormulas": 94,
+  "sheets": [
+    {
+      "name": "Assumptions",
+      "state": "visible",
+      "dimension": "A1:C6",
+      "cells": 18,
+      "formulaCount": 0,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [],
+      "mergedCells": [],
+      "frozenAt": null,
+      "columnWidths": {},
+      "valueTypes": {
+        "float": 3,
+        "int": 2,
+        "str": 13
+      },
+      "maxRow": 6,
+      "maxColumn": 3
+    },
+    {
+      "name": "Projection",
+      "state": "visible",
+      "dimension": "A1:N10",
+      "cells": 113,
+      "formulaCount": 91,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [
+        {
+          "cell": "B4",
+          "formula": "Assumptions!$B$2",
+          "type": "normal",
+          "ref": null,
+          "cached": "50000"
+        },
+        {
+          "cell": "C4",
+          "formula": "B4*(1+Assumptions!$B$3)",
+          "type": "normal",
+          "ref": null,
+          "cached": "51500"
+        },
+        {
+          "cell": "D4",
+          "formula": "C4*(1+Assumptions!$B$3)",
+          "type": "normal",
+          "ref": null,
+          "cached": "53045"
+        },
+        {
+          "cell": "E4",
+          "formula": "D4*(1+Assumptions!$B$3)",
+          "type": "normal",
+          "ref": null,
+          "cached": "54636.35"
+        },
+        {
+          "cell": "F4",
+          "formula": "E4*(1+Assumptions!$B$3)",
+          "type": "normal",
+          "ref": null,
+          "cached": "56275.4405"
+        },
+        {
+          "cell": "G4",
+          "formula": "F4*(1+Assumptions!$B$3)",
+          "type": "normal",
+          "ref": null,
+          "cached": "57963.703714999996"
+        },
+        {
+          "cell": "H4",
+          "formula": "G4*(1+Assumptions!$B$3)",
+          "type": "normal",
+          "ref": null,
+          "cached": "59702.61482645"
+        },
+        {
+          "cell": "I4",
+          "formula": "H4*(1+Assumptions!$B$3)",
+          "type": "normal",
+          "ref": null,
+          "cached": "61493.6932712435"
+        },
+        {
+          "cell": "J4",
+          "formula": "I4*(1+Assumptions!$B$3)",
+          "type": "normal",
+          "ref": null,
+          "cached": "63338.504069380804"
+        },
+        {
+          "cell": "K4",
+          "formula": "J4*(1+Assumptions!$B$3)",
+          "type": "normal",
+          "ref": null,
+          "cached": "65238.65919146223"
+        },
+        {
+          "cell": "L4",
+          "formula": "K4*(1+Assumptions!$B$3)",
+          "type": "normal",
+          "ref": null,
+          "cached": "67195.8189672061"
+        },
+        {
+          "cell": "M4",
+          "formula": "L4*(1+Assumptions!$B$3)",
+          "type": "normal",
+          "ref": null,
+          "cached": "69211.69353622229"
+        },
+        {
+          "cell": "N4",
+          "formula": "SUM(B4:M4)",
+          "type": "normal",
+          "ref": null,
+          "cached": "709601.478076965"
+        },
+        {
+          "cell": "B5",
+          "formula": "B4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "20000"
+        },
+        {
+          "cell": "C5",
+          "formula": "C4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "20600"
+        },
+        {
+          "cell": "D5",
+          "formula": "D4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "21218"
+        },
+        {
+          "cell": "E5",
+          "formula": "E4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "21854.54"
+        },
+        {
+          "cell": "F5",
+          "formula": "F4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "22510.1762"
+        },
+        {
+          "cell": "G5",
+          "formula": "G4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "23185.481486"
+        },
+        {
+          "cell": "H5",
+          "formula": "H4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "23881.045930580003"
+        },
+        {
+          "cell": "I5",
+          "formula": "I4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "24597.4773084974"
+        },
+        {
+          "cell": "J5",
+          "formula": "J4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "25335.401627752322"
+        },
+        {
+          "cell": "K5",
+          "formula": "K4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "26095.463676584895"
+        },
+        {
+          "cell": "L5",
+          "formula": "L4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "26878.327586882442"
+        },
+        {
+          "cell": "M5",
+          "formula": "M4*Assumptions!$B$4",
+          "type": "normal",
+          "ref": null,
+          "cached": "27684.677414488917"
+        },
+        {
+          "cell": "N5",
+          "formula": "SUM(B5:M5)",
+          "type": "normal",
+          "ref": null,
+          "cached": "283840.591230786"
+        },
+        {
+          "cell": "B6",
+          "formula": "B4-B5",
+          "type": "normal",
+          "ref": null,
+          "cached": "30000"
+        },
+        {
+          "cell": "C6",
+          "formula": "C4-C5",
+          "type": "normal",
+          "ref": null,
+          "cached": "30900"
+        },
+        {
+          "cell": "D6",
+          "formula": "D4-D5",
+          "type": "normal",
+          "ref": null,
+          "cached": "31827"
+        },
+        {
+          "cell": "E6",
+          "formula": "E4-E5",
+          "type": "normal",
+          "ref": null,
+          "cached": "32781.81"
+        },
+        {
+          "cell": "F6",
+          "formula": "F4-F5",
+          "type": "normal",
+          "ref": null,
+          "cached": "33765.264299999995"
+        },
+        {
+          "cell": "G6",
+          "formula": "G4-G5",
+          "type": "normal",
+          "ref": null,
+          "cached": "34778.22222899999"
+        },
+        {
+          "cell": "H6",
+          "formula": "H4-H5",
+          "type": "normal",
+          "ref": null,
+          "cached": "35821.56889587"
+        },
+        {
+          "cell": "I6",
+          "formula": "I4-I5",
+          "type": "normal",
+          "ref": null,
+          "cached": "36896.2159627461"
+        },
+        {
+          "cell": "J6",
+          "formula": "J4-J5",
+          "type": "normal",
+          "ref": null,
+          "cached": "38003.10244162848"
+        },
+        {
+          "cell": "K6",
+          "formula": "K4-K5",
+          "type": "normal",
+          "ref": null,
+          "cached": "39143.19551487734"
+        },
+        {
+          "cell": "L6",
+          "formula": "L4-L5",
+          "type": "normal",
+          "ref": null,
+          "cached": "40317.491380323656"
+        },
+        {
+          "cell": "M6",
+          "formula": "M4-M5",
+          "type": "normal",
+          "ref": null,
+          "cached": "41527.016121733366"
+        },
+        {
+          "cell": "N6",
+          "formula": "SUM(B6:M6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "425760.8868461789"
+        },
+        {
+          "cell": "B7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "C7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "D7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "E7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "F7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "G7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "H7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "I7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "J7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "K7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "L7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "M7",
+          "formula": "Assumptions!$B$5",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        },
+        {
+          "cell": "N7",
+          "formula": "SUM(B7:M7)",
+          "type": "normal",
+          "ref": null,
+          "cached": "216000"
+        },
+        {
+          "cell": "B8",
+          "formula": "B6-B7",
+          "type": "normal",
+          "ref": null,
+          "cached": "12000"
+        },
+        {
+          "cell": "C8",
+          "formula": "C6-C7",
+          "type": "normal",
+          "ref": null,
+          "cached": "12900"
+        },
+        {
+          "cell": "D8",
+          "formula": "D6-D7",
+          "type": "normal",
+          "ref": null,
+          "cached": "13827"
+        },
+        {
+          "cell": "E8",
+          "formula": "E6-E7",
+          "type": "normal",
+          "ref": null,
+          "cached": "14781.809999999998"
+        },
+        {
+          "cell": "F8",
+          "formula": "F6-F7",
+          "type": "normal",
+          "ref": null,
+          "cached": "15765.264299999995"
+        },
+        {
+          "cell": "G8",
+          "formula": "G6-G7",
+          "type": "normal",
+          "ref": null,
+          "cached": "16778.22222899999"
+        },
+        {
+          "cell": "H8",
+          "formula": "H6-H7",
+          "type": "normal",
+          "ref": null,
+          "cached": "17821.568895869998"
+        },
+        {
+          "cell": "I8",
+          "formula": "I6-I7",
+          "type": "normal",
+          "ref": null,
+          "cached": "18896.2159627461"
+        },
+        {
+          "cell": "J8",
+          "formula": "J6-J7",
+          "type": "normal",
+          "ref": null,
+          "cached": "20003.102441628478"
+        },
+        {
+          "cell": "K8",
+          "formula": "K6-K7",
+          "type": "normal",
+          "ref": null,
+          "cached": "21143.19551487734"
+        },
+        {
+          "cell": "L8",
+          "formula": "L6-L7",
+          "type": "normal",
+          "ref": null,
+          "cached": "22317.491380323656"
+        },
+        {
+          "cell": "M8",
+          "formula": "M6-M7",
+          "type": "normal",
+          "ref": null,
+          "cached": "23527.016121733366"
+        },
+        {
+          "cell": "N8",
+          "formula": "SUM(B8:M8)",
+          "type": "normal",
+          "ref": null,
+          "cached": "209760.8868461789"
+        },
+        {
+          "cell": "B9",
+          "formula": "MAX(0,B8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "3000"
+        },
+        {
+          "cell": "C9",
+          "formula": "MAX(0,C8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "3225"
+        },
+        {
+          "cell": "D9",
+          "formula": "MAX(0,D8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "3456.75"
+        },
+        {
+          "cell": "E9",
+          "formula": "MAX(0,E8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "3695.4524999999994"
+        },
+        {
+          "cell": "F9",
+          "formula": "MAX(0,F8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "3941.316074999999"
+        },
+        {
+          "cell": "G9",
+          "formula": "MAX(0,G8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "4194.555557249998"
+        },
+        {
+          "cell": "H9",
+          "formula": "MAX(0,H8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "4455.392223967499"
+        },
+        {
+          "cell": "I9",
+          "formula": "MAX(0,I8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "4724.053990686525"
+        },
+        {
+          "cell": "J9",
+          "formula": "MAX(0,J8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "5000.7756104071195"
+        },
+        {
+          "cell": "K9",
+          "formula": "MAX(0,K8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "5285.798878719335"
+        },
+        {
+          "cell": "L9",
+          "formula": "MAX(0,L8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "5579.372845080914"
+        },
+        {
+          "cell": "M9",
+          "formula": "MAX(0,M8*Assumptions!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "5881.7540304333415"
+        },
+        {
+          "cell": "N9",
+          "formula": "SUM(B9:M9)",
+          "type": "normal",
+          "ref": null,
+          "cached": "52440.22171154473"
+        },
+        {
+          "cell": "B10",
+          "formula": "B8-B9",
+          "type": "normal",
+          "ref": null,
+          "cached": "9000"
+        },
+        {
+          "cell": "C10",
+          "formula": "C8-C9",
+          "type": "normal",
+          "ref": null,
+          "cached": "9675"
+        },
+        {
+          "cell": "D10",
+          "formula": "D8-D9",
+          "type": "normal",
+          "ref": null,
+          "cached": "10370.25"
+        },
+        {
+          "cell": "E10",
+          "formula": "E8-E9",
+          "type": "normal",
+          "ref": null,
+          "cached": "11086.357499999998"
+        },
+        {
+          "cell": "F10",
+          "formula": "F8-F9",
+          "type": "normal",
+          "ref": null,
+          "cached": "11823.948224999996"
+        },
+        {
+          "cell": "G10",
+          "formula": "G8-G9",
+          "type": "normal",
+          "ref": null,
+          "cached": "12583.666671749994"
+        },
+        {
+          "cell": "H10",
+          "formula": "H8-H9",
+          "type": "normal",
+          "ref": null,
+          "cached": "13366.176671902498"
+        },
+        {
+          "cell": "I10",
+          "formula": "I8-I9",
+          "type": "normal",
+          "ref": null,
+          "cached": "14172.161972059575"
+        },
+        {
+          "cell": "J10",
+          "formula": "J8-J9",
+          "type": "normal",
+          "ref": null,
+          "cached": "15002.326831221359"
+        },
+        {
+          "cell": "K10",
+          "formula": "K8-K9",
+          "type": "normal",
+          "ref": null,
+          "cached": "15857.396636158006"
+        },
+        {
+          "cell": "L10",
+          "formula": "L8-L9",
+          "type": "normal",
+          "ref": null,
+          "cached": "16738.118535242742"
+        },
+        {
+          "cell": "M10",
+          "formula": "M8-M9",
+          "type": "normal",
+          "ref": null,
+          "cached": "17645.262091300025"
+        },
+        {
+          "cell": "N10",
+          "formula": "SUM(B10:M10)",
+          "type": "normal",
+          "ref": null,
+          "cached": "157320.66513463418"
+        }
+      ],
+      "mergedCells": [],
+      "frozenAt": "B4",
+      "columnWidths": {},
+      "valueTypes": {
+        "datetime": 12,
+        "float": 62,
+        "int": 29,
+        "str": 10
+      },
+      "maxRow": 10,
+      "maxColumn": 14
+    },
+    {
+      "name": "Summary",
+      "state": "visible",
+      "dimension": "A1:C5",
+      "cells": 15,
+      "formulaCount": 3,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [
+        {
+          "cell": "B3",
+          "formula": "Projection!N10",
+          "type": "normal",
+          "ref": null,
+          "cached": "157320.66513463418"
+        },
+        {
+          "cell": "B4",
+          "formula": "B3/Projection!N4",
+          "type": "normal",
+          "ref": null,
+          "cached": "0.22170284306759974"
+        },
+        {
+          "cell": "B5",
+          "formula": "AVERAGE(Projection!B7:M7)",
+          "type": "normal",
+          "ref": null,
+          "cached": "18000"
+        }
+      ],
+      "mergedCells": [],
+      "frozenAt": null,
+      "columnWidths": {},
+      "valueTypes": {
+        "float": 2,
+        "int": 2,
+        "str": 11
+      },
+      "maxRow": 5,
+      "maxColumn": 3
+    }
+  ]
+}

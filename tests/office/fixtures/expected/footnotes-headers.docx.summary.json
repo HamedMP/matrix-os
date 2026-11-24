@@ -1,0 +1,48 @@
+{
+  "file": "footnotes-headers.docx",
+  "valid": true,
+  "errors": [],
+  "parts": 20,
+  "document": {
+    "bodyParagraphs": 4,
+    "allParagraphs": 4,
+    "tables": 0,
+    "numberedParagraphs": 0,
+    "paragraphStyles": {
+      "Heading1": 1
+    },
+    "hyperlinks": 0,
+    "bookmarks": [],
+    "fields": [],
+    "footnoteReferences": 3,
+    "characters": 213,
+    "pythonDocx": {
+      "paragraphs": 4,
+      "tables": 0,
+      "sections": 1,
+      "headings": [
+        "Research summary"
+      ]
+    }
+  },
+  "revisions": {
+    "total": 0,
+    "byKind": {},
+    "byAuthor": {},
+    "byAuthorKind": {},
+    "paragraphMarkRevisions": 0,
+    "missingAuthor": 0,
+    "duplicateIds": []
+  },
+  "comments": {
+    "count": 0,
+    "replies": 0,
+    "authors": [],
+    "referencedIds": [],
+    "unreferencedIds": [],
+    "danglingReferences": []
+  },
+  "footnotes": 3,
+  "headers": 1,
+  "footers": 1
+}
