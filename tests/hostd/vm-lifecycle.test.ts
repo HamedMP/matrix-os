@@ -36,6 +36,8 @@ let events: string[];
 let execCalls: string[][];
 let execFailures: Map<string, number>;
 let lvExists: boolean;
+// What lvs prints, exit code 5, for an LV that does not exist.
+const LV_MISSING = '  Failed to find logical volume "vmvg/mx-x"\n';
 let chState: ChVmInfo["state"];
 let snapshotError: Error | null;
 let resumeError: Error | null;
@@ -65,7 +67,7 @@ const fakeExec: Exec = async (argv) => {
   if (cmd[0] === "lvs" && cmd.includes("data_percent,metadata_percent")) return { code: 0, stdout: "  10.00  5.00\n", stderr: "" };
   if (cmd[0] === "lvs" && cmd.includes("lv_size")) return { code: 0, stdout: "  21474836480\n", stderr: "" };
   if (cmd[0] === "cloud-localds") await writeFile(cmd[cmd.length - 3]!, "seed-image");
-  if (cmd[0] === "lvs") return { code: lvExists ? 0 : 5, stdout: "", stderr: "" };
+  if (cmd[0] === "lvs") return lvExists ? { code: 0, stdout: "", stderr: "" } : { code: 5, stdout: "", stderr: LV_MISSING };
   if (cmd[0] === "lvremove") lvExists = false;
   if (cmd[0] === "lvcreate") lvExists = true;
   if (cmd[0] === "systemctl" && cmd[1] === "start") chState = cmd[2]!.startsWith("matrix-vm-restore@") ? "Paused" : "Running";

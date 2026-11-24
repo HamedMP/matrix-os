@@ -63,8 +63,12 @@ const exec: Exec = async (argv, options) => {
   if (outcome instanceof Error || typeof outcome === "string") throw outcome;
   if (typeof outcome === "number") return { code: outcome, stdout: "", stderr: "" };
   if (argv[0] === "systemctl" && argv[1] === "start") chState = "Running";
-  return { code: argv[0] === "lvs" ? 5 : 0, stdout: "", stderr: "" };
+  if (argv[0] === "lvs") return lvsAnswer;
+  return { code: 0, stdout: "", stderr: "" };
 };
+// What lvs prints, exit code 5, for an LV that does not exist.
+const LV_MISSING = { code: 5, stdout: "", stderr: '  Failed to find logical volume "vmvg/mx-x"\n' };
+let lvsAnswer: { code: number; stdout: string; stderr: string };
 
 function ch(): ChClient {
   const ok = async () => undefined;
@@ -132,6 +136,7 @@ beforeEach(async () => {
   clockT = 1_000_000;
   goldenBytes = 20 * GiB;
   thinPool = "  10.00   5.00\n";
+  lvsAnswer = LV_MISSING;
 });
 
 afterEach(async () => {
@@ -370,6 +375,9 @@ describe("repeated create never destroys a VM that has a real disk", () => {
     const lifecycle = make();
     const vm = await lifecycle.create(spec);
     chOverrides = {
+      async pause() {
+        chState = "Paused";
+      },
       snapshot: async () => Promise.reject(new ChError("rejected", "x")),
       resume: async () => Promise.reject(new ChError("rejected", "x")),
     };
@@ -645,5 +653,72 @@ describe("queue admission, shutdown drain, and per-caller wake budgets", () => {
     const [long2, short2] = await Promise.all([lifecycle.resume(vm.id, 5000), lifecycle.resume(vm.id, 500)]);
     expect([long2, short2]).toEqual(["running", "starting"]);
     expect(execCalls.filter((c) => c[1] === "start" && c[2] === `matrix-vm@${vm.id}.service`)).toHaveLength(3);
+  });
+});
+
+describe("lost pause replies, lowered memory ceilings, and unreadable LVM on destroy", () => {
+  it("resumes a VM whose pause took effect although the pause reply was lost", async () => {
+    const lifecycle = make();
+    const vm = await lifecycle.create(spec);
+    chState = "Running";
+    const resumes: string[] = [];
+    chOverrides = {
+      async pause() {
+        chState = "Paused";
+        throw new ChError("timeout", "pause reply lost");
+      },
+      async resume() {
+        resumes.push("resume");
+        chState = "Running";
+      },
+    };
+    await expect(lifecycle.suspend(vm.id)).rejects.toMatchObject({ code: "snapshot_failed" });
+    expect(resumes).toEqual(["resume"]);
+    await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("marks the VM failed when its state cannot be read after a lost pause reply", async () => {
+    const lifecycle = make();
+    const vm = await lifecycle.create(spec);
+    chOverrides = {
+      pause: async () => Promise.reject(new ChError("timeout", "pause reply lost")),
+      info: async () => Promise.reject(new ChError("unreachable", "socket gone")),
+    };
+    await expect(lifecycle.suspend(vm.id)).rejects.toMatchObject({ code: "snapshot_failed" });
+    await expect(store.get(vm.id)).resolves.toMatchObject({ state: "failed" });
+  });
+
+  it("shrinks a running VM to a lowered ceiling before saving it, and keeps the old ceiling if that fails", async () => {
+    const lifecycle = make();
+    const vm = await lifecycle.create({ ...spec, tier: "paid", maxMiB: 32768 });
+    const resizes: number[] = [];
+    let resizeFails = true;
+    chOverrides = {
+      info: async () => ({ state: "Running", memoryActualBytes: 16384 * 1024 * 1024 }),
+      async resizeMemory(bytes) {
+        resizes.push(bytes / (1024 * 1024));
+        if (resizeFails) throw new ChError("rejected", "resize refused");
+      },
+    };
+    await expect(lifecycle.setPolicy(vm.id, { tier: "paid", maxMiB: 8192 })).rejects.toBeDefined();
+    await expect(store.get(vm.id)).resolves.toMatchObject({ maxMiB: 32768 });
+    resizeFails = false;
+    await expect(lifecycle.setPolicy(vm.id, { tier: "paid", maxMiB: 8192 })).resolves.toMatchObject({ maxMiB: 8192 });
+    expect(resizes).toEqual([8192, 8192]);
+    // The guest may still hold more than the new ceiling: a downward step is allowed, a growth past it is not.
+    await expect(lifecycle.resize(vm.id, 15360)).resolves.toBeUndefined();
+    await expect(lifecycle.resize(vm.id, 17408)).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("keeps the record when LVM cannot say whether the disk exists, and drops it once the LV is gone", async () => {
+    const lifecycle = make();
+    const vm = await lifecycle.create(spec);
+    lvsAnswer = { code: 5, stdout: "", stderr: "  Volume group \"vmvg\" has insufficient free space or is locked\n" };
+    await expect(lifecycle.destroy(vm.id)).rejects.toMatchObject({ code: "failed" });
+    await expect(store.get(vm.id)).resolves.not.toBeNull();
+    expect(execCalls.some((c) => c[0] === "lvremove")).toBe(false);
+    lvsAnswer = LV_MISSING;
+    await lifecycle.destroy(vm.id);
+    await expect(store.get(vm.id)).resolves.toBeNull();
   });
 });

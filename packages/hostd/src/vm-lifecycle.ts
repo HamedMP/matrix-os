@@ -186,6 +186,8 @@ const IP_BASE = (10 << 24) | (78 << 16); // 10.78.0.0
 const IP_FIRST = IP_BASE + 10; // 10.78.0.10
 const IP_LAST = IP_BASE + (3 << 8) + 250; // 10.78.3.250
 const HEALTH_POLL_MS = 250;
+// What lvs prints (exit code 5) for an LV that does not exist.
+const LV_MISSING = /Failed to find logical volume/;
 const RESTORE_POLL_MS = 50;
 
 const toIPv4 = (n: number) => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join(".");
@@ -642,23 +644,29 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     // An ondemand-restored VMM still maps the current snapshot, so write beside it.
     const finalDir = snapshotDir(record.id);
     const newDir = `${finalDir}.new`;
-    let paused = false;
+    // Set before the request: a pause can take effect even if its reply is lost.
+    let pauseSent = false;
     try {
       await rm(newDir, { recursive: true, force: true });
       await mkdir(newDir, { mode: 0o700 });
       await sh(["chown", `${cfg.vmUser}:${cfg.vmUser}`, newDir]);
       await withCh(record.id, async (client) => {
+        pauseSent = true;
         await client.pause(chSignal());
-        paused = true;
         await client.snapshot(newDir, chSignal());
       });
       await stopUnits(record.id);
     } catch (error: unknown) {
       log("vm_snapshot_failed", { id: record.id, alert: true, ...errorFields(error) });
       let state: "running" | "failed" = "running";
-      if (paused) {
+      if (pauseSent) {
         try {
-          await withCh(record.id, (client) => client.resume(chSignal()));
+          // Ask rather than assume: resume a paused VM, accept a running one.
+          await withCh(record.id, async (client) => {
+            const { state: vmState } = await client.info(chSignal());
+            if (vmState === "Paused") await client.resume(chSignal());
+            else if (vmState !== "Running") throw new LifecycleError("failed", `VM is ${vmState} after a failed snapshot`);
+          });
         } catch (resumeError: unknown) {
           // The VM may be left paused: "failed" makes the next wake cold-boot it.
           state = "failed";
@@ -720,8 +728,11 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     await exec(["systemctl", "reset-failed", vmUnit(id), restoreUnit(id)], {
       signal: AbortSignal.timeout(cfg.execTimeoutMs),
     });
+    // Only "no such LV" proves the disk is gone; any other lvs failure (a lock,
+    // unreadable metadata) keeps the record so a retry can still find the disk.
     const lv = await exec(["lvs", lvName(id)], { signal: AbortSignal.timeout(cfg.execTimeoutMs) });
     if (lv.code === 0) await sh(["lvremove", "--yes", lvName(id)]);
+    else if (!LV_MISSING.test(lv.stderr)) throw new LifecycleError("failed", "could not tell whether the VM disk exists");
     await dropSnapshot(id);
     await rm(join(cfg.serialLogDir, `${id}.serial`), { force: true });
     await store.remove(id);
@@ -729,11 +740,19 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
 
   async function resize(id: string, targetMiB: number): Promise<void> {
     const record = await load(id);
-    if (!Number.isSafeInteger(targetMiB) || targetMiB < record.bootMiB || targetMiB > record.maxMiB) {
+    if (!Number.isSafeInteger(targetMiB) || targetMiB < record.bootMiB) {
       throw new LifecycleError("invalid", "memory target out of range");
     }
     if (record.state !== "running") throw new LifecycleError("conflict", `VM is ${record.state}`);
-    await withCh(id, (client) => client.resizeMemory(targetMiB * MiB, chSignal()));
+    await withCh(id, async (client) => {
+      // Above the ceiling only as a downward step: a lowered ceiling may sit
+      // below what the guest still holds while it gives memory back.
+      if (targetMiB > record.maxMiB) {
+        const actualMiB = Math.floor((await client.info(chSignal())).memoryActualBytes / MiB);
+        if (targetMiB >= actualMiB) throw new LifecycleError("invalid", "memory target out of range");
+      }
+      await client.resizeMemory(targetMiB * MiB, chSignal());
+    });
   }
 
   async function setPolicy(id: string, policy: { tier: VmTier; maxMiB: number }): Promise<VmRecord> {
@@ -747,6 +766,14 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       maxMiB <= maxMiBFor(tier);
     if (!valid) throw new LifecycleError("invalid", "invalid VM policy");
     if (record.state === "creating") throw new LifecycleError("conflict", "VM is still being created");
+    // A lowered ceiling below the running guest's memory: shrink first, and keep
+    // the old ceiling if the shrink is refused.
+    if (record.state === "running" && maxMiB < record.maxMiB) {
+      await withCh(id, async (client) => {
+        const actualMiB = Math.floor((await client.info(chSignal())).memoryActualBytes / MiB);
+        if (actualMiB > maxMiB) await client.resizeMemory(maxMiB * MiB, chSignal());
+      });
+    }
     const envPath = join(cfg.vmsDir, id, "unit.env");
     const env = await readFile(envPath, "utf8");
     await writeFileAtomic(envPath, env.replace(/^HOTPLUG_MIB=\d+$/m, `HOTPLUG_MIB=${maxMiB - record.bootMiB}`), 0o644);
