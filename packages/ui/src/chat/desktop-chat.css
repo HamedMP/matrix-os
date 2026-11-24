@@ -71,7 +71,8 @@
 .chat-lifecycle-toast { position: fixed; right: 16px; bottom: 16px; z-index: 100; display: flex; align-items: center; gap: 16px; background: var(--chat-fg, var(--text-primary, var(--foreground))); color: var(--chat-bg, var(--bg-surface, var(--background))); border-radius: 12px; padding: 12px 16px; box-shadow: 0 8px 16px rgb(0 0 0 / 12%); font-size: 14px; }
 .chat-lifecycle-toast .matrix-btn, .chat-lifecycle-toast button { color: inherit!important; padding: 0; background: transparent!important; font-size: inherit; font-weight: 400; }
 @media (max-width: 800px) { .chat-archive-page { padding: 28px 24px; } .chat-archive-header { align-items: stretch; flex-direction: column; gap: 16px; } .chat-archive-search { width: 100%; } }
-.chat-search-design { border-radius: 12px; overflow: hidden; }
+/* Portaled popovers sit outside the Chat surface scope: use the popover surface so hover fills show (Figma 8.3). */
+.chat-search-design { --chat-bg: var(--bg-overlay, var(--popover, var(--background))); border-radius: 12px; overflow: hidden; }
 .chat-search-filters { display: flex; gap: 6px; padding: 10px 16px 2px; }
 .chat-search-filter { border: 0; background: transparent; padding: 0; color: var(--chat-muted); }
 .chat-search-filter[aria-selected="true"] { color: var(--chat-fg); }
@@ -88,7 +89,8 @@
 .chat-search-row-actions { display: flex; visibility: hidden; gap: 2px; padding-right: 8px; }
 .chat-search-result-row:hover .chat-search-row-actions, .chat-search-result-row:focus-within .chat-search-row-actions { visibility: visible; }
 .chat-search-row-actions button { display: grid; place-items: center; height: 32px; width: 32px; border-radius: 8px; color: var(--chat-muted); }
-.chat-search-row-actions button[data-danger] { color: var(--chat-danger); }
+.desktop-chat-design .chat-search-row-actions button { color: var(--chat-muted)!important; }
+.desktop-chat-design .chat-search-row-actions button[data-danger] { color: var(--chat-danger)!important; }
 .chat-search-open-archive { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; height: 52px; border-top: 1px solid var(--chat-divider); border-radius: 0; padding: 0 16px 0 18px; text-align: left; font: 400 14px/20px Geist, sans-serif; }
 .chat-search-open-archive > svg { flex-shrink: 0; color: var(--chat-muted); }
 .chat-search-open-archive span { flex: 1; }
