@@ -74,15 +74,17 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
             projectId: input.resourceId,
           }) : options.standaloneScope ? await options.standaloneScope.preflight({ ownerId: proof.ownerId,
             organizationId: input.organizationId, kind: input.kind, resourceId: input.resourceId }) : unsupported;
-    const projectCreation = input.kind === "project";
+    // Projects and, as the spec 2710 exception, team terminals may be newly shared;
+    // other standalone kinds stay compatibility-only (spec 124).
+    const creatable = input.kind === "project" || input.kind === "terminal";
     return c.json(CollaborationScopePreflightResponseSchema.parse({
-      eligible: projectCreation && result.eligible,
-      ...(!projectCreation ? { reason: "unsupported" as const }
+      eligible: creatable && result.eligible,
+      ...(!creatable ? { reason: "unsupported" as const }
         : "reason" in result && result.reason ? { reason: result.reason } : {}),
       resourceRevision: String("chatRevision" in result
         ? result.chatRevision
         : "projectRevision" in result ? result.projectRevision : result.resourceRevision),
-      ...(projectCreation && result.confirmationToken ? { confirmationToken: result.confirmationToken } : {}),
+      ...(creatable && result.confirmationToken ? { confirmationToken: result.confirmationToken } : {}),
       ...("existingScopeId" in result && result.existingScopeId
         ? { existingScopeId: result.existingScopeId, existingLifecycle: result.existingLifecycle }
         : {}),
@@ -96,6 +98,21 @@ export function registerScopeRoutes(routes: Hono, options: CollaborationRouteOpt
       CollaborationRuntimeIdSchema.parse(c.req.param("runtimeId")), input.organizationId);
     // Membership is proven before any write; the confirmation token also binds this organization.
     await requireOrganizationMembership(options, proof.actorId, input.organizationId);
+    if (input.kind === "terminal") {
+      // Spec 2710 team terminal: owner-only, bound to the exact confirmed tab incarnation.
+      const scope = await requireTerminalAdapter(options.terminalAdapter).shareTerminal({
+        ownerId: proof.ownerId,
+        organizationId: input.organizationId,
+        terminalId: input.resourceId,
+        clientRequestId: input.clientRequestId,
+        payloadHash: digest(bytes),
+        expectedResourceRevision: Number(input.expectedRevision),
+        confirmationToken: input.confirmationToken,
+      });
+      const context = await options.authority.authorize({ scopeId: scope.id, actorId: proof.actorId, action: "read" });
+      await notifyScope(options, scope.id);
+      return c.json(await scopeProjection(scope, context, options.authority, options.chatScope), 201);
+    }
     if (input.kind !== "project") {
       throw new CollaborationAuthorizationError("forbidden", "New standalone collaboration scopes are unavailable");
     }

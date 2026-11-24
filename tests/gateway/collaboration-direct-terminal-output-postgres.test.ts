@@ -25,6 +25,7 @@ import { CollaborationTerminalAdapter } from "../../packages/gateway/src/collabo
 import { TerminalControlCoordinator } from "../../packages/gateway/src/collaboration/terminal-control.js";
 import { CollaborationTerminalDispatcher } from "../../packages/gateway/src/collaboration/terminal-dispatcher.js";
 import { CollaborationTerminalEventRegistry } from "../../packages/gateway/src/collaboration/terminal-events.js";
+import { TeamTerminalInputModes } from "../../packages/gateway/src/collaboration/team-terminal-input-mode.js";
 import {
   ed25519PrivateKeyFromSeed, ed25519PublicKeyRaw, possessionPayload, proofKeyThumbprint,
   signEd25519, ticketSigningPayload,
@@ -37,6 +38,7 @@ const runtimeId = `vps:${machineId}`;
 const logicalRuntimeId = `vps-${machineId}`;
 const ownerId = "user_direct_terminal_owner";
 const memberId = "user_direct_terminal_member";
+const editorId = "user_direct_terminal_editor";
 const organizationId = "org_direct_terminal";
 const scopeId = "10000000-0000-4000-8000-00000000d901";
 const workspaceId = `tws_${"3".repeat(32)}`;
@@ -85,6 +87,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 direct terminal outp
     attach: ReturnType<typeof vi.fn>;
   };
   let incarnation: string;
+  let inputModes: TeamTerminalInputModes;
 
   beforeEach(async () => {
     fixture = await createRealCollaborationTestDatabase();
@@ -104,7 +107,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 direct terminal outp
     };
     const repository = new CollaborationRepository(fixture.db);
     const precondition = createOrganizationPrecondition({
-      source: { async assertMembership({ actorId }) { return actorId === ownerId || actorId === memberId
+      source: { async assertMembership({ actorId }) { return actorId === ownerId || actorId === memberId || actorId === editorId
         ? { member: true, expiresAt: new Date(now.getTime() + 20_000).toISOString() } : { member: false }; } },
       now: () => now,
     });
@@ -131,9 +134,17 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 direct terminal outp
       invitation_id: null, invited_by: ownerId, accepted_at: now, expires_at: null, revision: 1,
       joined_at: now, updated_at: now, dispositioned_at: null,
     }).execute();
+    await fixture.db.insertInto("collaboration_members").values({
+      scope_id: scopeId, actor_id: editorId, role: "editor", status: "accepted", organization_id: organizationId,
+      invitation_id: null, invited_by: ownerId, accepted_at: now, expires_at: null, revision: 1,
+      joined_at: now, updated_at: now, dispositioned_at: null,
+    }).execute();
+    // Sharing with an editor records the owner's host-shell opt-in (spec 2710).
+    await adapter.setContributorControl({ scopeId, terminalId, incarnation, ownerId, contributorControl: true });
     control = new TerminalControlCoordinator({ startTimer: false });
+    inputModes = new TeamTerminalInputModes();
     const dispatcher = new CollaborationTerminalDispatcher({
-      authority, terminal: adapter, control, resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
+      authority, terminal: adapter, control, inputModes, resolveParticipant: async (actorId) => ({ actorId, displayName: actorId }),
     });
     terminalRegistry = new CollaborationTerminalEventRegistry({
       authorize: (id, actorId) => authority.authorize({ scopeId: id, actorId, action: "read" }),
@@ -239,6 +250,51 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 direct terminal outp
     await vi.waitFor(() => expect(ws.close).toHaveBeenCalledWith(1008, "Invalid frame"));
     expect(runtime.writeInput).toHaveBeenCalledOnce();
     expect(runtime.terminateTab).not.toHaveBeenCalled();
+  });
+
+  it("lets an editor type without a lease and answers viewer input without closing (spec 2710)", async () => {
+    const editor = await openStream(editorId);
+    await vi.waitFor(() => expect(frames(editor.ws)).toContainEqual(expect.objectContaining({ type: "terminal.ready" })));
+    const editorConnection = (frames(editor.ws).find((frame) => frame.type === "terminal.ready")!).connectionId as string;
+    const editorSocket = socketEvents!;
+    editorSocket.onMessage?.({ data: JSON.stringify({
+      type: "input_shared", clientRequestId: randomUUID(), incarnation, connectionId: editorConnection, data: "claude\r",
+    }) } as never, editor.ws as never);
+    await vi.waitFor(() => expect(runtime.writeInput).toHaveBeenCalledWith({ workspaceId, tabId }, "claude\r", tab.incarnation));
+
+    const viewer = await openStream(memberId);
+    await vi.waitFor(() => expect(frames(viewer.ws)).toContainEqual(expect.objectContaining({ type: "terminal.ready" })));
+    const viewerConnection = (frames(viewer.ws).find((frame) => frame.type === "terminal.ready")!).connectionId as string;
+    const viewerRequest = randomUUID();
+    socketEvents!.onMessage?.({ data: JSON.stringify({
+      type: "input_shared", clientRequestId: viewerRequest, incarnation, connectionId: viewerConnection, data: "rm -rf ~\r",
+    }) } as never, viewer.ws as never);
+    await vi.waitFor(() => expect(frames(viewer.ws)).toContainEqual(expect.objectContaining({
+      type: "terminal.input_rejected", clientRequestId: viewerRequest, code: "forbidden",
+    })));
+    expect(viewer.ws.close).not.toHaveBeenCalled();
+    expect(runtime.writeInput).toHaveBeenCalledOnce();
+
+    // The owner takes control: the editor's next frame is paused, not written.
+    inputModes.set(scopeId, incarnation, "owner");
+    const pausedRequest = randomUUID();
+    editorSocket.onMessage?.({ data: JSON.stringify({
+      type: "input_shared", clientRequestId: pausedRequest, incarnation, connectionId: editorConnection, data: "x",
+    }) } as never, editor.ws as never);
+    await vi.waitFor(() => expect(frames(editor.ws)).toContainEqual(expect.objectContaining({
+      type: "terminal.input_rejected", clientRequestId: pausedRequest, code: "input_paused",
+    })));
+    expect(runtime.writeInput).toHaveBeenCalledOnce();
+  });
+
+  it("closes a revoked editor's stream as soon as the scope change commits (spec 2710)", async () => {
+    const editor = await openStream(editorId);
+    await vi.waitFor(() => expect(frames(editor.ws)).toContainEqual(expect.objectContaining({ type: "terminal.ready" })));
+    await fixture.db.updateTable("collaboration_members").set({ status: "revoked" })
+      .where("scope_id", "=", scopeId).where("actor_id", "=", editorId).execute();
+    await terminalRegistry.reauthorizeScope(scopeId);
+    expect(frames(editor.ws)).toContainEqual(expect.objectContaining({ type: "terminal.unavailable", code: "revoked" }));
+    expect(editor.ws.close).toHaveBeenCalledWith(1008, "Revoked");
   });
 
   it("never serves a replaced tab: a stale incarnation closes the direct stream before any output", async () => {

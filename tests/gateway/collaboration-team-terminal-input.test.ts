@@ -1,0 +1,156 @@
+import { describe, expect, it, vi } from "vitest";
+import type { CollaborationRole } from "@matrix-os/contracts";
+import { TerminalControlCoordinator } from "../../packages/gateway/src/collaboration/terminal-control.js";
+import { CollaborationTerminalDispatcher } from "../../packages/gateway/src/collaboration/terminal-dispatcher.js";
+import { TeamTerminalInputModes } from "../../packages/gateway/src/collaboration/team-terminal-input-mode.js";
+
+const scopeId = "10000000-0000-4000-8000-000000000001";
+const terminalId = "main:tab_shared";
+const incarnation = "terminal-0123456789abcdef0123456789abcdef";
+const requestId = "20000000-0000-4000-8000-000000000001";
+
+function setup(options: { contributorControl?: boolean } = {}) {
+  const roles = new Map<string, CollaborationRole>([
+    ["user_owner", "owner"], ["user_editor", "editor"], ["user_editor_b", "editor"], ["user_viewer", "viewer"],
+  ]);
+  const runtime = {
+    input: vi.fn(async (input: { revalidate(): Promise<void> }) => { await input.revalidate(); }),
+    paste: vi.fn(async (input: { revalidate(): Promise<void> }) => { await input.revalidate(); }),
+    resize: vi.fn(async () => undefined),
+    stop: vi.fn(async () => undefined),
+  };
+  const terminal = {
+    get: vi.fn(async () => ({
+      scopeId, terminalId, incarnation, executionGeneration: 4, creatorActorId: "user_owner",
+      createdAt: "2026-11-24T00:00:00.000Z", status: "active" as const,
+      contributorControl: options.contributorControl ?? true,
+    })),
+    setContributorControl: vi.fn(async () => undefined),
+    ...runtime,
+  };
+  const authority = {
+    authorize: vi.fn(async ({ actorId, action }: { actorId: string; action: string }) => {
+      const role = roles.get(actorId);
+      if (!role) throw Object.assign(new Error("not found"), { name: "CollaborationAuthorizationError" });
+      if (role === "viewer" && action === "control_execution") {
+        const { CollaborationAuthorizationError } = await import("../../packages/gateway/src/collaboration/authority.js");
+        throw new CollaborationAuthorizationError("forbidden", "Role does not allow this action");
+      }
+      return {
+        actorId, ownerId: "user_owner", organizationId: "org_team", scopeId, membershipScopeId: scopeId,
+        resourceKind: "terminal" as const, resourceId: terminalId, role, authEpoch: 1,
+        authorityRuntimeId: "runtime_owner", authorityGeneration: 1, capability: action,
+      };
+    }),
+  };
+  const control = new TerminalControlCoordinator({ startTimer: false });
+  const inputModes = new TeamTerminalInputModes();
+  const dispatcher = new CollaborationTerminalDispatcher({ authority, terminal, control, inputModes });
+  const send = (actorId: string, type: "input_shared" | "paste_shared", data = "echo hi\r") => dispatcher.dispatch({
+    scopeId, actorId, connectionId: `connection_${actorId}`,
+    action: { type, clientRequestId: requestId, incarnation, connectionId: `connection_${actorId}`, data },
+  });
+  const setMode = (actorId: string, mode: "shared" | "owner") => dispatcher.dispatch({
+    scopeId, actorId, connectionId: `connection_${actorId}`,
+    action: { type: "input_mode", clientRequestId: requestId, incarnation, mode },
+  });
+  return { dispatcher, runtime, control, roles, send, setMode, inputModes };
+}
+
+describe("team terminal shared input (spec 2710 J3-J6)", () => {
+  it("lets two editors type into the same terminal without holding a lease", async () => {
+    const { send, runtime, control } = setup();
+    await send("user_editor", "input_shared", "claude\r");
+    await send("user_editor_b", "paste_shared", "fix the test");
+    expect(runtime.input).toHaveBeenCalledWith(expect.objectContaining({ actorId: "user_editor", data: "claude\r" }));
+    expect(runtime.paste).toHaveBeenCalledWith(expect.objectContaining({ actorId: "user_editor_b", data: "fix the test" }));
+    control.close();
+  });
+
+  it("rejects viewer input before it reaches the terminal", async () => {
+    const { send, runtime, control } = setup();
+    await expect(send("user_viewer", "input_shared")).rejects.toMatchObject({ code: "forbidden" });
+    await expect(send("user_viewer", "paste_shared")).rejects.toMatchObject({ code: "forbidden" });
+    expect(runtime.input).not.toHaveBeenCalled();
+    expect(runtime.paste).not.toHaveBeenCalled();
+    control.close();
+  });
+
+  it("keeps editors observing until the owner opts them into the host shell", async () => {
+    const { send, runtime, control } = setup({ contributorControl: false });
+    await expect(send("user_editor", "input_shared")).rejects.toMatchObject({ code: "forbidden" });
+    expect(runtime.input).not.toHaveBeenCalled();
+    control.close();
+  });
+
+  it("pauses editor input while the owner has control and resumes when handed back", async () => {
+    const { send, setMode, runtime, control } = setup();
+    await expect(setMode("user_owner", "owner")).resolves.toMatchObject({ inputMode: "owner" });
+    await expect(send("user_editor", "input_shared")).rejects.toMatchObject({ code: "input_paused" });
+    await send("user_owner", "input_shared", "whoami\r");
+    expect(runtime.input).toHaveBeenCalledTimes(1);
+    await setMode("user_owner", "shared");
+    await send("user_editor", "input_shared");
+    expect(runtime.input).toHaveBeenCalledTimes(2);
+    control.close();
+  });
+
+  it("refuses an input frame whose author lost the editor role while it was in flight", async () => {
+    const { dispatcher, runtime, roles, control } = setup();
+    runtime.input.mockImplementationOnce(async (input: { revalidate(): Promise<void> }) => {
+      roles.set("user_editor", "viewer");
+      await input.revalidate();
+    });
+    await expect(dispatcher.dispatch({
+      scopeId, actorId: "user_editor", connectionId: "connection_user_editor",
+      action: { type: "input_shared", clientRequestId: requestId, incarnation, connectionId: "connection_user_editor", data: "rm -rf build\r" },
+    })).rejects.toMatchObject({ code: "forbidden" });
+    control.close();
+  });
+
+  it("re-checks the input mode immediately before the write", async () => {
+    const { send, runtime, inputModes, control } = setup();
+    runtime.input.mockImplementationOnce(async (input: { revalidate(): Promise<void> }) => {
+      inputModes.set(scopeId, incarnation, "owner");
+      await input.revalidate();
+    });
+    await expect(send("user_editor", "input_shared")).rejects.toMatchObject({ code: "input_paused" });
+    control.close();
+  });
+
+  it("allows only the owner to change the input mode", async () => {
+    const { setMode, control } = setup();
+    await expect(setMode("user_editor", "owner")).rejects.toMatchObject({ code: "forbidden" });
+    await expect(setMode("user_viewer", "owner")).rejects.toMatchObject({ code: "forbidden" });
+    control.close();
+  });
+
+  it("pauses shared input while a legacy controller holds the lease", async () => {
+    const { dispatcher, send, control } = setup();
+    await dispatcher.dispatch({
+      scopeId, actorId: "user_editor_b", connectionId: "connection_user_editor_b",
+      action: { type: "acquire", clientRequestId: requestId, incarnation, connectionId: "connection_user_editor_b" },
+    });
+    await expect(send("user_editor", "input_shared")).rejects.toMatchObject({ code: "input_paused" });
+    await expect(send("user_editor_b", "input_shared")).resolves.toMatchObject({ action: "accepted" });
+    control.close();
+  });
+});
+
+describe("TeamTerminalInputModes", () => {
+  it("defaults to shared, forgets a scope and stays bounded", () => {
+    const modes = new TeamTerminalInputModes({ maxEntries: 2 });
+    expect(modes.get(scopeId, incarnation)).toBe("shared");
+    modes.set(scopeId, incarnation, "owner");
+    expect(modes.get(scopeId, incarnation)).toBe("owner");
+    expect(modes.get(scopeId, "terminal-ffffffffffffffffffffffffffffffff")).toBe("shared");
+    modes.set("10000000-0000-4000-8000-000000000002", incarnation, "owner");
+    modes.set("10000000-0000-4000-8000-000000000003", incarnation, "owner");
+    expect(modes.size).toBe(2);
+    expect(modes.get(scopeId, incarnation)).toBe("shared");
+    modes.clearScope("10000000-0000-4000-8000-000000000003");
+    expect(modes.size).toBe(1);
+    modes.set("10000000-0000-4000-8000-000000000002", incarnation, "shared");
+    expect(modes.size).toBe(0);
+  });
+});

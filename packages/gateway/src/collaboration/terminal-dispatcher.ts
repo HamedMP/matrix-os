@@ -1,6 +1,8 @@
 import {
+  CollaborationTeamTerminalActionSchema,
   CollaborationTerminalActionResultSchema,
-  CollaborationTerminalActionSchema,
+  type CollaborationTeamTerminalInputAction,
+  type CollaborationTeamTerminalInputMode,
   type CollaborationParticipant,
   type CollaborationTerminal,
   type CollaborationTerminalAction,
@@ -19,6 +21,7 @@ import {
 } from "./terminal-control.js";
 import { CollaborationTerminalAdapterError } from "./terminal-adapter.js";
 import { terminalControlAllowed, type TerminalTaskProfile } from "./terminal-task-profile.js";
+import type { TeamTerminalInputModes } from "./team-terminal-input-mode.js";
 
 export type CollaborationTerminalDispatcherErrorCode =
   | "invalid_request"
@@ -27,7 +30,25 @@ export type CollaborationTerminalDispatcherErrorCode =
   | "held"
   | "stale_lease"
   | "capacity"
+  | "input_paused"
   | "unavailable";
+
+/** Spec 2710: a team input frame was written; no terminal projection is built per keystroke. */
+export interface CollaborationTeamTerminalInputAccepted {
+  action: "accepted";
+  shared: true;
+}
+
+export interface CollaborationTeamTerminalInputModeChanged {
+  scopeId: string;
+  incarnation: string;
+  inputMode: CollaborationTeamTerminalInputMode;
+}
+
+export type CollaborationTerminalDispatchResult =
+  | CollaborationTerminalActionResult
+  | CollaborationTeamTerminalInputAccepted
+  | CollaborationTeamTerminalInputModeChanged;
 
 export class CollaborationTerminalDispatcherError extends Error {
   constructor(public readonly code: CollaborationTerminalDispatcherErrorCode) {
@@ -87,7 +108,14 @@ export class CollaborationTerminalDispatcher {
     resolveParticipant?(actorId: string): Promise<CollaborationParticipant>;
     /** S07 / T039: actors whose direct-session lease was lost are refused until re-admitted. */
     revocations?: { isRevoked(scopeId: string, actorId: string): boolean };
+    /** Spec 2710: shared input and the owner's take-control switch; absent means team input is unavailable. */
+    inputModes?: TeamTerminalInputModes;
   }) {}
+
+  /** The current team input mode of a bound terminal (spec 2710). */
+  inputMode(scopeId: string, incarnation: string): CollaborationTeamTerminalInputMode {
+    return this.options.inputModes?.get(scopeId, incarnation) ?? "shared";
+  }
 
   async read(context: AuthorizedCollaborationContext): Promise<CollaborationTerminal> {
     if (context.resourceKind !== "terminal" || context.capability !== "read") {
@@ -143,9 +171,9 @@ export class CollaborationTerminalDispatcher {
     actorId: string;
     connectionId: string;
     action: unknown;
-  }): Promise<CollaborationTerminalActionResult> {
+  }): Promise<CollaborationTerminalDispatchResult> {
     try {
-      const action = CollaborationTerminalActionSchema.parse(input.action);
+      const action = CollaborationTeamTerminalActionSchema.parse(input.action);
       assertConnection(action, input.connectionId);
       const context = await this.options.authority.authorize({
         scopeId: input.scopeId,
@@ -183,11 +211,67 @@ export class CollaborationTerminalDispatcher {
         role: context.role,
         connectionId: input.connectionId,
       };
+      if (action.type === "input_mode") return this.setInputMode(identity, action.mode);
+      if (action.type === "input_shared" || action.type === "paste_shared") return await this.applySharedInput(action, identity, terminal);
       const result = await this.apply(action, identity, terminal);
       return CollaborationTerminalActionResultSchema.parse(result);
     } catch (error: unknown) {
       throw mapDispatcherError(error);
     }
+  }
+
+  private setInputMode(identity: TerminalControlIdentity, mode: CollaborationTeamTerminalInputMode): CollaborationTeamTerminalInputModeChanged {
+    if (identity.role !== "owner" || !this.options.inputModes) throw new CollaborationTerminalDispatcherError("forbidden");
+    this.options.inputModes.set(identity.scopeId, identity.incarnation, mode);
+    return { scopeId: identity.scopeId, incarnation: identity.incarnation, inputMode: mode };
+  }
+
+  /**
+   * Spec 2710 shared input: no lease; every frame re-checks role, revocation,
+   * the owner's input mode and any legacy controller, once before and once
+   * immediately before the write.
+   */
+  private async applySharedInput(
+    action: CollaborationTeamTerminalInputAction,
+    identity: TerminalControlIdentity,
+    metadata: CollaborationTerminalMetadata,
+  ): Promise<CollaborationTeamTerminalInputAccepted> {
+    if (!this.options.inputModes) throw new CollaborationTerminalDispatcherError("unavailable");
+    const assertMayType = async () => {
+      const context = await this.options.authority.authorize({
+        scopeId: identity.scopeId, actorId: identity.actorId, action: "control_execution",
+      });
+      if (context.actorId !== identity.actorId || context.scopeId !== identity.scopeId || context.resourceKind !== "terminal") {
+        throw new CollaborationTerminalDispatcherError("forbidden");
+      }
+      if (this.options.revocations?.isRevoked(identity.scopeId, identity.actorId)) {
+        throw new CollaborationTerminalDispatcherError("forbidden");
+      }
+      if (context.role === "owner") return;
+      if (!terminalControlAllowed({
+        role: context.role,
+        policy: { taskProfile: metadata.taskProfile ?? "host_shell", contributorControl: metadata.contributorControl === true },
+      })) throw new CollaborationTerminalDispatcherError("forbidden");
+      if (this.options.inputModes!.get(identity.scopeId, identity.incarnation) === "owner") {
+        throw new CollaborationTerminalDispatcherError("input_paused");
+      }
+      const lease = this.options.control.current(identity.scopeId, identity.terminalId, identity.incarnation);
+      if (lease && lease.actorId !== identity.actorId) throw new CollaborationTerminalDispatcherError("input_paused");
+    };
+    await assertMayType();
+    const runtimeInput: TerminalRuntimeAction & { data: string } = {
+      scopeId: identity.scopeId,
+      terminalId: identity.terminalId,
+      incarnation: identity.incarnation,
+      actorId: identity.actorId,
+      connectionId: identity.connectionId,
+      leaseEpoch: 0,
+      data: action.data,
+      revalidate: assertMayType,
+    };
+    if (action.type === "input_shared") await this.options.terminal.input(runtimeInput);
+    else await this.options.terminal.paste(runtimeInput);
+    return { action: "accepted", shared: true };
   }
 
   private async apply(
@@ -295,7 +379,7 @@ export class CollaborationTerminalDispatcher {
   }
 }
 
-function assertConnection(action: CollaborationTerminalAction, connectionId: string): void {
+function assertConnection(action: { connectionId?: string } | object, connectionId: string): void {
   if ("connectionId" in action && action.connectionId !== connectionId) {
     throw new CollaborationTerminalDispatcherError("stale_lease");
   }
