@@ -110,9 +110,9 @@ it("runs Matrix AI setup with zero tools, fresh ephemeral session, RO root and u
   const orchestrator = new CanonicalChatOrchestrator({ repository, catalog, adapters: new CanonicalChatProviderRegistry([runtime.adapter]), executionRoots: roots });
   cleanup.push(async () => { await orchestrator.close(); await runtime.close(); });
   current = await advance(current, { type: "generate", selection });
-  const generation = await generateProjectSetup({ repository, orchestrator, catalog }, principal, owner, current.draft!, selection, "req_generate");
+  const generation = await generateProjectSetup({ repository, orchestrator, catalog }, principal, owner, current.draft!, selection, "req_generate", resolved.fingerprint);
   expect(generation.status).toBe("running"); await orchestrator.drain();
-  const generated = await syncProjectSetupGeneration(repository, owner, { ...current.draft!, generation });
+  const generated = await syncProjectSetupGeneration(repository, owner, { ...current.draft!, generation }, resolved.fingerprint);
   expect(generated.generation?.status).toBe("completed"); expect(generated.proposals[0]?.content).toContain("relevant checks");
   expect(specs[0]?.capabilities).toEqual([]); expect(contexts[0]?.tools ?? []).toEqual([]);
   expect(JSON.stringify(contexts[0])).not.toContain("PRIVATE_BROADER_SESSION_CANARY");
