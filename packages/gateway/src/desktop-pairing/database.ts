@@ -17,12 +17,16 @@ export interface DesktopPairingDatabase {
   };
 }
 
-/** A paired desktop's own report: name, system, and whether it can take screenshots (spec 2716). */
-export interface DesktopPairingDeviceReport {
-  name: string;
+/** What a paired desktop's own report says about its system (spec 2716). */
+export interface DesktopPairingDeviceSystem {
   platform: "darwin" | "linux" | "win32";
   arch: "x64" | "arm64";
   screenshot: boolean;
+}
+/** A paired desktop's own report: its name, and its system once it reports one (spec 2716). */
+export interface DesktopPairingDeviceReport {
+  name: string;
+  system?: DesktopPairingDeviceSystem | null;
 }
 
 // Pair and disconnect move the revision; a new pairing never inherits the old device's report.
@@ -131,7 +135,8 @@ export class DesktopPairingRepository {
     if (!row) return null;
     const { device_name: name, device_platform: platform, device_arch: arch, device_screenshot: screenshot } = row;
     return {
-      report: name && platform && arch && screenshot !== null ? { name, platform, arch, screenshot } : null,
+      name,
+      system: platform && arch && screenshot !== null ? { platform, arch, screenshot } : null,
       lastSeenAt: row.last_seen_at ? new Date(row.last_seen_at) : null,
     };
   }
@@ -140,8 +145,8 @@ export class DesktopPairingRepository {
   async describe(deviceId: string, revision: number, report: DesktopPairingDeviceReport, at: Date): Promise<boolean> {
     const row = await this.bounded(tx => tx.updateTable("desktop_pairings")
       .set({
-        device_name: report.name, device_platform: report.platform, device_arch: report.arch,
-        device_screenshot: report.screenshot, last_seen_at: at,
+        device_name: report.name, device_platform: report.system?.platform ?? null, device_arch: report.system?.arch ?? null,
+        device_screenshot: report.system?.screenshot ?? null, last_seen_at: at,
       })
       .where("owner_id", "=", this.scope.ownerId)
       .where("machine_id", "=", this.scope.machineId)

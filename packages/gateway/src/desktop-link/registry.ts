@@ -9,6 +9,8 @@ import type { DesktopLink } from "./link.js";
 
 export const DESKTOP_LINK_PING_MS = 15_000;
 export const DESKTOP_LINK_STALE_MS = 45_000;
+/** Heartbeats between re-reads of the pairing for live links (about once a minute). */
+const PAIRING_CHECK_SWEEPS = 4;
 
 export interface DesktopLinkRegistryOptions {
   now?: () => number;
@@ -31,8 +33,9 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
   const staleMs = options.staleMs ?? DESKTOP_LINK_STALE_MS;
   const maxLinks = options.maxLinks ?? DESKTOP_LINK_MAX_DEVICES;
   const createAdapter = options.createAdapter ?? ((open) => createHerdrAdapter({ open, callTimeoutMs: DESKTOP_LINK_CALL_TIMEOUT_MS }));
-  // Both bounded by maxLinks: a device has an adapter only while it has a link
-  // or was linked since start, and only the paired desktop links (2698).
+  // Both bounded by maxLinks: a device keeps an adapter while it is linked, or
+  // offline but still the one paired; another device linking, or a pairing
+  // change, closes the adapters of every device that is neither.
   const links = new Map<string, DesktopLink>();
   const adapters = new Map<string, HerdrAdapter>();
   let draining = false;
@@ -73,6 +76,15 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
     return links.get(deviceId) === link && !link.closed ? link : null;
   }
 
+  /** Closes the adapters of devices that are not linked now, except `keep`. */
+  function pruneAdapters(keep: string | null): void {
+    for (const [deviceId, adapter] of [...adapters]) {
+      if (deviceId === keep || links.has(deviceId)) continue;
+      adapters.delete(deviceId);
+      adapter.close();
+    }
+  }
+
   function adapterFor(deviceId: string): HerdrAdapter {
     let adapter = adapters.get(deviceId);
     if (!adapter) {
@@ -86,8 +98,25 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
     return adapter;
   }
 
+  // The newest pairing state this registry was told about: a link admitted at an
+  // older revision (its proof was checked just before a change committed) is refused.
+  let latest: { deviceId: string | null; revision: number } | null = null;
+  // Sweeps since the pairing was last re-read for live links (every PAIRING_CHECK_SWEEPS).
+  let sweepsSinceCheck = 0;
+
   function sweep(): void {
     const at = now();
+    // A missed change notice (another gateway process, a direct database change)
+    // still ends a live link within a few heartbeats.
+    sweepsSinceCheck += 1;
+    if (pairing && sweepsSinceCheck >= PAIRING_CHECK_SWEEPS) {
+      sweepsSinceCheck = 0;
+      for (const deviceId of links.keys()) {
+        current(deviceId).catch((error: unknown) => {
+          console.warn("[desktop-link] pairing check failed:", error instanceof Error ? error.name : "UnknownError");
+        });
+      }
+    }
     for (const [deviceId, link] of links) {
       if (link.closed) { links.delete(deviceId); continue; }
       if (at - link.lastSeen() > staleMs) {
@@ -107,6 +136,9 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
     admit(link: DesktopLink): boolean {
       if (draining) return false;
       const { deviceId } = link.info;
+      if (latest && (latest.revision > link.info.revision || (latest.revision === link.info.revision && latest.deviceId !== deviceId))) {
+        return false;
+      }
       const previous = links.get(deviceId);
       if (!previous) {
         for (const [id, other] of links) if (other.closed) links.delete(id);
@@ -114,6 +146,7 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
       }
       links.set(deviceId, link);
       if (previous && previous !== link) previous.close(DESKTOP_LINK_CLOSE.replaced);
+      pruneAdapters(deviceId);
       adapterFor(deviceId);
       heard(link);
       return true;
@@ -136,13 +169,18 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
      * link not admitted under exactly this device and revision ends now.
      */
     pairingChanged(state: { deviceId: string | null; revision: number }): void {
+      if (!latest || state.revision >= latest.revision) latest = { deviceId: state.deviceId, revision: state.revision };
       for (const [deviceId, link] of [...links]) {
         if (deviceId !== state.deviceId || link.info.revision !== state.revision) revoke(deviceId);
       }
+      // An offline device that is no longer the paired one keeps nothing either.
+      pruneAdapters(state.deviceId);
     },
     /** Where admitted and live links are reported (the throttled last-seen write). */
     observeSeen(listener: (link: DesktopLink) => void): void { seen = listener; },
     size: () => links.size,
+    /** True once shutdown began: new links are refused. */
+    draining: () => draining,
     /** Where the current pairing is read from (2698's owner table). */
     usePairing(read: () => Promise<{ deviceId: string | null; revision: number }>): void { pairing = read; },
     sweep,

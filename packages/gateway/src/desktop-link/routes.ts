@@ -54,10 +54,9 @@ function isPairingOwner(c: Context, ownerId: string): boolean {
 export function isDesktopLinkOwner(c: Context, ownerId: string): boolean {
   if (!hasVerifiedRuntimeBearer(c)) return false;
   const principal = getOptionalRequestPrincipal(c);
-  // The computer's own shell proxy sends the gateway token with no user named:
-  // that resolves to the configured owner, as Herdr's owner routes accept.
-  return principal?.userId === ownerId
-    && (principal.source === "jwt" || principal.source === "platform-verified" || principal.source === "configured-container");
+  // The same principals as 2698's pairing routes, so the Desktops group can remove
+  // what it lists: never the bare gateway token, which no owner session carries.
+  return principal?.userId === ownerId && (principal.source === "jwt" || principal.source === "platform-verified");
 }
 
 function ownerOnly(ownerId: string): MiddlewareHandler {
@@ -155,11 +154,10 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
     const state = await pairing.read();
     const deviceId = state.deviceId;
     const stored = deviceId ? await pairing.readReport(deviceId, state.revision) : null;
-    const report = stored?.report ?? null;
     return c.json(DesktopLinkMachineListSchema.parse({
       machines: deviceId ? [{
         deviceId,
-        name: report?.name ?? "Paired desktop",
+        name: stored?.name ?? "Paired desktop",
         revision: state.revision,
         state: registry.online(deviceId) ? "online" : "offline",
         lastSeenAt: stored?.lastSeenAt?.toISOString() ?? null,
@@ -199,6 +197,13 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
         reject(ws, DESKTOP_LINK_CLOSE.auth);
         return;
       }
+      // The pairing may have changed while the key was read: admit only at the current revision.
+      const state = await pairing.read();
+      if (!timer) return;
+      if (state.deviceId !== deviceId || state.revision !== revision) {
+        reject(ws, DESKTOP_LINK_CLOSE.removed);
+        return;
+      }
       const socket = ws.raw as { bufferedAmount?: number } | undefined;
       const admitted = createDesktopLink({
         info: { deviceId, revision, name, appVersion: client.version, os: client.os },
@@ -211,10 +216,20 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
         now,
         log,
       });
-      if (!registry.admit(admitted)) { reject(ws, DESKTOP_LINK_CLOSE.rateLimited); return; }
+      // Admission writes the report below, which counts as heard: the next last-seen write waits a minute.
+      lastWrite = { key: `${deviceId}:${revision}`, at: now() };
+      if (!registry.admit(admitted)) {
+        // Shutting down, a newer pairing, or full.
+        reject(ws, registry.draining() ? DESKTOP_LINK_CLOSE.going : DESKTOP_LINK_CLOSE.removed);
+        return;
+      }
       stop();
       link = admitted;
       admitted.send({ t: "ready" });
+      // The desktop's own name, stored for the paired device at this revision only (D3).
+      pairing.describe(deviceId, revision, { name }, new Date(now())).catch((error: unknown) => {
+        log(`device report update failed: ${error instanceof Error ? error.name : "UnknownError"}`);
+      });
     }
 
     return {

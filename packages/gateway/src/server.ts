@@ -1269,7 +1269,7 @@ export async function createGateway(config: GatewayConfig) {
       localTerminalAgentToken: () => localTerminalAgentToken?.token,
     },
   });
-  app.route("/api/desktop-pairing", await createRuntimeDesktopPairingRoutes({ ownerDatabase: kyselyInstance, onPairingChanged: (state) => desktopLinks?.pairingChanged(state) }));
+  app.route("/api/desktop-pairing", await createRuntimeDesktopPairingRoutes({ ownerDatabase: kyselyInstance, onPairingChanged: (state) => herdrViewers?.desktopLinks?.pairingChanged(state) }));
   app.route("/api/system/private-network", privateNetwork.routes);
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0

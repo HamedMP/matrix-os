@@ -131,6 +131,7 @@ function unpair(http: Awaited<ReturnType<typeof gateway>>["http"], mac: ReturnTy
 /** A desktop stand-in: dials out, proves itself, and pipes core streams to `core` when given one. */
 function dialMac(base: string, mac: ReturnType<typeof testMac>, options: {
   revision: number; headers?: Record<string, string>; core?: ReturnType<typeof createFakeHerdrCore>; proof?: (nonce: string) => unknown;
+  staleBytes?: boolean;
 }) {
   const socket = new WebSocket(`ws://${base}/ws/desktop-link`, { headers: options.headers ?? ownerHeaders() });
   const control: Array<Record<string, unknown>> = [];
@@ -155,6 +156,9 @@ function dialMac(base: string, mac: ReturnType<typeof testMac>, options: {
       const pipe = options.core.connect();
       pipe.on("data", (chunk: Buffer) => { if (stream?.id === id) socket.send(chunk); });
       pipe.on("close", () => { if (stream?.id === id) { stream = null; socket.send(JSON.stringify({ t: "end", stream: id })); } });
+      // Late bytes from an older stream, as a slow reply would arrive: the gateway must drop them.
+      if (options.staleBytes) socket.send(Buffer.from("stale reply from an older stream\n"));
+      socket.send(JSON.stringify({ t: "opened", stream: id }));
       stream = { id, pipe };
     } else if (frame.t === "close" && stream?.id === frame.stream) {
       const ending = stream;
@@ -230,6 +234,46 @@ describe("Pairing is the desktop link's admission (2698)", () => {
     await again.ready();
   });
 
+  // Fault detected (review): a disconnect that committed while the link's proof key was
+  // being read still admitted the link, since the change notice only ends admitted links.
+  it("refuses a link whose pairing changed while its proof was being checked", async () => {
+    const { http, base, registry } = await gateway();
+    const mac = testMac();
+    await pair(http, mac);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let reading = false;
+    const original = DesktopPairingRepository.prototype.readRegisteredKey;
+    const spy = vi.spyOn(DesktopPairingRepository.prototype, "readRegisteredKey").mockImplementation(async function (this: DesktopPairingRepository, ...args) {
+      const key = await original.apply(this, args);
+      reading = true;
+      await gate;
+      return key;
+    });
+    const link = dialMac(base, mac, { revision: 1 });
+    await link.until(() => reading);
+    expect((await unpair(http, mac, 1)).status).toBe(200);
+    release();
+    await link.closed();
+    expect(link.closeCode()).toBe(DESKTOP_LINK_CLOSE.removed);
+    expect(registry?.online(mac.deviceId)).toBe(false);
+    spy.mockRestore();
+  });
+
+  it("ends a live link whose pairing changed without a notice, within a few heartbeats", async () => {
+    const now = 1_000_000;
+    const registry = createDesktopLinkRegistry({ now: () => now, pingMs: 3_600_000, staleMs: 3_600_000 });
+    const { http, base } = await gateway({ registry, now: () => now });
+    const mac = testMac();
+    await pair(http, mac);
+    const link = dialMac(base, mac, { revision: 1 });
+    await link.ready();
+    await db.updateTable("desktop_pairings").set({ device_id: null, public_key: null, revision: 2 }).execute();
+    for (let beat = 0; beat < 4; beat += 1) registry.sweep();
+    await link.closed();
+    expect(link.closeCode()).toBe(DESKTOP_LINK_CLOSE.removed);
+  });
+
   it("refuses a link whose pairing changed without a notice, before its next core stream", async () => {
     const { http, base, registry } = await gateway();
     const mac = testMac();
@@ -246,13 +290,22 @@ describe("Pairing is the desktop link's admission (2698)", () => {
 });
 
 describe("Desktop link auth matrix", () => {
-  it("refuses everyone but the owner on every route, and only a signed-in desktop opens the link", async () => {
+  // Fault detected (review): the machine list took the bare gateway token, which
+  // 2698's pairing routes refuse, so a client that could list a desktop got 403 on Remove.
+  it("answers the same principals as 2698's pairing routes", async () => {
+    const { http } = await gateway();
+    const shell = { authorization: `Bearer ${SECRET}` };
+    expect((await http("/api/desktop-link/machines", {}, shell)).status).toBe(403);
+    expect((await http("/api/desktop-pairing", {}, shell)).status).toBe(403);
+    expect((await http("/api/desktop-link/machines")).status).toBe(200);
+    expect((await http("/api/desktop-pairing")).status).toBe(200);
+  });
+
+  it("refuses everyone but the owner on the machine list, and only a signed-in desktop opens the link", async () => {
     const { http, base } = await gateway();
     const mac = testMac();
     expect((await http("/api/desktop-link/machines", {}, {})).status).toBe(401);
     expect((await http("/api/desktop-link/machines", {}, ownerHeaders("org_member"))).status).toBe(403);
-    // The gateway's own runtime token with no user named is the configured owner, as for Herdr's routes.
-    expect((await http("/api/desktop-link/machines", {}, { authorization: `Bearer ${SECRET}` })).status).toBe(200);
     await pair(http, mac);
     for (const headers of [{}, ownerHeaders("org_member"), { authorization: `Bearer ${SECRET}` }]) {
       const link = dialMac(base, mac, { revision: 1, headers });
@@ -352,8 +405,25 @@ describe("Desktop link admission", () => {
   });
 });
 
-// D3 (Hamed, 2026-11-25): last seen lives on 2698's row.
-describe("The paired desktop's last seen", () => {
+// D3 (Hamed, 2026-11-25): the paired desktop's name and last seen live on 2698's row.
+describe("The paired desktop's name and last seen", () => {
+  it("stores the name for the paired device at its revision, keeps it across a restart, and clears it on disconnect and re-pair", async () => {
+    const first = await gateway();
+    const mac = testMac();
+    await pair(first.http, mac);
+    const link = dialMac(first.base, mac, { revision: 1 });
+    await link.ready();
+    await expect.poll(async () => (await listed(first.http))[0]?.name).toBe("Hamed's MacBook");
+    link.socket.terminate();
+    await link.closed();
+    // A new gateway process on the same database still knows it, offline.
+    const restarted = await gateway();
+    expect(await listed(restarted.http)).toMatchObject([{ name: "Hamed's MacBook", state: "offline", lastSeenAt: expect.any(String) }]);
+    expect((await unpair(restarted.http, mac, 1)).status).toBe(200);
+    await pair(restarted.http, mac, 2);
+    expect(await listed(restarted.http)).toEqual([{ deviceId: mac.deviceId, name: "Paired desktop", revision: 3, state: "offline", lastSeenAt: null }]);
+  });
+
   it("writes last seen on admission, then at most once a minute while the desktop stays linked", async () => {
     let now = Date.parse("2026-11-25T10:00:00.000Z");
     const registry = createDesktopLinkRegistry({ now: () => now, pingMs: 3_600_000, staleMs: 3_600_000 });
@@ -386,11 +456,25 @@ describe("The paired desktop's last seen", () => {
     expect(await listed(http)).toEqual([{ deviceId: mac.deviceId, name: "Paired desktop", revision: 4, state: "offline", lastSeenAt: null }]);
     const link = dialMac(base, mac, { revision: 4 });
     await link.ready();
-    await expect.poll(async () => (await listed(http))[0]?.lastSeenAt).not.toBeNull();
+    await expect.poll(async () => (await listed(http))[0]?.name).toBe("Hamed's MacBook");
   });
 });
 
 describe("Herdr over the Desktop link", () => {
+  it("drops desktop bytes that arrive before the desktop acknowledges the new stream", async () => {
+    const registry = createDesktopLinkRegistry({ createAdapter: (open) => createHerdrAdapter({ open }) });
+    const { http, base } = await gateway({ registry });
+    const core = createFakeHerdrCore();
+    core.add("t1", { title: "shell" });
+    const mac = testMac();
+    await pair(http, mac);
+    const link = dialMac(base, mac, { revision: 1, core, staleBytes: true });
+    await link.ready();
+    const listed = await registry.adapter(mac.deviceId)!.list();
+    expect(listed.status).toBe("ready");
+    expect(listed.sessions.map((session) => session.id)).toEqual(["t1"]);
+  });
+
   it("lists and attaches the desktop's terminals through the link, and reports the desktop gone when it drops", async () => {
     const registry = createDesktopLinkRegistry({
       createAdapter: (open) => createHerdrAdapter({ open, captureQuietMs: 5, captureMaxMs: 100 }),
@@ -399,7 +483,7 @@ describe("Herdr over the Desktop link", () => {
     const core = createFakeHerdrCore();
     core.add("t1", { title: "claude on the desktop", status: { state: "working" }, screen: "hello from darwin" });
     const mac = testMac();
-    await enrol(http, mac);
+    await pair(http, mac);
     const link = dialMac(base, mac, { revision: 1, core });
     await link.ready();
 
@@ -424,5 +508,41 @@ describe("Herdr over the Desktop link", () => {
     expect(ended).toBe("disconnected");
     expect(registry.adapter(mac.deviceId)).toBeNull();
     attachment.detach();
+  });
+});
+
+// Fault detected (review): an adapter outlived its desktop going offline, and replacing
+// that desktop with another left it open, so adapters piled up past the link cap.
+describe("Desktop link registry adapters", () => {
+  function fakeLink(deviceId: string, revision: number) {
+    let closed = false;
+    return {
+      info: { deviceId, revision } as never,
+      get closed() { return closed; },
+      lastSeen: () => Date.now(),
+      openStream: async () => { throw new Error("unused"); },
+      receiveControl: () => {}, receiveBinary: () => {}, send: () => {},
+      closedBy: () => { closed = true; },
+      close: () => { closed = true; },
+    };
+  }
+
+  it("closes the adapter of a desktop that went offline once another desktop links or the pairing moves on", () => {
+    const closedAdapters: string[] = [];
+    let made = 0;
+    const registry = createDesktopLinkRegistry({
+      maxLinks: 1,
+      createAdapter: () => { const id = `a${made++}`; return { close: () => closedAdapters.push(id) } as never; },
+    });
+    const first = fakeLink("desktop-a", 1);
+    expect(registry.admit(first as never)).toBe(true);
+    registry.closed(first as never);
+    expect(closedAdapters).toEqual([]);
+    expect(registry.admit(fakeLink("desktop-b", 2) as never)).toBe(true);
+    expect(closedAdapters).toEqual(["a0"]);
+    registry.closed(fakeLink("desktop-b", 2) as never);
+    registry.pairingChanged({ deviceId: null, revision: 3 });
+    expect(closedAdapters).toEqual(["a0", "a1"]);
+    void registry.drain();
   });
 });
