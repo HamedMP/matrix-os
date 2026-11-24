@@ -1,0 +1,157 @@
+import type { CustomerVpsConfig } from '../customer-vps-config.js';
+import type { PlatformDB } from '../db.js';
+import { appOrigin } from '../origins.js';
+import { createHostdClient, createHostdDispatcher } from './hostd-client.js';
+import { loadMetalSubstrateConfig } from './metal-config.js';
+import { createMetalHostsRepository } from './metal-hosts-repository.js';
+import { createMetalProvisioner, type MetalProvisioner } from './metal-provisioner.js';
+import { createMetalVmDeletionDrainer } from './metal-vm-deletions.js';
+import { METAL_MAINTENANCE_LOCK_KEY, runAsSingleton } from './metal-singleton.js';
+
+/**
+ * Startup composition for metal provisioning (spec 2691, ENG-520): the
+ * provisioner the free plan uses, plus the maintenance pass that fails stale
+ * provisioning rows (`reconcileStale`) and drains queued VM teardowns
+ * (`drainOnce`). Without the pass, a failed create would queue a teardown that
+ * never runs. Metal is composed only when it is enabled and fully configured.
+ */
+
+export const METAL_MAINTENANCE_INTERVAL_MS = 60_000;
+
+type Log = (event: string, fields: Record<string, unknown>) => void;
+const defaultLog: Log = (event, fields) => console.error(`[metal-runtime] ${event}`, JSON.stringify(fields));
+
+function errorCode(error: unknown): string {
+  return error instanceof Error ? error.name : 'unknown';
+}
+
+export interface MetalMaintenanceWorker {
+  stop(): void;
+  /** Resolves when the pass in flight (if any) settles. */
+  drain(): Promise<void>;
+}
+
+/**
+ * Runs `reconcileStale` then `drainOnce` now and every `intervalMs`. A tick
+ * while a pass is still running is skipped (single flight). Each step logs a
+ * failure by error name and the next step and tick still run.
+ */
+export function startMetalMaintenanceWorker(input: {
+  reconcileStale: () => Promise<unknown>;
+  drainOnce: () => Promise<unknown>;
+  intervalMs?: number;
+  /**
+   * Runs a pass only while holding a cluster-wide lock, so two worker
+   * instances (a deploy overlap) never run the same pass; resolves without
+   * running it when another instance holds the lock.
+   */
+  singleton?: (run: () => Promise<void>) => Promise<unknown>;
+  log?: Log;
+}): MetalMaintenanceWorker {
+  const log = input.log ?? defaultLog;
+  let running: Promise<void> | undefined;
+  let stopped = false;
+
+  async function step(name: string, run: () => Promise<unknown>): Promise<void> {
+    try {
+      await run();
+    } catch (error: unknown) {
+      log('maintenance_step_failed', { step: name, code: errorCode(error) });
+    }
+  }
+
+  const tick = (): void => {
+    if (stopped || running) return;
+    const run = async () => {
+      await step('reconcile_stale', input.reconcileStale);
+      if (!stopped) await step('drain_deletions', input.drainOnce);
+    };
+    const pass = (async () => {
+      if (!input.singleton) return run();
+      try {
+        await input.singleton(run);
+      } catch (error: unknown) {
+        log('maintenance_lock_failed', { code: errorCode(error) });
+      }
+    })().finally(() => {
+      if (running === pass) running = undefined;
+    });
+    running = pass;
+  };
+
+  tick();
+  const interval = setInterval(tick, input.intervalMs ?? METAL_MAINTENANCE_INTERVAL_MS);
+  interval.unref?.();
+  return {
+    stop() {
+      stopped = true;
+      clearInterval(interval);
+    },
+    drain() {
+      return running ?? Promise.resolve();
+    },
+  };
+}
+
+export interface MetalRuntime {
+  provisioner: MetalProvisioner;
+  /** Stops scheduling maintenance passes (synchronous; call first on shutdown). */
+  stop(): void;
+  /** Stops the maintenance pass, waits for the one in flight, and closes hostd connections. */
+  shutdown(): Promise<void>;
+}
+
+export function createConfiguredMetalRuntime(input: {
+  db: PlatformDB;
+  env: NodeJS.ProcessEnv;
+  customerVps: { config: CustomerVpsConfig; cloudInitTemplate?: string } | undefined;
+  backgroundWorkersEnabled: boolean;
+  log?: Log;
+}): MetalRuntime | undefined {
+  const log = input.log ?? defaultLog;
+  const metal = loadMetalSubstrateConfig(input.env);
+  if (!metal.enabled) return undefined;
+  if (!input.customerVps) {
+    // Metal guests render host config from the customer VPS settings (bundle channel, registration URL).
+    log('metal_provisioning_unconfigured', { missing: 'customer_vps_config' });
+    return undefined;
+  }
+  const dispatcher = createHostdDispatcher(metal.caPem);
+  const hosts = createMetalHostsRepository(input.db.kysely);
+  const clientFor = (host: Parameters<typeof createHostdClient>[0]) => createHostdClient(host, metal.apiToken, { dispatcher });
+  const drainer = createMetalVmDeletionDrainer({ db: input.db, hosts, clientFor });
+  const provisioner = createMetalProvisioner({
+    db: input.db,
+    hosts,
+    clientFor,
+    goldenVersion: metal.goldenVersion,
+    ...(metal.poolMaxDataPercent !== undefined ? { poolMaxDataPercent: metal.poolMaxDataPercent } : {}),
+    ...(metal.poolMaxMetadataPercent !== undefined ? { poolMaxMetadataPercent: metal.poolMaxMetadataPercent } : {}),
+    config: input.customerVps.config,
+    publicAppOrigin: appOrigin(input.env),
+    drainMachineDeletions: (machineId, signal) => drainer.drainMachine(machineId, signal),
+    ...(input.customerVps.cloudInitTemplate ? { cloudInitTemplate: input.customerVps.cloudInitTemplate } : {}),
+  });
+  const worker = input.backgroundWorkersEnabled
+    ? startMetalMaintenanceWorker({
+      reconcileStale: () => provisioner.reconcileStale(),
+      drainOnce: () => drainer.drainOnce(),
+      singleton: (run) => runAsSingleton(input.db, METAL_MAINTENANCE_LOCK_KEY, run),
+      log,
+    })
+    : undefined;
+  let closing: Promise<void> | undefined;
+  return {
+    provisioner,
+    stop() {
+      worker?.stop();
+    },
+    shutdown() {
+      return closing ??= (async () => {
+        worker?.stop();
+        await Promise.all([worker?.drain(), provisioner.drain()]);
+        await dispatcher.close();
+      })();
+    },
+  };
+}

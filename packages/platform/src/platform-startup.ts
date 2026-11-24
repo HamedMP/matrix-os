@@ -53,6 +53,9 @@ import type { PlatformApp } from './platform-app-types.js';
 import { shutdownPlatformApp } from './shutdown-platform-app.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
+import { createConfiguredMetalRuntime } from './substrates/metal-runtime.js';
+import { loadConfiguredFreeTier, type FreeTierConfig } from './free-tier/config.js';
+import { createFreeTierRuntime, type FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
 import { closeUpstreamDispatchers } from './substrates/upstream-transport.js';
 import {
   PlatformStartupConfigError,
@@ -291,6 +294,7 @@ type CreatePlatformApp = (deps: {
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   substrateRegistry?: SubstrateRegistry;
+  freeTier?: { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner };
   env?: NodeJS.ProcessEnv;
 }) => PlatformApp;
 
@@ -1193,6 +1197,16 @@ async function startPlatformServerWithCleanup(
   });
   const atsBackgroundWorker = atsDb && backgroundWorkersEnabled ? startAtsBackgroundWorker(atsDb, appEnv) : undefined;
   registerCustomMcpStartupCleanup(async () => { await atsBackgroundWorker?.shutdown(); });
+  // Metal provisioning (spec 2691): free signup's provisioner and the stale-row and teardown maintenance pass.
+  const metalRuntime = createConfiguredMetalRuntime({
+    db, env: appEnv, backgroundWorkersEnabled,
+    customerVps: customerVpsDependencies
+      ? { config: customerVpsDependencies.config, cloudInitTemplate: customerVpsDependencies.cloudInitTemplate }
+      : undefined,
+  });
+  registerCustomMcpStartupCleanup(async () => { await metalRuntime?.shutdown(); });
+  // Read once at startup.
+  const freeTier = createFreeTierRuntime({ db, config: loadConfiguredFreeTier(process.env), metal: metalRuntime?.provisioner });
   const app = createPlatformApp({
     accountDeletion,
     db,
@@ -1232,6 +1246,7 @@ async function startPlatformServerWithCleanup(
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
     assertSitesStorageReady: sitesStorageGate?.assertReady,
     substrateRegistry,
+    freeTier,
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({
@@ -1260,6 +1275,7 @@ async function startPlatformServerWithCleanup(
     customerVpsReconciliationWorker?.stop();
     previewPairRuntime?.stop();
     managedFeatureReconciliationWorker?.stop();
+    metalRuntime?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
     if (previewDriveSweepInterval) clearInterval(previewDriveSweepInterval);
@@ -1276,6 +1292,11 @@ async function startPlatformServerWithCleanup(
         console.error('[platform] HTTP server close failed:', err.message);
       }
       (async () => {
+        // Started first so a rejected step below cannot skip draining the metal maintenance pass.
+        const metalShutdown = metalRuntime?.shutdown().catch((metalErr: unknown) => {
+          exitCode = 1;
+          console.error('[platform] Metal runtime shutdown failed:', metalErr instanceof Error ? metalErr.name : 'unknown');
+        });
         await accountDeletion?.drain();
         accountDeletion?.close();
         await atsBackgroundWorker?.shutdown();
@@ -1283,6 +1304,8 @@ async function startPlatformServerWithCleanup(
         await previewPairRuntime?.close();
         await managedFeatureReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
+        // Drain the metal maintenance pass (DB writes, hostd deletes) before the pool closes.
+        await metalShutdown;
         await Promise.allSettled([
           stopGooglePurchaseWorker(),
           collaboration?.shutdown(),
