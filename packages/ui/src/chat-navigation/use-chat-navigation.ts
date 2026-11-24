@@ -12,6 +12,8 @@ type Entry = {
     dispose(): void;
   };
   source?: Source;
+  /** A trailing read cancelled with its subscription; the next one reads at once. */
+  refreshPending?: boolean;
 };
 /**
  * One send emits a burst of Chat events (accepted, claimed, updated, completed).
@@ -58,10 +60,17 @@ function connect(entry: Entry) {
   });
   entry.subscription = subscription ? {
     dispose() {
+      // Keep the burst's read owed: the replacement subscription does not
+      // replay the event and ensure() may reuse the older snapshot.
+      if (timer !== undefined) entry.refreshPending = true;
       cancel();
       subscription.dispose();
     },
   } : undefined;
+  if (subscription && entry.refreshPending) {
+    entry.refreshPending = false;
+    void entry.store.refresh();
+  }
 }
 const stores = new Map<string, Entry>(); // max three scopes; unmounted least-recent entry evicted
 // Render-time candidates share identity without replacing/disconnecting the

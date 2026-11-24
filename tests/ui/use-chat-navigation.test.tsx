@@ -189,3 +189,22 @@ it('coalesces a burst of Chat events into one trailing navigation read', async (
     vi.useRealTimers();
   }
 });
+
+it('keeps a pending trailing navigation read when the event source changes mid-burst', async () => {
+  const load = vi.fn(async () => empty);
+  let emit!: (event: unknown) => void;
+  const source = () => ({ subscribe: (listener: typeof emit) => { emit = listener; return { dispose() {} }; } });
+  const first = source();
+  const second = source();
+  const hook = renderHook(({ eventSource }) => useChatNavigation({ scope: 'source-switch', load, eventSource }), { initialProps: { eventSource: first } });
+  await waitFor(() => expect(hook.result.current.fresh).toBe(true));
+  vi.useFakeTimers();
+  try {
+    await act(async () => { emit({ type: 'chat.changed', chatId: 'chat_one', cursor: 1, eventType: 'chat.updated' }); });
+    hook.rerender({ eventSource: second });
+    await act(async () => { await vi.advanceTimersByTimeAsync(CHAT_NAVIGATION_EVENT_COALESCE_MS); });
+    expect(load).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
