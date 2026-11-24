@@ -94,7 +94,9 @@ for await(const line of createInterface({input:process.stdin})){
   const control=createCodexControlClient({homePath:home});
   if(mode==='restricted'){
    await waitFor(async()=> (await readTrace()).some(x=>x.event==='turn'));
-   const rows=await readTrace();expect(rows[1].params.config['mcp_servers.matrix_shared_browser']).toEqual({command:'/opt/matrix/runtime/node/bin/node',args:['/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js'],enabled:false});expect(calls).toEqual([]);return;
+   const rows=await readTrace();
+   expect(rows[1].params.developerInstructions).not.toContain("mcp__matrix_shared_browser__shared_browser");
+   expect(rows[1].params.config['mcp_servers.matrix_shared_browser']).toEqual({command:'/opt/matrix/runtime/node/bin/node',args:['/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js'],enabled:false});expect(calls).toEqual([]);return;
   }
   await new Promise(r=>setTimeout(r,100));expect(await readTrace()).toEqual([]);
   if(mode==='catalog_failed'){
@@ -108,7 +110,14 @@ for await(const line of createInterface({input:process.stdin})){
   await waitFor(async()=> (await readTrace()).filter(x=>x.event==='turn').length===2);
   const rows=await readTrace();expect(rows.map(x=>x.event)).toEqual(['spawn','thread/start','turn','closed','spawn','thread/resume','turn']);
   expect(rows[3].pid).toBe(rows[0].pid);expect(rows[4].pid).not.toBe(rows[0].pid);
-  expect(rows[5].params.threadId).toBe('native-browser-thread');expect(calls).toEqual(['Bearer '+'a'.repeat(43),'Bearer '+'b'.repeat(43)]);
+  expect(rows[5].params.threadId).toBe('native-browser-thread');
+  for (const { params } of [rows[1], rows[5]]) {
+   const browserPointer = params.developerInstructions.split("\n\n").at(-1) ?? "";
+   expect(Buffer.byteLength(browserPointer)).toBeLessThan(180);
+   expect(browserPointer).toContain("mcp__matrix_shared_browser__shared_browser");
+   expect(browserPointer).toContain("status");
+  }
+  expect(calls).toEqual(['Bearer '+'a'.repeat(43),'Bearer '+'b'.repeat(43)]);
   await control.submitTurn({sessionId:'sess_browser_native',turnId:'turn_browser_restricted',prompt:'Restricted synthetic',modelOptions:[]});
   await waitFor(async()=> (await readTrace()).filter(x=>x.event==='turn').length===3);
   const restrictedRows=await readTrace();expect(restrictedRows.at(-2).params.config['mcp_servers.matrix_shared_browser']).toEqual({command:'/opt/matrix/runtime/node/bin/node',args:['/opt/matrix/app/packages/integrations-mcp/dist/shared-browser-cli.js'],enabled:false});expect(calls).toHaveLength(2);
