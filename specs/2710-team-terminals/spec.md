@@ -355,6 +355,10 @@ into those same objects:
   `terminalAudience` service;
 - the `/ws/terminal/events` publisher receives a typed `onCollaborationChanged`
   callback from the registry through dependency injection, with no `globalThis`.
+- the Electron Terminal window session signs only platform `/api/collaboration/*`
+  and `/api/organizations/*` requests with the account token (in the trusted
+  core). Every terminal and computer request keeps its computer-scoped
+  bearer, and the renderer never holds either token.
 
 The shutdown order is: drain collaborator sockets, stop timers, then close the
 DB pools that the collaboration owner created.
@@ -417,6 +421,10 @@ connection store (2706 rule).
 | 4 | Desktop owner | `desktop/.../terminal-window/` (new `share/` folder), main-process IPC | Share dialog, shared badge, presence strip, take control, audience management |
 | 5 | Desktop member + docs | `desktop/.../terminal-window/` (new `team/` folder), `packages/ui` decorations helper, `docs/` | Team section, shared pane, read-only UX, gutter marks; user docs |
 | 6 | Share a whole computer | gateway computer scope + desktop | Members see every tab on the computer and editors can open tabs; same roles, revocation and caps |
+
+Public documentation ships as a separate `FinnaAI/matrix-os-site` PR under
+`content/docs/` (a "Team terminals" guide: sharing, roles, take control,
+stop sharing, and the full-shell warning), linked from layer 5 and ENG-570.
 
 Every layer stays under 3000 additions and 50 files.
 `TerminalWindowSidebar.tsx` (317 LOC) and `use-terminal-window.ts` (450 LOC)
