@@ -159,13 +159,17 @@ it, for VPS and owned computers alike.
 
 ### Mac-side guard (`desktop/src/main/mac-link/guard.ts`)
 
-The Mac never trusts the computer beyond "may run terminals". The guard
-decodes every frame from the gateway with `HcFrameDecoder` and, on channel 0,
-parses JSON-RPC and forwards only:
+The Mac never trusts the computer beyond "may run terminals". Each core
+stream gets a fresh guard. herdr-core starts unframed: the client's first
+message is one newline-terminated JSON-RPC `hello`. The guard therefore reads
+that line first (at most 64 KiB, must be `{"method":"hello"}` with
+`framed: true`, nothing else is forwarded until it is), passes it to the core,
+and only then switches to `HcFrameDecoder` for the framed bytes that follow. On
+channel 0 it parses JSON-RPC and forwards only:
 
 | Allowed method | Extra checks |
 | --- | --- |
-| `hello` | first frame only, `framed: true` |
+| `hello` | only as the stream's first, unframed line, `framed: true` |
 | `terminal.list`, `terminal.get`, `terminal.read`, `terminal.wait`, `events.subscribe` | no `on`; no `terminal` address containing `/` |
 | `terminal.run` | no `on`; `cwd` resolves (realpath) inside the macOS user's home; no `env` beyond an allowlist (`TERM`, `COLORTERM`, `LANG`, `LC_*`); `argv` ≤ 64 entries, each ≤ 4 KiB; label `matrix.from` forced to the enrolled computer name |
 | `terminal.attach`, `terminal.send`, `terminal.keys`, `terminal.interrupt`, `terminal.kill`, `terminal.rm`, `terminal.label` | no `/` in the address; `terminal.label` may not change `matrix.from` |
@@ -173,7 +177,7 @@ parses JSON-RPC and forwards only:
 
 Everything else is refused with a JSON-RPC `denied` error, without reaching the
 core: `machine.*` (including `machine.exec`), `file.*`, `doc.*`, `server.*`,
-unknown methods, a second `hello`, oversized requests (channel 0 payload
+unknown methods, a framed `hello` (a stream handshakes once), oversized requests (channel 0 payload
 > 256 KiB), or malformed JSON (which closes the link). Stream frames on other
 channels pass through; the core already rejects channels it did not open.
 Calls the Mac core makes back to the computer (a child reporting to a parent on
@@ -337,11 +341,12 @@ running on the Mac keep running; only the computer's access ends.
 | Mac sleeps / network drops | Both ends miss pongs; link closed after 45 s. Gateway marks offline with `last_seen_at`; viewers show reconnecting. Electron reconnects on `powerMonitor` `resume` and `online` immediately, else 1 s → 30 s backoff with jitter |
 | Cloudflare or proxy idle cut | 15 s pings stay under the 100 s idle limit |
 | Gateway restarts | Links drop; Electron reconnects with backoff; no state lost (Postgres rows) |
-| Mac core restarts or is upgraded | Guard reconnects to the socket once; the gateway handshake re-runs over the same link; unsupported version → `mac_unsupported` on the computer, "update Matrix OS" on the Mac |
+| Mac core restarts or is upgraded | The Mac's core socket closes; the Mac sends `end` for that stream. The gateway's `HcConnection` for it ends (pending calls fail, attachments report `disconnected`). The adapter opens a new stream: a fresh core connection, a fresh guard and a fresh handshake, on the same WebSocket. Unsupported version → `mac_unsupported` on the computer, "update Matrix OS" on the Mac |
 | Two links for one device | Newer admitted link wins; older closed `4409` |
 | Enrol race (two tabs, two clicks) | Revision-fenced statement; loser gets `conflict` and re-reads |
 | Lost enrol reply | Electron re-reads `GET /api/mac-link/machines`-equivalent status before retrying |
-| Slow viewer | herdr-core credit flow control stalls only that channel; WS `bufferedAmount` > 8 MiB on any side closes that viewer, not the link |
+| Slow viewer | herdr-core credit flow control stalls only that viewer's channel (credit returns only as the viewer's own socket drains, as in 2701's `herdr/ws.ts`); a browser viewer socket over its cap is closed alone |
+| Slow or stuck link | The link's own WebSocket queue (shared by every channel) over 8 MiB on either end closes the whole link (`1008`); the Mac reconnects with backoff and viewers re-attach. Credit flow control keeps a healthy link far below this |
 | Malformed or denied frames | Denied calls get errors; malformed JSON or a frame > cap closes the link (`1008`) |
 | Partial enrol (row written, link never opens) | Row shows offline; harmless; removable |
 
@@ -388,7 +393,7 @@ their link. No temp files.
 5. Sleep the Mac 2 minutes: computer shows offline; on wake the viewer
    re-attaches with history within 5 s of network.
 6. With a forged gateway (test harness), `machine.exec`, `file.read`, any `on`
-   call, `cwd` outside home and a second `hello` are all refused by the Mac
+   call, `cwd` outside home and a framed `hello` are all refused by the Mac
    guard against the real pinned herdr-core.
 7. An org member or collaborator principal gets `403` on every `mac-link`
    route and cannot open `/ws/mac-link/terminal`.
@@ -424,7 +429,7 @@ their link. No temp files.
 | 3 | Electron: device keys, guard, `MacLinkService` (reconnect, sleep, toggle, menu, IPC) | desktop |
 | 4 | Gateway: Mac terminal routes, browser attach WS, verbs/CLI/kernel `--machine` | gateway, sync-client, kernel |
 | 5 | Surfaces: shared Machines group (packages/ui), Web Desktop/Canvas Terminal app, Electron Terminal window, Mac-side header and confirmation | ui, shell, desktop |
-| 6 | Docs and live qualification fixes | docs, fixes |
+| 6 | Live qualification fixes, repo docs; plus a separate public documentation PR in `FinnaAI/matrix-os-site` under `content/docs/` (enable, switch off, remove) | docs, fixes, site |
 
 Layer 2 needs `packages/herdr-core-client` (#3527). If it has not merged when
 layer 2 starts, the stack bases on it or waits; it does not copy the client.
