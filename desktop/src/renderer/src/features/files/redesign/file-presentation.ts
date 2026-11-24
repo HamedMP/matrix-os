@@ -7,7 +7,8 @@ import { kindForEntry, type FileKind } from "../file-kind";
 export type TileTone = "neutral" | "info" | "warning" | "destructive";
 export type FolderAccess = "own" | "shared" | "managed";
 
-const NAMED_KINDS: Record<string, string> = {
+// A Map, so extensions like "__proto__" or "constructor" never resolve to inherited members.
+const NAMED_KINDS = new Map<string, string>(Object.entries({
   md: "Markdown",
   mdx: "MDX",
   txt: "Text",
@@ -29,7 +30,7 @@ const NAMED_KINDS: Record<string, string> = {
   gif: "GIF image",
   svg: "SVG image",
   webp: "WebP image",
-};
+}));
 
 export function extensionOf(name: string): string {
   const dot = name.lastIndexOf(".");
@@ -41,7 +42,7 @@ export function kindLabel(entry: { name: string; type: "file" | "directory" }): 
   if (entry.type === "directory") return "Folder";
   const extension = extensionOf(entry.name);
   if (!extension) return "File";
-  return NAMED_KINDS[extension] ?? extension.toUpperCase();
+  return NAMED_KINDS.get(extension) ?? extension.toUpperCase();
 }
 
 /** PDF coral, archives gold, JSON and code info, everything else neutral. */

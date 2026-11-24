@@ -1,5 +1,5 @@
 import { Folder, Plus, X } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Icon, IconButton, pillTabClass, rovingIndex } from "../../../design/ds";
 import { cn } from "../../../lib/cn";
 
@@ -25,8 +25,17 @@ export function FolderTabs({
   onClose: (id: string) => void;
   onNewTab: () => void;
 }) {
-  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  const refs = useRef(new Map<string, HTMLButtonElement>());
+  // Closing the focused tab removes its button; focus moves to the neighbour once it renders.
+  const pendingFocus = useRef<string | null>(null);
   const closable = tabs.length > 1;
+
+  useEffect(() => {
+    const id = pendingFocus.current;
+    if (id === null) return;
+    pendingFocus.current = null;
+    refs.current.get(id)?.focus();
+  }, [tabs]);
   return (
     <div className="flex min-w-0 items-center gap-1">
       <div role="tablist" aria-label="Open folders" className="flex min-w-0 items-center gap-1 overflow-x-auto">
@@ -35,7 +44,10 @@ export function FolderTabs({
           return (
             <div key={tab.id} className={cn(pillTabClass(active), "max-w-48 shrink-0 pr-1 pl-2.5")}>
               <button
-                ref={(el) => { refs.current[index] = el; }}
+                ref={(el) => {
+                  if (el) refs.current.set(tab.id, el);
+                  else refs.current.delete(tab.id);
+                }}
                 type="button"
                 role="tab"
                 aria-selected={active}
@@ -44,6 +56,7 @@ export function FolderTabs({
                 onKeyDown={(event) => {
                   if ((event.key === "Delete" || event.key === "Backspace") && closable) {
                     event.preventDefault();
+                    pendingFocus.current = (tabs[index - 1] ?? tabs[index + 1])?.id ?? null;
                     onClose(tab.id);
                     return;
                   }
@@ -51,7 +64,7 @@ export function FolderTabs({
                   if (next === null) return;
                   event.preventDefault();
                   onSelect(tabs[next]!.id);
-                  refs.current[next]?.focus();
+                  refs.current.get(tabs[next]!.id)?.focus();
                 }}
                 className="ds-focus flex min-w-0 items-center gap-1.5 rounded-sm outline-none"
               >

@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Folder, Trash2 } from "lucide-react";
 import {
@@ -92,6 +92,12 @@ describe("Files presentation", () => {
     expect(kindLabel({ name: "bundle.zip", type: "file" })).toBe("ZIP");
     expect(kindLabel({ name: "Makefile", type: "file" })).toBe("File");
     expect(kindLabel({ name: "apps", type: "directory" })).toBe("Folder");
+  });
+
+  it("never returns inherited object members for unusual extensions", () => {
+    expect(kindLabel({ name: "a.__proto__", type: "file" })).toBe("__PROTO__");
+    expect(kindLabel({ name: "a.constructor", type: "file" })).toBe("CONSTRUCTOR");
+    expect(kindLabel({ name: "a.toString", type: "file" })).toBe("TOSTRING");
   });
 
   it("tints PDFs coral, archives gold, code info and the rest neutral", () => {
@@ -214,6 +220,38 @@ describe("FolderTabs", () => {
     expect(onClose).toHaveBeenCalledWith("home");
     rerender(<Tooltip.Provider><FolderTabs tabs={[tabs[0]!]} activeId="home" onSelect={onSelect} onClose={onClose} onNewTab={vi.fn()} /></Tooltip.Provider>);
     expect(screen.queryByRole("button", { name: "Close Matrix home" })).toBeNull();
+  });
+});
+
+describe("FolderTabs focus", () => {
+  function Harness() {
+    const [tabs, setTabs] = React.useState([{ id: "home", title: "Matrix home" }, { id: "projects", title: "projects" }, { id: "apps", title: "apps" }]);
+    const [active, setActive] = React.useState("projects");
+    return (
+      <Tooltip.Provider>
+        <FolderTabs
+          tabs={tabs}
+          activeId={active}
+          onSelect={setActive}
+          onClose={(id) => {
+            const index = tabs.findIndex((tab) => tab.id === id);
+            const next = tabs.filter((tab) => tab.id !== id);
+            setTabs(next);
+            if (id === active) setActive(next[Math.max(0, index - 1)]!.id);
+          }}
+          onNewTab={vi.fn()}
+        />
+      </Tooltip.Provider>
+    );
+  }
+
+  it("keeps keyboard focus in the tab strip after closing the focused tab", async () => {
+    render(<Harness />);
+    const projects = screen.getByRole("tab", { name: "projects" });
+    projects.focus();
+    fireEvent.keyDown(projects, { key: "Delete" });
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Matrix home" })));
+    expect(screen.getByRole("tab", { name: "Matrix home" }).getAttribute("aria-selected")).toBe("true");
   });
 });
 
