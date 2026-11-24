@@ -1,9 +1,28 @@
 import { z } from "zod/v4";
+import type { CanonicalChatDetailResponse } from "./canonical-chat-api.js";
 import {
   canonicalBoundedText,
   canonicalOwnerRelativePath,
   canonicalReferenceId,
+  canonicalExecutionRootProjectId,
 } from "#canonical-chat-primitives";
+
+export type CanonicalChatFileScope =
+  | { kind: "home" }
+  | { kind: "project"; projectId: string; worktreeId?: string }
+  | { kind: "unavailable" };
+
+/** Presentation scope only; every file read still requires Gateway ownership checks. */
+export function canonicalChatFileScope(detail: Pick<CanonicalChatDetailResponse, "record" | "runs"> | null): CanonicalChatFileScope {
+  if (!detail) return { kind: "unavailable" };
+  const projectId = detail.record.projectId;
+  if (!projectId) return { kind: "home" };
+  const activeRunId = detail.record.activeRun?.runId;
+  const run = activeRunId ? detail.runs.find(candidate => candidate.id === activeRunId) : detail.runs.at(-1);
+  if (activeRunId && !run) return { kind: "unavailable" };
+  if (run?.executionRoot && canonicalExecutionRootProjectId(run.executionRoot) !== projectId) return { kind: "unavailable" };
+  return { kind: "project", projectId, ...(run?.executionRoot?.kind === "worktree" ? { worktreeId: run.executionRoot.worktreeId } : {}) };
+}
 
 const MimeTypeSchema = z.string()
   .min(1)

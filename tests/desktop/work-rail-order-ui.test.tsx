@@ -73,12 +73,12 @@ it("supports manual keyboard and drag reorder while rejecting other groups",()=>
     <WorkRailOrderItem id="c" kind="chat" group="working"><button>C</button></WorkRailOrderItem>
   </nav></WorkRailOrderContext.Provider>);
   fireEvent.keyDown(screen.getByRole("button",{name:"B"}),{key:"ArrowUp",altKey:true});
-  expect(move).toHaveBeenLastCalledWith("chat","chat_b","chat_a");
+  expect(move).toHaveBeenLastCalledWith("chat","chat_b","chat_a",["chat_a","chat_b"]);
   const data = new Map<string,string>();
   const transfer = {effectAllowed:"",dropEffect:"",types:["application/x-matrix-chat-rail"],setData:(type:string,value:string)=>data.set(type,value),getData:(type:string)=>data.get(type) ?? ""};
   fireEvent.dragStart(screen.getByRole("button",{name:"A"}).parentElement!,{dataTransfer:transfer});
   fireEvent.drop(screen.getByRole("button",{name:"B"}).parentElement!,{dataTransfer:transfer});
-  expect(move).toHaveBeenLastCalledWith("chat","chat_a","chat_b");
+  expect(move).toHaveBeenLastCalledWith("chat","chat_a","chat_b",["chat_a","chat_b"]);
   fireEvent.drop(screen.getByRole("button",{name:"C"}).parentElement!,{dataTransfer:transfer});
   expect(move).toHaveBeenCalledTimes(2);
 });

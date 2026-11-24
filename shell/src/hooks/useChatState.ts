@@ -32,8 +32,12 @@ export interface ChatState {
   navigationTruncated?:boolean;
   /** Changes on every Chat change except streamed run text. */
   chatChangeRevision?:number;
+  chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
   /** The newest run start/end/wait changes, each tagged with its revision. */
   chatRunStatusChange?:import("@/hooks/useCanonicalChatState").ChatRunStatusChanges;
+  navigationPage?: import("@/lib/canonical-chat-client").CanonicalShellChatClient["navigationPage"];
+  searchConversations?: import("@/lib/canonical-chat-client").CanonicalShellChatClient["search"];
+  navigationUpdatedAt?: number;
   navigationClassifications?:readonly {chatId:string;classification:import("@matrix-os/contracts").CanonicalChatNavigationItem["classification"]}[];
   collaborationView?: ChatCollaborationView;
   openSharedChat?: (scopeId: string) => void;
@@ -60,6 +64,8 @@ export interface ChatState {
   canSteerQueuedTurns?: boolean;
   /** The open Chat's project, or the project a new Chat will be created in. */
   chatProjectId?: string;
+  /** Verified active/latest-run scope; unavailable must never fall back to main. */
+  chatFileScope?: import("@matrix-os/contracts").CanonicalChatFileScope;
   projectSkillRootAvailable?: boolean;
   /** Picks the project for a new Chat or moves the open Chat; resolves false when it was not saved. */
   setChatProject?: (projectId: string | null) => Promise<boolean>;
@@ -81,6 +87,15 @@ export interface ChatState {
   renameConversation?: (id: string, title: string) => Promise<boolean>;
   /** Permanently deletes a Chat; resolves false when the server refused it. */
   deleteConversation?: (id: string) => Promise<boolean>;
+  archiveConversation?: (id: string) => Promise<{ chatId: string; revision: number } | null>;
+  restoreConversation?: (id: string, revision: number) => Promise<boolean>;
+  listArchivedConversations?: (cursor?: string) => Promise<import("@matrix-os/contracts").CanonicalChatListResponse>;
+  archiveProjectChats?: (projectId: string) => Promise<{ archived: Array<{ chatId: string; revision: number }>; archivedCount: number; skippedCount: number } | null>;
+  restoreArchivedChats?: (chats: Array<{ chatId: string; revision: number }>) => Promise<readonly string[]>;
+  chatRowActions?: ReturnType<typeof import("@/lib/canonical-chat-client").createCanonicalChatRowActions>;
+  archiveClient?: import("@matrix-os/ui").ChatArchiveClient;
+  sideChatClient?: import("@matrix-os/ui").SideChatClient;
+  terminalSessionIds?: readonly string[];
   composerDraftRequest: { id: number; text: string; merge?: boolean } | null;
   /** `merge` keeps the owner's own text and adds the request below it. */
   requestComposerDraft: (text: string, options?: { merge?: boolean }) => void;
