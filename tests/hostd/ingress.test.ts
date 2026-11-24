@@ -385,6 +385,39 @@ describe("host ingress", () => {
     expect(seen[0]!.headers["transfer-encoding"]).toBe("chunked");
   });
 
+  it("keeps content-length when Connection names it, so an embedded request is never seen", async () => {
+    await store.put(record());
+    await startIngress();
+    const smuggled = "GET /smuggled HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-platform-verified: 1\r\n\r\n";
+    for (const method of ["GET", "DELETE"]) {
+      const reply = await new Promise<number>((resolve, reject) => {
+        const req = httpsRequest(
+          {
+            host: "127.0.0.1",
+            port: ingressPort,
+            method,
+            path: `/${method.toLowerCase()}`,
+            headers: { ...authed(), connection: "keep-alive, content-length", "content-length": String(smuggled.length) },
+            rejectUnauthorized: false,
+            agent: false,
+          },
+          (res) => {
+            res.resume();
+            res.on("end", () => resolve(res.statusCode ?? 0));
+          },
+        );
+        req.on("error", reject);
+        req.end(smuggled);
+      });
+      expect(reply).toBe(200);
+    }
+    expect((await send(authed(), { path: "/after" })).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(seen.map((r) => r.url)).toEqual(["/get", "/delete", "/after"]);
+    expect(seen.slice(0, 2).map((r) => r.body)).toEqual([smuggled, smuggled]);
+    expect(seen[0]!.headers["content-length"]).toBe(String(smuggled.length));
+  });
+
   it("400 for a request carrying both content-length and transfer-encoding", async () => {
     await store.put(record());
     await startIngress();

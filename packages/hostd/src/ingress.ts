@@ -138,7 +138,10 @@ function forwardedHeaders(req: IncomingMessage, upgrade: boolean): OutgoingHttpH
   );
   const out: OutgoingHttpHeaders = {};
   for (const [name, value] of Object.entries(req.headers as IncomingHttpHeaders)) {
-    if (value === undefined || name === HOST_AUTH_HEADER || HOP_BY_HOP.has(name) || listed.has(name)) continue;
+    // Content-Length frames the body: a client naming it in Connection must not
+    // strip it, or the body would reach the VM unframed (a smuggled request).
+    if (value === undefined || name === HOST_AUTH_HEADER || HOP_BY_HOP.has(name)) continue;
+    if (listed.has(name) && name !== "content-length") continue;
     out[name] = value;
   }
   const client = req.socket.remoteAddress ?? "";
