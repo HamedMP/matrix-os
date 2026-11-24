@@ -431,7 +431,7 @@ export function ConversationTranscript({
   beforeTurns?: ReactNode;
   renderAfterTurn?: (turnId: string) => ReactNode;
   afterTurns?: ReactNode;
-  projectSetup?: ProjectSetupTranscript & { header: ReactNode };
+  projectSetup?: ProjectSetupTranscript;
 }) {
   const routines=useRoutineMessageState();
   const [initialFinalIds] = useState(() => new Set(
@@ -458,8 +458,6 @@ export function ConversationTranscript({
     nested[index]!.push(row.occurrence);return false;
   });
   return (
-    <>
-    {projectSetup?.header}
     <Conversation>
       <ConversationContent className={projectSetup ? `${PROJECT_SETUP_COLUMN_CLASS} justify-start gap-4 py-4 sm:px-4 lg:px-4` : "justify-end pt-8 sm:pt-12"}>
         {beforeTurns}
@@ -482,11 +480,12 @@ export function ConversationTranscript({
           requestIds={visibleTurns.flatMap(({ visibility }) => visibility.pendingRequestIds)}/>
         <RoutineMessageReadNotice/>
         {projectSetup?.controls && !turns.some(turn => turn.final?.id === projectSetup.messageId || turn.user?.id === projectSetup.messageId) ? (
-          <p role="status" className="text-xs text-[var(--text-secondary)]">Updating project setup…</p>
+          <p role="status" className="text-sm text-[var(--text-secondary)]">
+            {turns.length === 0 ? "Preparing the first question…" : "Updating project setup…"}
+          </p>
         ) : null}
         {afterTurns}
       </ConversationContent>
     </Conversation>
-    </>
   );
 }

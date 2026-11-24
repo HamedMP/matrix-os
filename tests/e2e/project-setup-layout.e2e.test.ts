@@ -121,3 +121,80 @@ it("keeps a visible, aligned Cancel setup button while a floating Web Chat grows
     await page.close();
   }
 }, 25_000);
+
+it("keeps the small Web setup shell in place from the first click through Chat admission", async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+  page.setDefaultTimeout(6_000);
+  const opening: ProjectSetupDraft = {
+    chatId: "chat_setup", projectId: "proj_harbor", revision: 1, step: "guidance",
+    currentQuestionMessageId: "msg_setup_question", interview: { focus: "intent", suggestions: ["Volunteer leads"] },
+    generation: { status: "completed" }, answers: { purpose: "" }, proposals: [],
+    mcp: { state: "not_requested" }, updatedAt: "2026-11-24T12:00:00Z",
+  };
+  const postArrived = Promise.withResolvers<void>();
+  const postResponse = Promise.withResolvers<void>();
+  const readArrived = Promise.withResolvers<void>();
+  const readResponse = Promise.withResolvers<void>();
+  await page.route("**/*", async route => {
+    switch (new URL(route.request().url()).pathname) {
+      case "/":
+        return route.fulfill({ contentType: "text/html", body: `<!doctype html><style>${css}</style><div id="root"></div>` });
+      case "/api/workspace/projects":
+        return route.fulfill({ json: { projects: [{ id: "proj_harbor", slug: "harbor", name: "Harbor Volunteer Scheduling" }] } });
+      case "/api/projects/proj_harbor/setup":
+        postArrived.resolve();
+        await postResponse.promise;
+        return route.fulfill({ json: { draft: opening } });
+      case "/api/chats/chat_setup/project-setup":
+        readArrived.resolve();
+        await readResponse.promise;
+        return route.fulfill({ json: { draft: opening } });
+      default:
+        return route.fulfill({ status: 404, json: {} });
+    }
+  });
+  try {
+    await page.goto("https://project-setup.test/?start");
+    await page.addScriptTag({ content: script });
+    await page.getByText("Harbor Volunteer Scheduling", { exact: true }).click();
+    await page.getByRole("button", { name: "Set up with Chat", exact: true }).click();
+    await expect.poll(() => postArrived.promise.then(() => true), { message: "setup POST received" }).toBe(true);
+    const shell = page.locator('header[aria-label="Project setup"]');
+    const steps = shell.getByRole("navigation", { name: "Project setup progress" });
+    const composer = page.locator("[data-slot=chat-composer] .prompt-card");
+    const composerInput = page.getByPlaceholder("Write your own answer…");
+    const setupComposition = async () => {
+      await shell.waitFor();
+      await composer.waitFor();
+      expect(await steps.getByRole("listitem").count()).toBe(3);
+      const current = steps.locator('[aria-current="step"]');
+      expect(await current.textContent()).toContain("Guidance");
+      expect(await current.evaluate(step => getComputedStyle(step).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+      expect(await page.getByRole("button", { name: "Cancel setup" }).isVisible()).toBe(true);
+      expect(await page.locator('[data-slot="chat-session-header"]').textContent()).toContain("Project setup");
+      return { header: (await shell.boundingBox())!, input: (await composer.boundingBox())! };
+    };
+    const compare = (before: Awaited<ReturnType<typeof setupComposition>>, after: typeof before) => {
+      for (const area of ["header", "input"] as const)
+        for (const dimension of ["x", "y", "width", "height"] as const)
+          expect(after[area][dimension]).toBeCloseTo(before[area][dimension], 0);
+    };
+    await page.getByText("Preparing the first question…", { exact: true }).waitFor();
+    expect(await composerInput.isVisible()).toBe(true);
+    const before = await setupComposition();
+    postResponse.resolve();
+    await expect.poll(() => readArrived.promise.then(() => true), { message: "setup Chat GET received" }).toBe(true);
+    expect(await page.getByRole("button", { name: "Send", exact: true }).isDisabled()).toBe(true);
+    compare(before, await setupComposition());
+    readResponse.resolve();
+    await page.getByRole("button", { name: "Load accepted Chat transcript" }).click();
+    await page.getByText("Who should see the harbor schedule?", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Volunteer leads", exact: true }).waitFor();
+    compare(before, await setupComposition());
+    expect(await page.getByText("Set up this project with Chat.", { exact: true }).count()).toBe(1);
+  } finally {
+    postResponse.resolve();
+    readResponse.resolve();
+    await page.close();
+  }
+}, 25_000);

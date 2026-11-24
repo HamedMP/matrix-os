@@ -1,7 +1,6 @@
 import { useState } from "react";
 import type { ProjectSetupController } from "./use-project-setup.js";
 import { ProjectSetupActionButton as Action, borderStyle, mutedStyle } from "./ProjectSetupAction.js";
-import { ProjectSetupProgress } from "./ProjectSetupProgress.js";
 
 export function ProjectSetupEntry({ onStart, pending = false }: { onStart: () => void; pending?: boolean }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -29,33 +28,19 @@ export function ProjectSetupEntry({ onStart, pending = false }: { onStart: () =>
   );
 }
 
-export function ProjectSetupIntroduction({
-  projectName,
-  setup,
-}: {
-  projectName: string;
-  setup: ProjectSetupController;
-}) {
-  return (
-    <div
-      className="mx-auto w-full max-w-[768px] space-y-7 px-6 py-8 text-sm leading-5"
-      data-slot="project-setup-introduction"
-    >
-      <ProjectSetupProgress projectName={projectName} agentLed />
-      {setup.pending ? <p role="status" style={mutedStyle}>Starting project setup…</p> : null}
-      {setup.error ? (
-        <div className="space-y-2">
-          <p className="text-xs" role="alert">
-            {setup.error}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <Action disabled={setup.pending} onClick={() => { void setup.start(); }}>
-              Try again
-            </Action>
-            <Action variant="ghost" onClick={setup.dismiss}>Skip for now</Action>
-          </div>
+export function ProjectSetupIntroduction({ setup }: { setup: ProjectSetupController }) {
+  if (setup.error) {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm" role="alert">{setup.error}</p>
+        <div className="flex flex-wrap gap-2">
+          <Action disabled={setup.pending} onClick={() => { void setup.start(); }}>
+            Try again
+          </Action>
+          <Action variant="ghost" onClick={setup.dismiss}>Skip for now</Action>
         </div>
-      ) : null}
-    </div>
-  );
+      </div>
+    );
+  }
+  return <p className="text-sm" role="status" style={mutedStyle}>Preparing the first question…</p>;
 }

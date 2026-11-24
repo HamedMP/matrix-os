@@ -40,4 +40,21 @@ function SetupWindow() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<SetupWindow />);
+function StartingSetupWindow() {
+  const [sessionId, setSessionId] = useState<string>();
+  const [hasTranscript, setHasTranscript] = useState(false);
+  return <>
+    <button type="button" onClick={() => setHasTranscript(true)}>Load accepted Chat transcript</button>
+    <div data-test-window style={{ width: 624, height: 540 }}>
+      <ChatApp messages={hasTranscript ? initialMessages : []} sessionId={sessionId}
+        activeConversationTitle={hasTranscript ? "Project setup" : undefined}
+        chatProjectId="proj_harbor" projectSkillRootAvailable={true} conversations={[]}
+        connected busy={false} onSubmit={() => {}} onSwitchConversation={setSessionId}
+        onNewChat={() => setSessionId(undefined)} />
+    </div>
+  </>;
+}
+
+createRoot(document.getElementById("root")!).render(
+  new URLSearchParams(window.location.search).has("start") ? <StartingSetupWindow /> : <SetupWindow />,
+);

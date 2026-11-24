@@ -45,7 +45,7 @@ export function useDesktopProjectSetup({
   live: boolean;
   selection?: CanonicalChatModelSelection | null;
   selectionLoading?: boolean;
-  openChat: (id: string) => void;
+  openChat: (id: string, title: string) => void;
   refresh: () => void;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -120,7 +120,7 @@ export function useDesktopProjectSetup({
     selection,
     onOpenChat: (id) => {
       launch?.dismiss();
-      openChat(id);
+      openChat(id, "Project setup");
     },
     onChanged: refresh,
   });
@@ -216,12 +216,13 @@ export function useDesktopProjectSetup({
     introductionVisible,
     placeholder: projectSetupAnswerPlaceholder(introductionVisible, setup.draft?.step, setup.mcpHandoff, Boolean(setup.draft?.interview)),
     note: setup.draft ? <ProjectSetupAcceptedNote draft={setup.draft} /> : null,
-    header: setup.draft ? <ProjectSetupProgress projectName={projectName} draft={setup.draft} onLeaveSetup={leaveSetup} /> : null,
+    header: introductionVisible || setup.draft ? (
+      <ProjectSetupProgress projectName={projectName} draft={setup.draft} onLeaveSetup={introductionVisible ? view.dismiss : leaveSetup} />
+    ) : null,
     controls: renderControls?.() ?? null,
     renderControls,
-    introductionContent:
-      introductionVisible ? (
-        <ProjectSetupIntroduction projectName={projectName} setup={{ ...view, pending: setup.pending || selectionLoading }} />
-      ) : null,
+    introductionContent: (
+      <ProjectSetupIntroduction setup={{ ...view, pending: setup.pending || selectionLoading }} />
+    ),
   };
 }

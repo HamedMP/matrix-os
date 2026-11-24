@@ -142,6 +142,39 @@ it("aborts generation launch and ignores its response after a project switch", a
   expect(result.current.active).toBe(false);
 });
 
+it("holds the admitted setup on its matching Chat while reading authoritative state", async () => {
+  const client = transport();
+  const admitted = { ...interviewDraft, generation: { status: "completed" } };
+  client.post.mockResolvedValue({ draft: admitted });
+  let resolveDraft!: (value: unknown) => void;
+  client.get.mockImplementationOnce(() => new Promise(resolve => { resolveDraft = resolve; }));
+  const { result, rerender } = renderHook(
+    ({ chatId }) => useProjectSetup({ client, scope: "owner:computer", projectId: "project_a", chatId, eligible: true }),
+    { initialProps: { chatId: undefined as string | undefined } },
+  );
+  await act(async () => { await result.current.start(); });
+  rerender({ chatId: "chat_setup" });
+  expect(result.current.draft).toMatchObject({ chatId: "chat_setup", revision: 1 });
+  expect(result.current.canAnswer).toBe(false);
+  await act(async () => { resolveDraft({ draft: { ...admitted, revision: 2 } }); });
+  expect(result.current.draft?.revision).toBe(2);
+  expect(result.current.canAnswer).toBe(true);
+});
+
+it("does not carry an admitted setup to a newly selected authority", async () => {
+  const client = transport();
+  client.post.mockResolvedValue({ draft: interviewDraft });
+  client.get.mockImplementationOnce(() => new Promise(() => {}));
+  const { result, rerender } = renderHook(
+    ({ scope, chatId }) => useProjectSetup({ client, scope, projectId: "project_a", chatId, eligible: true }),
+    { initialProps: { scope: "owner:computer", chatId: undefined as string | undefined } },
+  );
+  await act(async () => { await result.current.start(); });
+  rerender({ scope: "another-owner:another-computer", chatId: "chat_setup" });
+  expect(result.current.draft).toBeNull();
+  expect(result.current.canAnswer).toBe(false);
+});
+
 it("keeps the start request identity across an uncertain network retry", async () => {
   const client = transport();
   client.post.mockRejectedValueOnce(new Error("offline"));

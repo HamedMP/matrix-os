@@ -276,6 +276,10 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
   let page: Page;
   let profile: string;
   const state = setupFixture();
+  const openingArrived = Promise.withResolvers<void>();
+  const openingReleased = Promise.withResolvers<void>();
+  const chatDetailArrived = Promise.withResolvers<void>();
+  const chatDetailReleased = Promise.withResolvers<void>();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
@@ -304,7 +308,11 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     if (path === "/api/chat-navigation") return json(state.navigation());
     if (path === "/api/chats")
       return json(CanonicalChatListResponseSchema.parse({ items: state.draft ? [state.record()] : [] }));
-    if (path === `/api/chats/${chatId}`) return json(state.detail());
+    if (path === `/api/chats/${chatId}`) {
+      chatDetailArrived.resolve();
+      void chatDetailReleased.promise.then(() => { if (!res.destroyed) json(state.detail()); });
+      return;
+    }
     if (path === `/api/chats/${chatId}/read-state`) {
       req.resume();
       return json(state.record());
@@ -314,7 +322,12 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     if (path === `/api/projects/${project.id}/setup` || path === `/api/chats/${chatId}/project-setup`) {
       if (req.method === "GET") return json(ProjectSetupResponseSchema.parse({ draft: state.draft }));
       void readBody(req)
-        .then((body) => {
+        .then(async (body) => {
+          if (req.method === "POST") {
+            openingArrived.resolve();
+            await openingReleased.promise;
+          }
+          if (res.destroyed) return;
           json(req.method === "POST" ? state.start(body) : state.update(body));
           state.publish();
         })
@@ -384,6 +397,8 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
   }, 60_000);
 
   afterAll(async () => {
+    openingReleased.resolve();
+    chatDetailReleased.resolve();
     if (app) await closeElectronApp(app);
     for (const stream of state.streams) stream.end();
     state.streams.clear();
@@ -407,7 +422,32 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     expect(state.mutations).toEqual([]);
     expect(state.draft).toBeNull();
     await page.getByRole("button", { name: "Set up with Chat", exact: true }).click();
+    await openingArrived.promise;
+    const header = page.locator('header[aria-label="Project setup"]');
+    const stepProgress = header.getByRole("navigation", { name: "Project setup progress" });
+    const setupComposer = page.locator('[data-slot="shared-chat-composer"] .prompt-card');
+    const measureSetup = async () => {
+      await header.waitFor();
+      await setupComposer.waitFor();
+      expect(await stepProgress.getByRole("listitem").count()).toBe(3);
+      expect(await stepProgress.locator('[aria-current="step"]').textContent()).toContain("Guidance");
+      expect(await header.getByRole("button", { name: "Cancel setup", exact: true }).isEnabled()).toBe(true);
+      return { header: (await header.boundingBox())!, composer: (await setupComposer.boundingBox())! };
+    };
+    const compareSetup = (before: Awaited<ReturnType<typeof measureSetup>>, after: typeof before) => {
+      for (const area of ["header", "composer"] as const)
+        for (const dimension of ["x", "y", "width", "height"] as const)
+          expect(after[area][dimension]).toBeCloseTo(before[area][dimension], 0);
+    };
+    await page.getByText("Preparing the first question…", { exact: true }).waitFor();
+    const pendingLaunch = await measureSetup();
+    openingReleased.resolve();
+    await chatDetailArrived.promise;
+    expect(await page.getByRole("status", { name: "Loading chat", exact: true }).count()).toBe(0);
+    compareSetup(pendingLaunch, await measureSetup());
+    chatDetailReleased.resolve();
     await page.getByText(openingQuestion, { exact: true }).waitFor({ timeout: 8_000 });
+    compareSetup(pendingLaunch, await measureSetup());
     expect(state.draft?.chatId).toBe(chatId);
     await page.getByRole("button", { name: "Publish an illustration archive", exact: true }).waitFor();
     expect(await page.getByRole("button", { name: longOpeningChoice, exact: true }).count()).toBe(0);
@@ -425,6 +465,7 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     const question = messages.getByText(skillQuestion, { exact: true });
     const suggestion = page.getByRole("button", { name: skillSuggestion, exact: true });
     await suggestion.waitFor();
+    expect(await stepProgress.locator('[aria-current="step"]').textContent()).toContain("Skills");
     const questionBox = await question.boundingBox();
     const choiceBox = await suggestion.boundingBox();
     expect(choiceBox!.y - (questionBox!.y + questionBox!.height)).toBeLessThan(22);
@@ -433,6 +474,7 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     await messages.getByText(toolQuestion, { exact: true }).waitFor();
     expect(state.draft?.answers.skillInstructions).toBe(skillSuggestion);
     await page.getByRole("button", { name: "Connect Linear", exact: true }).click();
+    expect(await stepProgress.locator('[aria-current="step"]').textContent()).toContain("MCP");
     await page.getByRole("button", { name: "Open MCP Settings", exact: true }).click();
     const settings = page.getByRole("dialog", { name: "Settings window", exact: true });
     await settings.getByRole("heading", { name: "MCP servers", exact: true }).waitFor();

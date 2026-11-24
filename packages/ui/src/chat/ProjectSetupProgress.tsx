@@ -6,54 +6,70 @@ import { cn } from "../cn.js";
 
 export const PROJECT_SETUP_COLUMN_CLASS = "mx-auto w-full max-w-[768px] px-4 @min-[768px]/bot-chat:px-6";
 
+export const PROJECT_SETUP_COMPOSER_CLASS = `${PROJECT_SETUP_COLUMN_CLASS} shrink-0 pt-2 pb-3`;
+
 type SetupStep = ProjectSetupDraft["step"];
-type ProgressState = "current" | "incomplete" | "complete" | "skipped" | "described";
+type ProgressState = "current" | "incomplete" | "complete" | "skipped" | "described" | "pending";
 const progressLabels = ["Guidance", "Skills", "MCP"] as const;
+const progressStatusLabel = {
+  complete: "ready",
+  skipped: "skipped",
+  described: "described",
+  pending: "connection requested",
+} as const;
 
 function projectSetupProgress(draft: ProjectSetupDraft | null): ProgressState[] {
-  if (!draft || draft.step === "guidance") return ["current", "incomplete", "incomplete"];
-  const skills = draft.skill ? "complete" : draft.answers.skillInstructions ? "described" : "skipped";
-  if (draft.step === "skill" || draft.step === "skill_instructions") return ["complete", "current", "incomplete"];
-  if (draft.step === "mcp") return ["complete", skills, "current"];
-  return ["complete", skills, draft.mcp.state === "skipped" ? "skipped" : "current"];
+  if (!draft) return ["current", "incomplete", "incomplete"];
+  const focus = draft.interview?.focus;
+  const guidance = (focus === "intent" || focus === "guidance" || (!focus && draft.step === "guidance"))
+    ? "current" : draft.answers.purpose && draft.answers.guidance ? "complete" : "incomplete";
+  const skills = focus === "skill" || (!focus && ["skill", "skill_instructions"].includes(draft.step))
+    ? "current" : draft.skill ? "complete" : draft.answers.skillInstructions ? "described" : "incomplete";
+  const mcp = focus === "mcp" || (!focus && draft.step === "mcp")
+    ? "current" : draft.mcp.state === "not_requested" ? "incomplete" : draft.mcp.state;
+  return [guidance, skills, mcp];
 }
 
-export function ProjectSetupProgress({ projectName, draft = null, agentLed = Boolean(draft?.interview), onLeaveSetup }: {
+export function ProjectSetupProgress({ projectName, draft = null, onLeaveSetup }: {
   projectName: string;
   draft?: ProjectSetupDraft | null;
-  agentLed?: boolean;
   onLeaveSetup?: () => void;
 }) {
   return (
-    <header className={cn("min-w-0 space-y-3", draft && PROJECT_SETUP_COLUMN_CLASS, draft && "shrink-0")} aria-label="Project setup">
-      <div className={cn("flex min-w-0 items-center justify-between gap-2", draft && "min-h-10 border-b pb-2")} style={draft ? borderStyle : undefined}>
+    <header className={cn(PROJECT_SETUP_COLUMN_CLASS, "min-w-0 shrink-0 space-y-3")} aria-label="Project setup">
+      <div className="flex min-h-10 min-w-0 items-center justify-between gap-2 border-b pb-2" style={borderStyle}>
         <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
           <span className="truncate" title={projectName}>{projectName}</span>
           <ChevronRight aria-hidden size={12} className="shrink-0" />
           <span className="shrink-0">Project setup</span>
         </p>
-        {agentLed && draft && draft.step !== "saved" && onLeaveSetup ? (
+        {draft?.step !== "saved" && onLeaveSetup ? (
           <div className="shrink-0 whitespace-nowrap"><Action onClick={onLeaveSetup}>Cancel setup</Action></div>
         ) : null}
       </div>
-      {!agentLed ? <nav aria-label="Project setup progress">
-        <ol className="grid w-full max-w-[434px] grid-cols-3 gap-2 text-xs">
+      <nav aria-label="Project setup progress">
+        <ol className="grid w-full max-w-[434px] grid-cols-3 gap-1.5 text-xs">
           {projectSetupProgress(draft).map((state, index) => (
             <li
               key={progressLabels[index]}
               aria-current={state === "current" ? "step" : undefined}
               data-state={state}
-              className={`flex min-h-[30px] min-w-0 flex-wrap items-center gap-1.5 rounded-md px-2 py-1.5 ${state === "current" ? "bg-[var(--success-muted,var(--bg-selected))] font-medium text-[var(--success-text,var(--foreground))]" : "bg-[var(--bg-surface,var(--muted))] text-[var(--text-secondary,var(--muted-foreground))]"}`}
+              style={state === "current" ? {
+                backgroundColor: "var(--success-muted, color-mix(in srgb, var(--success, var(--success-text, var(--foreground))) 13%, transparent))",
+              } : undefined}
+              className={cn("flex min-h-[28px] min-w-0 items-center gap-1.5 rounded-md px-2 py-1",
+                state === "current"
+                  ? "font-medium text-[var(--success-text,var(--foreground))]"
+                  : "bg-[var(--bg-surface,var(--muted))] text-[var(--text-secondary,var(--muted-foreground))]")}
             >
-              {state === "complete" ? <Check aria-hidden size={12} className="text-[var(--success-text,var(--success))]" /> : state === "current" || state === "incomplete" ? <span aria-hidden>{index + 1}</span> : null}
+              {state === "complete" ? <Check aria-hidden size={12} className="shrink-0 text-[var(--success-text,var(--success))]" />
+                : <span className="shrink-0 tabular-nums" aria-hidden>{index + 1}</span>}
               <span>{progressLabels[index]}</span>
-              {state === "complete" ? <span className="sr-only">complete</span> : null}
-              {state === "skipped" ? <span>skipped</span> : null}
-              {state === "described" ? <span>to draft</span> : null}
+              {state !== "current" && state !== "incomplete" ? <span className="sr-only">{progressStatusLabel[state]}</span> : null}
             </li>
           ))}
         </ol>
-      </nav> : null}
+      </nav>
     </header>
   );
 }
@@ -79,9 +95,8 @@ export function projectSetupAnswerPlaceholder(
   agentLed = false,
 ): string | undefined {
   if (step === "saved") return undefined;
-  if (agentLed) return step === "review" ? "Tell me what to change…" : "Write your own answer…";
+  if (agentLed || introduction) return step === "review" ? "Tell me what to change…" : "Write your own answer…";
   if (mcpHandoff) return "Continue in MCP Settings or review below…";
-  if (introduction) return "Waiting for the first reply…";
   switch (step) {
     case "guidance": return "Describe how you want the AI to work…";
     case "skill":

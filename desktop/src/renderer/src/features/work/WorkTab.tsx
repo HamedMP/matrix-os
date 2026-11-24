@@ -304,7 +304,7 @@ function WorkTabContent({
     ) setDraftTerminalLaunch(null);
   }, [draftTerminalLaunch, initialChatId, initialChatTitle]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeTitleRecordRef.current = null;
     setEditingChatTitle(false);
     setRenamingChatTitle(false);
@@ -504,7 +504,7 @@ function WorkTabContent({
     }
     openGlobalDraft();
   }, [initialChatId, layout, openGlobalDraft, showChat]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!activeTitleRecordRef.current) setActiveChatTitle(initialChatTitle ?? "Chat");
   }, [initialChatId, initialChatTitle, client]);
   const applyRenamedChat = useCallback((incoming: CanonicalChatRecord) => {

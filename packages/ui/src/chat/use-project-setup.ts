@@ -45,25 +45,30 @@ function setupReplyFailed(draft: ProjectSetupDraft | null) {
 }
 
 /** Chat owns accepted setup state. This hook holds only the currently scoped view. */
+type SetupOpening = { identity: string; client: ProjectSetupTransport; draft: ProjectSetupDraft };
+
+const emptySetupState = (identity: string, opening?: SetupOpening) => ({
+  identity,
+  draft: opening?.draft ?? null,
+  introduction: false,
+  pending: Boolean(opening),
+  error: null as string | null,
+  opening: undefined as SetupOpening | undefined,
+});
+
 export function useProjectSetup(options: Options) {
   const { client, scope, projectId, chatId, eligible, allowActions = true, selection } = options;
   const identity = JSON.stringify([scope, projectId, chatId ?? "new"]);
-  const [state, setState] = useState<{
-    identity: string;
-    draft: ProjectSetupDraft | null;
-    introduction: boolean;
-    pending: boolean;
-    error: string | null;
-  }>({ identity, draft: null, introduction: false, pending: false, error: null });
+  const [state, setState] = useState(() => emptySetupState(identity));
   const [reviewMcpKey, setReviewMcpKey] = useState<string | null>(null);
   const lifetime = useRef<{ identity: string; controller: AbortController } | null>(null);
   const request = useRef<AbortController | null>(null);
   const attempt = useRef<{ identity: string; key: string; requestId: string } | null>(null);
   const actionsAllowed = useRef(eligible && allowActions);
-  const currentState =
-    state.identity === identity
-      ? state
-      : { identity, draft: null, introduction: false, pending: false, error: null };
+  const matchingOpening = useCallback((opening?: SetupOpening) =>
+    eligible && opening?.identity === identity && opening.client === client ? opening : undefined,
+  [eligible, identity, client]);
+  const currentState = state.identity === identity ? state : emptySetupState(identity, matchingOpening(state.opening));
   const stateRef = useRef(currentState);
   stateRef.current = currentState;
   const openChat = useEffectEvent((id: string) => options.onOpenChat?.(id));
@@ -77,14 +82,15 @@ export function useProjectSetup(options: Options) {
     const controller = new AbortController();
     lifetime.current = { identity, controller };
     attempt.current = null;
-    setState({ identity, draft: null, introduction: false, pending: false, error: null });
+    // Carry the scoped start response for display while the destination Chat loads.
+    setState(previous => emptySetupState(identity, matchingOpening(previous.opening)));
     return () => {
       controller.abort();
       request.current?.abort();
       request.current = null;
       lifetime.current = null;
     };
-  }, [identity, client, eligible]);
+  }, [identity, matchingOpening]);
 
   const run = useCallback(
     async (operation: (signal: AbortSignal) => Promise<unknown>, navigate = false): Promise<boolean> => {
@@ -102,16 +108,20 @@ export function useProjectSetup(options: Options) {
         if (result.draft && (result.draft.projectId !== projectId || (chatId && result.draft.chatId !== chatId)))
           throw new Error("Setup scope mismatch");
         if (navigate && !result.draft) throw new Error("Setup draft unavailable");
+        const opening = navigate && result.draft && result.draft.chatId !== chatId
+          ? { identity: JSON.stringify([scope, projectId, result.draft.chatId]), client, draft: result.draft }
+          : undefined;
         const next = {
           identity,
           draft: result.draft,
           introduction: false,
-          pending: false,
+          pending: Boolean(opening),
           error: null,
+          opening,
         };
         stateRef.current = next;
         setState(next);
-        if (navigate && result.draft && result.draft.chatId !== chatId) openChat(result.draft.chatId);
+        if (opening) openChat(opening.draft.chatId);
         changed();
         return true;
       } catch (error: unknown) {
@@ -127,7 +137,7 @@ export function useProjectSetup(options: Options) {
         if (request.current === controller) request.current = null;
       }
     },
-    [chatId, client, eligible, identity, projectId],
+    [chatId, client, eligible, identity, projectId, scope],
   );
 
   const reload = useCallback(() => {
@@ -228,10 +238,13 @@ export function useProjectSetup(options: Options) {
   const dismiss = () => {
     request.current?.abort();
     request.current = null;
-    setState((previous) => ({ ...previous, identity, introduction: false, pending: false, error: null }));
+    setState((previous) => ({ ...previous, identity, introduction: false, pending: false, error: null, opening: undefined }));
   };
   return {
-    ...currentState,
+    identity: currentState.identity,
+    draft: currentState.draft,
+    introduction: currentState.introduction,
+    error: currentState.error,
     pending: currentState.pending || !allowActions,
     eligible,
     start,
