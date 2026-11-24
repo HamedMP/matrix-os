@@ -49,6 +49,19 @@ export function createCanonicalTerminalCollaborationBridge(options: {
 }) {
   const { db, ownerId, runtime } = options;
   if (!ownerId) throw new CanonicalTerminalBridgeError();
+  // Spec 2710: collaborator writes to one tab run one at a time, so every
+  // write's final access check (role, owner control) happens after the write
+  // before it reached the terminal, not while it still waited behind it.
+  const writes = new Map<string, Promise<void>>();
+  const MAX_WRITE_CHAINS = 256;
+  const serialized = (key: string, write: () => Promise<void>): Promise<void> => {
+    const previous = writes.get(key) ?? Promise.resolve();
+    if (!writes.has(key) && writes.size >= MAX_WRITE_CHAINS) throw new CanonicalTerminalBridgeError();
+    const next = previous.catch(() => undefined).then(write);
+    const settled = next.catch(() => undefined).then(() => { if (writes.get(key) === settled) writes.delete(key); });
+    writes.set(key, settled);
+    return next;
+  };
 
   const currentTab = async (terminalId: string) => {
     const ref = parseTerminalId(terminalId);
@@ -292,18 +305,18 @@ export function createCanonicalTerminalCollaborationBridge(options: {
     runtime: {
       input: async (input: {
         terminalId: string; scopeId: string; incarnation: string; data: string; revalidate(): Promise<void>;
-      }): Promise<void> => {
+      }): Promise<void> => serialized(input.terminalId, async () => {
         const current = await boundTab(input.scopeId, input.terminalId, input.incarnation);
         await input.revalidate();
         await runtime.writeInput(current.ref, input.data, current.tabIncarnation);
-      },
+      }),
       paste: async (input: {
         terminalId: string; scopeId: string; incarnation: string; data: string; revalidate(): Promise<void>;
-      }): Promise<void> => {
+      }): Promise<void> => serialized(input.terminalId, async () => {
         const current = await boundTab(input.scopeId, input.terminalId, input.incarnation);
         await input.revalidate();
         await runtime.writeInput(current.ref, input.data, current.tabIncarnation);
-      },
+      }),
       resize: async (): Promise<void> => { throw new CanonicalTerminalBridgeError(); },
       stop: async (input: { terminalId: string; scopeId: string; incarnation: string }): Promise<void> => {
         const current = await boundTab(input.scopeId, input.terminalId, input.incarnation);

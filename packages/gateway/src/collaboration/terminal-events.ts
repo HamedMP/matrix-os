@@ -258,6 +258,27 @@ export class CollaborationTerminalEventRegistry {
     }
   }
 
+  /**
+   * Spec 2710: re-checks every live connection of one scope right after a
+   * committed membership or grant change, so a revoked member is closed at
+   * once instead of on the next output frame or heartbeat.
+   */
+  async reauthorizeScope(scopeId: string): Promise<void> {
+    for (const connection of [...this.connections.values()]) {
+      if (connection.scopeId !== scopeId) continue;
+      try {
+        const context = await this.options.authorize(connection.scopeId, connection.actorId);
+        if (context.resourceKind !== "terminal" || context.authorityGeneration !== connection.authorityGeneration) {
+          throw new CollaborationTerminalEventError("unavailable");
+        }
+      } catch (error: unknown) {
+        console.warn("[collaboration-terminal-events] scope reauthorization ended a connection", error instanceof Error ? error.name : "UnknownError");
+        this.sendBestEffort(connection, unavailableFrame(connection, this.runtimes.get(scopeId), "revoked"));
+        this.remove(connection, 1008, "Revoked");
+      }
+    }
+  }
+
   sweep(at: Date): void {
     const cutoff = at.getTime() - STALE_AFTER_MS;
     for (const connection of [...this.connections.values()]) {

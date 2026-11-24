@@ -14,7 +14,8 @@ import {
   CollaborationDirectHandshakeFrameSchema,
   CollaborationIdSchema,
   CollaborationRevisionSchema,
-  CollaborationTerminalActionSchema,
+  CollaborationTeamTerminalActionSchema,
+  isTeamTerminalInputAction,
   type CollaborationConnectionTicket,
 } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
@@ -26,6 +27,7 @@ import type { DirectTicketVerifier } from "./direct-auth.js";
 import type { DirectSessionService } from "./direct-sessions.js";
 import type { CollaborationEventRegistry } from "./events.js";
 import type { TerminalControlCoordinator } from "./terminal-control.js";
+import { handleTeamTerminalFrame, TeamInputBudget } from "./team-terminal-frames.js";
 import type { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
 import type { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 
@@ -66,6 +68,7 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
       let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
       let watchdog: ReturnType<typeof setInterval> | null = null;
       let unsubscribeEnded: (() => void) | null = null;
+      const teamInputBudget = new TeamInputBudget();
 
       const shutdownStream = (ws: SocketLike, code: number, reason: string) => {
         if (handshakeTimer) clearTimeout(handshakeTimer);
@@ -146,8 +149,19 @@ export function registerCollaborationDirectWebSocketRoutes(options: {
             }
             return;
           }
-          const action = CollaborationTerminalActionSchema.parse(parsed);
-          await options.sessions.runStreamInput(sessionId!, () => options.terminal!.dispatcher.dispatch({ scopeId, actorId: actorId!, connectionId: connectionId!, action }));
+          const action = CollaborationTeamTerminalActionSchema.parse(parsed);
+          const dispatch = () => options.sessions.runStreamInput(sessionId!, () => options.terminal!.dispatcher.dispatch({ scopeId, actorId: actorId!, connectionId: connectionId!, action }));
+          if (isTeamTerminalInputAction(action)) {
+            // Spec 2710: a refused shared input is answered, not fatal; nothing is broadcast per keystroke.
+            const outcome = await handleTeamTerminalFrame({ scopeId, action, budget: teamInputBudget, send: (value) => { ws.send(value); }, dispatch });
+            if (outcome === "close") {
+              shutdownStream(ws, 1008, "Too much input");
+              return;
+            }
+            stream.touch();
+            return;
+          }
+          await dispatch();
           await options.terminal!.registry.publishState(scopeId);
           stream.touch();
         }).catch((error: unknown) => {

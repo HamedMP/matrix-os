@@ -2,7 +2,8 @@ import {
   CollaborationClientFrameSchema,
   CollaborationIdSchema,
   CollaborationRevisionSchema,
-  CollaborationTerminalActionSchema,
+  CollaborationTeamTerminalActionSchema,
+  isTeamTerminalInputAction,
 } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import type { Context, Hono } from "hono";
@@ -12,6 +13,7 @@ import type { CollaborationActorProofVerifier } from "./actor-proof.js";
 import type { CollaborationAuthority } from "./authority.js";
 import type { TerminalControlCoordinator } from "./terminal-control.js";
 import type { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
+import { handleTeamTerminalFrame, TeamInputBudget } from "./team-terminal-frames.js";
 import type { CollaborationTerminalEventRegistry } from "./terminal-events.js";
 
 const PROOF_HEADER = "x-matrix-collaboration-proof";
@@ -49,6 +51,7 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
       let processing = Promise.resolve();
       let inFlightFrames = 0;
       const pendingFrames: string[] = [];
+      const teamInputBudget = new TeamInputBudget();
 
       const processFrame = (raw: string, ws: { send(value: string): void; close(code?: number, reason?: string): void }) => {
         // Frames settle in order; a client that sends faster than the dispatcher
@@ -67,8 +70,21 @@ export function registerCollaborationTerminalWebSocketRoute(options: {
             session.touch();
             return;
           }
-          const action = CollaborationTerminalActionSchema.parse(parsed);
-          await options.dispatcher.dispatch({ scopeId, actorId, connectionId, action });
+          const action = CollaborationTeamTerminalActionSchema.parse(parsed);
+          const currentActor = actorId;
+          const currentConnection = connectionId;
+          const dispatch = () => options.dispatcher.dispatch({ scopeId, actorId: currentActor, connectionId: currentConnection, action });
+          if (isTeamTerminalInputAction(action)) {
+            const outcome = await handleTeamTerminalFrame({ scopeId, action, budget: teamInputBudget, send: (value) => { ws.send(value); }, dispatch });
+            if (outcome === "close") {
+              sendError(ws);
+              ws.close(1008, "Too much input");
+              return;
+            }
+            session.touch();
+            return;
+          }
+          await dispatch();
           await options.registry.publishState(scopeId);
           session.touch();
         }).catch((error: unknown) => {

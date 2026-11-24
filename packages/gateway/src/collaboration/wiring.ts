@@ -74,6 +74,7 @@ import { TerminalControlCoordinator } from "./terminal-control.js";
 import { CollaborationRevocationEnforcer, ProjectAccessRevocationEnforcer } from "./revocation-enforcer.js";
 import { CollaborationTerminalDispatcher } from "./terminal-dispatcher.js";
 import { CollaborationTerminalEventRegistry } from "./terminal-events.js";
+import { TeamTerminalInputModes } from "./team-terminal-input-mode.js";
 import { registerCollaborationTerminalWebSocketRoute } from "./terminal-websocket-route.js";
 import { createProjectTransitionJournal } from "./project-transition.js";
 import { createProjectFence } from "./project-fence.js";
@@ -367,6 +368,7 @@ export async function createGatewayCollaboration(options: {
   let terminalControl: TerminalControlCoordinator | undefined;
   let terminalDispatcher: CollaborationTerminalDispatcher | undefined;
   let terminalEventRegistry: CollaborationTerminalEventRegistry | undefined;
+  let teamTerminalInputModes: TeamTerminalInputModes | undefined;
   let projectSharing: ProjectSharingService | undefined;
   let projectChatAssignments: ProjectChatAssignmentCoordinator | undefined;
   let projectTransitionCoordinator: ReturnType<typeof createProjectTransitionCoordinator> | undefined;
@@ -385,6 +387,7 @@ export async function createGatewayCollaboration(options: {
     drainScope: async (scopeId, actorId) => {
       eventRegistry.notifyScopeRevoked(scopeId, actorId);
       terminalEventRegistry?.notifyScopeRevoked(scopeId, actorId);
+      if (actorId === undefined) teamTerminalInputModes?.clearScope(scopeId);
       if (actorId === undefined) terminalControl?.invalidateScope(scopeId);
       else terminalControl?.invalidateActor(scopeId, actorId);
       if (sharedAiRuntime?.available) await sharedAiRuntime.revokeScope(scopeId, actorId);
@@ -717,12 +720,14 @@ export async function createGatewayCollaboration(options: {
             sharedAiRuntime?.available ? sharedAiRuntime.sandboxRuntimes.stopForActor(scopeId, actorId) : Promise.resolve(0),
         },
       });
+      teamTerminalInputModes = new TeamTerminalInputModes();
       terminalDispatcher = new CollaborationTerminalDispatcher({
         authority,
         terminal: terminalAdapter,
         control: terminalControl,
         resolveParticipant,
         revocations: revocationEnforcer,
+        inputModes: teamTerminalInputModes,
       });
       terminalEventRegistry = new CollaborationTerminalEventRegistry({
         authorize: (scopeId, actorId) => authority.authorize({ scopeId, actorId, action: "read" }),
@@ -844,7 +849,11 @@ export async function createGatewayCollaboration(options: {
         ...(standaloneScope ? { standaloneScope } : {}),
         ...(organizationDrive ? { organizationDrive } : {}),
         ...(collaborativeAppReadiness ? { collaborativeAppReadiness } : {}),
-        onScopeCommitted: (scopeId) => eventRegistry.broadcastScope(scopeId),
+        onScopeCommitted: async (scopeId) => {
+          await eventRegistry.broadcastScope(scopeId);
+          // Spec 2710: a revoked or removed grant closes that member's live terminal at once.
+          await terminalEventRegistry?.reauthorizeScope(scopeId);
+        },
         onRevoked: (scopeId, actorId) => {
           eventRegistry.notifyRevoked(scopeId, actorId);
           terminalControl?.invalidateActor(scopeId, actorId);
@@ -942,6 +951,8 @@ export async function createGatewayCollaboration(options: {
       eventRegistry.shutdown();
       terminalEventRegistry?.shutdown();
       terminalEventRegistry = undefined;
+      teamTerminalInputModes?.clear();
+      teamTerminalInputModes = undefined;
       terminalControl?.close();
       terminalControl = undefined;
       terminalDispatcher = undefined;
@@ -990,6 +1001,8 @@ export async function createGatewayCollaboration(options: {
       eventRegistry.shutdown();
       terminalEventRegistry?.shutdown();
       terminalEventRegistry = undefined;
+      teamTerminalInputModes?.clear();
+      teamTerminalInputModes = undefined;
       terminalControl?.close();
       terminalControl = undefined;
       terminalDispatcher = undefined;

@@ -90,6 +90,7 @@
     "#collaboration-direct": "./src/collaboration-direct.ts",
     "#collaboration-execution": "./src/collaboration-execution.ts",
     "#collaboration-peer": "./src/collaboration-peer.ts",
+    "#collaboration-team-terminal": "./src/collaboration-team-terminal.ts",
     "#collaboration-resources": "./src/collaboration-resources.ts",
     "#organization-billing": "./src/organization-billing.ts",
     "#organization-drive": "./src/organization-drive.ts",
