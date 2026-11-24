@@ -124,8 +124,8 @@ export function WorkRailProjectGroup({
               onClick={() => onSelect?.(group.project)}
             >
               {expanded
-                ? <FolderOpen size={15} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} />
-                : <Folder size={15} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-text, var(--text-primary))" }} />}
+                ? <FolderOpen size={14} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }} />
+                : <Folder size={14} aria-hidden className="shrink-0" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }} />}
               <OverflowingChatTitle title={group.name} />
               {shared ? <span role="img" aria-label="Shared project" title="Shared with others" className="ml-auto flex shrink-0" style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}>
                 <UsersIcon size={13} aria-hidden />
@@ -179,11 +179,11 @@ export function WorkRailProjectGroup({
             /></WorkRailOrderItem>
           ))}
           {hiddenCount > 0 ? <button type="button" aria-label={`Show more ${group.name} chats`}
-            className="rounded-[8px] px-2.5 py-1 pl-[24px] text-left text-xs outline-none hover:bg-[var(--matrix-chat-rail-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+            className="rounded-[8px] px-2.5 py-1 pl-[48px] text-left text-[13px] outline-none hover:bg-[var(--matrix-chat-rail-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
             style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}
             onClick={() => setLimit(shownCount + 20)}>Show more</button> : null}
           {hiddenCount <= 0 && (projectPage.cursor || legacyPage.cursor) ? <button type="button" aria-label={`Show more ${group.name} chats`}
-            className="rounded-[8px] px-2.5 py-1 pl-[24px] text-left text-xs" disabled={projectPage.loading || legacyPage.loading}
+            className="rounded-[8px] px-2.5 py-1 pl-[48px] text-left text-[13px]" disabled={projectPage.loading || legacyPage.loading}
             onClick={() => { setLimit(shownCount + 20); projectPage.loadMore(); legacyPage.loadMore(); }}>Show more</button> : null}
       </RailCollapse>
     </div>

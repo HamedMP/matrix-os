@@ -112,7 +112,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
     <div className="matrix-web-project" data-mobile={mobile || undefined}>
       <button type="button" aria-label={project.name} title={project.name} className="matrix-web-project-select"
         onClick={() => onFocusProject(project)}>
-        {expanded ? <FolderOpen aria-hidden="true" size={15} strokeWidth={1.5} /> : <Folder aria-hidden="true" size={15} strokeWidth={1.5} />}
+        {expanded ? <FolderOpen aria-hidden="true" size={14} strokeWidth={1.5} /> : <Folder aria-hidden="true" size={14} strokeWidth={1.5} />}
         <OverflowingChatTitle title={project.name} />
       </button>
       <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name} chats`} aria-expanded={expanded}

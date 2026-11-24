@@ -781,7 +781,7 @@ function ChatAppContent({
           {/* Electron Desktop's pane title: the Chat name on the left; the model lives in the composer. */}
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center">
-              <div className="min-w-0 flex-1 text-left text-sm font-medium text-foreground">
+              <div className="min-w-0 flex-1 text-left text-[15px] font-medium text-foreground">
                 {collaborationView ? (
                   <span className="block truncate px-1.5">
                     {activeSharedMetadata?.title ?? "Chat"}
@@ -807,7 +807,7 @@ function ChatAppContent({
                     aria-label={`Rename ${activeConversationTitle}`}
                     title={activeConversationTitle}
                     disabled={!onRenameConversation || renamePending}
-                    className={`max-w-full truncate rounded px-1.5 py-0.5 text-left text-sm font-medium text-foreground outline-none enabled:hover:bg-[var(--bg-hover)] enabled:focus-visible:ring-2 enabled:focus-visible:ring-primary/40 ${mobile ? "min-h-11 py-2" : ""}`}
+                    className={`max-w-full truncate rounded px-1.5 py-0.5 text-left text-[15px] font-medium text-foreground outline-none enabled:hover:bg-[var(--bg-hover)] enabled:focus-visible:ring-2 enabled:focus-visible:ring-primary/40 ${mobile ? "min-h-11 py-2" : ""}`}
                     onClick={() => sessionId && activeConversationTitle && setEditingChat({ id: sessionId, source: "header" })}
                   >
                     {activeConversationTitle}

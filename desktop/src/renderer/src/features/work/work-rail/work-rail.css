@@ -53,20 +53,22 @@
 .work-rail-chat:focus-within .work-rail-chat-label,
 .work-rail-chat[data-menu-open="true"] .work-rail-chat-label { padding-right: 50px; }
 .work-rail-chat > button { height: 100%; padding: 5px 7px 5px 9px; }
-.work-rail-chat[data-placement="project"] > button { padding-left: 23px; }
+/* Figma 7.2: nested chat titles align with the project name (48px); a status dot hangs in the indent. */
+.work-rail-chat[data-placement="project"] > button { padding-left: 47px; }
+.work-rail-chat[data-placement="project"] > button > span.rounded-full:first-child { margin-left: -16px; }
 .work-rail-chat-actions { color: var(--matrix-chat-rail-muted); background: var(--matrix-chat-rail-hover); }
 .work-rail-chat[data-current="true"] .work-rail-chat-actions { background: var(--matrix-chat-rail-current); }
 .work-rail-chat[data-menu-open="true"] .work-rail-chat-actions { opacity: 1; pointer-events: auto; }
 
 /* Project title navigation remains independent from the adjacent tree disclosure. */
-.work-rail-project { height: 32px; width: 100%; padding-right: 7px; padding-left: 9px; }
+.work-rail-project { height: 32px; width: 100%; padding-right: 7px; padding-left: 23px; }
 .work-rail-project-main { display: flex; align-items: center; flex: 1; min-width: 0; padding-right: 0; }
 .work-rail-project:hover .work-rail-project-main,
 .work-rail-project:focus-within .work-rail-project-main,
 .work-rail-project[data-state="open"] .work-rail-project-main,
 .work-rail-project:has([data-state="open"]) .work-rail-project-main { padding-right: 50px; }
 .work-rail-project-select { height: 30px; padding: 0; gap: 10px; min-width: 0; flex: 0 1 auto; font-size: 14px; line-height: 18.2px; font-weight: 400; display: flex; align-items: center; }
-.work-rail-project-select > svg { flex: 0 0 15px; }
+.work-rail-project-select > svg { flex: 0 0 14px; }
 .work-rail-project-select > span:first-of-type { min-width: 0; }
 .work-rail-project-disclosure { width: 0; height: 24px; flex: 0 0 0; overflow: hidden; padding: 0; display: grid; place-items: center; opacity: 0; pointer-events: none; color: var(--matrix-chat-rail-muted); }
 .work-rail-project-actions { position: absolute; right: 7px; top: 3px; height: 24px; gap: 2px; display: flex; align-items: center; background: var(--matrix-chat-rail-hover); color: var(--matrix-chat-rail-muted); opacity: 0; pointer-events: none; }
