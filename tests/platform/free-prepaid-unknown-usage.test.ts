@@ -46,13 +46,14 @@ function harness(dbs: () => PlatformDB, clock: { now: Date }) {
     } }));
     const { credential } = await repo.issueRuntimeCredential(identity);
     let n = 0;
-    const lostUsage = async (options: { holdMode?: boolean } = {}) => {
+    const lostUsage = async (options: { holdMode?: boolean; beforeReport?: () => Promise<void> } = {}) => {
       n += 1;
       const auth = await repo.authorize({ credential: credential.token, requestId: `request_${n}`, modelId: MODEL,
         maxCostMicrousd: 1_000, ...(options.holdMode ? {} : { billingMode: 'usage' as const }),
         ...(input.free ? {} : { billingPolicy: 'postpaid' as const }) });
       const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
       const start = await repo.startReservation({ ...key, executionId: `execution_${n}` });
+      await options.beforeReport?.();
       // A hold-mode request has no usage report to lose: it is dispatched and never finalized.
       if (!options.holdMode) await repo.recordTerminalOutcome({ contractVersion: 1, ...key, ...identity, requestId: `request_${n}`,
         startedAt: start.startedAt, expiresAt: start.expiresAt, executionId: `execution_${n}`,
@@ -119,6 +120,19 @@ describe('free prepaid requests with unknown usage', () => {
     expect(await owner.repo.cleanupExpiredReservations({ limit: 100 })).toBe(1);
     expect(await owner.row(key.reservationId)).not.toMatchObject({ status: 'in_flight' });
     await expect(owner.next()).resolves.toMatchObject({ authorized: true });
+  });
+
+  it('keeps a running free hold on the free path when its owner upgrades before the unknown-usage report', async () => {
+    const owner = await runtime({ free: true });
+    const { key, hold } = await owner.lostUsage({
+      // The Stripe webhook replaces the free entitlement while the request is running.
+      beforeReport: async () => {
+        await db.executor.updateTable('billing_entitlements').set({ source: 'stripe', plan_slug: 'matrix_starter' })
+          .where('clerk_user_id', '=', owner.identity.ownerId).execute();
+      },
+    });
+    expect(await owner.row(key.reservationId)).toMatchObject({ status: 'in_flight', customer_charge_release: null });
+    expect(await owner.repo.getFundingSummary(owner.identity)).toMatchObject({ reservedMicrousd: hold });
   });
 
   it('keeps a free request in the daily ceiling after its owner upgrades the same day', async () => {

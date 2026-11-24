@@ -3,7 +3,6 @@ import { z } from 'zod/v4';
 import { releaseCustomerCharge } from '../ai-funded-customer-charge-release.js';
 import { AiFundedPolicyError } from '../ai-funded-policy-errors.js';
 import type { AiFundedUsageReservationsTable, PlatformDB } from '../db.js';
-import { freeMetalMachine } from './free-runtime.js';
 
 /**
  * Free prepaid requests whose final usage never arrived (spec 2691, owner
@@ -32,14 +31,16 @@ export const FREE_PREPAID_UNKNOWN_USAGE_GRACE_MS = 10 * 60_000;
 
 /**
  * True for a reservation row that is a free runtime's prepaid usage hold: usage
- * billing with no postpaid policy, on a free metal runtime. Never NULL: a
- * hold-mode row (no billingMode) is false, so `NOT freePrepaidHold()` keeps it
- * in the ordinary cleanup instead of leaving it reserved forever.
+ * billing with no postpaid policy, funded by the free plan. The free mark is
+ * the reservation's own `free_funded`, recorded at creation, so an owner who
+ * upgrades while a request runs cannot change how that hold settles. Never
+ * NULL: a hold-mode row (no billingMode) is false, so `NOT freePrepaidHold()`
+ * keeps it in the ordinary cleanup instead of leaving it reserved forever.
  */
 export function freePrepaidHold() {
   return sql<boolean>`(COALESCE(ai_funded_usage_reservations.authorization_response::jsonb #>> '{reservation,billingMode}', '') = 'usage'
     AND ai_funded_usage_reservations.authorization_response::jsonb #> '{reservation,billingPolicy}' IS NULL
-    AND ${freeMetalMachine('ai_funded_usage_reservations.machine_id')})`;
+    AND ai_funded_usage_reservations.free_funded)`;
 }
 
 export async function isFreePrepaidHold(
