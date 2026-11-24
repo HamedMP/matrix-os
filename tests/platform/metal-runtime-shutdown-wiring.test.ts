@@ -27,4 +27,18 @@ describe('metal runtime shutdown wiring', () => {
     expect(drainIndex).toBeLessThan(shutdown.indexOf('await Promise.allSettled(['));
     expect(drainIndex).toBeLessThan(shutdown.indexOf('closePrimaryDb()'));
   });
+
+  it('gives the idle sleeper the substrate registry and platform secret, and drains it with the metal runtime', async () => {
+    const startup = await readFile('packages/platform/src/platform-startup.ts', 'utf8');
+    const composed = startup.slice(startup.indexOf('const metalRuntime = createConfiguredMetalRuntime({'));
+    expect(composed.slice(0, composed.indexOf('});'))).toContain('substrates: substrateRegistry, platformSecret');
+    // The sleeper's stop and drain live in the metal runtime, so the SIGTERM wiring above covers them.
+    const runtime = await readFile('packages/platform/src/substrates/metal-runtime.ts', 'utf8');
+    const stop = runtime.slice(runtime.indexOf('    stop() {'), runtime.indexOf('    shutdown() {'));
+    expect(stop).toContain('sleeper?.stop();');
+    const shutdown = runtime.slice(runtime.indexOf('    shutdown() {'));
+    const drain = shutdown.indexOf('await Promise.all([worker?.drain(), sleeper?.drain(), provisioner.drain()]);');
+    expect(drain).toBeGreaterThan(shutdown.indexOf('sleeper?.stop();'));
+    expect(drain).toBeLessThan(shutdown.indexOf('await dispatcher.close();'));
+  });
 });

@@ -102,6 +102,8 @@ export interface WakeResult {
 
 export interface WakeOptions {
   log?: Log;
+  /** Clock for the `awake_since` stamp. */
+  now?: () => Date;
   /** Aborts the platform's wait (platform shutdown); the start itself may still finish on the host. */
   signal?: AbortSignal;
 }
@@ -112,13 +114,14 @@ const inFlightWakes = new Map<string, Promise<WakeResult>>();
 /**
  * Records `running` after the substrate reports it, with one compare-and-set
  * on the status and generation the wake started from, so a concurrent
- * replacement or deletion is never overwritten.
+ * replacement or deletion is never overwritten. The same write stamps
+ * `awake_since` (the idle sleeper's clock) and clears any scheduled wake.
  */
-async function markRunning(db: PlatformDB, machine: UserMachineRecord): Promise<WakeResult> {
+async function markRunning(db: PlatformDB, machine: UserMachineRecord, now: Date): Promise<WakeResult> {
   if (machine.status !== 'running') {
     await db.ready;
     const row = await db.executor.updateTable('user_machines')
-      .set({ status: 'running' })
+      .set({ status: 'running', awake_since: now, next_wake_at: null, wake_failures: 0 })
       .where('machine_id', '=', machine.machineId)
       .where('generation', '=', machine.generation)
       .where('status', '=', machine.status)
@@ -171,7 +174,7 @@ async function runWake(
   }
   if (result.state !== 'running') return { result };
   try {
-    const woke = await markRunning(db, machine);
+    const woke = await markRunning(db, machine, (options.now ?? (() => new Date()))());
     if (woke.machine && machine.status !== 'running') notifyResumed(substrate, woke.machine, log);
     return woke;
   } catch (error: unknown) {
