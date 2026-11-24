@@ -8,7 +8,9 @@
     ".": "./src/index.ts",
     "./errors": "./src/errors.ts",
     "./opc": "./src/opc/index.ts",
-    "./xml": "./src/xml/index.ts"
+    "./xml": "./src/xml/index.ts",
+    "./docx": "./src/docx/index.ts",
+    "./redline": "./src/redline/index.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",
