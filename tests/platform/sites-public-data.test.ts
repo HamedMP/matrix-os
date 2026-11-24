@@ -135,6 +135,24 @@ describe('platform public site data route', () => {
     }
   });
 
+  it('serves live data only to links the owner published after public data shipped', async () => {
+    const forward = vi.fn(async () => Response.json({ result: [] }));
+    vi.stubGlobal('fetch', forward);
+    const owner = { ownerId: 'user_tasks_host', machineId: identity.machineId, appSlug: 'legacy-board' };
+    const legacy = await service.deploy(owner, { title: 'Board', config: {}, files });
+    expect(legacy.publicData).toBe(true);
+    // A link published before this change has no opt-in recorded; it keeps serving static pages only.
+    await db.executor.updateTable('public_sites').set({ public_data_enabled_at: null }).where('id', '=', legacy.id).execute();
+    expect((await service.resolve(legacy.id))?.publicData).toBe(false);
+    expect((await post(routes(), `/${legacy.id}/data`, find)).status).toBe(404);
+    const transport = createSiteDataTransport({ db, platformSecret: secret });
+    await expect(transport.forwardWrite((await service.resolve(legacy.id))!, 'a'.repeat(64), insert as never)).rejects.toMatchObject({ code: 'not_found' });
+    expect(forward).not.toHaveBeenCalled();
+    // Publishing again from the Share popover is the owner's opt-in.
+    await service.deploy(owner, { title: 'Board', config: {}, files });
+    expect((await post(routes(), `/${legacy.id}/data`, find)).status).toBe(200);
+  });
+
   it('refuses private-link sites, unknown references and requests without the same-origin edge marker', async () => {
     const forward = vi.fn(async () => Response.json({ result: [] }));
     vi.stubGlobal('fetch', forward);

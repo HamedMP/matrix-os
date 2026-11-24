@@ -39,7 +39,7 @@ async function project(db: PlatformDB, row: Selectable<SitesTable>, emailCapabil
     const active = row.active_version ? await db.executor.selectFrom('public_site_versions').select('config').where('id', '=', row.active_version).where('site_id', '=', row.id).executeTakeFirst() : undefined;
     return SiteRecordSchema.parse({ id: row.id, appSlug: row.app_slug, title: row.title, description: row.description, slug: row.slug,
         url: `https://matrix.page/${row.slug ?? row.id}`, revision: row.revision, status: row.status, accessMode: row.access_mode,
-        activeVersion: row.active_version,
+        activeVersion: row.active_version, publicData: row.access_mode === 'public' && row.public_data_enabled_at != null,
         versions: versions.map(v => ({ id: v.id, createdAt: v.created_at })), config: active?.config ?? SitePublishingSchema.parse({}),
         ...(emailCapability ? { capabilities: { privateEmailInvitations: await emailCapability() } } : {}) });
 }
@@ -190,9 +190,12 @@ export function createSitesService(options: {
                     && request.accessMode !== 'private_email')
                     await revokeSiteEmailAuthorityForTransition(trx, row.id, owner.ownerId,
                         'mode_changed', request.accessMode);
+                // Publishing a public link is the owner's opt-in to visitor data (2694).
+                const publishedPublic = (request.accessMode ?? row.access_mode) === 'public';
                 const changed = await trx.executor.updateTable('public_sites').set({ title: request.title, description: request.description,
                     ...(request.slug !== undefined ? { slug: request.slug } : {}),
                     ...(request.accessMode !== undefined ? { access_mode: request.accessMode } : {}),
+                    public_data_enabled_at: publishedPublic ? row.public_data_enabled_at ?? new Date().toISOString() : null,
                     active_version: version, status: 'published', revision: row.revision + 1 }).where('id', '=', row.id).where('revision', '=', row.revision).returningAll().executeTakeFirst();
                 check();
                 if (!changed)
@@ -262,7 +265,9 @@ export function createSitesService(options: {
                 await revokeSiteEmailAuthorityForTransition(trx, row.id, owner.ownerId,
                     'mode_changed', request.accessMode);
             const { baseRevision: _, accessMode, ...changes } = request;
-            return { ...changes, ...(accessMode !== undefined ? { access_mode: accessMode } : {}) };
+            // Leaving public mode drops the visitor-data opt-in; only publishing public records it again.
+            return { ...changes, ...(accessMode !== undefined ? { access_mode: accessMode } : {}),
+                ...(accessMode !== undefined && accessMode !== 'public' ? { public_data_enabled_at: null } : {}) };
         });
         const accessModeChanged = previousAccessMode !== undefined && previousAccessMode !== result.accessMode;
         emitSiteTelemetry(captureEvent, MATRIX_TELEMETRY_EVENTS.MATRIX_PAGE_SETTINGS_UPDATED,

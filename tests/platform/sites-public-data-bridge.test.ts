@@ -4,7 +4,7 @@ import { MessageChannel as NodeMessageChannel } from 'node:worker_threads';
 import { APP_BRIDGE_STORED_VALUE_PREFIX, type SiteRecord } from '@matrix-os/contracts';
 import { APP_CSP, siteFrame, sitePage } from '../../packages/platform/src/sites/renderer.js';
 
-const site: SiteRecord = { id: 'a2fd72d0-0926-49d5-b45f-bbfb167e50d2', appSlug: 'tasks-lab', title: 'Tasks', description: '', slug: 'tasks', url: 'https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2', revision: 1, status: 'published', accessMode: 'public', activeVersion: 'cd0a12e9-18a0-4b4e-9a10-269eb5697d4f', versions: [], config: { data: {}, forms: [] } };
+const site: SiteRecord = { id: 'a2fd72d0-0926-49d5-b45f-bbfb167e50d2', appSlug: 'tasks-lab', title: 'Tasks', description: '', slug: 'tasks', url: 'https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2', revision: 1, status: 'published', accessMode: 'public', publicData: true, activeVersion: 'cd0a12e9-18a0-4b4e-9a10-269eb5697d4f', versions: [], config: { data: {}, forms: [] } };
 type Reply = { ok: true; result: unknown } | { error: string };
 
 function frameWithParent(record: SiteRecord, answer: (request: any) => Reply) {
@@ -125,6 +125,15 @@ describe('public site frame data bridge', () => {
       await expect(os.collaboration.query({ action: 'delete', table: 'tasks', id: 'row' })).rejects.toThrow('Collaboration unavailable');
       await expect(os.collaboration.mutate({ action: 'delete', table: 'tasks', id: 'row' }, '0')).rejects.toThrow('Collaboration unavailable');
       await expect(os.db.delete('tasks', 'row')).rejects.toThrow('Shared data is unavailable');
+    } finally { dom.window.close(); }
+  });
+
+  it('gives public links published before visitor data no data bridge', () => {
+    const { dom, os } = frameWithParent({ ...site, publicData: false }, () => ({ error: 'unused' }));
+    try {
+      expect(os.db).toBeUndefined();
+      expect(os.readData).toBeUndefined();
+      expect(typeof os.site.submit).toBe('function');
     } finally { dom.window.close(); }
   });
 

@@ -85,9 +85,10 @@ export function createSiteDataTransport(options: { db: PlatformDB; platformSecre
             return options.db.transaction(async (trx) => {
                 await sql`SET LOCAL lock_timeout = '2s'`.execute(trx.executor);
                 await sql`SET LOCAL statement_timeout = '5s'`.execute(trx.executor);
-                const row = await trx.executor.selectFrom('public_sites').select(['status', 'access_mode', 'active_version'])
+                const row = await trx.executor.selectFrom('public_sites').select(['status', 'access_mode', 'active_version', 'public_data_enabled_at'])
                     .where('id', '=', site.id).forShare().executeTakeFirst();
-                if (!row || row.status !== 'published' || row.access_mode !== 'public' || row.active_version !== site.activeVersion)
+                if (!row || row.status !== 'published' || row.access_mode !== 'public' || row.active_version !== site.activeVersion
+                    || row.public_data_enabled_at == null)
                     throw new SiteError('not_found');
                 return forward(site, visitor, request, trx);
             });

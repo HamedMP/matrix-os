@@ -8,6 +8,8 @@ import { verifySiteSignature } from "./submission-validation.js";
 const UNAVAILABLE = "Shared data is unavailable";
 const RATE_WINDOW_MS = 60_000;
 const MAX_TRACKED_SITES = 1_000;
+// Visitor requests share the owner's gateway; keep enough headroom for Chat and the shell.
+const MAX_IN_FLIGHT = 8;
 
 /** Bounded per-site admission; the oldest site window is evicted at the cap. */
 export function createSitePublicDataLimiter(maxPerMinute: number, maxKeys = MAX_TRACKED_SITES) {
@@ -34,9 +36,12 @@ export function createSitePublicDataRoutes(options: {
   env?: NodeJS.ProcessEnv;
   onChange?(change: { app: string; key: string }): void;
   perSiteLimit?: number;
+  maxInFlight?: number;
 }): Hono {
   const app = new Hono();
   const limiter = createSitePublicDataLimiter(options.perSiteLimit ?? 3_000);
+  const maxInFlight = options.maxInFlight ?? MAX_IN_FLIGHT;
+  let flights = 0;
   app.post("/api/internal/sites/:siteId/data", bodyLimit({ maxSize: 96 * 1024, onError: (c) => c.json({ error: "Invalid change" }, 413) }), async (c) => {
     const siteId = z.uuid().safeParse(c.req.param("siteId"));
     if (!siteId.success) return c.json({ error: "Invalid change" }, 400);
@@ -58,6 +63,8 @@ export function createSitePublicDataRoutes(options: {
     }
     if (!limiter.check(siteId.data)) return c.json({ error: "Try again later" }, 429);
     if (!options.repository) return c.json({ error: UNAVAILABLE }, 503);
+    if (flights >= maxInFlight) return c.json({ error: "Try again later" }, 429);
+    flights++;
     try {
       const outcome = await options.repository.execute(parsed.data);
       if (outcome.changed) {
@@ -69,6 +76,8 @@ export function createSitePublicDataRoutes(options: {
       if (error instanceof SitePublicDataError && error.code === "invalid") return c.json({ error: "Invalid change" }, 400);
       if (!(error instanceof SitePublicDataError)) console.warn("[sites] Public data route failed", error instanceof Error ? error.name : "UnknownError");
       return c.json({ error: UNAVAILABLE }, 503);
+    } finally {
+      flights--;
     }
   });
   return app;
