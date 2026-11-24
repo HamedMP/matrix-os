@@ -57,6 +57,16 @@ describe("Team terminals listing (spec 2710 J2)", () => {
     expect(group!.name).toBe("Nima's team-dev-1");
   });
 
+  it("finds terminals past the first discovery page (Greptile on #3685)", async () => {
+    const pages: Record<string, unknown> = {
+      "/api/collaboration/shared?limit=50": { items: [{ ...item("10000000-0000-4000-8000-0000000000d1", "accepted"), kind: "chat" }], nextCursor: "page2" },
+      "/api/collaboration/shared?limit=50&cursor=page2": { items: [item(scopeA, "accepted")] },
+      "/api/collaboration/inbox?limit=50": { items: [] },
+    };
+    const api = { getDiscovery: vi.fn(async (path: string) => pages[path]), get: vi.fn(async () => projection(scopeA, "editor")), post: vi.fn() };
+    expect((await listTeamTerminals(api)).map((terminal) => terminal.scopeId)).toEqual([scopeA]);
+  });
+
   it("round-trips a Team row key and refuses anything else", () => {
     expect(teamScopeFromKey(teamRowKey(scopeA))).toBe(scopeA);
     expect(teamScopeFromKey(`computer:primary|${scopeA}`)).toBeNull();
@@ -128,13 +138,54 @@ describe("Shared pane socket (spec 2710 J3-J6)", () => {
     const harness = streamHarness();
     const socket = createTeamTerminalSocket(() => harness.api, teamSessionName(scopeA), harness.events);
     socket.connect();
-    expect(harness.events.onOwnershipChange).toHaveBeenCalledWith("observer");
+    // No device-takeover banner: "View only" in the header says why (Greptile on #3685).
+    expect(harness.events.onOwnershipChange).not.toHaveBeenCalledWith("observer");
     harness.ready();
     socket.sendInput("rm -rf ~\r");
     await act(async () => { await vi.advanceTimersByTimeAsync(20); });
     expect(harness.sent).toEqual([]);
+  });
+
+  it("stops sending once the owner refuses input because the role became Viewer", async () => {
+    vi.useFakeTimers();
+    updateTeamSession(scopeA, { projection: projection(scopeA, "editor") as never });
+    const harness = streamHarness();
+    const socket = createTeamTerminalSocket(() => harness.api, teamSessionName(scopeA), harness.events);
+    socket.connect();
+    harness.ready();
     harness.handlers().onInputRejected!({ code: "forbidden" });
     expect(teamSession(scopeA)?.rejected?.code).toBe("forbidden");
+    socket.sendInput("x");
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    expect(harness.sent).toEqual([]);
+  });
+
+  it("follows the owner's grid when the list brings a new size (Greptile on #3685)", () => {
+    updateTeamSession(scopeA, { projection: projection(scopeA, "editor") as never });
+    const harness = streamHarness();
+    const socket = createTeamTerminalSocket(() => harness.api, teamSessionName(scopeA), harness.events);
+    socket.connect();
+    updateTeamSession(scopeA, { projection: { ...projection(scopeA, "editor"), size: { cols: 200, rows: 50 } } as never });
+    expect(harness.events.onCanonicalSize).toHaveBeenLastCalledWith({ cols: 200, rows: 50 });
+    socket.dispose();
+  });
+
+  it("paces a long paste within the owner's budget and never splits a character (Greptile on #3685)", async () => {
+    vi.useFakeTimers();
+    updateTeamSession(scopeA, { projection: projection(scopeA, "editor") as never });
+    const harness = streamHarness();
+    const socket = createTeamTerminalSocket(() => harness.api, teamSessionName(scopeA), harness.events);
+    socket.connect();
+    harness.ready();
+    const paste = "x".repeat(8_191) + "😀" + "y".repeat(100_000);
+    socket.sendInput(paste);
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    const firstSecond = harness.sent.map((frame) => frame.data!).join("");
+    expect(new TextEncoder().encode(firstSecond).byteLength).toBeLessThanOrEqual(56 * 1024);
+    expect(harness.sent[0]!.data!.endsWith("x")).toBe(true);
+    expect(harness.sent[1]!.data!.startsWith("😀")).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    expect(harness.sent.map((frame) => frame.data!).join("")).toBe(paste);
   });
 
   it("shows that access ended when the owner revokes it or stops sharing", () => {

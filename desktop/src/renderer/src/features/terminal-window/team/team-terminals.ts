@@ -73,19 +73,35 @@ function terminalItems(items: readonly DiscoveryItem[]): DiscoveryItem[] {
   return items.filter((item) => item.kind === "terminal" && UUID.test(item.scopeId));
 }
 
+const MAX_DISCOVERY_PAGES = 10;
+
+/** Terminal items from a discovery list, following its cursor for at most ten pages. */
+async function discoverTerminals(api: TeamTerminalsApi, path: string): Promise<DiscoveryItem[]> {
+  const found: DiscoveryItem[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_DISCOVERY_PAGES && found.length < MAX_TEAM_TERMINALS; page += 1) {
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop -- pages are read in order: each needs the previous cursor.
+    const response = CollaborationDiscoveryResponseSchema.parse(await api.getDiscovery(
+      `${path}?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+    ));
+    found.push(...terminalItems(response.items));
+    cursor = response.nextCursor;
+    if (!cursor) break;
+  }
+  return found;
+}
+
 /**
  * Every terminal shared with this person: accepted ones hydrated from their
  * owner's computer, pending organization or member grants ready to open.
  */
 export async function listTeamTerminals(api: TeamTerminalsApi): Promise<TeamTerminal[]> {
+  // Discovery pages hold every kind of share, so terminals can sit past the first page.
   const [inbox, shared] = await Promise.all([
-    api.getDiscovery("/api/collaboration/inbox"),
-    api.getDiscovery("/api/collaboration/shared?limit=50"),
+    discoverTerminals(api, "/api/collaboration/inbox"),
+    discoverTerminals(api, "/api/collaboration/shared"),
   ]);
-  const items = [
-    ...terminalItems(CollaborationDiscoveryResponseSchema.parse(inbox).items),
-    ...terminalItems(CollaborationDiscoveryResponseSchema.parse(shared).items),
-  ];
+  const items = [...inbox, ...shared];
   const unique = [...new Map(items.map((item) => [item.scopeId, item])).values()].slice(0, MAX_TEAM_TERMINALS);
   return mapLimited(unique, HYDRATION_CONCURRENCY, async (item): Promise<TeamTerminal> => {
     const base = { scopeId: item.scopeId, ownerId: item.ownerId, runtimeId: item.runtimeId };

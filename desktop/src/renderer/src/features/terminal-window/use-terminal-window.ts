@@ -127,6 +127,8 @@ export function useTerminalWindow() {
       localChoice.current += 1;
       setLocalOpen(null);
       clearActive();
+      // A teammate's terminal belongs to no machine of this person's: show All so its tab is on the bar.
+      if (sidebar.prefs.filter) sidebar.setFilter(null);
       setTeamOpen(shared);
       return;
     }
@@ -136,7 +138,7 @@ export function useTerminalWindow() {
     if (target.kind === "local") openLocal(target.id, name);
     else openCloud(target.slot, terminalRefKey(target.ref));
     markSeen(key);
-  }, [clearActive, markSeen, openCloud, openLocal, status.rows]);
+  }, [clearActive, markSeen, openCloud, openLocal, sidebar, status.rows]);
 
   const createLocal = useCallback((launch: { agent?: LocalTerminalAgent; machine?: string } = {}) => {
     const chosen = localChoice.current;
