@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProjectSetupStartRequestSchema, ProjectSetupUpdateRequestSchema, type CanonicalChatDetailResponse, type CanonicalChatMessage } from "@matrix-os/contracts";
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
@@ -56,6 +56,37 @@ it("does not create a Chat or run on project overview or Skip", async () => {
   expect(client.get).not.toHaveBeenCalled();
   expect(client.post).not.toHaveBeenCalled();
   expect(client.patch).not.toHaveBeenCalled();
+});
+
+it("retains the loaded setup draft while the root is unresolved and blocks new setup writes", async () => {
+  const client = transport();
+  client.get.mockResolvedValue({ draft: {
+    ...interviewDraft, generation: { status: "completed" },
+  } });
+  const { result, rerender } = renderHook(({ allowActions, eligible }) =>
+    useProjectSetup({ client, scope: "owner:computer", projectId: "project_a", chatId: "chat_setup", eligible, allowActions }),
+    { initialProps: { allowActions: true, eligible: true } });
+  await waitFor(() => expect(result.current.canAnswer).toBe(true));
+  const dispatchAfterSkillRead = result.current.dispatch;
+  const resumeSetup = result.current.start;
+  rerender({ allowActions: false, eligible: true });
+  expect(result.current.draft).toMatchObject({ chatId: "chat_setup" });
+  expect(result.current.canAnswer).toBe(false);
+  expect(await result.current.answer("A different answer")).toBe(false);
+  expect(await result.current.dispatch({ type: "interview_retry", selection })).toBe(false);
+  expect(await result.current.start()).toBe(false);
+  await act(async () => {
+    const content = "---\nname: resume-review\ndescription: Review the project setup draft.\n---\nReview the proposed files.";
+    expect(await dispatchAfterSkillRead({ type: "stage_skill", content })).toBe(false);
+  });
+  expect(client.patch).not.toHaveBeenCalled();
+  expect(client.post).not.toHaveBeenCalled();
+  rerender({ allowActions: true, eligible: true });
+  expect(result.current.canAnswer).toBe(true);
+  rerender({ allowActions: true, eligible: false });
+  expect(result.current.draft).toBeNull();
+  expect(await resumeSetup()).toBe(false);
+  expect(client.post).not.toHaveBeenCalled();
 });
 
 it("launches the Agent on explicit start with the canonical composer's model", async () => {

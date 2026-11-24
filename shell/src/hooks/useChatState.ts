@@ -66,7 +66,7 @@ export interface ChatState {
   chatProjectId?: string;
   /** Verified active/latest-run scope; unavailable must never fall back to main. */
   chatFileScope?: import("@matrix-os/contracts").CanonicalChatFileScope;
-  projectSkillRootAvailable?: boolean;
+  projectSkillRootAvailable?: boolean | "pending";
   /** Picks the project for a new Chat or moves the open Chat; resolves false when it was not saved. */
   setChatProject?: (projectId: string | null) => Promise<boolean>;
   messages: ChatMessage[];

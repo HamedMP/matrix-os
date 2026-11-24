@@ -1,7 +1,10 @@
 import { Check, ChevronRight } from "lucide-react";
 import { PROJECT_SETUP_COMPACT_ANSWER_LENGTH, PROJECT_SETUP_PRIMARY_REPLY_LENGTH, type ProjectSetupDraft } from "@matrix-os/contracts";
 import ReactMarkdown from "react-markdown";
-import { ProjectSetupActionButton as Action } from "./ProjectSetupAction.js";
+import { ProjectSetupActionButton as Action, borderStyle } from "./ProjectSetupAction.js";
+import { cn } from "../cn.js";
+
+export const PROJECT_SETUP_COLUMN_CLASS = "mx-auto w-full max-w-[768px] px-4 @min-[768px]/bot-chat:px-6";
 
 type SetupStep = ProjectSetupDraft["step"];
 type ProgressState = "current" | "incomplete" | "complete" | "skipped" | "described";
@@ -22,15 +25,15 @@ export function ProjectSetupProgress({ projectName, draft = null, agentLed = Boo
   onLeaveSetup?: () => void;
 }) {
   return (
-    <header className="min-w-0 space-y-4">
-      <div className="flex min-w-0 items-center justify-between gap-2">
+    <header className={cn("min-w-0 space-y-3", draft && PROJECT_SETUP_COLUMN_CLASS, draft && "shrink-0")} aria-label="Project setup">
+      <div className={cn("flex min-w-0 items-center justify-between gap-2", draft && "min-h-10 border-b pb-2")} style={draft ? borderStyle : undefined}>
         <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
-          <span className="truncate">{projectName}</span>
+          <span className="truncate" title={projectName}>{projectName}</span>
           <ChevronRight aria-hidden size={12} className="shrink-0" />
           <span className="shrink-0">Project setup</span>
         </p>
         {agentLed && draft && draft.step !== "saved" && onLeaveSetup ? (
-          <Action variant="ghost" onClick={onLeaveSetup}>Cancel setup</Action>
+          <div className="shrink-0 whitespace-nowrap"><Action onClick={onLeaveSetup}>Cancel setup</Action></div>
         ) : null}
       </div>
       {!agentLed ? <nav aria-label="Project setup progress">

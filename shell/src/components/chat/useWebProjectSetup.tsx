@@ -37,6 +37,7 @@ export function useWebProjectSetup({
   scope,
   gatewayUrl,
   eligible,
+  rootPending,
   selection,
   isCurrentAuthority,
   openChat,
@@ -48,6 +49,7 @@ export function useWebProjectSetup({
   scope: string;
   gatewayUrl: string;
   eligible: boolean;
+  rootPending: boolean;
   selection?: CanonicalChatModelSelection;
   isCurrentAuthority?: () => boolean;
   openChat: (id: string) => void;
@@ -89,6 +91,7 @@ export function useWebProjectSetup({
     projectId: project?.id,
     chatId,
     eligible,
+    allowActions: !rootPending,
     selection,
     onOpenChat: openChat,
   });
@@ -116,7 +119,7 @@ export function useWebProjectSetup({
     [scope, project?.id, chatId],
   );
   const openFile = async (path: string, authority: string): Promise<boolean> => {
-    if (!project || !navigation?.openPreview || fileRequest.current) return false;
+    if (rootPending || !project || !navigation?.openPreview || fileRequest.current) return false;
     const controller = new AbortController();
     fileRequest.current = controller;
     try {

@@ -426,7 +426,7 @@ export { archiveRestoreLocation } from "./chat/ArchivedChatsPage.js";
 
 export { useProjectSetup, type ProjectSetupController, type ProjectSetupTransport } from "./chat/use-project-setup.js";
 export { ProjectSetupEntry, ProjectSetupIntroduction, ProjectSetupControls } from "./chat/ProjectSetupControls.js";
-export { ProjectSetupProgress, ProjectSetupAcceptedNote, projectSetupAnswerPlaceholder } from "./chat/ProjectSetupProgress.js";
+export { PROJECT_SETUP_COLUMN_CLASS, ProjectSetupProgress, ProjectSetupAcceptedNote, projectSetupAnswerPlaceholder } from "./chat/ProjectSetupProgress.js";
 export { ProjectSetupLaunchProvider, useProjectSetupLaunch } from "./chat/ProjectSetupLaunch.js";
 export { projectSetupGenerationText, projectSetupGenerationResultId, projectSetupControlsMessageId, projectSetupDetailPresentation } from "./chat/project-setup-presentation.js";
 

@@ -214,9 +214,9 @@ export function ChatInput({
     if (!element) return;
     element.style.height = "0px";
     const contentHeight = element.scrollHeight;
-    element.style.height = `${Math.min(Math.max(contentHeight, 40), 220)}px`;
+    element.style.height = `${Math.min(Math.max(contentHeight, setupAnswer ? 24 : 40), 220)}px`;
     element.style.overflowY = contentHeight > 220 ? "auto" : "hidden";
-  }, [input]);
+  }, [input, setupAnswer]);
 
   useEffect(() => {
     // react-doctor-disable-next-line react-doctor/no-event-handler -- focusing a DOM ref when the composer mounts or autoFocus turns on is a legitimate effect, not a user-event side effect that belongs in a parent handler
@@ -341,7 +341,7 @@ export function ChatInput({
   }
 
   return (
-    <div className="matrix-chat-composer @container/chat-composer relative flex flex-col gap-2" data-slot="chat-composer"
+    <div className="matrix-chat-composer @container/chat-composer relative flex flex-col gap-2" data-slot="chat-composer" data-project-setup-answer={setupAnswer || undefined}
       onDragOver={event => {
         if (event.dataTransfer && (hasMatrixFileDrag(event.dataTransfer) || event.dataTransfer.types?.includes("Files"))) {
           event.preventDefault();
@@ -466,7 +466,7 @@ export function ChatInput({
                   handleChatInputKey(event, { query, mentionListRef, onDismiss: () => setDismissedQuery(input), onSubmit: () => void handleSubmit() });
                 }}
                 placeholder={editorPlaceholder}
-                rows={2}
+                rows={setupAnswer ? 1 : 2}
                 className="block max-h-[220px] min-h-10 w-full resize-none border-0 bg-transparent p-0 text-[14px] leading-[20px] text-[var(--text-primary)] shadow-none outline-none placeholder:text-[var(--text-tertiary)] focus-visible:outline-none focus-visible:ring-0"
               />
             </div>

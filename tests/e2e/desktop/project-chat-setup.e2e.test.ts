@@ -452,6 +452,22 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     expect(state.draft?.mcp.state).toBe("pending");
     expect(await page.getByRole("button", { name: "Open MCP Settings", exact: true }).count()).toBe(0);
     expect(state.files.size).toBe(0);
+
+    await page.setViewportSize({ width: 900, height: 620 });
+    const cancelSetup = page.getByRole("button", { name: "Cancel setup", exact: true });
+    await cancelSetup.waitFor();
+    expect(await cancelSetup.evaluate(button => Number.parseFloat(getComputedStyle(button).borderTopWidth))).toBeGreaterThan(0);
+    const cancelTop = (await cancelSetup.boundingBox())!.y;
+    await messages.evaluate(viewport => { viewport.scrollTop = 0; });
+    await expect.poll(() => messages.evaluate(viewport => viewport.scrollTop)).toBe(0);
+    expect((await cancelSetup.boundingBox())?.y).toBeCloseTo(cancelTop, 0);
+    await messages.evaluate(viewport => { viewport.scrollTop = viewport.scrollHeight; });
+    await expect.poll(() => messages.evaluate(viewport => viewport.scrollTop)).toBeGreaterThan(0);
+    expect((await cancelSetup.boundingBox())?.y).toBeCloseTo(cancelTop, 0);
+    await cancelSetup.click({ trial: true });
+    await page.screenshot({ path: join(evidence, "electron-setup-fixture-compact-review.png") });
+    await page.setViewportSize({ width: 1280, height: 900 });
+
     await composer.fill(correction);
     await composer.press("Enter");
     await messages.getByText(correctedReply, { exact: true }).waitFor();

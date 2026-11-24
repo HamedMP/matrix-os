@@ -1,4 +1,4 @@
-import { BrowserPermissionCard, useRoutineMessageState, routineMessageTimeline, RoutineOccurrenceMessage, RoutineMessageReadNotice, type RoutineOccurrence } from "@matrix-os/ui";
+import { PROJECT_SETUP_COLUMN_CLASS, BrowserPermissionCard, useRoutineMessageState, routineMessageTimeline, RoutineOccurrenceMessage, RoutineMessageReadNotice, type RoutineOccurrence } from "@matrix-os/ui";
 import { ConversationNotice } from "./notice";
 import { RoutineReceipt, BotRunMessageBody, BotUnassignedMessageBody, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
@@ -459,9 +459,9 @@ export function ConversationTranscript({
   });
   return (
     <>
-    {projectSetup?.header ? <div className="mx-auto w-full max-w-[768px] shrink-0 px-6 pt-8">{projectSetup.header}</div> : null}
+    {projectSetup?.header}
     <Conversation>
-      <ConversationContent className={projectSetup ? "max-w-[768px] justify-start gap-5 px-6 pt-5 lg:px-6" : "justify-end pt-8 sm:pt-12"}>
+      <ConversationContent className={projectSetup ? `${PROJECT_SETUP_COLUMN_CLASS} justify-start gap-4 py-4 sm:px-4 lg:px-4` : "justify-end pt-8 sm:pt-12"}>
         {beforeTurns}
         {rows.map(row => row.kind === "occurrence" ? <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/> : (
           <Fragment key={row.value.turn.id}>

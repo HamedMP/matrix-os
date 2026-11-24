@@ -19,6 +19,8 @@ interface Options {
   projectId?: string | null;
   chatId?: string | null;
   eligible: boolean;
+  /** A partial Chat projection can leave the active checkout temporarily unverified. */
+  allowActions?: boolean;
   selection?: CanonicalChatModelSelection | null;
   onOpenChat?: (chatId: string) => void;
   onChanged?: () => void;
@@ -44,7 +46,7 @@ function setupReplyFailed(draft: ProjectSetupDraft | null) {
 
 /** Chat owns accepted setup state. This hook holds only the currently scoped view. */
 export function useProjectSetup(options: Options) {
-  const { client, scope, projectId, chatId, eligible, selection } = options;
+  const { client, scope, projectId, chatId, eligible, allowActions = true, selection } = options;
   const identity = JSON.stringify([scope, projectId, chatId ?? "new"]);
   const [state, setState] = useState<{
     identity: string;
@@ -57,6 +59,7 @@ export function useProjectSetup(options: Options) {
   const lifetime = useRef<{ identity: string; controller: AbortController } | null>(null);
   const request = useRef<AbortController | null>(null);
   const attempt = useRef<{ identity: string; key: string; requestId: string } | null>(null);
+  const actionsAllowed = useRef(eligible && allowActions);
   const currentState =
     state.identity === identity
       ? state
@@ -65,6 +68,10 @@ export function useProjectSetup(options: Options) {
   stateRef.current = currentState;
   const openChat = useEffectEvent((id: string) => options.onOpenChat?.(id));
   const changed = useEffectEvent(() => options.onChanged?.());
+
+  useLayoutEffect(() => {
+    actionsAllowed.current = eligible && allowActions;
+  }, [eligible, allowActions]);
 
   useLayoutEffect(() => {
     const controller = new AbortController();
@@ -139,7 +146,7 @@ export function useProjectSetup(options: Options) {
   };
   const strictSelection = selection ? canonicalSetupSelection(selection) : undefined;
   const start = async () => {
-    if (!client || !projectId) return false;
+    if (!actionsAllowed.current || !client || !projectId) return false;
     const payload = {
       mode: "interview",
       ...(strictSelection ? { currentSelection: strictSelection } : {}),
@@ -149,7 +156,7 @@ export function useProjectSetup(options: Options) {
   };
   const dispatch = async (action: ProjectSetupAction): Promise<boolean> => {
     const draft = stateRef.current.draft;
-    if (!client || !draft || draft.projectId !== projectId) return false;
+    if (!actionsAllowed.current || !client || !draft || draft.projectId !== projectId) return false;
     const followUp = action.type === "stage_skill" || (action.type === "choose_mcp" && action.choice === "skip");
     const canonicalAction = followUp && draft.interview && strictSelection
       ? { ...action, selection: strictSelection }
@@ -181,10 +188,10 @@ export function useProjectSetup(options: Options) {
   const active = Boolean(draft && draft.step !== "saved");
   const waiting = waitingForSetupReply(draft);
   const [exhaustedGeneration, setExhaustedGeneration] = useState<string | null>(null);
-  const pollingGeneration = eligible && waiting
+  const pollingGeneration = eligible && allowActions && waiting
     ? JSON.stringify([identity, draft?.revision, draft?.generation?.runId])
     : null;
-  const canAnswer = active && !currentState.pending && !waiting
+  const canAnswer = active && allowActions && !currentState.pending && !waiting
     && (!mcpHandoff || Boolean(draft?.interview));
   const retryInterview = () =>
     strictSelection && setupReplyFailed(stateRef.current.draft)
@@ -225,6 +232,7 @@ export function useProjectSetup(options: Options) {
   };
   return {
     ...currentState,
+    pending: currentState.pending || !allowActions,
     eligible,
     start,
     dismiss,

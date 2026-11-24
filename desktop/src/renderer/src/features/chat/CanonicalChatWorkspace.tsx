@@ -1,4 +1,4 @@
-import { projectSetupDetailPresentation, projectSetupControlsMessageId } from "@matrix-os/ui";
+import { PROJECT_SETUP_COLUMN_CLASS, projectSetupDetailPresentation, projectSetupControlsMessageId } from "@matrix-os/ui";
 import { useDesktopProjectSetup } from "../project/use-desktop-project-setup";
 import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-scope";
 import { SourceChatRoutines } from "./SourceChatRoutines";
@@ -1333,7 +1333,7 @@ function CanonicalChatWorkspaceContent({
             }} />
             </div>
             </ChatContextMenu>
-            <div className={cn("mx-auto w-full shrink-0 px-6 pb-5", projectSetup.draft ? "max-w-[768px]" : "max-w-[808px]")}>
+            <div className={projectSetup.draft ? `${PROJECT_SETUP_COLUMN_CLASS} shrink-0 pt-2 pb-3` : "mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5"}>
               <ChatWorktreeActions
                 key={JSON.stringify([admissionIdentity, controller.detail.record.chat.id])}
                 active={nativeChatChecksActive}

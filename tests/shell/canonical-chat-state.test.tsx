@@ -740,6 +740,31 @@ it("only submits a selected skill to its bound project and requests that checkou
   });
 });
 
+it("keeps an unresolved streamed run root distinct from a different checkout", async () => {
+  const { snapshot } = createCanonicalChatFixture("running");
+  const { project, providerBinding: _binding, activeRun, ...chat } = snapshot.chat;
+  const projectId = project!.projectId;
+  const current = { chat, projectId, activeRun };
+  const fetchFn = vi.fn(async (url: string) => {
+    if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+    if (url.includes(`/api/chats/${chat.id}?`)) return Response.json({
+      record: current, messages: snapshot.messages, turns: snapshot.turns, activities: [], runs: [],
+    });
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  stubLegacyChatFetch(fetchFn);
+  const { result } = renderHook(() => useCanonicalChatState());
+  await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+  expect(result.current.projectSkillRootAvailable).toBe("pending");
+  await act(async () => {
+    expect(await result.current.submitMessage("Use the selected skill.", undefined, {
+      instanceId: "codex_fixture", model: "gpt-5.6-sol", interactionMode: "default", permissionMode: "supervised",
+      projectSkillProjectId: projectId,
+    })).toBe(false);
+  });
+  expect(fetchFn.mock.calls.some(([url]) => /\/(?:queued-)?turns$/.test(url))).toBe(false);
+});
+
 it.each(["primary checkout", "other project", "worktree"] as const)(
   "queues a skill-only draft only for the active run's primary checkout (%s)",
   async (scope) => {

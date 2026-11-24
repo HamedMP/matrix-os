@@ -1,4 +1,5 @@
 "use client";
+import { PROJECT_SETUP_COLUMN_CLASS } from "@matrix-os/ui";
 import { useWebProjectSetup } from "./chat/useWebProjectSetup";
 import { useRoutineOrigin, routineApprovalPlacement, RoutineOriginApprovals, RoutineReceipt, routineOriginChatEligible } from "@matrix-os/ui";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
@@ -211,7 +212,7 @@ interface ChatAppProps {
   /** The Chat's project, or the project a new Chat will be created in. */
   chatProjectId?: string;
   chatFileScope?: import("@matrix-os/contracts").CanonicalChatFileScope;
-  projectSkillRootAvailable?: boolean;
+  projectSkillRootAvailable?: boolean | "pending";
   /** Puts a new Chat in a project or moves the active one; null removes it. */
   onSetChatProject?: (projectId: string | null) => void;
   providerSelection?: CanonicalChatModelSelection;
@@ -453,7 +454,7 @@ function ChatAppContent({
   const projectSlash: ProjectChatSlashScope | undefined = !mobile && chatProjectId ? {
     projectId: chatProjectId,
     scope: webProjects.identity,
-    read: projectSkillRootAvailable && !collaborationView && !directBotId && !botIdentityUnknown && isCurrentAuthority
+    read: projectSkillRootAvailable === true && !collaborationView && !directBotId && !botIdentityUnknown && isCurrentAuthority
       ? (path, signal) => readWebProjectAgentContext(projectGatewayUrl, path, signal, isCurrentAuthority)
       : null,
   } : undefined;
@@ -463,7 +464,7 @@ function ChatAppContent({
     : undefined;
   const projectSetup = useWebProjectSetup({ project: setupProject, chatId: sessionId, scope: webProjects.identity,
     gatewayUrl: projectGatewayUrl, eligible: Boolean(visible && !mobile && !collaborationView && !directBotId && setupProject && projectSkillRootAvailable !== false),
-    selection: setupSelection, isCurrentAuthority, openChat: onSwitchConversation,
+    rootPending: projectSkillRootAvailable === "pending", selection: setupSelection, isCurrentAuthority, openChat: onSwitchConversation,
     leaveSetup: setupProject ? () => openProjectHome(setupProject) : undefined, messages });
   const providerReady = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : Boolean(!providerState.loading && providerState.selectionAvailable));
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
@@ -605,7 +606,7 @@ function ChatAppContent({
   });
   const suggestions = getMessageSuggestions(messages);
 
-  const isEmpty = messages.length === 0 && !busy;
+  const isEmpty = messages.length === 0 && !busy && !projectSetup.draft;
 
   const runProviderSetupAction = async (
     instance: CanonicalProviderInstanceDescriptor,
@@ -894,9 +895,11 @@ function ChatAppContent({
           <div className="flex flex-1 flex-col min-h-0">
             <ChatContextMenu chatId={sessionId} zIndex={SHELL_Z_INDEX.popover}>
             <div className="contents">
-            {projectSetup.header ? <div className="mx-auto w-full max-w-[720px] shrink-0 px-4 pt-8 md:px-0">{projectSetup.header}</div> : null}
-            <Conversation>
-              <ConversationContent className={`${projectSetup.draft ? "justify-start" : "min-h-full justify-end"} gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]`}>
+            {projectSetup.header}
+            <Conversation className={projectSetup.draft ? "min-h-0" : undefined}>
+              <ConversationContent className={projectSetup.draft
+                ? `${PROJECT_SETUP_COLUMN_CLASS} justify-start gap-4 py-4`
+                : "min-h-full justify-end gap-5 px-4 py-5 md:px-0 mx-auto w-full max-w-[720px]"}>
                 <RoutineOriginApprovals state={routineOrigin} items={routineApprovals.earlier} notices={false} earlier />
                 <BotTranscriptMessages groups={grouped}>{(group, groupIndex, scheduled) => {
                   const id = group.type === "tool_group" ? group.messages[0]!.id : group.message.id;
@@ -986,7 +989,8 @@ function ChatAppContent({
             </ChatContextMenu>
 
             {/* Suggestions + Input */}
-            <div className={`mx-auto w-full shrink-0 pt-2 ${projectSetup.draft ? "max-w-[768px]" : "max-w-[808px]"} ${mobile ? "px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]" : "px-6 pb-5"}`}>
+            <div className={projectSetup.draft ? `${PROJECT_SETUP_COLUMN_CLASS} shrink-0 pt-2 pb-3` :
+              `mx-auto w-full max-w-[808px] shrink-0 pt-2 ${mobile ? "px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]" : "px-6 pb-5"}`}>
               {mobile && !projectSetup.active && !busy && suggestions.length > 0 && (
                 <div className="pb-3">
                   <SuggestionChips
