@@ -110,6 +110,8 @@ describe("Preview runtime host activation", () => {
       MATRIX_RUNTIME_SLOT: machine.runtimeSlot,
       MATRIX_RUNTIME_TOKEN_EPOCH: "1",
       MATRIX_FUNDED_AI_ENABLED: "false",
+      // Every rendered host.env names its platform; activation binds to it.
+      PLATFORM_INTERNAL_URL: "https://app.matrix-os.com",
     };
     const proofApp = new Hono().route("/internal/containers/:handle/ai",
       createFundedHostActivationRoutes({ db, platformSecret: hostSecret,
@@ -173,6 +175,8 @@ describe("Preview runtime host activation", () => {
       MATRIX_RUNTIME_SLOT: machine.runtimeSlot,
       MATRIX_RUNTIME_TOKEN_EPOCH: "1",
       MATRIX_FUNDED_AI_ENABLED: "false",
+      // Every rendered host.env names its platform; activation binds to it.
+      PLATFORM_INTERNAL_URL: "https://app.matrix-os.com",
     };
     const proofApp = new Hono().route("/internal/containers/:handle/ai",
       createFundedHostActivationRoutes({ db, platformSecret: hostSecret, previewRuntimeSecret: previewSecret,

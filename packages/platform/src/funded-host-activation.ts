@@ -1,4 +1,4 @@
-import { FundedHostActivationResponseSchema, MANAGED_WORKERS_AI_MODEL_IDS, type FundedHostActivationResponse } from '@matrix-os/contracts';
+import { FUNDED_PRODUCTION_PLATFORM_ORIGIN, FundedHostActivationResponseSchema, MANAGED_WORKERS_AI_MODEL_IDS, fundedOriginPairKind, type FundedHostActivationResponse } from '@matrix-os/contracts';
 import { Hono } from 'hono';
 import { sql } from 'kysely';
 import { z } from 'zod/v4';
@@ -14,9 +14,43 @@ const Query = z.object({ runtimeSlot: RuntimeSlot.optional().default('primary') 
 const Models = z.array(z.string().max(128)).max(32);
 const ordinaryModels = new Set<string>(['anthropic/claude-sonnet-5', ...MANAGED_WORKERS_AI_MODEL_IDS]);
 type Options = { db: PlatformDB; platformSecret: string; previewRuntimeSecret?: string;
-  relayOrigin: string; now?: () => Date; env?: NodeJS.ProcessEnv };
+  relayOrigin: string;
+  /** The platform origin guests are configured against (fundedPlatformOrigin); null disables. Defaults to production. */
+  platformOrigin?: string | null;
+  now?: () => Date; env?: NodeJS.ProcessEnv };
 export type FundedHostActivationRead = { status: 'ready'; configuration: FundedHostActivationResponse }
   | { status: 'unauthorized' | 'ineligible' | 'deferred' };
+
+/**
+ * The platform origin funded AI configures guests against. Production always
+ * uses https://app.matrix-os.com. Only an explicitly pinned preview platform
+ * (PLATFORM_PREVIEW=true, MATRIX_FUNDED_AI_PREVIEW_PIN=1 set by the preview
+ * workflow, and no Hetzner token) uses its own public origin, which must then
+ * pair with the reviewed preview relay. A pinned preview without a usable
+ * origin returns null: it emits nothing rather than the production pair.
+ */
+export function fundedPlatformOrigin(env: NodeJS.ProcessEnv): string | null {
+  const pinnedPreview = env.PLATFORM_PREVIEW === 'true' && env.MATRIX_FUNDED_AI_PREVIEW_PIN === '1'
+    && !env.HETZNER_API_TOKEN?.trim();
+  if (!pinnedPreview) return FUNDED_PRODUCTION_PLATFORM_ORIGIN;
+  const raw = env.MATRIX_APP_ORIGIN ?? env.PLATFORM_PUBLIC_URL;
+  if (!raw) return null;
+  try {
+    return new URL(raw).origin;
+  } catch (error: unknown) {
+    if (!(error instanceof TypeError)) throw error;
+    return null;
+  }
+}
+
+/**
+ * Whether the platform and relay origins form a reviewed pair guests accept
+ * (production, or the exact preview pair). Any other pair, including a mixed
+ * one, can never activate funded AI.
+ */
+export function isAdmittedFundedOriginPair(platformOrigin: string | null, relayOrigin: string): boolean {
+  return platformOrigin !== null && fundedOriginPairKind(platformOrigin, relayOrigin) !== null;
+}
 
 /** Configuration delivery only: never issues a credential, grants credit or settles usage. */
 export async function readFundedHostActivation(options: Options & {
@@ -26,6 +60,8 @@ export async function readFundedHostActivation(options: Options & {
   if (!Handle.safeParse(options.handle).success || !RuntimeSlot.safeParse(options.runtimeSlot).success
     || !/^[a-f0-9]{64}$/.test(supplied)) return { status: 'unauthorized' };
   if (options.platformSecret.length < 32) throw new Error('Managed feature configuration unavailable');
+  // A pinned preview without a usable origin emits nothing (never the production pair).
+  if (options.platformOrigin === null) return { status: 'deferred' };
   await options.db.ready;
   return options.db.kysely.transaction().setIsolationLevel('repeatable read').execute(async trx => {
     await sql`SET TRANSACTION READ ONLY`.execute(trx);
@@ -82,7 +118,8 @@ export async function readFundedHostActivation(options: Options & {
     return { status: 'ready', configuration: FundedHostActivationResponseSchema.parse({ contractVersion: 1,
       identity: { handle: machine.handle, machineId: machine.machine_id, ownerId: machine.clerk_user_id,
         runtimeSlot: machine.runtime_slot, runtimeTokenEpoch: machine.runtime_token_epoch },
-      configuration: { enabled: true, platformOrigin: 'https://app.matrix-os.com', relayOrigin: options.relayOrigin, runtimeToken },
+      configuration: { enabled: true, platformOrigin: options.platformOrigin ?? FUNDED_PRODUCTION_PLATFORM_ORIGIN,
+        relayOrigin: options.relayOrigin, runtimeToken },
       issuedAt: now.toISOString(), expiresAt: new Date(expiresAt).toISOString() }) };
   });
 }
@@ -92,12 +129,20 @@ export function createFundedHostActivationRoutes(options: Options): Hono {
     && (options.previewRuntimeSecret.length < 32 || options.previewRuntimeSecret === options.platformSecret)) {
     throw new Error('Managed feature configuration unavailable');
   }
+  // Checked once: an unpinned relay fails every read the same way, so say so
+  // once and answer 503 instead of a ZodError per guest poll.
+  const relayAdmitted = isAdmittedFundedOriginPair(
+    options.platformOrigin === undefined ? FUNDED_PRODUCTION_PLATFORM_ORIGIN : options.platformOrigin, options.relayOrigin);
+  if (!relayAdmitted) {
+    console.error('[managed-features] activation configuration disabled: the configured relay and platform origins are not a reviewed pair');
+  }
   const app = new Hono();
   app.get('/activation-config', async c => {
     c.header('Cache-Control', 'no-store, private');
     c.header('CDN-Cache-Control', 'no-store');
     const query = Query.safeParse(c.req.query());
     if (!query.success || !Handle.safeParse(c.req.param('handle')).success) return c.json({ error: 'Invalid request' }, 400);
+    if (!relayAdmitted) return c.json({ error: 'Service unavailable' }, 503);
     try {
       const result = await readFundedHostActivation({ ...options, handle: c.req.param('handle')!,
         runtimeSlot: query.data.runtimeSlot, authorization: c.req.header('authorization') });

@@ -41,4 +41,28 @@ describe('metal runtime shutdown wiring', () => {
     expect(drain).toBeGreaterThan(shutdown.indexOf('sleeper?.stop();'));
     expect(drain).toBeLessThan(shutdown.indexOf('await dispatcher.close();'));
   });
+
+  it('binds the metal resume hook to the managed-feature resume trigger and stops and drains it on shutdown', async () => {
+    const source = await readFile('packages/platform/src/platform-startup.ts', 'utf8');
+    // The registry's metal hook forwards to the late-bound trigger.
+    const registry = source.indexOf('const substrateRegistry = createPlatformSubstrateRegistry(db, process.env, {');
+    expect(registry).toBeGreaterThan(0);
+    expect(source.slice(registry, source.indexOf('});', registry))).toContain('onMetalResumed: (ref) => activateResumedRuntime?.(ref)');
+    const bind = source.indexOf('activateResumedRuntime = createManagedFeatureResumeTrigger(activateManagedFeatures);');
+    expect(bind).toBeGreaterThan(source.indexOf('activateManagedFeatures = createManagedFeatureActivator('));
+    // Every wake source (HTTP server, metal sleeper) starts after the bind.
+    expect(bind).toBeLessThan(source.indexOf('const metalRuntime = createConfiguredMetalRuntime({'));
+    // Startup-failure cleanup stops and drains it with the other workers.
+    const cleanup = source.slice(source.indexOf('registerCustomMcpStartupCleanup(createPlatformStartupWorkerCleanup(() => ['));
+    expect(cleanup.slice(0, cleanup.indexOf(']));'))).toContain('activateResumedRuntime,');
+    // SIGTERM: stopped before the server closes, drained before the primary pool closes.
+    const shutdown = source.slice(source.indexOf('const shutdown = (signal:'));
+    const stop = shutdown.indexOf('activateResumedRuntime?.stop();');
+    expect(stop).toBeGreaterThan(0);
+    expect(stop).toBeLessThan(shutdown.indexOf('(server as Server).close('));
+    const drain = shutdown.indexOf('await activateResumedRuntime?.drain();');
+    expect(drain).toBeGreaterThan(shutdown.indexOf('(server as Server).close('));
+    expect(drain).toBeLessThan(shutdown.indexOf('closeUpstreamDispatchers()'));
+    expect(drain).toBeLessThan(shutdown.indexOf('closePrimaryDb()'));
+  });
 });
