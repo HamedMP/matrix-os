@@ -16,6 +16,7 @@ import { z } from "zod/v4";
 import { disconnectAttachmentClient } from "./attachment-client-loss.js";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
+import { WorkspaceRestoreRetries } from "./workspace-restore-retry.js";
 import { terminalTabIncarnation } from "./incarnation.js";
 import { TerminalCommandStateRefSchema, TerminalCommandStateSchema, type TerminalCommandState } from "./terminal-command-state.js";
 import { TerminalCommandResultRefSchema, TerminalCommandResultSchema, type TerminalCommandResult } from './terminal-command-state.js';
@@ -105,6 +106,8 @@ export interface TerminalRuntimeOptions {
   maxViewersPerTab?: number;
   maxPendingInputBytes?: number;
   viewerTtlMs?: number;
+  /** Base backoff for retrying a workspace whose startup restore failed (default 30 s, capped at 10 min). */
+  restoreRetryBaseMs?: number;
   sweepIntervalMs?: number;
   observerCloseTimeoutMs?: number;
   /** Command tabs write their exit code here, so their exit needs no Zellij call (spec 2706). */
@@ -188,6 +191,7 @@ export class TerminalRuntime {
   private deletingWorkspaceId: string | null = null;
   private untrackedPaneClosures = 0;
   private observerRetryQueued = false;
+  private readonly restoreRetries: WorkspaceRestoreRetries;
   private shuttingDown = false;
   private acceptingObserverEvents = true;
 
@@ -206,6 +210,7 @@ export class TerminalRuntime {
     this.maxPendingInputBytes = options.maxPendingInputBytes ?? 1024 * 1024;
     this.viewerTtlMs = options.viewerTtlMs ?? 2 * 60_000;
     this.observerCloseTimeoutMs = z.number().int().min(1).max(30_000).parse(options.observerCloseTimeoutMs ?? 5_000);
+    this.restoreRetries = new WorkspaceRestoreRetries({ baseMs: options.restoreRetryBaseMs });
     this.sweepTimer = setInterval(() => {
       void this.sweepStaleViewers().catch((error: unknown) => {
         console.error("[terminal-runtime] stale viewer sweep failed", error instanceof Error ? error.name : "unknown_error");
@@ -221,9 +226,21 @@ export class TerminalRuntime {
     return (await this.listWorkspaces()).find((candidate) => candidate.id === workspace.id)!;
   }
 
+  /**
+   * Startup restore. One workspace that cannot be reconciled (for example a
+   * stale Zellij server printing unreadable output) must not keep the service
+   * from serving every other workspace: it is logged, left untouched in the
+   * store, and retried by the periodic sweep with backoff.
+   */
   async restoreAll(): Promise<void> {
     for (const workspace of await this.listWorkspaces()) {
-      if (workspace.status !== "stopped") await this.reconcileWorkspace(workspace.id);
+      if (workspace.status === "stopped") continue;
+      try {
+        await this.reconcileWorkspace(workspace.id);
+      } catch (error) {
+        if (this.shuttingDown) throw error;
+        this.restoreRetries.fail(workspace.id, error);
+      }
     }
   }
 
@@ -465,6 +482,7 @@ export class TerminalRuntime {
         await this.store.activateTab({ workspaceId, tabId: tab.id }, ids);
       }
       await this.restartObserver(workspaceId);
+      this.restoreRetries.clear(workspaceId);
     } finally {
       releaseObserverReservation();
     }
@@ -1105,6 +1123,14 @@ export class TerminalRuntime {
     // while the child was down. Running on observerChain would deadlock when
     // reconciliation queues its replacement observer on that same chain.
     const operation = this.runWorkspaceMutation(async () => {
+      await this.restoreRetries.retryDue({
+        isActive: async (id) => {
+          const status = (await this.store.getRuntimeWorkspace(id))?.status;
+          return status !== undefined && status !== "stopped";
+        },
+        reconcile: (id) => this.reconcileWorkspaceNow(id),
+        shuttingDown: () => this.shuttingDown,
+      });
       for (const [workspaceId, observer] of this.observers) {
         if (this.shuttingDown) return;
         if (observer.size > 0) continue;

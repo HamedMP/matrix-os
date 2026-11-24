@@ -18,6 +18,7 @@ import {
   TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
   TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
 } from "./limits.js";
+import { parseZellijStructuredOutput } from "./zellij-structured-output.js";
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
 import { decodeZellijScreenDump } from "./zellij-screen-dump.js";
 import { terminalCommandStateFromPanes, type TerminalCommandState } from "./terminal-command-state.js";
@@ -862,23 +863,12 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     let lastError: unknown;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       try {
-        const output = (await this.run(
+        const raw = await this.run(
           args,
           binaryPath,
           remainingCommandTimeout(operationDeadline),
-        )).trim();
-        const arrayStart = output.indexOf("[");
-        const objectStart = output.indexOf("{");
-        const start = arrayStart < 0
-          ? objectStart
-          : objectStart < 0
-            ? arrayStart
-            : Math.min(arrayStart, objectStart);
-        const end = Math.max(output.lastIndexOf("]"), output.lastIndexOf("}"));
-        if (start < 0 || end < start) {
-          throw new Error("Zellij structured command returned non-JSON output");
-        }
-        return schema.parse(JSON.parse(output.slice(start, end + 1)));
+        );
+        return parseZellijStructuredOutput(raw, schema);
       } catch (error) {
         lastError = error;
         await new Promise<void>((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
@@ -1111,3 +1101,4 @@ function safeJson(line: string): unknown {
     return null;
   }
 }
+
