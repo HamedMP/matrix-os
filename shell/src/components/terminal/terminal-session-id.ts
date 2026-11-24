@@ -1,5 +1,6 @@
 import { TerminalRefSchema, type TerminalRef } from "@matrix-os/contracts";
 import { isHerdrTerminalRef } from "@matrix-os/contracts/herdr-terminals";
+import { desktopLinkDevicePrefix } from "@matrix-os/contracts/desktop-link";
 
 const TERMINAL_REF_SEPARATOR = ":";
 
@@ -20,7 +21,9 @@ export function isCanonicalShellSessionId(value: string): boolean {
   return parseTerminalRefKey(value) !== null;
 }
 
-/** Herdr terminals (spec 2701) attach through their own socket with the same frames. */
-export function terminalWebSocketPathForSession(value?: string | null): "/ws/terminal/tab" | "/ws/terminal/herdr" {
-  return isHerdrTerminalRef(parseTerminalRefKey(value)) ? "/ws/terminal/herdr" : "/ws/terminal/tab";
+/** Herdr terminals (spec 2701) and desktop terminals (spec 2716) attach through their own sockets with the same frames. */
+export function terminalWebSocketPathForSession(value?: string | null): "/ws/terminal/tab" | "/ws/terminal/herdr" | "/ws/desktop-link/terminal" {
+  const ref = parseTerminalRefKey(value);
+  if (desktopLinkDevicePrefix(ref?.workspaceId)) return "/ws/desktop-link/terminal";
+  return isHerdrTerminalRef(ref) ? "/ws/terminal/herdr" : "/ws/terminal/tab";
 }

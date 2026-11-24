@@ -161,6 +161,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
     const deviceId = state.deviceId;
     const stored = deviceId ? await pairing.readReport(deviceId, state.revision) : null;
     return c.json(DesktopLinkMachineListSchema.parse({
+      machineId,
       machines: deviceId ? [{
         deviceId,
         name: stored?.name ?? "Paired desktop",

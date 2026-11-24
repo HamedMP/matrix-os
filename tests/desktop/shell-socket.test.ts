@@ -260,6 +260,15 @@ describe("ShellSocket URL building", () => {
     );
   });
 
+  it("attaches a terminal on a linked desktop through the desktop socket with the same query (spec 2716)", () => {
+    const desktopWorkspace = `tws_000000000064736b${"ab12".repeat(4)}`;
+    const h = createHarness({ sessionName: `${desktopWorkspace}:${TAB_ID}` });
+    h.socket.connect();
+    expect(h.latest().url).toBe(
+      `wss://app.matrix-os.com/ws/desktop-link/terminal?workspaceId=${desktopWorkspace}&tabId=${TAB_ID}&client=electron&fromSeq=${LIVE_TAIL_FROM_SEQ}&lease=exclusive&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`,
+    );
+  });
+
   it("keeps standalone workspace-tab URLs free of Chat context", () => {
     const h = createHarness();
     h.socket.connect();
