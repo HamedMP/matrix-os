@@ -45,7 +45,7 @@ export function createBackgroundAgentRuntime(options: {
 }): BackgroundAgentRuntime & { sweep(): Promise<void>; close(): Promise<void> } {
   const home = resolve(options.homePath);
   const root = join(home, "system", "background-agents");
-  const maxJobs = z.number().int().min(1).max(128).parse(options.maxJobs ?? 32);
+  const maxJobs = z.number().int().min(1).max(128).parse(options.maxJobs ?? 64);
   const runCommand = options.runCommand ?? runDefault;
   const uid = process.getuid?.();
   const env = { ...process.env, XDG_RUNTIME_DIR: `/run/user/${uid}`, DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${uid}/bus` };

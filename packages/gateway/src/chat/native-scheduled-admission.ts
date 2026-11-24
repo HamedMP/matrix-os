@@ -26,7 +26,7 @@ export interface NativeScheduledAdmissionOptions {
   now?: () => Date;
   assertOpen(): void;
   assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
-  atCapacity(owner: ChatOwner): boolean;
+  atCapacity(owner: ChatOwner, reservedRunId?: string): boolean;
   hasStoppingExecution(owner: ChatOwner, chatId: string): boolean;
   reservePendingDispatch(runId: string): void;
   releasePendingDispatch(runId: string): void;
@@ -106,7 +106,7 @@ export async function admitNativeScheduledPhase(
     if (admitted.alreadyAccepted) throw new ChatConflictError(chatId, admitted.chat.chat.revision);
     accepted = true;
     deps.assertOpen();
-    if (deps.atCapacity(owner) || deps.hasStoppingExecution(owner, chatId)) throw new ChatBusyError(chatId);
+    if (deps.atCapacity(owner, run.id) || deps.hasStoppingExecution(owner, chatId)) throw new ChatBusyError(chatId);
     // Registration is synchronous; do not await the native phase's terminal result here.
     const registration = deps.registerDispatch(owner, admitted.message, admitted.run, adapter, root, resumeState,
       { sourceRunId: request.sourceRunId, sessionId: request.sessionId, promptId: request.promptId });
