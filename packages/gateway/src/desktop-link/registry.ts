@@ -81,6 +81,11 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
       link.closedBy(DESKTOP_LINK_CLOSE.going);
       if (links.get(link.info.deviceId) === link) links.delete(link.info.deviceId);
     },
+    /** The one linked device whose id starts with `prefix`, or null when none or several do. */
+    deviceByPrefix(prefix: string): string | null {
+      const matches = [...links.keys()].filter((deviceId) => deviceId.startsWith(prefix));
+      return matches.length === 1 ? matches[0]! : null;
+    },
     online(deviceId: string): boolean {
       const link = links.get(deviceId);
       return link !== undefined && !link.closed;

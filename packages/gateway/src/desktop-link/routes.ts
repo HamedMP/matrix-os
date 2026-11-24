@@ -13,11 +13,12 @@ import {
   DesktopLinkEnrolRequestSchema, DesktopLinkEnrolmentSchema, DesktopLinkMachineListSchema, DesktopLinkProofFrameSchema,
   desktopLinkEnrolProofMessage, desktopLinkProofMessage, desktopLinkRevisionTag,
 } from "@matrix-os/contracts/desktop-link";
-import { getOptionalRequestPrincipal, hasVerifiedRuntimeBearer, SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
+import { getOptionalRequestPrincipal, hasVerifiedRuntimeBearer, isLocalTerminalAgent, SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
 import { createDesktopLink, type DesktopLink } from "./link.js";
 import { createChallengeStore, newNonce, verifyDeviceProof } from "./proof.js";
 import { createDesktopLinkRegistry, type DesktopLinkRegistry } from "./registry.js";
 import { DesktopLinkStore, type DesktopLinkDatabase } from "./store.js";
+import { addDesktopLinkTerminalRoutes } from "./terminal-routes.js";
 
 export const DESKTOP_LINK_API_PREFIX = "/api/desktop-link";
 const ADMISSION_TIMEOUT_MS = 10_000;
@@ -41,9 +42,14 @@ export function readDesktopLinkConfig(env: NodeJS.ProcessEnv = process.env): Des
   return { ownerId, machineId: machineId.data.toLowerCase() };
 }
 
-/** True only for the computer's owner signed in with a verified runtime bearer. */
+/**
+ * True only for the computer's owner signed in with a verified runtime bearer,
+ * or a process in one of this computer's own terminals holding the local
+ * token, which the auth middleware admits only on the desktop terminal routes.
+ */
 export function isDesktopLinkOwner(c: Context, ownerId: string): boolean {
   if (!hasVerifiedRuntimeBearer(c)) return false;
+  if (isLocalTerminalAgent(c)) return true;
   const principal = getOptionalRequestPrincipal(c);
   // The computer's own shell proxy sends the gateway token with no user named:
   // that resolves to the configured owner, as Herdr's owner routes accept.
@@ -200,6 +206,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
     return c.json({ deviceId: device.data, revision: next });
   });
 
+  addDesktopLinkTerminalRoutes(api, registry, { now, log });
   // Hono copies a sub-app's routes when it is mounted, so mount after defining them.
   app.route(DESKTOP_LINK_API_PREFIX, api);
 

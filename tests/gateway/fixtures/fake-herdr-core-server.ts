@@ -54,6 +54,15 @@ export function createFakeHerdrCore(options: { version?: string; methods?: strin
       ]));
       return;
     }
+    if (call.method === "terminal.run") {
+      const address = `t${100 + terminals.size + calls.filter((entry) => entry.method === "terminal.run").length}`;
+      const argv = Array.isArray(call.params.argv) ? call.params.argv.map(String) : [];
+      const title = typeof call.params.name === "string" ? call.params.name
+        : typeof call.params.line === "string" ? call.params.line : argv[0] ?? "shell";
+      terminals.set(address, { title, status: null, screen: `ran ${title}`, input: [], resizes: [] });
+      reply(socket, call.id, { result: { address, state: "live" } });
+      return;
+    }
     if (call.method === "terminal.kill") {
       const id = String(call.params.terminal);
       if (!terminals.delete(id)) { reply(socket, call.id, { error: { code: -1, message: "x", data: { kind: "not_found" } } }); return; }

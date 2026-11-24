@@ -12,7 +12,7 @@ import {
 import { HcCallError, HcProtocolError, type HcSocket } from "@matrix-os/herdr-core-client/client";
 import { ZodError } from "zod/v4";
 import { createAttachmentSlots } from "@matrix-os/herdr-core-client/sessions";
-import { createHerdrSessionHost, type HerdrSessionHostStatus } from "@matrix-os/herdr-core-client/session-host";
+import { createHerdrSessionHost, type HerdrLaunch, type HerdrSessionHostStatus } from "@matrix-os/herdr-core-client/session-host";
 import type { TerminalAgentStatusEntry } from "@matrix-os/terminal-runtime";
 import { createHerdrRefMap, herdrTerminalRef } from "./refs.js";
 
@@ -443,6 +443,17 @@ export function createHerdrAdapter(options: {
 
     /** A writer's size for this terminal, so verb input attaches at the same size. */
     rememberSize,
+
+    /**
+     * Starts a terminal: the computer's shell at home, or `launch` there.
+     * Returns its id, or null when too many were started just now.
+     */
+    async create(size: { cols: number; rows: number }, launch: HerdrLaunch = {}): Promise<string | null> {
+      if (closed) throw new HerdrAdapterError("unavailable");
+      const id = await host.create(size, launch);
+      cache = null;
+      return id;
+    },
 
     async kill(id: string): Promise<void> {
       await requireListed(id);

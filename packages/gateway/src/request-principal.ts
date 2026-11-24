@@ -64,6 +64,17 @@ export function markVerifiedRuntimeBearer(c: PrincipalContextWriter): void {
   if (typeof c.set === "function") c.set(VERIFIED_RUNTIME_BEARER_CONTEXT_KEY as never, true);
 }
 
+export const LOCAL_TERMINAL_AGENT_CONTEXT_KEY = "localTerminalAgent";
+
+/** The caller is a process in one of this computer's own terminals, with the local token (spec 2692). */
+export function markLocalTerminalAgent(c: PrincipalContextWriter): void {
+  if (typeof c.set === "function") c.set(LOCAL_TERMINAL_AGENT_CONTEXT_KEY as never, true);
+}
+
+export function isLocalTerminalAgent(c: PrincipalContextReader): boolean {
+  return typeof c.get === "function" && c.get(LOCAL_TERMINAL_AGENT_CONTEXT_KEY as never) === true;
+}
+
 export function hasVerifiedRuntimeBearer(c: PrincipalContextReader): boolean {
   return typeof c.get === "function" && c.get(VERIFIED_RUNTIME_BEARER_CONTEXT_KEY as never) === true;
 }
