@@ -17,6 +17,8 @@ export interface PaneInfo {
   detail?: string;
   icon?: ReactNode;
   working?: boolean;
+  /** Spec 2710: a shared tab's people and controls, before the pane buttons. */
+  extra?: ReactNode;
 }
 
 export type PaneButton = "split-right" | "split-down" | "zoom" | "close";
@@ -171,6 +173,7 @@ function PaneHeader({ leaf, info, zoomed, props, setDrag }: {
         {info.working ? <span role="img" aria-label="Working" className="size-1.5 shrink-0 animate-pulse rounded-full" style={{ background: FOCUS_OUTLINE }} /> : null}
         {info.detail ? <span className="min-w-0 truncate" style={secondaryText}>{info.detail}</span> : null}
       </button>
+      {info.extra ?? null}
       <PaneButtons title={info.title} zoomed={zoomed} onButton={(button) => props.onPaneButton(leaf.id, button)} />
     </div>
   );

@@ -57,9 +57,20 @@ function stripAuthorization(headers: Record<string, string>): void {
   }
 }
 
+// Spec 2710: team terminal discovery, tickets and organization members are
+// account requests to the platform, not requests to one computer.
+const ACCOUNT_PATH = /^\/api\/(?:collaboration|organizations)(?:\/|$)/;
+
+/** A platform account request: collaboration or organizations, naming no computer. */
+export function isAccountRequest(requestUrl: string, gatewayOrigin: string | null): boolean {
+  if (!shouldInjectAuth(requestUrl, gatewayOrigin)) return false;
+  const url = new URL(requestUrl);
+  return ACCOUNT_PATH.test(url.pathname) && !url.searchParams.has("runtime") && !VM_ROUTE.test(url.pathname);
+}
+
 export function installTerminalWindowAuth(
   session: AuthSession,
-  options: { broker: AuthBroker; getGatewayOrigin(): string | null },
+  options: { broker: AuthBroker; getGatewayOrigin(): string | null; accountToken?(): string | null },
 ): { clear(): void } {
   // The bearer each in-flight request was sent with, by request id, so a 401
   // is charged to the token that request carried and never to a newer one.
@@ -69,6 +80,12 @@ export function installTerminalWindowAuth(
     const headers = details.requestHeaders;
     // Only the trusted core supplies a bearer on this session.
     stripAuthorization(headers);
+    if (isAccountRequest(details.url, options.getGatewayOrigin())) {
+      const token = options.accountToken?.() ?? null;
+      if (token) headers.Authorization = `Bearer ${token}`;
+      callback({ requestHeaders: headers });
+      return;
+    }
     const slot = resolveRuntimeTarget(details.url, options.getGatewayOrigin());
     if (!slot) {
       callback({ requestHeaders: headers });

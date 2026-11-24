@@ -466,7 +466,7 @@ if (!gotLock) {
       // attached there by target computer, never the selected-computer token.
       const terminalSession = session.fromPartition(TERMINAL_WINDOW_PARTITION);
       const terminalCredentials = createComputerCredentialBroker({ auth });
-      const terminalAuth = installTerminalWindowAuth(terminalSession, { broker: terminalCredentials, getGatewayOrigin: () => auth.getGatewayOrigin() });
+      const terminalAuth = installTerminalWindowAuth(terminalSession, { broker: terminalCredentials, getGatewayOrigin: () => auth.getGatewayOrigin(), accountToken: () => auth.getToken() });
       // Signing out forgets the minted bearers and the record of which was last sent.
       computerCredentials = { clear: () => { terminalCredentials.clear(); terminalAuth.clear(); } };
       installGatewayCors(terminalSession, () => auth.getGatewayOrigin(), rendererOrigin);

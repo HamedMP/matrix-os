@@ -30,6 +30,10 @@ import { createFailureText } from "./computer-terminals";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
 import type { PaneTab } from "@matrix-os/ui/terminal-pane-tree";
 import type { TerminalPaneAction } from "@matrix-os/contracts";
+import { ShareTerminalDialog, type ShareTarget } from "./share/ShareTerminalDialog";
+import { TeamPaneControl } from "./share/TeamPaneControl";
+import { setTeamInputMode } from "./share/team-share";
+import { useTeamCollaboration, type TeamCollaboration } from "./share/use-team-collaboration";
 
 const AVAILABILITY_LABEL: Record<MatrixComputer["availability"], string> = {
   available: "Available",
@@ -260,7 +264,24 @@ export function paneInfoFor(row: TerminalSidebarRow | undefined, fallback: strin
   };
 }
 
-function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
+/** Spec 2710: share controls on a Matrix computer's pane; this device and ssh machines are not shared. */
+function teamControl(view: TerminalWindowView, key: string, title: string, team: TeamCollaboration, onShare: (target: ShareTarget) => void) {
+  const target = terminalRowTarget(key);
+  if (target?.kind !== "computer") return undefined;
+  const refKey = terminalRefKey(target.ref);
+  const computer = view.ready?.computers.find((candidate) => candidate.runtimeSlot === target.slot);
+  return (
+    <TeamPaneControl entry={view.status.states[target.slot]?.team?.[refKey]} title={title}
+      onShare={() => onShare({ slot: target.slot, terminalId: refKey, title, computerLabel: computer?.handle ?? computer?.label ?? "Computer" })}
+      onInputMode={async (scopeId, mode) => {
+        const api = team.api();
+        if (!api) throw new Error("Collaboration unavailable");
+        await setTeamInputMode(api, scopeId, mode);
+      }} />
+  );
+}
+
+function Panes({ view, tab, team, onShare }: { view: TerminalWindowView; tab: PaneTab; team: TeamCollaboration; onShare(target: ShareTarget): void }) {
   const rows = new Map(view.status.rows.map((row) => [row.key, row]));
   // One callback for every pane's terminal that always runs the latest handler, so status updates leave panes alone.
   const latestPaneAction = useRef(view.panes.paneAction);
@@ -269,7 +290,11 @@ function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
   const ended = view.endedLocal;
   return (
     <TerminalPaneTree tab={tab}
-      paneInfo={(leaf) => paneInfoFor(rows.get(leaf.terminal), leaf.terminal === view.selectedKey && view.localTerminal ? view.localTerminal.title : "Terminal")}
+      paneInfo={(leaf) => {
+        const info = paneInfoFor(rows.get(leaf.terminal), leaf.terminal === view.selectedKey && view.localTerminal ? view.localTerminal.title : "Terminal");
+        const extra = teamControl(view, leaf.terminal, info.title, team, onShare);
+        return extra ? { ...info, extra } : info;
+      }}
       onPaneButton={view.paneButton}
       onFocus={view.panes.focusLeaf} onResize={view.panes.resize} onMove={view.panes.move}
       renderPane={(leaf, focused) => {
@@ -287,9 +312,9 @@ function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
   );
 }
 
-function ActivePane({ view }: { view: TerminalWindowView }) {
+function ActivePane({ view, team, onShare }: { view: TerminalWindowView; team: TeamCollaboration; onShare(target: ShareTarget): void }) {
   // A terminal on its own is a one-pane tab, so every terminal has a header and buttons.
-  if (view.panes.tab) return <Panes view={view} tab={view.panes.tab} />;
+  if (view.panes.tab) return <Panes view={view} tab={view.panes.tab} team={team} onShare={onShare} />;
   return <EmptyPane signedIn={view.ready !== null} />;
 }
 
@@ -322,6 +347,8 @@ export default function TerminalWindowApp() {
   const view = useTerminalWindow();
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [sharing, setSharing] = useState<ShareTarget | null>(null);
+  const team = useTeamCollaboration(view.ready?.platformHost ?? null, view.ready?.sessionKey ?? "");
   const machines = useMemo(() => sidebarMachines(view, setRemoving), [view]);
   const rowsByKey = useMemo(() => new Map(view.status.rows.map((row) => [row.key, row])), [view.status.rows]);
   const { prefs } = view.sidebar;
@@ -398,7 +425,7 @@ export default function TerminalWindowApp() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <TerminalTabBar space={activeSpace} tabs={view.tabs} selectedKey={view.selectedKey} row={(key) => rowsByKey.get(key)}
             icon={(row) => paneInfoFor(row, "Terminal").icon} onSelect={view.select} onClose={view.closeTab} onNew={view.newTerminal} />
-          <ActivePane view={view} />
+          <ActivePane view={view} team={team} onShare={setSharing} />
         </div>
       </div>
       <StatusBar view={view} />
@@ -408,6 +435,7 @@ export default function TerminalWindowApp() {
       <CloseTerminalDialog target={view.closing} onConfirm={view.close} onClose={() => view.setClosing(null)} />
       <AddMachineDialog open={adding} onAdd={view.ssh.add} onOpenSsh={view.openSshLogin} loadPeers={view.ssh.tailscalePeers} onClose={() => setAdding(false)} />
       <RemoveMachineDialog name={removing} onConfirm={view.ssh.remove} onClose={() => setRemoving(null)} />
+      <ShareTerminalDialog key={sharing?.terminalId ?? "closed"} target={sharing} platformHost={view.ready?.platformHost ?? null} team={team} onClose={() => setSharing(null)} />
     </div>
   );
 }
