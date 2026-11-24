@@ -421,7 +421,7 @@ export default function TerminalWindowApp() {
       <CloseTerminalDialog target={view.closing} onConfirm={view.close} onClose={() => view.setClosing(null)} />
       <AddMachineDialog open={adding} onAdd={view.ssh.add} onOpenSsh={view.openSshLogin} loadPeers={view.ssh.tailscalePeers} onClose={() => setAdding(false)} />
       <RemoveMachineDialog name={removing} onConfirm={view.ssh.remove} onClose={() => setRemoving(null)} />
-      <ShareTerminalDialog target={sharing} platformHost={view.ready?.platformHost ?? null} team={team} onClose={() => setSharing(null)} />
+      <ShareTerminalDialog key={sharing?.terminalId ?? "closed"} target={sharing} platformHost={view.ready?.platformHost ?? null} team={team} onClose={() => setSharing(null)} />
     </div>
   );
 }

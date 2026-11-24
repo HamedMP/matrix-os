@@ -67,6 +67,43 @@ describe("Share terminal dialog (spec 2710 J1)", () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the share and Stop sharing when stopping fails partway (Greptile on #3679)", async () => {
+    const post = vi.fn(async () => ({ eligible: true, resourceRevision: "4", confirmationToken: "c".repeat(64), existingScopeId: scopeId, existingLifecycle: "shared" }));
+    const grant = { id: "20000000-0000-4000-8000-000000000001", scopeId, organizationId: "org_team", audience: { kind: "organization" }, preset: "viewer", state: "active", policyVersion: "preset-v1", revision: "1", createdAt: "2026-11-24T10:00:00.000Z", updatedAt: "2026-11-24T10:00:00.000Z" };
+    const get = vi.fn(async (path: string) => path.endsWith("/grants") ? [grant] : path.includes("/members") ? { members: [] } : scope());
+    const remove = vi.fn(async () => { throw new Error("CollaborationUnavailable"); });
+    render(<ShareTerminalDialog target={target} platformHost={platformHost} team={teamWith({ post, get, delete: remove, patch: vi.fn(async () => ({})), put: vi.fn() })} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Stop sharing" }));
+    expect(await screen.findByText(/Couldn't stop sharing/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop sharing" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Share terminal" })).toBeNull();
+  });
+
+  it("offers Retry when access saved but the typing setting did not (Greptile on #3679)", async () => {
+    const post = vi.fn(async () => ({ eligible: true, resourceRevision: "4", confirmationToken: "c".repeat(64), existingScopeId: scopeId, existingLifecycle: "shared" }));
+    const get = vi.fn(async (path: string) => path.endsWith("/grants") ? [] : path.includes("/members") ? { members: [] } : scope());
+    const patch = vi.fn().mockRejectedValueOnce(new Error("CollaborationUnavailable")).mockResolvedValue({});
+    render(<ShareTerminalDialog target={target} platformHost={platformHost} team={teamWith({ post, get, delete: vi.fn(), patch, put: vi.fn() })} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText(/Editors may not be able to type/)).toBeNull());
+  });
+
+  it("finds a share made in the person's second organization (Greptile on #3679)", async () => {
+    const post = vi.fn(async (_path: string, body?: unknown) => {
+      if ((body as { organizationId: string }).organizationId === "org_team") throw new Error("CollaborationUnavailable");
+      return { eligible: true, resourceRevision: "4", confirmationToken: "c".repeat(64), existingScopeId: scopeId, existingLifecycle: "shared" };
+    });
+    const get = vi.fn(async (path: string) => path.endsWith("/grants") ? [] : path.includes("/members") ? { members: [] } : { ...scope(), organizationId: "org_other" });
+    const team: TeamCollaboration = {
+      api: () => ({ post, get, delete: vi.fn(), patch: vi.fn(async () => ({})), put: vi.fn() }) as unknown as CollaborationDirectApi,
+      organizations: async () => [{ organizationId: "org_team", name: "Acme" }, { organizationId: "org_other", name: "Other" }],
+    };
+    render(<ShareTerminalDialog target={target} platformHost={platformHost} team={team} onClose={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Stop sharing" })).toBeTruthy();
+    expect(post).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ organizationId: "org_other" }));
+  });
+
   it("asks a person with no organization to join one first", async () => {
     const team: TeamCollaboration = { api: () => ({}) as CollaborationDirectApi, organizations: async () => [] };
     render(<ShareTerminalDialog target={target} platformHost={platformHost} team={team} onClose={vi.fn()} />);
