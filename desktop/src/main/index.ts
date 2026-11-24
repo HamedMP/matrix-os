@@ -3,7 +3,7 @@ import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack"
 import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
 import { createPreviewWindowReopener } from "./preview-pair-window";
 import { initializeDesktopPreview } from "./preview-pair-startup";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, powerMonitor, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
 import { join, dirname } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
 import { createOrganizationDriveTransferService } from "./files/organization-drive-transfer";
@@ -101,6 +101,7 @@ import { createTerminalBrowserWindow } from "./terminal-window/window";
 import { createComputerCredentialBroker } from "./terminal-window/credential-broker";
 import { installTerminalWindowAuth } from "./terminal-window/gateway-auth";
 import { createLocalTerminalHost, type LocalTerminalHost } from "./local-terminals/host";
+import { startDesktopLink, type DesktopLinkService } from "./desktop-link/register";
 import { registerLocalTerminalIpc } from "./local-terminals/ipc";
 import { localLoginShell, resolveLocalTerminalRuntime, startLocalTerminalCore } from "./local-terminals/runtime";
 import { LOCAL_TERMINAL_VERSION } from "../shared/local-terminals";
@@ -151,6 +152,7 @@ const terminalWindowEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
 let computerCredentials: { clear(): void } | null = null;
 let localTerminals: LocalTerminalHost | null = null;
 let shortcutWiring: Awaited<ReturnType<typeof installShortcuts>> | null = null;
+let desktopLink: DesktopLinkService | null = null;
 let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
@@ -397,6 +399,7 @@ if (!gotLock) {
           fileDownloads?.cancelAll();
           organizationDriveTransfers?.cancelAll();
           localChatImports?.cancelAll();localUsage?.cancel();
+          desktopLink?.authChanged(status.signedIn);
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
             ...(status.signedIn ? {
@@ -721,6 +724,7 @@ if (!gotLock) {
         facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }),
       });
       localTerminals = localTerminalHost;
+      desktopLink = startDesktopLink({ userData, home: homedir(), appVersion: app.getVersion(), safeStorage, localTerminals: localTerminalHost, auth, computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, quitting: (listener) => app.once("before-quit", listener) });
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender);
       // Both trusted windows host terminals, so both may read copied files.
       registerTerminalClipboardIpc(ipcMain, {

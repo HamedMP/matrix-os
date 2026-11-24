@@ -214,6 +214,17 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     list: sessions.list,
 
     /**
+     * A new raw byte stream to this app's private core, started if needed, for
+     * the Desktop link (spec 2716). The caller speaks the handshake itself; every
+     * byte it writes has already passed the Desktop link guard.
+     */
+    async openStream(): Promise<HcSocket> {
+      await ensure();
+      if (disposed) throw new Error("local terminals are shut down");
+      return options.openSocket(socketPath);
+    },
+
+    /**
      * Starts the user's login shell, or one of the known agents in it, at home or
      * in a folder under home. Returns null when too many were started just now.
      */
