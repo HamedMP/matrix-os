@@ -104,4 +104,70 @@ describe('server actions from platform auth-shell pages', () => {
     expect(upstreamOf(fetchMock.mock.calls[0]!)).toContain('203.0.113.50');
     expect(res.headers.get('set-cookie') ?? '').toMatch(/matrix_platform_shell=; [^,]*Max-Age=0/);
   });
+
+  it('keeps a /vm/<handle> server action on the runtime even with the cookie', async () => {
+    await runningMachine();
+
+    await platform().request('/vm/alice/', {
+      method: 'POST', headers: { ...CLERK, cookie: COOKIE, 'next-action': 'abc123', 'content-type': 'text/plain' }, body: '[]',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(upstreamOf(fetchMock.mock.calls[0]!)).toContain('203.0.113.50');
+  });
+
+  it('clears the cookie when an explicit /vm/<handle> runtime document loads', async () => {
+    await runningMachine();
+
+    const res = await platform().request('/vm/alice/', { headers: { ...CLERK, cookie: COOKIE } });
+
+    expect(upstreamOf(fetchMock.mock.calls[0]!)).toContain('203.0.113.50');
+    expect(res.headers.get('set-cookie') ?? '').toMatch(/matrix_platform_shell=; [^,]*Max-Age=0/);
+  });
+
+  it('replays an action the runtime does not know to the auth shell (another tab cleared the cookie)', async () => {
+    await runningMachine();
+    fetchMock.mockImplementation(async (input: unknown) => String(input).startsWith(AUTH_SHELL)
+      ? new Response('auth-shell-ok', { status: 200, headers: { 'content-type': 'text/x-component' } })
+      : new Response('Server Action unavailable.', { status: 409, headers: { 'x-nextjs-action-not-found': '1' } }));
+
+    const res = await platform().request('/', {
+      method: 'POST', headers: { ...CLERK, 'next-action': 'abc123', 'content-type': 'text/plain' }, body: '["payload"]',
+    });
+
+    expect(fetchMock.mock.calls.map(upstreamOf)).toEqual(['https://203.0.113.50:443/', `${AUTH_SHELL}/`]);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('auth-shell-ok');
+    const replayed = fetchMock.mock.calls[1]![1] as RequestInit;
+    expect(await new Response(replayed.body as BodyInit).text()).toBe('["payload"]');
+  });
+
+  it('replays an action the auth shell does not know to the runtime (stale cookie from another tab)', async () => {
+    await runningMachine();
+    fetchMock.mockImplementation(async (input: unknown) => String(input).startsWith(AUTH_SHELL)
+      ? new Response('Server Action unavailable.', { status: 409, headers: { 'x-nextjs-action-not-found': '1' } })
+      : new Response('runtime-ok', { status: 200, headers: { 'content-type': 'text/x-component' } }));
+
+    const res = await platform().request('/', {
+      method: 'POST', headers: { ...CLERK, cookie: COOKIE, 'next-action': 'abc123', 'content-type': 'text/plain' }, body: '["payload"]',
+    });
+
+    expect(fetchMock.mock.calls.map(upstreamOf)).toEqual([`${AUTH_SHELL}/`, 'https://203.0.113.50:443/']);
+    expect(await res.text()).toBe('runtime-ok');
+    const replayed = fetchMock.mock.calls[1]![1] as RequestInit;
+    expect(await new Response(replayed.body as BodyInit).text()).toBe('["payload"]');
+  });
+
+  it('does not replay an ordinary failed action or loop between upstreams', async () => {
+    await runningMachine();
+    fetchMock.mockImplementation(async () =>
+      new Response('Server Action unavailable.', { status: 409, headers: { 'x-nextjs-action-not-found': '1' } }));
+
+    const res = await platform().request('/', {
+      method: 'POST', headers: { ...CLERK, cookie: COOKIE, 'next-action': 'abc123', 'content-type': 'text/plain' }, body: '[]',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(res.status).toBe(409);
+  });
 });

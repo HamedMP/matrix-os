@@ -19,6 +19,28 @@ export function isHtmlDocumentResponse(method: string, headers: Headers): boolea
 }
 
 export function isPlatformShellServerAction(c: Context, cookieHeader: string | undefined): boolean {
-  return c.req.method === 'POST' && c.req.header('next-action') !== undefined
+  return isServerActionRequest(c) && !isExplicitVmPath(c.req.path)
     && readCookie(cookieHeader, PLATFORM_SHELL_DOCUMENT_COOKIE) === '1';
+}
+
+/**
+ * Next answers an action id its build does not contain with this header
+ * (status 409, the action did not run), so replaying the same request to the
+ * other Next upstream is safe. The marker cookie is only a hint: it is shared
+ * by every tab on the host, so either upstream may receive an action that
+ * belongs to the other one.
+ */
+const NEXT_ACTION_NOT_FOUND_HEADER = 'x-nextjs-action-not-found';
+
+export function isServerActionRequest(c: Context): boolean {
+  return c.req.method === 'POST' && c.req.header('next-action') !== undefined;
+}
+
+export function isUnrecognizedServerActionResponse(response: Response): boolean {
+  return response.headers.get(NEXT_ACTION_NOT_FOUND_HEADER) === '1';
+}
+
+/** Explicit `/vm/<handle>/...` pages are always runtime pages. */
+export function isExplicitVmPath(path: string): boolean {
+  return path.startsWith('/vm/');
 }

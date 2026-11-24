@@ -120,7 +120,7 @@ import {
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
 import {
   PLATFORM_SHELL_DOCUMENT_COOKIE, PLATFORM_SHELL_DOCUMENT_COOKIE_CLEAR, PLATFORM_SHELL_DOCUMENT_COOKIE_SET,
-  isHtmlDocumentResponse, isPlatformShellServerAction,
+  isHtmlDocumentResponse, isPlatformShellServerAction, isServerActionRequest, isUnrecognizedServerActionResponse,
 } from './app-domain-shell-routing.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
@@ -568,8 +568,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const authHeader = c.req.header('authorization');
     const cookieHeader = c.req.header('cookie');
     const path = c.req.path;
+    // The marker is shared by every tab, so it is only a hint: an action either
+    // Next build reports as unknown (it did not run) is replayed once to the other.
+    let authShellRejectedAction = false;
     if (isAppDomain && isPlatformShellServerAction(c, cookieHeader)) {
-      return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
+      const shellResponse = await proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
+      if (!isUnrecognizedServerActionResponse(shellResponse)) return shellResponse;
+      await shellResponse.body?.cancel();
+      authShellRejectedAction = true;
     }
     const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
     const explicitVmRouteHasValidAppAssetToken = Boolean(
@@ -852,6 +858,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
+        if (isHtmlDocumentResponse(c.req.method, upstream.headers)
+          && readCookie(cookieHeader, PLATFORM_SHELL_DOCUMENT_COOKIE) !== null) {
+          // An explicit computer page is the runtime's: its server actions belong to the runtime.
+          responseHeaders.append('set-cookie', PLATFORM_SHELL_DOCUMENT_COOKIE_CLEAR);
+        }
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.url);
         responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
@@ -1028,6 +1039,12 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           dispatcher: customerVpsProxyDispatcher,
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
         shouldReleaseRuntimeProxyTimeout(c.req.method, path));
+        if (isAppDomain && !authShellRejectedAction && isServerActionRequest(c)
+          && isUnrecognizedServerActionResponse(upstream)) {
+          // An auth-shell page whose marker another tab cleared: the action did not run here.
+          await upstream.body?.cancel();
+          return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
+        }
         if (isCodeDomain && upstream.status >= 500) {
           logCodeDomainUpstreamFailure({
             handle: runningMachine.handle,
