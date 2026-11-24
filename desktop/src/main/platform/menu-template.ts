@@ -79,6 +79,8 @@ interface AppMenuTemplateOptions {
   openMacVerification?(): void;
   /** Opens the licence texts of bundled third-party components, when this build ships any. */
   openThirdPartyNotices?(): void;
+  /** Switches the Desktop link off for every computer at once (spec 2716). */
+  stopDesktopLink?(): void;
   /** Each registry action shows its first binding as its accelerator. */
   shortcuts: EffectiveShortcuts;
   runShortcut(id: ShortcutActionId): void;
@@ -106,6 +108,7 @@ export function createAppMenuTemplate({
   openMacPairing,
   openMacVerification,
   openThirdPartyNotices,
+  stopDesktopLink,
   shortcuts,
   runShortcut,
   terminalWindow,
@@ -204,6 +207,8 @@ export function createAppMenuTemplate({
               visible: false,
               click: stopBackgroundMacChecks,
             }] : []),
+            // Always here, so the person can cut every computer off this device without opening a window.
+            ...(stopDesktopLink ? [{ label: "Stop Computers Using This Device", click: stopDesktopLink }] : []),
             { type: "separator" },
             { role: "services" },
             { type: "separator" },
@@ -226,6 +231,7 @@ export function createAppMenuTemplate({
             ...settingsItems,
             // 2698 pairing, which also switches the desktop link on (spec 2716).
             ...(openMacPairing ? [{ label: platform === "win32" ? "Pair This PC…" : "Pair This Desktop…", click: openMacPairing }] : []),
+            ...(stopDesktopLink ? [{ label: "Stop Computers Using This Device", click: stopDesktopLink }] : []),
             updateItem,
             { type: "separator" },
             ...closeAppItems,

@@ -8,6 +8,7 @@ import { LOCAL_TERMINAL_EVENT_CHANNELS, LOCAL_TERMINAL_INVOKE_CHANNELS } from ".
 import {
   bindingFromKeyEvent, SHORTCUT_ACTIONS, terminalWindowFixedKeys as registryFixedKeys, type EffectiveShortcuts, type KeyEventLike, type ShortcutActionId,
 } from "@matrix-os/contracts/keyboard-shortcuts";
+import { DESKTOP_LINK_EVENT_CHANNELS, DESKTOP_LINK_INVOKE_CHANNELS } from "./desktop-link";
 
 export const TERMINAL_WINDOW_ARG = "--matrix-terminal-window";
 export const TERMINAL_WINDOW_QUERY_KEY = "window";
@@ -82,7 +83,7 @@ export const TERMINAL_WINDOW_INVOKE = {
 
 /** Channels only the Terminal window may call. */
 export const TERMINAL_WINDOW_ONLY_INVOKE_CHANNELS = [
-  "terminal-window:focus-main", ...LOCAL_TERMINAL_INVOKE_CHANNELS,
+  "terminal-window:focus-main", ...LOCAL_TERMINAL_INVOKE_CHANNELS, ...DESKTOP_LINK_INVOKE_CHANNELS,
 ] as const satisfies readonly InvokeChannel[];
 
 /** Everything the Terminal window may call. */
@@ -104,7 +105,7 @@ export const TERMINAL_WINDOW_INVOKE_CHANNELS = [
 
 /** Events the Terminal window may subscribe to. */
 export const TERMINAL_WINDOW_EVENT_CHANNELS = [
-  "auth:changed", "window:focus-changed", "shortcuts:changed", "terminal-window:command", ...LOCAL_TERMINAL_EVENT_CHANNELS,
+  "auth:changed", "window:focus-changed", "shortcuts:changed", "terminal-window:command", ...LOCAL_TERMINAL_EVENT_CHANNELS, ...DESKTOP_LINK_EVENT_CHANNELS,
 ] as const satisfies readonly EventChannel[];
 
 export type WindowRole = "main" | "terminal";

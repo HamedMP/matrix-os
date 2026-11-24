@@ -264,6 +264,7 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
       stream.queued -= bytes.length;
       if (link.stream !== stream || !stream.core) return;
       // The guard writes what it lets through to the core itself; only answers come back here.
+      // react-doctor-disable-next-line react-doctor/async-defer-await -- the check after this await is a different one: the stream may have been replaced or ended while the guard ran, and the guard must see every byte in order.
       const result = await stream.guard.push(bytes);
       if (link.stream !== stream) return;
       for (const answer of result.toComputer) link.socket?.send(answer);
@@ -533,6 +534,11 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
       }
       const saved = prefs.computers[slot];
       if (saved) await savePrefs({ computers: { ...prefs.computers, [slot]: { ...saved, enabled: false } } });
+    },
+
+    /** The app-menu kill switch: every computer is switched off at once. */
+    async disableAll(): Promise<void> {
+      await Promise.all([...links.keys()].map((slot) => this.disable(slot)));
     },
 
     /** Woke from sleep or the network came back: reconnect now instead of waiting out the backoff. */
