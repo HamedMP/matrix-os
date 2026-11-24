@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProjectSetupStartRequestSchema, ProjectSetupUpdateRequestSchema, type CanonicalChatDetailResponse, type CanonicalChatMessage } from "@matrix-os/contracts";
 import { canonicalChatPresentation } from "@desktop/renderer/src/features/chat/canonical-chat-presentation";
@@ -8,6 +8,15 @@ import { projectCanonicalTranscript } from "../../shell/src/lib/canonical-chat-t
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
 import { projectSetupDetailPresentation } from "../../packages/ui/src/chat/project-setup-presentation";
 import { useProjectSetup, type ProjectSetupTransport } from "../../packages/ui/src/chat/use-project-setup";
+
+const webSetup = vi.hoisted(() => ({ active: false }));
+vi.mock("@clerk/nextjs", () => ({
+  useOrganization: () => ({ organization: null }),
+  useAuth: () => ({ userId: null, sessionId: null }),
+}));
+vi.mock("../../shell/src/components/chat/useWebProjectSetup", () => ({
+  useWebProjectSetup: () => ({ active: webSetup.active, canAnswer: true }),
+}));
 
 afterEach(cleanup);
 const draft = {
@@ -267,4 +276,35 @@ it("preserves approved interview questions in both transcripts without showing r
   expect(presented.messages.map(message => message.id)).toEqual([owner.id, question.id]);
   expect(canonicalChatPresentation(presented).some(turn => turn.final?.id === question.id)).toBe(true);
   expect(projectCanonicalTranscript(detail).map(message => message.id)).toEqual([owner.id, question.id]);
+});
+
+it("shows ordinary Web Chat suggestions only outside active project setup", async () => {
+  const { ChatApp } = await import("../../shell/src/components/ChatApp");
+  const props = {
+    messages: [
+      { id: "msg_input", role: "user" as const, content: "Set up this project with Chat.", timestamp: 1000 },
+      { id: "msg_question", role: "assistant" as const, content: "Who should see the archive?", timestamp: 1001 },
+    ],
+    sessionId: "chat_setup", busy: false, connected: true, conversations: [],
+    onSubmit: vi.fn(), onNewChat: vi.fn(), onSwitchConversation: vi.fn(),
+  };
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+  vi.stubGlobal("ResizeObserver", class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  });
+  try {
+    const { rerender } = render(<ChatApp {...props} />);
+    expect(screen.getByRole("group", { name: "Suggested messages" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "What can you do?" })).toBeTruthy();
+    webSetup.active = true;
+    rerender(<ChatApp {...props} />);
+    expect(screen.queryByRole("group", { name: "Suggested messages" })).toBeNull();
+    expect(screen.getByText("Who should see the archive?")).toBeTruthy();
+  } finally {
+    webSetup.active = false;
+    cleanup();
+    vi.unstubAllGlobals();
+  }
 });

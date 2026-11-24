@@ -987,7 +987,7 @@ function ChatAppContent({
 
             {/* Suggestions + Input */}
             <div className={`mx-auto w-full shrink-0 pt-2 ${projectSetup.draft ? "max-w-[768px]" : "max-w-[808px]"} ${mobile ? "px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]" : "px-6 pb-5"}`}>
-              {mobile && !busy && suggestions.length > 0 && (
+              {mobile && !projectSetup.active && !busy && suggestions.length > 0 && (
                 <div className="pb-3">
                   <SuggestionChips
                     suggestions={suggestions}
