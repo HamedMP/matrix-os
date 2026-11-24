@@ -9,6 +9,7 @@ import {
   EXECUTION_GENERATION_PATTERN as EXECUTION_GENERATION,
   SCOPE_HANDLE_PATTERN as SCOPE_HANDLE,
   SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION,
+  SCOPE_RUNTIME_CODEX_EXECUTABLE,
   SCOPE_RUNTIME_CODEX_HARNESS_VERSION,
   SCOPE_RUNTIME_HANDLE_PATTERN as RUNTIME_HANDLE,
   prepareScopeRuntimeWorkerEnvironment,
@@ -43,7 +44,6 @@ const NATIVE_EXECUTABLE = "/opt/matrix/scope-sdk/native/claude";
 const BROKER_SOCKET = "/run/matrix-scope/broker.sock";
 const MAX_CHAT_FRAME_BYTES = 128 * 1024;
 const CHAT_TIMEOUT_MS = 50_000;
-const CODEX_EXECUTABLE = "/opt/matrix/runtime/node/bin/codex";
 const MAX_CODEX_EVENT_LINE_BYTES = 1024 * 1024;
 const MAX_CODEX_EVENTS = 2_048;
 const CODEX_DISABLED_FEATURES = [
@@ -136,7 +136,7 @@ export function buildScopeCodexExecLaunch(input: {
     "supports_websockets = false }",
   ].join(", ");
   return {
-    command: CODEX_EXECUTABLE,
+    command: SCOPE_RUNTIME_CODEX_EXECUTABLE,
     args: [
       "--ask-for-approval", "never",
       "--sandbox", "read-only",

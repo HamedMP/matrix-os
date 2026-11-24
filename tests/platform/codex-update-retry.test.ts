@@ -32,7 +32,7 @@ describe('managed Codex update recovery', () => {
       await writeFile(finalizers, '');
       await mkdir(join(app, 'skills/matrix'), { recursive: true });
       await writeFile(join(app, 'scripts/sync-matrix-agent-skills.sh'), '#!/bin/sh\nprintf "skills\\n" >> "$TEST_CODEX_FINALIZERS"\n', { mode: 0o755 });
-      await writeFile(codex, '#!/bin/sh\nprintf "codex-cli 0.156.1\\n"\n', { mode: 0o755 });
+      await writeFile(codex, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
       await writeFile(join(state, 'installed-tools'), recorded ? 'codex\n' : '');
       if (customGlobal) await writeFile(join(root, 'usr/local/bin/codex'), 'owner command\n', { mode: 0o755 });
       await writeFile(attempts, '');

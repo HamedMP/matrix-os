@@ -11,11 +11,13 @@ Same machine, same account, `app-server --stdio` `model/list`:
 
 ## What moved
 
-`CODEX_VERIFIED_VERSION`, the scope-runtime harness pin (profile digest `98b24935…9e801f`), both customer-VPS installers, both Dockerfiles and the supervisor acceptance script. Provider contracts for 0.171.0 were already qualified in [qualification-01710.md](qualification-01710.md). The installer treats the pin as a minimum, so existing VPSes on an older managed Codex reinstall at the next boot/update reconciliation; healthy newer binaries are preserved.
+`CODEX_VERIFIED_VERSION`, the scope-runtime harness pin (profile digest `a12c383c…4e722`), both customer-VPS installers, both Dockerfiles and the supervisor acceptance script. Provider contracts for 0.171.0 were already qualified in [qualification-01710.md](qualification-01710.md). New Terminal installations use the qualified version. Background reconciliation preserves any healthy existing Terminal executable, including 0.162.1.
 
 ## Upgrade order
 
-The scope supervisor admits only the exact pinned Codex and reads the installed version once at start; the gateway derives shared-Chat eligibility from that at its own start. The background developer-tools service would upgrade Codex after both had started, leaving shared Codex Chat disabled until a restart. The updater now runs `matrix-install-developer-tools --codex-upgrade-only` after the new host binaries land and before it starts the supervisor. It is bounded to 10 minutes, never installs Codex for an owner without it, and a failure only logs a warning; the background service still retries. If that fallback is what lands the upgrade, shared Codex Chat returns at the next supervisor and gateway restart. First boot needs no such step: cloud-init starts the supervisor before any Codex exists, and a snapshot is brought to a newer bundle through the same updater.
+The host-bundle build downloads and checksums the exact Linux binary, verifies its version, and stages it as `bin/matrix-codex`. On the first upgrade, the running predecessor already backs up and installs flat host binaries before restarting the supervisor. Its rollback restores the prior scoped binary or removes the new file when the predecessor had none. Codex needs no separate network installation during the service stop.
+
+The scope supervisor checks the release binary and mounts only that file read-only into the shared Chat runtime. The optional Terminal installation and its account state remain independently managed. An owner can still update their Terminal CLI without changing the shared Chat pin.
 
 ## Settings device login
 
