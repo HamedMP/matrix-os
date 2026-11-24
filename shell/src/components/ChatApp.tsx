@@ -20,6 +20,8 @@ import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } fr
 import { WebChatQueuedTurns } from "./chat/WebChatQueuedTurns";
 import { WebChatProjectPicker } from "./chat/WebChatProjectPicker";
 import { WebChatComposerControls } from "./chat/WebChatComposerControls";
+import { CanonicalChatFailureMessage } from "./chat/CanonicalChatFailureMessage";
+import { canonicalFailureInput } from "@/lib/canonical-chat-terminal-notices";
 import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
@@ -208,6 +210,8 @@ interface ChatAppProps {
     decision: CanonicalChatApprovalDecision,
     browserChoice?: BrowserPermissionChoice,
   ) => Promise<boolean>;
+  /** Retries a failed turn; resolves false when the retry was not admitted. */
+  onRetryTurn?: (turnId: string) => Promise<boolean>;
   composerDraftRequest?: ChatAgentDraftRequest | null;
   onComposerDraftConsumed?: (id: number) => void;
   onProviderSetupAction?: (
@@ -243,6 +247,7 @@ function ChatAppContent({
   boundProviderInstanceId,
   browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision, routineOriginChat, navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, projectSkillRootAvailable, onSetChatProject, navigationTruncated, chatChangeRevision, chatRunStatusChange,
   onSubmitApproval,
+  onRetryTurn,
   onSubmitInput,
   composerDraftRequest,
   onComposerDraftConsumed,
@@ -363,6 +368,7 @@ function ChatAppContent({
   };
   // Bumped by approval cards to open the composer's Permission mode picker, as on Electron Desktop.
   const [permissionModeRequest, setPermissionModeRequest] = useState(0);
+  const [modelPickerRequest, setModelPickerRequest] = useState(0);
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy initializer performs one bounded localStorage read.
   const [channels] = useState(() => new Set(getInitialHermesSetup().channels));
   const providerState = useChatProviderState(providerSelection, boundProviderInstanceId, { chatId: sessionId, scopeKey: authorityKey, executionControls });
@@ -529,7 +535,7 @@ function ChatAppContent({
   };
 
   const composerToolbar = !collaborationView && !botIdentityUnknown && !directBotId
-    ? <WebChatComposerControls providerState={providerState} lockedInstanceId={boundProviderInstanceId} permissionModeRequest={permissionModeRequest}
+    ? <WebChatComposerControls providerState={providerState} lockedInstanceId={boundProviderInstanceId} permissionModeRequest={permissionModeRequest} modelPickerRequest={modelPickerRequest}
       onSetupAction={(instance, action) => { void runProviderSetupAction(instance, action); }} />
     : undefined;
   // Electron Desktop's pane toggle at the top-left of the Chat pane; the phone drawer has its own close button.
@@ -798,7 +804,14 @@ function ChatAppContent({
                             return onSubmitInput ? onSubmitInput(request.runId, request.requestId, input) : false;
                           }}
                         />
-                      ) : directBotId && msg.role === "system" && msg.metadata?.canonicalFailureCode === "model_unavailable" ? <BotModelFailureNotice/> : msg.role === "system" ? (
+                      ) : directBotId && msg.role === "system" && msg.metadata?.canonicalFailureCode === "model_unavailable" ? <BotModelFailureNotice/> : msg.role === "system" && canonicalFailureInput(msg) ? (
+                        <CanonicalChatFailureMessage failure={canonicalFailureInput(msg)!} catalog={providerState.catalog} handlers={{
+                          retry: onRetryTurn ? async (turnId) => { if (!await onRetryTurn(turnId)) throw new Error("RetryUnavailable"); } : undefined,
+                          open_setup_terminal: collaborationView ? undefined : openProviderSettings,
+                          select_provider: composerToolbar ? () => setModelPickerRequest((request) => request + 1) : undefined,
+                          start_new_chat: () => startNewChat(chatProjectId ?? (mobile ? undefined : focusedProject?.id)),
+                        }} />
+                      ) : msg.role === "system" ? (
                         <CanonicalApprovalMessage
                           chatId={sessionId}
                           message={msg}

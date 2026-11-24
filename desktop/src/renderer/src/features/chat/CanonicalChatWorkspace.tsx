@@ -2,10 +2,11 @@ import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-sc
 import { SourceChatRoutines } from "./SourceChatRoutines";
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
 import { useChatSubmissionError } from "./use-chat-submission-error";
-import { BrowserPermissionReviewProvider, BrowserPermissionReminder, withPendingCanonicalTurn } from "@matrix-os/ui";
+import { BrowserPermissionReviewProvider, BrowserPermissionReminder, canonicalChatRunHarnessLabel, withPendingCanonicalTurn } from "@matrix-os/ui";
 import { canonicalChatExecutionControls } from "@matrix-os/contracts";
 import { chatAttachmentComposerPolicy } from "@matrix-os/ui";
 import { openChatProviderSettings } from "./open-chat-provider-settings";
+import { openProviderSettings } from "../settings/open-provider-settings";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { projectContext } from "./canonical-project-context";
 import { useBotDraftNavigation } from "./use-bot-draft-navigation";
@@ -145,6 +146,7 @@ function CanonicalChatWorkspaceContent({
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
   const [permissionModeRequest, setPermissionModeRequest] = useState(0);
+  const [modelPickerRequest, setModelPickerRequest] = useState(0);
   const actorId = useConnection((state) => state.userId);
   const authStatus = useConnection((state) => state.status);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -418,6 +420,7 @@ function CanonicalChatWorkspaceContent({
   const transcript = controller.detail ? canonicalChatPresentation({
     ...withPendingCanonicalTurn(controller.detail, controller.pendingTurn),
     streamedMessageIds: controller.streamedMessageIds,
+    harnessLabel: (run) => canonicalChatRunHarnessLabel(run, providerCatalog),
   }) : [];
   const pendingTool = pendingSupervisedTool(transcript);
   const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
@@ -467,10 +470,18 @@ function CanonicalChatWorkspaceContent({
   }, []);
   const retryTurn = controller.retryTurn;
   const submitApproval = controller.submitApproval;
+  const modelPickerAvailable = botPresentation?.kind !== "recipe";
+  const startNewChatRef = useRef<() => void>(() => undefined);
   const performTranscriptAction = useCallback(async (action: ConversationActionPresentation) => {
     if (action.kind === "retry") {
       const admitted = await retryTurn(action.turnId);
       if (!admitted) throw new Error("RetryUnavailable");
+      return;
+    }
+    if (action.kind === "recovery") {
+      if (action.recovery === "open_setup_terminal") openProviderSettings();
+      else if (action.recovery === "select_provider") setModelPickerRequest((request) => request + 1);
+      else startNewChatRef.current();
       return;
     }
     if (action.kind === "approval") {
@@ -482,7 +493,8 @@ function CanonicalChatWorkspaceContent({
   }, [retryTurn, submitApproval]);
   const canPerformTranscriptAction = useCallback((action: ConversationActionPresentation) => (
     action.kind === "retry" || action.kind === "approval"
-  ), []);
+    || (action.kind === "recovery" && (action.recovery !== "select_provider" || modelPickerAvailable))
+  ), [modelPickerAvailable]);
   const activeProjectSlug = projects.find((project) => (
     project.id === composerProjectId || project.slug === composerProjectId
   ))?.slug;
@@ -768,6 +780,7 @@ function CanonicalChatWorkspaceContent({
     setGlobalView("draft");
     setLocalComposerFocusRequestId((requestId) => requestId + 1);
   };
+  useLayoutEffect(() => { startNewChatRef.current = startNewChat; });
 
   const selectChat = (chatId: string) => {
     setEditingQueuedTurn(null);
@@ -813,6 +826,7 @@ function CanonicalChatWorkspaceContent({
       <BrowserPermissionReminder/>
       <SharedChatComposer
         permissionModeRequest={permissionModeRequest}
+        modelPickerRequest={modelPickerRequest}
         value={draft}
         onChange={setDraft}
         draftScopeKey={draftScope}

@@ -1,9 +1,9 @@
 import { RoutineActionIdSchema } from "@matrix-os/contracts";
-import { projectChatSubagent, canonicalChatToolDetail, canonicalChatToolActivityState, canonicalReviewedAgentFailure } from "@matrix-os/contracts";
+import { projectChatSubagent, canonicalChatToolDetail, canonicalChatToolActivityState } from "@matrix-os/contracts";
 import type { CanonicalChatRun, CanonicalChatRunActivity } from "@matrix-os/contracts";
-import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
+import { canonicalChatFailurePresentation } from "@matrix-os/ui";
 import type {
-  ConversationActivityGroupPresentation, ConversationActivityPresentation, ConversationMessagePresentation,
+  ConversationActionPresentation, ConversationActivityGroupPresentation, ConversationActivityPresentation, ConversationMessagePresentation,
   ConversationNoticePresentation, ConversationRequestPresentation, ConversationWorkPresentation,
 } from "../../components/conversation/presentation";
 const MAX_RUN_ACTIVITY_PROJECTIONS = 500;
@@ -116,6 +116,7 @@ export function runPresentation(
   hasFinalAssistantMessage: boolean,
   turnId: string,
   allowRetry: boolean,
+  harnessLabel?: string,
 ): {
   work: ConversationWorkPresentation[];
   streamingFinal?: ConversationMessagePresentation;
@@ -322,23 +323,21 @@ export function runPresentation(
         phase: "final" as const,
       }
     : undefined;
-  const reviewedFailure = canonicalReviewedAgentFailure(runError?.error.code, runError?.error.safeMessage);
+  const failure = failed && !stopped ? canonicalChatFailurePresentation(runError?.error, { harnessLabel, allowRetry }) : undefined;
+  const actions = failure?.actions.map((action): ConversationActionPresentation => action.kind === "retry"
+    ? { kind: "retry", turnId, label: action.label }
+    : { kind: "recovery", recovery: action.kind, label: action.label }) ?? [];
   const terminalNotice = failed || stopped
     ? {
         kind: "notice" as const,
         id: runError?.id ?? `${run.id}:terminal`,
         phase: "final" as const,
         tone: stopped ? "stopped" as const : "failed" as const,
-        label: stopped ? "Agent work stopped" : "Agent work failed",
-        ...(!stopped && runError ? { failureCode: runError.error.code } : {}),
-        markdown: stopped ? "Run was cancelled."
-          : canonicalChatSafeFailureReason(runError?.error.code, runError?.error.safeMessage)
-            ?? canonicalChatSafeFailureReason("run_failed")!,
+        label: failure?.title ?? "Agent work stopped",
+        ...(failure && runError ? { failureCode: runError.error.code } : {}),
+        markdown: failure?.message ?? "Run was cancelled.",
         timestamp: Date.parse(runError?.occurredAt ?? run.completedAt ?? run.updatedAt),
-        ...(!stopped && allowRetry && runError?.error.retryable && (reviewedFailure?.retryable ?? true)
-          && runError.error.recoveryActions?.includes("retry")
-          ? { actions: [{ kind: "retry" as const, turnId, label: "Retry" }] }
-          : {}),
+        ...(actions.length > 0 ? { actions } : {}),
       }
     : undefined;
   return {

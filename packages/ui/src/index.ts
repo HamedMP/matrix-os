@@ -81,6 +81,7 @@ export {
 
 export {
   canonicalChatSubscriptionSelectionMatches,
+  canonicalChatRunHarnessLabel,
   canonicalProviderChoiceCanBeDefault,
   canonicalProviderAvailabilityLabel,
   canonicalProviderUnavailableSelectionLabel,
@@ -261,6 +262,7 @@ export { compactChatTitle } from "./chat-title.js";
 export { WindowResizeControls, resizeWindowBounds, type WindowBounds, type ResizeDirection } from "./window/WindowResizeControls.js";
 export { constrainFloatingWindow, isPointNearWindow, WINDOW_BACKGROUND_CLICK_BUFFER } from "./window/window-placement.js";
 export { CanonicalChatInputForm, type CanonicalChatInputFormProps } from "./chat/CanonicalChatInputForm.js";
+export { ChatNoticeCard, type ChatNoticeCardAction } from "./chat/ChatNoticeCard.js";
 
 export { useFileDownload, type FileDownloadTransport, type FileDownloadController } from "./files/use-file-download.js";
 export { filePreviewContentUrl, filePreviewMetadataUrl } from "./files/file-preview-policy.js";
@@ -282,7 +284,7 @@ export { McpServerDiagnostics } from "./McpServerDiagnostics.js";
 
 export { createTerminalNativeHistory } from "./terminal/terminal-native-history.js";
 export { captureTerminalFileDrag, terminalDropFiles, terminalDropMimeType, MAX_TERMINAL_DROP_FILES, MAX_TERMINAL_DROP_FILE_BYTES } from "./terminal/terminal-file-drag.js";
-export { canonicalChatSafeFailureReason } from "./canonical-chat-error-copy.js";
+export { canonicalChatSafeFailureReason, canonicalChatFailurePresentation, type CanonicalChatFailureAction, type CanonicalChatFailureActionKind, type CanonicalChatFailurePresentation } from "./canonical-chat-error-copy.js";
 
 export { ConversationSubagentActivity } from "./chat/subagent-activity";
 export { ChatProviderConnections, ChatProviderOnboarding, deriveChatProviderConnectionState } from "./agents-providers/ChatProviderConnections.js";

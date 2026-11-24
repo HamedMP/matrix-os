@@ -849,6 +849,27 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     }
   }, [client, loadDetail, isCurrent]);
 
+  const retryTurn = useCallback(async (turnId: string) => {
+    if (!isCurrent()) return false;
+    const current = detailRef.current;
+    if (!current || current.record.activeRun || current.record.chat.id !== activeChatIdRef.current) return false;
+    const chatId = current.record.chat.id;
+    try {
+      await client.retryTurn(chatId, turnId, { clientRequestId: requestId(), baseRevision: current.record.chat.revision });
+      // Reloading a Chat the owner has left would supersede the newly selected Chat's pending load.
+      if (!isCurrent() || activeChatIdRef.current !== chatId) return false;
+      await loadDetail(chatId);
+      return isCurrent();
+    } catch (error: unknown) {
+      if (!isCurrent()) return false;
+      console.warn("[canonical-chat] Shell retry failed:", error instanceof Error ? error.name : "UnknownError");
+      if (activeChatIdRef.current !== chatId) return false;
+      setSafeError("The Run could not be retried. Refresh and try again.");
+      await loadDetail(chatId);
+      return false;
+    }
+  }, [client, loadDetail, isCurrent]);
+
   const renameConversation = useCallback(async (chatId: string, title: string) => {
     if (!isCurrent()) return false;
     const current = detailRef.current?.record.chat.id === chatId
@@ -1037,6 +1058,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     switchConversation,
     abortCurrent,
     submitApproval,
+    retryTurn,
     submitInput,
   };
 }

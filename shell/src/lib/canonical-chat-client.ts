@@ -10,6 +10,8 @@ import {
   CanonicalQueueChatTurnRequestSchema, CanonicalCancelQueuedChatTurnRequestSchema, CanonicalChatQueuedTurnIdSchema,
   type CanonicalChatQueueAdmissionResponse, type CanonicalChatQueueCancellationResponse, type CanonicalCancelQueuedChatTurnRequest,
   CanonicalSteerQueuedChatTurnRequestSchema, CanonicalChatRunSteeringResponseSchema,
+  CanonicalRetryChatTurnRequestSchema, CanonicalChatRunAdmissionResponseSchema, CanonicalChatTurnIdSchema,
+  type CanonicalRetryChatTurnRequest, type CanonicalChatRunAdmissionResponse,
   type CanonicalSteerQueuedChatTurnRequest, type CanonicalChatRunSteeringResponse,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
@@ -77,6 +79,8 @@ export interface CanonicalShellChatClient {
   /** Moves a queued turn into the active run when it reports same-run steering. */
   steerQueuedTurn(chatId: string, runId: string, queuedTurnId: string, input: CanonicalSteerQueuedChatTurnRequest): Promise<CanonicalChatRunSteeringResponse>;
   cancelRun(chatId: string, runId: string, clientRequestId: string): Promise<CanonicalChatRunCancellationResponse>;
+  /** Starts a new Run for a failed turn; the same request id is idempotent. */
+  retryTurn(chatId: string, turnId: string, input: CanonicalRetryChatTurnRequest): Promise<CanonicalChatRunAdmissionResponse>;
   uploadAttachment(file: ShellAttachmentInput, retryKey?: string): Promise<CanonicalAttachmentReference>;
   deleteAttachment(ownerReference: string): Promise<void>;
   submitInput(chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest): Promise<CanonicalChatInputSubmissionResponse>;
@@ -407,6 +411,15 @@ export function createCanonicalShellChatClient(options: {
       const body = CanonicalSubmitChatInputRequestSchema.parse(input);
       return CanonicalChatInputSubmissionResponseSchema.parse(await request(
         `/api/chats/${encodeURIComponent(id)}/runs/${encodeURIComponent(parsedRunId)}/inputs/${encodeURIComponent(parsedRequestId)}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+      ));
+    },
+    async retryTurn(chatId, turnId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const parsedTurnId = CanonicalChatTurnIdSchema.parse(turnId);
+      const body = CanonicalRetryChatTurnRequestSchema.parse(input);
+      return CanonicalChatRunAdmissionResponseSchema.parse(await request(
+        `/api/chats/${encodeURIComponent(id)}/turns/${encodeURIComponent(parsedTurnId)}/runs`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
       ));
     },

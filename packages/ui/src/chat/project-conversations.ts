@@ -51,6 +51,11 @@ const AGENTS: Partial<Record<CanonicalProviderDriverKind, { label: string; artwo
   matrix_bot: { label: "Bot" },
 };
 
+/** Harness name for a bound driver; generic Bot routes have no harness name to show. */
+export function chatHarnessLabel(driver: CanonicalProviderDriverKind): string | undefined {
+  return driver === "matrix_bot" ? undefined : AGENTS[driver]?.label;
+}
+
 function timeOf(value: string | undefined): number {
   const parsed = value ? Date.parse(value) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : 0;

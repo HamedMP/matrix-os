@@ -680,13 +680,14 @@ function MobileAppFrame({
         onAbortCurrent={chat.abortCurrent}
         connected={chat.connected}
         conversations={chat.conversations}
-        onNewChat={() => void chat.newChat()}
+        onNewChat={(projectId) => void chat.newChat(projectId)}
         onSwitchConversation={chat.switchConversation}
         activeConversationTitle={chat.activeConversationTitle}
         onRenameConversation={chat.renameConversation}
         onSubmit={chat.submitMessage}
               agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} routineOriginChat={chat.routineOriginChat} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} onSetChatProject={chat.setChatProject} navigationTruncated={chat.navigationTruncated} chatChangeRevision={chat.chatChangeRevision} chatRunStatusChange={chat.chatRunStatusChange}
         onSubmitApproval={chat.submitApproval}
+        onRetryTurn={chat.retryTurn}
                 browserPermissions={chat.browserPermissions}
         onSubmitInput={chat.submitInput}
         providerSelection={chat.providerSelection}

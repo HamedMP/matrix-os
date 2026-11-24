@@ -14,11 +14,13 @@ function glyphKind(route: { instanceId: string; driverKind: CanonicalProviderIns
 }
 
 /** Model, effort and access pickers for the Web Chat composer toolbar, matching Electron Desktop. */
-export function WebChatComposerControls({ providerState, lockedInstanceId, permissionModeRequest = 0, onSetupAction }: {
+export function WebChatComposerControls({ providerState, lockedInstanceId, permissionModeRequest = 0, modelPickerRequest = 0, onSetupAction }: {
   providerState: ChatProviderState;
   lockedInstanceId?: string;
   /** Bumping this opens the Permission mode picker (or the narrow Chat settings menu). */
   permissionModeRequest?: number;
+  /** Bumping this opens the model and provider picker. */
+  modelPickerRequest?: number;
   onSetupAction: (instance: CanonicalProviderInstanceDescriptor, action: CanonicalProviderSetupAction) => void;
 }) {
   const { selected, activeInstance } = providerState;
@@ -55,6 +57,7 @@ export function WebChatComposerControls({ providerState, lockedInstanceId, permi
           ? <WebProviderDriverIcon kind={glyphKind({ instanceId: activeInstance.id, driverKind: activeInstance.driverKind })} />
           : <Cpu size={15} aria-hidden="true" />}
         lockedInstanceId={lockedInstanceId}
+        openRequest={modelPickerRequest}
         loading={providerState.loading}
         menuZIndex={SHELL_Z_INDEX.popover}
         renderDriverIcon={(kind) => <WebProviderDriverIcon kind={kind} />}
