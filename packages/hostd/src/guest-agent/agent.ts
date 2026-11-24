@@ -117,8 +117,25 @@ export function serveConnection(
     let closing = false;
     let timer: NodeJS.Timeout | undefined;
 
-    const send = (response: GuestResponse) => {
-      if (!output.writableEnded && !output.destroyed) output.write(`${JSON.stringify(response)}\n`);
+    // Waits for the peer to read once the output buffer is full, so a peer
+    // that never reads stalls the agent instead of growing its buffer. A peer
+    // that reads nothing for `idleMs` is dropped.
+    const send = async (response: GuestResponse) => {
+      if (output.writableEnded || output.destroyed) return;
+      if (output.write(`${JSON.stringify(response)}\n`)) return;
+      await new Promise<void>((resolve) => {
+        const stalled = setTimeout(() => output.destroy(), idleMs);
+        const done = () => {
+          clearTimeout(stalled);
+          output.off("drain", done);
+          output.off("close", done);
+          output.off("error", done);
+          resolve();
+        };
+        output.on("drain", done);
+        output.on("close", done);
+        output.on("error", done);
+      });
     };
 
     const close = () => {
@@ -167,7 +184,7 @@ export function serveConnection(
         // Backpressure: read no further input while these lines are answered.
         input.pause();
         work = work.then(async () => {
-          for (const line of lines) send(await agent.handleLine(line));
+          for (const line of lines) await send(await agent.handleLine(line));
           if (!closing) input.resume();
         });
       }
@@ -254,13 +271,19 @@ export interface AgentProcess extends SignalSource {
   exitCode?: number | string | null;
 }
 
-export async function main(argv: readonly string[], proc: AgentProcess = process): Promise<void> {
+// `makeAgent` lets tests serve a controlled agent: the system agent's trim
+// drops the caches and compacts the memory of whatever machine runs it.
+export async function main(
+  argv: readonly string[],
+  proc: AgentProcess = process,
+  makeAgent: () => GuestAgent = createSystemGuestAgent,
+): Promise<void> {
   if (argv[0] === "--stdio") {
-    await serveConnection(createSystemGuestAgent(), proc.stdin, proc.stdout);
+    await serveConnection(makeAgent(), proc.stdin, proc.stdout);
     return;
   }
   if (argv[0] === "--listen" && typeof argv[1] === "string" && argv[1].startsWith("/")) {
-    await listenGuestAgent(argv[1], createSystemGuestAgent(), proc);
+    await listenGuestAgent(argv[1], makeAgent(), proc);
     return;
   }
   defaultLog("guest_agent_usage", { usage: "agent.js --listen <absolute socket path> | --stdio" });
