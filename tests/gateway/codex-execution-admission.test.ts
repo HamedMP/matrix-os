@@ -15,6 +15,7 @@ async function fixture() {
   let revision = 1;
   let enabled = true;
   let principal = "private_owner_profile_A";
+  let generation: string | undefined;
   let available = true;
   let source = "owner_openai_profile";
   let account = "native_account";
@@ -36,15 +37,16 @@ async function fixture() {
       accounts: [{ id: account, providerId: "openai", accessSourceId: source, authMethod: method, authState: "authenticated" }],
     } as unknown as ProviderSettingsSnapshot),
     readNativeAccount: async () => {
-      const captured = principal;
+      const captured = principal, capturedGeneration = generation;
       return bindNativeAccountMetadata({ accountLabel: "person@example.test", authMethod: method,
         checkedAt: new Date(Date.now() - 1000).toISOString(), staleAfter: new Date(Date.now() + 30000).toISOString() },
-      async () => available && captured === principal, captured);
+      async () => available && captured === principal, captured, capturedGeneration ? { generation: capturedGeneration } : {});
     },
   };
   await save();
-  return { homePath, options, save, bumpOtherSettings: async () => { revision++; await save(); }, admission: createCodexExecutionAdmission(options), bumpConsent: async () => { consentRevision++; revision++; await save(); }, change: (value: { principal?: string; enabled?: boolean; available?: boolean; source?: string; account?: string; method?: "terminal" | "api_key" }) => {
+  return { homePath, options, save, bumpOtherSettings: async () => { revision++; await save(); }, admission: createCodexExecutionAdmission(options), bumpConsent: async () => { consentRevision++; revision++; await save(); }, change: (value: { principal?: string; generation?: string; enabled?: boolean; available?: boolean; source?: string; account?: string; method?: "terminal" | "api_key" }) => {
     if (value.principal !== undefined) principal = value.principal;
+    if (value.generation !== undefined) generation = value.generation;
     if (value.enabled !== undefined) { enabled = value.enabled; revision++; }
     if (value.available !== undefined) available = value.available;
     if (value.source !== undefined) { source = value.source; revision++; }
@@ -426,3 +428,71 @@ describe("receipts never cost availability", () => {
   });
 });
 
+// ENG-523: consent saved under the legacy token-bound generation is upgraded by
+// recording an alias, never by rewriting the saved row. A chat whose native
+// runner was admitted before the upgrade must keep resuming on the same account.
+describe("Codex consent alias after the durable-generation upgrade", () => {
+  const sha = (value: string) => createHash("sha256").update(value).digest("hex");
+  const alias = async (homePath: string, durable: string) => writeFile(join(homePath, "system/ai-providers/codex-consent-alias.json"),
+    JSON.stringify({ version: 1, saved: sha("private_owner_profile_A"), durable: sha(durable) }));
+  it("keeps a session admitted before the upgrade resumable for the same account", async () => {
+    const f = await fixture();
+    const binding = await f.admission.start("owner", "sess_live_runner");
+    const before = await f.admission.validateLaunch("owner", "sess_live_runner");
+    // After deploy the same account reports its durable generation, and Codex
+    // later refreshes its tokens, so the exact legacy proof no longer matches.
+    f.change({ principal: "private_owner_profile_A:refreshed", generation: "durable_owner_A" });
+    await expect(f.admission.validate("owner", binding, "sess_live_runner")).rejects.toThrow("unavailable");
+    await alias(f.homePath, "durable_owner_A");
+    await expect(f.admission.validate("owner", binding, "sess_live_runner")).resolves.toBeUndefined();
+    const after = await f.admission.validateLaunch("owner", "sess_live_runner");
+    expect(after).toEqual(before);
+    expect(after?.expectedPrincipalFingerprint).toBe(sha("private_owner_profile_A"));
+  });
+  it("still treats a different account as a switch despite an upgrade alias", async () => {
+    const f = await fixture();
+    const binding = await f.admission.start("owner", "sess_live_runner");
+    await alias(f.homePath, "durable_owner_A");
+    f.change({ principal: "private_owner_profile_B", generation: "durable_owner_B" });
+    await expect(f.admission.validate("owner", binding, "sess_live_runner")).rejects.toThrow("unavailable");
+    await expect(f.admission.start("owner", "sess_new")).rejects.toThrow("unavailable");
+  });
+  it("admits concurrent starts under legacy consent for unchanged credentials and records one alias", async () => {
+    const f = await fixture();
+    f.change({ generation: "durable_owner_A" });
+    const bindings = await Promise.all(Array.from({ length: 6 }, (_, index) => f.admission.start("owner", `sess_concurrent_${index}`)));
+    expect(new Set(bindings).size).toBe(1);
+    expect(JSON.parse(await readFile(join(f.homePath, "system/ai-providers/codex-consent-alias.json"), "utf8")))
+      .toEqual({ version: 1, saved: sha("private_owner_profile_A"), durable: sha("durable_owner_A") });
+  });
+  it("confirms a same-send receipt for upgraded same-account consent", async () => {
+    const f = await fixture();
+    f.change({ principal: "private_owner_profile_A:refreshed", generation: "durable_owner_A" });
+    await alias(f.homePath, "durable_owner_A");
+    const { binding, receipt } = await f.admission.startWithReceipt("owner", "sess_receipt_alias");
+    expect(binding).toEqual(expect.any(String));
+    await expect(f.admission.confirm("owner", receipt, "sess_receipt_alias")).resolves.toBeUndefined();
+    f.change({ principal: "private_owner_profile_B", generation: "durable_owner_B" });
+    await expect(f.admission.confirm("owner", receipt, "sess_receipt_alias")).rejects.toThrow("unavailable");
+  });
+  it("fails closed and retryably when the required consent upgrade cannot be saved", async () => {
+    const f = await fixture();
+    f.change({ generation: "durable_owner_A" });
+    const blocked = join(f.homePath, "system/ai-providers/codex-consent-alias.json");
+    await mkdir(blocked); // an unwritable alias path
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(f.admission.start("owner", "sess_blocked")).rejects.toThrow("Selected Codex account is unavailable");
+    } finally { warn.mockRestore(); }
+    await rm(blocked, { recursive: true });
+    await expect(f.admission.start("owner", "sess_blocked")).resolves.toEqual(expect.any(String));
+    expect(JSON.parse(await readFile(blocked, "utf8"))).toMatchObject({ saved: sha("private_owner_profile_A"), durable: sha("durable_owner_A") });
+  });
+  it("ignores an alias for a different saved generation", async () => {
+    const f = await fixture();
+    await writeFile(join(f.homePath, "system/ai-providers/codex-consent-alias.json"),
+      JSON.stringify({ version: 1, saved: sha("someone_else"), durable: sha("durable_owner_A") }));
+    f.change({ principal: "private_owner_profile_A:refreshed", generation: "durable_owner_A" });
+    await expect(f.admission.start("owner", "sess_new")).rejects.toThrow("unavailable");
+  });
+});

@@ -22,10 +22,11 @@ import { useTerminalWindow, type TerminalWindowView } from "./use-terminal-windo
 import { isTerminalWindowShortcut } from "../../../../shared/terminal-window";
 import { computerMachineId, localRowKey, sshMachineId, terminalRowTarget } from "./use-terminal-status";
 import { AddMachineDialog, RemoveMachineDialog } from "./AddMachineDialog";
-import type { LocalMachine } from "../../../../shared/local-terminals";
+import type { LocalCreateFailure, LocalMachine } from "../../../../shared/local-terminals";
 import { TerminalPaneTree, type PaneInfo } from "./TerminalPaneTree";
 import { TerminalTabBar, type ActiveSpaceChip } from "./TerminalTabBar";
 import { defaultSpaceColor, spaceId } from "./SidebarSpaces";
+import { createFailureText } from "./computer-terminals";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
 import type { PaneTab } from "@matrix-os/ui/terminal-pane-tree";
 import type { TerminalPaneAction } from "@matrix-os/contracts";
@@ -40,6 +41,17 @@ const AVAILABILITY_COLOR: Record<MatrixComputer["availability"], string> = {
   starting: "var(--color-warning)",
   unavailable: "var(--text-tertiary, var(--color-muted-foreground))",
 };
+// Why a terminal on this device did not start, as the main process classified it.
+const LOCAL_CREATE_FAILURE: Record<LocalCreateFailure, string> = {
+  timeout: "Couldn't start a terminal: this device's terminal service did not answer. Try again.",
+  busy: "Couldn't start a terminal: this device's terminal service is busy. Try again.",
+  disconnected: "Couldn't start a terminal: this device's terminal service stopped. Try again.",
+  refused: "Couldn't start a terminal: this device's terminal service refused it. Try again.",
+  protocol: "Couldn't start a terminal: this device's terminal service answered unexpectedly. Restart the app.",
+  folder: "Couldn't start a terminal: that folder is not in your home folder.",
+  unknown: "Couldn't start a terminal. Try again.",
+};
+
 const LOCAL_NOTICE: Record<Exclude<LocalTerminalsNotice, null>, string> = {
   "create-failed": "Couldn't start a terminal. Try again.",
   "create-rate-limited": "Too many terminals started at once. Try again in a moment.",
@@ -160,8 +172,8 @@ function sidebarMachines(view: TerminalWindowView, onRemove: (name: string) => v
       // A refused credential or an unreachable computer, from starting a terminal there.
       ? { status: <ComputerFailure reason={(view.cloud.terminals[computer.runtimeSlot] as { reason: "reconnect" | "unavailable" }).reason}
           onRetry={() => { void view.cloud.load(computer.runtimeSlot); }} /> }
-      : view.cloud.createFailed === computer.runtimeSlot
-        ? { status: <p role="alert" className="px-3 pb-1 text-[12px]">Couldn't start a terminal. Try again.</p> } : {}),
+      : view.cloud.createFailed?.slot === computer.runtimeSlot
+        ? { status: <p role="alert" className="px-3 pb-1 text-[12px]">{createFailureText(view.cloud.createFailed.failure)}</p> } : {}),
   }));
   const ssh = (view.ssh.state.status === "ready" ? view.ssh.state.machines : []).map((machine): SidebarMachine => ({
     id: sshMachineId(machine.name),
@@ -332,7 +344,9 @@ export default function TerminalWindowApp() {
   useEffect(() => { document.title = "Terminal"; }, []);
 
   const failed = view.local.notice ?? view.computerNotice;
-  const noticeText = failed ? LOCAL_NOTICE[failed] : view.panes.notice ? PANE_NOTICE[view.panes.notice] : null;
+  const noticeText = failed === "create-failed" && view.local.notice === "create-failed" && view.local.createFailure
+    ? LOCAL_CREATE_FAILURE[view.local.createFailure]
+    : failed ? LOCAL_NOTICE[failed] : view.panes.notice ? PANE_NOTICE[view.panes.notice] : null;
   const notice = noticeText ? <p role="alert" className="px-2 py-1 text-[12px]">{noticeText}</p> : null;
   return (
     <div className="ph-no-capture flex h-screen w-screen flex-col" style={{ background: "var(--bg-app)", color: "var(--text-primary, var(--color-foreground))" }}>

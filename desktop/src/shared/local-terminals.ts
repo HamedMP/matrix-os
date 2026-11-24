@@ -83,6 +83,10 @@ const Size = { cols: z.number().int().min(20).max(500), rows: z.number().int().m
 const Ok = z.strictObject({ ok: z.boolean() });
 // "not-installed": this build carries no local terminal runtime.
 // "unavailable": the runtime exists but could not be reached or started.
+/** Why starting a local terminal failed, as a bounded kind safe to show. */
+export const LocalCreateFailureSchema = z.enum(["timeout", "busy", "disconnected", "refused", "protocol", "folder", "unknown"]);
+export type LocalCreateFailure = z.infer<typeof LocalCreateFailureSchema>;
+
 const UNAVAILABLE = ["not-installed", "unavailable", "version-mismatch"] as const;
 const Unavailable = z.enum(UNAVAILABLE);
 export type LocalTerminalUnavailable = z.infer<typeof Unavailable>;
@@ -156,8 +160,9 @@ export const LOCAL_TERMINAL_INVOKE = {
     }).refine((request) => !request.machine || (!request.agent && !request.folder)),
     response: z.discriminatedUnion("status", [
       z.strictObject({ status: z.literal("ready"), id: LocalTerminalAddressSchema }),
-      // "rate-limited": too many terminals were started in a short time.
-      z.strictObject({ status: z.enum([...UNAVAILABLE, "rate-limited"]) }),
+      // "rate-limited": too many terminals were started in a short time. `reason`: why a
+      // start failed, as a bounded kind (never the core's own message), for the window to say.
+      z.strictObject({ status: z.enum([...UNAVAILABLE, "rate-limited"]), reason: LocalCreateFailureSchema.optional() }),
     ]),
   },
   // Terminals here (`t7`) and on machines this core added (`vps/t7`) take the same actions.

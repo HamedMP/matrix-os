@@ -36,7 +36,7 @@ export interface TurnAdmissionOptions {
   reconcileActiveRuns(owner: ChatOwner): Promise<unknown>;
   reservePendingDispatch(runId: string): void;
   releasePendingDispatch(runId: string): void;
-  atCapacity(owner: ChatOwner): boolean;
+  atCapacity(owner: ChatOwner, reservedRunId?: string): boolean;
   hasStoppingExecution(owner: ChatOwner, chatId: string, admissionKey?: string): boolean;
   beforePreviewDispatch?: (input: { actorId: string; chatId: string; turnId: string; runId: string;
     clientRequestId: string; body: CanonicalCreateChatTurnRequest; proof: string }) => Promise<void | (() => void)>;
@@ -307,7 +307,7 @@ async function admitTimedTurn(
     try {
       if (!admitted.alreadyAccepted) {
         const stopping = deps.hasStoppingExecution(owner, chatId);
-        if (stopping || deps.atCapacity(owner)) {
+        if (stopping || deps.atCapacity(owner, run.id)) {
           await deps.repository.finishRun(owner, {
             chatId,
             runId: admitted.run.id,
@@ -346,7 +346,7 @@ async function admitTimedTurn(
         try {
           deps.assertOpen();
           if (deps.hasStoppingExecution(owner, chatId)) return mapRepositoryError(new ChatBusyError(chatId));
-          if (deps.atCapacity(owner)) {
+          if (deps.atCapacity(owner, run.id)) {
             throw new CanonicalChatOrchestrationError(
               safeError("run_unavailable", "Chat execution is temporarily busy.", true, ["retry"]),
               503,

@@ -87,6 +87,13 @@ runners (Ubuntu 24.04 for E2E), including their normal OS dependency setup.
 
 ## Release Artifacts
 
+Native mobile beta releases run manually from `main`:
+`mobile-ios-testflight.yml` builds and submits to TestFlight, and
+`mobile-android-internal.yml` builds an AAB and submits to Google Play internal
+testing. Both use EAS cloud builds from Ubuntu GitHub runners, separate GitHub
+environments, and EAS-managed signing/submission credentials. See the
+[operator setup and recovery guide](../../docs/dev/mobile-shell.md#native-beta-releases).
+
 Matrix OS does not publish customer runtime Docker images. The customer runtime
 ships only as immutable VPS host bundles registered in platform Postgres.
 Docker remains supported for local development and CI validation only;

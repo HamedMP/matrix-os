@@ -1,20 +1,10 @@
 "use client";
-import { useCallback, useRef, useState } from "react";
-import { chatSearchShortcutLabel, useChatSearchShortcut } from "@matrix-os/ui";
+import { chatSearchShortcutLabel, useChatSearchShortcut, ChatSourceFilterMenu, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import { SearchIcon } from "@/lib/hugeicons";
-export function WebChatRailControls({query,onQuery,active = true,onSearch}:{query:string;onQuery(value:string):void;active?:boolean;onSearch?:()=>void}) {
-  const [focused, setFocused] = useState(false);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const focusSearch = useCallback(() => {
-    onSearch?.();
-    searchRef.current?.focus();
-  }, [onSearch]);
-  useChatSearchShortcut(active, focusSearch);
-  return <div className="flex items-center gap-1 px-3 pb-2">
-    <div data-current={focused} className="matrix-web-chat-search flex min-w-0 flex-1 items-center gap-2 rounded-lg bg-background/60 px-2.5 py-1.5 text-xs">
-      <SearchIcon className="size-3.5 shrink-0 text-muted-foreground"/>
-      <input ref={searchRef} onFocus={()=>setFocused(true)} onBlur={()=>setFocused(false)} aria-current={focused ? "page" : undefined} aria-label="Search chats" aria-keyshortcuts="Meta+K Control+K" placeholder="Search chats..." value={query} onChange={event=>onQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground/60"/>
-      <kbd aria-hidden="true" className="shrink-0 text-[12px] font-normal text-muted-foreground" style={{fontFamily:"inherit"}}>{chatSearchShortcutLabel()}</kbd>
-    </div>
+export function WebChatRailControls({active = true,onSearch,sourceFilter="all",onSourceFilter}:{active?:boolean;onSearch():void;sourceFilter?:ChatImportSourceFilterValue;onSourceFilter?(value:ChatImportSourceFilterValue):void}) {
+  useChatSearchShortcut(active,onSearch);
+  return <div className="chat-search-rail-row relative mx-3 mb-2 flex h-8 shrink-0 items-center">
+    <button type="button" className="matrix-web-chat-search flex h-8 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-sm hover:bg-accent" aria-label="Search chats" aria-keyshortcuts="Meta+K Control+K" onClick={onSearch}><SearchIcon className="size-4 shrink-0"/><span className="flex-1 text-left">Search</span><kbd aria-hidden className="text-xs font-normal text-muted-foreground" style={{fontFamily:"inherit"}}>{chatSearchShortcutLabel()}</kbd></button>
+    {onSourceFilter?<ChatSourceFilterMenu value={sourceFilter} onChange={onSourceFilter}/>:null}
   </div>;
 }

@@ -438,7 +438,7 @@ export function ConversationTranscript({
   });
   return (
     <Conversation>
-      <ConversationContent className="justify-start pt-8 sm:pt-12">
+      <ConversationContent className="justify-end pt-8 sm:pt-12">
         {beforeTurns}
         {rows.map(row => row.kind === "occurrence" ? <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/> : (
           <Fragment key={row.value.turn.id}>

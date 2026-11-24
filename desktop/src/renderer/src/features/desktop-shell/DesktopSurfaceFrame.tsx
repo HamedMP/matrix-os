@@ -272,6 +272,7 @@ export default function DesktopSurfaceFrame({
           rightActions={surfaceChrome?.rightActions}
           leftPaneWidth={surfaceChrome?.leftPaneWidth ?? (isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined)}
           rightPaneWidth={surfaceChrome?.rightPaneWidth}
+          actionsBeforeRightPane={surfaceChrome?.actionsBeforeRightPane}
           showSidebarTrigger={isWorkSurface}
           sidebarTriggerLabel="Toggle Chat sidebar"
           showWindowControls={isWindow}

@@ -1,59 +1,12 @@
 # Release
 
-Create a tagged release with changelog and push to GitHub. Usage: `/release [patch|minor|major]`
+Retired. This command used to push version bumps straight to `main`, which the
+PR-only rule forbids. Use the release skills instead:
 
-Requested bump: $ARGUMENTS
+- Platform service (Cloud Run, `platform-cloud-run.yml`):
+  `.agents/skills/release-platform/SKILL.md`
+- Customer VPS host bundle, canary then stable (`host-bundle-release.yml`):
+  `.agents/skills/release-matrix-stable/SKILL.md`
+- Desktop What's New notes: `/release-notes` (`.claude/commands/release-notes.md`)
 
-For Desktop releases, write the user-facing What's New notes first with `/release-notes <version> <channel>` (`.claude/commands/release-notes.md`).
-
-## Steps
-
-1. Run full test suite: `bun run test`. Stop if tests fail.
-
-2. Show commits since last tag:
-   ```
-   git log $(git describe --tags --abbrev=0)..HEAD --oneline
-   ```
-
-3. Categorize commits by Conventional Commit prefix:
-   - `feat:` -- New features
-   - `fix:` -- Bug fixes
-   - `refactor:` / `chore:` / `test:` / `docs:` -- Other changes
-   Group them into a changelog.
-
-4. Determine version bump:
-   - If `$ARGUMENTS` specifies patch/minor/major, use that
-   - Otherwise auto-suggest: any `feat:` = minor, only `fix:` = patch
-   - Ask user to confirm
-
-5. Update version in root `package.json`.
-
-6. Commit the version bump: `git commit -am "chore: bump version to v<version>"`
-
-7. Create annotated tag with changelog as message:
-   ```
-   git tag -a v<version> -m "<changelog>"
-   ```
-
-8. Push commit and tag:
-   ```
-   git push origin main
-   git push origin v<version>
-   ```
-
-9. Create GitHub release:
-   ```
-   gh release create v<version> --title "v<version>" --notes "<changelog>"
-   ```
-
-10. Report:
-   - Tag and GitHub release URL
-   - `host-bundle-release.yml` run URL and immutable bundle version
-   - Promoted host-bundle channel (`v*` tags promote `canary` by default)
-
-## Rules
-
-- NEVER skip tests before releasing
-- NEVER release from a non-main branch without asking
-- Follow SemVer strictly (pre-1.0: minor = features, patch = fixes)
-- Include all commits in the changelog, grouped by type
+Requested: $ARGUMENTS

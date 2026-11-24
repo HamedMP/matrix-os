@@ -89,6 +89,7 @@ async function browseProjectDirectory(
  */
 export function InspectorFilesPanel({
   scopeLabel = "Matrix Home",
+  rootLabel,
   scope = { kind: "home", chatId: "legacy-inspector" },
   browserOnly = false,
   forceList = false,
@@ -101,6 +102,7 @@ export function InspectorFilesPanel({
   onFileMovedToTrash,
 }: {
   scopeLabel?: string;
+  rootLabel?: string;
   scope?: WorkFilesScope;
   browserOnly?: boolean;
   forceList?: boolean;
@@ -128,6 +130,7 @@ export function InspectorFilesPanel({
       <ProjectFilesPanel
         key={`${scopeKey}:${scope.projectId}:${scope.worktreeId ?? "root"}`}
         scope={scope}
+        rootLabel={rootLabel}
         selectedPath={selectedFile?.kind === "project" && selectedFile.projectId === scope.projectId && selectedFile.worktreeId === scope.worktreeId ? selectedFile.path : undefined}
         browserOnly={browserOnly}
         selectedDirectory={selectedDirectory}
@@ -142,6 +145,7 @@ export function InspectorFilesPanel({
       key={scopeKey}
       viewKey={inspectorFileViewKey(scope)}
       scopeLabel={scopeLabel}
+      rootLabel={rootLabel}
       selectedPath={selectedFile?.kind === "home" ? selectedFile.path : undefined}
       browserOnly={browserOnly}
       forceList={forceList}
@@ -154,6 +158,7 @@ export function InspectorFilesPanel({
 }
 
 function HomeFilesPanel({
+  rootLabel,
   viewKey,
   scopeLabel,
   browserOnly,
@@ -164,6 +169,7 @@ function HomeFilesPanel({
   allowTrash,
   onFileMovedToTrash,
 }: {
+  rootLabel?: string;
   viewKey: string;
   scopeLabel: string;
   browserOnly: boolean;
@@ -244,7 +250,7 @@ function HomeFilesPanel({
           {allowTrash ? <div className="flex justify-end border-b px-2" style={{ borderColor: "var(--border-subtle)" }}>
             <OpenTrashButton trash={trash} />
           </div> : null}
-          <ExpandableFileTree attachmentPicker={attachmentPicker} key={refreshRevision} viewKey={attachmentPicker ? undefined : viewKey}
+          <ExpandableFileTree rootLabel={attachmentPicker ? undefined : rootLabel} attachmentPicker={attachmentPicker} key={refreshRevision} viewKey={attachmentPicker ? undefined : viewKey}
             selectedPath={selectedPath} loadDirectory={loadDirectory} searchEntries={searchEntries}
             renderEntry={attachmentPicker ? undefined : actions.renderEntry}
             fileActionLabel={attachmentPicker ? "Attach" : undefined}
@@ -285,6 +291,7 @@ function HomeFilesPanel({
 }
 
 function ProjectFilesPanel({
+  rootLabel,
   scope,
   browserOnly,
   onOpenFile,
@@ -293,6 +300,7 @@ function ProjectFilesPanel({
   revealKey,
   attachmentPicker,
 }: {
+  rootLabel?: string;
   scope: Extract<WorkFilesScope, { kind: "project" }>;
   browserOnly: boolean;
   onOpenFile?: (target: InspectorFileTarget) => void;
@@ -302,12 +310,13 @@ function ProjectFilesPanel({
   attachmentPicker: boolean;
 }) {
   if (browserOnly) {
-    return <ProjectFilesTree revealKey={revealKey} selectedDirectory={selectedDirectory} selectedPath={selectedPath} scope={scope} onOpenFile={onOpenFile} attachmentPicker={attachmentPicker} />;
+    return <ProjectFilesTree rootLabel={rootLabel} revealKey={revealKey} selectedDirectory={selectedDirectory} selectedPath={selectedPath} scope={scope} onOpenFile={onOpenFile} attachmentPicker={attachmentPicker} />;
   }
   return <ProjectNavigableFilesPanel scope={scope} onOpenFile={onOpenFile} />;
 }
 
 function ProjectFilesTree({
+  rootLabel,
   scope,
   onOpenFile,
   selectedPath,
@@ -315,6 +324,7 @@ function ProjectFilesTree({
   revealKey,
   attachmentPicker,
 }: {
+  rootLabel?: string;
   scope: Extract<WorkFilesScope, { kind: "project" }>;
   onOpenFile?: (target: InspectorFileTarget) => void;
   selectedPath?: string;
@@ -349,7 +359,7 @@ function ProjectFilesTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ExpandableFileTree
+      <ExpandableFileTree rootLabel={attachmentPicker ? undefined : rootLabel}
         attachmentPicker={attachmentPicker}
         revealKey={revealKey} viewKey={attachmentPicker ? undefined : inspectorFileViewKey(scope)}
         selectedDirectory={selectedDirectory} selectedPath={selectedPath} loadDirectory={loadDirectory} searchEntries={searchEntries}

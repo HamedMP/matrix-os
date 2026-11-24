@@ -188,7 +188,7 @@ describe("Web Chat composer matches Electron Desktop", () => {
     fireEvent.click(within(header).getByRole("button", { name: "Close Chat sidebar" }));
     expect(sidebar.className).toContain("w-0");
     fireEvent.click(within(header).getByRole("button", { name: "Open Chat sidebar" }));
-    expect(sidebar.className).toContain("w-[260px]");
+    expect(sidebar.className).toContain("w-[240px]");
   });
 
   it("renders Chat text antialiased like Electron Desktop", () => {

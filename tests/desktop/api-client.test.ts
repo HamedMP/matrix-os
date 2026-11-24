@@ -130,6 +130,21 @@ describe("createApiClient", () => {
     );
   });
 
+  it("copies the original account/runtime fence before later selection changes", async () => {
+    const scope = { authGeneration: 3, runtimeSlot: "computer-a" };
+    let selectedRuntime = scope.runtimeSlot;
+    const fetchFn = vi.fn(async () => Response.json({ ok: true }));
+    const client = createApiClient({ baseUrl: "https://app.matrix-os.com", getRuntimeSlot: () => selectedRuntime, fetchFn });
+    const original = client.forSession(scope);
+    selectedRuntime = "computer-b";
+    scope.runtimeSlot = selectedRuntime;
+    scope.authGeneration = 4;
+    await original.post("/api/chats/chat_private/side-chat/turns", { text: "Original question" });
+    expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining("runtime=computer-a"), expect.objectContaining({
+      headers: expect.objectContaining({ "X-Matrix-Session": '[3,"computer-a"]' }), redirect: "error",
+    }));
+  });
+
   it("fetches and parses JSON with a timeout signal", async () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200, { projects: [{ slug: "matrix-os" }] }));
     const client = createApiClient({

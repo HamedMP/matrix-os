@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "../../lib/operator";
 import { setAlternateTerminalSockets } from "../terminal/terminal-runtime";
 import {
-  LOCAL_TERMINAL_SESSION_PREFIX, type LocalTerminal, type LocalTerminalAgent, type LocalTerminalFact, type LocalTerminalUnavailable,
+  LOCAL_TERMINAL_SESSION_PREFIX, type LocalCreateFailure, type LocalTerminal, type LocalTerminalAgent, type LocalTerminalFact, type LocalTerminalUnavailable,
 } from "../../../../shared/local-terminals";
 import { createLocalTerminalSocket } from "./local-terminal-socket";
 import { useLocalTerminalFacts } from "./use-terminal-status";
@@ -31,6 +31,8 @@ export function useLocalTerminals() {
   // One start at a time, read at call time: a shortcut can fire before the render that cleared it.
   const starting = useRef(false);
   const [notice, setNotice] = useState<LocalTerminalsNotice>(null);
+  // Why the last start failed, as the main process classified it; shown with the notice.
+  const [createFailure, setCreateFailure] = useState<LocalCreateFailure | null>(null);
 
   const state = useMemo<LocalTerminalsState>(() => {
     if (facts.status !== "ready") return facts;
@@ -62,8 +64,10 @@ export function useLocalTerminals() {
         setNotice("create-rate-limited");
         return null;
       }
+      setCreateFailure("reason" in result && result.reason ? result.reason : null);
     } catch (error: unknown) {
       console.warn("[local-terminal] create failed:", error instanceof Error ? error.name : "UnknownError");
+      setCreateFailure(null);
     } finally {
       starting.current = false;
       setCreating(false);
@@ -127,5 +131,5 @@ export function useLocalTerminals() {
     return renamed;
   }, []);
 
-  return { state, creating, notice, retry, create, end, remove, close, rename };
+  return { state, creating, notice, createFailure, retry, create, end, remove, close, rename };
 }
