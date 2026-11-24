@@ -363,7 +363,7 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
     permissionMode,
     "--strict-mcp-config",
     ...(input.runtimeHome ? ["--append-system-prompt", buildMatrixAgentOrientation({
-      surface: "claude", customMcpScope: input.matrixCustomMcp
+      surface: "claude", customMcpScope: input.matrixCustomMcp && effectiveMcpScope !== "preview_drive_call"
         ? discoveryOnly ? "discovery" : "call" : "none",
     }) + (input.matrixCustomMcp && input.matrixIntegrationRead && (effectiveMcpScope === "call" || effectiveMcpScope === "discovery") ? `\n\n${INTEGRATION_READ_GUIDANCE}` : "")] : []),
     ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(effectiveMcpScope, input.matrixDriveContext, input.matrixIntegrationRead)] : []),
