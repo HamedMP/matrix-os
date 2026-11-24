@@ -766,6 +766,7 @@
     {"table_name":"public_sites","column_name":"social_title","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"public_sites","column_name":"social_description","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"public_sites","column_name":"social_image_path","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
+    {"table_name":"public_sites","column_name":"public_data_enabled_at","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"social_comments","column_name":"id","data_type":"text","is_nullable":"NO","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"social_comments","column_name":"post_id","data_type":"text","is_nullable":"NO","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"social_comments","column_name":"author_id","data_type":"text","is_nullable":"NO","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},

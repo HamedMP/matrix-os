@@ -42,6 +42,8 @@ postgres('public sites independent PostgreSQL sessions', () => {
         await sql`UPDATE platform_schema_revisions SET generation = 3,
             fingerprint = 'public-app-sites-email-invitations-v3' WHERE scope = 'sites'`.execute(dbA.executor);
         await sql`DELETE FROM platform_schema_revisions WHERE scope = 'sites-social'`.execute(dbA.executor);
+        await sql`DELETE FROM platform_schema_revisions WHERE scope = 'sites-public-data'`.execute(dbA.executor);
+        await sql`ALTER TABLE public_sites DROP COLUMN public_data_enabled_at`.execute(dbA.executor);
         await sql`ALTER TABLE public_sites DROP COLUMN social_title, DROP COLUMN social_description, DROP COLUMN social_image_path`.execute(dbA.executor);
         const before = await sql`SELECT * FROM platform_schema_revisions WHERE scope = 'sites'`.execute(dbB.executor);
         await runPlatformStartupMigrations(dbA.kysely);
@@ -52,16 +54,20 @@ postgres('public sites independent PostgreSQL sessions', () => {
         await runPlatformStartupMigrations(dbB.kysely);
         expect((await sql`SELECT * FROM platform_schema_revisions WHERE scope = 'sites'`.execute(dbA.executor)).rows).toEqual(before.rows);
         await sql`SELECT social_title, social_description, social_image_path FROM public_sites`.execute(dbB.executor);
+        await sql`SELECT public_data_enabled_at FROM public_sites`.execute(dbB.executor);
     });
-    it('preserves an already-recorded generation 4 without rewriting its migration history', async () => {
+    it.each(['public-app-sites-social-previews-v4', 'public-app-sites-public-data-opt-in-v4'])('preserves recorded generation 4 (%s) without rewriting migration history', async fingerprint => {
         await sql`UPDATE platform_schema_revisions SET generation = 4,
-            fingerprint = 'public-app-sites-social-previews-v4' WHERE scope = 'sites'`.execute(dbA.executor);
+            fingerprint = ${fingerprint} WHERE scope = 'sites'`.execute(dbA.executor);
         await sql`DELETE FROM platform_schema_revisions WHERE scope = 'sites-social'`.execute(dbA.executor);
+        await sql`DELETE FROM platform_schema_revisions WHERE scope = 'sites-public-data'`.execute(dbA.executor);
+        await sql`ALTER TABLE public_sites DROP COLUMN public_data_enabled_at`.execute(dbA.executor);
         const before = await sql`SELECT * FROM platform_schema_revisions WHERE scope = 'sites'`.execute(dbA.executor);
         await runPlatformStartupMigrations(dbB.kysely);
         expect((await sql`SELECT * FROM platform_schema_revisions WHERE scope = 'sites'`.execute(dbA.executor)).rows).toEqual(before.rows);
         expect((await sql`SELECT generation FROM platform_schema_revisions WHERE scope = 'sites-social'`.execute(dbA.executor)).rows)
             .toEqual([{ generation: 1 }]);
+        await sql`SELECT public_data_enabled_at FROM public_sites`.execute(dbA.executor);
     });
     it.each(['private_email', 'unpublished'] as const)('does not render metadata saved after a public site becomes %s', async transition => {
         const publisher = { ...owner, appSlug: `social-${transition.replaceAll('_', '-')}` };

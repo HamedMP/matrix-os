@@ -4,7 +4,7 @@ export interface SitesWorkerEnv {
 }
 const reference = '(?:[a-z][a-z0-9-]{1,62}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
 const read = new RegExp(`^/${reference}(?:/frame|/assets/[0-9a-f-]{36}/[A-Za-z0-9_./-]{1,240})?$`);
-const write = new RegExp(`^/${reference}/(?:forms/[a-z][a-z0-9_]{0,63}|access/claim)$`);
+const write = new RegExp(`^/${reference}/(?:forms/[a-z][a-z0-9_]{0,63}|access/claim|data)$`);
 const blocked = new Set(['api', 'public', 'assets', 'frame', 'forms', 'preview', 'admin', 'auth', 'health', 'robots', 'favicon', 'index', 'sites', 'www']);
 const siteIdPattern = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const emailExchange = new RegExp(`^/${siteIdPattern}/access/email$`, 'i');
@@ -64,7 +64,9 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
         if (url.search && request.method !== 'GET')
             return new Response('Site unavailable', { status: 400 });
         const claim = request.method === 'POST' && url.pathname.endsWith('/access/claim');
-        if ((claim || emailAuth) && request.headers.get('origin') !== url.origin)
+        // Visitor data (2694) is only callable by the Matrix-rendered page on this origin.
+        const data = request.method === 'POST' && /^\/[^/]+\/data$/.test(url.pathname);
+        if ((claim || emailAuth || data) && request.headers.get('origin') !== url.origin)
             return new Response('Site unavailable', { status: 404 });
         const bearer = emailAuth ? request.headers.get('authorization') : null;
         if (bearer && (bearer.length > 8192 || !/^Bearer [A-Za-z0-9._-]{1,8185}$/.test(bearer)))
@@ -74,7 +76,7 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
         const headers = new Headers({ 'x-matrix-sites-edge': env.SITES_EDGE_SECRET, 'x-matrix-sites-source': request.headers.get('cf-connecting-ip') ?? 'unknown' });
         if (request.method === 'POST')
             headers.set('content-type', 'application/json');
-        if (claim || emailAuth)
+        if (claim || emailAuth || data)
             headers.set('x-matrix-sites-origin', 'same-origin');
         if (bearer) headers.set('authorization', bearer);
         const targetSiteId = pathSiteId(url.pathname);
@@ -96,7 +98,7 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
                     if (chunk.done)
                         break;
                     size += chunk.value.length;
-                    if (size > (claim || emailAuth ? 2048 : 17 * 1024)) {
+                    if (size > (claim || emailAuth ? 2048 : data ? 64 * 1024 : 17 * 1024)) {
                         await reader.cancel();
                         return new Response('Invalid submission', { status: 413 });
                     }

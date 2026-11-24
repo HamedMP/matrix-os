@@ -1,5 +1,7 @@
 import { sql } from 'kysely';
 import type { PlatformMigrationExecutor } from '../database/migration-types.js';
+/** Stable invitation capability marker; additive features use independent scopes. */
+export const SITES_SCHEMA_REVISION = { generation: 3, fingerprint: 'public-app-sites-email-invitations-v3' } as const;
 export async function migrateSites(db: PlatformMigrationExecutor): Promise<void> {
     await sql `CREATE TABLE IF NOT EXISTS public_sites (
   id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, machine_id TEXT NOT NULL, app_slug TEXT NOT NULL,

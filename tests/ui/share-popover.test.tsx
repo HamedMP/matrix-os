@@ -90,7 +90,7 @@ describe("Share popover shell", () => {
     expect(publicTab.getAttribute("aria-selected")).toBe("true");
     expect(within(publicTab).getByRole("img", { name: "on" })).toBeTruthy();
     expect(screen.getByText("matrix.page/sales-crm")).toBeTruthy();
-    expect(inPanel().getByText("Live")).toBeTruthy();
+    expect(inPanel().getByText("Live · Anyone with the link can view")).toBeTruthy();
     expect(screen.getByTestId("trigger").textContent).toBe("Live");
   });
 
@@ -210,7 +210,7 @@ describe("Mode switch confirm", () => {
     expect(screen.queryByRole("button", { name: /^Publish$/ })).toBeNull();
     expect(emailInvites.active("sales-crm")).toBe(true);
     fireEvent.click(within(dialog).getByRole("button", { name: "Make public" }));
-    await inPanel().findByText("Live");
+    await inPanel().findByText("Live · Anyone with the link can view");
     expect(emailInvites.active("sales-crm")).toBe(false);
     expect((await emailInvites.list("sales-crm", new AbortController().signal)).invitations).toEqual([]);
     expect(api.deploy).toHaveBeenCalledWith("sales-crm", expect.objectContaining({ accessMode: "public", slug: null }), expect.any(AbortSignal));

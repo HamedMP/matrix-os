@@ -7,6 +7,7 @@ import { createSitesService } from './service.js';
 import { createSiteManagementRoutes } from './management-routes.js';
 import { createSitePublicRoutes } from './public-routes.js';
 import { createSiteSubmissionTransport } from './submission-transport.js';
+import { createSiteDataTransport } from './data-transport.js';
 import type { SiteTelemetryCapture } from './telemetry.js';
 import type { ClerkAuth } from '../clerk-auth.js';
 export interface SiteEmailReadiness {
@@ -62,7 +63,7 @@ export function registerSiteRoutes(app: Hono<any>, options: {
         : undefined;
     app.route('/public/sites', createSitePublicRoutes({ service, edgeSecret: options.edgeSecret,
         edgePreviousSecret: options.edgePreviousSecret, submit: createSiteSubmissionTransport(options),
-        captureEvent: options.captureEvent, email }));
+        captureEvent: options.captureEvent, email, data: { transport: createSiteDataTransport(options), env: options.env } }));
 }
 
 /** Proxy-only deployments do not mount Sites; explicit Sites startup still validates its secret. */

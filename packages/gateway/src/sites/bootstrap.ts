@@ -4,6 +4,11 @@ import { SiteSubmissionRepository } from './submission-repository.js';
 
 /** Setup owns this short-lived connection; runtime repositories keep the shared owner DB. */
 export async function bootstrapSiteSubmissionDatabase(connectionString: string): Promise<void> {
+ await bootstrapSiteDatabase(connectionString, db => new SiteSubmissionRepository(db).bootstrap());
+}
+
+/** Runs one optional site DDL step on its own bounded, owned connection. */
+export async function bootstrapSiteDatabase(connectionString: string, setup: (db: Kysely<any>) => Promise<void>): Promise<void> {
  const pool = new pg.Pool({
   connectionString, max: 1, connectionTimeoutMillis: 5000,
   lock_timeout: 2000, statement_timeout: 5000, query_timeout: 7500,
@@ -29,6 +34,6 @@ export async function bootstrapSiteSubmissionDatabase(connectionString: string):
   },
   async end() { await pool.end(); },
  } }) });
- try { await new SiteSubmissionRepository(db).bootstrap(); }
+ try { await setup(db); }
  finally { await db.destroy(); }
 }

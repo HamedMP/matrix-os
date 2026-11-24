@@ -151,6 +151,8 @@ export const SiteRecordSchema = z.object({
   slug: SiteSlugSchema.nullable(), url: SiteUrlSchema, revision: baseRevision,
   status: z.enum(["published", "unpublished"]), activeVersion: SiteIdSchema.nullable(),
   accessMode: SiteAccessModeSchema.default("public"),
+  /** 2694: the owner published this public link after visitor data shipped, so visitors may read app data. */
+  publicData: z.boolean().optional(),
   capabilities: SiteEmailInvitationsCapabilitySchema.optional(),
   versions: z.array(SiteVersionSchema).max(50), config: SitePublishingSchema,
 }).strict();
@@ -294,4 +296,81 @@ export type SiteSubmissionsResponse = z.infer<typeof SiteSubmissionsResponseSche
 export const SITE_SAFE_ERRORS = ["Site unavailable", "Site URL unavailable", "Site changed; reload and try again", "App needs a public build", "Invalid submission", "Submission unavailable", "Invitation unavailable", "Too many requests"] as const;
 export function siteSafeError(value: unknown, fallback = "Site unavailable"): string {
   return typeof value === "string" && SITE_SAFE_ERRORS.some((s) => s === value) ? value : fallback;
+}
+
+/** 2694: anonymous public-site visitors use the owner app bridge for exactly one app. */
+export const SITE_PUBLIC_DATA_REQUEST_MAX_BYTES = 64 * 1024;
+export const SITE_PUBLIC_DATA_RESPONSE_MAX_BYTES = 1024 * 1024;
+export const SITE_PUBLIC_DATA_MAX_ROWS = 500;
+export const SITE_PUBLIC_DATA_MAX_BULK = 50;
+export const SITE_PUBLIC_DATA_READ_ONLY = "Public app data is read-only";
+export const SITE_PUBLIC_DATA_SAFE_ERRORS = ["Shared data is unavailable", "Try again later", "Invalid change", SITE_PUBLIC_DATA_READ_ONLY] as const;
+const SitePublicDataNameSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/);
+const SitePublicDataIdSchema = z.string().min(1).max(512);
+const SitePublicDataComparableSchema = z.union([z.string().max(4000), z.number().finite(), z.boolean(), z.null()]);
+const SitePublicDataOrderedSchema = z.union([z.string().max(4000), z.number().finite()]);
+const SitePublicDataOperatorSchema = z.object({
+  $eq: SitePublicDataComparableSchema.optional(), $ne: SitePublicDataComparableSchema.optional(),
+  $lt: SitePublicDataOrderedSchema.optional(), $lte: SitePublicDataOrderedSchema.optional(),
+  $gt: SitePublicDataOrderedSchema.optional(), $gte: SitePublicDataOrderedSchema.optional(),
+  $in: z.array(SitePublicDataComparableSchema).max(200).optional(),
+  $like: z.string().max(4000).optional(), $ilike: z.string().max(4000).optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "Empty filter operator");
+const SitePublicDataFilterSchema = z.record(SitePublicDataNameSchema, z.union([SitePublicDataComparableSchema, SitePublicDataOperatorSchema]))
+  .refine((value) => Object.keys(value).length <= 32, "Too many filters");
+const SitePublicDataRowSchema = z.record(SitePublicDataNameSchema, z.json())
+  .refine((value) => Object.keys(value).length > 0 && Object.keys(value).length <= 64, "Invalid row");
+const table = { table: SitePublicDataNameSchema };
+export const SitePublicDbActionSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("find"), ...table, filter: SitePublicDataFilterSchema.optional(),
+    orderBy: z.record(SitePublicDataNameSchema, z.enum(["asc", "desc"])).refine((value) => Object.keys(value).length <= 4, "Too many sort keys").optional(),
+    limit: z.number().int().min(0).max(SITE_PUBLIC_DATA_MAX_ROWS).optional(),
+    offset: z.number().int().min(0).max(100_000).optional(),
+  }).strict(),
+  z.object({ action: z.literal("findOne"), ...table, id: SitePublicDataIdSchema }).strict(),
+  z.object({ action: z.literal("count"), ...table, filter: SitePublicDataFilterSchema.optional() }).strict(),
+  z.object({ action: z.literal("insert"), ...table, data: SitePublicDataRowSchema }).strict(),
+  z.object({ action: z.literal("bulkInsert"), ...table, rows: z.array(SitePublicDataRowSchema).min(1).max(SITE_PUBLIC_DATA_MAX_BULK) }).strict(),
+  z.object({ action: z.literal("update"), ...table, id: SitePublicDataIdSchema, data: SitePublicDataRowSchema }).strict(),
+  z.object({
+    action: z.literal("bulkUpdate"), ...table,
+    updates: z.array(z.object({ id: SitePublicDataIdSchema, data: SitePublicDataRowSchema }).strict()).min(1).max(SITE_PUBLIC_DATA_MAX_BULK)
+      .refine((updates) => new Set(updates.map((update) => update.id)).size === updates.length, "Duplicate row"),
+  }).strict(),
+  z.object({
+    action: z.literal("compareAndSwap"), ...table, id: SitePublicDataIdSchema,
+    expectedPayload: z.record(z.string().max(128), z.json()), data: SitePublicDataRowSchema,
+  }).strict(),
+  z.object({ action: z.literal("delete"), ...table, id: SitePublicDataIdSchema }).strict(),
+  z.object({ action: z.literal("appInfo") }).strict(),
+  z.object({ action: z.literal("schema") }).strict(),
+]);
+export type SitePublicDbAction = z.infer<typeof SitePublicDbActionSchema>;
+export const SitePublicDataKeySchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+export const SitePublicDataRequestSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("db"), action: SitePublicDbActionSchema }).strict(),
+  z.object({ kind: z.literal("kvRead"), key: SitePublicDataKeySchema }).strict(),
+  z.object({ kind: z.literal("kvWrite"), key: SitePublicDataKeySchema, value: z.string().max(32 * 1024) }).strict(),
+]);
+export type SitePublicDataRequest = z.infer<typeof SitePublicDataRequestSchema>;
+/** Platform-signed request to the owner gateway; the visitor never names the app. */
+export const SitePublicDataCapabilitySchema = z.object({
+  siteId: SiteIdSchema, appSlug: SiteAppSlugSchema, versionId: SiteIdSchema,
+  visitor: z.string().regex(/^[a-f0-9]{64}$/), request: SitePublicDataRequestSchema,
+}).strict();
+export type SitePublicDataCapability = z.infer<typeof SitePublicDataCapabilitySchema>;
+/** Whether a visitor request changes owner data (write admission, rate class, write log). */
+export function isSitePublicDataWrite(request: SitePublicDataRequest): boolean {
+  if (request.kind === "kvRead") return false;
+  if (request.kind !== "db") return true;
+  return !["find", "findOne", "count", "appInfo", "schema"].includes(request.action.action);
+}
+
+/** Visitor writes stay disabled until the public app data permission model is defined. */
+export function publicSiteDataWritesEnabled(): boolean {
+  return false;
+}
+export function sitePublicDataSafeError(value: unknown): (typeof SITE_PUBLIC_DATA_SAFE_ERRORS)[number] {
+  return SITE_PUBLIC_DATA_SAFE_ERRORS.find((error) => error === value) ?? "Shared data is unavailable";
 }

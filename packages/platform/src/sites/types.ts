@@ -16,6 +16,8 @@ export interface SitesTable {
     social_title: Generated<string | null>;
     social_description: Generated<string | null>;
     social_image_path: Generated<string | null>;
+    /** 2694: set when the owner publishes this link as public; NULL for links published before visitor data. */
+    public_data_enabled_at: Generated<string | null>;
 }
 export interface SiteVersionsTable {
     id: string;
