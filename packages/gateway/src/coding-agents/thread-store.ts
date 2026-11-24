@@ -1,4 +1,5 @@
 import { CODING_PREPARATION_TIMEOUT_MS, createCodingRunLifetime, explicitCodingRunTimeout } from "./coding-run-lifetime.js";
+import { recordChatSendStage, startChatSendStage } from "../chat/send-timing.js";
 import { assertCodingAgentProviderEnabled } from "./codex-harness-admission.js";
 import { applyProviderTranscriptRecovery, providerTranscriptUnavailable, prepareProviderObservation, retainedProviderSessions, type ProviderIdleObservation, type ProviderObservationResume } from "./provider-transcript-recovery.js";
 import { boundedOperation } from "../bounded-operation.js";
@@ -687,8 +688,15 @@ export function createCodingAgentThreadStore(
   const initialRunTimeoutMs = explicitCodingRunTimeout(options.turnDispatchTimeoutMs);
   let queue = Promise.resolve();
 
-  async function mutate<T>(fn: (state: StoredThreadState) => Promise<{ state: StoredThreadState; result: T }>): Promise<T> {
+  async function mutate<T>(
+    fn: (state: StoredThreadState) => Promise<{ state: StoredThreadState; result: T }>,
+    timing: { timeQueueWait?: boolean } = {},
+  ): Promise<T> {
+    // Queue wait ends when this task starts, before the state read, so slow
+    // storage is never reported as time spent behind other work.
+    const queuedAt = timing.timeQueueWait ? startChatSendStage() : undefined;
     const run = queue.then(async () => {
+      recordChatSendStage("thread_store_queue_wait", queuedAt);
       const current = await readState(options.homePath);
       const { state, result } = await fn(current);
       const persisted = trimState(state);
@@ -1245,7 +1253,7 @@ export function createCodingAgentThreadStore(
         } : {}),
       };
       return { state: nextState, result };
-    });
+    }, { timeQueueWait: true });
     if (!result.existing) {
       publish(principal.userId, result.snapshot.thread.id, result.eventsToPublish);
       if (result.backgroundDispatch) startInitialRun(result.backgroundDispatch);
@@ -1429,7 +1437,7 @@ export function createCodingAgentThreadStore(
               dispatch: { thread: nextThread, turn },
             },
           };
-        });
+        }, { timeQueueWait: true });
         publish(principal.userId, threadId, result.eventsToPublish);
         if (result.dispatch) {
           turnDispatcher.start(reservation, {
