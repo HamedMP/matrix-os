@@ -457,6 +457,14 @@ describe("Codex consent alias after the durable-generation upgrade", () => {
     await expect(f.admission.validate("owner", binding, "sess_live_runner")).rejects.toThrow("unavailable");
     await expect(f.admission.start("owner", "sess_new")).rejects.toThrow("unavailable");
   });
+  it("admits concurrent starts under legacy consent for unchanged credentials and records one alias", async () => {
+    const f = await fixture();
+    f.change({ generation: "durable_owner_A" });
+    const bindings = await Promise.all(Array.from({ length: 6 }, (_, index) => f.admission.start("owner", `sess_concurrent_${index}`)));
+    expect(new Set(bindings).size).toBe(1);
+    expect(JSON.parse(await readFile(join(f.homePath, "system/ai-providers/codex-consent-alias.json"), "utf8")))
+      .toEqual({ version: 1, saved: sha("private_owner_profile_A"), durable: sha("durable_owner_A") });
+  });
   it("ignores an alias for a different saved generation", async () => {
     const f = await fixture();
     await writeFile(join(f.homePath, "system/ai-providers/codex-consent-alias.json"),
