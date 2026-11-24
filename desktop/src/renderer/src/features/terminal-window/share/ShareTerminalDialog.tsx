@@ -1,10 +1,9 @@
 // Spec 2710 J1/J6: the owner shares one terminal with people in their
 // organization as Viewer or Editor, and can stop sharing at any time.
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AudienceGrantPicker, Button, Dialog, DialogFooter, DialogTitle, Input } from "@matrix-os/ui";
+import { AudienceGrantPicker, Button, Dialog, DialogFooter, DialogTitle, Input, type CollaborationDirectApi } from "@matrix-os/ui";
 import type { CollaborationScope } from "@matrix-os/contracts";
-import { computerRuntimeId, useTeamCollaborationState, type TeamCollaboration, type TeamCollaborationState, type TeamOrganization } from "./use-team-collaboration";
-import { findTeamTerminal, prepareTeamTerminal, stopSharingTeamTerminal, syncEditorTyping } from "./team-share";
+import { useTeamCollaborationState, type TeamCollaboration, type TeamCollaborationState, type TeamOrganization } from "./use-team-collaboration";
+import { MAX_LABEL, TYPING_FAILED, useShareFlow, type ShareStep } from "./use-share-flow";
 
 export interface ShareTarget {
   slot: string;
@@ -16,19 +15,6 @@ export interface ShareTarget {
 }
 
 const secondaryText = { color: "var(--text-secondary, var(--color-muted-foreground))" };
-const MAX_LABEL = 64;
-
-type Step =
-  | { kind: "loading" }
-  | { kind: "confirm" }
-  | { kind: "working" }
-  | { kind: "shared"; scope: CollaborationScope; error?: string }
-  | { kind: "failed"; message: string };
-
-const FAILED = "Couldn't share this terminal. Check that the computer is online and try again.";
-const TYPING_FAILED = "Access is saved, but Editors may not be able to type yet. Retry to finish.";
-const STOP_FAILED = "Couldn't stop sharing. Some people may still have access; try again.";
-
 export function ShareTerminalDialog({ target, platformHost, team: teamClient, onClose }: {
   target: ShareTarget | null;
   platformHost: string | null;
@@ -36,88 +22,8 @@ export function ShareTerminalDialog({ target, platformHost, team: teamClient, on
   onClose(): void;
 }) {
   const teamState = useTeamCollaborationState(teamClient, target !== null);
-  const [step, setStep] = useState<Step>({ kind: "loading" });
-  const [label, setLabel] = useState("");
-  const [organizationId, setOrganizationId] = useState<string | null>(null);
   const ready = teamState.status === "ready" ? teamState : null;
-  // Results of requests started for an earlier target or before closing are dropped.
-  const live = useRef(0);
-  useEffect(() => {
-    live.current += 1;
-    return () => { live.current += 1; };
-  }, [target]);
-
-  // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- opening the dialog reads whether this tab is already shared; nothing is created until the owner confirms.
-  useEffect(() => {
-    if (!target || !ready || !platformHost) return;
-    let active = true;
-    const chosen = ready.organizations[0]?.organizationId ?? null;
-    setOrganizationId(chosen);
-    setLabel(target.computerLabel.slice(0, MAX_LABEL));
-    setStep({ kind: "loading" });
-    void (async () => {
-      const runtimeId = await computerRuntimeId(platformHost, target.slot);
-      if (!runtimeId || !chosen) throw new Error("runtime unavailable");
-      // A tab is shared within at most one organization: look in each the person belongs to.
-      const existing = await findAcrossOrganizations(ready, runtimeId, target.terminalId);
-      if (!active) return;
-      if (!existing) { setStep({ kind: "confirm" }); return; }
-      if (existing.organizationId) setOrganizationId(existing.organizationId);
-      setStep({ kind: "shared", scope: existing });
-      // Finishes a typing setting an earlier session left unsaved.
-      void syncEditorTyping(ready.api, existing.id).catch((error: unknown) => {
-        console.warn("[terminal-window] typing sync failed:", error instanceof Error ? error.name : "UnknownError");
-        if (active) setStep({ kind: "shared", scope: existing, error: TYPING_FAILED });
-      });
-    })().catch((error: unknown) => {
-      console.warn("[terminal-window] share lookup failed:", error instanceof Error ? error.name : "UnknownError");
-      if (active) setStep({ kind: "confirm" });
-    });
-    return () => { active = false; };
-  }, [platformHost, ready, target]);
-
-  const share = useCallback(async () => {
-    if (!target || !ready || !platformHost || !organizationId || !label.trim()) return;
-    const request = live.current;
-    setStep({ kind: "working" });
-    try {
-      const runtimeId = await computerRuntimeId(platformHost, target.slot);
-      if (!runtimeId) throw new Error("runtime unavailable");
-      const scope = await prepareTeamTerminal(ready.api, { runtimeId, organizationId, terminalId: target.terminalId, computerLabel: label });
-      if (request === live.current) setStep({ kind: "shared", scope });
-    } catch (error: unknown) {
-      console.warn("[terminal-window] share failed:", error instanceof Error ? error.name : "UnknownError");
-      if (request === live.current) setStep({ kind: "failed", message: FAILED });
-    }
-  }, [label, organizationId, platformHost, ready, target]);
-
-  const stop = useCallback(async (scope: CollaborationScope) => {
-    if (!ready) return;
-    const request = live.current;
-    setStep({ kind: "working" });
-    try {
-      await stopSharingTeamTerminal(ready.api, scope.id);
-      if (request === live.current) setStep({ kind: "confirm" });
-    } catch (error: unknown) {
-      console.warn("[terminal-window] stop sharing failed:", error instanceof Error ? error.name : "UnknownError");
-      // The share is still in place: keep it, with Stop sharing to retry until every grant is gone.
-      if (request === live.current) setStep({ kind: "shared", scope, error: STOP_FAILED });
-    }
-  }, [ready]);
-
-  /** After each access change, and on Retry: editors can type only once the owner's setting is saved. */
-  const syncTyping = useCallback(async (scope: CollaborationScope) => {
-    if (!ready) return;
-    const request = live.current;
-    try {
-      await syncEditorTyping(ready.api, scope.id);
-      if (request === live.current) setStep({ kind: "shared", scope });
-    } catch (error: unknown) {
-      console.warn("[terminal-window] typing sync failed:", error instanceof Error ? error.name : "UnknownError");
-      if (request === live.current) setStep({ kind: "shared", scope, error: TYPING_FAILED });
-    }
-  }, [ready]);
-
+  const { step, label, setLabel, organizationId, setOrganizationId, share, stop, syncTyping } = useShareFlow(target, platformHost, ready);
   if (!target) return null;
   const editing = step.kind === "confirm" || step.kind === "failed";
   return (
@@ -133,25 +39,11 @@ export function ShareTerminalDialog({ target, platformHost, team: teamClient, on
           <StepStatus step={step} />
           {editing ? <ShareSetup organizations={ready.organizations} organizationId={organizationId} onOrganization={setOrganizationId}
             label={label} onLabel={setLabel} /> : null}
-          {step.kind === "shared" ? (
-            <>
-              {step.error ? (
-                <div role="alert" className="flex flex-wrap items-center gap-2">
-                  {step.error}
-                  {step.error === TYPING_FAILED ? <Button size="sm" variant="secondary" onClick={() => { void syncTyping(step.scope); }}>Retry</Button> : null}
-                </div>
-              ) : null}
-              <AudienceGrantPicker api={ready.api} scope={step.scope} onRefresh={() => syncTyping(step.scope)} />
-            </>
-          ) : null}
+          {step.kind === "shared" ? <SharedAccess api={ready.api} step={step} onSyncTyping={syncTyping} /> : null}
         </div>
       ) : null}
-      <DialogFooter>
-        {step.kind === "shared" ? <Button variant="destructive" onClick={() => { void stop(step.scope); }}>Stop sharing</Button> : null}
-        {ready && editing
-          ? <Button variant="primary" disabled={!label.trim() || !organizationId} onClick={() => { void share(); }}>Share terminal</Button> : null}
-        <Button variant="secondary" onClick={onClose}>{step.kind === "shared" ? "Done" : "Cancel"}</Button>
-      </DialogFooter>
+      <ShareFooter step={step} canShare={Boolean(ready && editing && label.trim() && organizationId)} showShare={Boolean(ready && editing)}
+        onShare={() => { void share(); }} onStop={(scope) => { void stop(scope); }} onClose={onClose} />
     </Dialog>
   );
 }
@@ -163,7 +55,7 @@ function TeamStatus({ status }: { status: TeamCollaborationState["status"] }) {
   return null;
 }
 
-function StepStatus({ step }: { step: Step }) {
+function StepStatus({ step }: { step: ShareStep }) {
   if (step.kind === "loading" || step.kind === "working") {
     return <p role="status" style={secondaryText}>{step.kind === "loading" ? "Checking this terminal…" : "Working…"}</p>;
   }
@@ -197,20 +89,38 @@ function ShareSetup({ organizations, organizationId, onOrganization, label, onLa
   );
 }
 
-async function findAcrossOrganizations(
-  ready: { api: Parameters<typeof findTeamTerminal>[0]; organizations: readonly TeamOrganization[] },
-  runtimeId: string,
-  terminalId: string,
-): Promise<CollaborationScope | null> {
-  for (const organization of ready.organizations) {
-    try {
-      // react-doctor-disable-next-line react-doctor/async-await-in-loop -- at most a few organizations, and the first match ends the search.
-      const found = await findTeamTerminal(ready.api, { runtimeId, organizationId: organization.organizationId, terminalId });
-      if (found) return found;
-    } catch (error: unknown) {
-      // A share in another organization refuses this one's lookup: keep looking.
-      console.warn("[terminal-window] share lookup skipped an organization:", error instanceof Error ? error.name : "UnknownError");
-    }
-  }
-  return null;
+
+function SharedAccess({ api, step, onSyncTyping }: {
+  api: CollaborationDirectApi;
+  step: Extract<ShareStep, { kind: "shared" }>;
+  onSyncTyping(scope: CollaborationScope): Promise<void>;
+}) {
+  return (
+    <>
+      {step.error ? (
+        <div role="alert" className="flex flex-wrap items-center gap-2">
+          {step.error}
+          {step.error === TYPING_FAILED ? <Button size="sm" variant="secondary" onClick={() => { void onSyncTyping(step.scope); }}>Retry</Button> : null}
+        </div>
+      ) : null}
+      <AudienceGrantPicker api={api} scope={step.scope} onRefresh={() => onSyncTyping(step.scope)} />
+    </>
+  );
+}
+
+function ShareFooter({ step, canShare, showShare, onShare, onStop, onClose }: {
+  step: ShareStep;
+  canShare: boolean;
+  showShare: boolean;
+  onShare(): void;
+  onStop(scope: CollaborationScope): void;
+  onClose(): void;
+}) {
+  return (
+    <DialogFooter>
+      {step.kind === "shared" ? <Button variant="destructive" onClick={() => onStop(step.scope)}>Stop sharing</Button> : null}
+      {showShare ? <Button variant="primary" disabled={!canShare} onClick={onShare}>Share terminal</Button> : null}
+      <Button variant="secondary" onClick={onClose}>{step.kind === "shared" ? "Done" : "Cancel"}</Button>
+    </DialogFooter>
+  );
 }
