@@ -29,7 +29,8 @@ export function clickSelection(state: SelectionState, id: string, order: readonl
   if (modifiers.range && state.anchor !== null && order.includes(state.anchor)) {
     const range = rangeBetween(order, state.anchor, id);
     if (modifiers.toggle) {
-      const merged = [...state.selected, ...range.filter((item) => !state.selected.includes(item))];
+      const already = new Set(state.selected);
+      const merged = [...state.selected, ...range.filter((item) => !already.has(item))];
       return { selected: merged, anchor: state.anchor };
     }
     return { selected: range, anchor: state.anchor };
@@ -60,7 +61,8 @@ export function reconcileSelection(state: SelectionState, order: readonly string
 /** Header checkbox state for the list view. */
 export function headerCheckState(state: SelectionState, order: readonly string[]): boolean | "indeterminate" {
   if (order.length === 0 || state.selected.length === 0) return false;
-  const all = order.every((id) => state.selected.includes(id));
+  const selected = new Set(state.selected);
+  const all = order.every((id) => selected.has(id));
   return all ? true : "indeterminate";
 }
 

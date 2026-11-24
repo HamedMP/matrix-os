@@ -131,8 +131,15 @@ export function FileRow({
       )}
       style={{ gridTemplateColumns: FILE_TABLE_COLUMNS }}
     >
-      <div role="gridcell" className="flex items-center" onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()}>
-        <Checkbox aria-label={`Select ${entry.name}`} checked={selected} tabIndex={-1} onCheckedChange={onToggle} />
+      <div role="gridcell" className="flex items-center">
+        <Checkbox
+          aria-label={`Select ${entry.name}`}
+          checked={selected}
+          tabIndex={-1}
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onCheckedChange={onToggle}
+        />
       </div>
       <div role="gridcell" className="flex min-w-0 items-center gap-2.5">
         <FileTile entry={entry} access={access} size={32} className="size-6 rounded-[6px] [&_svg]:size-3.5" />

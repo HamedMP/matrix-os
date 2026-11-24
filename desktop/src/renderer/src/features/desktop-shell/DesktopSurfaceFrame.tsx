@@ -24,6 +24,8 @@ import {
   OS_WINDOW_SIDEBAR_WIDTH,
   TopBar,
 } from "./OSWindow";
+import { FILES_SIDEBAR_WIDTH } from "../files/redesign/files-sidebar-width";
+import { useFilesRedesignFlag } from "../files/redesign/use-files-redesign-flag";
 import { BotDetailsContext, SurfaceChromeContext, type SurfaceChromeSpec } from "./SurfaceChrome";
 import { HostedWorkSidebar, HOSTED_WORK_SIDEBAR_WIDTH } from "../work/HostedWorkSidebar";
 import { WorkSurfaceRuntimeProvider } from "../work/WorkSurfaceRuntime";
@@ -127,12 +129,15 @@ export default function DesktopSurfaceFrame({
     || tab.kind === "chat"
     || tab.kind === "projects"
     || tab.kind === "project";
+  const filesRedesign = useFilesRedesignFlag() === true && tab.kind === "files";
   const sidebarOwnsChrome = isWorkSurface
+    || filesRedesign
     || tab.kind === "terminal"
     || tab.kind === "terminals"
     || tab.kind === "settings"
     || tab.kind === "notes";
   const sidebarHidesTitle = isWorkSurface
+    || filesRedesign
     || tab.kind === "terminal"
     || tab.kind === "terminals"
     || tab.kind === "settings"
@@ -277,7 +282,7 @@ export default function DesktopSurfaceFrame({
           sidebarTriggerLabel="Toggle Chat sidebar"
           showWindowControls={isWindow}
           chromePlacement={sidebarOwnsChrome ? "sidebar" : "full-width"}
-          sidebarWidth={sidebarOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
+          sidebarWidth={filesRedesign ? FILES_SIDEBAR_WIDTH : sidebarOwnsChrome ? OS_WINDOW_SIDEBAR_WIDTH : undefined}
           onClose={onClose}
           onMinimize={onMinimize}
           onMaximize={onMaximize}
