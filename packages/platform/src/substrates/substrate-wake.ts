@@ -26,7 +26,7 @@ export const WAKE_TIMEOUT_MS = 25_000;
 export const DEFAULT_REQUEST_WAIT_MS = 10_000;
 export const OWNER_ACTIVITY_WRITE_INTERVAL_MS = 60_000;
 export const OWNER_ACTIVITY_CACHE_MAX = 10_000;
-const WAKE_IN_FLIGHT_MAX = 1_024;
+export const WAKE_IN_FLIGHT_MAX = 1_024;
 const WAKING_RETRY_AFTER = '3';
 const BUSY_RETRY_AFTER = '30';
 const UNAVAILABLE_RETRY_AFTER = '5';
@@ -106,7 +106,7 @@ export interface WakeOptions {
   signal?: AbortSignal;
 }
 
-// Insertion-ordered and capped; entries remove themselves when they settle.
+// Capped; entries remove themselves when they settle (bounded by WAKE_TIMEOUT_MS).
 const inFlightWakes = new Map<string, Promise<WakeResult>>();
 
 /**
@@ -192,16 +192,16 @@ function sharedWake(
 ): Promise<WakeResult> {
   const pending = inFlightWakes.get(machine.machineId);
   if (pending) return pending;
+  // Running wakes are never evicted (that would start a second host start for
+  // the same machine); at the cap a new machine is refused as busy and retries.
+  if (inFlightWakes.size >= WAKE_IN_FLIGHT_MAX) {
+    log('[substrate-wake] wake registry full; refusing as busy', { machineId: machine.machineId });
+    return Promise.resolve({ result: { state: 'busy' } });
+  }
   const promise = runWake(db, substrate, machine, log, options).finally(() => {
     if (inFlightWakes.get(machine.machineId) === promise) inFlightWakes.delete(machine.machineId);
   });
   inFlightWakes.set(machine.machineId, promise);
-  while (inFlightWakes.size > WAKE_IN_FLIGHT_MAX) {
-    // The evicted wake still completes; later callers just stop sharing it.
-    const oldest = inFlightWakes.keys().next().value;
-    if (oldest === undefined) break;
-    inFlightWakes.delete(oldest);
-  }
   return promise;
 }
 

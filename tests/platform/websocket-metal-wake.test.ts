@@ -110,6 +110,19 @@ describe('WebSocket upgrades to a metal runtime', () => {
     expect(rig.ingress.requests.filter((req) => req.upgrade)).toHaveLength(2);
   });
 
+  it('an ingress-marked asleep handshake with a chunked body still wakes the VM and retries once', async () => {
+    await db.executor.updateTable('user_machines').set({ status: 'running' }).where('machine_id', '=', rig.machineId).execute();
+    rig.ingress.chunkedAsleepUpgrades = 1;
+
+    const outcome = await connect('/vm/alice/ws/terminal');
+
+    expect(outcome.kind).toBe('open');
+    if (outcome.kind !== 'open') return;
+    expect(await roundTrip(outcome.ws, 'chunked')).toBe('echo:chunked');
+    expect(rig.resumeCalls()).toHaveLength(1);
+    expect(rig.ingress.requests.filter((req) => req.upgrade)).toHaveLength(2);
+  });
+
   it('refuses with waking, not runtime_asleep, when the VM stays asleep after the retry', async () => {
     await db.executor.updateTable('user_machines').set({ status: 'running' }).where('machine_id', '=', rig.machineId).execute();
     rig.ingress.asleepResponses = 2;

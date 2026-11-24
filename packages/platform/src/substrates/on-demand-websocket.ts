@@ -117,7 +117,12 @@ async function retryAfterAsleep(upgrade: OnDemandWebSocketUpgrade, substrates: S
     () => refuseWithWakeBody(upgrade.socket, wakeRefusal({ kind: 'not_ready', state: 'waking' })));
 }
 
-/** A small 503 whose JSON body says `runtime_asleep`; anything else is relayed as before. */
+/**
+ * A small 503 whose JSON body says `runtime_asleep`; anything else is relayed
+ * as before. The ingress drops any marker a VM sends, so the marker alone is
+ * authoritative: a marked 503 without a Content-Length (a chunked body) is
+ * asleep as soon as its head arrives.
+ */
 function readAsleepAnswer(buffered: Buffer, end: number): 'asleep' | 'other' | 'incomplete' {
   const head = buffered.subarray(0, end).toString('latin1');
   if (!/^HTTP\/1\.[01] 503 /.test(head)) return 'other';
@@ -127,7 +132,9 @@ function readAsleepAnswer(buffered: Buffer, end: number): 'asleep' | 'other' | '
       && line.slice(colon + 1).trim() === RUNTIME_ASLEEP_ERROR;
   });
   if (!marked) return 'other';
-  const length = Number(/\r\ncontent-length:\s*(\d+)/i.exec(head)?.[1] ?? Number.NaN);
+  const declared = /\r\ncontent-length:\s*(\d+)/i.exec(head)?.[1];
+  if (declared === undefined) return 'asleep';
+  const length = Number(declared);
   if (!Number.isSafeInteger(length) || length > MAX_ASLEEP_BODY_BYTES) return 'other';
   if (buffered.length < end + 4 + length) return 'incomplete';
   return isRuntimeAsleepBody(buffered.subarray(end + 4, end + 4 + length).toString('utf8')) ? 'asleep' : 'other';

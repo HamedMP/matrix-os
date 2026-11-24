@@ -192,6 +192,18 @@ describe('waking a metal runtime from every entry point', () => {
     expect((await rig.machine())?.status).toBe('running');
   });
 
+  it('a HEAD to a VM the host put to sleep (bodyless marked 503) wakes it and is retried once', async () => {
+    await setup({ status: 'running' });
+    rig.ingress.asleepResponses = 1;
+
+    const response = await platform.request('/vm/alice/api/files', { method: 'HEAD', headers: OWNER_SESSION });
+
+    expect(response.status).toBe(200);
+    expect(rig.resumeCalls()).toHaveLength(1);
+    expect(rig.ingress.requests.map((req) => req.method)).toEqual(['HEAD', 'HEAD']);
+    expect((await rig.machine())?.status).toBe('running');
+  });
+
   it('a 503 runtime_asleep body from the VM itself, without the ingress marker, passes through and is never re-sent', async () => {
     await setup({ status: 'running' });
     rig.ingress.vmAsleepBodyResponses = 1;

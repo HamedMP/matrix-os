@@ -49,9 +49,12 @@ function concat(chunks: Uint8Array[]): Uint8Array<ArrayBuffer> {
  */
 export async function readRuntimeAsleep(response: Response): Promise<{ asleep: true } | { asleep: false; response: Response }> {
   // Only the ingress's own marked answer counts; a VM may return the same body for its own reasons.
-  if (response.status !== 503 || !response.body || response.headers.get(INGRESS_ERROR_HEADER) !== RUNTIME_ASLEEP_ERROR) {
+  if (response.status !== 503 || response.headers.get(INGRESS_ERROR_HEADER) !== RUNTIME_ASLEEP_ERROR) {
     return { asleep: false, response };
   }
+  // A bodyless reply (HEAD) carries only the marker. The ingress drops any
+  // marker a VM sends, so a marked 503 is always the ingress's own answer.
+  if (!response.body) return { asleep: true };
   const declared = Number(response.headers.get('content-length') ?? '0');
   if (declared > MAX_ASLEEP_BODY_BYTES) return { asleep: false, response };
   const reader = response.body.getReader();
