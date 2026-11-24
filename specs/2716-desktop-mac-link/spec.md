@@ -77,17 +77,18 @@ Mac.
    computer and opens the link. Off by default; never enabled implicitly.
 2. **See it on the computer.** Within 5 s the computer's Terminal app (Web
    Desktop, Web Canvas, Electron OS view) and its Terminal-window section show a
-   **Machines** group with "Hamed's MacBook Pro · online", its terminals with
+   **Macs** group with "Hamed's MacBook Pro · Online", its terminals with
    status, and **New terminal** / agent presets (Claude, Codex, OpenCode, Pi).
 3. **Use it.** Opening a terminal attaches live; typing, resize, paste and
    Herdr status work as with any Herdr terminal. Agents on the computer use
-   `matrix shell run --machine <name> -- …`, `read`, `send`, `wait`.
+   `matrix shell machine run <mac> -- …`, `read`, `send`, `kill`.
 4. **Know it is on.** While the link is up, the Mac shows it: the Terminal
-   window header ("matrix-demo can use this Mac · 2 terminals open from it")
-   and a checked **Matrix OS → Let matrix-demo Use This Mac** app-menu item.
+   window sidebar ("matrix-demo can use this Mac · 2 terminals open from it",
+   with **Turn off**), and the app menu always offers **Matrix OS → Stop
+   Computers Using This Mac**.
    Terminals started from the computer carry the label
    `matrix.from=<computer>` and a small "from matrix-demo" tag.
-5. **Switch off (Mac).** Unchecking the menu item or the header toggle closes
+5. **Switch off (Mac).** **Turn off** or the app-menu item closes
    the link at once. The computer shows "off on the Mac". Terminals keep
    running on the Mac (like any Herdr terminal); the computer can no longer
    see or reach them. Switching on again needs no new confirmation for the same
@@ -108,11 +109,18 @@ Mac.
 | Electron Desktop (computer side) | Terminal window computer section and OS-view Terminal: Machines group, open, new, agents, remove |
 | Web Desktop | Terminal app Machines group, same actions |
 | Web Canvas | Same component as Web Desktop |
-| `matrix` CLI, kernel, remote-computer MCP | `--machine <name>` on `shell list/run/read/send/keys/wait/kill` |
+| `matrix` CLI (and agents in the computer's terminals) | `matrix shell machine ls|terminals|run|read|send|kill` |
+| Kernel tools, remote-computer MCP | Follow-on: they call the same routes |
 | Web Mobile, Native Mobile | N/A in this stack: routes are shared; list/attach UI is a follow-on. Needs reviewer approval |
 
-The Mac's own Electron app hides its own entry under the computer section (it
-already shows those terminals as "This Computer").
+On the Mac itself, the computer's Macs group lists this Mac too; opening a
+terminal there works (it loops through the computer). Hiding it is a
+follow-on, since the main window does not know this Mac's device id.
+
+Terminals on a Mac use their own workspace id per Mac in every `TerminalRef`:
+`tws_00000000006d6163` + the first 16 hex digits of the device id. Two Macs
+never collide, and every OS view picks the `/ws/mac-link/terminal` socket by
+the id alone.
 
 ## Architecture
 
@@ -219,9 +227,11 @@ the confirmation says so.
   `WHERE revision = :base`; enrol is `INSERT … ON CONFLICT (device_id) DO
   UPDATE … WHERE mac_link_devices.revoked_at IS NOT NULL` so a live enrolment
   is never silently replaced.
-- **Verbs**: a Mac terminal is addressed as machine `<name>` plus its herdr-core
-  address. 2692 verbs and the kernel tools gain `machine`; `TerminalRef`
-  callers that do not pass it are unchanged.
+- **Agents on the computer**: the local terminal token (2692) is accepted on
+  the Mac terminal routes and the machine list only, from a direct loopback
+  caller, so an agent in one of the computer's terminals can use
+  `matrix shell machine …`. Enrolling, removing and the link socket still need
+  the owner's signed-in session.
 
 ### Device identity
 
@@ -254,13 +264,14 @@ one 2698 (#3483) already defines; this spec adds no second key store:
 | `POST /api/mac-link/enrol/challenge` | Electron main | Owner bearer (computer-scoped JWT, `requireRequestPrincipal`, owner only) | `bodyLimit` 4 KiB; ≤ 5 live challenges per owner, 60 s TTL, single use |
 | `POST /api/mac-link/enrol` | Electron main | Owner bearer + Ed25519 proof over the challenge | `bodyLimit` 8 KiB; ≤ 5 enrolled devices per owner |
 | `GET /ws/mac-link` | Electron main | Owner bearer header on upgrade + per-connection challenge proof | Not in the query-token allowlist (header only; no browser can open it) |
-| `GET /api/mac-link/machines` | Owner shells, CLI, kernel | Owner principal | Name, state, last seen; never keys |
-| `DELETE /api/mac-link/machines/:deviceId` | Owner shells, CLI | Owner principal | `bodyLimit` 1 KiB, `If-Match: <revision>`, closes live link |
-| `GET /api/mac-link/machines/:deviceId/terminals` | Owner shells, CLI, kernel | Owner principal | |
-| `POST /api/mac-link/machines/:deviceId/terminals` | Owner shells, CLI, kernel | Owner principal | `bodyLimit` 64 KiB; run rate limit |
-| `DELETE /api/mac-link/machines/:deviceId/terminals/:address` | Owner shells, CLI, kernel | Owner principal | `bodyLimit` 1 KiB |
-| `POST /api/mac-link/machines/:deviceId/terminals/:address/{send,keys,interrupt}` | Owner CLI, kernel | Owner principal | `bodyLimit` 64 KiB |
-| `GET /ws/mac-link/terminal?device=&terminal=&lease=` | Owner shells | Owner principal; query token pattern added to `WS_QUERY_TOKEN_PATH_PATTERNS` | observe by default; write lease as `/ws/terminal/tab` |
+| `GET /api/mac-link/machines` | Owner shells, CLI, agents | Owner principal or local terminal token | Name, state, last seen, this computer's id; never keys |
+| `DELETE /api/mac-link/machines/:deviceId` | Owner shells | Owner principal | `bodyLimit` 1 KiB, `If-Match: "mac-link-<machine>-<device>-<revision>"`, closes live link |
+| `GET /api/mac-link/machines/:deviceId/terminals` | Owner shells, CLI, agents | Owner principal or local terminal token | |
+| `POST /api/mac-link/machines/:deviceId/terminals` | Owner shells, CLI, agents | Same | `bodyLimit` 96 KiB; `{cols, rows, agent? \| argv?, cwd?, name?}`; 10 per minute per Mac |
+| `DELETE /api/mac-link/machines/:deviceId/terminals/:address` | Owner shells, CLI, agents | Same | `bodyLimit` 1 KiB |
+| `GET /api/mac-link/machines/:deviceId/terminals/:address/screen?lines=` | CLI, agents | Same | ≤ 2,000 lines |
+| `POST /api/mac-link/machines/:deviceId/terminals/:address/input` | CLI, agents | Same | `bodyLimit` 96 KiB, ≤ 64 KiB of input |
+| `GET /ws/mac-link/terminal?workspaceId=&tabId=\|id=&lease=` | Owner shells | Owner principal; path added to `WS_QUERY_TOKEN_PATHS` | 2701's Herdr viewer socket per Mac; observe by default; write lease as `/ws/terminal/tab` |
 
 Who can open a terminal on the Mac:
 
@@ -389,9 +400,9 @@ their link. No temp files.
    enable for that computer, see the Mac online in the Web Desktop Terminal
    app within 5 s, open a new terminal there, run `uname -s` → `Darwin`, start
    Claude from the agent preset.
-2. From a terminal on the computer, `matrix shell run --machine <mac> -- uname
-   -s` then `matrix shell read` returns `Darwin`.
-3. Uncheck the app-menu item: the open viewer shows "off on the Mac" within
+2. From a terminal on the computer, `matrix shell machine run <mac> -- uname
+   -s` then `matrix shell machine read <mac> <id>` shows `Darwin`.
+3. Choose Stop Computers Using This Mac: the open viewer shows "off on the Mac" within
    1 s; new calls get `mac_disabled`; the terminal keeps running on the Mac.
 4. Remove the Mac from the computer: the Mac shows "Removed"; re-enable needs
    a fresh confirmation; old device proof is refused.
@@ -432,8 +443,8 @@ their link. No temp files.
 | 1 | Spec (this file) | specs |
 | 2 | Gateway: store + migration, enrolment routes, `/ws/mac-link` admission, registry, `HcConnection` over the link | gateway, contracts |
 | 3 | Electron: device keys, guard, `MacLinkService` (reconnect, sleep, toggle, menu, IPC) | desktop |
-| 4 | Gateway: Mac terminal routes, browser attach WS, verbs/CLI/kernel `--machine` | gateway, sync-client, kernel |
-| 5 | Surfaces: shared Machines group (packages/ui), Web Desktop/Canvas Terminal app, Electron Terminal window, Mac-side header and confirmation | ui, shell, desktop |
+| 4 | Gateway: Mac terminal routes, viewer socket, local-token access for agents, `matrix shell machine` | gateway, sync-client |
+| 5 | Surfaces: Mac-side controls (Terminal window, confirmation, app menu, IPC) and the shared Macs group on Web Desktop, Web Canvas and Electron Desktop | ui, shell, desktop |
 | 6 | Live qualification fixes, repo docs; plus a separate public documentation PR in `FinnaAI/matrix-os-site` under `content/docs/` (enable, switch off, remove) | docs, fixes, site |
 
 Layer 2 needs `packages/herdr-core-client` (#3527). If it has not merged when
