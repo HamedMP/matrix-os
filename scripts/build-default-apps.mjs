@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { glob, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const root = resolve(new URL("..", import.meta.url).pathname);
 const appsRoot = resolve(process.argv[2] ?? join(root, "home/apps"));
@@ -138,7 +140,26 @@ async function buildApp(manifestPath) {
   );
 }
 
+// Office apps import home/apps/_shared/office-engine, a git-ignored copy of
+// packages/office/src. Regenerate it before hashing or building any app when
+// building the checkout's own home/apps. Elsewhere (a Docker runtime image or
+// host bundle without the sync script, or another apps directory) the copy
+// that shipped with the home template is used as is.
+async function syncOfficeEngineMirror() {
+  const syncScript = join(root, "scripts/sync-office-engine.mjs");
+  if (appsRoot !== join(root, "home/apps")) return;
+  if (!existsSync(syncScript) || !existsSync(join(root, "packages/office/src"))) return;
+  const { syncOfficeEngine } = await import(pathToFileURL(syncScript).href);
+  const { changes } = syncOfficeEngine({ root });
+  console.log(
+    changes.length === 0
+      ? "[default-apps] office engine mirror is up to date"
+      : `[default-apps] regenerated ${changes.length} office engine mirror file(s)`,
+  );
+}
+
 await mkdir(appsRoot, { recursive: true });
+await syncOfficeEngineMirror();
 const manifests = [];
 for await (const file of glob("**/matrix.json", { cwd: appsRoot })) {
   manifests.push(join(appsRoot, file));

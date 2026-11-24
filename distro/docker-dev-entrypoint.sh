@@ -104,6 +104,13 @@ fi
 # files, and skips files the user has touched. The previous version of this
 # block did `rm -rf` + `cp -r` on every boot, which clobbered user
 # customizations and broke the docker-test customized-files scenario.
+# home/apps/_shared/office-engine is a git-ignored copy of packages/office/src.
+# Generate it before seeding so a first-boot home gets it too (a no-op when the
+# image already carries it or it is up to date).
+if [ -f /app/scripts/sync-office-engine.mjs ] && [ -d /app/packages/office/src ]; then
+  node /app/scripts/sync-office-engine.mjs
+fi
+
 for dir in agents system apps; do
   if [ -d "/app/home/$dir" ] && [ ! -d "$MATRIX_HOME/$dir" ]; then
     cp -r "/app/home/$dir" "$MATRIX_HOME/$dir"

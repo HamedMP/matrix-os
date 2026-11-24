@@ -133,6 +133,8 @@ export default defineConfig({
     // Tests must never send CLI telemetry. CI lanes (e.g. Linux qualification) may export PostHog
     // tokens with no network, and a failed capture would add stray lines to spawned CLI stderr.
     env: { MATRIX_NO_TELEMETRY: "1" },
+    // Generates home/apps/_shared/office-engine (git-ignored) for the office app suites.
+    globalSetup: ["tests/helpers/office-engine-global-setup.ts"],
     globals: true,
     server: {
       deps: { inline: ["@testing-library/jest-dom"] },

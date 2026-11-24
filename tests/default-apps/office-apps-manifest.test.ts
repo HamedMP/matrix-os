@@ -87,6 +87,8 @@ describe.each(OFFICE_APPS)("office app %s", (app) => {
     const pkg = readJson<{ name: string; scripts: Record<string, string>; dependencies: Record<string, string> }>(app, "package.json");
     expect(pkg.name).toBe(`@matrixos/${app}`);
     expect(pkg.scripts.build).toContain("vite build");
+    // The engine copy is generated, not committed: regenerate (or, on an owner's computer, verify) it first.
+    expect(pkg.scripts.build).toMatch(/^node \.\.\/_shared\/ensure-office-engine\.mjs && /);
     expect(pkg.dependencies.react).toBe("19.2.6");
     expect(pkg.dependencies["react-dom"]).toBe("19.2.6");
   });
