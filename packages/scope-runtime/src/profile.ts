@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION,
+  SCOPE_RUNTIME_CODEX_EXECUTABLE,
   SCOPE_RUNTIME_CODEX_HARNESS_VERSION,
 } from "./worker-common.js";
 
@@ -56,6 +57,7 @@ export const FIXED_SYSTEMD_PROPERTIES = [
   "BindReadOnlyPaths=/usr/lib",
   "BindReadOnlyPaths=/usr/bin/env",
   "BindReadOnlyPaths=/opt/matrix/runtime/node",
+  `BindReadOnlyPaths=-${SCOPE_RUNTIME_CODEX_EXECUTABLE}`,
   `BindReadOnlyPaths=${SDK_DIRECTORY_TOKEN}:/opt/matrix/scope-sdk/sdk`,
   `BindReadOnlyPaths=${NATIVE_DIRECTORY_TOKEN}:/opt/matrix/scope-sdk/native`,
   `BindReadOnlyPaths=${WORKER_FILE_TOKEN}:/opt/matrix/scope-runtime/worker.mjs`,

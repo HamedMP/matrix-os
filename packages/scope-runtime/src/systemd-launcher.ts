@@ -50,7 +50,7 @@ import type {
   ScopeRuntimeLauncher,
   ScopeRuntimeReconciledRuntime,
 } from "./supervisor.js";
-import { scopeRuntimeWorkerFailureForExitCode } from "./worker-common.js";
+import { SCOPE_RUNTIME_CODEX_EXECUTABLE, scopeRuntimeWorkerFailureForExitCode } from "./worker-common.js";
 import {
   SCOPE_RUNTIME_SANDBOX_CAPABILITY,
   assertSandboxEnvironment,
@@ -636,7 +636,7 @@ export function createSystemdScopeRuntimeLauncher(
     workerFile: assertTrustedAbsolutePath(input.workerFile),
     brokerSocket: assertTrustedAbsolutePath(input.brokerSocket),
     nodeBinary: assertTrustedAbsolutePath(input.nodeBinary ?? "/opt/matrix/runtime/node/bin/node"),
-    codexBinary: assertTrustedAbsolutePath(input.codexBinary ?? "/opt/matrix/runtime/node/bin/codex"),
+    codexBinary: assertTrustedAbsolutePath(input.codexBinary ?? SCOPE_RUNTIME_CODEX_EXECUTABLE),
     sandboxRoots: (input.sandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
     botSandboxRoots: (input.botSandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),
     managedPiSandboxRoots: (input.managedPiSandboxRoots ?? []).map((root) => assertTrustedAbsolutePath(root)),

@@ -6,7 +6,7 @@ if [ -r /opt/matrix/env/host.env ]; then
 fi
 
 MODE="${1:-}"
-if [ "$#" -gt 1 ] || { [ -n "$MODE" ] && [ "$MODE" != "--sandbox-only" ] && [ "$MODE" != "--tools-only" ] && [ "$MODE" != "--codex-upgrade-only" ]; }; then
+if [ "$#" -gt 1 ] || { [ -n "$MODE" ] && [ "$MODE" != "--sandbox-only" ] && [ "$MODE" != "--tools-only" ]; }; then
   printf 'matrix-install-developer-tools: unsupported arguments\n' >&2
   exit 64
 fi
@@ -107,14 +107,14 @@ tool_bin_name() {
   printf '%s\n' "$tool"
 }
 
-codex_version_is_current() {
-  local output required_major required_minor required_patch current_major current_minor current_patch
+codex_version_at_least() {
+  local minimum="$1" output required_major required_minor required_patch current_major current_minor current_patch
   output="$("$NODE_PREFIX/bin/codex" --version 2>/dev/null)" || return 1
   [[ "$output" =~ ^codex-cli[[:space:]]+([0-9]+)\.([0-9]+)\.([0-9]+)([[:space:]]|$) ]] || return 1
   current_major="${BASH_REMATCH[1]}"
   current_minor="${BASH_REMATCH[2]}"
   current_patch="${BASH_REMATCH[3]}"
-  IFS=. read -r required_major required_minor required_patch <<< "$CODEX_VERSION"
+  IFS=. read -r required_major required_minor required_patch <<< "$minimum"
   (( 10#$current_major > 10#$required_major ||
      (10#$current_major == 10#$required_major && 10#$current_minor > 10#$required_minor) ||
      (10#$current_major == 10#$required_major && 10#$current_minor == 10#$required_minor && 10#$current_patch >= 10#$required_patch) ))
@@ -144,28 +144,13 @@ is_tool_installed() {
     return
   fi
   if [ "$tool" = "codex" ]; then
-    [ -x "$NODE_PREFIX/bin/codex" ] && codex_version_is_current
+    # A host update must preserve the existing Terminal executable for rollback.
+    # Shared Chat has its own release-scoped Codex.
+    [ -x "$NODE_PREFIX/bin/codex" ] && codex_version_at_least 0.0.0
     return
   fi
   grep -qxF "$tool" "$INSTALLED_FILE" && [ -x "$NODE_PREFIX/bin/${bin_name}" ]
 }
-
-if [ "$MODE" = "--codex-upgrade-only" ]; then
-  # The scope supervisor admits only the exact pinned Codex and reads the
-  # installed version once at start. The updater runs this before starting it,
-  # so a pin change does not leave shared Codex Chat disabled until a restart.
-  # Never installs Codex for an owner who does not have it.
-  if [ ! -x "$NODE_PREFIX/bin/codex" ] || codex_version_is_current; then
-    exit 0
-  fi
-  mkdir -p "$STATE_DIR"
-  log "upgrading managed Codex before the scope runtime starts"
-  if /opt/matrix/bin/matrix-install-tool-pack codex >>"$STATE_DIR/codex.log" 2>&1 && codex_version_is_current; then
-    exit 0
-  fi
-  log "managed Codex upgrade failed; the developer tools service will retry"
-  exit 1
-fi
 
 if [ "$MODE" != "--sandbox-only" ]; then
   if ! ensure_terminal_runtime; then
@@ -224,7 +209,7 @@ for tool in $TOOLS; do
   if /opt/matrix/bin/matrix-install-tool-pack "$tool" >>"$STATE_DIR/${tool}.log" 2>&1; then
     if [ "$tool" = "claude-code" ] && ! claude_version_is_current; then
       log "installed Claude Code did not meet the required version"
-    elif [ "$tool" = "codex" ] && ! codex_version_is_current; then
+    elif [ "$tool" = "codex" ] && ! codex_version_at_least "$CODEX_VERSION"; then
       log "installed Codex did not meet the required version"
     else
       install_succeeded=1

@@ -22,7 +22,7 @@ describe('managed Codex version ownership', () => {
     const acceptance = readFileSync('scripts/spikes/collaboration/production-supervisor-acceptance.mjs', 'utf8');
     expect(acceptance).toContain(`const EXPECTED_CODEX_VERSION = \"${CODEX_VERIFIED_VERSION}\"`);
     expect(acceptance).toContain(`const EXPECTED_PROFILE_DIGEST = \"${SCOPE_RUNTIME_PROFILE_DIGEST}\"`);
-    for (const path of ['distro/customer-vps/host-bin/matrix-install-tool-pack', 'distro/customer-vps/host-bin/matrix-install-developer-tools']) {
+    for (const path of ['scripts/build-host-bundle.sh', 'distro/customer-vps/host-bin/matrix-install-tool-pack', 'distro/customer-vps/host-bin/matrix-install-developer-tools']) {
       expect(readFileSync(path, 'utf8')).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
     }
     for (const path of ['Dockerfile', 'Dockerfile.dev']) {

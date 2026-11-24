@@ -14,7 +14,7 @@ const functionSource = (name: string) => {
   if (!definition) throw new Error(`Missing installer function ${name}`);
   return definition;
 };
-const definitions = ["tool_bin_name", "codex_version_is_current", "claude_version_is_current", "is_tool_installed"]
+const definitions = ["tool_bin_name", "codex_version_at_least", "claude_version_is_current", "is_tool_installed"]
   .map(functionSource).join("\n");
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -49,7 +49,7 @@ function installFixture(output: string, exitCode = 0) {
 afterEach(() => { for (const directory of temporary.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 describe("managed Codex minimum version during optional tool provisioning", () => {
-  it("uses the qualified contract version for fresh installations and the minimum check", () => {
+  it("uses the qualified contract version for fresh installations", () => {
     expect(CODEX_VERIFIED_VERSION).toBe("0.171.0");
     expect(minimum).toBe(CODEX_VERIFIED_VERSION);
     const toolPack = readFileSync("distro/customer-vps/host-bin/matrix-install-tool-pack", "utf8");
@@ -70,9 +70,9 @@ describe("managed Codex minimum version during optional tool provisioning", () =
   it("preserves a healthy newer version with an existing marker", () => {
     expect(fixture("codex-cli 0.171.1", { marked: true }).run().status).toBe(0);
   });
-  it.each(["0.156.1", "0.162.1", "0.170.99", "0.170.0", "0.99.99"])("still repairs older %s even with a marker", version => {
-    expect(fixture(`codex-cli ${version}`, { marked: true }).run().status).toBe(1);
-    expect(fixture(`codex-cli ${version}`).run().status).toBe(1);
+  it.each(["0.156.1", "0.162.1", "0.170.99", "0.170.0", "0.99.99"])("preserves a working older %s during background provisioning", version => {
+    expect(fixture(`codex-cli ${version}`, { marked: true }).run().status).toBe(0);
+    expect(fixture(`codex-cli ${version}`).run().status).toBe(0);
   });
   it.each(["codex-cli 0.171.0-beta.1", "error: codex-cli 0.171.0", "codex-cli broken", "codex-cli 0.171.0.4"])("refuses unverified version output %s", output => {
     expect(fixture(output, { marked: true }).run().status).toBe(1);

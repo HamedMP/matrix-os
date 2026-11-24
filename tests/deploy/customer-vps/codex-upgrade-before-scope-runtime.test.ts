@@ -1,89 +1,90 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { expect, it } from "vitest";
 
-// Outcome: after an update that raises the Codex pin, shared Codex Chat keeps
-// working. The scope supervisor admits only the exact pinned release and reads
-// the installed version once at start, so an older managed binary must be
-// upgraded before the supervisor starts, not by the later background service.
-const installerPath = "distro/customer-vps/host-bin/matrix-install-developer-tools";
-const installer = readFileSync(installerPath, "utf8");
-const syncAgent = readFileSync("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
-const pin = installer.match(/^CODEX_VERSION="([0-9.]+)"$/m)?.[1];
-if (!pin) throw new Error("Missing Codex pin");
-const temporary: string[] = [];
-afterEach(() => { for (const directory of temporary.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+const predecessorPath = "tests/deploy/customer-vps/fixtures/browser-predecessor-updater.sh";
+const updaterPath = "distro/customer-vps/host-bin/matrix-sync-agent";
+const stagePath = "scripts/stage-host-codex.sh";
+const runnerName = "matrix-codex";
+const archiveMember = "codex-x86_64-unknown-linux-musl";
 
-/** Runs the real installer with a fake managed prefix and a fake tool pack. */
-function run(installed: string | null, pack: "upgrades" | "fails" | "stays-old" = "upgrades") {
-  const root = mkdtempSync(join(tmpdir(), "codex-upgrade-before-scope-"));
-  temporary.push(root);
-  const prefix = join(root, "node");
-  const state = join(root, "state");
-  mkdirSync(join(prefix, "bin"), { recursive: true });
-  const codex = join(prefix, "bin/codex");
-  const script = (version: string) => `#!/bin/sh\nprintf 'codex-cli %s\\n' '${version}'\n`;
-  if (installed) writeFileSync(codex, script(installed), { mode: 0o755 });
-  const packBody = pack === "fails" ? "exit 1"
-    : pack === "stays-old" ? "exit 0"
-    : `cp ${JSON.stringify(join(root, "pinned-codex"))} ${JSON.stringify(codex)}`;
-  writeFileSync(join(root, "pinned-codex"), script(pin!), { mode: 0o755 });
-  const toolPack = join(root, "tool-pack");
-  writeFileSync(toolPack, `#!/bin/sh\necho "$@" >> ${JSON.stringify(join(root, "pack-calls"))}\n${packBody}\n`, { mode: 0o755 });
-  const source = installer
-    .replace("if [ -r /opt/matrix/env/host.env ]; then\n  source /opt/matrix/env/host.env\nfi\n", "")
-    .replaceAll("/opt/matrix/bin/matrix-install-tool-pack", toolPack);
-  const copy = join(root, "installer");
-  writeFileSync(copy, source, { mode: 0o755 });
-  const result = spawnSync("bash", [copy, "--codex-upgrade-only"], {
-    encoding: "utf8", timeout: 10_000,
-    env: { PATH: process.env.PATH, MATRIX_NODE_PREFIX: prefix, MATRIX_DEVELOPER_TOOLS_STATE_DIR: state },
-  });
-  const calls = existsSync(join(root, "pack-calls")) ? readFileSync(join(root, "pack-calls"), "utf8") : "";
-  const version = existsSync(codex) ? spawnSync(codex, { encoding: "utf8" }).stdout.trim() : null;
-  return { result, calls, version, state };
+function shellFunction(source: string, name: string): string {
+  const definition = source.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}`))?.[0];
+  if (!definition) throw new Error(`Missing updater function ${name}`);
+  return definition;
 }
 
-describe("managed Codex upgrade before the scope supervisor starts", () => {
-  it("upgrades an older managed Codex to the pin and touches nothing else", () => {
-    const { result, calls, version, state } = run("0.162.1");
-    expect(result.status, result.stderr).toBe(0);
-    expect(calls).toBe("codex\n");
-    expect(version).toBe(`codex-cli ${pin}`);
-    // The optional-tool bookkeeping belongs to the background service.
-    expect(existsSync(join(state, "failed-tools"))).toBe(false);
-    expect(existsSync(join(state, "installed-tools"))).toBe(false);
-  });
+it.each(["0.162.1", null])(
+  "keeps first-upgrade and rollback working with previous release binary %s",
+  async previous => {
+    const root = await mkdtemp(join(tmpdir(), "matrix-codex-release-"));
+    try {
+      const staged = join(root, "staged");
+      const installed = join(root, "installed");
+      await mkdir(staged);
+      await mkdir(installed);
+      const versionScript = (version: string) => `#!/bin/sh\necho 'codex-cli ${version}'\n`;
+      await writeFile(join(root, "terminal-codex"), versionScript("0.162.1"), { mode: 0o755 });
+      if (previous) await writeFile(join(installed, runnerName), versionScript(previous), { mode: 0o755 });
+      await writeFile(join(root, archiveMember), versionScript("0.171.0"), { mode: 0o755 });
+      const archive = join(root, "codex.tar.gz");
+      execFileSync("tar", ["-czf", archive, "-C", root, archiveMember]);
+      const digest = createHash("sha256").update(await readFile(archive)).digest("hex");
 
-  it.each([pin, "9.0.0"])("leaves current or newer %s alone", version => {
-    const outcome = run(version);
-    expect(outcome.result.status).toBe(0);
-    expect(outcome.calls).toBe("");
-    expect(outcome.version).toBe(`codex-cli ${version}`);
-  });
+      const rejected = spawnSync("bash", [stagePath, archive, "0".repeat(64), staged], { encoding: "utf8" });
+      expect(rejected.status).toBe(1);
+      await expect(readFile(join(staged, runnerName))).rejects.toHaveProperty("code", "ENOENT");
+      const packaged = spawnSync("bash", [stagePath, archive, digest, staged], { encoding: "utf8" });
+      expect(packaged.status, packaged.stderr).toBe(0);
 
-  it("does not install Codex for an owner who never had it", () => {
-    const outcome = run(null);
-    expect(outcome.result.status).toBe(0);
-    expect(outcome.calls).toBe("");
-    expect(outcome.version).toBeNull();
-  });
-
-  it.each(["fails", "stays-old"] as const)("reports failure when the package step %s", pack => {
-    expect(run("0.162.1", pack).result.status).toBe(1);
-  });
-
-  it("runs bounded and non-fatal in the updater before the supervisor is started", () => {
-    const upgrade = syncAgent.indexOf('"$BIN_DIR/matrix-install-developer-tools" --codex-upgrade-only');
-    const start = syncAgent.indexOf("sudo systemctl start matrix-scope-runtime.service");
-    expect(upgrade).toBeGreaterThan(-1);
-    expect(start).toBeGreaterThan(upgrade);
-    // After the new host binaries land, so the new pin decides.
-    expect(upgrade).toBeGreaterThan(syncAgent.indexOf('install_host_bin_payload "$extract_dir/bin"'));
-    const call = syncAgent.slice(syncAgent.lastIndexOf("\n", syncAgent.lastIndexOf("if ", upgrade)), upgrade);
-    expect(call).toContain("/usr/bin/timeout --kill-after=30 600");
-    expect(syncAgent.slice(upgrade, start)).toContain("WARN: managed Codex upgrade deferred");
-  });
-});
+      const predecessor = await readFile(predecessorPath, "utf8");
+      const updater = await readFile(updaterPath, "utf8");
+      const transaction = ["record_update_payload_directory", "restore_regular_file_atomic", "restore_update_payload_directory"]
+        .map(name => shellFunction(updater, name)).join("\n");
+      const result = spawnSync("bash", ["-c", `set -euo pipefail
+BIN_DIR="$TEST_ROOT/installed"
+UPDATE_TRANSACTION_DIR="$TEST_ROOT/transaction"
+sudo() {
+  local tool="$1"
+  shift
+  case "$tool" in
+    install)
+      local args=()
+      while [ "$#" -gt 0 ]; do
+        case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac
+      done
+      command install "\${args[@]}" ;;
+    mv)
+      if [ "$1" = -Tf ]; then shift; fi
+      command mv -f "$@" ;;
+    *) command "$tool" "$@" ;;
+  esac
+}
+log() { printf '%s\\n' "$*" >&2; }
+${shellFunction(predecessor, "install_host_bin_payload")}
+${transaction}
+record_update_payload_directory "$TEST_ROOT/staged" "$BIN_DIR" bin
+install_host_bin_payload "$TEST_ROOT/staged"
+# The predecessor starts the incoming scope runtime after this host-bin step.
+test "$("$BIN_DIR/matrix-codex" --version)" = 'codex-cli 0.171.0'
+test "$("$TEST_ROOT/terminal-codex" --version)" = 'codex-cli 0.162.1'
+restore_update_payload_directory "$BIN_DIR" bin
+if [ -n "$PREVIOUS" ]; then
+  test "$("$BIN_DIR/matrix-codex" --version)" = "codex-cli $PREVIOUS"
+else
+  test ! -e "$BIN_DIR/matrix-codex"
+fi
+test "$("$TEST_ROOT/terminal-codex" --version)" = 'codex-cli 0.162.1'
+`], {
+        encoding: "utf8", timeout: 15_000,
+        env: { ...process.env, TEST_ROOT: root, PREVIOUS: previous ?? "" },
+      });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
