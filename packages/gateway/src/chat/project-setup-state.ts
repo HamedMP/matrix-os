@@ -242,7 +242,7 @@ const output = ProjectSetupInterviewSchema.omit({ mcpHandoff: true }).extend({
   }).strict().optional(),
 }).strict().refine(({ reply, review }) =>
   [reply, review?.guidance, review?.skill?.description, review?.skill?.instructions]
-    .every(text => text === undefined || !IMAGE_EMBED.test(text)), "Project setup cannot embed images");
+    .every(text => typeof text !== "string" || !IMAGE_EMBED.test(text)), "Project setup cannot embed images");
 
 export function applyProjectSetupInterview(current: ProjectSetupDraft, text: string, context: ProjectSetupInterviewContext):
   { draft: ProjectSetupDraft; assistantText: string } {
