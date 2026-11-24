@@ -17,7 +17,8 @@ import type { Tab } from "@desktop/renderer/src/stores/tabs";
 
 const runtime = vi.hoisted(() => ({ client: null as CanonicalChatClient | null, eventSource: null,
   projectedChatTitles: [], projectChat: vi.fn(), agentDraftRequest: null, requestAgentDraft: vi.fn(() => true) }));
-vi.mock("@desktop/renderer/src/features/work/WorkSurfaceRuntime", () => ({
+vi.mock("@desktop/renderer/src/features/work/WorkSurfaceRuntime", async importOriginal => ({
+  ...await importOriginal<typeof import("@desktop/renderer/src/features/work/WorkSurfaceRuntime")>(),
   useWorkSurfaceRuntime: () => runtime,
   WorkSurfaceRuntimeProvider: function MockRuntime({ children }: { children: React.ReactNode }) { return <ChatAgentsWorkspace>{children}</ChatAgentsWorkspace>; },
 }));

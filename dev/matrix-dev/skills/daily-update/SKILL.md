@@ -1,17 +1,15 @@
 ---
-description: Write a short daily update of what you shipped, started, and moved forward on a given day, from your GitHub PRs, Linear tickets, and agent terminals.
-argument-hint: [date | yesterday | today] [github-login]
+name: daily-update
+description: Write a short, paste-ready daily update of what the current user shipped, started, and moved forward on a day, from their GitHub PRs, Linear tickets (through the Linear MCP server), and agent terminals, with each PR as a Markdown link and a one-line description. Use when asked for a daily update, standup notes, or what I shipped yesterday.
 ---
+
 
 # Daily Update
 
-Usage: `/daily-update [date | yesterday | today] [github-login]`
-
-Arguments:
-
-```text
-$ARGUMENTS
-```
+Use this skill when the requester asks for a daily update, standup notes, or a
+summary of what they shipped or started on a day, or invokes `daily-update`.
+The request may name a day (`yesterday`, `today`, a date) and a GitHub login;
+by default it covers yesterday for the current user.
 
 ## Goal
 

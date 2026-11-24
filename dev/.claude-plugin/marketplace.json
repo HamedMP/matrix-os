@@ -1,0 +1,13 @@
+{
+  "name": "matrix-os-dev",
+  "owner": { "name": "Matrix OS" },
+  "metadata": { "description": "Internal workflow skills for engineers working on Matrix OS" },
+  "plugins": [
+    {
+      "name": "matrix-dev",
+      "source": "./matrix-dev",
+      "description": "Matrix OS engineering workflow: PR loop, stack reviews, releases, daily updates, and chat wrap-up",
+      "category": "development"
+    }
+  ]
+}

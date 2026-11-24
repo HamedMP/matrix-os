@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,6 +26,44 @@ function runGate(overrides: Record<string, string>) {
 }
 
 describe("PR size CI lane", () => {
+  it("measures the PR head without unrelated files from the CI merge commit", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pr-size-ci-merge-"));
+    const git = (...args: string[]) => {
+      const result = spawnSync("git", args, { cwd: dir, encoding: "utf8", timeout: 5_000 });
+      expect(result.status, result.stderr).toBe(0);
+      return result.stdout.trim();
+    };
+    try {
+      git("init", "-q", "-b", "main");
+      git("config", "user.name", "CI");
+      git("config", "user.email", "ci@example.com");
+      writeFileSync(join(dir, "README.md"), "base\n");
+      git("add", "."); git("commit", "-qm", "base");
+      const base = git("rev-parse", "HEAD");
+      git("checkout", "-qb", "feature");
+      writeFileSync(join(dir, "feature.md"), "feature\n");
+      git("add", "."); git("commit", "-qm", "feature");
+      const head = git("rev-parse", "HEAD");
+      git("checkout", "-q", "main");
+      for (let index = 0; index < 51; index++) writeFileSync(join(dir, `upstream-${index}.md`), "upstream\n");
+      git("add", "."); git("commit", "-qm", "advance main");
+      git("merge", "-q", "--no-ff", "feature", "-m", "synthetic CI merge");
+      const merge = git("rev-parse", "HEAD");
+      const checkout = jobs["pr-size"].steps.find((step: { uses?: string }) => step.uses?.startsWith("actions/checkout@"));
+      const refs: Record<string, string> = {
+        "${{ github.event.pull_request.head.sha }}": head,
+        "${{ needs.changes.outputs.source_sha }}": merge,
+      };
+      expect(refs[checkout.with.ref]).toBeDefined();
+      git("checkout", "-q", "--detach", refs[checkout.with.ref]!);
+      const actual = spawnSync(process.execPath, [join(process.cwd(), "scripts/review/check-added-patterns.mjs"),
+        "--base", base, "--only", "pr-size"], { cwd: dir, encoding: "utf8", timeout: 5_000 });
+      expect(actual.status, actual.stdout + actual.stderr).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("runs for every fresh PR head, including docs-only changes", () => {
     const job = jobs["pr-size"];
     expect(job.if).toContain("github.event_name == 'pull_request'");

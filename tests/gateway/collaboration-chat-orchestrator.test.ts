@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { adapter, catalog } from "./chat-orchestrator-test-support.js";
 import { createExecutionAdmissionFence } from "../../packages/gateway/src/execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "../../packages/gateway/src/managed-feature-restart.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
@@ -309,6 +310,85 @@ describe("canonical shared Chat orchestration", () => {
       expect(start).toHaveBeenCalledTimes(mode === "shutdown" ? 0 : 1);
     } finally { release(); vi.useRealTimers(); await dispatch.catch(error => { if (!(error instanceof Error)) throw error; }); await orchestrator.close(); }
   });
+  it.each(["personal", "shared", "direct", "shared failure"])("reserves the last global slot during %s preparation", async kind => {
+    let releasePreparation!: () => void;
+    const preparation = new Promise<void>(resolve => { releasePreparation = resolve; });
+    let releaseInitial!: () => void;
+    const initial = new Promise<void>(resolve => { releaseInitial = resolve; });
+    let preparing = false;
+    const provider = adapter(async function* (input) {
+      if (input.prompt === "initial") await initial;
+      else await new Promise<void>(resolve => {
+        if (input.signal.aborted) resolve();
+        else input.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      yield { type: "run.completed", outcome: "completed" };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({ repository,
+      catalog: { getCatalog: async () => catalog() }, adapters: new CanonicalChatProviderRegistry([provider]) });
+    const principal = { userId: owner.ownerId, source: "jwt" as const };
+    const input = (index: number, text = "hold") => ({ clientRequestId: `req_slot_${index}_${text}`,
+      baseRevision: 0, parts: [{ type: "text" as const, text }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default" as const, permissionMode: "supervised" as const });
+    let dispatch: Promise<void> | undefined;
+    try {
+      for (let index = 0; index < 65; index += 1) {
+        await repository.create(owner, { id: `chat_slot_${index}`, clientRequestId: `req_create_slot_${index}`, title: "Slot" });
+        if (index < 63) await orchestrator.admitTurn(principal, owner, `chat_slot_${index}`, input(index));
+      }
+      if (kind === "direct") {
+        await enqueueSharedRequest("qturn_wait_for_direct_slot");
+        const admit = repository.admitTurn.bind(repository);
+        vi.spyOn(repository, "admitTurn").mockImplementation(async (...args) => {
+          if (args[1].chatId === "chat_slot_63") { preparing = true; await preparation; }
+          return admit(...args);
+        });
+        dispatch = orchestrator.admitTurn(principal, owner, "chat_slot_63", input(63)).then(() => undefined);
+        await vi.waitFor(() => expect(preparing).toBe(true));
+        const createSharedAdapter = vi.fn(async () => ({ ...provider, driverKind: "claude_code" as const }));
+        await orchestrator.dispatchNextSharedQueued(owner, collaborationIds.chat, collaborationIds.scope, createSharedAdapter);
+        expect(createSharedAdapter).not.toHaveBeenCalled();
+        expect(await repository.listSharedQueuedTurns(owner, collaborationIds.chat)).toMatchObject([{ state: "queued" }]);
+      } else if (kind.startsWith("shared")) {
+        await enqueueSharedRequest("qturn_shared_last_slot");
+        dispatch = orchestrator.dispatchNextSharedQueued(owner, collaborationIds.chat, collaborationIds.scope, async () => {
+          preparing = true;
+          await preparation;
+          if (kind === "shared failure") throw new SharedChatRunPreparationError("unavailable");
+          return { ...provider, driverKind: "claude_code" as const };
+        });
+      } else {
+        await orchestrator.admitTurn(principal, owner, "chat_slot_63", input(63, "initial"));
+        await vi.waitFor(async () => expect((await repository.get(owner, "chat_slot_63"))?.activeRun?.status).toBe("running"));
+        const record = (await repository.get(owner, "chat_slot_63"))!;
+        await orchestrator.enqueueQueuedTurn(principal, owner, "chat_slot_63", {
+          ...input(63, "queued"), baseRevision: record.chat.revision,
+        });
+        const claim = repository.claimNextQueuedTurn.bind(repository);
+        vi.spyOn(repository, "claimNextQueuedTurn").mockImplementation(async (...args) => {
+          const result = await claim(...args);
+          if (result && args[1].chatId === "chat_slot_63") { preparing = true; await preparation; }
+          return result;
+        });
+        releaseInitial();
+      }
+      await vi.waitFor(() => expect(preparing).toBe(true));
+      expect(orchestrator.activeCount).toBe(63);
+      await expect(orchestrator.admitTurn(principal, owner, "chat_slot_64", input(64)))
+        .rejects.toMatchObject({ status: 503, safeError: { code: "run_unavailable" } });
+      releasePreparation();
+      await dispatch;
+      if (kind === "shared failure") {
+        expect(orchestrator.activeCount).toBe(63);
+        await orchestrator.admitTurn(principal, owner, "chat_slot_64", input(64));
+      }
+      await vi.waitFor(() => expect(orchestrator.activeCount).toBe(64));
+    } finally {
+      releaseInitial(); releasePreparation(); await dispatch;
+      await orchestrator.close();
+    }
+  }, 60_000);
   async function enqueueSharedRequest(queuedTurnId: string): Promise<void> {
     await repository.enqueueSharedQueuedTurn(owner, {
       chatId: collaborationIds.chat,

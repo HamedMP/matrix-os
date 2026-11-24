@@ -39,6 +39,24 @@ tarball through npm CLI using trusted-publisher OIDC. Keep the isolated
 package-runner check; it verifies bundled contract files and runs the
 tarball through `npm exec`, `pnpm dlx`, and `npm install -g` outside the repo.
 
+The CLI also declares `fsevents` under `optionalDependencies`. On
+`npm install -g`, npm gives a package that bundles dependencies a hard
+dependency on every package installed beside it. `tsx` pulls in `fsevents` as
+an optional dependency whose build always fails on macOS (it ships a prebuilt
+binary and no `binding.gyp`); normally npm ignores that failure, but the hard
+dependency made it fatal and the install aborted. Declaring `fsevents` optional
+in the CLI keeps the failure harmless. Do not remove the entry or the
+`bundledDependencies` declaration: without the declaration npm prunes the
+contracts files on the next `npm install` in a project, and Homebrew's repack
+drops them.
+
+The `CLI Install Smoke` workflow checks the packed tarball the way users
+install it: `npm install -g` into a clean prefix on macOS and Linux (Node 20
+and 24), a project install followed by a second install, and the Homebrew
+formula on macOS, each ending in `matrix --version`. `CLI Release` calls it and
+will not publish unless it passes; pull requests that touch CLI packaging or
+the formula run it too.
+
 Run these from the repo root before dispatching the release workflow:
 
 ```bash

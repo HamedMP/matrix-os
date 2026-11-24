@@ -1,17 +1,15 @@
 ---
-description: Get the current user's open Linear tickets and their PRs, show the live state, then ask the decisions that unblock them and carry out the answers.
-argument-hint: [github-login | ticket-ids | pr-numbers]
+name: unblock-tickets
+description: Get the current user's open Linear tickets (through the Linear MCP server) and their GitHub PRs, show the live state, ask the decisions that are waiting on them as multiple-choice questions, and carry out each answer. Use when asked what is blocked on me, to unblock my tickets or PRs, or to run unblock-tickets.
 ---
+
 
 # Unblock Tickets
 
-Usage: `/unblock-tickets [github-login | ENG-123 ... | #1234 ...]`
-
-Arguments:
-
-```text
-$ARGUMENTS
-```
+Use this skill when the requester asks what is waiting on them, asks to unblock
+their tickets or PRs, or invokes `unblock-tickets`. The request may name a
+GitHub login, ticket IDs (`ENG-123`), or PR numbers; with none, it covers the
+current user.
 
 ## Goal
 
@@ -135,7 +133,10 @@ waiting on them that a one-line answer could have unblocked.
    outside the author's knowledge (someone else pushed, a PR went back to draft,
    a merge landed, unsent prompts).
 
-6. **Ask.** Use the question tool for every `needs you` and `ready` item.
+6. **Ask.** Ask about every `needs you` and `ready` item. Use the structured
+   user-input tool when this session has one. Otherwise write each question in
+   the reply as a numbered list of options and stop until the requester
+   answers; do not pick for them.
    - One question per ticket, at most 4 per round; order by how much work the
      answer unblocks. Run further rounds until nothing is left or the author
      stops.

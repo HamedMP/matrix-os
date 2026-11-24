@@ -4,7 +4,8 @@ import { constants } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
-import { createCodexCredentialFileProofReader } from "./codex-credential-file-proof.mjs";
+import { codexNativeGenerationSource, createCodexCredentialFileEvidenceReader } from "./codex-credential-file-proof.mjs";
+import { readCodexConsentAlias, savedCodexConsentMatches } from "./codex-consent-alias.mjs";
 const Account = z.object({ type: z.literal("chatgpt"), email: z.email().max(120), planType: z.string().max(64).optional(), id: z.string().max(160).optional() });
 
 /** Equality is not consent: caller supplies a server-admitted fingerprint and
@@ -49,9 +50,12 @@ export async function createNativeCodexExecutionProof(expected, environment, raw
   if (!/^[a-f0-9]{64}$/.test(expected ?? "") || !environment.HOME || !environment.CODEX_HOME) throw new Error("native_subscription_unavailable");
   const consent = Consent.parse(rawConsent);
   await assertSavedConsent(expected, consent, environment);
-  const readProof = createCodexCredentialFileProofReader({ homePath: environment.HOME, codexHome: environment.CODEX_HOME });
+  const readEvidence = createCodexCredentialFileEvidenceReader({ homePath: environment.HOME, codexHome: environment.CODEX_HOME });
   // Captured before spawn because a provider can cache account state at startup.
-  const initialFileProof = await readProof();
+  // A token refresh rewrites the file but keeps its stable account identity.
+  const initialEvidence = await readEvidence();
+  const sameCredential = (left, right) => Boolean(left && right
+    && (left.identity ? left.identity === right.identity : left.proof === right.proof));
   return async request => {
     await assertSavedConsent(expected, consent, environment);
     // Without cwd, Codex reads thread-agnostic layers rather than this launch project.
@@ -60,13 +64,20 @@ export async function createNativeCodexExecutionProof(expected, environment, raw
       || (config.openai_base_url != null && config.openai_base_url !== "")
       || config.chatgpt_base_url !== "https://chatgpt.com/backend-api/") throw new Error("native_subscription_unavailable");
     const fileBackend = config.cli_auth_credentials_store === "file";
-    const credentialProof = fileBackend ? await readProof() : null;
-    if (fileBackend && (!credentialProof || initialFileProof !== credentialProof)) throw new Error("native_subscription_unavailable");
+    const evidence = fileBackend ? await readEvidence() : null;
+    if (fileBackend && !sameCredential(initialEvidence, evidence)) throw new Error("native_subscription_unavailable");
     const { account } = await request("account/read", { refreshToken: false });
     const principal = Account.parse(account);
-    if (!principal.id && !credentialProof) throw new Error("native_subscription_unavailable");
-    const fingerprint = createHash("sha256").update(JSON.stringify({ principal, ...(credentialProof ? { credentialProof } : {}) })).digest("hex");
-    if (fingerprint !== expected || (fileBackend && await readProof() !== credentialProof)) throw new Error("native_subscription_unavailable");
+    if (!principal.id && !evidence) throw new Error("native_subscription_unavailable");
+    const fingerprint = createHash("sha256").update(codexNativeGenerationSource({ principal,
+      credentialProof: evidence?.proof ?? null, credentialIdentity: evidence?.identity ?? null })).digest("hex");
+    // `expected` is the saved consent, rechecked against the row above. A
+    // same-account upgrade alias keeps legacy consent resumable (ENG-523).
+    const alias = fingerprint === expected ? null : await readCodexConsentAlias(environment.HOME);
+    // The legacy token-bound generation of this same, unchanged credential.
+    const legacy = createHash("sha256").update(JSON.stringify({ principal, ...(evidence?.proof ? { credentialProof: evidence.proof } : {}) })).digest("hex");
+    if (!savedCodexConsentMatches(expected, fingerprint, alias, legacy)
+      || (fileBackend && !sameCredential(evidence, await readEvidence()))) throw new Error("native_subscription_unavailable");
     await assertSavedConsent(expected, consent, environment);
   };
 }

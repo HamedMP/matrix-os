@@ -56,6 +56,26 @@ it("includes a scheduled result in the displayed read boundary", async () => {
   expect(hook.result.current.displayedThroughSeq).toBe(2);
 });
 
+it("keeps the transcript when the active chat is selected from another rail placement", async () => {
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Old transcript"));
+  act(() => hook.result.current.switchConversation("chat_same"));
+  expect(hook.result.current.messages[0]?.content).toBe("Old transcript");
+  expect(hook.result.current.sessionId).toBe("chat_same");
+});
+it("retains an explicitly reselected startup chat when a later complete navigation omits it", async () => {
+  let navigation = snapshot();
+  state.store.dispose();
+  state.store = createChatNavigationStore({load:async()=>navigation});
+  await state.store.refresh();
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Old transcript"));
+  act(() => hook.result.current.switchConversation("chat_same"));
+  navigation = {...navigation,items:navigation.items.map(item=>({...item,chat:{...item.chat,id:"chat_other"}}))};
+  await act(async()=>state.store.refresh());
+  expect(hook.result.current.sessionId).toBe("chat_same");
+  expect(hook.result.current.messages[0]?.content).toBe("Old transcript");
+});
 it("clears Bot names/approvals and library across same-store revoke/recovery without rotating normal action identity", async () => {
   const hook = renderHook(() => {
     const chat = useCanonicalChatState();
@@ -322,4 +342,20 @@ it("keeps the newer project when an older move response arrives late", async () 
   expect(hook.result.current.chatProjectId).toBe("proj_new");
   await act(async () => { slow.resolve({ ...base, chat: { ...base.chat, revision: 1 }, projectId: "proj_old" }); await first; });
   expect(hook.result.current.chatProjectId).toBe("proj_new");
+});
+it("reports every successful bulk restore when one chat fails", async () => {
+  state.client.updateLifecycle = vi.fn(async (chatId: string) => {
+    if (chatId === "chat_fail") throw new Error("restore failed");
+    return detail().record;
+  });
+  const hook = mount();
+  const chats = [
+    { chatId: "chat_first", revision: 2 },
+    { chatId: "chat_fail", revision: 3 },
+    { chatId: "chat_last", revision: 4 },
+  ];
+  let restoredIds: readonly string[] = [];
+  await act(async () => { restoredIds = await hook.result.current.restoreArchivedChats!(chats); });
+  expect(restoredIds).toEqual(["chat_first", "chat_last"]);
+  expect(state.client.updateLifecycle).toHaveBeenCalledTimes(3);
 });

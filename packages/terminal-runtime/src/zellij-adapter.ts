@@ -18,6 +18,7 @@ import {
   TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
   TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
 } from "./limits.js";
+import { parseZellijStructuredOutput } from "./zellij-structured-output.js";
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
 import { decodeZellijScreenDump } from "./zellij-screen-dump.js";
 import { terminalCommandStateFromPanes, type TerminalCommandState } from "./terminal-command-state.js";
@@ -82,9 +83,11 @@ export interface WorkspaceZellijTarget {
 
 export interface WorkspaceZellijLifecycle {
   resolveWorkspaceTarget(logicalSessionName: string): Promise<WorkspaceZellijTarget>;
+  /** `deadline` (epoch ms) caps every command the start makes, killing it at that time. */
   ensureWorkspaceSession(
     logicalSessionName: string,
     size: { cols: number; rows: number },
+    options?: { deadline?: number },
   ): Promise<WorkspaceZellijTarget>;
   deleteWorkspaceSession(logicalSessionName: string): Promise<void>;
 }
@@ -172,25 +175,34 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     });
   }
 
-  async ensureSession(sessionNameInput: string, size = { cols: 120, rows: 36 }): Promise<void> {
+  async ensureSession(
+    sessionNameInput: string,
+    size = { cols: 120, rows: 36 },
+    options: { deadline?: number } = {},
+  ): Promise<void> {
     const logicalSessionName = z.string().regex(SESSION_NAME).parse(sessionNameInput);
     if (this.workspaceLifecycle) {
       // The systemd lifecycle does its own invocation-fenced readiness check
       // before returning. Re-probing with `list-panes` scales with every pane
       // in a migrated workspace and can exceed this adapter's fixed timeout
       // even though the owned runtime is already ready.
-      await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size);
+      if (options.deadline === undefined) {
+        await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size);
+      } else {
+        await this.workspaceLifecycle.ensureWorkspaceSession(logicalSessionName, size, { deadline: options.deadline });
+      }
       return;
     }
     const sessionName = logicalSessionName;
-    if ((await this.listSessions()).includes(sessionName)) return;
+    const { deadline } = options;
+    if ((await this.listSessions(deadline)).includes(sessionName)) return;
     await this.ensureLayout();
     z.object({ cols: z.number().int().min(20).max(500), rows: z.number().int().min(5).max(200) }).parse(size);
     await this.run([
       "attach", "--create-background", sessionName,
       "options", "--default-layout", this.workspaceLayoutPath,
-    ]);
-    await this.waitForSession(sessionName);
+    ], this.binaryPath, remainingCommandTimeout(deadline));
+    await this.waitForSession(sessionName, this.binaryPath, deadline);
   }
 
   ensureWorkspace(sessionName: string, size: { cols: number; rows: number }): Promise<void> {
@@ -326,13 +338,14 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     internalName: string;
     cwd: string;
     command?: string[];
-  }): Promise<{ tabId: number; paneId: string }> {
+  }, options: { deadline?: number } = {}): Promise<{ tabId: number; paneId: string }> {
     const internalName = z.string().regex(TAB_NAME).parse(input.internalName);
     await this.resolveCwd(input.cwd);
+    const controlDeadline = Date.now() + TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS;
     const prepared = await this.prepareShellTabs(
       sessionNameInput,
       [{ ...input, internalName }],
-      Date.now() + TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
+      options.deadline === undefined ? controlDeadline : Math.min(controlDeadline, options.deadline),
     );
     return prepared[internalName]!;
   }
@@ -625,15 +638,18 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   async findTabByInternalName(
     sessionNameInput: string,
     internalNameInput: string,
+    options: { deadline?: number } = {},
   ): Promise<{ tabId: number; paneId: string } | undefined> {
     const internalName = z.string().regex(TAB_NAME).parse(internalNameInput);
-    return (await this.findTabsByInternalName(sessionNameInput, [internalName]))[internalName];
+    return (await this.findTabsByInternalName(sessionNameInput, [internalName], options))[internalName];
   }
 
   async findTabsByInternalName(
     sessionNameInput: string,
     internalNamesInput: string[],
+    options: { deadline?: number } = {},
   ): Promise<Record<string, { tabId: number; paneId: string }>> {
+    const { deadline } = options;
     const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
     const internalNames = z.array(z.string().regex(TAB_NAME)).max(10_000).parse(internalNamesInput);
     if (new Set(internalNames).size !== internalNames.length) {
@@ -645,6 +661,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       ["--session", sessionName, "action", "list-tabs", "--json"],
       z.array(TabSchema).max(10_000),
       binaryPath,
+      deadline,
     );
     const requestedTabs = tabs.filter((tab) => requested.has(tab.name));
     if (requestedTabs.length === 0) return {};
@@ -652,6 +669,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       ["--session", sessionName, "action", "list-panes", "--all", "--json"],
       z.array(PaneSchema).max(10_000),
       binaryPath,
+      deadline,
     );
     const found: Record<string, { tabId: number; paneId: string }> = {};
     for (const tab of requestedTabs) {
@@ -664,6 +682,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
         await this.run(
           ["--session", sessionName, "action", "rename-pane", "--pane-id", paneId, tab.name],
           binaryPath,
+          remainingCommandTimeout(deadline),
         );
       }
       found[tab.name] = { tabId: tab.tab_id, paneId };
@@ -775,9 +794,9 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     void parsed;
   }
 
-  private async listSessions(): Promise<string[]> {
+  private async listSessions(deadline?: number): Promise<string[]> {
     try {
-      return (await this.run(["list-sessions", "--no-formatting"]))
+      return (await this.run(["list-sessions", "--no-formatting"], this.binaryPath, remainingCommandTimeout(deadline)))
         .split(/\r?\n/)
         .filter((line) => !/\bEXITED\b/i.test(line))
         .map((line) => line.trim().split(/\s+/)[0] ?? "")
@@ -800,12 +819,20 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     };
   }
 
-  private async waitForSession(sessionName: string, binaryPath = this.binaryPath): Promise<void> {
-    const deadline = Date.now() + 10_000;
+  private async waitForSession(
+    sessionName: string,
+    binaryPath = this.binaryPath,
+    operationDeadline?: number,
+  ): Promise<void> {
+    const deadline = Math.min(Date.now() + 10_000, operationDeadline ?? Number.POSITIVE_INFINITY);
     let loggedFailure = false;
     while (Date.now() < deadline) {
       try {
-        await this.run(["--session", sessionName, "action", "list-panes", "--json"], binaryPath);
+        await this.run(
+          ["--session", sessionName, "action", "list-panes", "--json"],
+          binaryPath,
+          remainingCommandTimeout(operationDeadline),
+        );
         return;
       } catch (error) {
         if (!loggedFailure) {
@@ -862,25 +889,16 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     let lastError: unknown;
     for (let attempt = 0; attempt < 10; attempt += 1) {
       try {
-        const output = (await this.run(
+        const raw = await this.run(
           args,
           binaryPath,
           remainingCommandTimeout(operationDeadline),
-        )).trim();
-        const arrayStart = output.indexOf("[");
-        const objectStart = output.indexOf("{");
-        const start = arrayStart < 0
-          ? objectStart
-          : objectStart < 0
-            ? arrayStart
-            : Math.min(arrayStart, objectStart);
-        const end = Math.max(output.lastIndexOf("]"), output.lastIndexOf("}"));
-        if (start < 0 || end < start) {
-          throw new Error("Zellij structured command returned non-JSON output");
-        }
-        return schema.parse(JSON.parse(output.slice(start, end + 1)));
+        );
+        return parseZellijStructuredOutput(raw, schema);
       } catch (error) {
         lastError = error;
+        // A caller's deadline bounds every retry, not only each command.
+        if (operationDeadline !== undefined && Date.now() >= operationDeadline) break;
         await new Promise<void>((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
       }
     }
@@ -1111,3 +1129,4 @@ function safeJson(line: string): unknown {
     return null;
   }
 }
+

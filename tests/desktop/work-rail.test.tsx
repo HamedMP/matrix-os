@@ -11,8 +11,10 @@ import type {
   CanonicalChatInvalidation,
 } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { renderRailFixture as render } from "./work-rail-client-fixture";
+import { clientFixture as agentClientFixture } from "./chat-agents-fixture";
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
-import { ChatAgentsWorkspace, subscribeCollaborationDiscoveryChanged } from "@matrix-os/ui";
+import { ChatAgentsWorkspace, ChatAgentsContent, subscribeCollaborationDiscoveryChanged } from "@matrix-os/ui";
+import { WorkArchiveProvider, WorkArchiveOutlet } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
 import { PinOffIcon } from "lucide-react";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import type { Project } from "@desktop/renderer/src/stores/board";
@@ -66,11 +68,14 @@ const beta: Project = { id: "project_beta_id", slug: "beta", name: "Beta", kind:
 const pinned = record("chat_pinned", "Pinned global", { pinned: true, updatedAt: "2026-08-28T12:00:00.000Z" });
 const projectChat = record("chat_alpha", "Alpha chat", { projectId: "project_alpha_id", updatedAt: "2026-08-28T11:00:00.000Z" });
 const recent = record("chat_recent", "Recent global", { updatedAt: "2026-08-28T10:00:00.000Z" });
+const chatRowIn = (name: string, placement: string) => screen.queryAllByRole("button", { name })
+  .find(button => button.closest("[data-placement]")?.getAttribute("data-placement") === placement);
 
-function setup() {
+function setup(withInspector = false) {
   const records = [pinned, projectChat, recent];
   const client = {
     list: vi.fn(async () => ({ items: records })),
+    search: vi.fn(async (query: string) => ({ items: records.filter(item => item.chat.title.toLowerCase().includes(query.toLowerCase())) })),
     delete: vi.fn(async (chatId: string) => ({
       chatId,
       deletedAt: "2026-08-28T13:00:00.000Z",
@@ -101,7 +106,8 @@ function setup() {
     onSelectChat: vi.fn(),
     onCollapse: vi.fn(),
   };
-  render(<WorkRail client={client} projects={[alpha]} active {...actions} />);
+  const rail = <WorkRail client={client} projects={[alpha]} active {...actions} />;
+  render(withInspector ? <div data-surface-mode="maximized">{rail}<aside aria-label="Chat inspector"/></div> : rail);
   return { client, actions };
 }
 
@@ -164,6 +170,31 @@ describe("WorkRail", () => {
       expect(date?.textContent).not.toBe("");
       expect(date?.getAttribute("title")).toMatch(/^Started /);
     }
+  });
+
+  it.each(["missing", "unavailable"])("keeps all older-Gateway fallback chats reachable with independent paging when navigation pages are %s", async availability => {
+    const done = Array.from({ length: 37 }, (_, index) => record(`chat_legacy_done_${index}`, `Legacy done ${index}`, { updatedAt: "2026-08-28T10:00:00.000Z" }));
+    const working = Array.from({ length: 13 }, (_, index) => record(`chat_legacy_working_${index}`, `Legacy working ${index}`, { updatedAt: "2026-08-28T10:00:00.000Z", activeRunStatus: "running" }));
+    const client = {
+      list: vi.fn(async () => ({ items: [...done, ...working] })),
+      ...(availability === "unavailable" ? { navigationPage: vi.fn(async () => { throw new Error("Synthetic older Gateway endpoint unavailable"); }) } : {}),
+    } as unknown as CanonicalChatClient;
+    renderRail(client);
+    await screen.findByRole("button", { name: "Legacy done 0", exact: true });
+    const doneSection = screen.getByRole("button", { name: "Done", exact: true }).closest("section")!;
+    const workingSection = screen.getByRole("button", { name: "Working", exact: true }).closest("section")!;
+    expect(within(doneSection).getAllByRole("button", { name: /^Legacy done / })).toHaveLength(10);
+    const more = within(doneSection).getByRole("button", { name: "Show more Done chats" }) as HTMLButtonElement;
+    await waitFor(() => expect(more.disabled).toBe(false));
+    fireEvent.click(more);
+    expect(within(doneSection).getAllByRole("button", { name: /^Legacy done / })).toHaveLength(30);
+    expect(within(workingSection).getAllByRole("button", { name: /^Legacy working / })).toHaveLength(10);
+    fireEvent.click(within(doneSection).getByRole("button", { name: "Show more Done chats" }));
+    expect(within(doneSection).getAllByRole("button", { name: /^Legacy done / })).toHaveLength(37);
+    expect(within(doneSection).queryByRole("button", { name: "Show more Done chats" })).toBeNull();
+    fireEvent.click(within(workingSection).getByRole("button", { name: "Show more Working chats" }));
+    expect(within(workingSection).getAllByRole("button", { name: /^Legacy working / })).toHaveLength(13);
+    expect(within(doneSection).getAllByRole("button", { name: /^Legacy done / })).toHaveLength(37);
   });
 
   it("displays ordinary Chats as one identity cohort despite out-of-order results and rerenders", async () => {
@@ -245,10 +276,12 @@ describe("WorkRail", () => {
   it("keeps Project disclosure independent from selecting the Project", async () => {
     const { actions } = setup();
     fireEvent.click(await screen.findByRole("button", { name: "Expand Alpha chats" }));
-    expect(screen.getByRole("button", { name: "Alpha chat" })).toBeTruthy();
+    expect(chatRowIn("Alpha chat", "project")).toBeTruthy();
+    expect(chatRowIn("Alpha chat", "recent")).toBeTruthy();
     expect(actions.onSelectProject).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Collapse Alpha chats" }));
-    expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
+    expect(chatRowIn("Alpha chat", "project")).toBeUndefined();
+    expect(chatRowIn("Alpha chat", "recent")).toBeTruthy();
   });
 
   it("focuses the sidebar on a selected Project until the owner goes back", async () => {
@@ -266,7 +299,7 @@ describe("WorkRail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to all chats" }));
     expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Alpha" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
+    expect(chatRowIn("Alpha chat", "recent")).toBeTruthy();
   });
 
   it("focuses the Project opened from search, and leaves focus for a Chat found elsewhere", async () => {
@@ -435,6 +468,44 @@ describe("WorkRail", () => {
     expect(screen.queryByRole("button", { name: "Deleted elsewhere" })).toBeNull();
   });
 
+  it("archives the selected idle chat with Shift Command A and offers the archived page", async () => {
+    const updateLifecycle = vi.fn(async () => ({ ...recent, chat: { ...recent.chat, lifecycle: "archived", revision: 2 } }));
+    const client = { list: vi.fn(async () => ({ items: [recent] })), updateLifecycle } as unknown as CanonicalChatClient;
+    render(<WorkRail client={client} projects={[]} active activeChatId={recent.chat.id} onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()} onSelectChat={vi.fn()} onCollapse={vi.fn()}/>);
+    await screen.findByRole("button", { name: "Recent global" });
+    fireEvent.keyDown(window, { key: "a", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(updateLifecycle).toHaveBeenCalledWith(recent.chat.id, { baseRevision: 1, lifecycle: "archived" }));
+    expect(screen.getByRole("button", { name: "View archived" })).toBeTruthy();
+  });
+  it.each(["search", "toast"])("opens the archive above Agents from %s", async (entry) => {
+    const client = {
+      list: vi.fn(async () => ({ items: [recent] })),
+      search: vi.fn(async () => ({ items: [] })),
+      updateLifecycle: vi.fn(async () => ({ ...recent, chat: { ...recent.chat, lifecycle: "archived", revision: 2 } })),
+      agents: { ...agentClientFixture(),
+        bots: { recipes: vi.fn(async () => []), directChat: vi.fn(async () => null), directBot: vi.fn(async () => null), interactions: vi.fn(async () => []) } },
+    } as unknown as CanonicalChatClient;
+    render(<WorkArchiveProvider><ChatAgentsWorkspace>
+      <WorkRail client={client} projects={[]} active activeChatId={recent.chat.id}
+        onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()} onNewProjectChat={vi.fn()} onSelectChat={vi.fn()} onCollapse={vi.fn()}/>
+      <ChatAgentsContent client={client.agents} scopeKey="archive-regression">
+        <WorkArchiveOutlet client={client} projects={[]}><p>Main chat</p></WorkArchiveOutlet>
+      </ChatAgentsContent>
+    </ChatAgentsWorkspace></WorkArchiveProvider>);
+    await screen.findByRole("button", { name: "Recent global" });
+    if (entry === "toast") {
+      fireEvent.keyDown(window, { key: "a", metaKey: true, shiftKey: true });
+      await screen.findByRole("button", { name: "View archived" });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Agents", exact: true }));
+    await waitFor(() => expect(screen.getByText("Main chat").closest("[inert]")).toBeTruthy());
+    if (entry === "search") {
+      fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Archived" }));
+      fireEvent.click(screen.getByRole("button", { name: "Open the archived list" }));
+    } else fireEvent.click(screen.getByRole("button", { name: "View archived" }));
+    expect(await screen.findByRole("heading", { name: "Archived chats" })).toBeTruthy();
+  });
   it("uses the Chat rail typography and contained section headings", async () => {
     const css = await readFile(resolve(__dirname, "../../desktop/src/renderer/src/features/work/work-rail/work-rail.css"), "utf8");
     render(<style>{css}</style>);
@@ -451,7 +522,7 @@ describe("WorkRail", () => {
     expect(rail.className).toContain("pb-2");
     expect(rail.className).not.toContain("px-2");
     expect(screen.getByTestId("work-rail-scroll").className).toContain("pl-2.5");
-    expect(rail.getAttribute("style")).toContain("background: var(--sidebar)");
+    expect(rail.getAttribute("style")).toContain("background: var(--bg-surface)");
     expect(newChat.className).toContain("gap-2.5");
     expect(newChat.className).toContain("px-2.5");
     expect(newChat.className).toContain("h-8");
@@ -464,7 +535,7 @@ describe("WorkRail", () => {
 
     const pinnedChat = await screen.findByRole("button", { name: "Pinned global" });
     fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
-    const projectChatRow = screen.getByRole("button", { name: "Alpha chat" });
+    const projectChatRow = chatRowIn("Alpha chat", "project")!;
     const recentChat = screen.getByRole("button", { name: "Recent global" });
     const pinnedHeading = screen.getByRole("button", { name: "Pinned" });
     const projectsHeading = screen.getByRole("button", { name: "Projects" });
@@ -477,9 +548,9 @@ describe("WorkRail", () => {
       expect(item.className).toContain("text-sm");
       expect(item.className).toContain("font-normal");
     }
-    expect(getComputedStyle(projectsHeading).textTransform).toBe("uppercase");
-    expect(projectsHeading.closest(".work-rail-group-heading")).toBeNull();
-    expect(projectsHeading.querySelector(".work-rail-section-icon")).toBeNull();
+    expect(getComputedStyle(projectsHeading).textTransform).toBe("none");
+    expect(projectsHeading.closest(".work-rail-group-heading")).toBeTruthy();
+    expect(projectsHeading.querySelector(".work-rail-section-icon")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Alpha", exact: true }).querySelector("svg.lucide-folder-open")).toBeTruthy();
     for (const heading of [pinnedHeading, projectsHeading, recentsHeading]) {
       expect(heading.className).toContain("work-rail-section-toggle");
@@ -757,6 +828,7 @@ describe("WorkRail", () => {
     });
     const client = {
       list: vi.fn(async () => ({ items: [global, inProject] })),
+      search: vi.fn(async () => ({ items: [inProject, global] })),
     } as unknown as CanonicalChatClient;
     const actions = {
       onNewGlobalChat: vi.fn(),
@@ -771,7 +843,7 @@ describe("WorkRail", () => {
     const search = screen.getByRole("searchbox", { name: "Search chats" });
     fireEvent.change(search, { target: { value: "deploy" } });
 
-    const projectResult = screen.getByRole("option", { name: "Deploy release, Alpha" });
+    const projectResult = await screen.findByRole("option", { name: "Deploy release, Alpha" });
     const globalResult = screen.getByRole("option", { name: "Deploy release, Global" });
     expect(projectResult.getAttribute("aria-selected")).toBe("true");
     expect(globalResult.getAttribute("aria-selected")).toBe("false");
@@ -797,7 +869,7 @@ describe("WorkRail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
     const search = screen.getByRole("searchbox", { name: "Search chats" });
     fireEvent.change(search, { target: { value: "alpha" } });
-    fireEvent.click(screen.getByRole("option", { name: "Alpha chat, Alpha" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Alpha chat, Alpha" }));
 
     await waitFor(()=>expect(actions.onSelectChat).toHaveBeenCalledWith(projectChat, alpha));
     expect(screen.queryByRole("dialog", { name: "Search chats" })).toBeNull();
@@ -1009,14 +1081,15 @@ describe("WorkRail", () => {
     setup();
     expect(await screen.findByRole("button", { name: "Pinned global" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
+    expect(chatRowIn("Alpha chat", "recent")).toBeTruthy();
+    expect(chatRowIn("Alpha chat", "project")).toBeUndefined();
 
     fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
-    expect(screen.getByRole("button", { name: "Alpha chat" })).toBeTruthy();
+    expect(chatRowIn("Alpha chat", "project")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Pinned" }));
     expect(screen.queryByRole("button", { name: "Pinned global" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Alpha chat" })).toBeTruthy();
+    expect(chatRowIn("Alpha chat", "project")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Projects" }));
@@ -1040,7 +1113,7 @@ describe("WorkRail", () => {
     expect(compose.parentElement?.className).toContain("work-rail-project-actions");
     fireEvent.click(compose);
     fireEvent.click(screen.getByRole("button", { name: "Hide Chat navigation" }));
-    fireEvent.click(screen.getByRole("button", { name: "Alpha chat" }));
+    fireEvent.click(chatRowIn("Alpha chat", "project")!);
 
     expect(actions.onNewGlobalChat).toHaveBeenCalledOnce();
     expect(actions.onCreateProject).toHaveBeenCalledOnce();
@@ -1346,7 +1419,10 @@ describe("WorkRail", () => {
     fireEvent.contextMenu(screen.getByRole("button",{name:"Recent global"}));
     fireEvent.keyDown(await screen.findByRole("menuitem",{name:"Move to project"}),{key:"ArrowRight"});
     fireEvent.click(await screen.findByRole("menuitem",{name:"Alpha"}));
-    await waitFor(()=>expect(screen.getByRole("button",{name:"Recent global"}).closest('[data-placement]')?.getAttribute("data-placement")).toBe("project"));
+    await waitFor(()=>expect(client.updateProject).toHaveBeenCalledTimes(2));
+    expect(await screen.findAllByRole("button", { name: "Recent global" })).toHaveLength(2);
+    expect(chatRowIn("Recent global", "project")).toBeTruthy();
+    expect(chatRowIn("Recent global", "recent")).toBeTruthy();
     expect(client.updateProject).toHaveBeenLastCalledWith("chat_recent",{baseRevision:1,projectId:alpha.id});
   });
 
@@ -1511,6 +1587,37 @@ describe("WorkRail", () => {
     expect(onChatDeleted).not.toHaveBeenCalled();
   });
 
+  it.each(["single", "project"])("keeps a newer chat selection when a delayed %s archive commits", async (kind) => {
+    const target = kind === "project" ? projectChat : recent;
+    let finish!: (value: unknown) => void;
+    const pending = new Promise<unknown>(resolve => { finish = resolve; });
+    const client = { list: vi.fn(async () => ({ items: [target] })),
+      updateLifecycle: vi.fn(() => pending), archiveProjectChats: vi.fn(() => pending),
+    } as unknown as CanonicalChatClient;
+    const onChatDeleted = vi.fn();
+    const props = { client, projects: [alpha], active: true, onNewGlobalChat: vi.fn(), onCreateProject: vi.fn(),
+      onNewProjectChat: vi.fn(), onSelectChat: vi.fn(), onCollapse: vi.fn(), onChatDeleted };
+    const view = render(<WorkRail {...props} activeChatId={target.chat.id}/>);
+    await screen.findAllByRole("button", { name: target.chat.title, exact: true });
+    if (kind === "project") {
+      fireEvent.contextMenu(screen.getByRole("button", { name: "Alpha", exact: true }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Archive project chats" }));
+      fireEvent.click(screen.getByRole("button", { name: "Archive chats", exact: true }));
+      await waitFor(() => expect(client.archiveProjectChats).toHaveBeenCalledTimes(2));
+    } else {
+      fireEvent.keyDown(window, { key: "a", metaKey: true, shiftKey: true });
+      await waitFor(() => expect(client.updateLifecycle).toHaveBeenCalledOnce());
+    }
+    view.rerender(<WorkRail {...props} activeChatId="chat_newer_selection"/>);
+    await act(async () => {
+      finish(kind === "project" ? { archived: [{ chatId: target.chat.id, revision: 2 }], archivedCount: 1, skippedCount: 0 }
+        : { ...target, chat: { ...target.chat, lifecycle: "archived", revision: 2 } });
+      await pending;
+    });
+    expect(onChatDeleted).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Undo", exact: true })).toBeTruthy();
+  });
+
   it("marks a committed cohort without titles and reuses it during selection", async () => {
     const original = globalThis.performance;
     const mark = vi.fn();
@@ -1546,4 +1653,14 @@ describe("WorkRail", () => {
 
     expect(await screen.findByRole("alertdialog", { name: "Delete project permanently?" })).toBeTruthy();
   });
+});
+
+it('centers native Search over the conversation while an inspector is open',()=>{
+ const measure=vi.spyOn(HTMLElement.prototype,'getBoundingClientRect').mockImplementation(function(){
+  if(this.hasAttribute('data-surface-mode'))return new DOMRect(0,0,1512,982);
+  if(this.getAttribute('aria-label')==='Chat navigation')return new DOMRect(0,0,240,982);
+  if(this.getAttribute('aria-label')==='Chat inspector')return new DOMRect(1112,0,400,982);
+  return new DOMRect();
+ });
+ try{setup(true);fireEvent.click(screen.getByRole('button',{name:'Search chats'}));expect(screen.getByRole('dialog',{name:'Search chats'}).style.left).toBe('676px');}finally{measure.mockRestore();}
 });

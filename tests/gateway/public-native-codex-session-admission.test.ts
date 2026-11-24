@@ -37,6 +37,7 @@ async function fixture() {
   const trace: string[] = [];
   let consent = true;
   let principal = "public-native-owner-A";
+  let generation: string | undefined;
   let revision = 1;
   let requestOwner = "owner";
   const fingerprint = createHash("sha256").update(principal).digest("hex");
@@ -54,10 +55,10 @@ async function fixture() {
   await save();
   native.read.mockImplementation(async () => {
     trace.push("native-read");
-    const captured = principal;
+    const captured = principal, capturedGeneration = generation;
     return bindNativeAccountMetadata({ authMethod: method, accountLabel: "owner@example.test",
       checkedAt: new Date(Date.now() - 1000).toISOString(), staleAfter: new Date(Date.now() + 30000).toISOString(),
-    }, async () => captured === principal, captured);
+    }, async () => captured === principal, captured, capturedGeneration ? { generation: capturedGeneration } : {});
   });
   const getSnapshot = vi.fn(async () => ({ revision, access: { mode: "writable" },
     accessSources: [{ id: "owner_openai_profile", providerId: "openai", accountId: "native_account", kind: "provider_account", fundingKind: "owner_account" }],
@@ -115,6 +116,8 @@ async function fixture() {
   return { homePath, runtime, sharedRuntime, manager, start, terminal, launcher, sandbox, effects, index, trace, getSnapshot,
     fenceProject: () => { projectFenced = true; },
     forgetRuntime: () => { sessionRuntime = undefined; },
+    // An upgraded gateway reports the durable generation for the same credential.
+    upgradeReader: (value: string) => { generation = value; },
     change: async (value: { enabled?: boolean; consent?: boolean; principal?: string; owner?: string; method?: "terminal" | "api_key"; missingSettings?: boolean }) => {
       if (value.method !== undefined) method = value.method;
       if (value.enabled !== undefined) enabled = value.enabled;
@@ -129,6 +132,27 @@ async function fixture() {
 }
 
 describe("public native Codex session admission", () => {
+  // ENG-523: an upgraded install keeps legacy consent for unchanged credentials
+  // without the owner first opening Settings or Chat.
+  it("admits legacy consent for unchanged credentials after the upgrade and records the same-account alias", async () => {
+    const f = await fixture();
+    f.upgradeReader("public-native-durable-A");
+    const response = await f.start();
+    expect(response.status).toBe(201);
+    const legacy = createHash("sha256").update("public-native-owner-A").digest("hex");
+    expect(f.effects).toEqual([expect.objectContaining({ nativeCodexSubscription: expect.objectContaining({ expectedPrincipalFingerprint: legacy }) })]);
+    expect(JSON.parse(await readFile(join(f.homePath, "system/ai-providers/codex-consent-alias.json"), "utf8")))
+      .toEqual({ version: 1, saved: legacy, durable: createHash("sha256").update("public-native-durable-A").digest("hex") });
+  });
+  it("still rejects a different account after the upgrade", async () => {
+    const f = await fixture();
+    f.upgradeReader("public-native-durable-B");
+    await f.change({ principal: "public-native-owner-B" });
+    expect((await f.start()).status).toBe(400);
+    expect(f.effects).toEqual([]);
+    await expect(readFile(join(f.homePath, "system/ai-providers/codex-consent-alias.json"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("constructs the shared runtime without observing an account or probing a model", async () => {
     const f = await fixture();
     expect(native.read).not.toHaveBeenCalled();

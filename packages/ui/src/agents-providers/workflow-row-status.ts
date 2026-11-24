@@ -23,6 +23,11 @@ export function resolvedWorkflowRowStatus(harness: ProviderHarnessInstance, sour
     && source.kind === "provider_account" && source.providerId === "anthropic" && source.fundingKind === "owner_account"
     && source.accountId !== null && harness.selectedAccountId === source.accountId && harness.accessSourceId === source.id) return "Connected";
   if (override === "Connecting" || harness.authState === "authenticating") return "Connecting";
+  // A saved native Codex login Matrix may not use yet (expired, or not yet
+  // approved for this account) needs one sign-in, not a fresh connection.
+  if (harness.harness === "codex" && harness.installState === "installed"
+    && (harness.authState === "expired" || harness.authState === "authenticated"
+      && source?.kind === "provider_account" && ["auth_required", "expired"].includes(source.readiness.state))) return "Needs sign-in";
   const configured = hasConfiguredConnection(harness, source);
   if (configured && harness.authState === "authenticated") return "Connected";
   if (configured || hasStaleHermesConnection(harness, source)) return "Configured";

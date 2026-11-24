@@ -57,7 +57,8 @@ describe("CI wiring", () => {
   const { jobs } = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
   const stepRuns = (job: string) => jobs[job].steps.map((step: { run?: string }) => step.run ?? "").join("\n");
 
-  it.each(["pr-size", "patterns"])("%s diffs against the resolved PR base, not github.base_ref", (job) => {
+  it("patterns diffs against the resolved PR base, not github.base_ref", () => {
+    const job = "patterns";
     const resolver = jobs[job].steps.find((step: { id?: string }) => step.id === "pr-base");
     if (job === "pr-size") {
       // The size lane reuses the earlier bounded metadata read and pins its

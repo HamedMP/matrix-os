@@ -157,7 +157,7 @@ Gateway settings add a second layer but are never the only control.
 
 - Each owner can have at most one active Private Preview per PR. Each owner can
   have at most `MATRIX_PRIVATE_PREVIEW_LIMIT` active Private Previews in total
-  (default 2, maximum 4). The platform counts and inserts inside the existing
+  (default 8, maximum 16). The platform counts and inserts inside the existing
   per-owner provisioning lock. If the same owner starts the same PR while one is
   active, the platform returns the existing machine instead of creating another.
 - Each Private Preview expires 72 hours after provisioning. A platform

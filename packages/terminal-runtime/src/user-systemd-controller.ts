@@ -44,6 +44,11 @@ export type UserSystemdCommandRunner = (
   options: UserSystemdCommandOptions,
 ) => Promise<{ stdout: string; stderr: string }>;
 
+/** `deadline` is an absolute epoch-ms time; every command and wait is capped to it. */
+export interface UserSystemdOperationOptions {
+  deadline?: number;
+}
+
 export interface CreateUserSystemdRuntimeInput {
   runtimeId: string;
   scope: "terminal" | "workspace";
@@ -322,6 +327,29 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
+/** A command timeout capped to the caller's deadline; an expired deadline fails before spawning. */
+function boundedTimeout(defaultMs: number, deadline?: number): number {
+  if (deadline === undefined) return defaultMs;
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new TerminalRuntimeUnavailableError();
+  return Math.min(defaultMs, remaining);
+}
+
+async function waitWithinDeadline(wait: Promise<void>, deadline?: number): Promise<void> {
+  if (deadline === undefined) return wait;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      wait,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new TerminalRuntimeUnavailableError()), Math.max(0, deadline - Date.now()));
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function isMissingZellijSessionFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const commandError = error as Error & { stderr?: unknown; stdout?: unknown };
@@ -339,7 +367,7 @@ export function createUserSystemdTerminalRuntime(options: {
   generation: string;
   terminalRuntimeRoot?: string;
   runCommand?: UserSystemdCommandRunner;
-  readinessProbe?: (descriptor: UserSystemdTerminalDescriptor) => Promise<boolean>;
+  readinessProbe?: (descriptor: UserSystemdTerminalDescriptor, options?: { timeoutMs?: number }) => Promise<boolean>;
   now?: () => string;
   readinessTimeoutMs?: number;
   readinessStabilityMs?: number;
@@ -368,9 +396,10 @@ export function createUserSystemdTerminalRuntime(options: {
     uid,
   });
 
-  async function withCrossProcessGenerationLock<T>(operation: () => Promise<T>): Promise<T> {
+  async function withCrossProcessGenerationLock<T>(operation: () => Promise<T>, deadline?: number): Promise<T> {
     if (!generationLockHelperPath) return operation();
     await ensureDescriptorRoot();
+    const lockTimeoutMs = boundedTimeout(SYSTEMCTL_TIMEOUT_MS, deadline);
     const child = spawn("python3", [generationLockHelperPath, "--lock", descriptorRoot], {
       cwd: homePath,
       env: systemdEnv,
@@ -383,7 +412,7 @@ export function createUserSystemdTerminalRuntime(options: {
     });
     try {
       await new Promise<void>((resolveReady, rejectReady) => {
-        const timeout = setTimeout(() => rejectReady(new TerminalRuntimeUnavailableError()), SYSTEMCTL_TIMEOUT_MS);
+        const timeout = setTimeout(() => rejectReady(new TerminalRuntimeUnavailableError()), lockTimeoutMs);
         timeout.unref?.();
         const cleanup = () => {
           clearTimeout(timeout);
@@ -413,10 +442,14 @@ export function createUserSystemdTerminalRuntime(options: {
       child.stdin.end();
       await new Promise<void>((resolveExit) => {
         if (child.exitCode !== null) return resolveExit();
+        // A bounded caller kills the helper at its deadline; the lock dies with it.
+        const exitTimeoutMs = deadline === undefined
+          ? SYSTEMCTL_TIMEOUT_MS
+          : Math.max(0, Math.min(SYSTEMCTL_TIMEOUT_MS, deadline - Date.now()));
         const timeout = setTimeout(() => {
           child.kill("SIGKILL");
           resolveExit();
-        }, SYSTEMCTL_TIMEOUT_MS);
+        }, exitTimeoutMs);
         timeout.unref?.();
         child.once("exit", () => {
           clearTimeout(timeout);
@@ -426,15 +459,18 @@ export function createUserSystemdTerminalRuntime(options: {
     }
   }
 
-  async function withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
+  async function withMutationLock<T>(operation: () => Promise<T>, deadline?: number): Promise<T> {
     const previous = mutationTail;
     let release!: () => void;
-    mutationTail = new Promise<void>((resolveRelease) => {
+    const held = new Promise<void>((resolveRelease) => {
       release = resolveRelease;
     });
-    await previous;
+    // Later callers wait for both, so one that gives up at its deadline never
+    // lets the next one in while `previous` still holds the lock.
+    mutationTail = previous.then(() => held);
     try {
-      return await withCrossProcessGenerationLock(operation);
+      await waitWithinDeadline(previous, deadline);
+      return await withCrossProcessGenerationLock(operation, deadline);
     } finally {
       release();
     }
@@ -457,16 +493,20 @@ export function createUserSystemdTerminalRuntime(options: {
     }
   }
 
-  async function defaultReadinessProbe(descriptor: UserSystemdTerminalDescriptor): Promise<boolean> {
+  async function defaultReadinessProbe(
+    descriptor: UserSystemdTerminalDescriptor,
+    probeOptions: { timeoutMs?: number } = {},
+  ): Promise<boolean> {
+    const timeoutMs = Math.min(2_000, probeOptions.timeoutMs ?? 2_000);
     const ready = await probeKeeperReadiness({ descriptor, terminalRuntimeRoot, homePath,
-      env: systemdEnv, runCommand });
+      env: systemdEnv, runCommand, timeoutMs });
     if (ready !== null) return ready;
     const zellijPath = join(terminalRuntimeRoot, "generations", descriptor.generation, "zellij");
     try {
       const { stdout } = await runCommand(zellijPath, ["list-sessions", "--no-formatting"], {
         cwd: descriptor.cwd,
         env: systemdEnv,
-        timeoutMs: 2_000,
+        timeoutMs,
       });
       return stdout.split(/\r?\n/).some((line) => line.trim().split(/\s+/)[0] === descriptor.sessionName);
     } catch (err: unknown) {
@@ -477,13 +517,17 @@ export function createUserSystemdTerminalRuntime(options: {
 
   const readinessProbe = options.readinessProbe ?? defaultReadinessProbe;
 
-  async function waitUntilReady(descriptor: UserSystemdTerminalDescriptor): Promise<void> {
-    const deadline = Date.now() + (options.readinessTimeoutMs ?? READINESS_TIMEOUT_MS);
+  async function waitUntilReady(descriptor: UserSystemdTerminalDescriptor, operationDeadline?: number): Promise<void> {
+    const deadline = Math.min(
+      Date.now() + (options.readinessTimeoutMs ?? READINESS_TIMEOUT_MS),
+      operationDeadline ?? Number.POSITIVE_INFINITY,
+    );
+    const probe = () => readinessProbe(descriptor, { timeoutMs: boundedTimeout(2_000, operationDeadline) });
     do {
-      if (await readinessProbe(descriptor)) {
+      if (await probe()) {
         if (readinessStabilityMs <= 0) return;
-        await delay(readinessStabilityMs);
-        if (await readinessProbe(descriptor)) return;
+        await delay(boundedTimeout(readinessStabilityMs, operationDeadline));
+        if (await probe()) return;
         throw new TerminalRuntimeUnavailableError();
       }
       await delay(READINESS_INTERVAL_MS);
@@ -491,12 +535,13 @@ export function createUserSystemdTerminalRuntime(options: {
     throw new TerminalRuntimeUnavailableError();
   }
 
-  async function runSystemctl(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  async function runSystemctl(args: string[], deadline?: number): Promise<{ stdout: string; stderr: string }> {
+    const timeoutMs = boundedTimeout(SYSTEMCTL_TIMEOUT_MS, deadline);
     try {
       return await runCommand("systemctl", ["--user", ...args], {
         cwd: homePath,
         env: systemdEnv,
-        timeoutMs: SYSTEMCTL_TIMEOUT_MS,
+        timeoutMs,
       });
     } catch (err: unknown) {
       throw new TerminalRuntimeUnavailableError(err);
@@ -560,11 +605,11 @@ export function createUserSystemdTerminalRuntime(options: {
     return descriptors;
   }
 
-  async function isRunning(runtimeId: string): Promise<boolean> {
+  async function isRunning(runtimeId: string, deadline?: number): Promise<boolean> {
     const parsed = RuntimeIdSchema.safeParse(runtimeId);
     if (!parsed.success) throw new InvalidTerminalRuntimeRequestError();
     try {
-      const { stdout } = await runSystemctl(["is-active", unitName(parsed.data)]);
+      const { stdout } = await runSystemctl(["is-active", unitName(parsed.data)], deadline);
       return stdout.trim() === "active";
     } catch (err: unknown) {
       const code: unknown = err instanceof Error && "code" in err
@@ -575,27 +620,31 @@ export function createUserSystemdTerminalRuntime(options: {
     }
   }
 
-  async function startInterruptedRuntime(descriptor: UserSystemdTerminalDescriptor): Promise<void> {
+  /**
+   * A deadline kills the `systemctl` client at that time. systemd may still
+   * finish the queued start job; the next attempt observes its result.
+   */
+  async function startInterruptedRuntime(descriptor: UserSystemdTerminalDescriptor, deadline?: number): Promise<void> {
     try { await admitCapacity(descriptor.runtimeId); }
     catch (error: unknown) { throw new TerminalRuntimeUnavailableError(error); }
-    await runSystemctl(["start", unitName(descriptor.runtimeId)]);
+    await runSystemctl(["start", unitName(descriptor.runtimeId)], deadline);
     try {
-      await waitUntilReady(descriptor);
+      await waitUntilReady(descriptor, deadline);
       return;
     } catch (err: unknown) {
-      if (!(err instanceof TerminalRuntimeUnavailableError) || await isRunning(descriptor.runtimeId)) {
+      if (!(err instanceof TerminalRuntimeUnavailableError) || await isRunning(descriptor.runtimeId, deadline)) {
         throw err;
       }
     }
-    await deleteExactZellijSession(descriptor);
-    await delay(INACTIVE_RECOVERY_RETRY_DELAY_MS);
-    await runSystemctl(["start", unitName(descriptor.runtimeId)]);
-    await waitUntilReady(descriptor);
+    await deleteExactZellijSession(descriptor, deadline);
+    await delay(boundedTimeout(INACTIVE_RECOVERY_RETRY_DELAY_MS, deadline));
+    await runSystemctl(["start", unitName(descriptor.runtimeId)], deadline);
+    await waitUntilReady(descriptor, deadline);
   }
 
-  async function isSettledInactive(runtimeId: string): Promise<boolean> {
+  async function isSettledInactive(runtimeId: string, deadline?: number): Promise<boolean> {
     try {
-      const { stdout } = await runSystemctl(["is-active", unitName(runtimeId)]);
+      const { stdout } = await runSystemctl(["is-active", unitName(runtimeId)], deadline);
       return ["inactive", "failed", "unknown"].includes(stdout.trim());
     } catch (error: unknown) {
       // execFile rejects the normal systemctl inactive result (exit 3).
@@ -611,13 +660,14 @@ export function createUserSystemdTerminalRuntime(options: {
     }
   }
 
-  async function deleteExactZellijSession(descriptor: UserSystemdTerminalDescriptor): Promise<void> {
+  async function deleteExactZellijSession(descriptor: UserSystemdTerminalDescriptor, deadline?: number): Promise<void> {
     const zellijPath = join(terminalRuntimeRoot, "generations", descriptor.generation, "zellij");
+    const timeoutMs = boundedTimeout(SYSTEMCTL_TIMEOUT_MS, deadline);
     try {
       await runCommand(zellijPath, ["delete-session", descriptor.sessionName, "--force"], {
         cwd: descriptor.cwd,
         env: systemdEnv,
-        timeoutMs: SYSTEMCTL_TIMEOUT_MS,
+        timeoutMs,
       });
     } catch (err: unknown) {
       if (!isMissingZellijSessionFailure(err)) throw new TerminalRuntimeUnavailableError(err);
@@ -644,7 +694,11 @@ export function createUserSystemdTerminalRuntime(options: {
       }
     },
 
-    async create(input: CreateUserSystemdRuntimeInput, recovery: { replaceInactiveWorkspace?: boolean } = {}): Promise<UserSystemdRuntimeResult> {
+    async create(
+      input: CreateUserSystemdRuntimeInput,
+      recovery: { replaceInactiveWorkspace?: boolean } & UserSystemdOperationOptions = {},
+    ): Promise<UserSystemdRuntimeResult> {
+      const { deadline } = recovery;
       const parsed = z.object({
         runtimeId: RuntimeIdSchema,
         scope: RuntimeScopeSchema,
@@ -696,10 +750,10 @@ export function createUserSystemdTerminalRuntime(options: {
         if (recovery.replaceInactiveWorkspace && existing) {
           if (existing.scope !== "workspace" || descriptor.scope !== "workspace"
             || existing.displayName !== descriptor.displayName || existing.cwd !== descriptor.cwd
-            || existing.kind !== descriptor.kind || !await isSettledInactive(descriptor.runtimeId)) {
+            || existing.kind !== descriptor.kind || !await isSettledInactive(descriptor.runtimeId, deadline)) {
             throw new TerminalRuntimeUnavailableError();
           }
-          await deleteExactZellijSession(existing);
+          await deleteExactZellijSession(existing, deadline);
           await writeDescriptorAtomic(path, descriptor);
           // Superseded OS-generated launch files are no longer referenced by the durable descriptor.
           // Never remove user layouts, shared environment files, or any conversation/workspace data.
@@ -720,19 +774,20 @@ export function createUserSystemdTerminalRuntime(options: {
         } else {
           persisted = await writeDescriptorExclusive(path, descriptor);
         }
-        await startInterruptedRuntime(persisted);
+        await startInterruptedRuntime(persisted, deadline);
         return { ...persisted, lifecycle: "running" };
-      });
+      }, deadline);
     },
 
-    async start(runtimeId: string): Promise<UserSystemdRuntimeResult> {
+    async start(runtimeId: string, startOptions: UserSystemdOperationOptions = {}): Promise<UserSystemdRuntimeResult> {
+      const { deadline } = startOptions;
       return withMutationLock(async () => {
         const descriptor = await readDescriptor(runtimeId);
         if (!descriptor) throw new InvalidTerminalRuntimeRequestError();
         if (descriptor.hibernatedAt) throw new TerminalRuntimeUnavailableError();
-        await startInterruptedRuntime(descriptor);
+        await startInterruptedRuntime(descriptor, deadline);
         return { ...descriptor, lifecycle: "running" };
-      });
+      }, deadline);
     },
 
     get(runtimeId: string): Promise<UserSystemdTerminalDescriptor | null> {

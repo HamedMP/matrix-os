@@ -1,4 +1,6 @@
-import { ChatImportSourceFilter, filterChatsByImportSource, useMinuteClock, type ChatImportSourceFilterValue } from "@matrix-os/ui";
+import { Button, archiveRestoreLocation } from "@matrix-os/ui";
+import { ChatSourceFilterMenu } from "@matrix-os/ui";
+import { filterChatsByImportSource, useMinuteClock, type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { useWorkNavigation } from "./use-work-navigation";
 import {
@@ -15,7 +17,7 @@ import { ChatAgentsRailSection, useChatAgentsNavigation } from "@matrix-os/ui";
 import { useUi } from "../../stores/ui";
 import { useTabs } from "../../stores/tabs";
 import { type CanonicalChatRecord } from "@matrix-os/contracts";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   CanonicalChatClient,
   CanonicalChatEventSource,
@@ -46,9 +48,11 @@ import { partitionSharedProjects, useSharedProjects } from "./work-rail/SharedWo
 export { SharedWithMeRailRow } from "./work-rail/SharedWithMeRailRow";
 import { WorkRailGroups, type WorkRailSectionKey } from "./work-rail/WorkRailGroups";
 import { WorkRailSearchDialog } from "./WorkRailSearchDialog";
+import { useWorkArchiveNavigation } from "./WorkSurfaceRuntime";
 import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 import { DesktopProjectSharingHost, useDesktopProjectSharingContext } from "../project/DesktopProjectSharing";
 import { DesktopSharedWithMeDialog } from "../chat/DesktopChatCollaboration";
+import { Dialog } from "../../design/primitives";
 
 type SectionKey = WorkRailSectionKey;
 
@@ -96,7 +100,7 @@ export function WorkRail({
   onNewProjectChat: (project: Project) => void;
   onSelectProject?: (project: Project) => void;
   onSelectChat: (record: CanonicalChatRecord, project?: Project) => void;
-  onChatDeleted?: (record: ChatNavigationRecord, project?: Project) => void;
+  onChatDeleted?: (chatId: string, project?: Project) => void;
   onChatRenamed?: (record: CanonicalChatRecord, project?: Project) => void;
   onChatMoved?: (record: CanonicalChatRecord, project?: Project) => void;
   onCollapse: () => void;
@@ -104,15 +108,16 @@ export function WorkRail({
   className?: string;
 }) {
   const agentsNavigation = useChatAgentsNavigation();
+  const archiveNavigation = useWorkArchiveNavigation();
   const selectionAttempt = useRef(0);
   const currentProjects = useRef(projects);
   useLayoutEffect(() => { currentProjects.current = projects; }, [projects]);
   const [selectionError,setSelectionError]=useState<string|null>(null);
   const invalidateSelection = () => { selectionAttempt.current++; setSelectionError(null); };
-  const onNewGlobalChat = () => { invalidateSelection(); agentsNavigation?.close(); newGlobalChat(); };
+  const onNewGlobalChat = () => { invalidateSelection(); archiveNavigation?.close(); agentsNavigation?.close(); newGlobalChat(); };
   const onCreateProject = () => { invalidateSelection(); agentsNavigation?.close(); createProject(); };
-  const onSelectProject = (project: Project) => { invalidateSelection(); agentsNavigation?.close(); selectProject?.(project); };
-  const onNewProjectChat = (project: Project) => { invalidateSelection(); agentsNavigation?.close(); newProjectChat(project); };
+  const onSelectProject = (project: Project) => { invalidateSelection(); archiveNavigation?.close(); agentsNavigation?.close(); selectProject?.(project); };
+  const onNewProjectChat = (project: Project) => { invalidateSelection(); archiveNavigation?.close(); agentsNavigation?.close(); newProjectChat(project); };
   useEffect(() => () => { selectionAttempt.current++; }, []);
   const onSelectChat = (record:ChatNavigationRecord) => {
     if(!client || !isCurrentScope(routeScopeRef.current)) return;
@@ -122,7 +127,7 @@ export function WorkRail({
     void Promise.resolve().then(()=>isCurrentScope(scope) ? client.getDetail(record.chat.id,{limit:1}) : null).then(detail=>{
       if(!detail || selectionAttempt.current!==attempt || !isCurrentScope(scope)) return;
       const project = detail.record.projectId ? currentProjects.current.find(candidate => candidate.id === detail.record.projectId || candidate.slug === detail.record.projectId) : undefined;
-      agentsNavigation?.close(); if(project) selectChat(detail.record,project);else selectChat(detail.record);
+      archiveNavigation?.close(); agentsNavigation?.close(); if(project) selectChat(detail.record,project);else selectChat(detail.record);
     }).catch((error:unknown)=>{
       console.warn("[chat-navigation] Open failed:",error instanceof Error?error.name:"UnknownError");
       if(selectionAttempt.current===attempt && isCurrentScope(scope)) setSelectionError("The Chat could not be opened. Try again.");
@@ -136,6 +141,7 @@ export function WorkRail({
   const [botRefreshKey, setBotRefreshKey] = useState(0);
   const navigation=useWorkNavigation(client,eventSource,active);
   const records=navigation.items;
+  useEffect(() => { if (archiveNavigation?.version) void navigation.store?.refresh(); }, [archiveNavigation?.version, navigation.store]);
   const authorityEpoch = navigation.store?.getAuthorityEpoch() ?? 0;
   // After revocation, only a successful navigation read may re-enable Agent data.
   // A later transport failure retains that same epoch's verified snapshot.
@@ -155,6 +161,8 @@ export function WorkRail({
     lastRenderedCohort.current = { items: records, fresh: navigation.fresh };
     markChatNavigation("render-ready", records.length);
   }, [active, committedCohort, records, navigation.fresh]);
+  const [mutationRevision, setMutationRevision] = useState(0);
+  const pageVersion = navigation.updatedAt + mutationRevision;
   const setRecords=useCallback((action:ChatNavigationRecord[]|((records:ChatNavigationRecord[])=>ChatNavigationRecord[]))=>{
     if (!authorityCurrent()) return;
     navigation.store?.update(current=>{
@@ -166,6 +174,8 @@ export function WorkRail({
         return known?[mergeChatNavigationRecord(known,record)]:[];
       });
     });
+    // Page-backed project/status placements also refresh after committed local actions.
+    setMutationRevision(value => value + 1);
   },[navigation.store,authorityCurrent]);
   const status=navigation.status;
   const { sections, setExpanded } = useWorkRailDisclosure();
@@ -175,14 +185,41 @@ export function WorkRail({
   const [deleteChatTarget, setDeleteChatTarget] = useState<ChatNavigationRecord | null>(null);
   const [deletingChat, setDeletingChat] = useState(false);
   const [deleteChatError, setDeleteChatError] = useState<string | null>(null);
+  const [archivePendingId, setArchivePendingId] = useState<string | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveUndo, setArchiveUndo] = useState<{ chats: Array<{ chatId: string; revision: number }>; label: string; projectId?: string; lifecycle?: "active" | "archived" } | null>(null);
+  const [archiveProjectTarget, setArchiveProjectTarget] = useState<Project | null>(null);
+  const [bulkArchivePending, setBulkArchivePending] = useState(false);
+  const [bulkArchiveError, setBulkArchiveError] = useState<string | null>(null);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+  const [renamingPlacement, setRenamingPlacement] = useState<"project" | "pinned" | "recent">("recent");
   const [renamePending, setRenamePending] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
   const [sourceFilter, setSourceFilter] = useState<ChatImportSourceFilterValue>("all");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchCenterX, setSearchCenterX] = useState<number>();
+  const [searchBounds, setSearchBounds] = useState<{ left: number; right: number }>();
+  const railRef = useRef<HTMLElement>(null);
   const [focusedProjectId, setFocusedProjectId] = useState<string | null>(null);
-  const openSearch = useCallback(() => { if (authorityCurrent()) setSearchOpen(true); }, [authorityCurrent]);
+  const openSearch = useCallback(() => {
+    if (!authorityCurrent()) return;
+    const rail = railRef.current?.getBoundingClientRect();
+    const frameElement = railRef.current?.closest("[data-surface-mode]");
+    const frame = frameElement?.getBoundingClientRect();
+    const inspector = frameElement?.querySelector('[aria-label="Chat inspector"]')?.getBoundingClientRect();
+    const start = rail?.width ? rail.right : frame?.left ?? 0;
+    setSearchBounds(frame?.width ? { left: frame.left, right: frame.right } : { left: 0, right: window.innerWidth });
+    const end = inspector?.width && inspector.left > start ? inspector.left : frame?.right ?? window.innerWidth;
+    setSearchCenterX((start + end) / 2);
+    setSearchOpen(true);
+  }, [authorityCurrent]);
+  const openArchivedList = () => {
+    invalidateSelection();
+    setSearchOpen(false);
+    agentsNavigation?.close();
+    archiveNavigation?.show();
+  };
   useChatSearchShortcut(searchShortcutActive && Boolean(client), openSearch);
   const [sharedWithMeOpen, setSharedWithMeOpen] = useState(false);
   const [sharedProjectRevealRequest, setSharedProjectRevealRequest] = useState<{
@@ -211,13 +248,20 @@ export function WorkRail({
     setPinError(null); setPinning({}); setReadPending(false); setReadError(null);
     setDeleteChatTarget(null); setDeletingChat(false); setDeleteChatError(null);
     setRenamingChatId(null); setRenamePending(false); setRenameError(null); setSelectionError(null);
-    setSearchOpen(false);
+    setSearchOpen(false); setArchivePendingId(null); setBulkArchivePending(false);
+    setArchiveProjectTarget(null); setArchiveUndo(null); setArchiveError(null); setBulkArchiveError(null);
   }
   useEffect(()=>{
     setPinError(null);setPinning({});setReadPending(false);setReadError(null);
     setDeleteChatTarget(null);setDeletingChat(false);setDeleteChatError(null);
     setRenamingChatId(null);setRenamePending(false);setRenameError(null);setSelectionError(null);
+    setArchivePendingId(null);setBulkArchivePending(false);setArchiveProjectTarget(null);
   },[routeScope,client]);
+  useEffect(() => {
+    if (!archiveUndo) return;
+    const timer = window.setTimeout(() => setArchiveUndo(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [archiveUndo]);
   const recordIds = useMemo(() => records.map(record => record.chat.id), [records]);
   const classifications=useMemo(()=>records.map(record=>({chatId:record.chat.id,classification:record.classification})),[records]);
   useEffect(() => {
@@ -367,7 +411,7 @@ export function WorkRail({
       setRecords((current) => current.filter((record) => record.chat.id !== target.chat.id));
       if (isCurrentScope(scope)) {
         setDeleteChatTarget(null);
-        onChatDeleted?.(target, targetProject);
+        onChatDeleted?.(target.chat.id, targetProject);
       }
     } catch (error: unknown) {
       console.warn(
@@ -381,6 +425,104 @@ export function WorkRail({
       if (isCurrentScope(scope)) {
         setDeletingChat(false);
       }
+    }
+  };
+
+  const archiveChat = async (record: ChatNavigationRecord) => {
+    if (!client || archivePendingId || record.activeRun || !isCurrentScope(routeScopeRef.current)) return;
+    const scope = routeScopeRef.current;
+    setArchivePendingId(record.chat.id);
+    setArchiveError(null);
+    try {
+      const updated = await client.updateLifecycle(record.chat.id, { baseRevision: record.chat.revision, lifecycle: "archived" });
+      if (!isCurrentAuthority(scope)) return;
+      setRecords(current => current.filter(item => item.chat.id !== record.chat.id));
+      setArchiveUndo({ chats: [{ chatId: record.chat.id, revision: updated.chat.revision }], label: `Archived ${record.chat.title}` });
+      if (isCurrentScope(scope) && record.chat.id === activeChatId) {
+        const project = projectGroups.find(group => group.id === record.projectId || group.slug === record.projectId)?.project;
+        onChatDeleted?.(record.chat.id, project);
+      }
+    } catch (error: unknown) {
+      console.warn("[work] Chat archive failed:", error instanceof Error ? error.name : "UnknownError");
+      if (isCurrentAuthority(scope)) setArchiveError("The Chat could not be archived. Try again.");
+    } finally {
+      if (isCurrentAuthority(scope)) setArchivePendingId(null);
+    }
+  };
+
+  const handleChatShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!event.metaKey && !event.ctrlKey) return;
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest('input, textarea, [contenteditable="true"]')) return;
+    const record = records.find(row => row.chat.id === activeChatId);
+    if (!record || !authorityCurrent()) return;
+    const key = event.key.toLowerCase();
+    if (event.shiftKey && key === "a" && !event.altKey) {
+      if (record.activeRun) return;
+      event.preventDefault(); void archiveChat(record);
+    } else if (event.altKey && key === "p") {
+      event.preventDefault(); updatePinned(record);
+    } else if (event.altKey && key === "r" && !renamePending) {
+      event.preventDefault(); setRenameError(null);
+      const placement = target instanceof HTMLElement ? target.closest("[data-placement]")?.getAttribute("data-placement") : null;
+      setRenamingPlacement(placement === "project" || placement === "pinned" ? placement : record.chat.userState?.pinned ? "pinned" : "recent");
+      setRenamingChatId(record.chat.id);
+    } else if (event.shiftKey && key === "u") {
+      event.preventDefault(); void toggleRead(record);
+    }
+  });
+  useEffect(() => {
+    if (!active || !activeChatId) return;
+    const shortcut = (event: KeyboardEvent) => handleChatShortcut(event);
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, [active, activeChatId]);
+
+  const undoArchive = async () => {
+    if (!client || !archiveUndo || !isCurrentScope(routeScopeRef.current)) return;
+    const scope = routeScopeRef.current;
+    const undo = archiveUndo;
+    setArchiveUndo(null);
+    try {
+      for (const chat of undo.chats) await client.updateLifecycle(chat.chatId, { baseRevision: chat.revision, lifecycle: undo.lifecycle ?? "active" });
+      if (isCurrentAuthority(scope)) await navigation.store?.refresh();
+    } catch (error: unknown) {
+      console.warn("[work] Chat restore failed:", error instanceof Error ? error.name : "UnknownError");
+      if (isCurrentAuthority(scope)) setArchiveError("The Chat could not be restored. Try again from Archived.");
+    }
+  };
+
+  const archiveProject = async () => {
+    if (!client || !archiveProjectTarget || bulkArchivePending || !isCurrentScope(routeScopeRef.current)) return;
+    const scope = routeScopeRef.current;
+    const project = archiveProjectTarget;
+    setBulkArchivePending(true);
+    setBulkArchiveError(null);
+    try {
+      const references = [...new Set([project.id, project.slug].filter((reference): reference is string => Boolean(reference)))];
+      const results = await Promise.allSettled(references.map(reference => client.archiveProjectChats(reference)));
+      if (!isCurrentAuthority(scope)) return;
+      const completed = results.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
+      const archived = [...new Map(completed.flatMap(result => result.archived).map(chat => [chat.chatId, chat])).values()];
+      const archivedIds = new Set(archived.map(chat => chat.chatId));
+      const skippedCount = completed.reduce((count, result) => count + result.skippedCount, 0);
+      setRecords(current => current.filter(record => !archivedIds.has(record.chat.id)));
+      if (isCurrentScope(scope) && activeChatId && archivedIds.has(activeChatId)) onChatDeleted?.(activeChatId, project);
+      if (archived.length) setArchiveUndo(current => {
+        const chats = [...new Map([...(current && current.projectId === project.id ? current.chats : []), ...archived]
+          .map(chat => [chat.chatId, chat])).values()];
+        return { chats, projectId: project.id,
+          label: `Archived ${chats.length} chats in ${project.name}${skippedCount ? `; ${skippedCount} running skipped` : ""}` };
+      });
+      else if (skippedCount) setArchiveError(`${skippedCount} running chats were skipped.`);
+      if (completed.length === results.length) setArchiveProjectTarget(null);
+      else setBulkArchiveError("Some project chats could not be archived. Retry or use Undo for archived chats.");
+      void navigation.store?.refresh();
+    } catch (error: unknown) {
+      console.warn("[work] Project archive failed:", error instanceof Error ? error.name : "UnknownError");
+      if (isCurrentAuthority(scope)) setBulkArchiveError("Project chats could not be archived. Try again.");
+    } finally {
+      if (isCurrentAuthority(scope)) setBulkArchivePending(false);
     }
   };
 
@@ -432,6 +574,11 @@ export function WorkRail({
     return (
       <WorkRailOrderItem key={group.id} id={group.id} kind="project" group={group.project.pinned ? "pinned-projects" : "projects"}><WorkRailProjectGroup
         group={group}
+        client={authorityReady ? client : null}
+        scopeKey={`${authorityKey}:${authorityEpoch}`}
+        navigationUpdatedAt={pageVersion}
+        sourceFilter={sourceFilter}
+        orderRows={order.orderRows}
         fresh={navigation.fresh}
         shared={sharedProjects.ownedSharedProjectIds.has(group.id)}
         moveItems={moveItems}
@@ -440,13 +587,14 @@ export function WorkRail({
         activeProjectSlug={activeProjectSlug}
         activeChatId={activeChatId}
         pinning={pinning}
-        renamingChatId={renamingChatId}
+        renamingChatId={renamingPlacement === "project" ? renamingChatId : null}
         renamePending={renamePending}
         onToggleRead={(record) => { void toggleRead(record); }}
         readPending={readPending}
         onRenameChat={(record) => {
           if (renamePending) return;
           setRenameError(null);
+          setRenamingPlacement("project");
           setRenamingChatId(record.chat.id);
         }}
         onRenameCommit={(record, title) => { void renameChat(record, title); }}
@@ -460,6 +608,8 @@ export function WorkRail({
         onDeleteProject={setDeleteProjectTarget}
         onSelectChat={onSelectChat}
         onPinChat={updatePinned}
+        onArchiveChat={(record) => { void archiveChat(record); }}
+        onArchiveProject={setArchiveProjectTarget}
         onDeleteChat={(record) => {
           setDeleteChatError(null);
           setDeleteChatTarget(record);
@@ -477,22 +627,23 @@ export function WorkRail({
     );
   };
 
-  const renderChatRow = (record: ChatNavigationRecord, placement: "pinned" | "recent") => <WorkRailOrderItem key={record.chat.id} id={record.chat.id} kind="chat" group={placement === "pinned" ? "pinned-chats" : resolveCanonicalChatLifecycleGroup(record) === "recent" ? "done" : resolveCanonicalChatLifecycleGroup(record)}><WorkRailChatRow nowMs={nowMs} fresh={navigation.fresh} record={record} moveItems={moveItems(record)} moving={movingChatId === record.chat.id} placement={placement} active={record.chat.id === activeChatId}
-    pinning={Boolean(pinning[record.chat.id])} renaming={renamingChatId === record.chat.id}
+  const renderChatRow = (record: ChatNavigationRecord, placement: "pinned" | "recent") => <WorkRailOrderItem key={record.chat.id} id={record.chat.id} kind="chat" group={placement === "pinned" ? "pinned-chats" : resolveCanonicalChatLifecycleGroup(record) === "recent" ? "done" : resolveCanonicalChatLifecycleGroup(record)}><WorkRailChatRow nowMs={nowMs} projectName={projects.find(project => project.id === record.projectId || project.slug === record.projectId)?.name} fresh={navigation.fresh} record={record} moveItems={moveItems(record)} moving={movingChatId === record.chat.id} placement={placement} active={record.chat.id === activeChatId}
+    pinning={Boolean(pinning[record.chat.id])} renaming={renamingChatId === record.chat.id && renamingPlacement === placement}
     renamePending={renamePending && renamingChatId === record.chat.id} renameDisabled={renamePending}
     onToggleRead={() => { void toggleRead(record); }} readPending={readPending}
-    onRenameStart={() => { if (renamePending) return; setRenameError(null); setRenamingChatId(record.chat.id); }}
+    onRenameStart={() => { if (renamePending) return; setRenameError(null); setRenamingPlacement(placement); setRenamingChatId(record.chat.id); }}
     onRenameCommit={(title) => { void renameChat(record, title); }} onRenameCancel={() => setRenamingChatId(null)}
     onSelect={() => onSelectChat(record)}
-    onPin={() => updatePinned(record)} onDelete={() => { setDeleteChatError(null); setDeleteChatTarget(record); }} /></WorkRailOrderItem>;
+    onPin={() => updatePinned(record)} onArchive={() => { void archiveChat(record); }} onDelete={() => { setDeleteChatError(null); setDeleteChatTarget(record); }} /></WorkRailOrderItem>;
 
   return (
     <WorkRailOrderContext.Provider value={{manual:true,move:order.move,scopeKey:order.scopeKey}}><nav
+      ref={railRef}
       aria-label="Chat navigation"
       aria-busy={records.length>0 && !navigation.fresh}
       data-navigation-fresh={navigation.fresh || undefined}
       className={`matrix-chat-work-rail flex min-h-0 shrink-0 flex-col gap-0.5 overflow-hidden border-r pb-2 pt-3 ${className}`}
-      style={{ borderColor: "var(--sidebar-border)", background: "var(--sidebar)", color: "var(--sidebar-foreground)" }}
+      style={{ borderColor: "var(--border-subtle)", background: "var(--bg-surface)", color: "var(--text-primary)" }}
     >
       <WorkRailHeader
         shortcutAvailable={newChatShortcutActive}
@@ -500,15 +651,18 @@ export function WorkRail({
         onCollapse={onCollapse}
         showCollapseControl={showCollapseControl}
       />
-      <div className="ml-2.5 mr-[9px] flex shrink-0 flex-col"><WorkRailSearchControls onSearch={openSearch} active={searchOpen} /></div>
-      <div className="mx-3 my-1.5 shrink-0"><ChatImportSourceFilter value={sourceFilter} onChange={setSourceFilter}/></div>
+      <div className="chat-search-rail-row relative ml-2.5 mr-[9px] flex shrink-0 flex-col"><WorkRailSearchControls onSearch={openSearch} active={searchOpen}/><ChatSourceFilterMenu value={sourceFilter} onChange={setSourceFilter}/></div>
       {sourceFilter !== "all" && sourceRecords.length === 0 && status === "ready" ? <p className="px-3 py-2 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats match this source.</p> : null}
       <WorkRailScrollArea>
       {focusedGroup && focusedRecords ? <FocusedProjectRail group={focusedGroup} records={focusedRecords} sections={sections} onToggle={toggleSection}
+        client={authorityReady ? client : null} scopeKey={`${authorityKey}:${authorityEpoch}`} navigationUpdatedAt={pageVersion} sourceFilter={sourceFilter}
+        orderRows={order.orderRows} registerVisibleChats={order.registerVisibleChats}
         renderChat={renderChatRow} onBack={() => setFocusedProjectId(null)} onNewChat={onNewProjectChat} /> : <>
       <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
       <ChatAgentsRailSection menuZIndex={DESKTOP_Z_INDEX.popover} expanded={sections.agents} onExpandedChange={(expanded) => setExpanded("agents", expanded)} activeAgentId={agentsNavigation?.opened ? null : botSummaries.conversations.find(bot => bot.chatId === activeChatId)?.agentId ?? null} visible={visible} activeChatId={activeChatId} client={authorityReady ? client?.agents : undefined} summaryClient={agentAuthority.client} isCurrent={authorityCurrent} onSelectionIntent={invalidateSelection} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
+        client={authorityReady ? client : null} scopeKey={`${authorityKey}:${authorityEpoch}`} navigationUpdatedAt={pageVersion} sourceFilter={sourceFilter}
+        orderRows={order.orderRows} registerVisibleChats={order.registerVisibleChats}
         renderProject={renderProjectGroup} renderChat={renderChatRow} bots={botSummaries.conversations}
         sharedProjects={sharedProjects.receivedProjects}
         onOpenBotChat={onOpenBotChat ? (chatId) => { if (!authorityCurrent()) return; invalidateSelection(); agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}
@@ -534,7 +688,13 @@ export function WorkRail({
         {renameError ? (
           <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--danger-text)" }}>{renameError}</p>
         ) : null}
+        {archiveError ? <p role="alert" className="px-2 py-3 text-xs" style={{ color: "var(--danger-text)" }}>{archiveError}</p> : null}
       </WorkRailScrollArea>
+      {archiveUndo ? <div role="status" className="desktop-chat-design chat-lifecycle-toast">
+        <span className="truncate">{archiveUndo.label}</span>
+        <button type="button" className="ml-2 font-semibold underline" onClick={() => { void undoArchive(); }}>Undo</button>
+        <button type="button" onClick={openArchivedList}>View archived</button>
+      </div> : null}
       <DeleteConversationDialog
         conversation={authorityReady && deleteChatTarget ? {
           id: deleteChatTarget.chat.id,
@@ -556,14 +716,31 @@ export function WorkRail({
           onClose={() => setDeleteProjectTarget(null)}
         />
       ) : null}
+      <Dialog open={archiveProjectTarget !== null} onClose={() => { if (!bulkArchivePending) setArchiveProjectTarget(null); }} title={`Archive chats in ${archiveProjectTarget?.name ?? "project"}?`} width={420}>
+        <div className="desktop-chat-design p-4 text-sm">
+          <p>Archive all idle chats in this project? Running chats will be skipped.</p>
+          {bulkArchiveError ? <p role="alert" className="mt-2" style={{ color: "var(--danger-text)" }}>{bulkArchiveError}</p> : null}
+          <div className="mt-4 flex justify-end gap-3"><Button variant="ghost" size="sm" disabled={bulkArchivePending} onClick={() => setArchiveProjectTarget(null)}>Cancel</Button>
+            <Button size="sm" disabled={bulkArchivePending} onClick={() => { void archiveProject(); }}>Archive chats</Button></div>
+        </div>
+      </Dialog>
       <WorkRailSearchDialog
         open={authorityReady && searchOpen}
+        centerX={searchCenterX}
+        bounds={searchBounds}
+        client={client}
         records={sourceRecords}
+        sourceFilter={sourceFilter}
         projects={projects}
         status={status}
         onSelectProject={(project) => { setSearchOpen(false); focusProject(project); }}
         onClose={() => setSearchOpen(false)}
         onOpenShared={() => setSharedWithMeOpen(true)}
+        onArchiveRestored={record => {
+          setArchiveUndo({ chats: [{ chatId: record.chat.id, revision: record.chat.revision }], lifecycle: "archived", label: `Chat restored to ${archiveRestoreLocation(record, projects.find(project => project.id === record.projectId || project.slug === record.projectId)?.name)}` });
+        }}
+        onOpenArchivedList={openArchivedList}
+        onArchiveChanged={() => { void navigation.store?.refresh(); }}
         onSelect={(record) => {
           setSearchOpen(false);
           // A Chat found outside the focused Project moves focus to its own Project, or back to all chats.

@@ -2,7 +2,7 @@
 
 import { Ellipsis } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { ChatContextMenu, OverflowingChatTitle, ChatImportSourceIcon, chatStartTitle, compactChatStartLabel } from "@matrix-os/ui";
+import { resolveCanonicalChatAttention, ChatContextMenu, OverflowingChatTitle, ChatImportSourceIcon, chatStartTitle, compactChatStartLabel } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 export interface RenameableConversation {
@@ -73,6 +73,8 @@ export function RenameableConversationRow({
   onRenameCommit,
   onRenameCancel,
   onDelete,
+  onArchive,
+  onPin, moveItems, projectName,
   nowMs,
 }: {
   conversation: RenameableConversation;
@@ -86,6 +88,10 @@ export function RenameableConversationRow({
   onRenameCommit: (title: string) => void;
   onRenameCancel: () => void;
   onDelete?: () => void;
+  onArchive?: () => void;
+  onPin?(): void;
+  moveItems?: {label:string;onSelect():void}[];
+  projectName?: string;
   /** When set, the row shows how long ago the Chat started, as in Project lists. */
   nowMs?: number;
 }) {
@@ -99,6 +105,8 @@ export function RenameableConversationRow({
     if (deleteTimerRef.current !== null) window.clearTimeout(deleteTimerRef.current);
   }, []);
   const title = conversation.title || conversation.preview || "New chat";
+  const attention = conversation.canonicalRecord ? resolveCanonicalChatAttention(conversation.canonicalRecord) : "idle";
+  const statusLabel = attention === "approval_required" ? "Approve before sending" : attention === "input_required" ? "Waiting for your reply" : attention === "running" ? "Working…" : attention === "failed" ? "Needs attention" : undefined;
   const startedAt = conversation.canonicalRecord?.chat.createdAt;
   const row = editing ? (
     <div className={`flex w-full items-center px-2.5 ${mobile ? "py-3" : "py-1.5"}`}>
@@ -130,8 +138,9 @@ export function RenameableConversationRow({
         active ? "bg-accent/50 text-foreground" : "text-foreground/70 hover:bg-accent/30 hover:text-foreground"
       }`}
     >
+      {statusLabel ? <span aria-label={`${statusLabel} for ${title}`} className="size-1.5 shrink-0 rounded-full" style={{background:attention === "running" ? "var(--matrix-success, var(--success))" : "var(--matrix-warning, var(--warning))"}}/> : null}
       {conversation.canonicalRecord?.importSource ? <ChatImportSourceIcon harness={conversation.canonicalRecord.importSource.harness}/> : null}
-      <span className={`matrix-web-chat-title flex min-w-0 flex-1 ${conversation.readState?.unread ? "font-semibold" : ""}`}><OverflowingChatTitle title={title}/></span>
+      <span className="matrix-web-chat-title flex min-w-0 flex-1 flex-col"><span className={conversation.readState?.unread ? "flex min-w-0 font-semibold" : "flex min-w-0"}><OverflowingChatTitle title={title}/></span>{statusLabel ? <span className="truncate text-[11px] leading-[14px] text-muted-foreground">{projectName ? `${projectName} · ` : ""}{statusLabel}</span> : null}</span>
       {nowMs !== undefined && startedAt ? <time dateTime={startedAt} title={chatStartTitle(startedAt)} className="matrix-web-chat-row-started">{compactChatStartLabel(startedAt, nowMs)}</time> : null}
       {conversation.readState?.unread ? <span aria-label={`Unread ${title}`} className="size-2 shrink-0 rounded-full bg-primary" /> : null}
     </button>
@@ -139,7 +148,7 @@ export function RenameableConversationRow({
   if (editing) return row;
   return (
     <div data-chat-title-row className="matrix-web-chat-row-item" data-current={active} data-menu-open={menuOpen}>
-    <ChatContextMenu dropdownTrigger={<button type="button" className="matrix-web-chat-row-more" aria-label={`Actions for ${title}`}><Ellipsis aria-hidden="true" size={15} strokeWidth={1.5}/></button>} onDropdownOpenChange={setMenuOpen} chatId={conversation.id} zIndex={SHELL_Z_INDEX.popover} primaryAction={onToggleRead ? { label: conversation.readState?.unread ? "Mark as read" : "Mark as unread", onSelect: onToggleRead } : undefined} items={[...(onRenameStart ? [{
+    <ChatContextMenu hint={conversation.canonicalRecord?.activeRun ? "Stop the chat first to move, archive or delete it." : undefined} dropdownTrigger={<button type="button" className="matrix-web-chat-row-more" aria-label={`Actions for ${title}`}><Ellipsis aria-hidden="true" size={15} strokeWidth={1.5}/></button>} onDropdownOpenChange={setMenuOpen} chatId={conversation.id} zIndex={SHELL_Z_INDEX.popover} items={[...(onPin ? [{label:conversation.canonicalRecord?.chat.userState?.pinned ? "Unpin" : "Pin",onSelect:onPin}] : []), ...(onRenameStart ? [{
         label: "Rename", onSelect: () => {
           if (renameTimerRef.current !== null) window.clearTimeout(renameTimerRef.current);
           renameTimerRef.current = window.setTimeout(() => {
@@ -147,9 +156,11 @@ export function RenameableConversationRow({
             onRenameStart();
           }, 0);
         },
+    }] : []), ...(moveItems ? [{label:"Move to project",disabled:Boolean(conversation.canonicalRecord?.activeRun),children:moveItems}] : []), ...(onToggleRead ? [{ label: conversation.readState?.unread ? "Mark as read" : "Mark as unread", onSelect: onToggleRead }] : []), ...(onArchive ? [{
+        label: "Archive", disabled: Boolean(conversation.canonicalRecord?.activeRun), onSelect: onArchive,
     }] : []), ...(onDelete ? [{
         // Open after the menu closes so the dialog receives focus.
-        label: "Delete", danger: true, onSelect: () => {
+        label: "Delete", danger: true, disabled: Boolean(conversation.canonicalRecord?.activeRun), onSelect: () => {
           if (deleteTimerRef.current !== null) window.clearTimeout(deleteTimerRef.current);
           deleteTimerRef.current = window.setTimeout(() => {
             deleteTimerRef.current = null;
