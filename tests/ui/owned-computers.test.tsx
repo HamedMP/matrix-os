@@ -137,6 +137,24 @@ describe("OwnedComputersPanel", () => {
     expect(t.remove).toHaveBeenCalledWith(`/api/auth/owned-computers/${ID_A}`);
   });
 
+  it("keeps Escape inside the remove confirmation so host Settings stays open", async () => {
+    const t = transport([computer()]);
+    const hostEscape = vi.fn();
+    const onHostKey = (event: KeyboardEvent) => { if (event.key === "Escape") hostEscape(); };
+    window.addEventListener("keydown", onHostKey);
+    try {
+      render(<OwnedComputersPanel scope="a" transport={t} />);
+      fireEvent.click(await screen.findByRole("button", { name: "Remove Lab server" }));
+      fireEvent.keyDown(screen.getByRole("button", { name: "Cancel" }), { key: "Escape" });
+      expect(hostEscape).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      expect(hostEscape).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener("keydown", onHostKey);
+    }
+  });
+
   it("keeps the row and shows generic copy when removal fails", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const t = transport([computer()]);

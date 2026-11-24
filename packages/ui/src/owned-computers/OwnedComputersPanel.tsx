@@ -54,6 +54,16 @@ function OwnedComputersContent({ transport, onChanged }: { transport: OwnedCompu
   const [pending, setPending] = useState<Record<string, true>>({});
   const [failure, setFailure] = useState<{ machineId: string | null; kind: OwnedComputersFailure } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<OwnedComputerSummary | null>(null);
+  const confirmOpen = removeTarget !== null;
+  // Escape belongs to the confirmation while it is open: a capture listener on
+  // window keeps it from reaching hosts (such as Settings) that close on Escape.
+  // The native dialog still receives its cancel, so only the confirmation closes.
+  useEffect(() => {
+    if (!confirmOpen) return;
+    const swallowEscape = (event: KeyboardEvent) => { if (event.key === "Escape") event.stopPropagation(); };
+    window.addEventListener("keydown", swallowEscape, true);
+    return () => window.removeEventListener("keydown", swallowEscape, true);
+  }, [confirmOpen]);
   const [showInstall, setShowInstall] = useState(false);
   // List loads never race changes: a load is applied only if no change was in
   // flight or started while it ran. A discarded load is retried once all
