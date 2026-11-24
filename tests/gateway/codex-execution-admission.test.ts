@@ -465,6 +465,16 @@ describe("Codex consent alias after the durable-generation upgrade", () => {
     expect(JSON.parse(await readFile(join(f.homePath, "system/ai-providers/codex-consent-alias.json"), "utf8")))
       .toEqual({ version: 1, saved: sha("private_owner_profile_A"), durable: sha("durable_owner_A") });
   });
+  it("confirms a same-send receipt for upgraded same-account consent", async () => {
+    const f = await fixture();
+    f.change({ principal: "private_owner_profile_A:refreshed", generation: "durable_owner_A" });
+    await alias(f.homePath, "durable_owner_A");
+    const { binding, receipt } = await f.admission.startWithReceipt("owner", "sess_receipt_alias");
+    expect(binding).toEqual(expect.any(String));
+    await expect(f.admission.confirm("owner", receipt, "sess_receipt_alias")).resolves.toBeUndefined();
+    f.change({ principal: "private_owner_profile_B", generation: "durable_owner_B" });
+    await expect(f.admission.confirm("owner", receipt, "sess_receipt_alias")).rejects.toThrow("unavailable");
+  });
   it("ignores an alias for a different saved generation", async () => {
     const f = await fixture();
     await writeFile(join(f.homePath, "system/ai-providers/codex-consent-alias.json"),

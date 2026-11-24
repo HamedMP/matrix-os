@@ -173,6 +173,14 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
    * any Settings write since). Only the full check's binding comparison decides
    * those; owner, revocation gate, and principal mismatches reject outright.
    */
+  /** The one saved-consent rule shared with the full check: direct, upgrade alias,
+   * or the legacy token-bound generation of the same unchanged credential. */
+  async function consentMatches(saved: string, metadata: CodexNativeAccountMetadata): Promise<boolean> {
+    const current = nativeAccountPrincipalFingerprint(metadata);
+    if (current === saved) return true;
+    return savedCodexConsentMatches(saved, current, await readCodexConsentAlias(resolve(options.homePath)),
+      nativeAccountLegacyPrincipalFingerprint(metadata));
+  }
   async function confirmOrValidate(userId: string, receipt: CodexAdmissionReceipt, sessionId?: string): Promise<ConfirmOutcome> {
     const facts = freshFacts(userId, receipt);
     if (!facts || facts.sessionId !== sessionId) return { kind: "full", value: await validate(userId, receipt?.binding, sessionId) };
@@ -191,7 +199,7 @@ export function createCodexExecutionAdmission(options: CodexExecutionAdmissionOp
       const metadata = await verifyNativeAccountMetadata(await options.readNativeAccount());
       if (!metadata || metadata.authMethod !== "terminal"
         || !(Date.parse(metadata.checkedAt) <= Date.now() && Date.parse(metadata.staleAfter) > Date.now())
-        || nativeAccountPrincipalFingerprint(metadata) !== facts.principal) reject();
+        || !await consentMatches(facts.principal, metadata)) reject();
       await options.assertProfileAvailable?.();
       await sessions.assertOpen();
       const latest = await readSavedProviderSettingsConfiguration(path);
