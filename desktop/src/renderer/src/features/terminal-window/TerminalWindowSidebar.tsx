@@ -265,8 +265,9 @@ function MachinesList({ props }: { props: TerminalWindowSidebarProps }) {
         onStyle={props.onSpaceStyle} onReorder={reorder} />
       {query.trim() !== "" && entries.length === 0 && previews.length === 0 ? (
         // An empty result says so and offers the way back (ux-guide: empty states).
-        <div role="status" className="flex items-center gap-2 px-3 py-1 text-[12px]" style={secondaryText}>
-          <span className="min-w-0 truncate">{spacesEmptyMessage(query)}</span>
+        <div role="status" className="flex flex-wrap items-center gap-x-2 px-3 py-1 text-[12px]" style={secondaryText}>
+          {/* Wraps rather than cut, so the whole query stays readable in a narrow sidebar. */}
+          <span className="min-w-0 break-all">{spacesEmptyMessage(query)}</span>
           <Button variant="ghost" onClick={() => props.onSpacesQuery("")} className="shrink-0"
             style={{ height: 20, padding: "0 6px", fontSize: 12 }}>
             Clear filter
