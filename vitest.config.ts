@@ -160,6 +160,7 @@ export default defineConfig({
         "packages/kernel/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
         "packages/gateway/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
         "packages/platform/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+        "packages/hostd/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
         "desktop/src/renderer/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
       ],
       exclude: [
