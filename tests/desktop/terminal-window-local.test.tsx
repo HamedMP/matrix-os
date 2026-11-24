@@ -271,6 +271,14 @@ describe("This Computer terminals", () => {
     expect(screen.queryByTestId("terminal-view")).toBeNull();
   });
 
+  // ENG-521 canary report: a failed start says what kind of failure it was, as the main process classified it.
+  it("says why a terminal on this device did not start", async () => {
+    installOperator({ "local-terminal:watch": watching([fact("t1", "zsh")]), "local-terminal:create": () => ({ status: "unavailable", reason: "timeout" }) });
+    render(<TerminalWindowApp />);
+    await startShell();
+    expect(await screen.findByText("Couldn't start a terminal: this device's terminal service did not answer. Try again.")).toBeTruthy();
+  });
+
   it("tells a build without local terminals apart from local terminals that failed to start", async () => {
     let listing: unknown = { status: "not-installed" };
     installOperator({ "local-terminal:watch": () => listing });
