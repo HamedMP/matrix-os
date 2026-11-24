@@ -123,7 +123,14 @@ export type {
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
-export { pendingCanonicalTurnMessage, withPendingCanonicalTurn, type PendingCanonicalTurn } from "./canonical-chat-pending-turn.js";
+export { pendingCanonicalTurnMessage, pendingCanonicalTurnRows, withPendingCanonicalTurn, type PendingCanonicalTurn } from "./canonical-chat-pending-turn.js";
+export {
+  canonicalTranscriptWithPendingSend,
+  nextPendingCanonicalSend,
+  optimisticCanonicalSendParts,
+  type PendingCanonicalSend,
+  type PendingCanonicalSendTranscript,
+} from "./canonical-chat-pending-send.js";
 export { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "./canonical-chat-admission.js";
 export { recoverCanonicalChatAdmission, type CanonicalChatClientAdmission } from "./canonical-chat-admission-recovery.js";
 export { useCanonicalChatStopRecovery } from "./use-canonical-chat-stop-recovery.js";
