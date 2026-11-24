@@ -33,10 +33,10 @@ describe('metal runtime thin-pool thresholds', () => {
   it('passes configured thresholds to the provisioner and leaves defaults otherwise', async () => {
     const configured = createConfiguredMetalRuntime({
       db, env: { ...env, METAL_POOL_MAX_DATA_PERCENT: '70', METAL_POOL_MAX_METADATA_PERCENT: '60' },
-      customerVps: { config: createTestConfig() }, backgroundWorkersEnabled: false, log: () => {},
+      customerVps: { config: createTestConfig(), cloudInitTemplate: '#cloud-config\n' }, backgroundWorkersEnabled: false, log: () => {},
     });
     const defaults = createConfiguredMetalRuntime({
-      db, env, customerVps: { config: createTestConfig() }, backgroundWorkersEnabled: false, log: () => {},
+      db, env, customerVps: { config: createTestConfig(), cloudInitTemplate: '#cloud-config\n' }, backgroundWorkersEnabled: false, log: () => {},
     });
 
     expect(captured.deps[0]).toMatchObject({ poolMaxDataPercent: 70, poolMaxMetadataPercent: 60 });

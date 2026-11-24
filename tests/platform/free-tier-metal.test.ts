@@ -274,6 +274,23 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(hostd.createVm).toHaveBeenCalledTimes(1);
   });
 
+  it('a repeat request after the registration window closed fails the stuck build and provisions afresh', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    const { routes } = routesFor();
+    const first = await (await request(routes)).json() as { machineId: string };
+
+    // The guest never registered and no maintenance worker ran.
+    clock = new Date('2026-11-21T14:00:00.000Z');
+    const second = await request(routes);
+
+    expect(second.status).toBe(202);
+    const body = await second.json() as { machineId: string };
+    expect(body.machineId).not.toBe(first.machineId);
+    expect(hostd.createVm).toHaveBeenCalledTimes(2);
+    expect((await db.executor.selectFrom('user_machines').select('status').where('machine_id', '=', first.machineId).executeTakeFirst())?.status)
+      .not.toBe('provisioning');
+  });
+
   it('concurrent first requests create one runtime and one VM', async () => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
     const { routes } = routesFor();

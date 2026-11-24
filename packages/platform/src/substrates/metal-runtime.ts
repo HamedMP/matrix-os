@@ -116,6 +116,12 @@ export function createConfiguredMetalRuntime(input: {
     log('metal_provisioning_unconfigured', { missing: 'customer_vps_config' });
     return undefined;
   }
+  const cloudInitTemplate = input.customerVps.cloudInitTemplate;
+  if (!cloudInitTemplate?.trim()) {
+    // Only the real template restores the owner home and starts registration on a golden clone.
+    log('metal_provisioning_unconfigured', { missing: 'cloud_init_template' });
+    return undefined;
+  }
   const dispatcher = createHostdDispatcher(metal.caPem);
   const hosts = createMetalHostsRepository(input.db.kysely);
   const clientFor = (host: Parameters<typeof createHostdClient>[0]) => createHostdClient(host, metal.apiToken, { dispatcher });
@@ -130,7 +136,7 @@ export function createConfiguredMetalRuntime(input: {
     config: input.customerVps.config,
     publicAppOrigin: appOrigin(input.env),
     drainMachineDeletions: (machineId, signal) => drainer.drainMachine(machineId, signal),
-    ...(input.customerVps.cloudInitTemplate ? { cloudInitTemplate: input.customerVps.cloudInitTemplate } : {}),
+    cloudInitTemplate,
   });
   const worker = input.backgroundWorkersEnabled
     ? startMetalMaintenanceWorker({

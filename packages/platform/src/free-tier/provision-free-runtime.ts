@@ -139,6 +139,16 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
     }, deps.env);
   }
 
+  async function reconcileExpired(clerkUserId: string): Promise<void> {
+    if (!deps.metal.failExpiredProvisioning) return;
+    try {
+      await deps.metal.failExpiredProvisioning(clerkUserId, FREE_RUNTIME_SLOT);
+    } catch (error: unknown) {
+      // Admission still answers from current state; the maintenance pass or the next request retries.
+      console.error('[free-tier] expired build reconciliation failed:', error instanceof Error ? error.name : 'unknown');
+    }
+  }
+
   async function admitOrRefuse(clerkUserId: string): Promise<Admission> {
     try {
       return await admit(clerkUserId);
@@ -187,6 +197,10 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
     },
 
     async provision(input: { clerkUserId: string; handle: string }): Promise<FreeProvisionOutcome> {
+      // Outside the admission transaction: a build whose registration window
+      // closed is failed first, so a repeat request retries it instead of
+      // returning a runtime that can never register (no maintenance worker needed).
+      await reconcileExpired(input.clerkUserId);
       const admission = await admitOrRefuse(input.clerkUserId);
       if (admission.kind !== 'admitted') return admission;
       const result = await deps.metal.provision({

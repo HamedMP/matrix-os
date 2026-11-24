@@ -116,7 +116,7 @@ describe('metal runtime composition', () => {
     METAL_HOSTD_INGRESS_TOKEN: 'b'.repeat(40),
     METAL_GOLDEN_VERSION: 'golden-2026.11.20-1',
   };
-  const customerVps = { config: createTestConfig() };
+  const customerVps = { config: createTestConfig(), cloudInitTemplate: '#cloud-config\n' };
 
   it('is not composed while metal is disabled or incomplete', () => {
     const quiet = { log: () => {} };
@@ -135,6 +135,15 @@ describe('metal runtime composition', () => {
       db, env: metalEnv, customerVps: undefined, backgroundWorkersEnabled: true, log: (event) => { logs.push(event); },
     })).toBeUndefined();
     expect(logs).toEqual(['metal_provisioning_unconfigured']);
+  });
+
+  it('is not composed without the cloud-init template a golden clone needs to finish first boot', () => {
+    const logs: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    expect(createConfiguredMetalRuntime({
+      db, env: metalEnv, customerVps: { config: createTestConfig() }, backgroundWorkersEnabled: true,
+      log: (event, fields) => { logs.push({ event, fields }); },
+    })).toBeUndefined();
+    expect(logs).toEqual([{ event: 'metal_provisioning_unconfigured', fields: { missing: 'cloud_init_template' } }]);
   });
 
   it('stop clears the maintenance timer and shutdown waits for the pass in flight', async () => {

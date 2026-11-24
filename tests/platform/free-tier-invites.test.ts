@@ -11,6 +11,7 @@ import {
   removeFreeTierInvite,
 } from '../../packages/platform/src/free-tier/invites.js';
 import { loadFreeTierConfig } from '../../packages/platform/src/free-tier/config.js';
+import { eraseOwnerPlatformData } from '../../packages/platform/src/account-deletion/cleanup-data.js';
 import { createApp as createPlatformApp } from '../../packages/platform/src/main.js';
 import { shutdownPlatformApp } from '../../packages/platform/src/shutdown-platform-app.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
@@ -92,6 +93,17 @@ describe('free tier invite repository', () => {
     expect(await removeFreeTierInvite(db, OWNER)).toBe('not_found');
     expect(await removeFreeTierInvite(db, 'user_invited2')).toBe('consumed');
     expect(await getFreeTierInvite(db, 'user_invited2')).toBeDefined();
+  });
+
+  it('account erasure removes the owner\'s invite, consumed or not, and keeps other owners\' invites', async () => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    await redeemFreeTierInvite(db, OWNER);
+    await addFreeTierInvite(db, { clerkUserId: 'user_invited2', invitedBy: 'ops' });
+
+    await eraseOwnerPlatformData(db, OWNER);
+
+    expect(await getFreeTierInvite(db, OWNER)).toBeUndefined();
+    expect(await getFreeTierInvite(db, 'user_invited2')).toMatchObject({ consumedAt: null });
   });
 
   it('rejects malformed identifiers in the table itself', async () => {
