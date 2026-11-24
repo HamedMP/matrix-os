@@ -139,19 +139,27 @@ const SSH_STATE_COLOR: Record<LocalMachine["state"], string> = {
 };
 
 /** What to do about an ssh machine the core cannot use now: log in or check its key in a terminal, or dial again. */
+/** The line under a machine about its core: why the last update did not run, or how old it is. */
+function coreStatusText(state: { unsupported: boolean; changed: boolean; failed: boolean; version?: string }): string {
+  if (state.unsupported) return "Not updated: the app can't update the core on this machine (Windows). Update it there.";
+  if (state.changed) return "Not updated: this name now belongs to a different machine. Check it, then try again.";
+  if (state.failed) return "Couldn't update its core.";
+  return `Its core is ${state.version}; this app has ${LOCAL_TERMINAL_VERSION}.`;
+}
+
 /** The machine's core is older than the app's: offer to bring it up to date (spec 2706 layer 8). */
 function MachineCoreStatus({ machine, view }: { machine: LocalMachine; view: TerminalWindowView }) {
   const busy = view.ssh.coreBusy.includes(machine.name);
   const failed = view.ssh.coreFailed.includes(machine.name);
   const changed = view.ssh.coreChanged.includes(machine.name);
+  const unsupported = view.ssh.coreUnsupported.includes(machine.name);
   const older = machine.version ? (compareCoreVersions(machine.version, LOCAL_TERMINAL_VERSION) ?? 0) < 0 : false;
   if (!busy && !failed && !older) return null;
   return (
     <div role="status" className="flex flex-wrap items-center gap-1.5 px-3 pb-1.5 pl-9 text-[12px]">
       {busy ? <span>Updating its core…</span> : (
         <>
-          <span>{changed ? "Not updated: this name now belongs to a different machine. Check it, then try again."
-            : failed ? "Couldn't update its core." : `Its core is ${machine.version}; this app has ${LOCAL_TERMINAL_VERSION}.`}</span>
+          <span>{coreStatusText({ unsupported, changed, failed, version: machine.version })}</span>
           <Button type="button" variant="secondary" size="sm" onClick={() => { void view.ssh.update(machine); }}>
             {failed ? "Try again" : "Update core"}
           </Button>

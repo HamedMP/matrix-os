@@ -160,7 +160,7 @@ const PutFileNameSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9._ -]+$/)
 
 const MachineCoreResponse = z.union([
   z.strictObject({ ok: z.literal(true) }),
-  z.strictObject({ ok: z.literal(false), reason: z.enum(["failed", "busy", "unavailable", "changed"]) }),
+  z.strictObject({ ok: z.literal(false), reason: z.enum(["failed", "busy", "unavailable", "changed", "unsupported"]) }),
 ]);
 
 export const LOCAL_TERMINAL_INVOKE = {

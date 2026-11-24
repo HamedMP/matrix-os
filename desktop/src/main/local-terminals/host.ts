@@ -8,7 +8,7 @@ import { SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type Local
 import { installVia, sshLoginArgv, sshProbeArgv, sshVia } from "./ssh-command";
 import { createMachineSshStore, machineSshMatches } from "./machine-ssh-store";
 import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
-import { createMachineCore, probeLiveCoreId, type MachineCoreResult, type MachineCoreRunner } from "./machine-core";
+import { createMachineCore, MachineCoreUnsupportedError, probeLiveCoreId, type MachineCoreResult, type MachineCoreRunner } from "./machine-core";
 import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
@@ -473,6 +473,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
           try {
             live = await probeCoreId(sshProbeArgv(current.target, current.ssh, current.ssh?.tailscaleSsh ? findTailscale() : null));
           } catch (error: unknown) {
+            if (error instanceof MachineCoreUnsupportedError) return { ok: false, reason: "unsupported" };
             console.warn("[local-terminals] live core id unreadable before update:", describeError(error));
             return { ok: false, reason: "failed" };
           }

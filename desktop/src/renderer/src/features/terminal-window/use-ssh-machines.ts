@@ -67,6 +67,8 @@ export function useSshMachines() {
   const [coreBusy, setCoreBusy] = useState<string[]>([]);
   const [coreFailed, setCoreFailed] = useState<string[]>([]);
   const [coreChanged, setCoreChanged] = useState<string[]>([]);
+  // Machines whose core the app cannot update (a Windows target), from their last attempt.
+  const [coreUnsupported, setCoreUnsupported] = useState<string[]>([]);
 
   const remove = useCallback(async (name: string): Promise<boolean> => {
     let removed = false;
@@ -126,10 +128,12 @@ export function useSshMachines() {
     setCoreBusy((current) => [...current.filter((entry) => entry !== name), name]);
     let ok = false;
     let changed = false;
+    let unsupported = false;
     try {
       const result = await job();
       ok = result.ok;
       changed = result.reason === "changed";
+      unsupported = result.reason === "unsupported";
     } catch (error: unknown) {
       console.warn("[terminal-window] machine core failed:", error instanceof Error ? error.name : "UnknownError");
     }
@@ -138,6 +142,7 @@ export function useSshMachines() {
     setCoreFailed((current) => (ok ? current.filter((entry) => entry !== name) : [...current.filter((entry) => entry !== name), name]));
     // The name now belongs to another machine than the one picked: nothing ran, and the list shows the new one.
     setCoreChanged((current) => (changed ? [...current.filter((entry) => entry !== name), name] : current.filter((entry) => entry !== name)));
+    setCoreUnsupported((current) => (unsupported ? [...current.filter((entry) => entry !== name), name] : current.filter((entry) => entry !== name)));
     await refresh();
     return ok;
   }, [refresh]);
@@ -151,5 +156,5 @@ export function useSshMachines() {
     ...(machine.coreId ? { coreId: machine.coreId } : {}), ...(machine.ssh ? { ssh: machine.ssh } : {}),
   })), [coreJob]);
 
-  return { state, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers, install, update, coreBusy, coreFailed, coreChanged };
+  return { state, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers, install, update, coreBusy, coreFailed, coreChanged, coreUnsupported };
 }

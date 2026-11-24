@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeCore } from "./fixtures/fake-herdr-core";
 import { createLocalTerminalHost, type LocalTerminalHostOptions } from "@desktop/main/local-terminals/host";
+import { MachineCoreUnsupportedError } from "@desktop/main/local-terminals/machine-core";
 import { LOCAL_TERMINAL_VERSION } from "@desktop/shared/local-terminals";
 
 // Spec 2706 layer 7: machines added over ssh keep how they are reached, and
@@ -193,6 +194,11 @@ describe("added machines over ssh", () => {
     // A probe that fails refuses too: the update is never sent blind.
     probeCoreId.mockRejectedValueOnce(new Error("timed out"));
     expect(await host.updateMachine(picked)).toEqual({ ok: false, reason: "failed" });
+    expect(runCoreCli).not.toHaveBeenCalled();
+
+    // A Windows target is refused with its own reason, and nothing is sent.
+    probeCoreId.mockRejectedValueOnce(new MachineCoreUnsupportedError());
+    expect(await host.updateMachine(picked)).toEqual({ ok: false, reason: "unsupported" });
     expect(runCoreCli).not.toHaveBeenCalled();
 
     live = "a".repeat(32);

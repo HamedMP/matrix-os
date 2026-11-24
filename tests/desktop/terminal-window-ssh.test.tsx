@@ -25,7 +25,7 @@ const fact = (id: string, title: string) => ({ id, title, status: null, statusAt
 
 function installOperator(options: {
   peers?: unknown;
-  machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean; failUpdate?: string[]; changedUpdate?: string[];
+  machines?: Machine[]; add?: (payload: { target: string; name?: string }) => unknown; facts?: unknown[]; refuseRemove?: boolean; failList?: () => boolean; refuseLogin?: boolean; failUpdate?: string[]; changedUpdate?: string[]; unsupportedUpdate?: string[];
   holdInstall?: Promise<void>;
 } = {}) {
   let machines = options.machines ?? [];
@@ -55,6 +55,7 @@ function installOperator(options: {
       case "local-terminal:machine-update": {
         const { name } = payload as { name: string };
         if (options.changedUpdate?.includes(name)) return { ok: false, reason: "changed" };
+        if (options.unsupportedUpdate?.includes(name)) return { ok: false, reason: "unsupported" };
         return options.failUpdate?.includes(name) ? { ok: false, reason: "failed" } : { ok: true };
       }
       case "local-terminal:ssh-login": return options.refuseLogin ? { status: "unavailable" } : { status: "ready", id: "t9" };
@@ -298,6 +299,15 @@ describe("Terminal window ssh machines", () => {
     const machines = await screen.findByRole("list", { name: "Machines" });
     fireEvent.click(await within(machines).findByRole("button", { name: "Update core" }));
     expect(await within(machines).findByText("Not updated: this name now belongs to a different machine. Check it, then try again.")).toBeTruthy();
+  });
+
+  // Nima, #3579/#3662: a Windows target is refused with a clear reason, not a generic failure.
+  it("says when a machine's core cannot be updated from here", async () => {
+    installOperator({ unsupportedUpdate: ["win"], machines: [{ name: "win", target: "me@winbox", state: "connected", temporary: false, version: "0.1.14" } as never] });
+    render(<TerminalWindowApp />);
+    const machines = await screen.findByRole("list", { name: "Machines" });
+    fireEvent.click(await within(machines).findByRole("button", { name: "Update core" }));
+    expect(await within(machines).findByText("Not updated: the app can't update the core on this machine (Windows). Update it there.")).toBeTruthy();
   });
 
   it("shows a machine's core version and updates an older one", async () => {
