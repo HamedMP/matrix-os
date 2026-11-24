@@ -13,13 +13,17 @@ import { createBotMemoryRepository } from "../../../packages/gateway/src/bots/re
 import { createBotTasksRepository } from "../../../packages/gateway/src/bots/repositories/tasks.js";
 import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { buildBotSystemPrompt } from "../../../packages/gateway/src/bots/system-prompt.js";
+import { createBotSelectedChatReader } from "../../../packages/gateway/src/chat/bot-selected-chat.js";
+import { bootstrapChatSharing } from "../../../packages/gateway/src/chat/sharing.js";
+import { runCommandFromSpec } from "../../../packages/bot-runtime/src/worker.js";
+import { ownerHttpInputProvenance } from "../../../packages/gateway/src/chat/owner-http-input.js";
 import { ChatAgentContext } from "../../../packages/gateway/src/chat/agent-context.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import { jsonb } from "../../../packages/gateway/src/chat/records.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
 import { BOT, NOW, OWNER, createBotStateDatabase, createRealBotStateDatabase, insertChat } from "./bot-state-support.js";
 
-it("grounds an onboarding brief in granted work accounts and confirmed memory while excluding a second Chat", async () => {
+it("grounds an onboarding brief in granted work accounts and confirmed memory and a prior Chat selected for this turn only", async () => {
   const fixture = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase());
   onTestFinished(fixture.destroy);
   const { db } = fixture;
@@ -45,16 +49,28 @@ it("grounds an onboarding brief in granted work accounts and confirmed memory wh
     recipeRef: { recipeId: recipe.recipeId, version: recipe.version }, selection, archived: false,
     revision: 1, createdAt: NOW, updatedAt: NOW };
   const agents = { get: async () => agent };
-  const admission = new ChatAgentContext({ repository, agents, enabled: () => true, botChats: {
+  await bootstrapChatSharing(repository.kysely);
+  const selectedChats = createBotSelectedChatReader(repository);
+  const admission = new ChatAgentContext({ repository, selectedChats, agents, enabled: () => true, botChats: {
     directBot: async (actor, id) => (await bindings.forChat({ ownerId: actor.ownerId, chatId: id }))[0]?.botId ?? null,
   } });
   const request = { selection, clientRequestId: "req_onboarding", baseRevision: 0, interactionMode: "default" as const,
     permissionMode: "supervised" as const, parts: [{ type: "text" as const, text: "Prepare my first-week brief." }] };
-  await expect(admission.prepare(owner, chatId, { ...request, parts: [...request.parts,
-    { type: "resource_reference", resource: { kind: "chat", id: prior, label: "Earlier decisions" } },
-  ] })).rejects.toMatchObject({ code: "context_unavailable" });
+  const withPrior = { ...request, parts: [...request.parts,
+    { type: "resource_reference" as const, resource: { kind: "chat" as const, id: prior, label: "Earlier decisions" } },
+  ] };
+  // A continuation can carry the same structured request without the owner's HTTP selection.
+  await expect(admission.prepare(owner, chatId, withPrior)).rejects.toMatchObject({ code: "context_unavailable" });
+  const unverified = ownerHttpInputProvenance({ userId: OWNER, source: "configured-container" }, owner);
+  await expect(admission.prepare(owner, chatId, withPrior, unverified)).rejects.toMatchObject({ code: "context_unavailable" });
+  const ownerInput = ownerHttpInputProvenance({ userId: OWNER, source: "jwt" }, owner);
+  const prepared = await admission.prepare(owner, chatId, withPrior, ownerInput);
+  expect(prepared.context?.botChatSources?.sources.map(source => source.chatId)).toEqual([prior]);
   await expect(admission.prepare(owner, chatId, request)).resolves.toHaveProperty("selection");
 
+  const selectionProof = prepared.context!.botChatSources!;
+  expect(JSON.stringify(selectionProof)).not.toContain(priorText);
+  expect((await admission.prepare(owner, chatId, request)).context?.botChatSources).toBeUndefined();
   const accounts = [
     { id: "conn_work_mail", service: "gmail", account_label: "Work inbox" },
     { id: "conn_work_calendar", service: "google_calendar", account_label: "Work calendar" },
@@ -103,19 +119,24 @@ it("grounds an onboarding brief in granted work accounts and confirmed memory wh
     fauxAssistantMessage(fauxToolCall("integration_call", query("google_calendar", accounts[1].id, "list_events"), { id: "call_calendar" }), { stopReason: "toolUse" }),
     context => {
       contexts.push(JSON.stringify(context.messages));
+      const reference = context.messages.some(message => message.role === "user" && JSON.stringify(message.content).includes(priorText));
       const checklist = JSON.stringify(context.messages.find(message => message.role === "system")).includes(preference);
       const facts = context.messages.flatMap(message => message.role === "toolResult"
         ? message.content.flatMap(part => part.type === "text" ? [JSON.parse(part.text).fact as string] : []) : []);
-      return fauxAssistantMessage(fauxText(facts.map(fact => checklist ? `- ${fact}` : fact).join("\n")));
+      return fauxAssistantMessage(fauxText([...facts, ...(reference ? [priorText] : [])].map(fact => checklist ? `- ${fact}` : fact).join("\n")));
     },
   ]);
   const output: string[] = [];
   const result = await runBotTurn({ route: { provider: provider.provider, model: provider.getModel() }, bridgeOrigin: "http://127.0.0.1:1",
-    command: { version: 1, kind: "bot.run", runId: binding.runId, route: binding.route, capabilities: ["integration.call"],
+    command: runCommandFromSpec(binding.runId, { selectedChatReference: await selectedChats.read(owner, chatId, selectionProof), route: binding.route, capabilities: ["integration.call"],
       limits: { maxToolActions: 4 }, turn: { kind: "prompt", text: request.parts[0].text },
-      systemPrompt: buildBotSystemPrompt({ botName: recipe.name, instructions: recipe.instructions, recipe, now: now(), memory }) },
+      systemPrompt: buildBotSystemPrompt({ botName: recipe.name, instructions: recipe.instructions, recipe, now: now(), memory }) }, []),
     broker: { loadSession: async () => ({ revision: 0, needsRecompaction: false, messages: [] }),
-      saveSession: async () => ({ revision: 1 }), event: async ({ event }) => { if (event.type === "assistant_delta") output.push(event.text); },
+      saveSession: async snapshot => {
+        expect(JSON.stringify(snapshot.messages)).not.toContain(JSON.stringify(selectionProof.sources));
+        expect(JSON.stringify(snapshot.messages.filter(message => message.role === "user"))).not.toContain(priorText);
+        return { revision: 1 };
+      }, event: async ({ event }) => { if (event.type === "assistant_delta") output.push(event.text); },
       tool: async (call, signal) => {
         if (call.capability !== "integration.call") throw new Error("Unexpected onboarding tool");
         return integrations.call(binding, call.args, signal);
@@ -123,8 +144,8 @@ it("grounds an onboarding brief in granted work accounts and confirmed memory wh
   });
   expect(result.status).toBe("completed");
   expect(reads).toEqual([accounts[0].id, accounts[1].id]);
-  expect(output.join("")).toBe(`- ${mail}\n- ${calendar}`);
+  expect(output.join("")).toBe(`- ${mail}\n- ${calendar}\n- ${priorText}`);
   expect(contexts).toHaveLength(1);
-  for (const included of [mail, calendar, preference]) expect(contexts[0]).toContain(included);
-  for (const excluded of [priorText, unconfirmed]) expect(contexts[0]).not.toContain(excluded);
+  for (const included of [mail, calendar, preference, priorText]) expect(contexts[0]).toContain(included);
+  expect(contexts[0]).not.toContain(unconfirmed);
 });

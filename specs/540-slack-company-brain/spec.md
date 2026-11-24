@@ -17,6 +17,34 @@ The PR-preview personal context path is a separate audience from company-channel
 
 Rules cannot enroll another source, widen Slack scopes, change payer/model authority or publish back to Slack. Ordinary messages remain passive unless an active owner policy matches. Automatic output is private Matrix text with suggested to-dos, one inference and zero tools; it does not execute the to-dos. Paused/deleted policy cannot fall back to the legacy environment mention pilot. Resumption does not backfill history. The bounded implementation and qualification gates are specified in [chat-defined-summary-rules-plan.md](chat-defined-summary-rules-plan.md) and the executable Slack context contract. This local implementation is not evidence of live activation, CI qualification or release availability.
 
+## Agent workflow gaps and delivery order (ENG-85)
+
+The support/education scenario exercises scratch and Recipe setup, explicit Create and Save, and recovery in the same private Chat. The onboarding scenario combines approved work mail and calendar, a selected prior Chat and confirmed Memory in a first-week brief. The [comparison and validation record](agent-workflow-gap.md) distinguishes public competitor evidence, Matrix implementation, automated regression and live acceptance.
+
+### P1 for first use
+
+| User path | Completion check |
+| --- | --- |
+| Open the owner-only Preview | An ordinary browser loads the complete shell at its machine-qualified URL, including lazy JavaScript and CSS. The test client uses the URLs emitted by the build. Exercise an Agent entry after a fresh load without substituting asset paths. |
+| Focus the Agent setup conversation | The active turn shows one short model-generated question and a few short suggested replies. A custom answer is always available. After a proposal, the summary highlights just what changed in that turn. Expand full instructions, Skills, sources and access when needed. Nothing persists until the user chooses Create or Save. Verify both a new Agent and a one-field edit. |
+| Include a specific prior Chat in an onboarding brief | An owner explicitly chooses a personal source for a turn in their private Agent Chat. Eligible context reaches the brief alongside granted mail/calendar and confirmed Memory. Omitting or removing the selection supplies no prior Chat. Foreign, shared or inaccessible sources supply no content. The Agent gains no standing access. |
+| Deliver the English Slack summary | On the original binding, observe an authorized natural channel message, its automatic job and Run, and a single result in the originating private Chat. Check duplicate delivery, pause/resume without backfill, and zero Slack posts. First use read-only checks to match the exact original instance, Agent, direct Chat and callback route. The runtime owner must confirm recovery of the model ledger and callback, with an active authorized spending window. Preserve the event, job, Run and private result receipts and a recording of the natural delivery. |
+
+The four real setup Runs recorded at `a947d2c3` are the historical baseline. For this iteration, record the existing owner-only Preview at its ordinary entry URL using its installed candidate and zero model calls. Label any local scripted-model UX recording separately.
+
+Existing connectors, scheduled routines, approval interactions, stop controls and task status have separate acceptance work. Use a scoped account to verify read access and revocation; observe a scheduled Run, approve or deny a requested action, stop pending work, and follow its final status in Chat. Keep the source, permission, Run and resulting delivery distinguishable in the evidence. Failed live qualification is recorded against the specific path.
+
+### P2 follow-up commitments
+
+These items remain in the ENG-85 product backlog after first-use qualification. Each has an observable completion check for the eventual delivery.
+
+| Follow-up | User outcome and acceptance |
+| --- | --- |
+| Broader onboarding context | An owner can opt a defined set of prior Chats or work sources into future briefs, inspect what contributed, and remove a source. A later brief excludes the removed source and evidence from an unapproved mailbox. Reuse the source inventory and consent controls from Project Agent Context where applicable. |
+| Shared team Agents and ownership changes | A team owner can define who may use a shared Agent and which sources the team owns. Exercise joining, leaving, revocation and owner departure with two users. A colleague never inherits the creator’s private inbox, Chat, Memory or personal grants. |
+| Outbound actions and replies | An owner explicitly selects a destination and allowed action and can withhold or revoke consent. Verify an authorized delivery once, duplicate suppression on retry, and zero deliveries after denial or revocation. Owner-private Slack summaries keep their original private destination. |
+| Activity and recovery across tasks | From one view, the owner can find a pending, blocked, failed or completed task, inspect its existing job/Run receipt, and take an available recovery action. A retry cannot repeat a committed result. Use the existing usage/speed interface wherever metrics are displayed. |
+
 ## Direct-user agent parity with WhatsApp Cloud API
 
 The personal Slack DM and the Direct WhatsApp access flow in spec 546 share the same user promise: a verified person can message Matrix from a channel they already use, get a private agent response in that same channel, and continue their private Matrix-owned conversation without entering a company conversation. They should share acceptance scenarios and failure semantics, while retaining channel-specific identity proof and the currently qualified agent runtime.
