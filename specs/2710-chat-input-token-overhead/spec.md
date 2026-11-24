@@ -15,3 +15,7 @@ Codex and Claude Chat should spend less input context on unrelated App and Brows
 ## Validation
 
 Compare native provider and full Chat input on the same Dev computer with a fixed model, effort, tier, and matched synthetic prompts. Record the exact installed and running commit, per-turn gross and cached input, and completion status. Exercise App Builder skill discovery, a multi-turn Chat, and representative tool and approval flows. Track any workflow coverage gaps alongside test results.
+
+## Public documentation
+
+Submit a separate [documentation PR in FinnaAI/matrix-os-site](https://github.com/FinnaAI/matrix-os-site) under `content/docs/`. Explain how native Chat uses App Builder guidance on demand and how connected tools remain scoped to the run. Link both PRs to ENG-567.
