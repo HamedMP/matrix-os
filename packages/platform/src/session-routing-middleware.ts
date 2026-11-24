@@ -74,6 +74,7 @@ import {
   CODE_SESSION_EXPIRES_IN_SEC,
   NATIVE_APP_SESSION_PROXY_HEADER,
   buildCodeSessionCookie,
+  readCookie,
 } from './session-cookies.js';
 import { HANDLE_PATTERN, describeError } from './platform-route-utils.js';
 import {
@@ -117,6 +118,10 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
+import {
+  PLATFORM_SHELL_DOCUMENT_COOKIE, PLATFORM_SHELL_DOCUMENT_COOKIE_CLEAR, PLATFORM_SHELL_DOCUMENT_COOKIE_SET,
+  isHtmlDocumentResponse, isPlatformShellServerAction,
+} from './app-domain-shell-routing.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
@@ -308,6 +313,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         signal: AbortSignal.timeout(authShellProxyTimeoutMs),
       });
       const responseHeaders = sanitizeProxyResponseHeaders(response.headers);
+      if (!proxyOpts.assetRequest && isHtmlDocumentResponse(c.req.method, response.headers)) {
+        responseHeaders.append('set-cookie', PLATFORM_SHELL_DOCUMENT_COOKIE_SET);
+      }
       if (!proxyOpts.preserveUpstreamCacheHeaders) {
         applyNoStoreResponseHeaders(responseHeaders);
       }
@@ -560,6 +568,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const authHeader = c.req.header('authorization');
     const cookieHeader = c.req.header('cookie');
     const path = c.req.path;
+    if (isAppDomain && isPlatformShellServerAction(c, cookieHeader)) {
+      return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
+    }
     const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
     const explicitVmRouteHasValidAppAssetToken = Boolean(
       explicitVmRoute &&
@@ -1029,6 +1040,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
+        if (isAppDomain && isHtmlDocumentResponse(c.req.method, upstream.headers)
+          && readCookie(cookieHeader, PLATFORM_SHELL_DOCUMENT_COOKIE) !== null) {
+          // The page is now the runtime's: its server actions belong to the runtime.
+          responseHeaders.append('set-cookie', PLATFORM_SHELL_DOCUMENT_COOKIE_CLEAR);
+        }
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
