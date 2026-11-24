@@ -22,14 +22,15 @@ import {
 } from "@matrix-os/contracts";
 import {
   SupportedAgentSchema,
+  type AgentLaunchInput,
   type AgentLaunchSandbox,
+  type AgentLaunchSpec,
   type SupportedAgent,
 } from "./agent-launcher.js";
 import { MAX_PROMPT_CONTENT_LENGTH, PromptContentSchema } from "./prompt-validation.js";
 import { PROJECT_SLUG_REGEX, type ProjectConfig, type WorkspaceError } from "./project-manager.js";
 import { atomicWriteJson, readJsonFile } from "./state-ops.js";
 import { createProjectRegistry } from "./project-registry.js";
-import type { createAgentLauncher } from "./agent-launcher.js";
 import type { createWorktreeManager, WorktreeRecord } from "./worktree-manager.js";
 import type { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { codexProviderEventPath } from "./coding-agents/codex-event-bridge.js";
@@ -85,7 +86,9 @@ type WorktreeManager = Pick<
   ReturnType<typeof createWorktreeManager>,
   "listWorktrees" | "acquireLease" | "releaseLease"
 >;
-type AgentLauncher = Pick<ReturnType<typeof createAgentLauncher>, "buildLaunch">;
+type AgentLauncher = {
+  buildLaunch(input: AgentLaunchInput): AgentLaunchSpec | Promise<AgentLaunchSpec>;
+};
 type TerminalRuntimeClient = Pick<
   TerminalRuntimeSocketClient,
   "ensureWorkspace" | "createTab" | "terminateTab" | "writeInput" | "listWorkspaces"
@@ -475,7 +478,7 @@ export function createAgentSessionManager(options: {
             readOnly: request.mode === "plan" || request.mode === "review" || request.sandbox?.mode === "read-only" }) ?? null
           : null;
         launch = request.kind === "agent"
-          ? options.agentLauncher.buildLaunch({
+          ? await options.agentLauncher.buildLaunch({
             agent: request.agent!,
             ...(nativeCodexSubscription ? { nativeCodexSubscription } : {}),
             cwd,

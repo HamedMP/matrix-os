@@ -4,7 +4,7 @@ import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
-import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
+import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.js";
 import { createBackgroundAgentRuntime } from "../../packages/gateway/src/background-agent-runtime.js";
 import type { ManagedLaunchChannel } from "../../packages/gateway/src/background-launch-channel.js";
 import type { ManagedShimFrame } from "../../packages/gateway/src/coding-agents/managed-launch-protocol.mjs";
@@ -28,7 +28,7 @@ it.each(["Gateway close", "wrapper protocol close", "wrapper output overflow"] a
     await writeFile(config, JSON.stringify({ records: join(home, "native.jsonl"), controlFile: join(home, "native-control"), holdAfterResult: true }));
     await writeFile(executable, `#!${process.execPath}\nif (process.argv.includes('--version')) console.log('codex 0.171.0'); else { process.env.TEST_ROUTINE_NATIVE_FILE = ${JSON.stringify(config)}; await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/codex-routine-process.mjs")).href)}); }\n`);
     await chmod(executable, 0o700);
-    const launch = buildAgentLaunch({ agent: "codex", cwd: home, prompt: "Named transport fixture", runtimeHome: home, codexExecutable: executable,
+    const launch = await createAgentLauncher({ codexExecutable: executable }).buildLaunch({ agent: "codex", cwd: home, prompt: "Named transport fixture", runtimeHome: home,
       providerEventPath: join(home, "events.jsonl"), codexRoutinePrivate: true, sandbox: { enabled: true, writableRoots: [home] } });
     let revoke!: () => void; const revoked = new Promise<void>(done => { revoke = done; });
     let receive!: (value: Extract<ManagedShimFrame, { type: "shim.call" }>) => void;

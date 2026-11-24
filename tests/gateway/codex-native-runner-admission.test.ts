@@ -66,7 +66,7 @@ for await (const line of createInterface({input:process.stdin})) {
 }
 `); await chmod(executable, 0o700);
   const launch = buildAgentLaunch({ agent: "codex", cwd: dir, runtimeHome: dir, prompt: "synthetic only", codexExecutable: executable,
-    sandbox: { enabled: true, mode: "workspace-write" }, providerEventPath: join(dir, "events.jsonl"), ...(resume ? { providerThreadId: "existing-thread" } : {}), nativeCodexSubscription: { codexHome: join(dir, ".codex"), expectedPrincipalFingerprint, expectedConsentRevision: 1, expectedConfigurationFingerprint: nativeCodexConfigurationFingerprint(row), expectedHarnessInstanceId: row.id, expectedAccountId: row.selectedAccountId } });
+    sandbox: { enabled: true, mode: "workspace-write" }, providerEventPath: join(dir, "events.jsonl"), ...(resume ? { providerThreadId: "existing-thread" } : {}), nativeCodexSubscription: { codexHome: join(dir, ".codex"), expectedPrincipalFingerprint, expectedConsentRevision: 1, expectedConfigurationFingerprint: nativeCodexConfigurationFingerprint(row), expectedHarnessInstanceId: row.id, expectedAccountId: row.selectedAccountId } }, CODEX_VERIFIED_VERSION);
   const child = spawn(launch.command, launch.args, { cwd: dir, env: launch.env, stdio: ["pipe", "pipe", "pipe"] });
   child.stdout.resume(); let errors = ""; child.stderr.on("data", chunk => { errors += chunk; });
   const code = await new Promise<number | null>((resolve, reject) => {
