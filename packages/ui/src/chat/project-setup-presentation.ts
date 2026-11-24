@@ -43,6 +43,7 @@ export function projectSetupDetailPresentation(
   detail: CanonicalChatDetailResponse,
   draft: ProjectSetupDraft | null,
 ): CanonicalChatDetailResponse {
+  if (!draft?.generation?.runId && !detail.runs.some(run => run.context?.projectSetupDraft)) return detail;
   const chatId = detail.record.chat.id;
   const runs = detail.runs.filter(run => run.chatId === chatId && run.context?.projectSetupDraft);
   const current = draft?.chatId === chatId ? draft : null;

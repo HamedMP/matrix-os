@@ -114,5 +114,9 @@ describe("durable setup generation presentation", () => {
     const detail = generationDetail();
     delete detail.runs[0]!.context;
     expect(projectSetupDetailPresentation(detail, null)).toBe(detail);
+    // Ordinary Web snapshots can carry just the transcript fields.
+    const { messages, turns, runs, activities } = detail;
+    const transcript = { messages, turns, runs, activities } as CanonicalChatDetailResponse;
+    expect(projectCanonicalTranscript(transcript).at(-1)?.content).toBe('{"guidance":"# Private draft"}');
   });
 });
