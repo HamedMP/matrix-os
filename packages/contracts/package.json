@@ -36,6 +36,7 @@
     "./runtime-lifecycle": "./src/runtime-lifecycle.ts",
     "./app-files": "./src/app-files.ts",
     "./office-open-with": "./src/office-open-with.ts",
+    "./office-documents": "./src/office-documents.ts",
     "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts",
     "./herdr-terminals": "./src/herdr-terminals.ts"
   },

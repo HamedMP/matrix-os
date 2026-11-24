@@ -1,5 +1,6 @@
 import { terminalAgentToolDefinitions, type TerminalAgentKernelTools } from "./tools/terminal-agents.js";
 import { ownerDataImportToolDefinitions } from "./tools/data-imports.js";
+import { documentToolDefinitions, type DocumentKernelTools } from "./tools/documents.js";
 import { z } from "zod/v4";
 import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -85,6 +86,7 @@ export async function createIpcServer(
   osViewTools?: OsViewAgentTools,
   ownerAudioTranscriber?: OwnerAudioTranscriber,
   terminalTools?: TerminalAgentKernelTools,
+  documentTools?: DocumentKernelTools,
 ) {
   const { createSdkMcpServer, tool } = await import("@anthropic-ai/claude-agent-sdk");
   const transcribeOwnerAudio = homePath && ownerAudioTranscriber
@@ -97,6 +99,9 @@ export async function createIpcServer(
         definition.name, definition.description, definition.schema.shape, definition.handler,
       )),
       ...(terminalTools ? terminalAgentToolDefinitions(terminalTools).map(definition => tool(
+        definition.name, definition.description, definition.schema.shape, definition.handler,
+      )) : []),
+      ...(documentTools ? (await documentToolDefinitions(documentTools)).map(definition => tool(
         definition.name, definition.description, definition.schema.shape, definition.handler,
       )) : []),
       tool(

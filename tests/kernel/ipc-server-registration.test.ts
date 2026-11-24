@@ -47,3 +47,26 @@ describe("IPC owner data import registration", () => {
     expect(config.tools.map(tool => tool.name)).not.toContain("refresh_imported_data");
   });
 });
+
+describe("IPC document tool registration", () => {
+  afterEach(() => vi.clearAllMocks());
+  const names = (): string[] =>
+    (sdk.createSdkMcpServer.mock.calls[0]?.[0] as { tools: Array<{ name: string }> }).tools.map(tool => tool.name);
+
+  // Fault detected: the chat agent is offered document tools with no document service behind them.
+  it("omits document tools when the gateway injects no document service", async () => {
+    await createIpcServer({} as MatrixDB, "/home/matrix/home");
+    expect(names().filter(name => name.startsWith("document_") || name.startsWith("sheet_"))).toEqual([]);
+  });
+
+  // Fault detected: an injected document service never reaches the chat agent.
+  it("registers every document and sheet tool when the document service is injected", async () => {
+    await createIpcServer({} as MatrixDB, "/home/matrix/home", undefined, undefined, undefined, { request: vi.fn() });
+    expect(names()).toEqual(expect.arrayContaining([
+      "document_describe", "document_read_text", "document_propose_edits", "document_list_revisions",
+      "document_accept_revisions", "document_reject_revisions", "document_add_comment", "document_compare",
+      "document_create", "sheet_describe", "sheet_read_range", "sheet_propose_edits", "sheet_list_changes",
+      "sheet_accept_changes", "sheet_reject_changes",
+    ]));
+  });
+});

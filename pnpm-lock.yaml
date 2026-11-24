@@ -778,6 +778,9 @@ importers:
       '@matrix-os/observability':
         specifier: workspace:*
         version: link:../observability
+      '@matrix-os/office':
+        specifier: workspace:*
+        version: link:../office
       '@matrix-os/scope-runtime':
         specifier: workspace:*
         version: link:../scope-runtime

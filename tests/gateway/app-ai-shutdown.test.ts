@@ -78,6 +78,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     homeMirrorLifecycle: { mirror: null, startup: null }, syncR2: null,
     canonicalChatEventStream: null, chatRepository: service("Chat database"), closeCanonicalChatEventLifecycle: vi.fn(),
     canvasRepository: service("canvas database"), socialRoutes: service("social"), appDb: service("app database"),
+    officeDocuments: service("office documents"),
     platformDb: service("platform database"), posthogErrorTracker: service("telemetry"), server: service("HTTP"),
   };
   // Exercise the actual production teardown sequence without booting a gateway.
@@ -91,7 +92,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   expect(body).not.toBe("");
   const script = ts.transpileModule(`const close = async () => ${body};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const close = new Function(...Object.keys(dependencies), `${script};return close;`)(...Object.values(dependencies)) as () => Promise<void>;
-  return { close, calls, logBestEffortFailure, terminalLaunchRuntime, nativeClaudeChatRuntime };
+  return { close, calls, logBestEffortFailure, terminalLaunchRuntime, nativeClaudeChatRuntime, officeDocuments: dependencies.officeDocuments };
 }
 
 it("continues the actual gateway shutdown after app AI cleanup rejects", async () => {
@@ -119,6 +120,17 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   expect(shutdown.calls.indexOf("push.dispose")).toBeLessThan(shutdown.calls.indexOf("app database.destroy"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
   expect(shutdown.calls.slice(0, 3)).toEqual(["native Claude.beginShutdown", "managed feature restart.close", "GitHub developer setup.close"]);
+});
+
+it("logs an office documents close failure and still finishes gateway teardown", async () => {
+  const failure = new Error("office sessions did not drain");
+  const shutdown = await shutdownFixture({ close: vi.fn(async () => {}) });
+  const office = shutdown.officeDocuments;
+  office.close.mockImplementationOnce(async () => { throw failure; });
+  await expect(shutdown.close()).resolves.toBeUndefined();
+  expect(office.close).toHaveBeenCalledOnce();
+  expect(shutdown.logBestEffortFailure).toHaveBeenCalledWith("Office documents shutdown failed", failure);
+  expect(shutdown.calls.at(-1)).toBe("HTTP.close");
 });
 
 it.each(["rejects", "throws"])("finishes gateway teardown when native Claude cleanup %s without hiding failure", async mode => {

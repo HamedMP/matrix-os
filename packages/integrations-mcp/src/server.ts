@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerIntegrationReadTools, INTEGRATION_READ_INSTRUCTIONS } from "./integration-read.js";
 import { registerOwnerDataImportTools } from "./data-imports.js";
+import { registerDocumentTools } from "./documents.js";
 import { registerChatAgentTools } from "./chat-agents.js";
 import { registerCompanyDriveTools } from "./company-drive.js";
 import { registerJevInboxTool } from "./jev-inbox.js";
@@ -98,6 +99,7 @@ export function createIntegrationsMcpServer(
   if (surface.endsWith("-drive")) registerCompanyDriveTools(server, fetcher);
 
   if (full) registerOwnerDataImportTools(server, fetcher);
+  if (full) registerDocumentTools(server, fetcher);
   if (full || chat) {
     server.registerTool(
       "list_integration_inventory",

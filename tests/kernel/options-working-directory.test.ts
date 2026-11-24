@@ -29,6 +29,7 @@ vi.mock("../../packages/kernel/src/hooks.js", () => ({
   notifyShellHook: vi.fn(),
   preCompactHook: vi.fn(),
   createIntegrationApprovalHook: vi.fn(() => vi.fn()),
+  createDocumentApprovalHook: vi.fn(() => vi.fn()),
 }));
 
 vi.mock("../../packages/kernel/src/evolution.js", () => ({
@@ -40,6 +41,7 @@ import {
   type KernelConfig,
 } from "../../packages/kernel/src/options.js";
 import { createIpcServer } from "../../packages/kernel/src/ipc-server.js";
+import { createDocumentApprovalHook } from "../../packages/kernel/src/hooks.js";
 
 describe("kernel working directory", () => {
   const db = {} as MatrixDB;
@@ -78,7 +80,7 @@ describe("kernel working directory", () => {
     expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__add_app_to_desktop");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__list_placeable_apps");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__add_app_to_desktop");
-    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools, undefined, undefined);
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", osViewTools, undefined, undefined, undefined);
   });
 
   it("registers owner audio transcription only from an injected managed dependency", async () => {
@@ -91,6 +93,7 @@ describe("kernel working directory", () => {
       "/home/matrix/home",
       undefined,
       ownerAudioTranscriber,
+      undefined,
       undefined,
     );
   });
@@ -106,6 +109,29 @@ describe("kernel working directory", () => {
     expect(withoutTools.allowedTools).not.toContain("mcp__matrix-os-ipc__terminal_run");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__terminal_run");
     expect(withTools.allowedTools).toContain("mcp__matrix-os-ipc__terminal_wait");
-    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", undefined, undefined, terminalTools);
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", undefined, undefined, terminalTools, undefined);
+  });
+
+  // Fault detected: document tools are offered without the service, or accept/reject skip the owner.
+  it("registers document tools and their owner approval gate only when the gateway injects them", async () => {
+    const documentTools = { request: vi.fn() };
+    const requestApproval = vi.fn(async () => true);
+    const gate = "mcp__matrix-os-ipc__document_accept_revisions|mcp__matrix-os-ipc__document_reject_revisions|mcp__matrix-os-ipc__sheet_accept_changes|mcp__matrix-os-ipc__sheet_reject_changes";
+    const withoutTools = await kernelOptions({ db, homePath: "/home/matrix/home" });
+    expect(withoutTools.allowedTools.filter((name) => name.includes("__document_") || name.includes("__sheet_"))).toEqual([]);
+    expect(withoutTools.hooks.PreToolUse.map((entry) => entry.matcher)).not.toContain(gate);
+
+    const withTools = await kernelOptions({ db, homePath: "/home/matrix/home", documentTools, requestApproval });
+    expect(withTools.allowedTools).toEqual(expect.arrayContaining([
+      "mcp__matrix-os-ipc__document_describe", "mcp__matrix-os-ipc__document_propose_edits",
+      "mcp__matrix-os-ipc__document_accept_revisions", "mcp__matrix-os-ipc__sheet_reject_changes",
+    ]));
+    expect(withTools.hooks.PreToolUse.map((entry) => entry.matcher)).toContain(gate);
+    expect(vi.mocked(createDocumentApprovalHook)).toHaveBeenLastCalledWith(requestApproval);
+    expect(vi.mocked(createIpcServer)).toHaveBeenLastCalledWith(db, "/home/matrix/home", undefined, undefined, undefined, documentTools);
+
+    await kernelOptions({ db, homePath: "/home/matrix/home", documentTools });
+    const fallback = vi.mocked(createDocumentApprovalHook).mock.lastCall![0];
+    expect(await fallback("mcp__matrix-os-ipc__document_accept_revisions", {})).toBe(false);
   });
 });

@@ -16,6 +16,7 @@ COPY packages/terminal-runtime/package.json packages/terminal-runtime/package.js
 COPY packages/kernel/package.json packages/kernel/package.json
 COPY packages/mcp-browser/package.json packages/mcp-browser/package.json
 COPY packages/observability/package.json packages/observability/package.json
+COPY packages/office/package.json packages/office/package.json
 COPY packages/brand/package.json packages/brand/package.json
 COPY packages/ui/package.json packages/ui/package.json
 COPY packages/platform/package.json packages/platform/package.json
