@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createApiClient } from "@desktop/renderer/src/lib/api";
 import {
   buildRendererCsp,
   installGatewayCors,
@@ -116,6 +117,44 @@ function analyticsSession() {
 }
 
 describe("installHeaderInjection", () => {
+  it.each(["same", "account", "runtime", "origin", "signed-out"])("fences private request bytes before credential injection when the session is %s", async change => {
+    let scope = { authGeneration: 3, runtimeSlot: "computer-a" };
+    let origin = GATEWAY;
+    let signedIn = true;
+    const original = { ...scope };
+    let listener!: (details: { url: string; requestHeaders: Record<string, string> }, callback: (decision: { requestHeaders: Record<string, string>; cancel?: boolean }) => void) => void;
+    let dispatch!: () => void;
+    const waitForDispatch = new Promise<void>(resolve => { dispatch = resolve; });
+    const forwarded = vi.fn();
+    const token = vi.fn(() => `fixture-owner-${scope.authGeneration}`);
+    const session = { webRequest: { onBeforeSendHeaders: (value: typeof listener) => { listener = value; }, onHeadersReceived: () => {} } };
+    installHeaderInjection(session, token, () => origin, "null", () => signedIn ? scope : null);
+    const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+      await waitForDispatch;
+      let decision!: { requestHeaders: Record<string, string>; cancel?: boolean };
+      listener({ url, requestHeaders: Object.fromEntries(new Headers(init?.headers)) }, result => { decision = result; });
+      if (decision.cancel) throw new DOMException("Canceled", "AbortError");
+      forwarded(url, init?.body, decision.requestHeaders);
+      return Response.json({ ok: true });
+    });
+    const api = createApiClient({ baseUrl: GATEWAY, getRuntimeSlot: () => scope.runtimeSlot, fetchFn, session: original });
+    const request = api.post("/api/chats/chat_private/side-chat/turns", { text: "Original owner's private question" });
+    if (change === "account") scope = { ...scope, authGeneration: 4 };
+    if (change === "runtime") scope = { ...scope, runtimeSlot: "computer-b" };
+    if (change === "origin") origin = "https://replacement.matrix.test";
+    if (change === "signed-out") signedIn = false;
+    dispatch();
+    if (change === "same") {
+      await expect(request).resolves.toEqual({ ok: true });
+      expect(forwarded).toHaveBeenCalledWith(expect.stringContaining("runtime=computer-a"), expect.stringContaining("private question"), expect.objectContaining({ Authorization: "Bearer fixture-owner-3" }));
+      expect(Object.keys(forwarded.mock.calls[0]![2]).some(key => key.toLowerCase() === "x-matrix-session")).toBe(false);
+    } else {
+      await expect(request).rejects.toBeInstanceOf(Error);
+      expect(forwarded).not.toHaveBeenCalled();
+      expect(token).not.toHaveBeenCalled();
+    }
+  });
+
   it("sets the trusted Matrix OS referrer for packaged Support widget calls", () => {
     const { session, fire } = headerSession();
     installHeaderInjection(session, () => null, () => GATEWAY, "null");
@@ -175,7 +214,7 @@ describe("installGatewayCors", () => {
     const allowed = res.responseHeaders?.["Access-Control-Allow-Headers"]?.[0]
       .toLowerCase().split(/,\s*/);
     expect(allowed).toEqual(expect.arrayContaining([
-      "x-matrix-chat-metadata", "x-matrix-chat-import-source", "x-matrix-chat-protocol", "last-event-id",
+      "x-matrix-chat-metadata", "x-matrix-chat-import-source", "x-matrix-chat-protocol", "last-event-id", "x-matrix-session",
     ]));
   });
 
