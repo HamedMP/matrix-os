@@ -699,6 +699,17 @@ describe("collaboration gateway routes", () => {
     const scopes = await fixture.db.selectFrom("collaboration_scopes").select(["kind", "lifecycle", "resource_id"])
       .where("resource_id", "=", terminalId).execute();
     expect(scopes).toEqual([{ kind: "terminal", lifecycle: "shared", resource_id: terminalId }]);
+    const scope = await fixture.db.selectFrom("collaboration_scopes").select("id").where("resource_id", "=", terminalId).executeTakeFirstOrThrow();
+
+    // Spec 2710: the owner names the computer; members see the projection from the owner home.
+    const labelPath = `/api/collaboration/scopes/${scope.id}/terminal/team/label`;
+    const label = await signedJson({ actorId: collaborationActors.owner, scopeId: scope.id, method: "PUT", path: labelPath, body: { computerLabel: "team-dev-1" } });
+    expect(label.status).toBe(200);
+    const projection = await signedJson({ actorId: collaborationActors.owner, scopeId: scope.id, method: "GET", path: `/api/collaboration/scopes/${scope.id}/terminal/team` });
+    expect(projection.status).toBe(200);
+    expect(await projection.json()).toMatchObject({ scopeId: scope.id, computerLabel: "team-dev-1", role: "owner", inputMode: "shared", status: "active" });
+    const unsafe = await signedJson({ actorId: collaborationActors.owner, scopeId: scope.id, method: "PUT", path: labelPath, body: { computerLabel: "x".repeat(65) } });
+    expect(unsafe.status).toBe(400);
   });
 
   it("refuses a team terminal share from a non-owner", async () => {

@@ -64,6 +64,15 @@ interface TerminalConnection {
   lastSentAt: number;
   socket: CollaborationTerminalEventSocket;
   delivery: Promise<void>;
+  /** Spec 2710: opted into presence frames with `presence_subscribe`. */
+  presence?: boolean;
+}
+
+/** Spec 2710: told when collaborators come, go or change role, so presence stays outside this registry. */
+export interface CollaborationTerminalConnectionObserver {
+  joined(input: { scopeId: string; connectionId: string; actorId: string; role: AuthorizedCollaborationContext["role"]; ownerId: string }): void;
+  left(scopeId: string, connectionId: string): void;
+  roleChanged(scopeId: string, actorId: string, role: AuthorizedCollaborationContext["role"]): void;
 }
 
 export class CollaborationTerminalEventRegistry {
@@ -77,6 +86,7 @@ export class CollaborationTerminalEventRegistry {
   private readonly maxReplayBytes: number;
   private readonly maxSessions: number;
   private closing = false;
+  private observer: CollaborationTerminalConnectionObserver | undefined;
 
   constructor(private readonly options: {
     authorize(scopeId: string, actorId: string): Promise<AuthorizedCollaborationContext>;
@@ -177,6 +187,10 @@ export class CollaborationTerminalEventRegistry {
         sequence: String(runtime.sequence),
         terminal: await this.options.projectTerminal(metadata),
       });
+      this.observer?.joined({
+        scopeId: metadata.scopeId, connectionId: connection.connectionId, actorId: connection.actorId,
+        role: current.role, ownerId: current.ownerId,
+      });
     } catch (error: unknown) {
       this.remove(connection, 1011, "Unavailable");
       throw error;
@@ -271,10 +285,90 @@ export class CollaborationTerminalEventRegistry {
         if (context.resourceKind !== "terminal" || context.authorityGeneration !== connection.authorityGeneration) {
           throw new CollaborationTerminalEventError("unavailable");
         }
+        this.observer?.roleChanged(scopeId, connection.actorId, context.role);
       } catch (error: unknown) {
         console.warn("[collaboration-terminal-events] scope reauthorization ended a connection", error instanceof Error ? error.name : "UnknownError");
         this.sendBestEffort(connection, unavailableFrame(connection, this.runtimes.get(scopeId), "revoked"));
         this.remove(connection, 1008, "Revoked");
+      }
+    }
+  }
+
+  /** Spec 2710: one observer (the presence service) learns joins, leaves and role changes. */
+  observe(observer: CollaborationTerminalConnectionObserver | undefined): void {
+    this.observer = observer;
+  }
+
+  /** Spec 2710: this connection receives presence frames from now on. */
+  subscribePresence(connectionId: string): boolean {
+    const connection = this.connections.get(connectionId);
+    if (!connection) return false;
+    connection.presence = true;
+    return true;
+  }
+
+  /** The live terminal of a scope that someone is watching, with its output position. */
+  liveTerminal(scopeId: string): { terminalId: string; incarnation: string; ownerId: string; sequence: number } | null {
+    const runtime = this.runtimes.get(scopeId);
+    if (!runtime || runtime.connections.size === 0 || runtime.metadata.status !== "active") return null;
+    return { terminalId: runtime.metadata.terminalId, incarnation: runtime.metadata.incarnation, ownerId: runtime.metadata.creatorActorId, sequence: runtime.sequence };
+  }
+
+  /** The watched scope bound to a canonical tab, for attributing the owner's own typing. */
+  scopeForTerminal(terminalId: string): string | null {
+    for (const [scopeId, runtime] of this.runtimes) {
+      if (runtime.metadata.terminalId === terminalId && runtime.connections.size > 0) return scopeId;
+    }
+    return null;
+  }
+
+  /** Whether a connection is still open, so a late async join cannot add a closed socket. */
+  hasConnection(connectionId: string): boolean {
+    return this.connections.has(connectionId);
+  }
+
+  /**
+   * Sends one already-validated frame to every presence subscriber of a scope.
+   * Each recipient is re-authorized first, as output is; a revoked, slow or
+   * failing recipient is removed instead of queuing more.
+   */
+  async sendPresence(scopeId: string, value: string): Promise<void> {
+    const runtime = this.runtimes.get(scopeId);
+    if (!runtime) return;
+    const dead: Array<{ connection: TerminalConnection; revoked: boolean }> = [];
+    for (const connectionId of [...runtime.connections]) {
+      const connection = this.connections.get(connectionId);
+      if (!connection?.presence) continue;
+      try {
+        const context = await this.options.authorize(connection.scopeId, connection.actorId);
+        if (context.resourceKind !== "terminal" || context.authorityGeneration !== connection.authorityGeneration) {
+          dead.push({ connection, revoked: true });
+          continue;
+        }
+      } catch (error: unknown) {
+        console.warn("[collaboration-terminal-events] presence authorization failed", error instanceof Error ? error.name : "UnknownError");
+        dead.push({ connection, revoked: true });
+        continue;
+      }
+      if (!this.connections.has(connectionId)) continue;
+      if (bufferedAmount(connection.socket) > MAX_BUFFERED_BYTES) {
+        dead.push({ connection, revoked: false });
+        continue;
+      }
+      try {
+        connection.socket.send(value);
+        connection.lastSentAt = this.now().getTime();
+      } catch (error: unknown) {
+        console.warn("[collaboration-terminal-events] presence send failed", error instanceof Error ? error.name : "UnknownError");
+        dead.push({ connection, revoked: false });
+      }
+    }
+    for (const { connection, revoked } of dead) {
+      if (revoked) {
+        this.sendBestEffort(connection, unavailableFrame(connection, runtime, "revoked"));
+        this.remove(connection, 1008, "Revoked");
+      } else {
+        this.remove(connection, 1011, "Unavailable");
       }
     }
   }
@@ -448,6 +542,7 @@ export class CollaborationTerminalEventRegistry {
 
   private remove(connection: TerminalConnection, code: number, reason: string): void {
     if (!this.connections.delete(connection.connectionId)) return;
+    this.observer?.left(connection.scopeId, connection.connectionId);
     const runtime = this.runtimes.get(connection.scopeId);
     runtime?.connections.delete(connection.connectionId);
     if (runtime) runtime.lastTouchedAt = this.now().getTime();
