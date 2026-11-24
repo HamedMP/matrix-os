@@ -289,7 +289,8 @@ export const SITE_PUBLIC_DATA_REQUEST_MAX_BYTES = 64 * 1024;
 export const SITE_PUBLIC_DATA_RESPONSE_MAX_BYTES = 1024 * 1024;
 export const SITE_PUBLIC_DATA_MAX_ROWS = 500;
 export const SITE_PUBLIC_DATA_MAX_BULK = 50;
-export const SITE_PUBLIC_DATA_SAFE_ERRORS = ["Shared data is unavailable", "Try again later", "Invalid change"] as const;
+export const SITE_PUBLIC_DATA_READ_ONLY = "Public app data is read-only";
+export const SITE_PUBLIC_DATA_SAFE_ERRORS = ["Shared data is unavailable", "Try again later", "Invalid change", SITE_PUBLIC_DATA_READ_ONLY] as const;
 const SitePublicDataNameSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,62}$/);
 const SitePublicDataIdSchema = z.string().min(1).max(512);
 const SitePublicDataComparableSchema = z.union([z.string().max(4000), z.number().finite(), z.boolean(), z.null()]);
@@ -347,9 +348,14 @@ export const SitePublicDataCapabilitySchema = z.object({
 export type SitePublicDataCapability = z.infer<typeof SitePublicDataCapabilitySchema>;
 /** Whether a visitor request changes owner data (write admission, rate class, write log). */
 export function isSitePublicDataWrite(request: SitePublicDataRequest): boolean {
-  if (request.kind === "kvWrite") return true;
-  if (request.kind !== "db") return false;
-  return ["insert", "bulkInsert", "update", "bulkUpdate", "compareAndSwap", "delete"].includes(request.action.action);
+  if (request.kind === "kvRead") return false;
+  if (request.kind !== "db") return true;
+  return !["find", "findOne", "count", "appInfo", "schema"].includes(request.action.action);
+}
+
+/** Visitor writes stay disabled until the public app data permission model is defined. */
+export function publicSiteDataWritesEnabled(): boolean {
+  return false;
 }
 export function sitePublicDataSafeError(value: unknown): (typeof SITE_PUBLIC_DATA_SAFE_ERRORS)[number] {
   return SITE_PUBLIC_DATA_SAFE_ERRORS.find((error) => error === value) ?? "Shared data is unavailable";

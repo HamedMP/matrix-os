@@ -1,3 +1,4 @@
+import * as contracts from "@matrix-os/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { createHmac, randomUUID } from "node:crypto";
@@ -11,6 +12,11 @@ import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { registerSiteRuntime } from "../../packages/gateway/src/sites/wiring.js";
 import { BridgeQueryBodySchema } from "../../packages/gateway/src/app-db-contracts.js";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
+
+// Exercise the retained write path with admission simulated for those cases only.
+function allowWritesForTest() {
+  vi.spyOn(contracts, "publicSiteDataWritesEnabled").mockReturnValue(true);
+}
 
 const SECRET = "runtime-bound-token";
 const siteId = randomUUID();
@@ -52,7 +58,10 @@ describe("public site visitor data at the owner gateway", () => {
     app = new Hono();
     app.route("/", createSitePublicDataRoutes({ serviceSecret: SECRET, repository, env, onChange: (change) => changes.push(change) }));
   });
-  afterEach(async () => { await created.db.destroy(); });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await created.db.destroy();
+  });
 
   async function call(body: unknown) {
     const response = await app.request(signed(body));
@@ -62,7 +71,26 @@ describe("public site visitor data at the owner gateway", () => {
     return (await sql<any>`SELECT site_id, app_slug, table_name, row_id, op, before, after, visitor_hash FROM public._site_visitor_writes ORDER BY id`.execute(created.kysely)).rows;
   }
 
+  it("rejects even signed visitor mutations before they reach the owner repository", async () => {
+    const execute = vi.spyOn(repository, "execute");
+    const id = randomUUID();
+    for (const request of [
+      db({ action: "insert", table: "tasks", data: { title: "Plan" } }),
+      db({ action: "bulkInsert", table: "tasks", rows: [{ title: "Plan" }] }),
+      db({ action: "update", table: "tasks", id, data: { done: true } }),
+      db({ action: "bulkUpdate", table: "tasks", updates: [{ id, data: { done: true } }] }),
+      db({ action: "compareAndSwap", table: "tasks", id, expectedPayload: {}, data: { done: true } }),
+      db({ action: "delete", table: "tasks", id }),
+      capability({ kind: "kvWrite", key: "theme", value: "dark" }),
+    ]) {
+      expect(await call(request)).toEqual({ status: 403, body: { error: "Public app data is read-only" } });
+    }
+    expect(execute).not.toHaveBeenCalled();
+    expect(changes).toEqual([]);
+  });
+
   it("lets a visitor read, create, update and delete the published app's rows like the owner bridge", async () => {
+    allowWritesForTest();
     const inserted = await call(db({ action: "insert", table: "tasks", data: { title: "Plan", done: false } }));
     expect(inserted.status).toBe(200);
     const id = inserted.body.result.id;
@@ -77,6 +105,7 @@ describe("public site visitor data at the owner gateway", () => {
   });
 
   it("records each visitor write with before/after and a visitor hash in the same transaction", async () => {
+    allowWritesForTest();
     const { body } = await call(db({ action: "insert", table: "tasks", data: { title: "Plan", done: false } }));
     await call(db({ action: "update", table: "tasks", id: body.result.id, data: { title: "Ship" } }));
     await call(db({ action: "delete", table: "tasks", id: body.result.id }));
@@ -88,6 +117,7 @@ describe("public site visitor data at the owner gateway", () => {
   });
 
   it("logs before and after snapshots and keys entries by row id", async () => {
+    allowWritesForTest();
     const { body } = await call(db({ action: "insert", table: "tasks", data: { title: "Plan", done: false } }));
     const id = body.result.id;
     await call(db({ action: "update", table: "tasks", id, data: { title: "Ship" } }));
@@ -100,6 +130,7 @@ describe("public site visitor data at the owner gateway", () => {
   });
 
   it("rolls the visitor write back when the write log cannot be written", async () => {
+    allowWritesForTest();
     await sql`ALTER TABLE public._site_visitor_writes ADD CONSTRAINT reject_all CHECK (false) NOT VALID`.execute(created.kysely);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const result = await call(db({ action: "insert", table: "tasks", data: { title: "Plan" } }));
@@ -118,8 +149,8 @@ describe("public site visitor data at the owner gateway", () => {
     expect((await call(db({ action: "find", table: "notes" }, "missing-app"))).status).toBe(503);
     await created.db.raw(`INSERT INTO public._kv (app, key, value) VALUES ('private-notes', 'theme', 'owner-only')`);
     expect((await call(capability({ kind: "kvRead", key: "theme" }))).body.result).toEqual({ value: null });
-    await call(capability({ kind: "kvWrite", key: "theme", value: "dark" }));
-    expect((await call(capability({ kind: "kvRead", key: "theme" }))).body.result).toEqual({ value: "dark" });
+    await created.db.raw(`INSERT INTO public._kv (app, key, value) VALUES ('tasks-lab', 'theme', 'light')`);
+    expect((await call(capability({ kind: "kvRead", key: "theme" }))).body.result).toEqual({ value: "light" });
     expect((await created.db.raw(`SELECT value FROM public._kv WHERE app = 'private-notes'`)).rows).toEqual([{ value: "owner-only" }]);
   });
 
@@ -133,11 +164,12 @@ describe("public site visitor data at the owner gateway", () => {
     expect(await call(db({ action: "appInfo" }, "2048"))).toEqual({ status: 400, body: { error: "Invalid change" } });
     expect(await call(db({ action: "find", table: "tiles" }, "2048"))).toEqual({ status: 400, body: { error: "Invalid change" } });
     expect(resolveApp).not.toHaveBeenCalled();
-    expect((await call(capability({ kind: "kvWrite", key: "best", value: "64" }, "2048"))).status).toBe(200);
+    await created.db.raw(`INSERT INTO public._kv (app, key, value) VALUES ('2048', 'best', '64')`);
     expect((await call(capability({ kind: "kvRead", key: "best" }, "2048"))).body.result).toEqual({ value: "64" });
   });
 
   it("supports bulk and compare-and-swap writes with per-row log entries", async () => {
+    allowWritesForTest();
     const inserted = await call(db({ action: "bulkInsert", table: "tasks", rows: [{ title: "A" }, { title: "B" }] }));
     expect(inserted.body.result.ids).toHaveLength(2);
     const [a, b] = inserted.body.result.ids;
@@ -150,6 +182,7 @@ describe("public site visitor data at the owner gateway", () => {
   });
 
   it("stamps updated_at on visitor updates unless the app sets it", async () => {
+    allowWritesForTest();
     const { body } = await call(db({ action: "insert", table: "tasks", data: { title: "Plan" } }));
     expect((await call(db({ action: "update", table: "tasks", id: body.result.id, data: { title: "Ship", updated_at: "2020-01-01T00:00:00.000Z" } }))).status).toBe(200);
     const row = (await call(db({ action: "findOne", table: "tasks", id: body.result.id }))).body.result;
@@ -157,12 +190,13 @@ describe("public site visitor data at the owner gateway", () => {
   });
 
   it("clamps an explicit zero limit to one row like the owner bridge", async () => {
-    await call(db({ action: "bulkInsert", table: "tasks", rows: [{ title: "A" }, { title: "B" }] }));
+    await created.db.raw(`INSERT INTO "tasks-lab".tasks (title) VALUES ('A'), ('B')`);
     expect((await call(db({ action: "find", table: "tasks", limit: 0 }))).body.result).toHaveLength(1);
     expect((await call(db({ action: "find", table: "tasks" }))).body.result).toHaveLength(2);
   });
 
   it("logs the owner value a visitor key write replaces, and null for a new key", async () => {
+    allowWritesForTest();
     await created.db.raw(`INSERT INTO public._kv (app, key, value) VALUES ('tasks-lab', 'theme', 'owner-light')`);
     await call(capability({ kind: "kvWrite", key: "theme", value: "dark" }));
     await call(capability({ kind: "kvWrite", key: "fresh", value: "one" }));
@@ -181,6 +215,7 @@ describe("public site visitor data at the owner gateway", () => {
   });
 
   it("maps payload faults to Invalid change and never echoes database text", async () => {
+    allowWritesForTest();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const unknownColumn = await call(db({ action: "insert", table: "tasks", data: { nope: "x" } }));
     expect(unknownColumn).toEqual({ status: 400, body: { error: "Invalid change" } });
@@ -202,6 +237,7 @@ describe("public site visitor data at the owner gateway", () => {
   });
 
   it("is mounted by the site runtime with the owner database, registry and change broadcast", async () => {
+    allowWritesForTest();
     const runtime = new Hono();
     const broadcast = vi.fn();
     await registerSiteRuntime(runtime, { homePath: "/unused", db: created.kysely, env: { MATRIX_SYNC_RUNTIME_TOKEN: SECRET },

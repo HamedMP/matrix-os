@@ -1,6 +1,9 @@
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { SITE_PUBLIC_DATA_REQUEST_MAX_BYTES, SiteReferenceSchema, SitePublicDataRequestSchema, isSitePublicDataWrite } from '@matrix-os/contracts';
+import {
+    SITE_PUBLIC_DATA_READ_ONLY, SITE_PUBLIC_DATA_REQUEST_MAX_BYTES, SiteReferenceSchema, SitePublicDataRequestSchema,
+    isSitePublicDataWrite, publicSiteDataWritesEnabled,
+} from '@matrix-os/contracts';
 import { createBoundedRateLimiter } from '../request-admission.js';
 import { SiteError } from './types.js';
 import type { SitesService } from './service.js';
@@ -55,6 +58,7 @@ export function registerSitePublicDataRoute(app: Hono, options: {
             const site = await options.service.resolve(reference.data);
             // Links published before visitor data shipped have no owner opt-in and serve no app data.
             if (!site || site.accessMode !== 'public' || !site.activeVersion || !site.publicData) return c.json({ error: 'Site unavailable' }, 404);
+            if (write && !publicSiteDataWritesEnabled()) return c.json({ error: SITE_PUBLIC_DATA_READ_ONLY }, 403);
             // Visitor budgets are per source and site, so one site's traffic never spends another's.
             const visitorKey = `${site.id}\0${source}`;
             if (!perSource.check(visitorKey) || (write && !perSourceWrites.check(visitorKey)) || !perSite.check(site.id))
