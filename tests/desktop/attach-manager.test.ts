@@ -192,6 +192,25 @@ describe("AttachManager generation guard", () => {
 });
 
 describe("AttachManager buffer cache (LRU)", () => {
+  // Fault detected (Greptile, #3569): a finished terminal's screen went with its pane's manager,
+  // so coming back to it showed a blank pane (the core cannot attach a finished terminal).
+  it("keeps a shared screen past the manager that saved it, within the shared cap", () => {
+    const shared = new Map<string, string>();
+    const first = new AttachManager({ createSocket: () => { throw new Error("unused"); }, sharedBuffers: shared, bufferCacheCap: 2 });
+    first.cacheBuffer("local:t1", "screen-1");
+    first.dispose();
+    const second = new AttachManager({ createSocket: () => { throw new Error("unused"); }, sharedBuffers: shared, bufferCacheCap: 2 });
+    expect(second.getCachedBuffer("local:t1")).toBe("screen-1");
+    second.cacheBuffer("local:t2", "screen-2");
+    second.cacheBuffer("local:t3", "screen-3");
+    expect(shared.size).toBe(2);
+    expect(second.getCachedBuffer("local:t1")).toBeNull();
+    // A manager with its own screens still clears them when disposed.
+    const own = new AttachManager({ createSocket: () => { throw new Error("unused"); } });
+    own.cacheBuffer("a", "x");
+    own.dispose();
+    expect(own.getCachedBuffer("a")).toBeNull();
+  });
   it("returns null for unknown sessions", () => {
     const { manager } = createManager();
     expect(manager.getCachedBuffer("nope")).toBeNull();

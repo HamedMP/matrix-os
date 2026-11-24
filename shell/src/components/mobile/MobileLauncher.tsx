@@ -93,7 +93,7 @@ export function MobileLauncher({ apps, onOpen, onOpenSettings, openStackCount, o
             style={LAUNCHER_APP_BUTTON_STYLE}
           >
             <span className="relative inline-flex">
-              <MobileAppIcon slug={app.iconSlug} iconUrl={app.iconUrl} size={56} />
+              <MobileAppIcon slug={app.iconSlug} iconUrl={app.iconUrl} size={56} fallbackName={app.sharedAppTarget ? app.name : undefined} />
               {app.sharedAppTarget ? <SharedAppBadge /> : null}
             </span>
             <span style={LAUNCHER_APP_LABEL_STYLE}>{app.name}</span>

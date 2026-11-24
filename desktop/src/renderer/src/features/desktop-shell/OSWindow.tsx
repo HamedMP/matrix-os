@@ -166,7 +166,7 @@ function PaneTitle({ title, titleLayout, icon, leftActions, alignedLeftWidth, sh
 /** Stable pane-aligned toolbar; shares the same parent window container. */
 function PaneAlignedChrome({
   title, titleLayout, icon, leftActions, rightActions, chromePlacement,
-  alignedLeftWidth, alignedRightWidth, showSidebarTrigger, sidebarTriggerLabel, windowControls,
+  alignedLeftWidth, alignedRightWidth, showSidebarTrigger, sidebarTriggerLabel, windowControls, actionsBeforeRightPane,
 }: {
   title?: ReactNode;
   titleLayout?: "identity";
@@ -176,6 +176,7 @@ function PaneAlignedChrome({
   chromePlacement: OSWindowChromePlacement;
   alignedLeftWidth: number;
   alignedRightWidth: number;
+  actionsBeforeRightPane?: boolean;
   showSidebarTrigger: boolean;
   sidebarTriggerLabel?: string;
   windowControls: ReactNode;
@@ -194,7 +195,7 @@ function PaneAlignedChrome({
         data-testid="os-window-chrome-grid"
         className={`pointer-events-none absolute inset-0 z-30 grid ${titleLayout === "identity" ? "@max-[42rem]/window-chrome:[--os-window-leading-width:0px]" : ""}`}
         style={{
-          gridTemplateColumns: `${titleLayout === "identity" ? `var(--os-window-leading-width, ${alignedLeftWidth}px)` : `${alignedLeftWidth}px`} minmax(0, 1fr) ${rightActions ? `minmax(${alignedRightWidth}px, max-content)` : `${alignedRightWidth}px`}`,
+          gridTemplateColumns: `${titleLayout === "identity" ? `var(--os-window-leading-width, ${alignedLeftWidth}px)` : `${alignedLeftWidth}px`} minmax(0, 1fr) ${rightActions && !actionsBeforeRightPane ? `minmax(${alignedRightWidth}px, max-content)` : `${alignedRightWidth}px`}`,
         }}
       >
         <div
@@ -203,16 +204,21 @@ function PaneAlignedChrome({
         >
           {alignedLeftWidth > 0 && titleLayout !== "identity" ? <div className="pointer-events-auto ml-auto flex items-center gap-1">{leftActions}</div> : null}
         </div>
-        <PaneTitle title={title} titleLayout={titleLayout} icon={icon} leftActions={leftActions}
-          alignedLeftWidth={alignedLeftWidth} showSidebarTrigger={showSidebarTrigger}
-          sidebarTriggerLabel={sidebarTriggerLabel} windowControls={windowControls} />
-        <div
+        <div className="flex min-w-0 items-center">
+          <div className="min-w-0 flex-1">
+            <PaneTitle title={title} titleLayout={titleLayout} icon={icon} leftActions={leftActions}
+              alignedLeftWidth={alignedLeftWidth} showSidebarTrigger={showSidebarTrigger}
+              sidebarTriggerLabel={sidebarTriggerLabel} windowControls={windowControls} />
+          </div>
+          {actionsBeforeRightPane ? <div data-os-window-actions className="pointer-events-auto flex shrink-0 items-center justify-end px-2">{rightActions}</div> : null}
+        </div>
+        {actionsBeforeRightPane ? <div data-os-window-inspector-space className="pointer-events-none" /> : <div
           data-os-window-actions
           className={`pointer-events-auto flex min-w-0 items-center justify-end ${rightActions ? "px-1" : ""} ${alignedRightWidth > 0 ? "border-l" : ""}`}
           style={{ borderColor: "var(--border-subtle)" }}
         >
           {rightActions}
-        </div>
+        </div>}
       </div>
     </>
   );
@@ -268,6 +274,7 @@ export function TopBar({
   sidebarWidth = OS_WINDOW_SIDEBAR_WIDTH,
   leftPaneWidth,
   rightPaneWidth,
+  actionsBeforeRightPane = false,
   showSidebarTrigger = false,
   sidebarTriggerLabel,
   onClose,
@@ -285,6 +292,7 @@ export function TopBar({
   sidebarWidth?: number;
   leftPaneWidth?: number;
   rightPaneWidth?: number;
+  actionsBeforeRightPane?: boolean;
   showSidebarTrigger?: boolean;
   sidebarTriggerLabel?: string;
   onClose?: () => void;
@@ -310,6 +318,7 @@ export function TopBar({
       {onDragStart ? (
         <div
           data-os-window-gesture-layer
+          style={actionsBeforeRightPane ? { right: alignedRightWidth } : undefined}
           data-testid="desktop-window-drag-handle"
           className="pointer-events-auto absolute inset-0 z-20"
           onPointerDown={onDragStart}
@@ -321,6 +330,7 @@ export function TopBar({
           leftActions={leftActions} rightActions={rightActions} chromePlacement={chromePlacement}
           alignedLeftWidth={alignedLeftWidth} alignedRightWidth={alignedRightWidth}
           showSidebarTrigger={showSidebarTrigger} sidebarTriggerLabel={sidebarTriggerLabel}
+          actionsBeforeRightPane={actionsBeforeRightPane}
           windowControls={windowControls} />
       ) : (
         <CenteredChrome title={title} icon={icon} leftActions={leftActions} rightActions={rightActions}

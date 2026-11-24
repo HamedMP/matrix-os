@@ -54,6 +54,7 @@ import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
 import { normalizeDesktopEditorPath } from "../editor/desktop-editor-store";
 import { useChatFileNavigation } from "../work/ChatFileNavigation";
+import { useSideChatDraft } from "../work/WorkSurfaceRuntime";
 import { resolveChatInspectorTargetForRun, resolveWorkFilesScope } from "../work/work-files-scope";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
@@ -266,6 +267,14 @@ function CanonicalChatWorkspaceContent({
   const [optimisticQueuedTurns, setOptimisticQueuedTurns] = useState<CanonicalChatQueuedTurn[] | null>(null);
   const [editingQueuedTurn, setEditingQueuedTurn] = useState<CanonicalChatQueuedTurn | null>(null);
   const [localComposerFocusRequestId, setLocalComposerFocusRequestId] = useState(0);
+  const sideDraft = useSideChatDraft();
+  const sideDraftRequest = sideDraft?.pending;
+  useEffect(() => {
+    if (!active || !sideDraftRequest || sideDraftRequest.chatId !== routedComposerChatId) return;
+    setDraft(current => current.trim() ? `${current}\n\n${sideDraftRequest.text}` : sideDraftRequest.text);
+    setLocalComposerFocusRequestId(value => value + 1);
+    sideDraft?.consume(sideDraftRequest.id);
+  }, [active, routedComposerChatId, setDraft, sideDraftRequest, sideDraft]);
   const previousRoute = useRef({ initialChatId, initialView, projectId });
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
   const submissionSequence = useRef(0);
@@ -1072,7 +1081,7 @@ function CanonicalChatWorkspaceContent({
                 if (!fileNavigation || !controller.detail) return false;
                 const scope = resolveWorkFilesScope(controller.detail, projects);
                 const target = resolveChatInspectorTargetForRun(
-                  rawPath, scope, executionRoot, controller.detail.record.projectId,
+                  rawPath, scope, executionRoot, projects,
                 );
                 if (!target) return false;
                 fileNavigation.open({ chatId: scope.chatId, target });

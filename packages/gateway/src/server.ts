@@ -669,7 +669,7 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
     providers: codingAgentRegistryProviders,
     agentCredentials: agentCredentialService,
-    invalidateCredentialDetection: agentCredentialLauncher.invalidateCredentialDetection,
+    invalidateCredentialDetection: nativeCodexRuntime.withIdentityInvalidation(agentCredentialLauncher.invalidateCredentialDetection),
   });
   const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
   const codingAgentTurnLifecycle = await createCodingAgentTurnLifecycle({
@@ -1795,7 +1795,7 @@ export async function createGateway(config: GatewayConfig) {
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
   const localChatImportLifecycle = registerCollaborationChatRoutes({
-    browserApprovals: supervisedBrowserRuntime?.control,
+    homePath, fundedCredentialProvider, browserApprovals: supervisedBrowserRuntime?.control,
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
     credentialKey: toolOutputKey, runtimeOwnerIds: terminalRuntimeOwnerIds,

@@ -87,6 +87,7 @@ export function Dialog({
   trigger,
   onOpenChange,
   portalContainer,
+  centerX,
 }: {
   open: boolean;
   onClose: () => void;
@@ -102,6 +103,7 @@ export function Dialog({
   trigger?: ReactNode;
   onOpenChange?: (open: boolean) => void;
   portalContainer?: HTMLElement | null;
+  centerX?: number;
 }) {
   const contained = Boolean(portalContainer);
   return (
@@ -131,6 +133,7 @@ export function Dialog({
           style={{
             zIndex: DESKTOP_Z_INDEX.dialog,
             width,
+            ...(centerX === undefined ? {} : { left: centerX }),
             maxWidth: contained ? "calc(100% - 32px)" : "calc(100vw - 32px)",
             background: "var(--bg-overlay)",
             borderColor: "var(--border-default)",

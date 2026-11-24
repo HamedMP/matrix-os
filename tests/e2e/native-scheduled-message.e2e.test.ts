@@ -19,7 +19,7 @@ beforeAll(async () => {
   await mkdir(output, { recursive: true });
   const result = await build({ absWorkingDir: root, entryPoints: ["tests/e2e/fixtures/native-scheduled-message.tsx"], bundle: true, write: false,
     outfile: "fixture.js", format: "iife", platform: "browser", jsx: "automatic",
-    alias: { "@matrix-os/brand/marks":join(root,"packages/brand/src/marks.ts"),"@matrix-os/brand/tokens":join(root,"packages/brand/src/tokens.ts"),"@matrix-os/brand":join(root,"packages/brand/src/index.ts"), "@renderer": join(root, "desktop/src/renderer/src"), "@": join(root, "shell/src") },
+    alias: { "@renderer": join(root, "desktop/src/renderer/src"), "@": join(root, "shell/src") },
     define: { "process.env.NODE_ENV": '"test"', "process.env": "{}" }, plugins: [{ name: "offline-renderer", setup(builder) {
       builder.onResolve({ filter: /^react(?:\/.*)?$/ }, args => ({ path: requireDesktop.resolve(args.path) }));
       builder.onResolve({ filter: /^react-dom(?:\/.*)?$/ }, args => ({ path: requireDesktop.resolve(args.path) }));

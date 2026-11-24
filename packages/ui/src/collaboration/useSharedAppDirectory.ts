@@ -49,7 +49,8 @@ export function useSharedAppDirectory(api: DirectoryApi | null, identity: string
         // Initial discovery is bounded. Further pages are a deliberate user action.
         for (let pageIndex = 0; pageIndex < (continuation?.pageCount ?? MAX_PAGES); pageIndex++) {
           const page = CollaborativeAppDirectoryResponseSchema.parse(await api.get(
-            `/api/collaboration/shared-apps?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+            // `fields=display` opts in to the owner's name and icon URL (ENG-490); released clients omit it.
+            `/api/collaboration/shared-apps?limit=100&fields=display${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
           ));
           if (!active) return;
           pages.push({ cursor, items: page.items });
@@ -104,4 +105,18 @@ export function useSharedAppDirectory(api: DirectoryApi | null, identity: string
 
 export function sharedAppDisplayName(appId: string): string {
   return appId.replaceAll(/[-_]+/g, " ").replace(/^./, (value) => value.toUpperCase());
+}
+
+/** The owner's manifest name when the platform captured one; otherwise a name derived from the slug. */
+export function sharedAppTargetName(target: { appId: string; name?: string }): string {
+  return target.name ?? sharedAppDisplayName(target.appId);
+}
+
+/**
+ * The owner's platform-served icon for a shared app, resolved against the collaboration API origin
+ * when one is given. Never a member `/icons/<slug>` URL, which would show the member's own artwork.
+ */
+export function sharedAppIconUrl(target: { iconUrl?: string }, apiOrigin?: string): string | undefined {
+  if (!target.iconUrl) return undefined;
+  return apiOrigin ? `${apiOrigin.replace(/\/+$/, "")}${target.iconUrl}` : target.iconUrl;
 }

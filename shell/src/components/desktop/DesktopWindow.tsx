@@ -166,7 +166,7 @@ export function DesktopWindow({
       style={windowStyle}
       onMouseDown={() => !isFullscreen && onFocusWindow(win.id)}
     >
-      <CardHeader
+      {!(isFullscreen && desktopParity && win.path === "__chat__") ? <CardHeader
         className={cn(
           "relative flex shrink-0 flex-row items-center gap-0 space-y-0 px-4 select-none backdrop-blur-xl md:cursor-grab md:active:cursor-grabbing",
           usesTerminalChrome ? "border-b-0" : "bg-card/85",
@@ -199,7 +199,7 @@ export function DesktopWindow({
             </div>
           ) : null}
         </div>
-      </CardHeader>
+      </CardHeader> : null}
 
       <CardContent className="relative flex-1 p-0 min-h-0">
         {win.path.startsWith("__terminal__") ? (
@@ -231,6 +231,8 @@ export function DesktopWindow({
           <div className="h-full overflow-hidden">
             {chat && (
               <ChatApp
+                windowControls={isFullscreen && desktopParity ? <TrafficLights onClose={() => onCloseWindow(win.id)}
+                  onMinimize={() => onAnimateMinimize(win.id)} onFullscreen={() => onToggleFullscreen(win.id)} /> : undefined}
                 collaborationView={chat.collaborationView}
                 onOpenSharedChat={chat.openSharedChat}
                 onOpenSharedProject={chat.openSharedProject}
@@ -255,8 +257,20 @@ export function DesktopWindow({
                 activeConversationTitle={chat.activeConversationTitle}
                 onRenameConversation={chat.renameConversation}
                 onDeleteConversation={chat.deleteConversation}
+                loadNavigationPage={chat.navigationPage}
+                searchConversations={chat.searchConversations}
+                navigationUpdatedAt={chat.navigationUpdatedAt}
+                onArchiveConversation={chat.archiveConversation}
+                onRestoreConversation={chat.restoreConversation}
+                onListArchivedConversations={chat.listArchivedConversations}
+                onArchiveProjectChats={chat.archiveProjectChats}
+                onRestoreArchivedChats={chat.restoreArchivedChats}
+                sideChatClient={chat.sideChatClient}
+                archiveClient={chat.archiveClient}
+                chatRowActions={chat.chatRowActions}
+                terminalSessionIds={chat.terminalSessionIds}
                 onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} routineOriginChat={chat.routineOriginChat} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} projectSkillRootAvailable={chat.projectSkillRootAvailable} onSetChatProject={chat.setChatProject} navigationTruncated={chat.navigationTruncated} chatChangeRevision={chat.chatChangeRevision} chatRunStatusChange={chat.chatRunStatusChange}
+              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} routineOriginChat={chat.routineOriginChat} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} chatFileScope={chat.chatFileScope} projectSkillRootAvailable={chat.projectSkillRootAvailable} onSetChatProject={chat.setChatProject} navigationTruncated={chat.navigationTruncated} chatChangeRevision={chat.chatChangeRevision} chatReadStateUpdates={chat.chatReadStateUpdates} chatRunStatusChange={chat.chatRunStatusChange}
                 onSubmitApproval={chat.submitApproval}
                 browserPermissions={chat.browserPermissions}
                 onSubmitInput={chat.submitInput}

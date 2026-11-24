@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { loadCustomerVpsConfig, resolvePreviewServerType } from '../../packages/platform/src/customer-vps-config.js';
 import { ProvisionRequestSchema } from '../../packages/platform/src/customer-vps-schema.js';
 import { isPreviewMachine } from '../../packages/platform/src/customer-vps-preview.js';
 import { validateDbLatestPointer } from '../../packages/platform/src/customer-vps-r2.js';
@@ -23,12 +23,20 @@ describe('platform/customer-vps', () => {
     expect(config.posthogHost).toBe('https://eu.i.posthog.com');
     expect(config.posthogPublicHost).toBe('https://eu.posthog.com');
   });
-  it('keeps the preview provisioning limit bounded for missing or invalid configuration', () => {
-    expect(loadCustomerVpsConfig({}).previewProvisioningLimit).toBe(8);
+  it('allows 24 shared PR previews by default and bounds the configured limit', () => {
+    expect(loadCustomerVpsConfig({}).previewProvisioningLimit).toBe(24);
     expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '4' }).previewProvisioningLimit).toBe(4);
-    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '0' }).previewProvisioningLimit).toBe(8);
-    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '17' }).previewProvisioningLimit).toBe(8);
-    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(8);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '48' }).previewProvisioningLimit).toBe(48);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '0' }).previewProvisioningLimit).toBe(24);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '49' }).previewProvisioningLimit).toBe(24);
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_PROVISIONING_LIMIT: '2.5' }).previewProvisioningLimit).toBe(24);
+  });
+  it('allows 8 Private Previews per person by default and bounds the configured limit', () => {
+    expect(loadCustomerVpsConfig({}).privatePreviewLimit).toBe(8);
+    expect(loadCustomerVpsConfig({ MATRIX_PRIVATE_PREVIEW_LIMIT: '2' }).privatePreviewLimit).toBe(2);
+    expect(loadCustomerVpsConfig({ MATRIX_PRIVATE_PREVIEW_LIMIT: '16' }).privatePreviewLimit).toBe(16);
+    expect(loadCustomerVpsConfig({ MATRIX_PRIVATE_PREVIEW_LIMIT: '0' }).privatePreviewLimit).toBe(8);
+    expect(loadCustomerVpsConfig({ MATRIX_PRIVATE_PREVIEW_LIMIT: '17' }).privatePreviewLimit).toBe(8);
   });
   it('keeps golden snapshots disabled by default and bounds every control-plane budget', () => {
     expect(loadCustomerVpsConfig({}).goldenSnapshots).toMatchObject({
@@ -147,5 +155,21 @@ describe('platform/customer-vps', () => {
     expect(quickstart).toContain('Rollback');
     expect(quickstart).toContain('Non-production smoke commands');
   });
-
+  it('creates preview machines on cx23 unless a valid preview server type is configured', () => {
+    expect(loadCustomerVpsConfig({}).previewServerType).toBe('cx23');
+    expect(loadCustomerVpsConfig({}).serverType).toBe('cpx22');
+    expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_SERVER_TYPE: 'cpx32' }).previewServerType).toBe('cpx32');
+    for (const invalid of ['', 'CX23', 'cx23 ', 'cx23;reboot', '../cx23', 'cx', 'x'.repeat(65)]) {
+      expect(loadCustomerVpsConfig({ CUSTOMER_VPS_PREVIEW_SERVER_TYPE: invalid }).previewServerType).toBe('cx23');
+    }
+  });
+  it('falls back to the customer server type where the preview type is not offered', () => {
+    const config = loadCustomerVpsConfig({ HETZNER_SERVER_TYPE: 'cpx21' });
+    for (const location of ['fsn1', 'hel1', 'nbg1']) {
+      expect(resolvePreviewServerType(config, location)).toBe('cx23');
+    }
+    for (const location of ['ash', 'hil', 'sin']) {
+      expect(resolvePreviewServerType(config, location)).toBe('cpx21');
+    }
+  });
 });
