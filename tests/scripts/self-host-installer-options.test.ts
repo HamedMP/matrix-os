@@ -866,6 +866,30 @@ capture_install_telemetry matrix_manual_install_started started 0`,
       expect(readFileSync(script, "utf8")).toMatch(/apt-get install -y [^\n]*nftables/);
     });
 
+    // Review P1 (Greptile, #3532 at b854833b31): user@<uid> is BindsTo= the table, so
+    // restarting the table on a rerun stopped the browser account's user manager and
+    // nothing started it again; the desktop's Files/Terminal buttons need its bus.
+    it("starts the browser account's user manager again after the table restarts, and checks it", () => {
+      const units = join(dir, "units");
+      spawnSync("mkdir", ["-p", units]);
+      const calls = join(dir, "isolation-calls");
+      const body = (active: number) => `install() { case "\${@: -1}" in /etc/*) ;; *) mkdir -p "\${@: -1}" ;; esac; }
+id() { echo 1234; }
+render_browser_isolation() { :; }
+systemctl() { echo "systemctl $*" >>"${calls}"; [ "$1" != is-active ] || return ${active}; }
+nft() { :; }
+MATRIX_INSTALL_LOG=/dev/null MATRIX_BROWSER_ACCOUNT=matrix-browser MATRIX_SYSTEMD_UNIT_DIR="${units}" MATRIX_BROWSER_ISOLATION_FILE="${dir}/browser-isolation.nft" install_browser_isolation`;
+      const ok = run(body(0));
+      expect(ok.status, ok.stderr).toBe(0);
+      const log = readFileSync(calls, "utf8");
+      const restart = log.indexOf("systemctl restart matrix-browser-isolation.service");
+      expect(restart).toBeGreaterThan(-1);
+      expect(log.indexOf("systemctl start user@1234.service")).toBeGreaterThan(restart);
+      expect(log.indexOf("systemctl is-active --quiet user@1234.service")).toBeGreaterThan(log.indexOf("systemctl start user@1234.service"));
+      rmSync(calls);
+      expect(run(body(3)).status).not.toBe(0);
+    });
+
     // Review P1 (#3532 at 0b159db3): ordering alone let a browser unit start without the table.
     it("binds every browser unit and the account's user manager to the table, so a failed load starts none", () => {
       const units = join(dir, "units");

@@ -1315,18 +1315,24 @@ EOF
 # install_browser_isolation: applied now and at every boot before the browser units.
 install_browser_isolation() {
   local unit_dir="${MATRIX_SYSTEMD_UNIT_DIR:-/etc/systemd/system}" uid unit
+  # Tests point this elsewhere; matrix-browser-isolation.service loads the default.
+  local table="${MATRIX_BROWSER_ISOLATION_FILE:-/etc/matrix/browser-isolation.nft}"
   uid="$(id -u "$MATRIX_BROWSER_ACCOUNT")" || return 1
   for unit in matrix-browser-runtime.service "${BROWSER_NATIVE_UNITS[@]}" "user@${uid}.service"; do
     install -d -m 0755 "${unit_dir}/${unit}.d" || return 1
     render_browser_isolation_dropin >"${unit_dir}/${unit}.d/matrix-isolation.conf" || return 1
   done
-  install -d -o root -g root -m 0755 /etc/matrix
-  render_browser_isolation "$MATRIX_BROWSER_ACCOUNT" >/etc/matrix/browser-isolation.nft || return 1
+  install -d -o root -g root -m 0755 "${table%/*}"
+  render_browser_isolation "$MATRIX_BROWSER_ACCOUNT" >"$table" || return 1
   render_browser_isolation_unit >"${unit_dir}/matrix-browser-isolation.service" || return 1
   systemctl daemon-reload >>"$MATRIX_INSTALL_LOG" 2>&1 || return 1
   systemctl enable matrix-browser-isolation.service >>"$MATRIX_INSTALL_LOG" 2>&1 || return 1
   systemctl restart matrix-browser-isolation.service >>"$MATRIX_INSTALL_LOG" 2>&1 || return 1
-  nft list table inet matrix_browser_isolation >/dev/null 2>&1
+  nft list table inet matrix_browser_isolation >/dev/null 2>&1 || return 1
+  # user@<uid> is BindsTo= the table, so the restart above stopped the browser
+  # account's user manager; the desktop's Files/Terminal buttons need its bus.
+  systemctl start "user@${uid}.service" >>"$MATRIX_INSTALL_LOG" 2>&1 || return 1
+  systemctl is-active --quiet "user@${uid}.service"
 }
 
 configure_browser() {
