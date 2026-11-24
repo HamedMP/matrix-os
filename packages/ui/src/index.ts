@@ -218,7 +218,7 @@ export {
   subscribeCollaborationDiscoveryChanged,
 } from "./collaboration/discovery-events.js";
 export { isAcceptedProjectOwnedByRail } from "./collaboration/discovery-visibility.js";
-export { TerminalControls } from './terminal/TerminalControls.js';
+export { TerminalControls, TerminalControlsStatus } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';
 
