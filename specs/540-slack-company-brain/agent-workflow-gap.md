@@ -15,6 +15,14 @@ Evidence at ENG-85 candidate 5c8c0d50e8, 23 November 2026. A support lead or tea
 | Return to original Chat | Grok documents channel and chat delivery. Dots brings results back; strict originating-Chat routing unproven. | **Existing code, LIVE BLOCKED.** #3482 binds owner/Bot/Chat, has one bounded inference and zero tools. Signed synthetic delivery is proven. A natural Slack event still lacks a committed result. | English assistant message in the original private Chat, no Slack reply / deliver the brief to its requesting audience. |
 | Sharing boundary | Grok describes Team Bot audience and authorization. Dots workspace sharing varies by product, and per-source equivalence is unproven. | **P0 invariant already covered in part.** Enrolled source revalidation and publication fences. Personal grants cannot be copied into a shared Chat. New team model deferred. | A second teacher/team cannot inherit a private channel or student record / private inbox and memories stay private. |
 
+## Conversational setup
+
+Agents **+** opens the existing chooser. **Start from scratch** opens a full-page setup Chat immediately. **Set up bot** opens the same Chat with the selected Recipe and version. Show its existing Skills, integrations and MCP requirements when declared. A setup turn can ask one question with suggested replies or propose a draft for review. The owner's free-text reply and a clicked suggestion follow the same private Chat route.
+
+For an empty Agent, a repetitive procedure can motivate an installed Skill, an external data source can motivate an Integration, and a missing tool can motivate an MCP server. Ask when the user's stated job gives a reason. A task that already has enough context can proceed directly to review. Present requested dependencies separately from access. Settings owns connections and authorization. **Create** and **Save** explicitly commit the reviewed draft. Cancelling leaves the last saved definition intact.
+
+[Approved design](https://www.figma.com/design/USFVlYYFZ3WKJBAzFZSceC/?node-id=2575-192502)
+
 ## Stack scope
 
 Keep the existing #3482 intake and model selection fixed by merged #2367. Preserve the historical commits and PR evidence while splitting oversized review boundaries. From #2600 reuse proposal data constraints, from #2601 the proposal-only authority model, from #2602 the single editable draft, and from #2603 only host integration needed by the current shared Agents entry. Validate against today's source before importing any old code. Scope edits and saved configuration to the current owner and Agent. P2 follow-ups include broad onboarding context import, team administration, autonomous external replies and new dashboards. The adjacent usage task owns cost and timing interfaces.

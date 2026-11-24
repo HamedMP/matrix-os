@@ -5,7 +5,7 @@ import type { Kysely } from "kysely";
 import { expect, vi } from "vitest";
 import {
   BotCreationSnapshotSchema, CanonicalChatDetailResponseSchema, CanonicalChatRecordSchema,
-  CanonicalChatTurnAdmissionResponseSchema, InstantiateBotResponseSchema, type BotCreationDraftPatch, type BotCreationSnapshot,
+  CanonicalChatTurnAdmissionResponseSchema, InstantiateBotResponseSchema, type BotCreationDraftPatch, type BotCreationSnapshot, type BotSetupQuestion,
 } from "@matrix-os/contracts";
 import { createBotAuthority } from "../../../packages/gateway/src/bots/authority.js";
 import { createBotCreationSelectionValidator } from "../../../packages/gateway/src/bots/creation-selection.js";
@@ -44,8 +44,8 @@ type RouteFixture = { fixture: Awaited<ReturnType<typeof createRealBotStateDatab
 type DraftFixture = (snapshot: BotCreationSnapshot, prompt: string) => BotCreationDraftPatch | Promise<BotCreationDraftPatch>;
 
 /** A fixed test principal uses real owner routes/storage with a synthetic provider response, funding receipt and local Skill. */
-export async function createEng85AgentRoutes({ fixture, ownerId, homePath, draftPatch = () => supportPatch }:
-  RouteFixture & { draftPatch?: DraftFixture }) {
+export async function createEng85AgentRoutes({ fixture, ownerId, homePath, draftPatch = () => supportPatch, ask }:
+  RouteFixture & { draftPatch?: DraftFixture; ask?: (snapshot: BotCreationSnapshot, prompt: string) => Pick<BotSetupQuestion, "question" | "suggestedReplies"> | undefined }) {
   const repository = new ChatRepository(fixture.db as unknown as Kysely<ChatDatabase>);
   const agents = new ChatAgentStore({ homePath, db: repository.kysely });
   await agents.bootstrap();
@@ -67,8 +67,10 @@ export async function createEng85AgentRoutes({ fixture, ownerId, homePath, draft
     driverKind: "matrix_pi", stateSchemaVersion: 1, parseState: value => value, serializeState: value => value,
     async *start(input) {
       const draft = BotCreationSnapshotSchema.parse(input.context?.botCreation);
-      yield { type: "bot.draft.proposed", proposalId: "proposal_" + input.runId, sessionId: draft.sessionId,
-        baseDraftRevision: draft.draftRevision, patch: await draftPatch(draft, input.prompt) };
+      const turn = { proposalId: "proposal_" + input.runId, sessionId: draft.sessionId, baseDraftRevision: draft.draftRevision };
+      const question = ask?.(draft, input.prompt);
+      if (question) yield { type: "bot.setup.question", ...turn, ...question };
+      else yield { type: "bot.draft.proposed", ...turn, patch: await draftPatch(draft, input.prompt) };
       yield { type: "run.completed", outcome: "completed" };
     },
   };
@@ -78,15 +80,18 @@ export async function createEng85AgentRoutes({ fixture, ownerId, homePath, draft
     validateSelection: createBotCreationSelectionValidator({ available: () => true, providers: { getSnapshot: async () => snapshot } }) });
   const authority = createBotAuthority({ agents, recipes, transact: createBotStateTransactions(repository), resolveProcedure: procedures.resolve });
   const app = new Hono();
-  app.route("/", createBotRoutes({ getPrincipal, instantiation, authority, botChats }));
-  app.route("/", createChatAgentRoutes({ getPrincipal, enabled: () => true, agents, context, recipes: customRecipes, catalog, repository }));
+  app.route("/", createBotRoutes({ getPrincipal, recipes, instantiation, authority, botChats }));
+  app.route("/", createChatAgentRoutes({ getPrincipal, enabled: () => true, agents, context, recipes: customRecipes, botRecipes: recipes, catalog, repository }));
   app.route("/", createCanonicalChatRoutes({ getPrincipal, service: createCanonicalChatService(repository, { orchestrator }) }));
   return { app, agents, repository, customRecipes, close: async () => { await orchestrator.close(); await agents.close(); } };
 }
 
 /** Exercise the client, real Chat Run/event, preview, explicit save/retry and owner readback before passing the actual binding to Slack. */
 export async function createEng85AgentThroughSetup(input: RouteFixture) {
-  const routes = await createEng85AgentRoutes({ ...input, draftPatch: (snapshot, prompt) => {
+  const question = "Which source should the support educator use?";
+  const suggestedReplies = ["Use approved Slack", "Use this Chat only"];
+  const routes = await createEng85AgentRoutes({ ...input,
+    ask: snapshot => snapshot.intent === "open" ? { question, suggestedReplies } : undefined, draftPatch: (snapshot, prompt) => {
     if (prompt.includes("unapproved account")) return { recipe: { ...approvedRecipe, integrations: [{ service: "slack", accountLabel: "Other owner" }] } };
     return snapshot.draft.name ? { instructions: editedInstructions } : supportPatch;
   } });
@@ -106,7 +111,7 @@ export async function createEng85AgentThroughSetup(input: RouteFixture) {
     const setup: CreationConversationClient = {
       create: async body => CanonicalChatRecordSchema.parse(await request("/api/chats", "POST", body)),
       admitTurn: async (chat, body) => CanonicalChatTurnAdmissionResponseSchema.parse(await request("/api/chats/" + chat + "/turns", "POST", body)),
-      detail: async chat => CanonicalChatDetailResponseSchema.parse(await request("/api/chats/" + chat + "?botCreationVersion=1", "GET")),
+      detail: async chat => CanonicalChatDetailResponseSchema.parse(await request("/api/chats/" + chat + "?botCreationVersion=2", "GET")),
       cancelRun: (chat, run, clientRequestId) => request("/api/chats/" + chat + "/runs/" + run + "/cancel", "POST", { clientRequestId }),
     };
     const client = createChatAgentClient(request, setup);
@@ -118,10 +123,23 @@ export async function createEng85AgentThroughSetup(input: RouteFixture) {
         const { requestId: _requestId, ...fields } = draft;
         const snapshot = BotCreationSnapshotSchema.parse({ sessionId, draftRevision: 1, seed: { kind: "scratch" },
           draft: fields, choices: { skills: ["matrix-integrations"], services: ["slack"] } });
-        expect(await conversation.send(prompt, snapshot, selection)).toBe(true);
+        if (sessionId === "session_create") {
+          expect(await conversation.open(snapshot, selection)).toBe(true);
+          await vi.waitFor(async () => {
+            await conversation.refresh();
+            expect(conversation.state().question).toMatchObject({ question, suggestedReplies });
+          }, { timeout: 5000 });
+          expect((await client.list()).agents).toHaveLength(0);
+          expect(await conversation.replyToQuestion(suggestedReplies[0], snapshot, selection)).toBe(true);
+        } else {
+          expect(await conversation.send(prompt, snapshot, selection)).toBe(true);
+        }
+        const runId = conversation.state().activeRunId;
+        expect(runId).toBeTruthy();
         await vi.waitFor(async () => {
           await conversation.refresh();
-          expect(conversation.state().detail?.runs[0]?.status).toBe(outcome);
+          expect(conversation.state().activeRunId).toBeNull();
+          expect(conversation.state().detail?.runs.find(run => run.id === runId)?.status).toBe(outcome);
         }, { timeout: 5000 });
       } finally { conversation.dispose(); }
     };
