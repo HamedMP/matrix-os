@@ -4,9 +4,11 @@ import { sql } from 'kysely';
 import type { PlatformDB } from '../db.js';
 import type { CustomerVpsObjectStore } from '../customer-vps-r2.js';
 import { createSitesService } from './service.js';
+import { SITES_SCHEMA_REVISION } from './migration.js';
 import { createSiteManagementRoutes } from './management-routes.js';
 import { createSitePublicRoutes } from './public-routes.js';
 import { createSiteSubmissionTransport } from './submission-transport.js';
+import { createSiteDataTransport } from './data-transport.js';
 import type { SiteTelemetryCapture } from './telemetry.js';
 import type { ClerkAuth } from '../clerk-auth.js';
 export interface SiteEmailReadiness {
@@ -28,8 +30,8 @@ export async function readSiteEmailCapability(db: PlatformDB, env: NodeJS.Proces
         || !env.ACCOUNT_DELETION_SECRET || Buffer.byteLength(env.ACCOUNT_DELETION_SECRET) < 32) return false;
     const marker = await sql<{ generation: number; fingerprint: string }>`
       SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'sites'`.execute(db.executor);
-    return marker.rows[0]?.generation === 3
-        && marker.rows[0]?.fingerprint === 'public-app-sites-email-invitations-v3';
+    return marker.rows[0]?.generation === SITES_SCHEMA_REVISION.generation
+        && marker.rows[0]?.fingerprint === SITES_SCHEMA_REVISION.fingerprint;
 }
 export function registerSiteRoutes(app: Hono<any>, options: {
     db: PlatformDB;
@@ -58,7 +60,7 @@ export function registerSiteRoutes(app: Hono<any>, options: {
         : undefined;
     app.route('/public/sites', createSitePublicRoutes({ service, edgeSecret: options.edgeSecret,
         edgePreviousSecret: options.edgePreviousSecret, submit: createSiteSubmissionTransport(options),
-        captureEvent: options.captureEvent, email }));
+        captureEvent: options.captureEvent, email, data: { transport: createSiteDataTransport(options), env: options.env } }));
 }
 
 /** Proxy-only deployments do not mount Sites; explicit Sites startup still validates its secret. */

@@ -2,7 +2,7 @@ import { migratePreviewPairPublisher } from "../preview-pair/migration.js";
 import { GOOGLE_TRACKING_REVISION } from '../billing/google-tracking-revision.js';
 import { migrateGooglePurchases } from '../billing/google-tracking-migration.js';
 import type { Kysely } from 'kysely';
-import { migrateSites } from '../sites/migration.js';
+import { migrateSites, SITES_SCHEMA_REVISION } from '../sites/migration.js';
 import type { PlatformDatabase } from '../db.js';
 import { runPlatformMigration } from '../migration-runner.js';
 import { PLATFORM_SCHEMA_REVISION } from './migration-revision.js';
@@ -33,7 +33,7 @@ export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>)
   });
   await runPlatformMigration(db, migrateGooglePurchases, { scope: 'billing-google-purchases', revision: GOOGLE_TRACKING_REVISION, deadlockAttempts: 12 });
   await runPlatformMigration(db, migrateSites, {
-    scope: 'sites', revision: { generation: 3, fingerprint: 'public-app-sites-email-invitations-v3' }, deadlockAttempts: 12,
+    scope: 'sites', revision: SITES_SCHEMA_REVISION, deadlockAttempts: 12,
   });
   await runPlatformMigration(db, migratePreviewPairPublisher, {
     scope: 'preview-pairs', revision: { generation: 5, fingerprint: 'collaboration-preview-pair-publisher-v5' }, deadlockAttempts: 12,

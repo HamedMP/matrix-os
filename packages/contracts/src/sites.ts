@@ -137,6 +137,8 @@ export const SiteRecordSchema = z.object({
   slug: SiteSlugSchema.nullable(), url: SiteUrlSchema, revision: baseRevision,
   status: z.enum(["published", "unpublished"]), activeVersion: SiteIdSchema.nullable(),
   accessMode: SiteAccessModeSchema.default("public"),
+  /** 2694: the owner published this public link after visitor data shipped, so visitors may read app data. */
+  publicData: z.boolean().optional(),
   capabilities: SiteEmailInvitationsCapabilitySchema.optional(),
   versions: z.array(SiteVersionSchema).max(50), config: SitePublishingSchema,
 }).strict();
