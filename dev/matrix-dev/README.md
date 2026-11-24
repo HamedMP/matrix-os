@@ -11,6 +11,8 @@ customer-facing `plugins/matrix-os` plugin.
 | `unblock-tickets` | Answer the decisions waiting on you |
 | `daily-update` | Write a paste-ready summary of a day's work |
 | `release-notes` | Draft Desktop release notes |
+| `release-matrix-stable` | Cut a canary host bundle and promote it to stable |
+| `release-platform` | Deploy, verify, and roll back the platform service |
 | `wrap-up` | Close out a chat whose work has shipped |
 
 Install and update instructions: [`docs/dev/agent-plugins.md`](../../docs/dev/agent-plugins.md#matrix-dev).

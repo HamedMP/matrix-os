@@ -652,7 +652,7 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 ### Workflow skills and the matrix-dev plugin
 
 - Each workflow skill has one canonical copy in `.agents/skills/<name>/`, read by Codex directly and by Claude Code through a `.claude/skills/<name>` link. Do not add a second copy under `.claude/commands/`.
-- The `matrix-dev` plugin in `dev/matrix-dev/` ships `worktree-pr-monitor`, `monitor-stack-reviews`, `unblock-tickets`, `daily-update`, `release-notes`, and `wrap-up` to engineers, with auto-update. Its `skills/` folder is generated: after editing a canonical skill run `node scripts/dev/sync-matrix-dev-plugin.mjs` and commit both. Install steps: `docs/dev/agent-plugins.md`.
+- The `matrix-dev` plugin in `dev/matrix-dev/` ships `worktree-pr-monitor`, `monitor-stack-reviews`, `unblock-tickets`, `daily-update`, `release-notes`, `release-matrix-stable`, `release-platform`, and `wrap-up` to engineers, with auto-update. Its `skills/` folder is generated: after editing a canonical skill run `node scripts/dev/sync-matrix-dev-plugin.mjs` and commit both. Install steps: `docs/dev/agent-plugins.md`.
 - To take one change from a worktree to a merge-ready PR, use the `worktree-pr-monitor` skill; after the merge, `wrap-up`.
 
 ### Stack review monitor
