@@ -169,7 +169,7 @@ write_file() {
 
 # --- packages -----------------------------------------------------------------
 missing_packages=()
-for pkg in mdadm gdisk parted cloud-image-utils qemu-utils thin-provisioning-tools python3-yaml openssl e2fsprogs iproute2 nftables curl xz-utils; do
+for pkg in mdadm gdisk parted cloud-image-utils qemu-utils lvm2 thin-provisioning-tools python3-yaml openssl e2fsprogs iproute2 nftables curl xz-utils; do
   # shellcheck disable=SC2016 # ${Status} is dpkg-query's format, not shell.
   has 'install ok installed' dpkg-query -W -f='${Status}' "$pkg" || missing_packages+=("$pkg")
 done
