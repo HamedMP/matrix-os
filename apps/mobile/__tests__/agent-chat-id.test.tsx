@@ -74,8 +74,9 @@ describe("finding an agent's chat", () => {
 
     await waitFor(() => expect(mockEnsureAgentDirectChat).toHaveBeenCalledTimes(1));
     expect(mockEnsureAgentDirectChat).toHaveBeenCalledWith(
-      "session-token", "https://app.matrix-os.com/vm/alice", "bot_research1",
+      expect.any(Function), "https://app.matrix-os.com/vm/alice", "bot_research1",
     );
+    await expect(mockEnsureAgentDirectChat.mock.calls[0]![0]()).resolves.toBe("session-token");
     expect(result.current).toMatchObject({ chatId: null, failed: false });
 
     await act(async () => answer("chat_created"));

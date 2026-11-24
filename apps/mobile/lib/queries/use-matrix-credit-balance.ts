@@ -16,7 +16,7 @@ export function useMatrixCreditBalance() {
     queryFn: async () => {
       const session = await gateway.session();
       if (!session) throw new Error("Credit balance unavailable.");
-      return fetchMatrixCreditBalance(session.token, session.gatewayUrl);
+      return fetchMatrixCreditBalance(session.getToken ?? session.token, session.gatewayUrl);
     },
   });
   const balanceMicrousd = balance.data ?? null;

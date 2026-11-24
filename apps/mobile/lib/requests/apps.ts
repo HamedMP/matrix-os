@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 
-import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "@/lib/requests/http";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, type RequestToken } from "@/lib/requests/http";
 
 const APPS_UNAVAILABLE_ERROR = "Apps unavailable. Try again.";
 const APP_SESSION_UNAVAILABLE_ERROR = "App session unavailable. Try again.";
@@ -33,7 +33,7 @@ export type InstalledApp = z.infer<typeof AppEntrySchema>;
 export type AppSession = z.infer<typeof AppSessionSchema>;
 
 export function fetchInstalledApps(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
 ): Promise<InstalledApp[]> {
   return fetchAuthenticatedJson({
@@ -45,7 +45,7 @@ export function fetchInstalledApps(
 }
 
 export async function createAppSession(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
   slug: string,
 ): Promise<AppSession> {

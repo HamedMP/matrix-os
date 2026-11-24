@@ -13,7 +13,7 @@ export function createNativeRoutineClient(session: () => Promise<GatewaySession 
     const url = new URL(buildGatewayRequestUrl(auth.gatewayUrl, pathname!));
     for (const [key, value] of new URLSearchParams(query)) url.searchParams.set(key, value);
     const accept = botRoutineOriginReadAccept(path, method);
-    return fetchAuthenticatedJson({ url: url.toString(), token: auth.token, method,
+    return fetchAuthenticatedJson({ url: url.toString(), token: auth.getToken ?? auth.token, method,
       ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
       ...(accept ? { headers: { Accept: accept } } : {}),
       schema: z.unknown(), errorMessage: "Schedules are temporarily unavailable." });

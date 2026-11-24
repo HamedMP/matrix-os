@@ -26,6 +26,27 @@ const props = { chatId: "chat_test", gatewayUrl: "https://app.matrix-os.com/vm/p
 
 afterEach(() => { jest.restoreAllMocks(); refresh.mockClear(); mockRoutineAuth.userId = "owner-a"; mockRoutineAuth.sessionId = "session-a"; mockRoutineAuth.token = null; });
 
+it("submits the same approval decision with a renewed token after wake", async () => {
+  jest.useFakeTimers();
+  jest.spyOn(Math, "random").mockReturnValue(0);
+  const transport = jest.spyOn(global, "fetch").mockImplementationOnce(async () => {
+    mockRoutineAuth.token = Promise.resolve("renewed");
+    return new Response('{"runtimeState":"waking"}', { status: 503, headers: { "Retry-After": "1" } });
+  }).mockImplementationOnce(async (_url, init) => {
+    const valid = new Headers(init?.headers).get("authorization") === "Bearer renewed";
+    return new Response(JSON.stringify({ approvalId: "approval_test", decision: "approve", submission: "accepted" }), { status: valid ? 200 : 401 });
+  });
+  try {
+    render(<CanonicalApprovalMessage {...props} approval={{ ...approval, allowedDecisions: [...approval.allowedDecisions] }} />);
+    fireEvent.press(screen.getByText("Allow once"));
+    await act(async () => { await jest.advanceTimersByTimeAsync(1_000); });
+    expect(screen.getByText("Decision submitted. Waiting for confirmation.")).toBeTruthy();
+    expect(transport.mock.calls[1]?.[1]?.body).toBe(transport.mock.calls[0]?.[1]?.body);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
 it("submits a one-time decision to the selected chat and run, then refreshes", async () => {
   const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ approvalId: "approval_test", decision: "decline", submission: "accepted" }) } as Response);
   render(<CanonicalApprovalMessage {...props} approval={{ ...approval, allowedDecisions: [...approval.allowedDecisions] }} />);

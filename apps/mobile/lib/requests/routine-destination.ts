@@ -1,10 +1,11 @@
 import { ROUTINE_DESTINATION_PATH, RoutineDestinationViewSchema, RoutineCliRememberTargetSchema, RoutineCliResetTargetSchema } from "@matrix-os/contracts/routine-destination";
 import { gatewayRequestUrl, fetchAuthenticatedAnswer } from "./answers";
+import type { RequestToken } from "./http";
 /** Only fixed app-written error copy reaches the shared hook; server/provider messages never do. */
 export class RoutineDestinationRequestError extends Error {
   constructor(readonly status: number | null) { super("Routine destination unavailable."); this.name = "RoutineDestinationRequestError"; }
 }
-export async function requestRoutineDestination(token: string, gatewayUrl: string, kind: "get" | "remember" | "reset", input?: unknown, signal?: AbortSignal) {
+export async function requestRoutineDestination(token: RequestToken, gatewayUrl: string, kind: "get" | "remember" | "reset", input?: unknown, signal?: AbortSignal) {
   const path = ROUTINE_DESTINATION_PATH + (kind === "reset" ? "/reset" : ""), url = gatewayRequestUrl(gatewayUrl, path);
   if (!url || signal?.aborted) throw new RoutineDestinationRequestError(null);
   const body = kind === "get" ? undefined : kind === "remember" ? RoutineCliRememberTargetSchema.parse(input) : RoutineCliResetTargetSchema.parse(input);

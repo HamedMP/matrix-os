@@ -61,12 +61,14 @@ export function CanonicalInputMessage({ request, chatId, gatewayUrl, onSettled }
       const key = JSON.stringify([chatId, request.runId, request.requestId]);
       if (attempt.current?.key !== key) attempt.current = { key, id: canonicalChatRequestId() };
       const body = CanonicalSubmitChatInputRequestSchema.parse({ ...answer, clientRequestId: attempt.current.id });
-      const token = await getToken();
-      if (!token) throw new Error("Not signed in");
       if (!mounted.current) return;
       await fetchAuthenticatedJson({
         url: buildGatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(chatId)}/runs/${encodeURIComponent(request.runId)}/inputs/${encodeURIComponent(request.requestId)}`),
-        token, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        token: async () => {
+          const token = await getToken();
+          return mounted.current ? token : null;
+        },
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
         schema: CanonicalChatInputSubmissionResponseSchema,
         errorMessage: "The answer could not be submitted. Try again.",
       });

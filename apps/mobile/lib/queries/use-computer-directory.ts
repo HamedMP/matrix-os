@@ -32,9 +32,8 @@ export function useComputerDirectory(path: string) {
     queryKey: mobileQueryKeys.files(userId ?? "signed-out", computerKey, path),
     enabled: authEnabled && Boolean(computer),
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Files unavailable.");
-      return fetchFileList(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, path);
+      if (!computer) throw new Error("Files unavailable.");
+      return fetchFileList(getToken, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, path);
     },
   });
   const directoryQueryKey = mobileQueryKeys.files(
@@ -44,13 +43,12 @@ export function useComputerDirectory(path: string) {
   );
   const createEntryMutation = useMutation({
     mutationFn: async ({ name, type }: { name: string; type: "directory" | "file" }) => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Could not create item. Try again.");
+      if (!authEnabled || !computer) throw new Error("Could not create item. Try again.");
       const gatewayUrl = `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`;
       if (type === "directory") {
-        await createFolder(token, gatewayUrl, path, name);
+        await createFolder(getToken, gatewayUrl, path, name);
       } else {
-        await createFile(token, gatewayUrl, path, name);
+        await createFile(getToken, gatewayUrl, path, name);
       }
     },
     onSuccess: (_result, { name, type }) => {

@@ -22,7 +22,7 @@ export function useSavedAgentChat(agentId: string, target: SavedAgentChat | unde
         const auth = await session();
         if (!current) return;
         if (!auth) throw new Error("Chat unavailable");
-        const bound = await fetchSavedBotChatIdentity(auth.token, auth.gatewayUrl, chatId);
+        const bound = await fetchSavedBotChatIdentity(auth.getToken ?? auth.token, auth.gatewayUrl, chatId);
         if (current) setResult({key, chatId: bound === agentId ? chatId : null, failed: bound !== agentId});
       } catch (failure: unknown) {
         console.warn("[mobile-schedules] Saved Chat unavailable", failure instanceof Error ? failure.name : "UnknownError");

@@ -14,9 +14,11 @@ export function RoutineDestinationSection({ gatewayUrl, chatId, botId, eligible 
     const identity = {};
     if (!isLoaded || !isSignedIn || !userId || !gatewayUrl) return { identity, client: null };
     const call = async (kind: "get" | "remember" | "reset", input?: unknown, signal?: AbortSignal) => {
-      const token = await getToken();
-      if (!token || current.current !== identity || signal?.aborted) throw new RoutineDestinationRequestError(null);
-      return requestRoutineDestination(token, gatewayUrl, kind, input, signal);
+      if (current.current !== identity || signal?.aborted) throw new RoutineDestinationRequestError(null);
+      return requestRoutineDestination(async () => {
+        const token = await getToken();
+        return current.current === identity && !signal?.aborted ? token : null;
+      }, gatewayUrl, kind, input, signal);
     };
     const client: RoutineDestinationClient = { get: signal => call("get", undefined, signal), remember: (input, signal) => call("remember", input, signal), reset: (input, signal) => call("reset", input, signal) };
     return { identity, client };
