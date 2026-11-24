@@ -9,6 +9,7 @@ import { ProjectSetupError } from "./project-setup-state.js";
 
 export interface ProjectSetupWorkspace {
   fingerprint: string;
+  executionRootFingerprint: string;
   projectSlug: string;
   read(path: string): Promise<string | null>;
   create(path: string, content: string): Promise<void>;
@@ -49,7 +50,7 @@ export async function openProjectSetupWorkspace(roots: ChatExecutionRootResolver
       if (current.primaryWorkspaceRoot !== resolved.primaryWorkspaceRoot || !stat.isDirectory() || stat.dev !== identity.dev || stat.ino !== identity.ino) throw new ProjectSetupError("not_found");
     };
     await revalidate();
-    return { fingerprint, projectSlug: resolved.projectSlug, revalidate, close: () => directory.close(),
+    return { fingerprint, executionRootFingerprint: resolved.fingerprint, projectSlug: resolved.projectSlug, revalidate, close: () => directory.close(),
       read: path => readManifest(directory, path),
       create: async (path, content) => { await revalidate(); await createProjectAgentConfigFile(directory, path, content); await revalidate(); } };
   } catch (error: unknown) {

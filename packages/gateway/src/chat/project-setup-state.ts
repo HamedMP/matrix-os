@@ -35,13 +35,20 @@ export function projectSetupSkill(content: string): NonNullable<ProjectSetupDraf
   return { name: slug, path: `.agents/skills/${slug}/SKILL.md`, content };
 }
 
+export function projectSetupRootFile(draft: ProjectSetupDraft, path: "AGENTS.md" | "CLAUDE.md"): ProjectSetupFile {
+  const content = path === "AGENTS.md"
+    ? `# Project guidance\n\n## Project purpose\n\n${draft.answers.purpose}\n\n## Working preferences\n\n${draft.answers.guidance ?? ""}\n`
+    : "@AGENTS.md\n";
+  return { path, content, status: "pending" };
+}
+
 function reviewedFiles(draft: ProjectSetupDraft): ProjectSetupFile[] {
-  const existingGuidance = draft.proposals.find(file => file.path === "AGENTS.md")?.content;
-  const content = existingGuidance ?? `# Project guidance\n\n## Project purpose\n\n${draft.answers.purpose}\n\n## Working preferences\n\n${draft.answers.guidance ?? ""}\n`;
-  const files: ProjectSetupFile[] = [
-    { path: "AGENTS.md", content, status: "pending" },
-    { path: "CLAUDE.md", content: "@AGENTS.md\n", status: "pending" },
-  ];
+  const files = (["AGENTS.md", "CLAUDE.md"] as const).map(path => {
+    const previous = draft.proposals.find(file => file.path === path);
+    if (previous?.status === "already_present") return previous;
+    const fallback = projectSetupRootFile(draft, path);
+    return path === "AGENTS.md" && previous ? { ...fallback, content: previous.content } : fallback;
+  });
   if (draft.skill) files.push({ path: draft.skill.path, content: draft.skill.content, status: "pending" });
   return files;
 }

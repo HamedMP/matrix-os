@@ -10,7 +10,7 @@ function draft() {
   return transitionProjectSetup(current, { type: "choose_mcp", choice: "skip" }).draft;
 }
 function workspace(files = new Map<string, string>()): ProjectSetupWorkspace & { files: Map<string, string> } {
-  return { files, fingerprint: "a".repeat(64), projectSlug: "portfolio", read: async p => files.get(p) ?? null,
+  return { files, executionRootFingerprint: "b".repeat(64), fingerprint: "a".repeat(64), projectSlug: "portfolio", read: async p => files.get(p) ?? null,
     revalidate: vi.fn(async () => {}), close: vi.fn(async () => {}), create: vi.fn(async (p, c) => {
       if (files.has(p)) throw Object.assign(new Error("Exists"), { code: "EEXIST" });
       files.set(p, c);

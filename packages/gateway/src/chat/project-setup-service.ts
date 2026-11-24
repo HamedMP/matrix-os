@@ -58,7 +58,7 @@ export class ProjectSetupService {
   async update(principal: RequestPrincipal, owner: ChatOwner, chatId: string, input: ProjectSetupUpdateRequest): Promise<ProjectSetupResponse> {
     const projectId = await this.projectForChat(owner, chatId);
     return this.workspace(owner, projectId, async workspace => {
-      const mutate = () => this.drafts.mutate(owner, chatId, workspace.fingerprint, input, async (current, repository) => {
+      const mutate = () => this.drafts.mutate(owner, chatId, workspace.fingerprint, input, async (current, repository, lastRequestId) => {
         await workspace.revalidate();
         if (input.action.type === "save") {
           const draft = await saveProjectSetupFiles(workspace, current);
@@ -66,7 +66,7 @@ export class ProjectSetupService {
             : "Some project files need attention. Existing files were preserved. Review the file results and retry the remaining files." };
         }
         if (input.action.type === "sync_generation") {
-          const draft = await syncProjectSetupGeneration(repository, owner, current);
+          const draft = await syncProjectSetupGeneration(repository, owner, current, workspace.executionRootFingerprint, lastRequestId);
           return { draft: draft.generation?.status === "completed" ? await inspectProjectSetupFiles(workspace, draft) : draft };
         }
         const result = transitionProjectSetup(current, input.action);
@@ -80,7 +80,7 @@ export class ProjectSetupService {
       let generation: NonNullable<ProjectSetupDraft["generation"]>;
       try {
         generation = this.options.generation
-          ? await generateProjectSetup(this.options.generation, principal, owner, result.draft, input.action.selection, input.clientRequestId)
+          ? await generateProjectSetup(this.options.generation, principal, owner, result.draft, input.action.selection, input.clientRequestId, workspace.executionRootFingerprint)
           : { status: "unavailable" };
       } catch (error: unknown) {
         console.warn("[project-setup] Draft generation failed:", error instanceof Error ? error.name : "UnknownError");

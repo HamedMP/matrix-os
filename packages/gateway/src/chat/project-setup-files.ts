@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ProjectSetupDraft, ProjectSetupFile } from "@matrix-os/contracts";
 import { isFsError } from "../app-gallery/pinned-directory.js";
 import type { ProjectSetupWorkspace } from "./project-setup-workspace.js";
-import { projectSetupSkill, ProjectSetupError } from "./project-setup-state.js";
+import { projectSetupRootFile, projectSetupSkill, ProjectSetupError } from "./project-setup-state.js";
 
 const hash = (content: string | null) => content === null ? null : createHash("sha256").update(content).digest("hex");
 
@@ -22,9 +22,18 @@ export async function inspectProjectSetupFiles(workspace: ProjectSetupWorkspace,
   for (const file of draft.proposals) {
     await workspace.revalidate();
     const current = await workspace.read(file.path);
-    const preservedRoot = current !== null && file.expectedHash === undefined && ["AGENTS.md", "CLAUDE.md"].includes(file.path);
-    proposals.push({ ...file, ...(preservedRoot ? { content: current } : {}), expectedHash: hash(current),
-      status: current === null ? "pending" : preservedRoot || current === file.content ? "already_present" : "conflict" });
+    if ((file.path === "AGENTS.md" || file.path === "CLAUDE.md") && (file.expectedHash === undefined || file.status === "already_present")) {
+      if (current !== null) {
+        proposals.push({ ...file, content: current, expectedHash: hash(current), status: "already_present" });
+        continue;
+      }
+      if (file.status === "already_present") {
+        proposals.push({ ...projectSetupRootFile(draft, file.path), expectedHash: null });
+        continue;
+      }
+    }
+    proposals.push({ ...file, expectedHash: hash(current),
+      status: current === null ? "pending" : current === file.content ? "already_present" : "conflict" });
   }
   return { ...draft, proposals };
 }

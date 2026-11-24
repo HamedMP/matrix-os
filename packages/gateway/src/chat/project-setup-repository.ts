@@ -66,8 +66,12 @@ export class ProjectSetupRepository {
       const row = await db.selectFrom("chat_project_setups").selectAll().where("owner_id", "=", owner.ownerId).where("chat_id", "=", chatId)
         .where("root_fingerprint", "=", fingerprint).forUpdate().executeTakeFirst();
       if (!row || row.project_id !== chat.project_id) throw new ProjectSetupError("not_found");
-      if (row.last_request_id !== requestId) throw new ProjectSetupError("conflict");
       const draft = ProjectSetupDraftSchema.parse(parseJson(row.draft));
+      if (row.last_request_id !== requestId) {
+        if (generation.runId && draft.generation?.runId === generation.runId
+          && draft.generation.sourceRevision === generation.sourceRevision) return draft;
+        throw new ProjectSetupError("conflict");
+      }
       if (draft.generation?.status !== "pending") return draft;
       const next = ProjectSetupDraftSchema.parse({ ...draft, generation });
       await db.updateTable("chat_project_setups").set({ draft: jsonb(next) }).where("owner_id", "=", owner.ownerId).where("chat_id", "=", chatId)
@@ -78,7 +82,7 @@ export class ProjectSetupRepository {
   }
 
   async mutate(owner: ChatOwner, chatId: string, fingerprint: string, input: ProjectSetupUpdateRequest,
-    operation: (draft: ProjectSetupDraft, repository: ChatRepository) => Promise<{ draft: ProjectSetupDraft; userText?: string; assistantText?: string }> | { draft: ProjectSetupDraft; userText?: string; assistantText?: string }): Promise<ProjectSetupResponse> {
+    operation: (draft: ProjectSetupDraft, repository: ChatRepository, lastRequestId: string | null) => Promise<{ draft: ProjectSetupDraft; userText?: string; assistantText?: string }> | { draft: ProjectSetupDraft; userText?: string; assistantText?: string }): Promise<ProjectSetupResponse> {
     return this.chats.withTransaction(async repository => {
       const db = repository.kysely;
       const chat = await db.selectFrom("chats").selectAll().where("id", "=", chatId).where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).forUpdate().executeTakeFirst();
@@ -95,7 +99,11 @@ export class ProjectSetupRepository {
       if (Number(row.revision) !== input.baseRevision) throw new ProjectSetupError("conflict");
       const recordBeforeAction = await repository.get(owner, chatId);
       if (recordBeforeAction?.activeRun && input.action.type !== "sync_generation") throw new ProjectSetupError("busy");
-      const result = await operation(current, repository);
+      const result = await operation(current, repository, row.last_request_id);
+      // A poll before the canonical turn is admitted must retain the generating request ID.
+      if (input.action.type === "sync_generation" && current.generation?.status === "pending" && result.draft === current) {
+        return { draft: current, record: recordBeforeAction! };
+      }
       const entries: SetupTranscriptMessage[] = [
         ...(result.userText ? [{ role: "user" as const, text: result.userText }] : []),
         ...(result.assistantText ? [{ role: "assistant" as const, text: result.assistantText }] : []),
