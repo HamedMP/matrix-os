@@ -243,7 +243,7 @@ function setupFixture() {
         expect(action.text).toBe(correction);
         next.answers.purpose = correction;
         next.proposals = next.proposals.map(file => file.path === "AGENTS.md"
-          ? { ...file, content: `${file.content}\n${correction}\n` } : file);
+          ? { ...file, content: `${file.content}\n\n${correction}\n` } : file);
         next.currentQuestionMessageId = append(action.text, correctedReply);
       } else if (action.type === "save") {
         for (const file of next.proposals) {
