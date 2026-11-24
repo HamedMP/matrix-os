@@ -1,0 +1,33 @@
+# Matrix guest agent inside each metal VM (installed into the golden disk by
+# Task H6). Answers the host's memory controller ({"op":"stats"}) and suspend
+# path ({"op":"trim"}) on a local unix socket; matrix-guest-agent-vsock.service
+# bridges AF_VSOCK port 1024 to it. Build: `bun run --cwd packages/hostd
+# build:guest-agent` -> packages/hostd/dist/guest-agent/agent.mjs, installed at
+# /opt/matrix/guest-agent/agent.mjs.
+[Unit]
+Description=Matrix guest agent
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/opt/matrix/runtime/node/bin/node /opt/matrix/guest-agent/agent.mjs --listen /run/matrix-guest-agent/agent.sock
+RuntimeDirectory=matrix-guest-agent
+RuntimeDirectoryMode=0700
+Restart=always
+RestartSec=2
+# Root with only CAP_SYS_ADMIN: writing /proc/sys/vm/drop_caches needs it.
+# ProtectKernelTunables stays off because trim writes /proc/sys/vm.
+CapabilityBoundingSet=CAP_SYS_ADMIN
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectHome=yes
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX
+MemoryMax=128M
+TasksMax=16
+# Must keep answering when the guest is short of memory.
+OOMScoreAdjust=-900
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+# Keeps the guest clock on the host clock through ptp_kvm (S7: chrony with
+# network sources did not step reliably after a restore; this measured a 9 us
+# offset one second after resume).
+[Unit]
+Description=Follow the host clock via ptp_kvm
+After=systemd-modules-load.service
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/phc2sys -s /dev/ptp0 -c CLOCK_REALTIME -O 0 -R 4 -S 0.5 -q
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
