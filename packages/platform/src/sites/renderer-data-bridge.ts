@@ -7,7 +7,8 @@ import { APP_BRIDGE_STORED_VALUE_PREFIX, SITE_PUBLIC_DATA_REQUEST_MAX_BYTES, typ
  * Returns object-literal members appended to the frozen `window.MatrixOS`.
  */
 export function frameDataBridge(site: SiteRecord): string {
-    if (site.accessMode !== 'public') return '';
+    // Only links the owner published after visitor data shipped get the bridge (2694).
+    if (site.accessMode !== 'public' || !site.publicData) return '';
     return `,...(()=>{
 const appName=${JSON.stringify(site.appSlug)};const prefix=${JSON.stringify(APP_BRIDGE_STORED_VALUE_PREFIX)};
 const listeners=[];let flights=0;
@@ -92,7 +93,8 @@ return{
 
 /** Parent-page relay for frame data messages; public sites only. */
 export function pageDataHandler(site: SiteRecord): string {
-    if (site.accessMode !== 'public') return '';
+    // Only links the owner published after visitor data shipped get the bridge (2694).
+    if (site.accessMode !== 'public' || !site.publicData) return '';
     return `let dataFlights=0;
 const relayData=async(port,request)=>{
  if(!request||typeof request!=='object'||Array.isArray(request)){port.postMessage({error:'Invalid change'});port.close();return}
