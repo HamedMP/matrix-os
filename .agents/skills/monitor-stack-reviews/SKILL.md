@@ -1,17 +1,14 @@
 ---
-description: Monitor a GitHub native PR stack through Greptile 5/5, marking PRs ready for review, and CI.
-argument-hint: [pr-or-range-or-branch]
+name: monitor-stack-reviews
+description: Monitor an existing GitHub native PR stack - read Greptile feedback on every layer, fix actionable findings, mark each PR ready only after Greptile is 5/5 on its current head, and watch CI until every layer is ready for final human review. Use when asked to monitor a stack, fix stack review comments, or run monitor-stack-reviews.
 ---
+
 
 # Monitor Stack Reviews
 
-Usage: `/monitor-stack-reviews <pr-or-range-or-branch>`
-
-Arguments:
-
-```text
-$ARGUMENTS
-```
+Use this skill when asked to monitor, review-fix, or get a GitHub native PR
+stack ready, or when invoked as `monitor-stack-reviews`. The request names the
+stack by a PR number, a range, or a branch.
 
 ## Goal
 
@@ -35,11 +32,11 @@ final human review.
   "needs human approval" and never self-approve or use admin bypass, even
   when asked to merge.
 - Do not create worktrees, create implementation branches, or open new feature
-  PRs. This command is for monitoring and fixing an existing PR/stack. Use `/worktree-pr-monitor` for the implementation stage.
+  PRs. This skill is for monitoring and fixing an existing PR/stack. Use `/worktree-pr-monitor` for the implementation stage.
 - Full PR CI runs on every non-draft head. Do not mark a PR ready for review
   (`gh pr ready <number>`) before the latest trusted Greptile review for that
   PR is `5/5`. There is no command-level override for this gate.
-- In this command, a *current-head* `5/5` also includes a `5/5` on an earlier
+- In this skill, a *current-head* `5/5` also includes a `5/5` on an earlier
   head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0;
   exit 1 needs a fresh review, exit 3 means the check could not decide: fix
   `gh`/git access and rerun). Restacks, retargets, and
@@ -70,8 +67,8 @@ final human review.
 ## Workflow
 
 1. Resolve the stack.
-   - If `$ARGUMENTS` contains a PR number/range, inspect those PRs with `gh pr view`.
-   - If `$ARGUMENTS` contains a branch, use `gh stack view --json` from its owning
+   - If the request names a PR number/range, inspect those PRs with `gh pr view`.
+   - If the request names a branch, use `gh stack view --json` from its owning
      worktree and `gh pr list --head`. Use the native stack REST API for remote
      membership when no local tracking exists; do not mutate just to read status.
    - If no arguments are provided, use the current branch and `gh stack view --json`.
@@ -82,7 +79,7 @@ final human review.
 2. Validate reviewability.
    - If any PR is still draft, report that Greptile may not run for that PR until
      a human or a separate explicit action marks it ready. Do not convert it from
-     this command. Continue monitoring and fixing the remaining non-draft PRs in
+     this skill. Continue monitoring and fixing the remaining non-draft PRs in
      stack order; keep each draft PR listed as a blocker in the final status.
    - Always keep the PR order intact, regardless of draft state. Do not alter
      bases manually or flatten dependencies; report malformed native membership.
@@ -187,7 +184,7 @@ final human review.
      `CI checks never became active for <pr> @ <sha>`.
    - Track a review-wait start time and current head SHA for each PR awaiting
      Greptile. Initialize the timer at command start for any PR whose current
-     head lacks a trusted Greptile review before this command makes changes, and
+     head lacks a trusted Greptile review before this skill makes changes, and
      reset it to the push time after every successful submit that rewrites that
      PR. If no Greptile comment for that head appears within 30 minutes after
      that PR's review-wait start time, stop and report
