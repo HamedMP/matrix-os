@@ -6,6 +6,7 @@ import { BOARD_EVENTS_WS_PATH, registerBoardEventsWebSocket } from "../message-b
 import { createMessageBoardRoutes } from "../message-board/routes.js";
 import type { MessageBoardRuntime } from "../message-board/runtime.js";
 import type { BoardCaller } from "../message-board/service.js";
+import { resolveBoardCaller, type BoardCallerOptions } from "../message-board/caller.js";
 import { requireRequestPrincipal } from "../request-principal.js";
 
 export const MESSAGE_BOARD_API_PREFIX = "/api/board";
@@ -16,9 +17,10 @@ export interface MessageBoardGatewayRouteOptions {
   runtime: MessageBoardRuntime | null;
   /** Display name for the owner's own posts. */
   ownerName?: string;
+  resolveTerminalCaller?: BoardCallerOptions["resolveTerminalCaller"];
 }
 
-/** The owner principal acts as `user:<id>`; agent sessions are resolved in a later layer. */
+/** The owner principal acting as `user:<id>` with full access. */
 export function ownerBoardCaller(c: Context, ownerName: string): BoardCaller {
   const principal = requireRequestPrincipal(c);
   return { ownerId: principal.userId, actor: { id: `user:${principal.userId}`, kind: "user", name: ownerName } };
@@ -33,7 +35,7 @@ export function registerMessageBoardGatewayRoutes(options: MessageBoardGatewayRo
     return;
   }
   const ownerName = options.ownerName?.trim().slice(0, 64) || "Owner";
-  const resolveCaller = (c: Context) => ownerBoardCaller(c, ownerName);
+  const resolveCaller = (c: Context) => resolveBoardCaller(c, { ownerName, resolveTerminalCaller: options.resolveTerminalCaller });
   app.route(MESSAGE_BOARD_API_PREFIX, createMessageBoardRoutes({ service: runtime.service, tasks: runtime.tasks, hub: runtime.hub, resolveCaller }));
   if (options.upgradeWebSocket) {
     registerBoardEventsWebSocket({ app, upgradeWebSocket: options.upgradeWebSocket, hub: runtime.hub, service: runtime.service, resolveCaller });

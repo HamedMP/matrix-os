@@ -936,6 +936,7 @@ export async function createGateway(config: GatewayConfig) {
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
     terminalTools: terminalAgents.kernelTools,
+    boardTools: ownerDatabaseServices?.messageBoardKernelTools ?? undefined,
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
@@ -1732,9 +1733,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   registerTerminalEventWebSocket({
-    app, upgradeWebSocket, hub: terminalAgents.events,
-    getPrincipal: requireRequestPrincipal,
-    terminalOwnerIds: terminalRuntimeOwnerIds,
+    app, upgradeWebSocket, hub: terminalAgents.events, getPrincipal: requireRequestPrincipal, terminalOwnerIds: terminalRuntimeOwnerIds,
   });
 
   slackRuntime = await startOwnerSlack({
@@ -1832,7 +1831,7 @@ export async function createGateway(config: GatewayConfig) {
 
   registerDataFeatureRoutes({
     app, upgradeWebSocket, messagingRepository, canvasService, canvasSubscriptionHub, gatewayCollaboration, logUnexpectedWsSendFailure,
-    messageBoard: ownerDatabaseServices?.messageBoard ?? null, ownerName: process.env.MATRIX_HANDLE,
+    messageBoard: ownerDatabaseServices?.messageBoard ?? null, ownerName: process.env.MATRIX_HANDLE, resolveTerminalCaller: terminalAgents.agents.resolveCaller,
   });
 
   const socialRoutes = await registerGatewaySyncAndSocialRoutes({

@@ -139,6 +139,8 @@ describe("Matrix integrations MCP server", () => {
       "jev_evaluate",
       "list_chat_agent_options",
       "create_chat_agent",
+      "board_read", "board_post", "board_reply", "board_label", "board_wait",
+      "board_task_create", "board_task_claim", "board_task_renew", "board_task_settle",
     ]);
     expect(listed.tools[0]?.description).toContain("new conversation");
 

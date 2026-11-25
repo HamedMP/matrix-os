@@ -5,6 +5,7 @@ import { registerChatAgentTools } from "./chat-agents.js";
 import { registerCompanyDriveTools } from "./company-drive.js";
 import { registerJevInboxTool } from "./jev-inbox.js";
 import { CORE_MCP_INSTRUCTIONS, registerCoreMcpTools } from "./core-mcp.js";
+import { registerBoardTools } from "./board.js";
 import {
   callServiceHandler,
   connectServiceHandler,
@@ -219,5 +220,7 @@ export function createIntegrationsMcpServer(
 
     registerChatAgentTools(server, fetcher);
   }
+  // Owner agents only; scoped Chat Run surfaces get board access in a follow-up with its own allowlist review.
+  if (full) registerBoardTools(server, fetcher);
   return server;
 }

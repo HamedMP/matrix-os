@@ -14,6 +14,7 @@ export {
 export type { KernelConfig, KernelEffort } from "./options.js";
 export type { OsViewAgentTools } from "./ipc-server.js";
 export type { TerminalAgentKernelTools } from "./tools/terminal-agents.js";
+export type { MessageBoardKernelTools } from "./tools/message-board.js";
 export type { OwnerAudioTranscriber } from "./tools/transcribe-audio.js";
 export { createDB } from "./db.js";
 export type { MatrixDB } from "./db.js";
