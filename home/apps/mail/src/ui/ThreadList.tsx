@@ -60,11 +60,13 @@ export function ThreadList({ state, keys }: ThreadListProps) {
   const start = Math.max(0, Math.floor(viewport.scrollTop / THREAD_ROW_HEIGHT) - OVERSCAN);
   const end = Math.min(keys.length, Math.ceil((viewport.scrollTop + viewport.height) / THREAD_ROW_HEIGHT) + OVERSCAN);
   const canLoadMore = hasMore && view !== undefined && !view.loadingMore && view.status !== "loading" && keys.length > 0;
+  // After a failed page the owner retries by hand; an automatic retry would loop against a busy gateway.
+  const autoLoad = canLoadMore && !view?.error;
   const nearEnd = end >= keys.length - LOAD_MORE_ROWS;
 
   useEffect(() => {
-    if (canLoadMore && nearEnd) void store.loadMore();
-  }, [canLoadMore, nearEnd, store]);
+    if (autoLoad && nearEnd) void store.loadMore();
+  }, [autoLoad, nearEnd, store]);
 
   if (!view) return null;
   if (keys.length === 0) return <EmptyList state={state} view={view} />;
@@ -111,6 +113,11 @@ export function ThreadList({ state, keys }: ThreadListProps) {
         <div className="mail-list__canvas" role="presentation" style={{ height: keys.length * THREAD_ROW_HEIGHT }}>{rows}</div>
       </div>
       {view.loadingMore && <div className="mail-list__more"><Spinner size={14} label="Loading more conversations" /></div>}
+      {canLoadMore && view.error && (
+        <div className="mail-list__more">
+          <button type="button" className="oui-button oui-button--ghost" onClick={() => void store.loadMore()}>Load more</button>
+        </div>
+      )}
     </div>
   );
 }

@@ -14,6 +14,8 @@ export const MAX_APP_DATABASE_REPLY_BYTES = 8 * 1024 * 1024;
 /** Exact JSON body limits of the existing structured database and legacy KV endpoints. */
 export const MAX_APP_DATABASE_REQUEST_BYTES = 1_000_000;
 export const MAX_APP_KV_REQUEST_BYTES = 1_000_000;
+/** Envelope prefix for typed `readData`/`writeData` values; owner and public-site bridges share stored rows. */
+export const APP_BRIDGE_STORED_VALUE_PREFIX = "__matrix_os_value_v1__:";
 /** Mail bodies, attachments and month views that exceed the default; oversized replies fail whole. */
 const LARGE_INTEGRATION_REPLY_BYTES: Readonly<Record<string, number>> = Object.freeze({
   "gmail/get_thread": 1536 * 1024, "gmail/get_message": 1536 * 1024,

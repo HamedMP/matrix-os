@@ -3,6 +3,10 @@ import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CODEX_VERIFIED_VERSION } from "@matrix-os/contracts";
+import { codexChatRunnerModelOptions } from "../../packages/gateway/src/chat/codex-chat-speed.js";
+import { createCodexControlClient } from "../../packages/gateway/src/coding-agents/codex-control-client.js";
+import { buildAgentLaunch } from "../../packages/gateway/src/agent-launcher.js";
 import { codexProviderEventPath } from "../../packages/gateway/src/coding-agents/codex-event-bridge.js";
 import { parseCodexExecJsonLine } from "../../packages/gateway/src/coding-agents/codex-events.js";
 
@@ -690,22 +694,27 @@ describe("Codex app-server control runtime", () => {
     }
   });
 
-  it("keeps one provider thread alive for queued Matrix turns and applies each turn selection", async () => {
+  it.each([false, true])("applies each Chat speed over the existing runner wire (resume=%s)", async (resume) => {
     const homePath = await mkdtemp(join("/tmp", "codex-turns-"));
     const fakeCodexPath = join(homePath, "fake-codex-turns.mjs");
     const requestsPath = join(homePath, "turn-requests.jsonl");
-    const eventPath = codexProviderEventPath(homePath, "sess_turns_1");
+    const sessionId = "sess_turns_1";
+    const eventPath = codexProviderEventPath(homePath, sessionId);
     await writeFile(fakeCodexPath, [
       "#!/usr/bin/env node",
       "import { appendFile } from 'node:fs/promises';",
       "import { createInterface } from 'node:readline';",
       `const requestsPath = ${JSON.stringify(requestsPath)};`,
       "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      `if (process.argv.includes('--version')) { console.log('codex-cli ${CODEX_VERIFIED_VERSION}'); process.exit(0); }`,
       "let turn = 0;",
       "for await (const line of input) {",
       "  const message = JSON.parse(line);",
       "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
-      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-turns' }, model: message.params.model, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'thread/start' || message.method === 'thread/resume') {",
+      "    await appendFile(requestsPath, JSON.stringify(message.params) + '\\n');",
+      "    console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-turns' }, model: message.params.model, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  }",
       "  else if (message.method === 'turn/start') {",
       "    turn += 1;",
       "    await appendFile(requestsPath, JSON.stringify(message.params) + '\\n');",
@@ -724,47 +733,57 @@ describe("Codex app-server control runtime", () => {
       writableRoots: [homePath],
       model: "openai/gpt-5.6-sol",
       effort: "low",
-      serviceTier: "fast",
+      serviceTier: "priority",
     }), "utf8").toString("base64");
-    const child = spawn(process.execPath, [
-      runnerPath,
-      eventPath,
-      process.version.slice(1),
-      process.execPath,
-      fakeCodexPath,
-      config,
-    ], { cwd: homePath, stdio: ["pipe", "pipe", "pipe"] });
-    const secondTurn = Buffer.from(JSON.stringify({
-      prompt: "Second turn.",
-      model: "openai/gpt-5.6-terra",
-      modelOptions: [
-        { id: "effort", value: "high" },
-        { id: "service_tier", value: "standard" },
-      ],
-    }), "utf8").toString("base64");
-    child.stdin?.write(`matrix-turn-v2:${secondTurn}\n`);
-
+    const launch = resume ? buildAgentLaunch({
+      agent: "codex", cwd: homePath, providerEventPath: eventPath,
+      codexExecutable: fakeCodexPath, providerThreadId: "native-thread-turns",
+      sandbox: { enabled: true, mode: "read-only" },
+      prompt: "First turn.", model: "openai/gpt-5.6-sol",
+      modelOptions: codexChatRunnerModelOptions([
+        { id: "effort", value: "low" }, { id: "service_tier", value: "priority" },
+      ]),
+    }, CODEX_VERIFIED_VERSION) : {
+      command: process.execPath,
+      args: [runnerPath, eventPath, process.version.slice(1), process.execPath, fakeCodexPath, config],
+    };
+    const child = spawn(launch.command, launch.args, { cwd: homePath, stdio: ["pipe", "pipe", "pipe"] });
     try {
+      await waitForTranscript(eventPath, /"type":"turn.completed"/);
+      const control = createCodexControlClient({ homePath });
+      await control.submitTurn({
+        sessionId,
+        turnId: "turn_speed_followup",
+        prompt: "Second turn.",
+        model: "openai/gpt-5.6-terra",
+        modelOptions: codexChatRunnerModelOptions([
+          { id: "effort", value: "high" },
+          { id: "codex_speed", value: resume ? "priority" : "standard" },
+        ]),
+      });
       const transcript = await waitForTranscript(
         eventPath,
         (value) => (value.match(/"type":"turn.completed"/g) ?? []).length >= 2,
       );
       const requests = (await readFile(requestsPath, "utf8"))
         .trim().split("\n").map((line) => JSON.parse(line));
-      expect(requests).toHaveLength(2);
-      expect(requests[0]).toMatchObject({
+      expect(requests).toHaveLength(3);
+      expect(requests[0]).toMatchObject(resume
+        ? { threadId: "native-thread-turns", serviceTier: "default" }
+        : { serviceTier: "priority" });
+      expect(requests[1]).toMatchObject({
         threadId: "native-thread-turns",
         input: [{ type: "text", text: "First turn.", text_elements: [] }],
         model: "openai/gpt-5.6-sol",
         effort: "low",
-        serviceTier: "fast",
+        serviceTier: resume ? "default" : "priority",
       });
-      expect(requests[1]).toMatchObject({
+      expect(requests[2]).toMatchObject({
         threadId: "native-thread-turns",
         input: [{ type: "text", text: "Second turn.", text_elements: [] }],
         model: "openai/gpt-5.6-terra",
         effort: "high",
-        serviceTier: "standard",
+        serviceTier: resume ? "priority" : "default",
       });
       expect(transcript.match(/"type":"turn.completed"/g)).toHaveLength(2);
       expect(transcript).toContain("answer-1");

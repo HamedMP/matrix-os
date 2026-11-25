@@ -1,19 +1,31 @@
 "use client";
 
-import { ChatRailOrderItem, ChatRailSection, OverflowingChatTitle, filterChatsByImportSource, useMinuteClock,
+import { ChatRailOrderContext, ChatRailOrderItem, ChatRailSection, OverflowingChatTitle, filterChatsByImportSource, useMinuteClock,
   type ChatImportSourceFilterValue } from "@matrix-os/ui";
 import { ChevronRight, Folder, FolderOpen } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import type { RenameableConversation } from "./ChatTitleRename";
-import { MAX_PROJECT_CHAT_ROWS, usePagedProjectChats, type FetchedProjectChat } from "./usePagedProjectChats";
+import { usePagedProjectChats, type FetchedProjectChat } from "./usePagedProjectChats";
 import { projectChats, type WebProject, type WebProjectsState } from "./web-projects";
+import { orderWebChatRows } from "./useWebChatRailOrder";
+import type { CanonicalChatNavigationPageQuery, CanonicalChatNavigationPageResponse } from "@matrix-os/contracts";
 
 // Same page size as the Electron Desktop project list.
-const PROJECT_CHAT_PAGE = 6;
+const PROJECT_CHAT_PAGE = 5;
 export type ProjectRow = { kind: "known"; chat: RenameableConversation } | { kind: "fetched"; chat: FetchedProjectChat };
+export type ProjectTitleOverrides = Readonly<Record<string, { title: string; titleVersion: number }>>;
+export function withRenamedProjectTitles(chats: readonly FetchedProjectChat[], titles: ProjectTitleOverrides): FetchedProjectChat[] {
+  return chats.map(chat => {
+    const saved = titles[chat.id];
+    if (!saved || chat.titleVersion >= saved.titleVersion) return chat;
+    return { ...chat, title: saved.title, titleVersion: saved.titleVersion,
+      ...(chat.canonicalRecord ? { canonicalRecord: { ...chat.canonicalRecord,
+        chat: { ...chat.canonicalRecord.chat, title: saved.title, titleVersion: saved.titleVersion } } } : {}) };
+  });
+}
 
 export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, onFocusProject, renderChat,
-  mobile = false, unreadOnly = false, sourceFilter = "all", searchQuery = "" }: {
+  mobile = false, unreadOnly = false, sourceFilter = "all", searchQuery = "", renamedTitles = {}, onArchiveProject, loadNavigationPage, refreshVersion = 0, chatReadStateUpdates }: {
   state: WebProjectsState;
   gatewayUrl: string;
   chats: readonly RenameableConversation[];
@@ -21,6 +33,7 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
   listedChatIds: ReadonlySet<string>;
   activeChatId?: string;
   activeChatTitle?: string;
+  renamedTitles?: ProjectTitleOverrides;
   onSelectChat(chatId: string): void;
   /** Narrows the sidebar to one project, as on Electron Desktop. */
   onFocusProject(project: WebProject): void;
@@ -29,6 +42,10 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
   unreadOnly?: boolean;
   sourceFilter?: ChatImportSourceFilterValue;
   searchQuery?: string;
+  onArchiveProject?: (projectId: string, projectSlug: string, projectName: string) => Promise<boolean>;
+  loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
+  refreshVersion?: number | string;
+  chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
 }) {
   const { projects, loading, error, retry } = state;
   const [groupExpanded, setGroupExpanded] = useState(true);
@@ -39,28 +56,29 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
       {loading ? <p role="status" className="matrix-web-project-note">Loading projects…</p> : null}
       {error ? <div className="matrix-web-project-note">
         <p role="alert">Projects could not be loaded.</p>
-        <button type="button" className="matrix-web-project-more" data-mobile={mobile || undefined} onClick={retry}>Retry projects</button>
+        <Button variant="ghost" size="sm" type="button" className="matrix-web-project-more" data-mobile={mobile || undefined} onClick={retry}>Retry projects</Button>
       </div> : null}
       {!loading && !error && projects.length === 0 ? <div className="matrix-web-project-note">
         <p className="matrix-web-project-note-title">No projects on this computer yet.</p>
         <p>Create a project in Matrix Desktop to get started.</p>
       </div> : null}
       {projects.map(project => <WebProjectGroup key={`${state.identity}/${project.id}/${unreadOnly}/${sourceFilter}`} project={project} gatewayUrl={gatewayUrl}
-        chats={projectChats(chats, project).filter(chat => !chat.canonicalRecord?.chat.userState?.pinned)} listedChatIds={listedChatIds}
-        activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} onFocusProject={onFocusProject}
-        renderChat={renderChat} mobile={mobile} unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}/>)}
+        chats={projectChats(chats, project)} listedChatIds={listedChatIds}
+        activeChatId={activeChatId} activeChatTitle={activeChatTitle} renamedTitles={renamedTitles} onSelectChat={onSelectChat} onFocusProject={onFocusProject}
+        renderChat={renderChat} mobile={mobile} unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery} onArchiveProject={onArchiveProject} loadNavigationPage={loadNavigationPage} refreshVersion={refreshVersion} chatReadStateUpdates={chatReadStateUpdates}/>)}
     </ChatRailSection>
   </nav>;
 }
 
-function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, onFocusProject, renderChat,
-  mobile, unreadOnly, sourceFilter, searchQuery }: {
+function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, renamedTitles, onSelectChat, onFocusProject, renderChat,
+  mobile, unreadOnly, sourceFilter, searchQuery, onArchiveProject, loadNavigationPage, refreshVersion, chatReadStateUpdates }: {
   project: WebProject;
   gatewayUrl: string;
   chats: readonly RenameableConversation[];
   listedChatIds: ReadonlySet<string>;
   activeChatId?: string;
   activeChatTitle?: string;
+  renamedTitles: ProjectTitleOverrides;
   onSelectChat(chatId: string): void;
   onFocusProject(project: WebProject): void;
   renderChat(chat: RenameableConversation, nowMs: number): ReactNode;
@@ -68,16 +86,25 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   unreadOnly: boolean;
   sourceFilter: ChatImportSourceFilterValue;
   searchQuery: string;
+  onArchiveProject?: (projectId: string, projectSlug: string, projectName: string) => Promise<boolean>;
+  loadNavigationPage?: (input: CanonicalChatNavigationPageQuery) => Promise<CanonicalChatNavigationPageResponse>;
+  refreshVersion: number | string;
+  chatReadStateUpdates?: readonly import("@matrix-os/ui").ChatNavigationRecord[];
 }) {
-  const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly);
+  const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, false, loadNavigationPage, refreshVersion, chats.map(chat => chat.id).sort().join("\0"), chatReadStateUpdates);
   const [limit, setLimit] = useState(PROJECT_CHAT_PAGE);
   const nowMs = useMinuteClock(expanded);
   const search = searchQuery.trim().toLowerCase();
   // Paged rows only fill in older Chats; a listed (or pinned, filtered, deleted) Chat keeps its normal placement.
-  const unknownChats = filterChatsByImportSource(fetched.filter(chat => !listedChatIds.has(chat.id)
+  const unknownChats = filterChatsByImportSource(withRenamedProjectTitles(fetched, renamedTitles).filter(chat => !listedChatIds.has(chat.id)
     && (!search || chat.title.toLowerCase().includes(search))), sourceFilter, chat => chat.importSource);
-  const allRows: ProjectRow[] = [...chats.map(chat => ({ kind: "known", chat } as const)),
-    ...unknownChats.map(chat => ({ kind: "fetched", chat } as const))];
+  const order = useContext(ChatRailOrderContext);
+  const unorderedRows: ProjectRow[] = loadNavigationPage
+    ? filterChatsByImportSource(withRenamedProjectTitles(fetched, renamedTitles), sourceFilter, chat => chat.importSource)
+      .filter(chat => (!listedChatIds.has(chat.id) || chats.some(item => item.id === chat.id)) && (!search || chat.title.toLowerCase().includes(search)))
+      .map(chat => { const known = chats.find(item => item.id === chat.id); return known ? {kind: "known" as const, chat: known} : {kind: "fetched" as const, chat}; })
+    : [...chats.map(chat => ({ kind: "known", chat } as const)), ...unknownChats.map(chat => ({ kind: "fetched", chat } as const))];
+  const allRows = orderWebChatRows(unorderedRows, order.chatIds, row=>row.chat.id);
   // Never hide the open Chat behind Show more.
   const shownCount = Math.max(limit, allRows.findIndex(row => row.chat.id === activeChatId) + 1);
   const hiddenCount = allRows.length - shownCount;
@@ -92,6 +119,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
         className="matrix-web-project-disclosure" onClick={toggleExpanded}>
         <ChevronRight aria-hidden="true" size={12} className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
       </button>
+      {onArchiveProject ? <WebProjectArchiveAction projectId={project.id} projectSlug={project.slug} projectName={project.name} onArchive={onArchiveProject}/> : null}
     </div>
     {expanded ? <div className="matrix-web-project-chats">
       <ProjectChatRows rows={allRows.slice(0, shownCount)} projectId={project.id} nowMs={nowMs}
@@ -100,7 +128,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
       <ProjectChatStatus rowCount={allRows.length} loading={loading} error={error} hasMore={hasMore}
         mobile={mobile} retry={retry} filtered={unreadOnly || sourceFilter !== "all" || Boolean(search)} />
       <ProjectChatPaging projectName={project.name} hiddenCount={hiddenCount} loading={loading} error={error}
-        hasMore={hasMore} capped={capped} mobile={mobile} showMore={() => setLimit(shownCount + PROJECT_CHAT_PAGE)} loadMore={loadMore} />
+        hasMore={hasMore} capped={capped} mobile={mobile} showMore={() => setLimit(shownCount + 20)} loadMore={loadMore} />
     </div> : null}
   </div>;
 }
@@ -109,11 +137,18 @@ export function ProjectChatRows({ rows, projectId, nowMs, activeChatId, activeCh
   rows: readonly ProjectRow[]; projectId: string; nowMs: number; activeChatId?: string; activeChatTitle?: string;
   onSelectChat(chatId: string): void; renderChat(chat: RenameableConversation, nowMs: number): ReactNode; mobile: boolean;
 }) {
+  const fullConversation = (chat: FetchedProjectChat): RenameableConversation | null => chat.canonicalRecord ? {
+    id: chat.id, title: chat.title, preview: chat.title, messageCount: chat.canonicalRecord.chat.messageCount,
+    updatedAt: Date.parse(chat.canonicalRecord.chat.activityAt ?? chat.canonicalRecord.chat.updatedAt),
+    canonicalRecord: chat.canonicalRecord, readState: chat.canonicalRecord.readState,
+  } : null;
   return <>{rows.map(row => row.kind === "known"
     ? <ChatRailOrderItem key={row.chat.id} id={row.chat.id} kind="chat" group={`project:${projectId}`}>
         {renderChat(row.chat, nowMs)}
       </ChatRailOrderItem>
-    // Older Chats from paging look like every other Chat row; they only lack the row actions.
+    : fullConversation(row.chat) ? <ChatRailOrderItem key={row.chat.id} id={row.chat.id} kind="chat" group={`project:${projectId}`}>
+        {renderChat(fullConversation(row.chat)!, nowMs)}
+      </ChatRailOrderItem>
     : <div key={row.chat.id} className="matrix-web-chat-row-item" data-current={activeChatId === row.chat.id}>
         <button type="button" aria-current={activeChatId === row.chat.id ? "page" : undefined}
           className={`matrix-web-chat-row flex w-full items-center rounded-lg text-left focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "py-3" : "py-2"}`}
@@ -130,7 +165,7 @@ export function ProjectChatStatus({ rowCount, loading, error, hasMore, mobile, f
     {loading && rowCount === 0 ? <p role="status" className="matrix-web-project-note">Loading chats…</p> : null}
     {error ? <div className="matrix-web-project-note">
       <p role="alert">Project chats could not be loaded.</p>
-      <button type="button" className="matrix-web-project-more" data-mobile={mobile || undefined} onClick={retry}>Retry chats</button>
+      <Button variant="ghost" size="sm" type="button" className="matrix-web-project-more" data-mobile={mobile || undefined} onClick={retry}>Retry chats</Button>
     </div> : null}
     {/* One quiet line, as on Electron Desktop. */}
     {!loading && !error && !hasMore && rowCount === 0 ? <p className="matrix-web-project-note">
@@ -144,10 +179,48 @@ export function ProjectChatPaging({ projectName, hiddenCount, loading, error, ha
   showMore(): void; loadMore(): void;
 }) {
   return <>
-    {hiddenCount > 0 ? <button type="button" aria-label={`Show more ${projectName} chats`} className="matrix-web-project-more"
-      data-mobile={mobile || undefined} onClick={showMore}>Show more</button> : null}
-    {!loading && !error && hiddenCount <= 0 && hasMore ? <button type="button" className="matrix-web-project-more"
-      data-mobile={mobile || undefined} onClick={loadMore}>Load more chats</button> : null}
-    {hiddenCount <= 0 && capped ? <p className="matrix-web-project-note">Showing the newest {MAX_PROJECT_CHAT_ROWS.toLocaleString("en-US")} chats in this project.</p> : null}
+    {hiddenCount > 0 ? <Button variant="ghost" size="sm" type="button" aria-label={`Show more ${projectName} chats`} className="matrix-web-project-more"
+      data-mobile={mobile || undefined} disabled={loading} onClick={() => { showMore(); if (hasMore) loadMore(); }}>Show more</Button> : null}
+    {!loading && !error && hiddenCount <= 0 && hasMore ? <Button variant="ghost" size="sm" type="button" className="matrix-web-project-more"
+      data-mobile={mobile || undefined} aria-label={`Show more ${projectName} chats`} onClick={() => { showMore(); loadMore(); }}>Show more</Button> : null}
+    {hiddenCount <= 0 && capped ? <p className="matrix-web-project-note">More chats can be found through search.</p> : null}
+  </>;
+}
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { Archive, MoreHorizontal } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+export function WebProjectArchiveAction({ projectId, projectSlug, projectName, onArchive }: {
+  projectId: string;
+  projectSlug: string;
+  projectName: string;
+  onArchive(projectId: string, projectSlug: string, projectName: string): Promise<boolean>;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState(false);
+  return <><DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen}><DropdownMenu.Trigger asChild>
+    <button type="button" aria-label={`Actions for ${projectName}`} className="matrix-web-project-actions grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent" onClick={() => setMenuOpen(true)}><MoreHorizontal size={15} aria-hidden/></button>
+    </DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content align="end" sideOffset={4} className="min-w-52 rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg" style={{zIndex:SHELL_Z_INDEX.appDialog}}><DropdownMenu.Item aria-label={`Archive chats in ${projectName}`} className="flex cursor-default items-center gap-2 rounded px-2.5 py-1.5 text-sm outline-none data-[highlighted]:bg-accent" onSelect={() => setConfirm(true)}><Archive size={14} aria-hidden/>Archive chats</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
+    <Dialog open={confirm} onOpenChange={open => { if (!open && !pending) { setConfirm(false); setError(false); } }}>
+      <DialogContent role="alertdialog" aria-label={`Archive chats in ${projectName}?`} showCloseButton={false} className="sm:max-w-[400px]"
+        style={{ zIndex: SHELL_Z_INDEX.appDialog }} overlayStyle={{ zIndex: SHELL_Z_INDEX.appDialog }}>
+        <DialogHeader><DialogTitle>Archive chats in {projectName}?</DialogTitle>
+          <DialogDescription>Archive all idle chats in {projectName}? Running chats will be skipped.</DialogDescription></DialogHeader>
+        {error ? <p role="alert" className="text-destructive">Project chats could not be archived. Try again.</p> : null}
+        <DialogFooter>
+          <Button type="button" variant="ghost" disabled={pending} onClick={() => { setConfirm(false); setError(false); }}>Cancel</Button>
+          <Button type="button" disabled={pending} onClick={() => {
+            setPending(true);
+            setError(false);
+            void onArchive(projectId, projectSlug, projectName).then(done => { if (done) setConfirm(false); else setError(true); })
+              .catch((cause: unknown) => { console.warn("[web-projects] Archive failed:", cause instanceof Error ? cause.name : "UnknownError"); setError(true); })
+              .finally(() => setPending(false));
+          }}>Archive chats</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </>;
 }

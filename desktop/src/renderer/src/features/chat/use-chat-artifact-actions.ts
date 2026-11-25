@@ -43,7 +43,7 @@ export function useChatArtifactActions(api: ApiClient | null | undefined, detail
   }, [resolveApp]);
   const resolveFileImageResource = useCallback((path: string, executionRoot?: CanonicalChatExecutionRootRef) => {
     if (!detail) return null;
-    const target = resolveChatInspectorTargetForRun(path, resolveWorkFilesScope(detail, projects), executionRoot, detail.record.projectId);
+    const target = resolveChatInspectorTargetForRun(path, resolveWorkFilesScope(detail, projects), executionRoot, projects);
     if (!target) return null;
     const resource = target.kind === "home" ? { kind: "home" as const, path: target.path }
       : { kind: "project" as const, path: target.path, projectId: target.projectId, ...(target.worktreeId ? { worktreeId: target.worktreeId } : {}) };

@@ -1,18 +1,27 @@
 import type { Context, Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import { z } from "zod/v4";
+import { TerminalTabIdSchema, TerminalWorkspaceIdSchema } from "@matrix-os/contracts";
 import { readPreviewTerminalOwner } from "../auth.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { terminalRuntimeOwnerAccess } from "../shell/workspace-routes.js";
-import type { TerminalEventHub } from "./events.js";
+import type { TerminalEventHub, TerminalEventSubscription } from "./events.js";
 
 export const TERMINAL_EVENTS_WS_PATH = "/ws/terminal/events";
 const MAX_CLIENT_FRAME_CHARS = 256;
-const ClientFrameSchema = z.object({ type: z.literal("ping") }).strict();
+const ClientFrameSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("ping") }).strict(),
+  // The person opened this tab (spec 2706). Sent only by clients that received an `attention` frame.
+  z.object({
+    type: z.literal("seen"),
+    ref: z.object({ workspaceId: TerminalWorkspaceIdSchema, tabId: TerminalTabIdSchema }).strict(),
+  }).strict(),
+]);
 
 /**
  * `/ws/terminal/events`: the live terminal fact stream for the terminal owner.
- * Clients send `{type:"ping"}` at least every 30 s; anything else closes the socket.
+ * Clients send `{type:"ping"}` at least every 30 s, and `{type:"seen",ref}` when
+ * the person opens a tab; anything else closes the socket.
  */
 export function registerTerminalEventWebSocket(options: {
   app: Hono;
@@ -22,7 +31,7 @@ export function registerTerminalEventWebSocket(options: {
   terminalOwnerIds: readonly string[];
 }): void {
   options.app.get(TERMINAL_EVENTS_WS_PATH, options.upgradeWebSocket((c) => {
-    let handle: { touch(): void; close(): void } | null = null;
+    let handle: TerminalEventSubscription | null = null;
     return {
       onOpen(_event, ws) {
         let access: ReturnType<typeof terminalRuntimeOwnerAccess>;
@@ -66,6 +75,11 @@ export function registerTerminalEventWebSocket(options: {
           return;
         }
         handle?.touch();
+        // A seen mark changes the attention frame every subscriber receives; it has no reply of its own.
+        if (parsed.type === "seen") {
+          handle?.markSeen(parsed.ref);
+          return;
+        }
         ws.send(JSON.stringify({ type: "pong" }));
       },
       onClose() {

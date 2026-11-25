@@ -129,6 +129,8 @@ jobs:
         id: runner
         env:
           POOL_HEARTBEAT: ${{ vars.MATRIX_CI_POOL_HEARTBEAT }}
+          # Reads this run attempt's start time, when `vars` was resolved.
+          GITHUB_TOKEN: ${{ github.token }}
           # Fork PR code never reaches the self-hosted pool.
           EVENT_NAME: ${{ github.event_name }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
@@ -325,7 +327,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.changes.outputs.source_sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -333,6 +335,15 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
+
+      - name: Verify the individual PR layer base
+        id: layer-base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEW_BASE_SHA: ${{ needs.changes.outputs.review_base_sha }}
+        run: node scripts/ci/pr-size-base.mjs
 
       - name: Enforce the 50-file / 3000-addition PR limit
         env:
@@ -435,6 +446,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
+        env:
+          # This Node 20 package lane never launches Electron. Keep desktop
+          # download availability out of the CLI's compatibility boundary.
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
       - name: Build sync client
         if: needs.changes.outputs.should_run == 'true'
@@ -764,7 +779,7 @@ jobs:
 
       - name: Run docs contract tests
         if: needs.changes.outputs.docs_contract_tests == 'true'
-        run: pnpm exec vitest run tests/repository/site-extraction.test.ts
+        run: pnpm exec vitest run tests/repository/site-extraction.test.ts tests/platform/matrix-dev-plugin.test.ts
 
   os-view-parity:
     name: OS View Parity

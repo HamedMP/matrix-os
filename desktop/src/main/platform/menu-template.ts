@@ -3,6 +3,8 @@ import type { EffectiveShortcuts, ShortcutActionId } from "@matrix-os/contracts/
 import { isCarriedByMatcher } from "../shortcuts/input-matcher";
 import { isShortcutActionAvailable } from "../shortcuts/shortcut-availability";
 import type { ZoomAction } from "./zoom";
+import { terminalWindowKeys, type TerminalWindowCommand } from "../../shared/terminal-window";
+import { terminalWindowMenuItems } from "./terminal-menu-items";
 
 type MenuEventSender = (channel: string, payload: unknown) => void;
 type ShortcutItemFactory = (id: ShortcutActionId, label: string) => MenuItemConstructorOptions[];
@@ -73,6 +75,12 @@ interface AppMenuTemplateOptions {
   /** Each registry action shows its first binding as its accelerator. */
   shortcuts: EffectiveShortcuts;
   runShortcut(id: ShortcutActionId): void;
+  /**
+   * Set while the Terminal window has focus (spec 2706): File holds its
+   * terminal shortcuts, and the main window's own shortcuts that would take
+   * the same keys (View's navigation, the Apps menu) are left out.
+   */
+  terminalWindow?: { command(command: TerminalWindowCommand): void; close(): void };
 }
 
 export function createAppMenuTemplate({
@@ -89,13 +97,25 @@ export function createAppMenuTemplate({
   openThirdPartyNotices,
   shortcuts,
   runShortcut,
+  terminalWindow,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const isMac = platform === "darwin";
-  const item: ShortcutItemFactory = (id, label) => createShortcutItems(shortcuts, () => runShortcut(id), id, label);
+  // While the Terminal window has focus its own commands own their keys: a main-window item that
+  // shares one (Settings on a key moved onto New Terminal) keeps its place without the key.
+  const terminalKeys = terminalWindow ? terminalWindowKeys(shortcuts, isMac) : null;
+  const menuShortcuts: EffectiveShortcuts = terminalKeys
+    ? Object.fromEntries(Object.entries(shortcuts).map(([id, bindings]) => [
+      id, id.startsWith("terminal-window.") ? bindings : bindings.filter((binding) => !terminalKeys.has(binding)),
+    ])) as EffectiveShortcuts
+    : shortcuts;
+  const item: ShortcutItemFactory = (id, label) => createShortcutItems(menuShortcuts, () => runShortcut(id), id, label);
+  const mainOnly = (items: MenuItemConstructorOptions[]) => (terminalWindow ? [] : items);
   const viewSubmenu: MenuItemConstructorOptions[] = [
-    ...item("nav.palette", "Command Palette"),
-    ...item("nav.quick-open", "Go to File"),
-    ...item("terminal.focus", "Terminal"),
+    ...mainOnly([
+      ...item("nav.palette", "Command Palette"),
+      ...item("nav.quick-open", "Go to File"),
+      ...item("terminal.focus", "Terminal"),
+    ]),
     ...(openTerminalWindow && isShortcutActionAvailable("terminal.window", platform)
       ? createShortcutItems(shortcuts, () => openTerminalWindow(), "terminal.window", "Terminal Window")
       : []),
@@ -136,11 +156,15 @@ export function createAppMenuTemplate({
   };
   // Quit takes the platform's quit key back once no action claims it.
   const quitKey = isMac ? "Cmd+Q" : "Ctrl+Q";
-  const quitKeyFree = !Object.values(shortcuts).some((bindings) => bindings?.includes(quitKey));
+  // Only the actions in the menu being built count: a Terminal window command on Cmd+Q holds it only there.
+  const quitKeyFree = !Object.entries(shortcuts).some(([id, bindings]) =>
+    (terminalWindow !== undefined || !id.startsWith("terminal-window.")) && bindings?.includes(quitKey));
   const quitAccelerator = quitKeyFree ? { accelerator: quitKey } : {};
   const settingsItems = item("nav.settings", "Settings…");
   const closeAppItems = item("app.close", "Close Selected App");
-  const newItems: MenuItemConstructorOptions[] = [
+  const newItems: MenuItemConstructorOptions[] = terminalWindow
+    ? terminalWindowMenuItems(shortcuts, terminalWindow.command, terminalWindow.close, isMac)
+    : [
     ...item("tabs.new-context", "New"),
     ...item("chat.new-thread", "New Agent Thread"),
     ...item("chat.open", "Open Chat"),
@@ -190,7 +214,7 @@ export function createAppMenuTemplate({
     ...platformMenus,
     { role: "editMenu" },
     { label: "View", submenu: viewSubmenu },
-    createAppsMenu(item),
+    ...mainOnly([createAppsMenu(item)]),
     {
       // Built by hand: the windowMenu role's Minimize takes Cmd+M, which belongs to app.minimize.
       label: "Window",

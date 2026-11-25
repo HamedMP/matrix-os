@@ -670,7 +670,7 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
     providers: codingAgentRegistryProviders,
     agentCredentials: agentCredentialService,
-    invalidateCredentialDetection: agentCredentialLauncher.invalidateCredentialDetection,
+    invalidateCredentialDetection: nativeCodexRuntime.withIdentityInvalidation(agentCredentialLauncher.invalidateCredentialDetection),
   });
   const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
   const codingAgentTurnLifecycle = await createCodingAgentTurnLifecycle({
@@ -1330,7 +1330,7 @@ export async function createGateway(config: GatewayConfig) {
 
 
   const { processManager, customMcp, browserLab } = await registerDeferredRuntimeRoutes({
-    app, homePath, ownerDatabase: kyselyInstance, integrationRoutes, internalIntegrationBaseUrl,
+    app, homePath, ownerDatabase: kyselyInstance, integrationRoutes, internalIntegrationBaseUrl, sitePublicApps: { ensureProvisioned: ensureAppProvisioned, getRecord: async (slug) => appRegistry ? appRegistry.get(slug) : null, onChange: ({ app: changedApp, key }) => broadcast({ type: "data:change", app: changedApp, key }) },
     ...(sharedBrowserRuntime && terminalRuntimeOwnerId ? { sharedBrowser: { broker: sharedBrowserRuntime.broker, ownerId: terminalRuntimeOwnerId } } : {}),
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
@@ -1788,7 +1788,7 @@ export async function createGateway(config: GatewayConfig) {
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
   const localChatImportLifecycle = registerCollaborationChatRoutes({
-    browserApprovals: supervisedBrowserRuntime?.control,
+    homePath, fundedCredentialProvider, browserApprovals: supervisedBrowserRuntime?.control,
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
     credentialKey: toolOutputKey, runtimeOwnerIds: terminalRuntimeOwnerIds,

@@ -10,7 +10,7 @@ export function projectChatMetadata<T>(value: T, version: "0" | "1"): T {
     if (Array.isArray(input)) return input.map((item) => project(item, depth + 1));
     const result = { ...input } as Record<string, unknown>;
     if (result.chat && typeof result.chat === "object") {
-      const { titleVersion: _titleVersion, activityAt, ...chat } = result.chat as Record<string, unknown>;
+      const { titleVersion: _titleVersion, activityAt, archivedAt: _archivedAt, ...chat } = result.chat as Record<string, unknown>;
       // Released clients sort updatedAt themselves. Give those clients stable activity.
       result.chat = { ...chat, ...(typeof activityAt === "string" ? { updatedAt: activityAt } : {}) };
     }

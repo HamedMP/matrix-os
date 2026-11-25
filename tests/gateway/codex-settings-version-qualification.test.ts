@@ -121,3 +121,43 @@ describe('retained official 0.164.0 Settings authentication contract', () => {
       .toEqual(variant(schema, '#/definitions/ServerNotification', 'method', 'account/login/completed'));
   });
 });
+
+describe('retained official 0.171.0 Settings authentication contract', () => {
+  const promotedBytes = gunzipSync(readFileSync(new URL('../fixtures/codex-0171/app-server-schema-0171.json.gz', import.meta.url)));
+  const promoted = object(JSON.parse(promotedBytes.toString('utf8')));
+
+  it('limits the transitive public auth delta to reviewed optional additions', () => {
+    expect(createHash('sha256').update(promotedBytes).digest('hex')).toBe('fe3f0cc67ec5f581743c802ee6e1369c32328d24f91faf4c6f5c697935db642c');
+    const reviewed = structuredClone(promoted);
+    // An optional client capability Matrix never sends.
+    const capabilities = object(resolve(reviewed, '#/definitions/InitializeCapabilities').properties);
+    expect(capabilities.requiredHumanApproval).toMatchObject({ type: 'boolean' });
+    expect(resolve(reviewed, '#/definitions/InitializeCapabilities')).not.toHaveProperty('required');
+    delete capabilities.requiredHumanApproval;
+    // Optional response metadata the bounded account reader does not consume.
+    const response = resolve(reviewed, '#/definitions/v2/GetAccountResponse');
+    expect(response.required).toEqual(['requiresOpenaiAuth']);
+    expect(object(response.properties).userId).toMatchObject({ type: ['string', 'null'] });
+    delete object(response.properties).userId;
+    const account = resolve(reviewed, '#/definitions/v2/Account');
+    const chatgpt = object(variant(reviewed, '#/definitions/v2/Account', 'type', 'chatgpt').properties);
+    expect(chatgpt.workspaceName).toMatchObject({ type: ['string', 'null'] });
+    delete chatgpt.workspaceName;
+    // A new externally managed account kind; the reader admits only chatgpt and apiKey.
+    const gcp = variant(reviewed, '#/definitions/v2/Account', 'type', 'gcp');
+    expect(Object.keys(object(gcp.properties))).toEqual(['type']);
+    account.oneOf = (account.oneOf as unknown[]).filter(branch => branch !== gcp);
+    expect(authenticationContract(reviewed)).toEqual(authenticationContract(next));
+  });
+
+  it('retains exact public login, account and cancellation method variants', () => {
+    for (const method of ['initialize', 'account/login/start', 'account/login/cancel', 'account/read',
+      'account/rateLimits/read', 'config/read']) {
+      expect(variant(promoted, '#/definitions/ClientRequest', 'method', method))
+        .toEqual(variant(next, '#/definitions/ClientRequest', 'method', method));
+    }
+    expect(variant(promoted, '#/definitions/ServerNotification', 'method', 'account/login/completed'))
+      .toEqual(variant(next, '#/definitions/ServerNotification', 'method', 'account/login/completed'));
+    expect(variant(promoted, '#/definitions/v2/Account', 'type', 'chatgpt')).toMatchObject({ required: ['email', 'planType', 'type'] });
+  });
+});

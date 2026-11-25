@@ -4,26 +4,32 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { packCli } from "./pack-cli.mjs";
 
 const pkgRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const tempRoot = await mkdtemp(join(tmpdir(), "matrix-cli-runners-"));
 
-async function run(command, args, options = {}) {
+async function isolatedEnv(options = {}) {
   const runHome = options.home ?? join(tempRoot, "home");
   const pnpmHome = options.pnpmHome ?? join(tempRoot, "pnpm-home");
   await mkdir(runHome, { recursive: true });
   await mkdir(pnpmHome, { recursive: true });
+  return {
+    ...process.env,
+    HOME: runHome,
+    PNPM_HOME: pnpmHome,
+    npm_config_yes: "true",
+    npm_config_update_notifier: "false",
+    ...options.env,
+  };
+}
+
+async function run(command, args, options = {}) {
+  const env = await isolatedEnv(options);
   return new Promise((resolveRun, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd ?? pkgRoot,
-      env: {
-        ...process.env,
-        HOME: runHome,
-        PNPM_HOME: pnpmHome,
-        npm_config_yes: "true",
-        npm_config_update_notifier: "false",
-        ...options.env,
-      },
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -58,15 +64,15 @@ async function run(command, args, options = {}) {
 }
 
 try {
-  const packDestination = join(tempRoot, "pack");
-  await mkdir(packDestination, { recursive: true });
-  // Use the same workspace-aware packer as publication, including private contracts.
-  const packed = await run("pnpm", ["pack", "--config.node-linker=hoisted", "--pack-destination", packDestination, "--json"], {
-    home: join(tempRoot, "npm-pack-home"),
-    pnpmHome: join(tempRoot, "npm-pack-pnpm-home"),
+  // Use the same packer as publication, including private contracts.
+  const packInfo = await packCli({
+    packDestination: join(tempRoot, "pack"),
+    env: await isolatedEnv({
+      home: join(tempRoot, "npm-pack-home"),
+      pnpmHome: join(tempRoot, "npm-pack-pnpm-home"),
+    }),
   });
-  const packInfo = JSON.parse(packed.stdout);
-  const tarball = resolve(packDestination, packInfo.filename);
+  const tarball = packInfo.tarball;
   const files = new Set(packInfo.files.map((file) => file.path));
   for (const required of [
     "package.json",
@@ -98,6 +104,43 @@ try {
   const pnpmOutput = pnpmRun.stdout + pnpmRun.stderr;
   if (!pnpmOutput.includes(packInfo.version)) {
     throw new Error(`pnpm dlx did not print ${packInfo.version}: ${pnpmOutput}`);
+  }
+
+  // `npm install -g` nests every dependency under the CLI, the layout in which
+  // npm skips dependencies it believes are bundled. Run outside the workspace
+  // so nothing resolves from the repo's own node_modules.
+  const globalPrefix = join(tempRoot, "npm-global-prefix");
+  await run("npm", ["install", "--global", "--prefix", globalPrefix, tarball], {
+    cwd: tempRoot,
+    home: join(tempRoot, "npm-global-home"),
+    pnpmHome: join(tempRoot, "npm-global-pnpm-home"),
+  });
+  const globalRun = await run(join(globalPrefix, "bin", "matrix"), ["--version"], {
+    cwd: tempRoot,
+    home: join(tempRoot, "npm-global-home"),
+    pnpmHome: join(tempRoot, "npm-global-pnpm-home"),
+  });
+  const globalOutput = globalRun.stdout + globalRun.stderr;
+  if (!globalOutput.includes(packInfo.version)) {
+    throw new Error(`npm install -g did not print ${packInfo.version}: ${globalOutput}`);
+  }
+
+  // npm prunes files it does not know about on the next install in a project,
+  // so the bundled contracts must still be there after a second install.
+  const projectDir = join(tempRoot, "npm-project");
+  await mkdir(projectDir, { recursive: true });
+  const projectHomes = {
+    cwd: projectDir,
+    home: join(tempRoot, "npm-project-home"),
+    pnpmHome: join(tempRoot, "npm-project-pnpm-home"),
+  };
+  await run("npm", ["init", "--yes"], projectHomes);
+  await run("npm", ["install", tarball], projectHomes);
+  await run("npm", ["install", "is-number"], projectHomes);
+  const projectRun = await run(join(projectDir, "node_modules", ".bin", "matrix"), ["--version"], projectHomes);
+  const projectOutput = projectRun.stdout + projectRun.stderr;
+  if (!projectOutput.includes(packInfo.version)) {
+    throw new Error(`project install did not print ${packInfo.version} after a second install: ${projectOutput}`);
   }
 
   console.log(`Package-runner validation: ok (${packInfo.name}@${packInfo.version})`);

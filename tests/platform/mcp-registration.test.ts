@@ -39,4 +39,23 @@ describe('platform MCP registration', () => {
       PLATFORM_JWT_SECRET: 'test-secret-at-least-thirty-two-characters' } });
     expect((await app.request('/mcp')).status).toBe(503);
   });
+  const base = { MATRIX_MCP_ENABLED: 'true', MATRIX_MCP_RESOURCE_URL: 'https://app.matrix-os.com/mcp',
+    MATRIX_MCP_OAUTH_ISSUER: 'https://clerk.matrix-os.com',
+    MATRIX_MCP_OAUTH_JWKS_URL: 'https://clerk.matrix-os.com/.well-known/jwks.json',
+    PLATFORM_JWT_SECRET: 'test-secret-at-least-thirty-two-characters' };
+  it('uses MATRIX_MCP_REQUIRED_SCOPES for discovery and challenges, defaulting to matrix:computer', async () => {
+    for (const [raw, expected] of [[undefined, ['matrix:computer']], ['', ['matrix:computer']],
+      ['matrix:computer, offline_access', ['matrix:computer', 'offline_access']]] as const) {
+      const app = createPlatformMcpRoutes({ db, env: { ...base, MATRIX_MCP_REQUIRED_SCOPES: raw } });
+      expect(await (await app.request('/.well-known/oauth-protected-resource/mcp')).json()).toMatchObject({
+        resource: 'https://app.matrix-os.com/mcp', authorization_servers: ['https://clerk.matrix-os.com'], scopes_supported: expected });
+      expect((await app.request('/mcp', { method: 'POST' })).headers.get('www-authenticate'))
+        .toContain(`scope="${expected.join(' ')}"`);
+    }
+  });
+  it('fails closed on unsafe MATRIX_MCP_REQUIRED_SCOPES', async () => {
+    const app = createPlatformMcpRoutes({ db, env: { ...base, MATRIX_MCP_REQUIRED_SCOPES: 'matrix"computer' } });
+    expect((await app.request('/mcp', { method: 'POST' })).status).toBe(503);
+    expect((await app.request('/.well-known/oauth-protected-resource/mcp')).status).toBe(503);
+  });
 });

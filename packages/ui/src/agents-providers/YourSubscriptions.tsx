@@ -74,7 +74,7 @@ export function YourSubscriptions({snapshot, capabilities, client, localChatgptC
           const usage = source?.fundingKind === "owner_subscription" && source.usage.kind === "subscription_allowance" ? usageLines(source.usage) : null;
           return <article className="matrix-ap-subscription" key={`${kind}:${id}`}>
             <div className="matrix-ap-subscription-head"><strong>{nativeName}{rows.length > 1 ? ` · ${harness?.displayName ?? capability?.displayName}` : ""}</strong>
-              <span className="matrix-ap-status-chip" data-state={connected ? "ready" : "attention"}><i aria-hidden="true"/>{continuing ? status === "Not connected" ? "Connecting" : status : connected ? "Connected" : retained ? "Saved connection" : account ? "Saved account" : installState === "missing" ? "Not installed" : "Not connected"}</span>
+              <span className="matrix-ap-status-chip" data-state={connected ? "ready" : "attention"}><i aria-hidden="true"/>{continuing ? status === "Not connected" ? "Connecting" : status : connected ? "Connected" : status === "Needs sign-in" ? status : retained ? "Saved connection" : account ? "Saved account" : installState === "missing" ? "Not installed" : "Not connected"}</span>
             </div>
             <p className="matrix-ap-help">Native Codex uses its own account on this Computer, independently of Matrix AI. Subscription usage does not use Matrix AI credit.</p>
             {canKey ? <p className="matrix-ap-help">Connect with an OpenAI API key, billed per request by OpenAI. Matrix AI credit is separate.</p> : null}

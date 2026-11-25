@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { ShortcutActionId } from "@matrix-os/contracts/keyboard-shortcuts";
+import { isMainShortcutAction, type MainShortcutActionId, type ShortcutActionId } from "@matrix-os/contracts/keyboard-shortcuts";
 import { requestChatSearchShortcut } from "@matrix-os/ui";
 import { invoke, onEvent } from "../../lib/operator";
 import { CODING_AGENTS_DESKTOP_WORKSPACE } from "../../lib/feature-flags";
@@ -192,7 +192,7 @@ function switchTo(position: number): () => void {
 }
 
 // Main matches the keys and the app menu; the renderer only runs the action.
-const SHORTCUT_HANDLERS: Record<ShortcutActionId, () => void> = {
+const SHORTCUT_HANDLERS: Record<MainShortcutActionId, () => void> = {
   "app.next": () => cycleApp(1),
   "app.previous": () => cycleApp(-1),
   "app.launcher": toggleAppLauncher,
@@ -238,6 +238,8 @@ const SHORTCUT_HANDLERS: Record<ShortcutActionId, () => void> = {
 export function runShortcutAction(id: ShortcutActionId): void {
   // The Getting Started wizard covers the desktop; nothing behind it may act.
   if (isGetStartedBlocking()) return;
+  // The Terminal window's own actions never reach the main window.
+  if (!isMainShortcutAction(id)) return;
   SHORTCUT_HANDLERS[id]();
 }
 

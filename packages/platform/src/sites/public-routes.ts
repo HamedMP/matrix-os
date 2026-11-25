@@ -19,6 +19,8 @@ import { authorizeEmailViewerSession, terminateEmailClerkSession } from './email
 import { siteClerkSessionKey } from './email-keys.js';
 import { hasVerifiedClerkBrowserSession } from '../clerk-auth.js';
 import type { VerifyResult } from '../clerk-auth.js';
+import { registerSitePublicDataRoute } from './public-data-routes.js';
+import type { SiteDataTransport } from './data-transport.js';
 const ID = z.uuid();
 function unavailable(c: Context, error: unknown) {
     if (error instanceof SiteError)
@@ -43,6 +45,7 @@ export function createSitePublicRoutes(options: {
         verify: (token: string) => Promise<VerifyResult>;
         fetchImpl?: typeof fetch;
     };
+    data?: { transport: SiteDataTransport; env?: NodeJS.ProcessEnv };
 }): Hono {
     const app = new Hono();
     app.onError((error, c) => unavailable(c, error));
@@ -246,6 +249,7 @@ export function createSitePublicRoutes(options: {
             return c.json({ signedOut: true });
         } finally { flights--; }
     });
+    if (options.data) registerSitePublicDataRoute(app, { service: options.service, ...options.data });
     app.post('/:reference/forms/:formId', bodyLimit({ maxSize: 17 * 1024, onError: c => c.json({ error: 'Invalid submission' }, 413) }), async (c) => {
         const formId = z.string().min(1).max(64).regex(/^[a-z][a-z0-9_-]*$/).safeParse(c.req.param('formId'));
         if (!formId.success)

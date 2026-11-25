@@ -56,7 +56,7 @@ describe('developer tool selection schema', () => {
     expect(defaultDeveloperToolsForServerType('cpx42')).toEqual(DEFAULT_DEVELOPER_TOOLS);
   });
 
-  it('pins automated Codex installs and installed-state checks to the verified version', async () => {
+  it('pins fresh Codex installs and validates the newly installed executable', async () => {
     const toolPack = await readFile(fileURLToPath(new URL(
       '../../distro/customer-vps/host-bin/matrix-install-tool-pack',
       import.meta.url,
@@ -69,6 +69,6 @@ describe('developer tool selection schema', () => {
     expect(toolPack).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
     expect(toolPack).toContain('"@openai/codex@${CODEX_VERSION}"');
     expect(developerTools).toContain(`CODEX_VERSION="${CODEX_VERIFIED_VERSION}"`);
-    expect(developerTools).toContain('codex_version_is_current');
+    expect(developerTools).toContain('codex_version_at_least "$CODEX_VERSION"');
   });
 });

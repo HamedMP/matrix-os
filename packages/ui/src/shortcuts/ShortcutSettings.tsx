@@ -6,6 +6,7 @@ import {
   SHORTCUT_ACTIONS,
   addBinding,
   findConflict,
+  fixedKeyOwner,
   isOverridden,
   removeBinding,
   resetAction,
@@ -48,7 +49,7 @@ type PendingNotice =
   | { actionId: ShortcutActionId; kind: "conflict"; binding: string; owner: ShortcutActionId }
   | { actionId: ShortcutActionId; kind: "message"; text: string };
 
-const GROUP_ORDER: readonly ShortcutGroup[] = ["apps", "navigation", "tabs", "chat", "terminal"];
+const GROUP_ORDER: readonly ShortcutGroup[] = ["apps", "navigation", "tabs", "chat", "terminal", "terminal-window"];
 const ACTION_LABELS = new Map(SHORTCUT_ACTIONS.map((action) => [action.id, action.label]));
 const isSwitchAction = (id: ShortcutActionId) => id.startsWith("app.switch-");
 
@@ -177,6 +178,12 @@ export function ShortcutSettings({
     }
     if (current.length >= MAX_BINDINGS_PER_ACTION) {
       setNotice({ actionId: id, kind: "message", text: SHORTCUT_COPY.limit });
+      return;
+    }
+    // The Terminal window's fixed digit keys are taken like any other action's key.
+    const fixed = fixedKeyOwner(id, binding, platform);
+    if (fixed !== null) {
+      setNotice({ actionId: id, kind: "message", text: conflictMessage(binding, fixed, platform) });
       return;
     }
     const owner = findConflict(effective, binding, id);

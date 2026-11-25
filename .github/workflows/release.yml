@@ -231,7 +231,13 @@ jobs:
         working-directory: packages/sync-client
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm publish --config.node-linker=hoisted --provenance --access public --no-git-checks
+        run: |
+          set -euo pipefail
+          # Publish the tarball pack-cli.mjs produced, never a bare `pnpm publish`:
+          # the bare form ships bundled dependency edges that break `npm install -g`.
+          TARBALL="$(node ./scripts/pack-cli.mjs --pack-destination "$RUNNER_TEMP" | node -p 'JSON.parse(require("node:fs").readFileSync(0, "utf8")).tarball')"
+          test -f "$TARBALL"
+          pnpm publish "$TARBALL" --provenance --access public --no-git-checks
 
   build-binaries:
     name: Build standalone binaries

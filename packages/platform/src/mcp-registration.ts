@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { PlatformDB } from './db.js';
-import { createMcpTokenVerifier } from './mcp-auth.js';
+import { createMcpTokenVerifier, parseMcpRequiredScopes } from './mcp-auth.js';
 import { createMcpRoutes } from './mcp-routes.js';
 import { createMcpRuntimeContext } from './mcp-runtime-context.js';
 import { registerExternalCoreMcpTools, type ExternalCoreMcp } from './mcp-core-tools.js';
@@ -41,8 +41,9 @@ export function createPlatformMcpRoutes(options: { db: PlatformDB; env: NodeJS.P
     const rawOrigins = env.MATRIX_MCP_ALLOWED_ORIGINS?.split(',').map(value => value.trim()).filter(Boolean) ?? [];
     if (rawOrigins.length > 20) throw new Error('Too many MCP origins');
     const allowedOrigins = rawOrigins.map(value => secureUrl(value, '/').origin);
-    const verify = createMcpTokenVerifier({ resourceUrl, issuer, jwksUrl });
-    return createMcpRoutes({ resourceUrl, issuer, allowedOrigins, verify,
+    const scopes = parseMcpRequiredScopes(env.MATRIX_MCP_REQUIRED_SCOPES);
+    const verify = createMcpTokenVerifier({ resourceUrl, issuer, jwksUrl, requiredScopes: scopes });
+    return createMcpRoutes({ resourceUrl, issuer, scopes, allowedOrigins, verify,
       context: principal => createMcpRuntimeContext({ db: options.db, principal, gatewayOrigin, jwtSecret, env }),
       extendServer: async (server, principal, signal) => {
         const coreMcp = options.coreMcp?.();

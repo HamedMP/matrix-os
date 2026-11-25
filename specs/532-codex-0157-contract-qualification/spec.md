@@ -1,6 +1,8 @@
 # Codex 0.157.0 provider contract qualification
 
-Latest exact qualification: [0.171.0 / ENG-467](evidence/qualification-01710.md) (also 0.169.1 and 0.170.0; previous: [0.169.0](evidence/qualification-01690.md)). Historical evidence below remains scoped to its recorded version.
+Latest exact qualification is [0.172.0 / ENG-571](evidence/qualification-01720.md). Earlier evidence covers [0.169.1 through 0.171.0](evidence/qualification-01710.md) and [0.169.0](evidence/qualification-01690.md). Historical evidence below remains scoped to its recorded version.
+
+Managed pin: [0.171.0 / ENG-541](evidence/promotion-01710.md) is the installed/runtime-selected release. Statements below that the pin stays at an earlier version describe the time of that qualification.
 
 **Status:** Exact 0.157.0 contract records implemented. Review and final-head CI remain required; installer promotion is out of scope.
 

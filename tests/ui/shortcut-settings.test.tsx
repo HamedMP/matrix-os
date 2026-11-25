@@ -60,11 +60,14 @@ describe("ShortcutSettings layout", () => {
       screen.getByText("Change how you control Matrix from the keyboard. Saved on this computer."),
     ).toBeInTheDocument();
     const headings = screen.getAllByRole("heading", { level: 4 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Apps", "Navigation", "Tabs", "Chat", "Terminal"]);
+    expect(headings).toEqual(["Apps", "Navigation", "Tabs", "Chat", "Terminal", "Terminal window"]);
   });
 
   it("shows the effective bindings for each row", () => {
     renderSettings();
+    // ENG-521: the Terminal window's commands, with Herdr's keys, are set here too.
+    expect(chipLabels("Split right")).toEqual(["⌘D"]);
+    expect(chipLabels("Overview")).toEqual(["⌘⇧O"]);
     expect(chipLabels("Next app")).toEqual(["⌃⇥"]);
     expect(chipLabels("Open App Launcher")).toEqual(["⌥Space"]);
     expect(chipLabels("Show desktop")).toEqual([]);
@@ -104,6 +107,17 @@ describe("ShortcutSettings editing", () => {
     record("Show desktop", { key: "d", code: "KeyD", metaKey: true, shiftKey: true });
     await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
     expect(onChange).toHaveBeenCalledWith({ version: 1, overrides: { "app.show-desktop": ["Cmd+Shift+D"] } });
+  });
+
+  // ENG-521: the Terminal window's fixed digits (select a terminal, switch space) cannot be taken.
+  it("refuses a Terminal window binding on its fixed digit keys", () => {
+    const { onChange } = renderSettings();
+    record("Split right", { key: "3", code: "Digit3", metaKey: true });
+    expect(within(row("Split right")).getByText("⌘3 is used by Select terminal 3.")).toBeInTheDocument();
+    record("Split right", { key: "0", code: "Digit0", ctrlKey: true });
+    expect(within(row("Split right")).getByText("⌃0 is used by All spaces.")).toBeInTheDocument();
+    expect(within(row("Split right")).queryByRole("button", { name: "Replace" })).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("shows a conflict and moves the binding on Replace", async () => {

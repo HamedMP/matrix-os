@@ -2,6 +2,7 @@ import { isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-
 import {
   CollaborationParticipantSchema,
   CollaborativeAppParticipantSchema,
+  APP_BRIDGE_STORED_VALUE_PREFIX,
   MAX_APP_CAPABILITY_BYTES,
   MAX_APP_DATABASE_REQUEST_BYTES,
   MAX_APP_KV_REQUEST_BYTES,
@@ -69,7 +70,7 @@ const THEME_VAR_ALIASES: Record<string, string> = {
 
 export type ThemeVars = Record<string, string>;
 
-const BRIDGE_STORED_VALUE_PREFIX = "__matrix_os_value_v1__:";
+const BRIDGE_STORED_VALUE_PREFIX = APP_BRIDGE_STORED_VALUE_PREFIX;
 
 /**
  * Persist bridge values in an explicit envelope. This preserves ordinary

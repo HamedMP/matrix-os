@@ -207,6 +207,32 @@ describe("installShortcuts", () => {
     expect(press(contents, F6)).not.toHaveBeenCalled();
   });
 
+  // Spec 2706: Ctrl+Tab and Cmd+digits step through the Terminal window's own tabs and terminals there.
+  it("leaves the Terminal window's own keys to that window", async () => {
+    const { app, run, terminal } = await setup();
+    app.createContents(terminal!.webContents);
+    expect(press(terminal!.webContents, CTRL_TAB)).not.toHaveBeenCalled();
+    expect(press(terminal!.webContents, { ...CTRL_TAB, key: "1", code: "Digit1", control: false, meta: true })).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    const other = fakeContents();
+    app.createContents(other);
+    press(other, CTRL_TAB);
+    expect(run).toHaveBeenCalledWith("app.next");
+  });
+
+  // ENG-521: a key moved onto a Terminal window command in Shortcuts settings belongs to that window there.
+  it("follows the Terminal window's keys as set in Shortcuts settings", async () => {
+    const TILE_LEFT = { ...CTRL_TAB, key: "ArrowLeft", code: "ArrowLeft", shift: true };
+    const { app, run, terminal, installed } = await setup();
+    app.createContents(terminal!.webContents);
+    press(terminal!.webContents, TILE_LEFT);
+    expect(run).toHaveBeenLastCalledWith("app.tile-left");
+    run.mockClear();
+    await installed.service.set({ version: 1, overrides: { "terminal-window.focus-left": ["Ctrl+Shift+Left"] } });
+    expect(press(terminal!.webContents, TILE_LEFT)).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("does not watch DevTools web contents", async () => {
     const { app, run } = await setup();
     const devtools = fakeContents("devtools");
@@ -269,8 +295,9 @@ describe("installShortcuts", () => {
       expect(press(win.webContents, TILE_LEFT)).not.toHaveBeenCalled();
       // No action runs, so the Terminal window keeps focus: menu routing never sees the key.
       expect(run).not.toHaveBeenCalled();
-      expect(press(win.webContents, CTRL_TAB)).toHaveBeenCalledTimes(1);
-      expect(run).toHaveBeenCalledWith("app.next");
+      // An Apps key the window does not use still runs (Ctrl+Tab belongs to the Terminal window's own tabs).
+      expect(press(win.webContents, { ...CTRL_TAB, key: "m", code: "KeyM", control: false, meta: true })).toHaveBeenCalledTimes(1);
+      expect(run).toHaveBeenCalledWith("app.minimize");
     });
 
     it("still arranges apps from other web contents while a Terminal claims the key", async () => {

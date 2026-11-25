@@ -199,7 +199,7 @@ describe("canonical Chat service", () => {
       projectId: "project_1",
     });
 
-    expect(search).toHaveBeenCalledWith(owner, "release plan", 10, "project_1");
+    expect(search).toHaveBeenCalledWith(owner, "release plan", 11, "project_1", undefined, undefined);
     expect(result.items[0]?.projectId).toBe("project_1");
   });
 

@@ -1,7 +1,7 @@
 import { invoke } from "../../lib/operator";
 import type { ApiClient } from "../../lib/api";
 import { parseTerminalRefKey } from "../../lib/terminal-workspaces";
-import { LOCAL_TERMINAL_SESSION_PREFIX, LocalTerminalIdSchema, LOCAL_TERMINAL_PUT_MAX_BYTES } from "../../../../shared/local-terminals";
+import { LOCAL_TERMINAL_SESSION_PREFIX, LocalTerminalAddressSchema, LOCAL_TERMINAL_PUT_MAX_BYTES } from "../../../../shared/local-terminals";
 import { safeTerminalUploadFilename } from "./terminal-rich-paste";
 
 /** Both transports return a path on the terminal's machine, never an app-host path. */
@@ -13,7 +13,8 @@ export async function putTerminalPasteFile(input: {
   let path: unknown;
   if (input.sessionName.startsWith(LOCAL_TERMINAL_SESSION_PREFIX)) {
     name = name.replace(/[^A-Za-z0-9._ -]/g, "-").slice(0, 128);
-    const id = LocalTerminalIdSchema.parse(input.sessionName.slice(LOCAL_TERMINAL_SESSION_PREFIX.length));
+    // This device's terminal (t7) or one on an ssh machine (vps/t7), as the core addresses it.
+    const id = LocalTerminalAddressSchema.parse(input.sessionName.slice(LOCAL_TERMINAL_SESSION_PREFIX.length));
     if (input.size > LOCAL_TERMINAL_PUT_MAX_BYTES) throw new Error("Local paste file too large");
     const result = await invoke("local-terminal:put", { id, name, dataBase64: input.dataBase64 });
     if (!result.ok) throw new Error("Local paste failed");

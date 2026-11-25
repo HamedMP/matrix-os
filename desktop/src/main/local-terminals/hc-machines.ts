@@ -1,0 +1,85 @@
+// Machines the Terminal window's core reaches over ssh (spec 2706 layer 7),
+// through herdr-core's own machine model: `machine.add`, `machine.list`,
+// `machine.connect`, `machine.rm`. The core dials with the system ssh in
+// batch mode, so keys stay in ~/.ssh, the ssh agent or the keychain, and
+// OpenSSH checks host keys against known_hosts. Nothing here passes ssh
+// options of its own; a `via` line comes only from ssh-command.ts.
+import { z } from "zod/v4";
+import {
+  LOCAL_MACHINE_NAME_PATTERN, LOCAL_MACHINES_MAX, LocalMachineStateSchema, MachineCoreIdSchema,
+  type LocalMachine, type LocalMachineAddFailure,
+} from "../../shared/local-terminals";
+import { HcCallError, type HcConnection } from "./hc-client";
+
+/** A dial over a slow network, with the ssh handshake and the core check there. */
+const ADD_TIMEOUT_MS = 30_000;
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
+const ADD_FAILURES = new Set<LocalMachineAddFailure>(["unreachable", "hc_missing", "incompatible", "name_taken", "already_added"]);
+
+const ListedSchema = z.object({ machines: z.array(z.unknown()).max(LOCAL_MACHINES_MAX * 4) });
+const MachineSchema = z.object({
+  name: z.string().regex(LOCAL_MACHINE_NAME_PATTERN),
+  target: z.string().max(1_024),
+  state: z.string().max(32).optional().catch(undefined),
+  temporary: z.boolean().optional().catch(false),
+  version: z.string().max(32).regex(/^[0-9A-Za-z.+-]*$/).optional().catch(undefined),
+  id: MachineCoreIdSchema.optional().catch(undefined),
+});
+
+function machineFrom(raw: unknown, fallbackState: LocalMachine["state"] = "connecting"): LocalMachine | null {
+  const parsed = MachineSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const state = LocalMachineStateSchema.safeParse(parsed.data.state);
+  return {
+    name: parsed.data.name,
+    // Shown as typed; a `via` command line is never shown in full.
+    target: parsed.data.target.replace(UNSAFE, "").slice(0, 255),
+    state: state.success ? state.data : fallbackState,
+    temporary: parsed.data.temporary === true,
+    ...(parsed.data.version ? { version: parsed.data.version } : {}),
+    ...(parsed.data.id ? { coreId: parsed.data.id } : {}),
+  };
+}
+
+/** A name for a target the person did not name: its host, as herdr-core's terminal-name rules allow. */
+export function machineNameFor(target: string): string {
+  const address = target.replace(/^[^@]*@/, "");
+  const bracketed = /^\[([^\]]*)\]/.exec(address);
+  const host = bracketed ? bracketed[1]! : address.replace(/:\d+$/, "");
+  const name = host.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 32);
+  return LOCAL_MACHINE_NAME_PATTERN.test(name) ? name : "machine";
+}
+
+/** A validated target as OpenSSH takes it: `user@host` (brackets dropped) and the port apart. */
+export function sshDestination(target: string): { destination: string; port: string | null } {
+  const at = target.lastIndexOf("@");
+  const user = at < 0 ? "" : target.slice(0, at + 1);
+  const address = target.slice(at + 1);
+  const bracketed = /^\[([^\]]*)\](?::(\d{1,5}))?$/.exec(address);
+  if (bracketed) return { destination: `${user}${bracketed[1]}`, port: bracketed[2] ?? null };
+  const port = /:(\d{1,5})$/.exec(address);
+  return port ? { destination: `${user}${address.slice(0, -port[0].length)}`, port: port[1]! } : { destination: target, port: null };
+}
+
+export async function listMachines(core: HcConnection): Promise<LocalMachine[]> {
+  const listed = ListedSchema.parse(await core.call("machine.list", {}));
+  return listed.machines.flatMap((raw) => machineFrom(raw) ?? []).slice(0, LOCAL_MACHINES_MAX);
+}
+
+export type AddMachineResult = { ok: true; machine: LocalMachine } | { ok: false; reason: LocalMachineAddFailure };
+
+/** `via` is only ever a line the main process built (ssh-command.ts), never one a window sent. */
+export async function addMachine(core: HcConnection, input: { target: string; name?: string; via?: string }): Promise<AddMachineResult> {
+  try {
+    const name = input.name ?? machineNameFor(input.target);
+    const result = await core.call("machine.add", input.via ? { via: input.via, name } : { target: input.target, name }, ADD_TIMEOUT_MS);
+    const machine = machineFrom(result, "connected");
+    return machine ? { ok: true, machine } : { ok: false, reason: "invalid" };
+  } catch (error: unknown) {
+    if (error instanceof HcCallError) {
+      const kind = error.kind as LocalMachineAddFailure;
+      return { ok: false, reason: ADD_FAILURES.has(kind) ? kind : error.kind === "invalid_params" ? "invalid" : "unavailable" };
+    }
+    throw error;
+  }
+}

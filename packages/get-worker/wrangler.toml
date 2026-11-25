@@ -1,0 +1,13 @@
+name = "matrix-get-worker"
+main = "src/index.ts"
+compatibility_date = "2026-06-04"
+
+routes = [
+  { pattern = "get.matrix-os.com", custom_domain = true }
+]
+
+# Bundle scripts/install.sh into the Worker as a string.
+[[rules]]
+type = "Text"
+globs = ["**/*.sh"]
+fallthrough = true

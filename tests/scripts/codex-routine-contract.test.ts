@@ -35,7 +35,7 @@ const historical0170ServerDigests = {
 };
 
 it("guards the native callback and the exact managed request and response schemas", () => {
-  expect(CODEX_VERIFIED_VERSION).toBe("0.162.1");
+  expect(CODEX_VERIFIED_VERSION).toBe("0.171.0");
   expect(app.requiredServerMethods).toContain("item/tool/call");
   const pin = JSON.parse(gunzipSync(readFileSync(new URL(
     "../fixtures/codex-0162/app-server-schema-0162.json.gz", import.meta.url,
@@ -68,11 +68,12 @@ const mutations = [
 
 const routineFixtures: Record<string, string> = {
   "0.166.0": "0166", "0.167.0": "0167", "0.167.1": "0167", "0.167.2": "0167",
-  "0.169.0": "0169", "0.169.1": "0169", "0.170.0": "0170", "0.171.0": "0171",
+  "0.169.0": "0169", "0.169.1": "0169", "0.170.0": "0170", "0.171.0": "0171", "0.172.0": "0172",
 };
 const historicalDigestsByFixture: Record<string, Record<string, string>> = {
   "0166": historicalServerDigests, "0167": historical0167ServerDigests,
-  "0169": historical0169ServerDigests, "0170": historical0170ServerDigests, "0171": {},
+  "0169": historical0169ServerDigests, "0170": historical0170ServerDigests,
+  "0171": { "turn/completed": "b6bd55f1da742df68c275dd2e016f76152bd705b223ef4fc5652446b3be6b3df" },
 };
 
 it.each(Object.keys(routineFixtures))("rejects every changed routine payload in %s after a whole-schema digest refresh", version => {
