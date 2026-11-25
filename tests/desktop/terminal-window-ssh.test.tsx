@@ -312,13 +312,13 @@ describe("Terminal window ssh machines", () => {
     expect(result.current.coreChanged).toEqual([]);
   });
 
-  // Nima, #3579/#3662: a Windows target is refused with a clear reason, not a generic failure.
+  // #3662: unsupported transports have a clear message without claiming Windows targets are unsupported.
   it("says when a machine's core cannot be updated from here", async () => {
     installOperator({ unsupportedUpdate: ["win"], machines: [{ name: "win", target: "me@winbox", state: "connected", temporary: false, version: "0.1.14" } as never] });
     render(<TerminalWindowApp />);
     const machines = await screen.findByRole("list", { name: "Machines" });
     fireEvent.click(await within(machines).findByRole("button", { name: "Update core" }));
-    expect(await within(machines).findByText("Not updated: the app can't update the core on this machine (Windows). Update it there.")).toBeTruthy();
+    expect(await within(machines).findByText("Not updated: this SSH connection cannot safely update the core. Update it on the machine.")).toBeTruthy();
   });
 
   it("shows a machine's core version and updates an older one", async () => {

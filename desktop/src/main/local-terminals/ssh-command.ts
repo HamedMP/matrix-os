@@ -55,33 +55,3 @@ export function sshLoginArgv(target: string, options: SshOptions | undefined, ta
     "--", destination,
   ];
 }
-
-/** What the probe runs there: the core's own status, which names its id. */
-// Found as herdr-core finds a machine's core: `herdr-core` on PATH, then ~/.local/bin/herdr-core
-// (and the `hc` alias in both places). Exit 127 when there is none. A target whose shell is not a
-// POSIX one (Windows) fails at `sh`, which the probe reports as unsupported.
-const CORE_STATUS_COMMAND = "sh -lc 'for c in herdr-core hc \"$HOME/.local/bin/herdr-core\" \"$HOME/.local/bin/hc\"; do "
-  + "if command -v \"$c\" >/dev/null 2>&1; then exec \"$c\" server status --json; fi; done; exit 127'";
-
-/**
- * The argv of a batch ssh dial to the machine, the same route herdr-core's
- * update takes (target, port, identity file, jump host or Tailscale SSH), that
- * prints its live core's status. Bound to a short connect timeout.
- */
-export function sshProbeArgv(target: string, options: SshOptions | undefined, tailscaleBinary: string | null): string[] {
-  const { destination, port } = sshDestination(target);
-  if (options?.tailscaleSsh) {
-    if (!tailscaleBinary) throw new Error("tailscale is not installed");
-    return [tailscaleBinary, "ssh", destination, CORE_STATUS_COMMAND];
-  }
-  const chosenPort = options?.port ? String(options.port) : port;
-  return [
-    // Its own connection, as herdr-core's updater opens one: never a ControlMaster the person's ssh
-    // config shares, which could still reach the host a name pointed at before.
-    "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ControlMaster=no", "-o", "ControlPath=none",
-    ...(chosenPort ? ["-p", chosenPort] : []),
-    ...(options?.identity ? ["-i", options.identity] : []),
-    ...(options?.jump ? ["-J", options.jump] : []),
-    "--", destination, CORE_STATUS_COMMAND,
-  ];
-}

@@ -142,7 +142,7 @@ const SSH_STATE_COLOR: Record<LocalMachine["state"], string> = {
 /** What to do about an ssh machine the core cannot use now: log in or check its key in a terminal, or dial again. */
 /** The line under a machine about its core: why the last update did not run, or how old it is. */
 function coreStatusText(state: { unsupported: boolean; changed: boolean; failed: boolean; version?: string }): string {
-  if (state.unsupported) return "Not updated: the app can't update the core on this machine (Windows). Update it there.";
+  if (state.unsupported) return "Not updated: this SSH connection cannot safely update the core. Update it on the machine.";
   if (state.changed) return "Not updated: this name now belongs to a different machine. Check it, then try again.";
   if (state.failed) return "Couldn't update its core.";
   return `Its core is ${state.version}; this app has ${LOCAL_TERMINAL_VERSION}.`;
