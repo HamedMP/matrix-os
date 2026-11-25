@@ -20,12 +20,13 @@ describe("project setup service integration", () => {
   let service: ProjectSetupService;
   let options: ProjectSetupServiceOptions;
   let files: Map<string, string>;
+  let blockedSkillDestination: boolean;
   let generation = 1;
   let request = 0;
   let create: ReturnType<typeof vi.fn>;
   beforeEach(async () => {
     pg = await createTestPGlite(); repository = new ChatRepository(pg.dialect); await repository.bootstrap();
-    files = new Map(); generation = 1; request = 0;
+    files = new Map(); generation = 1; request = 0; blockedSkillDestination = false;
     create = vi.fn(async (projectId: string, path: string, content: string) => {
       const key = `${projectId}/${path}`;
       if (files.has(key)) throw Object.assign(new Error("Exists"), { code: "EEXIST" });
@@ -35,7 +36,10 @@ describe("project setup service integration", () => {
       openWorkspace: async (scope, projectId): Promise<ProjectSetupWorkspace> => {
         if (scope.ownerId !== owner.ownerId) throw new Error("Unrelated owner");
         return { fingerprint: String(generation).repeat(64), executionRootFingerprint: "a".repeat(64), projectSlug: projectId,
-          read: async path => files.get(`${projectId}/${path}`) ?? null,
+          read: async path => {
+            if (blockedSkillDestination && path.endsWith("/SKILL.md")) throw Object.assign(new Error("Directory unavailable"), { code: "ENOTDIR" });
+            return files.get(`${projectId}/${path}`) ?? null;
+          },
           create: (path, content) => create(projectId, path, content), revalidate: async () => {}, close: async () => {} };
       } };
     service = new ProjectSetupService(options);
@@ -61,6 +65,24 @@ describe("project setup service integration", () => {
     const transcript = await repository.getDetailPage(owner, current.draft!.chatId, { limit: 100 });
     expect(transcript?.turns.length).toBe(5); expect(transcript?.runs).toHaveLength(0);
     expect(transcript?.messages.every(message => Boolean(message.turnId))).toBe(true);
+  });
+  it("records an unavailable Skill separately from successfully saved guidance in Chat", async () => {
+    blockedSkillDestination = true;
+    let current = await service.start(owner, "project_a", { clientRequestId: "req_start", answer: "A portfolio website" });
+    current = await next(current, { type: "answer", text: "Run checks" });
+    current = await next(current, { type: "stage_skill", content: manifest });
+    current = await next(current, { type: "choose_mcp", choice: "skip" });
+    expect(current.draft?.step).toBe("review");
+    current = await next(current, { type: "save" });
+    const resumed = await service.getProject(owner, "project_a");
+    expect(resumed.draft?.step).toBe("saved");
+    expect(resumed.draft?.proposals.map(file => file.status)).toEqual(["saved", "saved", "destination_unavailable"]);
+    expect([...files.keys()]).toEqual(["project_a/AGENTS.md", "project_a/CLAUDE.md"]);
+    const transcript = await repository.getDetailPage(owner, current.draft!.chatId, { limit: 100 });
+    expect(transcript?.messages.at(-1)?.parts).toEqual([{
+      type: "text",
+      text: "Project setup is complete. The skill was skipped because its destination is unavailable.",
+    }]);
   });
   it.each(["AGENTS.md", "CLAUDE.md"])("preserves an existing empty %s when rebuilding Review and saving", async path => {
     files.set(`project_a/${path}`, "");

@@ -74,7 +74,7 @@ The review summarizes guidance, the optional skill, and the observed MCP state. 
 
 1. The review binds its proposed content and destinations to the authenticated account, computer, immutable project ID, and primary checkout. Save revalidates that scope and the reviewed proposal.
 2. Saving creates only confirmed files at allowlisted project-relative paths. Saving the draft never enables a tool or grants an MCP permission.
-3. Each file has an explicit saved, already-present, conflict, or failed result. A partial result preserves successful files and unsaved Markdown. Retry rereads destinations, recognizes matching content, and asks for renewed review when a destination changed.
+3. Each file has an explicit saved, already-present, conflict, or failed result. A partial result preserves successful files and unsaved Markdown. Retry rereads destinations, recognizes matching content, and asks for renewed review when a destination changed. A blocked Skill directory is reported separately during Review. Saving available files can complete setup with the Skill skipped, preserving the original proposal and any existing files.
 4. After success, the overview displays saved guidance and any skill. Exact file actions open the existing editor. Future edits refresh the project’s inventory and skill picker through existing reads.
 5. A normal subsequent Project Chat can select and use the saved skill. An actual runtime result verifies that the selected manifest was read under the admitted project root.
 6. The saved-files receipt describes persistence. Any claim that guidance influenced a run requires evidence that the selected runtime actually read it. The explicit read-and-use route remains available under normal workspace permissions.

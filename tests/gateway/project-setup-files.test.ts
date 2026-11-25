@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { ProjectSetupDraftSchema } from "@matrix-os/contracts";
 import { initialProjectSetup, transitionProjectSetup, applyProjectSetupGeneration } from "../../packages/gateway/src/chat/project-setup-state.js";
@@ -127,6 +127,63 @@ describe("reviewed setup file creation", () => {
         expect(await readlink(join(root, "CLAUDE.md"))).toBe("AGENTS.md");
         expect(await readFile(join(root, skillPath), "utf8")).toBe(manifest);
         expect(await readFile(join(root, "AGENTS.md"), "utf8")).toBe("Existing guidance");
+      } finally {
+        await ws.close();
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+  it("skips only an unavailable Skill destination without concealing unexpected read failures", async () => {
+    const ws = workspace();
+    const read = ws.read;
+    const unavailable = Object.assign(new Error("Directory unavailable"), { code: "ENOTDIR" });
+    ws.read = async path => path === skillPath ? Promise.reject(unavailable) : read(path);
+    const reviewed = ProjectSetupDraftSchema.parse(await inspectProjectSetupFiles(ws, draft(true)));
+    expect(reviewed.proposals[2]).toEqual({ path: skillPath, status: "destination_unavailable", content: manifest });
+    expect(ws.create).not.toHaveBeenCalled();
+    const saved = ProjectSetupDraftSchema.parse(await saveProjectSetupFiles(ws, reviewed));
+    expect(saved.step).toBe("saved");
+    expect(saved.proposals.map(file => file.status)).toEqual(["saved", "saved", "destination_unavailable"]);
+    expect(ws.files.has(skillPath)).toBe(false);
+
+    const unexpected = Object.assign(new Error("Read failed"), { code: "EIO" });
+    ws.read = async path => path === skillPath ? Promise.reject(unexpected) : read(path);
+    await expect(inspectProjectSetupFiles(ws, draft(true))).rejects.toBe(unexpected);
+  });
+  it.runIf(process.platform === "linux").each([
+    [".agents", "link"], [".agents/skills", "link"], [".agents/skills/release-check", "link"],
+    [".agents/skills", "file"],
+  ])("saves guidance while preserving an obstructed Skill directory at %s (%s)", async (obstruction, kind) => {
+    const home = await mkdtemp(join(await realpath(tmpdir()), "setup-skill-directory-"));
+    try {
+      const root = join(home, "project-a");
+      const blockedPath = join(root, obstruction);
+      const target = join(root, "skill-target");
+      const targetManifest = join(target, skillPath.slice(obstruction.length + 1));
+      const existing = "Keep the owner's content";
+      await mkdir(dirname(blockedPath), { recursive: true });
+      await mkdir(dirname(targetManifest), { recursive: true });
+      await writeFile(targetManifest, existing);
+      if (kind === "link") await symlink(target, blockedPath);
+      else await writeFile(blockedPath, existing);
+      const resolved = { ref: { kind: "project" as const, projectId: "project_a" }, fingerprint: "a".repeat(64),
+        primaryWorkspaceRoot: root, projectSlug: "project-a" };
+      const roots = { resolve: async () => resolved, revalidate: async () => resolved };
+      const ws = await openProjectSetupWorkspace(roots, home, { type: "personal", ownerId: "owner" }, "project_a");
+      try {
+        const reviewed = await inspectProjectSetupFiles(ws, draft(true));
+        expect(reviewed.proposals.map(file => file.status)).toEqual(["pending", "pending", "destination_unavailable"]);
+        expect(reviewed.proposals[2]?.content).toBe(manifest);
+        await expect(readFile(join(root, "AGENTS.md"))).rejects.toMatchObject({ code: "ENOENT" });
+        const saved = await saveProjectSetupFiles(ws, reviewed);
+        expect(saved.step).toBe("saved");
+        expect(saved.proposals.map(file => file.status)).toEqual(["saved", "saved", "destination_unavailable"]);
+        expect(await readFile(join(root, "AGENTS.md"), "utf8")).toBe(reviewed.proposals[0]?.content);
+        expect(await readFile(join(root, "CLAUDE.md"), "utf8")).toBe("@AGENTS.md\n");
+        if (kind === "link") expect(await readlink(blockedPath)).toBe(target);
+        else expect(await readFile(blockedPath, "utf8")).toBe(existing);
+        expect(await readFile(targetManifest, "utf8")).toBe(existing);
       } finally {
         await ws.close();
       }

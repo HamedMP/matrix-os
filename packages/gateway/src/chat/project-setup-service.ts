@@ -62,7 +62,10 @@ export class ProjectSetupService {
         await workspace.revalidate();
         if (input.action.type === "save") {
           const draft = await saveProjectSetupFiles(workspace, current);
-          return { draft, userText: "Save this project setup.", assistantText: draft.step === "saved" ? PROJECT_SETUP_QUESTIONS.saved
+          const saved = draft.proposals.some(file => file.path.endsWith("/SKILL.md") && ["symlink_skipped", "destination_unavailable"].includes(file.status))
+            ? "Project setup is complete. The skill was skipped because its destination is unavailable."
+            : PROJECT_SETUP_QUESTIONS.saved;
+          return { draft, userText: "Save this project setup.", assistantText: draft.step === "saved" ? saved
             : "Some project files need attention. Existing files were preserved. Review the file results and retry the remaining files." };
         }
         if (input.action.type === "sync_generation") {
