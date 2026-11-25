@@ -4,6 +4,7 @@ import type { PlatformDb } from "../platform-db.js";
 import { IntegrationActionNotImplementedError } from "./action-execution.js";
 import { GoogleCollectionRefusedError } from "./collection-hook.js";
 import { DriveContentError } from "./drive-content.js";
+import type { IntegrationActionRisk } from "./types.js";
 
 /** SDK errors can carry mailbox bodies, credentials, and arbitrary names/causes.
  * Only fixed operation/classification labels may enter these diagnostics. */
@@ -56,6 +57,8 @@ export async function integrationActionSuccess(c: Context, input: {
   action: string;
   data: unknown;
   summary?: string;
+  /** The catalog action's closed risk class; decides whether release may withhold the result. */
+  risk: IntegrationActionRisk;
   beforeRelease?: () => Promise<void>;
 }): Promise<Response> {
   const { db, connectionId, service, action, data, summary } = input;
@@ -66,8 +69,18 @@ export async function integrationActionSuccess(c: Context, input: {
     // Losing that result would encourage the caller to repeat the action.
     logFailure("usage_update", err instanceof Error ? "failure" : "non_error_failure");
   }
-  // Authority refusal must propagate after best-effort usage accounting.
-  await input.beforeRelease?.();
+  // Authority refusal must propagate after best-effort usage accounting for
+  // reads, where withholding the data is the point. A write or destructive
+  // action has already taken effect; reporting it as failed invites a retry
+  // that repeats the effect (e.g. a second email), so record and return it.
+  try {
+    await input.beforeRelease?.();
+  } catch (err: unknown) {
+    if (input.risk !== "write" && input.risk !== "destructive") throw err;
+    console.warn("[integrations] release refused after completed action", {
+      service, action, risk: input.risk, errorClass: err instanceof Error ? err.name : "UnknownError",
+    });
+  }
   return c.json({ data, service, action, ...(summary ? { summary } : {}) });
 }
 

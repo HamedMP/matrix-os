@@ -86,7 +86,7 @@ describe('trusted Gmail collection route boundary', () => {
     expect(f.admit).toHaveBeenCalledExactlyOnceWith(expect.anything(), { id: account, user_id: owner, service: 'gmail', status: 'active' }, path);
     expect(f.token).not.toHaveBeenCalled(); expect(f.fetcher).not.toHaveBeenCalled(); expect(f.legacy.proxyGet).not.toHaveBeenCalled(); expect(f.legacy.proxyPost).not.toHaveBeenCalled(); expect(f.release).not.toHaveBeenCalled();
   });
-  it.each(actions.flatMap(action => [false, true].map(native => ({ ...action, native }))))('withholds $path/$action if authority changes during usage accounting (native=$native)', async ({ native, path, action, params }) => {
+  it.each(actions.filter(action => action.action !== 'send_email').flatMap(action => [false, true].map(native => ({ ...action, native }))))('withholds $path/$action if authority changes during usage accounting (native=$native)', async ({ native, path, action, params }) => {
     const f = fixture({ native, revokedDuringUsage: true }); const response = await f.post(path, { action, params });
     expect(response.status).toBe(503); expect(await response.text()).not.toMatch(/private-result|private-mailbox|synthetic private/);
     expect(f.events.filter(event => ['admit', 'provider', 'usage', 'release'].includes(event))).toEqual(['admit', 'provider', 'usage', 'release']);
@@ -141,9 +141,18 @@ describe('trusted Gmail collection route boundary', () => {
     const response = await f.post('/call', { action: 'get_message', params: { messageId: 'message1' } });
     expect(response.status).toBe(503); expect(f.release).toHaveBeenCalledTimes(1); expect(await response.text()).not.toContain('private-result');
   });
-  it('preserves unknown-effect semantics when a write succeeded before release refusal', async () => {
-    const f = fixture({ revokedDuringUsage: true }); const client = createBotIntegrationClient(createLocalIntegrationTransport(f.app));
-    await expect(client.call(owner, { service: 'gmail', action: 'send_email', label: 'Work', connectionId: account, params: writeParams, read: false })).rejects.toMatchObject({ code: 'unavailable', effectUnknown: true });
+  it.each([false, true])('reports a completed write as completed when release refuses afterwards, so it is not retried (native=%s)', async native => {
+    const f = fixture({ native, revokedDuringUsage: true }); const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const response = await f.post('/call', { action: 'send_email', params: writeParams });
+    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ data: { id: 'private-result' }, action: 'send_email' });
+    expect(f.events.filter(event => ['admit', 'provider', 'usage', 'release'].includes(event))).toEqual(['admit', 'provider', 'usage', 'release']);
+    expect(f.release).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/synthetic private|private-result/);
+  });
+  it('lets a bot client see the completed write instead of an unknown effect', async () => {
+    const f = fixture({ revokedDuringUsage: true }); vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const client = createBotIntegrationClient(createLocalIntegrationTransport(f.app));
+    await expect(client.call(owner, { service: 'gmail', action: 'send_email', label: 'Work', connectionId: account, params: writeParams, read: false })).resolves.toBeDefined();
     expect(f.legacy.proxyPost).toHaveBeenCalledTimes(1); expect(f.release).toHaveBeenCalledTimes(1);
   });
   it.each(['/call', '/read-call'])('preserves non-Gmail flows on $0', async path => {
