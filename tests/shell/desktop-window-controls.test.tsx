@@ -171,6 +171,26 @@ describe("web desktop window controls", () => {
     expect(publishingProps.current?.portalContainerRef?.current).toBe(frame);
   });
 
+  it("shows no Share on a Matrix default app", () => {
+    // Fault: default apps (Calculator, Notes, games) offering Share like an app the owner built.
+    publishingProps.current = null;
+    const win: AppWindow = {
+      id: "window-calculator", title: "Calculator", path: "apps/calculator",
+      x: 20, y: 20, width: 640, height: 480, minimized: false, zIndex: 10,
+    };
+    const noop = vi.fn();
+    render(
+      <DesktopWindow win={win} dockPosition="bottom" fullscreenWindowId={null}
+        interacting={false} minimizingIds={new Set()} onAnimateMinimize={noop}
+        onCloseWindow={noop} onDragEnd={noop} onDragMove={noop} onDragStart={noop}
+        onFocusWindow={noop} onOpenWindow={noop} onResizeInteractionChange={noop}
+        onToggleFullscreen={noop} />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Publish app" })).toBeNull();
+    expect(publishingProps.current).toBeNull();
+  });
+
   it("hides portal-backed app controls throughout minimize and restores them with the window", () => {
     const win: AppWindow = {
       id: "window-1", title: "Demo", path: "apps/demo/dist/index.html",

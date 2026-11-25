@@ -1,5 +1,6 @@
 import { buildBridgeScript, withCredentialedAssets, type ThemeVars } from "@/lib/os-bridge";
 import { appRuntimeSlugFromIdentity, remoteBrowserSurfaceForPath, type CollaborationParticipant } from "@matrix-os/contracts";
+import { isShareableAppSlug } from "@matrix-os/ui/share";
 
 const LEGACY_NESTED_RUNTIME_APP_SLUGS = new Set([
   "2048",
@@ -64,7 +65,7 @@ export function extractSlug(path: string): string | null {
 export function publishingAppSlugFromPath(path: string): string | null {
   if (remoteBrowserSurfaceForPath(path)) return null;
   const slug = extractSlug(path);
-  return slug === "browser-lab" ? null : slug;
+  return slug && slug !== "browser-lab" && isShareableAppSlug(slug) ? slug : null;
 }
 
 export function shouldRenderAppIframe(path: string): boolean {

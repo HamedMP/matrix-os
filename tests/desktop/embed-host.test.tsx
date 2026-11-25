@@ -96,9 +96,16 @@ describe("EmbedHost", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows no Share on a Matrix default app", () => {
+    // Fault: default apps (Notes, Calculator, games) offering Share like an app the owner built.
+    render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+
+    expect(screen.queryByRole("button", { name: "Share" })).toBeNull();
+  });
+
   it("checks, shares, and stops organization access inside the single Share popover", async () => {
     const build = {
-      appId: "notes", catalogId: "30000000-0000-4000-8000-000000000001",
+      appId: "team-tracker", catalogId: "30000000-0000-4000-8000-000000000001",
       registrationIncarnation: "a".repeat(64), manifestVersion: "1.0.0", buildId: "b".repeat(64),
       manifestDigest: "c".repeat(64), schemaDigest: "d".repeat(64), assetDigest: "e".repeat(64),
       bridgeContractVersion: "matrix-app-bridge-v1", runtimeAbi: "matrix-runtime-v1",
@@ -134,7 +141,7 @@ describe("EmbedHost", () => {
     };
     useConnection.setState({ organizationId: "org_matrix", organizationStatus: "member", platformHost: "https://app.matrix-os.com",
       api: { forRuntime: () => gateway } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
-    render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    render(<EmbedHostWithChrome kind="app" slug="team-tracker" active />);
 
     expect(screen.getAllByRole("button", { name: "Share" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
@@ -143,20 +150,20 @@ describe("EmbedHost", () => {
     openOrganizationTab();
     expect(screen.getByRole("group", { name: "Share in Matrix Team" })).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Share with Matrix Team" }));
-    await waitFor(() => expect(gateway.post).toHaveBeenCalledWith("/api/collaboration/apps/notes/share", expect.objectContaining({ organizationId: "org_matrix" })));
+    await waitFor(() => expect(gateway.post).toHaveBeenCalledWith("/api/collaboration/apps/team-tracker/share", expect.objectContaining({ organizationId: "org_matrix" })));
     expect(await screen.findByRole("button", { name: "Copy Matrix Team link" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Shared" })).toBeTruthy();
     expect(publishing.client.getConfig).not.toHaveBeenCalled();
     expect(publishing.client.deploy).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Stop sharing with Matrix Team" }));
-    await waitFor(() => expect(gateway.delete).toHaveBeenCalledWith("/api/collaboration/apps/notes/share", expect.objectContaining({ expectedBindingRevision: "4" })));
+    await waitFor(() => expect(gateway.delete).toHaveBeenCalledWith("/api/collaboration/apps/team-tracker/share", expect.objectContaining({ expectedBindingRevision: "4" })));
   });
 
   it("hides the Organization tab when the owner is in no organization", async () => {
     orgListing.value = { state: "loaded", complete: true, organizations: [] };
     try {
       useConnection.setState({ organizationStatus: "none", api: { forRuntime: () => ({ get: vi.fn(async () => null), post: vi.fn() }) } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
-      render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+      render(<EmbedHostWithChrome kind="app" slug="team-tracker" active />);
       fireEvent.click(screen.getByRole("button", { name: "Share" }));
       await screen.findByRole("dialog", { name: "Share app" });
       expect(screen.queryByRole("tab", { name: /Organization/ })).toBeNull();
@@ -174,15 +181,15 @@ describe("EmbedHost", () => {
     };
     useConnection.setState({ organizationId: "org_matrix", organizationStatus: "member",
       api: { forRuntime: () => gateway } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
-    render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    render(<EmbedHostWithChrome kind="app" slug="team-tracker" active />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     await screen.findByRole("dialog", { name: "Share app" });
     openOrganizationTab();
     fireEvent.click(await screen.findByRole("button", { name: "Share with Matrix Team" }));
     expect(await screen.findByText("Couldn’t check this app right now. Try again.")).toBeTruthy();
     expect(screen.queryByText(/postgres password/)).toBeNull();
-    expect(gateway.post).toHaveBeenCalledWith("/api/collaboration/apps/notes/readiness/check", expect.objectContaining({ organizationId: "org_matrix" }));
-    expect(gateway.post).not.toHaveBeenCalledWith("/api/collaboration/apps/notes/share", expect.anything());
+    expect(gateway.post).toHaveBeenCalledWith("/api/collaboration/apps/team-tracker/readiness/check", expect.objectContaining({ organizationId: "org_matrix" }));
+    expect(gateway.post).not.toHaveBeenCalledWith("/api/collaboration/apps/team-tracker/share", expect.anything());
   });
 
   it("shows a safe message when the current share cannot be read", async () => {
@@ -197,7 +204,7 @@ describe("EmbedHost", () => {
     };
     useConnection.setState({ organizationId: "org_matrix", organizationStatus: "member",
       api: { forRuntime: () => gateway } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
-    render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    render(<EmbedHostWithChrome kind="app" slug="team-tracker" active />);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     await screen.findByRole("dialog", { name: "Share app" });
     openOrganizationTab();
@@ -208,7 +215,7 @@ describe("EmbedHost", () => {
   it("closes a retained hidden app's publishing portal and releases only its own renderer overlay", async () => {
     useConnection.setState({ api: { forRuntime: () => ({ get: vi.fn(async () => null) }) } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
     useUi.getState().acquireRendererOverlay(); // A separate surface owns this lease.
-    const view = render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    const view = render(<EmbedHostWithChrome kind="app" slug="team-tracker" active />);
     expect(screen.queryByTestId("app-publishing-bar")).toBeNull();
     expect(screen.getByTestId("embed-toolbar").contains(screen.getByRole("button", { name: "Share" }))).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
@@ -218,10 +225,10 @@ describe("EmbedHost", () => {
     // Overlay-adjusted native activity is false, but the owning surface is still visible.
     expect(screen.getByRole("dialog", { name: "Share app" })).toBeTruthy();
 
-    view.rerender(<EmbedHostWithChrome kind="app" slug="notes" active={false} />);
+    view.rerender(<EmbedHostWithChrome kind="app" slug="team-tracker" active={false} />);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(useUi.getState().rendererOverlayCount).toBe(1);
-    view.rerender(<EmbedHostWithChrome kind="app" slug="notes" active />);
+    view.rerender(<EmbedHostWithChrome kind="app" slug="team-tracker" active />);
     expect(screen.queryByRole("dialog")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Share" }));
     await screen.findByRole("dialog", { name: "Share app" });

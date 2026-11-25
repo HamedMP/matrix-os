@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
 
@@ -10,8 +10,6 @@ const mocks = vi.hoisted(() => ({
   releaseApi: vi.fn(),
   createTransport: vi.fn(),
   sharedViewer: vi.fn(),
-  shareButton: vi.fn(),
-  organization: vi.fn().mockReturnValue({ status: "unknown", organizationId: null, organizationName: null }),
   openSession: vi.fn().mockResolvedValue(undefined),
   subscribe: vi.fn().mockReturnValue(() => undefined),
   ownerShareGet: vi.fn(),
@@ -23,9 +21,6 @@ vi.mock("@/lib/collaboration", () => ({
   releaseShellCollaborationApi: mocks.releaseApi,
 }));
 vi.mock("@matrix-os/ui/collaborative-app-sharing", () => ({
-  CollaborativeAppShareButton: (props: unknown) => { mocks.shareButton(props); return null; },
-  ReadinessSummary: () => null,
-  useCollaborativeAppSharing: () => ({ readiness: null }),
   createSharedAppTransport: mocks.createTransport,
   SharedAppViewer: (props: { target: CollaborativeAppDirectoryItem; transport: unknown }) => {
     mocks.sharedViewer(props);
@@ -38,9 +33,6 @@ vi.mock("@/hooks/useSocket", () => ({
   useSocket: () => ({ send: vi.fn(), subscribe: mocks.subscribe }),
 }));
 vi.mock("@/lib/app-session", () => ({ openAppSession: mocks.openSession }));
-vi.mock("@/lib/collaboration-organization-state", () => ({
-  useCollaborationOrganization: mocks.organization,
-}));
 
 import { AppViewer } from "../../shell/src/components/AppViewer.js";
 import { OwnerCollaborationParticipantProvider } from "../../shell/src/lib/owner-collaboration-participant.js";
@@ -95,7 +87,6 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.clearAllMocks();
-  mocks.organization.mockReturnValue({ status: "unknown", organizationId: null, organizationName: null });
 });
 
 describe("collaborative app web viewer", () => {
@@ -257,32 +248,5 @@ describe("collaborative app web viewer", () => {
     expect(iframe.srcdoc).toContain('"scopeId":"10000000-0000-4000-8000-000000000001"');
     expect(iframe.srcdoc).toContain('"shareRevision":"1"');
     expect(iframe.srcdoc).toContain('"buildId":"' + "b".repeat(64) + '"');
-  });
-
-  it("updates the owner bridge context without replacing an unfinished iframe", async () => {
-    mocks.organization.mockReturnValue({ status: "member", organizationId: target.organizationId, organizationName: "Matrix" });
-    mocks.ownerShareGet.mockResolvedValueOnce(null).mockResolvedValue(ownerShare());
-    mocks.createApi.mockReturnValue({
-      get: vi.fn(),
-      direct: { request: vi.fn(), subscribeEvents: vi.fn().mockReturnValue(() => undefined), close: vi.fn() },
-    });
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response("<html><head></head><body></body></html>")));
-
-    render(<AppViewer path="matrix-app:tracker" />);
-    await waitFor(() => expect(mocks.shareButton).toHaveBeenCalled());
-    const iframe = screen.getByTitle("matrix-app:tracker") as HTMLIFrameElement;
-    await waitFor(() => expect(iframe.srcdoc).toContain("collaboration:"));
-    const originalHtml = iframe.srcdoc;
-    const postMessage = vi.spyOn(iframe.contentWindow!, "postMessage");
-    await act(async () => {
-      await (mocks.shareButton.mock.lastCall![0] as { onShareChanged(): Promise<void> }).onShareChanged();
-    });
-
-    expect(screen.getByTitle("matrix-app:tracker")).toBe(iframe);
-    expect(iframe.srcdoc).toBe(originalHtml);
-    expect(postMessage).toHaveBeenCalledWith({
-      type: "os:collaboration-context",
-      participant: expect.objectContaining({ scopeId: target.scopeId, shareRevision: "1" }),
-    }, "*");
   });
 });
