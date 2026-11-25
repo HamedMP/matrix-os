@@ -4,7 +4,7 @@
 // passes through here before the core sees it; refused calls are answered
 // here and never reach the core.
 import { realpath, stat } from "node:fs/promises";
-import { sep } from "node:path";
+import * as nodePath from "node:path";
 import { DESKTOP_LINK_METHODS } from "@matrix-os/contracts/desktop-link";
 import { encodeFrame, HC_FRAME, HcFrameDecoder } from "@matrix-os/herdr-core-client/protocol";
 
@@ -46,6 +46,8 @@ export interface DesktopLinkGuardOptions {
   computerName: string;
   /** Replaced in tests. Resolves symlinks; rejects when the folder does not exist. */
   resolveFolder?: (path: string) => Promise<string>;
+  /** Path rules of this desktop's OS (`path.win32` on Windows); replaced in tests. */
+  pathApi?: Pick<typeof nodePath, "isAbsolute" | "join" | "relative">;
 }
 
 type Request = { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown };
@@ -73,6 +75,7 @@ function labelsWithin(value: unknown): value is Record<string, string> {
 }
 
 export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
+  const pathApi = options.pathApi ?? nodePath;
   const resolveFolder = options.resolveFolder ?? (async (path: string) => {
     const resolved = await realpath(path);
     if (!(await stat(resolved)).isDirectory()) throw new Error("not a folder");
@@ -91,12 +94,14 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
     if (typeof cwd !== "string" || cwd.length > MAX_ARG_CHARS || cwd.includes("\0")) return null;
     let resolved: string;
     try {
-      resolved = await resolveFolder(cwd.startsWith("/") ? cwd : `${root}${sep}${cwd}`);
+      resolved = await resolveFolder(pathApi.isAbsolute(cwd) ? cwd : pathApi.join(root, cwd));
     } catch (error: unknown) {
       if (error instanceof Error) return null;
       throw error;
     }
-    return resolved === root || resolved.startsWith(root + sep) ? resolved : null;
+    // Inside home: home itself, or a path below it (never `..`, never another drive).
+    const inside = pathApi.relative(root, resolved);
+    return inside === "" || (!inside.startsWith("..") && !pathApi.isAbsolute(inside)) ? resolved : null;
   }
 
   async function judge(method: string, params: Record<string, unknown>): Promise<Verdict> {

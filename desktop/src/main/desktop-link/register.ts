@@ -9,6 +9,8 @@ import { createPairingKeyStore, type PairingSafeStorage } from "../desktop-pairi
 import type { LocalTerminalHost } from "../local-terminals/host";
 import { registerDesktopLinkIpc } from "./ipc";
 import { createDesktopLinkPreferenceStore } from "./preferences";
+import { createWindowsCore, type SpawnWindowsPty, type WindowsCore } from "./windows-core";
+import { letComputerUseThisDevice, type NativeDialog } from "./native-enable";
 import { createDesktopScreenshot, type ScreenSource } from "./screenshot";
 
 const OS_NAMES: Partial<Record<NodeJS.Platform, string>> = { darwin: "macOS", linux: "Linux", win32: "Windows" };
@@ -43,6 +45,8 @@ export interface DesktopLinkMainOptions {
     authorizeSender: Parameters<typeof registerDesktopLinkIpc>[2];
     emit: Parameters<typeof registerDesktopLinkIpc>[3];
   };
+  /** On Windows, where herdr-core has no build: node-pty's spawn, loaded only there. */
+  loadWindowsPty?(): Promise<SpawnWindowsPty>;
   /** What the computer shows for this device; the macOS computer name when available. */
   deviceName?: string;
 }
@@ -57,10 +61,45 @@ export function desktopDeviceInfo(platform: "darwin" | "linux" | "win32", arch: 
   };
 }
 
+/**
+ * The app-menu switch where no Terminal window holds it (Windows): native
+ * dialogs to pick a computer and confirm, then the same enable as the panel.
+ */
+export function desktopLinkMenuChoice(
+  service: DesktopLinkService | null,
+  auth: { listRuntimeComputers(): Promise<{ items: ReadonlyArray<{ runtimeSlot: string; label: string }> }> },
+  dialog: NativeDialog,
+): Promise<string | null> {
+  if (!service) return Promise.resolve(null);
+  return letComputerUseThisDevice({
+    dialog,
+    listComputers: async () => [...(await auth.listRuntimeComputers()).items],
+    enable: (slot, name) => service.enable(slot, name),
+    linkedSlots: () => service.statuses().filter((entry) => entry.state !== "off").map((entry) => entry.slot),
+  });
+}
+
+/** The environment PowerShell starts with: the user's own, minus anything Electron-only. */
+export function windowsShellEnv(source: NodeJS.ProcessEnv): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (value === undefined || /^(ELECTRON_|NODE_OPTIONS$|MATRIX_)/i.test(name)) continue;
+    env[name] = value;
+  }
+  return env;
+}
+
 export function startDesktopLink(options: DesktopLinkMainOptions): DesktopLinkService {
   const keys = createPairingKeyStore(options.userData, options.safeStorage);
   const platform = options.platform ?? process.platform;
   const electron = options.electron;
+  // Built on first use; its terminals end when the app quits.
+  let windows: Promise<WindowsCore> | null = null;
+  const windowsCore = (): Promise<WindowsCore> => {
+    if (!options.loadWindowsPty) return Promise.reject(new Error("windows terminals unavailable"));
+    windows ??= options.loadWindowsPty().then((spawn) => createWindowsCore({ spawn, home: options.home, env: windowsShellEnv(process.env) }));
+    return windows;
+  };
   const arch = options.arch ?? process.arch;
   if (platform !== "darwin" && platform !== "linux" && platform !== "win32") throw new Error("desktop link unsupported here");
   const service = createDesktopLinkService({
@@ -71,7 +110,8 @@ export function startDesktopLink(options: DesktopLinkMainOptions): DesktopLinkSe
     },
     credential: (slot) => options.computerToken(slot),
     keys,
-    openCore: () => options.localTerminals.openStream(),
+    // macOS and Linux: the app's private herdr-core. Windows: the ConPTY core.
+    openCore: platform === "win32" ? () => windowsCore().then((core) => core.openStream()) : () => options.localTerminals.openStream(),
     preferences: createDesktopLinkPreferenceStore(options.userData),
     home: options.home,
     deviceName: (options.deviceName ?? hostname().replace(/\.local$/, "")).slice(0, 64) || "desktop",
@@ -90,7 +130,12 @@ export function startDesktopLink(options: DesktopLinkMainOptions): DesktopLinkSe
       },
     }) } : {}),
   });
-  options.quitting(() => service.dispose());
+  options.quitting(() => {
+    service.dispose();
+    void windows?.then((core) => core.dispose(), (error: unknown) => {
+      console.warn("[desktop-link] windows terminals did not start:", error instanceof Error ? error.name : "UnknownError");
+    });
+  });
   if (options.ipc) registerDesktopLinkIpc(options.ipc.ipcMain, service, options.ipc.authorizeSender, options.ipc.emit);
   const wake = () => service.wake();
   options.powerMonitor.on("resume", wake);

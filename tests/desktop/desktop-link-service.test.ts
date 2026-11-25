@@ -3,7 +3,7 @@
 // through the guard, and switching off, removal and dropped links behave as
 // the spec says.
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash, generateKeyPairSync } from "node:crypto";
@@ -22,6 +22,7 @@ import { readDesktopLinkConfig, registerDesktopLinkRoutes } from "../../packages
 import type { DesktopLinkDatabase } from "../../packages/gateway/src/desktop-link/store.js";
 import { createFakeHerdrCore } from "../gateway/fixtures/fake-herdr-core-server.js";
 import { createDesktopLinkPreferenceStore } from "../../desktop/src/main/desktop-link/preferences";
+import { createWindowsCore } from "../../desktop/src/main/desktop-link/windows-core";
 import { createDesktopLinkService, type DesktopLinkKey, type DesktopLinkService, type DesktopLinkSocket } from "../../desktop/src/main/desktop-link/service";
 
 const OWNER = "owner_mac";
@@ -123,6 +124,45 @@ function mac(origin: string, options: { core?: ReturnType<typeof createFakeHerdr
 }
 
 const until = (check: () => boolean, ms = 5_000) => vi.waitFor(() => { if (!check()) throw new Error("waiting"); }, { timeout: ms, interval: 10 });
+
+describe("desktop link service on Windows", () => {
+  it("serves terminals from the ConPTY core to the computer's own Herdr adapter, through the guard", async () => {
+    const { origin, registry } = await computer();
+    const written: string[] = [];
+    let print: (text: string) => void = () => {};
+    const spawn = vi.fn((file: string) => ({
+      pid: 1, write: (data: string) => { written.push(data); }, resize: () => {}, kill: () => {}, pause: () => {}, resume: () => {},
+      onData: (listener: (data: string) => void) => { print = listener; return { dispose: () => {} }; },
+      onExit: () => ({ dispose: () => {} }),
+      file,
+    }));
+    const windows = createWindowsCore({ spawn, home: tmpdir(), env: {}, log: () => {} });
+    cleanup.push(() => windows.dispose());
+    const userData = mkdtempSync(join(tmpdir(), "desktop-link-"));
+    cleanup.push(() => rmSync(userData, { recursive: true, force: true }));
+    const keys = desktopKeys();
+    const service = createDesktopLinkService({
+      gatewayOrigin: () => origin, ownerId: () => OWNER, credential: async () => ownerJwt(), keys,
+      openCore: () => windows.openStream(), preferences: createDesktopLinkPreferenceStore(userData, () => {}),
+      home: tmpdir(), deviceName: "PC", app: { version: "0.9.0", os: "Windows 11" },
+      device: { platform: "win32", arch: "x64", capabilities: { terminals: true, screenshot: true, input: false } },
+      createSocket: (url, headers) => new WebSocket(url, { headers } as never) as unknown as DesktopLinkSocket, log: () => {},
+    });
+    cleanup.push(() => service.dispose());
+    await service.start();
+    await service.enable("primary", "matrix-demo");
+    await until(() => registry.online(keys.key.deviceId));
+    const adapter = registry.adapter(keys.key.deviceId)!;
+    const id = await adapter.create({ cols: 100, rows: 30 }, { line: "Get-Date" });
+    expect(spawn).toHaveBeenCalledWith("powershell.exe", ["-NoLogo", "-Command", "Get-Date"], expect.objectContaining({ cwd: realpathSync(tmpdir()) }));
+    const listed = await adapter.list();
+    expect(listed.sessions.map((session) => session.id)).toEqual([id]);
+    await adapter.writeInput(id!, "Get-Location\r");
+    await until(() => written.join("").includes("Get-Location"));
+    print("C:\\Users\\hamed");
+    expect(registry.linked()[0]!.device.platform).toBe("win32");
+  });
+});
 
 describe("Desktop link service screenshots", () => {
   it("sends a screenshot the computer asks for, in pieces, and the owner gets the same bytes", async () => {

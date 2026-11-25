@@ -339,6 +339,11 @@ describe("createAppMenuTemplate", () => {
     const item = appMenu(createAppMenuTemplate(options({ platform: "darwin", stopDesktopLink }))).find((entry) => entry.label === "Stop Computers Using This Device");
     item!.click!();
     expect(stopDesktopLink).toHaveBeenCalledTimes(1);
+    // Windows has no Terminal window, so it also offers the switch itself there.
+    const letComputerUseDevice = vi.fn();
+    const windowsFile = createAppMenuTemplate(options({ platform: "win32", stopDesktopLink, letComputerUseDevice })).find((entry) => entry.label === "File")!.submenu as Array<{ label?: string; click?: () => void }>;
+    windowsFile.find((entry) => entry.label === "Let a Computer Use This Device…")!.click!();
+    expect(letComputerUseDevice).toHaveBeenCalledTimes(1);
     // Linux and Windows have it in the File menu.
     for (const platform of ["linux", "win32"] as const) {
       const file = createAppMenuTemplate(options({ platform, stopDesktopLink })).find((entry) => entry.label === "File")!.submenu as Array<{ label?: string }>;

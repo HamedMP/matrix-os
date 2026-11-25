@@ -72,8 +72,10 @@ interface AppMenuTemplateOptions {
   openTerminalWindow?(): void;
   /** Opens the licence texts of bundled third-party components, when this build ships any. */
   openThirdPartyNotices?(): void;
-  /** Switches the Desktop link off for every computer at once (spec 2716). */
+  /** Switches the desktop link off for every computer at once (spec 2716). */
   stopDesktopLink?(): void;
+  /** Lets a computer use this device, where no Terminal window holds that switch (Windows). */
+  letComputerUseDevice?(): void;
   /** Each registry action shows its first binding as its accelerator. */
   shortcuts: EffectiveShortcuts;
   runShortcut(id: ShortcutActionId): void;
@@ -98,6 +100,7 @@ export function createAppMenuTemplate({
   openTerminalWindow,
   openThirdPartyNotices,
   stopDesktopLink,
+  letComputerUseDevice,
   shortcuts,
   runShortcut,
   terminalWindow,
@@ -197,6 +200,7 @@ export function createAppMenuTemplate({
             ...newItems,
             { type: "separator" },
             ...settingsItems,
+            ...(letComputerUseDevice ? [{ label: "Let a Computer Use This Device…", click: letComputerUseDevice }] : []),
             ...(stopDesktopLink ? [{ label: "Stop Computers Using This Device", click: stopDesktopLink }] : []),
             updateItem,
             { type: "separator" },

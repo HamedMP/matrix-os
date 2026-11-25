@@ -38,8 +38,10 @@ export function installAppMenu(options: {
   shortcuts: Pick<ShortcutService, "snapshot" | "onChange">;
   /** Delivers a Terminal window shortcut to that window (spec 2706). */
   sendTerminalCommand(command: TerminalWindowCommand): void;
-  /** Switches the Desktop link off for every computer (spec 2716). */
+  /** Switches the desktop link off for every computer (spec 2716). */
   stopDesktopLink?(): void;
+  /** Lets a computer use this device (Windows, where there is no Terminal window). */
+  letComputerUseDevice?(): void;
 }): { terminalWindowFocused(focused: boolean): void } {
   const router = createMenuRouter(options);
   const run = (id: ShortcutActionId): void => {
@@ -75,6 +77,7 @@ export function installAppMenu(options: {
     reloadWindow: router.reload,
     openTerminalWindow: options.openTerminalWindow,
     ...(options.stopDesktopLink ? { stopDesktopLink: options.stopDesktopLink } : {}),
+    ...(options.letComputerUseDevice ? { letComputerUseDevice: options.letComputerUseDevice } : {}),
     shortcuts,
     runShortcut: run,
     ...(options.thirdPartyNoticesPath ? {

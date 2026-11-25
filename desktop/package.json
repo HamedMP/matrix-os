@@ -64,6 +64,7 @@
     "material-file-icons": "^2.4.0",
     "mermaid": "11.13.0",
     "monaco-editor": "^0.56.0",
+    "node-pty": "^1.1.0",
     "pdfjs-dist": "5.4.624",
     "posthog-js": "^1.409.6",
     "react": "19.2.6",
