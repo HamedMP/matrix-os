@@ -74,12 +74,17 @@ export function createCanonicalChatAdmissionTracker() {
     }).finally(() => { attempt.reading = undefined; });
     return attempt.reading;
   };
+  const unresolved = (identity: unknown, scope: string, payload: string, seed?: string) =>
+    attempts.find(item => item.identity === identity && item.scope === scope && item.payload === payload && item.seed === seed);
   return {
+    hasUnresolved(identity: unknown, scope: string, input: Input, seed?: string) {
+      return Boolean(unresolved(identity, scope, JSON.stringify(InputSchema.parse(input)), seed));
+    },
     prepare(identity: unknown, scope: string, value: Input, seed?: string): ChatAdmissionAttempt {
       const input = InputSchema.parse(value);
       if (seed !== undefined) CanonicalCreateChatTurnRequestSchema.shape.clientRequestId.parse(seed);
       const payload = JSON.stringify(input);
-      const previous = attempts.find(item => item.identity === identity && item.scope === scope && item.payload === payload && item.seed === seed);
+      const previous = unresolved(identity, scope, payload, seed);
       if (previous) return previous;
       if (attempts.length >= 100) throw new ChatAdmissionUnconfirmed();
       let resolve!: ChatAdmissionAttempt["resolve"];

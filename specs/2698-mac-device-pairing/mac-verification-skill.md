@@ -12,6 +12,8 @@ Choose **Mac Verification** in a private worktree Chat. The Skill supplies the i
 
 Mac Verification appears under `@` and `/mac-verification`. Selecting it alone requests native execution for the current eligible worktree. With a change request already in the composer, selecting it arms verification for the next send. The normal Chat submission keeps the user’s text and the selected worktree. Start local verification only after the exact admitted Codex run completes in that Chat and remains current. Cancel removes the pending verification intent.
 
+If the previous worktree becomes unavailable, an ordinary text reply in an idle Chat can continue in the current project checkout after the user chooses it. An armed verification still requires its selected worktree.
+
 ## Execution and approval
 
 | Boundary | Contract |

@@ -6,6 +6,7 @@ import { canonicalChatApprovals, canonicalChatDisplayedIncomingSeq, type Canonic
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
   CanonicalChatDetailResponse,
+  CanonicalChatExecutionRootRef,
   CanonicalChatApprovalDecision,
   CanonicalChatRecord,
   CanonicalChatTurnAdmissionResponse,
@@ -462,6 +463,32 @@ export function useCanonicalChatRouteController({
       return null;
     }
   }, [client, detail, loadDetail, updateDetail]);
+
+  const hasUnresolvedTurn = (
+    input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
+    requestId?: string,
+  ) => {
+    const chatId = activeChatIdRef.current;
+    return chatId !== null && admissions.hasUnresolved(admissionIdentity, chatId, input, requestId);
+  };
+
+  const canOfferProjectCheckout = (
+    input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
+    worktree: Extract<CanonicalChatExecutionRootRef, { kind: "worktree" }>,
+    revision: number,
+    requestId?: string,
+  ) => {
+    const current = detailRef.current;
+    const chatId = activeChatIdRef.current;
+    const authority = admissionAuthority.current;
+    if (!authority.valid || authority.client !== client || authority.identity !== admissionIdentity
+      || !routeScopeRef.current?.active || !current || !chatId || current.record.chat.id !== chatId || current.record.activeRun
+      || current.record.chat.revision !== revision) return false;
+    const inherited = withChatContinuationRoot(input, current, chatId);
+    const root = inherited.executionRoot;
+    return !input.executionRoot && root?.kind === "worktree" && root.projectId === worktree.projectId
+      && root.worktreeId === worktree.worktreeId && !hasUnresolvedTurn(inherited, requestId);
+  };
 
   const submitTurn = useCallback(async (
     input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string },
@@ -991,6 +1018,8 @@ export function useCanonicalChatRouteController({
     refresh: load,
     moveProject,
     submitTurn,
+    canOfferProjectCheckout,
+    hasUnresolvedTurn,
     cancelActiveRun,
     steerActiveRun,
     queueTurn,

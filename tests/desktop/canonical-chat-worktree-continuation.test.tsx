@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalChatDetailResponse, CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
@@ -13,7 +16,11 @@ import { useProviderPreferences } from "@desktop/renderer/src/features/settings/
 import { useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
 import { AppError } from "@desktop/shared/app-error";
+import { isHistoricalWorktreeMissing, withChatContinuationRoot } from "@desktop/renderer/src/features/chat/canonical-chat-continuation-root";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
+import { createChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root";
+import { createProjectManager } from "../../packages/gateway/src/project-manager";
+import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager";
 import { createCanonicalChatWorkspaceClient } from "./canonical-chat-workspace-test-utils";
 import { mockSharedComposerPopoverLayout, setSharedComposerText } from "./shared-chat-composer-test-utils";
 
@@ -168,6 +175,78 @@ describe("native Chat worktree continuation", () => {
     expect(post.mock.calls[0]![1]).not.toHaveProperty("executionRoot");
   });
 
+  it("offers an idle Chat an explicit project checkout after its worktree is deleted", async () => {
+    const fixture = worktreeFixture();
+    const { detail, client } = fixture;
+    const owner = detail.record.chat.ownerScope;
+    if (owner.type !== "personal") throw new Error("Expected a personal Chat");
+    const ownerScope = { type: "user" as const, id: owner.ownerId };
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-chat-worktree-deletion-"));
+    try {
+      const projects = createProjectManager({ homePath });
+      const created = await projects.createProject({ mode: "scratch", name: "Matrix OS", slug: "matrix-os", ownerScope });
+      if (!created.ok) throw new Error("Fixture project creation failed");
+      const { project } = created;
+      const worktrees = createWorktreeManager({
+        homePath, runCommand: async (_command, args) => {
+          if (args[0] === "worktree" && args[1] === "add") {
+            await mkdir(args[args.indexOf("--") + 1]!, { recursive: true });
+          }
+          return { stdout: "", stderr: "" };
+        },
+      });
+      const createdWorktree = await worktrees.createWorktree({ projectSlug: project.slug, branch: "feature/chat", ownerScope });
+      if (!createdWorktree.ok) throw new Error("Fixture worktree creation failed");
+      const root = { kind: "worktree", projectId: project.id, worktreeId: createdWorktree.worktree.id } as const;
+      const projectRoot = { kind: "project", projectId: project.id } as const;
+      detail.record.projectId = project.id;
+      detail.runs[0]!.executionRoot = root;
+      useBoard.setState({ projects: [project] });
+      const resolver = createChatExecutionRootResolver({ homePath, projects, worktrees });
+      await expect(resolver.resolve(owner, root)).resolves.toMatchObject({ ref: root });
+      await expect(worktrees.deleteWorktree({ projectSlug: project.slug, worktreeId: root.worktreeId, ownerScope }))
+        .resolves.toEqual({ ok: true });
+      await expect(resolver.resolve(owner, root)).rejects.toThrow();
+      const get = vi.fn(async (path: string) => {
+        if (path === "/api/projects/matrix-os/worktrees") {
+          const result = await worktrees.listWorktrees(project.slug, ownerScope);
+          if (!result.ok) throw new Error("Fixture worktree inventory failed");
+          return { worktrees: result.worktrees };
+        }
+        if (path === "/api/projects/matrix-os") return { project };
+        throw new Error("Unexpected fixture request");
+      });
+      const admit = vi.mocked(client.admitTurn).getMockImplementation()!;
+      vi.mocked(client.admitTurn).mockImplementation(async (chatId, input, options) => {
+        if (!input.executionRoot) throw new Error("Fixture requires an explicit project root");
+        await resolver.resolve(owner, input.executionRoot);
+        return admit(chatId, input, options);
+      });
+      render(<CanonicalChatWorkspace client={client} api={{ get } as unknown as ApiClient}
+        projectId={project.id} initialChatId={detail.record.chat.id} initialView="conversation"
+        active catalog={fixture.providerCatalog} />);
+      const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+      await setSharedComposerText(editor, "Continue after removing the worktree.");
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      const chooseProject = await screen.findByRole("button", { name: "Use project checkout" });
+      expect(client.admitTurn).not.toHaveBeenCalled();
+      expect(editor.textContent).toBe("Continue after removing the worktree.");
+      fireEvent.click(chooseProject);
+      vi.mocked(client.admitTurn).mockRejectedValueOnce(new AppError("server", { httpStatus: 503 }));
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await screen.findByText("Message status is unconfirmed. You can retry safely.");
+      expect(client.admitTurn).toHaveBeenCalledExactlyOnceWith(detail.record.chat.id,
+        expect.objectContaining({ executionRoot: projectRoot,
+          parts: [{ type: "text", text: "Continue after removing the worktree." }] }), { chatScope: "project" });
+      const request = vi.mocked(client.admitTurn).mock.calls[0]![1];
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(client.admitTurn).toHaveBeenCalledTimes(2));
+      expect(vi.mocked(client.admitTurn).mock.calls[1]![1]).toEqual(request);
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("does not resurrect an earlier worktree after a deliberate project-root run", async () => {
     const fixture = worktreeFixture();
     fixture.detail.runs.push({ ...fixture.detail.runs[0]!, id: "run_project_root",
@@ -198,6 +277,36 @@ describe("native Chat worktree continuation", () => {
       expect(vi.mocked(fixture.client.admitTurn).mock.calls[1]![1]).toEqual(request);
       expect(editor.textContent).toBe("Do not fall back to the project checkout.");
     }
+  });
+
+  it("keeps the exact worktree request when the worktree disappears after an unconfirmed send", async () => {
+    const fixture = worktreeFixture();
+    const project = { id: worktree.projectId, slug: "matrix-os", name: "Matrix OS", kind: "scratch" as const };
+    useBoard.setState({ projects: [project] });
+    let deleted = false;
+    const get = vi.fn(async (path: string) => {
+      if (path === "/api/projects/matrix-os/worktrees") {
+        return { worktrees: deleted ? [] : [{ id: worktree.worktreeId, projectSlug: project.slug }] };
+      }
+      if (path === "/api/projects/matrix-os") return { project };
+      throw new Error("Unexpected fixture request");
+    });
+    const { client } = fixture;
+    vi.mocked(client.admitTurn).mockRejectedValue(new AppError("server", { httpStatus: 503 }));
+    render(<CanonicalChatWorkspace client={client} api={{ get } as unknown as ApiClient}
+      projectId={project.id} initialChatId={fixture.detail.record.chat.id} initialView="conversation"
+      active catalog={fixture.providerCatalog} />);
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    await setSharedComposerText(editor, "Continue the original request.");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Message status is unconfirmed. You can retry safely.");
+    const request = vi.mocked(client.admitTurn).mock.calls[0]![1];
+    expect(request.executionRoot).toEqual(worktree);
+    deleted = true;
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(client.admitTurn).mock.calls[1]![1]).toEqual(request);
+    expect(screen.queryByRole("button", { name: "Use project checkout" })).toBeNull();
   });
 
   it("never dispatches with the previous Chat's root while navigation is loading", async () => {
@@ -240,5 +349,98 @@ describe("native Chat worktree continuation", () => {
     expect(fixture.client.admitTurn).toHaveBeenCalledWith("chat_new",
       expect.objectContaining({ permissionMode: "full_access" }), { chatScope: "project" });
     expect(vi.mocked(fixture.client.admitTurn).mock.calls[0]![1]).not.toHaveProperty("executionRoot");
+  });
+});
+
+const input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision"> = {
+  parts: [{ type: "text", text: "Continue here." }], selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+  interactionMode: "default", permissionMode: "full_access",
+};
+function context(state: "running" | "completed" = "completed"): CanonicalChatDetailResponse {
+  const { snapshot } = createCanonicalChatFixture(state);
+  const { project, providerBinding, activeRun, ...chat } = snapshot.chat;
+  return { record: { chat, projectId: project.projectId, providerBinding, ...(activeRun ? { activeRun } : {}) },
+    messages: snapshot.messages, turns: snapshot.turns,
+    runs: snapshot.runs.map(run => ({ ...run, executionRoot: worktree })), activities: [] };
+}
+
+describe("canonical Chat continuation scope", () => {
+  it.each([
+    { result: { worktrees: [] }, projectId: "replacement_project" },
+    { result: { worktrees: [{ id: "unreadable", projectSlug: "matrix-os" }] }, projectId: worktree.projectId },
+    { result: { worktrees: [{ id: "wt_00000000000b", projectSlug: "different-project" }] }, projectId: worktree.projectId },
+    { result: undefined, projectId: worktree.projectId },
+  ])("requires an intact inventory and the same project identity before offering recovery", async ({ result, projectId }) => {
+    const get = vi.fn(async (path: string) => {
+      if (path.endsWith("/worktrees")) {
+        if (!result) throw new AppError("server", { httpStatus: 503 });
+        return result;
+      }
+      return { project: { id: projectId, slug: "matrix-os" } };
+    });
+    await expect(isHistoricalWorktreeMissing({ get } as unknown as ApiClient, "matrix-os", worktree, () => true))
+      .resolves.toBe(false);
+  });
+
+  it("preserves an explicit project/skill selection over the inherited worktree", () => {
+    const detail = context();
+    const explicit = { ...input, executionRoot: { kind: "project", projectId: "matrix-os" } as const };
+    expect(withChatContinuationRoot(explicit, detail, detail.record.chat.id)).toBe(explicit);
+  });
+
+  it("uses the active run's binding rather than a different historical run", () => {
+    const detail = context("running");
+    detail.runs.push({ ...detail.runs[0]!, id: "run_history", executionRoot: { kind: "project", projectId: "matrix-os" } });
+    expect(withChatContinuationRoot(input, detail, detail.record.chat.id)).toEqual({ ...input, executionRoot: worktree });
+    expect(input).not.toHaveProperty("executionRoot");
+  });
+
+  it.each(["missing active run", "foreign active turn", "foreign Chat", "changed project", "removed project"])("refuses %s without a project-root fallback", invalid => {
+    const detail = context("running");
+    if (invalid === "missing active run") detail.runs = [];
+    if (invalid === "foreign active turn") detail.runs[0]!.turnId = "turn_foreign";
+    if (invalid === "foreign Chat") detail.runs[0]!.chatId = "chat_foreign";
+    if (invalid === "changed project") detail.record.projectId = "project_foreign";
+    if (invalid === "removed project") delete detail.record.projectId;
+    expect(() => withChatContinuationRoot(input, detail, detail.record.chat.id)).toThrow(AppError);
+  });
+
+  it.each(["project_new", undefined])("refuses an explicit stale worktree after a change to %s", projectId => {
+    const detail = context();
+    detail.record.projectId = projectId;
+    expect(() => withChatContinuationRoot({ ...input, executionRoot: worktree }, detail, detail.record.chat.id)).toThrow(AppError);
+  });
+
+  it("preserves an explicit worktree that still belongs to the Chat's project", () => {
+    const detail = context();
+    const explicit = { ...input, executionRoot: worktree };
+    expect(withChatContinuationRoot(explicit, detail, detail.record.chat.id)).toBe(explicit);
+  });
+
+  it("rejects missing or different selected-Chat detail, including explicit roots", () => {
+    const detail = context();
+    expect(() => withChatContinuationRoot(input, null, detail.record.chat.id)).toThrow(AppError);
+    expect(() => withChatContinuationRoot({ ...input, executionRoot: worktree }, detail, "chat_other")).toThrow(AppError);
+  });
+
+  it("leaves new, legacy and shared Chats on their existing admission path", () => {
+    const detail = context();
+    expect(withChatContinuationRoot(input, detail, null)).toBe(input);
+    delete detail.runs[0]!.executionRoot;
+    expect(withChatContinuationRoot(input, detail, detail.record.chat.id)).toBe(input);
+    detail.runs[0]!.executionRoot = worktree;
+    detail.record.chat.ownerScope = { type: "organization", ownerId: "org_shared" };
+    expect(withChatContinuationRoot(input, detail, detail.record.chat.id)).toBe(input);
+  });
+
+  it("continues an explicitly private Chat without inheriting shared or Bot workspace policy", () => {
+    const detail = context();
+    detail.record.chat.collaboration = { mode: "private" };
+    expect(withChatContinuationRoot(input, detail, detail.record.chat.id)).toEqual({ ...input, executionRoot: worktree });
+    detail.record.chat.collaboration = { mode: "shared", membership: { role: "owner", memberCount: 2 } };
+    expect(withChatContinuationRoot(input, detail, detail.record.chat.id)).toBe(input);
+    delete detail.record.chat.collaboration;
+    detail.runs[0]!.executionRoot = { kind: "bot_workspace", botId: "bot_00000000" };
+    expect(withChatContinuationRoot(input, detail, detail.record.chat.id)).toBe(input);
   });
 });
