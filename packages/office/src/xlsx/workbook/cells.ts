@@ -9,6 +9,7 @@ import type { CellMutation, RawCell } from "./internals.js";
 import {
   type CellRec,
   DIRTY_CONTENT,
+  DIRTY_EDIT,
   DIRTY_STYLE,
   type RowRec,
   type SheetModel,
@@ -135,7 +136,10 @@ export function writeCell(
       if (contentChanged) {
         cell.dirty |= DIRTY_CONTENT;
         if (cell.shared >= 0) sheet.unshare = true;
-        if (!keepExtra) cell.extra = null;
+        if (!keepExtra) {
+          cell.extra = null;
+          cell.dirty |= DIRTY_EDIT;
+        }
       }
       if (styleChanged) cell.dirty |= DIRTY_STYLE;
     }

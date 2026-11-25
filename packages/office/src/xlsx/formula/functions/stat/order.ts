@@ -5,7 +5,7 @@
  * scalars, and an array there gives an array of results.
  */
 
-import type { FormulaValue, FunctionContext, FunctionRegistry } from "../../../../api/formula.js";
+import type { FormulaError, FormulaValue, FunctionContext, FunctionRegistry } from "../../../../api/formula.js";
 import { ERR, collectNumbers, compareValues, isError, toNumber } from "../../coerce.js";
 import { registerFunction } from "../../registry.js";
 import {
@@ -19,10 +19,28 @@ import {
 
 type Selector = (numbers: readonly number[], k: number) => NumberResult;
 
+/**
+ * The numbers of the first argument by its value. An array of `k` calls the
+ * function once per element with the same first argument, whose numbers are
+ * then collected (and sorted, see `compute.ts`) once. Entries go away with
+ * their values.
+ */
+const collected = new WeakMap<object, number[] | FormulaError>();
+
+function numbersOf(value: FormulaValue): number[] | FormulaError {
+  if (value === null || typeof value !== "object") return collectNumbers([value]);
+  let numbers = collected.get(value);
+  if (numbers === undefined) {
+    numbers = collectNumbers([value]);
+    collected.set(value, numbers);
+  }
+  return numbers;
+}
+
 /** `(array, k)` where `k` is a number. */
 function withK(select: Selector) {
   return (args: readonly FormulaValue[], context: FunctionContext): FormulaValue => {
-    const numbers = collectNumbers([args[0] ?? null]);
+    const numbers = numbersOf(args[0] ?? null);
     if (isError(numbers)) return numbers;
     const k = toNumber(args[1] ?? null, { date1904: context.date1904 });
     return isError(k) ? k : select(numbers, k);

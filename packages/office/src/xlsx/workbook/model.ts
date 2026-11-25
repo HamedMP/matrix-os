@@ -25,6 +25,12 @@ export const CLEAN = 0;
 export const DIRTY_CONTENT = 1;
 /** The style differs from the `<c>` element. */
 export const DIRTY_STYLE = 2;
+/**
+ * An edit replaced the content (not a calculation or a reference rewrite):
+ * the cell and value metadata of the old `<c>` element (`cm`, `vm`) no
+ * longer describe it.
+ */
+export const DIRTY_EDIT = 4;
 
 /** What an array or data-table formula carries besides its text. */
 export interface FormulaExtra {
@@ -46,7 +52,7 @@ export interface CellRec {
    * `<c>` elements of its source row.
    */
   el: XmlElement | number | null;
-  /** {@link CLEAN}, or a combination of {@link DIRTY_CONTENT} and {@link DIRTY_STYLE}. */
+  /** {@link CLEAN}, or a combination of {@link DIRTY_CONTENT}, {@link DIRTY_STYLE} and {@link DIRTY_EDIT}. */
   dirty: number;
   /** Shared formula group of the cell in the XML, or -1. */
   shared: number;

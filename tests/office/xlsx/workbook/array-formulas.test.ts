@@ -83,6 +83,10 @@ describe("the array formula of formulas.xlsx", () => {
     expect(codeOf(() => workbook.setRange(calc, parseA1("C5"), [["a", 1], ["b", 2], ["c", 3]]))).toBe("invalid_operation");
     expect(codeOf(() => workbook.clearRange(calc, parseA1Range("D3:D4")))).toBe("invalid_operation");
     expect(codeOf(() => workbook.clearRange(calc, parseA1Range("A1:D5"), "all"))).toBe("invalid_operation");
+    // A merge clears every cell but its top-left one: here part of the range, or the formula's own cell.
+    expect(codeOf(() => workbook.mergeCells(calc, parseA1Range("D2:E3")))).toBe("invalid_operation");
+    expect(codeOf(() => workbook.mergeCells(calc, parseA1Range("C2:D2")))).toBe("invalid_operation");
+    expect(workbook.getSheet(calc).mergedRanges).toEqual([]);
     expect(workbook.getRange(calc, parseA1Range("C1:E7"))).toEqual(before);
     // Formats are not content.
     workbook.clearRange(calc, parseA1Range("D3:D4"), "formats");
@@ -116,6 +120,7 @@ describe("the array formula of formulas.xlsx", () => {
     workbook.beginProposal({ author: "a", date: "2026-11-23T00:00:00Z", label: "x" });
     expect(codeOf(() => workbook.clearRange(calc, parseA1Range("D2:D6")))).toBe("invalid_operation");
     expect(codeOf(() => workbook.setRange(calc, parseA1("D2"), [[1], [2], [3], [4], [5]]))).toBe("invalid_operation");
+    expect(codeOf(() => workbook.mergeCells(calc, parseA1Range("C1:D6")))).toBe("invalid_operation");
     workbook.endProposal();
     expect(workbook.listChanges()).toEqual([]);
     expect(at(workbook, "Calc", "D2").formula).toBe("Data!C2:C6*Data!D2:D6");

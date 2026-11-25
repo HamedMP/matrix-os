@@ -14,7 +14,11 @@ export interface CsvField {
 
 export interface CsvScanOptions {
   delimiter: string;
-  /** Stop after this many records. */
+  /**
+   * Stop after this many records, for a sample of the text. Without it every
+   * record is read, and text with more records than a sheet has rows throws
+   * `limit_exceeded`.
+   */
   maxRecords?: number;
   /** Throw `limit_exceeded` when more non-empty fields than this are read. */
   maxCells?: number;
@@ -34,7 +38,8 @@ export function stripBom(text: string): string {
 export function scanCsv(text: string, options: CsvScanOptions): CsvField[][] {
   const delimiter = options.delimiter;
   const delimiterCode = delimiter.charCodeAt(0);
-  const maxRecords = options.maxRecords ?? MAX_ROWS;
+  const sample = options.maxRecords !== undefined;
+  const maxRecords = Math.min(options.maxRecords ?? MAX_ROWS, MAX_ROWS);
   const maxCells = options.maxCells ?? Number.POSITIVE_INFINITY;
   const records: CsvField[][] = [];
   let record: CsvField[] = [];
@@ -48,10 +53,14 @@ export function scanCsv(text: string, options: CsvScanOptions): CsvField[][] {
     }
     record.push(field);
   };
+  const tooManyRows = (): OfficeError => new OfficeError("limit_exceeded", "the text has more lines than a sheet has rows");
+  /** Ends the record; true when no more are read. A full read throws when records remain beyond the last row. */
   const endRecord = (): boolean => {
     records.push(record);
     record = [];
-    return records.length >= maxRecords;
+    if (records.length < maxRecords) return false;
+    if (!sample && i < length) throw tooManyRows();
+    return true;
   };
   // True when a delimiter was just read, so that a field must follow even at the end of the text.
   let pending = false;
@@ -116,7 +125,7 @@ export function scanCsv(text: string, options: CsvScanOptions): CsvField[][] {
   }
   if (pending) pushField({ text: "", quoted: false });
   if (record.length > 0) {
-    if (records.length >= MAX_ROWS) throw new OfficeError("limit_exceeded", "the text has more lines than a sheet has rows");
+    if (records.length >= MAX_ROWS) throw tooManyRows();
     records.push(record);
   }
   return records;

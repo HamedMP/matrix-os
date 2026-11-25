@@ -107,6 +107,44 @@ describe("a cell named for its position only", () => {
   });
 });
 
+describe("SUMIF and AVERAGEIF with a short sum range", () => {
+  it("follow the cells the sum range is stretched over", async () => {
+    const workbook = createXlsx({ sheetNames: ["S", "T"] });
+    const sheet = workbook.listSheets()[0]!.id;
+    const other = workbook.listSheets()[1]!.id;
+    workbook.setRange(sheet, parseA1("A1"), [[1, 10], [1, 20], [1, 30]]);
+    workbook.setFormula(sheet, parseA1("D1"), 'SUMIF(A1:A3,">0",B1)');
+    workbook.setFormula(sheet, parseA1("D2"), 'AVERAGEIF(A1:A3,">0",(B1))');
+    workbook.setFormula(sheet, parseA1("D3"), 'SUMIF(A1:A3,">0",T!B1:B2)');
+    workbook.setRange(other, parseA1("B1"), [[1], [2], [3]]);
+    workbook.recalc();
+    expect([valueAt(workbook, "S", "D1"), valueAt(workbook, "S", "D2"), valueAt(workbook, "S", "D3")]).toEqual([60, 20, 6]);
+    // Only cells outside the written sum range change.
+    workbook.setCell(sheet, parseA1("B3"), 300);
+    workbook.setCell(other, parseA1("B3"), 30);
+    workbook.recalc();
+    expect([valueAt(workbook, "S", "D1"), valueAt(workbook, "S", "D2"), valueAt(workbook, "S", "D3")]).toEqual([330, 110, 33]);
+    expect(workbook.dependents(sheet, parseA1("B3")).map((cell) => cell.row)).toEqual([0, 1]);
+    // The run save makes on its own covers them too.
+    workbook.setCell(sheet, parseA1("B2"), 0);
+    const reopened = await openXlsx(await workbook.save());
+    expect(valueAt(reopened, "S", "D1")).toBe(310);
+  });
+
+  it("follow a sum range they cannot size before the run", () => {
+    const workbook = createXlsx({ sheetNames: ["S"] });
+    const sheet = workbook.listSheets()[0]!.id;
+    workbook.setRange(sheet, parseA1("A1"), [[1, 10], [1, 20], [1, 30]]);
+    workbook.setDefinedName({ name: "Start", scope: null, refersTo: "S!$B$1" });
+    workbook.setFormula(sheet, parseA1("D1"), 'SUMIF(A1:A3,">0",Start)');
+    workbook.recalc();
+    expect(valueAt(workbook, "S", "D1")).toBe(60);
+    workbook.setCell(sheet, parseA1("B3"), 300);
+    workbook.recalc();
+    expect(valueAt(workbook, "S", "D1")).toBe(330);
+  });
+});
+
 describe("formulas that pick their cells at run time", () => {
   it("are calculated after the formula cells they read", async () => {
     const workbook = createXlsx({ sheetNames: ["S"] });

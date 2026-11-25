@@ -38,8 +38,21 @@ export function deviation(numbers: readonly number[], sample: boolean): NumberRe
   return typeof v === "number" ? Math.sqrt(v) : v;
 }
 
-function sorted(numbers: readonly number[]): number[] {
-  return [...numbers].sort((a, b) => a - b);
+/**
+ * Sorted copies by list. A function called once per element of an array
+ * argument (`SMALL(A:A,ROW(A:A))`) is handed the same list every time, which
+ * is then sorted once. Entries go away with their lists.
+ */
+const sortedLists = new WeakMap<readonly number[], readonly number[]>();
+
+/** The numbers in ascending order. The result is shared: read it, do not change it. */
+function sorted(numbers: readonly number[]): readonly number[] {
+  let list = sortedLists.get(numbers);
+  if (list === undefined) {
+    list = [...numbers].sort((a, b) => a - b);
+    sortedLists.set(numbers, list);
+  }
+  return list;
 }
 
 /** Median; `#NUM!` for an empty list. */
@@ -58,6 +71,14 @@ export function median(numbers: readonly number[]): NumberResult {
  */
 export function mode(numbers: readonly number[]): NumberResult {
   const list = sorted(numbers);
+  // Walking the sorted list counts each distinct value once: `runs[i]` is the length of the run starting at `i`.
+  const runs = new Array<number>(list.length).fill(0);
+  for (let start = 0; start < list.length; ) {
+    let end = start + 1;
+    while (end < list.length && list[end] === list[start]) end += 1;
+    runs[start] = end - start;
+    start = end;
+  }
   const frequency = (x: number): number => {
     let lo = 0;
     let hi = list.length;
@@ -66,9 +87,7 @@ export function mode(numbers: readonly number[]): NumberResult {
       if ((list[mid] as number) < x) lo = mid + 1;
       else hi = mid;
     }
-    let count = 0;
-    while (lo + count < list.length && list[lo + count] === x) count += 1;
-    return count;
+    return runs[lo] ?? 0;
   };
   let best: number | null = null;
   let bestCount = 1;

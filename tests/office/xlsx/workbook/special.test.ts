@@ -211,6 +211,23 @@ describe("workbook options and odd files", () => {
     expect(await final.package.getPartText("/customXml/item1.xml")).toBe("<a><b/></a>");
     expect(await final.package.getPartText("/xl/theme/theme1.xml")).toBe(await workbook.package.getPartText("/xl/theme/theme1.xml"));
   });
+
+  it("keeps the metadata and extensions of a cell whose result is calculated again", async () => {
+    const ext = '<extLst><ext uri="{11111111-2222-3333-4444-555555555555}"><keep/></ext></extLst>';
+    const rows =
+      `<row r="1">${num("A1", 1)}<c r="B1" cm="1" vm="2" ph="1"><f>A1*2</f><v>2</v>${ext}</c>` +
+      `<c r="C1" cm="1" vm="2"><f>A1*3</f><v>3</v>${ext}</c></row>`;
+    const workbook = await openXlsx(await buildXlsx({ sheets: [{ name: "S", rows }] }));
+    const sheet = sheetId(workbook, "S");
+    workbook.setCell(sheet, parseA1("A1"), 5);
+    // An edit replaces the content, and the metadata that described it goes with it.
+    workbook.setFormula(sheet, parseA1("C1"), "A1*4");
+    workbook.recalc();
+    await workbook.save();
+    const xml = await workbook.package.getPartText("/xl/worksheets/sheet1.xml");
+    expect(xml).toContain(`<c r="B1" cm="1" vm="2" ph="1"><f>A1*2</f><v>10</v>${ext}</c>`);
+    expect(xml).toContain(`<c r="C1"><f>A1*4</f><v>20</v>${ext}</c>`);
+  });
 });
 
 describe("files that cannot be opened", () => {

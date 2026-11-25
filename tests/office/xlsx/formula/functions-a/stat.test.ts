@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { createXlsx, parseA1 } from "../../../../../packages/office/src/xlsx/index.js";
+import { mode } from "../../../../../packages/office/src/xlsx/formula/functions/stat/compute.js";
 import { check, setup, type Case } from "./setup.js";
 
 const { value, run } = setup();
@@ -35,6 +37,37 @@ table("COUNT, COUNTA, COUNTBLANK", [
   ["COUNTBLANK(Z1:Z4)", 4],
   ["COUNTBLANK(A1:A5)", 0],
 ]);
+
+describe("MODE over many numbers", () => {
+  it("counts each value once, so a long list of repeats stays quick", () => {
+    const started = performance.now();
+    expect(mode(new Array<number>(100_000).fill(7))).toBe(7);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("sorts the list of LARGE, SMALL and PERCENTILE once for an array of k", () => {
+    const workbook = createXlsx();
+    const sheet = workbook.listSheets()[0]!.id;
+    const count = 20_000;
+    workbook.setRange(sheet, parseA1("A1"), Array.from({ length: count }, (_, i) => [count - i]));
+    workbook.setFormula(sheet, parseA1("B1"), `SUM(SMALL(A1:A${count},ROW(A1:A${count})))`);
+    workbook.setFormula(sheet, parseA1("B2"), `SUM(LARGE(A1:A${count},ROW(A1:A${count})))`);
+    workbook.setFormula(sheet, parseA1("B3"), `SUM(PERCENTILE(A1:A${count},ROW(A1:A${count})/${count}))`);
+    const started = performance.now();
+    workbook.recalc();
+    expect(performance.now() - started).toBeLessThan(2_000);
+    const total = (count * (count + 1)) / 2;
+    expect([0, 1].map((row) => workbook.getCell(sheet, { row, col: 1 }).value)).toEqual([total, total]);
+    // PERCENTILE(1..n, i/n) is 1 + i(n-1)/n.
+    expect(workbook.getCell(sheet, { row: 2, col: 1 }).value).toBeCloseTo(count + (count * count - 1) / 2, 3);
+  });
+
+  it("keeps the first of the most frequent values", () => {
+    expect(mode([1, 2, 2, 3, 3, 3, 1, 1])).toBe(1);
+    expect(mode([5, 4, 4, 5, 6])).toBe(5);
+    expect(mode([0, -0, 2])).toBe(0);
+  });
+});
 
 table("MEDIAN, MODE, STDEV, VAR", [
   ["MEDIAN(D1:D5)", 3],

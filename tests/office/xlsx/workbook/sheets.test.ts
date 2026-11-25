@@ -217,6 +217,19 @@ describe("defined names", () => {
     expect(await reopened.package.getPartText("/xl/workbook.xml")).toContain('<definedName name="rate">3</definedName><definedName name="Local" localSheetId="0">One!$A$1+2</definedName>');
   });
 
+  it("evaluates a local name on its own sheet, for the functions it calls too", () => {
+    const workbook = createXlsx({ sheetNames: ["Summary", "Inputs"] });
+    const [summary, inputs] = workbook.listSheets().map((sheet) => sheet.id) as [string, string];
+    workbook.setCell(summary, parseA1("A1"), 1);
+    workbook.setCell(inputs, parseA1("A1"), 42);
+    workbook.setDefinedName({ name: "Picked", refersTo: 'INDIRECT("A1")', scope: inputs });
+    workbook.setDefinedName({ name: "Plain", refersTo: "A1", scope: inputs });
+    workbook.setFormula(summary, parseA1("B1"), "Inputs!Picked");
+    workbook.setFormula(summary, parseA1("B2"), "Inputs!Plain");
+    workbook.recalc();
+    expect([valueAt(workbook, "Summary", "B1"), valueAt(workbook, "Summary", "B2")]).toEqual([42, 42]);
+  });
+
   it("keeps local names on their sheet when sheets are added and removed", async () => {
     const workbook = await openXlsx(await source());
     workbook.addSheet("Zero", 0);

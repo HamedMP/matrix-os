@@ -7,6 +7,7 @@
 import type { CellRange, SheetInfo } from "../../api/xlsx.js";
 import { OfficeError } from "../../errors.js";
 import type { JournalContext } from "./context.js";
+import { holds } from "./record.js";
 import { type BandSnapshot, MAX_SNAPSHOT_CELLS } from "./types.js";
 
 export type Axis = "row" | "col";
@@ -60,14 +61,22 @@ export function captureBand(ctx: JournalContext, info: SheetInfo, axis: Axis, in
   return { cells, sizes };
 }
 
-/** True when no cell of the band holds a value, a formula or a style. Bounded like {@link captureBand}. */
-export function bandIsEmpty(ctx: JournalContext, info: SheetInfo, axis: Axis, index: number, count: number): boolean {
+/**
+ * True when no cell of the band holds a value, a formula or a style, once
+ * the pending cell changes recorded after `afterSeq` are taken back: those
+ * were made on top of the inserted band, and rejecting them empties their
+ * cells again. A cell that no longer holds such a change's new content counts
+ * with what it holds. Bounded like {@link captureBand}.
+ */
+export function bandIsEmpty(ctx: JournalContext, info: SheetInfo, axis: Axis, index: number, count: number, afterSeq: number): boolean {
   const area = bandArea(info, axis, index, count);
   if (area === null) return true;
   if (areaSize(area) > MAX_SNAPSHOT_CELLS) return false;
   for (let row = area.start.row; row <= area.end.row; row++) {
     for (let col = area.start.col; col <= area.end.col; col++) {
-      const raw = ctx.internals.readRawCell(info.id, { row, col });
+      const current = ctx.internals.readRawCell(info.id, { row, col });
+      const later = ctx.store.cellAt(info.id, row, col);
+      const raw = later !== undefined && later.seq > afterSeq && holds(current, later.next) ? later.old : current;
       if (raw.value !== null || raw.formula !== null || raw.styleId !== 0) return false;
     }
   }

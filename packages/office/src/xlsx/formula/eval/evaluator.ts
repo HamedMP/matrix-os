@@ -88,7 +88,7 @@ function functionContext(frame: Frame): FunctionContext {
   const { options } = frame.state;
   frame.context = {
     provider: options.provider,
-    sheet: options.sheet,
+    sheet: frame.sheet,
     row: options.row,
     col: options.col,
     now: options.now ?? null,

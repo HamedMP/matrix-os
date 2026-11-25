@@ -111,6 +111,24 @@ describe("toSheetEdits", () => {
     expect(applySheetEdits(workbook, plan.edits, PROPOSAL).changeIds).toHaveLength(1);
   });
 
+  it("rejects an edit to a cell that already has a pending change", async () => {
+    const workbook = await openXlsxFixture("model.xlsx");
+    const earlier = applySheetEdits(workbook, toSheetEdits(workbook, [{ op: "setCell", sheet: "Assumptions", cell: "B3", value: 0.05 }]).edits, PROPOSAL);
+    const plan = toSheetEdits(workbook, [
+      { op: "setCell", sheet: "Assumptions", cell: "B3", value: 0.07 },
+      { op: "setRange", sheet: "Assumptions", start: "B2", values: [[1], [2]] },
+      { op: "clearRange", sheet: "Assumptions", range: "B3:B4" },
+      { op: "setCell", sheet: "Assumptions", cell: "B5", value: 20000 },
+    ]);
+    expect(plan.rejected.map((entry) => [entry.index, entry.code])).toEqual([
+      [0, "invalid_operation"],
+      [1, "invalid_operation"],
+      [2, "invalid_operation"],
+    ]);
+    expect(plan.edits.map((edit) => edit.editIndex)).toEqual([3]);
+    expect(workbook.listChanges().map((change) => [change.id, change.proposalId])).toEqual([[earlier.changeIds[0], earlier.proposalId]]);
+  });
+
   it("refuses to clear more cells than one edit may touch", () => {
     const workbook = createXlsx();
     const id = workbook.listSheets()[0]?.id ?? "";
@@ -200,6 +218,35 @@ describe("applySheetEdits", () => {
     expect(workbook.listChanges()).toEqual([]);
     expect(cell(workbook, "Assumptions", "B3").value).toBe(0.03);
     // No proposal was left open.
+    expect(typeof workbook.beginProposal(PROPOSAL)).toBe("string");
+  });
+
+  it("refuses, before writing anything, edits to a cell that another proposal changed", async () => {
+    const workbook = await openXlsxFixture("model.xlsx");
+    const assumptions = sheetId(workbook, "Assumptions");
+    const earlier = applySheetEdits(workbook, [{ editIndex: 0, sheet: assumptions, row: 2, col: 1, value: 0.05, formula: null }], PROPOSAL);
+    let code: string | null = null;
+    try {
+      applySheetEdits(
+        workbook,
+        [
+          { editIndex: 0, sheet: assumptions, row: 4, col: 1, value: 20000, formula: null },
+          { editIndex: 1, sheet: assumptions, row: 2, col: 1, value: 0.07, formula: null },
+          { editIndex: 2, sheet: "no-such-sheet", row: 0, col: 0, value: 1, formula: null },
+        ],
+        PROPOSAL,
+      );
+    } catch (error) {
+      code = isOfficeError(error) ? error.code : "other";
+    }
+    expect(code).toBe("invalid_operation");
+    // The earlier proposal keeps its change exactly; nothing of the refused one was written.
+    expect(workbook.listChanges().map((change) => [change.id, change.proposalId, change.oldValue, change.newValue])).toEqual([
+      [earlier.changeIds[0], earlier.proposalId, 0.03, 0.05],
+    ]);
+    expect(cell(workbook, "Assumptions", "B3").value).toBe(0.05);
+    expect(cell(workbook, "Assumptions", "B5").value).toBe(18000);
+    expect(workbook.listProposals().map((proposal) => proposal.id)).toEqual([earlier.proposalId]);
     expect(typeof workbook.beginProposal(PROPOSAL)).toBe("string");
   });
 

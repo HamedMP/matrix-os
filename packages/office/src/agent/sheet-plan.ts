@@ -13,7 +13,7 @@ import type {
   ToSheetEdits,
 } from "../api/agent.js";
 import type { CellAddress, CellRange, SheetInfo, Workbook } from "../api/xlsx.js";
-import { isOfficeError } from "../errors.js";
+import { OfficeError, isOfficeError } from "../errors.js";
 import { parseFormula } from "../xlsx/formula/parser/parser.js";
 import { MAX_COLS, MAX_ROWS, parseA1, parseA1Range } from "../xlsx/workbook/a1.js";
 import { MAX_RANGE_CELLS } from "./limits.js";
@@ -47,12 +47,18 @@ function address<T>(parse: () => T): T {
 }
 
 /**
- * A proposal cannot change a cell that an array formula fills: the journal
- * could not take the change back. The edit is rejected here, so that it does
- * not fail the whole proposal later.
+ * The checks every cell an edit writes must pass, so that the edit does not
+ * fail the whole proposal later:
+ * - A proposal cannot change a cell that an array formula fills: the journal
+ *   could not take the change back.
+ * - A proposal cannot change a cell that already has a pending change: the
+ *   journal would fold the edit into the earlier proposal's change, so the
+ *   new proposal could neither list it nor take it back.
  */
-function requireOutsideArray(workbook: Workbook, sheet: SheetInfo, at: CellAddress): void {
-  if (workbook.getCell(sheet.id, at).arrayRange !== null) reject("invalid_operation", "the cell is part of an array formula");
+function requireWritable(workbook: Workbook, sheet: SheetInfo, at: CellAddress): void {
+  const cell = workbook.getCell(sheet.id, at);
+  if (cell.arrayRange !== null) reject("invalid_operation", "the cell is part of an array formula");
+  if (cell.pendingChangeId !== null) reject("invalid_operation", "the cell has a pending change; accept or reject it first");
 }
 
 /** A literal or a formula from what the agent wrote. A string that starts with `=` is a formula. */
@@ -79,7 +85,7 @@ function resolve(workbook: Workbook, edit: AgentSheetEdit, editIndex: number): R
         const current = cell.formula === null ? singleLine(cell.display) : `=${singleLine(cell.formula)}`;
         if (singleLine(edit.expect).trim() !== current.trim()) reject("stale_reference", "the cell does not hold what was expected");
       }
-      requireOutsideArray(workbook, sheet, at);
+      requireWritable(workbook, sheet, at);
       return [{ editIndex, sheet: sheet.id, row: at.row, col: at.col, ...content(edit.value) }];
     }
     case "setRange": {
@@ -89,7 +95,7 @@ function resolve(workbook: Workbook, edit: AgentSheetEdit, editIndex: number): R
         row.forEach((input, c) => {
           const cell: CellAddress = { row: start.row + r, col: start.col + c };
           if (cell.row >= MAX_ROWS || cell.col >= MAX_COLS) reject("invalid_operation", "the values do not fit on the sheet");
-          requireOutsideArray(workbook, sheet, cell);
+          requireWritable(workbook, sheet, cell);
           resolved.push({ editIndex, sheet: sheet.id, row: cell.row, col: cell.col, ...content(input) });
         });
       });
@@ -104,7 +110,7 @@ function resolve(workbook: Workbook, edit: AgentSheetEdit, editIndex: number): R
       const resolved: ResolvedSheetEdit[] = [];
       for (let row = range.start.row; row <= range.end.row; row++) {
         for (let col = range.start.col; col <= range.end.col; col++) {
-          requireOutsideArray(workbook, sheet, { row, col });
+          requireWritable(workbook, sheet, { row, col });
           resolved.push({ editIndex, sheet: sheet.id, row, col, value: null, formula: null });
         }
       }
@@ -135,7 +141,27 @@ export const toSheetEdits: ToSheetEdits = (workbook, edits) => {
   return { edits: resolved, rejected };
 };
 
+/**
+ * Refuses, before anything is written, an edit to a cell with a pending
+ * change: that change belongs to an earlier proposal, so this proposal could
+ * neither list the edit nor take it back when a later edit fails.
+ */
+function requireNoPendingChanges(workbook: Workbook, edits: readonly ResolvedSheetEdit[]): void {
+  if (edits.length === 0) return;
+  const pending = new Set<string>();
+  for (const change of workbook.listChanges()) {
+    if (change.row !== null && change.col !== null) pending.add(`${change.sheet}!${change.row}:${change.col}`);
+  }
+  if (pending.size === 0) return;
+  for (const edit of edits) {
+    if (pending.has(`${edit.sheet}!${edit.row}:${edit.col}`)) {
+      throw new OfficeError("invalid_operation", "a cell of the edits has a pending change; accept or reject it first");
+    }
+  }
+}
+
 export const applySheetEdits: ApplySheetEdits = (workbook, edits, proposal) => {
+  requireNoPendingChanges(workbook, edits);
   const proposalId = workbook.beginProposal(proposal);
   const ownChanges = (): string[] =>
     workbook

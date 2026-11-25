@@ -134,10 +134,19 @@ describe("a table on a sheet", () => {
     expect(refusal(() => workbook.setFormula(sheet, parseA1("C3"), "1+1"))).toBe("invalid_operation");
     expect(refusal(() => workbook.setCellInput(sheet, parseA1("C3"), ""))).toBe("invalid_operation");
     expect(refusal(() => workbook.clearRange(sheet, parseA1Range("A1:C3")))).toBe("invalid_operation");
+    // A merge shows only its top-left cell, so merging across headers would clear them.
+    expect(refusal(() => workbook.mergeCells(sheet, parseA1Range("B3:D3")))).toBe("invalid_operation");
+    expect(refusal(() => workbook.mergeCells(sheet, parseA1Range("A2:C3")))).toBe("invalid_operation");
+    expect(workbook.getSheet(sheet).mergedRanges).toEqual([]);
+    expect(workbook.getCell(sheet, parseA1("C3")).value).toBe("Customer");
     // A range write that would give two columns one name changes nothing.
     expect(refusal(() => workbook.setRange(sheet, parseA1("A3"), [["x", "Same", "same", "Qty"]]))).toBe("invalid_operation");
     expect(workbook.getCell(sheet, parseA1("A3")).value).toBeNull();
     expect(await table(workbook)).toEqual({ ref: "B3:D7", filter: "B3:D7", columns: ["Order", "Customer", "Qty"], problems: [] });
+    // A header in the top-left cell of a merge keeps its content.
+    workbook.mergeCells(sheet, parseA1Range("D3:E3"));
+    expect(workbook.getCell(sheet, parseA1("D3")).value).toBe("Qty");
+    workbook.unmergeCells(sheet, parseA1Range("D3:E3"));
     // Formats may be cleared, and a range write of valid headers goes through.
     workbook.clearRange(sheet, parseA1Range("A1:D3"), "formats");
     workbook.setRange(sheet, parseA1("B3"), [["Id", "Who", "How many"]]);

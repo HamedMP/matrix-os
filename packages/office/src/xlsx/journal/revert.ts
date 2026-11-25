@@ -37,7 +37,7 @@ export function isStale(ctx: JournalContext, entry: JournalEntry): boolean {
     case "addSheet":
       return false;
     default:
-      return isInsert(entry) && !bandIsEmpty(ctx, info, axisOf(entry), entry.index, entry.count);
+      return isInsert(entry) && !bandIsEmpty(ctx, info, axisOf(entry), entry.index, entry.count, entry.seq);
   }
 }
 

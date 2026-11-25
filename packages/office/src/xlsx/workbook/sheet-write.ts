@@ -10,7 +10,7 @@ import type { CellRange } from "../../api/xlsx.js";
 import type { XmlChildNode, XmlElement } from "../../api/xml.js";
 import { createElement, getAttr, prependChild, remove, removeAttr, setAttr } from "../../xml/index.js";
 import { columnLabel, formatA1, formatA1Range } from "./a1.js";
-import { type AttachedSheet, CLEAN, type CellRec, DIRTY_CONTENT, DIRTY_STYLE, type RowRec, type SheetModel } from "./model.js";
+import { type AttachedSheet, CLEAN, type CellRec, DIRTY_CONTENT, DIRTY_EDIT, DIRTY_STYLE, type RowRec, type SheetModel } from "./model.js";
 import { attachSheet, firstSheetView } from "./sheet-read.js";
 import { encodeCellText, insertInOrder, isNamed, kid, kids, needsSpacePreserve, qualify, setChildren } from "./xml-util.js";
 
@@ -91,7 +91,20 @@ function valueElement(reference: XmlElement, text: string): XmlElement {
   return createElement(qualify(reference, "v"), needsSpacePreserve(text) ? { "xml:space": "preserve" } : undefined, [text]);
 }
 
-function buildCell(reference: XmlElement, cell: CellRec, row: number, col: number, strings: StringSink): XmlElement {
+/** Attributes of `<c>` that {@link buildCell} writes from the model. */
+const CELL_MODEL_ATTRS: ReadonlySet<string> = new Set(["r", "s", "t"]);
+/** Attributes that describe the old content, dropped when an edit replaces it. */
+const CELL_CONTENT_ATTRS: ReadonlySet<string> = new Set(["cm", "vm"]);
+/** Children of `<c>` that {@link buildCell} writes from the model. */
+const CELL_MODEL_CHILDREN = ["f", "v", "is"];
+
+/**
+ * A new `<c>` element for the cell. What the model does not hold of the
+ * `previous` element (phonetic flag, metadata indexes, extensions, attributes
+ * of other software) is carried over, except the metadata of content that an
+ * edit replaced.
+ */
+function buildCell(reference: XmlElement, cell: CellRec, row: number, col: number, strings: StringSink, previous: XmlElement | null): XmlElement {
   const attrs: Array<[string, string]> = [["r", columnLabel(col) + String(row + 1)]];
   if (cell.styleId !== 0) attrs.push(["s", String(cell.styleId)]);
   const children: XmlElement[] = [];
@@ -118,6 +131,16 @@ function buildCell(reference: XmlElement, cell: CellRec, row: number, col: numbe
   } else if (value !== null) {
     attrs.push(["t", "e"]);
     children.push(valueElement(reference, value.code));
+  }
+  if (previous !== null) {
+    const edited = (cell.dirty & DIRTY_EDIT) !== 0;
+    for (const attr of previous.attrs) {
+      if (CELL_MODEL_ATTRS.has(attr.name) || (edited && CELL_CONTENT_ATTRS.has(attr.name))) continue;
+      attrs.push([attr.name, attr.value]);
+    }
+    for (const node of previous.children) {
+      if (node.kind === "element" && !CELL_MODEL_CHILDREN.some((name) => isNamed(node.name, name))) children.push(node);
+    }
   }
   return createElement(qualify(reference, "c"), attrs, children);
 }
@@ -164,7 +187,7 @@ function flushRow(sheet: AttachedSheet, row: RowRec, strings: StringSink): boole
     const cell = row.cells.get(col) as CellRec;
     let cellElement = cell.el;
     if (cellElement === null || typeof cellElement === "number" || (cell.dirty & DIRTY_CONTENT) !== 0) {
-      cellElement = buildCell(data, cell, row.index, col, strings);
+      cellElement = buildCell(data, cell, row.index, col, strings, typeof cellElement === "object" ? cellElement : null);
       cell.el = cellElement;
     } else {
       if ((cell.dirty & DIRTY_STYLE) !== 0) syncAttr(cellElement, "s", cell.styleId === 0 ? null : String(cell.styleId));

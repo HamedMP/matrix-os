@@ -82,6 +82,14 @@ const CLOCK_FUNCTIONS: ReadonlySet<string> = new Set(["NOW", "TODAY"]);
  * no circular reference.
  */
 const POSITION_FUNCTIONS: ReadonlySet<string> = new Set(["ROW", "COLUMN", "ROWS", "COLUMNS", "AREAS", "SHEET", "SHEETS", "ISREF"]);
+/**
+ * Functions that stretch or shrink their third argument (the sum range) to
+ * the size of their first (the criteria range), so they read cells the third
+ * argument does not name. See `resizedGrid` of the formula functions.
+ */
+const RESIZING_FUNCTIONS: ReadonlySet<string> = new Set(["SUMIF", "AVERAGEIF"]);
+const LAST_ROW = 1_048_575;
+const LAST_COL = 16_383;
 /** How many defined names may be followed inside one another. */
 const MAX_NAME_DEPTH = 8;
 /** Largest range one array formula fills; a larger one keeps its stored values. */
@@ -141,6 +149,43 @@ function someCall(ast: FormulaAst, test: (name: string) => boolean): boolean {
   return false;
 }
 
+/** The rectangle of a cell or range written in the formula (in parentheses or not), or null for anything else. */
+function writtenRect(state: WorkbookState, node: FormulaAst, sheet: SheetModel): Dep | null {
+  let inner = node;
+  while (inner.type === "paren") inner = inner.inner;
+  if (inner.type !== "cell" && inner.type !== "range") return null;
+  const target = inner.sheet === null ? sheet : state.sheetsByKey.get(inner.sheet.toLowerCase());
+  if (target === undefined) return null;
+  if (inner.type === "cell") return { sheet: target, r1: inner.row, c1: inner.col, r2: inner.row, c2: inner.col };
+  return {
+    sheet: target,
+    r1: Math.min(inner.start.row, inner.end.row),
+    c1: Math.min(inner.start.col, inner.end.col),
+    r2: Math.max(inner.start.row, inner.end.row),
+    c2: Math.max(inner.start.col, inner.end.col),
+  };
+}
+
+/**
+ * For a SUMIF or AVERAGEIF call with a sum range: the rectangle the sum range
+ * is read over, sized as the criteria range; `"unknown"` when the size or the
+ * start is known only at run time (a name, a function); null for any other call.
+ */
+function resizedRead(state: WorkbookState, node: FormulaAst, sheet: SheetModel): Dep | "unknown" | null {
+  if (node.type !== "call" || !RESIZING_FUNCTIONS.has(node.name) || node.args.length < 3) return null;
+  const [criteria, , sum] = node.args as [FormulaAst, FormulaAst, FormulaAst];
+  const range = writtenRect(state, criteria, sheet);
+  const start = writtenRect(state, sum, sheet);
+  if (range === null || start === null) return "unknown";
+  return {
+    sheet: start.sheet,
+    r1: start.r1,
+    c1: start.c1,
+    r2: Math.min(LAST_ROW, start.r1 + range.r2 - range.r1),
+    c2: Math.min(LAST_COL, start.c1 + range.c2 - range.c1),
+  };
+}
+
 /** What the functions of a formula, and of the names it uses, ask of the calculation. */
 interface Traits {
   volatile: boolean;
@@ -153,7 +198,7 @@ function addTraits(state: WorkbookState, ast: FormulaAst, sheet: SheetModel, fun
   while (stack.length > 0) {
     const node = stack.pop() as FormulaAst;
     if (node.type === "call") {
-      if (DYNAMIC_FUNCTIONS.has(node.name)) traits.dynamic = true;
+      if (DYNAMIC_FUNCTIONS.has(node.name) || resizedRead(state, node, sheet) === "unknown") traits.dynamic = true;
       else if (functions.get(node.name)?.volatile === true) traits.volatile = true;
       if (CLOCK_FUNCTIONS.has(node.name)) traits.clock = true;
     } else if (node.type === "name" && depth < MAX_NAME_DEPTH) {
@@ -238,6 +283,8 @@ export function collectDeps(state: WorkbookState, ast: FormulaAst, sheet: SheetM
       continue;
     }
     children.length = 0;
+    const resized = resizedRead(state, node, sheet);
+    if (resized !== null && resized !== "unknown") out.push(resized);
     if (node.type === "call" && POSITION_FUNCTIONS.has(node.name)) {
       for (const arg of node.args) if (!isPlainReference(state, arg, sheet, depth)) children.push(arg);
     } else {

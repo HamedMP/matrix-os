@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { CellValue, Workbook } from "../../../../packages/office/src/api/xlsx.js";
 import { isOfficeError } from "../../../../packages/office/src/errors.js";
 import { inferField, scanCsv, sniffDelimiter } from "../../../../packages/office/src/xlsx/csv/index.js";
-import { openXlsx, parseA1, parseA1Range, parseCsv, toCsv } from "../../../../packages/office/src/xlsx/index.js";
+import { MAX_ROWS, openXlsx, parseA1, parseA1Range, parseCsv, toCsv } from "../../../../packages/office/src/xlsx/index.js";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures");
 
@@ -173,6 +173,19 @@ describe("parseCsv", () => {
     expect(codeOf(() => parseCsv("a", { delimiter: ",," }))).toBe("invalid_argument");
     expect(codeOf(() => parseCsv("a", { sheetName: "a/b" }))).toBe("invalid_argument");
     expect(codeOf(() => parseCsv(5 as never))).toBe("invalid_argument");
+  });
+
+  it("refuses text with more lines than a sheet has rows instead of cutting it short", () => {
+    expect(codeOf(() => scanCsv(`${"x\n".repeat(MAX_ROWS)}last`, { delimiter: "," }))).toBe("limit_exceeded");
+    // The last row that fits is an empty line, and a record follows it.
+    expect(codeOf(() => scanCsv(`${"x\n".repeat(MAX_ROWS - 2)}x\n\nlast`, { delimiter: "," }))).toBe("limit_exceeded");
+    expect(codeOf(() => parseCsv(`${"\n".repeat(MAX_ROWS)}last`))).toBe("limit_exceeded");
+    // A sheet full of rows fits, with or without a final line break.
+    expect(scanCsv("x\n".repeat(MAX_ROWS), { delimiter: "," })).toHaveLength(MAX_ROWS);
+    expect(scanCsv(`${"x\n".repeat(MAX_ROWS - 1)}x`, { delimiter: "," })).toHaveLength(MAX_ROWS);
+    // A sample asks for its first records only.
+    expect(fields("a\nb\nc").length).toBe(3);
+    expect(scanCsv("a\nb\nc", { delimiter: ",", maxRecords: 2 })).toHaveLength(2);
   });
 
   it("gives a workbook that saves as a valid file and reads back the same", async () => {

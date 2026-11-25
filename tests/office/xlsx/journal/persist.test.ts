@@ -82,6 +82,39 @@ describe("saving and reopening the journal", () => {
     expect(reopened.getSheetByName("Notes")).toBeNull();
   });
 
+  it("keeps inserted rows that later proposed edits filled, so a reject takes both back", async () => {
+    const { workbook, sheet } = smallBook();
+    workbook.beginProposal(AGENT);
+    workbook.insertRows(sheet, 0, 1);
+    workbook.setCell(sheet, a1("A1"), "Header");
+    workbook.endProposal();
+    expect(changes(workbook).map((change) => [change.kind, change.stale])).toEqual([
+      ["insertRows", false],
+      ["cell", false],
+    ]);
+    const reopened = await openXlsx(await workbook.save());
+    expect(getJournalWarnings(reopened)).toEqual([]);
+    expect(changes(reopened).map((change) => [change.kind, change.stale])).toEqual([
+      ["insertRows", false],
+      ["cell", false],
+    ]);
+    expect(reopened.rejectChanges("all").stale).toEqual([]);
+    expect([1, 2, 3, 4].map((row) => valueAt(reopened, "Data", `A${row}`))).toEqual([1, 2, 3, 6]);
+  });
+
+  it("drops inserted rows on open once something else filled them", async () => {
+    const { workbook, sheet } = smallBook();
+    workbook.beginProposal(AGENT);
+    workbook.insertRows(sheet, 0, 1);
+    workbook.setCell(sheet, a1("A1"), "Header");
+    workbook.endProposal();
+    // Another program changes the proposed cell, keeping the journal part.
+    getWorkbookInternals(workbook).writeRawCell(sheet, a1("A1"), { value: "Other", formula: null, styleId: 0 });
+    const reopened = await openXlsx(await workbook.save());
+    expect(changes(reopened)).toEqual([]);
+    expect(getJournalWarnings(reopened).map((warning) => warning.code)).toEqual(["change_stale", "change_stale"]);
+  });
+
   it("removes the part once nothing is pending", async () => {
     const { workbook, sheet } = smallBook();
     workbook.beginProposal(AGENT);
