@@ -60,7 +60,10 @@ it("keeps a visible, aligned Cancel setup button while a floating Web Chat grows
   const review: ProjectSetupDraft = {
     ...pending, revision: 2, step: "review", currentQuestionMessageId: "msg_setup_review",
     interview: { focus: "review", suggestions: [] }, generation: { status: "completed" },
-    proposals: [{ path: "AGENTS.md", content: "# Harbor\n\n" + "Confirm volunteer availability first.\n\n".repeat(24), status: "pending" }],
+    proposals: [
+      { path: "AGENTS.md", content: "# Harbor\n\n" + "Confirm volunteer availability first.\n\n".repeat(24), status: "pending" },
+      { path: "CLAUDE.md", content: "@AGENTS.md\n", status: "symlink_skipped" },
+    ],
   };
   let reviewReady = false;
   await page.route("**/*", route => {
@@ -115,6 +118,9 @@ it("keeps a visible, aligned Cancel setup button while a floating Web Chat grows
     const save = page.getByRole("button", { name: "Save project setup", exact: true });
     await save.waitFor({ timeout: 8_000 });
     await save.scrollIntoViewIfNeeded();
+    expect(await save.isEnabled()).toBe(true);
+    expect(await page.getByRole("region", { name: "Review CLAUDE.md" }).count()).toBe(0);
+    await page.getByText("CLAUDE.md · Symbolic link preserved", { exact: true }).scrollIntoViewIfNeeded();
     expect((await cancel.boundingBox())!.y).toBeCloseTo(initialBox.y, 0);
     if (evidenceDir) await page.locator("[data-test-window]").screenshot({ path: join(evidenceDir, "web-setup-review.png") });
     await cancel.click();
