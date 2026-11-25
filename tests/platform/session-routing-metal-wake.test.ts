@@ -63,7 +63,7 @@ describe('waking a metal runtime from every entry point', () => {
     expect(rig.ingress.requests).toHaveLength(1);
     const [proxied] = rig.ingress.requests;
     expect(proxied).toMatchObject({ method: 'GET', path: '/api/projects?x=1' });
-    expect(proxied!.headers.host).toBe(`${HANDLE}.matrix-os.com`);
+    expect(proxied!.headers.host).toBe('app.matrix-os.com');
     expect(proxied!.headers['x-matrix-host-auth']).toBe(INGRESS_TOKEN);
   });
 
@@ -375,7 +375,7 @@ describe('waking a metal runtime from every entry point', () => {
     const proxied = rig.ingress.requests.at(-1)!;
     expect(proxied.path).toBe('/api/health');
     expect(proxied.headers['x-matrix-host-auth']).toBe(INGRESS_TOKEN);
-    expect(proxied.headers.host).toBe(`${HANDLE}.matrix-os.com`);
+    expect(proxied.headers.host).toBe('app.matrix-os.com');
   });
 });
 

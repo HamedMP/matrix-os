@@ -93,7 +93,7 @@ describe('WebSocket upgrades to a metal runtime', () => {
     expect((await rig.machine())?.status).toBe('running');
     const upgrade = rig.ingress.requests.find((req) => req.upgrade)!;
     expect(upgrade.path).toBe('/ws/terminal?x=1');
-    expect(upgrade.headers.host).toBe(`${HANDLE}.matrix-os.com`);
+    expect(upgrade.headers.host).toBe('app.matrix-os.com');
     expect(upgrade.headers['x-matrix-host-auth']).toBe(INGRESS_TOKEN);
   });
 
