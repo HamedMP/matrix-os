@@ -10,6 +10,7 @@ const InputSchema = CanonicalCreateChatTurnRequestSchema.omit({ clientRequestId:
 export interface ChatAdmissionAttempt {
   identity: unknown; scope: string; payload: string; sourcePayload?: string; seed?: string; id: string;
   draftKey?: string;
+  requestedExecutionRoot?: Input["executionRoot"];
   record?: CanonicalChatRecord; request?: CanonicalCreateChatTurnRequest;
   accepted?: CanonicalChatTurnAdmissionResponse;
   uncertain?: boolean;
@@ -88,7 +89,7 @@ export function createCanonicalChatAdmissionTracker() {
       if (!attempt?.seed || !attempt.request) return null;
       return {
         requestId: attempt.seed,
-        executionRoot: attempt.request.executionRoot,
+        requestedExecutionRoot: attempt.requestedExecutionRoot,
         matches(input: Input) {
           return matchesPayload(attempt, identity, scope, JSON.stringify(InputSchema.parse(input)));
         },
@@ -110,6 +111,7 @@ export function createCanonicalChatAdmissionTracker() {
       let resolve!: ChatAdmissionAttempt["resolve"];
       const promise = new Promise<CanonicalChatTurnAdmissionResponse>(value => { resolve = value; });
       const attempt: ChatAdmissionAttempt = { identity, scope, payload, seed, draftKey: options?.draftKey,
+        requestedExecutionRoot: input.executionRoot,
         ...(sourcePayload === payload ? {} : { sourcePayload }),
         id: seed && !attempts.some(item => item.identity === identity && item.scope === scope && item.id === seed)
           ? seed : `req_${crypto.randomUUID().replaceAll("-", "")}`, resolve, receipt: promise, lastRead: 0 };

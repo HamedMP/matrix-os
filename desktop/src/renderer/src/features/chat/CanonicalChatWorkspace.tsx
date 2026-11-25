@@ -271,7 +271,6 @@ function CanonicalChatWorkspaceContent({
   const draftScope = globalView === "conversation" && routedComposerChatId
     ? `chat:${routedComposerChatId}` : `new:${projectId ?? "global"}`;
   const chatWorktree = controller.detail && chatElectronPreviewWorktree(controller.detail);
-  const composerOwner = useRef({ client, draftScope, draftRevision, identity: admissionIdentity, worktree: chatWorktree });
   const verificationDraftScope = JSON.stringify([admissionIdentity, draftScope, draftRevision]);
   const projectCheckoutScope = JSON.stringify([verificationDraftScope, controller.detail?.record.projectId]);
   const [checkout, setCheckout] = useState<{
@@ -285,19 +284,8 @@ function CanonicalChatWorkspaceContent({
   const checkoutMatchesHistory = currentCheckout !== null && currentCheckout.worktreeId === chatWorktree?.worktreeId
     && currentCheckout.revision === controller.detail?.record.chat.revision;
 
-  const pendingOrdinaryReply = () => controller.pendingDraft(verificationDraftScope);
-  const verificationRetry = useRef<{
-    client: typeof client;
-    draftScope: string;
-    draftKey: string;
-    worktree: MacVerificationDraft["worktree"];
-  } | null>(null);
+  const pendingChatReply = () => controller.pendingDraft(verificationDraftScope);
   const worktreeDraft = useRef<WorktreeDraft | null>(null);
-  useLayoutEffect(() => {
-    composerOwner.current = {
-      client, draftScope, draftRevision, identity: desktopProviderIdentityKey(useConnection.getState()), worktree: chatWorktree,
-    };
-  });
   const mentionResources = referenceTokens.flatMap((token) => token.type === "resource" ? [token.resource] : []);
   const [query, setQuery] = useState("");
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
@@ -366,6 +354,17 @@ function CanonicalChatWorkspaceContent({
   const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, permissionResources,
     selection?.permissionMode ?? "supervised", draftRequestIdentity);
   const selectionAvailable = botRouteAvailable && (!botPresentation?.requiresFullAccess || mentionPermission.confirmed);
+  const submissionSelectionKey = JSON.stringify([selection, selectionAvailable, mentionPermission.permissionMode]);
+  // A committed settings change ends preparation even if those settings are restored before it settles.
+  const submissionSelection = useMemo(() => ({ key: submissionSelectionKey }), [submissionSelectionKey]);
+  const composerOwner = useRef({
+    client, draftScope, draftRevision, identity: admissionIdentity, worktree: chatWorktree, submissionSelection,
+  });
+  useLayoutEffect(() => {
+    composerOwner.current = {
+      client, draftScope, draftRevision, identity: desktopProviderIdentityKey(useConnection.getState()), worktree: chatWorktree, submissionSelection,
+    };
+  });
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -651,19 +650,18 @@ function CanonicalChatWorkspaceContent({
     const isCurrentOwner = () => sequence === submissionSequence.current && isSameOwner();
     const isCurrentSubmission = () => isCurrentOwner()
       && composerOwner.current.draftRevision === draftRevision
+      && composerOwner.current.submissionSelection === owner.submissionSelection
       && useConnection.getState().providerCatalogGeneration === providerCatalogGeneration;
     const submittedAttachmentIds = attachments.items.map((item) => item.localId);
-    const retry = verificationRetry.current;
-    const pendingReply = pendingOrdinaryReply();
+    const pendingReply = pendingChatReply();
     let verificationSubmission: MacVerificationSubmission | undefined;
     let verificationUnconfirmed = false;
     setUploadingAttachments(true);
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
-      if (!parts) return;
+      if (!parts || !isCurrentSubmission()) return;
       // Confirmation can settle the original request while the retry prepares its parts.
-      if ((retry?.client === client && retry.draftScope === verificationDraftScope && retry !== verificationRetry.current)
-        || (pendingReply && pendingReply.requestId !== pendingOrdinaryReply()?.requestId)) return;
+      if (pendingReply && pendingReply.requestId !== pendingChatReply()?.requestId) return;
       const worktreeRequest = terminalRequest || previewRequest;
       const requestedRoot = worktreeRequest || verification ? composerOwner.current.worktree : null;
       const staged = worktreeDraft.current;
@@ -697,13 +695,23 @@ function CanonicalChatWorkspaceContent({
         permissionMode: mentionPermission.permissionMode,
       };
       const draftKey = JSON.stringify([verificationDraftScope, chatInput]);
-      // Cancel removes permission to verify. The same Chat send still retries with its original worktree.
-      const retryRoot = !submission.projectSkill && !permissionResources.length
-        && retry?.client === client && retry.draftKey === draftKey ? retry.worktree : null;
-      const executionRoot = requestedRoot ?? retryRoot;
-      const ordinaryReply = !directBotId && !verification && !executionRoot && !submission.projectSkill
+      const ordinaryReply = !directBotId && !verification && !submission.projectSkill
         && !worktreeRequest && !permissionResources.length;
-      if (pendingReply && !ordinaryReply) {
+      // The tracked request retains its explicit root even if native verification was canceled.
+      const executionRoot = requestedRoot ?? pendingReply?.requestedExecutionRoot;
+      const plainReply = ordinaryReply && parts.every(part => part.type === "text");
+      const selectedCheckout = !pendingReply && plainReply && currentCheckout?.selected && checkoutMatchesHistory
+        && chatWorktree && controller.canOfferProjectCheckout(chatInput, chatWorktree, currentCheckout.revision);
+      const checkoutProjectId = executionRoot?.kind === "project" ? executionRoot.projectId
+        : selectedCheckout ? controller.detail?.record.projectId : undefined;
+      const input = {
+        ...chatInput,
+        ...(executionRoot ? { executionRoot }
+          : submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } }
+          : checkoutProjectId ? { executionRoot: { kind: "project" as const, projectId: checkoutProjectId } } : {}),
+      };
+      const retryingVerification = verification && pendingReply?.requestedExecutionRoot?.kind === "worktree";
+      if (pendingReply && ((!ordinaryReply && !retryingVerification) || !pendingReply.matches(input))) {
         setSubmissionError("Restore this pending reply’s settings to retry it, or edit the draft to send a new reply.");
         return;
       }
@@ -722,21 +730,6 @@ function CanonicalChatWorkspaceContent({
           return;
         }
       }
-      const plainReply = ordinaryReply && parts.every(part => part.type === "text");
-      const selectedCheckout = !pendingReply && plainReply && currentCheckout?.selected && checkoutMatchesHistory
-        && chatWorktree && controller.canOfferProjectCheckout(chatInput, chatWorktree, currentCheckout.revision);
-      const checkoutProjectId = pendingReply?.executionRoot?.kind === "project" ? pendingReply.executionRoot.projectId
-        : selectedCheckout ? controller.detail?.record.projectId : undefined;
-      const input = {
-        ...chatInput,
-        ...(executionRoot ? { executionRoot }
-          : submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } }
-          : checkoutProjectId ? { executionRoot: { kind: "project" as const, projectId: checkoutProjectId } } : {}),
-      };
-      if (pendingReply && !pendingReply.matches(input)) {
-        setSubmissionError("Restore this pending reply’s settings to retry it, or edit the draft to send a new reply.");
-        return;
-      }
       const chatRevision = controller.detail?.record.chat.revision;
       if (plainReply && !pendingReply && !checkoutProjectId && api && chatWorktree && chatRevision !== undefined
         && controller.canOfferProjectCheckout(input, chatWorktree, chatRevision)) {
@@ -754,6 +747,7 @@ function CanonicalChatWorkspaceContent({
           }
         }
       }
+      if (!isCurrentSubmission()) return;
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = pendingReply ? undefined : mentionRequests.resolve(client, requestScope,
         permissionResources.length ? input : { ...input, draftRevision }, "send");
@@ -764,7 +758,6 @@ function CanonicalChatWorkspaceContent({
       const settleRequest = () => {
         if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
         if (checkoutProjectId) setCheckout(current => current === currentCheckout ? null : current);
-        if (verificationRetry.current?.client === client && verificationRetry.current.draftKey === draftKey) verificationRetry.current = null;
       };
       const acknowledgeAccepted = createComposerAcknowledgement({
         runtimeGeneration, identity: owner.identity, retained: draftRetentionIdentity !== undefined,
@@ -781,12 +774,9 @@ function CanonicalChatWorkspaceContent({
         ? await controller.queueTurn({ ...input, clientRequestId }, acknowledgeAccepted)
         : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId, acknowledgeAccepted, settleRequest,
           verificationSubmission && verification ? {
+            draftKey: verificationDraftScope,
             confirmed: (receipt) => { if (isSameOwner()) verificationSubmission?.accept(receipt.run); },
-            unconfirmed: () => {
-              if (!isCurrentOwner()) return;
-              verificationUnconfirmed = true;
-              verificationRetry.current = { client, draftScope: verificationDraftScope, draftKey, worktree: verification.worktree };
-            },
+            unconfirmed: () => { verificationUnconfirmed = isCurrentOwner(); },
           } : ordinaryReply && routedComposerChatId ? { draftKey: verificationDraftScope } : undefined);
       if (!admitted || !isCurrentOwner()) return;
       if ("record" in admitted) {
@@ -835,13 +825,14 @@ function CanonicalChatWorkspaceContent({
     );
     const isCurrentSubmission = () => isCurrentOwner()
       && composerOwner.current.draftRevision === draftRevision
+      && composerOwner.current.submissionSelection === owner.submissionSelection
       && useConnection.getState().providerCatalogGeneration === providerCatalogGeneration;
     const submittedAttachmentIds = attachments.items.map((item) => item.localId);
     setComposerAction(editingQueuedTurn ? "edit" : "queue");
     setUploadingAttachments(true);
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
-      if (!parts) return;
+      if (!parts || !isCurrentSubmission()) return;
       const updatedParts = editingQueuedTurn
         ? [
             ...editingQueuedTurn.parts.filter((part) => part.type !== "text"),
@@ -973,7 +964,7 @@ function CanonicalChatWorkspaceContent({
     const canUseCheckout = !directBotId && !activeRun && !editingQueuedTurn && !verification && !matrixAttachments.pending
       && referenceTokens.length === 0 && attachments.items.length === 0
       && !isMacTerminalProbeDraft(draft) && !isChatElectronPreviewDraft(draft);
-    const pendingCheckout = pendingOrdinaryReply()?.executionRoot?.kind === "project";
+    const pendingCheckout = pendingChatReply()?.requestedExecutionRoot?.kind === "project";
     return <>
       <QueuedTurnsPanel
         turns={queuedTurns}
@@ -1023,9 +1014,7 @@ function CanonicalChatWorkspaceContent({
         onAgentMention={botMention.select}
         mentionActions={mentionActions}
         onSubmit={(submission) => {
-          const retry = verificationRetry.current;
-          if (!editingQueuedTurn && activeRun && (pendingOrdinaryReply()
-            || (retry?.client === client && retry.draftScope === verificationDraftScope))) {
+          if (!editingQueuedTurn && activeRun && pendingChatReply()) {
             setSubmissionError("Wait for the active run before retrying this message.");
             return;
           }

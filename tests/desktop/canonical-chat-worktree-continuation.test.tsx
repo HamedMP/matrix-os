@@ -392,6 +392,89 @@ describe("native Chat worktree continuation", () => {
     expect(vi.mocked(client.admitTurn).mock.calls[1]![1]).toEqual(original);
   });
 
+  it("does not submit at the old permission mode after a downgrade during the worktree read", async () => {
+    const fixture = worktreeFixture();
+    const { client, detail } = fixture;
+    const project = { id: worktree.projectId, slug: "matrix-os", name: "Matrix OS", kind: "scratch" as const };
+    useBoard.setState({ projects: [project] });
+    const inventory = Promise.withResolvers<{ worktrees: Array<{ id: string; projectSlug: string }> }>();
+    const get = vi.fn(() => inventory.promise);
+    render(<CanonicalChatWorkspace client={client} api={{ get } as unknown as ApiClient}
+      projectId={project.id} initialChatId={detail.record.chat.id} initialView="conversation"
+      active catalog={fixture.providerCatalog} />);
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Full Access" }));
+    await setSharedComposerText(editor, "Continue with only the selected permissions.");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/api/projects/matrix-os/worktrees", expect.anything()));
+    expect(client.admitTurn).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Supervised" }));
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Supervised");
+    await act(async () => inventory.resolve({ worktrees: [{ id: worktree.worktreeId, projectSlug: project.slug }] }));
+    expect(client.admitTurn).not.toHaveBeenCalled();
+    expect(editor.textContent).toBe("Continue with only the selected permissions.");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledExactlyOnceWith(
+      detail.record.chat.id,
+      expect.objectContaining({ permissionMode: "supervised", executionRoot: worktree }),
+      { chatScope: "project" },
+    ));
+  });
+
+  it("does not start another Chat operation when changing permission mode after an unconfirmed verification draft", async () => {
+    const fixture = worktreeFixture();
+    const { client, detail } = fixture;
+    const owner = detail.record.chat.ownerScope;
+    if (owner.type !== "personal") throw new Error("Expected a personal Chat");
+    useConnection.setState({ userId: owner.ownerId });
+    detail.runs = [{ ...detail.runs[0]!, completedAt: new Date().toISOString() }];
+    window.operator = { ...window.operator, invoke: vi.fn(async (channel: string) => {
+      if (channel === "chat:mac-verification-selection") return { accepted: true };
+      return { available: false, verificationAvailable: true };
+    }) as typeof window.operator.invoke };
+    const admit = vi.mocked(client.admitTurn);
+    const accept = admit.getMockImplementation()!;
+    admit.mockRejectedValueOnce(new AppError("server", { httpStatus: 503 }));
+    admit.mockImplementation(async (...args) => {
+      const receipt = await accept(...args);
+      return {
+        ...receipt,
+        record: { ...receipt.record, chat: { ...receipt.record.chat, revision: detail.record.chat.revision + 1 } },
+        run: { ...receipt.run, id: "run_replayed_verification", completedAt: new Date().toISOString() },
+      };
+    });
+    openWorkspace(fixture);
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Full Access" }));
+    await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith("chat:electron-preview-available", {}));
+    await setSharedComposerText(editor, "Apply the requested change. @mac");
+    fireEvent.click(await screen.findByRole("option", { name: "Mac Verification", exact: true }));
+    await screen.findByText("Mac verification will run after this message.");
+    await waitFor(() => expect(editor.textContent?.trim()).toBe("Apply the requested change."));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Message status is unconfirmed. You can retry safely.");
+    expect(admit).toHaveBeenCalledOnce();
+    const originalRequest = admit.mock.calls[0]![1];
+    expect(originalRequest).toMatchObject({ permissionMode: "full_access", executionRoot: worktree });
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Supervised" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+    expect(admit).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Cancel verification" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Full Access" }));
+    expect(admit).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(admit).toHaveBeenCalledTimes(2));
+    expect(admit.mock.calls[1]![1]).toEqual(originalRequest);
+    await waitFor(() => expect(editor.textContent?.trim()).toBe(""));
+    expect(screen.queryByText("Waiting for the worktree run…")).toBeNull();
+    expect(window.operator.invoke).not.toHaveBeenCalledWith("chat:electron-preview-run", expect.anything());
+  });
+
   it("never dispatches with the previous Chat's root while navigation is loading", async () => {
     const fixture = worktreeFixture();
     const { result } = renderHook(() => useCanonicalChatRouteController({ client: fixture.client,
