@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly backup of the Matrix OS shared messaging bridge host
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=matrix-bridge-host-backup.service
+
+[Install]
+WantedBy=timers.target
