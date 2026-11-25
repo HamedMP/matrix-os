@@ -294,7 +294,7 @@ export function useMacVerification({ candidate, discoverable = false, available 
           ? "Mac verification is unavailable. Check Mac Pairing, or switch to Supervised to approve once."
           : status ? STATUS[status] : setupMessage}</p>
       {currentIntent?.state === "draft" && RECIPE_OPTIONS.map(([recipeSelection, label]) => (
-        <Button key={recipeSelection} type="button" variant="ghost" size="sm" aria-pressed={currentIntent.recipeSelection === recipeSelection}
+        <Button key={recipeSelection} type="button" variant={currentIntent.recipeSelection === recipeSelection ? "secondary" : "ghost"} size="sm" aria-pressed={currentIntent.recipeSelection === recipeSelection}
           onClick={() => {
             if (pendingIntent.current !== currentIntent || submittingIntent.current) return;
             stage({ ...currentIntent, recipeSelection: currentIntent.recipeSelection === recipeSelection ? undefined : recipeSelection });
