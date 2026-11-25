@@ -11,7 +11,7 @@
  *   [numbering label] [leaves and links] [paragraphs merged into this one] [mark] [filler]
  */
 
-import type { Hyperlink, InlineRun, ParagraphBlock, RevisionMark, RunFormat } from "../../../_shared/office-engine/index";
+import type { Hyperlink, InlineRun, ParagraphBlock, ResolvedParagraphStyle, RevisionMark, RunFormat } from "../../../_shared/office-engine/index";
 import { authorColorSlot } from "./authors";
 import type { ViewMode } from "./types";
 import { runVisible } from "./visibility";
@@ -46,6 +46,8 @@ export interface ParagraphRenderContext {
   highlights: readonly HighlightSpan[];
   /** Run formatting before a formatting revision, for the `original` view. */
   formatBefore(revisionId: string): Partial<RunFormat> | null;
+  /** Paragraph style before the paragraph's pending format change (`w:pPrChange`), for the `original` view. */
+  styleBefore(blockId: string): ResolvedParagraphStyle | null;
 }
 
 const REVISION_TITLES: Record<string, string> = {
@@ -220,13 +222,18 @@ function linkElement(doc: Document, link: Hyperlink): HTMLElement {
   return anchor;
 }
 
-function elementName(block: ParagraphBlock): string {
-  const level = block.style.headingLevel;
+/** The paragraph style the view shows: in `original`, the one rejecting a pending paragraph change would restore, as for run formatting. */
+function shownStyle(block: ParagraphBlock, context: ParagraphRenderContext): ResolvedParagraphStyle {
+  if (context.mode !== "original" || block.formatRevision === null) return block.style;
+  return context.styleBefore(block.id) ?? block.style;
+}
+
+function elementName(style: ResolvedParagraphStyle): string {
+  const level = style.headingLevel;
   return level >= 1 && level <= 6 ? `h${level}` : "p";
 }
 
-function applyParagraphStyle(element: HTMLElement, block: ParagraphBlock, context: ParagraphRenderContext): void {
-  const { style } = block;
+function applyParagraphStyle(element: HTMLElement, block: ParagraphBlock, style: ResolvedParagraphStyle, context: ParagraphRenderContext): void {
   const css = element.style;
   if (style.alignment !== "left") css.textAlign = style.alignment;
   if (style.indentLeftPt !== 0) css.marginLeft = `${style.indentLeftPt}pt`;
@@ -256,11 +263,12 @@ function applyParagraphStyle(element: HTMLElement, block: ParagraphBlock, contex
 }
 
 export function renderParagraph(doc: Document, block: ParagraphBlock, context: ParagraphRenderContext): HTMLElement {
-  const element = doc.createElement(elementName(block));
+  const style = shownStyle(block, context);
+  const element = doc.createElement(elementName(style));
   element.className = "doc-p";
   element.setAttribute(BLOCK_ID, block.id);
   element.setAttribute(BLOCK_TYPE, "paragraph");
-  applyParagraphStyle(element, block, context);
+  applyParagraphStyle(element, block, style, context);
 
   if (block.numbering !== null && block.numbering.text !== "") {
     const label = doc.createElement("span");
@@ -269,7 +277,7 @@ export function renderParagraph(doc: Document, block: ParagraphBlock, context: P
     label.setAttribute("contenteditable", "false");
     label.textContent = block.numbering.text;
     // The label sits in the hanging indent, so the text starts at the paragraph indent.
-    if (block.style.firstLineIndentPt < 0) label.style.minWidth = `${-block.style.firstLineIndentPt}pt`;
+    if (style.firstLineIndentPt < 0) label.style.minWidth = `${-style.firstLineIndentPt}pt`;
     element.append(label);
   }
 

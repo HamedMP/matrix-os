@@ -165,6 +165,66 @@ describe("rendering tracked changes", () => {
     expect(element(id).classList.contains("doc-changed")).toBe(false);
   });
 
+  it("shows the paragraph style before a tracked paragraph change in the original view: heading level and alignment", async () => {
+    m = await mount({ paragraphs: ["Scope of work", "Between", "Body text"] });
+    const [heading, , body] = bodyParagraphs(m.doc).map((block) => block.id);
+    m.session.apply(
+      [
+        { type: "setParagraphStyle", blockId: heading!, style: { headingLevel: 2 } },
+        { type: "setParagraphStyle", blockId: body!, style: { alignment: "center" } },
+      ],
+      { track: true, author: OTHER },
+    );
+    expect(element(heading!).tagName).toBe("H2");
+    expect(element(body!).style.textAlign).toBe("center");
+    m.editor.setViewMode("original");
+    expect(element(heading!).tagName).toBe("P");
+    expect(element(heading!).hasAttribute("data-heading")).toBe(false);
+    expect(element(heading!).getAttribute("data-style-id")).toBe(bodyParagraphs(m.doc)[1]!.style.styleId);
+    expect(element(body!).style.textAlign).toBe("");
+    m.editor.setViewMode("final");
+    expect(element(heading!).tagName).toBe("H2");
+    expect(element(body!).style.textAlign).toBe("center");
+  });
+
+  it("restores each paragraph's own old style when one tracked change covers several paragraphs", async () => {
+    m = await mount({ paragraphs: ["One", "Two", "Three"] });
+    const [one, two, three] = bodyParagraphs(m.doc).map((block) => block.id);
+    m.session.apply([{ type: "setParagraphStyle", blockId: three!, style: { alignment: "right" } }], { track: false });
+    // Adjacent paragraphs changed by one author in one minute make one revision.
+    m.session.apply([one, two, three].map((blockId) => ({ type: "setParagraphStyle" as const, blockId: blockId!, style: { alignment: "center" as const } })), { track: true, author: OTHER });
+    expect(m.doc.listRevisions()).toHaveLength(1);
+    m.editor.setViewMode("original");
+    expect([one, two, three].map((id) => element(id!).style.textAlign)).toEqual(["", "", "right"]);
+    m.editor.setViewMode("markup");
+    expect([one, two, three].map((id) => element(id!).style.textAlign)).toEqual(["center", "center", "center"]);
+  });
+
+  it("never gives a paragraph the old style of another paragraph in the same change", async () => {
+    m = await mount({ paragraphs: ["Title", "Body text"] });
+    const [title, body] = bodyParagraphs(m.doc).map((block) => block.id);
+    m.session.apply([{ type: "setParagraphStyle", blockId: title!, style: { headingLevel: 1 } }], { track: false });
+    const bodyStyle = paragraph(m.doc, body!).style.styleId;
+    m.session.apply(
+      [
+        { type: "setParagraphStyle", blockId: title!, style: { headingLevel: 0 } },
+        { type: "setParagraphStyle", blockId: body!, style: { alignment: "center" } },
+      ],
+      { track: true, author: OTHER },
+    );
+    m.editor.setViewMode("original");
+    expect(element(title!).tagName).toBe("H1");
+    expect(element(body!).tagName).toBe("P");
+    expect(element(body!).getAttribute("data-style-id")).toBe(bodyStyle);
+    expect(element(body!).style.textAlign).toBe("");
+    // Reading the old styles leaves the document as it was.
+    expect(m.doc.listRevisions()).toHaveLength(1);
+    expect(paragraph(m.doc, body!).style.alignment).toBe("center");
+    expect(m.session.getState().dirty).toBe(true);
+    m.editor.undo();
+    expect(paragraph(m.doc, body!).style.alignment).toBe("left");
+  });
+
   it("hides what a view drops: deleted paragraphs and rows in final, inserted ones in original", async () => {
     m = await mount({ fixture: "tracked.docx" });
     const blocks = bodyParagraphs(m.doc);

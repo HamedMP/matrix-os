@@ -11,7 +11,7 @@
  * as resolving the revision would remove it.
  */
 
-import type { BlockId, DocxBlock, DocxStory, DocxView, ParagraphBlock, RunFormat, SectionBreakBlock, TableBlock } from "../../../_shared/office-engine/index";
+import type { BlockId, DocxBlock, DocxStory, DocxView, ParagraphBlock, ResolvedParagraphStyle, RunFormat, SectionBreakBlock, TableBlock } from "../../../_shared/office-engine/index";
 import { BLOCK_ID, BLOCK_TYPE, type HighlightSpan, TAIL, renderParagraph } from "./render-paragraph";
 import type { ViewMode } from "./types";
 import { hasVisibleContent, markRemoved, rowVisible, tableVisible } from "./visibility";
@@ -28,6 +28,8 @@ export interface DocumentViewOptions {
   ariaLabel: string;
   /** Run formatting before a formatting revision, for the `original` view. */
   formatBefore(revisionId: string): Partial<RunFormat> | null;
+  /** Paragraph style before the paragraph's pending format change, for the `original` view. */
+  styleBefore(blockId: BlockId): ResolvedParagraphStyle | null;
 }
 
 export class DocumentView {
@@ -281,6 +283,7 @@ export class DocumentView {
         mode: this.viewMode,
         highlights: this.spans.get(block.id) ?? NO_SPANS,
         formatBefore: this.options.formatBefore,
+        styleBefore: this.options.styleBefore,
       });
       this.structure.set(block.id, this.structureKey(block));
       // Paragraphs that run on into the old element move to the new one.

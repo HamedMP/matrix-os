@@ -5,7 +5,7 @@
  * handling on top of it.
  */
 
-import type { BlockId, ParagraphBlock, RunFormat, TextPosition } from "../../../_shared/office-engine/index";
+import type { BlockId, ParagraphBlock, ResolvedParagraphStyle, RunFormat, TextPosition } from "../../../_shared/office-engine/index";
 import type { DocumentChange, DocumentSession } from "../session/index";
 import * as commands from "./commands";
 import { DocumentView } from "./document-view";
@@ -28,6 +28,8 @@ export abstract class EditorBase {
   protected host: HTMLElement | null = null;
   /** Formatting before each formatting revision, built when the `original` view first needs it. */
   protected formatsBefore: Map<string, Partial<RunFormat>> | null = null;
+  /** Paragraph styles before each pending paragraph change, built when the `original` view first needs them. */
+  protected stylesBefore: Map<BlockId, ResolvedParagraphStyle> | null = null;
   protected input: InputController | null = null;
   protected index = ModelIndex.empty();
   protected readonly store: EditorStore;
@@ -65,6 +67,7 @@ export abstract class EditorBase {
     const view = new DocumentView(host, {
       ariaLabel: this.options.ariaLabel ?? "Document",
       formatBefore: (revisionId) => this.formatBefore(revisionId),
+      styleBefore: (blockId) => this.styleBefore(blockId),
     });
     this.view = view;
     view.setMode(this.mode);
@@ -140,6 +143,38 @@ export abstract class EditorBase {
     return this.formatsBefore.get(revisionId) ?? null;
   }
 
+  /**
+   * The paragraph style that rejecting the paragraph's pending format change
+   * would restore (its `w:pPrChange`), or null when it has none. The engine
+   * reads it: the pending paragraph changes are rejected on the open document,
+   * which is put back from a snapshot at once, as undo does. A change over
+   * several paragraphs records old values for each of them, which
+   * `Revision.formatChange` (the first paragraph's) cannot tell apart.
+   */
+  protected styleBefore(blockId: BlockId): ResolvedParagraphStyle | null {
+    if (this.stylesBefore === null) {
+      this.stylesBefore = new Map();
+      const doc = this.session.document;
+      const changes = doc?.listRevisions().filter((revision) => revision.scope === "paragraphFormat") ?? [];
+      if (doc !== null && changes.length > 0) {
+        const snapshot = doc.snapshot();
+        try {
+          doc.rejectRevisions(changes.map((revision) => revision.id));
+          for (const id of changes.flatMap((revision) => revision.blockIds)) {
+            const block = doc.getBlock(id);
+            if (block !== null && block.type === "paragraph") this.stylesBefore.set(id, block.style);
+          }
+        } catch (error) {
+          this.log("docs editor: the original paragraph styles could not be read", error);
+          this.stylesBefore.clear();
+        } finally {
+          doc.restore(snapshot);
+        }
+      }
+    }
+    return this.stylesBefore.get(blockId) ?? null;
+  }
+
   /** Runs one of the editor's own commands and puts the selection where it says. */
   protected run(command: Command, given?: EditorSelection | null): boolean {
     if (this.view === null || !this.isEditable() || this.composition !== null) return false;
@@ -169,6 +204,7 @@ export abstract class EditorBase {
   protected onSessionChange(change: DocumentChange): void {
     if (this.view === null) return;
     this.formatsBefore = null;
+    this.stylesBefore = null;
     if (change.kind === "load" || change.kind === "close") {
       this.highlights.clear();
       this.lastSelection = null;
