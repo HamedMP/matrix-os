@@ -84,4 +84,6 @@ export interface OnDemandRuntimeSubstrate extends RuntimeSubstrate {
   readonly startsOnDemand: true;
   /** Puts the runtime to sleep; the outcome is read back later from the substrate. */
   stop(ref: RuntimeRef, signal: AbortSignal): Promise<StopRuntimeResult>;
+  /** True only when the provider confirms the same generation is suspended or stopped. */
+  isSuspended(ref: RuntimeRef, signal: AbortSignal): Promise<boolean>;
 }

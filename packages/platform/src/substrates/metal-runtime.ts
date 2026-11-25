@@ -190,7 +190,7 @@ function startConfiguredSleeper(
 ): MetalSleeperWorker | undefined {
   const lookup = substrates?.get('metal');
   const metal = lookup?.ok ? lookup.substrate : undefined;
-  if (!substrates || !metal || !metal.startsOnDemand || !('stop' in metal)) {
+  if (!substrates || !metal || !metal.startsOnDemand || !('stop' in metal) || !('isSuspended' in metal)) {
     log('metal_sleeper_unconfigured', { missing: 'metal_substrate' });
     return undefined;
   }

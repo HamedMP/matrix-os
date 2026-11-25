@@ -73,7 +73,7 @@ function fakeSubstrate() {
   const stop = vi.fn(async (): Promise<StopRuntimeResult> => ({ state: 'stopping' }));
   const ensureRunning = vi.fn(async (): Promise<EnsureRunningResult> => ({ state: 'running' }));
   const substrate: OnDemandRuntimeSubstrate = {
-    kind: 'metal', startsOnDemand: true, resolveUpstream: () => null, stop, ensureRunning,
+    kind: 'metal', startsOnDemand: true, resolveUpstream: () => null, stop, ensureRunning, isSuspended: async () => true,
   };
   return { substrate, stop, ensureRunning };
 }
@@ -796,20 +796,60 @@ describe('metal idle sleeper', () => {
       await hostd.close();
     });
 
+    it('keeps the row running when hostd accepts a suspend but the snapshot fails', async () => {
+      const id = await seedMachine();
+      let readsAfterAcceptance = 0;
+      let accepted = false;
+      hostd.handle((req, res) => {
+        if (req.method === 'POST') {
+          accepted = true;
+          return json(res, 202, { state: 'suspending' });
+        }
+        const state = accepted && readsAfterAcceptance++ === 0 ? 'suspending' : 'running';
+        return json(res, 200, {
+          id: VM_ID, machineId: id, generation: GENERATION, handle: 'owner1', tier: 'free', state,
+          privateIPv4: '10.77.0.5', bootMiB: 2048, maxMiB: 8192, diskGiB: 20, chVersion: 'v48.0', snapshot: null,
+          updatedAt: NOW.toISOString(),
+        });
+      });
+      const repo = createMetalHostsRepository(db.kysely);
+      await repo.upsert({
+        id: 'host-a', name: 'host-a', apiUrl: hostd.origin, ingressHost: 'host-a.metal.example.test',
+        status: 'active', memoryCapacityMib: 131072, admissionCeilingMib: 114688,
+      });
+      const substrate = createMetalSubstrate({
+        loadMachine: (machineId) => getUserMachine(db, machineId), hosts: createMetalHostDirectory(repo),
+        apiToken: 'a'.repeat(40), ingressToken: 'b'.repeat(40), caPem: hostd.caPem, log: () => {},
+      });
+      const s = createMetalSleeper({
+        db, substrate, log: () => {}, suspendWaitMs: 1_000,
+        readLifecycle: async () => ({ ok: true, status: IDLE }),
+      });
+
+      await s.sleepTick(NOW);
+
+      expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
+      expect(readsAfterAcceptance).toBeGreaterThanOrEqual(2);
+    });
+
     it('sends expectedGeneration on suspend', async () => {
       const id = await seedMachine();
       const scheduledAt = new Date(NOW.getTime() + HOUR);
       hostd.requests.length = 0;
+      let hostState = 'running';
       hostd.handle((req, res) => {
         if (req.method === 'GET' && req.path === `/v1/vms/${VM_ID}`) {
           json(res, 200, {
-            id: VM_ID, machineId: id, generation: GENERATION, handle: 'owner1', tier: 'free', state: 'running',
+            id: VM_ID, machineId: id, generation: GENERATION, handle: 'owner1', tier: 'free', state: hostState,
             privateIPv4: '10.77.0.5', bootMiB: 2048, maxMiB: 8192, diskGiB: 20, chVersion: 'v48.0', snapshot: null,
             updatedAt: '2026-11-21T10:00:00.000Z',
           });
           return;
         }
-        if (req.method === 'POST' && req.path === `/v1/vms/${VM_ID}/suspend`) return json(res, 202, { state: 'suspending' });
+        if (req.method === 'POST' && req.path === `/v1/vms/${VM_ID}/suspend`) {
+          hostState = 'suspended';
+          return json(res, 202, { state: 'suspending' });
+        }
         if (req.method === 'POST' && req.path === `/v1/vms/${VM_ID}/resume`) return json(res, 200, { state: 'running' });
         json(res, 404, { error: 'not_found' });
       });

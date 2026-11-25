@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { sql, type ExpressionBuilder, type Selectable } from 'kysely';
 import type { RuntimeLifecycleStatus } from '@matrix-os/contracts/runtime-lifecycle';
 import { mapUserMachine } from '../database/user-machine-records.js';
@@ -64,6 +65,7 @@ export const SLEEP_RECHECK_AFTER_MS = 5 * 60_000;
 export const SLEEP_PASS_BUDGET_MS = 30_000;
 /** The platform waits this long for hostd's suspend answer; a late answer is handled as a lost one. */
 export const SUSPEND_WAIT_MS = 15_000;
+const SUSPEND_POLL_INTERVAL_MS = 500;
 /** A failing scheduled wake is retried after 1 min, doubling up to this cap, so failures rotate behind fresh wakes. */
 export const WAKE_RETRY_BASE_MS = 60_000;
 export const WAKE_RETRY_MAX_MS = 15 * 60_000;
@@ -311,8 +313,9 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     const now = clock();
     const nowMs = now.getTime();
     if (!read.ok && read.code === 'asleep') {
-      // The host already sleeps this VM (for example a suspend accepted just before a platform restart).
-      // Record it asleep with its scheduled wake kept, so the wake pass picks it up.
+      // Ingress also returns asleep during transitions. Confirm with the
+      // provider before recording sleep after a late suspend or a restart.
+      if (!await substrate.isSuspended(refFor(machine), signal)) return;
       noteHealthy(machine.machineId);
       await markRuntimeAsleep(db, machine);
       log('sleep_recorded_host_asleep', { machineId: machine.machineId });
@@ -376,13 +379,20 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       return;
     }
     let accepted = false;
+    let suspended = false;
     try {
-      const outcome = await substrate.stop(refFor(machine),
-        AbortSignal.any([signal, AbortSignal.timeout(deps.suspendWaitMs ?? SUSPEND_WAIT_MS)]));
+      const ref = refFor(machine);
+      const suspendSignal = AbortSignal.any([signal, AbortSignal.timeout(deps.suspendWaitMs ?? SUSPEND_WAIT_MS)]);
+      const outcome = await substrate.stop(ref, suspendSignal);
       if (outcome.state === 'failed') {
         log('sleep_suspend_failed', { machineId: machine.machineId, code: outcome.code });
       } else {
         accepted = true;
+        // Hostd answers 202 before snapshotting. Only its subsequent VM state
+        // can confirm sleep, within the same bounded wait.
+        while (!(suspended = await substrate.isSuspended(ref, suspendSignal))) {
+          await delay(SUSPEND_POLL_INTERVAL_MS, undefined, { signal: suspendSignal });
+        }
       }
     } catch (error: unknown) {
       if (signal.aborted) throw error;
@@ -396,7 +406,7 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     // Recorded only while still idle: owner activity that arrived during the
     // suspend cancels it below instead of leaving their work interrupted.
     const awakeWhenClaimed = beforeStop.awakeSince === null ? null : new Date(beforeStop.awakeSince);
-    const recorded = accepted && !due && await db.executor.updateTable('user_machines')
+    const recorded = suspended && !due && await db.executor.updateTable('user_machines')
       .set({ status: ASLEEP_STATUS, awake_since: null, wake_failures: 0, ...(verdict.guard ? { idle_guard_at: tickNow } : {}) })
       .where('machine_id', '=', machine.machineId)
       .where('generation', '=', machine.generation)
@@ -413,12 +423,14 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     if (!recorded) {
       const current = await getUserMachine(db, machine.machineId);
       if (current && !current.deletedAt && current.generation === machine.generation && current.status === 'running') {
+        const lastWorkedAt = ms(current.lastActivityAt ?? current.awakeSince);
+        if (!suspended && !due && (lastWorkedAt === null || lastWorkedAt <= idleBefore.getTime())) return;
         // An owner request or a scheduled wake beat the suspend. The next
         // resume must go to hostd after this suspend attempt.
         log(due ? 'sleep_cancelled_scheduled_wake' : 'sleep_cancelled_activity', { machineId: machine.machineId });
         const { result } = await wakeAfterSuspendAttempt(db, substrate, current, { now: clock, signal,
           log: (message, detail) => log('sleep_cancel_resume_error', { machineId: machine.machineId, message, ...detail }) });
-        if (accepted && result.state === 'running') {
+        if (suspended && result.state === 'running') {
           await release();
         } else if (verdict.nextWakeAt !== null && current.nextWakeAt === null) {
           // Restore the durable retry if the earlier wake consumed it but the

@@ -164,6 +164,7 @@ describe('metal runtime composition', () => {
   describe('idle sleeper', () => {
     const metal: OnDemandRuntimeSubstrate = {
       kind: 'metal', startsOnDemand: true, resolveUpstream: () => null,
+      isSuspended: async () => true,
       ensureRunning: async () => ({ state: 'running' }), stop: async () => ({ state: 'stopping' }),
     };
     const substrates = createSubstrateRegistry([metal]);

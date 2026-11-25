@@ -1,4 +1,4 @@
-import { HostdVmIdSchema } from '@matrix-os/contracts';
+import { HostdVmIdSchema, type HostdVmState } from '@matrix-os/contracts';
 import type { Dispatcher } from 'undici';
 import {
   createHostdClient,
@@ -163,7 +163,7 @@ export interface MetalSubstrateDeps {
 }
 
 type Located =
-  | { ok: true; client: HostdClient; vmId: string }
+  | { ok: true; client: HostdClient; vmId: string; state: HostdVmState }
   | { ok: false; code: EnsureRunningFailureCode };
 
 function splitIngress(ingressHost: string): { hostname: string; port: number } {
@@ -222,7 +222,7 @@ export function createMetalSubstrate(deps: MetalSubstrateDeps): OnDemandRuntimeS
       log('generation_mismatch', { machineId: ref.machineId, expected: ref.generation, actual: vm.generation });
       return { ok: false, code: 'needs_recovery' };
     }
-    return { ok: true, client, vmId: vm.id };
+    return { ok: true, client, vmId: vm.id, state: vm.state };
   }
 
   return {
@@ -270,6 +270,11 @@ export function createMetalSubstrate(deps: MetalSubstrateDeps): OnDemandRuntimeS
     async powerOff(ref, signal) {
       const located = await locate(ref, signal);
       return located.ok && (await located.client.stop(located.vmId, signal)).state === 'stopped';
+    },
+
+    async isSuspended(ref, signal) {
+      const located = await locate(ref, signal);
+      return located.ok && (located.state === 'suspended' || located.state === 'stopped');
     },
 
     async stop(ref, signal): Promise<StopRuntimeResult> {
