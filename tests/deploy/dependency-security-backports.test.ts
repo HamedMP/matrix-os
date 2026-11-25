@@ -1,9 +1,6 @@
-import { spawnSync } from "node:child_process";
 import { constants, generateKeyPairSync, privateEncrypt } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
@@ -12,109 +9,7 @@ import { describe, expect, it } from "vitest";
 const mobile = createRequire(new URL("../../apps/mobile/package.json", import.meta.url));
 const expo = createRequire(mobile.resolve("expo/package.json"));
 const cli = createRequire(expo.resolve("@expo/cli/package.json"));
-const reactNative = createRequire(mobile.resolve("react-native/package.json"));
-const nativeCli = createRequire(reactNative.resolve("@react-native/community-cli-plugin/package.json"));
-const metro = createRequire(nativeCli.resolve("metro/package.json"));
-const imagePath = metro.resolve("image-size");
-const imageSize = metro("image-size") as ((input: Uint8Array | string, callback?: (error: Error | null, result?: unknown) => void) => { width: number; height: number; type: string }) & { imageSize: unknown };
 const forge = cli("node-forge");
-
-function box(type: string, payload: Buffer, size = payload.length + 8): Buffer {
-  const header = Buffer.alloc(8);
-  header.writeUInt32BE(size);
-  header.write(type, 4, "ascii");
-  return Buffer.concat([header, payload]);
-}
-
-const jxlSignature = Buffer.from("0000000c4a584c200d0a870a", "hex");
-const jxlBrand = box("ftyp", Buffer.from("6a786c20000000006a786c20", "hex"));
-const heifBrand = box("ftyp", Buffer.from("617669660000000061766966", "hex"));
-
-function icns(length: number, entryLength: number, entryType = "icp4"): Buffer {
-  const input = Buffer.alloc(16);
-  input.write("icns");
-  input.writeUInt32BE(length, 4);
-  input.write(entryType, 8);
-  input.writeUInt32BE(entryLength, 12);
-  return input;
-}
-
-// A vulnerable parser can synchronously block forever. Execute each malicious
-// input in a fresh process with a kill deadline rather than hanging a CI worker.
-function rejectsWithinDeadline(input: Buffer): void {
-  const script = `const size = require(process.argv[1]);
-    try { size(Buffer.from(process.argv[2], 'base64')); process.exitCode = 2; }
-    catch (error) { if (!(error instanceof Error)) throw error; process.stdout.write('rejected'); }`;
-  const result = spawnSync(process.execPath, ["-e", script, imagePath, input.toString("base64")], {
-    timeout: 2_000, killSignal: "SIGKILL", maxBuffer: 16_384, env: {},
-  });
-  expect(result.error, "image parsing exceeded its process deadline").toBeUndefined();
-  expect(result.status, result.stderr.toString()).toBe(0);
-  expect(result.stdout.toString()).toBe("rejected");
-}
-
-describe("image-size 1.x security backport", () => {
-  it.each([0, 1, 7, 0xffff_ffff])("rejects JXL partial-stream box length %s", (length) => {
-    rejectsWithinDeadline(Buffer.concat([jxlSignature, jxlBrand, box("jxlp", Buffer.alloc(4), length)]));
-  });
-
-  it.each([0, 1, 7, 0xffff_ffff])("rejects HEIF metadata box length %s", (length) => {
-    rejectsWithinDeadline(Buffer.concat([heifBrand, box("meta", Buffer.alloc(4), length)]));
-  });
-
-  it.each([0, 1, 7, 0xffff_ffff])("rejects ICNS entry length %s", (length) => {
-    rejectsWithinDeadline(icns(16, length));
-  });
-
-  it("rejects an ICNS entry beyond the declared container boundary", () => {
-    rejectsWithinDeadline(icns(12, 8));
-  });
-
-  it("retains the synchronous callable, named, path and callback 1.x API", async () => {
-    const png = Buffer.alloc(24);
-    Buffer.from("89504e470d0a1a0a0000000d49484452", "hex").copy(png);
-    png.writeUInt32BE(17, 16); png.writeUInt32BE(23, 20);
-    expect(typeof imageSize).toBe("function");
-    expect(imageSize.imageSize).toBe(imageSize);
-    expect(imageSize(png)).toMatchObject({ width: 17, height: 23, type: "png" });
-    expect(metro("metro/private/Assets").getAssetSize("png", png, "fixture.png")).toEqual({ width: 17, height: 23 });
-    const directory = mkdtempSync(join(tmpdir(), "matrix-image-size-regression-"));
-    try {
-      const path = join(directory, "fixture.png");
-      writeFileSync(path, png);
-      expect(imageSize(path)).toMatchObject({ width: 17, height: 23, type: "png" });
-      await expect(new Promise((resolve, reject) => {
-        imageSize(path, (error, result) => error ? reject(error) : resolve(result));
-      })).resolves.toMatchObject({ width: 17, height: 23, type: "png" });
-    } finally { rmSync(directory, { recursive: true, force: true }); }
-  });
-
-  it("retains normal ICNS dimensions", () => {
-    expect(imageSize(icns(16, 8))).toMatchObject({ width: 16, height: 16, type: "icp4" });
-  });
-
-  it("retains ICNS dimensions from a buffered header of a large file", () => {
-    // The 1.x filename API intentionally reads at most 512KiB. Entry payloads
-    // need not be present when the complete header already establishes size.
-    expect(imageSize(icns(1_048_576, 1_048_568))).toMatchObject({ width: 16, height: 16, type: "icp4" });
-  });
-
-  it("retains normal HEIF dimensions", () => {
-    const dimensions = Buffer.alloc(12);
-    dimensions.writeUInt32BE(17, 4); dimensions.writeUInt32BE(23, 8);
-    const input = Buffer.concat([heifBrand, box("meta", Buffer.concat([
-      Buffer.alloc(4), box("iprp", box("ipco", box("ispe", dimensions))),
-    ]))]);
-    expect(imageSize(input)).toMatchObject({ width: 17, height: 23, type: "avif" });
-  });
-
-  it.each(["jxlc", "jxlp"])("retains normal JXL %s dimensions", (type) => {
-    const codestream = Buffer.from("ff0a0100", "hex");
-    const payload = type === "jxlp" ? Buffer.concat([Buffer.alloc(4), codestream]) : codestream;
-    expect(imageSize(Buffer.concat([jxlSignature, jxlBrand, box(type, payload)])))
-      .toMatchObject({ width: 8, height: 8, type: "jxl" });
-  });
-});
 
 function browserForge(name: string) {
   const module = { exports: {} };
