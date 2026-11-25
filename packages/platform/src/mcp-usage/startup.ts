@@ -8,8 +8,15 @@ import { bootstrapMcpUsageDatabase, createMcpUsageRepository, type McpUsageDatab
 import { createMcpUsageWriter, startMcpUsageMaintenance } from "./writer.js";
 
 export interface GatewayCoreToolsModule {
-  CoreToolService: new (options: { broker: unknown; approvals?: unknown; usage?: { record(row: McpUsageEventRow): void }; orgPolicy?: unknown }) => unknown;
+  CoreToolService: new (options: { broker: unknown; approvals?: unknown; usage?: { record(row: McpUsageEventRow): void }; orgPolicy?: unknown; apps?: unknown }) => unknown;
 }
+
+/** The gateway Connect Apps adapter (spec 2691); Pipedream stays platform-owned and is passed in. */
+export interface GatewayCoreConnectedAppsModule {
+  createCoreConnectedApps(options: { db: unknown; pipedream: unknown }): unknown;
+}
+
+interface CoreServiceSlugs { serviceSlugs(userId: string): Promise<Map<string, string>> }
 
 export async function createPlatformCoreMcp(options: {
   db: Kysely<McpUsageDatabase>;
@@ -20,17 +27,22 @@ export async function createPlatformCoreMcp(options: {
   orgPolicy?: unknown;
   /** Rollup/retention run on one worker class only; every instance writes rows. */
   maintenance: boolean;
-}): Promise<{ core: unknown; shutdown(): Promise<void> }> {
+  /** Settings -> Connect Apps in Core; absent when the platform has no Pipedream configuration. */
+  connectedApps?: { module: GatewayCoreConnectedAppsModule; db: unknown; pipedream: unknown };
+}): Promise<{ core: unknown; serviceSlugs(userId: string): Promise<Map<string, string>>; shutdown(): Promise<void> }> {
   await bootstrapMcpUsageDatabase(options.db);
   const repository = createMcpUsageRepository(options.db);
   const writer = createMcpUsageWriter({ insert: rows => repository.insertEvents(rows) });
   writer.start();
   const maintenance = options.maintenance ? startMcpUsageMaintenance({ repository }) : undefined;
+  const apps = options.connectedApps?.module.createCoreConnectedApps({
+    db: options.connectedApps.db, pipedream: options.connectedApps.pipedream });
   const core = new options.coreModule.CoreToolService({ broker: options.broker, approvals: options.approvals, usage: writer,
-    ...(options.orgPolicy ? { orgPolicy: options.orgPolicy } : {}) });
+    ...(options.orgPolicy ? { orgPolicy: options.orgPolicy } : {}), ...(apps ? { apps } : {}) });
   let closing: Promise<void> | undefined;
   return {
     core,
+    serviceSlugs: userId => (core as CoreServiceSlugs).serviceSlugs(userId),
     shutdown: () => closing ??= (async () => {
       await maintenance?.stop();
       await writer.drain();

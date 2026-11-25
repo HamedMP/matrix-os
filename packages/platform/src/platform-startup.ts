@@ -63,7 +63,7 @@ import { createPreviewDriveIntegration } from './preview-drive-integration.js';
 import { createPreviewDriveStore } from './preview-drive-store.js';
 import type { PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createCustomMcpProjection } from './custom-mcp-projection.js';
-import { createPlatformCoreMcp, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
+import { createPlatformCoreMcp, type GatewayCoreConnectedAppsModule, type GatewayCoreToolsModule } from './mcp-usage/startup.js';
 import type { ExternalCoreMcp } from './mcp-core-tools.js';
 import { createPlatformOrgMcp } from './org-mcp/startup.js';
 import { createOrgMcpPresetGate } from './org-mcp/preset-gate.js';
@@ -578,6 +578,8 @@ async function startPlatformServerWithCleanup(
   let internalCustomMcpRoutes: Hono | undefined;
   let internalCustomMcpApprovalRoutes: Hono | undefined;
   let externalCoreMcp: ExternalCoreMcp | undefined;
+  // Spec 2691: Connect Apps reach Matrix Core through the same platform-owned Pipedream client.
+  let coreConnectedAppDeps: { db: unknown; pipedream: unknown } | undefined;
   let customMcpSweepInterval: NodeJS.Timeout | undefined;
   let customMcpShutdown: (() => Promise<void>) | undefined;
   let managedMcpPresetBroker: ManagedMcpPresetBroker | undefined;
@@ -620,6 +622,7 @@ async function startPlatformServerWithCleanup(
       environment: integrationConfig.pipedreamEnvironment,
     });
     deletionPipedream = pipedream;
+    coreConnectedAppDeps = { db: trustedPlatformDb, pipedream };
     const verifiedConnectedWebhook=process.env.ACCOUNT_DELETION_SECRET===undefined?undefined:
       createAccountDeletionIntegrationWebhookAdmission({db,pipedream,env:process.env});
     const webhookSecret = integrationConfig.pipedreamWebhookSecret;
@@ -716,6 +719,9 @@ async function startPlatformServerWithCleanup(
       importRuntimeModule<GatewayCustomMcpModules['catalogPresets']>('../../gateway/dist/integrations/custom-mcp/catalog-presets.js'),
       importRuntimeModule<GatewayCustomMcpModules['coreTools']>('../../gateway/dist/integrations/custom-mcp/core-tools.js'),
     ]);
+    const connectedAppsModule = coreConnectedAppDeps
+      ? await importRuntimeModule<GatewayCoreConnectedAppsModule>('../../gateway/dist/integrations/custom-mcp/core-connected-apps.js')
+      : undefined;
     const encryptionKey = cryptoModule.parseCustomMcpEncryptionKey(encryptionKeyRaw);
     // Spec 2691: Matrix-owned vendor apps are parsed once; a missing pair hides that preset.
     const registeredMcpOAuthClients = catalogPresetsModule.RegisteredMcpOAuthClients.fromEnv(process.env);
@@ -767,7 +773,8 @@ async function startPlatformServerWithCleanup(
     });
     // Matrix Core MCP (spec 2691): one tool service over this broker; usage rows go to platform Postgres.
     const coreMcp = await createPlatformCoreMcp({ db: db.kysely as never, coreModule: coreToolsModule, broker,
-      approvals: customDb, maintenance: backgroundWorkersEnabled, orgPolicy: orgMcp.policy });
+      approvals: customDb, maintenance: backgroundWorkersEnabled, orgPolicy: orgMcp.policy,
+      ...(connectedAppsModule && coreConnectedAppDeps ? { connectedApps: { module: connectedAppsModule, ...coreConnectedAppDeps } } : {}) });
     let customMcpClosed = false;
     customMcpShutdown = async () => {
       if (customMcpClosed) return;
@@ -800,6 +807,7 @@ async function startPlatformServerWithCleanup(
       catalog: registeredMcpOAuthClients,
       // Spec 2691: owner-session decisions for external `/mcp` writes (never on the internal router).
       ownerApprovals: customDb,
+      coreServiceSlugs: coreMcp.serviceSlugs,
       ...createOwnerCustomMcpRouteOptions(db, customDb),
     });
     customMcpRoutes=new Hono();
