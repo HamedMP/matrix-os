@@ -16,6 +16,8 @@ export interface PushTokenStore {
   register(input: { token: string; platform: string; ownerId: string; seenAt: Date; maxPerOwner: number }): Promise<void>;
   /** Removes the token only if it belongs to `ownerId`. */
   remove(input: { token: string; ownerId: string }): Promise<void>;
+  /** Exact owner/token lookup; expired registrations are no longer enabled. */
+  hasRecent(input: { token: string; ownerId: string; seenSince: Date }): Promise<boolean>;
   /** Removes tokens Expo reported as no longer registered, whoever owns them. */
   removeDeviceTokens(tokens: readonly string[]): Promise<void>;
   /** The owner's newest tokens seen since `seenSince`. There is no query across owners. */
@@ -47,6 +49,13 @@ export function createPushTokenStore(db: Kysely<NotificationDatabase>): PushToke
     async remove({ token, ownerId }) {
       await db.deleteFrom("notification_push_tokens")
         .where("token", "=", token).where("owner_id", "=", ownerId).execute();
+    },
+
+    async hasRecent({ token, ownerId, seenSince }) {
+      const row = await db.selectFrom("notification_push_tokens").select("token")
+        .where("token", "=", token).where("owner_id", "=", ownerId)
+        .where("last_seen_at", ">=", seenSince).executeTakeFirst();
+      return row !== undefined;
     },
 
     async removeDeviceTokens(tokens) {

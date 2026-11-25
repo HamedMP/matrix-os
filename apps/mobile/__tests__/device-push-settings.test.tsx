@@ -4,20 +4,27 @@ import * as Haptics from "expo-haptics";
 import * as Notifications from "expo-notifications";
 
 import { DevicePushSettings } from "../components/settings/DevicePushSettings";
-import { disablePushNotifications, isPushNotificationsEnabled } from "@/lib/push";
+import { useNotificationComputer } from "../lib/use-notification-computer";
+import { GatewayClient } from "../lib/gateway-client";
+import { disablePushNotifications, isPushNotificationsEnabled, PushIdentityUnavailableError } from "@/lib/push";
 import { queuePushChange, syncPushRegistration } from "@/lib/push-registration-sync";
 import { fetchActiveComputer } from "@/lib/requests";
 
 import { disposeTestQueryClient } from "./query-test-cleanup";
 
 let mockUserId = "user_1";
+let mockClient: GatewayClient;
 const mockEnablePush = jest.fn(() => Promise.resolve(true));
 
 jest.mock("@clerk/clerk-expo", () => ({
   useAuth: () => ({ getToken: async () => "clerk-token", isLoaded: true, isSignedIn: true, userId: mockUserId }),
 }));
+jest.mock("@/app/_layout", () => ({
+  useGateway: () => ({ client: mockClient, gateway: { id: "cloud", url: "https://app.example.test", name: "Cloud" } }),
+}));
 
 jest.mock("@/lib/push", () => ({
+  ...jest.requireActual("@/lib/push"),
   disablePushNotifications: jest.fn(() => Promise.resolve()),
   enablePushNotifications: () => mockEnablePush(),
   isPushNotificationsEnabled: jest.fn(() => Promise.resolve(false)),
@@ -37,6 +44,7 @@ describe("Device push settings", () => {
 
   beforeEach(() => {
     mockUserId = "user_1";
+    mockClient = new GatewayClient("https://app.example.test", "clerk-token");
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     jest.mocked(Haptics.selectionAsync).mockClear();
     mockEnablePush.mockClear();
@@ -53,9 +61,13 @@ describe("Device push settings", () => {
   function renderScreen() {
     return render(
       <QueryClientProvider client={queryClient}>
-        <DevicePushSettings />
+        <SelectedDevicePushSettings />
       </QueryClientProvider>,
     );
+  }
+
+  function SelectedDevicePushSettings() {
+    return <DevicePushSettings computer={useNotificationComputer()} />;
   }
 
   async function findEnabledSwitch(name: string) {
@@ -95,9 +107,9 @@ describe("Device push settings", () => {
 
   it("waits for a push registration already under way before changing push", async () => {
     let finishRegistering: () => void = () => {};
-    const registering = queuePushChange(() => new Promise<void>((resolve) => { finishRegistering = resolve; }));
     renderScreen();
     const push = await findEnabledSwitch("Push notifications");
+    const registering = queuePushChange(() => new Promise<void>((resolve) => { finishRegistering = resolve; }));
 
     fireEvent.press(push);
     await act(async () => {});
@@ -120,7 +132,7 @@ describe("Device push settings", () => {
       expect(push.props.accessibilityState).toMatchObject({ checked: true });
 
       await act(async () => {
-        await expect(syncPushRegistration({ clerkToken: "clerk-token", gatewayUrl: "https://app.example.test/vm/amin" }))
+        await expect(syncPushRegistration({ clerkToken: "clerk-token", gatewayUrl: "https://app.example.test/vm/amin", scopeKey: "user_1:https://app.example.test/vm/amin" }))
           .resolves.toBe("denied");
       });
 
@@ -175,9 +187,10 @@ describe("Device push settings", () => {
     jest.mocked(disablePushNotifications).mockRejectedValueOnce(new Error("unavailable"));
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
     let release!: () => void;
-    const queued = queuePushChange(() => new Promise<void>((done) => { release = done; }));
     renderScreen();
-    fireEvent.press(await findEnabledSwitch("Push notifications"));
+    const push = await findEnabledSwitch("Push notifications");
+    const queued = queuePushChange(() => new Promise<void>((done) => { release = done; }));
+    fireEvent.press(push);
     await act(async () => {});
     expect(disablePushNotifications).not.toHaveBeenCalled();
     await act(async () => { release(); await queued; });
@@ -198,9 +211,34 @@ describe("Device push settings", () => {
     await act(async () => {
       queryClient.setQueryData(["active-computer", "user_1"], { handle: "other", runtimeSlot: "primary", gatewayPath: "/vm/other" });
     });
-    await findEnabledSwitch("Push notifications");
     await act(async () => finish());
+    await findEnabledSwitch("Push notifications");
     expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState).toMatchObject({ checked: false });
+  });
+
+  it("reconciles an ambiguous disable failure with the computer's actual registration", async () => {
+    jest.mocked(isPushNotificationsEnabled).mockResolvedValueOnce(true).mockResolvedValue(false);
+    jest.mocked(disablePushNotifications).mockRejectedValueOnce(new Error("response lost"));
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    renderScreen();
+    fireEvent.press(await findEnabledSwitch("Push notifications"));
+    await screen.findByText(/Couldn’t update push notifications/);
+    expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState).toMatchObject({ checked: false });
+    warn.mockRestore();
+  });
+
+  it("keeps an unavailable identity unknown until the owner explicitly enables this computer", async () => {
+    jest.mocked(isPushNotificationsEnabled).mockRejectedValueOnce(new PushIdentityUnavailableError());
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    renderScreen();
+    await screen.findByText(/This phone’s push registration is unknown/);
+    expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState.disabled).toBe(true);
+    expect(mockEnablePush).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole("button", { name: "Enable for this computer" }));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState)
+      .toMatchObject({ checked: true, disabled: false }));
+    expect(mockEnablePush).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
   it("ignores a completed enable after changing signed-in accounts", async () => {
     let finish!: () => void;
@@ -209,9 +247,9 @@ describe("Device push settings", () => {
     fireEvent.press(await findEnabledSwitch("Push notifications"));
     await waitFor(() => expect(mockEnablePush).toHaveBeenCalledTimes(1));
     mockUserId = "user_2";
-    view.rerender(<QueryClientProvider client={queryClient}><DevicePushSettings /></QueryClientProvider>);
-    await findEnabledSwitch("Push notifications");
+    view.rerender(<QueryClientProvider client={queryClient}><SelectedDevicePushSettings /></QueryClientProvider>);
     await act(async () => finish());
+    await findEnabledSwitch("Push notifications");
     expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState).toMatchObject({ checked: false });
   });
 });

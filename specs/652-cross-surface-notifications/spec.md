@@ -32,7 +32,7 @@ This spec replaces all of that with one gateway-owned router. It is delivered as
 | A2 | Push tokens survive restarts | gateway | host bundle | none | Pushes keep working after gateway updates and restarts, and name the computer they came from |
 | A3 | One native build | `apps/mobile` | TestFlight, Play | none | Android receives pushes. Channels, background push and the Time Sensitive capability are in place for later releases. |
 | A4 | Notification preferences API | gateway, `packages/contracts` | host bundle | none | none on its own |
-| A5 | Notifications screen | `apps/mobile` | EAS Update | A4 | The owner controls kinds, phone timing, previews and Time Sensitive delivery before any new kind of push arrives |
+| A5 | Notifications screen | `apps/mobile` + gateway registration status | Host bundle (status API), then EAS Update | A4 | The owner controls kinds, phone timing, previews and Time Sensitive delivery before any new kind of push arrives |
 | A6 | Approvals and questions from every chat | gateway | host bundle | A2, A5 | Every canonical chat notifies when it needs the owner, not only Codex, Pi and OpenCode threads, and a gateway crash cannot lose the alert |
 | A7 | Reading on the phone counts as read | `apps/mobile` | EAS Update | none | Reading a chat on the phone advances the same read cursor as the computers |
 | A8 | Replies and failures, only if still unread | gateway | host bundle | A6, A7 | A push when a reply finishes, unless the owner already read it anywhere |
@@ -103,6 +103,32 @@ A4 implementation notes (ENG-453, 2026-11-20):
 
 #### A5 implementation notes (ENG-453)
 
+- Teammate P1 follow-up (2026-11-25): the phone push switch is explicitly **per
+  computer**. Show its name and use one resolved target for preferences, device
+  registration and foreground refresh. An explicit saved preview/runtime wins
+  over the platform active selection; a bare cloud URL resolves the active
+  computer once and pins its gateway path. Late account/computer responses stay
+  scoped to their original target. Other computers may continue sending.
+- Push enabled state comes from the selected computer's owner Postgres row via
+  `POST /api/push/status`, not the existence of a cached Expo token. This read-only
+  endpoint requires the verified request principal, a strict bounded token body,
+  `bodyLimit` 4 KiB and generic errors; it returns only `registered: boolean`.
+  Tokens are never placed in URLs. Missing server support/storage is unavailable,
+  not assumed off. Disable removes only that computer's row and retains the
+  phone's token identity for other computers. Foreground refresh never enrolls
+  a computer whose registration is absent/expired; enable is explicit again.
+- Migration: a missing cached Expo identity is not an opt-out. With existing OS
+  permission, recover the identity and query registration without requesting
+  permission or enrolling any computer. When recovery is unavailable, show
+  unknown with retry/permissions and an explicit enable action, never a
+  confirmed off state. Cache identity before registration writes so a failed
+  cache write cannot strand a newly registered phone.
+- Regression checks exercise disagreeing selectors, two-computer opt-out plus
+  foreground refresh, actual owner isolation and expiry in gateway/Postgres,
+  request failures and stale scopes. New native iOS captures must qualify the
+  changed binding/copy/opt-out scenarios; prior `9c9ed155` captures establish
+  unchanged preference-save/conflict behavior only. Android remains paused.
+
 - App settings → Push notifications opens Notifications. The explicit device
   switch uses the existing serialized push registration helpers and revocation
   subscription; owner preference changes never opt a phone into push.
@@ -114,26 +140,28 @@ A4 implementation notes (ENG-453, 2026-11-20):
   draft. Android omits Time Sensitive while preserving its saved value; away-after
   and device management remain deferred to B2 and B4.
 - Product copy distinguishes today's four coding-agent kind switches from timing
-  and content choices saved for later delivery updates. A1 routing, A3 sync, and
-  the legacy completion dedupe are unchanged.
+  and content choices saved for later delivery updates. A1 routing and the
+  legacy completion dedupe are unchanged; A3 foreground refresh now respects
+  the selected computer's actual registration.
 - API parsing and draft logic live in focused helpers. The large GatewayClient
   adds thin delegates only; no new native dependency or persistent phone store.
-- Validation: 11 focused mobile suites / 153 tests pass, including retained A1/A3
-  coverage. On 2026-11-25 all 300 mobile suites / 3,788 tests pass in-band with
-  normal exit and no forced teardown. Mobile typecheck passes after adding the
-  missing image-prop types to two existing test helpers. Root/shell typechecks
-  pass. Canonical mobile lint retains five errors in four files byte-identical
-  to A4; broader root baseline failures remain documented on [PR #3520](https://github.com/HamedMP/matrix-os/pull/3520).
-- Native iOS screenshots and recordings of the reviewed `bceeb41d0f` runtime are
-  attached to PR #3520: navigation, load/edit/save/reopen, failed-save retention
+- Validation after the P1 corrections: all 301 mobile suites / 3,798 tests pass
+  in-band with normal exit; five focused mobile suites / 51 tests and four
+  gateway/auth suites / 49 tests pass. Mobile and all nine root typecheck
+  projects pass. Changed-file lint has no errors; React Doctor reports no
+  issues. Canonical mobile lint retains five baseline errors in four unchanged
+  files; broader root limitations are recorded on [PR #3520](https://github.com/HamedMP/matrix-os/pull/3520).
+- Historical native iOS screenshots and recordings of the `9c9ed155` runtime
+  are attached to PR #3520: navigation, load/edit/save/reopen, failed-save retention
   and retry, and real 409 recovery using the production A4 owner-file API in a
   disposable self-hosted fixture. Cloud push registration/delivery is not claimed.
   Amin explicitly waived Android evidence for this PR on 2026-11-25: "skip android.
   ios is enough". Do not build/test/capture Android or run both native platforms
   concurrently; the original logged-in Android app/data remain untouched.
 - Design/product review of settings copy and native parity is recommended.
-  Other OS views are not touched by this Native Mobile release; reviewer approval
-  of that release-specific N/A rationale remains required.
+  Other OS views receive no UI changes: the new gateway status API serves Native
+  Mobile registration checks only. Reviewer approval of this release-specific
+  N/A rationale remains required.
 - Public documentation remains a separate deliverable in `FinnaAI/matrix-os-site`,
   tracked by ENG-453. Repository access remains unavailable on 2026-11-25; access
   has been requested and paste-ready text is in the A5 handoff. That deliverable
@@ -143,7 +171,7 @@ A4 implementation notes (ENG-453, 2026-11-20):
 | --- | --- | --- | --- | --- |
 | Owner on a connected computer | Edit kinds, durations, phone mode and content; Save; reopen | Confirmed values reload; Android retains hidden Time Sensitive | A4 owner API; full revisioned document | Native Mobile iOS/Android; real screen/controller/client with mocked HTTP and native sheet host |
 | Owner has unsaved edits | Save fails or another surface wins | Draft stays visible; 409 requires explicit recovery, preserving unrelated remote edits | Server revision remains authoritative | Native Mobile; settings-screen integration |
-| Device push off or OS permission revoked | Explicitly enable/disable, or foreground sync | Serialized registration; failure preserves confirmed state; stale computer result ignored | Existing per-device SecureStore token and OS permission | Native Mobile; DevicePushSettings component plus retained A3 sync suites |
+| Selected computer registered or registration unknown | Explicitly enable/disable, retry status, or foreground sync | Same named target as preferences; revoke only its registration; ambiguous failure reconciles actual state; stale scope ignored | Owner Postgres registration plus OS permission; cached Expo token is identity only | Native Mobile; production screen, sync and two-computer registration regressions |
 
 **A6 · Approvals and questions from every chat** (new `packages/gateway/src/notifications/`)
 - Router core: the `notification_events` and `notification_attempts` tables, the bounded queue, dedupe, and the transport interface. The first transport is `expo-direct`, which wraps today's push channel.
@@ -518,6 +546,7 @@ There are no inbound webhooks. Expo receipts are polled.
 | Endpoint | Release | Caller | Auth | Validation and limits |
 | --- | --- | --- | --- | --- |
 | `POST/DELETE /api/push/register` | existing; persisted in A2; removed in C5 | Native Mobile | Owner principal | Existing Zod schema; `bodyLimit` 4 KiB (add it to DELETE if missing) |
+| `POST /api/push/status` | A5 review correction | Native Mobile settings/foreground | Verified owner principal | Read-only POST; strict token body (1–512 chars), 4 KiB body limit; coarse registration boolean, generic errors |
 | `PATCH /api/chats/:chatId/read-state` | existing; used by mobile from A7 | Native Mobile | Owner principal | Existing |
 | `GET /api/notifications` | A10 | Owner clients | Owner principal | Zod query: `state` ∈ {open}, `limit` 1–100, opaque cursor ≤ 200 chars |
 | `POST /api/notifications/:id/opened` | A10 | Native Mobile cold start | Owner principal | `bodyLimit` 1 KiB, uuid param, owner-scoped update |

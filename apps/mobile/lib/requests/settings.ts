@@ -17,6 +17,7 @@ export const MobileSystemInfoSchema = z.looseObject({
 });
 
 const OkResponseSchema = z.looseObject({ ok: z.literal(true) });
+const PushRegistrationStatusSchema = z.strictObject({ registered: z.boolean() });
 const BillingPortalSchema = z.object({ url: z.url() }).strict();
 
 export type MobileSystemInfo = z.infer<typeof MobileSystemInfoSchema>;
@@ -80,4 +81,21 @@ export async function updatePushRegistration(input: {
       ? { token: input.expoPushToken, platform: input.platform }
       : { token: input.expoPushToken }),
   });
+}
+
+export async function fetchPushRegistrationStatus(input: {
+  clerkToken: string;
+  gatewayUrl: string;
+  expoPushToken: string;
+}): Promise<boolean> {
+  const response = await fetchAuthenticatedJson({
+    url: buildGatewayRequestUrl(input.gatewayUrl, "/api/push/status"),
+    token: input.clerkToken,
+    schema: PushRegistrationStatusSchema,
+    errorMessage: "Push notification settings unavailable. Try again.",
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: input.expoPushToken }),
+  });
+  return response.registered;
 }

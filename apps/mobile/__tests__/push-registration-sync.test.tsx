@@ -17,13 +17,13 @@ jest.mock("@/lib/push", () => ({
 
 const mockGateway = {
   gatewayUrl: null as string | null,
-  session: jest.fn(async (): Promise<{ token: string; gatewayUrl: string } | null> => (
-    mockGateway.gatewayUrl ? { token: "clerk-token", gatewayUrl: mockGateway.gatewayUrl } : null
+  session: jest.fn(async (): Promise<{ clerkToken: string; gatewayUrl: string } | null> => (
+    mockGateway.gatewayUrl ? { clerkToken: "clerk-token", gatewayUrl: mockGateway.gatewayUrl } : null
   )),
 };
 
-jest.mock("@/lib/queries/use-active-gateway", () => ({
-  useActiveGateway: () => ({ gatewayUrl: mockGateway.gatewayUrl, session: mockGateway.session }),
+jest.mock("@/lib/use-notification-computer", () => ({
+  useNotificationComputer: () => ({ client: mockGateway.gatewayUrl ? {} : null, session: mockGateway.session }),
 }));
 
 const SESSION = { clerkToken: "clerk-token", gatewayUrl: "https://app.example.test/vm/amin" };
@@ -202,5 +202,22 @@ describe("PushRegistrationSync", () => {
     view.unmount();
     expect(removeAppStateListener).toHaveBeenCalledTimes(1);
     warn.mockRestore();
+  });
+
+  it("refreshes the new computer when an old computer's session resolves late", async () => {
+    let finish!: (value: typeof SESSION) => void;
+    const old = new Promise<typeof SESSION>((resolve) => { finish = resolve; });
+    mockGateway.session.mockReturnValueOnce(old);
+    const view = render(<PushRegistrationSync />);
+    await act(async () => {});
+    mockGateway.gatewayUrl = "https://app.example.test/vm/other";
+    view.rerender(<PushRegistrationSync />);
+    try {
+      await act(async () => {});
+      expect(mockEnablePush).toHaveBeenCalledWith({ ...SESSION, gatewayUrl: mockGateway.gatewayUrl });
+    } finally {
+      await act(async () => finish(SESSION));
+    }
+    expect(mockEnablePush).toHaveBeenCalledTimes(1);
   });
 });

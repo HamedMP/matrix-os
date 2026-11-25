@@ -5,6 +5,7 @@ import { Button, SectionLabel, Spacer, Text } from "@/components/ui";
 import { DevicePushSettings } from "./DevicePushSettings";
 import { NotificationChoiceSheet, type NotificationChoice } from "./NotificationChoiceSheet";
 import type { useNotificationPreferences } from "@/lib/use-notification-preferences";
+import type { NotificationComputer } from "@/lib/use-notification-computer";
 
 const durations = [
   { value: 0, label: "Any length" }, { value: 10, label: "10 seconds" },
@@ -19,12 +20,16 @@ const modes = [
 ] as const;
 type Controller = ReturnType<typeof useNotificationPreferences>;
 
-export function NotificationsSettingsView({ settings, connected }: { settings: Controller; connected: boolean }) {
+export function NotificationsSettingsView({ settings, computer }: { settings: Controller; computer: NotificationComputer }) {
   const [choice, setChoice] = useState<{ scope: Controller["scope"]; choice: NotificationChoice } | null>(null);
   const { draft, pending, conflict } = settings;
+  const connected = computer.client !== null;
   return <SettingsPage>
-    <SectionLabel>THIS DEVICE</SectionLabel><Spacer size="md" />
-    <DevicePushSettings />
+    <Text>{computer.name ? `Notifications for ${computer.name}` : "No computer selected"}</Text>
+    {computer.address ? <Text tone="subtle">{computer.address}</Text> : null}
+    <Spacer size="md" /><SectionLabel>THIS COMPUTER</SectionLabel><Spacer size="md" />
+    <DevicePushSettings computer={computer} />
+    <Spacer size="md" /><Text tone="subtle">Other computers can still send notifications to this phone.</Text>
     <Spacer size="xl" />
     <Text tone="subtle">Preferences below apply to the selected Matrix computer.</Text>
     <Spacer size="md" />
@@ -55,7 +60,7 @@ function NotificationControls({ settings, choose }: { settings: Controller; choo
   return <>
       <Text size="muted" tone="subtle">
         Notification kinds apply to current coding-agent alerts. Timing and content choices are saved for upcoming notification updates.
-        To stop pushes to this phone now, turn off Push notifications above.
+        To stop this computer’s pushes to this phone, turn off Push notifications above.
       </Text>
       <Spacer size="xl" /><SectionLabel>NOTIFY ME WHEN</SectionLabel><Spacer size="md" />
       <SettingsGroup>

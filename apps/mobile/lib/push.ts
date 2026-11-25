@@ -5,7 +5,7 @@ import { Platform } from "react-native";
 import { z } from "zod/v4";
 import { CanonicalChatIdSchema, MatrixComputerHandleSchema, ThreadIdSchema } from "@matrix-os/contracts";
 
-import { updatePushRegistration } from "@/lib/requests/settings";
+import { fetchPushRegistrationStatus, updatePushRegistration } from "@/lib/requests/settings";
 import { ensureNotificationChannels } from "@/lib/notification-channels";
 
 const PUSH_TOKEN_KEY = "matrix_os_expo_push_token";
@@ -164,25 +164,55 @@ export function addNotificationResponseListener(
   return Notifications.addNotificationResponseReceivedListener(handler);
 }
 
-export async function isPushNotificationsEnabled(): Promise<boolean> {
-  return Boolean(await SecureStore.getItemAsync(PUSH_TOKEN_KEY));
-}
-
-export async function enablePushNotifications(input: {
+export interface PushRegistrationSession {
   clerkToken: string;
   gatewayUrl: string;
-}): Promise<void> {
+  /** Client-only account/computer identity for stale-response and event guards. */
+  scopeKey?: string;
+}
+
+export class PushIdentityUnavailableError extends Error {
+  constructor() {
+    super("Push registration identity unavailable.");
+    this.name = "PushIdentityUnavailableError";
+  }
+}
+
+async function readExpoPushIdentity(): Promise<string> {
+  const projectId = Constants.easConfig?.projectId
+    ?? (Constants.expoConfig?.extra?.eas as { projectId?: string } | undefined)?.projectId;
+  return (await expoPushToken(projectId ? { projectId } : undefined)).data;
+}
+
+async function pushIdentity(): Promise<string> {
+  const cached = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
+  if (cached) return cached;
+  // Older opt-out deleted the shared cache while other computers could still
+  // have this phone registered. A cache miss is not proof of revocation.
+  const permission = await Notifications.getPermissionsAsync();
+  if (!permission.granted) throw new PushIdentityUnavailableError();
+  await ensureNotificationChannels();
+  const token = await readExpoPushIdentity();
+  await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
+  return token;
+}
+
+export async function isPushNotificationsEnabled(input: PushRegistrationSession): Promise<boolean> {
+  const token = await pushIdentity();
+  return fetchPushRegistrationStatus({ ...input, expoPushToken: token });
+}
+
+export async function enablePushNotifications(input: PushRegistrationSession): Promise<void> {
   await ensureNotificationChannels();
   const existing = await Notifications.getPermissionsAsync();
   const permission = existing.granted ? existing : await Notifications.requestPermissionsAsync();
   if (!permission.granted) throw new Error("Push notification permission was not granted.");
 
-  const projectId = Constants.easConfig?.projectId
-    ?? (Constants.expoConfig?.extra?.eas as { projectId?: string } | undefined)?.projectId;
-  const token = (await expoPushToken(
-    projectId ? { projectId } : undefined,
-  )).data;
+  const token = await readExpoPushIdentity();
 
+  // A saved identity is not opt-in. Persist it before the remote write so a
+  // lost response or storage failure cannot leave an unidentifiable device row.
+  await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
   await updatePushRegistration({
     clerkToken: input.clerkToken,
     gatewayUrl: input.gatewayUrl,
@@ -190,15 +220,10 @@ export async function enablePushNotifications(input: {
     platform: Platform.OS,
     enabled: true,
   });
-  await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
 }
 
-export async function disablePushNotifications(input: {
-  clerkToken: string;
-  gatewayUrl: string;
-}): Promise<void> {
-  const token = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
-  if (!token) return;
+export async function disablePushNotifications(input: PushRegistrationSession): Promise<void> {
+  const token = await pushIdentity();
   await updatePushRegistration({
     clerkToken: input.clerkToken,
     gatewayUrl: input.gatewayUrl,
@@ -206,5 +231,6 @@ export async function disablePushNotifications(input: {
     platform: Platform.OS,
     enabled: false,
   });
-  await SecureStore.deleteItemAsync(PUSH_TOKEN_KEY);
+  // This token identifies the phone on other computers too. Only this gateway's
+  // owner-scoped registration was revoked; its status is the opt-in authority.
 }

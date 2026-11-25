@@ -1,5 +1,9 @@
 const mockUseGateway = jest.fn();
 let mockUserId = "owner";
+let mockActiveGateway = {
+  gatewayUrl: "https://app.matrix-os.com/vm/primary", userId: "owner", ready: true,
+  computer: { label: "Primary computer", handle: "primary", runtimeSlot: "primary" },
+};
 // Only the native sheet host is replaced; production choices, events and state stay real.
 jest.mock("@expo/ui", () => ({
   BottomSheet: ({ isPresented, children }: { isPresented: boolean; children: React.ReactNode }) => isPresented ? children : null,
@@ -8,8 +12,7 @@ jest.mock("@expo/ui", () => ({
 jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ userId: mockUserId }) }));
 jest.mock("@/app/_layout", () => ({ useGateway: () => mockUseGateway() }));
 jest.mock("@/lib/queries/use-active-gateway", () => ({
-  useActiveGateway: () => ({ gatewayUrl: "http://localhost:4000", userId: "owner", ready: true,
-    session: async () => ({ token: "token", gatewayUrl: "http://localhost:4000" }) }),
+  useActiveGateway: () => mockActiveGateway,
 }));
 jest.mock("expo-router", () => ({
   useFocusEffect: (effect: () => void | (() => void)) => require("react").useEffect(effect, [effect]),
@@ -38,16 +41,18 @@ function deferred<T>() {
 let stored = NotificationPreferencesSchema.parse(initial);
 let fetchMock: jest.SpyInstance;
 function setup() {
-  mockUseGateway.mockReturnValue({ client: new GatewayClient("http://localhost:4000", "token"), gateway: { id: "a" } });
+  mockUseGateway.mockReturnValue({ client: new GatewayClient("http://localhost:4000", "token"), gateway: { id: "a", url: "http://localhost:4000", name: "Computer A" } });
   fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (_url, request) => {
+    if (String(_url).includes("/api/push/status")) return jsonResponse({ registered: false });
     if (request?.method === "PUT") stored = { ...NotificationPreferencesSchema.parse(JSON.parse(request.body as string)), revision: stored.revision + 1 };
     return jsonResponse({ preferences: stored });
   });
 }
 async function edit() {
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState.disabled).toBe(false));
   fireEvent.press(await screen.findByRole("switch", { name: "Task needs approval" }));
 }
-beforeEach(() => { mockUserId = "owner"; jest.clearAllMocks(); stored = NotificationPreferencesSchema.parse(initial); setup(); });
+beforeEach(() => { jest.mocked(SecureStore.getItemAsync).mockResolvedValue(null); mockUserId = "owner"; jest.clearAllMocks(); stored = NotificationPreferencesSchema.parse(initial); setup(); });
 afterEach(() => { cleanup(); Platform.OS = originalOS; jest.restoreAllMocks(); });
 
 it("saves full preferences and reloads confirmed values without enabling device push", async () => {
@@ -61,12 +66,11 @@ it("saves full preferences and reloads confirmed values without enabling device 
   expect(stored.events).toMatchObject({ approval: false, question: false, minReplySeconds: 30 });
   expect(stored.phone.awayAfterSeconds).toBe(900);
   expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled();
-  expect(Notifications.getExpoPushTokenAsync).not.toHaveBeenCalled();
-  expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
+  expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/push/register"))).toBe(false);
   view.unmount();
   render(<NotificationsScreen />);
   expect((await screen.findByRole("switch", { name: "Task needs approval" })).props.accessibilityState).toMatchObject({ checked: false });
-  expect(fetchMock.mock.calls.every(([url]) => String(url).includes("/api/notifications/preferences"))).toBe(true);
+  expect(fetchMock.mock.calls.every(([url]) => /\/api\/(notifications\/preferences|push\/status)/.test(String(url)))).toBe(true);
 });
 it.each([404, 503])("blocks writes after load refusal %s instead of guessing defaults", async (status) => {
   fetchMock.mockResolvedValue(jsonResponse({ error: "private" }, { status }));
@@ -116,8 +120,8 @@ it("ignores an old computer's late save when the selected client changes", async
   const pending = deferred<Response>();
   fetchMock.mockReturnValueOnce(pending.promise);
   fireEvent.press(screen.getByRole("button", { name: "Save notification settings" }));
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-  mockUseGateway.mockReturnValue({ client: new GatewayClient("http://localhost:5000", "other"), gateway: { id: "b" } });
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/notifications/preferences"))).toHaveLength(2));
+  mockUseGateway.mockReturnValue({ client: new GatewayClient("http://localhost:5000", "other"), gateway: { id: "b", url: "http://localhost:5000", name: "Computer B" } });
   view.rerender(<NotificationsScreen />);
   await screen.findByRole("switch", { name: "Task needs approval", checked: true });
   await act(async () => pending.resolve(jsonResponse({ preferences: { ...stored, events: { ...stored.events, approval: false } } })));
@@ -168,7 +172,7 @@ it("does not display a prior client's late load", async () => {
   const response = deferred<Response>();
   fetchMock.mockReturnValueOnce(response.promise);
   const view = render(<NotificationsScreen />);
-  mockUseGateway.mockReturnValue({ client: new GatewayClient("http://localhost:5000", "other"), gateway: { id: "b" } });
+  mockUseGateway.mockReturnValue({ client: new GatewayClient("http://localhost:5000", "other"), gateway: { id: "b", url: "http://localhost:5000", name: "Computer B" } });
   view.rerender(<NotificationsScreen />);
   await screen.findByRole("switch", { name: "Task needs approval", checked: true });
   await act(async () => response.resolve(jsonResponse({ preferences: { ...stored, events: { ...stored.events, approval: false } } })));
@@ -179,12 +183,12 @@ it("does not reload a prior computer after its late save reports conflict", asyn
   const response = deferred<Response>();
   fetchMock.mockReturnValueOnce(response.promise);
   fireEvent.press(screen.getByRole("button", { name: "Save notification settings" }));
-  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-  mockUseGateway.mockReturnValue({ client: new GatewayClient("http://localhost:5000", "other"), gateway: { id: "b" } });
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/notifications/preferences"))).toHaveLength(2));
+  mockUseGateway.mockReturnValue({ client: new GatewayClient("http://localhost:5000", "other"), gateway: { id: "b", url: "http://localhost:5000", name: "Computer B" } });
   view.rerender(<NotificationsScreen />);
   await screen.findByRole("switch", { name: "Task needs approval", checked: true });
   await act(async () => response.resolve(jsonResponse({}, { status: 409 })));
-  expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://localhost:4000"))).toHaveLength(2);
+  expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://localhost:4000/api/notifications/preferences"))).toHaveLength(2);
 });
 
 it("discards late preference responses after an account change even with the same client", async () => {
@@ -197,4 +201,69 @@ it("discards late preference responses after an account change even with the sam
   await screen.findByRole("switch", { name: "Task needs approval", checked: false });
   await act(async () => response.resolve(jsonResponse({ preferences: initial })));
   expect(screen.getByRole("switch", { name: "Task needs approval" }).props.accessibilityState).toMatchObject({ checked: false });
+});
+
+it("binds preference saves and phone opt-out to the named selected preview when the active computer differs", async () => {
+  const preview = "https://app.matrix-os.com/vm/preview?runtime=review";
+  mockUseGateway.mockReturnValue({
+    client: new GatewayClient(preview, "preview-token"),
+    gateway: { id: "preview", url: preview, name: "Review computer", runtimeSlot: "review" },
+  });
+  jest.mocked(SecureStore.getItemAsync).mockResolvedValue("ExponentPushToken[phone]");
+  fetchMock.mockImplementation(async (url, request) => {
+    if (String(url).includes("/api/push/status")) return jsonResponse({ registered: true });
+    if (String(url).includes("/api/push/register")) return jsonResponse({ ok: true });
+    if (request?.method === "PUT") stored = { ...stored, ...JSON.parse(request.body as string), revision: 5 };
+    return jsonResponse({ preferences: stored });
+  });
+  render(<NotificationsScreen />);
+  const push = await screen.findByRole("switch", { name: "Push notifications" });
+  await waitFor(() => expect(push.props.accessibilityState).toMatchObject({ checked: true, disabled: false }));
+  fireEvent.press(push);
+  await waitFor(() => expect(fetchMock.mock.calls.some(([, request]) => request?.method === "DELETE")).toBe(true));
+  await edit();
+  fireEvent.press(screen.getByRole("button", { name: "Save notification settings" }));
+  await screen.findByText("Changes saved.");
+  for (const [rawUrl, request] of fetchMock.mock.calls) {
+    const url = new URL(String(rawUrl));
+    expect(url.origin).toBe("https://app.matrix-os.com");
+    expect(url.pathname).toMatch(/^\/vm\/preview\/api\//);
+    expect(url.searchParams.get("runtime")).toBe("review");
+    expect(request?.headers).toMatchObject({ Authorization: "Bearer preview-token" });
+  }
+  expect(screen.getByText(/Review computer/)).toBeTruthy();
+  expect(screen.getByText("https://app.matrix-os.com/vm/preview")).toBeTruthy();
+  expect(screen.getByText(/Other computers can still send/)).toBeTruthy();
+});
+
+it("pins a bare cloud selection to the active computer's explicit runtime path and name", async () => {
+  const cloud = "https://app.matrix-os.com";
+  mockActiveGateway = { ...mockActiveGateway, gatewayUrl: `${cloud}/vm/primary?runtime=review`,
+    computer: { label: "Primary computer", handle: "primary", runtimeSlot: "review" } };
+  mockUseGateway.mockReturnValue({ client: new GatewayClient(cloud, "owner-token"), gateway: { id: "cloud", url: cloud, name: "Cloud" } });
+  render(<NotificationsScreen />);
+  await edit();
+  fireEvent.press(screen.getByRole("button", { name: "Save notification settings" }));
+  await screen.findByText("Changes saved.");
+  expect(screen.getByText("Notifications for Primary computer (review)")).toBeTruthy();
+  expect(fetchMock.mock.calls.every(([url]) => new URL(String(url)).pathname.startsWith("/vm/primary/api/")
+    && new URL(String(url)).searchParams.get("runtime") === "review")).toBe(true);
+});
+
+it("keeps push registration unknown after a status failure and permits a safe retry", async () => {
+  jest.mocked(SecureStore.getItemAsync).mockResolvedValue("ExponentPushToken[phone]");
+  let unavailable = true;
+  fetchMock.mockImplementation(async (url) => String(url).includes("/api/push/status")
+    ? jsonResponse(unavailable ? {} : { registered: true }, { status: unavailable ? 503 : 200 })
+    : jsonResponse({ preferences: stored }));
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  render(<NotificationsScreen />);
+  await screen.findByText(/Couldn’t load this computer’s push registration/);
+  expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState.disabled).toBe(true);
+  expect(screen.getByRole("switch", { name: "Task needs approval" })).toBeTruthy();
+  unavailable = false;
+  fireEvent.press(screen.getByRole("button", { name: "Reload push registration" }));
+  await waitFor(() => expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState)
+    .toMatchObject({ checked: true, disabled: false }));
+  warn.mockRestore();
 });

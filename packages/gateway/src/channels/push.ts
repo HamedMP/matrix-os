@@ -42,6 +42,7 @@ export interface PushAdapterOptions {
 export interface PushAdapter extends ChannelAdapter {
   registerToken(token: string, platform: string, ownerId: string): Promise<void>;
   removeToken(token: string, ownerId: string): Promise<void>;
+  isTokenRegistered(token: string, ownerId: string): Promise<boolean>;
   /** Deletes tokens unseen for the TTL. Runs hourly until `dispose()`. */
   sweepExpiredTokens(): Promise<number>;
   dispose(): void;
@@ -202,6 +203,10 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
 
     async removeToken(token: string, ownerId: string) {
       await requireTokens().remove({ token, ownerId });
+    },
+
+    async isTokenRegistered(token: string, ownerId: string) {
+      return requireTokens().hasRecent({ token, ownerId, seenSince: tokenCutoff() });
     },
 
     sweepExpiredTokens,

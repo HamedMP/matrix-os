@@ -1,4 +1,5 @@
 import * as Notifications from "expo-notifications";
+import { AndroidImportance } from "expo-notifications";
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 
@@ -18,6 +19,7 @@ jest.mock("expo-notifications", () => ({
 
 jest.mock("@/lib/requests/settings", () => ({
   updatePushRegistration: jest.fn(() => Promise.resolve()),
+  fetchPushRegistrationStatus: jest.fn(() => Promise.resolve(true)),
 }));
 
 const notifications = jest.mocked(Notifications);
@@ -70,10 +72,10 @@ describe("Android notification channels", () => {
     await ensureNotificationChannels();
 
     expect(createdChannels()).toEqual(expect.objectContaining({
-      replies: expect.objectContaining({ name: "Replies", importance: Notifications.AndroidImportance.DEFAULT }),
+      replies: expect.objectContaining({ name: "Replies", importance: AndroidImportance.DEFAULT }),
       attention: expect.objectContaining({
         name: "Approvals and questions",
-        importance: Notifications.AndroidImportance.HIGH,
+        importance: AndroidImportance.HIGH,
       }),
     }));
   });
@@ -83,7 +85,7 @@ describe("Android notification channels", () => {
 
     expect(createdChannels().default).toEqual({
       name: "Matrix OS",
-      importance: Notifications.AndroidImportance.MAX,
+      importance: AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: "#2B3715",
     });

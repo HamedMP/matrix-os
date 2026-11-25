@@ -1,4 +1,5 @@
 import { notificationPreferencesRequest } from "@/lib/notification-preferences-client";
+import { formatAuthorizationHeader } from "@/lib/authorization";
 import type { NotificationPreferences } from "@matrix-os/contracts/notifications";
 import { encodeAppSlugPath } from "@/lib/app-slugs";
 import {
@@ -1685,12 +1686,6 @@ export function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined 
   const controller = new AbortController();
   setTimeout(() => controller.abort(), timeoutMs);
   return controller.signal;
-}
-
-function formatAuthorizationHeader(token: string | undefined): string | undefined {
-  if (!token) return undefined;
-  if (/^(Basic|Bearer)\s+/i.test(token)) return token;
-  return `Bearer ${token}`;
 }
 
 export function assertSecureTokenTransport(baseUrl: string): void {

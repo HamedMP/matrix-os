@@ -54,6 +54,8 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
   const { app, homePath, model, runningVersion, interactionLogger, pushAdapter,
     posthogErrorTracker, ownerTelemetryDistinctId, upgradeBodyLimit,
     logBestEffortFailure } = options;
+  const pushOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID]
+    .filter((id): id is string => Boolean(id));
   // Native host services do not export build variables. Capture matching release
   // provenance once at registration; later installs cannot relabel this process.
   const installedAtStartup = readReleaseInfo();
@@ -204,6 +206,38 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
     } catch (err: unknown) {
       logBestEffortFailure("Failed to read usage stats", err);
       return c.json({ total: 0, byAction: {} });
+    }
+  });
+
+  // Read-only POST keeps the device token out of URLs and access logs.
+  app.post("/api/push/status", bodyLimit({ maxSize: 4096 }), async (c) => {
+    let principal;
+    try {
+      principal = requireRequestPrincipal(c);
+    } catch (err: unknown) {
+      if (isRequestPrincipalError(err)) {
+        const mapped = mapRequestPrincipalError(err, "Push registration unavailable");
+        if (mapped.log) console.error("[push] Request principal misconfigured:", err.name);
+        return c.json(mapped.body, mapped.status);
+      }
+      throw err;
+    }
+    if (pushOwnerIds.length ? !pushOwnerIds.includes(principal.userId) : principal.source !== "dev-default") {
+      return c.json({ error: "Push registration unavailable" }, pushOwnerIds.length ? 403 : 503);
+    }
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) logBestEffortFailure("Failed to parse push status", err);
+      return c.json({ error: "Invalid push registration" }, 400);
+    }
+    const parsed = PushUnregisterBodySchema.safeParse(rawBody);
+    if (!parsed.success) return c.json({ error: "Invalid push registration" }, 400);
+    try {
+      return c.json({ registered: await pushAdapter.isTokenRegistered(parsed.data.token, principal.userId) });
+    } catch (err: unknown) {
+      return pushStorageFailure(c, err);
     }
   });
 

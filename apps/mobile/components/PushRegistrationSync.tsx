@@ -1,8 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { AppState } from "react-native";
 
 import { syncPushRegistration } from "@/lib/push-registration-sync";
-import { useActiveGateway } from "@/lib/queries/use-active-gateway";
+import { useNotificationComputer } from "@/lib/use-notification-computer";
 
 /**
  * Registers this phone for push with the active computer once the computer is
@@ -10,24 +10,24 @@ import { useActiveGateway } from "@/lib/queries/use-active-gateway";
  * nothing; a failure is logged and the next foreground tries again.
  */
 export function PushRegistrationSync() {
-  const { gatewayUrl, session } = useActiveGateway();
-  // One run at a time: a permission prompt sends the app inactive and back.
-  const running = useRef(false);
-
+  const computer = useNotificationComputer();
   useEffect(() => {
-    if (!gatewayUrl) return;
+    if (!computer.client) return;
+    let active = true;
+    // One run per computer; the shared push queue serializes remote changes.
+    let running = false;
 
     async function sync() {
-      if (running.current) return;
-      running.current = true;
+      if (!active || running) return;
+      running = true;
       try {
-        const current = await session();
-        if (!current) return;
-        await syncPushRegistration({ clerkToken: current.token, gatewayUrl: current.gatewayUrl });
+        const current = await computer.session();
+        if (!active || !current) return;
+        await syncPushRegistration(current, () => active);
       } catch (error: unknown) {
         console.warn("[mobile] Push registration failed:", error instanceof Error ? error.message : "unknown");
       } finally {
-        running.current = false;
+        running = false;
       }
     }
 
@@ -35,8 +35,8 @@ export function PushRegistrationSync() {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") void sync();
     });
-    return () => subscription.remove();
-  }, [gatewayUrl, session]);
+    return () => { active = false; subscription.remove(); };
+  }, [computer]);
 
   return null;
 }
