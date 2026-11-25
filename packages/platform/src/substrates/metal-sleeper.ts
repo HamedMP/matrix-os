@@ -299,9 +299,10 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     // generation, still running, and still idle (owner activity may have
     // arrived during the lifecycle read).
     const idleBefore = new Date(nowMs - (verdict.guard ? IDLE_GUARD_AFTER_MS : IDLE_SLEEP_AFTER_MS));
+    const previousWake = machine.nextWakeAt === null ? null : new Date(machine.nextWakeAt);
     const claimed = await db.executor.updateTable('user_machines')
       .set({ next_wake_at: verdict.nextWakeAt })
-      .where('next_wake_at', machine.nextWakeAt === null ? 'is' : '=', machine.nextWakeAt)
+      .where('next_wake_at', previousWake === null ? 'is' : '=', previousWake)
       .where('machine_id', '=', machine.machineId)
       .where('generation', '=', machine.generation)
       .where('status', '=', 'running')
