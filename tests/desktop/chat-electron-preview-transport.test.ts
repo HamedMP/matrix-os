@@ -287,6 +287,76 @@ describe("authenticated Chat Electron preview transport", () => {
     }
   });
 
+  it.each([
+    { fault: "before storage", status: "returned", methods: ["PUT", "PUT"] },
+    { fault: "after storage", status: "returned", methods: ["PUT", "PUT", "GET"] },
+    { fault: "recovery GET", status: "returned", methods: ["PUT", "GET", "PUT", "GET"] },
+    { fault: "persistent 502", status: "failed", methods: ["PUT", "PUT"] },
+    { fault: "upload 403", status: "failed", methods: ["PUT"] },
+    { fault: "legacy 502", status: "failed", methods: ["PUT"] },
+    { fault: "revoked pairing", status: "unavailable", methods: ["PUT"] },
+    { fault: "changed session", status: "unavailable", methods: ["PUT"] },
+  ])("handles $fault during screenshot delivery under the original claim", async ({ fault, status, methods }) => {
+    const legacy = fault === "legacy 502";
+    const { service: transport, fetchFn, changeSession, existingUpload, storeResult } = legacy ? mockTransport() : verificationFixture();
+    storeResult();
+    if (fault === "recovery GET") existingUpload(png);
+    const fetch = fetchFn.getMockImplementation()!;
+    const faultMethod = fault === "recovery GET" ? "GET" : "PUT";
+    let interrupted = false;
+    fetchFn.mockImplementation(async (input, options) => {
+      const method = options?.method ?? "GET";
+      if (new URL(String(input)).pathname === "/api/files/blob" && method === faultMethod
+        && (!interrupted || fault === "persistent 502")) {
+        interrupted = true;
+        if (fault === "after storage") existingUpload(png);
+        return new Response("Screenshot unavailable", { status: fault === "upload 403" ? 403 : 502 });
+      }
+      return fetch(input, options);
+    });
+    const execute = vi.fn(async () => previewResult);
+    const approve = vi.fn(async () => true);
+    const claim = vi.fn(async (_key: string) => true);
+    const check = vi.fn(async () => {
+      if (interrupted && fault === "changed session") changeSession();
+      return !interrupted || fault !== "revoked pairing";
+    });
+    const service = createChatElectronPreviewService({
+      ...transport,
+      enabled: true,
+      acquireActionPairing: async () => ({ check, close: vi.fn() }),
+      approve,
+      wasHandled: async () => false,
+      claim,
+      execute,
+    });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      await expect(service.run(legacy ? { chatId, runId } : verificationTarget)).resolves.toEqual({ status });
+    } finally {
+      clock.mockRestore();
+    }
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(approve).toHaveBeenCalledOnce();
+    expect(claim).toHaveBeenCalledOnce();
+    const imageRequests = fetchFn.mock.calls.filter(([input]) => new URL(String(input)).pathname === "/api/files/blob");
+    expect(imageRequests.map(([, options]) => options?.method ?? "GET")).toEqual(methods);
+    const imageUrl = new URL(String(imageRequests[0]![0]));
+    for (const [url, options] of imageRequests) {
+      expect(String(url)).toBe(imageUrl.href);
+      if (options?.method === "PUT") expect(options.body).toEqual(new Uint8Array(png));
+    }
+
+    const receipts = resultWrites(fetchFn).filter(([, options]) => options?.method === "POST");
+    expect(receipts).toHaveLength(status === "returned" ? 1 : 0);
+    if (status === "returned") {
+      const posted = JSON.parse(String(receipts[0]![1]?.body));
+      expect(posted).toMatchObject({ clientRequestId: `req_electron_preview_${claim.mock.calls[0]![0]}`,
+        parts: [{ type: "text" }, { type: "attachment_reference", ownerReference: imageUrl.searchParams.get("path") }] });
+    }
+  });
+
   it("verifies a clean worktree with an unchanged supported source", async () => {
     const { service, setGit, setSource } = verificationFixture();
     setGit(originHead, "");

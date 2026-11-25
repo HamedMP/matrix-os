@@ -576,6 +576,11 @@ export function createChatElectronPreviewTransport(
           label: "Mac Electron preview.png", mimeType: "image/png", sizeBytes: result.png.length, ownerReference });
       }
 
+      function deliveryError(response: Response, message: string) {
+        const error = new Error(message);
+        return isVerification && response.status === 502 ? new ChatElectronPreviewTransportInterruptedError(error) : error;
+      }
+
       async function prepareTurn() {
         const detail = await readDetail(authority, preview.chatId, signal);
         if (!detail) throw new Error("Preview Chat or source changed");
@@ -617,7 +622,7 @@ export function createChatElectronPreviewTransport(
           const existing = await request(authority, path, { signal });
           if (!existing.ok) {
             await existing.body?.cancel();
-            throw new Error("Existing preview image could not be read");
+            throw deliveryError(existing, "Existing preview image could not be read");
           }
           if (!(await boundedBytes(existing, MAX_PNG_BYTES)).equals(result.png)) {
             throw new Error("Existing preview image does not match");
@@ -625,7 +630,7 @@ export function createChatElectronPreviewTransport(
         } else {
           if (!uploaded.ok) {
             await uploaded.body?.cancel();
-            throw new Error("Preview image could not be saved");
+            throw deliveryError(uploaded, "Preview image could not be saved");
           }
           const payload = UploadReply.parse(await readJson(uploaded, 8192));
           if (payload.path !== ownerReference || payload.size !== result.png.length) throw new Error("Preview image receipt mismatch");
@@ -659,13 +664,10 @@ export function createChatElectronPreviewTransport(
         const conflict = await readAdmissionConflict(response);
         const refreshed = await prepareTurn();
         if (!refreshed) return;
-        if (isVerification && response.status === 502) {
-          throw new ChatElectronPreviewTransportInterruptedError(new Error("Bad Gateway posting preview receipt"));
-        }
         // A concurrent Chat turn can win between the idle check and admission.
         // Keep the same receipt identity and reuse the single uploaded PNG.
         if (conflict !== "chat_busy" && (conflict !== "chat_conflict" || refreshed.turn.baseRevision === turn.baseRevision)) {
-          throw new Error("Preview result could not be posted");
+          throw deliveryError(response, "Preview result could not be posted");
         }
         verifiedRevision = undefined;
         await delay(DELIVERY_RETRY_MS, undefined, { signal });
