@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 export function resolveWithinHome(
   homePath: string,
@@ -22,8 +22,19 @@ const DENIED_FILE_API_PREFIXES = ["data/browser-profiles", "data/app-gallery-sta
 
 function fileApiRelativePaths(homePath: string, resolvedPath: string): string[] {
   const paths = [relative(resolve(homePath), resolvedPath).split(sep).join("/")];
-  // A symlinked parent can otherwise hide a protected file or subtree under an alias.
-  if (existsSync(resolvedPath)) paths.push(relative(realpathSync(homePath), realpathSync(resolvedPath)).split(sep).join("/"));
+  if (!existsSync(homePath)) return paths;
+
+  // Missing descendants still inherit the canonical location of an existing parent.
+  let ancestor = resolvedPath;
+  const missingSegments: string[] = [];
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor);
+    if (parent === ancestor) return paths;
+    missingSegments.push(basename(ancestor));
+    ancestor = parent;
+  }
+  const canonicalPath = resolve(realpathSync(ancestor), missingSegments.reverse().join(sep));
+  paths.push(relative(realpathSync(homePath), canonicalPath).split(sep).join("/"));
   return paths;
 }
 
