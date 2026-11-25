@@ -107,9 +107,11 @@ equal mtime are indistinguishable, so the compare must be inside the write's cri
 4. On load the app calls `files.openRequest()`. A running app gets the request through
    `files.onOpenRequest(cb)`, driven by the `data:change` event for that key.
 5. Delivery follows `createOpenRequestInbox`: validate with `parseOpenRequest` (drop requests
-   older than 10 minutes), deliver each `nonce` once, then clear the key by writing `null`.
-   Reopening the app later therefore does not reopen the file; an app that wants to restore its
-   last document stores that itself. The injected script inlines the same steps.
+   older than 10 minutes) and deliver each `nonce` once. The app never writes `open-request`:
+   it records the handled nonce under `open-request-ack`, so Files stays the only writer of the
+   request key and a request stored during a read cannot be erased. Reopening the app later
+   therefore does not reopen the file; an app that wants to restore its last document stores
+   that itself. The injected script inlines the same steps.
 
 The request carries a path, not access: the app still reads through `files.read`.
 
