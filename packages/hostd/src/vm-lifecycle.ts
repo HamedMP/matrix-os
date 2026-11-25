@@ -587,9 +587,30 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     });
   }
 
+  async function runningVmNeedsBoot(id: string): Promise<boolean> {
+    let state: Awaited<ReturnType<ChClient["info"]>>["state"];
+    try {
+      state = (await withCh(id, (client) => client.info(AbortSignal.timeout(2_000)))).state;
+    } catch (error: unknown) {
+      log("vm_wake_info_failed", { id, ...errorFields(error) });
+      // A booting VMM may not have opened its socket yet. Only confirmed
+      // inactive units authorize a new cold boot.
+      const units = await exec(["systemctl", "is-active", vmUnit(id), restoreUnit(id)], {
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (units.code === 0 || /^(activating|reloading|deactivating)$/m.test(units.stdout)) return false;
+      if (units.code !== 3 && units.code !== 4) {
+        throw new LifecycleError("failed", "could not determine VM liveness", { cause: error });
+      }
+      return true;
+    }
+    if (state === "Paused") await withCh(id, (client) => client.resume(chSignal()));
+    return state === "Shutdown";
+  }
+
   // Brings a stopped or suspended VM to running; does not wait for the gateway.
   async function wake(record: VmRecord): Promise<VmRecord> {
-    if (record.state === "running") return record;
+    if (record.state === "running") return (await runningVmNeedsBoot(record.id)) ? coldBoot(record) : record;
     if (record.state === "creating") throw new LifecycleError("conflict", "VM is still being created");
     const snapshot = record.snapshot;
     if (record.state !== "suspended" || snapshot === null || snapshot.chVersion !== cfg.chVersion) {

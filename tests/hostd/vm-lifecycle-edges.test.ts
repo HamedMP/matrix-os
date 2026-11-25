@@ -259,6 +259,37 @@ describe("VM lifecycle edges", () => {
     await expect(lifecycle.setPolicy(vm.id, { tier: "paid", maxMiB: 16384 })).rejects.toMatchObject({ code: "conflict" });
   });
 
+  it("restarts the same VM when its VMM has exited since startup", async () => {
+    const lifecycle = make({ gatewayHealth: async () => chState === "Running" });
+    const vm = await lifecycle.create(spec);
+    chState = "Shutdown";
+    chOverrides.info = async () => {
+      if (chState === "Shutdown") throw new ChError("unreachable", "unit exited");
+      return { state: chState, memoryActualBytes: 2048 * 1024 * 1024 };
+    };
+    execFail = (argv) => (argv[1] === "is-active" ? 3 : undefined);
+    execCalls.length = 0;
+
+    await expect(lifecycle.resume(vm.id, 1000)).resolves.toBe("running");
+    expect(execCalls).toContainEqual(["systemctl", "start", `matrix-vm@${vm.id}.service`]);
+    expect(execCalls.some(([command]) => command === "lvremove" || command === "lvcreate")).toBe(false);
+  });
+
+  it("preserves an active VM when its control socket is briefly unavailable", async () => {
+    const lifecycle = make();
+    const vm = await lifecycle.create(spec);
+    chOverrides.info = async () => {
+      throw new ChError("unreachable", "socket not ready");
+    };
+    execCalls.length = 0;
+
+    await expect(lifecycle.resume(vm.id, 1000)).resolves.toBe("running");
+    expect(execCalls).toContainEqual([
+      "systemctl", "is-active", `matrix-vm@${vm.id}.service`, `matrix-vm-restore@${vm.id}.service`,
+    ]);
+    expect(execCalls.some(([, action]) => action === "stop" || action === "start")).toBe(false);
+  });
+
   it("logs a throwing health probe and keeps waiting", async () => {
     let calls = 0;
     const lifecycle = make({
