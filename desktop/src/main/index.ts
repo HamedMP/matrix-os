@@ -1031,7 +1031,7 @@ if (!gotLock) {
   app.on("before-quit", (event) => {
     organizationDriveTransfers?.cancelAll();
     nativeAppChatNavigation?.cancelAll();
-    if (handleAnalyticsBeforeQuit?.(event)) return;
+    // Close Mac activity admission before waiting for the renderer analytics flush.
     if (closeMacActivity) {
       event.preventDefault();
       if (!drainingMacActivity) {
@@ -1048,6 +1048,7 @@ if (!gotLock) {
       }
       return;
     }
+    if (handleAnalyticsBeforeQuit?.(event)) return;
     if (!navigationCacheDrained && navigationCache) {
       event.preventDefault();
       if (!drainingNavigationCache) {
