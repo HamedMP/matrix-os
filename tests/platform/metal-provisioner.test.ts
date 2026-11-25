@@ -373,7 +373,11 @@ describe('metal provisioner', () => {
 
     expect(await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ error: 'busy' });
     expect(await getActiveUserMachineByClerkId(db, 'user_metal', 'primary')).toBeUndefined();
-    expect(await db.executor.selectFrom('metal_vm_deletions').selectAll().execute()).toEqual([]);
+    expect(await db.executor.selectFrom('user_machines').select('status')
+      .where('machine_id', '=', MACHINE_ID).executeTakeFirst()).toEqual({ status: 'deleted' });
+    expect(await db.executor.selectFrom('metal_vm_deletions').selectAll().execute()).toMatchObject([
+      { machine_id: MACHINE_ID, generation: 1, reason: 'capacity_refused', completed_at: NOW },
+    ]);
 
     expect(await provisioner({ machineIds: ['0f1e2d3c-4b5a-4968-8776-655443322110'] })
       .provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' })).toEqual({ machineId: '0f1e2d3c-4b5a-4968-8776-655443322110' });

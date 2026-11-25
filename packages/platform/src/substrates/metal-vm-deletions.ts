@@ -36,6 +36,8 @@ export interface MetalVmDeletionInput {
   now: Date;
   /** First attempt time; defaults to now. */
   notBefore?: Date;
+  /** The provider explicitly refused the create before allocating a VM. */
+  confirmedAbsent?: boolean;
 }
 
 /**
@@ -56,6 +58,7 @@ export async function enqueueMetalVmDeletion(db: PlatformDB, input: MetalVmDelet
       reason: input.reason,
       next_attempt_at: (input.notBefore ?? input.now).toISOString(),
       created_at: input.now.toISOString(),
+      completed_at: input.confirmedAbsent ? input.now.toISOString() : null,
     })
     .onConflict((oc) => oc.columns(['machine_id', 'generation']).where('completed_at', 'is', null)
       .doUpdateSet({ metal_vm_id: sql`COALESCE(metal_vm_deletions.metal_vm_id, excluded.metal_vm_id)` }))

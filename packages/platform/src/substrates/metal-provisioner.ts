@@ -470,33 +470,39 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
 
   /**
    * Gives up a claimed row no host had capacity for. hostd refuses for
-   * capacity before creating anything, so no VM exists and no teardown is
-   * queued, and busy consumes no attempt: a first build's row is retired, and
+   * capacity before creating anything, so record that teardown is complete.
+   * Busy consumes no attempt: a first build's row is retired, and
    * a rebuild's row (which replaced the owner's failed row) becomes that failed
    * build again, with the attempt count it had, so the ceiling and the
    * journey's retry survive.
    */
-  async function releaseClaim(machineId: string): Promise<void> {
+  async function releaseClaim(machineId: string, refusedHostId: string): Promise<void> {
     const at = now().toISOString();
     try {
       await runInPlatformTransaction(db, async (trx) => {
         const restored = await trx.executor.updateTable('user_machines')
           .set({ status: 'failed', failure_code: 'provider_unavailable', failure_at: at, attempt: sql<number>`attempt - 1` })
           .where('machine_id', '=', machineId)
+          .where('metal_host_id', '=', refusedHostId)
           .where('status', '=', 'provisioning')
           .where('metal_vm_id', 'is', null)
           .where('deleted_at', 'is', null)
           .where('attempt', '>', 1)
-          .returning('machine_id')
+          .returning('generation')
           .executeTakeFirst();
-        if (restored) return;
-        await trx.executor.updateTable('user_machines')
-          .set({ status: 'failed', failure_code: 'provider_unavailable', failure_at: at, deleted_at: at })
+        const released = restored ?? await trx.executor.updateTable('user_machines')
+          .set({ status: 'deleted', failure_code: 'provider_unavailable', failure_at: at, deleted_at: at })
           .where('machine_id', '=', machineId)
+          .where('metal_host_id', '=', refusedHostId)
           .where('status', '=', 'provisioning')
           .where('metal_vm_id', 'is', null)
           .where('deleted_at', 'is', null)
-          .execute();
+          .returning('generation')
+          .executeTakeFirst();
+        if (released) await enqueueMetalVmDeletion(trx, {
+          metalHostId: refusedHostId, machineId, generation: released.generation, metalVmId: null,
+          reason: 'capacity_refused', now: new Date(at), confirmedAbsent: true,
+        });
       });
     } catch (error: unknown) {
       // The row stays provisioning without a VM; reconcileStale fails it after the window.
@@ -772,7 +778,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
         }
         const next = await place(shape.bootMiB, excluded);
         if ('error' in next || !await retargetClaim(machineId, target.id, next.host.id)) {
-          await releaseClaim(machineId);
+          await releaseClaim(machineId, target.id);
           return busy();
         }
         target = next.host;
