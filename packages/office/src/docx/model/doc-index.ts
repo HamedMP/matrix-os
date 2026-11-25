@@ -126,7 +126,12 @@ export class DocxIndex {
     return this.resolverCache;
   }
 
-  /** The numbering label of every numbered paragraph, keyed by its `w:p`. */
+  /**
+   * The numbering label of every numbered paragraph, keyed by its `w:p`, as
+   * the markup view shows them: inserted and deleted paragraphs count too.
+   * The `final` and `original` exports count only the paragraphs their view
+   * keeps (`../export/visibility.ts`).
+   */
   get labels(): Map<XmlElement, NumberingLabel> {
     if (this.labelCache === null) {
       const structure = this.structure;
@@ -214,6 +219,16 @@ export class DocxIndex {
    */
   markDirty(element: XmlElement): void {
     this.store.markDirty(element);
+  }
+
+  /**
+   * Throws `limit_exceeded` when the parts now hold more XML nodes or
+   * characters than the limits of the handle allow. Every edit checks it
+   * before it reports success, so a document never grows into one that the
+   * same limits refuse to open.
+   */
+  checkXmlLimits(): void {
+    this.store.checkLimits(this.limits);
   }
 
   /**

@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_DOCX_LIMITS, openDocx, toHtml } from "../../../../packages/office/src/docx/index.js";
+import type { CompareOptions } from "../../../../packages/office/src/api/docx.js";
+import { DEFAULT_DOCX_LIMITS, compareDocx, openDocx, toHtml } from "../../../../packages/office/src/docx/index.js";
+import { getDocxIndex } from "../../../../packages/office/src/docx/internal.js";
+import { countNodes, measureXml } from "../../../../packages/office/src/docx/model/limits.js";
 import { isOfficeError } from "../../../../packages/office/src/errors.js";
+import { appendChild, createElement, createText, parseXml, serializeXml, setAttr } from "../../../../packages/office/src/xml/index.js";
 import { buildPackage, cell, p, r, row, tbl } from "./build.js";
+import { DOCX_FIXTURES, openFixture } from "./helpers.js";
 
 const OPTIONS = { track: false, author: "Owner", date: "2026-01-01T00:00:00Z" };
 
@@ -113,6 +118,88 @@ describe("caller limits", () => {
     // The document still takes edits that stay within the limit.
     document.applyOps([{ type: "insertText", at: { blockId: last.id, offset: 5 }, text: "!" }], OPTIONS);
     expect(document.getPlainText()).toBe("one\ntwo\nthree!\n");
+  });
+});
+
+describe("edits stay inside the XML budgets the document was opened with", () => {
+  const two = p(r("one two three four")) + p(r("five six seven eight"));
+
+  /** The smallest value of a limit that opens the file, as `openDocx` counts. */
+  async function smallestFitting(bytes: Uint8Array, limit: "maxXmlChars" | "maxNodes"): Promise<number> {
+    let low = 1;
+    let high = 1_000_000;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if ((await refusedBy(bytes, { [limit]: middle })) === "opened") high = middle;
+      else low = middle + 1;
+    }
+    return low;
+  }
+
+  async function refusal(action: () => unknown): Promise<unknown> {
+    try {
+      await action();
+    } catch (error) {
+      if (isOfficeError(error, "limit_exceeded")) return error.details.limit;
+      throw error;
+    }
+    return "applied";
+  }
+
+  it("measures a tree exactly as the serialiser writes it, edited nodes included", async () => {
+    const exact = (doc: Parameters<typeof measureXml>[0]) => ({ nodes: countNodes(doc), chars: serializeXml(doc).length });
+    for (const name of DOCX_FIXTURES) {
+      for (const slot of getDocxIndex(await openFixture(name)).store.list()) expect(measureXml(slot.doc)).toEqual(exact(slot.doc));
+    }
+    const doc = parseXml(`\uFEFF<?xml version="1.0"?>\n<a  x = 'one' >text &amp; more<!-- note --><?pi some data?><![CDATA[a]]><b/><c ></c ></a>`);
+    setAttr(doc.root, "x", `it's "quoted" & <tab>\t`);
+    setAttr(doc.root, "y", `it's "quoted"\r\n`);
+    appendChild(doc.root, createText("a & b < c > d\r"));
+    appendChild(doc.root, createElement("w:t", [["xml:space", "preserve"]], ["edited"]));
+    expect(measureXml(doc)).toEqual(exact(doc));
+  });
+
+  it("refuses an insertion that the character limit would refuse to reopen, and rolls it back", async () => {
+    const bytes = await bytesOf(two);
+    const limits = { maxXmlChars: (await smallestFitting(bytes, "maxXmlChars")) + 200 };
+    const document = await openDocx(bytes, limits);
+    const first = document.getView().body.blocks[0]!;
+    const insert = (text: string) => () => document.applyOps([{ type: "insertText", at: { blockId: first.id, offset: 0 }, text }], OPTIONS);
+    expect(await refusal(insert("x".repeat(201)))).toBe("maxXmlChars");
+    expect(document.getPlainText()).toBe("one two three four\nfive six seven eight\n");
+    expect(await refusal(insert("x".repeat(10)))).toBe("applied");
+    // What an edit was allowed to write, the same limits open again.
+    expect(await refusedBy(await document.save(), limits)).toBe("opened");
+  });
+
+  it("refuses a formatting edit that splits runs past the node limit, and rolls it back", async () => {
+    const bytes = await bytesOf(two);
+    const document = await openDocx(bytes, { maxNodes: await smallestFitting(bytes, "maxNodes") });
+    const first = document.getView().body.blocks[0]!;
+    const range = { start: { blockId: first.id, offset: 4 }, end: { blockId: first.id, offset: 7 } };
+    const before = await document.package.getPartText("/word/document.xml");
+    expect(await refusal(() => document.applyOps([{ type: "setRunFormat", range, format: { bold: true } }], OPTIONS))).toBe("maxNodes");
+    await document.save();
+    expect(await document.package.getPartText("/word/document.xml")).toBe(before);
+    expect(document.getView().body.blocks[0]).toMatchObject({ runs: [{ text: "one two three four", bold: false }] });
+  });
+
+  it("refuses to turn on tracking when the settings would pass a limit", async () => {
+    const bytes = await bytesOf(two);
+    const limits = { maxXmlChars: await smallestFitting(bytes, "maxXmlChars") };
+    const document = await openDocx(bytes, limits);
+    expect(await refusal(() => document.setTrackRevisions(true))).toBe("maxXmlChars");
+    expect(document.getTrackRevisions()).toBe(false);
+    expect(await refusedBy(await document.save(), limits)).toBe("opened");
+  });
+
+  it("refuses a comparison whose result passes a limit both inputs fit", async () => {
+    const original = await bytesOf(two);
+    const revised = await bytesOf(p(r("nine ten eleven twelve")) + p(r("thirteen fourteen fifteen sixteen")));
+    const maxXmlChars = Math.max(await smallestFitting(original, "maxXmlChars"), await smallestFitting(revised, "maxXmlChars")) + 10;
+    // The document limits travel with the ZIP limits, as `openDocx` takes them.
+    const limits = { maxXmlChars } as CompareOptions["limits"];
+    expect(await refusal(() => compareDocx(original, revised, { author: "Owner", date: "2026-01-01T00:00:00Z", limits }))).toBe("maxXmlChars");
   });
 });
 

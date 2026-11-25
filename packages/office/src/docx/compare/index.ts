@@ -189,6 +189,8 @@ export async function compareDocumentsDetailed(
   }
   for (const pair of headerFooter) mergeStory(pair.a, pair.b);
 
+  // The result is a handle with the caller's limits: it must open again under them.
+  target.checkXmlLimits();
   verifyComparison(target, check);
   return { document, summary: summarise(document, counters), check };
 }

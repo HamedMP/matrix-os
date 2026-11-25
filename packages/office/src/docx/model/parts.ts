@@ -18,7 +18,7 @@ import type { XmlChildNode, XmlDocument, XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import { findPartByRelationshipType, partNameKey, relativeTargetFor } from "../../opc/index.js";
 import { parseXml, serializeXml } from "../../xml/index.js";
-import { DEFAULT_DOCX_LIMITS, type DocxLimits, countNodes, documentTooLarge } from "./limits.js";
+import { DEFAULT_DOCX_LIMITS, type DocxLimits, countNodes, documentTooLarge, measureXml } from "./limits.js";
 import { type DocxPartKind, type DocxSlotKind, PART_KINDS, firstChild, isWordMainContentType } from "./names.js";
 
 /** Identity the index attaches to XML elements. Copied with the element into snapshots. */
@@ -151,6 +151,8 @@ export class PartStore {
   private readonly slotByDoc = new WeakMap<XmlDocument, PartSlot>();
   private readonly unitStamps = new WeakMap<XmlChildNode, number>();
   private readonly listeners: PartChangeListener[] = [];
+  /** The size of each slot's tree at a version, so a part that did not change is not walked again. */
+  private readonly sizes = new WeakMap<PartSlot, { readonly version: number; readonly doc: XmlDocument; readonly nodes: number; readonly chars: number }>();
   /** Parts the model added to the package in an earlier save, with the relationship that points at them. */
   private readonly registered = new Map<string, { name: PartName; relationshipId: string | null }>();
   private clock = 0;
@@ -354,6 +356,27 @@ export class PartStore {
   /** Tells every listener that the trees changed as a whole. */
   notifyAll(): void {
     for (const slot of this.slots.values()) for (const listener of this.listeners) listener(slot);
+  }
+
+  /**
+   * Throws `limit_exceeded` when the parts together now hold more XML than
+   * `limits` allows: a document that `openDocx` with the same limits would
+   * refuse to open once saved. Edits call it before they report success.
+   */
+  checkLimits(limits: DocxLimits): void {
+    let nodes = 0;
+    let chars = 0;
+    for (const slot of this.slots.values()) {
+      let size = this.sizes.get(slot);
+      if (size === undefined || size.version !== slot.version || size.doc !== slot.doc) {
+        size = { version: slot.version, doc: slot.doc, ...measureXml(slot.doc) };
+        this.sizes.set(slot, size);
+      }
+      nodes += size.nodes;
+      chars += size.chars;
+    }
+    if (chars > limits.maxXmlChars) throw documentTooLarge("maxXmlChars", limits.maxXmlChars);
+    if (nodes > limits.maxNodes) throw documentTooLarge("maxNodes", limits.maxNodes);
   }
 
   /** Writes changed parts into the package and serialises it. */

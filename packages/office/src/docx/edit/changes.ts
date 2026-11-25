@@ -1,7 +1,8 @@
 /**
  * Works out what an edit did to the block structure: which blocks were
  * created and removed, and which surviving blocks show something else now.
- * Shared by `applyOps` and by accepting and rejecting revisions.
+ * Shared by `applyOps` and by accepting and rejecting revisions; finishing
+ * also holds the edit to the XML budgets of the document.
  */
 
 import type { BlockId, StoryId } from "../../api/docx-model.js";
@@ -47,7 +48,11 @@ export interface BlockChanges {
 export interface ChangeRecorder {
   /** Document order of the blocks after the edit; valid once `finish` ran. */
   order(): ReadonlyMap<BlockId, number>;
-  /** Compares the document with the state at `beginChanges`. `touched` are the block elements that were edited. */
+  /**
+   * Compares the document with the state at `beginChanges`. `touched` are the
+   * block elements that were edited. Throws `limit_exceeded` when the edit
+   * took the document past a limit; the caller restores its snapshot.
+   */
   finish(touched: Iterable<XmlElement>): BlockChanges;
 }
 
@@ -63,7 +68,9 @@ export function beginChanges(index: DocxIndex): ChangeRecorder {
       return order;
     },
     finish(touched) {
+      // Blocks, rows and cells are checked when the structure is built; nodes and characters here.
       after = blockStates(index);
+      index.checkXmlLimits();
       const created = [...after.keys()].filter((id) => !before.has(id));
       const removed = [...before.keys()].filter((id) => !after.has(id));
       const changed = new Set<BlockId>();

@@ -13,8 +13,9 @@
  */
 
 import type { ZipLimits } from "../../api/opc.js";
-import type { XmlDocument, XmlNode } from "../../api/xml.js";
+import type { XmlAttr, XmlDocument, XmlElement, XmlNode } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
+import { escapeXmlAttr, escapeXmlText } from "../../xml/index.js";
 
 export interface DocxLimits {
   /** XML nodes of all the parts the model parses, together. Default 500,000. */
@@ -93,4 +94,68 @@ export function countNodes(doc: XmlDocument): number {
     for (let index = 0; index < children.length; index++) stack.push(children[index] as XmlNode);
   }
   return count;
+}
+
+function count(text: string, char: string): number {
+  let found = 0;
+  for (let at = text.indexOf(char); at !== -1; at = text.indexOf(char, at + 1)) found += 1;
+  return found;
+}
+
+/** Length of an attribute value as the serialiser writes it. */
+function attrValueLength(attr: XmlAttr): number {
+  if (attr.raw != null) return attr.raw.length;
+  const escaped = escapeXmlAttr(attr.value);
+  // `escapeXmlAttr` escapes for double quotes; with single quotes `"` stays and `'` becomes `&apos;`.
+  return attr.quote === '"' ? escaped.length : escaped.length - 5 * count(attr.value, '"') + 5 * count(attr.value, "'");
+}
+
+function startTagLength(element: XmlElement): number {
+  let length = 1 + element.name.length + element.openTagTail.length;
+  for (const attr of element.attrs) length += attr.lead.length + attr.name.length + attr.eq.length + 2 + attrValueLength(attr);
+  return length;
+}
+
+/**
+ * The nodes of a parsed part (as {@link countNodes} counts them) and the
+ * characters it serialises to, without building the text: what `openDocx`
+ * would count when it opens the saved part again.
+ */
+export function measureXml(doc: XmlDocument): { nodes: number; chars: number } {
+  let nodes = 0;
+  let chars = doc.bom ? 1 : 0;
+  const stack: XmlNode[] = [...doc.children];
+  while (stack.length > 0) {
+    const node = stack.pop() as XmlNode;
+    nodes += 1;
+    switch (node.kind) {
+      case "element": {
+        const close = 3 + node.name.length + node.closeTagTail.length;
+        const children = node.children;
+        if (children.length === 0) chars += startTagLength(node) + (node.selfClosing ? 2 : 1 + close);
+        else chars += startTagLength(node) + 1 + close;
+        for (let index = 0; index < children.length; index++) stack.push(children[index] as XmlNode);
+        break;
+      }
+      case "text":
+        chars += node.raw != null ? node.raw.length : escapeXmlText(node.value).length;
+        break;
+      case "cdata":
+        // `]]>` inside the value is written as `]]]]><![CDATA[>`.
+        chars += 12 + node.value.length + 12 * (node.value.split("]]>").length - 1);
+        break;
+      case "comment":
+        chars += 7 + node.value.length;
+        break;
+      case "pi":
+        chars += 4 + node.target.length + node.data.length;
+        break;
+      case "declaration":
+        chars += node.raw.length;
+        break;
+      default:
+        break;
+    }
+  }
+  return { nodes, chars };
 }

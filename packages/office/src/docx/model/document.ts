@@ -173,6 +173,18 @@ class DocxDocumentHandle implements DocxDocument {
   setTrackRevisions(enabled: boolean): void {
     if (typeof enabled !== "boolean") throw new OfficeError("invalid_argument", "enabled must be a boolean");
     if (readTrackRevisions(this.#index) === enabled) return;
+    const snapshot = this.#index.snapshot();
+    try {
+      this.#writeTrackRevisions(enabled);
+      // Even a new settings part counts against the limits the document must reopen under.
+      this.#index.checkXmlLimits();
+    } catch (error) {
+      this.#index.restore(snapshot);
+      throw error;
+    }
+  }
+
+  #writeTrackRevisions(enabled: boolean): void {
     const settings = this.#index.ensurePart("settings");
     const existing = firstChild(settings, "w:trackRevisions");
     if (!enabled) {
