@@ -26,16 +26,16 @@ function fixture() {
 function request(path = '/v1/chat/completions', body: unknown = { model, messages: [{ role: 'user', content: 'private Google text' }], max_tokens: 100, stream: false }) {
   return { path, init: { method: 'POST', headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json', 'cf-aig-skip-cache': 'false' }, body: JSON.stringify(body) } };
 }
-function setup(options: { settings?: boolean; check?: (count: number) => Promise<Response | void>; start?: () => Promise<void>; authorize?: () => Promise<void>; generation?: () => Promise<Response>; at?: () => Date } = {}) {
-  const data = fixture(); let checks = 0; const actual = vi.fn(async () => options.generation ? options.generation() : Response.json({ success: true, result: { id: 'response_one', model, choices: [{ index: 0, message: { role: 'assistant', content: 'private result' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } } }));
+function setup(options: { settings?: boolean; postpaid?: boolean; check?: (count: number) => Promise<Response | void>; start?: () => Promise<void>; authorize?: () => Promise<void>; generation?: () => Promise<Response>; at?: () => Date } = {}) {
+  const data = fixture(); if (options.postpaid) Object.assign(data.authorized.authorization.reservation, { billingPolicy: 'postpaid', reservedMicrousd: 0 }); let checks = 0; const actual = vi.fn(async () => options.generation ? options.generation() : Response.json({ success: true, result: { id: 'response_one', model, choices: [{ index: 0, message: { role: 'assistant', content: 'private result' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } } }));
   const wire = vi.fn<typeof fetch>(async (url, init) => {
     if (String(url).endsWith('/qualified/dispatch-check')) { const denied = await options.check?.(++checks); return denied ?? Response.json(data.checked); }
     if (String(url).endsWith('/qualified/authorize')) { data.authorized.authorization.reservation.maxCostMicrousd = JSON.parse(String(init?.body)).maxCostMicrousd; await options.authorize?.(); return Response.json(data.authorized); }
     if (String(url) === data.route.descriptor.upstream.endpoint) return actual();
     throw new Error('Unexpected network target');
   });
-  const platform = { check: vi.fn(), authorize: vi.fn(), start: vi.fn(async () => { await options.start?.(); return { reservationId: 'reservation_one', requestId: 'request_one', tokenId: 'token_one' }; }),
-    release: vi.fn(async () => ({ reservationId: 'reservation_one', tokenId: 'token_one', status: 'released', reason: 'pre_upstream_failure' })), finalize: vi.fn(async () => ({})) };
+  const platform = { check: vi.fn(), authorize: vi.fn(), start: vi.fn(async (input: { executionId: string }) => { await options.start?.(); return { reservationId: 'reservation_one', requestId: 'request_one', tokenId: 'token_one', executionId: input.executionId, startedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 60_000).toISOString() }; }),
+    release: vi.fn(async () => ({ reservationId: 'reservation_one', tokenId: 'token_one', status: 'released', reason: 'pre_upstream_failure' })), finalize: vi.fn(async () => ({})), terminal: vi.fn(async () => ({})) };
   const relay = createFundedRelay({ ...config(), managedRouteControl: options.settings === false ? undefined : data.settings, fetch: wire, now: options.at ?? (() => now),
     platformClient: platform as unknown as FundedPlatformClient, requestIdFactory: () => 'request_one' });
   const app = new Hono(); relay.register(app); app.all('*', c => c.text('unguarded fallback', 418)); return { app, relay, actual, wire, platform, data };
@@ -50,6 +50,12 @@ describe('qualified route at actual proxy send and release', () => {
     expect(new Headers(init?.headers).get('cf-aig-skip-cache')).toBe('true'); expect(JSON.parse(String(init?.body)).store).toBe(false);
     for (const [url, init] of f.wire.mock.calls.filter(([url]) => String(url).includes('/qualified/'))) { expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${'c'.repeat(32)}`);
       const body = JSON.parse(String(init?.body)); expect(body.expectedDigest).toBe(f.data.route.digest); expect(body).not.toHaveProperty('requestClass'); expect(init?.redirect).toBe('error'); }
+  });
+  it('does not convert qualified credit authority into customer postpaid billing', async () => {
+    const f = setup({ postpaid: true });
+    try { const r = request(); expect((await f.app.request(r.path, r.init)).status).toBe(503);
+      expect(f.platform.start).not.toHaveBeenCalled(); expect(f.actual).not.toHaveBeenCalled();
+    } finally { await f.relay.close(); }
   });
   it('never falls through when disabled or missing reviewed configuration', async () => {
     const f = setup({ settings: false }); try { const r = request(); expect((await f.app.request(r.path, r.init)).status).toBe(503); expect(f.actual).not.toHaveBeenCalled(); } finally { await f.relay.close(); }
@@ -102,7 +108,8 @@ describe('qualified route at actual proxy send and release', () => {
   it('denies provider result after response wait without returning Google content', async () => {
     let deny = false; const cancelled = vi.fn(); const f = setup({ generation: async () => { deny = true; return new Response(new ReadableStream({ pull(c) { c.enqueue(new TextEncoder().encode('private result')); }, cancel: cancelled })); }, check: async () => deny ? Response.json({ error: 'denied' }, { status: 503 }) : undefined });
     try { const r = request(); const response = await f.app.request(r.path, r.init); expect(response.status).toBe(503); expect(await response.text()).not.toContain('private result'); expect(cancelled).toHaveBeenCalled(); } finally { await f.relay.close(); }
-    expect(f.platform.finalize).toHaveBeenCalledWith(expect.objectContaining({ mode: 'conservative' }), expect.any(AbortSignal));
+    expect(f.platform.terminal).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'usage_unknown', terminalState: 'failed' }), expect.any(AbortSignal));
+    expect(f.platform.finalize).not.toHaveBeenCalled();
   });
   it('does not release a chunk if revoked while its release check awaits', async () => {
     const f = setup({ check: async count => count >= 5 ? Response.json({ error: 'denied' }, { status: 503 }) : undefined });

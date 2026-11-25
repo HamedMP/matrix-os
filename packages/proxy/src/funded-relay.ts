@@ -507,6 +507,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const maxCostMicrousd = estimate.amountMicrousd;
 
+    // Qualified Gmail uses a separately approved prepaid usage hold.
+    const billing = qualified ? "prepaid" : checked.customerBilling;
     let authorization: Awaited<ReturnType<FundedPlatformClient["authorize"]>>;
     try {
       const claimKey = fundedClaimKey(c);
@@ -516,7 +518,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         modelId: model.canonicalModelId,
         maxCostMicrousd,
         billingMode: "usage",
-        ...(checked.customerBilling === "prepaid" ? {} : { billingPolicy: "postpaid" as const }), // Free runtimes prepay.
+        ...(billing === "prepaid" ? {} : { billingPolicy: "postpaid" as const }), // Free runtimes prepay.
         ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
     } catch (error) {
@@ -531,7 +533,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const reservation = authorization.reservation;
     if (!identitiesMatch(identity, authorization.identity)
-      || !customerAuthorizationMatches(checked.customerBilling, reservation, { requestId, modelId: model.canonicalModelId, maxCostMicrousd })) {
+      || !customerAuthorizationMatches(billing, reservation, { requestId, modelId: model.canonicalModelId, maxCostMicrousd })) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
@@ -572,7 +574,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (result.mode === "conservative") {
         if (!await terminal.unknown(terminalState) && closing) terminalComplete = false;
       } else {
-        settlementQueue.enqueue(customerExactFinalization(checked.customerBilling, finalizationLocator, result, terminalState));
+        settlementQueue.enqueue(customerExactFinalization(billing, finalizationLocator, result, terminalState));
       }
     };
 
