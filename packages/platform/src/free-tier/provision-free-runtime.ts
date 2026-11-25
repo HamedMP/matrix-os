@@ -4,6 +4,7 @@ import {
   getActiveUserMachineByClerkId,
   type PlatformDB,
 } from '../db.js';
+import { abandonExpiredUnattachedCheckout, unattachedCheckoutExpiryCutoff } from '../database/checkout-attempts.js';
 import { getActivePrebillingIntent } from '../prebilling-provisioning-store.js';
 import type { MetalProvisioner } from '../substrates/metal-provisioner.js';
 import type { FreeTierConfig } from './config.js';
@@ -79,21 +80,28 @@ type Admission =
   | { kind: 'waitlisted' | 'busy' | 'runtime_exists' | 'plan_unavailable' | 'deletion_pending' | 'checkout_pending' };
 
 /**
- * A paid checkout for the free slot is in flight: a `creating` claim, an `open` attempt (whatever
- * its age; a Stripe session stays open for up to 24 hours), a `paid` attempt
- * no subscription event for the slot has followed yet, or an active
- * prebilling intent. A `paid` attempt stays `paid` forever, so one whose
- * subscription has since been recorded (and maybe canceled) is history, not
- * a payment still settling. The journey settles only pre-activation, so it
- * offers the free plan to the same former paid owners.
+ * Check creating claims that can still yield a session, all open attempts,
+ * paid attempts without a later subscription event, and prebilling intents.
  */
-async function paidCheckoutPending(db: PlatformDB, clerkUserId: string): Promise<boolean> {
+async function paidCheckoutPending(db: PlatformDB, clerkUserId: string, at: Date): Promise<boolean> {
   const attempt = await db.executor.selectFrom('billing_checkout_attempts as a').select('a.id')
     .where('a.clerk_user_id', '=', clerkUserId).where('a.runtime_slot', '=', FREE_RUNTIME_SLOT)
-    .where((eb) => eb.or([eb('a.status', 'in', ['creating', 'open']), eb.and([eb('a.status', '=', 'paid'),
-      eb.not(eb.exists(eb.selectFrom('billing_subscriptions as s').select(sql<number>`1`.as('one'))
-        .whereRef('s.clerk_user_id', '=', 'a.clerk_user_id').whereRef('s.runtime_slot', '=', 'a.runtime_slot')
-        .where(sql<boolean>`s.latest_event_created_at::timestamptz >= a.created_at::timestamptz`)))])]))
+    .where((eb) => eb.or([
+      eb('a.status', '=', 'open'),
+      eb.and([
+        eb('a.status', '=', 'creating'),
+        eb.or([
+          eb('a.stripe_session_id', 'is not', null),
+          eb('a.created_at', '>=', unattachedCheckoutExpiryCutoff(at)),
+        ]),
+      ]),
+      eb.and([
+        eb('a.status', '=', 'paid'),
+        eb.not(eb.exists(eb.selectFrom('billing_subscriptions as s').select(sql<number>`1`.as('one'))
+          .whereRef('s.clerk_user_id', '=', 'a.clerk_user_id').whereRef('s.runtime_slot', '=', 'a.runtime_slot')
+          .where(sql<boolean>`s.latest_event_created_at::timestamptz >= a.created_at::timestamptz`))),
+      ]),
+    ]))
     .limit(1).executeTakeFirst();
   if (attempt) return true;
   return Boolean(await getActivePrebillingIntent(db, clerkUserId, FREE_RUNTIME_SLOT));
@@ -128,7 +136,8 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       if (await hasOtherLiveRuntime(trx, clerkUserId)) return { kind: 'runtime_exists' };
       if (!await paidRightsEnded(trx, clerkUserId, atIso)) return { kind: 'plan_unavailable' };
       // Checked under the billing owner lock, which checkout creation also takes.
-      if (await paidCheckoutPending(trx, clerkUserId)) return { kind: 'checkout_pending' };
+      await abandonExpiredUnattachedCheckout(trx, clerkUserId, FREE_RUNTIME_SLOT, at);
+      if (await paidCheckoutPending(trx, clerkUserId, at)) return { kind: 'checkout_pending' };
       // Already admitted: the invite was redeemed and the owner is counted.
       if (free) return { kind: 'admitted' };
       if (config.inviteRequired) {
@@ -181,14 +190,15 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       const entitlement = await db.executor.selectFrom('billing_entitlements').select('source')
         .where('clerk_user_id', '=', clerkUserId).executeTakeFirst();
       const free = entitlement?.source === 'free';
-      const atIso = now().toISOString();
+      const at = now();
+      const atIso = at.toISOString();
       // The same order as admission, so the journey, billing status, and provisioning agree.
       if (entitlement && !free && !await storedEntitlementEnded(db, clerkUserId, atIso)) return false;
       // A metal runtime without a free entitlement belongs to another plan.
       if (!free && current && current.status !== 'failed') return false;
       if (await hasOtherLiveRuntime(db, clerkUserId)) return false;
       if (!await paidRightsEnded(db, clerkUserId, atIso)) return false;
-      if (await paidCheckoutPending(db, clerkUserId)) return false;
+      if (await paidCheckoutPending(db, clerkUserId, at)) return false;
       if (free) return true;
       if (!config.inviteRequired) return true;
       const invite = await getFreeTierInvite(db, clerkUserId);

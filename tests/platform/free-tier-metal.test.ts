@@ -8,6 +8,7 @@ import { loadCustomerVpsCloudInitTemplate } from '../../packages/platform/src/cu
 import type { CustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
 import {
+  claimCheckoutAttempt,
   getBillingEntitlement,
   insertCheckoutAttempt,
   insertUserMachine,
@@ -555,6 +556,28 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(await getBillingEntitlement(db, OWNER)).toBeUndefined();
     expect((await getFreeTierInvite(db, OWNER))?.consumedAt).toBeNull();
     expect(hostd.createVm).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { ageHours: 46, expectedStatus: 409, storedStatus: 'creating' },
+    { ageHours: 49, expectedStatus: 202, storedStatus: 'abandoned' },
+  ])('handles an unattached checkout claim that is $ageHours hours old', async ({ ageHours, expectedStatus, storedStatus }) => {
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    const createdAt = new Date(Date.now() - ageHours * 60 * 60_000).toISOString();
+    await claimCheckoutAttempt(db, {
+      id: 'unattached', clerkUserId: OWNER, runtimeSlot: 'primary',
+      planSlug: 'matrix_starter', billingInterval: 'monthly', regionSlug: 'eu', createdAt,
+    });
+    const free = createFreeRuntimeProvisioner({
+      db, config: { maxRuntimes: 10, inviteRequired: true }, metal: metalProvisioner(), env: {},
+    });
+
+    expect(await free.isEligible(OWNER)).toBe(expectedStatus === 202);
+    const response = await request(routesFor().routes, FREE);
+    expect(response.status).toBe(expectedStatus);
+    expect(await db.executor.selectFrom('billing_checkout_attempts').select(['status', 'stripe_session_id'])
+      .where('id', '=', 'unattached').executeTakeFirst()).toEqual({ status: storedStatus, stripe_session_id: null });
+    expect(hostd.createVm).toHaveBeenCalledTimes(expectedStatus === 202 ? 1 : 0);
   });
 
   it('gives no free admission while an older paid checkout session is still open', async () => {
