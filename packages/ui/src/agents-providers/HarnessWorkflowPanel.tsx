@@ -42,6 +42,14 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       </button>
     ) : null;
 
+  const accountActions = renderAccountActions?.(disabled || pending || connecting || reconciling
+    || (operationId !== null && operation?.id !== operationId));
+  // Codex has one primary action per state: Reconnect only while its saved login needs sign-in.
+  const savedConnectionAction = onConnectSaved && !connected ? <button type="button"
+    className={harness.harness === "codex" ? "matrix-ap-button matrix-ap-button-primary" : "matrix-ap-button"}
+    disabled={disabled || connectSavedDisabled || pending || connecting || reconciling || (harness.harness === "codex" && operationId !== null && operation?.id !== operationId)}
+    onClick={() => reconnectOption ? void start("login", reconnectOption.method === "terminal", reconnectOption) : void run(onConnectSaved)}>{harness.harness === "codex" ? "Reconnect" : "Connect saved connection"}</button> : null;
+
   return (
     <section
       ref={connectionPanel}
@@ -56,11 +64,9 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
           || (operationId !== null && operation?.id !== operationId)}
           onClick={() => void start("login", adoptOption.method === "terminal", adoptOption)}>Use connected Claude account</button>
       </> : null}
-      {renderAccountActions?.(disabled || pending || connecting || reconciling
-        || (operationId !== null && operation?.id !== operationId))}
-      {onConnectSaved && !connected ? <button type="button" className="matrix-ap-button"
-        disabled={disabled || connectSavedDisabled || pending || connecting || reconciling || (harness.harness === "codex" && operationId !== null && operation?.id !== operationId)}
-        onClick={() => reconnectOption ? void start("login", reconnectOption.method === "terminal", reconnectOption) : void run(onConnectSaved)}>{harness.harness === "codex" ? "Reconnect" : "Connect saved connection"}</button> : null}
+      {harness.harness === "codex" && (savedConnectionAction || accountActions)
+        ? <div className="matrix-ap-workflow-actions" role="group" aria-label="Codex connection actions">{savedConnectionAction}{accountActions}</div>
+        : <>{accountActions}{savedConnectionAction}</>}
       {harness.installState === "installed" && !connectionPresent
         && !capability.connectionOptions && !inlineLogin && !terminalOnly && capability.apiKeyProviders.length === 0 ? (
         <p className="matrix-ap-help" role="status">

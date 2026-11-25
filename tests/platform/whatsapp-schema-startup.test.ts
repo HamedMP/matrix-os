@@ -7,6 +7,7 @@ import { runPlatformMigration } from '../../packages/platform/src/migration-runn
 import { migratePlatformSchema } from '../../packages/platform/src/database/migrate.js';
 import { PLATFORM_SCHEMA_REVISION } from '../../packages/platform/src/database/migration-revision.js';
 import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
+import { SITES_SCHEMA_REVISION } from '../../packages/platform/src/sites/migration.js';
 import { FUNDED_CONSERVATIVE_FENCE_REVISION } from '../../packages/platform/src/database/funded-conservative-fence-revision.js';
 import { FUNDED_PROBE_CACHE_REVISION } from '../../packages/platform/src/database/funded-probe-cache-revision.js';
 import { FUNDED_PRICING_REVIEW_REVISION } from '../../packages/platform/src/database/funded-pricing-review-revision.js';
@@ -89,7 +90,7 @@ describe('WhatsApp schema startup', () => {
         { scope: 'funded-pricing-review', ...FUNDED_PRICING_REVIEW_REVISION },
         { scope: 'funded-probe-cache', ...FUNDED_PROBE_CACHE_REVISION },
         { scope: 'preview-pairs', generation: 5, fingerprint: 'collaboration-preview-pair-publisher-v5' },
-        { scope: 'sites', generation: 3, fingerprint: 'public-app-sites-email-invitations-v3' },
+        { scope: 'sites', ...SITES_SCHEMA_REVISION },
         { scope: 'whatsapp', ...WHATSAPP_SCHEMA_REVISION },
       ]);
       await runPlatformStartupMigrations(db);

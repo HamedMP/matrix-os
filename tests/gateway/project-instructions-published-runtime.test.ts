@@ -105,7 +105,7 @@ async function runCodex(input: {
     providerEventPath: eventPath, providerThreadId: input.providerThreadId,
     model: "gpt-5.6-sol", prompt: input.prompt, approvalPolicy: "never",
     sandbox: { enabled: true, mode: "read-only" },
-  });
+  }, CODEX_VERIFIED_VERSION);
   const child = spawn(launch.command, launch.args, {
     cwd: launch.cwd,
     env: { ...isolationEnvironment(input.homePath), CODEX_HOME: input.codexHome,

@@ -941,7 +941,7 @@ describe("Chat collaboration sharing", () => {
         if (path.includes("/discussion/messages")) return { messages: [], latestSequence: "0" };
         if (path.includes("messages")) return { messages: [] };
         if (path.endsWith("/chat")) return { id: chatId, scopeId, title: "Toggle Chat", lifecycle: "active", revision: "1", messageCount: "0" };
-        if (path.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
+        if (path.split("?")[0]!.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
         return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
           revision: "1", authEpoch: "1", authorityGeneration: "1", role: "viewer",
           capabilities: { read: true, discuss: false, manageMembers: false, requestAi: false } };
@@ -966,7 +966,7 @@ describe("Chat collaboration sharing", () => {
         if (path.endsWith("/chat")) return {
           id: chatId, scopeId, title: "Reconnect Chat", lifecycle: "active", revision: "1", messageCount: "0",
         };
-        if (path.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
+        if (path.split("?")[0]!.endsWith("/chat/requests")) throw new Error("SharedAiUnavailable");
         return { id: scopeId, ownerId: "user_owner", kind: "chat", resourceId: chatId, membershipMode: "direct", lifecycle: "shared",
           revision: "1", authEpoch: "1", authorityGeneration: "1", role: "editor",
           capabilities: { read: true, discuss: true, manageMembers: false, requestAi: false } };

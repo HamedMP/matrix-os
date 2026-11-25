@@ -1,28 +1,27 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { BrandCard, CtaButton, palette, fonts, rabbitMarkSvg } from "@matrix-os/brand";
 import { sharedAppDesktopUrl, type SharedAppLink } from "@matrix-os/contracts";
 import { SharedAppBadge } from "@matrix-os/ui/collaborative-app-sharing";
+import { SHARED_APP_DESKTOP_SCHEME } from "./shared-app-launch";
 
-/** Stable desktop app scheme; Canary registers its own (desktop channel identity). */
-const DESKTOP_SCHEME = "matrixos";
-const CANARY_SCHEME = "matrixos-canary";
-
-/** Tries the desktop app once on load; the buttons stay as the explicit fallback. */
+/**
+ * Hand-off card. The automatic attempt is the server-rendered
+ * `SharedAppLaunchScript`; this card only shows progress and the explicit
+ * fallback buttons.
+ */
 export function SharedAppHandoff({ link, downloadUrl }: { link: SharedAppLink; downloadUrl: string }) {
-  const desktopUrl = sharedAppDesktopUrl(DESKTOP_SCHEME, link);
-  const canaryUrl = sharedAppDesktopUrl(CANARY_SCHEME, link);
-  const attempted = useRef(false);
+  const desktopUrl = sharedAppDesktopUrl(SHARED_APP_DESKTOP_SCHEME, link);
   const [opening, setOpening] = useState(true);
   useEffect(() => {
-    if (attempted.current) return;
-    attempted.current = true;
-    window.location.assign(desktopUrl);
     const timer = setTimeout(() => setOpening(false), 4_000);
     return () => clearTimeout(timer);
-  }, [desktopUrl]);
+  }, []);
   const appName = link.app ?? "Shared app";
   const orgName = link.org ?? null;
+  // Same colour key as the member launcher (the org id); links copied before
+  // the `orgId` hint existed fall back to the org name.
+  const badgeOrganization = orgName ? { organizationId: link.orgId ?? orgName, name: orgName } : null;
   return <div className="flex min-h-dvh flex-col" style={{ background: palette.pageBg, color: palette.brandInk, fontFamily: fonts.sans }}>
     <header className="flex h-14 items-center gap-2.5 px-6">
       <span aria-hidden="true" className="inline-flex" style={{ color: palette.brandTeal }} dangerouslySetInnerHTML={{ __html: rabbitMarkSvg("h-7 w-5") }} />
@@ -34,7 +33,7 @@ export function SharedAppHandoff({ link, downloadUrl }: { link: SharedAppLink; d
           <span className="relative block size-[72px]">
             <span aria-hidden="true" className="flex size-[72px] items-center justify-center rounded-[18px] text-[28px] font-semibold"
               style={{ background: palette.cream, color: palette.forestDeep }}>{appName.charAt(0).toUpperCase()}</span>
-            {orgName ? <SharedAppBadge appName={appName} organization={{ organizationId: orgName, name: orgName }} /> : null}
+            {badgeOrganization ? <SharedAppBadge appName={appName} organization={badgeOrganization} /> : null}
           </span>
           <div className="flex flex-col gap-1">
             <h1 id="shared-app-title" className="m-0 text-xl font-semibold tracking-[-0.01em]" style={{ fontFamily: fonts.heading }}>{appName}</h1>
@@ -50,9 +49,6 @@ export function SharedAppHandoff({ link, downloadUrl }: { link: SharedAppLink; d
           </CtaButton>
           <p className="m-0 text-[13px]" style={{ color: palette.mutedFg }}>
             Don’t have the app? <a href={downloadUrl} className="font-medium" style={{ color: palette.brandInk }} rel="noreferrer">Download Matrix</a>
-          </p>
-          <p className="m-0 text-xs" style={{ color: palette.subtle }}>
-            Using Matrix Canary? <a href={canaryUrl} className="font-medium" style={{ color: palette.forest }}>Open in Canary</a>
           </p>
           <div className="w-full border-t pt-3.5 text-xs" style={{ borderColor: palette.border, color: palette.mutedFg }}>
             {orgName ? `Only ${orgName} members can open this app.` : "Only members of the sharing organization can open this app."}

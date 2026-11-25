@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ProviderSettingsSnapshotSchema } from "@matrix-os/contracts";
+import { sessionProviderSettingsSnapshotCache } from "@matrix-os/ui";
 import nativeInput from "../fixtures/claude-native-authenticated-off.json";
 
 // Keep the Web adapter, shared view, controller and cadence real. Only the
@@ -49,7 +50,7 @@ beforeEach(() => {
   service.connections.mockReset().mockResolvedValue({ connections: [] });
   service.refreshConnections.mockReset(); service.authorizeConnection.mockReset();
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); sessionProviderSettingsSnapshotCache.clear(); });
 
 it("renews Web native proof every 20 seconds without repeating workflow or Bot discovery, then explicitly refreshes once", async () => {
   render(<AgentSection automaticCreditRefreshEnabled />); await advance();

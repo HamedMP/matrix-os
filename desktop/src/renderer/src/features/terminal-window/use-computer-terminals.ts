@@ -4,7 +4,7 @@ import { resetAttachManager } from "../terminal/terminal-runtime";
 import { onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import {
-  createComputerTab, listComputerTabs, terminalsFailure,
+  createComputerTab, createFailure, listComputerTabs, terminalsFailure, type ComputerCreateFailure,
   type ComputerTerminalTab, type ComputerTerminalsFailure,
 } from "./computer-terminals";
 
@@ -25,7 +25,7 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
   const [active, setActive] = useState<ActiveTerminal | null>(null);
   const [creating, setCreating] = useState<string | null>(null);
   // The computer whose last "New terminal" did not take effect.
-  const [createFailed, setCreateFailed] = useState<string | null>(null);
+  const [createFailed, setCreateFailed] = useState<{ slot: string; failure: ComputerCreateFailure } | null>(null);
   const generations = useRef<Record<string, number>>({});
   const boundSlot = useRef<string | null>(null);
   // Counts signed-in sessions seen by this hook. Work started in one session
@@ -131,7 +131,9 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
       if (terminalsFailure(error) === "reconnect") {
         setTerminals((existing) => ({ ...existing, [slot]: { status: "failed", reason: "reconnect" } }));
       } else {
-        setCreateFailed(slot);
+        const failure = createFailure(error);
+        console.warn("[terminal-window] tab create failure:", failure.kind, "status" in failure ? failure.status : "");
+        setCreateFailed({ slot, failure });
       }
     } finally {
       // The session change already cleared this; do not clear the next session's.
@@ -146,5 +148,8 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
     setActive(null);
   }, []);
 
-  return { terminals, active, creating, createFailed, attachEpoch, load, open, create, clearActive };
+  /** The API for one computer, addressed through the trusted core's credential for it. */
+  const api = useCallback((slot: string): ApiClient | null => client?.forRuntime(slot) ?? null, [client]);
+
+  return { terminals, active, creating, createFailed, attachEpoch, load, open, create, clearActive, api };
 }

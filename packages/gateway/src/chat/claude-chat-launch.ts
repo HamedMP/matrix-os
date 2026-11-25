@@ -177,6 +177,9 @@ export async function prepareClaudeNativeRecovery(options: {
   const args = launch.args.filter((_arg, index, values) => values[index] !== "--mcp-config" && values[index - 1] !== "--mcp-config");
   const source = await options.resolveSessionSource({ homePath: options.homePath, command, cwd: launch.cwd, args, env, input });
   signal.throwIfAborted();
-  if (!source.schedulingAllowed || source.fingerprint !== recovery.expectedSourceFingerprint) return null;
-  return { command, args, cwd: launch.cwd, env, sourceFingerprint: source.fingerprint, sessionId: recovery.sessionId };
+  if (!source.schedulingAllowed) return null;
+  const matching = source.fingerprint === recovery.expectedSourceFingerprint ? { args, fingerprint: source.fingerprint }
+    : source.legacy?.fingerprint === recovery.expectedSourceFingerprint ? source.legacy : undefined;
+  if (!matching) return null;
+  return { command, args: matching.args, cwd: launch.cwd, env, sourceFingerprint: matching.fingerprint, sessionId: recovery.sessionId };
 }

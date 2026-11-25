@@ -16,7 +16,7 @@ describe("scope Codex qualification agrees with the owner CLI contract", () => {
   });
   it("admits the qualified executable and refuses older or unqualified newer versions", () => {
     expect(parseScopeRuntimeWorkerArguments([...invocation, CODEX_VERIFIED_VERSION, "7"])).toMatchObject({adapterId:"codex",harnessVersion:CODEX_VERIFIED_VERSION});
-    for (const version of ["0.154.0", "0.156.1", "0.162.2"]) {
+    for (const version of ["0.154.0", "0.162.1", "0.170.0", "0.171.1"]) {
       expect(() => parseScopeRuntimeWorkerArguments([...invocation, version, "7"])).toThrow(expect.objectContaining({name:"ScopeRuntimeInvocationError"}));
     }
   });

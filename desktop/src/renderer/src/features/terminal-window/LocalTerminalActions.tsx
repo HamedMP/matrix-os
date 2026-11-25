@@ -17,17 +17,27 @@ const secondaryText = { color: "var(--text-secondary, var(--color-muted-foregrou
 const itemClass = "flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-[12px] outline-none hover:bg-black/5 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50";
 
 /** The "+" menu, as the app's other menus: it overlays the list and closes on any outside click or Escape. */
-export function NewLocalTerminalMenu({ creating, onCreate }: {
+export function NewLocalTerminalMenu({ creating, onCreate, compact = false }: {
   creating: boolean;
   onCreate(launch: { agent?: LocalTerminalAgent }): void;
+  /** Just the `+`, as beside a machine in the sidebar. */
+  compact?: boolean;
 }) {
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
-        <button type="button" disabled={creating} className={itemClass} style={secondaryText}>
-          <Plus size={12} aria-hidden="true" className="shrink-0" />
-          {creating ? "Starting…" : "New terminal"}
-        </button>
+        {compact ? (
+          <button type="button" disabled={creating} aria-label="New terminal" title={creating ? "Starting…" : "New terminal"}
+            className="no-drag flex size-6 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50"
+            style={secondaryText}>
+            <Plus size={13} aria-hidden="true" />
+          </button>
+        ) : (
+          <button type="button" disabled={creating} className={itemClass} style={secondaryText}>
+            <Plus size={12} aria-hidden="true" className="shrink-0" />
+            {creating ? "Starting…" : "New terminal"}
+          </button>
+        )}
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content

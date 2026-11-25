@@ -1200,6 +1200,21 @@ describe("collaboration gateway routes", () => {
       requests: [{ id: "qturn_shared_route_1" }],
       resourceRevision: "3",
     });
+    const claimed = await new ChatRepository(fixture.db).claimNextQueuedTurn({ type: "personal", ownerId: collaborationActors.owner }, {
+      chatId: collaborationIds.chat, collaborationScopeId: collaborationIds.scope,
+      turnId: "cturn_inline_status", runId: "run_inline_status", messageId: "msg_inline_status", claimedAt: now,
+    });
+    expect(claimed).not.toBeNull();
+    const legacy = await signedJson({ actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "GET", path });
+    expect((await legacy.json()).requests[0]).not.toHaveProperty("messageId");
+    const current = await signedJson({ actorId: collaborationActors.owner, scopeId: collaborationIds.scope,
+      method: "GET", path, query: "includeMessageIds=1" });
+    expect(current.status).toBe(200);
+    expect((await current.json()).requests[0]).toMatchObject({ messageId: "msg_inline_status" });
+    for (const query of ["includeMessageIds=0", "includeMessageIds=1&includeMessageIds=1"]) {
+      const invalid = await signedJson({ actorId: collaborationActors.owner, scopeId: collaborationIds.scope, method: "GET", path, query });
+      expect(invalid.status).toBe(400);
+    }
   });
 
   it("keeps history and discussion available when the bound Provider is unsupported", async () => {

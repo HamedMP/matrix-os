@@ -26,7 +26,7 @@ export async function codexFixture(native: { intent?: { args: string[]; stdin?: 
   const records = join(home, "native-requests.jsonl"), fixture = join(home, "native-fixture.json"), executable = join(home, "named-codex-native-fixture.mjs");
   const controlFile = join(home, "native-control");
   await writeFile(fixture, JSON.stringify({ records, controlFile, ...native }));
-  await writeFile(executable, `#!${process.execPath}\nif (process.argv.includes('--version')) console.log('codex 0.162.1'); else { process.env.TEST_ROUTINE_NATIVE_FILE = ${JSON.stringify(fixture)}; await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/codex-routine-process.mjs")).href)}); }\n`);
+  await writeFile(executable, `#!${process.execPath}\nif (process.argv.includes('--version')) console.log('codex 0.171.0'); else { process.env.TEST_ROUTINE_NATIVE_FILE = ${JSON.stringify(fixture)}; await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/codex-routine-process.mjs")).href)}); }\n`);
   await chmod(executable, 0o700);
   const overflow = native.wrapperOverflow ? await managedLaunchOverflow(home) : undefined;
   const privateFrames: ManagedShimFrame[] = [];

@@ -26,7 +26,7 @@ describe("shared platform speech browser primitives", () => {
 
     await client.capabilities();
     const [url, init] = fetcher.mock.calls[0]!;
-    expect(url).toBe("https://app.matrix-os.com/vm/alice/api/speech/capabilities?runtime=studio");
+    expect(url).toBe("https://app.matrix-os.com/vm/alice/api/speech/capabilities?runtime=studio&dictation=extended");
     expect(init?.headers).toEqual({ accept: "application/json" });
   });
 

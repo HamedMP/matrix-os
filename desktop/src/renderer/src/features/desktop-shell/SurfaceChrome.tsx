@@ -12,6 +12,7 @@ export interface SurfaceChromeSpec {
   rightActions?: ReactNode;
   leftPaneWidth?: number;
   rightPaneWidth?: number;
+  actionsBeforeRightPane?: boolean;
 }
 
 export interface SurfaceChromeHost {

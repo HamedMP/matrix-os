@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, { useMemo } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationMutationRequestSchema,
@@ -89,17 +89,20 @@ function Host({ api }: { api: ReturnType<typeof createSiteClient> }) {
     <SharePanel share={share} appSlug={APP} appName="Sales CRM" client={api} ownerInitial="N" onClose={vi.fn()} />
   </>;
 }
-const ready = () => waitFor(() => expect(screen.queryByText("Loading sharing settings…")).toBeNull());
+const ready = () => waitFor(() => expect(screen.queryByRole("status", { name: "Loading" })).toBeNull());
+const openPrivate = () => fireEvent.mouseDown(screen.getByRole("tab", { name: /Private/ }), { button: 0 });
 async function invite() {
+  openPrivate();
   fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "sara@example.com" } });
   fireEvent.click(screen.getByRole("button", { name: "Invite", exact: true }));
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-it("keeps invitations disabled when the server capability is false", async () => {
+it("hides invitations for an unpublished app when the server capability is false", async () => {
   const f = fixture(null, false);
   render(<Host api={f.api} />); await ready();
-  expect(screen.getByLabelText("Email address")).toHaveProperty("disabled", true);
+  expect(screen.queryByRole("tab", { name: /Private/ })).toBeNull();
+  expect(screen.queryByLabelText("Email address")).toBeNull();
   expect(f.post).not.toHaveBeenCalled();
   expect(f.get.mock.calls.some(([path]) => path.includes("/invitations?"))).toBe(false);
 });
@@ -128,6 +131,16 @@ it("requires confirmation before atomically replacing one-time links with email 
   expect(f.patch.mock.calls[0][1]).toMatchObject({ accessMode: "private_email", baseRevision: 3 });
   expect(f.remove).not.toHaveBeenCalled();
   await waitFor(() => expect(screen.getByTestId("revision").textContent).toBe("5"));
+});
+
+it("lets the owner stop a live invite-only site without making it public", async () => {
+  const f = fixture(site, true, [invitation()]);
+  f.remove.mockImplementation(async () => { f.state.site = { ...site, status: "unpublished", revision: 4 }; return f.state.site; });
+  render(<Host api={f.api} />); await ready();
+  fireEvent.click(screen.getByRole("button", { name: "Stop sharing privately" }));
+  await waitFor(() => expect(f.remove).toHaveBeenCalledWith(`/api/apps/${APP}/site`, { baseRevision: 3 }, expect.anything()));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Stop sharing privately" })).toBeNull());
+  expect(f.patch).not.toHaveBeenCalled();
 });
 
 it("resends an ambiguous invitation and revokes it using the new invitation and site revisions", async () => {
@@ -181,7 +194,7 @@ it("keeps successful mode changes visible when queuing an invitation fails, with
   render(<Host api={f.api} />); await ready(); await invite();
   fireEvent.click(screen.getByRole("button", { name: "Make invite-only" }));
   await waitFor(() => expect(screen.getByTestId("revision").textContent).toBe("4"));
-  expect(await screen.findByText("Only invited people can open it. They sign in with their email.")).toBeTruthy();
+  await waitFor(() => expect(within(screen.getByRole("tab", { name: /Private/ })).getByRole("img", { name: "on" })).toBeTruthy());
   expect(screen.getByRole("alert").textContent).toContain("Sharing is unavailable");
 });
 

@@ -98,6 +98,7 @@ import { createLegacyContainerRoutes } from './legacy-container-routes.js';
 import { createAppSessionRoutes } from './app-session-routes.js';
 import { createComputerRoutes } from './computer-routes.js';
 import { createPlatformMcpRoutes } from './mcp-registration.js';
+import type { ExternalCoreMcp } from './mcp-core-tools.js';
 import { registerCustomMcpRoutes } from './custom-mcp-route-registration.js';
 import { createUnavailableIntegrationRoutes } from './integration-route-fallback.js';
 import {
@@ -137,6 +138,9 @@ import {
   resolveAppDomainIdentity,
 } from './session-routing-identity.js';
 import { createSessionRoutingMiddleware } from './session-routing-middleware.js';
+import { runtimeProxyBodyLimitBytes } from './runtime-proxy-fetch.js';
+import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
+import type { SubstrateRegistry } from './substrates/registry.js';
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
@@ -270,6 +274,12 @@ export function createApp(deps: {
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
+  /** Spec 2691: Matrix Core tools for the external `/mcp` endpoint (set once Custom MCP starts). */
+  externalCoreMcp?: ExternalCoreMcp;
+  /** Organization → Connections admin routes (spec 2691); platform-owned, never proxied to a VPS. */
+  orgMcpRoutes?: Hono<any>;
+  /** Matrix Core repo webhook, admin sync, and VPS tarball routes (spec 2691); platform-owned. */
+  coreRepoRoutes?: Hono<any>;
   internalSyncRoutes?: Hono<any>;
   internalFundedAiRuntimeRoutes?: Hono<any>;
   internalFundedAiRelayRoutes?: Hono<any>;
@@ -293,6 +303,7 @@ export function createApp(deps: {
   sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
+  substrateRegistry?: SubstrateRegistry;
   env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
@@ -492,7 +503,7 @@ export function createApp(deps: {
   }
 
   if (deps.whatsappRoutes) app.route('/', deps.whatsappRoutes);
-  app.route('/', createPlatformMcpRoutes({ db, env: appEnv }));
+  app.route('/', createPlatformMcpRoutes({ db, env: appEnv, coreMcp: () => deps.externalCoreMcp }));
   app.route('/', createPreviewPairRoutes({ ...deps.previewPairs,
     enabled: (appEnv.MATRIX_PREVIEW_PAIR_ENABLED === 'true' || appEnv.MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED === 'true')
       && deps.previewPairs?.enabled === true }));
@@ -676,6 +687,8 @@ export function createApp(deps: {
   // Collaboration routes must precede personal session routing so recipients
   // without a provisioned computer reach the owner's registered authority.
   deps.collaboration?.register(app);
+  if (deps.orgMcpRoutes) app.route('/', deps.orgMcpRoutes);
+  if (deps.coreRepoRoutes) app.route('/', deps.coreRepoRoutes);
 
   registerFundedHostConfigRoutes(app, { db, platformSecret, env: appEnv });
   const browserApprovals = registerBrowserChatApprovalRoutes(app, { platformSecret, env: appEnv, lookup: deps.browserApprovalMachineLookup });
@@ -715,7 +728,15 @@ export function createApp(deps: {
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
   // - code.matrix-os.com -> Clerk session -> code-server on the user's VPS
-  app.use('*', bodyLimit({ maxSize: PROXY_BODY_LIMIT }), createSessionRoutingMiddleware({
+  const proxyBodyLimit = bodyLimit({ maxSize: PROXY_BODY_LIMIT });
+  const speechUploadBodyLimit = bodyLimit({
+    maxSize: runtimeProxyBodyLimitBytes('POST', '/api/speech/transcriptions', PROXY_BODY_LIMIT),
+  });
+  app.use('*', (c, next) => (
+    runtimeProxyBodyLimitBytes(c.req.method, c.req.path, PROXY_BODY_LIMIT) > PROXY_BODY_LIMIT
+      ? speechUploadBodyLimit(c, next)
+      : proxyBodyLimit(c, next)
+  ), createSessionRoutingMiddleware({
     db,
     docker,
     orchestrator,
@@ -736,6 +757,7 @@ export function createApp(deps: {
     getRuntimeEntitlementDecisionForUser,
     getGatewayUrlForHandle,
     logRouteError: logPlatformRouteError,
+    substrates: deps.substrateRegistry ?? createPlatformSubstrateRegistry(db),
   }));
 
   const integrationDeletionGuard=createAccountDeletionMutationGuard({db,env:appEnv,resolveOwner:c=>c.get('platformUserId') as string|undefined});

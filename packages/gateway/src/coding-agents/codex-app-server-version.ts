@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import contract from "./codex-app-server-contract.json" with { type: "json" };
 import { codexContractStatus, type CodexContractStatus } from "./codex-contract-version.js";
+import { codexExecContractStatus } from "./codex-version.js";
 
 const CodexVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
 const SchemaDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -47,4 +48,13 @@ export const CODEX_APP_SERVER_CONTRACT = CodexAppServerContractSchema.parse(cont
 
 export function codexAppServerContractStatus(versionOutput: string): CodexContractStatus {
   return codexContractStatus(versionOutput, CODEX_APP_SERVER_CONTRACT);
+}
+
+/** Structured sessions consume app-server RPCs and exec-format transcript events. */
+export function verifiedCodexWorkspaceVersion(output: string | undefined): string | undefined {
+  if (!output) return undefined;
+  const exec = codexExecContractStatus(output);
+  const appServer = codexAppServerContractStatus(output);
+  return exec.status === "verified" && appServer.status === "verified" && exec.version === appServer.version
+    ? exec.version : undefined;
 }

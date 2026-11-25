@@ -1,7 +1,7 @@
 import { createCodexRoutineChannel, CODEX_ROUTINE_TOOL } from "./codex-routine-channel.mjs";
 import { NativeReferenceSchema, ApprovalRequestSchema, InputRequestSchema, ToolLifecycleTypeSchema, ItemLifecycleSchema, RpcResponseSchema, RpcErrorSchema, ToolOutputDeltaSchema, AgentDeltaSchema, TokenUsageUpdatedSchema, TurnCompletedSchema } from "./codex-app-server-protocol.mjs";
 import { CodexControlSchema as ControlSchema } from "./codex-control-protocol.mjs";
-import { createCodexBrowserBootstrap, codexBrowserThreadConfig, codexBrowserChildEnvironment, CODEX_BROWSER_INSTRUCTIONS } from "./codex-browser-bootstrap.mjs";
+import { createCodexBrowserBootstrap, codexBrowserThreadConfig, codexBrowserChildEnvironment, CODEX_BROWSER_INSTRUCTIONS, createCodexBrowserTokenFile, canRenewCodexBrowserInPlace } from "./codex-browser-bootstrap.mjs";
 import { startCodexNativeProviderSession } from "./codex-native-provider-session.mjs";
 import { RunnerConfigSchema, ModelOptionSchema, PendingTurnSchema, EffortSchema, ServiceTierSchema } from "./codex-runner-config.mjs";
 import { createNativeCodexExecutionProof, assertNativeCodexThreadProvider, verifyNativeCodexHumanControl } from "./native-codex-execution-proof.mjs";
@@ -27,6 +27,8 @@ import { deferCodexNativeInput } from "./codex-deferred-input.mjs";
 import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 import { ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
 import { MATRIX_INTEGRATIONS_INSTRUCTIONS } from "./codex-matrix-integration-instructions.mjs";
+import { createCodexSendTiming } from "./codex-send-timing.mjs";
+import { discardUnrecordedNativeThread } from "./codex-unrecorded-thread.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -107,14 +109,23 @@ try {
   fail("Codex app-server runner configuration is invalid.");
 }
 
-try {
-  await assertCodexProviderVersion({ command, expectedVersion, cwd: process.cwd() });
-} catch (_error) {
-  fail("Codex provider version is not verified.");
-}
+// Overlap `codex --version` with the rest of startup (the private launch
+// handshake, proof setup, Browser lease wait). startNativeSession awaits it,
+// so no app-server is ever spawned before the version is verified.
+const providerVersionVerified = assertCodexProviderVersion({ command, expectedVersion, cwd: process.cwd() }).then(() => true, (error) => {
+  console.warn("[coding-agents] Codex provider version check failed:", error instanceof Error ? error.name : "UnknownError");
+  return false;
+});
 
 const toolOutputKey = process.env.MATRIX_HOME ? await tryLoadToolOutputKey(process.env.MATRIX_HOME) : undefined;
 const browserBootstrap = createCodexBrowserBootstrap(config.browserAttemptId);
+let browserTokenFile;
+try {
+  browserTokenFile = await createCodexBrowserTokenFile(Boolean(config.browserAttemptId));
+} catch (error) {
+  console.warn("[coding-agents] Browser bearer directory unavailable:", error instanceof Error ? error.name : "UnknownError");
+  fail("Codex Browser startup is unavailable.");
+}
 let currentBrowserLease;
 let nativeSession;
 let nativeGeneration, routineFeatureThread = false;
@@ -127,6 +138,8 @@ const routines = createCodexRoutineChannel({ enabled: config.routinePrivate, ini
 const artifactHomePath = resolve(dirname(eventPath), "../../..");
 const artifactStorageDirectory = join(artifactHomePath, "data", "chat-artifacts", "codex", "sha256");
 const artifactSessionId = basename(eventPath, extname(eventPath));
+const sendTiming = createCodexSendTiming(artifactSessionId, undefined, process.env.MATRIX_CODEX_SEND_TIMINGS === "1");
+sendTiming.runnerBoot();
 const artifactRoots = await Promise.all([process.cwd(), ...config.writableRoots].map((root) => realpath(root)));
 
 function withinArtifactRoot(path) {
@@ -384,6 +397,9 @@ async function persist(value) {
   }
   await eventFile.write(`${line}\n`);
   transcriptBytes += bytes;
+  if (value.type === "matrix.codex.assistant.delta" && typeof value.delta === "string" && value.delta.length > 0) {
+    sendTiming.firstPersistedText();
+  }
 }
 
 async function flushAssistantDelta(messageId) {
@@ -827,6 +843,7 @@ async function handleProviderMessage(raw) {
   }
   const delta = AgentDeltaSchema.safeParse(raw);
   if (delta.success) {
+    if (delta.data.params.delta.length > 0) sendTiming.firstProviderDelta();
     const messageId = itemIdentity(delta.data.params.turnId, delta.data.params.itemId);
     assertTrackedItemCapacity(assistantItemsWithDelta, messageId);
     await bufferAssistantDelta(messageId, delta.data.params.delta);
@@ -1194,8 +1211,12 @@ async function runTurn(threadId, turn) {
   activeTurnTokenUsage = undefined;
   activeTurnFailureReason = undefined;
   try {
+    const proofStartedAt = sendTiming.now();
     await verifyNativeSubscription?.(request);
+    sendTiming.mark("turn_account_proof", proofStartedAt);
+    const turnStartAt = sendTiming.now();
     const started = await request("turn/start", turnStartParams(threadId, turn));
+    sendTiming.mark("turn_start", turnStartAt);
     activeNativeTurnId = z.object({
       turn: z.object({ id: NativeReferenceSchema }).passthrough(),
     }).passthrough().parse(started).turn.id;
@@ -1240,9 +1261,17 @@ process.once("SIGTERM", () => { userStopped = true; stop(); });
 process.once("SIGINT", () => { userStopped = true; stop(); });
 
 async function startNativeSession(lease) {
+  if (!await providerVersionVerified) {
+    process.stderr.write("Codex provider version is not verified.\n");
+    throw new Error("provider_version_unverified");
+  }
   const resumeId = nativeThreadId ?? config.providerThreadId;
+  const turnIndex = terminalEventCount + 1;
+  const processStartedAt = sendTiming.now();
+  if (lease) await browserTokenFile?.write(lease.token);
+  else await browserTokenFile?.clear();
   nativeSession = await startCodexNativeProviderSession({ command, args: commandArgs,
-    cwd: process.cwd(), env: codexBrowserChildEnvironment(process.env, lease), signal: startupController.signal,
+    cwd: process.cwd(), env: codexBrowserChildEnvironment(process.env, lease, browserTokenFile?.path), signal: startupController.signal,
     onChild(value) {
       routines.end();
       nativeGeneration = randomUUID();
@@ -1262,43 +1291,92 @@ async function startNativeSession(lease) {
     },
     onRetry: async ({ label }) => { startupReconnecting = true; await persist({ type: "matrix.codex.tool.started", toolCallId: "startup_reconnect", kind: "phase", displayName: label }); },
   });
+  sendTiming.mark("process_ready", processStartedAt, turnIndex);
   childExit = nativeSession.closed; providerOutput = nativeSession.output; providerErrors = nativeSession.errors;
   if (startupReconnecting) { await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect", outcome: "success" }); startupReconnecting = false; }
   startupController.signal.throwIfAborted(); sendProvider({ method: "initialized", params: {} });
-  await verifyNativeSubscription?.(request);
-  const started = await request(resumeId ? "thread/resume" : "thread/start", {
+  const threadParams = {
     ...(resumeId ? { threadId: resumeId, excludeTurns: true } : routines.canRegister() ? { dynamicTools: [CODEX_ROUTINE_TOOL] } : {}), model: config.model,
     ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
     developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS + (lease ? "\n\n" + CODEX_BROWSER_INSTRUCTIONS : ""),
     serviceTier: config.serviceTier, cwd: process.cwd(), approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox, runtimeWorkspaceRoots: config.writableRoots, experimentalRawEvents: false,
-    config: codexBrowserThreadConfig(lease),
-  });
+    config: codexBrowserThreadConfig(lease, { tokenFile: Boolean(browserTokenFile) }),
+  };
+  // The account proof and thread/start (or resume) run concurrently: opening a
+  // thread only loads local state and starts MCP servers; no model request or
+  // billing happens until turn/start, which runTurn re-proves first. Nothing
+  // below (thread checks, persisted thread.started, turn/start) runs until both
+  // settle, and a proof failure wins over a thread failure, as when sequential.
+  const proofStartedAt = sendTiming.now();
+  const proof = verifyNativeSubscription?.(request);
+  const threadStartedAt = sendTiming.now();
+  // Settled into a value so a thread failure while the proof is pending (or
+  // after the proof already failed) is never an unhandled rejection.
+  const threadOutcome = request(resumeId ? "thread/resume" : "thread/start", threadParams)
+    .then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
+  try {
+    await proof;
+  } catch (proofError) {
+    // A new thread opened alongside a failed proof was never recorded; delete
+    // it (best effort, bounded) so no orphan Codex conversation remains. A
+    // resumed thread belongs to the chat and is left untouched.
+    if (!resumeId) await discardUnrecordedNativeThread(threadOutcome, request);
+    throw proofError;
+  }
+  sendTiming.mark("thread_account_proof", proofStartedAt, turnIndex);
+  const threadResult = await threadOutcome;
+  if (!threadResult.ok) throw threadResult.error;
+  const started = threadResult.value;
   if (config.nativeSubscription) assertNativeCodexThreadProvider(started);
   const identity = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() }).passthrough().parse(started).thread.id;
   if (resumeId && identity !== resumeId) throw new Error("provider_resume_identity_mismatch");
   if (!resumeId) routineFeatureThread = routines.canRegister();
   nativeThreadId = identity;
-  if (lease) {
-    const catalog = await request("mcpServerStatus/list", { threadId: identity, serverName: "matrix_shared_browser", limit: 10 });
-    const parsed = z.object({ data: z.array(z.object({ name: z.string(), runtimeStatus: z.string().nullable().optional(), tools: z.record(z.string(), z.unknown()) }).passthrough()).max(10) }).passthrough().parse(catalog);
-    const entry = parsed.data.find(server => server.name === "matrix_shared_browser");
-    if (!entry || entry.runtimeStatus !== "connected" || Object.keys(entry.tools).length !== 1 || !entry.tools.shared_browser) throw new Error("Browser startup unavailable");
-  }
+  sendTiming.mark(resumeId ? "thread_resume" : "thread_start", threadStartedAt, turnIndex);
+  if (lease) await assertBrowserMcpReady(identity, turnIndex);
   currentBrowserLease = lease;
   await persist({ type: "thread.started", thread_id: identity });
+}
+
+async function assertBrowserMcpReady(threadId, turnIndex) {
+  const browserStartedAt = sendTiming.now();
+  const catalog = await request("mcpServerStatus/list", { threadId, serverName: "matrix_shared_browser", limit: 10 });
+  const parsed = z.object({ data: z.array(z.object({ name: z.string(), runtimeStatus: z.string().nullable().optional(), tools: z.record(z.string(), z.unknown()) }).passthrough()).max(10) }).passthrough().parse(catalog);
+  const entry = parsed.data.find(server => server.name === "matrix_shared_browser");
+  if (!entry || entry.runtimeStatus !== "connected" || Object.keys(entry.tools).length !== 1 || !entry.tools.shared_browser) throw new Error("Browser startup unavailable");
+  sendTiming.mark("browser_mcp_ready", browserStartedAt, turnIndex);
+}
+
+// Same gateway, Browser already attached: write this run's bearer and re-prove
+// the native account and Browser MCP instead of restarting app-server + thread.
+async function renewBrowserInPlace(lease, turnIndex) {
+  const renewStartedAt = sendTiming.now();
+  await browserTokenFile.write(lease.token);
+  const proofStartedAt = sendTiming.now();
+  await verifyNativeSubscription?.(request);
+  sendTiming.mark("thread_account_proof", proofStartedAt, turnIndex);
+  await assertBrowserMcpReady(nativeThreadId, turnIndex);
+  currentBrowserLease = lease;
+  sendTiming.mark("browser_lease_renewed", renewStartedAt, turnIndex);
 }
 
 let exitCode = 0;
 let verifyNativeSubscription;
 let pendingAdmittedTurn = false;
 try {
+  const proofSetupStartedAt = sendTiming.now();
   if (config.nativeSubscription) verifyNativeSubscription = await createNativeCodexExecutionProof(config.expectedNativePrincipal, process.env, config.expectedNativeConsent);
+  sendTiming.mark("native_proof_setup", proofSetupStartedAt, 1);
   const initialRoutineTurn = await routines.initial(startupController.signal);
+  const leaseStartedAt = sendTiming.now();
   const initialBrowser = await browserBootstrap.waitLease(startupController.signal);
+  sendTiming.mark("browser_lease_wait", leaseStartedAt, 1);
   await startNativeSession(initialBrowser);
   browserBootstrap.markReady();
+  const releaseStartedAt = sendTiming.now();
   await browserBootstrap.waitRelease(startupController.signal);
+  sendTiming.mark("browser_release_wait", releaseStartedAt, 1);
   let turn = initialRoutineTurn ?? PendingTurnSchema.parse({
     prompt: config.prompt,
     model: config.model,
@@ -1310,11 +1388,19 @@ try {
   let firstTurn = true;
   while (turn && !stopping) {
     pendingAdmittedTurn = true;
+    sendTiming.beginTurn(terminalEventCount + 1, turn.clientRequestId);
     if (!firstTurn && (currentBrowserLease || turn.browser)) {
       renewingNativeTurn = true;
       try {
-        await nativeSession.close(); startupController.signal.throwIfAborted();
-        await startNativeSession(turn.browser ?? undefined);
+        if (canRenewCodexBrowserInPlace(currentBrowserLease, turn.browser, browserTokenFile)) {
+          await renewBrowserInPlace(turn.browser, terminalEventCount + 1);
+        } else {
+          // Attaching or detaching Browser changes the MCP config: restart once.
+          const closeStartedAt = sendTiming.now();
+          await nativeSession.close(); startupController.signal.throwIfAborted();
+          sendTiming.mark("previous_session_close", closeStartedAt, terminalEventCount + 1);
+          await startNativeSession(turn.browser ?? undefined);
+        }
       } finally {
         renewingNativeTurn = false;
       }
@@ -1323,6 +1409,10 @@ try {
     firstTurn = false;
     const outcome = await runTurn(nativeThreadId, turn);
     pendingAdmittedTurn = false;
+    // The finished run's lease is closed by the gateway; drop its bearer too.
+    await browserTokenFile?.clear().catch((error) => {
+      console.warn("[coding-agents] Browser bearer cleanup deferred:", error instanceof Error ? error.name : "UnknownError");
+    });
     if (outcome === "failed") exitCode = 1;
     const next = await Promise.race([
       nextTurn().then((value) => ({ type: "turn", value })),
@@ -1389,6 +1479,9 @@ try {
   controlSockets.clear();
   await new Promise((resolve) => controlServer.close(resolve));
   await rm(controlPath, { force: true });
+  await browserTokenFile?.close().catch((error) => {
+    console.warn("[coding-agents] Browser bearer directory cleanup failed:", error instanceof Error ? error.name : "UnknownError");
+  });
   await eventFile.close();
 }
 process.exitCode = exitCode;

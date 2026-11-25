@@ -133,10 +133,28 @@ skills-lock.json
 !.agents/skills/daily-update/**
 !.agents/skills/release-notes/
 !.agents/skills/release-notes/**
+!.agents/skills/wrap-up/
+!.agents/skills/wrap-up/**
+!.agents/skills/monitor-stack-reviews/
+!.agents/skills/monitor-stack-reviews/**
+# Release runbooks for platform Cloud Run and host-bundle stable promotion
+!.agents/skills/release-platform/
+!.agents/skills/release-platform/**
+!.claude/skills/release-platform
+!.agents/skills/release-matrix-stable/
+!.agents/skills/release-matrix-stable/**
+!.claude/skills/release-matrix-stable
 # Team-only macOS demo recorder; never part of the shipped skills/matrix pack
 !.agents/skills/product-demo-video/
 !.agents/skills/product-demo-video/**
 !.claude/skills/product-demo-video
+# Skills shipped in the matrix-dev plugin: symlinks to the canonical .agents/skills copies
+!.claude/skills/daily-update
+!.claude/skills/monitor-stack-reviews
+!.claude/skills/release-notes
+!.claude/skills/unblock-tickets
+!.claude/skills/worktree-pr-monitor
+!.claude/skills/wrap-up
 # Matrix OS seeds its own skills under home/ -- track them explicitly
 !home/agents/skills/
 !home/agents/skills/**

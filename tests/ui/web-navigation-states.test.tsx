@@ -4,20 +4,20 @@ import {cleanup,fireEvent,render,screen} from '@testing-library/react';
 import {afterEach,expect,it} from 'vitest';
 import {WebChatLifecycleGroups} from '../../shell/src/components/chat/WebChatLifecycleGroups';
 afterEach(cleanup);
-it('starts Done expanded, toggles by keyboard-accessible heading, and shows hidden count',()=>{
+it('starts Done expanded, keeps its Figma count visible, and toggles its rows',()=>{
   const conversation={id:'completed',preview:'Finished chat',messageCount:1,updatedAt:1};
   render(<WebChatLifecycleGroups conversations={[conversation]} renderRow={item=><button>{item.preview}</button>}/>);
   const heading=screen.getByRole('button',{name:'Done'});
   expect(heading.getAttribute('aria-expanded')).toBe('true');
   expect(screen.getByRole('button',{name:'Finished chat'})).toBeTruthy();
-  expect(screen.queryByLabelText('1 hidden chat')).toBeNull();
+  expect(screen.getByLabelText('1 hidden chat').textContent).toBe('1');
   fireEvent.click(heading);
   expect(heading.getAttribute('aria-expanded')).toBe('false');
   expect(screen.queryByRole('button',{name:'Finished chat'})).toBeNull();
   expect(screen.getByLabelText('1 hidden chat').textContent).toBe('1');
   fireEvent.click(heading);
   expect(screen.getByRole('button',{name:'Finished chat'})).toBeTruthy();
-  expect(screen.queryByLabelText('1 hidden chat')).toBeNull();
+  expect(screen.getByLabelText('1 hidden chat').textContent).toBe('1');
 });
 
 it('keeps the full Web title visible to assistive technology and exposes ellipsis actions', async()=>{

@@ -42,3 +42,17 @@ describe("Getting started row action", () => {
       .toEqual({ type: "bot", recipeId: "echo" });
   });
 });
+
+describe("Getting started keyboard shortcuts row", () => {
+  const shortcuts = (status: "complete" | "incomplete"): GettingStartedRow => ({ kind: "shortcuts", id: "shortcuts", label: "Learn keyboard shortcuts", status });
+
+  it("reads like a step and strikes through once done", () => {
+    expect(gettingStartedRowView(shortcuts("incomplete"), null)).toEqual({ label: "Learn keyboard shortcuts", done: false, struck: false, trailing: "icon" });
+    expect(gettingStartedRowView(shortcuts("complete"), null)).toEqual({ label: "Learn keyboard shortcuts", done: true, struck: true, trailing: "icon" });
+  });
+
+  it("opens Shortcuts whether or not it is done", () => {
+    expect(gettingStartedRowAction(shortcuts("incomplete"), { canConnect: true })).toEqual({ type: "shortcuts" });
+    expect(gettingStartedRowAction(shortcuts("complete"), { canConnect: true })).toEqual({ type: "shortcuts" });
+  });
+});

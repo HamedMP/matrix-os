@@ -1,3 +1,4 @@
+import { codexChatRunnerModelOptions } from "./codex-chat-speed.js";
 import { createCodexRoutineSources } from "./codex-routine-source.js";
 import { createPiRoutineSources } from "./pi-routine-source.js";
 import { createOpenCodeRoutineSources } from "./opencode-routine-source.js";
@@ -33,6 +34,7 @@ import { projectCodingActivity } from "./coding-activity-projection.js";
 import { createAssistantTextStreamProjector, sanitizeAssistantText } from "./safe-activity-projection.js";
 import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
 import { CodingChatStateSchema, recoveryState, recoverCodingRun, type CodingChatState } from "./coding-run-recovery.js";
+import { recordCodexRunnerLink } from "./send-timing.js";
 import {
   CanonicalProviderRunEventSchema,
   parseCanonicalProviderRunInput,
@@ -59,6 +61,11 @@ function driverKind(providerId: string): "codex" | "claude_code" | "opencode" | 
   if (providerId === "opencode") return "opencode";
   if (providerId === "pi") return "pi";
   throw new Error("Unsupported canonical coding Provider");
+}
+
+function chatModelOptions(input: CanonicalProviderRunInput, providerId: string) {
+  const options = input.selection.options ?? [];
+  return providerId === "codex" ? codexChatRunnerModelOptions(options) : options;
 }
 
 function legacyRequestId(runId: string): string {
@@ -564,12 +571,13 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           ...(input.worktreeId ? { worktreeId: input.worktreeId } : {}),
           mode,
           model: input.selection.model,
-          modelOptions: input.selection.options ?? [],
+          modelOptions: chatModelOptions(input, options.providerId),
           ...permissions(input.permissionMode, options.providerId),
           attachments: attachments(input),
           clientRequestId: requestId,
         }));
         targetThreadId = created.snapshot.thread.id;
+        if (options.providerId === "codex") recordCodexRunnerLink(input.runId, targetThreadId);
         releaseSteerRun = registerSteerRun(input.runId, {
           ownerId: input.owner.ownerId,
           chatId: input.chatId,
@@ -629,11 +637,12 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           message: input.prompt,
           attachments: attachments(input),
           model: input.selection.model,
-          modelOptions: input.selection.options ?? [],
+          modelOptions: chatModelOptions(input, options.providerId),
           ...permissions(input.permissionMode, options.providerId),
           clientRequestId: requestId,
         }));
         admittedTurnId = accepted.turnId;
+        if (options.providerId === "codex") recordCodexRunnerLink(input.runId, targetThreadId, accepted.turnId);
         releaseSteerRun = registerSteerRun(input.runId, {
           ownerId: input.owner.ownerId,
           chatId: input.chatId,

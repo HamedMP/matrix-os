@@ -13,6 +13,8 @@ export interface SitesTable {
     access_mode: Generated<'public' | 'private_link' | 'private_email'>;
     active_version: string | null;
     created_at: string;
+    /** 2694: set when the owner publishes this link as public; NULL for links published before visitor data. */
+    public_data_enabled_at: Generated<string | null>;
 }
 export interface SiteVersionsTable {
     id: string;

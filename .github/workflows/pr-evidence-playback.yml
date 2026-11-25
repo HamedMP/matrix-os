@@ -1,0 +1,47 @@
+name: PR Evidence Playback
+
+# Plays PR evidence recordings in Chromium and WebKit (Safari's engine) under the
+# Worker's production headers. Runs on a GitHub-hosted runner because the
+# self-hosted runner image ships only Chromium's system dependencies.
+on:
+  pull_request:
+    # ready_for_review: draft PRs skip the job, so run it when the PR leaves draft.
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - packages/pr-evidence-worker/**
+      - tests/e2e/pr-evidence-video-playback.e2e.test.ts
+      - tests/pr-evidence-worker/**
+      - tests/fixtures/pr-evidence/**
+      - .github/workflows/pr-evidence-playback.yml
+  workflow_dispatch:
+
+concurrency:
+  group: pr-evidence-playback-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  playback:
+    name: Video playback (Chromium + WebKit)
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium and WebKit with system dependencies
+        run: pnpm --filter shell exec playwright install --with-deps chromium webkit
+      - name: Play, seek, and range-read recordings in both engines
+        env:
+          PR_EVIDENCE_PLAYBACK_BROWSERS: chromium,webkit
+        run: pnpm exec vitest run -c vitest.e2e.config.ts tests/e2e/pr-evidence-video-playback.e2e.test.ts

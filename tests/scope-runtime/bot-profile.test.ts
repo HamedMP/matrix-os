@@ -14,6 +14,7 @@ describe("scope-runtime-bot-v1 profile", () => {
     const removed = FIXED_SYSTEMD_PROPERTIES.filter((property) => !FIXED_BOT_SYSTEMD_PROPERTIES.includes(property));
     const added = FIXED_BOT_SYSTEMD_PROPERTIES.filter((property) => !FIXED_SYSTEMD_PROPERTIES.includes(property));
     expect(removed).toEqual([
+      "BindReadOnlyPaths=-/opt/matrix/bin/matrix-codex",
       "BindReadOnlyPaths=<sdk-directory>:/opt/matrix/scope-sdk/sdk",
       "BindReadOnlyPaths=<native-directory>:/opt/matrix/scope-sdk/native",
       "BindReadOnlyPaths=<worker-file>:/opt/matrix/scope-runtime/worker.mjs",
@@ -33,7 +34,7 @@ describe("scope-runtime-bot-v1 profile", () => {
 
   it("pins its own digest and retains the current shared-chat qualification", () => {
     expect(SCOPE_RUNTIME_BOT_PROFILE_DIGEST).toBe("a1edb17cbb6df8cc52f3d15f137dfaa616045cade2198bcd65ae2c258d94e14b");
-    expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("78a58c7045b1083a0b1e538ae36fdc06c6a145d9aa09d36a3c75eb47ea3b1ed3");
+    expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("a12c383c31f1e2dcfc76a676bc7caade0d2166d122575f81e4775210a7d4e722");
   });
 
   it("names the Pi version pinned in the bot-runtime bundle as its harness version", async () => {

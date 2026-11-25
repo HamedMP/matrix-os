@@ -76,7 +76,7 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
       projectId: "matrix-os",
       worktreeId: "wt_feature",
       model: "gpt-5.6-sol",
-      modelOptions: [],
+      modelOptions: [{ id: "service_tier", value: "default" }],
       mode: "default",
       approvalPolicy: "on_request",
       sandboxMode: "workspace_write",
@@ -126,6 +126,36 @@ function fakeStore(initialEvents: AgentThreadEvent[]) {
 }
 
 describe("canonical coding Chat Provider adapter", () => {
+  it("records a content-free runner link for the first and accepted follow-up turns", async () => {
+    vi.stubEnv("MATRIX_CODEX_SEND_TIMINGS", "1");
+    const logged: Array<Record<string, unknown>> = [];
+    const info = vi.spyOn(console, "info").mockImplementation((prefix, payload) => {
+      if (prefix === "[chat-send-timing]") logged.push(JSON.parse(String(payload)) as Record<string, unknown>);
+    });
+    try {
+      const first = fakeStore([event({ type: "thread.completed", eventId: "evt_first_complete", outcome: "completed" })]);
+      const firstAdapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: first.store });
+      for await (const _item of firstAdapter.start(input())) { /* drain */ }
+      const followup = fakeStore([
+        event({ type: "turn.accepted", eventId: "evt_accepted", turnId: "turn_native",
+          clientRequestId: "req_followup", acceptedAt: occurredAt }),
+        event({ type: "thread.completed", eventId: "evt_complete", outcome: "completed" }),
+      ]);
+      const followupAdapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: followup.store });
+      for await (const _item of followupAdapter.resume!({ ...input({ runId: "run_followup" }),
+        resumeState: { conversationId: "thread_native" } })) { /* drain */ }
+      expect(logged.map(({ runId, stage }) => [runId, stage])).toEqual([
+        ["run_coding", "runner_link"], ["run_followup", "runner_link"],
+      ]);
+      expect(logged[0]).toMatchObject({ turnIndex: 1, session: logged[1]?.session });
+      expect(logged[1]?.turnKey).toMatch(/^[a-f0-9]{20}$/);
+      expect(JSON.stringify(logged)).not.toMatch(/thread_native|turn_native|req_coding/);
+    } finally {
+      info.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.each([false, true])("projects split Codex paths and credentials for shared=%s", async (shared) => {
     const fake = fakeStore([
       event({ type: "assistant.text.delta", eventId: "evt_path_1", messageId: "msg_final", delta: "Open /home/ma" }),
@@ -632,7 +662,7 @@ describe("canonical coding Chat Provider adapter", () => {
       .map((item) => item.delta).join("")).toBe("# Verification\n\n- Complete");
   });
 
-  it("resumes and cancels only the same persisted coding thread", async () => {
+  it("resumes the same persisted Codex thread with Standard on the existing runner wire", async () => {
     const accepted = event({
       type: "turn.accepted",
       eventId: "evt_accepted",
@@ -646,7 +676,9 @@ describe("canonical coding Chat Provider adapter", () => {
 
     const events = [];
     for await (const candidate of adapter.resume!({
-      ...input(),
+      ...input({ selection: { instanceId: "codex_default", model: "gpt-5.6-sol", options: [
+        { id: "effort", value: "low" }, { id: "service_tier", value: "priority" },
+      ] } }),
       resumeState: { conversationId: "thread_native" },
     })) events.push(candidate);
     expect(events).toEqual([
@@ -656,7 +688,9 @@ describe("canonical coding Chat Provider adapter", () => {
     expect(fake.acceptTurn).toHaveBeenCalledWith(
       expect.objectContaining({ userId: owner.ownerId }),
       "thread_native",
-      expect.objectContaining({ message: "ship it" }),
+      expect.objectContaining({ message: "ship it", modelOptions: [
+        { id: "effort", value: "low" }, { id: "service_tier", value: "default" },
+      ] }),
     );
 
     await adapter.cancel!({

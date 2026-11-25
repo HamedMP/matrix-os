@@ -309,7 +309,10 @@ export function MobileShell({ launchAppPath, sharedTerminalScopeId, onOpenComman
 
   const openSharedApp = useCallback((target: CollaborativeAppDirectoryItem) => {
     const path = sharedAppWindowPath(target);
-    openApp({ id: `shared-app:${target.scopeId}`, name: sharedAppWindowTitle(target), path, iconSlug: "apps" }, {
+    openApp({
+      id: `shared-app:${target.scopeId}`, name: sharedAppWindowTitle(target), path, iconSlug: "apps",
+      ...(target.iconUrl ? { iconUrl: target.iconUrl } : {}),
+    }, {
       sharedAppTarget: target,
     });
   }, [openApp]);
@@ -682,7 +685,8 @@ function MobileAppFrame({
         activeConversationTitle={chat.activeConversationTitle}
         onRenameConversation={chat.renameConversation}
         onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} routineOriginChat={chat.routineOriginChat} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} onSetChatProject={chat.setChatProject} navigationTruncated={chat.navigationTruncated} chatChangeRevision={chat.chatChangeRevision} chatRunStatusChange={chat.chatRunStatusChange}
+              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} routineOriginChat={chat.routineOriginChat} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} chatFileScope={chat.chatFileScope} onSetChatProject={chat.setChatProject} navigationTruncated={chat.navigationTruncated} chatChangeRevision={chat.chatChangeRevision} chatReadStateUpdates={chat.chatReadStateUpdates} chatRunStatusChange={chat.chatRunStatusChange}
+              loadNavigationPage={chat.navigationPage} searchConversations={chat.searchConversations} navigationUpdatedAt={chat.navigationUpdatedAt}
         onSubmitApproval={chat.submitApproval}
                 browserPermissions={chat.browserPermissions}
         onSubmitInput={chat.submitInput}
@@ -795,7 +799,7 @@ function AppSwitcher({
                 touchAction: "pan-y",
               }}
             >
-              <MobileAppIcon slug={o.app.iconSlug} iconUrl={o.app.iconUrl} size={44} />
+              <MobileAppIcon slug={o.app.iconSlug} iconUrl={o.app.iconUrl} size={44} fallbackName={o.sharedAppTarget ? o.app.name : undefined} />
               <button
                 onClick={() => onSelect(o.id)}
                 type="button"
