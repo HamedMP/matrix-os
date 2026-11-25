@@ -19,10 +19,7 @@ const STATE_TEXT: Record<DesktopLinkStateName, (name: string) => string> = {
 };
 
 function statusLine(entry: DesktopLinkStatusEntry): string {
-  const base = STATE_TEXT[entry.state](entry.computerName);
-  if (entry.state !== "on" || entry.terminalsFromComputer === 0) return base;
-  const count = entry.terminalsFromComputer;
-  return `${base} · ${count} ${count === 1 ? "terminal" : "terminals"} open from it`;
+  return STATE_TEXT[entry.state](entry.computerName);
 }
 
 /** Shown in the Terminal window's sidebar: the paired computer's link, and how to pair. */

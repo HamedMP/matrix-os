@@ -186,6 +186,8 @@ describe("Desktop link service", () => {
     await service.enable("primary", "matrix-demo");
     await until(() => registry.online(keys.key.deviceId));
     await until(() => service.statuses()[0]?.state === "on");
+    // Its own views can now leave this device out of the computer's desktop list.
+    expect(service.deviceIds()).toEqual([keys.key.deviceId]);
     expect(states).toContain("connecting");
 
     const listed = await registry.adapter(keys.key.deviceId)!.list();

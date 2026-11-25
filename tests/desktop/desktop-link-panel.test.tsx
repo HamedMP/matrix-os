@@ -45,12 +45,12 @@ describe("Desktop link panel", () => {
 
   it("shows what main reports, turns the link off at once, and back on after Stop", async () => {
     render(<Harness />);
-    emit("desktop-link:changed", { slot: "primary", computerName: "matrix-demo", state: "on", terminalsFromComputer: 2 });
-    expect(screen.getByRole("status").textContent).toBe("matrix-demo can use this device · 2 terminals open from it");
+    emit("desktop-link:changed", { slot: "primary", computerName: "matrix-demo", state: "on" });
+    expect(screen.getByRole("status").textContent).toBe("matrix-demo can use this device");
     expect(screen.queryByText("Pair this device with your computer…")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Stop matrix-demo using this device" }));
     await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith("desktop-link:disable", { slot: "primary" }));
-    emit("desktop-link:changed", { slot: "primary", computerName: "matrix-demo", state: "off", terminalsFromComputer: 0 });
+    emit("desktop-link:changed", { slot: "primary", computerName: "matrix-demo", state: "off" });
     fireEvent.click(screen.getByRole("button", { name: "Let matrix-demo use this device" }));
     await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith("desktop-link:enable", { slot: "primary", computerName: "matrix-demo" }));
   });
@@ -60,11 +60,11 @@ describe("Desktop link panel", () => {
     render(<Harness />);
     emit("desktop-link:changed", { slot: "primary", state: "on" });
     expect(screen.queryByRole("status")).toBeNull();
-    emit("desktop-link:changed", { slot: "primary", computerName: "matrix-demo", state: "removed", terminalsFromComputer: 0 });
+    emit("desktop-link:changed", { slot: "primary", computerName: "matrix-demo", state: "removed" });
     expect(screen.getByRole("status").textContent).toBe("matrix-demo is no longer paired with this device");
     expect(screen.queryByRole("button", { name: /matrix-demo using this device/ })).toBeNull();
     expect(screen.getByText("Pair this device with your computer…")).toBeTruthy();
-    emit("desktop-link:changed", { slot: "primary", computerName: "matrix-demo", state: "off", terminalsFromComputer: 0 });
+    emit("desktop-link:changed", { slot: "primary", computerName: "matrix-demo", state: "off" });
     fireEvent.click(screen.getByRole("button", { name: "Let matrix-demo use this device" }));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "This device isn't paired with your computer any more. Pair it again.");
   });

@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { HerdrSession } from "@matrix-os/contracts/herdr-terminals";
 import { Button } from "../Button.js";
 import { terminalVisualStatus } from "../terminal-agents/attention.js";
@@ -29,8 +29,8 @@ function lastSeen(machine: DesktopLinkMachine, now: number): string {
 
 /**
  * "Desktops" (spec 2716): the owner's desktops linked to this computer, after the
- * project workspaces in every Terminal view. Shown only when at least one desktop
- * is enrolled; a desktop is linked from the desktop itself, never from here.
+ * project workspaces in every Terminal view. Shown only when a desktop is paired
+ * (2698); a desktop is paired from the desktop itself, never from here.
  */
 export function DesktopMachinesGroup({ state, selectedRefKey, hideDeviceIds = [], now = Date.now(), onOpen, style }: {
   state: Pick<DesktopMachinesState, "desktops" | "terminals" | "busy" | "error" | "start" | "close" | "remove">;
@@ -43,10 +43,21 @@ export function DesktopMachinesGroup({ state, selectedRefKey, hideDeviceIds = []
   style?: CSSProperties;
 }) {
   const [confirming, setConfirming] = useState<string | null>(null);
+  // What is shown now, read when a start finishes (it may wait for the owner's approval).
+  const shown = useRef(selectedRefKey ?? null);
+  useEffect(() => { shown.current = selectedRefKey ?? null; }, [selectedRefKey]);
   const hidden = new Set(hideDeviceIds);
   const busy = new Set(state.busy);
   const machines = state.desktops.machines.filter((machine) => !hidden.has(machine.deviceId));
   if (machines.length === 0) return null;
+  // A terminal started here opens as a new Matrix tab does, unless the user chose another
+  // terminal while it waited (for the owner's approval, say): it is then only listed.
+  const open = (deviceId: string, agent: DesktopAgent | undefined, title: string) => {
+    const before = shown.current;
+    void state.start(deviceId, agent).then((started) => {
+      if (started && shown.current === before) onOpen(deviceId, { id: started.id, tabId: started.tabId, title, status: null });
+    });
+  };
   return (
     // The group sits on each surface's own drawer (dark on Web Terminal), so its buttons take
     // the surface's foreground instead of the page theme's.
@@ -129,12 +140,12 @@ export function DesktopMachinesGroup({ state, selectedRefKey, hideDeviceIds = []
                   })}
                 </ul>
                 <div role="group" aria-label={`Start on ${machine.name}`} style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: "4px 8px 0 20px" }}>
-                  <Button variant="secondary" size="sm" disabled={starting} onClick={() => { void state.start(machine.deviceId); }}>
+                  <Button variant="secondary" size="sm" disabled={starting} onClick={() => open(machine.deviceId, undefined, "Terminal")}>
                     {starting ? "Starting…" : "New terminal"}
                   </Button>
                   {AGENTS.map((agent) => (
                     <Button key={agent.id} variant="ghost" size="sm" disabled={starting} aria-label={`Start ${agent.label} on ${machine.name}`}
-                      onClick={() => { void state.start(machine.deviceId, agent.id); }}>
+                      onClick={() => open(machine.deviceId, agent.id, agent.label)}>
                       {agent.label}
                     </Button>
                   ))}

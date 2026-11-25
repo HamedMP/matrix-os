@@ -20,6 +20,7 @@ export function registerDesktopLinkIpc(
 ): () => void {
   const handlers: Record<Channel, (request: never) => Promise<unknown>> = {
     "desktop-link:status": async () => ({ computers: service.statuses() }),
+    "desktop-link:this-device": async () => ({ deviceIds: service.deviceIds() }),
     "desktop-link:enable": async ({ slot, computerName }: { slot: string; computerName: string }) => {
       try {
         await service.enable(slot, computerName);

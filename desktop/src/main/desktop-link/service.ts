@@ -488,6 +488,10 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
     },
 
     statuses(): DesktopLinkStatus[] { return [...links.values()].map(status); },
+    /** This device's device id at its computer, from the last pairing it linked with (no key is read). */
+    deviceIds(): string[] {
+      return [...new Set(Object.values(prefs.computers).flatMap((saved) => (saved.deviceId ? [saved.deviceId] : [])))];
+    },
     onStatus(listener: (status: DesktopLinkStatus) => void): () => void {
       events.on("status", listener);
       return () => { events.off("status", listener); };
@@ -513,6 +517,7 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
       const link = linkFor(slot, computerName.slice(0, 64));
       await savePrefs({ computers: { ...prefs.computers, [slot]: {
         enabled: true, computerName: link.computerName, machineId: identity.machineId, revision: identity.revision,
+        deviceId: identity.deviceId,
       } } });
       link.failures = 0;
       if (link.retry) { clearTimeout(link.retry); link.retry = null; }

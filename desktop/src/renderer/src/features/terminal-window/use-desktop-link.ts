@@ -6,10 +6,9 @@ import { z } from "zod/v4";
 import { DesktopLinkStatusSchema, type DesktopLinkStatusEntry } from "../../../../shared/desktop-link";
 import { invoke, onEvent } from "../../lib/operator";
 
-export type DesktopLinkEnableFailure = "signed_out" | "denied" | "not_paired" | "unavailable";
+export type DesktopLinkEnableFailure = "denied" | "not_paired" | "unavailable";
 
 export const DESKTOP_LINK_ENABLE_FAILURE: Record<DesktopLinkEnableFailure, string> = {
-  signed_out: "Sign in to Matrix OS first.",
   denied: "Only your primary computer can use this device.",
   not_paired: "This device isn't paired with your computer any more. Pair it again.",
   unavailable: "Couldn't reach your computer. Try again.",

@@ -97,6 +97,25 @@ describe("desktops group", () => {
     expect(screen.queryByText("Hamed's MacBook Pro")).toBeNull();
   });
 
+  // Fault detected (review): a start that waited for the owner's approval opened over the
+  // terminal the user had moved to meanwhile.
+  it("only lists a started terminal when the user chose another one while it waited", async () => {
+    let approve: () => void = () => {};
+    const { request } = gateway({
+      [`POST /api/desktop-link/machines/${MAC}/terminals`]: () => json({ deviceId: MAC, id: "t2", workspaceId: desktopLinkWorkspaceId(MAC), tabId: `tt_${"2".repeat(32)}` }, 201),
+    });
+    const slow: DesktopLinkRequest = (path, init) => (init.method === "POST"
+      ? new Promise<Response>((resolve) => { approve = () => resolve(request(path, init) as unknown as Response); }).then((response) => response)
+      : request(path, init));
+    const { onOpen, view, result } = await mounted(slow);
+    fireEvent.click(screen.getByRole("button", { name: "Start Codex on Hamed's MacBook Pro" }));
+    view.rerender(<DesktopMachinesGroup state={result.current} selectedRefKey="other:tab" onOpen={onOpen} />);
+    approve();
+    await waitFor(() => expect(request).toHaveBeenCalledWith(`/api/desktop-link/machines/${MAC}/terminals`, expect.objectContaining({ method: "POST" })));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
   it("starts a shell or an agent preset on the desktop", async () => {
     const { request, calls } = gateway();
     const { result } = await mounted(request);
