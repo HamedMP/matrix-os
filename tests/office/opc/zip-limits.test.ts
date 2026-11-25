@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { isOfficeError } from "../../../packages/office/src/errors.js";
 import { InflateFailure, inflateRaw } from "../../../packages/office/src/opc/deflate.js";
-import { DEFAULT_ZIP_LIMITS, openPackage, parseZip, readRecord } from "../../../packages/office/src/opc/index.js";
+import { DEFAULT_ZIP_LIMITS, createPackage, openPackage, parseZip, readRecord } from "../../../packages/office/src/opc/index.js";
 import { CONTENT_TYPES_XML, checksum, handmadeZip, rawDeflate } from "./handmade-zip.js";
 
 const MIB = 1024 * 1024;
@@ -140,6 +140,38 @@ describe("ZIP limits", () => {
       const whole = await inflateRaw(ZEROS_DEFLATED, ZEROS.length);
       expect(whole.length).toBe(ZEROS.length);
       expect(produced).toBe(ZEROS.length);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reports a platform stream that refuses deflate-raw as an unsupported format", async () => {
+    // Some engines expose the constructors but throw a TypeError for a format they lack.
+    class RefusingStream {
+      constructor(format: string) {
+        throw new TypeError(`Unsupported compression format: '${format}'`);
+      }
+    }
+    const deflated = handmadeZip([{ name: "[Content_Types].xml", data: CONTENT_TYPES_XML, method: 8 }]);
+    vi.stubGlobal("DecompressionStream", RefusingStream);
+    vi.stubGlobal("CompressionStream", RefusingStream);
+    try {
+      const inflateFailure = await inflateRaw(Uint8Array.from([3, 0]), 16).catch((error: unknown) => error);
+      expect(inflateFailure).toBeInstanceOf(InflateFailure);
+      expect((inflateFailure as InflateFailure).kind).toBe("unsupported");
+      expect((inflateFailure as InflateFailure).cause).toBeInstanceOf(TypeError);
+
+      await expect(openPackage(deflated)).rejects.toMatchObject({
+        code: "unsupported_format",
+        details: { reason: "compression_stream_unavailable" },
+      });
+
+      const pkg = createPackage();
+      pkg.setPart("/doc.xml", "<d/>".repeat(200));
+      await expect(pkg.save()).rejects.toMatchObject({
+        code: "unsupported_format",
+        details: { reason: "compression_stream_unavailable" },
+      });
     } finally {
       vi.unstubAllGlobals();
     }

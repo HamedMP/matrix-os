@@ -34,7 +34,15 @@ function platformStream(name: "CompressionStream" | "DecompressionStream"): Byte
   if (typeof ctor !== "function") {
     throw new InflateFailure("unsupported", `${name} is not available on this platform`);
   }
-  return new ctor("deflate-raw");
+  try {
+    return new ctor("deflate-raw");
+  } catch (error) {
+    // An engine that has the constructor but not the format throws a TypeError (or a RangeError in older ones).
+    if (error instanceof TypeError || error instanceof RangeError) {
+      throw new InflateFailure("unsupported", `${name} does not support deflate-raw on this platform`, error);
+    }
+    throw error;
+  }
 }
 
 interface PumpState {

@@ -18,9 +18,9 @@
 export interface ZipLimits {
   /** Maximum number of ZIP entries, directories included. Default 5000. */
   maxEntries: number;
-  /** Maximum uncompressed size of one entry. Default 64 MiB. */
+  /** Maximum uncompressed size of one entry. Default 32 MiB. */
   maxEntryBytes: number;
-  /** Maximum sum of the uncompressed sizes of all entries. Default 256 MiB. */
+  /** Maximum sum of the uncompressed sizes of all entries. Default 96 MiB. */
   maxTotalBytes: number;
 }
 
@@ -131,11 +131,15 @@ export interface OpcPackage {
    * extension already gives that type. When it is omitted an existing part
    * keeps its type; a new part whose extension has no Default throws
    * `invalid_operation`. Setting `[Content_Types].xml` or a relationships
-   * part directly throws `invalid_operation`.
+   * part directly throws `invalid_operation`, however the name is
+   * percent-escaped. A new name that `openPackage` would refuse as a ZIP entry
+   * (a drive prefix such as `C:`, a control character, an unpaired surrogate,
+   * more than 65535 UTF-8 bytes) throws `invalid_argument`.
    */
   setPart(name: PartName, data: Uint8Array | string, contentType?: string): void;
   /**
-   * Removes a part, its content-type Override and its own relationships part.
+   * Removes a part, its own relationships part, and the content-type
+   * Overrides of both.
    * Relationships that point at it from other parts are left for the caller.
    * Returns false when the part did not exist.
    */
@@ -190,6 +194,6 @@ export type CreatePackage = () => OpcPackage;
 export interface OpcModule {
   openPackage: OpenPackage;
   createPackage: CreatePackage;
-  /** `{ maxEntries: 5000, maxEntryBytes: 64 MiB, maxTotalBytes: 256 MiB }`, frozen. */
+  /** `{ maxEntries: 5000, maxEntryBytes: 32 MiB, maxTotalBytes: 96 MiB }`, frozen. */
   DEFAULT_ZIP_LIMITS: Readonly<ZipLimits>;
 }

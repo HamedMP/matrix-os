@@ -128,7 +128,7 @@ export interface XmlDeclaration {
 export interface XmlParseLimits {
   /** Maximum element nesting depth. Default 512. */
   maxDepth: number;
-  /** Maximum number of nodes of all kinds. Default 5 000 000. */
+  /** Maximum number of nodes of all kinds. Default 2 000 000. */
   maxNodes: number;
 }
 
@@ -250,6 +250,6 @@ export interface XmlModule {
   lookupNamespace: LookupNamespace;
   escapeXmlText: EscapeXmlText;
   escapeXmlAttr: EscapeXmlAttr;
-  /** `{ maxDepth: 512, maxNodes: 5_000_000 }`, frozen. */
+  /** `{ maxDepth: 512, maxNodes: 2_000_000 }`, frozen. */
   DEFAULT_XML_LIMITS: Readonly<XmlParseLimits>;
 }

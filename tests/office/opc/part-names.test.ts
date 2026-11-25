@@ -85,6 +85,16 @@ describe("relationships part names", () => {
     expect(isRelationshipsPartName("/word/_rels/sub/x.rels")).toBe(false);
   });
 
+  it("recognises relationships parts whose unreserved characters are percent-escaped", () => {
+    expect(isRelationshipsPartName("/word/%5Frels/document.xml.rels")).toBe(true);
+    expect(isRelationshipsPartName("/word/_rels/document.xml%2erels")).toBe(true);
+    expect(isRelationshipsPartName("/%5Frels/%2Erels")).toBe(true);
+    // A reserved character stays escaped, so this is a different name.
+    expect(isRelationshipsPartName("/word/_rels%2Fdocument.xml.rels")).toBe(false);
+    expect(relationshipsSourceOf("/word/%5Frels/document.xml.rels")).toBe("/word/document.xml");
+    expect(relationshipsSourceOf("/%5Frels/.rels")).toBe("/");
+  });
+
   it("resolves relative, absolute and dotted targets", () => {
     expect(resolveRelationshipTarget("/xl/worksheets/sheet1.xml", "../drawings/drawing1.xml")).toBe("/xl/drawings/drawing1.xml");
     expect(resolveRelationshipTarget("/xl/workbook.xml", "worksheets/sheet1.xml")).toBe("/xl/worksheets/sheet1.xml");

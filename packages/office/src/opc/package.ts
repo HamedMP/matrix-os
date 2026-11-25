@@ -26,6 +26,7 @@ import {
   CONTENT_TYPES_PART,
   PACKAGE_RELS_PART,
   PACKAGE_ROOT,
+  assertStorablePartName,
   isRelationshipsPartName,
   normalizePartName,
   partNameKey,
@@ -141,6 +142,8 @@ class Package implements OpcPackage {
       throw fault("invalid_value", "part data must be a string or a Uint8Array");
     }
     const existing = this.slots.get(key);
+    // An existing part came out of the archive, so only a new name needs to prove it can be stored.
+    if (!existing) assertStorablePartName(partName);
     if (contentType === undefined) {
       if (!existing && this.contentTypes.typeOf(partName) === null) {
         throw fault("not_allowed", `a content type is required for new part "${partName}"`);
@@ -162,8 +165,12 @@ class Package implements OpcPackage {
       throw fault("not_allowed", "content types and relationships parts cannot be removed directly");
     }
     if (!this.slots.delete(key)) return false;
-    if (this.contentTypes.removeOverride(partName)) touch(this.contentTypesSlot);
-    this.slots.delete(partNameKey(relationshipsPartNameFor(partName)));
+    const relsName = relationshipsPartNameFor(partName);
+    this.slots.delete(partNameKey(relsName));
+    // Both Overrides go: one left for a part that is no longer written makes the package invalid.
+    const removedOverride = this.contentTypes.removeOverride(partName);
+    const removedRelsOverride = this.contentTypes.removeOverride(relsName);
+    if (removedOverride || removedRelsOverride) touch(this.contentTypesSlot);
     return true;
   }
 

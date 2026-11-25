@@ -4,6 +4,9 @@
  * to how unreserved characters are percent-escaped.
  */
 
+import { isOfficeError } from "../errors.js";
+import { encodeUtf8 } from "./bytes.js";
+import { assertSafeEntryName } from "./entry-names.js";
 import { fault } from "./errors.js";
 
 export const PACKAGE_ROOT = "/";
@@ -68,13 +71,41 @@ export function normalizePartName(name: string): string {
   return joinSegments([], path, false);
 }
 
+/** Longest entry name a ZIP header can record, in UTF-8 bytes. */
+const MAX_ENTRY_NAME_BYTES = 0xffff;
+const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/**
+ * Refuses a new part name whose ZIP entry the reader would reject, so a
+ * package that saves always opens again: a drive prefix, a control character,
+ * text that has no UTF-8 form, or a name too long for a ZIP header.
+ */
+export function assertStorablePartName(partName: string): void {
+  const entryName = normalizePartName(partName).slice(1);
+  try {
+    assertSafeEntryName(entryName);
+  } catch (error) {
+    if (isOfficeError(error, "corrupt_package")) {
+      throw fault("invalid_part_name", "part name cannot be stored as a ZIP entry", undefined, error);
+    }
+    throw error;
+  }
+  if (UNPAIRED_SURROGATE.test(entryName)) {
+    throw fault("invalid_part_name", "part name is not valid Unicode text");
+  }
+  if (encodeUtf8(entryName).length > MAX_ENTRY_NAME_BYTES) {
+    throw fault("invalid_part_name", "part name is too long for a ZIP entry");
+  }
+}
+
+/** A name with unreserved characters unescaped and the remaining escapes upper-cased; casing is kept. */
+function canonicalSpelling(name: string): string {
+  return name.split("/").map(canonicalEscapes).join("/");
+}
+
 /** Key under which two part names are the same part. */
 export function partNameKey(name: string): string {
-  return normalizePartName(name)
-    .split("/")
-    .map(canonicalEscapes)
-    .join("/")
-    .replace(/[A-Z]/g, (char) => char.toLowerCase());
+  return canonicalSpelling(normalizePartName(name)).replace(/[A-Z]/g, (char) => char.toLowerCase());
 }
 
 export function partNamesEqual(a: string, b: string): boolean {
@@ -115,16 +146,21 @@ export function relationshipsPartNameFor(source: string): string {
   return `${normalized.slice(0, slash)}/_rels/${normalized.slice(slash + 1)}.rels`;
 }
 
+/**
+ * True for `/_rels/.rels` and every `…/_rels/*.rels` part, however the name
+ * spells its unreserved characters (`%5Frels` is `_rels`).
+ */
 export function isRelationshipsPartName(partName: string): boolean {
-  return /(^|\/)_rels\/[^/]*\.rels$/i.test(partName);
+  return /(^|\/)_rels\/[^/]*\.rels$/i.test(canonicalSpelling(partName));
 }
 
 /**
  * The part (or `/` for the package) whose relationships `relsPartName` holds,
- * or `null` when the name is not a relationships part.
+ * or `null` when the name is not a relationships part. Unreserved characters
+ * of the result are unescaped, like the name `relationshipsPartNameFor` takes.
  */
 export function relationshipsSourceOf(relsPartName: string): string | null {
-  const normalized = normalizePartName(relsPartName);
+  const normalized = canonicalSpelling(normalizePartName(relsPartName));
   const match = /^(.*\/)_rels\/([^/]*)\.rels$/i.exec(normalized);
   if (!match) return null;
   const [, directory, base] = match as unknown as [string, string, string];

@@ -125,6 +125,65 @@ describe("setPart and removePart", () => {
     expect(codeOf(() => pkg.removePart("/word/_rels/document.xml.rels"))).toBe("invalid_operation");
   });
 
+  it.each(["/word/%5Frels/document.xml.rels", "/word/_rels/document.xml%2Erels", "/%5Frels/.rels", "/%5Frels/%2Erels", "/[Content%5FTypes].xml"])(
+    "refuses a protected part spelled with percent escapes: %j",
+    async (name) => {
+      const pkg = await openPackage(handmadeDocx());
+      const before = pkg.getRelationships("/word/document.xml");
+      expect(codeOf(() => pkg.setPart(name, "<Relationships/>", "application/xml"))).toBe("invalid_operation");
+      expect(codeOf(() => pkg.removePart(name))).toBe("invalid_operation");
+      expect(pkg.getRelationships("/word/document.xml")).toEqual(before);
+      expect(pkg.hasPart("/word/_rels/document.xml.rels")).toBe(true);
+      expect(pkg.hasPart("/_rels/.rels")).toBe(true);
+      expect(pkg.listParts({ includeRelationships: true }).filter((part) => part.modified)).toEqual([]);
+    },
+  );
+
+  it("refuses a protected part as a relationship source when it is spelled with percent escapes", async () => {
+    const pkg = await openPackage(handmadeDocx());
+    expect(codeOf(() => pkg.getRelationships("/word/%5Frels/document.xml.rels"))).toBe("invalid_operation");
+    expect(codeOf(() => pkg.addRelationship("/word/%5Frels/document.xml.rels", { type: "t", target: "x.xml" }))).toBe(
+      "invalid_operation",
+    );
+  });
+
+  it("treats an archive entry spelled with percent escapes as the relationships part it names", async () => {
+    const pkg = await openPackage(
+      handmadeZip([
+        { name: "[Content_Types].xml", data: CONTENT_TYPES_XML },
+        { name: "_rels/.rels", data: ROOT_RELS_XML },
+        { name: "word/document.xml", data: "<w:document/>" },
+        { name: "word/%5Frels/document.xml.rels", data: DOCUMENT_RELS_XML },
+      ]),
+    );
+    expect(pkg.getRelationships("/word/document.xml").map((rel) => rel.id)).toEqual(["rId1", "rId7", "rId3"]);
+    expect(pkg.listParts().map((part) => part.name)).toEqual(["/word/document.xml"]);
+    expect(codeOf(() => pkg.setPart("/word/_rels/document.xml.rels", "<Relationships/>"))).toBe("invalid_operation");
+  });
+
+  it.each([
+    ["a drive prefix", "C:/x.xml"],
+    ["a bare drive prefix", "/c:x.xml"],
+    ["a control character", "/word/a\u0001b.xml"],
+    ["a delete character", "/word/a\u007fb.xml"],
+    ["a line break", "/word/a\nb.xml"],
+    ["an unpaired surrogate", "/word/a\ud800b.xml"],
+    ["a name too long for a ZIP entry", `/${"a".repeat(70_000)}.xml`],
+  ])("refuses a new part name with %s, which the reader would reject", async (_label, name) => {
+    const pkg = await openPackage(handmadeDocx());
+    expect(codeOf(() => pkg.setPart(name, "<x/>", "application/xml"))).toBe("invalid_argument");
+    expect(pkg.listParts().filter((part) => part.modified)).toEqual([]);
+    expect(pkg.getContentTypes().overrides).toHaveLength(2);
+  });
+
+  it("every name setPart accepts reopens from the saved archive", async () => {
+    const pkg = await openPackage(handmadeDocx());
+    const names = ["/word/ab:c.xml", "/word/ünïcödé.xml", "/word/%20space.xml", "/word/emoji-\u{1f600}.xml"];
+    for (const name of names) pkg.setPart(name, "<x/>", "application/xml");
+    const reopened = await openPackage(await pkg.save());
+    for (const name of names) expect(await reopened.getPartText(name)).toBe("<x/>");
+  });
+
   it.each(["", "/", "/word//document.xml", "/word/../document.xml", "/word/./document.xml", "word\\document.xml", "/word/"])(
     "refuses the part name %j",
     async (name) => {
@@ -150,6 +209,30 @@ describe("setPart and removePart", () => {
     expect(names).not.toContain("word/document.xml");
     expect(names).not.toContain("word/_rels/document.xml.rels");
     expect(names).toContain("word/styles.xml");
+  });
+
+  it("removes the override of the part's relationships part too, so the saved package stays consistent", async () => {
+    const typesWithRelsOverride = CONTENT_TYPES_XML.replace(
+      "</Types>",
+      `<Override PartName="/word/_rels/document.xml.rels" ContentType="${CONTENT_TYPE_RELATIONSHIPS}"/></Types>`,
+    );
+    const pkg = await openPackage(
+      handmadeZip([
+        { name: "[Content_Types].xml", data: typesWithRelsOverride },
+        { name: "_rels/.rels", data: ROOT_RELS_XML },
+        { name: "word/document.xml", data: "<w:document/>" },
+        { name: "word/_rels/document.xml.rels", data: DOCUMENT_RELS_XML },
+        { name: "word/styles.xml", data: "<w:styles/>" },
+      ]),
+    );
+    expect(pkg.getContentTypes().overrides.map((entry) => entry.partName)).toContain("/word/_rels/document.xml.rels");
+    expect(pkg.removePart("/word/document.xml")).toBe(true);
+    expect(pkg.getContentTypes().overrides.map((entry) => entry.partName)).toEqual(["/word/styles.xml"]);
+
+    const saved = await pkg.save();
+    const xml = decoder.decode(unzipSync(saved)["[Content_Types].xml"]);
+    expect(xml).not.toContain("document.xml");
+    expect((await openPackage(saved)).getContentTypes().overrides.map((entry) => entry.partName)).toEqual(["/word/styles.xml"]);
   });
 
   it("a part removed and set again is a new part at the end", async () => {
@@ -328,6 +411,16 @@ describe("openPackage refuses damaged packages", () => {
     ["an Override with a traversal part name", [typed('<Types><Override PartName="/../x.xml" ContentType="a/b"/></Types>')]],
     ["content types that declare a document type", [typed('<!DOCTYPE Types [<!ENTITY e "x">]><Types/>')]],
     ["content types that use an undeclared entity", [typed('<Types><Default Extension="xml" ContentType="&e;"/></Types>')]],
+    ["content types with text before the document element", [typed("garbage<Types/>")]],
+    ["content types with text after the document element", [typed("<Types/>garbage")]],
+    ["content types with an undefined entity in text", [typed("<Types>&undefined;</Types>")]],
+    ["content types with a bare ampersand in text", [typed("<Types>a & b</Types>")]],
+    ["content types with an inherited property name as an entity", [typed('<Types><Default Extension="xml" ContentType="&constructor;"/></Types>')]],
+    ["content types with an inherited property name as an entity in text", [typed("<Types>&toString;</Types>")]],
+    ["content types with a forbidden character", [typed("<Types>\u0001</Types>")]],
+    ["content types with a malformed element name", [typed('<Types><1Default Extension="xml" ContentType="a/b"/></Types>')]],
+    ["relationships with text before the document element", [typed(CONTENT_TYPES_XML), { name: "_rels/.rels", data: "junk<Relationships/>" }]],
+    ["relationships with an undefined entity in text", [typed(CONTENT_TYPES_XML), { name: "_rels/.rels", data: "<Relationships>&nope;</Relationships>" }]],
     ["relationships that are not well formed", [typed(CONTENT_TYPES_XML), { name: "_rels/.rels", data: "<Relationships><Relationship" }]],
     ["relationships with another document element", [typed(CONTENT_TYPES_XML), { name: "_rels/.rels", data: "<Types/>" }]],
     ["a relationship without Target", [typed(CONTENT_TYPES_XML), { name: "_rels/.rels", data: '<Relationships><Relationship Id="rId1" Type="t"/></Relationships>' }]],
