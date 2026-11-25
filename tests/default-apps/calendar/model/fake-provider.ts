@@ -31,7 +31,10 @@ export class FakeCalendarProvider implements CalendarProvider {
   calls: Array<{ method: string; args: unknown[] }> = [];
   failNext: ProviderError | null = null;
   holdWrites = false;
+  /** Event reads answer with what the calendar held when they were asked, after `releaseReads`. */
+  holdReads = false;
   private held: Deferred[] = [];
+  private heldReads: Deferred[] = [];
   private counter = 0;
 
   constructor(calendars: CalendarInfo[]) {
@@ -52,6 +55,10 @@ export class FakeCalendarProvider implements CalendarProvider {
     }
   }
 
+  releaseReads(): void {
+    for (const deferred of this.heldReads.splice(0)) deferred.resolve();
+  }
+
   callsTo(method: string) {
     return this.calls.filter((call) => call.method === method);
   }
@@ -63,8 +70,10 @@ export class FakeCalendarProvider implements CalendarProvider {
 
   async listEvents(request: ListEventsRequest): Promise<CalendarEvent[]> {
     this.calls.push({ method: "listEvents", args: [request] });
-    return this.events.filter((event) => request.calendarIds.includes(event.calendarId)
+    const events = this.events.filter((event) => request.calendarIds.includes(event.calendarId)
       && instantsOverlap(event.start, event.end, request.start, request.end));
+    if (this.holdReads) await new Promise<void>((resolve, reject) => this.heldReads.push({ resolve, reject }));
+    return events;
   }
 
   async createEvent(draft: EventDraft, options: InviteOptions): Promise<CalendarEvent> {

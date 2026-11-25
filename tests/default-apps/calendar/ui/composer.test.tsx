@@ -213,6 +213,34 @@ describe("event composer", () => {
     }
   });
 
+  it("withdraws suggested times while a new guest's availability loads, and after it fails", async () => {
+    const { provider } = await openComposerAt9();
+    provider.busy = [{ address: "ana@example.com", start: "2026-11-24T14:00:00Z", end: "2026-11-24T16:00:00Z" }];
+    addGuest("ana@example.com");
+    await settle();
+    await settle();
+    const assistant = () => within(composer()).getByRole("region", { name: "Scheduling assistant" });
+    const slotButtons = () => within(assistant()).queryAllByRole("button", { name: /–/ });
+    expect(slotButtons().length).toBeGreaterThan(0);
+    expect(document.querySelector(".cal-proposal--assistant")).not.toBeNull();
+
+    let answer: (fail: boolean) => void = () => undefined;
+    const getFreeBusy = provider.getFreeBusy.bind(provider);
+    provider.getFreeBusy = (addresses, start, end) => new Promise((resolve, reject) => {
+      answer = (fail) => (fail ? reject(new Error("free-busy down")) : resolve(getFreeBusy(addresses, start, end)));
+    });
+    addGuest("bo@example.com");
+    await settle();
+    // Bo's availability is not in yet: no time checked only against Ana can be picked.
+    expect(slotButtons()).toEqual([]);
+    expect(document.querySelector(".cal-proposal--assistant")).toBeNull();
+    await act(async () => answer(true));
+    await settle();
+    expect(within(assistant()).getByRole("alert")).toBeTruthy();
+    expect(slotButtons()).toEqual([]);
+    expect(document.querySelector(".cal-proposal--assistant")).toBeNull();
+  });
+
   it("opens a draft from an agent proposal on the grid without creating anything", async () => {
     const { store, provider } = await setup();
     store.receiveProposals([{ id: "p1", start: "2026-11-25T16:00:00Z", end: "2026-11-25T16:30:00Z", title: "Coffee with Ana", attendees: ["ana@example.com"] }]);

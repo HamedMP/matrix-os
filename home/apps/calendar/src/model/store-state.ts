@@ -136,6 +136,17 @@ export function initialState(preferences: CalendarPreferences, now: number): Cal
   };
 }
 
+/**
+ * The proposals without the scheduling assistant's: they were found from
+ * availability and events that are being replaced, and come back when the
+ * search runs on the new ones. Returns the same array when there are none.
+ */
+export function withoutAssistantProposals(proposals: Proposal[]): Proposal[] {
+  return proposals.some((proposal) => proposal.source === "assistant")
+    ? proposals.filter((proposal) => proposal.source !== "assistant")
+    : proposals;
+}
+
 /** Recomputes the fields derived from the cache, calendars, range and pending writes. */
 export function withDerived(state: CalendarState): CalendarState {
   const visibleIds = state.calendars.filter((calendar) => calendar.visible).map((calendar) => calendar.id);

@@ -171,6 +171,26 @@ export interface ProposalSegment {
   endMinute: number;
 }
 
+/** Where a span of time sits on each day of a time grid it touches, in wall-clock minutes. */
+export function spanSegments(
+  startMs: number,
+  endMs: number,
+  days: readonly DaySlice[],
+  timeZone: string,
+): Array<{ dayKey: DayKey; startMinute: number; endMinute: number }> {
+  const segments: Array<{ dayKey: DayKey; startMinute: number; endMinute: number }> = [];
+  for (const day of days) {
+    if (!(startMs < day.endMs && endMs > day.startMs)) continue;
+    const startMinute = startMs <= day.startMs ? 0 : wallMinutesAt(startMs, timeZone);
+    let endMinute = endMs >= day.endMs ? MINUTES_PER_DAY : wallMinutesAt(endMs, timeZone);
+    if (endMinute <= startMinute) {
+      endMinute = Math.min(MINUTES_PER_DAY, startMinute + Math.round((Math.min(endMs, day.endMs) - Math.max(startMs, day.startMs)) / MS_PER_MINUTE));
+    }
+    segments.push({ dayKey: day.key, startMinute, endMinute });
+  }
+  return segments;
+}
+
 /** Where proposals sit on each day of a time grid. Every day in `days` has an entry. */
 export function proposalSegments(
   proposals: readonly Proposal[],
@@ -180,16 +200,8 @@ export function proposalSegments(
   const result: Record<DayKey, ProposalSegment[]> = {};
   for (const day of days) result[day.key] = [];
   for (const proposal of proposals) {
-    const startMs = instantToMs(proposal.start);
-    const endMs = instantToMs(proposal.end);
-    for (const day of days) {
-      if (!(startMs < day.endMs && endMs > day.startMs)) continue;
-      const startMinute = startMs <= day.startMs ? 0 : wallMinutesAt(startMs, timeZone);
-      let endMinute = endMs >= day.endMs ? MINUTES_PER_DAY : wallMinutesAt(endMs, timeZone);
-      if (endMinute <= startMinute) {
-        endMinute = Math.min(MINUTES_PER_DAY, startMinute + Math.round((Math.min(endMs, day.endMs) - Math.max(startMs, day.startMs)) / MS_PER_MINUTE));
-      }
-      result[day.key].push({ proposal, dayKey: day.key, startMinute, endMinute });
+    for (const segment of spanSegments(instantToMs(proposal.start), instantToMs(proposal.end), days, timeZone)) {
+      result[segment.dayKey].push({ proposal, ...segment });
     }
   }
   return result;

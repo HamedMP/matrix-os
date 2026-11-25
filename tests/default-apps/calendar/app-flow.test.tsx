@@ -266,6 +266,46 @@ describe("Calendar app journey", () => {
     expect(bridge.prompts).toHaveLength(1);
   });
 
+  it("focuses the chosen time on the grid from an agent answer: the drawn proposal, or a marker for free times", async () => {
+    await mount();
+    fireEvent.click(toolbarButton("Agent"));
+    const panel = screen.getByRole("complementary", { name: "Agent" });
+    const box = await within(panel).findByRole("textbox", { name: "Ask the agent" }, { timeout: 5000 });
+    const ask = async (text: string, reply: unknown, title: string) => {
+      bridge.aiReply = () => JSON.stringify(reply);
+      fireEvent.change(box, { target: { value: text } });
+      fireEvent.keyDown(box, { key: "Enter" });
+      const cards = await within(panel).findAllByRole("article", { name: title });
+      await settle();
+      return cards.at(-1) as HTMLElement;
+    };
+
+    const proposals = await ask("propose two times for a sync with Ana", { intent: "propose_times", title: "Sync with Ana", attendees: ["ana@example.com"], durationMinutes: 60, count: 2 }, "Suggested times");
+    const showSecond = within(proposals).getAllByRole("button", { name: /^Show .* on the calendar$/ })[1];
+    fireEvent.click(showSecond);
+    await settle();
+    const drawn = [...document.querySelectorAll<HTMLElement>(".cal-proposal--agent")];
+    expect(drawn).toHaveLength(2);
+    expect(document.activeElement).toBe(drawn[1]);
+    expect(showSecond.getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector(".cal-marker")).toBeNull();
+
+    const free = await ask("when am I free with Ana", { intent: "find_slots", attendees: ["ana@example.com"], durationMinutes: 30, count: 2 }, "Free times");
+    const showFree = within(free).getAllByRole("button", { name: /^Show .* on the calendar$/ })[0];
+    fireEvent.click(showFree);
+    await settle();
+    const marker = document.querySelector<HTMLElement>(".cal-marker");
+    expect(marker).not.toBeNull();
+    expect(document.activeElement).toBe(marker);
+    expect(marker?.getAttribute("aria-label")).toMatch(/^Selected time /);
+    expect(showFree.getAttribute("aria-pressed")).toBe("true");
+
+    // Closing the agent panel takes its marker away.
+    fireEvent.click(toolbarButton("Agent"));
+    await settle();
+    expect(document.querySelector(".cal-marker")).toBeNull();
+  });
+
   it("shows the connect empty state when no calendar account is connected", async () => {
     bridge.integrations = async () => [];
     render(<App />);

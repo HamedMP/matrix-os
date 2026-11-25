@@ -32,10 +32,10 @@ export interface CalendarAppProps {
   getFreeBusy?: AgentSlotPanelProps["getFreeBusy"];
 }
 
-/** The element drawn for an event or proposal id, if it is on screen. */
+/** The element drawn for an event, proposal or marker id, if it is on screen. */
 function findDrawn(id: string): HTMLElement | undefined {
-  return [...document.querySelectorAll<HTMLElement>("[data-event-id], [data-proposal-id]")]
-    .find((item) => item.dataset.eventId === id || item.dataset.proposalId === id);
+  return [...document.querySelectorAll<HTMLElement>("[data-event-id], [data-proposal-id], [data-marker-id]")]
+    .find((item) => item.dataset.eventId === id || item.dataset.proposalId === id || item.dataset.markerId === id);
 }
 
 export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppProps) {
@@ -47,6 +47,8 @@ export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppP
   const highlightRef = useRef<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
+  // A time from an agent answer that has no proposal block (free times, a reschedule, a draft's time).
+  const [marker, setMarker] = useState<AgentHighlight | null>(null);
   const changes = useEventChanges(store, state);
   const selected = selectedId ? state.events.find((event) => event.id === selectedId) ?? null : null;
 
@@ -68,8 +70,14 @@ export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppP
       return true;
     }
     if (!agentOpen) return false;
-    setAgentOpen(false);
+    closeAgent();
     return true;
+  }
+
+  /** The marker belongs to the agent's answers, so it goes with the panel (and hides behind the composer, like the panel). */
+  function closeAgent() {
+    setAgentOpen(false);
+    setMarker(null);
   }
 
   const onShortcut = useEffectEvent((event: KeyboardEvent) => {
@@ -96,8 +104,11 @@ export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppP
   }, []);
 
   // A time chip in the agent panel: go to its day, then focus the event or proposal once it is drawn.
+  // A slot with no proposal block on the grid is drawn as a marker instead.
   function highlight(target: AgentHighlight) {
     highlightRef.current = target.id;
+    const drawnAsProposal = target.type === "slot" && state.proposals.some((proposal) => proposal.id === target.id);
+    setMarker(target.type === "slot" && !drawnAsProposal ? target : null);
     store.goToDate(dayKeyAt(instantToMs(target.start), state.timeZone));
   }
 
@@ -107,7 +118,7 @@ export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppP
     if (!element) return;
     highlightRef.current = null;
     element.focus();
-  }, [state.events, state.proposals, state.range]);
+  }, [state.events, state.proposals, state.range, marker]);
 
   function openEvent(eventId: string, anchor: HTMLElement) {
     popoverAnchor.current = anchor;
@@ -143,7 +154,7 @@ export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppP
         {state.draft && <EventComposer store={store} state={state} draftState={state.draft} onApplyProposal={onProposal} />}
         {agentOpen && (
           <div className="cal-agent-holder" hidden={Boolean(state.draft)}>
-            <AgentSlot store={store} now={now} getFreeBusy={getFreeBusy} onHighlight={highlight} onClose={() => setAgentOpen(false)} />
+            <AgentSlot store={store} now={now} getFreeBusy={getFreeBusy} onHighlight={highlight} onClose={closeAgent} />
           </div>
         )}
       </>
@@ -168,7 +179,7 @@ export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppP
             onView={(next) => store.setView(next)}
             onNew={openNew}
             onRefresh={() => void store.refresh()}
-            onToggleAgent={() => setAgentOpen((open) => !open)}
+            onToggleAgent={() => (agentOpen ? closeAgent() : setAgentOpen(true))}
           />
         )}
         banner={statusBanners({
@@ -204,6 +215,7 @@ export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppP
           onProposal={onProposal}
           onPickDay={pickDay}
           onNewEvent={openNew}
+          marker={state.draft ? null : marker}
         />
       </AppFrame>
       {selected && (

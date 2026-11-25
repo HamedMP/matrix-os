@@ -18,8 +18,10 @@ export interface EventCacheEntry {
   /** Exclusive. */
   end: IsoInstant;
   events: CalendarEvent[];
-  /** Epoch ms of the fetch. */
+  /** Epoch ms the reply was asked for; the later of two overlapping replies wins where they overlap. */
   fetchedAt: number;
+  /** Set when a newer reply showed that this entry may miss an event; it is fetched again when shown. */
+  stale?: true;
 }
 
 export interface EventCache {
@@ -52,10 +54,87 @@ function sortEvents(events: CalendarEvent[]): CalendarEvent[] {
   return events.sort((a, b) => instantToMs(a.start) - instantToMs(b.start) || a.id.localeCompare(b.id));
 }
 
-/** Adds or replaces an entry, marks it most recently used and evicts the oldest beyond `limit`. */
+/** True when the event shows in the half-open range in every zone, so a complete reply for it must list it. */
+function certainlyOverlaps(event: CalendarEvent, startMs: number, endMs: number): boolean {
+  const slack = event.allDay ? ALL_DAY_SLACK_MS : 0;
+  const eventStart = instantToMs(event.start) + slack;
+  const eventEnd = Math.max(instantToMs(event.end), instantToMs(event.start) + 1) - slack;
+  return eventStart < endMs && eventEnd > startMs;
+}
+
+/**
+ * `target` corrected by `source`, the newer reply for an overlapping range of
+ * the same calendar: inside the source's range the source is the truth, so
+ * its events replace the target's copies and events it no longer lists are
+ * dropped (deleted, or moved away). A target whose range reaches past the
+ * source's and lost such an event is marked stale, because the event may now
+ * sit in the part the source did not cover; it is fetched again when shown.
+ */
+function reconcile(target: EventCacheEntry, source: EventCacheEntry, sourceComplete: boolean): EventCacheEntry {
+  const sourceStart = instantToMs(source.start);
+  const sourceEnd = instantToMs(source.end);
+  const targetStart = instantToMs(target.start);
+  const targetEnd = instantToMs(target.end);
+  const listed = new Set(source.events.map((event) => event.id));
+  let lost = false;
+  let changed = false;
+  const events = target.events.filter((event) => {
+    if (listed.has(event.id)) {
+      changed = true;
+      return false;
+    }
+    if (sourceComplete && certainlyOverlaps(event, sourceStart, sourceEnd)) {
+      changed = true;
+      lost = true;
+      return false;
+    }
+    return true;
+  });
+  for (const event of source.events) {
+    if (events.length >= MAX_EVENTS_PER_ENTRY) break;
+    if (eventOverlaps(event, targetStart, targetEnd)) {
+      events.push(event);
+      changed = true;
+    }
+  }
+  if (!changed) return target;
+  const covered = sourceStart <= targetStart && sourceEnd >= targetEnd;
+  const next: EventCacheEntry = { ...target, events: sortEvents(events) };
+  if (lost && !covered) next.stale = true;
+  return next;
+}
+
+function rangesOverlap(a: EventCacheEntry, b: EventCacheEntry): boolean {
+  return a.calendarId === b.calendarId
+    && instantToMs(a.start) < instantToMs(b.end) && instantToMs(a.end) > instantToMs(b.start);
+}
+
+/**
+ * Adds or replaces an entry, marks it most recently used and evicts the
+ * oldest beyond `limit`. Overlapping entries of the same calendar are
+ * reconciled so that, where two ranges overlap, the reply asked for later
+ * wins: a meeting deleted or moved since an older reply does not come back
+ * from it. A reply asked for before the entry already stored for the same
+ * range is dropped.
+ */
 export function putEntry(cache: EventCache, entry: EventCacheEntry, limit = MAX_CACHE_ENTRIES): EventCache {
   const key = entryKey(entry);
-  const entries = { ...cache.entries, [key]: { ...entry, events: sortEvents(entry.events.slice(0, MAX_EVENTS_PER_ENTRY)) } };
+  const existing = cache.entries[key];
+  if (existing && existing.fetchedAt > entry.fetchedAt) return touchEntries(cache, [key]);
+  const complete = entry.events.length <= MAX_EVENTS_PER_ENTRY;
+  let incoming: EventCacheEntry = { ...entry, events: sortEvents(entry.events.slice(0, MAX_EVENTS_PER_ENTRY)) };
+  const overlapping = cache.order.filter((other) => other !== key && cache.entries[other] && rangesOverlap(cache.entries[other], incoming));
+  // First the newer replies correct this one, then this one corrects the older replies.
+  for (const other of overlapping) {
+    const stored = cache.entries[other];
+    if (stored.fetchedAt > entry.fetchedAt) incoming = reconcile(incoming, stored, stored.events.length < MAX_EVENTS_PER_ENTRY);
+  }
+  const entries: Record<string, EventCacheEntry> = { ...cache.entries };
+  for (const other of overlapping) {
+    const stored = cache.entries[other];
+    if (stored.fetchedAt <= entry.fetchedAt) entries[other] = reconcile(stored, incoming, complete);
+  }
+  entries[key] = incoming;
   const order = [...cache.order.filter((item) => item !== key), key];
   while (order.length > Math.max(1, limit)) {
     const evicted = order.shift();
@@ -72,10 +151,10 @@ export function touchEntries(cache: EventCache, keys: readonly string[]): EventC
   return { entries: cache.entries, order: [...cache.order.filter((key) => !moved.has(key)), ...present] };
 }
 
-/** The entry when it exists and is younger than `ttlMs`. */
+/** The entry when it exists, is younger than `ttlMs` and no newer reply marked it stale. */
 export function freshEntry(cache: EventCache, key: string, now: number, ttlMs = CACHE_TTL_MS): EventCacheEntry | null {
   const entry = cache.entries[key];
-  return entry && now - entry.fetchedAt < ttlMs ? entry : null;
+  return entry && !entry.stale && now - entry.fetchedAt < ttlMs ? entry : null;
 }
 
 /** Drops every entry, or only those of the given calendars. */

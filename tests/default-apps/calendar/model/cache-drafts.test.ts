@@ -62,6 +62,59 @@ describe("event cache", () => {
     const cache = putEntry(emptyCache(), { calendarId: "cal-1", ...WEEK, events: [holiday], fetchedAt: 0 });
     expect(eventsInRange(cache, ["cal-1"], WEEK.start, WEEK.end)).toHaveLength(1);
   });
+
+  describe("overlapping ranges", () => {
+    const MONTH = { start: "2026-11-01T00:00:00-04:00", end: "2026-12-01T00:00:00-05:00" };
+    const ids = (cache: ReturnType<typeof emptyCache>, range: { start: string; end: string }) =>
+      eventsInRange(cache, ["cal-1"], range.start, range.end).map((item) => `${item.id}@${item.start}`);
+
+    it("drops a meeting from an older month once a newer week reply no longer has it", () => {
+      const deleted = event({ id: "cal-1/deleted", start: "2026-11-24T15:00:00Z", end: "2026-11-24T16:00:00Z" });
+      const earlier = event({ id: "cal-1/earlier", start: "2026-11-10T15:00:00Z", end: "2026-11-10T16:00:00Z" });
+      let cache = putEntry(emptyCache(), { calendarId: "cal-1", ...MONTH, events: [deleted, earlier], fetchedAt: 1_000 });
+      cache = putEntry(cache, { calendarId: "cal-1", ...WEEK, events: [], fetchedAt: 2_000 });
+      expect(ids(cache, WEEK)).toEqual([]);
+      expect(ids(cache, MONTH)).toEqual([`${earlier.id}@${earlier.start}`]);
+      // The month may hold the meeting elsewhere now, so it is fetched again when shown.
+      expect(freshEntry(cache, cacheKey("cal-1", MONTH.start, MONTH.end), 2_500)).toBeNull();
+    });
+
+    it("shows a moved meeting once, at the time the newer reply gives", () => {
+      const before = event({ id: "cal-1/moved", start: "2026-11-24T15:00:00Z", end: "2026-11-24T16:00:00Z" });
+      const after = { ...before, start: "2026-11-25T15:00:00Z", end: "2026-11-25T16:00:00Z" };
+      let cache = putEntry(emptyCache(), { calendarId: "cal-1", ...MONTH, events: [before], fetchedAt: 1_000 });
+      cache = putEntry(cache, { calendarId: "cal-1", ...WEEK, events: [after], fetchedAt: 2_000 });
+      cache = touchEntries(cache, [cacheKey("cal-1", MONTH.start, MONTH.end)]);
+      expect(ids(cache, WEEK)).toEqual([`${after.id}@${after.start}`]);
+      expect(ids(cache, MONTH)).toEqual([`${after.id}@${after.start}`]);
+      // Nothing in the month was left unexplained, so it stays fresh.
+      expect(freshEntry(cache, cacheKey("cal-1", MONTH.start, MONTH.end), 2_500)).not.toBeNull();
+    });
+
+    it("keeps a newer week's answer when an older month reply is stored after it", () => {
+      const deleted = event({ id: "cal-1/deleted", start: "2026-11-24T15:00:00Z", end: "2026-11-24T16:00:00Z" });
+      let cache = putEntry(emptyCache(), { calendarId: "cal-1", ...WEEK, events: [], fetchedAt: 2_000 });
+      cache = putEntry(cache, { calendarId: "cal-1", ...MONTH, events: [deleted], fetchedAt: 1_000 });
+      expect(ids(cache, WEEK)).toEqual([]);
+      expect(ids(cache, MONTH)).toEqual([]);
+      // The same range asked earlier does not replace the newer answer.
+      const later = event({ id: "cal-1/later", start: "2026-11-25T15:00:00Z", end: "2026-11-25T16:00:00Z" });
+      cache = putEntry(cache, { calendarId: "cal-1", ...WEEK, events: [later], fetchedAt: 3_000 });
+      cache = putEntry(cache, { calendarId: "cal-1", ...WEEK, events: [], fetchedAt: 2_500 });
+      expect(ids(cache, WEEK)).toEqual([`${later.id}@${later.start}`]);
+    });
+
+    it("leaves other calendars and all-day events just outside the newer range alone", () => {
+      const holiday = event({ id: "cal-1/h", allDay: true, start: "2026-11-30T00:00:00Z", end: "2026-12-01T00:00:00Z" });
+      const other = event({ id: "cal-2/x", calendarId: "cal-2", start: "2026-11-24T15:00:00Z", end: "2026-11-24T16:00:00Z" });
+      let cache = putEntry(emptyCache(), { calendarId: "cal-1", ...MONTH, events: [holiday], fetchedAt: 1_000 });
+      cache = putEntry(cache, { calendarId: "cal-2", ...MONTH, events: [other], fetchedAt: 1_000 });
+      cache = putEntry(cache, { calendarId: "cal-1", ...WEEK, events: [], fetchedAt: 2_000 });
+      expect(ids(cache, MONTH)).toEqual([`${holiday.id}@${holiday.start}`]);
+      expect(eventsInRange(cache, ["cal-2"], WEEK.start, WEEK.end).map((item) => item.id)).toEqual([other.id]);
+      expect(freshEntry(cache, cacheKey("cal-1", MONTH.start, MONTH.end), 2_500)).not.toBeNull();
+    });
+  });
 });
 
 describe("event drafts", () => {

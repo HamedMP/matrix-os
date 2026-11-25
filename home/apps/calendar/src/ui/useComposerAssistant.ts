@@ -9,11 +9,12 @@ import { useEffect, useMemo } from "react";
 import type { CalendarEvent, EventDraft } from "../../../_shared/office-accounts/types/calendar";
 import type { CalendarState, CalendarStore } from "../model";
 import { isSlotDuration } from "../model/slots";
+import { normalizeAttendeeAddresses } from "../model/store-schedule";
 
 export interface ComposerSearch {
   /** False when the draft's length cannot be searched for (end not after start, or longer than a day). */
   searchable: boolean;
-  /** True when availability and the owner's events are loaded, so a search sees every meeting. */
+  /** True when the current guests' availability and the owner's events are loaded, so a search sees every meeting. */
   ready: boolean;
 }
 
@@ -30,7 +31,9 @@ export function useComposerAssistant(store: CalendarStore, draft: EventDraft, st
   const { status, busyStart } = state.assistant;
   const allDay = draft.allDay;
   const searchable = allDay || isSlotDuration(durationMinutes);
-  const ready = status === "ready" && state.eventsStatus === "ready";
+  // The loaded availability must be for these guests: right after a guest is added the store still holds the earlier list.
+  const currentGuests = normalizeAttendeeAddresses(attendeeKey ? attendeeKey.split(",") : []).join(",") === state.assistant.attendees.join(",");
+  const ready = status === "ready" && state.eventsStatus === "ready" && currentGuests;
   const ownerKey = useMemo(() => ownerBusyKey(state.events), [state.events]);
 
   useEffect(() => {

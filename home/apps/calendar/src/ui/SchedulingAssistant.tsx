@@ -20,7 +20,7 @@ export interface SchedulingAssistantProps {
   durationMinutes: number;
   /** False when that length cannot be searched for; the reason is shown instead of suggestions. */
   searchable: boolean;
-  /** True once availability and the owner's own events are loaded. */
+  /** True once availability of the current guests and the owner's own events for the range are loaded. */
   ready: boolean;
   onApply(proposalId: string): void;
   onFind(): void;
@@ -29,7 +29,8 @@ export interface SchedulingAssistantProps {
 
 export function SchedulingAssistant({ assistant, proposals, timeZone, durationMinutes, searchable, ready, onApply, onFind, onRetry }: SchedulingAssistantProps) {
   if (assistant.attendees.length === 0) return null;
-  const suggestions = searchable ? proposals.filter((proposal) => proposal.source === "assistant") : [];
+  // Until availability and events for these guests and this range are in, a suggestion may clash with someone.
+  const suggestions = searchable && ready ? proposals.filter((proposal) => proposal.source === "assistant") : [];
   return (
     <section className="cal-assistant" aria-label="Scheduling assistant">
       <div className="cal-assistant__head">

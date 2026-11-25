@@ -3,7 +3,7 @@
  */
 import { CalendarDays } from "lucide-react";
 import { EmptyState, Skeleton } from "../../../_shared/office-ui";
-import type { CalendarInfo } from "../../../_shared/office-accounts/types/calendar";
+import type { CalendarInfo, IsoInstant } from "../../../_shared/office-accounts/types/calendar";
 import type { CalendarState, CalendarStore } from "../model";
 import { AgendaView } from "./AgendaView";
 import { MonthView } from "./MonthView";
@@ -24,6 +24,8 @@ export interface CalendarMainProps {
   onProposal(proposalId: string): void;
   onPickDay(dayKey: string): void;
   onNewEvent(): void;
+  /** A time the agent answered with that has no proposal block; the time grid draws it. */
+  marker?: { id: string; start: IsoInstant; end: IsoInstant } | null;
 }
 
 export function CalendarMain(props: CalendarMainProps) {
@@ -74,6 +76,7 @@ export function CalendarMain(props: CalendarMainProps) {
           onChangeTime={props.onChangeTime}
           onProposal={props.onProposal}
           onPickDay={props.onPickDay}
+          marker={props.marker}
         />
       )}
       {state.eventsStatus === "loading" && state.events.length === 0 && (

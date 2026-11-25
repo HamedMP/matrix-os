@@ -14,13 +14,86 @@ import {
   type InviteOptions,
   type RespondOptions,
 } from "../../../_shared/office-accounts/types/calendar";
-import { findCachedEvent, replaceEvent, type EventCache } from "./cache";
+import { eventOverlaps, findCachedEvent, replaceEvent, type EventCache } from "./cache";
 import { applyEventChanges, eventFromDraft, draftChanges } from "./drafts";
 import type { CalendarConnection, CalendarState, PendingWrite, StoreContext } from "./store-state";
 import { zonedInstant } from "./dates";
 
 export const READ_ONLY_MESSAGE = "This calendar is read-only.";
 export const NOT_FOUND_MESSAGE = "This event is no longer available.";
+
+/** At most this many confirmed writes are kept for reads still out; a read that outlives them fails instead of answering. */
+export const MAX_CONFIRMED_WRITES = 200;
+
+/** A write the provider confirmed: `confirmed` replaces `eventId` (null for a delete). */
+export interface ConfirmedWrite {
+  seq: number;
+  eventId: string;
+  confirmed: CalendarEvent | null;
+}
+
+/**
+ * Writes confirmed while event reads were out. A reply the provider gave
+ * before a write landed must not undo that write once it has left `pending`,
+ * so each read takes a mark when it asks and, when it answers, gets every
+ * write confirmed since that mark to put on top of the reply.
+ */
+export interface WriteLog {
+  /** Call just before a read asks the provider; returns its mark. */
+  beginRead(): number;
+  /** Ends the read: the writes confirmed since `mark`, oldest first, or null when the log no longer reaches back that far. */
+  endRead(mark: number): ConfirmedWrite[] | null;
+  record(eventId: string, confirmed: CalendarEvent | null): void;
+}
+
+export function createWriteLog(limit = MAX_CONFIRMED_WRITES): WriteLog {
+  let seq = 0;
+  let reads = 0;
+  /** Writes up to this seq are no longer in `log`. */
+  let droppedThrough = 0;
+  let log: ConfirmedWrite[] = [];
+  return {
+    beginRead() {
+      reads += 1;
+      return seq;
+    },
+    endRead(mark) {
+      reads = Math.max(0, reads - 1);
+      const writes = droppedThrough > mark ? null : log.filter((write) => write.seq > mark);
+      if (reads === 0) {
+        // No read is out, so no reply can need these any more.
+        log = [];
+        droppedThrough = seq;
+      }
+      return writes;
+    },
+    record(eventId, confirmed) {
+      seq += 1;
+      if (reads === 0) {
+        droppedThrough = seq;
+        return;
+      }
+      log.push({ seq, eventId, confirmed });
+      while (log.length > Math.max(1, limit)) droppedThrough = log.shift()?.seq ?? droppedThrough;
+    },
+  };
+}
+
+/** A reply's events for one calendar and range with confirmed writes put on top, in the order they were confirmed. */
+export function withConfirmedWrites(
+  events: readonly CalendarEvent[],
+  writes: readonly ConfirmedWrite[],
+  calendarId: string,
+  startMs: number,
+  endMs: number,
+): CalendarEvent[] {
+  let next = [...events];
+  for (const write of writes) {
+    next = next.filter((event) => event.id !== write.eventId && event.id !== write.confirmed?.id);
+    if (write.confirmed && write.confirmed.calendarId === calendarId && eventOverlaps(write.confirmed, startMs, endMs)) next.push(write.confirmed);
+  }
+  return next;
+}
 
 /** Puts every pending write back on top of the cache, so a reload cannot undo an unconfirmed change. */
 export function reapplyPending(cache: EventCache, pending: readonly PendingWrite[]): EventCache {
@@ -45,7 +118,8 @@ function begin(ctx: StoreContext, write: PendingWrite): void {
   }));
 }
 
-function settle(ctx: StoreContext, write: PendingWrite, outcome: { confirmed: CalendarEvent | null } | { error: string }): void {
+function settle(ctx: StoreContext, log: WriteLog, write: PendingWrite, outcome: { confirmed: CalendarEvent | null } | { error: string }): void {
+  if (!("error" in outcome)) log.record(write.eventId, outcome.confirmed);
   ctx.set((state) => {
     const pending = state.pending.filter((item) => item.id !== write.id);
     if ("error" in outcome) {
@@ -71,7 +145,7 @@ export interface WriteActions {
   clearMutationError(): void;
 }
 
-export function createWriteActions(ctx: StoreContext, hooks: { onProposalUsed(proposalId: string): void }): WriteActions {
+export function createWriteActions(ctx: StoreContext, hooks: { log: WriteLog; onProposalUsed(proposalId: string): void }): WriteActions {
   async function createFromDraft(options: InviteOptions): Promise<boolean> {
     const state = ctx.get();
     const draftState = state.draft;
@@ -93,13 +167,13 @@ export function createWriteActions(ctx: StoreContext, hooks: { onProposalUsed(pr
     begin(ctx, write);
     try {
       const created = await connection.provider.createEvent(draft, { sendInvites: options.sendInvites === true });
-      settle(ctx, write, { confirmed: created });
+      settle(ctx, hooks.log, write, { confirmed: created });
       ctx.set((current) => (current.draft?.draft === draft ? { ...current, draft: null } : current));
       if (draftState.proposalId) hooks.onProposalUsed(draftState.proposalId);
       return true;
     } catch (error: unknown) {
       const message = ctx.report("create event", error);
-      settle(ctx, write, { error: message });
+      settle(ctx, hooks.log, write, { error: message });
       ctx.set((current) => (current.draft?.draft === draft
         ? { ...current, draft: { ...current.draft, status: "editing", error: message } }
         : current));
@@ -124,10 +198,10 @@ export function createWriteActions(ctx: StoreContext, hooks: { onProposalUsed(pr
     begin(ctx, write);
     try {
       const updated = await connection.provider.updateEvent(eventId, changes, { sendInvites: options.sendInvites === true });
-      settle(ctx, write, { confirmed: updated });
+      settle(ctx, hooks.log, write, { confirmed: updated });
       return true;
     } catch (error: unknown) {
-      settle(ctx, write, { error: ctx.report("update event", error) });
+      settle(ctx, hooks.log, write, { error: ctx.report("update event", error) });
       return false;
     }
   }
@@ -188,10 +262,10 @@ export function createWriteActions(ctx: StoreContext, hooks: { onProposalUsed(pr
       begin(ctx, write);
       try {
         await connection.provider.deleteEvent(eventId, { sendInvites: options.sendInvites === true });
-        settle(ctx, write, { confirmed: null });
+        settle(ctx, hooks.log, write, { confirmed: null });
         return true;
       } catch (error: unknown) {
-        settle(ctx, write, { error: ctx.report("delete event", error) });
+        settle(ctx, hooks.log, write, { error: ctx.report("delete event", error) });
         return false;
       }
     },
@@ -220,10 +294,10 @@ export function createWriteActions(ctx: StoreContext, hooks: { onProposalUsed(pr
       begin(ctx, write);
       try {
         await connection.provider.respond(eventId, response, options);
-        settle(ctx, write, { confirmed: optimistic });
+        settle(ctx, hooks.log, write, { confirmed: optimistic });
         return true;
       } catch (error: unknown) {
-        settle(ctx, write, { error: ctx.report("respond to event", error) });
+        settle(ctx, hooks.log, write, { error: ctx.report("respond to event", error) });
         return false;
       }
     },

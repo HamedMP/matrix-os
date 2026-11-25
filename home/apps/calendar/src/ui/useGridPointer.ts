@@ -77,12 +77,14 @@ export function useGridPointer(options: GridPointerOptions) {
 
   function commit(current: Press, final: GridDrag | null): void {
     if (!current.moved) {
+      const pressedDay = options.days[current.dayIndex];
       if (current.segment && current.target) options.onOpenEvent(current.segment.event.id, current.target);
-      else if (!current.segment) options.onCreate(options.days[current.dayIndex].key, current.minute);
+      else if (!current.segment && pressedDay) options.onCreate(pressedDay.key, current.minute);
       return;
     }
-    if (!final) return;
-    const day = options.days[final.dayIndex];
+    // A shortcut can change the days shown while the pointer is down; a gesture on a day that left does nothing.
+    const day = final ? options.days[final.dayIndex] : undefined;
+    if (!final || !day) return;
     if (final.kind === "create") {
       const span = createSpan(final.from, final.to, options.defaultMinutes);
       options.onCreate(day.key, span.start, span.end);

@@ -43,7 +43,7 @@ import {
 import type { CalendarPersistence } from "./preferences";
 import { mergeProposals, parseProposals, proposalsFromSlots, type Proposal, type ProposalSource } from "./proposals";
 import { MAX_SLOT_RESULTS, busyOverlays, findSlots, isSlotDuration } from "./slots";
-import { MAX_BUSY_BLOCKS, type CalendarConnection, type CalendarState, type StoreContext } from "./store-state";
+import { MAX_BUSY_BLOCKS, withoutAssistantProposals, type CalendarConnection, type CalendarState, type StoreContext } from "./store-state";
 
 export const NO_CALENDAR_MESSAGE = "Connect a calendar you can write to first.";
 
@@ -106,7 +106,7 @@ export interface ScheduleActions {
   setDraftReminders(reminders: readonly EventReminder[] | null): void;
   closeDraft(): void;
 
-  /** Whose busy time to overlay. Fetches it for the visible range. */
+  /** Whose busy time to overlay. Fetches it for the visible range; a changed list drops the assistant's suggestions. */
   setAssistantAttendees(addresses: readonly string[]): Promise<void>;
   setAssistantDuration(minutes: number): void;
   /** (Re)fetches busy time for the visible range. */
@@ -185,7 +185,11 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
     const state = ctx.get();
     const { attendees } = state.assistant;
     if (attendees.length === 0) {
-      ctx.set((current) => ({ ...current, assistant: { ...current.assistant, status: "idle", error: null, busy: [], busyStart: null, busyEnd: null, overlays: {} } }));
+      ctx.set((current) => ({
+        ...current,
+        assistant: { ...current.assistant, status: "idle", error: null, busy: [], busyStart: null, busyEnd: null, overlays: {} },
+        proposals: withoutAssistantProposals(current.proposals),
+      }));
       return;
     }
     const connection = busyConnection(state);
@@ -193,11 +197,16 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
       ctx.set((current) => ({
         ...current,
         assistant: { ...current.assistant, status: "error", error: NO_CALENDAR_MESSAGE, busy: [], busyStart: null, busyEnd: null, overlays: {} },
+        proposals: withoutAssistantProposals(current.proposals),
       }));
       return;
     }
     const { start, end } = state.range;
-    ctx.set((current) => ({ ...current, assistant: { ...current.assistant, status: "loading", error: null } }));
+    ctx.set((current) => ({
+      ...current,
+      assistant: { ...current.assistant, status: "loading", error: null },
+      proposals: withoutAssistantProposals(current.proposals),
+    }));
     try {
       const busy = await connection.provider.getFreeBusy(attendees, start, end);
       if (token !== busyToken) return;
@@ -298,7 +307,11 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
 
     async setAssistantAttendees(addresses) {
       const attendees = normalizeAttendeeAddresses(addresses);
-      ctx.set((state) => ({ ...state, assistant: { ...state.assistant, attendees } }));
+      ctx.set((state) => {
+        const changed = attendees.join(",") !== state.assistant.attendees.join(",");
+        // Suggestions were checked against the earlier guests only; they go until a new search runs.
+        return { ...state, assistant: { ...state.assistant, attendees }, proposals: changed ? withoutAssistantProposals(state.proposals) : state.proposals };
+      });
       await loadBusy();
     },
     setAssistantDuration(minutes) {

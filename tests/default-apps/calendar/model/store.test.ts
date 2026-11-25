@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ProviderError } from "../../../../home/apps/_shared/office-accounts/types/calendar";
 import { createMemoryPersistence, parsePreferences } from "../../../../home/apps/calendar/src/model/preferences";
 import { createCalendarStore, type CalendarStore } from "../../../../home/apps/calendar/src/model/store";
+import { createWriteLog } from "../../../../home/apps/calendar/src/model/store-writes";
 import { calendarInfo, FakeCalendarProvider } from "./fake-provider";
 import { event } from "./fixtures";
 
@@ -201,6 +202,64 @@ describe("calendar store: optimistic writes", () => {
     provider.release();
     expect(await deleting).toBe(true);
     expect(titles(store)).not.toContain("Standup");
+  });
+
+  it("keeps a confirmed create and delete when a refresh asked before them answers after them", async () => {
+    const { store, provider } = setup();
+    await store.init();
+    store.openDraftForGrid("2026-11-24", 13 * 60, 14 * 60);
+    store.patchDraft({ title: "Planning" });
+    provider.holdWrites = true;
+    const creating = store.saveDraft({ sendInvites: false });
+    const deleting = store.deleteEvent("work/standup", { sendInvites: false });
+    provider.holdReads = true;
+    // The provider answers this refresh with what it held before either write landed.
+    const refreshing = store.refresh();
+    provider.release();
+    expect(await creating).toBe(true);
+    expect(await deleting).toBe(true);
+    expect(store.getSnapshot().pending).toEqual([]);
+    provider.releaseReads();
+    await refreshing;
+    const state = store.getSnapshot();
+    expect(state.events.filter((item) => item.title === "Planning").map((item) => item.id)).toEqual(["work/created1"]);
+    expect(titles(store)).not.toContain("Standup");
+    expect(state.eventsStatus).toBe("ready");
+  });
+
+  it("answers an agent read with writes confirmed while the read was out", async () => {
+    const { store, provider } = setup();
+    await store.init();
+    const nextWeek = { start: "2026-11-30T00:00:00-05:00", end: "2026-12-07T00:00:00-05:00" };
+    store.openNewDraft({ start: "2026-12-01T15:00:00Z", durationMinutes: 30 });
+    store.patchDraft({ title: "Review" });
+    provider.holdWrites = true;
+    const creating = store.saveDraft({ sendInvites: false });
+    provider.holdReads = true;
+    const reading = store.readEvents(nextWeek.start, nextWeek.end);
+    provider.release();
+    expect(await creating).toBe(true);
+    provider.releaseReads();
+    expect((await reading).map((item) => item.title)).toEqual(["Review"]);
+    store.goToDate("2026-12-01");
+    await store.loadEvents();
+    expect(titles(store)).toContain("Review");
+  });
+
+  it("keeps confirmed writes only while a read is out, and fails a read that outlived the kept ones", () => {
+    const log = createWriteLog(2);
+    log.record("work/a", null);
+    const first = log.beginRead();
+    log.record("work/b", null);
+    const second = log.beginRead();
+    log.record("work/c", null);
+    expect(log.endRead(second)?.map((write) => write.eventId)).toEqual(["work/c"]);
+    log.record("work/d", null);
+    // "work/b" was dropped to stay within two, so the first read cannot be completed safely.
+    expect(log.endRead(first)).toBeNull();
+    // With no read out nothing is kept.
+    log.record("work/e", null);
+    expect(log.endRead(log.beginRead())).toEqual([]);
   });
 
   it("refuses writes to a read-only calendar without calling the provider", async () => {

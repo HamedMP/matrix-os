@@ -76,7 +76,8 @@ export function AnswerBody({ answer, proposals, timeZone, activeId, actions }: A
       {answer.kind === "proposals" && proposals.length > 0 && (
         <ul className="cal-agent__slots" aria-label="Suggested times">
           {proposals.map((proposal) => {
-            const slot = answer.slots.find((item) => item.start === proposal.start) ?? { id: proposal.id, start: proposal.start, end: proposal.end };
+            // The grid draws this time as the proposal's block, so the highlight names the proposal.
+            const slot: SlotRef = { id: proposal.id, start: proposal.start, end: proposal.end };
             return (
               <SlotRow key={proposal.id} slot={slot} timeZone={timeZone} active={activeId === slot.id} openLabel="Open draft"
                 onHighlight={() => slotHighlight(slot)} onOpen={() => actions.openProposal(proposal)} />

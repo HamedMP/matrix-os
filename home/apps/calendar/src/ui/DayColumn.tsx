@@ -1,6 +1,7 @@
 /**
  * One day of the time grid: attendees' busy bands, proposals, laid-out
- * events, the drag preview, the keyboard cursor and the current-time line.
+ * events, the drag preview, the agent's time marker, the keyboard cursor and
+ * the current-time line.
  */
 import type { CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import { instantToMs, type CalendarInfo } from "../../../_shared/office-accounts/types/calendar";
@@ -18,6 +19,16 @@ export interface GhostBlock {
   label: string;
 }
 
+/** Part of a time the agent answered with, on this day, while it has no proposal block. */
+export interface MarkerBlock {
+  id: string;
+  startMinute: number;
+  endMinute: number;
+  /** The whole time's start and end, for its label. */
+  startMs: number;
+  endMs: number;
+}
+
 export interface DayColumnProps {
   day: DaySlice;
   timeZone: string;
@@ -32,6 +43,7 @@ export interface DayColumnProps {
   draggingId: string | null;
   ghost: GhostBlock | null;
   cursorMinute: number | null;
+  markers: readonly MarkerBlock[];
   /** Minute of the current-time line, or null when today is not this day. */
   nowMinute: number | null;
   onEventClick(eventId: string, anchor: HTMLElement): void;
@@ -130,6 +142,17 @@ export function DayColumn(props: DayColumnProps) {
           {props.ghost.label}
         </div>
       )}
+      {props.markers.map((marker) => (
+        <div
+          key={`${marker.id}-${marker.startMinute}`}
+          className="cal-marker"
+          style={blockStyle(marker.startMinute, marker.endMinute)}
+          data-marker-id={marker.id}
+          tabIndex={-1}
+          role="img"
+          aria-label={`Selected time ${formatTime(marker.startMs, timeZone)} to ${formatTime(marker.endMs, timeZone)}`}
+        />
+      ))}
       {props.cursorMinute !== null && (
         <div className="cal-cursor" style={blockStyle(props.cursorMinute, props.cursorMinute + 30)} aria-hidden="true" />
       )}

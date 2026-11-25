@@ -33,11 +33,12 @@ import {
   initialState,
   rangeFor,
   withDerived,
+  withoutAssistantProposals,
   type CalendarConnection,
   type CalendarState,
   type StoreContext,
 } from "./store-state";
-import { createWriteActions, reapplyPending, type WriteActions } from "./store-writes";
+import { createWriteActions, createWriteLog, reapplyPending, withConfirmedWrites, type ConfirmedWrite, type WriteActions } from "./store-writes";
 
 export const MAX_SUBSCRIBERS = 64;
 const MS_PER_DAY = 86_400_000;
@@ -122,7 +123,8 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
   };
 
   const schedule = createScheduleActions(ctx, persistence);
-  const writes = createWriteActions(ctx, { onProposalUsed: (id) => schedule.proposalUsed(id) });
+  const writeLog = createWriteLog();
+  const writes = createWriteActions(ctx, { log: writeLog, onProposalUsed: (id) => schedule.proposalUsed(id) });
 
   function savePreferences(): void {
     const snapshot = state.preferences;
@@ -165,33 +167,51 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     return promise;
   }
 
-  type FetchResults = PromiseSettledResult<{ calendarIds: string[]; events: CalendarEvent[] }>[];
+  interface Fetched {
+    results: PromiseSettledResult<{ calendarIds: string[]; events: CalendarEvent[] }>[];
+    /** When the reply was asked for, so a later reply for an overlapping range wins. */
+    askedAt: number;
+    /** Writes confirmed while the read was out; null when too many were to keep track of. */
+    confirmed: ConfirmedWrite[] | null;
+  }
 
   /** One `listEvents` call per account for the given calendars and range. */
-  function fetchEvents(calendars: readonly CalendarInfo[], start: IsoInstant, end: IsoInstant): Promise<FetchResults> {
+  async function fetchEvents(calendars: readonly CalendarInfo[], start: IsoInstant, end: IsoInstant): Promise<Fetched> {
     const byAccount: Record<string, string[]> = {};
     for (const calendar of calendars) (byAccount[calendar.accountId] ??= []).push(calendar.id);
-    return Promise.allSettled(Object.entries(byAccount).map(async ([accountId, calendarIds]) => {
+    const askedAt = now();
+    const mark = writeLog.beginRead();
+    const results = await Promise.allSettled(Object.entries(byAccount).map(async ([accountId, calendarIds]) => {
       const connection = ctx.connectionFor(accountId);
       if (!connection) throw new ProviderError("not_connected");
       const events = await connection.provider.listEvents({ calendarIds, start, end });
       return { calendarIds, events };
     }));
+    return { results, askedAt, confirmed: writeLog.endRead(mark) };
   }
 
-  /** The cache with every fulfilled result stored for the range; the first failure, reported, as a fixed sentence. */
-  function storeResults(cache: EventCache, results: FetchResults, start: IsoInstant, end: IsoInstant, action: string): { cache: EventCache; error: string | null } {
+  /**
+   * The cache with every fulfilled result stored for the range, writes
+   * confirmed meanwhile put on top; the first failure, reported, as a fixed sentence.
+   */
+  function storeResults(cache: EventCache, fetched: Fetched, start: IsoInstant, end: IsoInstant, action: string): { cache: EventCache; error: string | null } {
+    const { confirmed } = fetched;
+    if (confirmed === null) {
+      // The reply may predate writes no longer on record; storing it could undo them.
+      return { cache, error: ctx.report(action, new ProviderError("failed")) };
+    }
     let error: string | null = null;
     let nextCache = cache;
-    const fetchedAt = now();
-    for (const result of results) {
+    const startMs = instantToMs(start);
+    const endMs = instantToMs(end);
+    for (const result of fetched.results) {
       if (result.status === "rejected") {
         error ??= ctx.report(action, result.reason);
         continue;
       }
       for (const calendarId of result.value.calendarIds) {
-        const events = result.value.events.filter((event) => event.calendarId === calendarId);
-        nextCache = putEntry(nextCache, { calendarId, start, end, events, fetchedAt });
+        const events = withConfirmedWrites(result.value.events.filter((event) => event.calendarId === calendarId), confirmed, calendarId, startMs, endMs);
+        nextCache = putEntry(nextCache, { calendarId, start, end, events, fetchedAt: fetched.askedAt });
       }
     }
     return { cache: nextCache, error };
@@ -209,10 +229,10 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
       return;
     }
     const token = ++eventsToken;
-    ctx.set((current) => ({ ...current, eventsStatus: "loading", eventsError: null }));
-    const results = await fetchEvents(missing, range.start, range.end);
+    ctx.set((current) => ({ ...current, eventsStatus: "loading", eventsError: null, proposals: withoutAssistantProposals(current.proposals) }));
+    const fetched = await fetchEvents(missing, range.start, range.end);
     ctx.set((current) => {
-      const stored = storeResults(current.cache, results, range.start, range.end, "load events");
+      const stored = storeResults(current.cache, fetched, range.start, range.end, "load events");
       const nextCache = reapplyPending(stored.cache, current.pending);
       if (token !== eventsToken) return { ...current, cache: nextCache };
       return { ...current, cache: nextCache, eventsStatus: stored.error ? "error" : "ready", eventsError: stored.error };
@@ -230,11 +250,14 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     const at = now();
     const missing = visible.filter((_, index) => !freshEntry(state.cache, keys[index], at));
     if (missing.length > 0) {
-      const results = await fetchEvents(missing, start, end);
-      // `ctx.set` runs synchronously, so `state` is the state the update applies to.
-      const stored = storeResults(state.cache, results, start, end, "read events");
-      ctx.set((current) => ({ ...current, cache: reapplyPending(stored.cache, current.pending) }));
-      if (stored.error !== null) throw new ProviderError("failed");
+      const fetched = await fetchEvents(missing, start, end);
+      let error: string | null = null;
+      ctx.set((current) => {
+        const stored = storeResults(current.cache, fetched, start, end, "read events");
+        error = stored.error;
+        return { ...current, cache: reapplyPending(stored.cache, current.pending) };
+      });
+      if (error !== null) throw new ProviderError("failed");
     }
     ctx.set((current) => ({ ...current, cache: touchEntries(current.cache, keys) }));
     const { cache, calendars } = state;

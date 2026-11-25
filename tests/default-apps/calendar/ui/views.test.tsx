@@ -68,6 +68,18 @@ describe("calendar views", () => {
     expect(screen.getByRole("region", { name: "Month" })).toBeTruthy();
   });
 
+  it("keeps keyboard creation working after a shortcut changes the days the grid shows", async () => {
+    const { store } = await setup();
+    const grid = screen.getByRole("group", { name: /Time grid/ });
+    grid.focus();
+    for (let step = 0; step < 4; step += 1) fireEvent.keyDown(grid, { key: "ArrowRight" });
+    // Switch to Day without moving focus off the grid.
+    fireEvent.keyDown(grid, { key: "1" });
+    expect(columnDays()).toEqual(["2026-11-23"]);
+    expect(() => fireEvent.keyDown(screen.getByRole("group", { name: /Time grid/ }), { key: "Enter" })).not.toThrow();
+    expect(store.getSnapshot().draft?.draft.start).toBe("2026-11-23T09:00:00-05:00");
+  });
+
   it("navigates from the mini month and from a day header", async () => {
     await setup();
     const navigator = screen.getByRole("group", { name: "Month navigator" });

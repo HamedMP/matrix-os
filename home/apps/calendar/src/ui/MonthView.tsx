@@ -28,9 +28,9 @@ export function MonthView({ state, calendarsById, onCreateAllDay, onOpenEvent, o
   const moreAnchor = useRef<HTMLElement | null>(null);
   const [moreDay, setMoreDay] = useState<string | null>(null);
   const eventsById = useMemo(() => Object.fromEntries(state.events.map((event) => [event.id, event])), [state.events]);
-  const hidden = moreDay
-    ? grid.weeks.flatMap((week) => week.days).find((day) => day.key === moreDay)?.hiddenEventIds ?? []
-    : [];
+  // The "more" list belongs to a day of this grid; once the month moves on it closes.
+  const moreCell = moreDay ? grid.weeks.flatMap((week) => week.days).find((day) => day.key === moreDay) : undefined;
+  const hidden = moreCell?.hiddenEventIds ?? [];
   const rowsStyle: CSSProperties = {
     gridTemplateRows: `var(--cal-month-date) repeat(${MONTH_ROWS}, var(--cal-bar-height)) var(--cal-bar-height)`,
   };
@@ -97,7 +97,7 @@ export function MonthView({ state, calendarsById, onCreateAllDay, onOpenEvent, o
           ))}
         </div>
       ))}
-      <Popover open={moreDay !== null} onClose={() => setMoreDay(null)} anchorRef={moreAnchor} label={moreDay ? `More events on ${formatShortDate(moreDay)}` : "More events"}>
+      <Popover open={moreCell !== undefined} onClose={() => setMoreDay(null)} anchorRef={moreAnchor} label={moreCell ? `More events on ${formatShortDate(moreCell.key)}` : "More events"}>
         <ul className="cal-more-list">
           {hidden.map((id) => {
             const event = eventsById[id];
