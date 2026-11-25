@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { DocxDocument, ParagraphBlock } from "../../../../packages/office/src/api/docx.js";
+import type { DocxBlock, DocxDocument, ParagraphBlock } from "../../../../packages/office/src/api/docx.js";
 import { isOfficeError } from "../../../../packages/office/src/errors.js";
-import { p, r } from "../model/build.js";
+import { cell, p, r, row, tbl } from "../model/build.js";
 import { DATE, DIRECT, RAE, TRACKED, blockXml, bodyXml, build, paragraphs, reopen, text } from "./helpers.js";
 
 const STYLES =
@@ -150,6 +150,31 @@ describe("setRunFormat", () => {
     expect(block(doc, first).runs.map((run) => [run.text, run.bold])).toEqual([["first ", false], ["one", true]]);
     expect(block(doc, middle).runs.map((run) => [run.text, run.bold])).toEqual([["middle", true]]);
     expect(block(doc, last).runs.map((run) => [run.text, run.bold])).toEqual([["last", true], [" one", false]]);
+    expect(doc.listRevisions().every((revision) => revision.kind === "format")).toBe(true);
+  });
+
+  it("formats the cells of a table, nested ones too, that lie between the ends of a range", () => {
+    const inner = tbl(row(cell(p(r("inner cell")))));
+    const { doc, ids } = make(p(r("before it")) + tbl(row(cell(p(r("cell one"))) + cell(p(r("cell two")) + inner + p(r("after inner"))))) + p(r("after it")));
+    const [first, last] = ids as [string, string];
+    const result = doc.applyOps([{ type: "setRunFormat", range: range(first, 7, last, 5), format: { bold: true } }], TRACKED);
+    const cellParagraphs: ParagraphBlock[] = [];
+    const visit = (blocks: readonly DocxBlock[]): void => {
+      for (const entry of blocks) {
+        if (entry.type === "paragraph") cellParagraphs.push(entry);
+        else if (entry.type === "table") for (const tableRow of entry.rows) for (const tableCell of tableRow.cells) visit(tableCell.blocks);
+      }
+    };
+    visit(doc.getView().body.blocks.filter((entry) => entry.type === "table"));
+    expect(cellParagraphs.map((entry) => [entry.text, entry.runs.every((run) => run.bold)])).toEqual([
+      ["cell one", true],
+      ["cell two", true],
+      ["inner cell", true],
+      ["after inner", true],
+    ]);
+    expect(block(doc, first).runs.map((run) => [run.text, run.bold])).toEqual([["before ", false], ["it", true]]);
+    expect(block(doc, last).runs.map((run) => [run.text, run.bold])).toEqual([["after", true], [" it", false]]);
+    expect(result.changedBlockIds).toEqual(expect.arrayContaining(cellParagraphs.map((entry) => entry.id)));
     expect(doc.listRevisions().every((revision) => revision.kind === "format")).toBe(true);
   });
 

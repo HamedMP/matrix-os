@@ -4,7 +4,7 @@ import type { ParagraphStylePatch, RunFormat } from "../../api/docx-model.js";
 import type { XmlElement } from "../../api/xml.js";
 import { appendChild, cloneNode, createElement, remove, serializeXml } from "../../xml/index.js";
 import type { BlockRecord, InlineAtom } from "../internal.js";
-import { firstChild, splitRunAt } from "../internal.js";
+import { firstChild, rowCells, splitRunAt, tableRows } from "../internal.js";
 import { type EditContext, type ResolvedRange, isOwn, noteRevision, revisionAttrs, touch } from "./context.js";
 import { ensureParagraphProps, markRevisions, pruneParagraphProps } from "./marks.js";
 import { applyParagraphPatch } from "./paragraph-style.js";
@@ -76,8 +76,13 @@ export function setRunFormat(context: EditContext, range: ResolvedRange, format:
   }
   const last = range.end.record;
   const paragraphs: BlockRecord[] = [];
+  // Every paragraph between the ends, the ones in the cells of a table (and of tables inside it) too.
   const collect = (record: BlockRecord): void => {
     if (record.type === "paragraph") paragraphs.push(record);
+    if (record.type !== "table") return;
+    for (const tableRow of tableRows(record.element)) {
+      for (const tableCell of rowCells(tableRow)) for (const inner of index.blocksIn(tableCell)) collect(inner);
+    }
   };
   for (const record of index.blocksIn(first.container).slice(first.indexInContainer + 1, last.indexInContainer)) collect(record);
   formatInParagraph(context, last, 0, range.end.offset, format);
