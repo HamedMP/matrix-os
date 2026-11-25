@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { parseAddressInput } from "../../../../home/apps/calendar/src/ui/AttendeeField";
+import { inviteRecipients, parseAddressInput } from "../../../../home/apps/calendar/src/ui/composer-helpers";
 import { presetForRecurrence, presetForReminders, recurrenceForPreset, remindersForPreset } from "../../../../home/apps/calendar/src/ui/composerOptions";
 import { guestAddresses, safeJoinUrl, timeChanges } from "../../../../home/apps/calendar/src/ui/eventActions";
-import { inviteRecipients } from "../../../../home/apps/calendar/src/ui/ComposerFooter";
 import { draftState } from "../../../../home/apps/calendar/src/model/drafts";
 import {
   columnAtOffset,

@@ -5,9 +5,9 @@
 import { useState, type KeyboardEvent } from "react";
 import { X } from "lucide-react";
 import { TextField } from "../../../_shared/office-ui";
-import { isValidMailAddress } from "../../../_shared/office-accounts/types/addresses";
 import { MAX_EVENT_ATTENDEES, type EventDraftAttendee } from "../../../_shared/office-accounts/types/calendar";
 import { personColorClass } from "./colors";
+import { parseAddressInput } from "./composer-helpers";
 
 export interface AttendeeFieldProps {
   attendees: readonly EventDraftAttendee[];
@@ -17,21 +17,6 @@ export interface AttendeeFieldProps {
   onAdd(attendee: EventDraftAttendee): void;
   onRemove(address: string): void;
   onToggleOptional(address: string, optional: boolean): void;
-}
-
-const SEPARATORS = /[\s,;]+/;
-
-/** Splits typed or pasted text into addresses; `invalid` holds the pieces that are not addresses. */
-export function parseAddressInput(text: string): { valid: string[]; invalid: string[] } {
-  const valid = new Set<string>();
-  const invalid: string[] = [];
-  for (const piece of text.split(SEPARATORS)) {
-    const trimmed = piece.replace(/^<|>$/g, "").trim().toLowerCase();
-    if (!trimmed) continue;
-    if (isValidMailAddress(trimmed)) valid.add(trimmed);
-    else invalid.push(piece.trim());
-  }
-  return { valid: [...valid], invalid };
 }
 
 export function AttendeeField({ attendees, colorOrder, disabled, onAdd, onRemove, onToggleOptional }: AttendeeFieldProps) {

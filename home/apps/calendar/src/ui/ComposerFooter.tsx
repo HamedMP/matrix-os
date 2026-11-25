@@ -8,6 +8,7 @@ import { useState } from "react";
 import { ConfirmSend } from "../../../_shared/office-ui";
 import type { CalendarStore } from "../model";
 import type { DraftState } from "../model/drafts";
+import { inviteRecipients } from "./composer-helpers";
 import { issueText } from "./composerOptions";
 import { formatEventWhen } from "./format";
 
@@ -20,14 +21,8 @@ export interface ComposerFooterProps {
   onAttempt(): void;
 }
 
-/** Everyone a save would notify: current guests plus, when editing, guests that were removed. */
-export function inviteRecipients(draftState: DraftState): string[] {
-  const addresses = [...draftState.draft.attendees, ...(draftState.original?.attendees ?? [])].map((attendee) => attendee.address.toLowerCase());
-  return [...new Set(addresses)];
-}
-
 /** What the primary button says and whether it may act. */
-export function primaryAction(draftState: DraftState): { label: string; sendsInvites: boolean; blocked: boolean } {
+function primaryAction(draftState: DraftState): { label: string; sendsInvites: boolean; blocked: boolean } {
   const sendsInvites = inviteRecipients(draftState).length > 0;
   const editing = draftState.mode === "edit";
   return {

@@ -68,8 +68,8 @@ async function walkWindow(store: CalendarStore, start: IsoInstant, end: IsoInsta
   }
   const startDay = dayKeyAt(instantToMs(start), first.timeZone);
   store.goToDate(startDay);
-  // Sequential on purpose: each step moves the one grid the store owns.
   for (let step = 0; step < MAX_WALK_STEPS; step += 1) {
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential on purpose: each step moves the one grid the store owns.
     await store.loadEvents();
     const state = store.getSnapshot();
     if (state.eventsStatus === "error") throw new Error("Calendar events could not be loaded");

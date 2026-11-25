@@ -128,6 +128,7 @@ let viewerZone: string | null = null;
 /** The viewer's zone, read once (the runtime's zone does not change while the app runs). */
 function viewerTimeZone(): string {
   if (viewerZone === null) {
+    // react-doctor-disable-next-line react-doctor/js-hoist-intl -- runs once: the result is cached in `viewerZone` above.
     const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
     viewerZone = isValidTimeZone(zone) ? zone : "UTC";
   }
