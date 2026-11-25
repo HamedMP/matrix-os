@@ -6,12 +6,12 @@ import { PushRegistrationSync } from "../components/PushRegistrationSync";
 import { queuePushChange, syncPushRegistration } from "../lib/push-registration-sync";
 
 const mockIsPushOn = jest.fn<Promise<boolean>, []>();
-const mockEnablePush = jest.fn<Promise<void>, [unknown]>();
+const mockRefreshPush = jest.fn<Promise<boolean>, [unknown]>();
 const mockDisablePush = jest.fn<Promise<void>, [unknown]>();
 
 jest.mock("@/lib/push", () => ({
   isPushNotificationsEnabled: () => mockIsPushOn(),
-  enablePushNotifications: (input: unknown) => mockEnablePush(input),
+  refreshPushNotifications: (input: unknown) => mockRefreshPush(input),
   disablePushNotifications: (input: unknown) => mockDisablePush(input),
 }));
 
@@ -35,7 +35,7 @@ const refused = { granted: false, status: "denied", canAskAgain: false } as Noti
 beforeEach(() => {
   jest.clearAllMocks();
   mockIsPushOn.mockResolvedValue(true);
-  mockEnablePush.mockResolvedValue();
+  mockRefreshPush.mockResolvedValue(true);
   mockDisablePush.mockResolvedValue();
   jest.mocked(Notifications.getPermissionsAsync).mockResolvedValue(granted);
   jest.mocked(Notifications.requestPermissionsAsync).mockResolvedValue(granted);
@@ -50,14 +50,14 @@ describe("syncPushRegistration", () => {
 
     expect(Notifications.getPermissionsAsync).not.toHaveBeenCalled();
     expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled();
-    expect(mockEnablePush).not.toHaveBeenCalled();
+    expect(mockRefreshPush).not.toHaveBeenCalled();
   });
 
   it("registers this phone with the computer again while push is on and allowed", async () => {
     await expect(syncPushRegistration(SESSION)).resolves.toBe("registered");
 
     expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled();
-    expect(mockEnablePush).toHaveBeenCalledWith(SESSION);
+    expect(mockRefreshPush).toHaveBeenCalledWith(SESSION);
   });
 
   it("asks for permission when push is on but this install was never asked, then registers", async () => {
@@ -68,7 +68,7 @@ describe("syncPushRegistration", () => {
     await expect(syncPushRegistration(SESSION)).resolves.toBe("registered");
 
     expect(Notifications.requestPermissionsAsync).toHaveBeenCalledTimes(1);
-    expect(mockEnablePush).toHaveBeenCalledWith(SESSION);
+    expect(mockRefreshPush).toHaveBeenCalledWith(SESSION);
   });
 
   it("turns push off when the owner declines the prompt, so the switch shows what the phone can get", async () => {
@@ -78,7 +78,7 @@ describe("syncPushRegistration", () => {
     await expect(syncPushRegistration(SESSION)).resolves.toBe("denied");
 
     expect(mockDisablePush).toHaveBeenCalledWith(SESSION);
-    expect(mockEnablePush).not.toHaveBeenCalled();
+    expect(mockRefreshPush).not.toHaveBeenCalled();
   });
 
   it("does not ask again once notifications are turned off in the system settings", async () => {
@@ -108,7 +108,7 @@ describe("queuePushChange", () => {
     finishTurningOff();
     await turningOff;
     await expect(sync).resolves.toBe("off");
-    expect(mockEnablePush).not.toHaveBeenCalled();
+    expect(mockRefreshPush).not.toHaveBeenCalled();
   });
 
   it("keeps a slow change ahead of the next one, so a late write cannot undo it", async () => {
@@ -153,14 +153,14 @@ describe("PushRegistrationSync", () => {
   it("registers once the computer is known, and again each time the app comes back", async () => {
     render(<PushRegistrationSync />);
     await act(async () => {});
-    expect(mockEnablePush).toHaveBeenCalledTimes(1);
+    expect(mockRefreshPush).toHaveBeenCalledTimes(1);
 
     await act(async () => appStateListener?.("background"));
-    expect(mockEnablePush).toHaveBeenCalledTimes(1);
+    expect(mockRefreshPush).toHaveBeenCalledTimes(1);
 
     await act(async () => appStateListener?.("active"));
-    expect(mockEnablePush).toHaveBeenCalledTimes(2);
-    expect(mockEnablePush).toHaveBeenLastCalledWith(SESSION);
+    expect(mockRefreshPush).toHaveBeenCalledTimes(2);
+    expect(mockRefreshPush).toHaveBeenLastCalledWith(SESSION);
   });
 
   it("waits for a computer before registering", async () => {
@@ -170,27 +170,27 @@ describe("PushRegistrationSync", () => {
     await act(async () => {});
 
     expect(mockIsPushOn).not.toHaveBeenCalled();
-    expect(mockEnablePush).not.toHaveBeenCalled();
+    expect(mockRefreshPush).not.toHaveBeenCalled();
   });
 
   it("does not start a second registration while one is still running", async () => {
     let finish: () => void = () => {};
-    mockEnablePush.mockImplementation(() => new Promise<void>((resolve) => { finish = resolve; }));
+    mockRefreshPush.mockImplementation(() => new Promise<boolean>((resolve) => { finish = () => resolve(true); }));
 
     render(<PushRegistrationSync />);
     await act(async () => {});
     await act(async () => appStateListener?.("active"));
-    expect(mockEnablePush).toHaveBeenCalledTimes(1);
+    expect(mockRefreshPush).toHaveBeenCalledTimes(1);
 
     await act(async () => finish());
     await act(async () => appStateListener?.("active"));
-    expect(mockEnablePush).toHaveBeenCalledTimes(2);
+    expect(mockRefreshPush).toHaveBeenCalledTimes(2);
     await act(async () => finish());
   });
 
   it("logs a failed registration without throwing, and stops listening once unmounted", async () => {
     const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-    mockEnablePush.mockRejectedValue(new Error("Push notification settings could not be saved. Try again."));
+    mockRefreshPush.mockRejectedValue(new Error("Push notification settings could not be saved. Try again."));
 
     const view = render(<PushRegistrationSync />);
     await act(async () => {});
@@ -214,10 +214,10 @@ describe("PushRegistrationSync", () => {
     view.rerender(<PushRegistrationSync />);
     try {
       await act(async () => {});
-      expect(mockEnablePush).toHaveBeenCalledWith({ ...SESSION, gatewayUrl: mockGateway.gatewayUrl });
+      expect(mockRefreshPush).toHaveBeenCalledWith({ ...SESSION, gatewayUrl: mockGateway.gatewayUrl });
     } finally {
       await act(async () => finish(SESSION));
     }
-    expect(mockEnablePush).toHaveBeenCalledTimes(1);
+    expect(mockRefreshPush).toHaveBeenCalledTimes(1);
   });
 });

@@ -54,7 +54,7 @@ describe("push adapter with owner Postgres tokens", () => {
   it("bootstraps the token table once and records its schema version", async () => {
     expect(await bootstrapNotificationDatabase(db)).toEqual({ applied: [] });
     const versions = await db.selectFrom("notification_schema_migrations").select(["version", "name"]).execute();
-    expect(versions).toEqual([{ version: 1, name: "push_tokens" }]);
+    expect(versions).toEqual([{ version: 1, name: "push_tokens" }, { version: 4, name: "push_consent" }]);
   });
 
   it("creates the version table under the schema lock, so gateways starting together cannot race on it", async () => {
@@ -65,7 +65,7 @@ describe("push adapter with owner Postgres tokens", () => {
       log: (event) => { statements.push(event.query.sql.replace(/\s+/g, " ").trim()); },
     });
     try {
-      expect(await bootstrapNotificationDatabase(logged)).toEqual({ applied: [1] });
+      expect(await bootstrapNotificationDatabase(logged)).toEqual({ applied: [1, 4] });
     } finally {
       await logged.destroy();
     }

@@ -93,13 +93,13 @@ describe("POST/DELETE /api/push/register", () => {
         expect(response.status).toBe(200);
         return response.json();
       };
-      expect(await status()).toEqual({ registered: false });
+      expect(await status()).toEqual({ enabled: false, registered: false });
       await push.registerToken("ExponentPushToken[phone]", "ios", "owner_b");
-      expect(await status()).toEqual({ registered: false });
+      expect(await status()).toEqual({ enabled: false, registered: false });
       await push.registerToken("ExponentPushToken[phone]", "ios", "owner_a");
-      expect(await status()).toEqual({ registered: true });
+      expect(await status()).toEqual({ enabled: true, registered: true });
       now += 31 * 24 * 60 * 60 * 1000;
-      expect(await status()).toEqual({ registered: false });
+      expect(await status()).toEqual({ enabled: true, registered: false });
     } finally {
       await db.destroy();
     }
@@ -115,7 +115,7 @@ describe("POST/DELETE /api/push/register", () => {
     const token = buildPlatformVerificationToken(handle, secret);
     const push = createPushAdapter({ tokens: null });
     adapters.push(push);
-    const status = vi.spyOn(push, "isTokenRegistered").mockResolvedValue(true);
+    const status = vi.spyOn(push, "getRegistrationStatus").mockResolvedValue({ enabled: true, registered: true });
     const app = createApp(homePath, push, "owner_a", authMiddleware(token));
     const body = pushRequest("POST", { token: "ExponentPushToken[phone]" });
     const headers = (userId: string) => ({
@@ -125,7 +125,7 @@ describe("POST/DELETE /api/push/register", () => {
     });
     const owner = await app.request("/api/push/status", { ...body, headers: headers("owner_a") });
     expect(owner.status).toBe(200);
-    expect(await owner.json()).toEqual({ registered: true });
+    expect(await owner.json()).toEqual({ enabled: true, registered: true });
     expect((await app.request("/api/push/status", body)).status).toBe(401);
     expect((await app.request("/api/push/status", { ...body, headers: headers("foreign_user") })).status).toBe(403);
     const access = buildPreviewTerminalAccess({
@@ -137,6 +137,17 @@ describe("POST/DELETE /api/push/register", () => {
       ...headers("shared_actor"), "x-platform-preview-terminal": access!,
     } })).status).toBe(403);
     expect(status).toHaveBeenCalledExactlyOnceWith("ExponentPushToken[phone]", "owner_a");
+    const refresh = vi.spyOn(push, "refreshToken").mockResolvedValue(true);
+    const renewal = pushRequest("POST", { token: "delivery", identity: "private-phone-identity", platform: "ios", mode: "refresh" });
+    const renewed = await app.request("/api/push/register", { ...renewal, headers: headers("owner_a") });
+    expect(renewed.status).toBe(200);
+    expect(await renewed.json()).toEqual({ ok: true, registered: true });
+    expect((await app.request("/api/push/register", renewal)).status).toBe(401);
+    expect((await app.request("/api/push/register", { ...renewal, headers: headers("foreign_user") })).status).toBe(403);
+    expect((await app.request("/api/push/register", { ...renewal, headers: {
+      ...headers("shared_actor"), "x-platform-preview-terminal": access!,
+    } })).status).toBe(403);
+    expect(refresh).toHaveBeenCalledExactlyOnceWith("delivery", "ios", "owner_a", "private-phone-identity");
   });
 
   it("rejects invalid and oversized bodies before touching storage", async () => {
@@ -145,7 +156,8 @@ describe("POST/DELETE /api/push/register", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const register = vi.spyOn(pushAdapter, "registerToken");
     const remove = vi.spyOn(pushAdapter, "removeToken");
-    const status = vi.spyOn(pushAdapter, "isTokenRegistered");
+    const status = vi.spyOn(pushAdapter, "getRegistrationStatus");
+    const refresh = vi.spyOn(pushAdapter, "refreshToken");
     const app = createApp(homePath, pushAdapter);
 
     expect((await app.request("/api/push/register", pushRequest("POST", { platform: "ios" }))).status).toBe(400);
@@ -156,9 +168,13 @@ describe("POST/DELETE /api/push/register", () => {
       expect((await app.request("/api/push/status", pushRequest("POST", invalid))).status).toBe(400);
     }
     expect((await app.request("/api/push/status", pushRequest("POST", oversized))).status).toBe(413);
+    for (const extra of [{ identity: "x".repeat(513) }, { mode: "unexpected" }, { identity: "" }]) {
+      expect((await app.request("/api/push/register", pushRequest("POST", { token: "delivery", platform: "ios", ...extra }))).status).toBe(400);
+    }
     expect(register).not.toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
     expect(status).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("fails closed before storage when an authenticated runtime has no configured owner", async () => {
@@ -166,7 +182,7 @@ describe("POST/DELETE /api/push/register", () => {
     vi.stubEnv("MATRIX_CLERK_USER_ID", "");
     const push = createPushAdapter({ tokens: null });
     adapters.push(push);
-    const status = vi.spyOn(push, "isTokenRegistered").mockResolvedValue(true);
+    const status = vi.spyOn(push, "getRegistrationStatus").mockResolvedValue({ enabled: true, registered: true });
     const response = await createApp(homePath, push).request("/api/push/status", pushRequest("POST", { token: "phone" }));
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: "Push registration unavailable" });
@@ -194,8 +210,9 @@ describe("POST/DELETE /api/push/register", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const failing = {
       register: async () => { throw new Error("connection to 10.0.0.5 refused"); },
+      refresh: async () => { throw new Error("connection to 10.0.0.5 refused"); },
       remove: async () => { throw new Error("connection to 10.0.0.5 refused"); },
-      hasRecent: async () => { throw new Error("connection to 10.0.0.5 refused"); },
+      status: async () => { throw new Error("connection to 10.0.0.5 refused"); },
       removeDeviceTokens: async () => undefined,
       listRecent: async () => [],
       deleteUnseenBefore: async () => 0,

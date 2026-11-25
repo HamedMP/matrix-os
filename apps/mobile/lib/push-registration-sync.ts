@@ -3,7 +3,7 @@ import { ensureNotificationChannels } from "@/lib/notification-channels";
 
 import {
   disablePushNotifications,
-  enablePushNotifications,
+  refreshPushNotifications,
   isPushNotificationsEnabled,
   type PushRegistrationSession,
 } from "@/lib/push";
@@ -56,9 +56,9 @@ function notifyPushTurnedOff(scopeKey: string | undefined) {
 }
 
 /**
- * Refreshes only an existing owner/computer registration. A cached Expo token
- * identifies the phone; it is never consent to enroll another computer. An
- * expired or explicitly removed registration requires another explicit opt-in.
+ * Restores delivery while durable owner/computer consent remains on. Token
+ * expiry and Expo cleanup do not revoke consent; explicit opt-out does.
+ * Conditional refresh cannot grant consent, including after a stale read.
  */
 export function syncPushRegistration(session: PushRegistrationSession, isCurrent = () => true): Promise<PushRegistrationResult> {
   return queuePushChange(async () => {
@@ -76,7 +76,9 @@ export function syncPushRegistration(session: PushRegistrationSession, isCurrent
       return "denied";
     }
 
-    await enablePushNotifications(session);
-    return "registered";
+    const registered = await refreshPushNotifications(session, isCurrent);
+    if (!isCurrent()) return "off";
+    if (!registered) notifyPushTurnedOff(session.scopeKey);
+    return registered ? "registered" : "off";
   });
 }

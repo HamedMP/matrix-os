@@ -19,6 +19,7 @@ jest.mock("expo-notifications", () => ({
 
 jest.mock("@/lib/requests/settings", () => ({
   updatePushRegistration: jest.fn(() => Promise.resolve()),
+  refreshPushRegistration: jest.fn(() => Promise.resolve(true)),
   fetchPushRegistrationStatus: jest.fn(() => Promise.resolve(true)),
 }));
 
@@ -106,7 +107,7 @@ describe("Android notification channels", () => {
   });
 
   it("also waits for channels before the launch re-registration permission prompt", async () => {
-    jest.mocked(SecureStore.getItemAsync).mockResolvedValueOnce("ExponentPushToken[previous-install]");
+    jest.mocked(SecureStore.getItemAsync).mockResolvedValue("ExponentPushToken[previous-install]");
     notifications.getPermissionsAsync.mockImplementation(async () => {
       events.push("permission");
       return { granted: false, canAskAgain: true } as Notifications.NotificationPermissionsStatus;

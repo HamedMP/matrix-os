@@ -17,7 +17,8 @@ export const MobileSystemInfoSchema = z.looseObject({
 });
 
 const OkResponseSchema = z.looseObject({ ok: z.literal(true) });
-const PushRegistrationStatusSchema = z.strictObject({ registered: z.boolean() });
+const PushRegistrationStatusSchema = z.strictObject({ enabled: z.boolean(), registered: z.boolean() });
+const PushRefreshResponseSchema = z.strictObject({ ok: z.literal(true), registered: z.boolean() });
 const BillingPortalSchema = z.object({ url: z.url() }).strict();
 
 export type MobileSystemInfo = z.infer<typeof MobileSystemInfoSchema>;
@@ -69,6 +70,8 @@ export async function updatePushRegistration(input: {
   expoPushToken: string;
   platform: string;
   enabled: boolean;
+  identity?: string;
+  deliveryToken?: string;
 }): Promise<void> {
   await fetchAuthenticatedJson({
     url: buildGatewayRequestUrl(input.gatewayUrl, "/api/push/register"),
@@ -78,9 +81,22 @@ export async function updatePushRegistration(input: {
     method: input.enabled ? "POST" : "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input.enabled
-      ? { token: input.expoPushToken, platform: input.platform }
-      : { token: input.expoPushToken }),
+      ? { token: input.expoPushToken, platform: input.platform, ...(input.identity ? { identity: input.identity } : {}) }
+      : { token: input.expoPushToken, ...(input.deliveryToken ? { deliveryToken: input.deliveryToken } : {}) }),
   });
+}
+
+/** Conditional refresh cannot grant consent after an explicit opt-out. */
+export async function refreshPushRegistration(input: {
+  clerkToken: string; gatewayUrl: string; expoPushToken: string; platform: string; identity: string;
+}): Promise<boolean> {
+  const response = await fetchAuthenticatedJson({
+    url: buildGatewayRequestUrl(input.gatewayUrl, "/api/push/register"), token: input.clerkToken,
+    schema: PushRefreshResponseSchema, errorMessage: "Push notification settings could not be saved. Try again.",
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: input.expoPushToken, platform: input.platform, identity: input.identity, mode: "refresh" }),
+  });
+  return response.registered;
 }
 
 export async function fetchPushRegistrationStatus(input: {
@@ -97,5 +113,5 @@ export async function fetchPushRegistrationStatus(input: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token: input.expoPushToken }),
   });
-  return response.registered;
+  return response.enabled;
 }

@@ -43,7 +43,7 @@ let fetchMock: jest.SpyInstance;
 function setup() {
   mockUseGateway.mockReturnValue({ client: new GatewayClient("http://localhost:4000", "token"), gateway: { id: "a", url: "http://localhost:4000", name: "Computer A" } });
   fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (_url, request) => {
-    if (String(_url).includes("/api/push/status")) return jsonResponse({ registered: false });
+    if (String(_url).includes("/api/push/status")) return jsonResponse({ enabled: false, registered: false });
     if (request?.method === "PUT") stored = { ...NotificationPreferencesSchema.parse(JSON.parse(request.body as string)), revision: stored.revision + 1 };
     return jsonResponse({ preferences: stored });
   });
@@ -211,7 +211,7 @@ it("binds preference saves and phone opt-out to the named selected preview when 
   });
   jest.mocked(SecureStore.getItemAsync).mockResolvedValue("ExponentPushToken[phone]");
   fetchMock.mockImplementation(async (url, request) => {
-    if (String(url).includes("/api/push/status")) return jsonResponse({ registered: true });
+    if (String(url).includes("/api/push/status")) return jsonResponse({ enabled: true, registered: true });
     if (String(url).includes("/api/push/register")) return jsonResponse({ ok: true });
     if (request?.method === "PUT") stored = { ...stored, ...JSON.parse(request.body as string), revision: 5 };
     return jsonResponse({ preferences: stored });
@@ -254,7 +254,7 @@ it("keeps push registration unknown after a status failure and permits a safe re
   jest.mocked(SecureStore.getItemAsync).mockResolvedValue("ExponentPushToken[phone]");
   let unavailable = true;
   fetchMock.mockImplementation(async (url) => String(url).includes("/api/push/status")
-    ? jsonResponse(unavailable ? {} : { registered: true }, { status: unavailable ? 503 : 200 })
+    ? jsonResponse(unavailable ? {} : { enabled: true, registered: true }, { status: unavailable ? 503 : 200 })
     : jsonResponse({ preferences: stored }));
   const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   render(<NotificationsScreen />);

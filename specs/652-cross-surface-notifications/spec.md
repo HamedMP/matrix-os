@@ -113,14 +113,34 @@ A4 implementation notes (ENG-453, 2026-11-20):
   over the platform active selection; a bare cloud URL resolves the active
   computer once and pins its gateway path. Late account/computer responses stay
   scoped to their original target. Other computers may continue sending.
-- Push enabled state comes from the selected computer's owner Postgres row via
-  `POST /api/push/status`, not the existence of a cached Expo token. This read-only
-  endpoint requires the verified request principal, a strict bounded token body,
-  `bodyLimit` 4 KiB and generic errors; it returns only `registered: boolean`.
-  Tokens are never placed in URLs. Missing server support/storage is unavailable,
-  not assumed off. Disable removes only that computer's row and retains the
-  phone's token identity for other computers. Foreground refresh never enrolls
-  a computer whose registration is absent/expired; enable is explicit again.
+- Consent lifecycle correction: enabled state comes from the selected owner's
+  durable `notification_push_consents` record, separate from expiring delivery
+  rows. `POST /api/push/status` returns only `{enabled, registered}` booleans.
+  The owner-only read has a strict private-identity body, 4 KiB limit and generic
+  errors; identities never enter URLs, logs or responses. Missing support or
+  storage is unavailable, never assumed off.
+- Explicit enable records consent and delivery in one owner-locked transaction.
+  Explicit opt-out retains an off tombstone and removes every delivery token
+  linked to that phone on this computer. TTL sweep and `DeviceNotRegistered`
+  remove delivery only. Foreground uses conditional `mode=refresh`, which checks
+  on-consent under the same lock and cannot grant consent after a stale read.
+  A stable private phone identity is retained separately from the current Expo
+  delivery token, so rotation does not strand consent or leave stale fanout.
+- Additive schema migration 4 reserves versions 2/3 for A6. It seeds consent from
+  actual legacy owner delivery rows, including expired rows, without resetting
+  an existing off record. Every bootstrap also reconciles legacy rows written by
+  an older gateway after migration 4, retaining known delivery aliases. The
+  exclusive schema lock and delivery-table lock serialize reconciliation with
+  current consent changes and older delivery writers. An owner-level guard
+  survives phone eviction: after any explicit opt-out, unknown legacy rotations
+  fail closed because the old protocol cannot prove which phone they represent.
+  Known enabled identities still recover through conditional refresh; explicit
+  enable remains available. Opt-out includes a distinct cached delivery alias
+  when needed and revokes both imported aliases and the retained identity.
+  A legacy identity already removed before migration is not sufficient proof for
+  a particular computer. Remembered phone records are capped at 64 per owner;
+  capacity eviction removes linked delivery and defaults off. Ordinary cleanup
+  never evicts consent.
 - Migration: a missing cached Expo identity is not an opt-out. With existing OS
   permission, recover the identity and query registration without requesting
   permission or enrolling any computer. When recovery is unavailable, show
@@ -130,8 +150,11 @@ A4 implementation notes (ENG-453, 2026-11-20):
 - Regression checks exercise disagreeing selectors, two-computer opt-out plus
   foreground refresh, actual owner isolation and expiry in gateway/Postgres,
   request failures and stale scopes. New native iOS captures must qualify the
-  changed binding/copy/opt-out scenarios; prior `9c9ed155` captures establish
-  unchanged preference-save/conflict behavior only. Android remains paused.
+  changed binding/copy/opt-out scenarios. Captures at `5ac410b1` qualify those
+  unchanged UI states, not the later consent cleanup correction. Amin explicitly
+  waived new captures for this non-UI fix and required a quick iOS verification;
+  coordinate a short lease with A7 before touching its preserved signed-in
+  client/runtime, then restore its exact selection. Android remains paused.
 
 - App settings → Push notifications opens Notifications. The explicit device
   switch uses the existing serialized push registration helpers and revocation
@@ -146,15 +169,24 @@ A4 implementation notes (ENG-453, 2026-11-20):
 - Product copy distinguishes today's four coding-agent kind switches from timing
   and content choices saved for later delivery updates. A1 routing and the
   legacy completion dedupe are unchanged; A3 foreground refresh now respects
-  the selected computer's actual registration.
+  the selected computer's durable consent, independently of delivery cleanup.
 - API parsing and draft logic live in focused helpers. The large GatewayClient
-  adds thin delegates only; no new native dependency or persistent phone store.
-- Validation after the P1 corrections: all 301 mobile suites / 3,798 tests pass
+  adds thin delegates only; the private retained identity uses existing
+  SecureStore and adds no native dependency.
+- Historical validation before the consent lifecycle correction: all 301 mobile suites / 3,798 tests pass
   in-band with normal exit; five focused mobile suites / 51 tests and four
   gateway/auth suites / 49 tests pass. Mobile and all nine root typecheck
   projects pass. Changed-file lint has no errors; React Doctor reports no
   issues. Canonical mobile lint retains five baseline errors in four unchanged
   files; broader root limitations are recorded on [PR #3520](https://github.com/HamedMP/matrix-os/pull/3520).
+- Consent lifecycle correction validation: all 301 mobile suites / 3,802 tests,
+  124 prepared gateway/auth tests, mobile typecheck and all nine root typecheck
+  projects pass. Changed-file lint has no errors (nine existing test-file
+  warnings); React Doctor finds no issues. Regression red/green checks cover
+  real TTL/Expo cleanup, conditional refresh after off, rotation, rollback,
+  post-v4 legacy writes and off protection after capacity eviction. Quick iOS
+  verification awaits a newly coordinated device window; no new native capture
+  or remote delivery qualification is claimed by these automated checks.
 - Historical native iOS screenshots and recordings of the `9c9ed155` runtime
   are attached to PR #3520: navigation, load/edit/save/reopen, failed-save retention
   and retry, and real 409 recovery using the production A4 owner-file API in a
@@ -175,7 +207,7 @@ A4 implementation notes (ENG-453, 2026-11-20):
 | --- | --- | --- | --- | --- |
 | Owner on a connected computer | Edit kinds, durations, phone mode and content; Save; reopen | Confirmed values reload; Android retains hidden Time Sensitive | A4 owner API; full revisioned document | Native Mobile iOS/Android; real screen/controller/client with mocked HTTP and native sheet host |
 | Owner has unsaved edits | Save fails or another surface wins | Draft stays visible; 409 requires explicit recovery, preserving unrelated remote edits | Server revision remains authoritative | Native Mobile; settings-screen integration |
-| Selected computer registered or registration unknown | Explicitly enable/disable, retry status, or foreground sync | Same named target as preferences; revoke only its registration; ambiguous failure reconciles actual state; stale scope ignored | Owner Postgres registration plus OS permission; cached Expo token is identity only | Native Mobile; production screen, sync and two-computer registration regressions |
+| Selected computer opted in, delivery expired, or consent unknown | Explicitly enable/disable, retry status, or foreground sync | Same target as preferences; automatic cleanup recovers delivery; explicit opt-out stays off; stale scope ignored | Owner Postgres consent separate from delivery plus OS permission; retained private identity is never consent | Native Mobile; production screen/sync and real SQL cleanup, migration, rotation, opt-out and conditional refresh regressions |
 
 **A6 · Approvals and questions from every chat** (new `packages/gateway/src/notifications/`)
 - Router core: the `notification_events` and `notification_attempts` tables, the bounded queue, dedupe, and the transport interface. The first transport is `expo-direct`, which wraps today's push channel.
@@ -550,7 +582,8 @@ There are no inbound webhooks. Expo receipts are polled.
 | Endpoint | Release | Caller | Auth | Validation and limits |
 | --- | --- | --- | --- | --- |
 | `POST/DELETE /api/push/register` | existing; persisted in A2; removed in C5 | Native Mobile | Owner principal | Existing Zod schema; `bodyLimit` 4 KiB (add it to DELETE if missing) |
-| `POST /api/push/status` | A5 review correction | Native Mobile settings/foreground | Verified owner principal | Read-only POST; strict token body (1–512 chars), 4 KiB body limit; coarse registration boolean, generic errors |
+| `POST /api/push/status` | A5 review correction | Native Mobile settings/foreground | Verified owner principal | Read-only POST; strict retained-identity body (1–512 chars), 4 KiB limit; only enabled/registered booleans, generic errors |
+| `POST /api/push/register` with `mode=refresh` | A5 consent correction | Native Mobile foreground | Verified runtime owner; server consent must already be on | Strict bounded identity/token/platform fields, 4 KiB limit; conditional transaction cannot grant consent |
 | `PATCH /api/chats/:chatId/read-state` | existing; used by mobile from A7 | Native Mobile | Owner principal | Existing |
 | `GET /api/notifications` | A10 | Owner clients | Owner principal | Zod query: `state` ∈ {open}, `limit` 1–100, opaque cursor ≤ 200 chars |
 | `POST /api/notifications/:id/opened` | A10 | Native Mobile cold start | Owner principal | `bodyLimit` 1 KiB, uuid param, owner-scoped update |

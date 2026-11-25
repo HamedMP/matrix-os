@@ -23,10 +23,15 @@ import type { GatewayConfig } from "./types.js";
 const PushRegisterBodySchema = z.object({
   token: z.string().trim().min(1).max(512),
   platform: z.string().trim().min(1).max(32),
+  identity: z.string().trim().min(1).max(512).optional(),
+  mode: z.enum(["enable", "refresh"]).default("enable"),
 }).strict();
-const PushUnregisterBodySchema = z.object({
+const PushStatusBodySchema = z.object({
   token: z.string().trim().min(1).max(512),
 }).strict();
+const PushUnregisterBodySchema = PushStatusBodySchema.extend({
+  deliveryToken: z.string().trim().min(1).max(512).optional(),
+});
 
 function pushStorageFailure(c: Context, err: unknown): Response {
   if (err instanceof PushTokenStorageUnavailableError) {
@@ -232,10 +237,10 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
       if (!(err instanceof SyntaxError)) logBestEffortFailure("Failed to parse push status", err);
       return c.json({ error: "Invalid push registration" }, 400);
     }
-    const parsed = PushUnregisterBodySchema.safeParse(rawBody);
+    const parsed = PushStatusBodySchema.safeParse(rawBody);
     if (!parsed.success) return c.json({ error: "Invalid push registration" }, 400);
     try {
-      return c.json({ registered: await pushAdapter.isTokenRegistered(parsed.data.token, principal.userId) });
+      return c.json(await pushAdapter.getRegistrationStatus(parsed.data.token, principal.userId));
     } catch (err: unknown) {
       return pushStorageFailure(c, err);
     }
@@ -270,7 +275,14 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
     }
 
     try {
-      await pushAdapter.registerToken(parsed.data.token, parsed.data.platform, principal.userId);
+      if (parsed.data.mode === "refresh") {
+        if (pushOwnerIds.length ? !pushOwnerIds.includes(principal.userId) : principal.source !== "dev-default") {
+          return c.json({ error: "Push registration unavailable" }, pushOwnerIds.length ? 403 : 503);
+        }
+        const registered = await pushAdapter.refreshToken(parsed.data.token, parsed.data.platform, principal.userId, parsed.data.identity);
+        return c.json({ ok: true, registered });
+      }
+      await pushAdapter.registerToken(parsed.data.token, parsed.data.platform, principal.userId, parsed.data.identity);
     } catch (err: unknown) {
       return pushStorageFailure(c, err);
     }
@@ -306,7 +318,8 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
     }
 
     try {
-      await pushAdapter.removeToken(parsed.data.token, principal.userId);
+      if (parsed.data.deliveryToken) await pushAdapter.removeToken(parsed.data.token, principal.userId, parsed.data.deliveryToken);
+      else await pushAdapter.removeToken(parsed.data.token, principal.userId);
     } catch (err: unknown) {
       return pushStorageFailure(c, err);
     }
