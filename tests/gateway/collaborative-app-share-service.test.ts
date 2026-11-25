@@ -61,7 +61,10 @@ function setup(overrides: {
   now?: Date;
   existing?: typeof storedShare | null;
   createReplay?: typeof storedShare | null;
-  readiness?: Omit<typeof readiness, "status"> & { status: "ready" | "blocked" };
+  readiness?: Omit<typeof readiness, "status" | "verifiedAt"> & {
+    status: "ready" | "blocked" | "failed" | "checking";
+    verifiedAt: string | null;
+  };
 } = {}) {
   const current = { build, artifactRef: `objects/${build.buildId}` };
   const catalog = { id: build.catalogId, ownerId, projectId: null, kind: "app" as const,
@@ -158,11 +161,47 @@ describe("CollaborativeAppShareService", () => {
     }));
   });
 
-  it("fails closed for blocked, stale, mismatched-organization, tampered, and expired confirmation state", async () => {
-    const blocked = setup({ readiness: { ...readiness, status: "blocked" } });
-    await expect(blocked.service.preflight(ownerId, build.appId, {
+  // Outcome (ENG-579): an owner can share an app that isn't collaborative; members get it read-only.
+  // Fault detected: the share service refusing a completed `blocked` readiness, or accepting an
+  // unfinished/errored one.
+  it("shares an app whose exact build completed readiness as blocked and projects it active", async () => {
+    const blockedReadiness = { ...readiness, status: "blocked" as const, verifiedAt: null,
+      gateResults: [{ code: "owner_postgres" as const, status: "blocked" as const, action: "Use shared owner-backed reads in the built app and recheck." }] };
+    const { service, shares } = setup({ readiness: blockedReadiness });
+    const preflight = await service.preflight(ownerId, build.appId, {
       organizationId, expectedReadinessRevision: "2", expectedBuildId: build.buildId,
-    })).resolves.toEqual({ eligible: false, reason: "not_ready" });
+    });
+    if (!preflight.eligible) throw new Error("expected eligible preflight");
+    const created = await service.create(ownerId, build.appId, {
+      organizationId,
+      clientRequestId: "80000000-0000-4000-8000-000000000001",
+      expectedResourceRevision: "0",
+      expectedReadinessRevision: "2",
+      readinessId,
+      buildId: build.buildId,
+      confirmationToken: preflight.confirmationToken,
+    });
+    expect(created.state).toBe("active");
+    expect(shares.createAtomic).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses readiness that is still checking or failed to verify", async () => {
+    for (const status of ["checking", "failed"] as const) {
+      const { service } = setup({ readiness: { ...readiness, status, verifiedAt: null,
+        gateResults: status === "failed" ? [{ code: "cleanup" as const, status: "failed" as const, action: "Readiness could not be verified. Try again." }] : [] } });
+      await expect(service.preflight(ownerId, build.appId, {
+        organizationId, expectedReadinessRevision: "2", expectedBuildId: build.buildId,
+      })).resolves.toEqual({ eligible: false, reason: "not_ready" });
+    }
+  });
+
+  it("projects a share bound to failed readiness as needing a recheck", async () => {
+    const { service } = setup({ existing: storedShare, readiness: { ...readiness, status: "failed", verifiedAt: null,
+      gateResults: [{ code: "cleanup" as const, status: "failed" as const, action: "Readiness could not be verified. Try again." }] } });
+    await expect(service.get(ownerId, build.appId)).resolves.toMatchObject({ state: "needs_recheck" });
+  });
+
+  it("fails closed for stale, mismatched-organization, tampered, and expired confirmation state", async () => {
 
     const stale = setup();
     await expect(stale.service.preflight(ownerId, build.appId, {

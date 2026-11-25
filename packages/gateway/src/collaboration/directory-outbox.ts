@@ -1,5 +1,6 @@
 import { COLLABORATION_HTTP_BODY_LIMIT, COLLABORATIVE_APP_ICON_MAX_BYTES, CollaborativeAppThumbnailSchema, CollaborationDirectoryEventSchema } from "@matrix-os/contracts";
 import type { Kysely, Transaction } from "kysely";
+import { isShareableAppReadiness } from "./collaborative-app-access.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
 import { PROJECT_CHAT_ROUTE_EVENT } from "./project-chat-routes.js";
@@ -336,7 +337,7 @@ export class CollaborationDirectoryOutbox {
         const appState = row.resource_kind === "app" && row.app_binding_state
           ? row.app_binding_state === "stopped"
             ? "stopped" as const
-            : row.app_readiness_status === "ready" && row.app_invalidated_at === null
+            : row.app_readiness_status && isShareableAppReadiness(row.app_readiness_status, row.app_invalidated_at)
               ? row.app_binding_state
               : "needs_recheck" as const
           : null;

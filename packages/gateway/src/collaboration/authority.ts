@@ -3,6 +3,7 @@ import type { Selectable } from "kysely";
 import { CollaborationAuthorizationError, type CollaborationAuthorizationErrorCode } from "./authority-error.js";
 import type { CollaborationScopesTable } from "./database.js";
 import { CollaborationCapabilityEvaluator, isActivationCurrent } from "./capability-evaluator.js";
+import { SHAREABLE_APP_READINESS_STATUSES, appShareAccess } from "./collaborative-app-access.js";
 import type { CollaborationCapabilityRepository } from "./capability-repository.js";
 import type { OrganizationPrecondition } from "./organization-precondition.js";
 import type { CollaborationRepository } from "./repository.js";
@@ -125,7 +126,10 @@ export class CollaborationAuthority {
     const appRole = scope.kind === "app"
       ? await this.resolveCurrentMembershipAppRole(scope, input.actorId)
       : null;
-    const role = appRole
+    if (appRole?.readOnly && input.action !== "read") {
+      throw new CollaborationAuthorizationError("forbidden", "Shared app is view-only", "read_only");
+    }
+    const role = appRole?.role
       ?? await this.resolveLegacyOrGrantRole(membershipScope, input.actorId, evidence.membershipEpoch);
     if (!role) {
       throw new CollaborationAuthorizationError("not_found", "Current membership is required");
@@ -167,11 +171,14 @@ export class CollaborationAuthority {
     return legacyRole ?? this.resolveGrantRole(membershipScope.id, actorId, membershipEpoch);
   }
 
-  /** Live app sharing derives full app use from current organization membership, never recipient rows or grants. */
+  /**
+   * Live app sharing derives app use from current organization membership, never recipient rows or
+   * grants. A collaborative (`ready`) build gives members full use; a `blocked` build is view-only.
+   */
   private async resolveCurrentMembershipAppRole(
     scope: Selectable<CollaborationScopesTable>,
     actorId: string,
-  ): Promise<CollaborationRole | null> {
+  ): Promise<{ role: CollaborationRole; readOnly: boolean } | null> {
     const binding = await this.repository.db.selectFrom("collaboration_app_bindings")
       .select("scope_id").where("scope_id", "=", scope.id).executeTakeFirst();
     // Pre-feature standalone app shares retain their legacy role/grant authority.
@@ -179,12 +186,12 @@ export class CollaborationAuthority {
     const exact = await this.repository.db.selectFrom("collaboration_app_bindings as binding")
       .innerJoin("collaboration_app_readiness as readiness", "readiness.id", "binding.readiness_id")
       .innerJoin("collaboration_resource_catalog as catalog", "catalog.id", "binding.catalog_id")
-      .select("binding.scope_id")
+      .select(["binding.scope_id", "readiness.status"])
       .where("binding.scope_id", "=", scope.id)
       .where("binding.state", "=", "active")
       .whereRef("binding.build_id", "=", "readiness.build_id")
       .whereRef("binding.registration_incarnation", "=", "readiness.registration_incarnation")
-      .where("readiness.status", "=", "ready")
+      .where("readiness.status", "in", SHAREABLE_APP_READINESS_STATUSES)
       .where("readiness.invalidated_at", "is", null)
       .whereRef("readiness.catalog_id", "=", "catalog.id")
       .whereRef("readiness.registration_incarnation", "=", "catalog.incarnation")
@@ -192,8 +199,10 @@ export class CollaborationAuthority {
       .where("catalog.kind", "=", "app")
       .where("catalog.id", "=", scope.resource_id)
       .executeTakeFirst();
-    if (!exact) throw new CollaborationAuthorizationError("unavailable", "Collaborative app needs recheck");
-    return actorId === scope.owner_id ? "owner" : "editor";
+    const access = exact ? appShareAccess(exact.status) : null;
+    if (!access) throw new CollaborationAuthorizationError("unavailable", "Collaborative app needs recheck");
+    if (actorId === scope.owner_id) return { role: "owner", readOnly: false };
+    return access === "full" ? { role: "editor", readOnly: false } : { role: "viewer", readOnly: true };
   }
 
   /** S04: preset grants on the membership scope; contributor maps to editor, viewer to viewer. */
