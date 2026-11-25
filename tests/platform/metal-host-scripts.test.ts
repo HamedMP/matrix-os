@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -119,6 +120,45 @@ describe("metal host scripts", () => {
     });
     expect(await readFile(join(partial, "cert.pem"), "utf8")).toBe("operator certificate");
     expect(existsSync(join(partial, "key.pem"))).toBe(false);
+  });
+
+  it("restarts hostd after a TLS renewal and only records a certificate after a healthy restart", async () => {
+    const fixture = await mkdtemp(join(work, "tls-renewal-"));
+    const tls = join(fixture, "tls");
+    await run("bash", [`${DIR}/matrix-hostd-tls`, tls, "host.example.test", "--smoke"]);
+    const source = await readFile(`${DIR}/provision-host.sh`, "utf8");
+    const restartAt = source.indexOf('if [ -n "$hostd_changed$units_changed');
+    const end = source.indexOf('install -m 0644 /dev/null "$policy_marker"', restartAt);
+    const start = source.lastIndexOf('# --- hostd service ---', restartAt);
+    const restartSection = source.slice(start < 0 ? restartAt : start, end);
+    const marker = join(fixture, "tls-loaded.sha256");
+    const reprovision = (failRestart = false) => run("bash", ["-euc", `
+      ETC_DIR="$1" STATE_DIR="$1"
+      fail_restart="$2"
+      hostd_changed="" units_changed="" api_port=8443
+      sha256_of() { sha256sum "$1" | awk '{print $1}'; }
+      write_file() { cat >"$1"; }
+      has() { return 0; }
+      systemctl() {
+        if [ "$1" = restart ]; then
+          [ "$fail_restart" = false ] || return 1
+          printf '%s\\n' "$2"
+        fi
+      }
+      ${restartSection}
+    `, "--", fixture, String(failRestart)]);
+
+    const original = createHash("sha256").update(await readFile(join(tls, "cert.pem"))).digest("hex") + "\n";
+    await writeFile(marker, original);
+    await expect(reprovision()).resolves.toMatchObject({ stdout: "" });
+    await run("openssl", ["req", "-x509", "-key", join(tls, "key.pem"), "-days", "60",
+      "-subj", "/CN=host.example.test", "-out", join(tls, "cert.pem")]);
+    await run("bash", [`${DIR}/matrix-hostd-tls`, tls, "host.example.test"]);
+    await expect(reprovision(true)).rejects.toMatchObject({ code: 1 });
+    expect(await readFile(marker, "utf8")).toBe(original);
+    await expect(reprovision()).resolves.toMatchObject({ stdout: "matrix-hostd.service\n" });
+    expect(await readFile(marker, "utf8")).not.toBe(original);
+    await expect(reprovision()).resolves.toMatchObject({ stdout: "" });
   });
 
   // Reported as skipped (never silently passed) where shellcheck is not

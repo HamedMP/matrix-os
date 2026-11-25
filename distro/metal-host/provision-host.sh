@@ -478,6 +478,14 @@ if [ -n "$nft_changed$units_changed" ] || ! systemctl is-active --quiet matrix-h
 else
   systemctl reload matrix-hostd-nft.service
 fi
+# --- hostd service ---
+# Both HTTPS servers load TLS at process startup. Hash the PEM bundle rather
+# than just the leaf so a changed chain also forces a restart.
+tls_fingerprint="$(sha256_of "$ETC_DIR/tls/cert.pem")"
+tls_loaded="$STATE_DIR/tls-loaded.sha256"
+if [ ! -f "$tls_loaded" ] || [ "$(cat -- "$tls_loaded")" != "$tls_fingerprint" ]; then
+  hostd_changed=changed
+fi
 if [ -n "$hostd_changed$units_changed" ] || ! systemctl is-active --quiet matrix-hostd.service; then
   systemctl restart matrix-hostd.service
 fi
@@ -486,6 +494,9 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 has LISTEN ss -ltn "sport = :$api_port" || die "hostd is not listening on $api_port (journalctl -u matrix-hostd)"
+
+# Leave the old fingerprint in place if the restart or readiness check failed.
+write_file "$tls_loaded" 0600 <<<"$tls_fingerprint" >/dev/null
 
 install -m 0644 /dev/null "$policy_marker"
 log "host $host_name ready: hostd API :$api_port, ingress :$ingress_port, bridge $BRIDGE, Cloud Hypervisor $CH_VERSION"

@@ -23,6 +23,9 @@ idempotent: re-running one repairs drift and changes nothing else.
 | VM network | bridge `brmx` 10.78.0.1/22, NAT out the public interface |
 | Firewall | `matrix-hostd-nft.service` loads `table inet matrix_hostd`. The tenant unit loads `table inet matrix_hostd_tenant` and `table ip matrix_hostd_nat`. |
 
+After an operator replaces the TLS certificate and key, rerun provisioning.
+A changed certificate bundle restarts hostd so both HTTPS endpoints load it.
+
 hostd runs as root (it drives LVM, systemd units and taps), so it reaches
 each VM's `ch.sock` and `vsock.sock` without group access; the VMM runs as the
 unprivileged `matrix-vm` user. It gets `/dev/kvm` through
