@@ -8,7 +8,8 @@ import {
 } from "../../../../packages/office/src/xlsx/journal/index.js";
 import { openXlsx, parseA1Range } from "../../../../packages/office/src/xlsx/index.js";
 import { getWorkbookInternals } from "../../../../packages/office/src/xlsx/internal.js";
-import { AGENT, OWNER, a1, at, changes, loadFixture, sheetId, smallBook, valueAt } from "./helpers.js";
+import { asyncCodeOf, buildXlsx, num } from "../workbook/helpers.js";
+import { AGENT, OWNER, a1, at, changes, codeOf, loadFixture, sheetId, smallBook, valueAt } from "./helpers.js";
 
 async function withJournalText(bytes: Uint8Array, text: string): Promise<Uint8Array> {
   const pkg = await openPackage(bytes);
@@ -222,5 +223,98 @@ describe("unreadable and stale journals", () => {
     const result = workbook.rejectChanges("all");
     expect(result.stale).toEqual([change!.id]);
     expect(valueAt(workbook, "Data", "B1")).toBe("typed");
+  });
+});
+
+// Outcome protected: whatever save writes as pending changes opens again, so the owner can still review them.
+// Fault detected: the journal writer keeping more, or longer, fields than the reader accepts, so the
+// whole journal is dropped as unreadable on the next open.
+describe("a saved journal holds only what it can read back", () => {
+  it("keeps the heights of more than ten thousand deleted rows, so a reject after reopening restores them", async () => {
+    const { workbook, sheet } = smallBook();
+    for (let row = 10; row < 10_011; row++) workbook.setRowHeight(sheet, row, 30);
+    workbook.beginProposal(AGENT);
+    workbook.deleteRows(sheet, 10, 10_001);
+    workbook.endProposal();
+    const reopened = await openXlsx(await workbook.save());
+    expect(getJournalWarnings(reopened)).toEqual([]);
+    expect(reopened.rejectChanges("all").stale).toEqual([]);
+    const rows = reopened.getSheet(sheetId(reopened, "Data")).rows.filter((row) => row.heightPt === 30);
+    expect(rows).toHaveLength(10_001);
+  });
+
+  it("keeps the merged ranges of a sheet with more than ten thousand of them", async () => {
+    let merges = "";
+    for (let row = 2; row <= 10_002; row++) merges += `<mergeCell ref="A${row}:B${row}"/>`;
+    const workbook = await openXlsx(
+      await buildXlsx({ sheets: [{ name: "Data", rows: `<row r="1">${num("A1", 1)}</row>`, after: `<mergeCells>${merges}</mergeCells>` }] }),
+    );
+    const sheet = sheetId(workbook, "Data");
+    workbook.beginProposal(AGENT);
+    workbook.deleteRows(sheet, 0, 1);
+    workbook.endProposal();
+    const reopened = await openXlsx(await workbook.save());
+    expect(getJournalWarnings(reopened)).toEqual([]);
+    expect(reopened.rejectChanges("all").stale).toEqual([]);
+    const after = reopened.getSheet(sheetId(reopened, "Data")).mergedRanges;
+    expect(after).toHaveLength(10_001);
+    expect(after.some((range) => range.start.row === 1 && range.end.col === 1)).toBe(true);
+  });
+
+  it("refuses, before changing anything, a deletion whose kept rows a journal could not hold", async () => {
+    const workbook = await openXlsx(
+      await buildXlsx({ sheets: [{ name: "Data", rows: `<row r="1">${num("A1", 1)}</row><row r="2" hidden="1" note="${"x".repeat(2000)}">${num("A2", 2)}</row>` }] }),
+    );
+    const sheet = sheetId(workbook, "Data");
+    workbook.beginProposal(AGENT);
+    expect(codeOf(() => workbook.deleteRows(sheet, 1, 1))).toBe("limit_exceeded");
+    workbook.endProposal();
+    expect(valueAt(workbook, "Data", "A2")).toBe(2);
+    expect(changes(workbook)).toEqual([]);
+  });
+
+  it("takes back an insertion whose rewritten names a journal could not hold", async () => {
+    const refersTo = Array.from({ length: 819 }, () => "Data!$A$9").join("+");
+    const workbook = await openXlsx(
+      await buildXlsx({
+        sheets: [{ name: "Data", rows: `<row r="9">${num("A9", 4)}</row>` }],
+        definedNames: `<definedName name="Wide">${refersTo}</definedName>`,
+      }),
+    );
+    const sheet = sheetId(workbook, "Data");
+    workbook.beginProposal(AGENT);
+    expect(codeOf(() => workbook.insertRows(sheet, 0, 1))).toBe("limit_exceeded");
+    workbook.endProposal();
+    expect(valueAt(workbook, "Data", "A9")).toBe(4);
+    expect(workbook.listDefinedNames()[0]!.refersTo).toBe(refersTo);
+    expect(changes(workbook)).toEqual([]);
+  });
+
+  it("refuses a proposed edit to a cell whose formula is longer than a journal holds", async () => {
+    const formula = Array.from({ length: 4200 }, () => "1").join("+");
+    const workbook = await openXlsx(await buildXlsx({ sheets: [{ name: "Data", rows: `<row r="1"><c r="A1"><f>${formula}</f><v>3000</v></c></row>` }] }));
+    const sheet = sheetId(workbook, "Data");
+    workbook.beginProposal(AGENT);
+    expect(codeOf(() => workbook.setCell(sheet, a1("A1"), 5))).toBe("limit_exceeded");
+    workbook.endProposal();
+    expect(at(workbook, "Data", "A1").formula).toBe(formula);
+    expect(changes(workbook)).toEqual([]);
+  });
+
+  it("refuses to save pending changes it could not read back, until they are accepted or rejected", async () => {
+    const { workbook, sheet } = smallBook();
+    const notes = workbook.addSheet("Notes").id;
+    // As long as a typed formula may be.
+    const long = `Data!A9&"${"x".repeat(8182)}"`;
+    workbook.beginProposal(AGENT);
+    workbook.setFormula(notes, a1("B1"), long);
+    workbook.endProposal();
+    // Moving the rows it reads, outside a proposal, lengthens the pending formula past what a journal holds.
+    workbook.insertRows(sheet, 0, 1);
+    expect(at(workbook, "Notes", "B1").formula).toHaveLength(8193);
+    expect(await asyncCodeOf(() => workbook.save())).toBe("limit_exceeded");
+    workbook.acceptChanges("all");
+    const reopened = await openXlsx(await workbook.save());
+    expect(getJournalWarnings(reopened)).toEqual([]);
   });
 });

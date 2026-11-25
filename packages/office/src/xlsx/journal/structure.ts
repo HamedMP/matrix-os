@@ -15,7 +15,10 @@ import { MAX_COLS, MAX_ROWS } from "../workbook/a1.js";
 import { type StructuralOp, rewriteForRemoval, rewriteForRename, rewriteForStructure } from "../workbook/refs-rewrite.js";
 import { type Axis, captureBand, sameRanges } from "./band.js";
 import { type JournalContext, type OriginalMethods, isActive } from "./context.js";
-import type { AxisKind, NameRewrite, RenameSheetEntry } from "./types.js";
+import { readableEntry } from "./parse.js";
+import { entryJson } from "./persist.js";
+import { rejectEntries } from "./revert.js";
+import { type AxisEntry, type AxisKind, MAX_KEPT_MERGES, MAX_KEPT_NAMES, type NameRewrite, type RenameSheetEntry } from "./types.js";
 
 /**
  * Rewrites the formulas the journal keeps to put back: the old formula of
@@ -100,6 +103,26 @@ function proposeAxis(ctx: JournalContext, sheet: SheetId, axis: Axis, index: num
   const snapshot = sign < 0 ? captureBand(ctx, info, axis, index, count) : null;
   const features = sign < 0 ? ctx.internals.captureSheetFeatures(sheet, axis, index, count) : null;
   const namesBefore = workbook.listDefinedNames();
+  const kind = AXIS_KIND[axis][sign > 0 ? 0 : 1];
+  // What is kept from before the edit is checked before anything changes; the edit keeps the number of
+  // merged ranges and names, or lowers it.
+  const before: AxisEntry = {
+    kind,
+    id: "c1",
+    seq: 1,
+    proposalId: ctx.open as string,
+    sheet,
+    index,
+    count,
+    snapshot,
+    rewrites: null,
+    names: [],
+    merges: null,
+    features,
+  };
+  if (info.mergedRanges.length > MAX_KEPT_MERGES || namesBefore.length > MAX_KEPT_NAMES || !readableEntry(entryJson(before))) {
+    throw unkeepable();
+  }
   ctx.capture = [];
   ctx.captureOverflow = false;
   let rewrites;
@@ -111,11 +134,10 @@ function proposeAxis(ctx: JournalContext, sheet: SheetId, axis: Axis, index: num
     ctx.captureOverflow = false;
   }
   const mergesAfter = workbook.getSheet(sheet).mergedRanges;
-  const open = ctx.open as string;
-  ctx.store.add({
-    kind: AXIS_KIND[axis][sign > 0 ? 0 : 1],
+  const entry: AxisEntry = {
+    kind,
     ...ctx.store.nextIds(),
-    proposalId: open,
+    proposalId: ctx.open as string,
     sheet,
     index,
     count,
@@ -124,7 +146,17 @@ function proposeAxis(ctx: JournalContext, sheet: SheetId, axis: Axis, index: num
     names: nameRewrites(namesBefore, workbook.listDefinedNames()),
     merges: sameRanges(info.mergedRanges, mergesAfter) ? null : { before: info.mergedRanges, after: mergesAfter },
     features,
-  });
+  };
+  ctx.store.add(entry);
+  // Rewritten formulas and names can come out longer than a journal holds: the edit is then taken back.
+  if (!readableEntry(entryJson(entry))) {
+    rejectEntries(ctx, [entry.id]);
+    throw unkeepable();
+  }
+}
+
+function unkeepable(): OfficeError {
+  return new OfficeError("limit_exceeded", "the change is too large to keep as a proposal");
 }
 
 function proposeAddSheet(ctx: JournalContext, name: string, index: number | undefined): SheetInfo {

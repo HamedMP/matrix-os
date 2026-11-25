@@ -7,16 +7,18 @@
 
 import type { OpcPackage, Relationship } from "../../api/opc.js";
 import type { CellValue } from "../../api/xlsx.js";
-import { isOfficeError } from "../../errors.js";
+import { OfficeError, isOfficeError } from "../../errors.js";
 import { partNamesEqual, relativeTargetFor } from "../../opc/index.js";
 import type { RawCell } from "../workbook/internals.js";
 import type { JournalContext } from "./context.js";
+import { parseJournal } from "./parse.js";
 import {
   JOURNAL_CONTENT_TYPE,
   JOURNAL_FORMAT_VERSION,
   JOURNAL_PART_NAME,
   JOURNAL_RELATIONSHIP_TYPE,
   type JournalEntry,
+  MAX_JOURNAL_TEXT,
 } from "./types.js";
 
 type JsonRaw = { value: CellValue; formula: string | null; styleId: number };
@@ -26,7 +28,8 @@ function rawJson(raw: RawCell): JsonRaw {
   return { value, formula: raw.formula, styleId: raw.styleId };
 }
 
-function entryJson(entry: JournalEntry): Record<string, unknown> {
+/** An entry as the journal part holds it. */
+export function entryJson(entry: JournalEntry): Record<string, unknown> {
   const base = { kind: entry.kind, id: entry.id, proposalId: entry.proposalId, seq: entry.seq, sheet: entry.sheet };
   switch (entry.kind) {
     case "cell":
@@ -70,6 +73,28 @@ export function serializeJournal(ctx: JournalContext): string {
   });
 }
 
+/**
+ * The journal part text, checked the way the next open reads it. Throws
+ * `limit_exceeded` before anything is written when that open would have to
+ * ignore it: the pending changes then stay in this handle to be accepted or
+ * rejected, instead of being lost with the file.
+ */
+function readableJournalText(ctx: JournalContext): string {
+  let text: string | null = null;
+  try {
+    text = serializeJournal(ctx);
+  } catch (error) {
+    // Text longer than a string may be.
+    if (!(error instanceof RangeError)) throw error;
+  }
+  if (text === null || text.length > MAX_JOURNAL_TEXT || !parseJournal(text).ok) {
+    throw new OfficeError("limit_exceeded", "the pending changes are too large to save; accept or reject some of them first", {
+      details: { maxJournalText: MAX_JOURNAL_TEXT },
+    });
+  }
+  return text;
+}
+
 /** True when the relationship points at the journal part. */
 export function pointsAtJournal(pkg: OpcPackage, source: string, relationship: Relationship): boolean {
   if (relationship.targetMode !== "Internal") return false;
@@ -92,7 +117,7 @@ export function writeJournalPart(ctx: JournalContext): void {
     if (pkg.hasPart(JOURNAL_PART_NAME)) pkg.removePart(JOURNAL_PART_NAME);
     return;
   }
-  pkg.setPart(JOURNAL_PART_NAME, serializeJournal(ctx), JOURNAL_CONTENT_TYPE);
+  pkg.setPart(JOURNAL_PART_NAME, readableJournalText(ctx), JOURNAL_CONTENT_TYPE);
   let linked = false;
   for (const relationship of relationships) {
     if (pointsAtJournal(pkg, source, relationship) && !linked) linked = true;

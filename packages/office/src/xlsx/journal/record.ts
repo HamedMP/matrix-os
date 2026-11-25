@@ -10,9 +10,12 @@
  */
 
 import type { CellValue } from "../../api/xlsx.js";
+import { OfficeError } from "../../errors.js";
 import type { CellMutation, RawCell } from "../workbook/internals.js";
 import { type JournalContext, isActive } from "./context.js";
-import { MAX_REWRITES } from "./types.js";
+import { readableEntry } from "./parse.js";
+import { entryJson } from "./persist.js";
+import { type CellEntry, MAX_REWRITES } from "./types.js";
 
 export function copyValue(value: CellValue): CellValue {
   return value !== null && typeof value === "object" ? { kind: "error", code: value.code } : value;
@@ -69,8 +72,20 @@ function onEdit(ctx: JournalContext, mutation: CellMutation): void {
     return;
   }
   if (sameRaw(mutation.before, mutation.after)) return;
+  const added: CellEntry = {
+    kind: "cell",
+    ...store.nextIds(),
+    proposalId: ctx.open,
+    sheet: mutation.sheet,
+    row: mutation.row,
+    col: mutation.col,
+    old: copyRaw(mutation.before),
+    next: copyRaw(mutation.after),
+  };
   try {
     store.requireRoom();
+    // A cell of an opened file may hold more than a journal keeps (a formula longer than one can be typed).
+    if (!readableEntry(entryJson(added))) throw new OfficeError("limit_exceeded", "the cell holds more than a pending change can keep");
   } catch (error) {
     // The edit cannot be recorded, so it must not stay applied.
     ctx.suppress++;
@@ -81,16 +96,7 @@ function onEdit(ctx: JournalContext, mutation: CellMutation): void {
     }
     throw error;
   }
-  store.add({
-    kind: "cell",
-    ...store.nextIds(),
-    proposalId: ctx.open,
-    sheet: mutation.sheet,
-    row: mutation.row,
-    col: mutation.col,
-    old: copyRaw(mutation.before),
-    next: copyRaw(mutation.after),
-  });
+  store.add(added);
 }
 
 export function onMutation(ctx: JournalContext, mutation: CellMutation): void {

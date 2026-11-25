@@ -24,6 +24,10 @@ export const MAX_PENDING_CHANGES = 100_000;
 export const MAX_SNAPSHOT_CELLS = 200_000;
 /** Formula rewrites kept per structural change; beyond it the reversal relies on the engine's own rewrite. */
 export const MAX_REWRITES = 200_000;
+/** Merged ranges a structural change keeps; a proposed one on a sheet with more throws `limit_exceeded` before anything changes. */
+export const MAX_KEPT_MERGES = 100_000;
+/** Defined names a structural change keeps; a proposed one in a workbook with more throws `limit_exceeded` before anything changes. */
+export const MAX_KEPT_NAMES = 10_000;
 /** Characters of a journal part that are read; a longer part is ignored. */
 export const MAX_JOURNAL_TEXT = 64 * 1024 * 1024;
 /** Characters of a proposal author or label. */

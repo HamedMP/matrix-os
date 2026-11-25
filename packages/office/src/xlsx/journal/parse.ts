@@ -19,6 +19,9 @@ import {
   type JournalData,
   type JournalEntry,
   MAX_DATE_TEXT,
+  MAX_JOURNAL_TEXT,
+  MAX_KEPT_MERGES,
+  MAX_KEPT_NAMES,
   MAX_PENDING_CHANGES,
   MAX_PROPOSAL_TEXT,
   MAX_REWRITES,
@@ -32,7 +35,6 @@ const ERROR_CODES: ReadonlySet<string> = new Set<FormulaErrorCode>(["#DIV/0!", "
 const MAX_COUNTER = 1_000_000_000;
 const MAX_CELL_TEXT = 32_767;
 const MAX_FORMULA_TEXT = 8_192;
-const MAX_LIST = 10_000;
 const AXIS_KINDS = new Set(["insertRows", "deleteRows", "insertColumns", "deleteColumns"]);
 
 function id(value: unknown, prefix: "p" | "c"): string {
@@ -93,7 +95,8 @@ function snapshot(value: unknown): BandSnapshot | null {
       const c = obj(item);
       return { row: int(c.row, 0, MAX_ROWS - 1), col: int(c.col, 0, MAX_COLS - 1), raw: raw(c.raw) };
     }),
-    sizes: list(o.sizes, MAX_LIST).map((item) => {
+    // One size per deleted row or column at most, as `captureBand` keeps them.
+    sizes: list(o.sizes, MAX_ROWS).map((item) => {
       const s = obj(item);
       const size = s.size;
       if (typeof size !== "number" || !Number.isFinite(size) || size < 0 || size > 409) fail();
@@ -117,7 +120,7 @@ function rewrites(value: unknown): RewriteRecord[] | null {
 }
 
 function names(value: unknown): NameRewrite[] {
-  return list(value, MAX_LIST).map((item) => {
+  return list(value, MAX_KEPT_NAMES).map((item) => {
     const n = obj(item);
     return {
       name: text(n.name, 255, 1),
@@ -138,7 +141,7 @@ function axisEntry(o: Record<string, unknown>, base: Omit<AxisEntry, "kind" | "i
   let merges: AxisEntry["merges"] = null;
   if (o.merges !== null) {
     const m = obj(o.merges);
-    merges = { before: list(m.before, MAX_LIST).map(range), after: list(m.after, MAX_LIST).map(range) };
+    merges = { before: list(m.before, MAX_KEPT_MERGES).map(range), after: list(m.after, MAX_KEPT_MERGES).map(range) };
   }
   // A journal written before deletions kept the features of the sheet has no such field.
   const kept = o.features === undefined || !isDelete ? null : features(o.features);
@@ -189,6 +192,31 @@ function numberAfter(ids: Iterable<string>): number {
   let max = 0;
   for (const value of ids) max = Math.max(max, Number(value.slice(1)));
   return max + 1;
+}
+
+/**
+ * True when one entry, as `entryJson` writes it, would be read back: written
+ * as JSON, within the size of a journal part and passing every check above.
+ * The journal calls it before keeping a change, so that a saved journal is
+ * never one the next open has to throw away.
+ */
+export function readableEntry(json: Record<string, unknown>): boolean {
+  let source: string;
+  try {
+    source = JSON.stringify(json);
+  } catch (error) {
+    // Text longer than a string may be.
+    if (error instanceof RangeError) return false;
+    throw error;
+  }
+  if (source.length > MAX_JOURNAL_TEXT) return false;
+  try {
+    entry(JSON.parse(source));
+    return true;
+  } catch (error) {
+    if (error instanceof FormatError) return false;
+    throw error;
+  }
 }
 
 export type ParseResult =
