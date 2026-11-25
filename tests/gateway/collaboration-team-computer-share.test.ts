@@ -122,6 +122,65 @@ describe("whole-computer sharing (spec 2710 layer 6)", () => {
     await expect(computers.openTab("user_yuhan")).rejects.toBeInstanceOf(TeamComputerShareError);
   });
 
+  it("lets a stop wait for a running pass, so the pass cannot re-grant after it (Greptile on #3689)", async () => {
+    const computers = service();
+    await computers.share({ organizationId, computerLabel: "team-dev-1", grants: [{ audience: { kind: "organization" }, preset: "contributor" }] });
+    terminals.push(tab(5));
+    const pass = computers.sync();
+    const stopped = computers.stop();
+    await Promise.all([pass, stopped]);
+    for (const terminalId of terminals) {
+      const scopeId = shared.get(terminalId);
+      if (scopeId) expect(grants.get(scopeId)!.every((grant) => grant.state === "revoked")).toBe(true);
+    }
+  });
+
+  it("keeps every tab's access exactly the policy's, ending a grant the policy no longer names (Greptile on #3689)", async () => {
+    const computers = service();
+    await computers.share({ organizationId, computerLabel: "team-dev-1", grants: [
+      { audience: { kind: "organization" }, preset: "viewer" },
+      { audience: { kind: "member", actorId: "user_sam" }, preset: "contributor" },
+    ] });
+    await computers.share({ organizationId, computerLabel: "team-dev-1", grants: [{ audience: { kind: "organization" }, preset: "viewer" }] });
+    for (const terminalId of terminals) {
+      const live = grants.get(shared.get(terminalId)!)!.filter((grant) => grant.state !== "revoked");
+      expect(live.map((grant) => grant.audience.kind)).toEqual(["organization"]);
+    }
+  });
+
+  it("shares a new tab directly even on a computer with more than 64 tabs (Greptile on #3689)", async () => {
+    terminals = Array.from({ length: 70 }, (_, index) => tab(index + 1));
+    const computers = service();
+    await computers.share({ organizationId, computerLabel: "team-dev-1", grants: [{ audience: { kind: "organization" }, preset: "contributor" }] });
+    expect(terminals.every((terminalId) => shared.has(terminalId))).toBe(true);
+    const scopeId = await computers.openTab("user_yuhan");
+    expect(scopeId).toBe(shared.get(tab(71)));
+  });
+
+  it("lets only Editors the policy names open tabs (Greptile on #3689)", async () => {
+    const computers = service();
+    await computers.share({ organizationId, computerLabel: "team-dev-1", grants: [{ audience: { kind: "member", actorId: "user_sam" }, preset: "contributor" }] });
+    await expect(computers.openTab("user_yuhan")).rejects.toMatchObject({ code: "forbidden" });
+    await expect(computers.openTab("user_sam")).resolves.toEqual(expect.any(String));
+  });
+
+  it("keeps a failed stop recoverable and finishes it on the next stop (Greptile on #3689)", async () => {
+    let failRevoke = true;
+    const computers = service();
+    await computers.share({ organizationId, computerLabel: "team-dev-1", grants: [{ audience: { kind: "organization" }, preset: "contributor" }] });
+    const deps = (computers as unknown as { deps: { grants: { revoke: (input: { scopeId: string; grantId: string }) => Promise<unknown> } } }).deps;
+    const revoke = deps.grants.revoke;
+    deps.grants.revoke = async (input) => { if (failRevoke) throw new Error("revoke failed"); return revoke(input as never); };
+    await expect(computers.stop()).rejects.toThrow();
+    expect(await computers.stopping()).toBe(true);
+    expect(await computers.policy()).toBeNull();
+    await expect(computers.sync()).resolves.toBe(0);
+    failRevoke = false;
+    await computers.stop();
+    expect(await computers.stopping()).toBe(false);
+    for (const terminalId of terminals) expect(grants.get(shared.get(terminalId)!)!.every((grant) => grant.state === "revoked")).toBe(true);
+  });
+
   it("refuses to open a tab on a computer that is not shared", async () => {
     await expect(service().openTab("user_yuhan")).rejects.toMatchObject({ code: "not_found" });
     expect(terminals).toHaveLength(2);
