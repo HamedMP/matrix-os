@@ -55,6 +55,7 @@ import {
   isBillingSetupPath,
   isSignupBillingHandoff,
   isPlatformShellAssetNamespacePath,
+  isPlatformShellServerAction,
   readRuntimeSlotSelection,
   shouldProxyAuthShellForUnroutedUser,
   shouldProxyShellForBillingGate,
@@ -74,7 +75,6 @@ import {
   CODE_SESSION_EXPIRES_IN_SEC,
   NATIVE_APP_SESSION_PROXY_HEADER,
   buildCodeSessionCookie,
-  readCookie,
 } from './session-cookies.js';
 import { HANDLE_PATTERN, describeError } from './platform-route-utils.js';
 import {
@@ -118,10 +118,6 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
-import {
-  PLATFORM_SHELL_DOCUMENT_COOKIE, PLATFORM_SHELL_DOCUMENT_COOKIE_CLEAR, PLATFORM_SHELL_DOCUMENT_COOKIE_SET,
-  isHtmlDocumentResponse, isPlatformShellServerAction, isServerActionRequest, isUnrecognizedServerActionResponse,
-} from './app-domain-shell-routing.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
@@ -313,9 +309,6 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         signal: AbortSignal.timeout(authShellProxyTimeoutMs),
       });
       const responseHeaders = sanitizeProxyResponseHeaders(response.headers);
-      if (!proxyOpts.assetRequest && isHtmlDocumentResponse(c.req.method, response.headers)) {
-        responseHeaders.append('set-cookie', PLATFORM_SHELL_DOCUMENT_COOKIE_SET);
-      }
       if (!proxyOpts.preserveUpstreamCacheHeaders) {
         applyNoStoreResponseHeaders(responseHeaders);
       }
@@ -568,14 +561,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const authHeader = c.req.header('authorization');
     const cookieHeader = c.req.header('cookie');
     const path = c.req.path;
-    // The marker is shared by every tab, so it is only a hint: an action either
-    // Next build reports as unknown (it did not run) is replayed once to the other.
-    let authShellRejectedAction = false;
-    if (isAppDomain && isPlatformShellServerAction(c, cookieHeader)) {
-      const shellResponse = await proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
-      if (!isUnrecognizedServerActionResponse(shellResponse)) return shellResponse;
-      await shellResponse.body?.cancel();
-      authShellRejectedAction = true;
+    if (isAppDomain && !isAppDomainStaticAssetPath(path) && isPlatformShellServerAction({
+      method: c.req.method,
+      path,
+      actionId: c.req.header('next-action'),
+      deploymentId: c.req.header('x-deployment-id'),
+    })) {
+      return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
     }
     const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
     const explicitVmRouteHasValidAppAssetToken = Boolean(
@@ -858,11 +850,6 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
-        if (isHtmlDocumentResponse(c.req.method, upstream.headers)
-          && readCookie(cookieHeader, PLATFORM_SHELL_DOCUMENT_COOKIE) !== null) {
-          // An explicit computer page is the runtime's: its server actions belong to the runtime.
-          responseHeaders.append('set-cookie', PLATFORM_SHELL_DOCUMENT_COOKIE_CLEAR);
-        }
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.url);
         responseHeaders.append('set-cookie', buildShellRouteCookie(machine.handle));
@@ -1039,12 +1026,6 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           dispatcher: customerVpsProxyDispatcher,
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
         shouldReleaseRuntimeProxyTimeout(c.req.method, path));
-        if (isAppDomain && !authShellRejectedAction && isServerActionRequest(c)
-          && isUnrecognizedServerActionResponse(upstream)) {
-          // An auth-shell page whose marker another tab cleared: the action did not run here.
-          await upstream.body?.cancel();
-          return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
-        }
         if (isCodeDomain && upstream.status >= 500) {
           logCodeDomainUpstreamFailure({
             handle: runningMachine.handle,
@@ -1057,11 +1038,6 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
-        if (isAppDomain && isHtmlDocumentResponse(c.req.method, upstream.headers)
-          && readCookie(cookieHeader, PLATFORM_SHELL_DOCUMENT_COOKIE) !== null) {
-          // The page is now the runtime's: its server actions belong to the runtime.
-          responseHeaders.append('set-cookie', PLATFORM_SHELL_DOCUMENT_COOKIE_CLEAR);
-        }
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
         }
