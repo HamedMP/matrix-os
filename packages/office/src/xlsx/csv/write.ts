@@ -40,6 +40,16 @@ function csvFieldText(state: WorkbookState, sheet: SheetModel, row: number, col:
   return iso === null ? rawText(value) : iso.replace("T", " ");
 }
 
+/**
+ * The default range: from `A1` to the bottom right corner of the used area.
+ * A file has no other way to say where its first field goes, so starting at
+ * the first occupied cell would move every field left or up by the empty
+ * rows and columns before it.
+ */
+function fromFirstCell(used: CellRange | null): CellRange | null {
+  return used === null ? null : { start: { row: 0, col: 0 }, end: { ...used.end } };
+}
+
 export const toCsv: ToCsv = (workbook, sheet, options) => {
   const delimiter = options?.delimiter ?? ",";
   if (typeof delimiter !== "string" || delimiter.length !== 1 || delimiter === '"' || delimiter === "\r" || delimiter === "\n") {
@@ -52,7 +62,7 @@ export const toCsv: ToCsv = (workbook, sheet, options) => {
   const info = workbook.getSheet(sheet);
   const state = findState(workbook);
   const model = state !== null && isCsvWorkbook(state) ? (state.sheetsById.get(sheet) ?? null) : null;
-  const range: CellRange | null = options?.range === undefined ? info.dimensions : requireRange(options.range);
+  const range: CellRange | null = options?.range === undefined ? fromFirstCell(info.dimensions) : requireRange(options.range);
   if (range === null) return "";
   const width = range.end.col - range.start.col + 1;
   if ((range.end.row - range.start.row + 1) * width > MAX_EXPORT_CELLS) {

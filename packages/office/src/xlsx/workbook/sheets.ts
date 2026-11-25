@@ -84,8 +84,9 @@ export function rewriteAllFormulas(state: WorkbookState, rewrite: (text: string,
     }
   }
   for (const sheet of state.sheets) if (sheet !== skip) rewriteFeatureFormulas(sheet, (text) => rewrite(text, sheet));
+  // A name local to a sheet resolves its unqualified references on that sheet; a global one on the sheet that uses it.
   for (const name of state.names) {
-    const text = rewrite(name.refersTo, null);
+    const text = rewrite(name.refersTo, name.scope);
     if (text === name.refersTo) continue;
     name.refersTo = text;
     state.namesDirty = true;

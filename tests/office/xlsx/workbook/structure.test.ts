@@ -130,6 +130,33 @@ describe("deleting rows", () => {
   });
 });
 
+describe("a name local to a sheet", () => {
+  // Outcome protected: a formula using a sheet's own name keeps reading the cell the name was given for.
+  // Fault detected: unqualified references of a local name left in place when its sheet's rows or columns move.
+  it("follows its cells when rows or columns of its sheet move", async () => {
+    const workbook = await openXlsx(
+      await buildXlsx({
+        sheets: [
+          { name: "Inputs", rows: `<row r="2">${num("A2", 5)}${fx("B2", "Rate*2", 10)}</row>` },
+          { name: "Other", rows: `<row r="1">${num("A1", 7)}</row>` },
+        ],
+        definedNames: '<definedName name="Rate" localSheetId="0">$A$2</definedName>',
+      }),
+    );
+    const inputs = sheetId(workbook, "Inputs");
+    workbook.insertRows(inputs, 0, 1);
+    expect(workbook.listDefinedNames()).toEqual([{ name: "Rate", scope: inputs, refersTo: "$A$3" }]);
+    workbook.insertColumns(inputs, 0, 1);
+    expect(workbook.listDefinedNames()[0]!.refersTo).toBe("$B$3");
+    workbook.setCell(inputs, parseA1("B3"), 6);
+    workbook.recalc();
+    expect(valueAt(workbook, "Inputs", "C3")).toBe(12);
+    // Rows of another sheet do not move it.
+    workbook.deleteRows(sheetId(workbook, "Other"), 0, 1);
+    expect(workbook.listDefinedNames()[0]!.refersTo).toBe("$B$3");
+  });
+});
+
 describe("inserting and deleting columns", () => {
   it("inserts columns", async () => {
     const workbook = await ledger();

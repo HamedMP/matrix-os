@@ -67,6 +67,19 @@ describe("parseCsv then toCsv with the defaults", () => {
     expect(again.getCell(id, parseA1("B3")).value).toBe(46096.5);
   });
 
+  it("keeps leading empty rows and columns, so every field stays in its row and column", () => {
+    for (const source of [",name\n,value", "\n\na", ",,\n,b,c"]) {
+      const workbook = parseCsv(source);
+      expect(toCsv(workbook, workbook.listSheets()[0]!.id, { lineEnding: "\n" })).toBe(source);
+    }
+    const workbook = createXlsx();
+    const sheet = workbook.listSheets()[0]!.id;
+    workbook.setCell(sheet, parseA1("C2"), "x");
+    expect(toCsv(workbook, sheet, { lineEnding: "\n" })).toBe(",,\n,,x");
+    // A range the caller names is written as it is.
+    expect(toCsv(workbook, sheet, { range: { start: parseA1("C2"), end: parseA1("C2") } })).toBe("x");
+  });
+
   it("leaves a workbook that is not a CSV file to the caller's choice of raw or display", () => {
     const workbook = createXlsx();
     const sheet = workbook.listSheets()[0]!.id;

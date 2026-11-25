@@ -90,7 +90,11 @@ const POSITION_FUNCTIONS: ReadonlySet<string> = new Set(["ROW", "COLUMN", "ROWS"
 const RESIZING_FUNCTIONS: ReadonlySet<string> = new Set(["SUMIF", "AVERAGEIF"]);
 const LAST_ROW = 1_048_575;
 const LAST_COL = 16_383;
-/** How many defined names may be followed inside one another. */
+/**
+ * How many defined names are followed inside one another when the graph is
+ * built. A formula that reaches deeper is treated like one that picks its
+ * cells at run time: the cells its calculation reads are recorded then.
+ */
 const MAX_NAME_DEPTH = 8;
 /** Largest range one array formula fills; a larger one keeps its stored values. */
 export const MAX_ARRAY_FORMULA_CELLS = 100_000;
@@ -201,7 +205,10 @@ function addTraits(state: WorkbookState, ast: FormulaAst, sheet: SheetModel, fun
       if (DYNAMIC_FUNCTIONS.has(node.name) || resizedRead(state, node, sheet) === "unknown") traits.dynamic = true;
       else if (functions.get(node.name)?.volatile === true) traits.volatile = true;
       if (CLOCK_FUNCTIONS.has(node.name)) traits.clock = true;
-    } else if (node.type === "name" && depth < MAX_NAME_DEPTH) {
+    } else if (node.type === "name" && depth >= MAX_NAME_DEPTH) {
+      // `collectDeps` stops here too, so the cells of the rest of the chain are recorded while it runs.
+      traits.dynamic = true;
+    } else if (node.type === "name") {
       const scope = node.sheet === null ? sheet : (state.sheetsByKey.get(node.sheet.toLowerCase()) ?? null);
       const name = lookupName(state, node.name, scope);
       const inner = name === null ? null : parseCached(state, name.refersTo);

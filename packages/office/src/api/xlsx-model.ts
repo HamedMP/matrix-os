@@ -258,7 +258,11 @@ export interface CsvWriteOptions {
   delimiter?: string;
   /** Default `\r\n`. */
   lineEnding?: "\r\n" | "\n";
-  /** Default: the dimensions of the sheet. */
+  /**
+   * Default: from `A1` to the bottom right corner of the sheet's dimensions,
+   * so leading empty rows and columns are written and every field keeps its
+   * row and column.
+   */
   range?: CellRange;
   /** `raw` writes values (numbers unformatted, formulas as their result); `display` writes the formatted text. Default `raw`. */
   values?: "raw" | "display";

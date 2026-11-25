@@ -327,3 +327,22 @@ describe("a run without a clock", () => {
     expect(valueAt(workbook, "S", "A1")).toBe(46349);
   });
 });
+
+describe("a chain of defined names", () => {
+  // Outcome protected: a formula that reads a cell through many names follows that cell's edits.
+  // Fault detected: the dependency graph stopping at a depth the evaluator still follows, so the result goes stale.
+  it("keeps a formula up to date when the cell at the end of a deep chain changes", () => {
+    const workbook = createXlsx({ sheetNames: ["S"] });
+    const sheet = workbook.listSheets()[0]!.id;
+    const depth = 12;
+    for (let level = 1; level < depth; level++) workbook.setDefinedName({ name: `Step${level}`, scope: null, refersTo: `Step${level + 1}` });
+    workbook.setDefinedName({ name: `Step${depth}`, scope: null, refersTo: "S!$A$1" });
+    workbook.setCell(sheet, parseA1("A1"), 1);
+    workbook.setFormula(sheet, parseA1("B1"), "Step1*10");
+    workbook.recalc({ now: NOW });
+    expect(valueAt(workbook, "S", "B1")).toBe(10);
+    workbook.setCell(sheet, parseA1("A1"), 2);
+    workbook.recalc({ now: NOW });
+    expect(valueAt(workbook, "S", "B1")).toBe(20);
+  });
+});
