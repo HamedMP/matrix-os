@@ -1,9 +1,22 @@
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, onTestFinished } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { encodeAppFileBase64 } from "../../../packages/contracts/src/app-files";
 import { createHarness, errorCode, type AppFileHarness } from "./helpers";
+
+/** Records synchronous path checks so a test can prove a request never blocks on them. */
+const syncFsCalls = vi.hoisted(() => [] as string[]);
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const recorded = <T extends (...args: never[]) => unknown>(name: string, fn: T) => ((...args: Parameters<T>) => {
+    syncFsCalls.push(`${name}:${String(args[0])}`);
+    return fn(...args);
+  }) as T;
+  const realpathSync = Object.assign(recorded("realpathSync", actual.realpathSync), { native: actual.realpathSync.native });
+  const fs = { ...actual, existsSync: recorded("existsSync", actual.existsSync), lstatSync: recorded("lstatSync", actual.lstatSync), statSync: recorded("statSync", actual.statSync), realpathSync };
+  return { ...fs, default: fs };
+});
 
 let harness: AppFileHarness | null = null;
 afterEach(async () => { await harness?.cleanup(); harness = null; });
@@ -96,6 +109,38 @@ describe("app file path security", () => {
     expect(names).toContain("visible.txt");
     expect(names).toContain("apps");
     for (const hidden of ["system", ".hidden", "link.txt"]) expect(names).not.toContain(hidden);
+  });
+
+  it("resolves request paths without synchronous filesystem calls", async () => {
+    harness = await createHarness();
+    await mkdir(join(harness.home, "Documents"));
+    await writeFile(join(harness.home, "Documents/plan.docx"), "plan");
+    syncFsCalls.length = 0;
+    const responses = await Promise.all([
+      harness.post({ kind: "files.stat", path: "Documents/plan.docx" }),
+      harness.post({ kind: "files.read", path: "Documents/plan.docx" }),
+      harness.post({ kind: "files.list", dir: "Documents" }),
+      harness.post({ kind: "files.write", path: "Documents/new.docx", contentBase64: bytes, ifVersion: null }),
+      harness.post({ kind: "files.mkdir", path: "Documents/sub" }),
+      harness.post({ kind: "files.read", path: "Documents/missing.docx" }),
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200, 200, 404]);
+    const home = harness.home;
+    expect(syncFsCalls.filter((call) => call.includes(home) && !call.includes(`${home}/apps`))).toEqual([]);
+  });
+
+  it("serves a home that is itself reached through a link", async () => {
+    harness = await createHarness();
+    const outsideDir = await mkdtemp(join(tmpdir(), "app-files-outside-"));
+    onTestFinished(() => rm(outsideDir, { recursive: true, force: true }));
+    await writeFile(join(outsideDir, "a.txt"), "outside");
+    // The home itself is reached through a link: real paths are compared, not spellings.
+    const linkedHome = join(outsideDir, "home-link");
+    await symlink(harness.home, linkedHome);
+    const linked = await createHarness({ homePath: linkedHome, install: false });
+    onTestFinished(() => linked.cleanup());
+    await writeFile(join(harness.home, "inside.txt"), "inside");
+    expect(await code(await linked.post({ kind: "files.read", path: "inside.txt" }))).toEqual([200, "ok"]);
   });
 
   it("replies not_found for missing paths and missing parents", async () => {

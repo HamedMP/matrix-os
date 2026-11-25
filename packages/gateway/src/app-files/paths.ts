@@ -1,9 +1,7 @@
-import { lstat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { lstat, realpath } from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
 import type { BigIntStats, Stats } from "node:fs";
-import {
-  isDeniedFileApiPath, isProtectedHomeSubpath, resolveExistingFileApiPath, resolveWithinHome, resolveWritableFileApiPath,
-} from "../path-security.js";
+import { isDeniedFileApiPath, isProtectedHomeSubpath, resolveWithinHome } from "../path-security.js";
 import { AppFileError, errnoCode } from "./errors.js";
 
 export async function lstatOrNull(path: string): Promise<Stats | null>;
@@ -16,6 +14,33 @@ export async function lstatOrNull(path: string, bigint = false): Promise<Stats |
   }
 }
 
+interface PathWalk {
+  /** An existing component is a symlink. */
+  symlink: boolean;
+  /** An existing component before the last one is not a directory. */
+  nonDirectoryAncestor: boolean;
+  /** The deepest existing component, or the home itself. */
+  deepest: string;
+  /** Every component exists. */
+  exists: boolean;
+}
+
+/** Walks the home-relative path with async `lstat`, stopping at the first missing component. */
+async function walkPath(homePath: string, relativePath: string): Promise<PathWalk> {
+  const segments = relativePath.split("/");
+  let current = resolve(homePath);
+  let deepest = current;
+  for (const [index, segment] of segments.entries()) {
+    current = join(current, segment);
+    const entry = await lstatOrNull(current);
+    if (!entry) return { symlink: false, nonDirectoryAncestor: false, deepest, exists: false };
+    if (entry.isSymbolicLink()) return { symlink: true, nonDirectoryAncestor: false, deepest, exists: true };
+    if (index < segments.length - 1 && !entry.isDirectory()) return { symlink: false, nonDirectoryAncestor: true, deepest, exists: true };
+    deepest = current;
+  }
+  return { symlink: false, nonDirectoryAncestor: false, deepest, exists: true };
+}
+
 /**
  * True when any existing component of the home-relative path is a symlink.
  * Stops at the first missing component. Unlike the File API helpers, this
@@ -23,14 +48,21 @@ export async function lstatOrNull(path: string, bigint = false): Promise<Stats |
  * such an alias could reach a protected subtree under an unprotected name.
  */
 export async function hasSymlinkComponent(homePath: string, relativePath: string): Promise<boolean> {
-  let current = resolve(homePath);
-  for (const segment of relativePath.split("/")) {
-    current = join(current, segment);
-    const entry = await lstatOrNull(current);
-    if (!entry) return false;
-    if (entry.isSymbolicLink()) return true;
+  return (await walkPath(homePath, relativePath)).symlink;
+}
+
+/**
+ * True when the real location of `absolutePath` is the real home or inside
+ * it. A component removed meanwhile answers false, so the caller refuses.
+ */
+async function isWithinRealHome(homePath: string, absolutePath: string): Promise<boolean> {
+  try {
+    const [homeReal, targetReal] = await Promise.all([realpath(resolve(homePath)), realpath(absolutePath)]);
+    return targetReal === homeReal || targetReal.startsWith(`${homeReal}${sep}`);
+  } catch (error: unknown) {
+    if (errnoCode(error) === "ENOENT") return false;
+    throw error;
   }
-  return false;
 }
 
 function guardSyntax(homePath: string, relativePath: string): string {
@@ -42,30 +74,27 @@ function guardSyntax(homePath: string, relativePath: string): string {
   return resolved;
 }
 
-function callPathHelper(helper: () => string | null): string | null {
-  try { return helper(); }
-  catch (error: unknown) {
-    // The File API helpers use sync fs; a racing delete surfaces here.
-    if (errnoCode(error) === "ENOENT") return null;
-    throw error;
-  }
-}
-
-/** Resolve a path that must already exist, for list, stat and read. */
+/**
+ * Resolve a path that must already exist, for list, stat and read. All
+ * checks are async so a slow disk never blocks other gateway requests.
+ */
 export async function resolveExistingAppFilePath(homePath: string, relativePath: string): Promise<string> {
-  guardSyntax(homePath, relativePath);
-  if (await hasSymlinkComponent(homePath, relativePath)) throw new AppFileError("forbidden", "symlink");
-  const resolved = callPathHelper(() => resolveExistingFileApiPath(homePath, relativePath));
-  if (!resolved) throw new AppFileError("not_found");
+  const resolved = guardSyntax(homePath, relativePath);
+  const walk = await walkPath(homePath, relativePath);
+  if (walk.symlink) throw new AppFileError("forbidden", "symlink");
+  if (!walk.exists || walk.nonDirectoryAncestor) throw new AppFileError("not_found");
+  if (!await isWithinRealHome(homePath, resolved)) throw new AppFileError("not_found");
   return resolved;
 }
 
 /** Resolve the target of a write or mkdir. The target itself may be missing. */
 export async function resolveWritableAppFilePath(homePath: string, relativePath: string): Promise<string> {
-  guardSyntax(homePath, relativePath);
-  if (await hasSymlinkComponent(homePath, relativePath)) throw new AppFileError("forbidden", "symlink");
-  const resolved = callPathHelper(() => resolveWritableFileApiPath(homePath, relativePath));
-  if (!resolved) throw new AppFileError("forbidden", "unwritable path");
+  const resolved = guardSyntax(homePath, relativePath);
+  const walk = await walkPath(homePath, relativePath);
+  if (walk.symlink) throw new AppFileError("forbidden", "symlink");
+  if (walk.nonDirectoryAncestor || !await isWithinRealHome(homePath, walk.deepest)) {
+    throw new AppFileError("forbidden", "unwritable path");
+  }
   return resolved;
 }
 
