@@ -16,7 +16,8 @@ function installation(row: SlackDatabase["slack_installations"]): SlackInstallat
     botUserId: row.bot_user_id, encryptedBotToken: row.encrypted_bot_token, generation: row.generation, state: row.state };
 }
 
-export type SlackLinkTransaction = (actorId: string, work: (trx: Kysely<SlackDatabase>) => Promise<void>) => Promise<void>;
+export type SlackLinkTransaction = <T>(actorId: string, work: (trx: Kysely<SlackDatabase>) => Promise<T>) => Promise<T>;
+type OAuthOwnerBinding = { installationGeneration: number; linkCreatedAt: string };
 
 export class SlackRepository {
   private readonly now: () => Date;
@@ -26,8 +27,11 @@ export class SlackRepository {
     const row = await this.db.selectFrom("slack_installations").selectAll().where("app_id", "=", appId).where("team_id", "=", teamId).executeTakeFirst();
     return row ? installation(row) : null;
   }
-  async saveInstallation(input: Omit<SlackInstallation, "generation" | "state">, options: { oauthStateHash?: string } = {}): Promise<void> {
-    await this.db.transaction().execute(async (trx) => {
+  async saveInstallation(
+    input: Omit<SlackInstallation, "generation" | "state">,
+    options: { oauthStateHash?: string; ownerSlackUserId?: never } | { oauthStateHash: string; ownerSlackUserId: string } = {},
+  ): Promise<OAuthOwnerBinding | undefined> {
+    const work = async (trx: Kysely<SlackDatabase>) => {
       await sql`SELECT pg_advisory_xact_lock(hashtext(${`slack-install:${input.appId}`}))`.execute(trx);
       if (options.oauthStateHash !== undefined) {
         // The consumed state remains a durable installation permit until this transaction closes it.
@@ -50,9 +54,15 @@ export class SlackRepository {
         .onConflict((oc) => oc.columns(["app_id", "team_id"]).doUpdateSet({ bot_user_id: input.botUserId,
           encrypted_bot_token: input.encryptedBotToken, installed_by: input.installedBy, state: "active", updated_at: this.now(),
           generation: sql<number>`slack_installations.generation + 1` }).where("slack_installations.organization_id", "=", input.organizationId))
-        .returning("team_id").executeTakeFirst();
+        .returning("generation").executeTakeFirst();
       if (!saved) throw new SlackRepositoryError("conflict");
-    });
+      if (!options.ownerSlackUserId) return undefined;
+      const linkCreatedAt = await this.saveEmployeeLink(trx, { appId: input.appId, teamId: input.teamId,
+        organizationId: input.organizationId, actorId: input.installedBy, slackUserId: options.ownerSlackUserId });
+      return { installationGeneration: saved.generation, linkCreatedAt };
+    };
+    if (options.ownerSlackUserId && this.options.linkTransaction) return this.options.linkTransaction(input.installedBy, work);
+    return this.db.transaction().execute(work);
   }
   async revokeInstallation(appId: string, teamId: string, options: { source?: "webhook" | "administrator" } = {}): Promise<void> {
     await this.db.transaction().execute(async (trx) => {
@@ -134,17 +144,24 @@ export class SlackRepository {
       if (!installed || installed.state !== "active" || installed.organization_id !== input.organizationId) throw new SlackRepositoryError("forbidden");
       const challenge = await trx.selectFrom("slack_link_challenges").selectAll().where("hash", "=", input.hash).forUpdate().executeTakeFirst();
       if (!challenge || challenge.consumed_at || new Date(challenge.expires_at).getTime() <= this.now().getTime()) throw new SlackRepositoryError("conflict");
-      const current = await trx.selectFrom("slack_employee_links").selectAll().where("app_id", "=", challenge.app_id).where("team_id", "=", challenge.team_id)
-        .where((eb) => eb.or([eb("slack_user_id", "=", challenge.slack_user_id), eb("actor_id", "=", input.actorId)])).execute();
-      if (current.some((row) => row.actor_id !== input.actorId || row.slack_user_id !== challenge.slack_user_id)) throw new SlackRepositoryError("conflict");
-      await trx.insertInto("slack_employee_links").values({ app_id: challenge.app_id, team_id: challenge.team_id,
-        slack_user_id: challenge.slack_user_id, actor_id: input.actorId, organization_id: input.organizationId, created_at: this.now() })
-        .onConflict((oc) => oc.columns(["app_id", "team_id", "slack_user_id"]).doNothing()).execute();
+      await this.saveEmployeeLink(trx, { appId: challenge.app_id, teamId: challenge.team_id,
+        slackUserId: challenge.slack_user_id, actorId: input.actorId, organizationId: input.organizationId });
       await trx.updateTable("slack_link_challenges").set({ consumed_at: this.now() }).where("hash", "=", input.hash).execute();
     };
     if (this.options.linkTransaction) await this.options.linkTransaction(input.actorId, work);
     else await this.db.transaction().execute(work);
   }
+  private async saveEmployeeLink(trx: Kysely<SlackDatabase>, link: SlackEmployeeLink): Promise<string> {
+    await trx.insertInto("slack_employee_links").values({ app_id: link.appId, team_id: link.teamId,
+      slack_user_id: link.slackUserId, actor_id: link.actorId, organization_id: link.organizationId, created_at: this.now() })
+      .onConflict(oc => oc.doNothing()).execute();
+    const saved = await trx.selectFrom("slack_employee_links").select("created_at")
+      .where("app_id", "=", link.appId).where("team_id", "=", link.teamId).where("slack_user_id", "=", link.slackUserId)
+      .where("actor_id", "=", link.actorId).where("organization_id", "=", link.organizationId).executeTakeFirst();
+    if (!saved) throw new SlackRepositoryError("conflict");
+    return new Date(saved.created_at).toISOString();
+  }
+
   async getLink(appId: string, teamId: string, slackUserId: string): Promise<SlackEmployeeLink | null> {
     const row = await this.db.selectFrom("slack_employee_links").selectAll().where("app_id", "=", appId).where("team_id", "=", teamId).where("slack_user_id", "=", slackUserId).executeTakeFirst();
     return row ? { appId, teamId, slackUserId, actorId: row.actor_id, organizationId: row.organization_id } : null;
@@ -262,9 +279,12 @@ export class SlackRepository {
       .where("team_id", "=", key.teamId).where("event_id", "=", key.eventId).where("state", "!=", "sent").execute();
   }
   /** Bounded recurring sweep: never buffer deleted records/content in memory. */
-  async cleanup(): Promise<void> {
+  async cleanup(appId?: string): Promise<void> {
     for (const table of ["slack_oauth_states", "slack_link_challenges", "slack_event_receipts"] as const) {
-      await sql`DELETE FROM ${sql.table(table)} WHERE ctid IN (SELECT ctid FROM ${sql.table(table)} WHERE expires_at < ${this.now()} LIMIT 1000)`.execute(this.db);
+      const app = appId ? sql`AND app_id = ${appId}` : sql``;
+      await sql`DELETE FROM ${sql.table(table)} WHERE ctid IN (
+        SELECT ctid FROM ${sql.table(table)} WHERE expires_at < ${this.now()} ${app} LIMIT 1000
+      )`.execute(this.db);
     }
   }
 }

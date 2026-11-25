@@ -8,7 +8,8 @@ import { createSlackThreadContext, type SlackThreadContextOptions } from "./thre
 import { createSlackLinkPage } from "./link-page.js";
 import { createSlackReplyRoutes } from "./reply-routes.js";
 import { createSlackReactionRoutes } from "./reaction-routes.js";
-import { SLACK_BOT_SCOPES } from "./api.js";
+import { SLACK_BOT_SCOPES, SLACK_DEV_BOT_SCOPES } from "./api.js";
+import type { SlackDevAcceptance } from "./home-resolver.js";
 import { SlackRepositoryError, type SlackRepository } from "./repository.js";
 import { decryptSlackToken, encryptSlackToken, verifySlackSignature } from "./security.js";
 import { ActorIdSchema, OrganizationIdSchema, SlackAppIdSchema, SlackChannelIdSchema, SlackTeamIdSchema, SlackTokenSchema,
@@ -24,11 +25,12 @@ const ChallengeSchema = z.object({ type: z.literal("url_verification"), challeng
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
 export type SlackAppRouteOptions = SlackAuthorityDependencies & SlackThreadContextOptions & {
-  config: SlackAppConfig; repository: SlackRepository; api: SlackApi; now?: () => Date;
+  config: SlackAppConfig; repository: SlackRepository; api: SlackApi; now?: () => Date; readOnlyDev?: SlackDevAcceptance;
 };
 
 export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { shutdownSlack(): Promise<void> } {
   const app = new Hono();
+  const dev = options.readOnlyDev;
   const now = options.now ?? (() => new Date());
   const threadContext = createSlackThreadContext(options);
   const publicUrl = new URL(options.config.publicBaseUrl);
@@ -55,15 +57,19 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     return parsed.success ? parsed.data : null;
   }
 
+  const isDevInstaller = (actorId: string, organizationId: string) => !dev || (actorId === dev.ownerId && organizationId === dev.organizationId);
+
   app.post("/api/slack/install", limit, async (c) => {
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
     const request = await parse(c, z.object({ organizationId: OrganizationIdSchema }).strict());
     if (!request) return fail(c, "Invalid request", 422);
-    if (!await options.requireOrgAdmin({ actorId, organizationId: request.organizationId })) return fail(c, "Forbidden", 403);
+    if (!isDevInstaller(actorId, request.organizationId) || !await options.requireOrgAdmin({ actorId, organizationId: request.organizationId })) return fail(c, "Forbidden", 403);
     const token = randomBytes(32).toString("base64url");
     await options.repository.createOAuthState({ hash: digest(token), appId: options.config.appId, actorId, organizationId: request.organizationId });
     const url = new URL("https://slack.com/oauth/v2/authorize");
-    url.search = new URLSearchParams({ client_id: options.config.clientId, scope: SLACK_BOT_SCOPES.join(","), redirect_uri: callbackUrl, state: token }).toString();
+    const scopes = dev ? SLACK_DEV_BOT_SCOPES : SLACK_BOT_SCOPES;
+    url.search = new URLSearchParams({ client_id: options.config.clientId, scope: scopes.join(","),
+      redirect_uri: callbackUrl, state: token, ...(dev ? { team: dev.teamId } : {}) }).toString();
     c.header("Cache-Control", "no-store"); return c.json({ url: url.toString() });
   });
 
@@ -82,20 +88,24 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     const hash = digest(parsed.data.state);
     const state = await options.repository.getOAuthState(hash);
     if (!state) return fail(c, "Request expired", 409);
-    if (state.appId !== options.config.appId || state.actorId !== actorId || !await options.requireOrgAdmin({ actorId, organizationId: state.organizationId })) return fail(c, "Forbidden", 403);
+    if (state.appId !== options.config.appId || state.actorId !== actorId || !isDevInstaller(actorId, state.organizationId) || !await options.requireOrgAdmin({ actorId, organizationId: state.organizationId })) return fail(c, "Forbidden", 403);
     try { await options.repository.consumeOAuthState(hash, actorId); } catch (error: unknown) { return repositoryFailure(c, error); }
     const installed = await options.api.exchangeCode({ code: parsed.data.code, redirectUri: callbackUrl });
-    if (installed.appId !== options.config.appId) return fail(c, "Forbidden", 403);
+    if (installed.appId !== options.config.appId || (dev && (installed.teamId !== dev.teamId || installed.slackUserId !== dev.ownerSlackId))) {
+      return fail(c, "Forbidden", 403);
+    }
     // Provider latency must not let an expired administrator privilege commit installation.
     if (!await options.requireOrgAdmin({ actorId, organizationId: state.organizationId })) return fail(c, "Forbidden", 403);
     try {
-      await options.repository.saveInstallation({ ...installed, organizationId: state.organizationId, installedBy: actorId,
-        encryptedBotToken: encryptSlackToken(installed.botToken, options.config.tokenEncryptionKey, `${installed.appId}:${installed.teamId}`) }, { oauthStateHash: hash });
+      const ownerBinding = await options.repository.saveInstallation({ ...installed, organizationId: state.organizationId, installedBy: actorId,
+        encryptedBotToken: encryptSlackToken(installed.botToken, options.config.tokenEncryptionKey, `${installed.appId}:${installed.teamId}`) },
+      dev ? { oauthStateHash: hash, ownerSlackUserId: dev.ownerSlackId } : { oauthStateHash: hash });
+      return c.json({ connected: true, teamId: installed.teamId, ...(ownerBinding ? { ownerBinding } : {}) });
     } catch (error: unknown) { return repositoryFailure(c, error); }
-    c.header("Cache-Control", "no-store"); return c.json({ connected: true, teamId: installed.teamId });
   });
 
   app.post("/api/slack/link/complete", limit, async (c) => {
+    if (dev) return fail(c, "Forbidden", 403);
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
     const request = await parse(c, z.object({ token: SlackTokenSchema }).strict()); if (!request) return fail(c, "Invalid request", 422);
     const hash = digest(request.token);
@@ -110,16 +120,19 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
   app.delete("/api/slack/workspaces/:teamId/link", limit, async (c) => {
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
     const teamId = SlackTeamIdSchema.safeParse(c.req.param("teamId")); if (!teamId.success) return fail(c, "Invalid request", 422);
+    if (dev && (actorId !== dev.ownerId || teamId.data !== dev.teamId)) return fail(c, "Forbidden", 403);
     await options.repository.removeLink(options.config.appId, teamId.data, actorId); return c.body(null, 204);
   });
   app.delete("/api/slack/workspaces/:teamId", limit, async (c) => {
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
     const teamId = SlackTeamIdSchema.safeParse(c.req.param("teamId")); if (!teamId.success) return fail(c, "Invalid request", 422);
+    if (dev && (actorId !== dev.ownerId || teamId.data !== dev.teamId)) return fail(c, "Forbidden", 403);
     const installed = await options.repository.getInstallation(options.config.appId, teamId.data);
     if (!installed || !await options.requireOrgAdmin({ actorId, organizationId: installed.organizationId })) return fail(c, "Forbidden", 403);
     await options.repository.revokeInstallation(options.config.appId, teamId.data, { source: "administrator" }); return c.body(null, 204);
   });
   app.put("/api/slack/workspaces/:teamId/channels/:channelId", limit, async (c) => {
+    if (dev) return fail(c, "Forbidden", 403);
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
     const params = z.object({ teamId: SlackTeamIdSchema, channelId: SlackChannelIdSchema }).safeParse(c.req.param());
     const request = await parse(c, z.object({ scopeId: z.uuid(), approvedOutput: z.literal(true) }).strict()); if (!params.success || !request || params.data.channelId.startsWith("D")) return fail(c, "Invalid request", 422);
@@ -148,11 +161,12 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     }
     const envelope = EnvelopeSchema.safeParse(payload); if (!envelope.success) return fail(c, "Invalid request", 422);
     const { api_app_id: appId, team_id: teamId, event_id: eventId, event } = envelope.data;
-    if (appId !== options.config.appId) return fail(c, "Forbidden", 403);
+    if (appId !== options.config.appId || (dev && teamId !== dev.teamId)) return fail(c, "Forbidden", 403);
     const revocation = event.type === "app_uninstalled" || event.type === "tokens_revoked";
     const installed = await options.repository.getInstallation(appId, teamId);
     if ((!installed || installed.state !== "active") && !revocation) return fail(c, "Forbidden", 403);
     if (envelope.data.is_ext_shared_channel || event.is_ext_shared || (event.user_team && event.user_team !== teamId)) return c.json({ received: true });
+    if (dev && !revocation && (event.type !== "message" || event.channel !== dev.channelId)) return c.json({ received: true });
     if (threadContext.receive && installed && event.type === "message" && event.channel_type === "channel"
       && !event.bot_id && !event.subtype && event.app_id === undefined && event.user !== installed.botUserId) {
       const status = await threadContext.receive({ appId, teamId, eventId, userId: event.user, channelId: event.channel,
@@ -160,6 +174,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
         ...(Object.hasOwn(event, "blocks") ? { blocks: event.blocks } : {}) }, body, installed, signal);
       return status === 200 ? c.json({ received: true }) : fail(c, status === 409 ? "Conflicting delivery" : "Slack unavailable", status);
     }
+    if (dev && !revocation) return c.json({ received: true });
     const relevant = event.type === "app_mention" || (event.type === "message" && event.channel_type === "im");
     if (event.bot_id || event.subtype || (event.user && event.user === installed?.botUserId) || (!relevant && !revocation)) return c.json({ received: true });
     if (relevant && !event.text?.trim()) return c.json({ received: true });
@@ -241,11 +256,17 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
       return fail(c, "Slack unavailable", 503);
     }
   });
-  app.route("/", createSlackReplyRoutes(options));
-  app.route("/", createSlackReactionRoutes(options));
+  if (dev) {
+    app.post("/internal/slack/replies", limit, c => fail(c, "Not found", 404));
+    app.post("/internal/slack/reactions", limit, c => fail(c, "Not found", 404));
+    app.get("/slack/link", c => fail(c, "Not found", 404));
+  } else {
+    app.route("/", createSlackReplyRoutes(options));
+    app.route("/", createSlackReactionRoutes(options));
+    app.route("/", createSlackLinkPage(options));
+  }
   app.route("/", createSlackContextRoutes(options, threadContext.readPrivateThread, threadContext.readEnrolledContext));
   app.route("/", threadContext.routes);
-  app.route("/", createSlackLinkPage(options));
   return Object.assign(app, { async shutdownSlack() { closed = true; await Promise.allSettled([...activeEvents]); } });
 }
 
@@ -263,4 +284,4 @@ function repositoryFailure(c: Context, error: unknown) {
   if (error instanceof SlackRepositoryError) return fail(c, "Request unavailable", error.code === "forbidden" ? 403 : error.code === "capacity" ? 429 : 409);
   console.warn("[slack] database request failed", error instanceof Error ? error.name : "UnknownError"); return fail(c, "Slack unavailable", 503);
 }
-function fail(c: Context, error: string, status: 401 | 403 | 409 | 413 | 422 | 429 | 503) { c.header("Cache-Control", "no-store"); return c.json({ error }, status); }
+function fail(c: Context, error: string, status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503) { c.header("Cache-Control", "no-store"); return c.json({ error }, status); }

@@ -26,7 +26,7 @@ export interface SlackAppConfig {
   tokenEncryptionKey: string; publicBaseUrl: string;
 }
 export interface SlackApi {
-  exchangeCode(input: { code: string; redirectUri: string }): Promise<{ appId: string; teamId: string; botUserId: string; botToken: string }>;
+  exchangeCode(input: { code: string; redirectUri: string }): Promise<{ appId: string; teamId: string; botUserId: string; botToken: string; slackUserId?: string }>;
   postMessage(input: { token: string; channelId: string; text: string; threadTs?: string; signal?: AbortSignal }): Promise<{ ts: string }>;
   replies(input: { token: string; channelId: string; ts: string; cursor?: string; signal?: AbortSignal }): Promise<SlackMessagePage>;
   history(input: { token: string; channelId: string; cursor?: string; signal?: AbortSignal }): Promise<SlackMessagePage>;

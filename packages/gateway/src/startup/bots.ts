@@ -268,11 +268,17 @@ export async function startBots(options: {
   const transact = createBotStateTransactions(options.repository);
   const routineApprovals=createBotRoutineApprovals({db,transact,source:chatgptPlanPeers,now:options.now,definitionRevision:async(ownerId,botId)=>{const agent=await options.agents.get({type:"personal",ownerId},botId);if(!agent?.recipeRef || agent.archived) throw new BotStateError("not_found");return agent.revision;}});
   const routines=createBotRoutineExecution({db,transact,approvals:routineApprovals,available:()=>Boolean(options.host?.available),now:options.now});
-  const enrolledPlatform = options.slackPlatform === undefined ? options.routineActionPlatform : options.slackPlatform;
-  const enrolledPreview = enrolledPlatform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(enrolledPlatform.runtimeSlot) && enrolledPlatform.handle === enrolledPlatform.runtimeSlot;
+  const enrolledPlatform: SlackBotPlatform | null | undefined = options.slackPlatform === undefined
+    ? options.routineActionPlatform : options.slackPlatform;
+  const devTarget = enrolledPlatform?.devTarget;
+  const enrolledSlackEnabled = enrolledPlatform && (devTarget
+    ? enrolledPlatform.runtimeSlot === "dev" && enrolledPlatform.handle === devTarget.handle
+      && enrolledPlatform.machineId === devTarget.machineId && options.runtimeOwnerId === devTarget.ownerId
+      && options.computerId === devTarget.handle
+    : /^pr-[1-9][0-9]{0,8}$/.test(enrolledPlatform.runtimeSlot) && enrolledPlatform.handle === enrolledPlatform.runtimeSlot);
   const corePlatform = options.routineActionPlatform;
   const corePreview = corePlatform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(corePlatform.runtimeSlot) && corePlatform.handle === corePlatform.runtimeSlot;
-  const integrationClient = options.integrations || corePreview || enrolledPreview
+  const integrationClient = options.integrations || corePreview || (enrolledSlackEnabled && options.runtimeOwnerId)
     ? createBotIntegrationClient(options.integrations ?? (async () => new Response(null, {status:503}))) : undefined;
   let enrolledSlack: EnrolledSlackReadSource | undefined;
   const integrationTools = integrationClient
@@ -429,10 +435,11 @@ export async function startBots(options: {
   let slackMentionSummaries: SlackMentionSummaries | undefined;
   let slackRules: SlackRuleTools | undefined;
   const platform = enrolledPlatform;
-  if (platform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(platform.runtimeSlot) && platform.handle === platform.runtimeSlot) {
+  if (platform && options.runtimeOwnerId && enrolledSlackEnabled) {
     try {
       const slackClient = createSlackOwnerClient(platform);
       const botAvailable = async (target: {ownerId:string;botId:string;chatId:string}) => {
+        if (devTarget && (target.ownerId !== devTarget.ownerId || target.botId !== devTarget.botId || target.chatId !== devTarget.chatId)) return false;
         const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
         return Boolean(bot?.recipeRef && !bot.archived);
       };
@@ -441,10 +448,7 @@ export async function startBots(options: {
         db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess,
         discoverEnrollment: slackClient.discoverThreadEnrollment,
         onReceive: slackMentionSummaries.receive,
-        botAvailable: async target => {
-          const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
-          return Boolean(bot?.recipeRef && !bot.archived);
-        },
+        botAvailable,
       });
       slackRules=createSlackRuleTools({db,ownerId:options.runtimeOwnerId,runtimeId:platform.machineId,context:slackThreadContext,afterCommit:chatId=>retireRevokedSlackJobs(db,options.runtimeOwnerId!,chatId,runId=>orchestrator.cancel(runId))});
       enrolledSlack = createEnrolledSlackReadSource({ context: slackThreadContext, read: slackClient.readEnrolledContext });

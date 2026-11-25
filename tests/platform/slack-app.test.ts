@@ -565,3 +565,86 @@ it("dispatches a signed ordinary public-channel thread reply through the read-on
   expect(dispatch).not.toHaveBeenCalled();
   expect(api.postMessage).not.toHaveBeenCalled();
 });
+
+describe("Slack Dev read-only callbacks", () => {
+  const dev = { handle: "owner-dev", machineId: "a1234567-1234-4123-8123-123456789abc",
+    ownerId: "user_employee", organizationId: org, teamId: "T123", channelId: "C123", ownerSlackId: "U123" };
+  const installation = { appId: "A123", teamId: "T123", botUserId: "UBOT",
+    botToken: "xoxb-slack-fixture", slackUserId: "U123" };
+
+  it("binds OAuth to the pinned Matrix owner, team and Slack installer without sending a DM", async () => {
+    app = makeApp({ readOnlyDev: dev });
+    actor = "user_other";
+    expect((await mutation("/api/slack/install", "POST", { organizationId: org })).status).toBe(403);
+    actor = dev.ownerId;
+    expect((await mutation("/api/slack/install", "POST", { organizationId: "org_other" })).status).toBe(403);
+    const authorize = await mutation("/api/slack/install", "POST", { organizationId: org });
+    const url = new URL((await authorize.json()).url);
+    expect(url.searchParams.get("scope")).toBe("channels:history,channels:read");
+    expect(url.searchParams.get("team")).toBe(dev.teamId);
+    expect(url.searchParams.get("user_scope")).toBeNull();
+
+    for (const changed of [{ teamId: "T999" }, { slackUserId: "U999" }, { slackUserId: undefined }]) {
+      api.exchangeCode.mockResolvedValueOnce({ ...installation, ...changed });
+      expect((await app.request(await startOAuth())).status).toBe(403);
+    }
+    expect(await repo.getLink("A123", "T123", "U123")).toBeNull();
+    api.exchangeCode.mockResolvedValueOnce(installation);
+    const result = await app.request(await startOAuth());
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ connected: true, teamId: "T123",
+      ownerBinding: { installationGeneration: 2, linkCreatedAt: clock.toISOString() } });
+    expect(await repo.getLink("A123", "T123", "U123")).toMatchObject({ actorId: dev.ownerId, organizationId: org });
+    expect(api.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("rolls back installation and refuses to replace a conflicting owner link", async () => {
+    await repo.createChallenge({ hash: "f".repeat(64), appId: "A123", teamId: "T123", slackUserId: "U123" });
+    await repo.completeLink({ hash: "f".repeat(64), actorId: "user_other", organizationId: org });
+    app = makeApp({ readOnlyDev: dev });
+    api.exchangeCode.mockResolvedValueOnce(installation);
+    expect((await app.request(await startOAuth())).status).toBe(409);
+    expect(await repo.getInstallation("A123", "T123")).toMatchObject({ installedBy: "user_admin", generation: 1 });
+    expect(await repo.getLink("A123", "T123", "U123")).toMatchObject({ actorId: "user_other" });
+  });
+
+  it("dispatches only signed enrolled channel callbacks without owning Slack write routes", async () => {
+    await linkEmployee();
+    const dispatchContext = vi.fn();
+    api.conversationInfo.mockResolvedValue({ isExternalShared: false, canAccess: true, channelMetadata: { id: "C123", name: "tech" } });
+    app = makeApp({ readOnlyDev: dev, dispatchContext, contextGrant: { scope: "channel",
+      appId: "A123", ownerId: dev.ownerId, runtimeId: dev.machineId, organizationId: org,
+      teamId: dev.teamId, channelId: dev.channelId, ownerSlackId: dev.ownerSlackId, installationGeneration: 1,
+      linkCreatedAt: clock.toISOString(), botId: "bot_12345678", chatId: "chat_12345678" } });
+    const harmless = { type: "message", user: "U456", channel: "C123", channel_type: "channel",
+      text: "Natural conversation", ts: "123.457" };
+    const send = (payload: unknown) => app.request("/webhooks/slack/events", signed(payload));
+    expect((await send({ ...envelope(harmless), api_app_id: "A999" })).status).toBe(403);
+    expect((await send({ ...envelope(harmless), team_id: "T999" })).status).toBe(403);
+    for (const ignored of [mention, { ...harmless, channel: "C999" }, { ...harmless, channel: "D123", channel_type: "im" }]) {
+      expect((await send(envelope(ignored))).status).toBe(200);
+    }
+    expect(api.conversationInfo).not.toHaveBeenCalled();
+    api.conversationInfo.mockResolvedValueOnce({
+      isExternalShared: false, canAccess: true, channelMetadata: { id: "C123", name: "renamed-channel" },
+    });
+    expect((await send(envelope(harmless, "EvOther"))).status).toBe(200);
+    expect(dispatchContext).not.toHaveBeenCalled();
+    expect((await send(envelope(harmless))).status).toBe(200);
+    expect((await send(envelope(harmless))).status).toBe(200);
+    expect(dispatchContext).toHaveBeenCalledOnce();
+    expect(dispatchContext).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: dev.ownerId, runtimeId: dev.machineId, source: expect.objectContaining({ ownerMention: false }),
+      event: expect.objectContaining({ appId: config.appId, teamId: dev.teamId, channelId: dev.channelId }),
+    }), expect.any(AbortSignal));
+    expect((await mutation("/api/slack/link/complete")).status).toBe(403);
+    expect((await mutation("/api/slack/workspaces/T123/channels/C123", "PUT")).status).toBe(403);
+    for (const path of ["/internal/slack/replies", "/internal/slack/reactions"]) {
+      expect((await app.request(path, { method: "POST" })).status).toBe(404);
+    }
+    expect((await app.request("/slack/link")).status).toBe(404);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(api.postMessage).not.toHaveBeenCalled();
+    expect(api.addReaction).not.toHaveBeenCalled();
+  });
+});

@@ -36,6 +36,7 @@ export function createSlackContextRoutes(options: SlackAppRouteOptions, readPriv
       const result = await readPrivateThread(privateRequest.data, runtime, AbortSignal.timeout(8_000));
       return result ? c.json(result) : c.json({ error: "Forbidden" }, 403);
     }
+    if (options.readOnlyDev) return c.json({ error: "Forbidden" }, 403);
     if (!options.authorizeReply) return c.json({ error: "Slack unavailable" }, 503);
     const parsed = RequestSchema.safeParse(request); if (!parsed.success) return c.json({ error: "Invalid request" }, 422);
     const key = { appId: options.config.appId, teamId: parsed.data.teamId, eventId: parsed.data.eventId };
