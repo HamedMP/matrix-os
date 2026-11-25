@@ -7,12 +7,12 @@ import { FileText, FileType2 } from "lucide-react";
 import type { MatrixOSFiles } from "../../../_shared/matrix-os";
 import { AppFrame, OfficeStartScreen, type StartFolderMemory, type StartTemplate } from "../../../_shared/office-ui";
 import type { RecentFile, SessionError } from "../session/index";
+// The launcher artwork, bundled as a data URL: the app frame is sandboxed with a null
+// origin, and an image file requested from there shows broken.
+import appArtwork from "../../../../system/icons/v3-docs.png?inline";
 import { DOCS_ACCEPT } from "./accept";
 import { templateArt } from "./template-art";
 import { DOCS_TEMPLATES, type DocsTemplateId } from "./templates";
-
-/** The launcher artwork, shown where the app introduces itself. */
-const appArtwork = new URL("../../../../system/icons/v3-docs.png", import.meta.url).href;
 
 const BROWSE_ACCEPT: readonly string[] = [".docx"];
 
