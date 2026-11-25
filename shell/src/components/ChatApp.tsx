@@ -317,7 +317,7 @@ function ChatAppContent({
     if (!mobile && projectHome?.id !== project.id) startNewChat(project.id);
   };
   const onSwitchConversation = (id: string) => { if (isCurrentAuthority && !isCurrentAuthority()) return; botDraftNavigation.clearNotice(); agentsNavigation?.close(); setArchivesOpen(false); switchConversation(id); };
-  const composer = useChatComposerDraft(composerScope, draftIdentity);
+  const composer = useChatComposerDraft(composerScope, draftIdentity, composerKey);
   const botDraftNavigation = useWebBotDraftNavigation({client:summaryClient,identityKey:authorityKey ?? projectGatewayUrl,scope:composerScope,sourceChatId:sessionId,newChatSequence,seed:composer.seedChatDraft,open:onSwitchConversation,
     restore:source=>{ agentsNavigation?.close(); if(source.chatId) switchConversation(source.chatId); else {setNewChatSequence(source.sequence);setAgentDraftRequest(null);createChat();} },
   });

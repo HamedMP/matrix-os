@@ -21,13 +21,14 @@ import {
 
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { Attachments, useAttachments } from "@/components/ai-elements/attachments";
+import { encodeChatAttachments } from "@/components/ai-elements/attachments-utils";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatMentionControls, useChatMentionPermission, useBotMentionNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import { ChatMentionTokens, FailedChatMessage } from "./ChatInputExtras";
 import { handleChatInputKey } from "./chat-input-keyboard";
 import { chatInputPlaceholder, canSendChatInput } from "./chat-input-placeholder";
 import { ChatMentionPicker } from "./ChatMentionPicker";
-import type { ChatComposerDraft } from "./useChatComposerDraft";
+import type { ChatComposerDraft, FailedChatSend } from "./useChatComposerDraft";
 import {
   BrowserSpeechClientError,
   createBrowserSpeechClient,
@@ -39,17 +40,6 @@ import {
 } from "@/lib/platform-speech-recorder";
 
 type ChatSendFiles = Array<{ name: string; type: string; data: string }>;
-type FailedSend = {
-  scope: string;
-  text: string;
-  prompt: string;
-  files?: ChatSendFiles;
-  options: Required<Pick<ChatSubmitOptions, "resources" | "clientRequestId" | "permissionMode">>
-    & Pick<ChatSubmitOptions, "projectSkillProjectId">;
-  projectScope?: string;
-  harnessId?: string;
-  permissionMode: string;
-};
 
 export function ChatInput({
   composer, agentClient, scope, permissionMode, onOpenBotMention, slashInstance, slashCatalogLoading = false, projectSlash, isCurrentAuthority,
@@ -109,11 +99,9 @@ export function ChatInput({
   /** Queued turns, attached above the prompt card. */
   queue?: React.ReactNode;
 }) {
-  const { text: input, setText: setInput, setDraft, resources } = composer;
+  const { text: input, setText: setInput, setDraft, resources, failedSend, clearFailedSend } = composer;
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [failed, setFailed] = useState<FailedSend | null>(null);
-  const failedSend = failed?.scope === scope ? failed : null;
   const [dismissedQuery, setDismissedQuery] = useState<string | null>(null);
   const [cursor, setCursor] = useState(input.length);
   const [slashDismissal, setSlashDismissal] = useState<string|null>(null);
@@ -181,24 +169,24 @@ export function ChatInput({
   const canSend = !failedSend && (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: referenceCount, text: input, attachments: attachments.length });
   const canRetry = failedSend && !speechBusy && !matrixAttachment.pending
     && permissionMode === failedSend.permissionMode
-    && (attachmentsEnabled || !failedSend.files?.length)
+    && (attachmentsEnabled || !failedSend.files.length)
     && (contextEnabled || !failedSend.options.resources.some(resource => resource.kind === "organization_drive"))
     && (!failedSend.options.projectSkillProjectId || (
       projectSlash?.projectId === failedSend.options.projectSkillProjectId && projectSlash.read
       && projectSlash.scope === failedSend.projectScope && slashInstance?.id === failedSend.harnessId
     ))
-    && canSendChatInput({ connected, sending, busy, references: failedSend.options.resources.length + Number(Boolean(failedSend.options.projectSkillProjectId)), text: failedSend.prompt, attachments: failedSend.files?.length ?? 0 });
-
-  const clearFailedSend = (requestId: string) => setFailed(previous =>
-    previous?.options.clientRequestId === requestId ? null : previous);
+    && canSendChatInput({ connected, sending, busy, references: failedSend.options.resources.length + Number(Boolean(failedSend.options.projectSkillProjectId)), text: failedSend.prompt, attachments: failedSend.files.length });
 
   const retryFailedSend = async () => {
     if (!failedSend || !canRetry || !(isCurrentAuthority?.() ?? true)) return;
+    const attachmentError = attachmentPolicy?.(failedSend.files);
+    if (attachmentError) { setError(attachmentError); return; }
     const requestId = failedSend.options.clientRequestId;
     setSending(true);
     setError(null);
     try {
-      const accepted = await onSubmit(failedSend.prompt, failedSend.files, {
+      const files = failedSend.files.length ? await encodeChatAttachments(failedSend.files) : undefined;
+      const accepted = await onSubmit(failedSend.prompt, files, {
         ...failedSend.options,
         onAccepted: chatId => {
           if (chatId) composer.moveDraft(chatId);
@@ -273,8 +261,8 @@ export function ChatInput({
       resources, clientRequestId: composer.requestId || randomUUID(), permissionMode: permission.permissionMode,
       ...(projectSkillProjectId ? { projectSkillProjectId } : {}),
     };
-    let retry: FailedSend | undefined;
-    let retainedForRetry = false;
+    let retry: FailedChatSend | undefined;
+    let restored = false;
     const clearSubmittedContext = () => {
       projectSkillDraft.clear();
       for (const id of submittedIds) removeFile(id);
@@ -295,16 +283,12 @@ export function ChatInput({
       },
       restore: () => {
         draftCleared = false;
-        const current = currentComposer.current;
-        if (retry && current.scope === scope && current.composer.requestId !== submittedDraft.requestId
-          && (current.composer.text.trim() || current.composer.resources.length)) {
-          retainedForRetry = true;
-          setFailed(retry);
-          clearSubmittedContext();
-        } else {
-          composer.restore(submittedDraft);
-          setSentAttachmentIds([]);
-        }
+        if (!retry) return;
+        restored = true;
+        const keepForRetry = retry.files.length > 0 || Boolean(projectSkillProjectId && !projectSkillDraft.isCurrent());
+        composer.restore(submittedDraft, retry, keepForRetry);
+        if (keepForRetry || composer.hasNewerDraft(submittedDraft)) clearSubmittedContext();
+        else setSentAttachmentIds([]);
       },
       settle: cleared => {
         clearFailedSend(submissionOptions.clientRequestId);
@@ -322,12 +306,13 @@ export function ChatInput({
       const files = attachments.length ? await getBase64Files() : undefined;
       if (projectSkillProjectId && !currentSkillScope()) return;
       const prompt = projectSkillDraft.prompt(text || (files?.length ? `Attached ${files.length} file(s)` : ""));
-      retry = { scope, text, prompt, files, options: submissionOptions, projectScope: projectSlash?.scope, harnessId: slashInstance?.id, permissionMode };
+      retry = { text, prompt, files: attachments.map(({ file }) => file), options: submissionOptions,
+        projectScope: projectSlash?.scope, harnessId: slashInstance?.id, permissionMode };
       const accepted = await onSubmit(prompt, files, {
         ...submissionOptions,
         onAccepted: chatId => {
-          if (retainedForRetry && chatId) composer.moveDraft(chatId);
           handoff.accepted();
+          if (restored && chatId) composer.moveDraft(chatId);
         },
         onShown: handoff.shown,
       });

@@ -6,7 +6,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { FileIcon, ImageIcon, FileTextIcon, XIcon, PaperclipIcon } from "@/lib/hugeicons";
 import { Button } from "@/components/ui/button";
-import { fileToBase64 } from "@/components/ai-elements/attachments-utils";
+import { encodeChatAttachments } from "@/components/ai-elements/attachments-utils";
 
 export interface AttachmentFile {
   file: File;
@@ -189,15 +189,7 @@ export function useAttachments(): UseAttachmentsReturn {
     });
   };
 
-  const getBase64Files = async () => {
-    return Promise.all(
-      attachments.map(async (att) => ({
-        name: att.file.name,
-        type: att.file.type,
-        data: await fileToBase64(att.file),
-      })),
-    );
-  };
+  const getBase64Files = () => encodeChatAttachments(attachments.map(({ file }) => file));
 
   return { attachments, addFiles, removeFile, clearAll, getBase64Files };
 }

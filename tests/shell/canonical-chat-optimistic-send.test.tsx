@@ -3,10 +3,12 @@ import React from "react";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
+import { canonicalChatProviderCatalogPath } from "@matrix-os/ui";
+import { ChatApp } from "../../shell/src/components/ChatApp";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState";
 import { ChatInput } from "../../shell/src/components/chat/ChatInput";
 import { useChatComposerDraft } from "../../shell/src/components/chat/useChatComposerDraft";
-import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
+import { createCanonicalChatFixture, createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
 import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 
 // ENG-540: on a new Chat the sent message stayed invisible for 1.8-3.1 s while
@@ -14,6 +16,12 @@ import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 // and the detail even though the event stream already carried the changes.
 
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
+vi.mock("@clerk/nextjs", async original => ({ ...(await original<typeof import("@clerk/nextjs")>()),
+  useOrganization: () => ({ organization: null }), useAuth: () => ({ userId: null, sessionId: null }),
+}));
+vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({
+  ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => children,
+}));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const options = { instanceId: "codex_fixture", model: "gpt-5.6-sol", interactionMode: "default", permissionMode: "supervised" };
 
@@ -42,11 +50,14 @@ function fixtureServer({ createGate, uploadGate, admitGate, createFails, firstCr
   let admitted: typeof existing | null = null;
   const reads = { list: 0, detail: 0 };
   const createRequestIds: string[] = [];
+  const uploadedPaths: string[] = [];
   stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes(canonicalChatProviderCatalogPath())) return Response.json(createCanonicalProviderCatalogFixture());
     if (url.includes("/events?")) return streamOpen ? attachedStream() : new Response(new ReadableStream());
     if (url.includes("/api/files/blob?")) {
       await uploadGate;
       const path = new URL(url).searchParams.get("path")!;
+      uploadedPaths.push(path);
       return Response.json({ ok: true, path, size: 5 });
     }
     if (url.includes("/api/chats?") && init?.method === "POST") {
@@ -75,7 +86,7 @@ function fixtureServer({ createGate, uploadGate, admitGate, createFails, firstCr
     reads.detail += 1;
     return Response.json(admitted ?? existing);
   }));
-  return { chat, reads, createRequestIds };
+  return { chat, reads, createRequestIds, uploadedPaths };
 }
 
 const shownCount = (messages: { role: string; content: unknown }[], text: string) =>
@@ -293,7 +304,7 @@ function WebChat({ chatId }: { chatId?: string }) {
   const state = useCanonicalChatState(chatId ? {} : { initialDraft: "draft" });
   const composer = useChatComposerDraft(state.sessionId ?? "new", "owner");
   return <>
-    <ul aria-label="Transcript" data-chat-id={state.sessionId}>{state.messages.filter((message) => message.role === "user")
+    <ul aria-label="Transcript">{state.messages.filter((message) => message.role === "user")
       .map((message) => <li key={message.id}>{String(message.content)}</li>)}</ul>
     {chatId && !state.sessionId ? <button type="button" onClick={() => state.switchConversation(chatId)}>Open</button> : null}
     <ChatInput key={state.sessionId ?? "new"} composer={composer} scope={state.sessionId ?? "new"} permissionMode="supervised" connected busy={false}
@@ -340,25 +351,52 @@ it("empties the composer when a follow-up's pending message shows, before admiss
   expect(composerValue()).toBe("");
 });
 
-it.each([false, true])("keeps a rejected first message retryable while preserving any newer draft (typed=%s)", async (typed) => {
+it.each([
+  { typed: false, attached: false },
+  { typed: true, attached: false },
+  { typed: true, attached: true },
+])("keeps a rejected first message retryable across composer mounts (typed=$typed, attached=$attached)", async ({ typed, attached }) => {
   vi.stubGlobal("crypto", webcrypto);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const create = gate();
-  const { chat, createRequestIds } = fixtureServer({ createGate: create.opened, firstCreateFails: true });
-  render(<WebChat />);
-  await sendFromComposer("Do not lose me");
-  await waitFor(() => expect(transcriptText()).toContain("Do not lose me"));
+  const { chat, createRequestIds, uploadedPaths } = fixtureServer({ createGate: create.opened, firstCreateFails: true });
+  function ChatScreen() {
+    const state = useCanonicalChatState({ initialDraft: "draft" });
+    return <>
+      <output data-testid="selected-chat">{state.sessionId}</output>
+      <ChatApp messages={state.messages} sessionId={state.sessionId} busy={state.busy} connected
+        composerIdentity={state.composerIdentity} conversations={[]} onNewChat={state.createChat}
+        onSwitchConversation={state.switchConversation} onSubmit={state.submitMessage}
+        providerSelection={state.providerSelection} />
+    </>;
+  }
+  render(<ChatScreen />);
+  const newChatInput = await screen.findByPlaceholderText("How can I help you today?");
+  fireEvent.change(newChatInput, { target: { value: "Do not lose me" } });
+  if (attached) {
+    const fileInput = screen.getByLabelText("Attach files", { selector: "input" });
+    fireEvent.change(fileInput, { target: { files: [new File(["hello"], "retry-notes.txt", { type: "text/plain" })] } });
+  }
+  const send = screen.getByRole("button", { name: "Send" });
+  await waitFor(() => expect(send).toHaveProperty("disabled", false));
+  fireEvent.click(send);
+  await screen.findByText("Do not lose me", { exact: true, selector: "span" });
+  const pendingInput = screen.getByPlaceholderText("Reply to chat…");
+  expect(pendingInput).not.toBe(newChatInput);
   expect(composerValue()).toBe("");
-  if (typed) fireEvent.change(screen.getByPlaceholderText("Reply to chat…"), { target: { value: "A newer thought" } });
+  if (typed) fireEvent.change(pendingInput, { target: { value: "A newer thought" } });
 
   create.release();
-  await waitFor(() => expect(transcriptText()).not.toContain("Do not lose me"));
+  await waitFor(() => expect(screen.queryByText("Do not lose me", { exact: true, selector: "span" })).toBeNull());
   expect(composerValue()).toBe(typed ? "A newer thought" : "Do not lose me");
   fireEvent.click(screen.getByRole("button", { name: typed ? "Retry message" : "Send" }));
-  await waitFor(() => expect(transcriptText()).toContain("Do not lose me"));
-  await waitFor(() => expect(screen.getByRole("list", { name: "Transcript" }).getAttribute("data-chat-id")).toBe(chat.id));
+  await screen.findByText("Do not lose me", { exact: true, selector: "span" });
+  await waitFor(() => expect(screen.getByTestId("selected-chat").textContent).toBe(chat.id));
   expect(createRequestIds).toHaveLength(2);
   expect(composerValue()).toBe(typed ? "A newer thought" : "");
   expect(createRequestIds[1]).toBe(createRequestIds[0]);
-  expect(transcriptText()).not.toContain("A newer thought");
+  expect(uploadedPaths).toHaveLength(attached ? 1 : 0);
+  if (attached) expect(uploadedPaths[0]).toContain("retry-notes.txt");
+  expect(screen.queryByText("A newer thought", { exact: true, selector: "span" })).toBeNull();
 });
