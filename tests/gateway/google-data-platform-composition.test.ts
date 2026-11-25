@@ -15,7 +15,10 @@ describe('platform-owned Google policy composition', () => {
     const native = await db.connectService({ userId: owner.id, service: 'gmail', pipedreamAccountId: 'gmail_123e4567-e89b-42d3-a456-426614174000', accountLabel: 'Direct', scopes: [] });
     const pipedream = await db.connectService({ userId: owner.id, service: 'gmail', pipedreamAccountId: 'apn_synthetic', accountLabel: 'Pipedream', scopes: [] });
     const other = await db.connectService({ userId: foreign.id, service: 'gmail', pipedreamAccountId: 'apn_other', accountLabel: 'Other', scopes: [] });
-    const reviewed = await db.googleData!.repository.reviewProfile(profileInput(), 0);
+    const profile = profileInput();
+    profile.evidence.reviewedAt = new Date(Date.now() - 1000).toISOString();
+    profile.evidence.expiresAt = new Date(Date.now() + 86400_000).toISOString();
+    const reviewed = await db.googleData!.repository.reviewProfile(profile, 0);
     const app = createIntegrationRoutes({ db, pipedream: { getAppInfo: vi.fn(async () => undefined) } as never, webhookSecret: 'synthetic', resolveUserId: async () => owner.id });
     for (const connection of [native, pipedream]) {
       const response = await app.request(`/gmail/processing-profiles?connectionId=${connection.id}`);
