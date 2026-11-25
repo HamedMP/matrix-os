@@ -75,6 +75,8 @@ const STATUS: Record<IngressErrorCode, number> = {
 export interface IngressDeps {
   store: Pick<VmStore, "list" | "onChange">;
   hostAuthToken: string;
+  // Host-installed IPv4 -> MAC bindings, read with the VM index.
+  readVmBindings?: () => Promise<ReadonlyMap<string, string>>;
   tls: { cert: string | Buffer; key: string | Buffer };
   // The VM nginx port; 443 in production, overridable for tests.
   upstreamPort?: number;
@@ -100,6 +102,7 @@ interface IndexEntry {
   id: string;
   state: VmState;
   privateIPv4: string;
+  bound: boolean;
 }
 
 type Candidate = Pick<VmRecord, "id" | "state" | "privateIPv4" | "updatedAt" | "generation">;
@@ -239,9 +242,10 @@ export function createIngress(deps: IngressDeps): Ingress {
 
   async function rebuild(): Promise<void> {
     dirty = false;
-    const chosen = new Map<string, Candidate>();
+    const chosen = new Map<string, VmRecord>();
     try {
       const records = await deps.store.list();
+      const bindings = records.some(({ state }) => state === "running") ? await deps.readVmBindings?.() : undefined;
       let capped = false;
       const dropped: Array<{ handle: string; id: string }> = [];
       for (const record of records) {
@@ -273,11 +277,16 @@ export function createIngress(deps: IngressDeps): Ingress {
       }
       loggedDuplicates = seen;
       const next = new Map<string, IndexEntry>();
-      for (const [handle, c] of chosen) next.set(handle, { id: c.id, state: c.state, privateIPv4: c.privateIPv4 });
+      for (const [handle, candidate] of chosen) {
+        const { id, state, privateIPv4, mac } = candidate;
+        const bound = bindings === undefined || bindings.get(privateIPv4) === mac;
+        next.set(handle, { id, state, privateIPv4, bound });
+      }
       index = next;
       builtAt = now();
     } catch (error: unknown) {
-      // Keep serving from the previous index; retry on the next request.
+      // Production ingress must never fall back to stale VM identities.
+      if (deps.readVmBindings) index = null;
       dirty = true;
       log("ingress.index_rebuild_failed", errorFields(error));
     }
@@ -300,7 +309,7 @@ export function createIngress(deps: IngressDeps): Ingress {
   async function lookup(handle: string): Promise<IndexEntry | null | undefined> {
     if (dirty || index === null || now() - builtAt >= INDEX_MAX_AGE_MS) await refresh();
     if (dirty && building === null) await refresh();
-    if (index === null) return undefined;
+    if (index === null || (dirty && deps.readVmBindings)) return undefined;
     return index.get(handle) ?? null;
   }
 
@@ -350,7 +359,7 @@ export function createIngress(deps: IngressDeps): Ingress {
     if (entry === null) return { ok: false, code: "runtime_unknown" };
     touch(handle);
     if (ASLEEP.has(entry.state)) return { ok: false, code: "runtime_asleep" };
-    if (entry.state !== "running" || !isIPv4(entry.privateIPv4)) return { ok: false, code: "runtime_unavailable" };
+    if (entry.state !== "running" || !entry.bound || !isIPv4(entry.privateIPv4)) return { ok: false, code: "runtime_unavailable" };
     return { ok: true, entry };
   }
 
@@ -368,7 +377,8 @@ export function createIngress(deps: IngressDeps): Ingress {
       path: req.url,
       headers: forwardedHeaders(req, upgrade),
       agent,
-      // The VM's nginx uses a self-signed certificate on the private bridge.
+      // Guest nginx is self-signed. The host-installed network binding
+      // supplies guest identity on this hop.
       rejectUnauthorized: false,
     });
     upstream.on("socket", (socket: Socket) => {

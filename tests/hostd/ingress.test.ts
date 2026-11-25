@@ -11,7 +11,7 @@ import { connect as tlsConnect, type TLSSocket } from "node:tls";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
-import { createIngress, type Ingress } from "../../packages/hostd/src/ingress.js";
+import { createIngress, INGRESS_ERROR_HEADER, type Ingress } from "../../packages/hostd/src/ingress.js";
 import { createVmStore, type VmRecord, type VmState, type VmStore } from "../../packages/hostd/src/vm-store.js";
 
 const TOKEN = "host-auth-token-0123456789abcdef";
@@ -178,6 +178,32 @@ const authed = (host = "alice.matrix-os.com", extra: Record<string, string> = {}
 });
 
 describe("host ingress", () => {
+  it("only forwards while the running VM has its assigned host network binding", async () => {
+    const vm = record();
+    await store.put(vm);
+    let bindings = new Map<string, string>();
+    let failRead = false;
+    await startIngress({
+      readVmBindings: async () => {
+        if (failRead) throw new Error("network inventory unavailable");
+        return bindings;
+      },
+    });
+
+    expect((await send(authed())).headers[INGRESS_ERROR_HEADER]).toBe("runtime_unavailable");
+    expect(seen).toHaveLength(0);
+
+    bindings = new Map([[vm.privateIPv4, vm.mac]]);
+    await store.put(vm);
+    expect((await send(authed())).status).toBe(200);
+    expect(seen).toHaveLength(1);
+
+    failRead = true;
+    await store.put(vm);
+    expect((await send(authed())).headers[INGRESS_ERROR_HEADER]).toBe("runtime_unavailable");
+    expect(seen).toHaveLength(1);
+  });
+
   it("routes by host header to the running VM", async () => {
     await store.put(record());
     await store.put(record({ id: "vm_bbbbbbbbbbbbbbbbbbbbbbbb", handle: "bob", privateIPv4: "127.0.0.2" }));
