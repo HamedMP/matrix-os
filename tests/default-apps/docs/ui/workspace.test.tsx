@@ -172,6 +172,23 @@ describe("Docs ribbon and status bar", () => {
     expect((screen.getByRole("combobox", { name: "Markup view" }) as HTMLSelectElement).value).toBe("final");
   });
 
+  it("moves the whole workspace to the markup view when a comparison opens, so Find and exports use what is shown", async () => {
+    await openContract();
+    ribbonTab("Review");
+    fireEvent.change(screen.getByRole("combobox", { name: "Markup view" }), { target: { value: "final" } });
+    await waitFor(() => expect(document.querySelector(".doc-page")?.getAttribute("data-view-mode")).toBe("final"));
+    ribbonTab("View");
+    fireEvent.click(screen.getByRole("button", { name: "Side panel" }));
+    const side = screen.getByRole("complementary", { name: "Review, assistant and compare" });
+    fireEvent.click(within(side).getByRole("tab", { name: /Compare/ }));
+    const other = new File([await docxFromMarkdown(`${CONTRACT}\n\nA clause added later.`)], "contract-v2.docx");
+    fireEvent.change(await within(side).findByLabelText("Word document to compare with", {}, { timeout: 5000 }), { target: { files: [other] } });
+    expect(await within(side).findByRole("article", { name: "Did anything substantive change?" }, { timeout: 5000 })).toBeTruthy();
+    await waitFor(() => expect(document.querySelector(".doc-page")?.getAttribute("data-view-mode")).toBe("markup"));
+    ribbonTab("Review");
+    expect((screen.getByRole("combobox", { name: "Markup view" }) as HTMLSelectElement).value).toBe("markup");
+  });
+
   it("shows the ribbon tabs in menu-bar order with Home selected, and File opens the backstage", async () => {
     await openContract();
     const tablist = screen.getByRole("tablist", { name: "Document ribbon" });

@@ -9,6 +9,7 @@
 import { GitCompareArrows, ListChecks, Sparkles, X } from "lucide-react";
 import { Component, type ComponentType, type ErrorInfo, type ReactNode, Suspense, lazy } from "react";
 import { EmptyState, Spinner, Tabs } from "../../../_shared/office-ui";
+import type { ViewMode } from "../editor/index";
 import type { ReviewController } from "../review/index";
 import type { AssistantStore } from "./agent/assistant-store";
 import type { DocumentSlot } from "./document-slot";
@@ -21,6 +22,8 @@ export interface ShellPanelProps extends DocsPanelProps {
   review: ReviewController | null;
   /** True in the read-only (original) view. */
   readOnly: boolean;
+  /** Changes the workspace's view: the editor, Find, exports and the ribbon follow it together. */
+  setViewMode?: (mode: ViewMode) => void;
   /** A ribbon request for the Assistant panel; it reports it handled once it ran (or cannot run). */
   assistantRequest?: AssistantRequest | null;
   onAssistantRequestHandled?: () => void;

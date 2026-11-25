@@ -243,6 +243,7 @@ export function DocsWorkspace({ session, state, file, pickDocument }: DocsWorksp
               pickDocument={pickDocument}
               review={review}
               readOnly={readOnly}
+              setViewMode={setViewMode}
               onClose={closePanel}
               assistantRequest={assistantRequest}
               onAssistantRequestHandled={() => setAssistantRequest(null)}

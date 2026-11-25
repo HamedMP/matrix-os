@@ -12,7 +12,7 @@ import type { MatrixOSFiles } from "../../../../_shared/matrix-os";
 import { Badge, EmptyState, Spinner } from "../../../../_shared/office-ui";
 import { compareWithBytes, compareWithFile } from "../../compare/index";
 import type { CompareFlowResult } from "../../compare/index";
-import type { DocumentEditorController } from "../../editor/index";
+import type { DocumentEditorController, ViewMode } from "../../editor/index";
 import type { DocumentSession } from "../../session/index";
 import { CompareSummaryCard } from "./CompareSummaryCard";
 import "./compare.css";
@@ -25,6 +25,8 @@ export interface ComparePanelProps {
   onClose?: () => void;
   readOnly?: boolean;
   review?: unknown;
+  /** The workspace's view switch, so Find, exports and the ribbon follow the markup view too. Default: the editor's own. */
+  setViewMode?: (mode: ViewMode) => void;
   /** Default `window.MatrixOS.files`. */
   files?: Pick<MatrixOSFiles, "read">;
 }
@@ -38,7 +40,7 @@ function bridgeFiles(): Pick<MatrixOSFiles, "read"> | undefined {
   return files !== undefined && typeof files.read === "function" ? files : undefined;
 }
 
-export function ComparePanel({ session, editor, pickDocument, files }: ComparePanelProps) {
+export function ComparePanel({ session, editor, pickDocument, files, setViewMode }: ComparePanelProps) {
   const [state, setState] = useState<PanelState>({ status: "idle" });
   // Re-render when a document is opened or closed elsewhere.
   useSyncExternalStore(session.subscribe, session.getState);
@@ -52,7 +54,8 @@ export function ComparePanel({ session, editor, pickDocument, files }: ComparePa
       setState({ status: "error", message: result.message });
       return;
     }
-    editor?.setViewMode("markup");
+    if (setViewMode !== undefined) setViewMode("markup");
+    else editor?.setViewMode("markup");
     setState({ status: "done", result });
   };
 
