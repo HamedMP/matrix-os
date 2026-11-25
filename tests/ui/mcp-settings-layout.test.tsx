@@ -88,6 +88,18 @@ describe("McpAddServicesSection initial state", () => {
     expect(screen.queryByText("Gallery")).toBeNull();
   });
 
+  // Fault: connected apps finish loading after the user started searching or typing a URL, and the gallery snaps shut on them.
+  it.each([
+    ["focus", (el: HTMLElement) => fireEvent.focus(el)],
+    ["pointer", (el: HTMLElement) => fireEvent.pointerDown(el)],
+  ])("stays open once the user starts using it before connections are known (%s)", (_kind, interact) => {
+    const { rerender } = render(<McpAddServicesSection hasConnections={undefined}><input aria-label="Search MCP services" /></McpAddServicesSection>);
+    interact(screen.getByRole("textbox", { name: "Search MCP services" }));
+    rerender(<McpAddServicesSection hasConnections><input aria-label="Search MCP services" /></McpAddServicesSection>);
+    expect(screen.getByRole("textbox", { name: "Search MCP services" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Add MCP" }).getAttribute("aria-expanded")).toBe("true");
+  });
+
   it("collapses once loading reveals existing connections", () => {
     const { rerender } = render(<McpAddServicesSection hasConnections={undefined}><p>Gallery</p></McpAddServicesSection>);
     rerender(<McpAddServicesSection hasConnections><p>Gallery</p></McpAddServicesSection>);

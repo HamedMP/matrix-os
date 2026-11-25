@@ -11,7 +11,7 @@ export interface McpAddServicesSectionProps {
    * Whether the user has any connection, or undefined while that is still loading
    * (or failed to load, so the disabled form stays visible next to Retry).
    * The first known value picks the state: open with nothing connected, collapsed
-   * behind Add MCP otherwise. Later changes (a preset just connected) never yank
+   * behind Add MCP otherwise; using the gallery first keeps it open. Later changes (a preset just connected) never yank
    * the gallery shut mid-flow.
    */
   hasConnections: boolean | undefined;
@@ -24,6 +24,8 @@ export function McpAddServicesSection({ hasConnections, children }: McpAddServic
   const [latchedOpen, setLatchedOpen] = useState<boolean | null>(null);
   if (latchedOpen === null && hasConnections !== undefined) setLatchedOpen(!hasConnections);
   const open = latchedOpen ?? true;
+  // Using the gallery before connections are known keeps it open, so a late load never closes it mid-search.
+  const keepOpen = () => { if (latchedOpen === null) setLatchedOpen(true); };
   return (
     <Collapsible.Root open={open} onOpenChange={setLatchedOpen} className="space-y-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -37,7 +39,7 @@ export function McpAddServicesSection({ hasConnections, children }: McpAddServic
           Add MCP
         </Collapsible.Trigger>
       </div>
-      <Collapsible.Content className="space-y-8">{children}</Collapsible.Content>
+      <Collapsible.Content className="space-y-8" onFocusCapture={keepOpen} onPointerDownCapture={keepOpen}>{children}</Collapsible.Content>
     </Collapsible.Root>
   );
 }
