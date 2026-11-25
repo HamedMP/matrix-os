@@ -149,9 +149,9 @@ async function free(): Promise<string> {
 }
 const apiCall = (method: string, path: string, body?: unknown) =>
   call(port(hostd!.api), method, path, { authorization: `Bearer ${API_TOKEN}` }, body);
-const ingressCall = (handle: string, id: string) =>
+const ingressCall = (id: string) =>
   call(port(hostd!.ingress.server), "GET", "/", {
-    host: `${handle}.matrix-os.com`, "x-matrix-host-auth": INGRESS_TOKEN, "x-matrix-vm-target": `${id}:1`,
+    host: "app.matrix-os.com", "x-matrix-host-auth": INGRESS_TOKEN, "x-matrix-vm-target": `${id}:1`,
   });
 
 const createBody = {
@@ -224,7 +224,7 @@ describe("hostd main", () => {
     expect(reply.status).toBe(201);
     const { id } = JSON.parse(reply.body) as { id: string };
     active.add(`matrix-vm@${id}.service`);
-    expect(await ingressCall("alice", id)).toMatchObject({
+    expect(await ingressCall(id)).toMatchObject({
       status: 503, body: '{"error":"runtime_unavailable"}',
     });
     expect(events).toContain("exec:ip -j -4 neigh show dev brmx nud permanent");
@@ -236,9 +236,9 @@ describe("hostd main", () => {
     const unit = `matrix-vm@${id}.service`;
     const restoreUnit = `matrix-vm-restore@${id}.service`;
     active.add(restoreUnit);
-    expect(JSON.parse((await ingressCall("alice", id)).body)).toEqual({ error: "runtime_unavailable" });
+    expect(JSON.parse((await ingressCall(id)).body)).toEqual({ error: "runtime_unavailable" });
     active.delete(restoreUnit);
-    expect(JSON.parse((await ingressCall("alice", id)).body)).toEqual({ error: "runtime_asleep" });
+    expect(JSON.parse((await ingressCall(id)).body)).toEqual({ error: "runtime_asleep" });
     expect(events).toContain(`exec:systemctl is-active ${unit} ${restoreUnit}`);
     await expect(hostd.store.get(id)).resolves.toMatchObject({ state: "running" });
   });
@@ -253,12 +253,12 @@ describe("hostd main", () => {
 
   it("shares one store: a VM created and suspended through the API is seen by the ingress at once", async () => {
     hostd = await startHostd(config, overrides());
-    expect(JSON.parse((await ingressCall("alice", "vm_0123456789abcdef01234567")).body)).toEqual({ error: "runtime_unknown" });
+    expect(JSON.parse((await ingressCall("vm_0123456789abcdef01234567")).body)).toEqual({ error: "runtime_unknown" });
     const created = JSON.parse((await apiCall("POST", "/v1/vms", createBody)).body) as { id: string };
     expect((await apiCall("POST", `/v1/vms/${created.id}/suspend`)).status).toBe(202);
     await hostd.lifecycle.idle();
     // The ingress index is younger than its 2 s max age: only a change notification refreshes it.
-    const asleep = await ingressCall("alice", created.id);
+    const asleep = await ingressCall(created.id);
     expect(asleep.status).toBe(503);
     expect(JSON.parse(asleep.body)).toEqual({ error: "runtime_asleep" });
     expect(events).toContain(`trim:${created.id}`);
@@ -272,7 +272,7 @@ describe("hostd main", () => {
     expect(hostd.idleSeconds(record)).toBe(90);
     await apiCall("POST", `/v1/vms/${created.id}/suspend`);
     await hostd.lifecycle.idle();
-    await ingressCall("alice", created.id);
+    await ingressCall(created.id);
     t += 5_000;
     expect(hostd.idleSeconds(record)).toBe(5);
   });
