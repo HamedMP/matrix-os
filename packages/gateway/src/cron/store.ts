@@ -25,7 +25,7 @@ export function cronStatePath(filePath: string): string {
 
 export function createCronStore(filePath: string): CronStore {
   let cache: CronJob[] | null = null;
-  // jobId -> ISO start of its latest run. Pruned to the jobs in cron.json on every flush.
+  // jobId -> ISO start of its latest run. Pruned to the current jobs on every load, save and flush.
   let runs: Record<string, string> | null = null;
   // Bumped on every run-state change; the async flush rewrites until the file holds the latest version.
   let version = 0;
@@ -66,7 +66,10 @@ export function createCronStore(filePath: string): CronStore {
     if (!existsSync(filePath)) return [];
     try {
       const data = JSON.parse(readFileSync(filePath, "utf-8"));
-      cache = withRuns(Array.isArray(data) ? data : []);
+      const jobs: CronJob[] = Array.isArray(data) ? data : [];
+      loadRuns();
+      pruneRuns(jobs);
+      cache = withRuns(jobs);
       return cache;
     } catch (err: unknown) {
       console.warn("[cron] Could not load cron store:", err instanceof Error ? err.message : String(err));
@@ -74,8 +77,16 @@ export function createCronStore(filePath: string): CronStore {
     }
   }
 
+  /** Drops run times of jobs no longer defined, so the record holds at most one entry per current job. */
+  function pruneRuns(jobs: CronJob[]): void {
+    if (runs === null) return;
+    const ids = new Set(jobs.map((job) => job.id));
+    for (const id of Object.keys(runs)) if (!ids.has(id)) delete runs[id];
+  }
+
   function save(jobs: CronJob[]): void {
     const tmp = filePath + ".tmp";
+    pruneRuns(jobs);
     cache = jobs;
     version++;
     try {
@@ -110,9 +121,8 @@ export function createCronStore(filePath: string): CronStore {
     try {
       while (written !== version) {
         const snapshot = version;
-        const ids = new Set(list().map((job) => job.id));
-        const pruned = Object.fromEntries(Object.entries(loadRuns()).filter(([id]) => ids.has(id)));
-        await writeFile(stateTmp, JSON.stringify(pruned, null, 2));
+        pruneRuns(list());
+        await writeFile(stateTmp, JSON.stringify(loadRuns(), null, 2));
         await rename(stateTmp, statePath);
         written = snapshot;
       }
