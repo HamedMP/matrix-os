@@ -111,10 +111,15 @@ export interface ZellijAttachment {
 export type ZellijObserverEvent =
   | { type: "pane-update"; paneId: string; ansi: string; viewport: string[]; scrollback: string[] }
   | { type: "pane-closed"; paneId: string };
+export interface ZellijObserverCloseOptions {
+  /** Cancel screen dumps while still delivering pane-close events already received. */
+  discardPendingSnapshots?: boolean;
+}
 export interface ZellijObserver {
   readonly closed?: boolean;
-  close(): Promise<void>;
+  close(options?: ZellijObserverCloseOptions): Promise<void>;
 }
+const DISCARD_OBSERVER_SNAPSHOTS = { discardPendingSnapshots: true };
 export interface TerminalRuntimeOptions {
   store: TerminalWorkspaceStore;
   zellij: ZellijRuntimeAdapter;
@@ -751,7 +756,7 @@ export class TerminalRuntime {
         const operation = this.observerChain.then(async () => {
           const observer = this.observers.get(workspaceId);
           if (observer) {
-            await observer.close();
+            await observer.close(DISCARD_OBSERVER_SNAPSHOTS);
             if (this.observers.get(workspaceId) === observer) this.observers.delete(workspaceId);
           }
           await this.zellij.deleteSession!(workspace.zellijSessionName);
@@ -1082,14 +1087,14 @@ export class TerminalRuntime {
     }
     if (paneRefs.size === 0) {
       if (existing) {
-        await existing.close();
+        await existing.close(DISCARD_OBSERVER_SNAPSHOTS);
         if (this.observers.get(workspaceId) === existing) this.observers.delete(workspaceId);
       }
       return;
     }
     let closedForCapacity: ObserverState | undefined;
     if (existing && this.observerCount() >= this.maxObservers) {
-      await existing.close();
+      await existing.close(DISCARD_OBSERVER_SNAPSHOTS);
       if (this.observers.get(workspaceId) === existing) this.observers.delete(workspaceId);
       closedForCapacity = existing;
       existing = undefined;
@@ -1147,10 +1152,10 @@ export class TerminalRuntime {
     }
     if (existing) {
       try {
-        await existing.close();
+        await existing.close(DISCARD_OBSERVER_SNAPSHOTS);
       } catch (error) {
         try {
-          await replacement.close();
+          await replacement.close(DISCARD_OBSERVER_SNAPSHOTS);
         } catch (replacementError) {
           existing.add(replacement, subscribeObserver);
           throw new AggregateError([error, replacementError], "Terminal observer replacement cleanup failed");
@@ -1483,9 +1488,9 @@ function createObserverState(
       restoreObserver = restore;
     },
     restore: async () => createObserverState(await restoreObserver(), restoreObserver),
-    close: async () => {
+    close: async (options) => {
       const current = [...observers];
-      const results = await Promise.allSettled(current.map((observer) => observer.close()));
+      const results = await Promise.allSettled(current.map((observer) => observer.close(options)));
       for (const [index, result] of results.entries()) {
         if (result.status === "fulfilled") observers.delete(current[index]!);
       }
