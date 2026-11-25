@@ -555,9 +555,20 @@ export function createChatElectronPreviewTransport(
       const key = previewRequestKey(preview);
       const isVerification = preview.requestKind === "verification";
       const executionRoot = { kind: "worktree" as const, projectId: preview.projectId, worktreeId: preview.worktreeId };
-      const text = "error" in result
-        ? `Mac Electron preview build or verification failed for run ${preview.runId}. No screenshot was captured. Please acknowledge this result without changing source. Any checkout cleanup follows the owner’s separate instructions.`
-        : `Mac Electron preview built for run ${preview.runId} from commit ${preview.baseSha} and source SHA-256 ${preview.sourceSha256}. ${isVerification ? "" : "Main reported passing checks. "}Matrix independently verified the worktree HEAD, tracked diff and source bytes. Mac verification: ${result.testSummary.replace(/\.$/, "")}. The attached image is from this preview. Please acknowledge this result without changing source. Any checkout cleanup follows the owner’s separate instructions.`;
+      let outcome: string;
+      if (isVerification) {
+        const trigger = `Mac Verification was requested in Chat after run ${preview.runId} completed.`;
+        const snapshot = `Matrix captured the current worktree snapshot for this request. Worktree base commit ${preview.baseSha} and source SHA-256 ${preview.sourceSha256}.`;
+        const status = "error" in result
+          ? "Mac Verification could not build or verify the captured worktree snapshot. No screenshot was captured."
+          : `Matrix independently verified the snapshot’s HEAD, tracked diff and source bytes. ${result.testSummary.replace(/\.$/, "")}. The attached image is from the Electron preview of that snapshot.`;
+        outcome = `${trigger} ${snapshot} ${status}`;
+      } else {
+        outcome = "error" in result
+          ? `Mac Electron preview build or verification failed for run ${preview.runId}. No screenshot was captured.`
+          : `Mac Electron preview built for run ${preview.runId} from commit ${preview.baseSha} and source SHA-256 ${preview.sourceSha256}. Main reported passing checks. Matrix independently verified the worktree HEAD, tracked diff and source bytes. Mac verification: ${result.testSummary.replace(/\.$/, "")}. The attached image is from this preview.`;
+      }
+      const text = `${outcome} Please acknowledge this result without changing source. Any checkout cleanup follows the owner’s separate instructions.`;
       const parts: CanonicalCreateChatTurnRequest["parts"] = [{ type: "text", text }];
       const ownerReference = "error" in result ? null : `temporary/desktop-chat/electron-preview-${sha256(key + sha256(result.png))}.png`;
       if (ownerReference && "png" in result) {

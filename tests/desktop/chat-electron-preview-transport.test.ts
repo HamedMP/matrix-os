@@ -173,12 +173,18 @@ describe("authenticated Chat Electron preview transport", () => {
     return mock;
   }
 
-  it("verifies the exact supported worktree edit without an assistant marker and posts one receipt", async () => {
-    const { service, fetchFn, storeResult } = verificationFixture();
+  it.each([
+    ["current worktree", "Finished the worktree task.", label],
+    ["change request", "Changed the label to YOUR SPACE TO BUILD.", "REVIEW THE SIGN-IN"],
+  ])("attributes the verified snapshot and triggering run separately for a %s", async (_mode, assistantReply, currentLabel) => {
+    const { detail, service, fetchFn, setSource, storeResult } = verificationFixture();
+    detail.messages[0]!.parts[0]!.text = assistantReply;
+    const capturedSource = verificationSource.replace(label, currentLabel);
+    setSource(capturedSource);
     storeResult();
     const target = await service.read(verificationTarget);
-    expect(target).toMatchObject({ ...verificationTarget, projectId, worktreeId, label, baseSha,
-      sourceSha256: sha256(verificationSource), expiresAt: now + 9 * 60_000 });
+    expect(target).toMatchObject({ ...verificationTarget, projectId, worktreeId, label: currentLabel, baseSha,
+      sourceSha256: sha256(capturedSource), expiresAt: now + 9 * 60_000 });
 
     const result = { png, testSummary: "10 tests passed" };
     await service.returnResult(target!, result);
@@ -191,11 +197,29 @@ describe("authenticated Chat Electron preview transport", () => {
     expect(posted).toMatchObject({
       executionRoot,
       parts: [
-        { type: "text", text: expect.stringContaining("Mac verification: 10 tests passed") },
+        { type: "text", text: expect.stringContaining("10 tests passed.") },
         { type: "attachment_reference", mimeType: "image/png" },
       ],
     });
+    expect(posted.parts[0].text).toContain(`Mac Verification was requested in Chat after run ${runId} completed.`);
+    expect(posted.parts[0].text).toContain("Matrix captured the current worktree snapshot for this request.");
+    expect(posted.parts[0].text).toContain(`Worktree base commit ${baseSha} and source SHA-256 ${sha256(capturedSource)}.`);
+    expect(posted.parts[0].text).toContain("The attached image is from the Electron preview of that snapshot.");
     expect(posted.parts[0].text).not.toContain("Main reported passing checks");
+  });
+
+  it("attributes a Mac Verification failure to the captured snapshot", async () => {
+    const { service, fetchFn } = verificationFixture();
+    const target = (await service.read(verificationTarget))!;
+    await service.returnResult(target, { error: "build-failed" });
+
+    const writes = resultWrites(fetchFn);
+    expect(writes.map(([, init]) => init?.method)).toEqual(["POST"]);
+    const posted = JSON.parse(String(writes[0]![1]?.body));
+    expect(posted.parts).toEqual([{ type: "text", text: expect.stringContaining("No screenshot was captured.") }]);
+    expect(posted.parts[0].text).toContain(`Mac Verification was requested in Chat after run ${runId} completed.`);
+    expect(posted.parts[0].text).toContain("Mac Verification could not build or verify the captured worktree snapshot.");
+    expect(posted.parts[0].text).toContain(`Worktree base commit ${baseSha} and source SHA-256 ${sha256(verificationSource)}.`);
   });
 
   it.each([true, false])("recovers a lost receipt response without rerunning the preview (accepted=%s)", async accepted => {
