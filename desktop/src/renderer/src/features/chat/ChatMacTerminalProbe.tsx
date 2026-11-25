@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { Button } from "@matrix-os/ui";
 import {
   getLatestCompletedMacTerminalRun,
   getMacTerminalProbeMarkerForRun,
