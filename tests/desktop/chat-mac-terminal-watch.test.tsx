@@ -128,7 +128,9 @@ describe("watch an existing Mac terminal", () => {
     await advance(2_000);
     expect(invoke.mock.calls.filter(([channel]) => channel === read)).toEqual([[read, ref]]);
 
-    fireEvent.click(screen.getByRole("button", { name: "Stop watching" }));
+    const stopButton = within(output()!).getByRole("button", { name: "Stop watching" });
+    expect(stopButton.classList.contains("matrix-btn-ghost")).toBe(true);
+    fireEvent.click(stopButton);
     expect(output()).toBeNull();
     await act(async () => { pendingRead.resolve({ status: "ready", output: "LATE_SCREEN" }); });
     await advance(4_000);

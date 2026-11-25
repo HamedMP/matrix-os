@@ -1,3 +1,4 @@
+import { Button } from "@matrix-os/ui";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { InvokeRequest, InvokeResponse } from "../../../../shared/ipc-contract";
 import { invoke } from "../../lib/operator";
@@ -173,10 +174,10 @@ export function useChatMacTerminalWatch(scope: WatchScope | null) {
           <p className="truncate font-medium">{viewing.title}</p>
           <p className="text-xs text-[var(--text-secondary)]">Live output on this Mac</p>
         </div>
-        <button type="button" className="rounded px-2 py-1 text-xs font-medium hover:bg-[var(--bg-hover)]"
+        <Button type="button" size="sm" variant="ghost"
           onClick={() => { void stop({ chatId: scope.chatId, worktreeId: scope.worktreeId, watchId: viewing.watchId }); }}>
           Stop watching
-        </button>
+        </Button>
       </div>
       {viewing.output ? (
         <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all border-t border-[var(--border-subtle)] px-3 py-2 text-xs">
