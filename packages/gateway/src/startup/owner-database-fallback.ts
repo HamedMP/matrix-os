@@ -18,6 +18,7 @@ export interface OwnerDatabaseFallbackServices {
   canvasRepository?: { destroy(): Promise<void> } | null;
   canvasSubscriptionHub?: { close(): void } | null;
   canvasCleanupTimer?: ReturnType<typeof setInterval> | null;
+  messageBoard?: { close(): void } | null;
   appDb?: { destroy(): Promise<void> } | null;
 }
 
@@ -29,6 +30,7 @@ export type OwnerDatabaseFallbackStep =
   | "canvasCleanupTimer"
   | "canvasSubscriptionHub"
   | "canvasRepository"
+  | "messageBoard"
   | "appDb";
 
 export const DEFAULT_COLLABORATION_DRAIN_TIMEOUT_MS = 10_000;
@@ -75,6 +77,7 @@ export async function teardownOwnerDatabaseServices(
     ["chatEventStream", () => services.chatEventStream?.shutdown()],
     ["chatRepository", () => services.chatRepository?.release()],
     ["canvasRepository", () => services.canvasRepository?.destroy()],
+    ["messageBoard", () => services.messageBoard?.close()],
     ["appDb", () => services.appDb?.destroy()],
   ];
   for (const [step, run] of steps) {

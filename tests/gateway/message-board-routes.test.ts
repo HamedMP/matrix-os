@@ -99,7 +99,7 @@ describe("/api/board routes", () => {
 
   it("answers 503 with a generic reason when the owner database is missing", async () => {
     const bare = new Hono();
-    registerMessageBoardGatewayRoutes({ app: bare, service: null });
+    registerMessageBoardGatewayRoutes({ app: bare, runtime: null });
     const response = await bare.request("/api/board/threads");
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: "The message board is unavailable.", reason: "unavailable" });
