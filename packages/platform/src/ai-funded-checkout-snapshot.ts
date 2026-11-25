@@ -111,7 +111,7 @@ export async function readCheckoutFundingSnapshot(input: {
       : [];
     const currentBalance = input.projectExpiredCredit
       ? await projectExpiredPromotionalCredit(trx.executor, identity, row, checkedAt) : row;
-    const balance = currentBalance.month_period_start === currentPeriod ? currentBalance : {
+    const balance = currentBalance.month_period_start >= currentPeriod ? currentBalance : {
       ...currentBalance, month_period_start: currentPeriod, month_spent_microusd: 0, month_reserved_microusd: 0,
     };
     const funding = {

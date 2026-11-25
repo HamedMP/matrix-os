@@ -57,6 +57,22 @@ export function utcMonthStart(at: Date): string {
   return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1)).toISOString();
 }
 
+/**
+ * Advances a runtime's monthly budget window to `period`, and never moves it
+ * back. A caller's clock can be older than a committed window: it was read
+ * before a lock wait, or on a replica whose clock is behind. Use the returned
+ * `month_period_start` as the window, not the caller's own period.
+ */
+export function advanceMonthWindow(period: string) {
+  // Every stored value comes from utcMonthStart, so byte order is time order.
+  const current = sql<boolean>`month_period_start COLLATE "C" >= ${period}`;
+  return {
+    month_period_start: sql<string>`CASE WHEN ${current} THEN month_period_start ELSE ${period} END`,
+    month_spent_microusd: sql<number>`CASE WHEN ${current} THEN month_spent_microusd ELSE 0 END`,
+    month_reserved_microusd: sql<number>`CASE WHEN ${current} THEN month_reserved_microusd ELSE 0 END`,
+  };
+}
+
 export function fundingSummary(
   balance: BalanceSnapshot,
   monthlyBudgetMicrousd: number,
