@@ -13,7 +13,7 @@ type RequestRow = { ref: string; chat_id: string; run_id: string | null; event: 
 
 /** Reads the same durable requests/outcomes as Needs you, never transcript/replay buffers. */
 export function createAttentionRequestSource(db: Kysely<NotificationDatabase>, ownerId: string) {
-  type ListOptions = { chatId?: string; ref?: string; refs?: readonly string[]; missingOnly?: boolean; limit?: number; source?: string };
+  type ListOptions = { chatId?: string; runId?: string; ref?: string; refs?: readonly string[]; key?: string; missingOnly?: boolean; limit?: number; source?: string };
   async function listIn(db: Transaction<NotificationDatabase>, now: number, options: ListOptions): Promise<AttentionRequest[]> {
     const cutoff = sql`(SELECT applied_at FROM notification_schema_migrations WHERE version=2)`;
     const missing = (key: ReturnType<typeof sql>) => options.missingOnly
@@ -30,8 +30,10 @@ export function createAttentionRequestSource(db: Kysely<NotificationDatabase>, o
         AND (r.event->>'type'!='input.requested' OR jsonb_array_length(COALESCE(r.event->'questions','[]'::jsonb))>0)
         AND (r.event->'browserApproval'->>'resolution') IS NULL
         ${options.chatId ? sql`AND r.chat_id=${options.chatId}` : sql``}
+        ${options.runId ? sql`AND r.run_id=${options.runId}` : sql``}
         ${options.ref ? sql`AND r.id=${options.ref}` : sql``}
         ${options.refs ? sql`AND r.id IN (${sql.join(options.refs)})` : sql``}
+        ${options.key ? sql`AND ${canonicalKey}=${options.key}` : sql``}
         AND NOT EXISTS (SELECT 1 FROM chat_approval_outcomes o WHERE o.run_id=r.run_id AND o.approval_id=r.event->>'approvalId')
         AND NOT EXISTS (SELECT 1 FROM chat_run_events resolved WHERE resolved.run_id=r.run_id AND (
           (resolved.event->>'type'='approval.resolved' AND resolved.event->>'approvalId'=r.event->>'approvalId') OR
@@ -81,7 +83,8 @@ export function createAttentionRequestSource(db: Kysely<NotificationDatabase>, o
       return listIn(trx, now, options);
     });
   }
-  return { list, async pending(event: Pick<NotificationEventsTable, "source" | "source_ref" | "dedupe_key">, now: number) {
-    return (await list(now, { ref: event.source_ref, source: event.source, limit: 1 })).find(request => request.dedupeKey === event.dedupe_key);
+  return { list, async pending(event: Pick<NotificationEventsTable, "source" | "source_ref" | "dedupe_key" | "run_id">, now: number) {
+    return (await list(now, { ...(event.source === "canonical_chat" ? { key: event.dedupe_key, ...(event.run_id ? { runId: event.run_id } : {}) } : { ref: event.source_ref }),
+      source: event.source, limit: 1 })).find(request => request.dedupeKey === event.dedupe_key);
   } };
 }

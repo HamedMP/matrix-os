@@ -58,6 +58,10 @@ const NOTIFICATION_MIGRATIONS: readonly NotificationMigration[] = [
     },
   },
   { version: 2, name: "canonical_attention", up: createAttentionTables },
+  { version: 3, name: "attention_device_receipts", async up(trx) {
+    await sql`CREATE UNIQUE INDEX notification_attempts_device_sent ON notification_attempts(event_id,device_id)
+      WHERE outcome='sent' AND device_id IS NOT NULL`.execute(trx);
+  } },
 ];
 
 /**

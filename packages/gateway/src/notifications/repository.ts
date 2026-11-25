@@ -60,6 +60,11 @@ export function createNotificationRepository(db: Kysely<NotificationDatabase>, o
           channel: "expo_push", device_id: null, outcome: "failed", created_at: new Date(now) }).execute();
       });
     },
+    async defer(event: NotificationEvent, retryAt: number) {
+      await db.updateTable("notification_events").set({ state: "open", phone_send_after: new Date(retryAt), claim_token: null })
+        .where("id", "=", event.id).where("owner_id", "=", ownerId).where("state", "=", "sending")
+        .where("claim_token", "=", event.claim_token).execute();
+    },
     async stillClaimed(event: NotificationEvent): Promise<boolean> {
       return !!await db.selectFrom("notification_events").select("id").where("id", "=", event.id)
         .where("owner_id", "=", ownerId).where("state", "=", "sending").where("claim_token", "=", event.claim_token).executeTakeFirst();

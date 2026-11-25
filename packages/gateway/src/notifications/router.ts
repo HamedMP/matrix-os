@@ -4,7 +4,7 @@ import type { ChatOutboxSink } from "../chat/outbox-delivery.js";
 import type { NotificationDatabase } from "./schema.js";
 import { createAttentionRequestSource } from "./request-source.js";
 import { createNotificationRepository, type NotificationEvent } from "./repository.js";
-import { attentionPush, type NotificationTransport } from "./copy.js";
+import { attentionPush, NotificationDeferredError, type NotificationTransport } from "./copy.js";
 
 export interface NotificationRouterOptions {
   db: Kysely<NotificationDatabase>; ownerId: string;
@@ -19,7 +19,8 @@ export function createNotificationRouter(options: NotificationRouterOptions) {
   type Work = { chatId: string; refs?: string[] };
   const queue: Work[] = []; // Source references only; capped at 1,000 and removed by the single worker.
   const spills = new Set<Promise<void>>(); // At most four direct overflow writes; removed when settled and drained on close.
-  let closed = false, worker: Promise<void> | undefined, ticking: Promise<void> | undefined, reconciling: Promise<void> | undefined;
+  let closed = false, storageOpen = true, closing: Promise<void> | undefined;
+  let worker: Promise<void> | undefined, ticking: Promise<void> | undefined, reconciling: Promise<void> | undefined;
   let overflow = false;
   const timers: ReturnType<typeof setInterval>[] = []; // Exactly three, cleared on close.
   const warn = (error: unknown) => (options.logger ?? console).warn(`[notifications] Delivery unavailable: ${error instanceof Error ? error.name : "UnknownError"}`);
@@ -41,8 +42,16 @@ export function createNotificationRouter(options: NotificationRouterOptions) {
   const onChatEvent: ChatOutboxSink = ({ owner, event }) => {
     if (!enabled() || owner.type !== "personal" || owner.ownerId !== options.ownerId
       || !["run.activity", "interaction.requested"].includes(event.eventType)) return;
-    const refs = Array.isArray(event.payload.activityIds)
-      ? event.payload.activityIds.filter((id): id is string => typeof id === "string" && id.length <= 160).slice(0, 100) : undefined;
+    // The real outbox strips activityIds and publishes committed activities in streamContent.
+    const content = event.payload.streamContent;
+    const activities = content && typeof content === "object" && "activities" in content && Array.isArray(content.activities)
+      ? content.activities : undefined;
+    const refs = activities?.slice(0, 100).flatMap((activity: unknown) => {
+      if (!activity || typeof activity !== "object" || !("type" in activity) || !("id" in activity)
+        || !["approval.requested", "input.requested"].includes(String(activity.type)) || typeof activity.id !== "string" || activity.id.length > 160) return [];
+      return [activity.id];
+    });
+    if (event.eventType === "run.activity" && refs?.length === 0) return;
     const work = { chatId: event.chatId, ...(refs?.length ? { refs } : {}) };
     if (queue.length < 1000) queue.push(work);
     else if (spills.size < 4) {
@@ -62,10 +71,11 @@ export function createNotificationRouter(options: NotificationRouterOptions) {
       if (!pending) { await repository.finish(event, "resolved", now()); return; }
       if (!enabled() || !await repository.stillClaimed(event)) return;
       await options.transport.send(attentionPush(event, pending, preferences));
-      if (!closed) await repository.finish(event, "pushed", now());
+      if (storageOpen) await repository.finish(event, "pushed", now());
     } catch (error: unknown) {
+      if (storageOpen && error instanceof NotificationDeferredError) { await repository.defer(event, error.retryAt); return; }
       warn(error);
-      if (!closed) await repository.retry(event, now());
+      if (storageOpen) await repository.retry(event, now());
     }
   }
   function tick(): Promise<void> {
@@ -91,12 +101,15 @@ export function createNotificationRouter(options: NotificationRouterOptions) {
         const timer = setInterval(() => { void work().catch(warn); }, interval); timer.unref?.(); timers.push(timer);
       }
     },
-    async close() {
-      if (closed) return;
+    close(): Promise<void> {
+      if (closing) return closing;
       closed = true; for (const timer of timers.splice(0)) clearInterval(timer); queue.length = 0;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try { await Promise.race([Promise.allSettled([worker, ticking, reconciling, ...spills]), new Promise<void>(resolve => { timer = setTimeout(resolve, 2000); })]); }
-      finally { if (timer) clearTimeout(timer); }
+      closing = (async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try { await Promise.race([Promise.allSettled([worker, ticking, reconciling, ...spills]), new Promise<void>(resolve => { timer = setTimeout(resolve, 2000); })]); }
+        finally { storageOpen = false; if (timer) clearTimeout(timer); }
+      })();
+      return closing;
     },
   };
 }

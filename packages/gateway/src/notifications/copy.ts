@@ -13,6 +13,10 @@ export type AttentionPush = z.infer<typeof AttentionPushSchema>;
 export const AttentionPhoneDataSchema = z.object({ v: z.literal(1), notificationId: z.uuid(),
   handle: MatrixComputerHandleSchema, target: AttentionPushSchema.shape.target }).strict();
 export interface NotificationTransport { send(notification: AttentionPush): Promise<void> }
+/** Local capacity deferral is not a failed provider attempt. */
+export class NotificationDeferredError extends Error {
+  constructor(readonly retryAt: number) { super("Notification delivery deferred"); this.name = "NotificationDeferredError"; }
+}
 
 /** Only an allowlisted request title may leave the VPS. Never tool args, descriptions, or bot previews. */
 function safeTitle(value: string | undefined): string | undefined {
@@ -21,7 +25,8 @@ function safeTitle(value: string | undefined): string | undefined {
 }
 export function attentionPush(event: NotificationEvent, request: AttentionRequest, preferences: NotificationPreferences): AttentionPush {
   return AttentionPushSchema.parse({ id: event.id, ownerId: event.owner_id, kind: event.kind, title: "Matrix OS",
-    body: (preferences.content.showPreview && safeTitle(request.preview))
+    // Approval producers may include command/query arguments in their display title.
+    body: (event.kind === "question" && preferences.content.showPreview && safeTitle(request.preview))
       || (event.kind === "approval" ? "Your agent needs approval" : "Your agent has a question"),
     target: { type: "chat", chatId: event.chat_id }, sound: preferences.content.sound,
     timeSensitive: preferences.content.timeSensitive, expiresAt: request.expiresAt.toISOString(),

@@ -20,6 +20,11 @@ import { createPushTokenStore } from "../../packages/gateway/src/notifications/p
 import { initializeGatewayChannels } from "../../packages/gateway/src/startup/channels.js";
 import type { OwnerDatabaseServices } from "../../packages/gateway/src/startup/owner-database.js";
 import { createConversationStore } from "../../packages/gateway/src/conversations.js";
+import { bootstrapBotDatabase, type OwnerBotDatabase } from "../../packages/gateway/src/bots/database.js";
+import { createBotTasksRepository } from "../../packages/gateway/src/bots/repositories/tasks.js";
+import { createBotInteractionsRepository } from "../../packages/gateway/src/bots/repositories/interactions.js";
+import { toOutbox } from "../../packages/gateway/src/chat/records.js";
+import { NotificationDeferredError } from "../../packages/gateway/src/notifications/copy.js";
 
 describe("canonical attention delivery", () => {
   let repository: ChatRepository;
@@ -123,12 +128,12 @@ describe("canonical attention delivery", () => {
   });
 
   it("uses opt-in preview and retries transport failures with a three-attempt cap", async () => {
-    await request(); await router.flush();
+    await request("question"); await router.flush();
     preferences.mockResolvedValue({ ...DEFAULT_NOTIFICATION_PREFERENCES,
       content: { showPreview: true, sound: false, timeSensitive: true } });
     send.mockRejectedValue(new Error("transport unavailable"));
     now += 15_000; await router.tick();
-    expect(send.mock.calls[0][0]).toMatchObject({ body: "Private approval", sound: false, timeSensitive: true });
+    expect(send.mock.calls[0][0]).toMatchObject({ body: "Private question", sound: false, timeSensitive: true });
     now += 2000; await router.tick(); now += 8000; await router.tick(); now += 30_000; await router.tick();
     expect(send).toHaveBeenCalledTimes(3);
     expect(await db.selectFrom("notification_events").select(["state", "push_attempts"]).execute()).toEqual([{ state: "failed", push_attempts: 3 }]);
@@ -180,6 +185,51 @@ describe("canonical attention delivery", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it("retains an enqueued question after a failed answer delivery reopens the same request", async () => {
+    const ids = await request("question"); await router.flush();
+    await repository.appendRunActivities(owner, ids.chatId, ids.runId, [{ ...ids, id: "activity_reopen_submission", type: "input.submitted",
+      requestId: "input_attention", clientRequestId: "req_answer", occurredAt: new Date(now + 1000).toISOString() }]);
+    expect(await repository.reopenInputSubmission(owner, { ...ids, requestId: "input_attention", submissionId: "activity_reopen_submission" })).toBe(true);
+    now += 15_000; await router.tick();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await db.selectFrom("notification_events").select("id").execute()).toHaveLength(1);
+  });
+
+  it("withholds command arguments in approval previews even when preview is enabled", async () => {
+    const ids = await request(); await router.flush();
+    await repository.appendRunActivities(owner, ids.chatId, ids.runId, [{ ...ids, id: "activity_command_preview", type: "approval.requested",
+      approvalId: "approval_command", title: "Run a command · “echo customer-data”", safeDescription: "echo customer-data",
+      risk: "low", allowedDecisions: ["approve"], occurredAt: new Date(now).toISOString() }]);
+    preferences.mockResolvedValue({ ...DEFAULT_NOTIFICATION_PREFERENCES, content: { showPreview: true, sound: true, timeSensitive: false } });
+    await router.flush(); now += 15_000; await router.tick();
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(send.mock.calls)).not.toContain("customer-data");
+  });
+
+  it("records an active successful send during the shutdown drain so restart cannot repeat it", async () => {
+    await request(); await router.flush(); now += 15_000;
+    let release!: () => void;
+    send.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    const tick = router.tick();
+    await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    const close = router.close(); release(); await tick; await close;
+    expect(await db.selectFrom("notification_events").select("state").execute()).toEqual([{ state: "pushed" }]);
+    router = createNotificationRouter({ db, ownerId: owner.ownerId, preferences, transport: { send }, now: () => now });
+    now += 61_000; await router.tick();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("defers local throttling until capacity returns without consuming provider attempts", async () => {
+    await request(); await router.flush(); now += 15_000;
+    send.mockRejectedValueOnce(new NotificationDeferredError(now + 60_000));
+    await router.tick(); now += 10_000; await router.tick();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await db.selectFrom("notification_events").select("push_attempts").execute()).toEqual([{ push_attempts: 0 }]);
+    expect(await db.selectFrom("notification_attempts").selectAll().execute()).toEqual([]);
+    now += 50_000; await router.tick();
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
   it("wires the real channel transport and suppresses the first canonical Codex approval before its adapter binding exists", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "matrix-a6-runtime-"));
     vi.stubEnv("MATRIX_USER_ID", owner.ownerId); vi.stubEnv("MATRIX_HANDLE", "attention-test"); vi.stubEnv("MATRIX_NOTIFICATIONS_ROUTER", "on");
@@ -224,4 +274,55 @@ describe("canonical attention delivery", () => {
       await rm(homePath, { recursive: true, force: true });
     }
   });
+
+  it.each(["pending", "answered", "foreign"])("reconciles bot questions only for a still-pending designated owner: %s", async state => {
+    const botDb = repository.kysely as unknown as Kysely<OwnerBotDatabase>;
+    await bootstrapBotDatabase(botDb);
+    const chatId = "chat_bot_attention", botId = "bot_attention123";
+    await repository.create(owner, { id: chatId, clientRequestId: "req_bot_attention", title: "Private bot chat" });
+    const timestamp = new Date(now).toISOString();
+    const task = await createBotTasksRepository(botDb).create({ ownerId: owner.ownerId, botId, chatId, now: timestamp });
+    const interactions = createBotInteractionsRepository(botDb);
+    const { interaction } = await interactions.create({ ownerId: owner.ownerId, botId, chatId, taskId: task.taskId,
+      kind: "question", payload: { kind: "question", questions: [{ questionId: "q1", header: "Choice", question: "Private question?" }] },
+      responderActorId: state === "foreign" ? "owner_foreign" : owner.ownerId, blocking: true,
+      now: timestamp, expiresAt: new Date(now + 60_000).toISOString() });
+    await router.reconcile();
+    if (state === "answered") await interactions.resolve({ ownerId: owner.ownerId, interactionId: interaction.interactionId,
+      baseRevision: 1, responderActorId: owner.ownerId, resolution: { answers: { q1: "yes" } }, now: new Date(now + 1000).toISOString() });
+    now += 15_000; await router.tick();
+    expect(send).toHaveBeenCalledTimes(state === "pending" ? 1 : 0);
+    expect(JSON.stringify(send.mock.calls)).not.toContain("Private");
+  });
+
+  // The hosted PostgreSQL lane requires its URL before collection; unit WASM is unsuitable for this full-size burst.
+  it.runIf(!!process.env.MATRIX_TEST_POSTGRES_URL)("persists the 1,001st approval when the synchronous enqueue burst fills the bounded queue", async () => {
+    stream.shutdown();
+    const ids = await request();
+    for (let batch = 0; batch < 20; batch++) {
+      await repository.appendRunActivities(owner, ids.chatId, ids.runId, Array.from({ length: 50 }, (_, offset) => {
+        const index = batch * 50 + offset;
+        return { ...ids, id: `activity_burst_${index}`, type: "approval.requested" as const, approvalId: `approval_burst_${index}`,
+          title: "Review request", risk: "low" as const, allowedDecisions: ["approve" as const], occurredAt: new Date(now).toISOString() };
+      }));
+    }
+    // Replay actual committed producer records into the synchronous sink before its worker can settle.
+    const rows = await repository.kysely.selectFrom("chat_outbox").selectAll().where("event_type", "=", "run.activity").orderBy("cursor").execute();
+    const events = rows.map(toOutbox).flatMap(event => {
+      const content = event.payload.streamContent as { activities?: { id: string; type: string }[] } | undefined;
+      return (content?.activities ?? []).filter(activity => activity.type === "approval.requested").map(activity =>
+        ({ ...event, payload: { ...event.payload, streamContent: { ...content, activities: [activity] } } }));
+    });
+    expect(events).toHaveLength(1001);
+    for (const event of events) router.onChatEvent({ owner, event });
+    await router.flush(); await router.reconcile();
+    const records = await db.selectFrom("notification_events").select(["id", "dedupe_key"]).execute();
+    expect(records).toHaveLength(1001);
+    expect(new Set(records.map(row => row.dedupe_key)).size).toBe(1001);
+    const last = records.find(row => row.dedupe_key.endsWith(":approval_burst_999"))!;
+    // Isolate the overflow request's delivery after proving every source row was retained.
+    await db.updateTable("notification_events").set({ state: "suppressed" }).where("id", "!=", last.id).execute();
+    now += 15_000; await router.tick(); await router.tick();
+    expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: last.id }));
+  }, 60_000);
 });
