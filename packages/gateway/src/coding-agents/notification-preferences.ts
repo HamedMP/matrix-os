@@ -21,6 +21,8 @@ export interface CodingAgentNotificationPreferenceStore {
 }
 export interface CodingAgentNotificationPreferenceStoreOptions extends NotificationPreferenceStoreOptions {
   preferences?: NotificationPreferenceStore;
+  /** Resolved by the runtime's development-auth gate, never from an event or request. */
+  localOwnerPrincipal?: RequestPrincipal & { source: "dev-default" };
 }
 
 /** Compatibility projection only: every consumer shares the owner document and its mutex. */
@@ -31,7 +33,9 @@ export function createCodingAgentNotificationPreferenceStore(options: CodingAgen
     async load(principal) { return projectLegacyNotificationPreferences(await preferences.load(principal)); },
     async save(principal, document) { return projectLegacyNotificationPreferences(await preferences.updateLegacy(principal, document)); },
     async isAttentionPushEnabled({ ownerId, kind }) {
-      return legacyNotificationKindEnabled(await preferences.load({ userId: ownerId, source: "jwt" }), kind);
+      const principal = options.localOwnerPrincipal?.userId === ownerId
+        ? options.localOwnerPrincipal : { userId: ownerId, source: "jwt" as const };
+      return legacyNotificationKindEnabled(await preferences.load(principal), kind);
     },
   };
 }
