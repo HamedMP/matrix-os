@@ -49,7 +49,7 @@ import { createGatewayAllowedOriginController } from "./server/browser-setup-ori
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
 import { listApps } from "./apps.js";
-import { registerWebSocketOriginGate, resolveWebSocketOriginPolicy } from "./server/websocket-origin-gate.js";
+import { registerBrowserOriginGates } from "./server/websocket-origin-gate.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createGatewayChatAdapters, startGatewayClaudeNativeRecovery, type GatewayNativeClaudeChatRuntime } from "./server/canonical-chat-adapters.js";
@@ -1256,7 +1256,7 @@ export async function createGateway(config: GatewayConfig) {
     );
   }
   // Before CORS and auth, so a refused browser origin reaches neither.
-  registerWebSocketOriginGate(app, resolveWebSocketOriginPolicy(process.env, allowedOriginController));
+  registerBrowserOriginGates(app, { env: process.env, allowedOrigins: allowedOriginController });
   registerGatewayAccessMiddleware(app, {
     resolveAllowedOrigin: allowedOriginController.resolve,
     devAppAuthBypass: APP_AUTH_DEV_BYPASS,

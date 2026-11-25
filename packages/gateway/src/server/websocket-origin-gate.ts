@@ -5,7 +5,6 @@
 // runtime bearer on every /ws request, so the requesting page never needs a
 // token. Every WebSocket upgrade therefore checks the browser's Origin first.
 import type { Hono, MiddlewareHandler } from "hono";
-import { cors } from "hono/cors";
 
 export interface WebSocketOriginPolicy {
   /** False where credentials are never ambient: the gate then changes nothing. */
@@ -111,21 +110,16 @@ export function registerWebSocketOriginGate(app: Hono, policy: WebSocketOriginPo
 }
 
 /**
- * The gateway's browser-origin policies, first in the middleware chain: the
- * WebSocket Origin gate and the HTTP mutation Origin gate (before CORS and
- * auth, so a refused request never reaches either), then CORS for the same
- * allowed origins. `devNullOrigin`
- * reflects the sandboxed app iframe's "null" origin for local development only.
+ * The gateway's browser-origin gates, first in the middleware chain: the
+ * WebSocket Origin gate and the HTTP mutation Origin gate. They run before CORS
+ * and auth (registerGatewayAccessMiddleware), so a refused request reaches
+ * neither. CORS answers the same allowed origins.
  */
-export function registerBrowserOriginPolicies(app: Hono, options: {
+export function registerBrowserOriginGates(app: Hono, options: {
   env: NodeJS.ProcessEnv;
   allowedOrigins: { resolve(origin: string | undefined): string | undefined };
-  devNullOrigin: boolean;
 }): void {
   const policy = resolveWebSocketOriginPolicy(options.env, options.allowedOrigins);
   registerWebSocketOriginGate(app, policy);
   app.use("*", createHttpMutationOriginGate(policy));
-  app.use("*", cors({
-    origin: (origin) => (options.devNullOrigin && origin === "null" ? "null" : options.allowedOrigins.resolve(origin)),
-  }));
 }

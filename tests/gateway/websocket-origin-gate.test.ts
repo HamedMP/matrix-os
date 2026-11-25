@@ -12,10 +12,11 @@ import { herdrTabId } from "../../packages/gateway/src/herdr/refs.js";
 import { registerHerdrTerminalWebSocket } from "../../packages/gateway/src/herdr/ws.js";
 import { requireRequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import {
-  registerBrowserOriginPolicies,
+  registerBrowserOriginGates,
   registerWebSocketOriginGate,
   resolveWebSocketOriginPolicy,
 } from "../../packages/gateway/src/server/websocket-origin-gate.js";
+import { registerGatewayAccessMiddleware } from "../../packages/gateway/src/server/access-middleware.js";
 import { createTerminalLiveOwnership } from "../../packages/gateway/src/terminal-live-ownership.js";
 import { createFakeHerdrCore } from "./fixtures/fake-herdr-core-server.js";
 
@@ -103,6 +104,12 @@ async function gateway(env: NodeJS.ProcessEnv) {
   };
 }
 
+/** server.ts's chain: the browser-origin gates, then CORS, security headers and auth. */
+function productionChain(app: Hono, env: NodeJS.ProcessEnv, allowedOrigins: ReturnType<typeof createAllowedOriginController>, devAppAuthBypass: boolean) {
+  registerBrowserOriginGates(app, { env, allowedOrigins });
+  registerGatewayAccessMiddleware(app, { resolveAllowedOrigin: allowedOrigins.resolve, devAppAuthBypass, authToken: TOKEN, auth: {} });
+}
+
 const herdrPath = `/ws/terminal/herdr?id=t1&lease=exclusive&cols=80&rows=24`;
 // What the self-host nginx adds to every /ws request, whatever page made it.
 const injected = { Authorization: `Bearer ${TOKEN}` };
@@ -180,9 +187,9 @@ describe("WebSocket Origin gate", () => {
   it("registers the gate before CORS, and CORS answers only the allowed origins", async () => {
     const app = new Hono();
     const allowedOrigins = createAllowedOriginController({ shellOrigin: TAILNET });
-    registerBrowserOriginPolicies(app, { env: SELF_HOST_ENV, allowedOrigins, devNullOrigin: false });
+    productionChain(app, SELF_HOST_ENV, allowedOrigins, false);
     app.get("/api/ping", (c) => c.text("pong"));
-    const cors = async (origin: string) => (await app.request("/api/ping", { headers: { Origin: origin } })).headers.get("access-control-allow-origin");
+    const cors = async (origin: string) => (await app.request("/api/ping", { headers: { ...injected, Origin: origin } })).headers.get("access-control-allow-origin");
     expect(await cors(TAILNET)).toBe(TAILNET);
     expect(await cors("https://untrusted.example")).toBeNull();
     expect(await cors("null")).toBeNull();
@@ -190,9 +197,9 @@ describe("WebSocket Origin gate", () => {
     expect(upgrade.status).toBe(403);
     expect(upgrade.headers.get("access-control-allow-origin")).toBeNull();
     const dev = new Hono();
-    registerBrowserOriginPolicies(dev, { env: {}, allowedOrigins, devNullOrigin: true });
+    productionChain(dev, {}, allowedOrigins, true);
     dev.get("/api/ping", (c) => c.text("pong"));
-    expect((await dev.request("/api/ping", { headers: { Origin: "null" } })).headers.get("access-control-allow-origin")).toBe("null");
+    expect((await dev.request("/api/ping", { headers: { ...injected, Origin: "null" } })).headers.get("access-control-allow-origin")).toBe("null");
   });
 });
 
@@ -202,12 +209,11 @@ describe("WebSocket Origin gate", () => {
 // terminal command); CORS only hides the response, the mutation still runs.
 const UNSAFE = ["POST", "PUT", "PATCH", "DELETE"] as const;
 
-/** The production order: browser-origin policies, then bearer auth, then the routes. */
+/** The production order: browser-origin gates, then CORS and bearer auth, then the routes. */
 function httpGateway(env: NodeJS.ProcessEnv) {
   const app = new Hono();
   const allowedOrigins = createAllowedOriginController({ shellOrigin: env.SHELL_ORIGIN, proxyOrigin: env.PROXY_ORIGIN });
-  registerBrowserOriginPolicies(app, { env, allowedOrigins, devNullOrigin: false });
-  app.use("*", authMiddleware(TOKEN));
+  productionChain(app, env, allowedOrigins, false);
   const ran: string[] = [];
   app.on([...UNSAFE], "/api/terminal/exec", (c) => { ran.push(c.req.method); return c.json({ ok: true }); });
   app.get("/api/terminal/list", (c) => c.json({ ok: true }));
