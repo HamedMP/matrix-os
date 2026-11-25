@@ -4,16 +4,8 @@ import type { PlatformDB } from '../db.js';
 import { HostdError, type HostdClient } from './hostd-client.js';
 import type { MetalHost, MetalHostsRepository } from './metal-hosts-repository.js';
 
-/**
- * Durable metal VM teardown (spec 2691, ENG-520). This is a metal-specific
- * queue, not a generalization of `provider_deletion_queue`: that queue is keyed
- * by integer Hetzner server ids and its consumers (drain, account deletion,
- * trial retention, preview pairs) all call Hetzner. An entry names the host,
- * the platform machine and its generation, and the hostd VM id when known.
- * When the id is unknown (create failed or timed out), the drainer finds the
- * VM through hostd's list by machine id and generation.
- */
-
+// Hostd teardown identifies a VM by host, machine and generation, even if
+// create timed out before returning the VM ID.
 const DEFAULT_BATCH_SIZE = 20;
 const MAX_BATCH_SIZE = 100;
 const BASE_BACKOFF_MS = 30_000;
@@ -40,12 +32,7 @@ export interface MetalVmDeletionInput {
   confirmedAbsent?: boolean;
 }
 
-/**
- * Enqueues a teardown on the given transaction-or-db handle. Insert failures
- * propagate so the caller's status change rolls back with it. A second entry
- * for the same open machine generation is a no-op (`ON CONFLICT DO NOTHING`),
- * except that a newly learned VM id is recorded on the open entry.
- */
+/** Enqueue in the caller's transaction so teardown and the status change commit together. */
 export async function enqueueMetalVmDeletion(db: PlatformDB, input: MetalVmDeletionInput): Promise<void> {
   await db.ready;
   await db.executor.insertInto('metal_vm_deletions')
@@ -177,12 +164,7 @@ export function createMetalVmDeletionDrainer(deps: MetalVmDeletionDrainerDeps) {
       return run(due);
     },
 
-    /**
-     * Drains one machine's open teardowns now, whatever their schedule, for
-     * callers that cannot wait for a maintenance worker (one may not run). Each
-     * entry stays generation-fenced; a failure is recorded and left for the
-     * drainer exactly as in drainOnce.
-     */
+    /** Tries one machine's open teardowns immediately, leaving failures for the worker. */
     async drainMachine(machineId: string, signal?: AbortSignal): Promise<MetalVmDeletionDrainResult> {
       await deps.db.ready;
       const open = await deps.db.executor.selectFrom('metal_vm_deletions')

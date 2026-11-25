@@ -30,7 +30,7 @@ import type { MetalHost } from './metal-hosts-repository.js';
 
 /**
  * Client for the hostd API on a metal host (spec 2691, ENG-520). Every call is
- * bounded by a timeout, reads at most 64 KiB of response, and parses the
+ * bounded by a timeout and a response size limit, and parses the
  * answer with the shared contract. Failures are typed HostdError codes; hostd
  * error text, the token, and transport details never reach the message.
  */
@@ -45,6 +45,9 @@ export const HOSTD_RESUME_GRACE_MS = 2_000;
  */
 export const HOSTD_SUSPEND_TIMEOUT_MS = 140_000;
 export const HOSTD_RESPONSE_LIMIT_BYTES = 64 * 1024;
+// The contract permits 4096 VM records. Give the inventory enough room for
+// each record while keeping the smaller bound on every other response.
+const HOSTD_INVENTORY_RESPONSE_LIMIT_BYTES = 4 * 1024 * 1024;
 const MIN_TOKEN_LENGTH = 32;
 
 export type HostdClientErrorCode = HostdErrorCode | 'timeout' | 'unreachable' | 'invalid_response';
@@ -107,13 +110,13 @@ const STATUS_CODES: Record<number, HostdErrorCode> = {
   507: 'pool_full',
 };
 
-async function readBounded(body: Dispatcher.ResponseData['body']): Promise<string> {
+async function readBounded(body: Dispatcher.ResponseData['body'], limit: number): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of body) {
     const buffer = chunk as Buffer;
     size += buffer.length;
-    if (size > HOSTD_RESPONSE_LIMIT_BYTES) {
+    if (size > limit) {
       body.destroy();
       throw new HostdError('invalid_response');
     }
@@ -152,7 +155,7 @@ export function createHostdClient(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     path: string,
     schema: z.ZodType<T> | null,
-    init: { body?: unknown; timeoutMs?: number; signal?: AbortSignal },
+    init: { body?: unknown; timeoutMs?: number; signal?: AbortSignal; responseLimit?: number },
   ): Promise<T> {
     const callerSignal = init.signal;
     callerSignal?.throwIfAborted();
@@ -173,7 +176,8 @@ export function createHostdClient(
         ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
       });
       status = response.statusCode;
-      text = await readBounded(response.body);
+      text = await readBounded(response.body, status >= 200 && status < 300
+        ? init.responseLimit ?? HOSTD_RESPONSE_LIMIT_BYTES : HOSTD_RESPONSE_LIMIT_BYTES);
     } catch (error: unknown) {
       if (callerSignal?.aborted) throw callerSignal.reason;
       if (error instanceof HostdError) throw error;
@@ -198,7 +202,7 @@ export function createHostdClient(
       return call('POST', '/v1/vms', HostdCreateVmResponseSchema, { body: body.data, timeoutMs: createTimeoutMs, signal });
     },
     async listVms(signal) {
-      return (await call('GET', '/v1/vms', HostdListVmsResponseSchema, { signal })).vms;
+      return (await call('GET', '/v1/vms', HostdListVmsResponseSchema, { signal, responseLimit: HOSTD_INVENTORY_RESPONSE_LIMIT_BYTES })).vms;
     },
     async getVm(vmId, signal) {
       return call('GET', vmPath(vmId), HostdVmSchema, { signal });
