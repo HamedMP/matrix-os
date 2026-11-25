@@ -3,6 +3,7 @@
  * adds the tables it first needs as a new version: A2 adds push tokens.
  */
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
+import { createAttentionTables, type NotificationEventsTable, type NotificationAttemptsTable } from "./events-schema.js";
 
 export interface NotificationPushTokensTable {
   token: string;
@@ -19,6 +20,8 @@ interface NotificationSchemaMigrationsTable {
 }
 
 export interface NotificationDatabase {
+  notification_events: NotificationEventsTable;
+  notification_attempts: NotificationAttemptsTable;
   notification_push_tokens: NotificationPushTokensTable;
   notification_schema_migrations: NotificationSchemaMigrationsTable;
 }
@@ -30,6 +33,7 @@ interface NotificationMigration {
 }
 
 const NOTIFICATION_MIGRATIONS: readonly NotificationMigration[] = [
+  // Keep versions ordered: the timestamp of v2 is the recovery/backlog cutoff.
   {
     version: 1,
     name: "push_tokens",
@@ -53,6 +57,7 @@ const NOTIFICATION_MIGRATIONS: readonly NotificationMigration[] = [
       `.execute(trx);
     },
   },
+  { version: 2, name: "canonical_attention", up: createAttentionTables },
 ];
 
 /**

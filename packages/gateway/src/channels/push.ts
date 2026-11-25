@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 import { MatrixComputerHandleSchema } from "@matrix-os/contracts";
 import type { PushTokenStore } from "../notifications/push-tokens.js";
 import { SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
+import { AttentionPushSchema, AttentionPhoneDataSchema, type AttentionPush } from "../notifications/copy.js";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -40,6 +41,7 @@ export interface PushAdapterOptions {
 }
 
 export interface PushAdapter extends ChannelAdapter {
+  sendAttention(notification: AttentionPush): Promise<void>;
   registerToken(token: string, platform: string, ownerId: string): Promise<void>;
   removeToken(token: string, ownerId: string): Promise<void>;
   /** Deletes tokens unseen for the TTL. Runs hourly until `dispose()`. */
@@ -162,7 +164,7 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
     }
   }
 
-  async function sendPush(store: PushTokenStore, pushTokens: string[], body: string, data: Record<string, unknown>): Promise<void> {
+  async function sendPush(store: PushTokenStore, pushTokens: string[], body: string, data: Record<string, unknown>, attention?: AttentionPush): Promise<void> {
     const messages = pushTokens.map((token) => ({
       to: token,
       title: "Matrix OS",
@@ -170,6 +172,9 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
       sound: "default" as const,
       data,
       channelId: "default",
+      ...(attention ? { title: attention.title, sound: attention.sound ? "default" : null,
+        channelId: "attention", interruptionLevel: attention.timeSensitive ? "time-sensitive" : "active",
+        collapseId: attention.id, priority: "high", ttl: Math.max(0, Math.floor((Date.parse(attention.expiresAt) - now()) / 1000)) } : {}),
     }));
 
     const res = await fetch(EXPO_PUSH_URL, {
@@ -183,6 +188,7 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
     });
 
     if (!res.ok) {
+      if (attention) throw new Error("Push transport unavailable");
       console.warn(`[push] Expo push request failed with HTTP ${res.status}`);
       return;
     }
@@ -191,10 +197,30 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
       return null;
     });
     await removeUnregisteredDevices(store, pushTokens, tickets);
+    if (attention) {
+      const parsed = ExpoTicketsSchema.safeParse(tickets);
+      if (!parsed.success || parsed.data.data.length !== pushTokens.length
+        || parsed.data.data.some(ticket => ticket.status !== "ok" && ticket.details?.error !== "DeviceNotRegistered")) {
+        throw new Error("Push transport unavailable");
+      }
+    }
   }
 
   return {
     id: "push",
+
+    async sendAttention(input) {
+      const notification = AttentionPushSchema.parse(input);
+      const data = AttentionPhoneDataSchema.parse({ v: 1, notificationId: notification.id, handle, target: notification.target });
+      if (computerOwnerId !== notification.ownerId) throw new Error("Push owner unavailable");
+      if (Date.parse(notification.expiresAt) <= now()) return;
+      if (isRateLimited()) throw new Error("Push transport busy");
+      const store = requireTokens();
+      const recipients = await store.listRecent({ ownerId: notification.ownerId, seenSince: tokenCutoff(), limit: maxFanoutTokens });
+      if (!recipients.length) return;
+      sendTimestamps.push(now());
+      await sendPush(store, recipients, notification.body, data, notification);
+    },
 
     async registerToken(token: string, platform: string, ownerId: string) {
       await requireTokens().register({ token, platform, ownerId, seenAt: new Date(now()), maxPerOwner: maxRegisteredTokens });

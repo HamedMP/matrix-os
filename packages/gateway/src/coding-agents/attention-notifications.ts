@@ -25,6 +25,8 @@ export interface CodingAgentAttentionNotificationPreferences {
 }
 
 export interface CodingAgentAttentionNotificationsOptions {
+  /** While A6 is enabled, canonical-bound threads notify through the chat sink only. */
+  isCanonicalThread?: (ownerId: string, threadId: string) => Promise<boolean>;
   threads: CodingAgentThreadStore;
   send: (reply: ChannelReply) => Promise<void>;
   preferences?: CodingAgentAttentionNotificationPreferences;
@@ -79,6 +81,7 @@ export function buildCodingAgentAttentionNotification(input: {
 }
 
 export function registerCodingAgentAttentionNotifications(options: CodingAgentAttentionNotificationsOptions): { dispose(): void } {
+  let disposed = false;
   const seenAtByKey = new Map<string, number>();
   const now = options.now ?? (() => Date.now());
   const dedupeWindowMs = Math.max(1_000, Math.min(options.dedupeWindowMs ?? DEFAULT_DEDUPE_WINDOW_MS, 10 * 60 * 1000));
@@ -116,10 +119,20 @@ export function registerCodingAgentAttentionNotifications(options: CodingAgentAt
     const dedupeKey = `${ownerId}:${threadId}:${kind}`;
 
     function sendIfEligible(): void {
+      if (disposed) return;
       if (!remember(dedupeKey, now())) return;
       void options.send(safeNotification).catch((err: unknown) => {
         logCodingAgentWarning("attention notification failed", err);
       });
+    }
+
+    if (options.isCanonicalThread) {
+      void options.isCanonicalThread(ownerId, threadId).then(async canonical => {
+        if (canonical) return;
+        if (options.preferences && !await options.preferences.isAttentionPushEnabled({ ownerId, threadId, kind })) return;
+        sendIfEligible();
+      }).catch((err: unknown) => logCodingAgentWarning("canonical notification ownership check failed", err));
+      return;
     }
 
     if (options.preferences) {
@@ -138,6 +151,7 @@ export function registerCodingAgentAttentionNotifications(options: CodingAgentAt
   });
   return {
     dispose() {
+      disposed = true;
       seenAtByKey.clear();
       subscription.dispose();
     },

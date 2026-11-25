@@ -10,6 +10,9 @@ import { createChannelManager, type ChannelManager } from "../channels/manager.j
 import { createOutboundQueue } from "../security/outbound-queue.js";
 import { createPushAdapter, type PushAdapter } from "../channels/push.js";
 import type { PushTokenStore } from "../notifications/push-tokens.js";
+import type { OwnerDatabaseServices } from "./owner-database.js";
+import { initializeCanonicalNotifications } from "./notifications.js";
+import { isCanonicalNotificationThread } from "../notifications/canonical-thread.js";
 import { createSessionStore } from "../session-store.js";
 import { createTelegramAdapter, type TelegramAdapter } from "../channels/telegram.js";
 import { createTelegramStream } from "../channels/telegram-stream.js";
@@ -17,6 +20,7 @@ import { formatForChannel } from "../channels/format.js";
 import type { ChannelConfig, ChannelId } from "../channels/types.js";
 
 export interface GatewayChannelStartupOptions {
+  notificationServices?: OwnerDatabaseServices | null;
   homePath: string;
   configPath: string;
   dispatcher: Dispatcher;
@@ -33,6 +37,7 @@ export interface GatewayChannelStartupOptions {
 }
 
 export interface GatewayChannels {
+  closeChannels(): Promise<void>;
   channelManager: ChannelManager;
   pushAdapter: PushAdapter;
   codingAgentAttentionNotifications: ReturnType<typeof registerCodingAgentAttentionNotifications> | undefined;
@@ -196,8 +201,16 @@ export function initializeGatewayChannels(options: GatewayChannelStartupOptions)
       threads: codingAgentThreadStore,
       send: (reply) => channelManager.send(reply),
       preferences: codingAgentNotificationPreferenceStore,
+      isCanonicalThread: async (ownerId, threadId) => {
+        const services = options.notificationServices;
+        return !!(services?.notificationRouter && process.env.MATRIX_NOTIFICATIONS_ROUTER !== "off"
+          && services.chatRepository && await isCanonicalNotificationThread(services.chatRepository.kysely, codingAgentThreadStore, ownerId, threadId));
+      },
     })
     : undefined;
+  if (options.notificationServices) options.notificationServices.notificationRouter = initializeCanonicalNotifications({
+    db: options.notificationServices.kyselyInstance, push: pushAdapter, preferences: codingAgentNotificationPreferenceStore.preferences,
+  });
 
   channelManager.start().then(() => {
     channelManager.replay().catch((err: unknown) => {
@@ -234,5 +247,9 @@ export function initializeGatewayChannels(options: GatewayChannelStartupOptions)
     }
   });
 
-  return { channelManager, pushAdapter, codingAgentAttentionNotifications };
+  return { channelManager, pushAdapter, codingAgentAttentionNotifications, async closeChannels() {
+    codingAgentAttentionNotifications?.dispose();
+    await options.notificationServices?.notificationRouter?.close();
+    pushAdapter.dispose();
+  } };
 }
