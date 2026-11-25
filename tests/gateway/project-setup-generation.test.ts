@@ -14,6 +14,7 @@ import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat
 import { appendProjectSetupTranscript } from "../../packages/gateway/src/chat/project-setup-transcript.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { SideChatRepository } from "../../packages/gateway/src/chat/side-chat-repository.js";
+import { prepareChatSessionContext } from "../../packages/gateway/src/chat/session-history.js";
 import { bootstrapChatSharing, ChatSharing } from "../../packages/gateway/src/chat/sharing.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry, type CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
@@ -662,6 +663,11 @@ describe("admitted project setup generation", () => {
     expect(incoming?.readState).toMatchObject({ unread: true, latestIncomingSeq: 4 });
     const read = await repository.updateReadState(owner, chatId, { type: "mark_read", throughSeq: 4, baseVersion: 0 });
     expect(read.readState).toMatchObject({ unread: false, latestIncomingSeq: 4 });
+    const ordinaryHistory = await prepareChatSessionContext({
+      repository, owner, chatId, instanceId: selection.instanceId, throughSeq: 4,
+      requestHash: "a".repeat(64), resumeState: undefined,
+    });
+    expect.soft(ordinaryHistory?.history?.text).toBe(`User: ${ownerText}\n\nAssistant: Who reviews the changelog?`);
 
     const sideChats = new SideChatRepository(repository.kysely);
     await sideChats.create(owner, chatId);

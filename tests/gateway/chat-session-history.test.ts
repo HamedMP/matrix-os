@@ -33,22 +33,3 @@ it("fails closed when the owner-scoped history is missing or shared", async () =
     })).rejects.toThrow("context_unavailable");
   }
 });
-
-it("replays the accepted setup exchange without feeding structured provider messages to ordinary Chat", async () => {
-  const chatId = "chat_history";
-  const rawTurnId = "cturn_raw_setup";
-  const detail = {
-    record: { chat: { lifecycle: "active", title: "Project setup" } },
-    messages: [
-      { ...message(1), turnId: "cturn_owner_reply" },
-      { ...message(2), turnId: rawTurnId },
-      { ...message(3, "assistant"), turnId: rawTurnId, runId: "run_raw_setup" },
-      { ...message(4, "assistant"), turnId: "cturn_owner_reply" },
-    ],
-    runs: [{ id: "run_raw_setup", turnId: rawTurnId, context: { projectSetupDraft: { mode: "interview" } } }],
-  };
-  const context = await prepareChatSessionContext({ repository: { getDetailPage: async () => detail as never }, owner,
-    chatId, instanceId: "codex_default", throughSeq: 4, requestHash: "a".repeat(64), resumeState: undefined,
-  });
-  expect(context?.history?.text).toBe("User: TEXT_1\n\nAssistant: TEXT_4");
-});
