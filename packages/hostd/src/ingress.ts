@@ -4,43 +4,30 @@ import { Agent, createServer, request as httpsRequest, type Server } from "node:
 import { isIPv4, type Socket } from "node:net";
 import { pipeline } from "node:stream";
 import type { TLSSocket } from "node:tls";
-import type { VmRecord, VmState, VmStore } from "./vm-store.js";
+import { isVmId, type VmState, type VmStore } from "./vm-store.js";
 
 // Host ingress: the public HTTPS front door of a metal host. The platform
-// proxies owner traffic here with `host: <handle>.matrix-os.com` and the
-// per-host `x-matrix-host-auth` secret; the ingress forwards it, unchanged
-// apart from that secret and hop-by-hop headers, to the VM's own nginx on the
+// proxies owner traffic here with the handle Host, exact VM target and
+// per-host auth secret. The ingress strips the target, secret and hop-by-hop
+// headers before forwarding to the VM's own nginx on the
 // private bridge. It never wakes a VM: waking is the platform's job via hostd.
 
 export const HOST_AUTH_HEADER = "x-matrix-host-auth";
+export const VM_TARGET_HEADER = "x-matrix-vm-target";
 // Marks an error answer the ingress generated itself. The platform treats a
 // 503 as "VM asleep" (and retries non-idempotent requests) only when it
 // carries this header with `runtime_asleep`, so a VM-originated copy is always
 // stripped before relaying: a VM must never be able to forge it.
 export const INGRESS_ERROR_HEADER = "x-matrix-ingress-error";
-export const MAX_INDEXED_HANDLES = 10_000;
+export const MAX_INDEXED_VMS = 10_000;
 export const INDEX_MAX_AGE_MS = 2_000;
 export const UPSTREAM_CONNECT_TIMEOUT_MS = 5_000;
 export const IDLE_SOCKET_TIMEOUT_MS = 15 * 60_000;
 export const MAX_UPSTREAM_PER_VM = 256;
 
+const MAX_LIVENESS_CHECKS = 32;
 const HANDLE_HOST = /^([a-z0-9][a-z0-9-]{0,62})\.matrix-os\.com(?::443)?$/i;
 const ASLEEP: ReadonlySet<VmState> = new Set<VmState>(["suspended", "suspending", "resuming", "stopped"]);
-// When several records share a handle (a re-provision creates the new
-// machine's VM before the old one is torn down), the index keeps the one most
-// able to serve: lower rank wins, then the most recently updated record, then
-// the higher generation, then the id, so the choice never depends on list order.
-const STATE_RANK: Record<VmState, number> = {
-  running: 0,
-  resuming: 1,
-  // A VM being created is the platform's intended successor: it answers
-  // runtime_unavailable, so an old suspended sibling is never woken.
-  creating: 2,
-  suspending: 3,
-  suspended: 4,
-  stopped: 5,
-  failed: 6,
-};
 const HOP_BY_HOP = new Set([
   "connection",
   "keep-alive",
@@ -77,13 +64,14 @@ export interface IngressDeps {
   hostAuthToken: string;
   // Host-installed IPv4 -> MAC bindings, read with the VM index.
   readVmBindings?: () => Promise<ReadonlyMap<string, string>>;
+  vmIsOffline?: (id: string) => Promise<boolean>;
   tls: { cert: string | Buffer; key: string | Buffer };
   // The VM nginx port; 443 in production, overridable for tests.
   upstreamPort?: number;
   connectTimeoutMs?: number;
   idleTimeoutMs?: number;
   maxUpstreamPerVm?: number;
-  // Cap on the per-handle last-request map; defaults to MAX_INDEXED_HANDLES.
+  // Cap on the per-handle last-request map; defaults to MAX_INDEXED_VMS.
   maxTrackedHandles?: number;
   // Seam for tests; defaults to node:https request.
   upstreamRequest?: typeof httpsRequest;
@@ -100,21 +88,11 @@ export interface Ingress {
 
 interface IndexEntry {
   id: string;
+  handle: string;
+  generation: number;
   state: VmState;
   privateIPv4: string;
   bound: boolean;
-}
-
-type Candidate = Pick<VmRecord, "id" | "state" | "privateIPv4" | "updatedAt" | "generation">;
-
-// True when `a` should serve the handle instead of `b`.
-export function preferVm(a: Candidate, b: Candidate): boolean {
-  const rank = STATE_RANK[a.state] - STATE_RANK[b.state];
-  if (rank !== 0) return rank < 0;
-  const updated = (Date.parse(a.updatedAt) || 0) - (Date.parse(b.updatedAt) || 0);
-  if (updated !== 0) return updated > 0;
-  if (a.generation !== b.generation) return a.generation > b.generation;
-  return a.id > b.id;
 }
 
 type Route = { ok: true; entry: IndexEntry } | { ok: false; code: IngressErrorCode };
@@ -143,7 +121,7 @@ function forwardedHeaders(req: IncomingMessage, upgrade: boolean): OutgoingHttpH
   for (const [name, value] of Object.entries(req.headers as IncomingHttpHeaders)) {
     // Content-Length frames the body: a client naming it in Connection must not
     // strip it, or the body would reach the VM unframed (a smuggled request).
-    if (value === undefined || name === HOST_AUTH_HEADER || HOP_BY_HOP.has(name)) continue;
+    if (value === undefined || name === HOST_AUTH_HEADER || name === VM_TARGET_HEADER || HOP_BY_HOP.has(name)) continue;
     if (listed.has(name) && name !== "content-length") continue;
     out[name] = value;
   }
@@ -181,7 +159,7 @@ export function hasAmbiguousFraming(req: IncomingMessage): boolean {
 function relayedHeaders(headers: IncomingHttpHeaders): OutgoingHttpHeaders {
   const out: OutgoingHttpHeaders = {};
   for (const [name, value] of Object.entries(headers)) {
-    if (value === undefined || HOP_BY_HOP.has(name) || name === INGRESS_ERROR_HEADER) continue;
+    if (value === undefined || HOP_BY_HOP.has(name) || name === INGRESS_ERROR_HEADER || name === VM_TARGET_HEADER) continue;
     out[name] = value;
   }
   return out;
@@ -231,56 +209,26 @@ export function createIngress(deps: IngressDeps): Ingress {
   if (deps.hostAuthToken.length < 16) throw new Error("host auth token too short");
   const tokenDigest = digest(deps.hostAuthToken);
 
-  // Handle -> VM index, rebuilt from the store on a change notification and
-  // at most every INDEX_MAX_AGE_MS otherwise; requests never read disk.
+  // VM id -> route, rebuilt from the store on a change notification and at
+  // most every INDEX_MAX_AGE_MS otherwise.
   let index: Map<string, IndexEntry> | null = null;
   let builtAt = 0;
   let dirty = true;
   let building: Promise<void> | null = null;
-  // Duplicate tuples logged by the last rebuild; at most MAX_INDEXED_HANDLES.
-  let loggedDuplicates = new Set<string>();
 
   async function rebuild(): Promise<void> {
     dirty = false;
-    const chosen = new Map<string, VmRecord>();
     try {
       const records = await deps.store.list();
       const bindings = records.some(({ state }) => state === "running") ? await deps.readVmBindings?.() : undefined;
-      let capped = false;
-      const dropped: Array<{ handle: string; id: string }> = [];
-      for (const record of records) {
-        const handle = record.handle.toLowerCase();
-        const current = chosen.get(handle);
-        if (current === undefined) {
-          if (chosen.size >= MAX_INDEXED_HANDLES) {
-            // Keep scanning: a later record may still be a better VM for an indexed handle.
-            if (!capped) log("ingress.index_capped", { cap: MAX_INDEXED_HANDLES, records: records.length });
-            capped = true;
-            continue;
-          }
-          chosen.set(handle, record);
-          continue;
-        }
-        const keep = preferVm(record, current) ? record : current;
-        const drop = keep === record ? current : record;
-        dropped.push({ handle, id: drop.id });
-        chosen.set(handle, keep);
-      }
-      // Log each (handle, kept, dropped) once while it persists, not on every rebuild.
-      const seen = new Set<string>();
-      for (const d of dropped) {
-        const kept = chosen.get(d.handle)!.id;
-        if (kept === d.id) continue;
-        const key = `${d.handle} ${kept} ${d.id}`;
-        if (!loggedDuplicates.has(key)) log("ingress.duplicate_handle", { handle: d.handle, kept, dropped: d.id });
-        if (seen.size < MAX_INDEXED_HANDLES) seen.add(key);
-      }
-      loggedDuplicates = seen;
       const next = new Map<string, IndexEntry>();
-      for (const [handle, candidate] of chosen) {
-        const { id, state, privateIPv4, mac } = candidate;
+      for (const { id, handle, generation, state, privateIPv4, mac } of records) {
+        if (next.size >= MAX_INDEXED_VMS) {
+          log("ingress.index_capped", { cap: MAX_INDEXED_VMS, records: records.length });
+          break;
+        }
         const bound = bindings === undefined || bindings.get(privateIPv4) === mac;
-        next.set(handle, { id, state, privateIPv4, bound });
+        next.set(id, { id, handle: handle.toLowerCase(), generation, state, privateIPv4, bound });
       }
       index = next;
       builtAt = now();
@@ -306,11 +254,11 @@ export function createIngress(deps: IngressDeps): Ingress {
     dirty = true;
   });
 
-  async function lookup(handle: string): Promise<IndexEntry | null | undefined> {
+  async function lookup(id: string): Promise<IndexEntry | null | undefined> {
     if (dirty || index === null || now() - builtAt >= INDEX_MAX_AGE_MS) await refresh();
     if (dirty && building === null) await refresh();
     if (index === null || (dirty && deps.readVmBindings)) return undefined;
-    return index.get(handle) ?? null;
+    return index.get(id) ?? null;
   }
 
   function authorized(headers: IncomingHttpHeaders): boolean {
@@ -325,7 +273,7 @@ export function createIngress(deps: IngressDeps): Ingress {
   function acquire(id: string): boolean {
     const count = active.get(id) ?? 0;
     if (count >= maxPerVm) return false;
-    if (count === 0 && active.size >= MAX_INDEXED_HANDLES) return false;
+    if (count === 0 && active.size >= MAX_INDEXED_VMS) return false;
     active.set(id, count + 1);
     return true;
   }
@@ -342,7 +290,7 @@ export function createIngress(deps: IngressDeps): Ingress {
 
   // Handle -> last authorized request time, in least-recently-seen order;
   // only handles of known VMs are recorded, and the map is capped.
-  const maxTracked = deps.maxTrackedHandles ?? MAX_INDEXED_HANDLES;
+  const maxTracked = deps.maxTrackedHandles ?? MAX_INDEXED_VMS;
   const lastSeen = new Map<string, number>();
   function touch(handle: string): void {
     lastSeen.delete(handle);
@@ -350,16 +298,41 @@ export function createIngress(deps: IngressDeps): Ingress {
     while (lastSeen.size > maxTracked) lastSeen.delete(lastSeen.keys().next().value as string);
   }
 
+  // Coalesce concurrent probes of a VM with no verified network binding.
+  const liveness = new Map<string, Promise<boolean>>();
+  function confirmedOffline(id: string): Promise<boolean> | boolean {
+    const existing = liveness.get(id);
+    if (existing) return existing;
+    const probe = deps.vmIsOffline;
+    if (!probe || liveness.size >= MAX_LIVENESS_CHECKS) return false;
+    const check = Promise.resolve().then(() => probe(id)).catch((error: unknown) => {
+      log("ingress.vm_liveness_failed", { id, ...errorFields(error) });
+      return false;
+    }).finally(() => liveness.delete(id));
+    liveness.set(id, check);
+    return check;
+  }
+
   async function route(req: IncomingMessage): Promise<Route> {
     if (!authorized(req.headers)) return { ok: false, code: "unauthorized" };
     const handle = parseHandle(req.headers.host);
     if (handle === null) return { ok: false, code: "runtime_unknown" };
-    const entry = await lookup(handle);
+    const target = req.headers[VM_TARGET_HEADER];
+    const match = typeof target === "string" ? /^([^:]+):(0|[1-9]\d{0,15})$/.exec(target) : null;
+    const id = match?.[1];
+    const generation = Number(match?.[2]);
+    if (!id || !isVmId(id) || !Number.isSafeInteger(generation)) return { ok: false, code: "bad_request" };
+    const entry = await lookup(id);
     if (entry === undefined) return { ok: false, code: "runtime_unavailable" };
-    if (entry === null) return { ok: false, code: "runtime_unknown" };
+    if (entry === null || entry.handle !== handle || entry.generation !== generation) {
+      return { ok: false, code: "runtime_unknown" };
+    }
     touch(handle);
     if (ASLEEP.has(entry.state)) return { ok: false, code: "runtime_asleep" };
-    if (entry.state !== "running" || !entry.bound || !isIPv4(entry.privateIPv4)) return { ok: false, code: "runtime_unavailable" };
+    if (entry.state !== "running" || !isIPv4(entry.privateIPv4)) return { ok: false, code: "runtime_unavailable" };
+    if (!entry.bound) {
+      return { ok: false, code: (await confirmedOffline(entry.id)) ? "runtime_asleep" : "runtime_unavailable" };
+    }
     return { ok: true, entry };
   }
 
@@ -486,7 +459,8 @@ export function createIngress(deps: IngressDeps): Ingress {
       const lines = [`HTTP/1.1 ${up.statusCode ?? 101} ${up.statusMessage ?? "Switching Protocols"}`];
       for (let i = 0; i < up.rawHeaders.length; i += 2) {
         const name = up.rawHeaders[i]!;
-        if (name.toLowerCase() === INGRESS_ERROR_HEADER) continue;
+        const lower = name.toLowerCase();
+        if (lower === INGRESS_ERROR_HEADER || lower === VM_TARGET_HEADER) continue;
         lines.push(`${name}: ${up.rawHeaders[i + 1]}`);
       }
       socket.write(`${lines.join("\r\n")}\r\n\r\n`);

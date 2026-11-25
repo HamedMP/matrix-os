@@ -171,13 +171,41 @@ function send(
   });
 }
 
+const ALICE_TARGET = "vm_0123456789abcdef01234567:1";
+const BOB_TARGET = "vm_bbbbbbbbbbbbbbbbbbbbbbbb:1";
+const CAROL_TARGET = "vm_cccccccccccccccccccccccc:1";
 const authed = (host = "alice.matrix-os.com", extra: Record<string, string> = {}) => ({
   host,
   "x-matrix-host-auth": TOKEN,
+  "x-matrix-vm-target": ALICE_TARGET,
   ...extra,
 });
 
 describe("host ingress", () => {
+  it("returns the wake signal when the binding is missing and both VM units are offline", async () => {
+    const vm = record();
+    await store.put(vm);
+    const checked: string[] = [];
+    await startIngress({
+      readVmBindings: async () => new Map(),
+      vmIsOffline: async (id: string) => { checked.push(id); return true; },
+    });
+    const reply = await send(authed("alice.matrix-os.com", { "x-matrix-vm-target": `${vm.id}:${vm.generation}` }), { method: "POST", body: "write" });
+    expect(reply.headers[INGRESS_ERROR_HEADER]).toBe("runtime_asleep");
+    expect(checked).toEqual([vm.id]);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("signals wake for the selected sleeping replacement while the retired VM is still running", async () => {
+    await store.put(record());
+    const replacement = record({ id: "vm_ffffffffffffffffffffffff", machineId: "replacement", generation: 4, state: "suspended" });
+    await store.put(replacement);
+    await startIngress();
+    const reply = await send(authed("alice.matrix-os.com", { "x-matrix-vm-target": `${replacement.id}:4` }), { method: "POST", body: "write" });
+    expect(reply.headers[INGRESS_ERROR_HEADER]).toBe("runtime_asleep");
+    expect(seen).toHaveLength(0);
+  });
+
   it("only forwards while the running VM has its assigned host network binding", async () => {
     const vm = record();
     await store.put(vm);
@@ -305,7 +333,7 @@ describe("host ingress", () => {
     expect(seen).toHaveLength(1);
   });
 
-  it("strips x-matrix-host-auth before forwarding", async () => {
+  it("strips ingress authentication and selection headers before forwarding", async () => {
     await store.put(record());
     await startIngress();
     await send(
@@ -319,6 +347,7 @@ describe("host ingress", () => {
     );
     const headers = seen[0]!.headers;
     expect(headers["x-matrix-host-auth"]).toBeUndefined();
+    expect(headers["x-matrix-vm-target"]).toBeUndefined();
     expect(headers.authorization).toBe("Bearer platform-jwt");
     expect(headers["x-platform-user-id"]).toBe("user_1");
     expect(headers["x-platform-verified"]).toBe("1");
@@ -474,7 +503,7 @@ describe("host ingress", () => {
     client.write(
       "GET /ws HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " +
         TOKEN +
-        "\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\n" +
+        `\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\n` +
         "sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
     );
     await expect.poll(() => listCalls).toBe(1);
@@ -501,7 +530,7 @@ describe("host ingress", () => {
     };
     await startIngress({ store: slowStore, maxUpstreamPerVm: 1 });
     const client = await rawTlsSocket();
-    client.write("GET /gone HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " + TOKEN + "\r\n\r\n");
+    client.write("GET /gone HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " + TOKEN + `\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\n\r\n`);
     await expect.poll(() => listCalls).toBe(1);
     client.destroy();
     await new Promise((r) => setTimeout(r, 100));
@@ -534,7 +563,7 @@ describe("host ingress", () => {
     expect(ingress!.lastRequestAt("alice")).toBeUndefined();
     await send(authed());
     t = 9_000;
-    await send(authed("bob.matrix-os.com"));
+    await send(authed("bob.matrix-os.com", { "x-matrix-vm-target": BOB_TARGET }));
     await send({ host: "alice.matrix-os.com" });
     await send(authed("nobody.matrix-os.com"));
     expect(ingress!.lastRequestAt("alice")).toBe(5_000);
@@ -548,9 +577,9 @@ describe("host ingress", () => {
     await store.put(record({ id: "vm_cccccccccccccccccccccccc", handle: "carol", privateIPv4: "127.0.0.3" }));
     await startIngress({ maxTrackedHandles: 2 });
     await send(authed());
-    await send(authed("bob.matrix-os.com"));
+    await send(authed("bob.matrix-os.com", { "x-matrix-vm-target": BOB_TARGET }));
     await send(authed());
-    await send(authed("carol.matrix-os.com"));
+    await send(authed("carol.matrix-os.com", { "x-matrix-vm-target": CAROL_TARGET }));
     expect(ingress!.lastRequestAt("alice")).toBeTypeOf("number");
     expect(ingress!.lastRequestAt("bob")).toBeUndefined();
     expect(ingress!.lastRequestAt("carol")).toBeTypeOf("number");
@@ -565,7 +594,7 @@ describe("host ingress", () => {
     const ws = await rawTls(
       "GET /ws HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " +
         TOKEN +
-        "\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\n" +
+        `\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\n` +
         "sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
     );
     expect(ws).toMatch(/^HTTP\/1.1 503 /);
@@ -584,7 +613,7 @@ describe("host ingress", () => {
     const cases: Array<[string, Reply]> = [
       ["unauthorized", await send({ host: "alice.matrix-os.com" })],
       ["runtime_unknown", await send(authed("nobody.matrix-os.com"))],
-      ["runtime_unavailable", await send(authed("bob.matrix-os.com"))],
+      ["runtime_unavailable", await send(authed("bob.matrix-os.com", { "x-matrix-vm-target": BOB_TARGET }))],
     ];
     const held = send(authed(), { path: "/hold" });
     await expect.poll(() => holdResponses.length).toBe(1);
@@ -593,7 +622,7 @@ describe("host ingress", () => {
     await held;
     await ingress!.close();
     await startIngress({ upstreamPort: refusedPort });
-    cases.push(["runtime_unreachable", await send(authed("carol.matrix-os.com"))]);
+    cases.push(["runtime_unreachable", await send(authed("carol.matrix-os.com", { "x-matrix-vm-target": CAROL_TARGET }))]);
     for (const [code, reply] of cases) {
       expect(JSON.parse(reply.body), code).toEqual({ error: code });
       expect(reply.headers["x-matrix-ingress-error"], code).toBe(code);
@@ -614,7 +643,7 @@ describe("host ingress", () => {
     await store.put(record());
     await startIngress();
     const upgrade = (path: string) =>
-      `GET ${path} HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: ${TOKEN}\r\n` +
+      `GET ${path} HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: ${TOKEN}\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\n` +
       "connection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\n" +
       "sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
     const declined = await rawTls(upgrade("/ws-forge-decline"));
@@ -652,95 +681,29 @@ async function rawTls(payload: string): Promise<string> {
   });
 }
 
-describe("host ingress with several VMs sharing one handle", () => {
-  // A handle can briefly map to two VMs: a platform re-provision creates the
-  // new machine's VM before the old one (stopped, awaiting teardown) is gone.
-  const OLD = "vm_aaaaaaaaaaaaaaaaaaaaaaaa";
-  const NEW = "vm_ffffffffffffffffffffffff";
-  let logs: Array<{ event: string; fields: Record<string, unknown> }>;
-
-  function listStore(records: VmRecord[]): Parameters<typeof createIngress>[0]["store"] {
-    return { list: async () => records, onChange: () => () => undefined };
-  }
-
-  async function startWith(records: VmRecord[]): Promise<void> {
-    logs = [];
-    await startIngress({ store: listStore(records), log: (event, fields) => logs.push({ event, fields }) });
-  }
-
-  const duplicates = () => logs.filter((l) => l.event === "ingress.duplicate_handle").map((l) => l.fields);
-
-  const stoppedOld = () =>
-    record({ id: OLD, machineId: "machine-old", state: "stopped", privateIPv4: "127.0.0.2", updatedAt: "2026-11-20T00:00:00.000Z" });
-  const runningNew = () => record({ id: NEW, machineId: "machine-new", state: "running", updatedAt: "2026-11-21T00:00:00.000Z" });
-
-  it("routes to the running VM when a stopped VM with the same handle is listed first", async () => {
-    await startWith([stoppedOld(), runningNew()]);
-    const reply = await send(authed());
-    expect(reply.status).toBe(200);
-    expect(seen).toHaveLength(1);
-    expect(duplicates()).toEqual([{ handle: "alice", kept: NEW, dropped: OLD }]);
-  });
-
-  it("routes to the running VM when it is listed first", async () => {
-    await startWith([runningNew(), stoppedOld()]);
-    expect((await send(authed())).status).toBe(200);
-    expect(duplicates()).toEqual([{ handle: "alice", kept: NEW, dropped: OLD }]);
-  });
-
-  it("prefers the running VM even when the stopped one was updated more recently", async () => {
-    await startWith([{ ...stoppedOld(), updatedAt: "2026-11-22T00:00:00.000Z" }, runningNew()]);
-    expect((await send(authed())).status).toBe(200);
-  });
-
-  it("keeps the most recently updated of two suspended VMs, whatever the list order", async () => {
-    const older = record({ id: NEW, machineId: "machine-old", state: "suspended", updatedAt: "2026-11-20T00:00:00.000Z" });
-    const newer = record({ id: OLD, machineId: "machine-new", state: "suspended", updatedAt: "2026-11-21T00:00:00.000Z" });
-    for (const order of [[older, newer], [newer, older]]) {
-      if (ingress) await ingress.close();
-      await startWith(order);
-      const reply = await send(authed());
-      expect(reply.status).toBe(503);
-      expect(JSON.parse(reply.body)).toEqual({ error: "runtime_asleep" });
-      expect(duplicates()).toEqual([{ handle: "alice", kept: OLD, dropped: NEW }]);
+describe("host ingress target validation", () => {
+  it("checks the generation and handle even when the VM id exists", async () => {
+    const vm = record();
+    await store.put(vm);
+    await startIngress();
+    for (const [host, target] of [
+      ["alice.matrix-os.com", `${vm.id}:2`],
+      ["bob.matrix-os.com", `${vm.id}:1`],
+      ["alice.matrix-os.com", "vm_ffffffffffffffffffffffff:1"],
+    ] as const) {
+      const reply = await send(authed(host, { "x-matrix-vm-target": target }));
+      expect(reply.headers[INGRESS_ERROR_HEADER]).toBe("runtime_unknown");
     }
+    expect(seen).toHaveLength(0);
   });
 
-  it("routes to the most recently updated of two running VMs", async () => {
-    // Only 127.0.0.1 answers; picking the older VM would give 502.
-    const older = record({ id: OLD, machineId: "machine-old", privateIPv4: "127.0.0.2", updatedAt: "2026-11-20T00:00:00.000Z" });
-    const newer = record({ id: NEW, machineId: "machine-new", updatedAt: "2026-11-21T00:00:00.000Z" });
-    await startWith([older, newer]);
-    expect((await send(authed())).status).toBe(200);
-  });
-
-  it("prefers a creating VM over a stopped or failed one", async () => {
-    const failed = record({ id: "vm_bbbbbbbbbbbbbbbbbbbbbbbb", machineId: "machine-failed", state: "failed", updatedAt: "2026-11-22T00:00:00.000Z" });
-    const creating = record({ id: NEW, machineId: "machine-new", state: "creating" });
-    await startWith([failed, creating, stoppedOld()]);
-    const reply = await send(authed());
-    expect(reply.status).toBe(503);
-    expect(JSON.parse(reply.body)).toEqual({ error: "runtime_unavailable" });
-    expect(duplicates().map((d) => d.kept)).toEqual([NEW, NEW]);
-  });
-
-  it("prefers a replacement being created over an old suspended VM, so the old machine is never woken", async () => {
-    for (const state of ["suspended", "suspending"] as VmState[]) {
-      if (ingress) await ingress.close();
-      const old = record({ id: OLD, machineId: "machine-old", state, updatedAt: "2026-11-22T00:00:00.000Z" });
-      const creating = record({ id: NEW, machineId: "machine-new", state: "creating", updatedAt: "2026-11-20T00:00:00.000Z" });
-      await startWith([old, creating]);
-      const reply = await send(authed());
-      expect(reply.status).toBe(503);
-      expect(JSON.parse(reply.body)).toEqual({ error: "runtime_unavailable" });
-      expect(duplicates()).toEqual([{ handle: "alice", kept: NEW, dropped: OLD }]);
+  it("rejects missing, malformed and ambiguous targets before forwarding", async () => {
+    await store.put(record());
+    await startIngress();
+    expect((await send({ host: "alice.matrix-os.com", "x-matrix-host-auth": TOKEN })).status).toBe(400);
+    for (const value of ["garbage", `${ALICE_TARGET}, ${ALICE_TARGET}`, `${record().id}:9007199254740992`]) {
+      expect((await send(authed("alice.matrix-os.com", { "x-matrix-vm-target": value }))).status).toBe(400);
     }
-  });
-
-  it("leaves a single record per handle unchanged and logs no duplicate", async () => {
-    await startWith([runningNew(), record({ id: OLD, handle: "bob", state: "stopped" })]);
-    expect((await send(authed())).status).toBe(200);
-    expect(JSON.parse((await send(authed("bob.matrix-os.com"))).body)).toEqual({ error: "runtime_asleep" });
-    expect(duplicates()).toEqual([]);
+    expect(seen).toHaveLength(0);
   });
 });
