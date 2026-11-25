@@ -508,6 +508,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       return false;
     }
     const sourceChatId = activeChatId;
+    const currentDraftProjectId = () => {
+      const current = draftProjectRef.current;
+      return current?.identity === navigationIdentity ? current.projectId : undefined;
+    };
     const projectSkillProjectId = options.projectSkillProjectId;
     const currentProjectSkillScope = () => {
       if (!projectSkillProjectId) return true;
@@ -516,8 +520,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         const current = detailRef.current;
         return current?.record.projectId === projectSkillProjectId && canUseProjectSkillRoot(current);
       }
-      return draftProjectRef.current?.identity === navigationIdentity
-        && draftProjectRef.current.projectId === projectSkillProjectId;
+      return currentDraftProjectId() === projectSkillProjectId;
     };
     if (!currentProjectSkillScope()) {
       setSafeError("The selected project skill is unavailable in this Chat.");
@@ -529,8 +532,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     const pendingToken = {};
     const sendDraftSession = draftSessionRef.current;
+    // Picking a project changes the draft's destination within the same session.
     const sourceIsSelected = () => activeChatIdRef.current === sourceChatId
-      && (sourceChatId !== undefined || draftSessionRef.current === sendDraftSession);
+      && (sourceChatId !== undefined
+        || (draftSessionRef.current === sendDraftSession && currentDraftProjectId() === draftProjectId));
     const showPending = (turn: Omit<PendingCanonicalTurn, "createdAt">) => {
       // A draft send whose New Chat session has ended no longer shows.
       if (sourceChatId === undefined && draftSessionRef.current !== sendDraftSession) return;

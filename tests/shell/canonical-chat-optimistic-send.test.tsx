@@ -40,6 +40,8 @@ function attachedStream(): Response {
   }), { headers: { "content-type": "text/event-stream" } });
 }
 
+const selectedProject = { id: "proj_race", slug: "race", name: "Race project", kind: "scratch" };
+
 function fixtureServer({ createGate, uploadGate, admitGate, createFails, firstCreateFails, streamOpen = false }: {
   createGate?: Promise<void>; uploadGate?: Promise<void>; admitGate?: Promise<void>; createFails?: boolean; firstCreateFails?: boolean; streamOpen?: boolean;
 } = {}) {
@@ -52,6 +54,7 @@ function fixtureServer({ createGate, uploadGate, admitGate, createFails, firstCr
   const createRequestIds: string[] = [];
   const uploadedPaths: string[] = [];
   stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/api/workspace/projects")) return Response.json({ projects: [selectedProject] });
     if (url.includes(canonicalChatProviderCatalogPath())) return Response.json(createCanonicalProviderCatalogFixture());
     if (url.includes("/events?")) return streamOpen ? attachedStream() : new Response(new ReadableStream());
     if (url.includes("/api/files/blob?")) {
@@ -360,7 +363,7 @@ function ChatScreen({ draft = false }: { draft?: boolean }) {
     <ChatApp messages={state.messages} sessionId={state.sessionId} busy={state.busy} connected
       composerIdentity={state.composerIdentity} conversations={state.conversations} onNewChat={state.newChat}
       onSwitchConversation={state.switchConversation} onSubmit={state.submitMessage}
-      providerSelection={state.providerSelection} />
+      providerSelection={state.providerSelection} chatProjectId={state.chatProjectId} onSetChatProject={state.setChatProject} />
   </>;
 }
 
@@ -423,6 +426,42 @@ it.each(["create", "admission"] as const)("keeps an independent New Chat selecte
     expect(reads.admission).toBe(1);
     expect(screen.getByTestId("selected-chat").textContent).toBe("");
     expect((screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement).value).toBe("Independent new draft");
+  } finally {
+    prior.release();
+  }
+});
+
+it.each(["create", "admission"] as const)("keeps the project draft when a pending Home send completes after %s", async stage => {
+  setupChatScreen();
+  const prior = gate();
+  const { reads, createRequestIds } = fixtureServer({
+    createGate: stage === "create" ? prior.opened : undefined,
+    admitGate: stage === "admission" ? prior.opened : undefined,
+    streamOpen: true,
+  });
+  render(<ChatScreen draft />);
+  const editor = await screen.findByPlaceholderText("How can I help you today?");
+  fireEvent.change(editor, { target: { value: "Original Home message" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  try {
+    await screen.findByText("Original Home message", { exact: true, selector: "span" });
+    await waitFor(() => expect(stage === "create" ? createRequestIds.length : reads.admission).toBe(1));
+    fireEvent.click(screen.getByRole("button", { name: "Add to project" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Race project, Scratch" }));
+    await screen.findByRole("button", { name: "Project Race project" });
+    expect(screen.getByTestId("selected-chat").textContent).toBe("");
+    const projectEditor = screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement;
+    fireEvent.change(projectEditor, { target: { value: "Independent project follow-up" } });
+    expect(projectEditor.value).toBe("Independent project follow-up");
+    prior.release();
+    await waitFor(() => expect(screen.getByTestId("send-busy").textContent).toBe("false"));
+    expect(reads.admission).toBe(1);
+    const selectedEditor = screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement;
+    expect({
+      selectedChat: screen.getByTestId("selected-chat").textContent,
+      projectSelected: Boolean(screen.queryByRole("button", { name: "Project Race project" })),
+      followUp: selectedEditor.value,
+    }).toEqual({ selectedChat: "", projectSelected: true, followUp: "Independent project follow-up" });
   } finally {
     prior.release();
   }
