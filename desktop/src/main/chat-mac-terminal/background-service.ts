@@ -27,7 +27,9 @@ interface Dependencies {
     grant: DiscoveryGrant,
     signal: AbortSignal,
   ): Promise<MacTerminalRequest | null>;
-  tryBackgroundPreview?(context: MacTerminalContext, grant: DiscoveryGrant, signal: AbortSignal): Promise<void>;
+  tryBackgroundPreview?(
+    context: MacTerminalContext, grant: DiscoveryGrant, signal: AbortSignal, beginPreview: () => boolean,
+  ): Promise<void>;
   isTerminalRequestCurrent(request: MacTerminalRequest): boolean;
   returnTerminalResult(request: MacTerminalRequest, result: Result, signal: AbortSignal): Promise<void>;
   prepareTerminal(action: MacTerminalProbeAction): Promise<ChatTerminalProbe>;
@@ -207,8 +209,17 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
       if (!isCurrent(grant)) return;
       if (request && !grant.used.has(request.runId) && matches(grant, request)) {
         await dispatch(grant, request);
-      } else if (!request) {
-        await deps.tryBackgroundPreview?.(grant.context, discovery, signal);
+      } else if (!request && deps.tryBackgroundPreview) {
+        try {
+          await deps.tryBackgroundPreview(grant.context, discovery, signal, () => {
+            if (!isCurrent(grant)) return false;
+            // Keep this Chat free for the preview result once a target is found.
+            grant.phase = "running";
+            return true;
+          });
+        } finally {
+          if (isCurrent(grant)) grant.phase = "waiting";
+        }
       }
     }
     if (isCurrent(grant)) await deliver(grant);

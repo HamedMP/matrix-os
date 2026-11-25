@@ -16,7 +16,10 @@ interface Options {
   isTrustedSender(event: unknown): boolean;
   onBackgroundActiveChange?(active: boolean): void;
   transport?: ReturnType<typeof createChatElectronPreviewTransport>;
-  tryBackgroundPreview?(context: MacTerminalContext, grant: { targetId: string; approvedAt: number }, signal: AbortSignal): Promise<void>;
+  tryBackgroundPreview?(
+    context: MacTerminalContext, grant: { targetId: string; approvedAt: number }, signal: AbortSignal,
+    beginPreview: () => boolean,
+  ): Promise<void>;
 }
 
 export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: Options) {

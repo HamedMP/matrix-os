@@ -6,6 +6,8 @@ import {
   type MacTerminalRequest,
 } from "@desktop/main/chat-electron-preview/transport";
 import type { MacTerminalProbeOutput } from "@desktop/shared/mac-terminal-probe";
+import { MAC_TERMINAL_PROBE_INVOKE } from "@desktop/shared/mac-terminal-probe-ipc";
+import { canSendBackgroundMacCheck } from "@desktop/renderer/src/features/chat/ChatMacTerminalProbe";
 
 const context: MacTerminalContext = {
   chatId: "chat_test",
@@ -43,8 +45,8 @@ function fixture() {
       .mockResolvedValueOnce(first)
       .mockResolvedValueOnce(second),
     tryBackgroundPreview: vi.fn<
-      (context: MacTerminalContext, grant: { targetId: string; approvedAt: number }, signal: AbortSignal) =>
-      Promise<void>
+      (context: MacTerminalContext, grant: { targetId: string; approvedAt: number }, signal: AbortSignal,
+        beginPreview: () => boolean) => Promise<void>
     >(async () => {}),
     reportEvent: vi.fn(),
     onActiveChange: vi.fn(),
@@ -65,6 +67,7 @@ beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("approved background Mac terminal checks", () => {
@@ -97,12 +100,47 @@ describe("approved background Mac terminal checks", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(deps.tryBackgroundPreview).toHaveBeenCalledExactlyOnceWith(context, {
       targetId, approvedAt: expect.any(Number),
-    }, expect.any(AbortSignal));
+    }, expect.any(AbortSignal), expect.any(Function));
     expect(deps.prepareTerminal).not.toHaveBeenCalled();
     expect(service.status(ref)).toMatchObject({ active: true, remaining: 3 });
     await service.stop();
     expect(deps.tryBackgroundPreview.mock.calls[0]?.[2].aborted).toBe(true);
   });
+
+  it.each(["returns the result", "fails to return the result"])(
+    "blocks a new Chat check during an admitted preview and reopens the grant when the preview %s", async outcome => {
+      const { deps, service, approve } = fixture();
+      const discovery = deferred<void>();
+      const delivery = deferred<void>();
+      deps.tryBackgroundPreview.mockImplementationOnce(async (_context, _grant, _signal, beginPreview) => {
+        await discovery.promise;
+        expect(beginPreview()).toBe(true);
+        await delivery.promise;
+        if (outcome === "fails to return the result") throw new Error("Preview delivery unavailable");
+      });
+      const channel = "chat:mac-terminal-background-status";
+      vi.stubGlobal("window", { operator: { invoke: async (name: string, target: typeof ref) => {
+        expect(name).toBe(channel);
+        return MAC_TERMINAL_PROBE_INVOKE[channel].response.parse(service.status(target));
+      } } });
+      const { targetId } = await approve();
+      const canSend = () => canSendBackgroundMacCheck(ref.chatId, ref.worktreeId, targetId);
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(deps.tryBackgroundPreview).toHaveBeenCalledOnce();
+      await expect(canSend()).resolves.toBe(true);
+
+      discovery.resolve(undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(canSend()).resolves.toBe(false);
+
+      delivery.resolve(undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(canSend()).resolves.toBe(true);
+      expect(service.status(ref)).toMatchObject({ active: true, remaining: 3 });
+      await service.stop();
+    },
+  );
 
   it("does not overlap a one-time approval or a second background request", async () => {
     const { deps, service } = fixture();

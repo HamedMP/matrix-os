@@ -80,10 +80,12 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
       context: ChatElectronPreviewBackgroundBinding["context"],
       grant: ChatElectronPreviewBackgroundBinding["grant"],
       signal: AbortSignal,
+      beginPreview: () => boolean,
     ) {
       if (!service.available || signal.aborted) return;
       const target = await transport.readBackgroundPreviewTarget(context, grant, signal);
       if (!target || (lastHandled?.targetId === grant.targetId && lastHandled.runId === target.runId)) return;
+      if (!beginPreview()) return;
       const { status } = await service.run(target, { context, grant, signal });
       if ((status === "returned" || status === "declined" || status === "already-handled") && !signal.aborted) {
         lastHandled = { targetId: grant.targetId, runId: target.runId };
