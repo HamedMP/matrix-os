@@ -1,6 +1,7 @@
 import { WorkflowLoadingSpinner } from "./WorkflowLoadingSpinner.js";
 import type { HarnessWorkflowController } from "./use-harness-workflow-controller.js";
 import { keyFormatFailure } from "./key-format.js";
+import { isCodexTerminalOption } from "./managed-connection-capability.js";
 const providerNames = { openai: "OpenAI", anthropic: "Anthropic", openrouter: "OpenRouter" };
 export function WorkflowKeyForm({ state }: { state: HarnessWorkflowController }) {
   const { selectedOption, harness, capability, client, disabled, onRefresh, method, setMethod, providerId, setProviderId, apiKey, setApiKey, pending, failure, setFailure, run, back } = state;
@@ -91,10 +92,15 @@ export function WorkflowKeyForm({ state }: { state: HarnessWorkflowController })
 
 export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowController }) {
   const { client, disabled, onOpenAuthorizationUrl, operation, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, pending, startingLogin, copied, setCopied, run, seconds, connecting, browserLogin, subscriptionName } = state;
-  const runningLogin = operation?.kind === "login" && connecting;
+  const codexTerminal = state.harness.harness === "codex" && isCodexTerminalOption(operation?.connectionOption);
+  const runningLogin = operation?.kind === "login" && connecting && (!codexTerminal || state.canContinueInTerminal);
   const preparingPage = runningLogin && state.inlineLogin && !operation.authorizationUrl && !operation.deviceCode
     && operation.connectionOption?.method !== "terminal";
-  const status = startingLogin ? "Starting sign-in" : preparingPage ? "Preparing sign-in page" : "Waiting for sign-in";
+  const checkingConnection = codexTerminal && !operation?.authorizationUrl && !operation?.deviceCode;
+  const status = startingLogin ? "Starting sign-in"
+    : preparingPage ? "Preparing sign-in page"
+    : checkingConnection ? "Checking Codex connection"
+    : "Waiting for sign-in";
   return <>
           {state.reconciling ? <p role="status" aria-label="Updating connection" className="matrix-ap-help matrix-ap-loading-status">
             <WorkflowLoadingSpinner /><span>Sign-in complete. Updating connection…</span>
@@ -108,6 +114,7 @@ export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowControl
                   <button
                     type="button"
                     className="matrix-ap-button"
+                    disabled={codexTerminal && disabled}
                     onClick={() =>
                       void run(async (signal) => {
                         await navigator.clipboard.writeText(
@@ -125,7 +132,7 @@ export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowControl
                 <button
                   type="button"
                   className="matrix-ap-button matrix-ap-button-primary"
-                  disabled={seconds === 0}
+                  disabled={seconds === 0 || (codexTerminal && disabled)}
                   onClick={() =>
                     void run(async () => {
                       onOpenAuthorizationUrl?.(operation!.authorizationUrl!);
@@ -159,7 +166,7 @@ export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowControl
               ) : null}
               <p role="status" aria-label={status} className="matrix-ap-help matrix-ap-loading-status">
                 <WorkflowLoadingSpinner />
-                <span>{startingLogin || preparingPage ? `${status}…` : <>
+                <span>{status !== "Waiting for sign-in" ? `${status}…` : <>
                   Waiting for sign-in.{" "}
                   {seconds > 0
                     ? `Code expires in ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}.`

@@ -341,7 +341,7 @@ export function useHarnessWorkflowController({
         }
         if (
           result.terminalSessionId &&
-          (kind !== "login" || loginMethod === "terminal")
+          (kind !== "login" || (loginMethod === "terminal" && harness.harness !== "codex"))
         )
           onOpenTerminal(result.terminalSessionId);
       }

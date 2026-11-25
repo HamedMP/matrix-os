@@ -23,6 +23,7 @@ import { resolve } from 'node:path';
 import { CODEX_VERIFIED_NPM_PACKAGE, type TerminalRef, type AiProviderSnapshotV3, type ProviderWorkflowStart } from '@matrix-os/contracts';
 import type { TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
 import type { ProviderSettingsStoreWriter } from './provider-settings-store.js';
+import { ProviderSettingsStoreError } from './provider-settings-errors.js';
 import { ProviderWorkflowError, ProviderWorkflowNotStartedError, type ProviderWorkflowAdapter } from './provider-workflows.js';
 /** Extract only the known device flow. Raw terminal output never leaves this adapter. */
 export function extractProviderDeviceCode(raw: string): {
@@ -407,7 +408,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
             publish({ state: success ? 'succeeded' : 'failed', safeFailure: success ? null : 'unavailable' });
           }
           catch (error) {
-            console.warn('[provider-workflow] Completion probe failed:', error instanceof Error ? error.name : 'UnknownError');
+            console.warn('[provider-workflow] Completion probe failed:', error instanceof Error ? error.name : 'UnknownError',
+              ...(codexTerminalLogin && error instanceof ProviderSettingsStoreError ? [error.code] : []));
             if (!codexTerminalLogin || !completionAbort.signal.aborted) publish({ state: 'failed', safeFailure: 'unavailable' });
           }
         };

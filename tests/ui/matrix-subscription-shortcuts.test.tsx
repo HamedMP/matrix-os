@@ -254,9 +254,12 @@ it("offers the current native Codex terminal flow from Coding agents beside Matr
  expect(within(subscriptions).getByRole("article",{name:"ChatGPT subscription"})).toBeVisible();
  await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
  fireEvent.click(screen.getByRole("button",{name:/^Codex/}));
- fireEvent.click(screen.getByRole("button",{name:/ChatGPT account · Log in in Terminal/}));
- await waitFor(()=>expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:"codex",optionId:"openai_terminal"}),expect.any(AbortSignal)));
- expect(props.onOpenTerminal).toHaveBeenCalledWith("tws_native:tt_login");
+ fireEvent.click(screen.getByRole("button",{name:/ChatGPT account · Sign in with Codex CLI/}));
+ const continueInTerminal = await screen.findByRole("button",{name:"Continue in Terminal"});
+ expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:"codex",optionId:"openai_terminal"}),expect.any(AbortSignal));
+ expect(props.onOpenTerminal).not.toHaveBeenCalled();
+ fireEvent.click(continueInTerminal);
+ expect(props.onOpenTerminal).toHaveBeenCalledExactlyOnceWith("tws_native:tt_login");
  expect(props.onMutate).not.toHaveBeenCalled();
 });
 it('reconnects a saved native Codex account through explicit Terminal completion rather than generic enablement', async () => {
@@ -271,8 +274,11 @@ it('reconnects a saved native Codex account through explicit Terminal completion
  await waitFor(()=>expect(client.capabilities).toHaveBeenCalled());
  fireEvent.click(screen.getByRole('button',{name:/^Codex/}));
  fireEvent.click(screen.getByRole('button',{name:'Reconnect'}));
- await waitFor(()=>expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:'codex',optionId:'openai_terminal'}),expect.any(AbortSignal)));
- expect(props.onOpenTerminal).toHaveBeenCalledWith('tws_native:tt_login');
+ const continueInTerminal = await screen.findByRole('button',{name:'Continue in Terminal'});
+ expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:'codex',optionId:'openai_terminal'}),expect.any(AbortSignal));
+ expect(props.onOpenTerminal).not.toHaveBeenCalled();
+ fireEvent.click(continueInTerminal);
+ expect(props.onOpenTerminal).toHaveBeenCalledExactlyOnceWith('tws_native:tt_login');
  expect(props.onMutate).not.toHaveBeenCalled();
 });
 
@@ -288,6 +294,6 @@ it('retains the saved native account card while explicit reconfirmation is requi
  expect(within(screen.getByRole('region',{name:'Codex saved account'})).getByText('saved@example.test')).toBeVisible();
  expect(screen.getByRole('heading',{name:'Saved account'})).toBeVisible();
  expect(screen.queryByRole('button',{name:/^Codex.*Connected/})).toBeNull();
- expect(screen.getByRole('button',{name:/ChatGPT account.*Log in in Terminal/})).toBeVisible();
+ expect(screen.getByRole('button',{name:/ChatGPT account.*Sign in with Codex CLI/})).toBeVisible();
  expect(client.startConnection).not.toHaveBeenCalled();
 });

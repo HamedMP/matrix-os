@@ -37,7 +37,7 @@ it.each(["connected", "key"] as const)("shows one selected-account lifecycle and
   expect(screen.getAllByRole("button", { name: /Log out/ })).toHaveLength(1);
   expect(screen.queryByRole("button", { name: "Connection options" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Disconnect" })).toBeNull();
-  expect(screen.queryByRole("button", { name: /Sign in with a code|Log in in Terminal|OpenAI API key/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Sign in with a code|Sign in with Codex CLI|OpenAI API key/ })).toBeNull();
   expect(mutate).not.toHaveBeenCalled(); expect(client.startConnection).not.toHaveBeenCalled();
 });
 it("cancels change account before any logout and preserves the connected card", async () => {

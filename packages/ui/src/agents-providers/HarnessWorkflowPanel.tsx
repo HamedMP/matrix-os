@@ -16,6 +16,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
     ? capability.connectionOptions?.find(isCodexDeviceOption) ?? capability.connectionOptions?.find(isCodexTerminalOption) : undefined;
   const codexDeviceOperation = codexDevice && isCodexDeviceOption(operation?.connectionOption);
   const codexTerminalOperation = codexTerminal && isCodexTerminalOption(operation?.connectionOption);
+  const showCodexLoginProgress = codexDeviceOperation || codexTerminalOperation || !operation && (codexDevice || codexTerminal);
   const terminalOnly = !capability.connectionOptions && capability.loginMethods.includes("terminal") && !inlineLogin;
   const adoptOption = props.availableClaudeAccount && harness.harness === "claude" && client.startConnection
     ? capability.connectionOptions?.find(option => option.providerId === "anthropic" && option.authKind === "subscription"
@@ -184,7 +185,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
             </>
           ) : null}
       <WorkflowKeyForm state={state} />
-      {harness.harness === "claude" || codexDevice && (!operation || codexDeviceOperation) ? <WorkflowLoginProgress state={state} /> : null}
+      {harness.harness === "claude" || showCodexLoginProgress ? <WorkflowLoginProgress state={state} /> : null}
         </>
       )}
       {failed && operation ? (

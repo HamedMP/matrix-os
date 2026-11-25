@@ -12,6 +12,7 @@ import { vi } from 'vitest';
 import { createNativeProviderWorkflowAdapters } from '../../packages/gateway/src/ai-providers/provider-workflow-native.js';
 import { createClaudeModelCatalogSource } from '../../packages/gateway/src/chat/claude-model-catalog.js';
 import type { ProviderSettingsStoreWriter } from '../../packages/gateway/src/ai-providers/provider-settings-store.js';
+import { ProviderSettingsStoreError } from '../../packages/gateway/src/ai-providers/provider-settings-errors.js';
 import type { TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
 const ref = { workspaceId: 'tws_11111111111111111111111111111111', tabId: 'tt_11111111111111111111111111111111' };
 function nativeFixture(kind: 'codex' | 'claude' | 'hermes' | 'openclaw' | 'pi' | 'opencode' = 'codex') {
@@ -498,6 +499,27 @@ it('completes Codex Terminal consent only through the exact private native compl
   expect(onLoginSucceeded.mock.invocationCallOrder[0]).toBeLessThan(publish.mock.invocationCallOrder.at(-1)!);
   expect(f.store.mutate).toHaveBeenCalledTimes(1);
   expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'start_login', method: 'terminal' }));
+});
+
+it('logs only the typed store failure for a Codex Terminal exit zero with failed binding', async () => {
+  const f = nativeFixture();
+  const error = new ProviderSettingsStoreError('invalid_route', 400);
+  error.message = 'private-account-detail';
+  f.store.completeCodexNativeLogin = vi.fn().mockRejectedValue(error);
+  const onLoginSucceeded = vi.fn();
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, onLoginSucceeded });
+  const publish = vi.fn();
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  try {
+    await adapter!.start({ registerCleanup: vi.fn(), request: { harnessInstanceId: f.row.id, kind: 'login', method: 'terminal', idempotencyKey: 'codex-bind-failure' }, publish });
+    f.observer().onFrame({ type: 'exit', revision: 1, exitCode: 0, terminalRef: ref });
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'failed', safeFailure: 'unavailable' }));
+    expect(onLoginSucceeded).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith('[provider-workflow] Completion probe failed:', 'ProviderSettingsStoreError', 'invalid_route');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(error.message);
+  } finally {
+    warn.mockRestore();
+  }
 });
 
 it.each(['off', 'source'] as const)('does not complete foreground native login after intervening %s intent', async mode => {

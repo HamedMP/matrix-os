@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStd
 import { z } from "zod/v4";
 import type { ProviderWorkflow } from "@matrix-os/contracts";
 import type { NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
+import { ProviderSettingsStoreError } from "./provider-settings-errors.js";
 import { ProviderWorkflowError } from "./provider-workflows.js";
 
 type Publish = (update: Partial<Pick<ProviderWorkflow, "state" | "authorizationUrl" | "deviceCode" | "safeFailure">>) => void;
@@ -89,7 +90,8 @@ export function createCodexSettingsLogin(options: {
           await onSuccess(proof, () => !cancelled); publish({ state: "succeeded", safeFailure: null });
           return true;
         } catch (error) {
-          console.warn("[provider-workflow] Codex connection unavailable:", error instanceof Error ? error.name : "UnknownError");
+          console.warn("[provider-workflow] Codex connection unavailable:", error instanceof Error ? error.name : "UnknownError",
+            ...(error instanceof ProviderSettingsStoreError ? [error.code] : []));
           if (!cancelled) publish(allClosed() ? { state: "failed", safeFailure: "unavailable" } : { safeFailure: "unavailable" });
           return false;
         }

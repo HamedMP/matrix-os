@@ -104,7 +104,7 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
   };
   const app = new Hono();
   const lifecycle = await createNativeProviderWorkflowRuntime({ app, homePath: home, ownerId: "owner", getPrincipal: c => c.req.header("x-test-actor") === "other" ? { userId: "other" } : { userId: "owner" }, store: workflowStore, terminal: terminal as never, profileGuard: guard, inventory: async () => ({ drivers: [driver] }) }); closes.push(lifecycle.close);
-  return { app, store, home, terminal, harness, guard, rollback, proofReady, resumeCompletion, rotateGeneration, completionBoundary, nativeCompletions,
+  return { app, store, home, executable, terminal, harness, guard, rollback, proofReady, resumeCompletion, rotateGeneration, completionBoundary, nativeCompletions,
     setVersion: (value: string) => writeFile(join(home, 'version'), value) };
 }
 
@@ -132,6 +132,41 @@ it.each(["0.156.2", "0.163.1", "0.164.1", "0.170.0", "0.171.1"])("keeps unqualif
   expect(capabilities[0].connectionOptions).not.toContainEqual(expect.objectContaining({ id: "openai_device_code" }));
   expect((await f.app.request(`${route}/start`, post({ harnessInstanceId: f.harness.id, optionId: "openai_device_code", idempotencyKey: "unqualified" }))).status).toBe(503);
   expect(f.terminal.createTab).not.toHaveBeenCalled();
+});
+
+it.each([
+  { mode: "scope", reason: "scope_unavailable", version: "unknown_version" },
+  { mode: "version", reason: "unsupported_version", version: "0.172.0" },
+  { mode: "stdout", reason: "unsupported_version", version: "unknown_version" },
+  { mode: "stderr", reason: "unexpected_stderr", version: "0.171.0" },
+  { mode: "process", reason: "version_process_failed", version: "0.171.0" },
+] as const)("logs a private Codex qualification diagnostic for $mode with no process details", async ({ mode, reason, version }) => {
+  const f = await fixture("0.172.0");
+  if (mode === "scope") {
+    vi.stubEnv("CODEX_HOME", join(f.home, "..", "private-profile-detail"));
+  } else if (mode === "stdout") {
+    await f.setVersion("0.172.0 private-probe-detail");
+  } else if (mode === "stderr" || mode === "process") {
+    await writeFile(f.executable, [
+      "#!/bin/sh",
+      "echo 'codex-cli 0.171.0'",
+      "echo 'private-probe-detail' >&2",
+      mode === "process" ? "exit 7" : "exit 0",
+    ].join("\n"));
+  }
+
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    const response = await f.app.request(`${route}/capabilities`);
+    expect(response.status).toBe(200);
+    const capabilities = await response.json();
+    expect(capabilities[0].loginMethods).toEqual(["terminal"]);
+    expect(JSON.stringify(capabilities)).not.toMatch(/scope_unavailable|unsupported_version|unexpected_stderr|version_process_failed|private-.*-detail/);
+    expect(warn).toHaveBeenCalledWith("[provider-workflow] Codex Settings protocol unavailable:", reason, version);
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private-.*-detail/);
+  } finally {
+    warn.mockRestore();
+  }
 });
 
 it.each(['start', 'writer-acquired'] as const)('rechecks exact 0.163.0 qualification at %s before native authentication', async boundary => {
@@ -230,9 +265,19 @@ it("does not let delayed Settings completion override an intervening owner Off",
 it.each(["rotate-on-release", "rotate-before-persist"])("rejects same-email native credential generation drift at %s and preserves saved source/Off", async mode => {
   const f = await fixture("0.162.1", mode);
   const before = await f.store.getSnapshot();
-  const started = await (await f.app.request(`${route}/start`, post({ harnessInstanceId: f.harness.id, optionId: "openai_device_code", idempotencyKey: "generation-fence" }))).json();
-  expect(await f.completionBoundary).toMatchObject({ kind: "native_completion", error: { code: "invalid_route" } });
-  await vi.waitFor(async () => expect(await (await f.app.request(`${route}/${started.id}`)).json()).toMatchObject({ state: "failed", safeFailure: "unavailable" }));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  try {
+    const started = await (await f.app.request(`${route}/start`, post({ harnessInstanceId: f.harness.id, optionId: "openai_device_code", idempotencyKey: "generation-fence" }))).json();
+    expect(await f.completionBoundary).toMatchObject({ kind: "native_completion", error: { code: "invalid_route" } });
+    await vi.waitFor(async () => {
+      const receipt = await (await f.app.request(`${route}/${started.id}`)).json();
+      expect(receipt).toMatchObject({ state: "failed", safeFailure: "unavailable" });
+      expect(JSON.stringify(receipt)).not.toContain("invalid_route");
+    });
+    expect(warn).toHaveBeenCalledWith("[provider-workflow] Codex connection unavailable:", "ProviderSettingsStoreError", "invalid_route");
+  } finally {
+    warn.mockRestore();
+  }
   const after = await f.store.getSnapshot();
   expect(after.revision).toBe(before.revision);
   if (mode === "rotate-before-persist") expect(f.rollback).toHaveBeenCalledOnce();

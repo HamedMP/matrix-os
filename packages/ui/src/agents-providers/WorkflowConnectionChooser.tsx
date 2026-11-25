@@ -16,9 +16,12 @@ export function WorkflowConnectionChooser({state}: {state: HarnessWorkflowContro
      {capability.connectionOptions?.map(option => {
        const key = option.authKind === "api_key";
        const available = option.availability === "available" && (key ? !!state.client.submitConnectionKey : !!state.client.startConnection);
+       const methodName = harness.harness === "codex" && option.method === "terminal"
+         ? "Sign in with Codex CLI"
+         : option.method ? methodNames[option.method] : "Sign in";
        return <div key={option.id}>
          <ConnectionMethodCard method={key ? "key" : "account"}
-           title={key ? `${keyNames[option.providerId]} API key` : `${providerNames[option.providerId]} account · ${option.method ? methodNames[option.method] : "Sign in"}`}
+           title={key ? `${keyNames[option.providerId]} API key` : `${providerNames[option.providerId]} account · ${methodName}`}
            description={key ? "Billed per request by your provider" : harness.harness === "hermes" ? "Sign in with your account in Terminal" : "Uses your subscription for this agent on this computer"}
            selected={selectedOption?.id === option.id} loading={startingLogin && selectedOption?.id === option.id} disabled={disabled || pending || connecting || state.reconciling || !available}
            onClick={() => {
