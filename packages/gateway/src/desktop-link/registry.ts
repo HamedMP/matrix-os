@@ -3,22 +3,25 @@
 // keeps one adapter, which opens core streams over whichever link is current,
 // so viewers re-attach after a reconnect without the adapter being rebuilt.
 import { HerdrTransportError } from "@matrix-os/herdr-core-client/session-host";
-import { DESKTOP_LINK_CALL_TIMEOUT_MS, DESKTOP_LINK_CLOSE, DESKTOP_LINK_MAX_DEVICES } from "@matrix-os/contracts/desktop-link";
+import {
+  DESKTOP_LINK_CALL_TIMEOUT_MS, DESKTOP_LINK_CLOSE, DESKTOP_LINK_MAX_DEVICES, type DesktopLinkDeviceInfo,
+} from "@matrix-os/contracts/desktop-link";
 import { createHerdrAdapter, type HerdrAdapter } from "../herdr/adapter.js";
-import type { DesktopLink } from "./link.js";
+import { DesktopCaptureError, type DesktopLink } from "./link.js";
 
 export const DESKTOP_LINK_PING_MS = 15_000;
 export const DESKTOP_LINK_STALE_MS = 45_000;
 /** Heartbeats between re-reads of the pairing for live links (about once a minute). */
 const PAIRING_CHECK_SWEEPS = 4;
 const MAX_RUNS_PER_MINUTE = 10;
+const MAX_CAPTURES_PER_MINUTE = 6;
 
 export interface DesktopLinkRegistryOptions {
   now?: () => number;
   /** Builds the adapter for one device; replaced in tests. */
   createAdapter?: (open: () => Promise<import("@matrix-os/herdr-core-client/client").HcSocket>) => HerdrAdapter;
   /**
-   * The current 2698 pairing, read before each new core stream,
+   * The current 2698 pairing, read before each new core stream and screenshot,
    * so a link whose pairing changed is refused even if the change notice was missed.
    */
   pairing?: () => Promise<{ deviceId: string | null; revision: number }>;
@@ -42,6 +45,7 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
   let draining = false;
   // Start times per device, for allowRun. Bounded to twice the link cap, oldest first out.
   const runs = new Map<string, number[]>();
+  const captures = new Map<string, number[]>();
   // Set by the routes (the registry is built before the owner database is known).
   let pairing = options.pairing;
   let seen = options.seen;
@@ -209,10 +213,29 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
       }
       return true;
     },
+    /** One screenshot of a linked desktop's screen, at most 6 a minute per desktop. */
+    async capture(deviceId: string): Promise<Buffer> {
+      const link = await current(deviceId);
+      if (!link) throw new DesktopCaptureError("offline");
+      const at = now();
+      const recent = (captures.get(deviceId) ?? []).filter((time) => at - time < 60_000);
+      if (recent.length >= MAX_CAPTURES_PER_MINUTE) throw new DesktopCaptureError("busy");
+      recent.push(at);
+      captures.delete(deviceId);
+      captures.set(deviceId, recent);
+      while (captures.size > maxLinks * 2) {
+        const oldest = captures.keys().next().value;
+        if (oldest === undefined) break;
+        captures.delete(oldest);
+      }
+      return link.capture();
+    },
+    /** Where the current pairing is read from (2698's owner table). */
+    usePairing(read: () => Promise<{ deviceId: string | null; revision: number }>): void { pairing = read; },
     /** Every linked device's id, name and adapter, for terminal verbs and the kernel. */
-    linked(): Array<{ deviceId: string; name: string; adapter: HerdrAdapter }> {
+    linked(): Array<{ deviceId: string; name: string; device: DesktopLinkDeviceInfo; adapter: HerdrAdapter }> {
       return [...links.values()].filter((link) => !link.closed).map((link) => ({
-        deviceId: link.info.deviceId, name: link.info.name, adapter: adapterFor(link.info.deviceId),
+        deviceId: link.info.deviceId, name: link.info.name, device: link.info.device, adapter: adapterFor(link.info.deviceId),
       }));
     },
     sweep,

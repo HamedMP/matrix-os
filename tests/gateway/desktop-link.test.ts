@@ -1,9 +1,9 @@
-// Desktop link gateway side (spec 2716): admission over 2698 pairing, the owner-only
-// auth matrix, link proofs, revocation by pairing revision, last seen (D3), and a
-// real herdr-core conversation carried over the link to a desktop stand-in.
+// Desktop link gateway side (spec 2716): admission over 2698 pairing, the owner-only auth matrix,
+// link admission with device proofs, revocation and replacement, and a real
+// herdr-core conversation carried over the link to a desktop stand-in.
 import { once } from "node:events";
-import { sql } from "kysely";
 import { WebSocket } from "ws";
+import { sql } from "kysely";
 import { describe, expect, it, vi } from "vitest";
 import { DESKTOP_LINK_CLOSE, DesktopLinkMachineListSchema } from "@matrix-os/contracts/desktop-link";
 import { createDesktopLinkRegistry } from "../../packages/gateway/src/desktop-link/registry.js";
@@ -12,16 +12,16 @@ import { createHerdrAdapter } from "../../packages/gateway/src/herdr/adapter.js"
 import { createFakeHerdrCore } from "./fixtures/fake-herdr-core-server.js";
 import { cleanup, db, dialMac, gateway, MACHINE, OWNER, ownerHeaders, pair, SECRET, testMac, unpair } from "./fixtures/desktop-link-harness.js";
 
-const listed = async (http: Awaited<ReturnType<typeof gateway>>["http"]) =>
-  DesktopLinkMachineListSchema.parse(await (await http("/api/desktop-link/machines")).json()).machines;
-
 describe("Pairing is the desktop link's admission (2698)", () => {
   it("lists the paired desktop offline until it links, and nothing before pairing", async () => {
     const { http } = await gateway();
     const mac = testMac();
-    expect(await listed(http)).toEqual([]);
+    expect(DesktopLinkMachineListSchema.parse(await (await http("/api/desktop-link/machines")).json()).machines).toEqual([]);
     expect((await pair(http, mac)).status).toBe(200);
-    expect(await listed(http)).toEqual([{ deviceId: mac.deviceId, name: "Paired desktop", revision: 1, state: "offline", lastSeenAt: null }]);
+    const list = DesktopLinkMachineListSchema.parse(await (await http("/api/desktop-link/machines")).json());
+    expect(list).toEqual({ machineId: MACHINE, machines: [{
+      deviceId: mac.deviceId, name: "Paired desktop", revision: 1, state: "offline", lastSeenAt: null, device: null,
+    }] });
   });
 
   it("admits only the paired device, at exactly the current pairing revision", async () => {
@@ -56,6 +56,7 @@ describe("Pairing is the desktop link's admission (2698)", () => {
       await retry.closed();
       expect(retry.closeCode()).toBe(DESKTOP_LINK_CLOSE.auth);
     }
+    // Paired again, it links again, only at the new revision.
     expect(await (await pair(http, mac, 2)).json()).toMatchObject({ deviceId: mac.deviceId, revision: 3 });
     const again = dialMac(base, mac, { revision: 3 });
     await again.ready();
@@ -105,12 +106,11 @@ describe("Pairing is the desktop link's admission (2698)", () => {
     const { http, base, registry } = await gateway();
     const mac = testMac();
     await pair(http, mac);
-    const link = dialMac(base, mac, { revision: 1, core: createFakeHerdrCore() });
+    const link = dialMac(base, mac, { revision: 1 });
     await link.ready();
     // As if another gateway process disconnected it: the row changed, no notice came.
     await db.updateTable("desktop_pairings").set({ device_id: null, public_key: null, revision: 2 }).execute();
-    const listing = await registry!.adapter(mac.deviceId)!.list();
-    expect(listing.status).not.toBe("ready");
+    await expect(registry!.capture(mac.deviceId)).rejects.toMatchObject({ code: "offline" });
     await link.closed();
     expect(link.closeCode()).toBe(DESKTOP_LINK_CLOSE.removed);
   });
@@ -134,6 +134,7 @@ describe("Desktop link auth matrix", () => {
     expect((await http("/api/desktop-link/machines", {}, {})).status).toBe(401);
     expect((await http("/api/desktop-link/machines", {}, ownerHeaders("org_member"))).status).toBe(403);
     await pair(http, mac);
+    // Only a signed-in desktop opens the link: not the computer's own gateway token.
     for (const headers of [{}, ownerHeaders("org_member"), { authorization: `Bearer ${SECRET}` }]) {
       const link = dialMac(base, mac, { revision: 1, headers });
       await link.closed();
@@ -155,7 +156,16 @@ describe("Desktop link admission", () => {
     const link = dialMac(base, mac, { revision: 1 });
     await link.ready();
     expect(registry?.online(mac.deviceId)).toBe(true);
-    expect((await listed(http))[0]?.state).toBe("online");
+    const list = DesktopLinkMachineListSchema.parse(await (await http("/api/desktop-link/machines")).json());
+    expect(list.machines[0]?.state).toBe("online");
+    // What it reported about itself is kept in memory, for tools and views to use even while it is offline.
+    expect(list.machines[0]).toMatchObject({
+      name: "Hamed's MacBook", device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } },
+    });
+    link.socket.terminate();
+    await link.closed();
+    await expect.poll(async () => DesktopLinkMachineListSchema.parse(await (await http("/api/desktop-link/machines")).json()).machines[0])
+      .toMatchObject({ state: "offline", name: "Hamed's MacBook", device: { platform: "darwin" } });
   });
 
   it("closes a link whose proof is wrong, stale, for another computer or not a proof", async () => {
@@ -168,7 +178,7 @@ describe("Desktop link admission", () => {
       dialMac(base, stranger, { revision: 1 }),
       dialMac(base, mac, { revision: 1, proof: (nonce) => ({
         t: "proof", name: "x", deviceId: mac.deviceId, revision: 1, signature: mac.signLink(nonce, 1, "00000000-0000-4000-8000-000000000000"),
-        app: { version: "0.9.0", os: "macOS" },
+        app: { version: "0.9.0", os: "macOS" }, device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } },
       }) }),
     ];
     for (const attempt of attempts) {
@@ -178,17 +188,6 @@ describe("Desktop link admission", () => {
     const garbage = dialMac(base, mac, { revision: 1, proof: () => ({ t: "hello" }) });
     await garbage.closed();
     expect(garbage.closeCode()).toBe(DESKTOP_LINK_CLOSE.policy);
-  });
-
-  it("refuses a self-reported name with control characters", async () => {
-    const { http, base } = await gateway();
-    const mac = testMac();
-    await pair(http, mac);
-    const link = dialMac(base, mac, { revision: 1, proof: (nonce) => ({
-      t: "proof", name: "Mac\u0007", deviceId: mac.deviceId, revision: 1, signature: mac.signLink(nonce, 1), app: { version: "0.9.0", os: "macOS" },
-    }) });
-    await link.closed();
-    expect(link.closeCode()).toBe(DESKTOP_LINK_CLOSE.policy);
   });
 
   it("refuses binary bytes before admission", async () => {
@@ -214,6 +213,7 @@ describe("Desktop link admission", () => {
     await first.closed();
     expect(first.closeCode()).toBe(DESKTOP_LINK_CLOSE.replaced);
     expect(registry?.online(mac.deviceId)).toBe(true);
+
   });
 
   it("closes a link that stops answering", async () => {
@@ -229,61 +229,6 @@ describe("Desktop link admission", () => {
     await link.closed();
     expect(link.closeCode()).toBe(DESKTOP_LINK_CLOSE.going);
     expect(registry.online(mac.deviceId)).toBe(false);
-  });
-});
-
-// D3 (Hamed, 2026-11-25): the paired desktop's name and last seen live on 2698's row.
-describe("The paired desktop's name and last seen", () => {
-  it("stores the name for the paired device at its revision, keeps it across a restart, and clears it on disconnect and re-pair", async () => {
-    const first = await gateway();
-    const mac = testMac();
-    await pair(first.http, mac);
-    const link = dialMac(first.base, mac, { revision: 1 });
-    await link.ready();
-    await expect.poll(async () => (await listed(first.http))[0]?.name).toBe("Hamed's MacBook");
-    link.socket.terminate();
-    await link.closed();
-    // A new gateway process on the same database still knows it, offline.
-    const restarted = await gateway();
-    expect(await listed(restarted.http)).toMatchObject([{ name: "Hamed's MacBook", state: "offline", lastSeenAt: expect.any(String) }]);
-    expect((await unpair(restarted.http, mac, 1)).status).toBe(200);
-    await pair(restarted.http, mac, 2);
-    expect(await listed(restarted.http)).toEqual([{ deviceId: mac.deviceId, name: "Paired desktop", revision: 3, state: "offline", lastSeenAt: null }]);
-  });
-
-  it("writes last seen on admission, then at most once a minute while the desktop stays linked", async () => {
-    let now = Date.parse("2026-11-25T10:00:00.000Z");
-    const registry = createDesktopLinkRegistry({ now: () => now, pingMs: 3_600_000, staleMs: 3_600_000 });
-    const { http, base } = await gateway({ registry, now: () => now });
-    const mac = testMac();
-    await pair(http, mac);
-    const link = dialMac(base, mac, { revision: 1 });
-    await link.ready();
-    const lastSeen = async () => (await db.selectFrom("desktop_pairings").select("last_seen_at").executeTakeFirstOrThrow()).last_seen_at;
-    await expect.poll(async () => (await lastSeen())?.toISOString()).toBe("2026-11-25T10:00:00.000Z");
-    const touches = vi.spyOn(DesktopPairingRepository.prototype, "touch");
-    for (let beat = 0; beat < 3; beat += 1) { now += 15_000; registry.sweep(); }
-    expect(touches).not.toHaveBeenCalled();
-    now += 20_000;
-    registry.sweep();
-    await expect.poll(async () => (await lastSeen())?.toISOString()).toBe("2026-11-25T10:01:05.000Z");
-    expect(touches).toHaveBeenCalledTimes(1);
-    touches.mockRestore();
-  });
-
-  it("adds the D3 columns to a table 2698 created before them, keeping its pairing", async () => {
-    await sql`CREATE TABLE desktop_pairings (
-      owner_id TEXT NOT NULL, machine_id UUID NOT NULL, device_id TEXT, public_key TEXT,
-      revision BIGINT NOT NULL, PRIMARY KEY (owner_id, machine_id))`.execute(db);
-    const mac = testMac();
-    await db.insertInto("desktop_pairings").values({
-      owner_id: OWNER, machine_id: MACHINE, device_id: mac.deviceId, public_key: mac.publicKey, revision: 4,
-    } as never).execute();
-    const { http, base } = await gateway();
-    expect(await listed(http)).toEqual([{ deviceId: mac.deviceId, name: "Paired desktop", revision: 4, state: "offline", lastSeenAt: null }]);
-    const link = dialMac(base, mac, { revision: 4 });
-    await link.ready();
-    await expect.poll(async () => (await listed(http))[0]?.name).toBe("Hamed's MacBook");
   });
 });
 
@@ -335,6 +280,80 @@ describe("Herdr over the Desktop link", () => {
     expect(ended).toBe("disconnected");
     expect(registry.adapter(mac.deviceId)).toBeNull();
     attachment.detach();
+  });
+});
+
+// D3 (Hamed, 2026-11-25): the paired desktop's own report lives on 2698's row.
+describe("The paired desktop's report (name, system, last seen)", () => {
+  const listed = async (http: Awaited<ReturnType<typeof gateway>>["http"]) =>
+    DesktopLinkMachineListSchema.parse(await (await http("/api/desktop-link/machines")).json()).machines;
+
+  it("is stored for the paired device at its revision, survives a restart, and is cleared by disconnect and re-pair", async () => {
+    const first = await gateway();
+    const mac = testMac();
+    await pair(first.http, mac);
+    const link = dialMac(first.base, mac, { revision: 1 });
+    await link.ready();
+    await expect.poll(async () => (await listed(first.http))[0]?.name).toBe("Hamed's MacBook");
+    link.socket.terminate();
+    await link.closed();
+    // A new gateway process on the same database still knows it, offline.
+    const restarted = await gateway();
+    expect(await listed(restarted.http)).toMatchObject([{
+      name: "Hamed's MacBook", state: "offline", device: { platform: "darwin", arch: "arm64" }, lastSeenAt: expect.any(String),
+    }]);
+    expect((await unpair(restarted.http, mac, 1)).status).toBe(200);
+    await pair(restarted.http, mac, 2);
+    expect(await listed(restarted.http)).toEqual([{
+      deviceId: mac.deviceId, name: "Paired desktop", revision: 3, state: "offline", lastSeenAt: null, device: null,
+    }]);
+  });
+
+  it("writes last seen at most once a minute while the desktop stays linked", async () => {
+    let now = Date.parse("2026-11-25T10:00:00.000Z");
+    const registry = createDesktopLinkRegistry({ now: () => now, pingMs: 3_600_000, staleMs: 3_600_000 });
+    const { http, base } = await gateway({ registry, now: () => now });
+    const mac = testMac();
+    await pair(http, mac);
+    const link = dialMac(base, mac, { revision: 1 });
+    await link.ready();
+    const lastSeen = async () => (await db.selectFrom("desktop_pairings").select("last_seen_at").executeTakeFirstOrThrow()).last_seen_at;
+    await expect.poll(async () => (await lastSeen())?.toISOString()).toBe("2026-11-25T10:00:00.000Z");
+    const touches = vi.spyOn(DesktopPairingRepository.prototype, "touch");
+    for (let beat = 0; beat < 3; beat += 1) { now += 15_000; registry.sweep(); }
+    expect(touches).not.toHaveBeenCalled();
+    now += 20_000;
+    registry.sweep();
+    await expect.poll(async () => (await lastSeen())?.toISOString()).toBe("2026-11-25T10:01:05.000Z");
+    expect(touches).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds the columns to a table 2698 created before them, keeping its pairing", async () => {
+    await sql`CREATE TABLE desktop_pairings (
+      owner_id TEXT NOT NULL, machine_id UUID NOT NULL, device_id TEXT, public_key TEXT,
+      revision BIGINT NOT NULL, PRIMARY KEY (owner_id, machine_id))`.execute(db);
+    const mac = testMac();
+    await db.insertInto("desktop_pairings").values({
+      owner_id: OWNER, machine_id: MACHINE, device_id: mac.deviceId, public_key: mac.publicKey, revision: 4,
+    } as never).execute();
+    const { http, base } = await gateway();
+    expect(await listed(http)).toEqual([{ deviceId: mac.deviceId, name: "Paired desktop", revision: 4, state: "offline", lastSeenAt: null, device: null }]);
+    const link = dialMac(base, mac, { revision: 4 });
+    await link.ready();
+    await expect.poll(async () => (await listed(http))[0]?.name).toBe("Hamed's MacBook");
+  });
+
+  it("refuses a self-reported name with control characters before it reaches the table", async () => {
+    const { http, base } = await gateway();
+    const mac = testMac();
+    await pair(http, mac);
+    const link = dialMac(base, mac, { revision: 1, proof: (nonce) => ({
+      t: "proof", name: "Mac\u0007", deviceId: mac.deviceId, revision: 1, signature: mac.signLink(nonce, 1),
+      app: { version: "0.9.0", os: "macOS" }, device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } },
+    }) });
+    await link.closed();
+    expect(link.closeCode()).toBe(DESKTOP_LINK_CLOSE.policy);
+    expect(await listed(http)).toMatchObject([{ name: "Paired desktop" }]);
   });
 });
 

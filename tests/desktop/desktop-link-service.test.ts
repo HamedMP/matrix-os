@@ -152,7 +152,7 @@ function mac(origin: string, options: { core?: ReturnType<typeof createFakeHerdr
     preferences: createDesktopLinkPreferenceStore(userData, () => {}),
     home: tmpdir(),
     deviceName: "Hamed's MacBook Pro",
-    app: { version: "0.9.0", os: "macOS 26.1" },
+    app: { version: "0.9.0", os: "macOS 26.1" }, device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } },
     createSocket: (url, headers) => {
       const socket = new WebSocket(url, { headers } as never) as unknown as DesktopLinkSocket;
       sockets.push(socket);
@@ -168,6 +168,30 @@ function mac(origin: string, options: { core?: ReturnType<typeof createFakeHerdr
 }
 
 const until = (check: () => boolean, ms = 5_000) => vi.waitFor(() => { if (!check()) throw new Error("waiting"); }, { timeout: ms, interval: 10 });
+
+describe("Desktop link service screenshots", () => {
+  it("sends a screenshot the computer asks for, in pieces, and the owner gets the same bytes", async () => {
+    const { origin, registry } = await computer();
+    const image = Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(130 * 1024, 7)]);
+    const userData = mkdtempSync(join(tmpdir(), "desktop-link-"));
+    cleanup.push(() => rmSync(userData, { recursive: true, force: true }));
+    const pairing = testPairing(origin);
+    const keys = { key: pairing.key };
+    await pairing.pair();
+    const service = createDesktopLinkService({
+      pairing, credential: async () => ownerJwt(), consent: ALLOW_ALL,
+      openCore: async () => createFakeHerdrCore().connect(), preferences: createDesktopLinkPreferenceStore(userData, () => {}),
+      home: tmpdir(), deviceName: "desktop", app: { version: "0.9.0", os: "macOS" }, device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } },
+      createSocket: (url, headers) => new WebSocket(url, { headers } as never) as unknown as DesktopLinkSocket, log: () => {},
+      screenshot: async () => ({ ok: true, image }),
+    });
+    cleanup.push(() => service.dispose());
+    await service.start();
+    await service.enable("primary", "matrix-demo");
+    await until(() => registry.online(keys.key.deviceId));
+    expect((await registry.capture(keys.key.deviceId)).equals(image)).toBe(true);
+  });
+});
 
 describe("Desktop link service", () => {
   it("links nothing before this device is paired, then links and serves the desktop's terminals to the computer", async () => {
@@ -224,7 +248,7 @@ describe("Desktop link service", () => {
     const again = createDesktopLinkService({
       pairing: first.pairing, credential: async () => ownerJwt(), consent: ALLOW_ALL,
       openCore: async () => createFakeHerdrCore().connect(), preferences: createDesktopLinkPreferenceStore(first.userData, () => {}),
-      home: tmpdir(), deviceName: "desktop", app: { version: "0.9.0", os: "macOS" },
+      home: tmpdir(), deviceName: "desktop", app: { version: "0.9.0", os: "macOS" }, device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } },
       createSocket: (url, headers) => new WebSocket(url, { headers } as never) as unknown as DesktopLinkSocket, log: () => {},
     });
     cleanup.push(() => again.dispose());
@@ -381,7 +405,7 @@ describe("Desktop link service", () => {
     const service = createDesktopLinkService({
       pairing, credential: async () => ownerJwt("org_member"), consent: ALLOW_ALL,
       openCore: async () => createFakeHerdrCore().connect(), preferences: createDesktopLinkPreferenceStore(userData, () => {}),
-      home: tmpdir(), deviceName: "desktop", app: { version: "0.9.0", os: "macOS" },
+      home: tmpdir(), deviceName: "desktop", app: { version: "0.9.0", os: "macOS" }, device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } },
       createSocket: (url, headers) => new WebSocket(url, { headers } as never) as unknown as DesktopLinkSocket, log: () => {},
     });
     cleanup.push(() => service.dispose());

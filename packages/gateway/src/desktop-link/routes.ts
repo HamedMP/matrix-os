@@ -10,7 +10,7 @@ import type { Kysely } from "kysely";
 import { z } from "zod/v4";
 import { randomBytes } from "node:crypto";
 import {
-  DESKTOP_LINK_CLOSE, DESKTOP_LINK_CONTROL_MAX_BYTES, DESKTOP_LINK_PATH,
+  DESKTOP_LINK_CAPTURE_FRAME_MAX_BYTES, DESKTOP_LINK_CLOSE, DESKTOP_LINK_CONTROL_MAX_BYTES, DESKTOP_LINK_PATH,
   DesktopLinkClientFrameSchema, DesktopLinkMachineListSchema, DesktopLinkProofFrameSchema, desktopLinkProofMessage,
 } from "@matrix-os/contracts/desktop-link";
 import { DESKTOP_LINK_SEEN_INTERVAL_MS, DesktopPairingRepository, type DesktopPairingDatabase } from "../desktop-pairing/database.js";
@@ -163,6 +163,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
     const state = await pairing.read();
     const deviceId = state.deviceId;
     const stored = deviceId ? await pairing.readReport(deviceId, state.revision) : null;
+    const system = stored?.system ?? null;
     return c.json(DesktopLinkMachineListSchema.parse({
       machineId,
       machines: deviceId ? [{
@@ -171,6 +172,10 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
         revision: state.revision,
         state: registry.online(deviceId) ? "online" : "offline",
         lastSeenAt: stored?.lastSeenAt?.toISOString() ?? null,
+        device: system ? {
+          platform: system.platform, arch: system.arch,
+          capabilities: { terminals: true, screenshot: system.screenshot, input: false },
+        } : null,
       }] : [],
     }));
   });
@@ -199,7 +204,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
       }
       const proof = DesktopLinkProofFrameSchema.safeParse(raw);
       if (!proof.success) { reject(ws, DESKTOP_LINK_CLOSE.policy); return; }
-      const { deviceId, revision, signature, name, app: client } = proof.data;
+      const { deviceId, revision, signature, name, app: client, device } = proof.data;
       // Only the paired device at exactly the current revision (2698).
       const publicKey = await pairing.readRegisteredKey(deviceId, revision);
       const message = desktopLinkProofMessage({ ownerId, machineId, deviceId, revision, nonce });
@@ -217,7 +222,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
       }
       const socket = ws.raw as { bufferedAmount?: number } | undefined;
       const admitted = createDesktopLink({
-        info: { deviceId, revision, name, appVersion: client.version, os: client.os },
+        info: { deviceId, revision, name, appVersion: client.version, os: client.os, device },
         transport: {
           sendText: (frame) => ws.send(frame),
           sendBinary: (bytes) => ws.send(new Uint8Array(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength)),
@@ -237,8 +242,10 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
       stop();
       link = admitted;
       admitted.send({ t: "ready" });
-      // The desktop's own name, stored for the paired device at this revision only (D3).
-      pairing.describe(deviceId, revision, { name }, new Date(now())).catch((error: unknown) => {
+      // The desktop's own report, stored for the paired device at this revision only (D3).
+      pairing.describe(deviceId, revision, {
+        name, system: { platform: device.platform, arch: device.arch, screenshot: device.capabilities.screenshot },
+      }, new Date(now())).catch((error: unknown) => {
         log(`device report update failed: ${error instanceof Error ? error.name : "UnknownError"}`);
       });
     }
@@ -268,7 +275,12 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
           return;
         }
         if (text !== null) {
-          if (Buffer.byteLength(text) > DESKTOP_LINK_CONTROL_MAX_BYTES) { link.close(DESKTOP_LINK_CLOSE.policy); return; }
+          // Only a screenshot part may exceed the control cap, and never its own cap.
+          const size = Buffer.byteLength(text);
+          if (size > DESKTOP_LINK_CAPTURE_FRAME_MAX_BYTES || (size > DESKTOP_LINK_CONTROL_MAX_BYTES && !text.startsWith('{"t":"capture-part"'))) {
+            link.close(DESKTOP_LINK_CLOSE.policy);
+            return;
+          }
           let raw: unknown;
           try { raw = JSON.parse(text); } catch (error: unknown) {
             if (!(error instanceof SyntaxError)) throw error;

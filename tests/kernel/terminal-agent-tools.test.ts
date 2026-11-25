@@ -35,8 +35,15 @@ describe("kernel terminal tools", () => {
     const definitions = terminalAgentToolDefinitions(tools());
     expect(definitions.map((definition) => `mcp__matrix-os-ipc__${definition.name}`)).toEqual(TERMINAL_AGENT_IPC_TOOL_NAMES);
     // With a linked desktop (spec 2716) the desktop tools are allowed too, and only then.
-    const withMacs = { ...tools(), desktops: async () => [], desktopRun: async () => ({ machine: "desktop", workspaceId: "w", tabId: "t" }) };
-    expect(terminalAgentToolDefinitions(withMacs).map((definition) => `mcp__matrix-os-ipc__${definition.name}`)).toEqual(terminalAgentIpcToolNames(withMacs));
+    // Fault detected: the allowed names still said mac_list/mac_run/mac_screenshot after the
+    // tools became desktop_*, so Chat could not call them.
+    const withDesktops = {
+      ...tools(), desktops: async () => [], desktopRun: async () => ({ machine: "desktop", workspaceId: "w", tabId: "t" }),
+      desktopScreenshot: async () => ({ machine: "desktop", mimeType: "image/jpeg" as const, data: "" }),
+    };
+    const allowed = terminalAgentIpcToolNames(withDesktops);
+    expect(terminalAgentToolDefinitions(withDesktops).map((definition) => `mcp__matrix-os-ipc__${definition.name}`)).toEqual(allowed);
+    expect(allowed).toEqual(expect.arrayContaining(["mcp__matrix-os-ipc__desktop_list", "mcp__matrix-os-ipc__desktop_run", "mcp__matrix-os-ipc__desktop_screenshot"]));
     expect(terminalAgentIpcToolNames(tools())).toEqual(TERMINAL_AGENT_IPC_TOOL_NAMES);
   });
 

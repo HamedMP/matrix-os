@@ -23,6 +23,12 @@ const GENERIC_MESSAGES: Record<string, string> = {
   terminal_agent_blocked: "The agent is waiting for a person. Read its screen first, or pass --force.",
   terminal_finished: "That terminal has finished.",
   not_found: "Terminal not found.",
+  // Linked desktops (spec 2716).
+  desktop_offline: "That desktop is not linked right now. Open Matrix OS on the desktop and check the Terminal window.",
+  denied: "The desktop refused it: its owner declined on the desktop, or it asked for a folder outside the desktop user's home or something other than a terminal program.",
+  busy: "Too many requests to that desktop just now. Try again in a minute.",
+  screen_recording_not_allowed: "Allow Screen Recording for Matrix OS on the desktop once (System Settings > Privacy & Security > Screen & System Audio Recording), then try again.",
+  screenshot_failed: "The desktop could not take a screenshot. Try again.",
 };
 
 export function formatCliSuccess(data: Record<string, unknown>): string {

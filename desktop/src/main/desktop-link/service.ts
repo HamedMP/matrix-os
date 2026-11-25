@@ -7,8 +7,9 @@
 import { sign } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
-  DESKTOP_LINK_CLOSE, DESKTOP_LINK_CONTROL_MAX_BYTES, DESKTOP_LINK_PATH,
+  DESKTOP_LINK_CAPTURE_MAX_BYTES, DESKTOP_LINK_CAPTURE_PART_CHARS, DESKTOP_LINK_CLOSE, DESKTOP_LINK_CONTROL_MAX_BYTES, DESKTOP_LINK_PATH,
   DesktopLinkChallengeFrameSchema, DesktopLinkServerFrameSchema, desktopLinkProofMessage,
+type DesktopLinkDeviceInfo,
 } from "@matrix-os/contracts/desktop-link";
 import type { HcSocket } from "@matrix-os/herdr-core-client/client";
 import type { PairedLinkIdentity } from "../desktop-pairing";
@@ -63,11 +64,17 @@ export interface DesktopLinkServiceOptions {
   home: string;
   deviceName: string;
   app: { version: string; os: string };
+  /** This desktop's OS, CPU and what it lets the computer do, reported on every connect. */
+  device: DesktopLinkDeviceInfo;
   createSocket(url: string, headers: Record<string, string>): DesktopLinkSocket;
+  /** One screenshot of this device's screen (JPEG), when the computer asks for one. */
+  screenshot?(): Promise<DesktopScreenshotResult>;
   now?: () => number;
   random?: () => number;
   log?: (message: string) => void;
 }
+
+export type DesktopScreenshotResult = { ok: true; image: Buffer } | { ok: false; reason: "permission" | "unavailable" | "failed" | "too_large" };
 
 export class DesktopLinkEnableError extends Error {
   constructor(readonly reason: "denied" | "not_paired" | "unavailable") {
@@ -137,6 +144,8 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
   // One entry per computer the person switched on, capped by the preference store.
   const links = new Map<string, Link>();
   let prefs: DesktopLinkPreferences = { computers: {} };
+  // Slots with a screenshot being taken; bounded by the links themselves.
+  const capturingLinks = new Set<string>();
   let disposed = false;
   // Who was signed in when last told: undefined before the first auth notice.
   let signedInAs: string | null | undefined;
@@ -250,6 +259,41 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
     });
   }
 
+  /**
+   * One screenshot for the computer, sent back in pieces. At most one at a
+   * time per link; a second request while one runs is refused.
+   */
+  async function capture(link: Link, id: string): Promise<void> {
+    const socket = link.socket;
+    if (!socket || capturingLinks.has(link.slot)) { sendText(link, { t: "capture-failed", id, reason: "failed" }); return; }
+    capturingLinks.add(link.slot);
+    try {
+      if (!(await link.consent.screenshot())) {
+        if (link.socket === socket) sendText(link, { t: "capture-failed", id, reason: "declined" });
+        return;
+      }
+      if (link.socket !== socket) return;
+      const result = options.screenshot ? await options.screenshot() : { ok: false as const, reason: "failed" as const };
+      if (link.socket !== socket) return;
+      if (!result.ok) { sendText(link, { t: "capture-failed", id, reason: result.reason }); return; }
+      if (result.image.length > DESKTOP_LINK_CAPTURE_MAX_BYTES) { sendText(link, { t: "capture-failed", id, reason: "too_large" }); return; }
+      const data = result.image.toString("base64");
+      const parts = Math.max(1, Math.ceil(data.length / DESKTOP_LINK_CAPTURE_PART_CHARS));
+      for (let index = 0; index < parts; index += 1) {
+        if (link.socket !== socket) return;
+        sendText(link, {
+          t: "capture-part", id, index, last: index === parts - 1,
+          data: data.slice(index * DESKTOP_LINK_CAPTURE_PART_CHARS, (index + 1) * DESKTOP_LINK_CAPTURE_PART_CHARS),
+        });
+      }
+    } catch (error: unknown) {
+      log(`screenshot failed: ${error instanceof Error ? error.name : "UnknownError"}`);
+      sendText(link, { t: "capture-failed", id, reason: "failed" });
+    } finally {
+      capturingLinks.delete(link.slot);
+    }
+  }
+
   /** Bytes from the computer for the current stream, through the guard, in order. */
   function fromComputer(link: Link, bytes: Buffer): void {
     const stream = link.stream;
@@ -319,7 +363,9 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
       const signature = sign(null, Buffer.from(desktopLinkProofMessage({
         ownerId, machineId, deviceId, revision, nonce: challenge.data.nonce,
       })), identity.privateKey).toString("base64url");
-      sendText(link, { t: "proof", name: options.deviceName, deviceId, revision, signature, app: options.app });
+      sendText(link, {
+        t: "proof", name: options.deviceName, deviceId, revision, signature, app: options.app, device: options.device,
+      });
       return;
     }
     const frame = DesktopLinkServerFrameSchema.safeParse(raw);
@@ -344,6 +390,7 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
       case "close": if (link.stream?.id === frame.data.stream) endStream(link, false); return;
       case "bye": return; // the close code that follows says what happened
       case "ready": return;
+      case "capture": void capture(link, frame.data.id); return;
     }
   }
 
