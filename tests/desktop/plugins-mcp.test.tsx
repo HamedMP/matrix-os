@@ -44,6 +44,13 @@ describe("desktop Custom MCP management", () => {
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+/** Connected MCP rows keep their tools collapsed; open every row before touching tool policy or diagnostics. */
+async function expandTools(): Promise<void> {
+  for (const toggle of await screen.findAllByRole("button", { name: /^\d+ tools? for / })) {
+    if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
+  }
+}
+
   it("keeps the session and form values while unavailable, then recovers on retry", async () => {
     const onUnauthorized = vi.fn();
     const listResponses = [Response.json({ error: "custom_mcp_unavailable" }, { status: 503 }), Response.json([])];
@@ -123,7 +130,7 @@ describe("desktop Custom MCP management", () => {
     });
     useConnection.setState({ status: "signed-in", handle: "operator", api: api as never });
     render(<McpServersSection />);
-    const checkboxes = await screen.findAllByRole("checkbox");
+    const checkboxes = (await expandTools(), await screen.findAllByRole("checkbox"));
 
     fireEvent.click(checkboxes[0]!);
     fireEvent.click(checkboxes[1]!);
@@ -159,7 +166,7 @@ describe("desktop Custom MCP management", () => {
     useConnection.setState({ status: "signed-in", handle: "operator", api: api as never });
     render(<McpServersSection />);
 
-    fireEvent.click((await screen.findAllByRole("checkbox"))[0]!);
+    fireEvent.click((await expandTools(), await screen.findAllByRole("checkbox"))[0]!);
 
     await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2));
     expect(vi.mocked(api.patch).mock.calls[1]?.[1]).toMatchObject({
@@ -198,7 +205,7 @@ describe("desktop Custom MCP management", () => {
     useConnection.setState({ status: "signed-in", handle: "operator", api: api as never });
     render(<McpServersSection />);
 
-    fireEvent.click((await screen.findAllByRole("checkbox"))[0]!);
+    fireEvent.click((await expandTools(), await screen.findAllByRole("checkbox"))[0]!);
     await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(2));
     fireEvent.change(screen.getByLabelText("search approval"), { target: { value: "allow" } });
     releaseRetry();

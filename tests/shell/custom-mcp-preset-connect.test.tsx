@@ -11,6 +11,13 @@ const linear = { id: "linear", name: "Linear", description: "Manage issues", cat
 const created = { id: "6bc45f4b-cf18-43ac-a424-c199a43511f4", name: "Linear", url: linear.url, authMode: "oauth", status: "auth_required", enabled: false, revision: 2, tools: [] };
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+/** Connected MCP rows keep their tools collapsed; open every row before touching tool policy or diagnostics. */
+async function expandTools(): Promise<void> {
+  for (const toggle of await screen.findAllByRole("button", { name: /^\d+ tools? for / })) {
+    if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
+  }
+}
+
 // Web Canvas and Web Desktop render the shell panel; Electron Desktop renders its section. Both use the shared picker.
 for (const [surface, Component] of [["Web", CustomMcpServersPanel], ["Electron", McpServersSection]] as const) {
   describe(`${surface} MCP preset connect`, () => {
@@ -54,11 +61,27 @@ for (const [surface, Component] of [["Web", CustomMcpServersPanel], ["Electron",
       expect((await screen.findByRole("alert")).textContent).toBe("The MCP request failed. Try again.");
       expect(screen.getByRole("button", { name: "Authorize" })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
+      await expandTools();
       const checkbox = screen.getByRole("checkbox") as HTMLInputElement;
       fireEvent.click(checkbox);
       await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("policy could not be saved"));
       expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
       expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
+    });
+
+    // Fault: a connected server's tool list and the whole gallery render expanded, burying the connections.
+    it("shows connected servers compactly with the gallery behind Add MCP", async () => {
+      const withTools = { ...created, status: "ready", tools: ["list_issues", "create_issue"].map(name => ({ name, description: "", inputSchema: {}, approval: "always_ask", enabled: true })) };
+      setup(() => Response.json({ url: "https://mcp.linear.app/authorize" }), [withTools]);
+      const toggle = await screen.findByRole("button", { name: "2 tools for Linear" });
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Connect Linear" })).toBeNull());
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(screen.queryByRole("checkbox")).toBeNull();
+      fireEvent.click(toggle);
+      expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+      fireEvent.click(screen.getByRole("button", { name: "Add MCP" }));
+      expect(await screen.findByRole("button", { name: "Add MCP server" })).toBeTruthy();
+      expect(screen.getByRole("searchbox", { name: "Search MCP services" })).toBeTruthy();
     });
 
     // Fault: a raw server or provider error string reaches the Settings UI.

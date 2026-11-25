@@ -11,6 +11,13 @@ const server = { id: "test-server", name: "Research", url: "https://example.com/
 const tool = { name: "search", description: "Search documents", inputSchema: {}, enabled: false, approval: "always_ask" };
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+/** Connected MCP rows keep their tools collapsed; open every row before touching tool policy or diagnostics. */
+async function expandTools(): Promise<void> {
+  for (const toggle of await screen.findAllByRole("button", { name: /^\d+ tools? for / })) {
+    if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
+  }
+}
+
 for (const [surface, Component] of [["Web", CustomMcpServersPanel], ["Electron", McpServersSection]] as const) {
   describe(`${surface} MCP action feedback`, () => {
     function setup(respond: () => Promise<Response>, initialTools: typeof tool[] = []) {
@@ -37,6 +44,7 @@ for (const [surface, Component] of [["Web", CustomMcpServersPanel], ["Electron",
     it("shows pending discovery, prevents duplicate actions, then explains the result", async () => {
       let resolve!: (response: Response) => void;
       const fetchFn = setup(() => new Promise<Response>(r => { resolve = r; }));
+      await expandTools();
       fireEvent.click(await screen.findByRole("button", { name: "Discover", exact: true }));
       expect(screen.getByRole("button", { name: "Discovering…" }).matches(":disabled")).toBe(true);
       expect(screen.getByRole("button", { name: "Test", exact: true }).matches(":disabled")).toBe(true);
@@ -51,6 +59,7 @@ for (const [surface, Component] of [["Web", CustomMcpServersPanel], ["Electron",
 
     it("saves permission choices for unchecked tools without enabling them", async () => {
       const fetchFn = setup(async () => Response.json({ ok: true }), [tool]);
+      await expandTools();
       const select = await screen.findByLabelText("search approval");
       expect(select.matches(":disabled")).toBe(false);
       fireEvent.change(select, { target: { value: "allow" } });
@@ -64,6 +73,7 @@ for (const [surface, Component] of [["Web", CustomMcpServersPanel], ["Electron",
 
     it("shows successful Test without pretending to execute a tool or discover it", async () => {
       setup(async () => Response.json({ ok: true, tools: 3 }));
+      await expandTools();
       fireEvent.click(await screen.findByRole("button", { name: "Test", exact: true }));
       expect(await screen.findByText("Connection successful. 3 tools available. No tools were executed.")).not.toBeNull();
       expect(screen.queryByRole("checkbox")).toBeNull();
@@ -72,6 +82,7 @@ for (const [surface, Component] of [["Web", CustomMcpServersPanel], ["Electron",
     it("shows Testing while waiting and rejects malformed success responses", async () => {
       let resolve!: (response: Response) => void;
       setup(() => new Promise<Response>(r => { resolve = r; }));
+      await expandTools();
       fireEvent.click(await screen.findByRole("button", { name: "Test", exact: true }));
       expect(screen.getByRole("button", { name: "Testing…" }).matches(":disabled")).toBe(true);
       expect(screen.getByRole("button", { name: "Discover", exact: true }).matches(":disabled")).toBe(true);
@@ -82,6 +93,7 @@ for (const [surface, Component] of [["Web", CustomMcpServersPanel], ["Electron",
 
     it("explains an empty catalog", async () => {
       setup(async () => Response.json({ ...server, tools: [] }));
+      await expandTools();
       fireEvent.click(await screen.findByRole("button", { name: "Discover", exact: true }));
       expect(await screen.findByText("Connected, but this server returned no tools. Check the server URL or try Discover again.")).not.toBeNull();
     });
@@ -89,6 +101,7 @@ for (const [surface, Component] of [["Web", CustomMcpServersPanel], ["Electron",
     it("shows a safe action-specific error and recovers on retry", async () => {
       let fail = true;
       setup(async () => fail ? Response.json({ error: "private database token" }, { status: 502 }) : Response.json({ ok: true, tools: 0 }));
+      await expandTools();
       fireEvent.click(await screen.findByRole("button", { name: "Test", exact: true }));
       expect((await screen.findByRole("alert")).textContent).toBe("Connection test failed. Check the server URL and authentication, then retry.");
       expect(screen.queryByText(/private database token/)).toBeNull();

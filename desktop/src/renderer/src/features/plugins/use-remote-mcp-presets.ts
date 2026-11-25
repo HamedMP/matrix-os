@@ -32,7 +32,7 @@ export function useRemoteMcpPresets(api: ApiClient | null) {
   }, [api, refreshIntegrations]);
   const ownedApps = api !== null && connectionsSource === api ? connectedApps : [];
 
-  const inventoryFor = (servers: ReadonlyArray<{ id: string; name: string; url: string; status: string }>): McpInventoryEntry[] =>
+  const inventoryFor = (servers: ReadonlyArray<{ id: string; name: string; url: string; status: string; tools?: readonly unknown[] }>): McpInventoryEntry[] =>
     buildMcpConnectionInventory(
       servers,
       ownedApps.map((app) => ({ id: app.id, service: app.service, account_label: app.accountLabel, status: app.status })),
