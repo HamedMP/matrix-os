@@ -5,10 +5,11 @@
  */
 import { ClipboardPaste } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { OfficeStartScreen, extensionOf, type StartFolderMemory, type StartTemplate } from "../../../_shared/office-ui";
+import { OfficeStartScreen, type StartFolderMemory, type StartTemplate } from "../../../_shared/office-ui";
 import type { RecentFile, RecentFiles } from "../session";
 import type { SheetsBridge } from "./bridge";
 import { LOCAL_ACCEPT } from "./document-flow";
+import { sheetKind } from "./sheet-kind";
 import { templateArt } from "./template-art";
 import { SHEETS_TEMPLATES, type SheetsTemplateId, sheetsTemplate } from "./templates";
 
@@ -21,12 +22,6 @@ const TEMPLATES: readonly StartTemplate[] = SHEETS_TEMPLATES.map((template) => (
   description: template.description,
   preview: templateArt(template.id),
 }));
-
-/** A grid for workbooks; text tables carry their extension. */
-export function sheetKind(name: string): { kind: "workbook" | "table"; tag?: string } {
-  const extension = extensionOf(name);
-  return extension === ".csv" || extension === ".tsv" ? { kind: "table", tag: extension.slice(1) } : { kind: "workbook" };
-}
 
 export interface StartScreenProps {
   recents: RecentFiles;

@@ -2,7 +2,7 @@
 import { Dialog, MatrixFileBrowser, type StartFolderMemory } from "../../../_shared/office-ui";
 import type { SheetsBridge } from "./bridge";
 import { LOCAL_ACCEPT } from "./document-flow";
-import { sheetKind } from "./StartScreen";
+import { sheetKind } from "./sheet-kind";
 
 export interface FilePickerProps {
   open: boolean;
