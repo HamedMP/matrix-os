@@ -16,7 +16,7 @@ idempotent: re-running one repairs drift and changes nothing else.
 | Guest kernel and initrd (Ubuntu 24.04 cloud, pinned) | `/var/lib/matrix-hostd/kernel/` |
 | Node 24 (pinned tarball) and hostd bundle | `/opt/matrix-hostd/node`, `/opt/matrix-hostd/hostd.mjs` |
 | hostd config (tokens, TLS paths, ports), 0600 | `/etc/matrix-hostd/hostd.env` |
-| TLS certificate | `/etc/matrix-hostd/tls/` (self-signed for smoke; production installs a real one) |
+| TLS certificate | `/etc/matrix-hostd/tls/cert.pem` and `/etc/matrix-hostd/tls/key.pem` |
 | VM disks | thin LVs `vmvg/mx-vm_*`, clones of the read-only `vmvg/golden-<bundle-version>` |
 | Memory snapshots | `/var/lib/matrix-hostd/snapshots`, ext4 on its own thin LV `vmvg/hostd-snapshots` (never the root fs) |
 | Host swap | thick LV `vmvg/hostd-swap` with zswap in front |
@@ -49,6 +49,11 @@ bun run --cwd packages/hostd build:hostd
 bun run --cwd packages/hostd build:guest-agent
 sudo distro/metal-host/provision-host.sh --host-name <fqdn> [--ingress-port 443] [--data-disks /dev/nvme0n1,/dev/nvme1n1]
 ```
+
+Install a trusted certificate and matching key before provisioning. Provisioning
+preserves the installed pair, including during the last week of validity.
+Replace an expired certificate before rerunning. For a disposable smoke host,
+pass `--smoke-tls` to generate a self-signed pair when both files are absent.
 
 The host reserves the full virtual size of every VM disk, golden clone,
 and snapshot filesystem against physical thin-pool data space. It also

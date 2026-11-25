@@ -9,6 +9,7 @@
 #   --wan-iface IF          public interface (default: the default-route interface)
 #   --ingress-port N        owner ingress port (default 443)
 #   --api-port N            host API port (default 8443)
+#   --smoke-tls             generate a self-signed pair only if none is installed
 #   --data-disks A,B        two whole disks whose free space becomes the RAID1
 #                           PV for vmvg (a new "vmdata" partition on each);
 #                           only used when vmvg does not exist yet
@@ -66,6 +67,7 @@ readonly ETC_DIR=/etc/matrix-hostd
 readonly OPT_DIR=/opt/matrix-hostd
 
 firewall_pending=0
+smoke_tls=0
 host_name="" wan="" ingress_port=443 api_port=8443 data_disks=""
 snapshots_size=400G swap_size=64G
 hostd_bundle="$REPO_ROOT/packages/hostd/dist/hostd/main.mjs"
@@ -84,6 +86,7 @@ if [ "${1:-}" = --confirm-firewall ]; then
   exec /usr/local/libexec/matrix-hostd-nft confirm
 fi
 while [ "$#" -gt 0 ]; do
+  if [ "$1" = --smoke-tls ]; then smoke_tls=1; shift; continue; fi
   [ "$#" -ge 2 ] || die "missing value for $1"
   case "$1" in
     --host-name) host_name="$2" ;;
@@ -186,6 +189,10 @@ if [ "${#missing_packages[@]}" -gt 0 ]; then
   DEBIAN_FRONTEND=noninteractive timeout 900 apt-get update -qq
   DEBIAN_FRONTEND=noninteractive timeout 900 apt-get install -y -qq "${missing_packages[@]}"
 fi
+
+tls_args=("$ETC_DIR/tls" "$host_name")
+if [ "$smoke_tls" -eq 1 ]; then tls_args+=(--smoke); fi
+tls_changed="$(bash "$SCRIPT_DIR/matrix-hostd-tls" "${tls_args[@]}")"
 
 # The tap must fail closed if the running kernel lacks its packet filters.
 for vm_filter in cls_flower act_gact act_police; do
@@ -408,17 +415,7 @@ nft_changed=""
 if /usr/local/libexec/matrix-hostd-nft changed; then nft_changed=changed; fi
 
 # --- hostd configuration ---------------------------------------------------------
-install -d -m 0700 "$ETC_DIR/tls"
-if [ ! -f "$ETC_DIR/tls/key.pem" ] || ! openssl x509 -in "$ETC_DIR/tls/cert.pem" -noout -checkend 604800 >/dev/null 2>&1; then
-  # Self-signed for the smoke; production installs a real certificate here.
-  openssl req -x509 -newkey rsa:3072 -nodes -days 90 -subj "/CN=$host_name" \
-    -addext "subjectAltName=DNS:$host_name,DNS:*.matrix-os.com" \
-    -keyout "$ETC_DIR/tls/key.pem.new" -out "$ETC_DIR/tls/cert.pem.new" 2>/dev/null
-  chmod 0600 "$ETC_DIR/tls/key.pem.new"
-  mv -f "$ETC_DIR/tls/key.pem.new" "$ETC_DIR/tls/key.pem"
-  mv -f "$ETC_DIR/tls/cert.pem.new" "$ETC_DIR/tls/cert.pem"
-  hostd_changed=changed
-fi
+if [ -n "$tls_changed" ]; then hostd_changed=changed; fi
 env_file="$ETC_DIR/hostd.env"
 if [ ! -f "$env_file" ]; then
   umask 077
