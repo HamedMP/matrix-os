@@ -7,10 +7,13 @@ import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
 import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
 import {
+  CollaborativeAppShareButton,
   SharedAppViewer,
   createSharedAppTransport,
 } from "@matrix-os/ui/collaborative-app-sharing";
+import { isShareableAppSlug } from "@matrix-os/ui/share";
 import { shellApi } from "@/api/http";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 import { useOwnerCollaborationParticipant } from "@/lib/owner-collaboration-participant";
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
@@ -60,6 +63,11 @@ interface AppViewerProps {
   active?: boolean;
   sessionId?: string;
   onOpenApp?: (name: string, path: string) => void;
+  /**
+   * Show organization sharing inside the app view. Only hosts without a title-bar
+   * Share (Web Mobile) set this; Desktop and Canvas use the Share popover.
+   */
+  inlineShareControls?: boolean;
   visible?: boolean;
 }
 
@@ -214,7 +222,7 @@ function SharedAppWebViewer({ target }: { target: CollaborativeAppDirectoryItem 
 }
 
 // react-doctor-disable-next-line react-doctor/no-giant-component -- Legacy app-viewer orchestration remains one surface, while collaboration policy and transport are extracted into focused modules; this change only wires those bounded adapters.
-function SandboxedAppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
+function SandboxedAppViewer({ path, sessionId, onOpenApp, inlineShareControls = false }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -547,6 +555,14 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
 
   return (
     <div className="relative isolate flex h-full w-full flex-col overflow-hidden">
+      {inlineShareControls && slug && isShareableAppSlug(slug) ? <OwnerCollaborativeAppSharingControls appId={slug} buildEpoch={refreshKey} onShareChanged={async () => {
+        const participant = await ownerCollaborationRef.current?.refreshShare() ?? ownerParticipant;
+        try {
+          iframeRef.current?.contentWindow?.postMessage({ type: "os:collaboration-context", participant }, "*");
+        } catch (error: unknown) {
+          console.warn("[app-viewer] owner collaboration context update unavailable", error instanceof Error ? error.name : "UnknownError");
+        }
+      }} /> : null}
       <iframe
         ref={iframeRef}
         key={refreshKey}
@@ -558,4 +574,19 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
       />
     </div>
   );
+}
+
+function OwnerCollaborativeAppSharingControls({ appId, buildEpoch, onShareChanged }: {
+  appId: string;
+  buildEpoch: number;
+  onShareChanged(): Promise<void>;
+}) {
+  const organization = useCollaborationOrganization();
+  if (organization.status !== "member" || !organization.organizationId) return null;
+  return <div className="flex items-start justify-end gap-2 border-b px-3 py-1.5">
+    <CollaborativeAppShareButton appId={appId} api={shellApi} buildEpoch={buildEpoch}
+      onShareChanged={onShareChanged}
+      organizationId={organization.organizationId}
+      organizationName={organization.organizationName ?? "your organization"} />
+  </div>;
 }

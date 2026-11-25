@@ -711,7 +711,8 @@ function MobileAppFrame({
       </div>
     );
   }
-  return <AppViewer path={app.path} onOpenApp={onOpenApp} />;
+  // Web Mobile has no title-bar Share, so owner apps keep the inline organization share.
+  return <AppViewer path={app.path} onOpenApp={onOpenApp} inlineShareControls />;
 }
 
 function AppSwitcher({

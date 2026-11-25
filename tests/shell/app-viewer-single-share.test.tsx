@@ -25,7 +25,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
     requests.push(url);
-    if (url.endsWith("/apps/team-tracker/")) return new Response("<html><head></head><body>Tracker</body></html>");
+    if (url.endsWith("/apps/team-tracker/") || url.endsWith("/apps/notes/")) return new Response("<html><head></head><body>App</body></html>");
     if (url.includes("/api/collaboration/")) return Response.json(null);
     throw new Error(`Unexpected request: ${url}`);
   }));
@@ -44,5 +44,20 @@ describe("AppViewer share entry point", () => {
     expect(screen.queryByRole("button", { name: "Share app" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Check collaboration" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Manage app sharing" })).toBeNull();
+  });
+
+  // Web Mobile has no title-bar Share, so its inline control is the only org-sharing
+  // entry point. Faults: Web Mobile losing org sharing, or offering it on default apps.
+  it("keeps the inline organization share on Web Mobile for an app the owner built", async () => {
+    render(<AppViewer path="apps/team-tracker" inlineShareControls />);
+
+    expect(await screen.findByRole("button", { name: /Share app|Manage app sharing/ })).toBeTruthy();
+  });
+
+  it("shows no inline share on Web Mobile for a Matrix default app", async () => {
+    render(<AppViewer path="apps/notes" inlineShareControls />);
+
+    await waitFor(() => expect(requests.some((url) => url.endsWith("/apps/notes/"))).toBe(true));
+    expect(screen.queryByRole("button", { name: /Share app|Check collaboration|Manage app sharing/ })).toBeNull();
   });
 });
