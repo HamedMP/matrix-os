@@ -12,9 +12,9 @@ import { LOCAL_ACCEPT } from "./document-flow";
 import { sheetKind } from "./sheet-kind";
 import { templateArt } from "./template-art";
 import { SHEETS_TEMPLATES, type SheetsTemplateId, sheetsTemplate } from "./templates";
-
-/** The launcher artwork, shown where the app introduces itself. */
-const appArtwork = new URL("../../../../system/icons/v3-sheets.png", import.meta.url).href;
+// The launcher artwork, bundled as a data URL: the app frame is sandboxed with a null
+// origin, and an image file requested from there shows broken.
+import appArtwork from "../../../../system/icons/v3-sheets.png?inline";
 
 const TEMPLATES: readonly StartTemplate[] = SHEETS_TEMPLATES.map((template) => ({
   id: template.id,

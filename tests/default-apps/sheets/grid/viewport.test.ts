@@ -90,8 +90,10 @@ describe("axis", () => {
   });
 
   it("converts file units to pixels and back", () => {
-    expect(columnWidthToPx(8.43)).toBe(64);
-    expect(pxToColumnWidth(64)).toBeCloseTo(8.43, 2);
+    // A width counts characters of 8 px, the digit width of the grid font: 8.43 holds eight digits.
+    expect(columnWidthToPx(8.43)).toBe(72);
+    expect(pxToColumnWidth(72)).toBeCloseTo(8.38, 2);
+    expect(pxToColumnWidth(columnWidthToPx(20))).toBe(20);
     expect(rowHeightToPx(15)).toBe(20);
     expect(pxToRowHeight(20)).toBe(15);
   });

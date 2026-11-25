@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createXlsx } from "../../../../home/apps/_shared/office-engine/index";
+import { canvasFont, cellLook } from "../../../../home/apps/sheets/src/grid/cell-look";
 import { COL, HEAD_H, HEAD_W, ROW, at, cellElement, cellText, click, drag, editor, liveText, press, renderGrid } from "./harness";
 
 afterEach(cleanup);
@@ -203,6 +205,41 @@ describe("SheetGrid view and selection", () => {
     expect(cellElement(container, 4, 0)!.textContent).toBe("####");
   });
 
+  // Outcome: a row of month headers (dates formatted "mmm yyyy") that fits its columns in Excel reads
+  // as months here. Fault: a column holding fewer characters than the same width in Excel shows some or
+  // all of them as ####, depending on how wide each month name is.
+  it("shows month headers and numbers that fit a default-width column, and #### only for a number that does not", async () => {
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const { container } = await renderGrid((workbook, id) => {
+      workbook.setCell(id, { row: 0, col: 0 }, "Line");
+      // 46388 is 1 January 2027; each serial is the first day of a month.
+      const serials = [46388, 46419, 46447, 46478, 46508, 46539, 46569, 46600, 46631, 46661, 46692, 46722];
+      workbook.setRange(id, { row: 0, col: 1 }, [serials]);
+      workbook.setStyle(id, { start: { row: 0, col: 1 }, end: { row: 0, col: 12 } }, { numberFormat: "mmm yyyy" });
+      workbook.setCell(id, { row: 0, col: 13 }, "Total");
+      workbook.setCell(id, { row: 1, col: 1 }, 709601.478);
+      workbook.setCell(id, { row: 1, col: 2 }, 123456789012.5);
+      workbook.setStyle(id, { start: { row: 1, col: 1 }, end: { row: 1, col: 2 } }, { numberFormat: "#,##0" });
+    });
+    expect(months.map((_, index) => cellText(container, 0, index + 1))).toEqual(months.map((month) => `${month} 2027`));
+    expect(cellText(container, 0, 13)).toBe("Total");
+    expect(cellText(container, 1, 1)).toBe("709,601");
+    expect(cellText(container, 1, 2)).toBe("####");
+  });
+
+  // Outcome: whether a number fits is decided in the font the cell shows it in.
+  // Fault: text measured in a wider or narrower stand-in font shows #### for a date that fits, or cuts one off.
+  it("measures cell text in the app font the cell is drawn in", () => {
+    const workbook = createXlsx();
+    const sheet = workbook.listSheets()[0]!.id;
+    workbook.setStyle(sheet, { start: { row: 0, col: 0 }, end: { row: 0, col: 1 } }, { font: { bold: true } });
+    workbook.setStyle(sheet, { start: { row: 0, col: 1 }, end: { row: 0, col: 1 } }, { font: { name: "Georgia" } });
+    const look = (col: number) => cellLook(workbook.getStyle(workbook.getCell(sheet, { row: 0, col }).styleId), 46388);
+    const geist = "'Matrix App Geist', Geist, system-ui, sans-serif";
+    expect(canvasFont(look(0), geist)).toBe(`700 13px ${geist}`);
+    expect(canvasFont(look(1), "Inter, sans-serif")).toBe(`700 13px "Georgia", Inter, sans-serif`);
+  });
+
   it("resizes a column by dragging its edge and fits it on a double click", async () => {
     const { session, sheet, container } = await renderGrid((workbook, id) => {
       workbook.setCell(id, { row: 0, col: 1 }, "a fairly long heading in column B");
@@ -212,7 +249,7 @@ describe("SheetGrid view and selection", () => {
     fireEvent.mouseMove(window, { clientX: HEAD_W + COL + 40, clientY: 10 });
     expect(container.querySelector<HTMLElement>("[data-header='col'][data-index='0']")!.style.width).toBe(`${COL + 40}px`);
     fireEvent.mouseUp(window, { clientX: HEAD_W + COL + 40, clientY: 10 });
-    expect(session.sheet(sheet).columns).toEqual([{ index: 0, width: expect.closeTo(14.14, 1), hidden: false }]);
+    expect(session.sheet(sheet).columns).toEqual([{ index: 0, width: expect.closeTo(13.38, 1), hidden: false }]);
     expect(session.getState().undoLabel).toBe("Column width");
 
     fireEvent.doubleClick(container.querySelector("[data-resize='col'][data-index='1']")!);

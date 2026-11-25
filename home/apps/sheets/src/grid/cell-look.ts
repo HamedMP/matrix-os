@@ -118,6 +118,9 @@ export const CELL_PADDING_PX = 8;
 let context: CanvasRenderingContext2D | null | undefined;
 const widths = new Map<string, number>();
 const MAX_MEASURED = 5000;
+/** How long the app font read from the page is reused before it is read again (a theme may change it). */
+const APP_FONT_TTL_MS = 5000;
+let appFont: { family: string; at: number } | null = null;
 
 function canvasContext(): CanvasRenderingContext2D | null {
   if (context !== undefined) return context;
@@ -125,6 +128,8 @@ function canvasContext(): CanvasRenderingContext2D | null {
   try {
     if (typeof document !== "undefined" && !/jsdom/i.test(globalThis.navigator?.userAgent ?? "")) {
       context = document.createElement("canvas").getContext("2d");
+      // Widths measured before a web font arrived were measured in its fallback.
+      document.fonts?.addEventListener?.("loadingdone", () => widths.clear());
     }
   } catch (error: unknown) {
     console.warn("text measuring falls back to an estimate", error instanceof Error ? error.name : "error");
@@ -132,13 +137,31 @@ function canvasContext(): CanvasRenderingContext2D | null {
   return context;
 }
 
+/** The font family `--app-font` resolves to on the page: the one the grid draws its text in. */
+function pageAppFont(): string {
+  const now = Date.now();
+  if (appFont !== null && now - appFont.at < APP_FONT_TTL_MS) return appFont.family;
+  const family = getComputedStyle(document.documentElement).getPropertyValue("--app-font").trim();
+  appFont = { family: family === "" ? "system-ui, sans-serif" : family, at: now };
+  return appFont.family;
+}
+
+/**
+ * The canvas font that measures text the way a cell draws it: the app font
+ * stands in for the `var(--app-font, ...)` part of the cell's family, so text
+ * is measured in the font it is shown in, not in a wider or narrower one.
+ */
+export function canvasFont(look: Pick<CellLook, "fontPx" | "bold" | "italic" | "fontFamily">, appFamily: string): string {
+  const family = look.fontFamily.includes(FONT_FALLBACK) ? look.fontFamily.replace(FONT_FALLBACK, appFamily) : look.fontFamily;
+  return `${look.italic ? "italic " : ""}${look.bold ? "700 " : ""}${look.fontPx}px ${family}`;
+}
+
 /** Width of text in pixels: measured on a canvas when there is one, estimated from the character count otherwise. */
 export function textWidth(text: string, look: Pick<CellLook, "fontPx" | "bold" | "italic" | "fontFamily">): number {
   if (text === "") return 0;
   const ctx = canvasContext();
   if (ctx === null) return Math.ceil(text.length * look.fontPx * (look.bold ? 0.62 : 0.56));
-  const family = look.fontFamily.includes("var(") ? "system-ui, sans-serif" : look.fontFamily;
-  const font = `${look.italic ? "italic " : ""}${look.bold ? "700 " : ""}${look.fontPx}px ${family}`;
+  const font = canvasFont(look, pageAppFont());
   const key = `${font}|${text}`;
   const known = widths.get(key);
   if (known !== undefined) return known;

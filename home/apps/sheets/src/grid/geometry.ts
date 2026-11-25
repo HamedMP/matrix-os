@@ -14,13 +14,24 @@ export const ROW_HEADER_WIDTH_PX = 56;
 export const MIN_COLUMN_PX = 12;
 export const MIN_ROW_PX = 8;
 
+/**
+ * Pixels per character of a column width. A file gives a column's width in
+ * digits of its default font: 7 px each in Excel's Calibri 11. The grid draws
+ * in a 13 px font whose digits are 8 px wide, so a width counts 8 px per
+ * character here and holds the same numbers and dates as in Excel, instead of
+ * showing `####` for a value that fits there.
+ */
+export const COLUMN_CHAR_PX = 8;
+/** Pixels a column has beyond its characters: the padding on both sides and the grid line. */
+const COLUMN_EXTRA_PX = 5;
+
 /** Spreadsheet column width (characters of the default font) to pixels. */
 export function columnWidthToPx(chars: number): number {
-  return Math.max(0, Math.round(chars * 7 + 5));
+  return Math.max(0, Math.round(chars * COLUMN_CHAR_PX + COLUMN_EXTRA_PX));
 }
 
 export function pxToColumnWidth(px: number): number {
-  return Math.max(0, Math.round(((px - 5) / 7) * 100) / 100);
+  return Math.max(0, Math.round(((px - COLUMN_EXTRA_PX) / COLUMN_CHAR_PX) * 100) / 100);
 }
 
 /** Row height in points to pixels. */

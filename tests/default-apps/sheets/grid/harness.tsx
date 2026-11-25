@@ -8,7 +8,7 @@ import { type SheetSession, openSheetSession } from "../../../../home/apps/sheet
 import { harness } from "../session/fakes";
 
 /** Default column width and row height of a new workbook, and the header sizes, in pixels. */
-export const COL = 64;
+export const COL = 72;
 export const ROW = 20;
 export const HEAD_W = ROW_HEADER_WIDTH_PX;
 export const HEAD_H = HEADER_HEIGHT_PX;
