@@ -222,6 +222,21 @@ export function wakeOnDemandRuntime(
 }
 
 /**
+ * A wake already in flight could have seen a running VM before this suspend
+ * reached hostd. Wait for that result to retire, then request a fresh wake.
+ */
+export async function wakeAfterSuspendAttempt(
+  db: PlatformDB,
+  substrate: RuntimeSubstrate,
+  machine: UserMachineRecord,
+  options: WakeOptions,
+): Promise<WakeResult> {
+  await inFlightWakes.get(machine.machineId);
+  options.signal?.throwIfAborted();
+  return wakeOnDemandRuntime(db, substrate, machine, options);
+}
+
+/**
  * Decides whether a request may proceed to the upstream. VPS machines, an
  * unconfigured substrate, and records in non-wakeable states pass through
  * untouched so the existing routing answers apply.

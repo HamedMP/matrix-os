@@ -5,7 +5,7 @@ import { getUserMachine } from '../database/user-machines.js';
 import type { PlatformDatabase, PlatformDB, UserMachineRecord } from '../db.js';
 import { resolveEffectiveBillingEntitlementForSlot } from '../billing-entitlement-resolver.js';
 import { markRuntimeAsleep } from './runtime-asleep.js';
-import { wakeOnDemandRuntime } from './substrate-wake.js';
+import { wakeAfterSuspendAttempt, wakeOnDemandRuntime } from './substrate-wake.js';
 import type { OnDemandRuntimeSubstrate, RuntimeRef } from './types.js';
 import type { LifecycleRead } from './metal-lifecycle-reader.js';
 
@@ -343,28 +343,34 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       await release();
       return;
     }
-    let outcome: Awaited<ReturnType<OnDemandRuntimeSubstrate['stop']>>;
+    let accepted = false;
     try {
-      outcome = await substrate.stop(refFor(machine),
+      const outcome = await substrate.stop(refFor(machine),
         AbortSignal.any([signal, AbortSignal.timeout(deps.suspendWaitMs ?? SUSPEND_WAIT_MS)]));
+      if (outcome.state === 'failed') {
+        log('sleep_suspend_failed', { machineId: machine.machineId, code: outcome.code });
+      } else {
+        accepted = true;
+      }
     } catch (error: unknown) {
       if (signal.aborted) throw error;
-      // The answer may be lost after hostd suspended the VM: keep the saved wake for the asleep path.
       log('sleep_suspend_failed', { machineId: machine.machineId, code: errorCode(error) });
-      return;
     }
-    if (outcome.state === 'failed') {
-      log('sleep_suspend_failed', { machineId: machine.machineId, code: outcome.code });
-      return;
-    }
+    // A due wake may have run while the suspend request traveled to hostd.
+    // Favor readiness at its deadline even when the suspend reply was lost.
+    const due = verdict.nextWakeAt !== null && verdict.nextWakeAt.getTime() <= clock().getTime();
+    if (!accepted && !due) return;
 
     // Recorded only while still idle: owner activity that arrived during the
     // suspend cancels it below instead of leaving their work interrupted.
-    const recorded = await db.executor.updateTable('user_machines')
+    const awakeWhenClaimed = beforeStop.awakeSince === null ? null : new Date(beforeStop.awakeSince);
+    const recorded = accepted && !due && await db.executor.updateTable('user_machines')
       .set({ status: ASLEEP_STATUS, awake_since: null, wake_failures: 0, ...(verdict.guard ? { idle_guard_at: tickNow } : {}) })
       .where('machine_id', '=', machine.machineId)
       .where('generation', '=', machine.generation)
       .where('status', '=', 'running')
+      .where('next_wake_at', verdict.nextWakeAt === null ? 'is' : '=', verdict.nextWakeAt)
+      .where('awake_since', awakeWhenClaimed === null ? 'is' : '=', awakeWhenClaimed)
       .where('deleted_at', 'is', null)
       .where((eb) => eb.or([
         eb('last_activity_at', '<=', idleBefore),
@@ -375,12 +381,23 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     if (!recorded) {
       const current = await getUserMachine(db, machine.machineId);
       if (current && !current.deletedAt && current.generation === machine.generation && current.status === 'running') {
-        // The owner came back during the suspend: resume the VM right away.
-        log('sleep_cancelled_activity', { machineId: machine.machineId });
-        const { result } = await wakeOnDemandRuntime(db, substrate, current, { now: clock, signal,
+        // An owner request or a scheduled wake beat the suspend. The next
+        // resume must go to hostd after this suspend attempt.
+        log(due ? 'sleep_cancelled_scheduled_wake' : 'sleep_cancelled_activity', { machineId: machine.machineId });
+        const { result } = await wakeAfterSuspendAttempt(db, substrate, current, { now: clock, signal,
           log: (message, detail) => log('sleep_cancel_resume_error', { machineId: machine.machineId, message, ...detail }) });
-        if (result.state === 'running') await release();
-        else log('sleep_cancel_resume_pending', { machineId: machine.machineId, state: result.state });
+        if (accepted && result.state === 'running') {
+          await release();
+        } else if (verdict.nextWakeAt !== null && current.nextWakeAt === null) {
+          // Restore the durable retry if the earlier wake consumed it but the
+          // compensation is pending, or the suspend itself is still uncertain.
+          const awake = current.awakeSince === null ? null : new Date(current.awakeSince);
+          await db.executor.updateTable('user_machines').set({ next_wake_at: verdict.nextWakeAt, wake_failures: 0 })
+            .where('machine_id', '=', current.machineId).where('generation', '=', current.generation)
+            .where('status', '=', 'running').where('deleted_at', 'is', null)
+            .where('awake_since', awake === null ? 'is' : '=', awake).where('next_wake_at', 'is', null).execute();
+        }
+        if (result.state !== 'running') log('sleep_cancel_resume_pending', { machineId: machine.machineId, state: result.state });
         return;
       }
       // The host still sleeps the VM; the ingress reports it asleep and the next request wakes it.

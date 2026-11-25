@@ -535,6 +535,40 @@ describe('metal idle sleeper', () => {
     expect(logs).toContainEqual({ event: 'sleep_cancelled_activity', fields: { machineId: id } });
   });
 
+  it.each([false, true])('keeps a scheduled wake that wins during a suspend (lost reply: %s)', async (loseReply) => {
+    const id = await seedMachine();
+    const wakeAt = new Date(NOW.getTime() + MINUTE);
+    const nextScheduledAt = new Date(wakeAt.getTime() + SCHEDULED_WAKE_LEAD_MS).toISOString();
+    let clock = 0;
+    let asleep = false;
+    let finishStop!: () => void;
+    const suspended = new Promise<void>((resolve) => { finishStop = resolve; });
+    const { sleeper: s, stop, ensureRunning } = sleeper({
+      elapsedMs: () => clock, lifecycle: { ok: true, status: { ...IDLE, nextScheduledAt } },
+    });
+    stop.mockImplementationOnce(async () => {
+      await suspended;
+      asleep = true;
+      if (loseReply) throw new DOMException('timed out', 'TimeoutError');
+      return { state: 'stopping' };
+    });
+    ensureRunning.mockImplementation(async () => { asleep = false; return { state: 'running' }; });
+
+    const sleeping = s.sleepTick(NOW);
+    try {
+      await vi.waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+      clock = MINUTE;
+      await s.wakeTick(wakeAt);
+      expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
+    } finally {
+      finishStop();
+      await sleeping;
+    }
+    expect(ensureRunning).toHaveBeenCalledTimes(2);
+    expect(asleep).toBe(false);
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: loseReply ? wakeAt.toISOString() : null });
+  });
+
   it('a cancelled suspend keeps the saved wake until the resume is confirmed', async () => {
     const scheduledAt = new Date(NOW.getTime() + HOUR);
     const id = await seedMachine();
