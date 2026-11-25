@@ -187,6 +187,8 @@ export class Importer {
     const root = this.target.ensurePart(kind === "footnote" ? "footnotes" : "endnotes");
     const slot = this.target.store.single(kind === "footnote" ? "footnotes" : "endnotes");
     if (slot === null) return null;
+    // The links and images of the note become relationships of the notes part, which must exist for them.
+    this.target.store.registerCreated(slot);
     if (this.nextNoteId[kind] === 0) {
       let highest = 0;
       for (const node of root.children) {

@@ -389,26 +389,36 @@ export class PartStore {
       if (entry.relationshipId !== null) pkg.removeRelationship(this.mainPartName, entry.relationshipId);
       this.registered.delete(key);
     }
-    for (const [key, slot] of this.slots) {
+    for (const slot of this.slots.values()) {
       if (slot.version === slot.packageVersion) continue;
-      const text = encodePart(slot.doc);
-      if (slot.created !== null && !pkg.hasPart(slot.name)) {
-        pkg.setPart(slot.name, text, slot.created.contentType);
-        const existing = pkg
-          .getRelationshipsByType(this.mainPartName, slot.created.relationshipType)
-          .find((entry) => entry.targetMode === "Internal" && partNameKey(pkg.resolveTarget(this.mainPartName, entry.target)) === key);
-        const relationship =
-          existing ??
-          pkg.addRelationship(this.mainPartName, {
-            type: slot.created.relationshipType,
-            target: relativeTargetFor(this.mainPartName, slot.name),
-          });
-        this.registered.set(key, { name: slot.name, relationshipId: existing ? null : relationship.id });
-      } else {
-        pkg.setPart(slot.name, text);
-      }
+      if (!this.registerCreated(slot)) pkg.setPart(slot.name, encodePart(slot.doc));
       slot.packageVersion = slot.version;
     }
     return pkg.save();
+  }
+
+  /**
+   * Puts a part the model created into the package now, with its content
+   * type and its relationship from the main part, instead of on the next
+   * save. Content that adds relationships of its own to the part (a link or
+   * an image in a new note) needs the part to exist first. Returns false when
+   * the slot is not a created part that the package lacks.
+   */
+  registerCreated(slot: PartSlot): boolean {
+    const pkg = this.package;
+    if (slot.created === null || pkg.hasPart(slot.name)) return false;
+    const key = partNameKey(slot.name);
+    pkg.setPart(slot.name, encodePart(slot.doc), slot.created.contentType);
+    const existing = pkg
+      .getRelationshipsByType(this.mainPartName, slot.created.relationshipType)
+      .find((entry) => entry.targetMode === "Internal" && partNameKey(pkg.resolveTarget(this.mainPartName, entry.target)) === key);
+    const relationship =
+      existing ??
+      pkg.addRelationship(this.mainPartName, {
+        type: slot.created.relationshipType,
+        target: relativeTargetFor(this.mainPartName, slot.name),
+      });
+    this.registered.set(key, { name: slot.name, relationshipId: existing ? null : relationship.id });
+    return true;
   }
 }

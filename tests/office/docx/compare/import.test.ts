@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DocxDocument, InlineRun, ParagraphBlock } from "../../../../packages/office/src/api/docx.js";
 import { compareDocx, compareDocxDetailed, openDocx } from "../../../../packages/office/src/docx/index.js";
+import { openPackage } from "../../../../packages/office/src/opc/index.js";
 import { OPTIONS, buildDocx, describeRevisions, expectResolves, loadFixture, p, r, reopen, views } from "./helpers.js";
 
 /*
@@ -129,6 +130,32 @@ describe("content carried over from the revised document", () => {
     const original = await buildDocx({ body: p(r("Read the ") + link("rIdA", "published terms") + r(" first.")), links: { rIdA: "https://example.com/terms" } });
     const revised = await buildDocx({ body: p(r("Read the ") + link("rIdB", "published terms") + r(" first.")), links: { rIdB: "https://example.com/terms" } });
     expect((await compareDocxDetailed(original, revised, OPTIONS)).summary.identical).toBe(true);
+  });
+
+  it("keeps the link and image of a note the original has no notes part for", async () => {
+    const note = p(`<w:r><w:footnoteRef/></w:r>` + r(" See ") + link("rIdNoteLink", "the register") + r(" and ") + picture("rIdNoteSeal"));
+    const original = await buildDocx({ body: p(r("The fee is fixed for the first year.")) });
+    const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    for (const kind of ["footnote", "endnote"] as const) {
+      const reference = `<w:r><w:${kind}Reference w:id="1"/></w:r>`;
+      const notes = { "1": note };
+      const built = await buildDocx({ body: p(r("The fee is fixed") + reference + r(" for the first year.")), ...(kind === "footnote" ? { footnotes: notes } : { endnotes: notes }) });
+      const pkg = await openPackage(built);
+      const notesPart = `/word/${kind}s.xml`;
+      pkg.addRelationship(notesPart, { type: `${R}/hyperlink`, target: "https://example.com/register", targetMode: "External", id: "rIdNoteLink" });
+      pkg.setDefaultContentType("png", "image/png");
+      pkg.setPart("/word/media/note-seal.png", PNG(1));
+      pkg.addRelationship(notesPart, { type: `${R}/image`, target: "media/note-seal.png", id: "rIdNoteSeal" });
+      const revised = await pkg.save();
+      const document = await reopen(await compareDocx(original, revised, OPTIONS));
+      const stories = kind === "footnote" ? document.getView().footnotes : document.getView().endnotes;
+      expect(stories).toHaveLength(1);
+      const runs = (stories[0]?.blocks[0] as ParagraphBlock).runs;
+      expect(runs.find((run) => run.hyperlink !== null)?.hyperlink?.href).toBe("https://example.com/register");
+      const image = runs.find((run) => run.object?.kind === "image");
+      if (image?.object?.kind !== "image" || image.object.partName === null) throw new Error(`the image of the ${kind} did not arrive`);
+      expect(Buffer.from(await document.package.getPartBytes(image.object.partName)).equals(Buffer.from(PNG(1)))).toBe(true);
+    }
   });
 
   it("copies an image of an inserted paragraph into the result", async () => {
