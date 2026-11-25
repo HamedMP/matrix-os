@@ -200,7 +200,7 @@ describe("VM lifecycle", () => {
     expect(env).toContain("HOTPLUG_MIB=6144\n");
     expect(env).toContain("MAC=52:54:00:78:00:0a\n");
     expect(env).toContain("BRIDGE=brmx\n");
-    expect(env).toContain(`SERIAL_PATH=${join(root, "log")}/${vm.id}.serial\n`);
+    expect(env).not.toContain("SERIAL_PATH=");
     expect(env).not.toContain("machine-1");
     expect(execCalls.at(-1)).toEqual(["systemctl", "start", `matrix-vm@${vm.id}.service`]);
     const order = execCalls.map((c) => c[0]);
@@ -260,6 +260,18 @@ describe("VM lifecycle", () => {
     expect(count("ch:pause")).toBe(0);
     expect(execCalls).toEqual([]);
     await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("routes tenant serial logs to a rate-limited journal for boots and restores", async () => {
+    const boot = await readFile(join(UNIT_DIR, "matrix-vm@.service"), "utf8");
+    const restore = await readFile(join(UNIT_DIR, "matrix-vm-restore@.service"), "utf8");
+    expect(boot).toContain("--serial tty");
+    for (const unit of [boot, restore]) {
+      expect(unit).toContain("StandardOutput=journal");
+      expect(unit).toContain("LogNamespace=matrix-vm");
+      expect(unit).toMatch(/^LogRateLimitBurst=[1-9]\d*$/m);
+      expect(unit).not.toMatch(/^(?:LogsDirectory|ReadWritePaths=.*\/var\/log\/matrix-vm)/m);
+    }
   });
 
   it("resume restores with memory_restore_mode=ondemand and returns running once the gateway is healthy", async () => {

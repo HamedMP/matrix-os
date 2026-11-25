@@ -345,7 +345,6 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       TAP: `mxtap${address - IP_FIRST}`,
       MAC: record.mac,
       BRIDGE: cfg.bridge,
-      SERIAL_PATH: join(cfg.serialLogDir, `${id}.serial`),
       SNAPSHOT_DIR: snapshotDir(id),
       VM_USER: cfg.vmUser,
     };

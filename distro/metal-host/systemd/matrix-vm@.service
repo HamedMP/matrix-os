@@ -16,7 +16,12 @@ Group=matrix-vm
 SupplementaryGroups=kvm
 RuntimeDirectory=matrix-vm/%i
 RuntimeDirectoryMode=0700
-LogsDirectory=matrix-vm
+# Guest output is untrusted. The dedicated journal has a host-wide size
+# limit and this unit has a rate limit.
+StandardOutput=journal
+LogNamespace=matrix-vm
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=500
 ExecStartPre=+-/usr/sbin/ip link delete ${TAP}
 ExecStartPre=+/usr/sbin/ip tuntap add dev ${TAP} mode tap user ${VM_USER} group ${VM_USER}
 # The tap is up before the VMM opens it: Cloud Hypervisor then needs no
@@ -38,7 +43,7 @@ ExecStart=/usr/local/bin/cloud-hypervisor \
   --disk path=${DISK},image_type=raw path=${SEED},image_type=raw,readonly=on \
   --net tap=${TAP},mac=${MAC} \
   --vsock cid=${VSOCK_CID},socket=${VSOCK_SOCKET} \
-  --serial file=${SERIAL_PATH} \
+  --serial tty \
   --console off
 ExecStopPost=+-/usr/sbin/ip link delete ${TAP}
 Restart=no
@@ -51,5 +56,4 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/var/lib/matrix-hostd/snapshots /var/log/matrix-vm
-
+ReadWritePaths=/var/lib/matrix-hostd/snapshots
