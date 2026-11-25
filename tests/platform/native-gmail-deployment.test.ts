@@ -8,10 +8,12 @@ const steps = workflow.jobs.deploy.steps as { name: string; run?: string; if?: s
 const step = (name: string) => steps.find(entry => entry.name === name);
 const callback = 'https://app.example.com/api/integrations/gmail/oauth/callback';
 const baseEnv: Record<string, string> = {
-  ...Object.fromEntries(Object.keys(workflow.jobs.deploy.env).map(key => [key, 'fixture'])),
+  ...Object.fromEntries(Object.entries(workflow.jobs.deploy.env).map(([key, value]) =>
+    [key, typeof value === 'string' ? /\|\| '([^']*)'/.exec(value)?.[1] ?? 'fixture' : String(value)])),
+  GITHUB_SHA: 'a'.repeat(40), GITHUB_RUN_ID: '1', GITHUB_REPOSITORY: 'HamedMP/matrix-os',
   DEPLOY_ENVIRONMENT: 'staging', PLATFORM_PUBLIC_URL: 'https://app.example.com',
-  MATRIX_API_ORIGIN: 'https://api.example.com', CUSTOM_MCP_ENABLED: 'false',
-  WHATSAPP_ENABLED: 'false', WHATSAPP_ENCRYPTION_KEY_VERSION: '1',
+  MATRIX_API_ORIGIN: 'https://api.example.com', CUSTOM_MCP_ENABLED: 'false', MATRIX_PUBLIC_SITES_ENABLED: 'false',
+  WHATSAPP_ENABLED: 'false', WHATSAPP_ENCRYPTION_KEY_VERSION: '1', WHATSAPP_BUSINESS_PHONE_NUMBER: '', WHATSAPP_ADMISSION_MODE: 'allowlist',
   GOLDEN_SNAPSHOT_BUILDS_ENABLED: 'false', MATRIX_CARD_TRIALS_ENABLED: 'true',
   MATRIX_CARD_TRIAL_DAYS: '3', MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '4',
   PLATFORM_SPEECH_ENABLED: 'false', MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: 'false',
