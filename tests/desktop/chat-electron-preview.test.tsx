@@ -30,10 +30,10 @@ function acceptVerificationDraft(
   run: CanonicalChatDetailResponse["runs"][number],
 ) {
   act(() => {
-    const finish = draft?.beginSubmission();
-    expect(finish).toBeTypeOf("function");
-    draft?.accept(run);
-    finish?.();
+    const submission = draft?.beginSubmission(run.id);
+    expect(submission).toBeDefined();
+    submission?.accept(run);
+    submission?.finish();
   });
 }
 
