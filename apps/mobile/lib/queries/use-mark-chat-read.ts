@@ -17,6 +17,23 @@ import { mergeChatReadState } from "@/lib/shared-chat-state";
  * while it was open.
  */
 type MarkReadRequest = Extract<CanonicalUpdateChatReadStateRequest, { type: "mark_read" }>;
+type ReadVisit = {
+  scope: string;
+  initialVersion: number;
+  request: MarkReadRequest | null;
+  generation: number;
+  attempt?: string;
+  dueAt?: number;
+};
+
+function pauseVisit(visit: ReadVisit | null) {
+  if (!visit) return;
+  if (visit.request) visit.generation += 1;
+  visit.request = null;
+  visit.dueAt = undefined;
+}
+
+const attemptKey = (request: MarkReadRequest) => `${request.baseVersion}:${request.throughSeq}`;
 
 export function chatReadAcknowledgement(
   detail: CanonicalChatDetailResponse,
@@ -60,9 +77,7 @@ export function useMarkChatRead(detail: CanonicalChatDetailResponse | null, chat
     mutationFn: (operation: () => Promise<void>) => operation(),
     networkMode: "always", retry: false, gcTime: 0,
   });
-  const visit = useRef<{
-    scope: string; initialVersion: number; blocked: boolean; attempt?: string; dueAt?: number;
-  } | null>(null);
+  const visit = useRef<ReadVisit | null>(null);
   const inFlight = useRef(false);
   const mounted = useRef(false);
   const [completion, settled] = useState(0);
@@ -78,21 +93,23 @@ export function useMarkChatRead(detail: CanonicalChatDetailResponse | null, chat
       return;
     }
     if (visit.current?.scope !== scope) visit.current = null;
-    if (!detail || detail.record.chat.id !== chatId || !detail.record.readState) return;
+    if (!detail || detail.record.chat.id !== chatId || !detail.record.readState) { pauseVisit(visit.current); return; }
     const version = detail.record.readState.version;
-    if (!visit.current) visit.current = { scope, initialVersion: version, blocked: false };
+    if (!visit.current) visit.current = { scope, initialVersion: version, request: null, generation: 0 };
     const current = visit.current;
-    current.blocked = detail.record.readState.markedUnread && version > current.initialVersion;
-    if (!appActive || drawerOpen || current.blocked) { current.dueAt = undefined; return; }
-    const request = chatReadAcknowledgement(detail, current.initialVersion);
-    if (!request) { current.dueAt = undefined; return; }
-    const attempt = `${request.baseVersion}:${request.throughSeq}`;
-    if (current.attempt === attempt || inFlight.current) return;
+    const request = appActive && !drawerOpen ? chatReadAcknowledgement(detail, current.initialVersion) : null;
+    if (!request) { pauseVisit(current); return; }
+    // Content refreshes replace the candidate without ending this visible visit.
+    // A real pause advances the generation, so foregrounding cannot revive an
+    // obsolete token lookup or a queued operation from before the pause.
+    current.request = request;
+    if (current.attempt === attemptKey(request) || inFlight.current) return;
     // New streamed content replaces the pending acknowledgement without pushing
     // its deadline back. A busy stream must not starve read marking.
     current.dueAt ??= Date.now() + 2_000;
-    let cancelled = false;
-    const isCurrent = () => !cancelled && mounted.current && visit.current === current;
+    const generation = current.generation;
+    const isCurrent = () => mounted.current && visit.current === current
+      && current.generation === generation && current.request !== null;
     const timer = setTimeout(() => {
       inFlight.current = true;
       current.dueAt = Date.now() + 2_000;
@@ -101,11 +118,14 @@ export function useMarkChatRead(detail: CanonicalChatDetailResponse | null, chat
         if (!isCurrent()) return;
         const gateway = await session();
         if (!isCurrent()) return;
+        const latest = current.request!;
+        const attempt = attemptKey(latest);
+        if (current.attempt === attempt) return;
         current.attempt = attempt;
         if (!gateway) return;
         // A failed lookup, stale-version refusal or request failure waits for
         // a newer snapshot or another visit, never a retry loop.
-        const record = await updateChatReadState(gateway.token, gateway.gatewayUrl, chatId, request);
+        const record = await updateChatReadState(gateway.token, gateway.gatewayUrl, chatId, latest);
         if (!isCurrent()) return;
         queryClient.setQueryData<CanonicalChatDetailResponse>(
           mobileQueryKeys.canonicalChatDetail(userId, computerKey, chatId),
@@ -115,13 +135,13 @@ export function useMarkChatRead(detail: CanonicalChatDetailResponse | null, chat
         );
         void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChats(userId, computerKey) });
       }).catch((error: unknown) => {
-        if (isCurrent()) current.attempt = attempt;
+        if (isCurrent()) current.attempt = attemptKey(current.request!);
         console.warn("[chat] Read state update failed:", error instanceof Error ? error.name : "UnknownError");
       }).finally(() => {
         inFlight.current = false;
         if (mounted.current) settled((value) => value + 1);
       });
     }, Math.max(0, current.dueAt - Date.now()));
-    return () => { cancelled = true; clearTimeout(timer); };
+    return () => clearTimeout(timer);
   }, [focused, appActive, drawerOpen, ready, detail, chatId, session, queryClient, userId, computerKey, completion, acknowledge]);
 }

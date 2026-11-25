@@ -272,6 +272,32 @@ describe("useMarkChatRead", () => {
     expect(client.getQueryData<CanonicalChatDetailResponse>(detailKey)?.record.readState).toEqual(unread);
   });
 
+  it("uses the newest committed reply when streaming updates arrive during token lookup", async () => {
+    const { rerender } = renderMarkRead(detail(unread));
+    await ready();
+    let finishToken!: (token: string) => void;
+    mockGetToken.mockReturnValueOnce(new Promise<string>((resolve) => { finishToken = resolve; }));
+    await advance();
+    rerender({ shown: detail({ ...unread, version: 3, latestIncomingSeq: 6 }, [message(6, "assistant"), message(7, "assistant", "pending")]) });
+    await act(async () => finishToken("fresh-token"));
+    expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1);
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("fresh-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
+  });
+
+  it("cancels a token lookup across background/foreground even if the same chat becomes visible again", async () => {
+    renderMarkRead(detail(unread));
+    await ready();
+    let finishToken!: (token: string) => void;
+    mockGetToken.mockReturnValueOnce(new Promise<string>((resolve) => { finishToken = resolve; }));
+    await advance();
+    act(() => appStateListener?.("background"));
+    act(() => appStateListener?.("active"));
+    await act(async () => finishToken("obsolete-token"));
+    expect(mockUpdateChatReadState).not.toHaveBeenCalled();
+    await advance();
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 });
+  });
+
   it("keeps one read in flight while newer committed replies arrive, then acknowledges the latest snapshot", async () => {
     let finish!: (record: CanonicalChatRecord) => void;
     mockUpdateChatReadState.mockReturnValueOnce(new Promise<CanonicalChatRecord>((resolve) => { finish = resolve; }));
