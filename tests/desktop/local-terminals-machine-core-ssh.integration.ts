@@ -48,8 +48,14 @@ async function sshd(home: string): Promise<number> {
   });
 }
 
-async function pointAt(port: number) {
-  await writeFile(config, `Host box\n HostName 127.0.0.1\n Port ${port}\n User ${userInfo().username}\n IdentityFile ${root}/client_key\n IdentitiesOnly yes\n StrictHostKeyChecking yes\n UserKnownHostsFile ${root}/known_hosts\n`);
+async function pointAt(port: number, withJump = false) {
+  await writeFile(config, [
+    "Host box", ` Port ${port}`,
+    ...(withJump ? ["Host jump", ` Port ${second}`] : []),
+    "Host box jump", " HostName 127.0.0.1", ` User ${userInfo().username}`,
+    ` IdentityFile ${root}/client_key`, " IdentitiesOnly yes",
+    " StrictHostKeyChecking yes", ` UserKnownHostsFile ${root}/known_hosts`, "",
+  ].join("\n"));
 }
 
 beforeAll(async () => {
@@ -188,14 +194,18 @@ describe("machine update on one verified SSH connection", () => {
     await expect(readFile(upload)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("runs the pinned Herdr machine updater through the guarded custom route", async () => {
+  it.each(["direct", "jump host"] as const)("runs the pinned Herdr updater on the verified %s route", async (kind) => {
     // Required for this explicit integration lane: no silently skipped proof.
     const binary = process.env.MATRIX_DESKTOP_HC_PATH;
     if (!binary) throw new Error("MATRIX_DESKTOP_HC_PATH must name the pinned Herdr 0.1.19 binary");
-    const { env, home, route } = await fixture();
+    const { env, home, route: fixtureRoute } = await fixture();
+    const withJump = kind === "jump host";
+    const jump = withJump ? ["-J", "jump"] : [];
+    const route = [fixtureRoute[0]!, ...jump, "--", "box"];
+    await pointAt(first, withJump);
     await copyFile(binary, join(home, ".local/bin/herdr-core"));
     await chmod(join(home, ".local/bin/herdr-core"), 0o700);
-    const local = join(root, "private-core");
+    const local = join(root, withJump ? "core-jump" : "core-direct");
     await mkdir(join(local, "run"), { recursive: true, mode: 0o700 });
     const localEnv = {
       ...env, HC_SESSION: "mx", XDG_STATE_HOME: join(local, "state"),
@@ -204,11 +214,11 @@ describe("machine update on one verified SSH connection", () => {
     const coreCli = (args: string[]) => exec(binary, args, { env: localEnv, timeout: 20_000 });
     try {
       await coreCli(["server", "start"]);
-      const via = `ssh -F '${config}' -- box`;
+      const via = ["ssh", "-F", `'${config}'`, ...jump, "--", "box"].join(" ");
       const added = JSON.parse((await coreCli(["machine", "add", "--json", "--name", "box", "--via", via])).stdout);
       const core = createMachineCore({
         cli: async () => ({ binary, env: localEnv }),
-        run: async (...args) => { await pointAt(second); await runCoreCli(...args); },
+        run: async (...args) => { await pointAt(second, withJump); await runCoreCli(...args); },
       });
       await writeFile(join(root, "probes"), "");
       expect(await core.update("box", { coreId: added.id, ssh: route })).toEqual({ ok: true });
@@ -218,7 +228,7 @@ describe("machine update on one verified SSH connection", () => {
       expect((await coreCli(["machine", "ls", "--json"])).stdout).toContain(added.id);
     } finally {
       await coreCli(["server", "stop"]);
-      await pointAt(first);
+      await pointAt(first, withJump);
       // Stop only the fixture's remote core, under its private XDG paths.
       await exec(route[0]!, [...route.slice(1), `"${home}/.local/bin/herdr-core" server stop`], { env, timeout: 20_000 });
     }

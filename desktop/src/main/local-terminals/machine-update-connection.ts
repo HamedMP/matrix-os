@@ -57,9 +57,9 @@ async function executable(name: string, env: Record<string, string>): Promise<st
   throw new Error(`missing update transport: ${name}`);
 }
 
-/** OpenSSH's -S overrides config; remove Herdr's -S before selecting our socket.
- * Put all no-fallback options first: OpenSSH keeps the first -o value. SCP also
- * uses this shim via -S, so SFTP and the Windows installer cannot dial afresh.
+/** The master has already followed the configured jump route. Strip Herdr's
+ * socket and jump options so children can only reuse it. OpenSSH keeps the
+ * first -o value, and SCP uses the same shim for its SSH transport.
  */
 function sshShim(binary: string, socket: string): string {
   return `#!/bin/sh
@@ -68,8 +68,8 @@ n=$#
 while [ "$n" -gt 0 ]; do
   a=$1; shift; n=$((n - 1))
   case "$a" in
-    -S) [ "$n" -gt 0 ] || exit 2; shift; n=$((n - 1));;
-    -S?*) ;;
+    -S|-J) [ "$n" -gt 0 ] || exit 2; shift; n=$((n - 1));;
+    -S?*|-J?*) ;;
     *) set -- "$@" "$a";;
   esac
 done
