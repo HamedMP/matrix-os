@@ -63,6 +63,7 @@ it("keeps a visible, aligned Cancel setup button while a floating Web Chat grows
     proposals: [
       { path: "AGENTS.md", content: "# Harbor\n\n" + "Confirm volunteer availability first.\n\n".repeat(24), status: "pending" },
       { path: "CLAUDE.md", content: "@AGENTS.md\n", status: "symlink_skipped" },
+      { path: ".agents/skills/shift-review/SKILL.md", content: "# Shift Review\n", status: "destination_unavailable" },
     ],
   };
   let reviewReady = false;
@@ -115,12 +116,14 @@ it("keeps a visible, aligned Cancel setup button while a floating Web Chat grows
 
     reviewReady = true;
     await page.getByRole("button", { name: "Receive completed Chat frame" }).click();
-    const save = page.getByRole("button", { name: "Save project setup", exact: true });
+    const save = page.getByRole("button", { name: "Save available files", exact: true });
     await save.waitFor({ timeout: 8_000 });
     await save.scrollIntoViewIfNeeded();
     expect(await save.isEnabled()).toBe(true);
     expect(await page.getByRole("region", { name: "Review CLAUDE.md" }).count()).toBe(0);
-    await page.getByText("CLAUDE.md · Symbolic link preserved", { exact: true }).scrollIntoViewIfNeeded();
+    expect(await page.getByRole("region", { name: "Review .agents/skills/shift-review/SKILL.md" }).count()).toBe(0);
+    expect(await page.getByText("CLAUDE.md · Symbolic link preserved", { exact: true }).count()).toBe(1);
+    await page.getByText(".agents/skills/shift-review/SKILL.md · Destination unavailable", { exact: true }).scrollIntoViewIfNeeded();
     expect((await cancel.boundingBox())!.y).toBeCloseTo(initialBox.y, 0);
     if (evidenceDir) await page.locator("[data-test-window]").screenshot({ path: join(evidenceDir, "web-setup-review.png") });
     await cancel.click();

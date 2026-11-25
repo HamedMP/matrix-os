@@ -46,6 +46,7 @@ const skillQuestion = "What should the release checklist verify before an illust
 const skillSuggestion = "Run release checks";
 const toolQuestion = "Would you like to connect Linear?";
 const reviewReply = "Review the setup before saving.";
+const failedCorrection = "Restrict access to the project team.";
 const correction = "Make the archive private to the design team.";
 const correctedReply = "Review the private archive setup.";
 const internalPrompt = "Project setup interview.";
@@ -97,7 +98,7 @@ function setupFixture() {
       activities: [],
       queuedTurns: [],
     });
-  const append = (userText: string, assistantText: string, runId?: string) => {
+  const append = (userText: string, assistantText: string | null, runId?: string) => {
     const turnId = `cturn_setup_${turns.length + 1}`;
     const inputMessageId = `msg_setup_${messages.length + 1}`;
     turns.push({
@@ -114,6 +115,7 @@ function setupFixture() {
       ["user", userText],
       ["assistant", assistantText],
     ] as const) {
+      if (text === null) continue;
       messages.push({
         id: `msg_setup_${messages.length + 1}`,
         chatId,
@@ -240,11 +242,17 @@ function setupFixture() {
         append(internalPrompt, internalReply, "run_setup_interview");
         next.currentQuestionMessageId = append(action.text, reviewReply);
       } else if (action.type === "interview_answer" && next.interview?.focus === "review") {
-        expect(action.text).toBe(correction);
-        next.answers.purpose = correction;
-        next.proposals = next.proposals.map(file => file.path === "AGENTS.md"
-          ? { ...file, content: `${file.content}\n\n${correction}\n` } : file);
-        next.currentQuestionMessageId = append(action.text, correctedReply);
+        if (action.text === failedCorrection) {
+          next.generation = { status: "failed" };
+          append(action.text, null);
+        } else {
+          expect(action.text).toBe(correction);
+          next.generation = { status: "completed" };
+          next.answers.purpose = correction;
+          next.proposals = next.proposals.map(file => file.path === "AGENTS.md"
+            ? { ...file, content: `${file.content}\n\n${correction}\n` } : file);
+          next.currentQuestionMessageId = append(action.text, correctedReply);
+        }
       } else if (action.type === "save") {
         for (const file of next.proposals) {
           files.set(file.path, file.content);
@@ -510,7 +518,14 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-compact-review.png") });
     await page.setViewportSize({ width: 1280, height: 900 });
 
+    await composer.fill(failedCorrection);
+    await composer.press("Enter");
+    await page.getByRole("alert").filter({ hasText: "Your answers are kept" }).waitFor();
+    expect(state.draft?.answers.purpose).toBe(purpose);
+    expect(await page.getByRole("button", { name: "Save project setup", exact: true }).count()).toBe(0);
     await composer.fill(correction);
+    expect(await page.getByRole("button", { name: "Send", exact: true }).isEnabled()).toBe(true);
+    await page.screenshot({ path: join(evidence, "electron-setup-fixture-revise-after-failure.png") });
     await composer.press("Enter");
     await messages.getByText(correctedReply, { exact: true }).waitFor();
     expect(state.draft?.answers.purpose).toBe(correction);
