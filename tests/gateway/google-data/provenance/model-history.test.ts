@@ -120,16 +120,45 @@ describe('authoritative model-history classification', () => {
     expect((await sql`SELECT 1 FROM google_model_history_births`.execute(repository.kysely)).rows).toHaveLength(1);
     expect(await history.inspect(owner, results[0]!.chat.id)).toEqual({ classification: 'ordinary' });
   });
-  it('rolls back all chat writes if classification capacity is exhausted', async () => {
+  it('creates the chat without a birth when classification capacity is exhausted', async () => {
     const capped = createGoogleModelHistoryStore(repository.kysely, { maxBirthsPerOwner: 1 });
     const repo = new ChatRepository(repository.kysely, false, undefined, {
       onServerCreatedEmptyChat: (tx, subject, chatId, receipt) => capped.recordServerCreatedEmptyChat(tx, subject, chatId, receipt),
     });
-    await repo.create(owner, input('first'));
-    await expect(repo.create(owner, input('second'))).rejects.toThrow();
-    expect(await repo.get(owner, 'chat_second')).toBeNull();
-    expect((await sql`SELECT 1 FROM chat_outbox WHERE chat_id='chat_second'`.execute(repository.kysely)).rows).toHaveLength(0);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await repo.create(owner, input('first'));
+      await repo.create(owner, input('second'));
+      await repo.create(owner, input('third'));
+    } finally { warn.mockRestore(); }
+    expect(await repo.get(owner, 'chat_second')).not.toBeNull();
+    expect((await sql`SELECT 1 FROM chat_outbox WHERE chat_id='chat_second'`.execute(repository.kysely)).rows.length).toBeGreaterThan(0);
+    expect(await history.inspect(owner, 'chat_first')).toEqual({ classification: 'ordinary' });
+    expect(await history.inspect(owner, 'chat_second')).toEqual({ classification: 'unknown' });
+    expect(warn.mock.calls.flat().join(' ')).not.toContain(owner.ownerId);
     await repo.create(outsider, input('other_owner'));
+    expect(await history.inspect(outsider, 'chat_other_owner')).toEqual({ classification: 'ordinary' });
+  });
+  it('creates the chat without a birth when the classification lock times out', async () => {
+    await repository.kysely.connection().execute(async held => {
+      await sql`SELECT pg_advisory_lock(551035504)`.execute(held);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try { await repository.create(owner, input('lock_timeout')); }
+      finally { warn.mockRestore(); await sql`SELECT pg_advisory_unlock_all()`.execute(held); }
+    });
+    expect(await repository.get(owner, 'chat_lock_timeout')).not.toBeNull();
+    expect(await history.inspect(owner, 'chat_lock_timeout')).toEqual({ classification: 'unknown' });
+  }, 15_000);
+  it('restores the caller transaction timeouts after recording a birth', async () => {
+    await repository.withTransaction(async tx => {
+      await sql`SET LOCAL statement_timeout = '30s'`.execute(tx.kysely);
+      await sql`SET LOCAL lock_timeout = '7s'`.execute(tx.kysely);
+      await tx.create(owner, input('caller_settings'));
+      const settings = (await sql<{ statement: string; lock: string }>`SELECT current_setting('statement_timeout') AS statement,
+        current_setting('lock_timeout') AS lock`.execute(tx.kysely)).rows[0];
+      expect(settings).toEqual({ statement: '30s', lock: '7s' });
+    });
+    expect(await history.inspect(owner, 'chat_caller_settings')).toEqual({ classification: 'ordinary' });
   });
   it('does not classify organization ownership using a matching personal owner id', async () => {
     const organization: ChatOwner = { type: 'organization', ownerId: owner.ownerId };

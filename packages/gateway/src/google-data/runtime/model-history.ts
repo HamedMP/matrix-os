@@ -1,9 +1,9 @@
 import { CanonicalChatIdSchema, CanonicalOwnerScopeSchema } from '@matrix-os/contracts';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type Transaction } from 'kysely';
 import { z } from 'zod/v4';
 import { consumeServerChatInsertReceipt, type ServerChatInsertReceipt } from '../../chat/creation-repository.js';
 import type { ChatOwner } from '../../chat/records.js';
-import { boundedProvenanceTransaction } from '../provenance/transaction.js';
+import { boundedProvenanceSavepoint, boundedProvenanceTransaction } from '../provenance/transaction.js';
 import { createGoogleContextStore, type GoogleContext } from './contexts.js';
 import { lockGoogleContexts } from './contexts-schema.js';
 import { migrateOrdinaryCopyReceipts } from '../provenance/ordinary-copy-receipts.js';
@@ -15,6 +15,23 @@ export class GoogleModelHistoryUnavailable extends Error {
   constructor() { super('Saved context unavailable'); this.name = 'GoogleModelHistoryUnavailable'; }
 }
 const deny = (): never => { throw new GoogleModelHistoryUnavailable(); };
+class BirthCapacityExhausted extends Error {
+  constructor() { super('Birth capacity exhausted'); this.name = 'BirthCapacityExhausted'; }
+}
+const loggedSkips: Record<'BirthCapacityExhausted' | 'TimeoutError', boolean> = { BirthCapacityExhausted: false, TimeoutError: false };
+/** A birth is classification only: an unborn chat is already `unknown` (fail-closed for Google use), so
+ * capacity exhaustion or a bounded lock/statement timeout must never fail ordinary chat creation. */
+function isSkippableBirthFailure(error: unknown): error is Error {
+  if (error instanceof BirthCapacityExhausted) return true;
+  const code = (error as { code?: unknown } | null)?.code;
+  return error instanceof Error && (code === '55P03' || code === '57014');
+}
+function logSkippedBirth(error: Error): void {
+  const reason = error instanceof BirthCapacityExhausted ? 'BirthCapacityExhausted' as const : 'TimeoutError' as const;
+  if (loggedSkips[reason]) return;
+  loggedSkips[reason] = true;
+  console.warn('[google-data] Chat history birth skipped:', reason);
+}
 const revisionSchema = z.number().int().min(1).max(2_147_483_647).optional();
 
 /** Private trusted composition, not a client approval API. Birth proves only the server-created empty
@@ -51,13 +68,14 @@ export function createGoogleModelHistoryStore<DB>(db: Kysely<DB>, options: Googl
       });
     },
     /** Install only on successful canonical empty-chat INSERT, before its transaction commits.
-     * A row updated/created in another transaction cannot receive a retrospective birth. */
+     * A row updated/created in another transaction cannot receive a retrospective birth. Runs in a
+     * savepoint; capacity or timeout skips the birth (chat stays `unknown`) instead of failing creation. */
     async recordServerCreatedEmptyChat<T>(tx: Kysely<T>, ownerInput: ChatOwner, chatIdInput: string, receipt: ServerChatInsertReceipt): Promise<void> {
       const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
       const chatId = CanonicalChatIdSchema.parse(chatIdInput);
       if (owner.type !== 'personal') return;
       if (!tx.isTransaction || !consumeServerChatInsertReceipt(receipt, tx, owner, chatId)) deny();
-      await boundedProvenanceTransaction(tx, async executor => {
+      try { await boundedProvenanceSavepoint(tx as Transaction<T>, async executor => {
         await lockGoogleContexts(executor);
         const fresh = (await sql`SELECT 1 FROM chats c WHERE c.id=${chatId} AND c.owner_type=${owner.type}
           AND c.owner_id=${owner.ownerId} AND c.xmin=pg_current_xact_id()::xid
@@ -70,10 +88,13 @@ export function createGoogleModelHistoryStore<DB>(db: Kysely<DB>, options: Googl
         if (!fresh) deny();
         const count = (await sql<{ total: number; owned: number }>`SELECT count(*)::int AS total,
           count(*) FILTER(WHERE owner_id=${owner.ownerId} AND owner_type=${owner.type})::int AS owned FROM google_model_history_births`.execute(executor)).rows[0]!;
-        if (count.total >= maxBirths || count.owned >= maxOwned) deny();
+        if (count.total >= maxBirths || count.owned >= maxOwned) throw new BirthCapacityExhausted();
         await sql`INSERT INTO google_model_history_births(chat_id,owner_type,owner_id)
           VALUES(${chatId},${owner.type},${owner.ownerId}) ON CONFLICT(chat_id) DO NOTHING`.execute(executor);
-      });
+      }); } catch (error) {
+        if (!isSkippableBirthFailure(error)) throw error;
+        logSkippedBirth(error);
+      }
     },
     async inspect(ownerInput: ChatOwner, chatIdInput: string): Promise<GoogleModelHistory> {
       const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
