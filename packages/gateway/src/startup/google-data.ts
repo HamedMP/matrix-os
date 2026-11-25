@@ -77,7 +77,7 @@ export async function createGoogleBrokerRuntime<DB>(options: {
     if (options.pilotAdmission && !pilotOwner(binding)) return null;
     if (binding.accessSourceId === 'matrix_included') {
       try { return await managed.resolveIdentity(binding, AbortSignal.any([signal, closing.signal])); }
-      catch (error) { console.warn('[google-data] Managed processing identity unavailable'); return null; }
+      catch (error) { console.warn('[google-data] Managed processing identity unavailable', error instanceof Error ? 'Error' : 'UnknownError'); return null; }
     }
     const identity = observedIdentity(binding); const runSignal = live(binding); const credentials = options.credentials;
     // Only the current explicit API-key broker exposes a durable credential generation.

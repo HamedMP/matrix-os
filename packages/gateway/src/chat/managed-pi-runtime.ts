@@ -46,6 +46,8 @@ interface Active {
   queue: ReturnType<typeof createCanonicalCliEventQueue<Event>>;
   stopping: boolean; stopCause?: "cancelled" | "lease_lost"; finished: boolean;
   worker?: ReturnType<typeof createBotWorkerDrain>;
+  execution?: Promise<unknown>;
+  admission?: Promise<ManagedPiRuntimeBinding>;
   renewal?: { stop(): Promise<void> };
   routineSource?: ManagedPiRoutineSource;
   renewalStopped?: Promise<void>;
@@ -100,7 +102,7 @@ export function createManagedPiRuntime(deps: {
     if (run.finished) { if (force) await release(run); return; }
     if (run.stopping && !force) return;
     const firstStop = !run.stopping;
-    run.stopping = true; run.stopCause = cause;
+    run.stopping = true; if (firstStop) run.stopCause = cause;
     run.routineSource?.end();
     if (cause === "cancelled") run.worker?.stop();
     else if (run.worker) void run.worker.release().catch((error: unknown) => {
@@ -154,8 +156,19 @@ export function createManagedPiRuntime(deps: {
         assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } }), inputs => inputs.dispose());
       await cancellation.wait(() => run.inputs!.revalidate());
       stage = "admission";
-      run.binding = await cancellation.wait(() => deps.admission.admit({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, resolved }), binding => deps.admission.release(binding.runtimeHandle, binding.executionGeneration));
-      run.tracked.bind(run.binding, () => stop(input.runId, "cancelled", true));
+      run.admission = deps.admission.admit({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, resolved }).then(async binding => {
+        run.binding = binding;
+        run.tracked.bind(binding, () => stop(input.runId, "cancelled", true));
+        if (signal.aborted || run.stopping || run.finished) {
+          try { await release(run); }
+          catch (error: unknown) {
+            console.warn("[managed-pi] late resource cleanup failed", diagnosticErrorName(error));
+            throw error;
+          }
+        }
+        return binding;
+      });
+      run.binding = await cancellation.wait(() => run.admission!);
       if (Boolean(run.binding.projectSetupDraft) !== run.setupDraft || (run.setupDraft && run.binding.capabilities.length)
         || input.context?.projectSetupDraft?.mode !== run.binding.projectSetupDraft?.mode) throw new BotBrokerActionError("not_granted");
       if (signal.aborted || run.stopping) return cancelled();
@@ -189,8 +202,12 @@ export function createManagedPiRuntime(deps: {
       stage = "worker_dispatch";
       run.worker = createBotWorkerDrain({ release: () => release(run),
         onError: error => console.warn("[managed-pi] grace release failed", diagnosticErrorName(error)) });
-      const reply = await cancellation.waitBusy(() => run.worker!.track(deps.host.client.runBot({ runtimeHandle: run.binding!.runtimeHandle, executionGeneration: run.binding!.executionGeneration,
-        command: { version: 1, kind: "bot.run", runId: input.runId }, signal: run.worker!.signal })));
+      const reply = await cancellation.waitBusy(() => {
+        const execution = run.worker!.track(deps.host.client.runBot({ runtimeHandle: run.binding!.runtimeHandle, executionGeneration: run.binding!.executionGeneration,
+          command: { version: 1, kind: "bot.run", runId: input.runId }, signal: run.worker!.signal }));
+        run.execution = execution;
+        return execution;
+      });
       if (signal.aborted || run.stopping) return cancelled();
       const outcome = reply.ok ? BotRunOutcomeSchema.safeParse(reply.reply) : undefined;
       if (outcome?.success && outcome.data.runId === input.runId && outcome.data.status === "completed") return { type: "run.completed", outcome: "completed" };
@@ -223,18 +240,24 @@ export function createManagedPiRuntime(deps: {
       await stopRenewal(run);
       if (run.stopping && run.worker) run.worker.stop();
       // Prompt cancellation stays bounded; quiescence separately awaits actual cleanup.
-      run.cleanup = Promise.all([
+      const localCleanup = Promise.all([
         run.routineSource?.close(),
         run.toolClose ?? (run.setupDraft ? undefined : deps.ownerTools?.closeRun(input.runId)),
+      ]);
+      run.cleanup = Promise.all([
+        localCleanup,
         (async () => {
           if (run.stopping && run.worker) await run.worker.done;
+          if (deps.quiescence && run.execution) await Promise.allSettled([run.execution]);
           await (run.worker?.release() ?? release(run));
         })(),
       ]).then(() => undefined, (error: unknown) => {
         run.releaseFailure = new ManagedPiStopUnavailable();
         throw error;
       });
-      await awaitManagedPiCleanup(() => run.cleanup!);
+      // A user-visible Stop is immediate; deletion still awaits the separate
+      // verified cleanup promise through quiescence before receiving a receipt.
+      await awaitManagedPiCleanup(() => run.stopping && run.worker ? localCleanup : run.cleanup!);
     }
   }
   const runs: BotRunSource = {
@@ -287,9 +310,12 @@ export function createManagedPiRuntime(deps: {
         });
         else forget();
       });
-      void result.then(async () => {
-        try { await run.cleanup; await run.releasing; }
-        catch (error: unknown) { run.releaseFailure = new ManagedPiStopUnavailable(); }
+      const receiptSettled = result.then(async () => {
+        try { await run.admission; await run.cleanup; await run.releasing; }
+        catch (error: unknown) {
+          console.warn('[managed-pi] Run cleanup unavailable', diagnosticErrorName(error));
+          run.releaseFailure = new ManagedPiStopUnavailable();
+        }
         await tracked.settle(run.releaseFailure);
       }, (error: unknown) => tracked.settle(error));
       let drained = false; let activities = 0;
@@ -323,10 +349,15 @@ export function createManagedPiRuntime(deps: {
         }
         drained = true;
       } finally { if (!drained) {
-        await quiescence.stopAndDrain({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, signal: new AbortController().signal });
+        if (deps.quiescence) await quiescence.stopAndDrain({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, signal: new AbortController().signal });
+        else await stop(input.runId);
         await result;
       } }
       const terminal = await result;
+      // The retention-enabled runtime publishes its stop receipt before exposing
+      // a settled execution. A user-requested Stop or timed-out admission may
+      // still be draining and must keep its terminal event bounded.
+      if (deps.quiescence && run.binding && !run.stopping) await receiptSettled;
       for (const progress of terminal.type === "run.completed" && terminal.outcome === "completed" ? [] : pendingTools.values()) {
         for (const event of mapBotEvent({ ...progress, phase: terminal.type === "run.completed" && terminal.outcome === "aborted" ? "cancelled" : "failed",
           ...(progress.display ? { display: { ...progress.display, output: "The tool ended without a confirmed result." } } : {}) }, { toolOutputKey: deps.toolOutputKey })) yield event;
@@ -337,8 +368,8 @@ export function createManagedPiRuntime(deps: {
     async cancel(input) {
       const run = active.get(input.runId);
       if (run && input.owner.type === "personal" && run.ownerId === input.owner.ownerId && run.chatId === input.chatId) {
-        void stop(input.runId).catch((error: unknown) => console.warn("[managed-pi] cancellation failed", diagnosticErrorName(error)));
-        await quiescence.stopAndDrain({ ownerId: run.ownerId, chatId: run.chatId, runId: input.runId, signal: new AbortController().signal });
+        if (deps.quiescence) await quiescence.stopAndDrain({ ownerId: run.ownerId, chatId: run.chatId, runId: input.runId, signal: new AbortController().signal });
+        else await stop(input.runId);
       }
     },
     async submitApproval(input) {

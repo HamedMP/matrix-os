@@ -52,7 +52,10 @@ export async function fixture(options: Parameters<typeof createManagedPiRuntime>
   const cancelInference = vi.fn((value: ManagedPiRuntimeBinding) => registry.cancelInference(value));
   let admitGate: Promise<void> = Promise.resolve();
   const admitted = vi.fn(async () => { await admitGate; return binding; });
-  const runtime = createManagedPiRuntime({ admission: { ...admission, admit: admitted },
+  const runtime = createManagedPiRuntime({ admission: { ...admission, admit: admitted,
+      // This socket fixture covers stop proof; owner DB and renewable leases
+      // have separate integration coverage and are deliberately absent here.
+      startRenewal: () => ({ stop: async () => undefined }) },
     host: { ...host, client: { ...client, runBot } }, providers: { getSnapshot: async () => snapshot },
     lifetime: new AbortController().signal, forgetRun: vi.fn(), cancelInference, quiescence: options, ownerTools });
   const controller = new AbortController();
