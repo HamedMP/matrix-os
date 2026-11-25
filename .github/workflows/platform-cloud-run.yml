@@ -1,6 +1,8 @@
 name: Platform Cloud Run staging startup diagnosis
 
 on:
+  push:
+    branches: [ci/qualify-platform-41b11f0890b]
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -22,7 +24,7 @@ jobs:
     environment: staging
     timeout-minutes: 55
     env:
-      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      EXPECTED_SHA: ${{ inputs.expected_sha || '41b11f0890b28f2d62ec7614f777ae5d20e2c251' }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
@@ -34,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ env.EXPECTED_SHA }}
           path: source
           persist-credentials: false
       - name: Require the exact reviewed source and isolated staging configuration
