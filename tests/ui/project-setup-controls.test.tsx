@@ -264,3 +264,14 @@ it.each(["saved", "already_present"] as const)("allows a preserved %s guidance f
   expect(screen.queryByText(/Shorten this draft before saving/)).toBeNull();
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(false);
 });
+
+it("reports a preserved symbolic link without exposing a preview or blocking other proposals", () => {
+  const setup = controller(undefined, { ...draft, proposals: [...draft.proposals,
+    { path: "CLAUDE.md", status: "symlink_skipped", content: "g".repeat(8193) }] });
+  render(<ProjectSetupControls setup={setup} transport={null} onOpenFile={vi.fn()} />);
+  expect(screen.queryByRole("region", { name: "Review CLAUDE.md" })).toBeNull();
+  expect(screen.getByText("CLAUDE.md · Symbolic link preserved")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Open file" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Save project setup" }));
+  expect(setup.dispatch).toHaveBeenCalledWith({ type: "save" });
+});

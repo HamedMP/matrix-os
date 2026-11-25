@@ -60,6 +60,7 @@ function ProjectSetupControlsScoped({
   const pendingService = draft.mcp.state === "pending" ? draft.mcp.service : undefined;
   const showConnectionCard = pendingService && setup.mcpHandoff;
   const showReview = draft.step === "review" && !showConnectionCard;
+  const reviewableFiles = draft.proposals.filter(file => file.status !== "symlink_skipped");
   const [dirtyFiles, setDirtyFiles] = useState<string[]>(() =>
     Object.entries(markdownEdits?.files ?? {})
       .filter(([path, edit]) => edit.value !== edit.baseline &&
@@ -362,11 +363,11 @@ function ProjectSetupControlsScoped({
           ) : null}
           {draft.proposals.length ? (
             <>
-              <div
+              {reviewableFiles.length > 0 ? <div
                 className="divide-y divide-[var(--border-subtle,var(--border))] overflow-hidden rounded-lg border"
                 style={borderStyle}
               >
-                {draft.proposals.map((file) => (
+                {reviewableFiles.map((file) => (
                   <ProjectSetupMarkdown
                     key={`${draft.chatId}:${file.path}`}
                     path={file.path}
@@ -388,13 +389,13 @@ function ProjectSetupControlsScoped({
                     onApply={(content) => setup.dispatch({ type: "review_file", path: file.path, content })}
                   />
                 ))}
-              </div>
+              </div> : null}
               <Button
                 size="sm"
                 className="min-h-8 max-w-full"
                 disabled={
                   busy || needsSkillDraft
-                  || draft.proposals.some(file => dirtyFiles.includes(file.path) || file.content.length > (guidanceLimit(file) ?? Infinity))
+                  || reviewableFiles.some(file => dirtyFiles.includes(file.path) || file.content.length > (guidanceLimit(file) ?? Infinity))
                   || draft.generation?.status === "running"
                 }
                 onClick={() => dispatch({ type: "save" })}
@@ -455,7 +456,7 @@ function ProjectSetupControlsScoped({
           {draft.proposals.map((file) => (
             <li key={file.path} className="flex flex-wrap items-center justify-between gap-2">
               <span className="break-all">
-                {file.path} · {file.status.replaceAll("_", " ")}
+                {file.path} · {file.status === "symlink_skipped" ? "Symbolic link preserved" : file.status.replaceAll("_", " ")}
               </span>
               {onOpenFile && ["saved", "already_present", "conflict"].includes(file.status) ? (
                 <Action
