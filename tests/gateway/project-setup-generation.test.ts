@@ -145,7 +145,7 @@ describe("admitted project setup generation", () => {
   let repository: ChatRepository;
   beforeEach(async () => { pg = await createTestPGlite(); repository = new ChatRepository(pg.dialect); await repository.bootstrap(); });
   afterEach(async () => { await repository.kysely.destroy(); });
-  it("uses scoped project facts and one accepted answer per Agent turn, then preserves the reviewed instructions", async () => {
+  it.each(["missing", "linked"] as const)("uses scoped Agent turns and preserves reviewed instructions with a %s CLAUDE.md", async companion => {
     const selection = { instanceId: "pi_default", model: "gpt-5.6-sol" };
     const available = catalog();
     available.instances[0]!.driverKind = "matrix_pi";
@@ -179,7 +179,12 @@ describe("admitted project setup generation", () => {
       repository, homePath: "/tmp/project-setup-tests", executionRoots: roots,
       openWorkspace: async (_owner, projectId) => ({
         fingerprint: "b".repeat(64), executionRootFingerprint, projectSlug: projectId, create, close: async () => {}, revalidate: async () => {},
-        read: async path => projectId === "project_a" && path === "AGENTS.md" ? existingInstructions : null,
+        read: async path => {
+          if (projectId !== "project_a") return null;
+          if (path === "AGENTS.md") return existingInstructions;
+          if (path === "CLAUDE.md" && companion === "linked") throw Object.assign(new Error("Symbolic link"), { code: "ELOOP" });
+          return null;
+        },
         interviewContext: async () => projectId === "project_a"
           ? { project: { name: "Release Notes", source: { type: "github", repository: "test-org/release-notes" } },
             instructionFiles: ["AGENTS.md"], skills: [], mcpServices: [{ name: "Linear", connection: "authorization_required" }] }
@@ -215,6 +220,7 @@ describe("admitted project setup generation", () => {
       expect(result.draft?.answers.guidance).toBe("Ask before publishing");
       expect(result.draft?.proposals.map(file => file.path)).toEqual(["AGENTS.md", "CLAUDE.md"]);
       expect(result.draft?.proposals[0]).toMatchObject({ content: existingInstructions, status: "already_present" });
+      expect(result.draft?.proposals[1]?.status).toBe(companion === "linked" ? "symlink_skipped" : "pending");
       expect(result.draft?.mcp.state).toBe("not_requested");
       expect(create).not.toHaveBeenCalled();
       const page = await repository.getDetailPage(owner, chatId, { limit: 40 });
@@ -244,7 +250,7 @@ describe("admitted project setup generation", () => {
       const saved = await service.update(principal, owner, chatId, { baseRevision: resultWithoutMcp.draft!.revision,
         clientRequestId: "req_interview_save", action: { type: "save" } });
       expect(saved.draft?.step).toBe("saved");
-      expect(create.mock.calls).toEqual([["CLAUDE.md", "@AGENTS.md\n"]]);
+      expect(create.mock.calls).toEqual(companion === "linked" ? [] : [["CLAUDE.md", "@AGENTS.md\n"]]);
       expect((await service.getProject(owner, "project_b")).draft).toBeNull();
       const store = await service.start(owner, "project_b", { mode: "interview", clientRequestId: "req_store_start", currentSelection: selection }, principal);
       await orchestrator.drain();
