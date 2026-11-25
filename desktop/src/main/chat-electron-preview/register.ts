@@ -1,5 +1,6 @@
 import type { BrowserWindow, IpcMain } from "electron";
 import { isAbsolute, join } from "node:path";
+import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 import type { AuthService } from "../auth/auth-service";
 import { CHAT_ELECTRON_PREVIEW_INVOKE } from "../../shared/chat-electron-preview-ipc";
 import type { BeginMacActivity } from "../mac-activity/activity";
@@ -11,6 +12,7 @@ import type { ChatElectronPreviewBackgroundBinding, createChatElectronPreviewTra
 
 interface RegistrationOptions {
   auth: AuthService;
+  acquireActionPairing: MacActionPairing;
   transport: ReturnType<typeof createChatElectronPreviewTransport>;
   allowed: boolean;
   checkout?: string;
@@ -26,6 +28,7 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
   const service = createChatElectronPreviewService({
     ...transport,
     beginActivity: options.beginActivity,
+    acquireActionPairing: options.acquireActionPairing,
     ...createChatElectronPreviewClaims(join(userData, "chat-electron-preview-claims")),
     enabled: options.allowed && !!checkout && isAbsolute(checkout),
     async approve(request, signal) {
@@ -84,12 +87,13 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
       grant: ChatElectronPreviewBackgroundBinding["grant"],
       signal: AbortSignal,
       beginPreview: () => boolean,
+      pairing?: MacActionPairingLease,
     ) {
       if (!service.available || signal.aborted) return;
       const target = await transport.readBackgroundPreviewTarget(context, grant, signal);
       if (!target || (lastHandled?.targetId === grant.targetId && lastHandled.runId === target.runId)) return;
       if (!beginPreview()) return;
-      const { status } = await service.run(target, { context, grant, signal });
+      const { status } = await service.run(target, { context, grant, signal, pairing });
       if ((status === "returned" || status === "declined" || status === "already-handled") && !signal.aborted) {
         lastHandled = { targetId: grant.targetId, runId: target.runId };
       }

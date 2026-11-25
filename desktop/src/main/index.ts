@@ -74,6 +74,7 @@ import { registerIpcHandlers } from "./ipc/handlers";
 import { registerChatElectronPreview } from "./chat-electron-preview/register";
 import { createChatElectronPreviewTransport } from "./chat-electron-preview/transport";
 import { registerChatMacTerminal } from "./chat-mac-terminal/register";
+import { createDesktopPairing } from "./desktop-pairing";
 import { createMacActivity } from "./mac-activity/activity";
 import { createMacActivityQuit } from "./mac-activity/quit";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
@@ -162,6 +163,8 @@ let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
 let navigationCacheDrained = false;
 let drainingNavigationCache = false;
+let cancelDesktopPairing: (() => void) | undefined;
+let disposeDesktopPairing: (() => void) | undefined;
 let macActivityQuit: ReturnType<typeof createMacActivityQuit> | undefined;
 let planDiagnostics: ReturnType<typeof createPlanDiagnosticStore> | null = null;
 let planDiagnosticsDrained = false;
@@ -403,6 +406,7 @@ if (!gotLock) {
           void cancelChatElectronPreview?.();
           void cancelChatMacTerminal?.();
           refreshMacActivity?.();
+          cancelDesktopPairing?.();
           invalidateAppCapabilities?.();
           nativeAppChatNavigation?.cancelAll();
           navigationCache?.observe(status);
@@ -422,6 +426,11 @@ if (!gotLock) {
         },
       });
       await auth.init();
+      const desktopPairing = process.platform === "darwin"
+        ? createDesktopPairing({ auth, safeStorage, userData, window: () => mainWindow })
+        : null;
+      cancelDesktopPairing = desktopPairing?.cancel;
+      disposeDesktopPairing = desktopPairing?.dispose;
       navigationCache = createNavigationCache({ dir: userData, getStatus: () => auth.getStatus() });
       registerNavigationCacheIpc(ipcMain, navigationCache, rawEvent => {
         const event = rawEvent as IpcMainInvokeEvent;
@@ -742,6 +751,7 @@ if (!gotLock) {
         showMacActivityMenu?.(macBackgroundChecksActive, Boolean(macActivity && getMacActivityScope()));
       };
       const chatDeviceTransport = createChatElectronPreviewTransport(auth);
+      const acquireActionPairing = desktopPairing?.acquireActionPairing ?? (async () => null);
       const chatElectronPreview = registerChatElectronPreview(ipcMain, {
         allowed: macDeveloperBuild,
         checkout: previewCheckout,
@@ -749,6 +759,7 @@ if (!gotLock) {
         electronPath: app.getPath("exe"),
         auth,
         transport: chatDeviceTransport,
+        acquireActionPairing,
         beginActivity: macActivity?.begin,
         window: () => mainWindow ?? terminalWindowController.current(),
         isTrustedSender: (event) => !macActivityQuit?.isFenced() && senderRole(windowSenders, event) === "main",
@@ -776,6 +787,7 @@ if (!gotLock) {
       const macTerminalChecks = registerChatMacTerminal(ipcMain, {
         auth,
         transport: chatDeviceTransport,
+        acquireActionPairing,
         beginActivity: macActivity?.begin,
         tryBackgroundPreview: chatElectronPreview.tryBackgroundPreview,
         host: localTerminalHost,
@@ -843,6 +855,7 @@ if (!gotLock) {
           notification.show();
         },
         onRuntimeChanged: (slot) => {
+          cancelDesktopPairing?.();
           void cancelChatElectronPreview?.();
           void cancelChatMacTerminal?.();
           refreshMacActivity?.();
@@ -1010,6 +1023,11 @@ if (!gotLock) {
         ...(macTerminalChecksAllowed ? {
           stopBackgroundMacChecks: () => { void macTerminalChecks.stopBackground(); },
         } : {}),
+        ...(desktopPairing ? {
+          openMacPairing: () => {
+            void desktopPairing.open().catch((error: unknown) => logMainError("Mac pairing failed", error));
+          },
+        } : {}),
         ...(macActivity ? {
           openMacActivity: () => { void macActivity.showHistory(); },
         } : {}),
@@ -1036,6 +1054,7 @@ if (!gotLock) {
     });
 
   app.on("before-quit", (event) => {
+    cancelDesktopPairing?.();
     organizationDriveTransfers?.cancelAll();
     nativeAppChatNavigation?.cancelAll();
     // Fence Mac activity before waiting for the renderer analytics flush.
@@ -1090,6 +1109,7 @@ if (!gotLock) {
   });
 
   app.on("will-quit", () => {
+    disposeDesktopPairing?.();
     macActivityQuit?.finish();
     if (updateCheckTimer) {
       clearInterval(updateCheckTimer);

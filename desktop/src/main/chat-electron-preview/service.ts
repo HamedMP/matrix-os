@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import type { ChatElectronPreviewReply, ChatElectronPreviewTarget } from "../../shared/chat-electron-preview-ipc";
+import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 import type { BeginMacActivity, MacActivityHandle, MacActivityPhase } from "../mac-activity/activity";
 import type { ChatElectronPreviewBackgroundBinding, ChatElectronPreviewRequest } from "./transport";
+
+type BackgroundPreview = ChatElectronPreviewBackgroundBinding & { pairing?: MacActionPairingLease };
 
 interface PreviewResult {
   png: Buffer;
@@ -10,6 +13,7 @@ interface PreviewResult {
 
 interface Dependencies {
   enabled: boolean;
+  acquireActionPairing?: MacActionPairing;
   read(target: ChatElectronPreviewTarget, background?: ChatElectronPreviewBackgroundBinding, signal?: AbortSignal): Promise<ChatElectronPreviewRequest | null>;
   isCurrent(request: ChatElectronPreviewRequest): boolean;
   wasHandled(key: string): Promise<boolean>;
@@ -40,12 +44,22 @@ export function createChatElectronPreviewService(deps: Dependencies) {
   let active: { operation: AbortController; result: Promise<ChatElectronPreviewReply> } | null = null;
 
   async function runPreview(
-    target: ChatElectronPreviewTarget, background: ChatElectronPreviewBackgroundBinding | undefined, signal: AbortSignal,
+    target: ChatElectronPreviewTarget, background: BackgroundPreview | undefined,
+    operation: AbortController, signal: AbortSignal,
   ): Promise<ChatElectronPreviewReply> {
     const read = () => deps.read(target, background ? { ...background, signal } : undefined, signal);
     let activity: MacActivityHandle | undefined;
+    let pairing: MacActionPairingLease | null | undefined;
     let completion: MacActivityPhase = "failed";
     let approvalSignal = signal;
+
+    async function pairingIsCurrent(boundarySignal: AbortSignal): Promise<boolean> {
+      if (boundarySignal.aborted || (pairing && !await pairing.check(boundarySignal))) return false;
+      // A freshly paired device cannot inherit permission from an older background grant.
+      if (background?.pairing && !await background.pairing.check(boundarySignal)) return false;
+      return !boundarySignal.aborted;
+    }
+
     try {
       const request = await read();
       if (!request || !deps.isCurrent(request) || signal.aborted) return { status: "unavailable" };
@@ -59,6 +73,14 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       const approved = await deps.approve(request, approvalSignal);
       completion = "revoked";
       if (approvalSignal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
+      if (approved && deps.acquireActionPairing) {
+        pairing = await deps.acquireActionPairing(operation, approvalSignal);
+        if (!pairing || approvalSignal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
+      }
+      if (approved && background?.pairing && !await background.pairing.check(approvalSignal)) {
+        return { status: "unavailable" };
+      }
+      if (approvalSignal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
       if (!await deps.claim(key)) return { status: "already-handled" };
       if (!approved) {
         completion = "declined";
@@ -70,6 +92,7 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       const current = await read();
       if (!current || approvalSignal.aborted || !deps.isCurrent(request)
         || !deps.isCurrent(current) || !matchesApproval(request, current)) return { status: "unavailable" };
+      if (!await pairingIsCurrent(approvalSignal) || approvalSignal.aborted || !deps.isCurrent(current)) return { status: "unavailable" };
 
       let result: Awaited<ReturnType<Dependencies["execute"]>>;
       // The request deadline governs approval and revalidation. The active
@@ -85,11 +108,15 @@ export function createChatElectronPreviewService(deps: Dependencies) {
           return { status: "unavailable" };
         }
         deps.reportError?.(error);
+        if (!await pairingIsCurrent(signal) || signal.aborted || !deps.isCurrent(current)) {
+          completion = "revoked";
+          return { status: "unavailable" };
+        }
         activity?.update("returning");
         await deps.returnResult(current, { error: "build-failed" }, signal);
         return { status: "failed" };
       }
-      if (signal.aborted || !deps.isCurrent(current)) {
+      if (!await pairingIsCurrent(signal) || signal.aborted || !deps.isCurrent(current)) {
         completion = "revoked";
         return { status: "unavailable" };
       }
@@ -103,16 +130,17 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       deps.reportError?.(error);
       return { status: "failed" };
     } finally {
+      pairing?.close();
       activity?.finish(completion !== "returned" && approvalSignal.aborted ? canceledPhase(approvalSignal) : completion);
     }
   }
 
-  async function run(target: ChatElectronPreviewTarget, background?: ChatElectronPreviewBackgroundBinding): Promise<ChatElectronPreviewReply> {
+  async function run(target: ChatElectronPreviewTarget, background?: BackgroundPreview): Promise<ChatElectronPreviewReply> {
     if (!deps.enabled || background?.signal.aborted) return { status: "unavailable" };
     if (active) return { status: "busy" };
     const operation = new AbortController();
     const signal = background ? AbortSignal.any([operation.signal, background.signal]) : operation.signal;
-    const result = runPreview(target, background, signal).finally(() => { active = null; });
+    const result = runPreview(target, background, operation, signal).finally(() => { active = null; });
     active = { operation, result };
     return result;
   }

@@ -9,6 +9,7 @@ function registerMacQuitWiring(dependencies: {
   app: { on(event: "before-quit" | "will-quit", listener: (event: { preventDefault(): void }) => void): void; quit(): void };
   windows?: [TestWindow, TestWindow];
   localTerminalHost?: { dispose(): void };
+  disposeDesktopPairing?: () => void;
   handleAnalyticsBeforeQuit: ReturnType<typeof createAnalyticsBeforeQuit>;
   chatElectronPreview: { cancel(): Promise<void> };
   macTerminalChecks: { cancelAll(): Promise<void> };
@@ -45,6 +46,7 @@ function registerMacQuitWiring(dependencies: {
   const { outputText } = ts.transpileModule(`
     const { app, handleAnalyticsBeforeQuit, chatElectronPreview, macTerminalChecks, macActivity, handleUpdateBeforeQuit } = dependencies;
     const organizationDriveTransfers = null, nativeAppChatNavigation = null, cancelDesktopPairing = null;
+    const disposeDesktopPairing = dependencies.disposeDesktopPairing;
     const navigationCacheDrained = true, planDrained = true, planDiagnosticsDrained = true, importsDrained = true, downloadsDrained = true;
     let updateCheckTimer, closeCodingAgentThreadEvents, terminalWindows, shortcutWiring, computerCredentials;
     let localTerminals = dependencies.localTerminalHost;
@@ -82,6 +84,7 @@ describe("bounded Desktop analytics quit", () => {
       const cancelAll = vi.fn(async () => {});
       const close = vi.fn(async () => {});
       const terminalHost = { dispose: vi.fn() };
+      const disposeDesktopPairing = vi.fn();
       const app = new EventEmitter();
       const unloadEvent = { preventDefault: vi.fn(), defaultPrevented: false };
       let shouldVeto = true;
@@ -96,7 +99,7 @@ describe("bounded Desktop analytics quit", () => {
       });
       const senderChecks = registerMacQuitWiring({
         app: Object.assign(app, { quit }),
-        windows, localTerminalHost: terminalHost,
+        windows, localTerminalHost: terminalHost, disposeDesktopPairing,
         handleAnalyticsBeforeQuit: createAnalyticsBeforeQuit({ requestFlush: () => flush.promise, quit, timeoutMs: 750 }),
         chatElectronPreview: { cancel }, macTerminalChecks: { cancelAll }, macActivity: { close, flush: vi.fn(async () => {}) },
         handleUpdateBeforeQuit(event) {
@@ -134,6 +137,7 @@ describe("bounded Desktop analytics quit", () => {
       expect(unloadEvent.preventDefault).not.toHaveBeenCalled();
       expect(close).not.toHaveBeenCalled();
       expect(terminalHost.dispose).not.toHaveBeenCalled();
+      expect(disposeDesktopPairing).not.toHaveBeenCalled();
 
       shouldVeto = false;
       quit();
@@ -150,6 +154,7 @@ describe("bounded Desktop analytics quit", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(close).toHaveBeenCalledOnce();
       expect(terminalHost.dispose).toHaveBeenCalledOnce();
+      expect(disposeDesktopPairing).toHaveBeenCalledOnce();
       veto.webContents.emit("will-prevent-unload", unloadEvent);
       expect(admission()).toEqual([false, false]);
     } finally {

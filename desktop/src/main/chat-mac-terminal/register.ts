@@ -1,5 +1,6 @@
 import { dialog, type BrowserWindow, type IpcMain } from "electron";
 import type { AuthService } from "../auth/auth-service";
+import type { MacActionPairing, MacActionPairingLease } from "../desktop-pairing/action";
 import type { LocalTerminalHost } from "../local-terminals/host";
 import type { BeginMacActivity } from "../mac-activity/activity";
 import { createChatElectronPreviewTransport, type MacTerminalContext } from "../chat-electron-preview/transport";
@@ -11,6 +12,7 @@ import { createChatMacTerminalService } from "./service";
 
 interface Options {
   auth: AuthService;
+  acquireActionPairing: MacActionPairing;
   host: LocalTerminalHost;
   allowed: boolean;
   window(): BrowserWindow | null;
@@ -20,7 +22,7 @@ interface Options {
   transport?: ReturnType<typeof createChatElectronPreviewTransport>;
   tryBackgroundPreview?(
     context: MacTerminalContext, grant: { targetId: string; approvedAt: number }, signal: AbortSignal,
-    beginPreview: () => boolean,
+    beginPreview: () => boolean, pairing?: MacActionPairingLease,
   ): Promise<void>;
 }
 
@@ -49,6 +51,7 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
   const service = createChatMacTerminalService({
     ...transport,
     beginActivity: options.beginActivity,
+    acquireActionPairing: options.acquireActionPairing,
     enabled: options.allowed,
     approve: (context, signal) => requestConsent(context, signal, {
       message: "Approve one Mac terminal check?",
@@ -66,6 +69,7 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
   const background = createMacTerminalBackgroundService({
     ...transport,
     beginActivity: options.beginActivity,
+    acquireActionPairing: options.acquireActionPairing,
     enabled: options.allowed,
     oneTimeBusy: service.isBusy,
     approve: (context, signal) => requestConsent(context, signal, {
