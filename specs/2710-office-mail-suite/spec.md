@@ -14,6 +14,13 @@ The work ships in two native stacks that share ENG-542.
    It stays on the proof-of-concept branch until it has been tested against live
    accounts. Nothing in this stack ships a mail or calendar surface.
 
+**Public docs deliverable.** Each stack also needs a separate documentation PR in the
+private `FinnaAI/matrix-os-site` repository under `content/docs/`, alongside its
+implementation and tests. For this stack it covers the Docs and Sheets apps (open,
+edit, save, track changes, reviewing agent edits) and the agent document tools; the
+follow-on stack's PR covers Mail and Calendar. The PR is opened in that repository and
+linked from ENG-542.
+
 Sections below describe the whole design. Items marked *follow-on* are not part of
 this stack.
 
@@ -142,6 +149,8 @@ Web Mobile and Native Mobile: out of scope; the apps are not offered on mobile i
 6. *Follow-on.* Calendar: five views, free-busy overlay, agent proposals highlighted, invite sent
    only after the owner confirms.
 7. `bun run typecheck`, `bun run check:patterns` and the new test suites pass.
+8. The `FinnaAI/matrix-os-site` documentation PR under `content/docs/` for Docs, Sheets
+   and the agent document tools is open and linked from ENG-542.
 
 ## Surface matrix (Docs and Sheets; each PR body carries the current status)
 
