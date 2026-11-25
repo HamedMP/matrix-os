@@ -24,7 +24,7 @@ import { composePhaseCatalog } from "../../packages/gateway/src/chat/phase-catal
 
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.resetAllMocks(); vi.restoreAllMocks(); });
-const model = "@cf/zai-org/glm-5.3-flash";
+const model = "@cf/zai-org/glm-5.3";
 const identity = { ownerId: "catalog_owner", machineId: "catalog_machine", runtimeSlot: "primary" };
 const at = new Date("2026-10-11T00:00:00.000Z");
 
