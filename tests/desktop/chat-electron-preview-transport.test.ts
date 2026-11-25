@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalChatMessage } from "@matrix-os/contracts";
 import { createChatMacTerminalService } from "@desktop/main/chat-mac-terminal/service";
@@ -8,6 +8,7 @@ import {
 } from "@desktop/main/chat-electron-preview/transport";
 import type { AuthStatus } from "@desktop/main/auth/auth-service";
 import { createChatElectronPreviewService } from "@desktop/main/chat-electron-preview/service";
+import { createMacActionPairing } from "@desktop/main/desktop-pairing/action";
 
 const chatId = "chat_original";
 const runId = "run_original";
@@ -172,6 +173,101 @@ describe("authenticated Chat Electron preview transport", () => {
     mock.setSource(verificationSource);
     return mock;
   }
+
+  it.each([
+    { fault: "none", status: "returned", deliveryReads: 1 },
+    { fault: "single 502", status: "returned", deliveryReads: 2 },
+    { fault: "repeated 502", status: "unavailable", deliveryReads: 2 },
+    { fault: "changed revision", status: "unavailable", deliveryReads: 2 },
+    { fault: "revoked device", status: "unavailable", deliveryReads: 2 },
+    { fault: "HTTP 403", status: "unavailable", deliveryReads: 1 },
+    { fault: "pre-build 502", status: "unavailable", deliveryReads: 0 },
+    { fault: "Stop", status: "unavailable", deliveryReads: 1 },
+  ])("requires a fresh signed pairing before returning verification ($fault)", async ({ fault, status, deliveryReads }) => {
+    const { service: transport, fetchFn, storeResult } = verificationFixture();
+    storeResult();
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const publicBytes = publicKey.export({ format: "der", type: "spki" });
+    const deviceId = sha256(publicBytes);
+    const state = { deviceId, machineId: "128388cd-c76a-4d0d-a5f0-dc944d749641", revision: 3 };
+    const nonce = Buffer.alloc(32, 7).toString("base64url");
+    const auth = {
+      getStatus: (): AuthStatus => ({ signedIn: true, userId: ownerId, handle: "owner", runtimeSlot: "primary", platformHost: origin, authGeneration: 4 }),
+      getToken: () => "test-auth",
+      getGatewayOrigin: () => origin,
+    };
+    let built = false;
+    let signed = false;
+    let currentAtDelivery = false;
+    let readsAfterBuild = 0;
+    let stopDelivery: Promise<void> | undefined;
+    const pairingFetch = vi.fn<typeof fetch>(async (input, init) => {
+      const { pathname } = new URL(String(input));
+      if (pathname === "/api/desktop-pairing/action-challenge") {
+        return Response.json({ ...state, nonce, expiresAt: Date.now() + 60_000 });
+      }
+      if (pathname === "/api/desktop-pairing/verify-action") {
+        const body = JSON.parse(String(init?.body));
+        const proof = JSON.stringify(["matrix-desktop-pairing-action-v1", ownerId, state.machineId, deviceId, state.revision, nonce]);
+        expect(body.nonce).toBe(nonce);
+        expect(verify(null, Buffer.from(proof), publicKey, Buffer.from(body.signature, "base64url"))).toBe(true);
+        signed = true;
+        return Response.json(state);
+      }
+      expect(pathname).toBe("/api/desktop-pairing");
+      if (!built) return signed && fault === "pre-build 502" ? new Response(null, { status: 502 }) : Response.json(state);
+      ++readsAfterBuild;
+      if (fault === "HTTP 403") return new Response(null, { status: 403 });
+      if (fault === "Stop") {
+        stopDelivery = service.cancel("stopped");
+        return new Response(null, { status: 502 });
+      }
+      if (fault === "repeated 502" || (fault !== "none" && readsAfterBuild === 1)) return new Response(null, { status: 502 });
+      if (fault === "changed revision") return Response.json({ ...state, revision: state.revision + 1 });
+      if (fault === "revoked device") return Response.json({ ...state, deviceId: null, revision: state.revision + 1 });
+      currentAtDelivery = true;
+      return Response.json(state);
+    });
+    const pairing = createMacActionPairing({ auth, fetchFn: pairingFetch,
+      keys: { load: async () => ({ deviceId, privateKey, publicKey: publicBytes.toString("base64url") }) } });
+    const fetch = fetchFn.getMockImplementation()!;
+    fetchFn.mockImplementation(async (input, init) => {
+      const { pathname } = new URL(String(input));
+      if (pathname === "/api/files/blob" || pathname === `/api/chats/${chatId}/turns`) {
+        expect(currentAtDelivery).toBe(true);
+      }
+      return fetch(input, init);
+    });
+    let claimedKey: string | undefined;
+    const execute = vi.fn(async () => { built = true; return previewResult; });
+    const approve = vi.fn(async () => true);
+    const claim = vi.fn(async (key: string) => { claimedKey = key; return true; });
+    const service = createChatElectronPreviewService({ ...transport, enabled: true, approve, claim, execute,
+      wasHandled: async key => key === claimedKey, acquireActionPairing: pairing.acquire });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const result = await service.run(verificationTarget);
+      await stopDelivery;
+      const writes = resultWrites(fetchFn);
+      expect(signed).toBe(true);
+      expect(approve).toHaveBeenCalledOnce();
+      expect(claim).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledTimes(fault === "pre-build 502" ? 0 : 1);
+      expect(result).toEqual({ status });
+      expect(readsAfterBuild).toBe(deliveryReads);
+      expect(writes.map(([, init]) => init?.method)).toEqual(status === "returned" ? ["PUT", "POST"] : []);
+      if (status === "returned") {
+        const receipt = JSON.parse(String(writes[1]?.[1]?.body));
+        expect(receipt.clientRequestId).toBe(`req_electron_preview_${claimedKey}`);
+      } else {
+        await expect(service.run(verificationTarget)).resolves.toEqual({ status: "already-handled" });
+        expect(execute).toHaveBeenCalledTimes(fault === "pre-build 502" ? 0 : 1);
+      }
+    } finally {
+      clock.mockRestore();
+      pairing.revokeAll();
+    }
+  });
 
   it.each([
     ["current worktree", "Finished the worktree task.", label],

@@ -146,10 +146,11 @@ export function createMacVerificationSetup(options: SetupDependencies) {
     const candidate = currentGrant();
     if (!candidate || signal.aborted) return null;
 
-    const check = async (boundarySignal: AbortSignal) => {
+    const check = async (boundarySignal: AbortSignal, retryBadGateway?: () => boolean) => {
       if (boundarySignal.aborted || currentGrant() !== candidate) return false;
       if (!await resolveActiveSource(boundarySignal) || currentGrant() !== candidate || boundarySignal.aborted) return false;
-      const paired = await candidate.pairing.check(boundarySignal);
+      const retryWhileCurrent = retryBadGateway && (() => currentGrant() === candidate && !boundarySignal.aborted && retryBadGateway());
+      const paired = await candidate.pairing.check(boundarySignal, retryWhileCurrent);
       if (boundarySignal.aborted || currentGrant() !== candidate) return false;
       if (!paired) {
         revoke("revoked", true);

@@ -21,7 +21,7 @@ const verdict = (main: AuthStatus = account) => {
   const replies: number[] = [];
   const close = vi.fn();
   const stop = vi.fn();
-  const check = vi.fn(async () => true);
+  const check = vi.fn(async (_signal?: AbortSignal, _retryBadGateway?: () => boolean) => true);
   const acquirePairing = vi.fn(async (_operation: AbortController) => ({ check, close }));
   const resolveSource = vi.fn(async () => source);
   const setup = createMacVerificationSetup({
@@ -89,6 +89,24 @@ describe("Mac Verification native setup", () => {
     expect(await setup.getFullAccessApproval(new AbortController().signal)).toBeNull();
     expect(close).toHaveBeenCalledOnce();
     expect(setup.enabled()).toBe(true);
+  });
+
+  it("refuses a delivery pairing retry when Full Access expires during its first read", async () => {
+    const { setup, replies, advance, check, close } = verdict();
+    replies.push(1, 2, 1);
+    await setup.open();
+    await setup.open();
+    const { signal } = new AbortController();
+    const approval = (await setup.getFullAccessApproval(signal))!;
+    const retryBadGateway = vi.fn(() => true);
+    check.mockImplementationOnce(async (_signal, retryPairingRead) => {
+      advance(15 * 60_000);
+      expect(retryPairingRead?.()).toBe(false);
+      return false;
+    });
+    await expect(approval.check(signal, retryBadGateway)).resolves.toBe(false);
+    expect(retryBadGateway).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it("discards a checkout selection if the account changes during the native prompt", async () => {

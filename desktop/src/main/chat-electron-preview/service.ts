@@ -15,7 +15,7 @@ interface PreviewResult {
 }
 
 interface ScopedApproval {
-  check(signal: AbortSignal): Promise<boolean>;
+  check(signal: AbortSignal, retryBadGateway?: () => boolean): Promise<boolean>;
 }
 
 interface Dependencies {
@@ -62,18 +62,24 @@ export function createChatElectronPreviewService(deps: Dependencies) {
     let approvalSignal = signal;
     let scopedApproval: ScopedApproval | undefined;
 
-    async function pairingIsCurrent(boundarySignal: AbortSignal): Promise<boolean> {
-      if (boundarySignal.aborted || (pairing && !await pairing.check(boundarySignal))) return false;
+    async function pairingIsCurrent(boundarySignal: AbortSignal, retryBadGateway?: () => boolean): Promise<boolean> {
+      if (boundarySignal.aborted || (pairing && !await pairing.check(boundarySignal, retryBadGateway))) return false;
       // A freshly paired device cannot inherit permission from an older background grant.
       if (background?.pairing && !await background.pairing.check(boundarySignal)) return false;
       // A fresh action pairing cannot replace the grant that skipped native consent.
-      if (scopedApproval && !await scopedApproval.check(boundarySignal)) return false;
+      if (scopedApproval && !await scopedApproval.check(boundarySignal, retryBadGateway)) return false;
       return !boundarySignal.aborted;
     }
 
     async function deliver(current: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }) {
+      let pairingRetryAvailable = true;
+      const retryBadGateway = current.requestKind === "verification" ? () => {
+        if (!pairingRetryAvailable) return false;
+        pairingRetryAvailable = false;
+        return true;
+      } : undefined;
       for (let attempt = 0; ; attempt++) {
-        if (!await pairingIsCurrent(signal) || signal.aborted || !deps.isCurrent(current)) return false;
+        if (!await pairingIsCurrent(signal, retryBadGateway) || signal.aborted || !deps.isCurrent(current)) return false;
         if (attempt === 0) activity?.update("returning");
         try {
           // Re-check the exact Chat and source before writing and reconcile a receipt
