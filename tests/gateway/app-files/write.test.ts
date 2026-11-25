@@ -58,6 +58,26 @@ describe("files.write", () => {
     expect((await readdir(harness.home)).filter((name) => name.includes("matrix-app-file"))).toEqual([]);
   });
 
+  it("refuses to publish over a copy another writer saved while the temp file was written", async () => {
+    harness = await createHarness();
+    const target = join(harness.home, "synced.docx");
+    await writeFile(target, "base");
+    const base = await versionOf(target);
+    const original = appFileIo.appFileIo.writeTemp;
+    // The sync daemon publishes a newer copy while this write fills and syncs its temp file.
+    vi.spyOn(appFileIo.appFileIo, "writeTemp").mockImplementation(async (...args) => {
+      await original(...args);
+      await writeFile(target, "newer copy from sync");
+    });
+    const rename = vi.spyOn(appFileIo.appFileIo, "rename");
+    const response = await harness.post({ kind: "files.write", path: "synced.docx", contentBase64: b64("mine"), ifVersion: base });
+    expect(response.status).toBe(409);
+    expect(await errorCode(response)).toBe("version_conflict");
+    expect(rename).not.toHaveBeenCalled();
+    expect(await readFile(target, "utf8")).toBe("newer copy from sync");
+    expect((await readdir(harness.home)).filter((name) => name.includes("matrix-app-file"))).toEqual([]);
+  });
+
   it("replaces a file when ifVersion matches, keeping its mode", async () => {
     harness = await createHarness();
     const target = join(harness.home, "sheet.xlsx");

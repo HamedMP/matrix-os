@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { mkdir, open, rm } from "node:fs/promises";
+import type { BigIntStats } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   APP_FILE_MAX_BYTES, appFileVersion,
@@ -43,6 +43,13 @@ async function ensureParent(homePath: string, path: string, target: string, crea
   return parent;
 }
 
+/** True when `after` is still the exact file `before` described: same inode, size, content and metadata times. */
+function sameFile(before: BigIntStats, after: BigIntStats | null): boolean {
+  return after !== null && after.isFile()
+    && after.dev === before.dev && after.ino === before.ino && after.size === before.size
+    && after.mtimeNs === before.mtimeNs && after.ctimeNs === before.ctimeNs;
+}
+
 async function removeTemp(path: string): Promise<void> {
   try { await rm(path, { force: true }); }
   catch (error: unknown) {
@@ -53,8 +60,11 @@ async function removeTemp(path: string): Promise<void> {
 /**
  * Atomic write with a version check. The compare, the temp write and the
  * publish run inside the owner file mutation guard, so two writers holding the
- * same version cannot both succeed. `ifVersion: null` publishes with an
- * exclusive `link`, so a file created by anyone in the meantime is a conflict.
+ * same version in this process cannot both succeed. A replace re-checks the
+ * target immediately before the rename, so a copy another process saved during
+ * the temp write is a conflict rather than overwritten. `ifVersion: null`
+ * publishes with an exclusive `link`, so a file created by anyone in the
+ * meantime is a conflict.
  * `guard` is the collaboration project fence; it is held inside the mutation
  * guard from before path resolution until the write settles.
  */
@@ -81,14 +91,7 @@ export async function writeAppFile(
     const temp = join(parent, `${APP_FILE_TEMP_PREFIX}${randomUUID()}.tmp`);
     let renamed = false;
     try {
-      const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o666);
-      try {
-        await handle.writeFile(content);
-        if (current) await handle.chmod(Number(current.mode) & 0o7777);
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
+      await appFileIo.writeTemp(temp, content, current ? Number(current.mode) & 0o7777 : null);
       if (request.ifVersion === null) {
         try { await appFileIo.link(temp, target); }
         catch (error: unknown) {
@@ -96,6 +99,10 @@ export async function writeAppFile(
           throw error;
         }
       } else {
+        // The temp write and sync wait on the disk, and writers outside this
+        // process (the sync daemon) are not serialised with this one. Check the
+        // target again just before publishing so their newer copy wins.
+        if (!current || !sameFile(current, await lstatOrNull(target, true))) throw new AppFileError("version_conflict", "file changed during write");
         await appFileIo.rename(temp, target);
         renamed = true;
       }
