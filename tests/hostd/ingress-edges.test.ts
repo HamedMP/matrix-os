@@ -9,7 +9,7 @@ import { Duplex, PassThrough } from "node:stream";
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
-import { createIngress, MAX_INDEXED_VMS, parseHandle, type Ingress, type IngressDeps } from "../../packages/hostd/src/ingress.js";
+import { createIngress, MAX_INDEXED_VMS, type Ingress, type IngressDeps } from "../../packages/hostd/src/ingress.js";
 import type { VmRecord } from "../../packages/hostd/src/vm-store.js";
 
 // Edge paths of the host ingress: index rebuild races, upgrade relays,
@@ -107,7 +107,7 @@ afterEach(async () => {
 });
 
 const ALICE_TARGET = "vm_0123456789abcdef01234567:1";
-const authed = (host = "alice.matrix-os.com", extra: Record<string, string> = {}) => ({
+const authed = (host = "app.matrix-os.com", extra: Record<string, string> = {}) => ({
   host, "x-matrix-host-auth": TOKEN, "x-matrix-vm-target": ALICE_TARGET, ...extra,
 });
 
@@ -145,15 +145,14 @@ async function rawTls(payload: string): Promise<string> {
   });
 }
 
-const upgradeRequest = (host = "alice.matrix-os.com", extra = "", target = ALICE_TARGET) =>
+const upgradeRequest = (host = "app.matrix-os.com", extra = "", target = ALICE_TARGET) =>
   `GET /ws HTTP/1.1\r\nhost: ${host}\r\nx-matrix-host-auth: ${TOKEN}\r\nx-matrix-vm-target: ${target}\r\nconnection: Upgrade\r\nupgrade: websocket\r\n` +
   `sec-websocket-version: 13\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n${extra}\r\n`;
 
 const has = (event: string) => logs.some((l) => l.event === event);
 
 describe("host ingress edges", () => {
-  it("parses no handle from a missing host and refuses a short token", () => {
-    expect(parseHandle(undefined)).toBeNull();
+  it("refuses a short host token", () => {
     expect(() => createIngress({ store, hostAuthToken: "short", tls })).toThrow();
   });
 
@@ -164,7 +163,7 @@ describe("host ingress edges", () => {
       res.end("ok");
     });
     await start({ upstreamPort: await listen(vm) });
-    expect((await send(authed("alice.matrix-os.com", { connection: "keep-alive, x-drop", "x-drop": "1", "x-keep": "1" }))).status).toBe(200);
+    expect((await send(authed("app.matrix-os.com", { connection: "keep-alive, x-drop", "x-drop": "1", "x-keep": "1" }))).status).toBe(200);
     expect(seen[0]!.headers["x-drop"]).toBeUndefined();
     expect(seen[0]!.headers["x-keep"]).toBe("1");
   });
@@ -187,11 +186,11 @@ describe("host ingress edges", () => {
     await start();
     for (const i of [0, 1, MAX_INDEXED_VMS - 1]) {
       const target = `${records[i]!.id}:1`;
-      const reply = await send(authed("alice.matrix-os.com", { "x-matrix-vm-target": target }));
+      const reply = await send(authed("app.matrix-os.com", { "x-matrix-vm-target": target }));
       expect(JSON.parse(reply.body)).toEqual({ error: "runtime_asleep" });
     }
     const target = `${records[MAX_INDEXED_VMS]!.id}:1`;
-    expect((await send(authed("alice.matrix-os.com", { "x-matrix-vm-target": target }))).status).toBe(404);
+    expect((await send(authed("app.matrix-os.com", { "x-matrix-vm-target": target }))).status).toBe(404);
     expect(logs.filter((l) => l.event === "ingress.index_capped")).toHaveLength(1);
   });
 
@@ -207,8 +206,8 @@ describe("host ingress edges", () => {
       }
     };
     await start({ upstreamPort: 1 });
-    const a = send(authed("nobody.matrix-os.com"));
-    const b = send(authed("nobody.matrix-os.com"));
+    const a = send(authed("app.matrix-os.com", { "x-matrix-vm-target": "vm_ffffffffffffffffffffffff:1" }));
+    const b = send(authed("app.matrix-os.com", { "x-matrix-vm-target": "vm_ffffffffffffffffffffffff:1" }));
     await expect.poll(() => lists).toBe(1);
     release();
     await Promise.all([a, b]);
@@ -260,7 +259,7 @@ describe("host ingress edges", () => {
     const vm = createHttpsServer(tls, (req) => req.socket.once("close", () => (upstreamClosed = true)));
     await start({ upstreamPort: await listen(vm), maxUpstreamPerVm: 1 });
     const client = await rawTlsSocket();
-    client.write(`GET /slow HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: ${TOKEN}\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\n\r\n`);
+    client.write(`GET /slow HTTP/1.1\r\nhost: app.matrix-os.com\r\nx-matrix-host-auth: ${TOKEN}\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\n\r\n`);
     await new Promise((r) => setTimeout(r, 100));
     client.destroy();
     await expect.poll(() => upstreamClosed).toBe(true);
@@ -273,8 +272,8 @@ describe("host ingress edges", () => {
     servers.splice(servers.indexOf(refused), 1);
     records = [record(), record({ id: "vm_bbbbbbbbbbbbbbbbbbbbbbbb", handle: "sleepy", state: "suspended" })];
     await start({ upstreamPort: refusedPort });
-    expect(await rawTls(upgradeRequest("nobody.matrix-os.com"))).toMatch(/^HTTP\/1.1 404 Not Found/);
-    expect(await rawTls(upgradeRequest("sleepy.matrix-os.com", "", "vm_bbbbbbbbbbbbbbbbbbbbbbbb:1"))).toMatch(/^HTTP\/1.1 503 Service Unavailable[\s\S]*retry-after: 2/);
+    expect(await rawTls(upgradeRequest("app.matrix-os.com", "", "vm_ffffffffffffffffffffffff:1"))).toMatch(/^HTTP\/1.1 404 Not Found/);
+    expect(await rawTls(upgradeRequest("app.matrix-os.com", "", "vm_bbbbbbbbbbbbbbbbbbbbbbbb:1"))).toMatch(/^HTTP\/1.1 503 Service Unavailable[\s\S]*retry-after: 2/);
     expect(await rawTls(upgradeRequest())).toMatch(/^HTTP\/1.1 502 Bad Gateway/);
     expect(has("ingress.upstream_failed")).toBe(true);
   });

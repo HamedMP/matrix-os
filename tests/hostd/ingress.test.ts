@@ -174,7 +174,7 @@ function send(
 const ALICE_TARGET = "vm_0123456789abcdef01234567:1";
 const BOB_TARGET = "vm_bbbbbbbbbbbbbbbbbbbbbbbb:1";
 const CAROL_TARGET = "vm_cccccccccccccccccccccccc:1";
-const authed = (host = "alice.matrix-os.com", extra: Record<string, string> = {}) => ({
+const authed = (host = "app.matrix-os.com", extra: Record<string, string> = {}) => ({
   host,
   "x-matrix-host-auth": TOKEN,
   "x-matrix-vm-target": ALICE_TARGET,
@@ -190,7 +190,7 @@ describe("host ingress", () => {
       readVmBindings: async () => new Map(),
       vmIsOffline: async (id: string) => { checked.push(id); return true; },
     });
-    const reply = await send(authed("alice.matrix-os.com", { "x-matrix-vm-target": `${vm.id}:${vm.generation}` }), { method: "POST", body: "write" });
+    const reply = await send(authed("app.matrix-os.com", { "x-matrix-vm-target": `${vm.id}:${vm.generation}` }), { method: "POST", body: "write" });
     expect(reply.headers[INGRESS_ERROR_HEADER]).toBe("runtime_asleep");
     expect(checked).toEqual([vm.id]);
     expect(seen).toHaveLength(0);
@@ -201,7 +201,7 @@ describe("host ingress", () => {
     const replacement = record({ id: "vm_ffffffffffffffffffffffff", machineId: "replacement", generation: 4, state: "suspended" });
     await store.put(replacement);
     await startIngress();
-    const reply = await send(authed("alice.matrix-os.com", { "x-matrix-vm-target": `${replacement.id}:4` }), { method: "POST", body: "write" });
+    const reply = await send(authed("app.matrix-os.com", { "x-matrix-vm-target": `${replacement.id}:4` }), { method: "POST", body: "write" });
     expect(reply.headers[INGRESS_ERROR_HEADER]).toBe("runtime_asleep");
     expect(seen).toHaveLength(0);
   });
@@ -232,24 +232,24 @@ describe("host ingress", () => {
     expect(seen).toHaveLength(1);
   });
 
-  it("routes by host header to the running VM", async () => {
+  it("routes the exact target on the canonical application Host", async () => {
     await store.put(record());
     await store.put(record({ id: "vm_bbbbbbbbbbbbbbbbbbbbbbbb", handle: "bob", privateIPv4: "127.0.0.2" }));
     await startIngress();
-    const reply = await send(authed("Alice.Matrix-OS.com:443"), { method: "POST", path: "/api/x?y=1", body: "hello" });
+    const reply = await send(authed("App.Matrix-OS.com:443"), { method: "POST", path: "/api/x?y=1", body: "hello" });
     expect(reply.status).toBe(200);
     expect(JSON.parse(reply.body)).toEqual({ ok: true, url: "/api/x?y=1" });
     expect(reply.headers["set-cookie"]).toEqual(["a=1", "b=2"]);
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ method: "POST", url: "/api/x?y=1", body: "hello" });
-    expect(seen[0]!.headers.host).toBe("Alice.Matrix-OS.com:443");
+    expect(seen[0]!.headers.host).toBe("App.Matrix-OS.com:443");
   });
 
   it("401 without x-matrix-host-auth and does not reach the VM", async () => {
     await store.put(record());
     await startIngress();
-    const missing = await send({ host: "alice.matrix-os.com" });
-    const wrong = await send({ host: "alice.matrix-os.com", "x-matrix-host-auth": `${TOKEN}x` });
+    const missing = await send({ host: "app.matrix-os.com" });
+    const wrong = await send({ host: "app.matrix-os.com", "x-matrix-host-auth": `${TOKEN}x` });
     expect(missing.status).toBe(401);
     expect(JSON.parse(missing.body)).toEqual({ error: "unauthorized" });
     expect(wrong.status).toBe(401);
@@ -285,16 +285,16 @@ describe("host ingress", () => {
     expect((await store.get(record().id))!.state).toBe("failed");
   });
 
-  it("404 runtime_unknown for an unknown handle", async () => {
+  it("rejects hosts outside the canonical application authority", async () => {
     await store.put(record());
     await startIngress();
     for (const host of [
-      "carol.matrix-os.com",
+      "alice.matrix-os.com",
       "matrix-os.com",
       "a.b.matrix-os.com",
-      "alice.matrix-os.com.evil.test",
-      "alice.matrix-os.com:8443",
-      "-alice.matrix-os.com",
+      "app.matrix-os.com.evil.test",
+      "app.matrix-os.com:8443",
+      "-app.matrix-os.com",
       "127.0.0.1",
     ]) {
       const reply = await send(authed(host));
@@ -322,7 +322,7 @@ describe("host ingress", () => {
     ws.close();
 
     const rejected = new WebSocket(`wss://127.0.0.1:${ingressPort}/ws`, {
-      headers: { host: "alice.matrix-os.com" },
+      headers: { host: "app.matrix-os.com" },
       rejectUnauthorized: false,
     });
     const status = await new Promise<number>((resolve) => {
@@ -337,7 +337,7 @@ describe("host ingress", () => {
     await store.put(record());
     await startIngress();
     await send(
-      authed("alice.matrix-os.com", {
+      authed("app.matrix-os.com", {
         authorization: "Bearer platform-jwt",
         "x-platform-user-id": "user_1",
         "x-platform-verified": "1",
@@ -408,7 +408,7 @@ describe("host ingress", () => {
   it("forwards a chunked body on a bodyless method framed, so an embedded request is never seen", async () => {
     await store.put(record());
     await startIngress();
-    const smuggled = "GET /smuggled HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-platform-verified: 1\r\n\r\n";
+    const smuggled = "GET /smuggled HTTP/1.1\r\nhost: app.matrix-os.com\r\nx-platform-verified: 1\r\n\r\n";
     for (const method of ["GET", "DELETE", "OPTIONS"]) {
       const reply = await new Promise<number>((resolve, reject) => {
         const req = httpsRequest(
@@ -443,7 +443,7 @@ describe("host ingress", () => {
   it("keeps content-length when Connection names it, so an embedded request is never seen", async () => {
     await store.put(record());
     await startIngress();
-    const smuggled = "GET /smuggled HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-platform-verified: 1\r\n\r\n";
+    const smuggled = "GET /smuggled HTTP/1.1\r\nhost: app.matrix-os.com\r\nx-platform-verified: 1\r\n\r\n";
     for (const method of ["GET", "DELETE"]) {
       const reply = await new Promise<number>((resolve, reject) => {
         const req = httpsRequest(
@@ -477,7 +477,7 @@ describe("host ingress", () => {
     await store.put(record());
     await startIngress();
     const raw = await rawTls(
-      "POST / HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " +
+      "POST / HTTP/1.1\r\nhost: app.matrix-os.com\r\nx-matrix-host-auth: " +
         TOKEN +
         "\r\ncontent-length: 5\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n0\r\n\r\n",
     );
@@ -501,7 +501,7 @@ describe("host ingress", () => {
     await startIngress({ store: slowStore, maxUpstreamPerVm: 1 });
     const client = await rawTlsSocket();
     client.write(
-      "GET /ws HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " +
+      "GET /ws HTTP/1.1\r\nhost: app.matrix-os.com\r\nx-matrix-host-auth: " +
         TOKEN +
         `\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\n` +
         "sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
@@ -530,7 +530,7 @@ describe("host ingress", () => {
     };
     await startIngress({ store: slowStore, maxUpstreamPerVm: 1 });
     const client = await rawTlsSocket();
-    client.write("GET /gone HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " + TOKEN + `\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\n\r\n`);
+    client.write("GET /gone HTTP/1.1\r\nhost: app.matrix-os.com\r\nx-matrix-host-auth: " + TOKEN + `\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\n\r\n`);
     await expect.poll(() => listCalls).toBe(1);
     client.destroy();
     await new Promise((r) => setTimeout(r, 100));
@@ -563,9 +563,9 @@ describe("host ingress", () => {
     expect(ingress!.lastRequestAt("alice")).toBeUndefined();
     await send(authed());
     t = 9_000;
-    await send(authed("bob.matrix-os.com", { "x-matrix-vm-target": BOB_TARGET }));
-    await send({ host: "alice.matrix-os.com" });
-    await send(authed("nobody.matrix-os.com"));
+    await send(authed("app.matrix-os.com", { "x-matrix-vm-target": BOB_TARGET }));
+    await send({ host: "app.matrix-os.com" });
+    await send(authed("app.matrix-os.com", { "x-matrix-vm-target": "vm_ffffffffffffffffffffffff:1" }));
     expect(ingress!.lastRequestAt("alice")).toBe(5_000);
     expect(ingress!.lastRequestAt("Bob")).toBe(9_000);
     expect(ingress!.lastRequestAt("nobody")).toBeUndefined();
@@ -577,9 +577,9 @@ describe("host ingress", () => {
     await store.put(record({ id: "vm_cccccccccccccccccccccccc", handle: "carol", privateIPv4: "127.0.0.3" }));
     await startIngress({ maxTrackedHandles: 2 });
     await send(authed());
-    await send(authed("bob.matrix-os.com", { "x-matrix-vm-target": BOB_TARGET }));
+    await send(authed("app.matrix-os.com", { "x-matrix-vm-target": BOB_TARGET }));
     await send(authed());
-    await send(authed("carol.matrix-os.com", { "x-matrix-vm-target": CAROL_TARGET }));
+    await send(authed("app.matrix-os.com", { "x-matrix-vm-target": CAROL_TARGET }));
     expect(ingress!.lastRequestAt("alice")).toBeTypeOf("number");
     expect(ingress!.lastRequestAt("bob")).toBeUndefined();
     expect(ingress!.lastRequestAt("carol")).toBeTypeOf("number");
@@ -592,7 +592,7 @@ describe("host ingress", () => {
     expect(reply.status).toBe(503);
     expect(reply.headers["x-matrix-ingress-error"]).toBe("runtime_asleep");
     const ws = await rawTls(
-      "GET /ws HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: " +
+      "GET /ws HTTP/1.1\r\nhost: app.matrix-os.com\r\nx-matrix-host-auth: " +
         TOKEN +
         `\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\n` +
         "sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
@@ -611,9 +611,9 @@ describe("host ingress", () => {
     await store.put(unreachable);
     await startIngress({ maxUpstreamPerVm: 1 });
     const cases: Array<[string, Reply]> = [
-      ["unauthorized", await send({ host: "alice.matrix-os.com" })],
+      ["unauthorized", await send({ host: "app.matrix-os.com" })],
       ["runtime_unknown", await send(authed("nobody.matrix-os.com"))],
-      ["runtime_unavailable", await send(authed("bob.matrix-os.com", { "x-matrix-vm-target": BOB_TARGET }))],
+      ["runtime_unavailable", await send(authed("app.matrix-os.com", { "x-matrix-vm-target": BOB_TARGET }))],
     ];
     const held = send(authed(), { path: "/hold" });
     await expect.poll(() => holdResponses.length).toBe(1);
@@ -622,7 +622,7 @@ describe("host ingress", () => {
     await held;
     await ingress!.close();
     await startIngress({ upstreamPort: refusedPort });
-    cases.push(["runtime_unreachable", await send(authed("carol.matrix-os.com", { "x-matrix-vm-target": CAROL_TARGET }))]);
+    cases.push(["runtime_unreachable", await send(authed("app.matrix-os.com", { "x-matrix-vm-target": CAROL_TARGET }))]);
     for (const [code, reply] of cases) {
       expect(JSON.parse(reply.body), code).toEqual({ error: code });
       expect(reply.headers["x-matrix-ingress-error"], code).toBe(code);
@@ -643,7 +643,7 @@ describe("host ingress", () => {
     await store.put(record());
     await startIngress();
     const upgrade = (path: string) =>
-      `GET ${path} HTTP/1.1\r\nhost: alice.matrix-os.com\r\nx-matrix-host-auth: ${TOKEN}\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\n` +
+      `GET ${path} HTTP/1.1\r\nhost: app.matrix-os.com\r\nx-matrix-host-auth: ${TOKEN}\r\nx-matrix-vm-target: ${ALICE_TARGET}\r\n` +
       "connection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-version: 13\r\n" +
       "sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
     const declined = await rawTls(upgrade("/ws-forge-decline"));
@@ -682,14 +682,13 @@ async function rawTls(payload: string): Promise<string> {
 }
 
 describe("host ingress target validation", () => {
-  it("checks the generation and handle even when the VM id exists", async () => {
+  it("fences the generation and refuses a missing VM", async () => {
     const vm = record();
     await store.put(vm);
     await startIngress();
     for (const [host, target] of [
-      ["alice.matrix-os.com", `${vm.id}:2`],
-      ["bob.matrix-os.com", `${vm.id}:1`],
-      ["alice.matrix-os.com", "vm_ffffffffffffffffffffffff:1"],
+      ["app.matrix-os.com", `${vm.id}:2`],
+      ["app.matrix-os.com", "vm_ffffffffffffffffffffffff:1"],
     ] as const) {
       const reply = await send(authed(host, { "x-matrix-vm-target": target }));
       expect(reply.headers[INGRESS_ERROR_HEADER]).toBe("runtime_unknown");
@@ -700,9 +699,9 @@ describe("host ingress target validation", () => {
   it("rejects missing, malformed and ambiguous targets before forwarding", async () => {
     await store.put(record());
     await startIngress();
-    expect((await send({ host: "alice.matrix-os.com", "x-matrix-host-auth": TOKEN })).status).toBe(400);
+    expect((await send({ host: "app.matrix-os.com", "x-matrix-host-auth": TOKEN })).status).toBe(400);
     for (const value of ["garbage", `${ALICE_TARGET}, ${ALICE_TARGET}`, `${record().id}:9007199254740992`]) {
-      expect((await send(authed("alice.matrix-os.com", { "x-matrix-vm-target": value }))).status).toBe(400);
+      expect((await send(authed("app.matrix-os.com", { "x-matrix-vm-target": value }))).status).toBe(400);
     }
     expect(seen).toHaveLength(0);
   });

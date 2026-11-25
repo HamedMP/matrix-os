@@ -7,7 +7,7 @@ import type { TLSSocket } from "node:tls";
 import { isVmId, type VmState, type VmStore } from "./vm-store.js";
 
 // Host ingress: the public HTTPS front door of a metal host. The platform
-// proxies owner traffic here with the handle Host, exact VM target and
+// proxies owner traffic here with the canonical application Host, exact VM target and
 // per-host auth secret. The ingress strips the target, secret and hop-by-hop
 // headers before forwarding to the VM's own nginx on the
 // private bridge. It never wakes a VM: waking is the platform's job via hostd.
@@ -26,7 +26,7 @@ export const IDLE_SOCKET_TIMEOUT_MS = 15 * 60_000;
 export const MAX_UPSTREAM_PER_VM = 256;
 
 const MAX_LIVENESS_CHECKS = 32;
-const HANDLE_HOST = /^([a-z0-9][a-z0-9-]{0,62})\.matrix-os\.com(?::443)?$/i;
+const APP_HOST = /^app\.matrix-os\.com(?::443)?$/i;
 const ASLEEP: ReadonlySet<VmState> = new Set<VmState>(["suspended", "suspending", "resuming", "stopped"]);
 const HOP_BY_HOP = new Set([
   "connection",
@@ -103,12 +103,6 @@ const errorFields = (error: unknown) =>
     : { error: String(error) };
 
 const digest = (value: string) => createHash("sha256").update(value).digest();
-
-export function parseHandle(host: string | undefined): string | null {
-  if (typeof host !== "string") return null;
-  const match = HANDLE_HOST.exec(host);
-  return match ? match[1]!.toLowerCase() : null;
-}
 
 function forwardedHeaders(req: IncomingMessage, upgrade: boolean): OutgoingHttpHeaders {
   const listed = new Set(
@@ -315,8 +309,7 @@ export function createIngress(deps: IngressDeps): Ingress {
 
   async function route(req: IncomingMessage): Promise<Route> {
     if (!authorized(req.headers)) return { ok: false, code: "unauthorized" };
-    const handle = parseHandle(req.headers.host);
-    if (handle === null) return { ok: false, code: "runtime_unknown" };
+    if (!APP_HOST.test(req.headers.host ?? "")) return { ok: false, code: "runtime_unknown" };
     const target = req.headers[VM_TARGET_HEADER];
     const match = typeof target === "string" ? /^([^:]+):(0|[1-9]\d{0,15})$/.exec(target) : null;
     const id = match?.[1];
@@ -324,10 +317,10 @@ export function createIngress(deps: IngressDeps): Ingress {
     if (!id || !isVmId(id) || !Number.isSafeInteger(generation)) return { ok: false, code: "bad_request" };
     const entry = await lookup(id);
     if (entry === undefined) return { ok: false, code: "runtime_unavailable" };
-    if (entry === null || entry.handle !== handle || entry.generation !== generation) {
+    if (entry === null || entry.generation !== generation) {
       return { ok: false, code: "runtime_unknown" };
     }
-    touch(handle);
+    touch(entry.handle);
     if (ASLEEP.has(entry.state)) return { ok: false, code: "runtime_asleep" };
     if (entry.state !== "running" || !isIPv4(entry.privateIPv4)) return { ok: false, code: "runtime_unavailable" };
     if (!entry.bound) {
