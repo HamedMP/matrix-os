@@ -27,8 +27,7 @@ import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
 import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED, type PendingCanonicalTurn } from "@matrix-os/ui";
-import { admitDesktopChatTurn, resolveDesktopAdmittedDetail } from "./canonical-chat-turn-admission";
-import { withChatContinuationRoot } from "./canonical-chat-continuation-root";
+import { admitDesktopChatTurn, resolveDesktopAdmittedDetail, withChatContinuationRoot } from "./canonical-chat-turn-admission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
 const INITIAL_DETAIL_RETRY_MS = 200;
@@ -464,12 +463,9 @@ export function useCanonicalChatRouteController({
     }
   }, [client, detail, loadDetail, updateDetail]);
 
-  const hasUnresolvedTurn = (
-    input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
-    requestId?: string,
-  ) => {
+  const pendingDraft = (draftKey: string) => {
     const chatId = activeChatIdRef.current;
-    return chatId !== null && admissions.hasUnresolved(admissionIdentity, chatId, input, requestId);
+    return chatId ? admissions.pendingDraft(admissionIdentity, chatId, draftKey) : null;
   };
 
   const canOfferProjectCheckout = (
@@ -486,7 +482,7 @@ export function useCanonicalChatRouteController({
     const inherited = withChatContinuationRoot(input, current, chatId);
     const root = inherited.executionRoot;
     return !input.executionRoot && root?.kind === "worktree" && root.projectId === worktree.projectId
-      && root.worktreeId === worktree.worktreeId && !hasUnresolvedTurn(inherited);
+      && root.worktreeId === worktree.worktreeId && !admissions.hasUnresolved(admissionIdentity, chatId, input);
   };
 
   const submitTurn = useCallback(async (
@@ -495,9 +491,10 @@ export function useCanonicalChatRouteController({
     initialProjectId: string | null = projectId,
     onAccepted?: () => void,
     onRejected?: () => void,
-    receiptCallbacks?: {
-      confirmed: (receipt: CanonicalChatTurnAdmissionResponse) => void;
-      unconfirmed: () => void;
+    options?: {
+      draftKey?: string;
+      confirmed?: (receipt: CanonicalChatTurnAdmissionResponse) => void;
+      unconfirmed?: () => void;
     },
   ) => {
     const routeScope = routeScopeRef.current;
@@ -514,7 +511,7 @@ export function useCanonicalChatRouteController({
       const current = detailRef.current;
       const admitted: CanonicalChatClientAdmission | null = await admitDesktopChatTurn({ client, tracker: admissions, identity: admissionIdentity,
         scope: selectedChatId ?? `new:${initialProjectId ?? "global"}:${selectionEpoch.current}`,
-        input: withChatContinuationRoot(input, current, selectedChatId), title, projectId: initialProjectId, detail: current,
+        input, title, projectId: initialProjectId, detail: current, selectedChatId, draftKey: options?.draftKey,
         current: () => detailRef.current,
         isCurrent: () => admissionAuthority.current.valid && admissionAuthority.current.mounted
           && admissionAuthority.current.client === client && admissionAuthority.current.identity === admissionIdentity,
@@ -536,7 +533,7 @@ export function useCanonicalChatRouteController({
           if (latestAdmissionId.current !== id) return;
           admissionConfirmed = true;
           setError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
-          if (isCurrentScope() && receipt.turn.clientRequestId === id) receiptCallbacks?.confirmed(receipt);
+          if (isCurrentScope() && receipt.turn.clientRequestId === id) options?.confirmed?.(receipt);
         },
         onSnapshot: fresh => {
           if (!isCurrentScope() || admissionSequence.current !== sequence) return;
@@ -561,7 +558,7 @@ export function useCanonicalChatRouteController({
     } catch (error: unknown) {
       console.warn("[canonical-chat] submit failed:", diagnosticErrorKind(error instanceof ChatAdmissionUnconfirmed ? error.cause : error));
       if (!isCurrentScope() || admissionSequence.current !== sequence || admissionConfirmed) return null;
-      if (pendingRequestId && error instanceof ChatAdmissionUnconfirmed) receiptCallbacks?.unconfirmed();
+      if (pendingRequestId && error instanceof ChatAdmissionUnconfirmed) options?.unconfirmed?.();
       setError(error instanceof ChatAdmissionUnconfirmed ? CHAT_ADMISSION_UNCONFIRMED : canonicalChatSubmitFailureMessage(error));
       return null;
     } finally {
@@ -1018,7 +1015,7 @@ export function useCanonicalChatRouteController({
     moveProject,
     submitTurn,
     canOfferProjectCheckout,
-    hasUnresolvedTurn,
+    pendingDraft,
     cancelActiveRun,
     steerActiveRun,
     queueTurn,

@@ -16,7 +16,7 @@ import { useProviderPreferences } from "@desktop/renderer/src/features/settings/
 import { useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
 import { AppError } from "@desktop/shared/app-error";
-import { isHistoricalWorktreeMissing, withChatContinuationRoot } from "@desktop/renderer/src/features/chat/canonical-chat-continuation-root";
+import { isHistoricalWorktreeMissing, withChatContinuationRoot } from "@desktop/renderer/src/features/chat/canonical-chat-turn-admission";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { createChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root";
 import { createProjectManager } from "../../packages/gateway/src/project-manager";
@@ -239,6 +239,12 @@ describe("native Chat worktree continuation", () => {
         expect.objectContaining({ executionRoot: projectRoot,
           parts: [{ type: "text", text: "Continue after removing the worktree." }] }), { chatScope: "project" });
       const request = vi.mocked(client.admitTurn).mock.calls[0]![1];
+      fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+      fireEvent.click(await screen.findByRole("menuitemradio", { name: "Full Access" }));
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+      expect(client.admitTurn).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+      fireEvent.click(await screen.findByRole("menuitemradio", { name: "Supervised" }));
       fireEvent.click(screen.getByRole("button", { name: "Send" }));
       await waitFor(() => expect(client.admitTurn).toHaveBeenCalledTimes(2));
       expect(vi.mocked(client.admitTurn).mock.calls[1]![1]).toEqual(request);
@@ -337,6 +343,53 @@ describe("native Chat worktree continuation", () => {
     await waitFor(() => expect(client.admitTurn).toHaveBeenCalledTimes(2));
     expect(vi.mocked(client.admitTurn).mock.calls[1]![1]).toEqual(request);
     expect(screen.queryByRole("button", { name: "Use project checkout" })).toBeNull();
+  });
+
+  it.each([false, true])("retries the original worktree after newer project history (change mode: %s)", async changeMode => {
+    const fixture = worktreeFixture();
+    const { client, detail } = fixture;
+    const permissionMode = changeMode ? "full_access" : "supervised";
+    const newerDetail = {
+      ...detail,
+      record: { ...detail.record, chat: { ...detail.record.chat, revision: detail.record.chat.revision + 2 } },
+      runs: [...detail.runs, {
+        ...detail.runs[0]!, id: "run_concurrent_project", permissionMode,
+        executionRoot: { kind: "project" as const, projectId: worktree.projectId },
+      }],
+    };
+    vi.mocked(client.admitTurn).mockImplementationOnce(async () => {
+      vi.mocked(client.getDetail).mockResolvedValue(newerDetail);
+      throw new AppError("server", { httpStatus: 503 });
+    });
+    const project = { id: worktree.projectId, slug: "matrix-os", name: "Matrix OS", kind: "scratch" as const };
+    useBoard.setState({ projects: [project] });
+    const get = vi.fn().mockRejectedValue(new AppError("server", { httpStatus: 503 }));
+    render(<CanonicalChatWorkspace client={client} api={{ get } as unknown as ApiClient}
+      projectId={project.id} initialChatId={detail.record.chat.id} initialView="conversation"
+      active catalog={fixture.providerCatalog} />);
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    if (changeMode) {
+      fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+      fireEvent.click(await screen.findByRole("menuitemradio", { name: "Full Access" }));
+    }
+    await setSharedComposerText(editor, "Keep the original checkout for this reply.");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Message status is unconfirmed. You can retry safely.");
+    const original = vi.mocked(client.admitTurn).mock.calls[0]![1];
+    expect(original).toMatchObject({ executionRoot: worktree, permissionMode,
+      baseRevision: detail.record.chat.revision });
+    if (changeMode) {
+      fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+      fireEvent.click(await screen.findByRole("menuitemradio", { name: "Supervised" }));
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send" })); });
+      expect(client.admitTurn).toHaveBeenCalledTimes(1);
+      expect(editor.textContent).toBe("Keep the original checkout for this reply.");
+      fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+      fireEvent.click(await screen.findByRole("menuitemradio", { name: "Full Access" }));
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(client.admitTurn).mock.calls[1]![1]).toEqual(original);
   });
 
   it("never dispatches with the previous Chat's root while navigation is loading", async () => {
