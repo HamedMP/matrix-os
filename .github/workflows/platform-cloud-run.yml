@@ -1,50 +1,11 @@
-name: Platform Cloud Run
+name: Platform Cloud Run staging qualification
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/platform-cloud-run.yml"
-      - "packages/platform/**"
-      - "packages/gateway/src/integrations/**"
-      - "packages/sync-client/**"
-      - "packages/observability/**"
-      - "packages/clerk-sync/**"
-      - "shell/**"
-      - "distro/customer-vps/**"
-      - "scripts/start-platform-cloud-run.sh"
-      - "scripts/ci/platform-funded-pricing-env.sh"
-      - "scripts/ci/platform-account-deletion-env.sh"
-      - "scripts/ci/platform-sites-env.sh"
-      - "scripts/ci/platform-whatsapp-env.sh"
-      - "scripts/ci/platform-google-analytics-env.sh"
-      - "scripts/ci/platform-slack-env.sh"
-      - "scripts/render-platform-worker-service.mjs"
-      - "scripts/select-legacy-platform-worker-tags.mjs"
-      - "scripts/ci/remove-legacy-platform-worker-tags.mjs"
-      - "scripts/ci/platform-source-compatibility.mjs"
-      - "specs/639-managed-model-selection/current-runtime-compatibility.json"
-      - "Dockerfile.platform"
-      - "cloudbuild.platform.yaml"
   workflow_dispatch:
     inputs:
-      environment:
-        description: GitHub environment to deploy
-        required: true
-        default: staging
-        type: choice
-        options:
-          - staging
-          - production
-      promote:
-        description: Promote the deployed revision to 100% traffic
-        required: true
-        default: false
-        type: boolean
       expected_sha:
-        description: Approved commit SHA (40 characters); the run stops before building if the ref has moved
-        required: false
-        default: ''
+        description: Exact reviewed main source to build
+        required: true
         type: string
 
 permissions:
@@ -52,870 +13,65 @@ permissions:
   id-token: write
 
 concurrency:
-  group: platform-cloud-run-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
+  group: platform-cloud-run-staging
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Build and deploy platform
+  qualify:
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
+    environment: staging
+    timeout-minutes: 55
     env:
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       ARTIFACT_REPOSITORY: ${{ vars.ARTIFACT_REPOSITORY }}
-      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
-      PLATFORM_MAX_INSTANCES: '30'
-      # Each open WebSocket/SSE stream counts toward per-instance concurrency. Idle streams cost
-      # almost no CPU, so a low cap makes the autoscaler add and remove instances for idle
-      # connections, and an instance being removed keeps its max-instance slot until its streams
-      # end. High concurrency keeps the stream population on a few instances.
-      PLATFORM_CONCURRENCY: '500'
-      PLATFORM_CPU: '2'
-      PLATFORM_MEMORY: '2Gi'
-      # Production runs a fixed instance count (Cloud Run manual scaling). On scale-in the
-      # autoscaler deprioritizes instances: they stop receiving new requests but stay up, holding a
-      # max-instance slot, until their open streams end, which is up to the request timeout. With
-      # many long-lived streams those instances accumulated until no slot was left. A fixed count
-      # never deprioritizes an instance. Raise it when stream or CPU load approaches capacity.
-      PLATFORM_MANUAL_INSTANCE_COUNT: '10'
-      CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
-      PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
-      MATRIX_PUBLIC_SITES_ENABLED: ${{ vars.MATRIX_PUBLIC_SITES_ENABLED || 'true' }}
-      SITES_EDGE_SECRET_VERSION: ${{ vars.SITES_EDGE_SECRET_VERSION }}
-      SITES_EDGE_SECRET_PREVIOUS_VERSION: ${{ vars.SITES_EDGE_SECRET_PREVIOUS_VERSION }}
-      WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}
-      SLACK_ENABLED: ${{ vars.SLACK_ENABLED || 'false' }}
-      SLACK_TOKEN_ENCRYPTION_KEY_VERSION: ${{ vars.SLACK_TOKEN_ENCRYPTION_KEY_VERSION || '1' }}
-      WHATSAPP_ADMISSION_MODE: ${{ vars.WHATSAPP_ADMISSION_MODE || 'allowlist' }}
-      WHATSAPP_BUSINESS_PHONE_NUMBER: ${{ vars.WHATSAPP_BUSINESS_PHONE_NUMBER || '' }}
-      WHATSAPP_ENCRYPTION_KEY_VERSION: ${{ vars.WHATSAPP_ENCRYPTION_KEY_VERSION || '1' }}
-      ACCOUNT_DELETION_CONFIGURED: ${{ vars.ACCOUNT_DELETION_CONFIGURED || 'false' }}
-      ACCOUNT_DELETION_ENABLED: ${{ vars.ACCOUNT_DELETION_ENABLED || 'false' }}
-      ACCOUNT_DELETION_SECRET_VERSION: ${{ vars.ACCOUNT_DELETION_SECRET_VERSION || '1' }}
-      CLERK_USER_WEBHOOK_SECRET_VERSION: ${{ vars.CLERK_USER_WEBHOOK_SECRET_VERSION || '1' }}
-      APPLE_SIGN_IN_SECRET_VERSION: ${{ vars.APPLE_SIGN_IN_SECRET_VERSION || '1' }}
-      MATRIX_API_ORIGIN: ${{ vars.MATRIX_API_ORIGIN }}
-      # Personal remote-server broker; independent of the hosted Matrix MCP endpoint.
-      CUSTOM_MCP_ENABLED: ${{ vars.CUSTOM_MCP_ENABLED || 'false' }}
-      MCP_OAUTH_CALLBACK_URL: ${{ vars.MCP_OAUTH_CALLBACK_URL }}
-      MCP_OAUTH_CLIENT_ID: ${{ vars.MCP_OAUTH_CLIENT_ID }}
-      MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: ${{ vars.MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION || '1' }}
-      MATRIX_MCP_ENABLED: ${{ vars.MATRIX_MCP_ENABLED || 'false' }}
-      MATRIX_MCP_RESOURCE_URL: ${{ vars.MATRIX_MCP_RESOURCE_URL }}
-      MATRIX_MCP_OAUTH_ISSUER: ${{ vars.MATRIX_MCP_OAUTH_ISSUER }}
-      MATRIX_MCP_OAUTH_JWKS_URL: ${{ vars.MATRIX_MCP_OAUTH_JWKS_URL }}
-      MATRIX_MCP_ALLOWED_ORIGINS: ${{ vars.MATRIX_MCP_ALLOWED_ORIGINS }}
-      MATRIX_MCP_REQUIRED_SCOPES: ${{ vars.MATRIX_MCP_REQUIRED_SCOPES }}
-      MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: ${{ vars.MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID || 'collaboration-v1' }}
-      MATRIX_COLLABORATION_ALLOWED_ORIGINS: ${{ vars.MATRIX_APP_URL }}
-      # Environment configuration takes precedence over the repository variable.
-      MATRIX_INTERNAL_CLERK_ORG_ID: ${{ vars.MATRIX_INTERNAL_CLERK_ORG_ID }}
-      MATRIX_APP_URL: ${{ vars.MATRIX_APP_URL }}
-      MATRIX_APP_DOMAIN_HOSTS: ${{ vars.MATRIX_APP_DOMAIN_HOSTS }}
-      MATRIX_CODE_DOMAIN_HOSTS: ${{ vars.MATRIX_CODE_DOMAIN_HOSTS }}
-      CUSTOMER_VPS_IMAGE_VERSION: 'stable'
-      ATS_BOOKING_BASE_URL: ${{ vars.ATS_BOOKING_BASE_URL }}
-      ATS_GROUP_INTAKE_ENABLED: ${{ vars.ATS_GROUP_INTAKE_ENABLED || 'false' }}
-      GOLDEN_SNAPSHOT_BUILDS_ENABLED: ${{ vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED || 'false' }}
-      GOLDEN_SNAPSHOTS_ENABLED: 'true'
-      GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100'
-      MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}
-      MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}
-      MATRIX_STARTER_TRIAL_DAYS: ${{ vars.MATRIX_STARTER_TRIAL_DAYS || '14' }}
-      GOOGLE_TAG_MANAGER_ID: ${{ vars.GOOGLE_TAG_MANAGER_ID || 'GTM-5D8ZT4HF' }}
-      GOOGLE_ANALYTICS_MEASUREMENT_ID: ${{ vars.GOOGLE_ANALYTICS_MEASUREMENT_ID }}
-      GOOGLE_ANALYTICS_API_SECRET_VERSION: ${{ vars.GOOGLE_ANALYTICS_API_SECRET_VERSION || '1' }}
-      MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true'
-      MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100'
-      MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE || '4' }}
-      POSTHOG_PUBLIC_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_HOST || 'https://eu.posthog.com' }}
-      POSTHOG_PUBLIC_API_HOST: ${{ vars.NEXT_PUBLIC_POSTHOG_API_HOST || '/relay' }}
-      PLATFORM_SPEECH_ENABLED: ${{ vars.PLATFORM_SPEECH_ENABLED || 'false' }}
-      PLATFORM_SPEECH_PROVIDER: ${{ vars.PLATFORM_SPEECH_PROVIDER || 'openai' }}
-      PLATFORM_SPEECH_MODEL: ${{ vars.PLATFORM_SPEECH_MODEL }}
-      PLATFORM_SPEECH_POLICY_REVISION: ${{ vars.PLATFORM_SPEECH_POLICY_REVISION }}
-      PLATFORM_SPEECH_MICROUSD_PER_MINUTE: ${{ vars.PLATFORM_SPEECH_MICROUSD_PER_MINUTE }}
-      PLATFORM_SPEECH_FUNDING_SOURCES: ${{ vars.PLATFORM_SPEECH_FUNDING_SOURCES }}
-      PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD: ${{ vars.PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD || '1000000' }}
-      PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD: ${{ vars.PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD || '1000000' }}
-      PLATFORM_SPEECH_OWNER_AUDIO_ENABLED: ${{ vars.PLATFORM_SPEECH_OWNER_AUDIO_ENABLED }}
-      MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: ${{ vars.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED || 'false' }}
-      MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: ${{ vars.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED || 'false' }}
-      MATRIX_FUNDED_AI_RUNTIME_ENABLED: ${{ vars.MATRIX_FUNDED_AI_RUNTIME_ENABLED || 'false' }}
-      MATRIX_FUNDED_HOST_CONFIG_ENABLED: ${{ vars.MATRIX_FUNDED_HOST_CONFIG_ENABLED || 'false' }}
-      MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS: ${{ vars.MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS }}
-      MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH: ${{ vars.MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH }}
-      MATRIX_FUNDED_AI_RELAY_URL: ${{ vars.MATRIX_FUNDED_AI_RELAY_URL }}
-      MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT || '0' }}
-      MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT || '0' }}
-      MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED: ${{ vars.MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED }}
-      MATRIX_FUNDED_AI_PRICING_REVIEW_JOB_ENABLED: ${{ vars.MATRIX_FUNDED_AI_PRICING_REVIEW_JOB_ENABLED }}
-      MATRIX_FUNDED_AI_PRICING_LINEAR_TEAM_ID: ${{ vars.MATRIX_FUNDED_AI_PRICING_LINEAR_TEAM_ID }}
-      MATRIX_FUNDED_AI_PRICING_LINEAR_OPEN_STATE_ID: ${{ vars.MATRIX_FUNDED_AI_PRICING_LINEAR_OPEN_STATE_ID }}
-      MATRIX_FUNDED_AI_PRICING_LINEAR_COMPLETED_STATE_ID: ${{ vars.MATRIX_FUNDED_AI_PRICING_LINEAR_COMPLETED_STATE_ID }}
-      MATRIX_FUNDED_AI_PRICING_LINEAR_TOKEN_VERSION: ${{ vars.MATRIX_FUNDED_AI_PRICING_LINEAR_TOKEN_VERSION }}
-      MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: ${{ vars.MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED || 'false' }}
-      MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: ${{ vars.MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED || 'false' }}
-      MATRIX_PREVIEW_RUNTIME_TTL_MS: ${{ vars.MATRIX_PREVIEW_RUNTIME_TTL_MS || '21600000' }}
-      MATRIX_PREVIEW_AI_BUDGET_MICROUSD: ${{ vars.MATRIX_PREVIEW_AI_BUDGET_MICROUSD || '1000000' }}
-      MATRIX_PREVIEW_AI_REQUEST_LIMIT: ${{ vars.MATRIX_PREVIEW_AI_REQUEST_LIMIT || '25' }}
-      MATRIX_PREVIEW_SPEECH_REQUEST_LIMIT: ${{ vars.MATRIX_PREVIEW_SPEECH_REQUEST_LIMIT || '25' }}
-      MATRIX_PREVIEW_MAX_CONCURRENCY: '1'
-      STRIPE_PRICE_AI_CREDIT_USD_5: ${{ vars.STRIPE_PRICE_AI_CREDIT_USD_5 }}
-      STRIPE_PRICE_AI_CREDIT_USD_10: ${{ vars.STRIPE_PRICE_AI_CREDIT_USD_10 }}
-      STRIPE_PRICE_AI_CREDIT_USD_25: ${{ vars.STRIPE_PRICE_AI_CREDIT_USD_25 }}
-      DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
+      STAGING_SERVICE: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE }}
+      STAGING_IDENTITY: ${{ vars.CLOUD_RUN_PREVIEW_SERVICE_ACCOUNT }}
+      MATRIX_APP_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
+      POSTHOG_PUBLIC_HOST: ""
+      POSTHOG_PUBLIC_API_HOST: /relay
     steps:
-      - name: Checkout
-        timeout-minutes: 5
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
-          # Source ancestry must survive squash merges and ordinary main deployments.
-          fetch-depth: 0
-
-      # First real step: a moved ref stops the run before any image is built or
-      # any traffic is switched.
-      - name: Require the approved commit
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: bash scripts/ci/assert-expected-sha.sh
-
-      - name: Validate funded pricing review configuration
-        run: bash scripts/ci/platform-funded-pricing-env.sh >> "$GITHUB_ENV"
-
-      - name: Validate Private Preview organization configuration
+          ref: ${{ inputs.expected_sha }}
+          path: source
+          persist-credentials: false
+      - name: Require the exact reviewed source and isolated staging configuration
+        working-directory: source
         run: |
           set -euo pipefail
-          if [ "${DEPLOY_ENVIRONMENT:-}" = "production" ] && [ -z "${MATRIX_INTERNAL_CLERK_ORG_ID:-}" ]; then
-            echo "MATRIX_INTERNAL_CLERK_ORG_ID is required for production Private Preview access." >&2
-            exit 1
-          fi
-          # Empty staging configuration keeps Private Preview disabled; never infer an organization.
-          if [ -n "${MATRIX_INTERNAL_CLERK_ORG_ID:-}" ] && ! [[ "$MATRIX_INTERNAL_CLERK_ORG_ID" =~ ^org_[A-Za-z0-9]{1,124}$ ]]; then
-            echo "MATRIX_INTERNAL_CLERK_ORG_ID must be a valid Clerk organization id when configured." >&2
-            exit 1
-          fi
-
-      - name: Validate deployment configuration
-        run: |
-          set -euo pipefail
-          missing=()
-          # gcloud uses | as the separator so comma-separated browser origins remain one value.
-          for name in CUSTOM_MCP_ENABLED MCP_OAUTH_CALLBACK_URL MCP_OAUTH_CLIENT_ID MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION MATRIX_MCP_ENABLED MATRIX_MCP_RESOURCE_URL MATRIX_MCP_OAUTH_ISSUER MATRIX_MCP_OAUTH_JWKS_URL MATRIX_MCP_ALLOWED_ORIGINS MATRIX_MCP_REQUIRED_SCOPES MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID MATRIX_COLLABORATION_ALLOWED_ORIGINS; do
-            if [[ "${!name:-}" == *"|"* ]]; then
-              echo "MCP configuration cannot contain the deployment delimiter" >&2
-              exit 1
-            fi
-          done
-          for name in \
-            GCP_PROJECT_ID \
-            GCP_REGION \
-            ARTIFACT_REPOSITORY \
-            CLOUD_RUN_SERVICE \
-            CLOUD_RUN_SERVICE_ACCOUNT \
-            PLATFORM_PUBLIC_URL \
-            MATRIX_API_ORIGIN \
-            MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID \
-            MATRIX_COLLABORATION_ALLOWED_ORIGINS \
-            MATRIX_APP_URL \
-            MATRIX_APP_DOMAIN_HOSTS \
-            MATRIX_CODE_DOMAIN_HOSTS; do
-            if [ -z "${!name:-}" ]; then
-              missing+=("$name")
-            fi
-          done
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ] && [ -z "${ATS_BOOKING_BASE_URL:-}" ]; then
-            missing+=("ATS_BOOKING_BASE_URL")
-          fi
-          if [ "${#missing[@]}" -gt 0 ]; then
-            printf 'Missing required GitHub environment variable(s): %s\n' "${missing[*]}" >&2
-            exit 1
-          fi
-          case "$CUSTOM_MCP_ENABLED" in
-            true)
-              if ! [[ "$MCP_OAUTH_CALLBACK_URL" =~ ^https://[^/?#[:space:]]+/api/mcp-servers/oauth/callback$ ]]; then
-                echo "Custom MCP requires an HTTPS MCP_OAUTH_CALLBACK_URL ending in /api/mcp-servers/oauth/callback." >&2
-                exit 1
-              fi
-              if [ "$MCP_OAUTH_CALLBACK_URL" != "${PLATFORM_PUBLIC_URL%/}/api/mcp-servers/oauth/callback" ] &&
-                 [ "$MCP_OAUTH_CALLBACK_URL" != "${MATRIX_API_ORIGIN%/}/api/mcp-servers/oauth/callback" ]; then
-                echo "Custom MCP callback must use the configured public platform or API origin." >&2
-                exit 1
-              fi
-              if ! [[ "$MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION" =~ ^[1-9][0-9]*$ ]]; then
-                echo "Custom MCP encryption key must use a pinned numeric secret version." >&2
-                exit 1
-              fi
-              ;;
-            false) ;;
-            *)
-              echo "CUSTOM_MCP_ENABLED must be true or false." >&2
-              exit 1
-              ;;
-          esac
-          case "$GOLDEN_SNAPSHOT_BUILDS_ENABLED" in
-            true|false) ;;
-            *)
-              echo "GOLDEN_SNAPSHOT_BUILDS_ENABLED must be true or false." >&2
-              exit 1
-              ;;
-          esac
-          case "$MATRIX_CARD_TRIALS_ENABLED" in
-            true|false) ;;
-            *)
-              echo "MATRIX_CARD_TRIALS_ENABLED must be true or false." >&2
-              exit 1
-              ;;
-          esac
-          scripts/ci/platform-speech-production-env.sh validate
-          scripts/ci/platform-whatsapp-env.sh validate
-          scripts/ci/platform-account-deletion-env.sh validate
-          scripts/ci/platform-sites-env.sh validate
-          bash scripts/ci/platform-google-analytics-env.sh validate
-          if ! [[ "$MATRIX_STARTER_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]; then
-            echo "MATRIX_STARTER_TRIAL_DAYS must be an integer from 1 to 30." >&2
-            exit 1
-          fi
-          scripts/ci/platform-slack-env.sh validate
-          if ! [[ "$MATRIX_CARD_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]; then
-            echo "MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30." >&2
-            exit 1
-          fi
-          if ! [[ "$MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE" =~ ^[1-9][0-9]*$ ]]; then
-            echo "MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE must be a positive integer." >&2
-            exit 1
-          fi
-          for name in MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED MATRIX_FUNDED_AI_RUNTIME_ENABLED MATRIX_FUNDED_HOST_CONFIG_ENABLED MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED; do
-            case "${!name:-false}" in
-              true|false) ;;
-              *)
-                echo "$name must be true or false." >&2
-                exit 1
-                ;;
-            esac
-          done
-          if [ "${MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED:-false}" = "true" ] && {
-            [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "true" ] ||
-            [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" != "true" ] ||
-            [ "$PLATFORM_SPEECH_ENABLED" != "true" ] ||
-            [ "$MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED" != "true" ];
-          }; then
-            echo "Preview runtime access requires funded AI and platform speech." >&2
-            exit 1
-          fi
-          if [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" = "true" ] &&
-             [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "true" ]; then
-            echo "Funded AI runtime provisioning requires the control plane." >&2
-            exit 1
-          fi
-          # Control-only deployment supports operator canary acceptance before
-          # customer provisioning. Its paid probes still need bounded budgets.
-          if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
-            for name in MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT; do
-              if ! [[ "${!name:-}" =~ ^[1-9][0-9]{0,4}$ ]]; then
-                echo "$name must be a positive bounded integer when funded AI is enabled." >&2
-                exit 1
-              fi
-            done
-            if [ "$MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT" -gt 10000 ] ||
-               [ "$MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT" -gt 100 ] ||
-               [ "$MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT" -gt "$MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT" ]; then
-              echo "Funded model probe limits exceed the supported budget bounds." >&2
-              exit 1
-            fi
-            if ! [[ "$MATRIX_FUNDED_AI_RELAY_URL" =~ ^https://[^/?#]+/?$ ]]; then
-              echo "MATRIX_FUNDED_AI_RELAY_URL must be an HTTPS origin when funded AI is enabled." >&2
-              exit 1
-            fi
-          fi
-          if [ "$MATRIX_FUNDED_HOST_CONFIG_ENABLED" = "true" ]; then
-            python3 - <<'PYCONFIG'
-          import datetime, os, re, uuid
-          def reject():
-              raise SystemExit("Funded host configuration is misconfigured")
-          if os.environ["DEPLOY_ENVIRONMENT"] != "production" or os.environ["MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED"] != "true":
-              reject()
-          raw = os.environ.get("MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS", "")
-          ids = raw.split(",") if raw else []
-          if len(ids) > 100 or len(set(ids)) != len(ids): reject()
-          for value in ids:
-              try:
-                  if str(uuid.UUID(value)) != value: reject()
-              except ValueError: reject()
-          if not re.fullmatch(r"https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app", os.environ.get("MATRIX_FUNDED_AI_RELAY_URL", "")): reject()
-          if not re.fullmatch(r"[a-f0-9]{40}", os.environ.get("GITHUB_SHA", "")): reject()
-          stamp = os.environ.get("MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH", "")
-          if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", stamp): reject()
-          try:
-              expiry = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-          except ValueError: reject()
-          remaining = expiry - datetime.datetime.now(datetime.timezone.utc)
-          if not datetime.timedelta(0) < remaining <= datetime.timedelta(days=7): reject()
-          PYCONFIG
-          fi
-          case "$MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED" in
-            true)
-              if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "true" ] ||
-                 [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" != "true" ]; then
-                echo "Matrix AI credit checkout requires funded AI control plane and runtime." >&2
-                exit 1
-              fi
-              for name in STRIPE_PRICE_AI_CREDIT_USD_5 STRIPE_PRICE_AI_CREDIT_USD_10 STRIPE_PRICE_AI_CREDIT_USD_25; do
-                if ! [[ "${!name}" =~ ^price_[A-Za-z0-9_]{2,249}$ ]]; then
-                  echo "$name must be a Stripe price ID when Matrix AI checkout is enabled." >&2
-                  exit 1
-                fi
-              done
-              if [ "$STRIPE_PRICE_AI_CREDIT_USD_5" = "$STRIPE_PRICE_AI_CREDIT_USD_10" ] ||
-                 [ "$STRIPE_PRICE_AI_CREDIT_USD_5" = "$STRIPE_PRICE_AI_CREDIT_USD_25" ] ||
-                 [ "$STRIPE_PRICE_AI_CREDIT_USD_10" = "$STRIPE_PRICE_AI_CREDIT_USD_25" ]; then
-                echo "Matrix AI credit packages require distinct Stripe price IDs." >&2
-                exit 1
-              fi
-              ;;
-            false) ;;
-            *)
-              echo "MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED must be true or false." >&2
-              exit 1
-              ;;
-          esac
-      - name: Authenticate to Google Cloud
-        # google-github-actions v4 tags are not published yet; v3 is the latest
-        # major tag currently resolvable by GitHub Actions.
-        uses: google-github-actions/auth@v3
+          [[ "$EXPECTED_SHA" == 41b11f0890b28f2d62ec7614f777ae5d20e2c251 ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SHA" ]]
+          [[ "$GCP_PROJECT_ID" == matrix-os-1144 && "$GCP_REGION" == europe-west3 ]]
+          [[ "$STAGING_SERVICE" == matrix-platform-staging ]]
+          [[ "$STAGING_IDENTITY" == "matrix-platform-preview-runner@${GCP_PROJECT_ID}.iam.gserviceaccount.com" ]]
+          [[ "$MATRIX_APP_URL" == https://matrix-platform-staging-515970864382.europe-west3.run.app ]]
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up gcloud
-        # Keep this aligned with auth@v3 until google-github-actions publishes v4.
-        uses: google-github-actions/setup-gcloud@v3
-
-      - name: Verify default-serving source before build
-        run: node scripts/ci/platform-source-compatibility.mjs
-
-      - name: Verify Custom MCP credential secret
-        if: ${{ env.CUSTOM_MCP_ENABLED == 'true' }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Require the existing staging service and test-mode bindings
         run: |
           set -euo pipefail
-          secret_name=mcp-credential-encryption-key
-          # Keep the existing encryption key across deploys; never generate or rotate it here.
-          state="$(gcloud secrets versions describe "$MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION" --secret "$secret_name" \
-            --project "$GCP_PROJECT_ID" --quiet --format='value(state)')"
-          if [ "$state" != "ENABLED" ]; then
-            echo "Custom MCP requires an enabled credential encryption secret version." >&2
-            exit 1
-          fi
-          accessor_member="$(
-            gcloud secrets get-iam-policy "$secret_name" --quiet \
-              --project "$GCP_PROJECT_ID" \
-              --flatten='bindings[].members' \
-              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-              --format='value(bindings.members)' \
-              | head -1
-          )"
-          if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-            echo "Custom MCP encryption secret must grant secretAccessor to the Cloud Run runtime identity." >&2
-            exit 1
-          fi
-
-      - name: Verify collaboration ticket secret
+          gcloud run services describe "$STAGING_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --format=json > "$RUNNER_TEMP/platform-staging-before.json"
+          jq -e --arg identity "$STAGING_IDENTITY" '
+            .spec.template.spec as $runtime
+            | $runtime.containers[0].env as $env
+            | $runtime.serviceAccountName == $identity
+            and any($env[]; .name == "PLATFORM_DATABASE_URL" and .valueFrom.secretKeyRef.name == "platform-database-url-staging")
+            and any($env[]; .name == "STRIPE_SECRET_KEY" and .valueFrom.secretKeyRef.name == "stripe-secret-key-test")
+            and any($env[]; .name == "PLATFORM_PREVIEW" and .value == "true")
+            and all($env[]; .name != "HETZNER_API_TOKEN" and (.name != "PLATFORM_BACKGROUND_WORKERS_ENABLED" or .value == "false"))
+          ' "$RUNNER_TEMP/platform-staging-before.json" >/dev/null
+      - name: Build platform image with a fresh cache tag
+        working-directory: source
         run: |
           set -euo pipefail
-          secret_name=collaboration-ticket-keys
-          gcloud secrets describe "$secret_name" \
-            --project "$GCP_PROJECT_ID" >/dev/null
-          ticket_keys_tmpfile="$(mktemp)"
-          trap 'rm -f "$ticket_keys_tmpfile"' EXIT
-          chmod 600 "$ticket_keys_tmpfile"
-          if ! gcloud secrets versions access latest \
-            --secret "$secret_name" \
-            --project "$GCP_PROJECT_ID" >"$ticket_keys_tmpfile"; then
-            echo "$secret_name must have an accessible latest version." >&2
-            exit 1
-          fi
-          if ! jq -e --arg active_key "$MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID" '
-            type == "object"
-            and length >= 1
-            and length <= 8
-            and all(to_entries[];
-              (.key | test("^[A-Za-z0-9_.-]{1,80}$"))
-              and (.value | type == "string" and test("^[A-Za-z0-9_-]{43}$")))
-            and (.[$active_key] | type == "string" and test("^[A-Za-z0-9_-]{43}$"))
-          ' "$ticket_keys_tmpfile" >/dev/null; then
-            echo "$secret_name must contain bounded Ed25519 ticket seeds and the configured active key." >&2
-            exit 1
-          fi
-          accessor_member="$(
-            gcloud secrets get-iam-policy "$secret_name" \
-              --project "$GCP_PROJECT_ID" \
-              --flatten='bindings[].members' \
-              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-              --format='value(bindings.members)' \
-              | head -1
-          )"
-          if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-            echo "$secret_name must grant roles/secretmanager.secretAccessor to the Cloud Run runtime identity." >&2
-            exit 1
-          fi
-
-      # Without a usable secret the Clerk organization webhook answers 503, the membership
-      # projection never fills, and every share is refused. The value check mirrors the
-      # platform's decodeSigningSecret: the whole value is whsec_ + base64 decoding to >= 16 bytes.
-      - name: Verify Clerk organization webhook secret
-        run: |
-          set -euo pipefail
-          secret_name=clerk-organization-webhook-signing-secret
-          webhook_secret_tmpfile="$(mktemp)"
-          trap 'rm -f "$webhook_secret_tmpfile"' EXIT
-          chmod 600 "$webhook_secret_tmpfile"
-          if ! gcloud secrets versions access latest \
-            --secret "$secret_name" \
-            --project "$GCP_PROJECT_ID" >"$webhook_secret_tmpfile"; then
-            echo "$secret_name must have an accessible latest version." >&2
-            exit 1
-          fi
-          if ! jq -Rse 'test("\\Awhsec_[A-Za-z0-9+/=]{16,}\\z") and ((((ltrimstr("whsec_") | gsub("="; "") | length) * 3 / 4) | floor) >= 16)' \
-            "$webhook_secret_tmpfile" >/dev/null; then
-            echo "$secret_name must hold exactly one Clerk webhook signing secret (whsec_...) with a key of at least 16 bytes." >&2
-            exit 1
-          fi
-          # The read above ran as the deployer. The Cloud Run runtime identity needs its own
-          # access: a grant on this secret, or an unconditional project-level secretAccessor.
-          runtime_member="serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}"
-          secret_grant="$(
-            gcloud secrets get-iam-policy "$secret_name" \
-              --project "$GCP_PROJECT_ID" \
-              --flatten='bindings[].members' \
-              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:${runtime_member}" \
-              --format='value(bindings.members)' \
-              | head -1
-          )"
-          # Only fall back to the project policy when the secret has no direct grant, so a
-          # deployer without project IAM read access is not blocked by a valid direct grant.
-          project_grants=0
-          if [ "$secret_grant" != "$runtime_member" ]; then
-            project_grants="$(
-              gcloud projects get-iam-policy "$GCP_PROJECT_ID" --format=json \
-                | jq --arg member "$runtime_member" \
-                  '[.bindings[] | select(.role == "roles/secretmanager.secretAccessor" and .condition == null and (.members | index($member)))] | length'
-            )"
-          fi
-          if [ "$secret_grant" != "$runtime_member" ] && [ "$project_grants" = "0" ]; then
-            echo "$secret_name must be readable by the Cloud Run runtime identity (${CLOUD_RUN_SERVICE_ACCOUNT})." >&2
-            exit 1
-          fi
-
-      - name: Verify funded AI control-plane secrets
-        if: ${{ env.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED == 'true' }}
-        run: |
-          set -euo pipefail
-          required_funded_ai_secrets=(
-            ai-relay-control-token
-            ai-funded-credential-hash-secret
-          )
-          if [ "${MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED:-false}" = "true" ]; then
-            required_funded_ai_secrets+=(matrix-preview-runtime-secret)
-          fi
-          accessor_member="serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}"
-          validate_access_policy() {
-            jq -e '
-              type == "object" and
-              (.bindings == null or (.bindings | type == "array")) and
-              all(.bindings[]?;
-                type == "object" and (.role | type == "string") and
-                (.members | type == "array") and
-                all(.members[]; type == "string"))
-            ' >/dev/null
-          }
-          has_unconditional_accessor() {
-            jq -e --arg member "$accessor_member" '
-              any(.bindings[]?;
-                .role == "roles/secretmanager.secretAccessor" and
-                .condition == null and
-                any(.members[]?; . == $member))
-            ' >/dev/null
-          }
-          project_policy=""
-          for secret_name in "${required_funded_ai_secrets[@]}"; do
-            gcloud secrets versions describe latest \
-              --secret "$secret_name" \
-              --project "$GCP_PROJECT_ID" >/dev/null
-            secret_policy="$(gcloud secrets get-iam-policy "$secret_name" \
-              --project "$GCP_PROJECT_ID" --format=json --quiet)"
-            # Malformed/unreadable IAM metadata is an error, not absent access.
-            printf '%s\n' "$secret_policy" | validate_access_policy
-            if printf '%s\n' "$secret_policy" | has_unconditional_accessor; then
-              continue
-            fi
-            # Project grants are inherited by secrets. Inspect existing access;
-            # never grant a new role or assume a conditional grant is effective.
-            if [ -z "$project_policy" ]; then
-              project_policy="$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" \
-                --project "$GCP_PROJECT_ID" --format=json --quiet)"
-              printf '%s\n' "$project_policy" | validate_access_policy
-            fi
-            if ! printf '%s\n' "$project_policy" | has_unconditional_accessor; then
-              echo "$secret_name requires verified unconditional secret or project accessor access for ${CLOUD_RUN_SERVICE_ACCOUNT}." >&2
-              exit 1
-            fi
-          done
-
-      - name: Verify edge router secret
-        run: |
-          set -euo pipefail
-          gcloud secrets describe edge-router-secret \
-            --project "$GCP_PROJECT_ID" >/dev/null
-          accessor_member="$(
-            gcloud secrets get-iam-policy edge-router-secret \
-              --project "$GCP_PROJECT_ID" \
-              --flatten='bindings[].members' \
-              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-              --format='value(bindings.members)' \
-              | head -1
-          )"
-          if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-            echo "edge-router-secret must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}" >&2
-            exit 1
-          fi
-
-      - name: Verify production speech secrets
-        run: scripts/ci/platform-speech-production-env.sh preflight-secrets
-
-      - name: Verify opted-in WhatsApp secrets
-        run: scripts/ci/platform-whatsapp-env.sh preflight-secrets
-
-      - name: Verify account deletion secrets
-        if: ${{ env.ACCOUNT_DELETION_CONFIGURED == 'true' }}
-        run: scripts/ci/platform-account-deletion-env.sh preflight-secrets
-
-      - name: Verify opted-in native Slack secrets
-        run: scripts/ci/platform-slack-env.sh preflight-secrets
-
-      - name: Verify golden snapshot operator secret
-        run: |
-          set -euo pipefail
-          snapshot_operator_secret_name=golden-snapshot-operator-secret
-          gcloud secrets describe "$snapshot_operator_secret_name" \
-            --project "$GCP_PROJECT_ID" >/dev/null
-          snapshot_operator_secret_tmpfile="$(mktemp)"
-          trap 'rm -f "$snapshot_operator_secret_tmpfile"' EXIT
-          if ! gcloud secrets versions access latest --secret "$snapshot_operator_secret_name" \
-            --project "$GCP_PROJECT_ID" >"$snapshot_operator_secret_tmpfile"; then
-            echo "Golden snapshot operator secret must have an accessible latest version." >&2
-            exit 1
-          fi
-          if [ ! -s "$snapshot_operator_secret_tmpfile" ]; then
-            echo "Golden snapshot operator secret must not be empty." >&2
-            exit 1
-          fi
-          accessor_member="$(
-            gcloud secrets get-iam-policy "$snapshot_operator_secret_name" \
-              --project "$GCP_PROJECT_ID" \
-              --flatten='bindings[].members' \
-              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-              --format='value(bindings.members)' \
-              | head -1
-          )"
-          if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-            echo "Golden snapshot operator secret must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}." >&2
-            exit 1
-          fi
-
-      - name: Verify recruiting ATS secrets
-        if: ${{ env.DEPLOY_ENVIRONMENT == 'production' }}
-        run: |
-          set -euo pipefail
-          required_ats_secrets=(
-            ATS_DATABASE_URL=ats-database-url
-            ATS_INGEST_SECRET=ats-ingest-secret
-            ATS_ADMIN_SECRET=ats-admin-secret
-          )
-
-          if [ "$ATS_GROUP_INTAKE_ENABLED" = "true" ]; then
-            required_ats_secrets+=(
-              ATS_MAIL_INGEST_SECRET=ats-mail-ingest-secret
-              ATS_SLACK_BOT_TOKEN=ats-slack-bot-token
-              ATS_SLACK_CHANNEL_ID=ats-slack-channel-id
-            )
-          elif [ "$ATS_GROUP_INTAKE_ENABLED" != "false" ]; then
-            echo "ATS_GROUP_INTAKE_ENABLED must be true or false." >&2
-            exit 1
-          fi
-          for entry in "${required_ats_secrets[@]}"; do
-            env_name="${entry%%=*}"
-            secret_name="${entry#*=}"
-            gcloud secrets describe "$secret_name" \
-              --project "$GCP_PROJECT_ID" >/dev/null
-            ats_secret_tmpfile="$(mktemp)"
-            if ! gcloud secrets versions access latest --secret "$secret_name" \
-              --project "$GCP_PROJECT_ID" >"$ats_secret_tmpfile"; then
-              rm -f "$ats_secret_tmpfile"
-              echo "$secret_name must have an accessible latest version for $env_name." >&2
-              exit 1
-            fi
-            if [ ! -s "$ats_secret_tmpfile" ]; then
-              rm -f "$ats_secret_tmpfile"
-              echo "$secret_name must not be empty for $env_name." >&2
-              exit 1
-            fi
-            rm -f "$ats_secret_tmpfile"
-            accessor_member="$(
-              gcloud secrets get-iam-policy "$secret_name" \
-                --project "$GCP_PROJECT_ID" \
-                --flatten='bindings[].members' \
-                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-                --format='value(bindings.members)' \
-                | head -1
-            )"
-            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-              echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}" >&2
-              exit 1
-            fi
-          done
-
-      - name: Verify Stripe billing secrets
-        run: |
-          set -euo pipefail
-          required_billing_secrets=(
-            STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-2026-08-31:1
-            STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest
-            STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-2026-08-31:1
-            STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest
-            STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-2026-08-31:1
-            STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest
-            STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json:latest
-          )
-
-          for entry in "${required_billing_secrets[@]}"; do
-            env_name="${entry%%=*}"
-            secret_binding="${entry#*=}"
-            secret_name="${secret_binding%%:*}"
-            secret_version="${secret_binding##*:}"
-            gcloud secrets describe "$secret_name" \
-              --project "$GCP_PROJECT_ID" >/dev/null
-            billing_secret_tmpfile="$(mktemp)"
-            if ! gcloud secrets versions access "$secret_version" --secret "$secret_name" \
-              --project "$GCP_PROJECT_ID" >"$billing_secret_tmpfile"; then
-              rm -f "$billing_secret_tmpfile"
-              echo "$secret_name must have accessible version $secret_version for $env_name." >&2
-              exit 1
-            fi
-            if [ ! -s "$billing_secret_tmpfile" ]; then
-              rm -f "$billing_secret_tmpfile"
-              echo "$secret_name must not be empty for $env_name." >&2
-              exit 1
-            fi
-            rm -f "$billing_secret_tmpfile"
-            accessor_member="$(
-              gcloud secrets get-iam-policy "$secret_name" \
-                --project "$GCP_PROJECT_ID" \
-                --flatten='bindings[].members' \
-                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-                --format='value(bindings.members)' \
-                | head -1
-            )"
-            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-              echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}" >&2
-              exit 1
-            fi
-          done
-
-      - name: Verify Stripe webhook lifecycle events
-        run: |
-          set -euo pipefail
-          if [ "$DEPLOY_ENVIRONMENT" != "production" ]; then
-            echo "Skipping the production Stripe webhook contract outside production."
-            exit 0
-          fi
-
-          stripe_secret_tmpfile="$(mktemp)"
-          stripe_curl_config_tmpfile="$(mktemp)"
-          stripe_webhooks_tmpfile="$(mktemp)"
-          stripe_webhook_matches_tmpfile="$(mktemp)"
-          trap 'rm -f "$stripe_secret_tmpfile" "$stripe_curl_config_tmpfile" "$stripe_webhooks_tmpfile" "$stripe_webhook_matches_tmpfile"' EXIT
-          chmod 600 "$stripe_secret_tmpfile" "$stripe_curl_config_tmpfile" "$stripe_webhooks_tmpfile" "$stripe_webhook_matches_tmpfile"
-
-          gcloud secrets versions access latest \
-            --secret stripe-secret-key \
-            --project "$GCP_PROJECT_ID" >"$stripe_secret_tmpfile"
-          printf 'header = "Authorization: Bearer %s"\n' "$(<"$stripe_secret_tmpfile")" \
-            >"$stripe_curl_config_tmpfile"
-          stripe_webhook_url="${MATRIX_APP_URL%/}/billing/webhooks/stripe"
-          starting_after=""
-          while true; do
-            stripe_page_args=(--data-urlencode "limit=100")
-            if [ -n "$starting_after" ]; then
-              stripe_page_args+=(--data-urlencode "starting_after=$starting_after")
-            fi
-            curl --fail --silent --show-error --max-time 10 \
-              --config "$stripe_curl_config_tmpfile" \
-              --get "https://api.stripe.com/v1/webhook_endpoints" \
-              "${stripe_page_args[@]}" \
-              >"$stripe_webhooks_tmpfile"
-            jq -c --arg url "$stripe_webhook_url" \
-              '.data[] | select(.url == $url and .status == "enabled")' \
-              "$stripe_webhooks_tmpfile" >>"$stripe_webhook_matches_tmpfile"
-
-            has_more="$(jq -r '.has_more' "$stripe_webhooks_tmpfile")"
-            if [ "$has_more" = "false" ]; then
-              break
-            fi
-            if [ "$has_more" != "true" ]; then
-              echo "Stripe webhook endpoint response did not include a valid has_more value." >&2
-              exit 1
-            fi
-            starting_after="$(jq -r '.data[-1].id // empty' "$stripe_webhooks_tmpfile")"
-            if [ -z "$starting_after" ]; then
-              echo "Stripe webhook endpoint pagination did not include a cursor." >&2
-              exit 1
-            fi
-          done
-
-          enabled_endpoint_count="$(wc -l <"$stripe_webhook_matches_tmpfile" | tr -d '[:space:]')"
-          if [ "$enabled_endpoint_count" != "1" ]; then
-            echo "Stripe must have exactly one enabled webhook endpoint for the platform billing URL." >&2
-            exit 1
-          fi
-
-          required_stripe_events=(
-            customer.subscription.created
-            customer.subscription.updated
-            customer.subscription.deleted
-            customer.subscription.trial_will_end
-            checkout.session.completed
-            checkout.session.expired
-            invoice.paid
-            invoice.payment_failed
-          )
-          for event_type in "${required_stripe_events[@]}"; do
-            if ! jq -s -e --arg event "$event_type" \
-              'any(.[]; (.enabled_events | index("*")) != null or (.enabled_events | index($event)) != null)' \
-              "$stripe_webhook_matches_tmpfile" >/dev/null; then
-              echo "Stripe webhook is missing required event: $event_type" >&2
-              exit 1
-            fi
-          done
-
-      - name: Verify Reddit Conversions API secret
-        if: ${{ env.DEPLOY_ENVIRONMENT == 'production' }}
-        run: |
-          set -euo pipefail
-          secret_name=reddit-conversions-access-token
-          gcloud secrets describe "$secret_name" \
-            --project "$GCP_PROJECT_ID" >/dev/null
-          reddit_secret_tmpfile="$(mktemp)"
-          if ! gcloud secrets versions access latest --secret "$secret_name" \
-            --project "$GCP_PROJECT_ID" >"$reddit_secret_tmpfile"; then
-            rm -f "$reddit_secret_tmpfile"
-            echo "$secret_name must have an accessible latest version." >&2
-            exit 1
-          fi
-          if [ ! -s "$reddit_secret_tmpfile" ]; then
-            rm -f "$reddit_secret_tmpfile"
-            echo "$secret_name must not be empty." >&2
-            exit 1
-          fi
-          rm -f "$reddit_secret_tmpfile"
-          accessor_member="$(
-            gcloud secrets get-iam-policy "$secret_name" \
-              --project "$GCP_PROJECT_ID" \
-              --flatten='bindings[].members' \
-              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-              --format='value(bindings.members)' \
-              | head -1
-          )"
-          if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-            echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}" >&2
-            exit 1
-          fi
-
-      - name: Verify Pipedream integration secrets
-        run: |
-          set -euo pipefail
-          required_pipedream_secrets=(
-            PIPEDREAM_CLIENT_ID=pipedream-client-id
-            PIPEDREAM_CLIENT_SECRET=pipedream-client-secret
-            PIPEDREAM_PROJECT_ID=pipedream-project-id
-            PIPEDREAM_ENVIRONMENT=pipedream-environment
-          )
-
-          for entry in "${required_pipedream_secrets[@]}"; do
-            env_name="${entry%%=*}"
-            secret_name="${entry#*=}"
-            gcloud secrets describe "$secret_name" \
-              --project "$GCP_PROJECT_ID" >/dev/null
-            pipedream_secret_tmpfile="$(mktemp)"
-            if ! gcloud secrets versions access latest --secret "$secret_name" \
-              --project "$GCP_PROJECT_ID" >"$pipedream_secret_tmpfile"; then
-              rm -f "$pipedream_secret_tmpfile"
-              echo "$secret_name must have an accessible latest version for $env_name." >&2
-              exit 1
-            fi
-            if [ ! -s "$pipedream_secret_tmpfile" ]; then
-              rm -f "$pipedream_secret_tmpfile"
-              echo "$secret_name must not be empty for $env_name." >&2
-              exit 1
-            fi
-            rm -f "$pipedream_secret_tmpfile"
-            accessor_member="$(
-              gcloud secrets get-iam-policy "$secret_name" \
-                --project "$GCP_PROJECT_ID" \
-                --flatten='bindings[].members' \
-                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-                --format='value(bindings.members)' \
-                | head -1
-            )"
-            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-              echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}" >&2
-              exit 1
-            fi
-          done
-
-      - name: Verify primary R2 endpoint secret
-        run: |
-          set -euo pipefail
-          secret_name=r2-endpoint
-          gcloud secrets describe "$secret_name" \
-            --project "$GCP_PROJECT_ID" >/dev/null
-          endpoint_tmpfile="$(mktemp)"
-          trap 'rm -f "$endpoint_tmpfile"' EXIT
-          chmod 600 "$endpoint_tmpfile"
-          if ! gcloud secrets versions access latest \
-            --secret "$secret_name" \
-            --project "$GCP_PROJECT_ID" >"$endpoint_tmpfile"; then
-            echo "$secret_name must have an accessible latest version." >&2
-            exit 1
-          fi
-          if [ ! -s "$endpoint_tmpfile" ]; then
-            echo "$secret_name must have a non-empty latest version." >&2
-            exit 1
-          fi
-          accessor_member="$(
-            gcloud secrets get-iam-policy "$secret_name" \
-              --project "$GCP_PROJECT_ID" \
-              --flatten='bindings[].members' \
-              --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-              --format='value(bindings.members)' \
-              | head -1
-          )"
-          if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-            echo "$secret_name must grant roles/secretmanager.secretAccessor to the Cloud Run runtime identity." >&2
-            exit 1
-          fi
-
-      - name: Verify public Sites secrets
-        run: scripts/ci/platform-sites-env.sh preflight-secrets
-
-      - name: Verify public Sites secret transition
-        run: scripts/ci/platform-sites-env.sh verify-transition
-
-      - name: Build platform image
-        run: |
-          set -euo pipefail
-          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:${GITHUB_SHA::12}"
-          cache_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:buildcache"
+          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:staging-${EXPECTED_SHA::12}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cache_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:staging-buildcache-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           echo "IMAGE=$image" >> "$GITHUB_ENV"
           echo "CACHE_IMAGE=$cache_image" >> "$GITHUB_ENV"
           next_public_clerk_publishable_key="$(gcloud secrets versions access latest --secret next-public-clerk-publishable-key --project "$GCP_PROJECT_ID" 2>/dev/null || true)"
@@ -929,10 +85,10 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --config cloudbuild.platform.yaml \
-            --substitutions "_IMAGE=$image,_CACHE_IMAGE=$cache_image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$next_public_clerk_publishable_key,_NEXT_PUBLIC_POSTHOG_KEY=$next_public_posthog_key,_NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$next_public_posthog_project_token,_NEXT_PUBLIC_POSTHOG_HOST=$POSTHOG_PUBLIC_HOST,_NEXT_PUBLIC_POSTHOG_API_HOST=$POSTHOG_PUBLIC_API_HOST,_NEXT_PUBLIC_MATRIX_APP_URL=$MATRIX_APP_URL,_MATRIX_BUILD_SHA=$GITHUB_SHA" \
+            --substitutions "_IMAGE=$image,_CACHE_IMAGE=$cache_image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$next_public_clerk_publishable_key,_NEXT_PUBLIC_POSTHOG_KEY=$next_public_posthog_key,_NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$next_public_posthog_project_token,_NEXT_PUBLIC_POSTHOG_HOST=$POSTHOG_PUBLIC_HOST,_NEXT_PUBLIC_POSTHOG_API_HOST=$POSTHOG_PUBLIC_API_HOST,_NEXT_PUBLIC_MATRIX_APP_URL=$MATRIX_APP_URL,_MATRIX_BUILD_SHA=$EXPECTED_SHA" \
             --async \
             --format 'value(metadata.build.id)' \
-            --timeout=1200s)
+            --timeout=1800s)
           if [ -z "$build_id" ]; then
             build_id=$(gcloud builds list \
               --project "$GCP_PROJECT_ID" \
@@ -949,22 +105,38 @@ jobs:
 
           {
             echo "### Platform Cloud Run build"
-            echo "- source_sha: \`${GITHUB_SHA}\`"
+            echo "- source_sha: \`${EXPECTED_SHA}\`"
             echo "- lane: \`platform\`"
             echo "- image: \`${image}\`"
             echo "- build_id: \`${build_id}\`"
             echo "- cache_image: \`${cache_image}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          report_cloud_build_timings() {
+            {
+              echo
+              echo '#### Cloud Build phase timings'
+              echo '```yaml'
+              if ! timeout 30s gcloud builds describe "$build_id" \
+                --project "$GCP_PROJECT_ID" \
+                --region "$GCP_REGION" \
+                --format='yaml(startTime,finishTime,timing,steps.timing,results.images)'; then
+                echo 'Could not read Cloud Build phase timings.'
+              fi
+              echo '```'
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+
           print_cloud_build_diagnostics() {
             echo "::group::Cloud Build diagnostics ($build_id)"
-            if ! gcloud builds describe "$build_id" \
+            if ! timeout 30s gcloud builds describe "$build_id" \
               --project "$GCP_PROJECT_ID" \
               --region "$GCP_REGION" \
               --format='yaml(status,statusDetail,failureInfo,logUrl)'; then
               echo "Could not read Cloud Build failure metadata." >&2
             fi
-            if ! gcloud builds log "$build_id" \
+            report_cloud_build_timings
+            if ! timeout 60s gcloud builds log "$build_id" \
               --project "$GCP_PROJECT_ID" \
               --region "$GCP_REGION"; then
               echo "Could not read Cloud Build logs; use the build URL above." >&2
@@ -972,11 +144,23 @@ jobs:
             echo "::endgroup::"
           }
 
-          for attempt in $(seq 1 240); do
-            status=$(gcloud builds describe "$build_id" \
+          poll_deadline=$((SECONDS + 35 * 60))
+          status=''
+          while (( (remaining = poll_deadline - SECONDS) > 0 )); do
+            if status=$(timeout "${remaining}s" gcloud builds describe "$build_id" \
               --project "$GCP_PROJECT_ID" \
               --region "$GCP_REGION" \
-              --format 'value(status)')
+              --format 'value(status)'); then
+              :
+            else
+              poll_exit=$?
+              if [ "$poll_exit" -eq 124 ]; then
+                break
+              fi
+              echo "Could not read Cloud Build status for $build_id (exit $poll_exit)." >&2
+              print_cloud_build_diagnostics
+              exit 1
+            fi
             case "$status" in
               SUCCESS)
                 break
@@ -987,723 +171,54 @@ jobs:
                 exit 1
                 ;;
             esac
-            sleep 5
+            remaining=$((poll_deadline - SECONDS))
+            if (( remaining > 0 )); then
+              sleep "$((remaining < 5 ? remaining : 5))"
+            fi
           done
           if [ "$status" != "SUCCESS" ]; then
             echo "Timed out waiting for Cloud Build $build_id" >&2
             print_cloud_build_diagnostics
             exit 1
           fi
+          report_cloud_build_timings
           digest="$(gcloud artifacts docker images describe "$image" \
             --project "$GCP_PROJECT_ID" \
             --format='value(image_summary.digest)')"
-          if [ -z "$digest" ]; then
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "Could not resolve the immutable platform image digest." >&2
             exit 1
           fi
-          echo "IMAGE_DIGEST=${image%:*}@${digest}" >> "$GITHUB_ENV"
-
-      - name: Recheck default-serving source before candidate startup
-        run: node scripts/ci/platform-source-compatibility.mjs
-
-      - name: Deploy tagged revision
+          image_digest="${image%:*}@${digest}"
+          echo "IMAGE_DIGEST=$image_digest" >> "$GITHUB_ENV"
+          echo "- image_digest: \`${image_digest}\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: Deploy an immutable image as a zero-traffic staging candidate
         run: |
           set -euo pipefail
-          if ! command -v jq >/dev/null 2>&1; then
-            echo "jq is required to parse Cloud Run JSON output." >&2
-            exit 1
-          fi
-          service_exists=0
-          if gcloud run services describe "$CLOUD_RUN_SERVICE" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" >/dev/null 2>&1; then
-            service_exists=1
-          fi
-
-          traffic_flags=(--tag candidate)
-          if [ "$service_exists" = "1" ]; then
-            traffic_flags+=(--no-traffic)
-          fi
-
-          ats_env_bindings=""
-          ats_secret_bindings=""
-          reddit_secret_bindings=""
-          google_env_bindings="$(bash scripts/ci/platform-google-analytics-env.sh env-bindings)"
-          google_secret_bindings="$(bash scripts/ci/platform-google-analytics-env.sh secret-bindings)"
-          if [ -n "$GOOGLE_ANALYTICS_MEASUREMENT_ID" ]; then
-            google_secret_state="$(gcloud secrets versions describe "$GOOGLE_ANALYTICS_API_SECRET_VERSION" \
-              --secret google-analytics-billing-api-secret --project "$GCP_PROJECT_ID" --format='value(state)')"
-            if [ "$google_secret_state" != "ENABLED" ]; then
-              echo "Google billing measurement requires an enabled pinned secret version." >&2
-              exit 1
-            fi
-          fi
-          custom_mcp_secret_bindings=""
-          if [ "$CUSTOM_MCP_ENABLED" = "true" ]; then
-            custom_mcp_secret_bindings=",MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key:${MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION}"
-          fi
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
-            ats_env_bindings="|ATS_BOOKING_BASE_URL=${ATS_BOOKING_BASE_URL}"
-            ats_secret_bindings=",ATS_DATABASE_URL=ats-database-url:latest,ATS_INGEST_SECRET=ats-ingest-secret:latest,ATS_ADMIN_SECRET=ats-admin-secret:latest"
-            if [ "$ATS_GROUP_INTAKE_ENABLED" = "true" ]; then
-              ats_secret_bindings="${ats_secret_bindings},ATS_MAIL_INGEST_SECRET=ats-mail-ingest-secret:latest,ATS_SLACK_BOT_TOKEN=ats-slack-bot-token:latest,ATS_SLACK_CHANNEL_ID=ats-slack-channel-id:latest"
-            fi
-            reddit_secret_bindings=",REDDIT_CONVERSIONS_ACCESS_TOKEN=reddit-conversions-access-token:latest"
-          fi
-
-          funded_ai_env_bindings="|MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=${MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED}|MATRIX_FUNDED_AI_RUNTIME_ENABLED=${MATRIX_FUNDED_AI_RUNTIME_ENABLED}|MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=${MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED}"
-          funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED=${MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED}"
-          funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_HOST_CONFIG_ENABLED=${MATRIX_FUNDED_HOST_CONFIG_ENABLED}"
-          if [ "$MATRIX_FUNDED_HOST_CONFIG_ENABLED" = "true" ]; then
-            funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS=${MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS}|MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH=${MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH}|MATRIX_FUNDED_HOST_CONFIG_SOURCE_SHA=${GITHUB_SHA}"
-          fi
-          funded_ai_secret_bindings=""
-          if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
-            funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
-            funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT}|MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT}"
-            funded_ai_secret_bindings=",AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret:latest"
-          fi
-          if [ "$MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED" = "true" ]; then
-            funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_PREVIEW_RUNTIME_TTL_MS=${MATRIX_PREVIEW_RUNTIME_TTL_MS}|MATRIX_PREVIEW_AI_BUDGET_MICROUSD=${MATRIX_PREVIEW_AI_BUDGET_MICROUSD}|MATRIX_PREVIEW_AI_REQUEST_LIMIT=${MATRIX_PREVIEW_AI_REQUEST_LIMIT}|MATRIX_PREVIEW_SPEECH_REQUEST_LIMIT=${MATRIX_PREVIEW_SPEECH_REQUEST_LIMIT}|MATRIX_PREVIEW_MAX_CONCURRENCY=${MATRIX_PREVIEW_MAX_CONCURRENCY}"
-            funded_ai_secret_bindings="${funded_ai_secret_bindings},MATRIX_PREVIEW_RUNTIME_SECRET=matrix-preview-runtime-secret:latest"
-          fi
-          if [ "$MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED" = "true" ]; then
-            funded_ai_env_bindings="${funded_ai_env_bindings}|STRIPE_PRICE_AI_CREDIT_USD_5=${STRIPE_PRICE_AI_CREDIT_USD_5}|STRIPE_PRICE_AI_CREDIT_USD_10=${STRIPE_PRICE_AI_CREDIT_USD_10}|STRIPE_PRICE_AI_CREDIT_USD_25=${STRIPE_PRICE_AI_CREDIT_USD_25}"
-          fi
-          speech_env_bindings="|PLATFORM_SPEECH_ENABLED=${PLATFORM_SPEECH_ENABLED}|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=${MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED}|PLATFORM_SPEECH_PROVIDER=${PLATFORM_SPEECH_PROVIDER}|PLATFORM_SPEECH_MODEL=${PLATFORM_SPEECH_MODEL}|PLATFORM_SPEECH_POLICY_REVISION=${PLATFORM_SPEECH_POLICY_REVISION}|PLATFORM_SPEECH_MICROUSD_PER_MINUTE=${PLATFORM_SPEECH_MICROUSD_PER_MINUTE}|PLATFORM_SPEECH_FUNDING_SOURCES=${PLATFORM_SPEECH_FUNDING_SOURCES}|PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD=${PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD}|PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD=${PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=${PLATFORM_SPEECH_OWNER_AUDIO_ENABLED}"
-          speech_secret_bindings=""
-          whatsapp_secret_bindings="$(scripts/ci/platform-whatsapp-env.sh secret-bindings)"
-          account_deletion_secret_bindings="$(scripts/ci/platform-account-deletion-env.sh secret-bindings)"
-          slack_secret_bindings="$(scripts/ci/platform-slack-env.sh secret-bindings)"
-          sites_secret_bindings="$(scripts/ci/platform-sites-env.sh secret-bindings)"
-          whatsapp_env_bindings="$(scripts/ci/platform-whatsapp-env.sh env-bindings)"
-          if [ "$PLATFORM_SPEECH_ENABLED" = "true" ]; then
-            speech_secret_bindings=",PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret:latest"
-          fi
-
-          # TODO(#410): flip CUSTOMER_VPS_TLS_VERIFY back to true once customer VPS origins present trusted certs.
-          if ! deploy_json=$(gcloud run deploy "$CLOUD_RUN_SERVICE" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --image "$IMAGE_DIGEST" \
-            --labels "matrix-source-sha=${GITHUB_SHA}" \
-            --service-account "$CLOUD_RUN_SERVICE_ACCOUNT" \
-            --platform managed \
-            --port 8080 \
-            --cpu "$PLATFORM_CPU" \
-            --memory "$PLATFORM_MEMORY" \
-            --concurrency "$PLATFORM_CONCURRENCY" \
-            --timeout 3600 \
-            --min-instances 0 \
-            --max-instances "$PLATFORM_MAX_INSTANCES" \
-            --ingress all \
-            --allow-unauthenticated \
-            "${traffic_flags[@]}" \
-            --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_BACKGROUND_WORKERS_ENABLED=false|PLATFORM_PORT=8080|PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL}|MATRIX_PUBLIC_SITES_ENABLED=${MATRIX_PUBLIC_SITES_ENABLED}|MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN}|CUSTOMER_VPS_ENABLED=true|MATRIX_INTERNAL_CLERK_ORG_ID=${MATRIX_INTERNAL_CLERK_ORG_ID:-}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION}|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS}|MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS}|NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL}|MATRIX_BILLING_PROVIDER=stripe|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|MATRIX_STARTER_TRIAL_DAYS=${MATRIX_STARTER_TRIAL_DAYS}|MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED}|MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT}|MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE}|ACCOUNT_DELETION_CONFIGURED=${ACCOUNT_DELETION_CONFIGURED}|ACCOUNT_DELETION_ENABLED=${ACCOUNT_DELETION_ENABLED}|POSTHOG_HOST=https://eu.i.posthog.com|POSTHOG_API_HOST=https://eu.i.posthog.com|NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST}|NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST}|R2_PREFIX_ROOT=matrixos-sync|GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}|GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED}|GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${MCP_OAUTH_CALLBACK_URL}|MCP_OAUTH_CLIENT_ID=${MCP_OAUTH_CLIENT_ID}|MATRIX_MCP_ENABLED=${MATRIX_MCP_ENABLED}|MATRIX_MCP_RESOURCE_URL=${MATRIX_MCP_RESOURCE_URL}|MATRIX_MCP_OAUTH_ISSUER=${MATRIX_MCP_OAUTH_ISSUER}|MATRIX_MCP_OAUTH_JWKS_URL=${MATRIX_MCP_OAUTH_JWKS_URL}|MATRIX_MCP_ALLOWED_ORIGINS=${MATRIX_MCP_ALLOWED_ORIGINS}|MATRIX_MCP_REQUIRED_SCOPES=${MATRIX_MCP_REQUIRED_SCOPES}|MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}|MATRIX_COLLABORATION_ALLOWED_ORIGINS=${MATRIX_COLLABORATION_ALLOWED_ORIGINS}|REDDIT_PIXEL_ID=a2_jo0odxapssmi${ats_env_bindings}${funded_ai_env_bindings}${FUNDED_PRICING_ENV_BINDINGS:-}${speech_env_bindings}${whatsapp_env_bindings}${google_env_bindings}" \
-            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ENDPOINT=r2-endpoint:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,MATRIX_SUPPORT_SSH_PUBLIC_KEY=matrix-support-ssh-public-key:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,POSTHOG_CONVERSATIONS_IDENTITY_SECRET=posthog-conversations-identity-secret:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys:latest,CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET=clerk-organization-webhook-signing-secret:latest${ats_secret_bindings}${reddit_secret_bindings}${custom_mcp_secret_bindings}${funded_ai_secret_bindings}${FUNDED_PRICING_SECRET_BINDINGS:-}${speech_secret_bindings}${whatsapp_secret_bindings}${slack_secret_bindings}${google_secret_bindings}${account_deletion_secret_bindings}${sites_secret_bindings}" \
-            --format=json); then
-            exit 1
-          fi
-          candidate_url=$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)
-          candidate_revision=$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .revisionName // empty' | head -1)
-          if [ -z "$candidate_url" ] || [ -z "$candidate_revision" ]; then
-            service_json=$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
-              --project "$GCP_PROJECT_ID" \
-              --region "$GCP_REGION" \
-              --format=json)
-            candidate_url=$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)
-            candidate_revision=$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .revisionName // empty' | head -1)
-          fi
-          if [ -z "$candidate_url" ] || [ -z "$candidate_revision" ]; then
-            echo "Could not resolve deployed candidate URL/revision; refusing to continue." >&2
-            exit 1
-          fi
-          echo "Resolved candidate revision $candidate_revision at $candidate_url"
-          echo "CANDIDATE_URL=$candidate_url" >> "$GITHUB_ENV"
-          echo "CANDIDATE_REVISION=$candidate_revision" >> "$GITHUB_ENV"
-
-      - name: Verify deployed provisioning contract
-        run: |
-          set -euo pipefail
-          revision_json="$(gcloud run revisions describe "$CANDIDATE_REVISION" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --format=json)"
-          actual_source_sha="$(printf '%s\n' "$revision_json" | jq -r '.metadata.labels["matrix-source-sha"] // empty')"
-          if [ "$actual_source_sha" != "$GITHUB_SHA" ]; then
-            echo "candidate source label is $actual_source_sha, expected $GITHUB_SHA" >&2
-            exit 1
-          fi
-          required_provisioning_env=(
-            CUSTOMER_VPS_IMAGE_VERSION
-            MATRIX_PREBILLING_PROVISIONING_ENABLED
-            MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT
-            MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE
-            GOLDEN_SNAPSHOTS_ENABLED
-            GOLDEN_SNAPSHOT_ROLLOUT_PERCENT
-            MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID
-            MATRIX_COLLABORATION_ALLOWED_ORIGINS
-            MATRIX_INTERNAL_CLERK_ORG_ID
-          )
-          for name in "${required_provisioning_env[@]}"; do
-            expected="${!name}"
-            actual="$(printf '%s\n' "$revision_json" | jq -r --arg name "$name" \
-              '.spec.containers[0].env[]? | select(.name == $name) | .value // empty')"
-            if [ "$actual" != "$expected" ]; then
-              echo "provisioning deployment contract is missing or incorrect for $name" >&2
-              exit 1
-            fi
-          done
-          collaboration_secret="$(printf '%s\n' "$revision_json" | jq -r '
-            .spec.containers[0].env[]?
-            | select(.name == "MATRIX_COLLABORATION_TICKET_KEYS")
-            | "\(.valueFrom.secretKeyRef.name):\(.valueFrom.secretKeyRef.key)"
-          ')"
-          if [ "$collaboration_secret" != "collaboration-ticket-keys:latest" ]; then
-            echo "collaboration ticket-key deployment contract is missing or incorrect" >&2
-            exit 1
-          fi
-          required_stripe_price_secret_bindings=(
-            STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-2026-08-31:1
-            STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-2026-08-31:1
-            STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-2026-08-31:1
-          )
-          for binding in "${required_stripe_price_secret_bindings[@]}"; do
-            name="${binding%%=*}"
-            expected_binding="${binding#*=}"
-            expected_secret="${expected_binding%%:*}"
-            expected_version="${expected_binding##*:}"
-            actual_secret="$(printf '%s\n' "$revision_json" | jq -r --arg name "$name" \
-              '.spec.containers[0].env[]? | select(.name == $name) | .valueFrom.secretKeyRef.name // empty')"
-            actual_version="$(printf '%s\n' "$revision_json" | jq -r --arg name "$name" \
-              '.spec.containers[0].env[]? | select(.name == $name) | .valueFrom.secretKeyRef.key // empty')"
-            if [ "$actual_secret" != "$expected_secret" ] || [ "$actual_version" != "$expected_version" ]; then
-              echo "Stripe price deployment contract is missing or incorrect for $name" >&2
-              exit 1
-            fi
-          done
-          legacy_prebilling_env=(
-            MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS
-            MATRIX_PREBILLING_PROVISIONING_COSTS
-          )
-          for name in "${legacy_prebilling_env[@]}"; do
-            if printf '%s\n' "$revision_json" | jq -e --arg name "$name" \
-              'any(.spec.containers[0].env[]?; .name == $name)' >/dev/null; then
-              echo "deployed prebilling contract still contains legacy setting $name" >&2
-              exit 1
-            fi
-          done
-
-      - name: Verify deployed speech contract
-        run: scripts/ci/platform-speech-production-env.sh verify-revision
-
-      - name: Verify deployed WhatsApp contract
-        run: |
-          scripts/ci/platform-whatsapp-env.sh verify-revision "$CANDIDATE_REVISION"
-          scripts/ci/platform-slack-env.sh verify-revision "$CANDIDATE_REVISION"
-
-      - name: Verify deployed account deletion contract
-        run: scripts/ci/platform-account-deletion-env.sh verify-revision "$CANDIDATE_REVISION"
-
-      - name: Verify deployed Sites contract
-        run: scripts/ci/platform-sites-env.sh verify-revision "$CANDIDATE_REVISION"
-
-      - name: Smoke candidate revision
-        run: |
-          set -euo pipefail
-          if ! command -v jq >/dev/null 2>&1; then
-            echo "jq is required to parse host bundle smoke JSON output." >&2
-            exit 1
-          fi
-          if [ -z "${CANDIDATE_URL:-}" ]; then
-            echo "No tagged candidate Cloud Run URL found; refusing to smoke the live service URL." >&2
-            exit 1
-          fi
-          curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/health" >/dev/null
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
-            ats_ingest_secret="$(gcloud secrets versions access latest \
-              --secret ats-ingest-secret \
-              --project "$GCP_PROJECT_ID" | tr -d '\r\n')"
-            ats_admin_secret="$(gcloud secrets versions access latest \
-              --secret ats-admin-secret \
-              --project "$GCP_PROJECT_ID" | tr -d '\r\n')"
-            if [ -z "$ats_ingest_secret" ] || [ -z "$ats_admin_secret" ]; then
-              echo "ATS smoke could not read the required scoped secrets." >&2
-              exit 1
-            fi
-            echo "::add-mask::$ats_ingest_secret"
-            echo "::add-mask::$ats_admin_secret"
-            ats_ingest_body="$(mktemp)"
-            ats_admin_body="$(mktemp)"
-            trap 'rm -f "$ats_ingest_body" "$ats_admin_body"' EXIT
-            ats_ingest_status="$(curl --silent --show-error --max-time 10 \
-              --output "$ats_ingest_body" \
-              --write-out '%{http_code}' \
-              --request POST \
-              --header "authorization: Bearer ${ats_ingest_secret}" \
-              --form "source=deployment_smoke" \
-              "$CANDIDATE_URL/api/ats/applications")"
-            if [ "$ats_ingest_status" != "422" ]; then
-              echo "ATS ingest smoke expected validation status 422, received ${ats_ingest_status}." >&2
-              exit 1
-            fi
-            if ! jq -e '.error == "Invalid application" and keys == ["error"]' "$ats_ingest_body" >/dev/null; then
-              echo "ATS ingest smoke did not return the expected safe validation response." >&2
-              exit 1
-            fi
-            curl --fail --silent --show-error --max-time 10 \
-              --output "$ats_admin_body" \
-              --header "authorization: Bearer ${ats_admin_secret}" \
-              "$CANDIDATE_URL/api/ats/admin/applications?search=__deployment_smoke__"
-            if ! jq -e '.applications | type == "array"' "$ats_admin_body" >/dev/null; then
-              echo "ATS admin database smoke did not return an application list." >&2
-              exit 1
-            fi
-          fi
-          # /sign-in is only served as the pre-VPS auth shell on app-domain hosts.
-          # The raw candidate tag URL is not an app-domain host, so simulate the
-          # edge router with x-forwarded-host + x-matrix-edge-secret instead of
-          # broadening MATRIX_APP_DOMAIN_HOSTS to Cloud Run tag URLs.
-          edge_router_secret="$(gcloud secrets versions access latest \
-            --secret edge-router-secret \
-            --project "$GCP_PROJECT_ID" | tr -d '\r\n')"
-          if [ -z "$edge_router_secret" ]; then
-            echo "Could not read edge-router-secret for the app-domain smoke request." >&2
-            exit 1
-          fi
-          echo "::add-mask::$edge_router_secret"
-          app_domain_host="$(printf '%s' "${MATRIX_APP_DOMAIN_HOSTS%%,*}" | tr -d '[:space:]')"
-          if [ -z "$app_domain_host" ]; then
-            echo "MATRIX_APP_DOMAIN_HOSTS did not yield an app-domain host for the smoke request." >&2
-            exit 1
-          fi
-          auth_shell_html="$(curl --fail --silent --show-error --max-time 10 \
-            --header "x-forwarded-host: ${app_domain_host}" \
-            --header "x-matrix-edge-secret: ${edge_router_secret}" \
-            "$CANDIDATE_URL/sign-in")"
-          if ! printf '%s\n' "$auth_shell_html" | grep -Fq 'data-matrix-auth-shell="true"'; then
-            echo "Candidate pre-VPS auth shell did not serve the Next sign-in surface." >&2
-            exit 1
-          fi
-          billing_shell_html="$(curl --fail --silent --show-error --max-time 10 \
-            --header "x-forwarded-host: ${app_domain_host}" \
-            --header "x-matrix-edge-secret: ${edge_router_secret}" \
-            "$CANDIDATE_URL/?billing=setup")"
-          # Spec 092 Phase C: the journey-driven BootSequence replaces the billing
-          # gate on the web path, so accept either marker (the old billing gate or
-          # the new boot sequence) — both prove the shell gate rendered, not the
-          # platform fallback auth page.
-          if ! printf '%s\n' "$billing_shell_html" | grep -Eq 'data-matrix-(billing-gate|boot-sequence)="true"'; then
-            echo "Candidate pre-VPS billing shell did not serve the billing gate or boot sequence." >&2
-            exit 1
-          fi
-          if printf '%s\n' "$billing_shell_html" | grep -Fq 'data-matrix-platform-fallback-auth="true"'; then
-            echo "Candidate pre-VPS billing shell served the platform fallback auth page." >&2
-            exit 1
-          fi
-          manifest="$(curl --fail --silent --show-error --max-time 10 "$CANDIDATE_URL/system-bundles/channels/${CUSTOMER_VPS_IMAGE_VERSION}.json")"
-          bundle_url="$(printf '%s\n' "$manifest" | jq -r '.url // empty')"
-          if [ -z "$bundle_url" ]; then
-            echo "Candidate host bundle channel smoke did not return a signed bundle URL." >&2
-            exit 1
-          fi
-          sync_bucket="$(gcloud secrets versions access latest --secret=r2-bucket)"
-          bundle_bucket="$(gcloud secrets versions access latest --secret=r2-bundles-bucket)"
-          if [ -z "$sync_bucket" ] || [ -z "$bundle_bucket" ]; then
-            echo "Candidate host bundle smoke could not read required bucket secret names." >&2
-            exit 1
-          fi
-          if [ "$bundle_bucket" = "$sync_bucket" ]; then
-            echo "Dedicated host bundle bucket secret matches the sync bucket secret; refusing to promote." >&2
-            exit 1
-          fi
-          if printf '%s\n' "$bundle_url" | grep -Fq -- "$sync_bucket"; then
-            echo "Candidate host bundle signer returned the configured sync bucket; refusing to promote." >&2
-            exit 1
-          fi
-          if printf '%s\n' "$bundle_url" | grep -Fq 'r2.cloudflarestorage.com' && ! printf '%s\n' "$bundle_url" | grep -Fq -- "$bundle_bucket"; then
-            echo "Candidate host bundle signer returned a native R2 URL outside the bundle bucket; refusing to promote." >&2
-            exit 1
-          fi
-          curl --fail --silent --show-error --max-time 20 --range 0-0 "$bundle_url" >/dev/null
-          platform_secret="$(gcloud secrets versions access latest \
-            --secret platform-secret \
-            --project "$GCP_PROJECT_ID" | tr -d '\r\n')"
-          if [ -z "$platform_secret" ]; then
-            echo "Could not read the platform smoke-test credential." >&2
-            exit 1
-          fi
-          echo "::add-mask::$platform_secret"
-          curl --fail --silent --show-error --max-time 45 \
-            --request POST \
-            --header "Authorization: Bearer ${platform_secret}" \
-            "$CANDIDATE_URL/vps/storage-check" >/dev/null
-          if [ "$MATRIX_PUBLIC_SITES_ENABLED" = "true" ]; then
-            curl --fail --silent --show-error --max-time 45 \
-              --request POST \
-              --header "Authorization: Bearer ${platform_secret}" \
-              "$CANDIDATE_URL/vps/sites-storage-check" >/dev/null
-            sites_edge_secret="$(gcloud secrets versions access "$SITES_EDGE_SECRET_VERSION" \
-              --secret sites-edge-secret --project "$GCP_PROJECT_ID")"
-            echo "::add-mask::$sites_edge_secret"
-            sites_health_body="$(curl --fail --silent --show-error --max-time 15 \
-              --header "x-matrix-sites-edge: ${sites_edge_secret}" \
-              "$CANDIDATE_URL/public/sites/_edge-health")"
-            if ! printf '%s\n' "$sites_health_body" | \
-               jq -e '.status == "ok" and keys == ["status"]' >/dev/null; then
-              echo "Candidate Sites edge proof was not accepted." >&2
-              exit 1
-            fi
-          fi
-
-      - name: Deploy production-role revision
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        run: |
-          set -euo pipefail
-          min_instances=0
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
-            min_instances=1
-          fi
-          deploy_json="$(gcloud run deploy "$CLOUD_RUN_SERVICE" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --image "$IMAGE_DIGEST" \
-            --labels "matrix-source-sha=${GITHUB_SHA}" \
-            --tag production-candidate \
-            --no-traffic \
-            --min-instances "$min_instances" \
-            --max-instances "$PLATFORM_MAX_INSTANCES" \
-            --no-cpu-throttling \
-            --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_STARTER_TRIAL_DAYS=${MATRIX_STARTER_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},ACCOUNT_DELETION_CONFIGURED=${ACCOUNT_DELETION_CONFIGURED},ACCOUNT_DELETION_ENABLED=${ACCOUNT_DELETION_ENABLED},GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED},GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}" \
-            --remove-env-vars "MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS,MATRIX_PREBILLING_PROVISIONING_COSTS" \
-            --format=json)"
-          production_revision="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "production-candidate") | .revisionName // empty' | head -1)"
-          if [ -z "$production_revision" ]; then
-            echo "Could not resolve the production-role revision." >&2
-            exit 1
-          fi
-          echo "PRODUCTION_REVISION=$production_revision" >> "$GITHUB_ENV"
-
-      - name: Verify production provisioning contract
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        run: |
-          set -euo pipefail
-          revision_json="$(gcloud run revisions describe "$PRODUCTION_REVISION" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --format=json)"
-          actual_source_sha="$(printf '%s\n' "$revision_json" | jq -r '.metadata.labels["matrix-source-sha"] // empty')"
-          if [ "$actual_source_sha" != "$GITHUB_SHA" ]; then
-            echo "production source label is $actual_source_sha, expected $GITHUB_SHA" >&2
-            exit 1
-          fi
-          actual_max_instances="$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/maxScale"] // empty')"
-          if [ "$actual_max_instances" != "$PLATFORM_MAX_INSTANCES" ]; then
-            echo "production revision maximum instances is $actual_max_instances, expected $PLATFORM_MAX_INSTANCES" >&2
-            exit 1
-          fi
-          actual_concurrency="$(printf '%s\n' "$revision_json" | jq -r '.spec.containerConcurrency // empty')"
-          if [ "$actual_concurrency" != "$PLATFORM_CONCURRENCY" ]; then
-            echo "production revision concurrency is $actual_concurrency, expected $PLATFORM_CONCURRENCY" >&2
-            exit 1
-          fi
-          actual_cpu="$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].resources.limits.cpu // empty')"
-          actual_memory="$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].resources.limits.memory // empty')"
-          if [ "$actual_cpu" != "$PLATFORM_CPU" ] || [ "$actual_memory" != "$PLATFORM_MEMORY" ]; then
-            echo "production revision resources are cpu=$actual_cpu memory=$actual_memory, expected cpu=$PLATFORM_CPU memory=$PLATFORM_MEMORY" >&2
-            exit 1
-          fi
-          required_production_env=(
-            "PLATFORM_BACKGROUND_WORKERS_ENABLED=false"
-            "CUSTOMER_VPS_IMAGE_VERSION=stable"
-            "MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}"
-            "MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}"
-            "MATRIX_STARTER_TRIAL_DAYS=${MATRIX_STARTER_TRIAL_DAYS}"
-            "MATRIX_PREBILLING_PROVISIONING_ENABLED=true"
-            "MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=100"
-            "MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE}"
-            "GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}"
-            "GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED}"
-            "GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}"
-            "MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}"
-            "MATRIX_COLLABORATION_ALLOWED_ORIGINS=${MATRIX_COLLABORATION_ALLOWED_ORIGINS}"
-            "MATRIX_INTERNAL_CLERK_ORG_ID=${MATRIX_INTERNAL_CLERK_ORG_ID}"
-          )
-          for binding in "${required_production_env[@]}"; do
-            name="${binding%%=*}"
-            expected="${binding#*=}"
-            actual="$(printf '%s\n' "$revision_json" | jq -r --arg name "$name" \
-              '.spec.containers[0].env[]? | select(.name == $name) | .value // empty')"
-            if [ "$actual" != "$expected" ]; then
-              echo "production provisioning deployment contract is missing or incorrect for $name" >&2
-              exit 1
-            fi
-          done
-          for name in \
-            MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS \
-            MATRIX_PREBILLING_PROVISIONING_COSTS; do
-            if printf '%s\n' "$revision_json" | jq -e --arg name "$name" \
-              'any(.spec.containers[0].env[]?; .name == $name)' >/dev/null; then
-              echo "production prebilling contract still contains legacy setting $name" >&2
-              exit 1
-            fi
-          done
-
-      - name: Verify production WhatsApp contract
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        run: |
-          scripts/ci/platform-whatsapp-env.sh verify-revision "$PRODUCTION_REVISION"
-          scripts/ci/platform-slack-env.sh verify-revision "$PRODUCTION_REVISION"
-
-      - name: Verify production account deletion contract
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        run: scripts/ci/platform-account-deletion-env.sh verify-revision "$PRODUCTION_REVISION"
-
-      - name: Verify production Sites contract
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        run: scripts/ci/platform-sites-env.sh verify-revision "$PRODUCTION_REVISION"
-
-      - name: Recheck default-serving source before worker startup
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        env:
-          REQUIRE_RUNTIME_CONFIGURATION_PRESERVATION: 'true'
-        run: node scripts/ci/platform-source-compatibility.mjs
-
-      - name: Deploy dedicated platform worker
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        run: |
-          set -euo pipefail
-          worker_service="${CLOUD_RUN_SERVICE}-worker"
-          worker_manifest="$(mktemp --suffix=.yaml)"
-          trap 'rm -f "$worker_manifest"' EXIT
-          gcloud run revisions describe "$CANDIDATE_REVISION" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --format=json \
-            | node scripts/render-platform-worker-service.mjs "$worker_service" > "$worker_manifest"
-          if gcloud run services describe "$worker_service" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json >/dev/null 2>&1; then
-            existing_iam="$(gcloud run services get-iam-policy "$worker_service" \
-              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-            if printf '%s\n' "$existing_iam" | jq -e \
-              'any(.bindings[]?; any(.members[]?; . == "allUsers" or . == "allAuthenticatedUsers"))' >/dev/null; then
-              echo "Dedicated worker service unexpectedly permits public invocation." >&2
-              exit 1
-            fi
-          fi
-          gcloud run services replace "$worker_manifest" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --dry-run --quiet >/dev/null
-          gcloud run services replace "$worker_manifest" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --quiet >/dev/null
-          echo "CLOUD_RUN_WORKER_SERVICE=$worker_service" >> "$GITHUB_ENV"
-
-      - name: Verify dedicated platform worker
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        run: |
-          set -euo pipefail
-          worker_json="$(gcloud run services describe "$CLOUD_RUN_WORKER_SERVICE" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-          worker_revision="$(printf '%s\n' "$worker_json" | jq -r '.status.latestReadyRevisionName // empty')"
-          if [ -z "$worker_revision" ] || \
-             [ "$(printf '%s\n' "$worker_json" | jq -r '.metadata.annotations["run.googleapis.com/ingress"] // empty')" != "internal" ] || \
-             [ "$(printf '%s\n' "$worker_json" | jq -r '.metadata.annotations["run.googleapis.com/minScale"] // empty')" != "1" ] || \
-             [ "$(printf '%s\n' "$worker_json" | jq -r '.metadata.annotations["run.googleapis.com/maxScale"] // empty')" != "1" ] || \
-             [ "$(printf '%s\n' "$worker_json" | jq -r 'any(.status.conditions[]?; .type == "Ready" and .status == "True")')" != "true" ]; then
-            echo "Dedicated platform worker is not ready as a private singleton." >&2
-            exit 1
-          fi
-          revision_json="$(gcloud run revisions describe "$worker_revision" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-          if [ "$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/maxScale"] // empty')" != "1" ] || \
-             [ "$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/minScale"] // empty')" != "0" ] || \
-             [ "$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["run.googleapis.com/cpu-throttling"] // empty')" != "false" ] || \
-             [ "$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].image // empty')" != "$IMAGE_DIGEST" ] || \
-             [ "$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].env[]? | select(.name == "PLATFORM_BACKGROUND_WORKERS_ENABLED") | .value // empty')" != "true" ]; then
-            echo "Dedicated platform worker revision does not match the verified candidate image and worker contract." >&2
-            exit 1
-          fi
-          worker_iam="$(gcloud run services get-iam-policy "$CLOUD_RUN_WORKER_SERVICE" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
-          if printf '%s\n' "$worker_iam" | jq -e \
-            'any(.bindings[]?; any(.members[]?; . == "allUsers" or . == "allAuthenticatedUsers"))' >/dev/null; then
-            echo "Dedicated worker service unexpectedly permits public invocation." >&2
-            exit 1
-          fi
-          scripts/ci/platform-whatsapp-env.sh verify-revision "$worker_revision"
-          scripts/ci/platform-account-deletion-env.sh verify-revision "$worker_revision" worker
-          scripts/ci/platform-slack-env.sh verify-revision "$worker_revision"
-          scripts/ci/platform-sites-env.sh verify-revision "$worker_revision"
-
-      - name: Set up pnpm for Matrix.page Worker
-        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
-        uses: pnpm/action-setup@v6
-
-      - name: Set up Node for Matrix.page Worker
-        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install locked Matrix.page Worker dependencies
-        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
-        run: pnpm install --frozen-lockfile --filter @matrix-os/edge-router...
-
-      - name: Recheck default-serving source before promotion
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        env:
-          REQUIRE_RUNTIME_CONFIGURATION_PRESERVATION: 'true'
-        run: node scripts/ci/platform-source-compatibility.mjs
-
-      - name: Promote revision
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        run: |
-          set -euo pipefail
-          if [ -z "${PRODUCTION_REVISION:-}" ]; then
-            echo "No production-role revision found" >&2
-            exit 1
-          fi
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
-            # Changing the scaling mode does not create a revision; the fixed count follows traffic.
-            gcloud run services update "$CLOUD_RUN_SERVICE" \
-              --project "$GCP_PROJECT_ID" \
-              --region "$GCP_REGION" \
-              --scaling "$PLATFORM_MANUAL_INSTANCE_COUNT"
-          fi
-          gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --to-revisions "$PRODUCTION_REVISION=100"
-
-      - name: Verify promoted revision traffic
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        run: |
-          set -euo pipefail
-          service_json="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --format=json)"
-          production_percent="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName == env.PRODUCTION_REVISION) | .percent) // empty' | head -1)"
-          if [ "$production_percent" != "100" ]; then
-            echo "Production revision ${PRODUCTION_REVISION} does not have 100% traffic." >&2
-            exit 1
-          fi
-          scaling_mode="$(printf '%s\n' "$service_json" | jq -r '.metadata.annotations["run.googleapis.com/scalingMode"] // empty')"
-          manual_instance_count="$(printf '%s\n' "$service_json" | jq -r '.metadata.annotations["run.googleapis.com/manualInstanceCount"] // empty')"
-          if [ "$DEPLOY_ENVIRONMENT" = "production" ] && { [ "$scaling_mode" != "manual" ] || [ "$manual_instance_count" != "$PLATFORM_MANUAL_INSTANCE_COUNT" ]; }; then
-            echo "Service scaling is mode=$scaling_mode count=$manual_instance_count, expected manual $PLATFORM_MANUAL_INSTANCE_COUNT" >&2
-            exit 1
-          fi
-          stale_revision="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName != env.PRODUCTION_REVISION and (.percent // 0) > 0) | "\(.revisionName)=\(.percent)") // empty' | head -1)"
-          if [ -n "$stale_revision" ]; then
-            echo "Stale Cloud Run revision is still receiving traffic: $stale_revision" >&2
-            exit 1
-          fi
-
-      - name: Deploy Matrix.page Worker
-        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -Eeuo pipefail
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "Matrix.page Worker deployment credentials are unavailable." >&2
-            exit 1
-          fi
-          sites_edge_secret_file="$(mktemp)"
-          wrangler_secrets="$(mktemp)"
-          headers="$(mktemp)"
-          body="$(mktemp)"
-          worker_switched=false
-          previous_worker_version=""
-          cleanup() { rm -f "$sites_edge_secret_file" "$wrangler_secrets" "$headers" "$body"; }
-          rollback_worker() {
-            trap - ERR
-            if [ "$worker_switched" = "true" ] && [ -n "$previous_worker_version" ]; then
-              pnpm --filter @matrix-os/edge-router exec wrangler rollback "$previous_worker_version" \
-                --config wrangler.sites.toml --message "Rollback failed Matrix.page deployment ${GITHUB_SHA}" || \
-                echo "Automatic Matrix.page Worker rollback failed; operator action is required." >&2
-            fi
+          tag="qualify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud run deploy "$STAGING_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --image "$IMAGE_DIGEST" --update-labels "matrix-source-sha=$EXPECTED_SHA" \
+            --tag "$tag" --no-traffic --quiet
+          gcloud run services describe "$STAGING_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --format=json > "$RUNNER_TEMP/platform-staging-after.json"
+          serving_revisions() {
+            jq -cS '[.status.traffic[] | select((.percent // 0) > 0) | {revisionName, percent}] | sort_by(.revisionName)' "$1"
           }
-          trap cleanup EXIT
-          trap rollback_worker ERR
-          chmod 600 "$sites_edge_secret_file" "$wrangler_secrets" "$headers" "$body"
-          if deployment_json="$(pnpm --filter @matrix-os/edge-router exec wrangler deployments status \
-            --config wrangler.sites.toml --json 2>/dev/null)"; then
-            previous_worker_version="$(printf '%s\n' "$deployment_json" | jq -r \
-              '.versions[]? | select((.percentage | tonumber) == 100) | .version_id' | head -1)"
-          fi
-          gcloud secrets versions access "$SITES_EDGE_SECRET_VERSION" \
-            --secret sites-edge-secret \
-            --project "$GCP_PROJECT_ID" \
-            --out-file="$sites_edge_secret_file" \
-            --quiet
-          node - "$sites_edge_secret_file" "$wrangler_secrets" <<'NODE'
-          const { readFileSync, writeFileSync } = require('node:fs');
-          const edgeSecret = readFileSync(process.argv[2], 'utf8');
-          if (edgeSecret.length < 32 || edgeSecret !== edgeSecret.trim() || /[\r\n]/.test(edgeSecret)) process.exit(1);
-          writeFileSync(process.argv[3], JSON.stringify({ SITES_EDGE_SECRET: edgeSecret }));
-          NODE
-          pnpm --filter @matrix-os/edge-router exec wrangler deploy \
-            --config wrangler.sites.toml \
-            --var "SITES_PLATFORM_ORIGIN:${PLATFORM_PUBLIC_URL}" \
-            --secrets-file "$wrangler_secrets"
-          worker_switched=true
-          root_status="$(curl --silent --show-error --max-time 15 \
-            --dump-header "$headers" --output "$body" --write-out '%{http_code}' \
-            'https://matrix.page/?discard=private')"
-          if [ "$root_status" != "302" ] || ! grep -Eqi '^location: https://matrix-os\.com/?[[:space:]]*$' "$headers"; then
-            echo "Matrix.page root did not return the reviewed query-dropping redirect." >&2
-            false
-          fi
-          health_status="$(curl --silent --show-error --max-time 30 \
-            --output "$body" --write-out '%{http_code}' 'https://matrix.page/_edge-health')"
-          if [ "$health_status" != "200" ] || ! jq -e '.status == "ok" and keys == ["status"]' "$body" >/dev/null; then
-            echo "Matrix.page did not accept the deployed edge proof." >&2
-            false
-          fi
-          worker_switched=false
-          trap - ERR
-
-      - name: Verify Matrix.page routing
-        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
-        run: |
-          set -euo pipefail
-          headers="$(mktemp)"
-          body="$(mktemp)"
-          cleanup() { rm -f "$headers" "$body"; }
-          trap cleanup EXIT
-          root_status="$(curl --silent --show-error --max-time 15 \
-            --dump-header "$headers" --output "$body" --write-out '%{http_code}' \
-            'https://matrix.page/?discard=private')"
-          if [ "$root_status" != "302" ] || ! grep -Eqi '^location: https://matrix-os\.com/?[[:space:]]*$' "$headers"; then
-            echo "Matrix.page root did not return the reviewed query-dropping redirect." >&2
-            exit 1
-          fi
-          health_status="$(curl --silent --show-error --max-time 30 \
-            --output "$body" --write-out '%{http_code}' \
-            'https://matrix.page/_edge-health')"
-          if [ "$health_status" != "200" ] || \
-             ! jq -e '.status == "ok" and keys == ["status"]' "$body" >/dev/null; then
-            echo "Matrix.page edge proof was not accepted by the promoted platform." >&2
-            exit 1
-          fi
-          public_status="$(curl --silent --show-error --max-time 30 \
-            --output "$body" --write-out '%{http_code}' \
-            'https://matrix.page/sites-deployment-smoke')"
-          if [ "$public_status" != "404" ]; then
-            echo "Matrix.page deployment smoke expected a 404 from the configured platform, received ${public_status}." >&2
-            exit 1
-          fi
-          origin_status="$(curl --silent --show-error --max-time 15 \
-            --output "$body" --write-out '%{http_code}' \
-            "${PLATFORM_PUBLIC_URL%/}/public/sites/sites-deployment-smoke")"
-          if [ "$origin_status" != "404" ]; then
-            echo "Platform Sites edge-proof gate expected a 404 without proof, received ${origin_status}." >&2
-            exit 1
-          fi
-
-      - name: Remove legacy worker tags
-        if: ${{ github.event_name == 'push' || inputs.promote }}
-        run: node scripts/ci/remove-legacy-platform-worker-tags.mjs
+          test "$(serving_revisions "$RUNNER_TEMP/platform-staging-before.json")" = \
+            "$(serving_revisions "$RUNNER_TEMP/platform-staging-after.json")"
+          candidate="$(jq -er --arg tag "$tag" '.status.traffic[] | select(.tag == $tag and (.percent // 0) == 0) | .url' \
+            "$RUNNER_TEMP/platform-staging-after.json")"
+          revision="$(jq -er --arg tag "$tag" '.status.traffic[] | select(.tag == $tag and (.percent // 0) == 0) | .revisionName' \
+            "$RUNNER_TEMP/platform-staging-after.json")"
+          gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json |
+            jq -e --arg image "$IMAGE_DIGEST" --arg sha "$EXPECTED_SHA" '
+              .spec.containers[0].image == $image and .metadata.labels["matrix-source-sha"] == $sha
+            ' >/dev/null
+          health="$(curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 10 "$candidate/health")"
+          echo "$health" | jq -e '.status == "ok"' >/dev/null
+          {
+            echo "- staging_revision: $revision"
+            echo "- immutable_image: $IMAGE_DIGEST"
+            echo "- candidate_health: HTTP 200, status ok"
+            echo "- promotion: disabled, serving traffic verified unchanged"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
