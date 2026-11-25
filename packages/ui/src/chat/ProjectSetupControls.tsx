@@ -63,7 +63,8 @@ function ProjectSetupControlsScoped({
   const pendingService = draft.mcp.state === "pending" ? draft.mcp.service : undefined;
   const showConnectionCard = pendingService && setup.mcpHandoff;
   const showReview = draft.step === "review" && !showConnectionCard;
-  const reviewableFiles = draft.proposals.filter(file => file.status !== "symlink_skipped");
+  const unavailableDestination = draft.proposals.some(file => file.status === "destination_unavailable");
+  const reviewableFiles = draft.proposals.filter(file => !["symlink_skipped", "destination_unavailable"].includes(file.status));
   const [dirtyFiles, setDirtyFiles] = useState<string[]>(() =>
     Object.entries(markdownEdits?.files ?? {})
       .filter(([path, edit]) => edit.value !== edit.baseline &&
@@ -381,13 +382,10 @@ function ProjectSetupControlsScoped({
                     editable={file.path !== "CLAUDE.md" && !file.expectedHash && !isPreservedMarkdown(file)}
                     busy={busy}
                     onDirtyChange={(dirty) =>
-                      setDirtyFiles((current) =>
-                        dirty
-                          ? current.includes(file.path)
-                            ? current
-                            : [...current, file.path]
-                          : current.filter((path) => path !== file.path),
-                      )
+                      setDirtyFiles(current => {
+                        if (current.includes(file.path) === dirty) return current;
+                        return dirty ? [...current, file.path] : current.filter(path => path !== file.path);
+                      })
                     }
                     onApply={(content) => setup.dispatch({ type: "review_file", path: file.path, content })}
                   />
@@ -403,7 +401,7 @@ function ProjectSetupControlsScoped({
                 }
                 onClick={() => dispatch({ type: "save" })}
               >
-                Save project setup
+                {unavailableDestination ? "Save available files" : "Save project setup"}
               </Button>
             </>
           ) : null}
@@ -459,13 +457,12 @@ function ProjectSetupControlsScoped({
           {draft.proposals.map((file) => (
             <li key={file.path} className="flex flex-wrap items-center justify-between gap-2">
               <span className="break-all">
-                {file.path} · {file.status === "symlink_skipped" ? "Symbolic link preserved" : file.status.replaceAll("_", " ")}
+                {file.path} · {file.status === "symlink_skipped" ? "Symbolic link preserved" : file.status === "destination_unavailable"
+                  ? "Destination unavailable" : file.status.replaceAll("_", " ")}
               </span>
               {onOpenFile && ["saved", "already_present", "conflict"].includes(file.status) ? (
                 <Action
-                  onClick={() => {
-                    void openSavedFile(file.path);
-                  }}
+                  onClick={() => { void openSavedFile(file.path); }}
                 >
                   Open file
                 </Action>

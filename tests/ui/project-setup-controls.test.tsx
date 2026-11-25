@@ -268,13 +268,16 @@ it.each(["saved", "already_present"] as const)("allows a preserved %s guidance f
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(false);
 });
 
-it("reports a preserved symbolic link without exposing a preview or blocking other proposals", () => {
+it.each([
+  ["CLAUDE.md", "symlink_skipped", "Symbolic link preserved"],
+  [".agents/skills/release-check/SKILL.md", "destination_unavailable", "Destination unavailable"],
+] as const)("reports a blocked destination for %s and allows saving other proposals", (path, status, label) => {
   const setup = controller(undefined, { ...draft, proposals: [...draft.proposals,
-    { path: "CLAUDE.md", status: "symlink_skipped", content: "g".repeat(8193) }] });
+    { path, status, content: "g".repeat(8193) }] });
   render(<ProjectSetupControls setup={setup} transport={null} onOpenFile={vi.fn()} />);
-  expect(screen.queryByRole("region", { name: "Review CLAUDE.md" })).toBeNull();
-  expect(screen.getByText("CLAUDE.md · Symbolic link preserved")).toBeTruthy();
+  expect(screen.queryByRole("region", { name: `Review ${path}` })).toBeNull();
+  expect(screen.getByText(`${path} · ${label}`)).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Open file" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Save project setup" }));
+  fireEvent.click(screen.getByRole("button", { name: status === "destination_unavailable" ? "Save available files" : "Save project setup" }));
   expect(setup.dispatch).toHaveBeenCalledWith({ type: "save" });
 });
