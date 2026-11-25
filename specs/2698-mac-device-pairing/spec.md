@@ -7,7 +7,7 @@ A signed-in macOS Matrix client offers **Mac Pairing…** in its application men
 ## Identity and API
 
 - Reuse the existing Matrix authentication transport. The Gateway admits verified Matrix owner identities on an enabled primary Computer with an immutable machine UUID and owner Postgres. There are no public routes or client-supplied owner or Computer identifiers.
-- The Mac creates an Ed25519 key in Electron main and encrypts its private key using Electron safeStorage. Per-owner and HTTPS-origin storage lives in the Electron profile. The device ID is SHA-256 of the public SPKI bytes. No key leaves Electron main except the public key and a signed proof.
+- The Mac creates an Ed25519 key in Electron main and encrypts its private key using Electron safeStorage. Per-owner and HTTPS-origin storage lives in the Electron profile. The device ID is SHA-256 of the public SPKI bytes. No key leaves Electron main except the public key and a signed proof. The shared [key-store module](../../desktop/src/main/desktop-pairing/key-store.ts) exports `createPairingKeyStore`.
 - The server stores the public identity and a monotonically increasing revision scoped to the authenticated owner and Computer. A revision persists after disconnect. Pair and disconnect use compare-and-set against that revision. An expired or consumed challenge, or a challenge issued before a competing mutation, cannot reinstate an old binding.
 - A challenge is random, single use, short-lived and capped. It is not restored across Gateway restarts. Its signature binds the owner, machine UUID, device ID, revision, and nonce. A lost reply is reconciled with a fresh read. Starting a new mutation requires local consent.
 
