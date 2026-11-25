@@ -88,12 +88,15 @@ export function useGridPointer(options: GridPointerOptions) {
       options.onCreate(day.key, span.start, span.end);
       return;
     }
-    const startMs = instantToMs(instantAtWall(day.key, final.startMinute, options.timeZone));
     if (final.kind === "move") {
+      const startMs = instantToMs(instantAtWall(day.key, final.startMinute, options.timeZone));
       options.onChangeTime(final.eventId, startMs, startMs + final.durationMinutes * MS_PER_MINUTE);
       return;
     }
-    options.onChangeTime(final.eventId, startMs, instantToMs(instantAtWall(day.key, final.endMinute, options.timeZone)));
+    // A resize changes only the end: the shown segment may be the last day of
+    // an event that started earlier, so its minute is not the event's start.
+    if (!current.segment) return;
+    options.onChangeTime(final.eventId, instantToMs(current.segment.event.start), instantToMs(instantAtWall(day.key, final.endMinute, options.timeZone)));
   }
 
   return {

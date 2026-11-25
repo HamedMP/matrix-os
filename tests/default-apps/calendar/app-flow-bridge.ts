@@ -183,6 +183,12 @@ export class FakeMatrixOS {
         for (const address of items) calendars[address] = { busy: this.busy[address] ?? [] };
         return { kind: "calendar#freeBusy", timeMin: params.timeMin, timeMax: params.timeMax, calendars };
       }
+      case "get_event": {
+        // Some writes read the stored event first.
+        const found = (this.events[String(params.calendarId)] ?? []).find((event) => event.id === String(params.eventId));
+        if (!found) throw Object.assign(new Error("HTTP 404: no such event"), { status: 404 });
+        return found;
+      }
       case "create_event_with_attendees":
         return this.create(params);
       default:

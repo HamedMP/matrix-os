@@ -69,6 +69,11 @@ export interface FindSlotsOptions {
 
 export const MAX_SLOT_RESULTS = 100;
 export const MAX_SLOT_DURATION_MINUTES = MINUTES_PER_DAY;
+
+/** A meeting length `findSlots` can search for: whole minutes, 1 to `MAX_SLOT_DURATION_MINUTES`. */
+export function isSlotDuration(minutes: number): boolean {
+  return Number.isInteger(minutes) && minutes >= 1 && minutes <= MAX_SLOT_DURATION_MINUTES;
+}
 const MAX_SEARCH_DAYS = 62;
 
 export function isValidWorkingHours(value: unknown): value is WorkingHours {

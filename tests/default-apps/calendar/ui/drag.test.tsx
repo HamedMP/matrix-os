@@ -2,7 +2,8 @@
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EventChanges } from "../../../../home/apps/_shared/office-accounts/types/calendar";
-import { eventButton, settle, setup } from "./helpers";
+import { event } from "../model/fixtures";
+import { baseEvents, eventButton, settle, setup } from "./helpers";
 
 // Seven 100px columns; 48px per hour, so y = minutes * 0.8.
 const RECT = { left: 0, top: 0, width: 700, height: 1152, right: 700, bottom: 1152, x: 0, y: 0, toJSON: () => ({}) };
@@ -66,6 +67,22 @@ describe("time grid gestures", () => {
     const changes = provider.callsTo("updateEvent")[0].args[1] as EventChanges;
     expect(changes.start).toBe("2026-11-23T14:00:00Z");
     expect(changes.end).toBe("2026-11-23T15:00:00Z");
+  });
+
+  it("resizes the last day of an overnight event and keeps its original start", async () => {
+    // Monday 23:00 to Tuesday 01:00 in New York.
+    const overnight = event({ id: "work/late", calendarId: "work", title: "Late deploy", start: "2026-11-24T04:00:00Z", end: "2026-11-24T06:00:00Z" });
+    const { provider } = await setup({ events: [...baseEvents(), overnight] });
+    const parts = screen.getAllByRole("button", { name: /^Late deploy,/ });
+    const tuesday = parts.find((part) => part.closest("[data-day]")?.getAttribute("data-day") === "2026-11-24");
+    const handle = tuesday?.querySelector<HTMLElement>("[data-resize]");
+    expect(handle).toBeTruthy();
+    // Drag the bottom edge from 01:00 down to 02:00 on Tuesday (column 1).
+    drag(handle!, { x: 150, y: 60 * 0.8 }, { x: 150, y: 120 * 0.8 });
+    await settle();
+    const changes = provider.callsTo("updateEvent")[0].args[1] as EventChanges;
+    expect(Date.parse(changes.start!)).toBe(Date.parse("2026-11-24T04:00:00Z"));
+    expect(Date.parse(changes.end!)).toBe(Date.parse("2026-11-24T07:00:00Z"));
   });
 
   it("treats a press without movement on an event as a click that opens it", async () => {

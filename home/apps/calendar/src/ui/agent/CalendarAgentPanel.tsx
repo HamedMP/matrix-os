@@ -34,7 +34,7 @@ export interface CalendarAgentPanelProps {
   store: CalendarStore;
   /** One model call; defaults to `MatrixOS.ai.generate`. */
   generate?: (prompt: string) => Promise<string>;
-  /** Free-busy from a provider; defaults to the store's scheduling assistant. */
+  /** Free-busy from a provider; defaults to the store's provider lookup (`readFreeBusy`). */
   getFreeBusy?: CalendarAgentDeps["getFreeBusy"];
   /** Called when the owner clicks a time chip, so the grid can highlight that event or slot. */
   onHighlight?: (target: CalendarHighlight) => void;

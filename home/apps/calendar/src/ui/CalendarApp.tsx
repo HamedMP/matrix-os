@@ -135,11 +135,20 @@ export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppP
     if (selected) void store.respond(selected.id, response);
   }
 
-  const rightPanel = state.draft
-    ? <EventComposer store={store} state={state} draftState={state.draft} onApplyProposal={onProposal} />
-    : agentOpen
-      ? <AgentSlot store={store} now={now} getFreeBusy={getFreeBusy} onHighlight={highlight} onClose={() => setAgentOpen(false)} />
-      : undefined;
+  // The agent panel stays mounted (hidden) while the composer covers it, so
+  // its answers are still there to pick another time from after Cancel.
+  const rightPanel = state.draft || agentOpen
+    ? (
+      <>
+        {state.draft && <EventComposer store={store} state={state} draftState={state.draft} onApplyProposal={onProposal} />}
+        {agentOpen && (
+          <div className="cal-agent-holder" hidden={Boolean(state.draft)}>
+            <AgentSlot store={store} now={now} getFreeBusy={getFreeBusy} onHighlight={highlight} onClose={() => setAgentOpen(false)} />
+          </div>
+        )}
+      </>
+    )
+    : undefined;
   const pendingCount = state.pendingEventIds.length;
 
   return (

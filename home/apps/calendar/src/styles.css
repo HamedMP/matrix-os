@@ -212,6 +212,8 @@ body { background: var(--app-bg); color: var(--app-fg); }
 
 /* Composer */
 .cal-composer, .cal-agent-fallback { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+/* Keeps the agent panel mounted behind the composer; while shown it lays out as if unwrapped. */
+.cal-agent-holder:not([hidden]) { display: contents; }
 .cal-composer__head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--cal-line); }
 .cal-composer__head h2 { margin: 0; font-size: 14px; font-weight: 650; }
 .cal-composer__scroll { flex: 1; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 12px; padding: 12px; }

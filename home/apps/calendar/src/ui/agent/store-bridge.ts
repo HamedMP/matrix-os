@@ -3,8 +3,8 @@
  *
  * - `agentContext(state, now)` is what the agent may read.
  * - `createStoreAgentDeps(store, options)` gives the agent read-only access:
- *   the model call, events (loaded through the store's own cache) and
- *   free-busy. There is no write path here.
+ *   the model call, events and free-busy for exactly the window it asks
+ *   about, whatever view the grid shows. There is no write path here.
  * - `openAgentDraft`, `openRescheduleDraft` and `openSlotDraft` put an agent
  *   result into the event composer. They only open drafts; sending stays an
  *   explicit click in the composer.
@@ -14,16 +14,11 @@ import {
   instantInZone,
   instantToMs,
   wallTimeOf,
-  type BusyBlock,
-  type CalendarEvent,
   type EventDraft,
   type IsoInstant,
 } from "../../../../_shared/office-accounts/types/calendar";
 import type { CalendarAgentContext, CalendarAgentDeps, SlotRef } from "../../agent";
-import { dayKeyAt, eventsInRange, type CalendarState, type CalendarStore, type Proposal } from "../../model";
-
-/** Views the walk may step through to cover one window; the window itself is at most 62 days. */
-export const MAX_WALK_STEPS = 12;
+import { dayKeyAt, type CalendarState, type CalendarStore, type Proposal } from "../../model";
 
 export function agentContext(state: CalendarState, now: number): CalendarAgentContext {
   return {
@@ -32,7 +27,8 @@ export function agentContext(state: CalendarState, now: number): CalendarAgentCo
     weekStart: state.preferences.weekStart,
     workingHours: state.preferences.workingHours,
     defaultDurationMinutes: state.preferences.defaultDurationMinutes,
-    ownerAddress: state.accounts[0]?.address.toLowerCase() ?? null,
+    // An empty address means the account's address is unknown.
+    ownerAddress: state.accounts[0]?.address.toLowerCase() || null,
     calendars: state.calendars,
     events: state.events,
     assistantAttendees: state.assistant.attendees,
@@ -55,35 +51,10 @@ function covers(state: CalendarState, start: IsoInstant, end: IsoInstant): boole
   return instantToMs(state.range.start) <= instantToMs(start) && instantToMs(state.range.end) >= instantToMs(end);
 }
 
-/**
- * Steps the grid through the views that cover `[start, end)`, loading each,
- * and calls `visit` with the state after every load. The grid is left on the
- * first day of the window, so the answer is what the owner sees.
- */
-async function walkWindow(store: CalendarStore, start: IsoInstant, end: IsoInstant, visit: (state: CalendarState) => Promise<void> | void): Promise<void> {
-  const first = store.getSnapshot();
-  if (covers(first, start, end) && first.eventsStatus === "ready") {
-    await visit(first);
-    return;
-  }
-  const startDay = dayKeyAt(instantToMs(start), first.timeZone);
-  store.goToDate(startDay);
-  for (let step = 0; step < MAX_WALK_STEPS; step += 1) {
-    // react-doctor-disable-next-line react-doctor/async-await-in-loop -- sequential on purpose: each step moves the one grid the store owns.
-    await store.loadEvents();
-    const state = store.getSnapshot();
-    if (state.eventsStatus === "error") throw new Error("Calendar events could not be loaded");
-    await visit(state);
-    if (instantToMs(state.range.end) >= instantToMs(end)) break;
-    store.shift(1);
-  }
-  store.goToDate(startDay);
-}
-
 export interface StoreAgentOptions {
   /** One model call; defaults to `MatrixOS.ai.generate`. */
   generate?: (prompt: string) => Promise<string>;
-  /** Free-busy straight from a provider; defaults to the store's scheduling assistant. */
+  /** Free-busy straight from a provider; defaults to the store's provider lookup. */
   getFreeBusy?: CalendarAgentDeps["getFreeBusy"];
   log?: (action: string, error: unknown) => void;
 }
@@ -92,27 +63,16 @@ export function createStoreAgentDeps(store: CalendarStore, options: StoreAgentOp
   return {
     generate: options.generate ?? bridgeGenerate,
     async listEvents(start, end) {
-      // Keyed by id so a view loaded twice does not list an event twice; bounded by the window's events.
-      const found: Record<string, CalendarEvent> = Object.create(null);
-      await walkWindow(store, start, end, (state) => {
-        const visible = state.calendars.filter((calendar) => calendar.visible).map((calendar) => calendar.id);
-        for (const event of eventsInRange(state.cache, visible, start, end)) found[event.id] = event;
-      });
-      return Object.values(found).sort((a, b) => instantToMs(a.start) - instantToMs(b.start));
+      // The whole window is read directly, so the answer never depends on the
+      // view; a calendar that cannot be read fails the read instead of leaving a gap.
+      const events = await store.readEvents(start, end);
+      // The grid then shows the window's first day, so the answer is what the owner sees.
+      const state = store.getSnapshot();
+      if (!covers(state, start, end)) store.goToDate(dayKeyAt(instantToMs(start), state.timeZone));
+      return events;
     },
-    async getFreeBusy(addresses, start, end) {
-      if (options.getFreeBusy) return options.getFreeBusy(addresses, start, end);
-      // The scheduling assistant fetches busy time for the visible range and
-      // draws it on the grid, so the owner sees whose time was checked.
-      const blocks: BusyBlock[] = [];
-      await walkWindow(store, start, end, async (state) => {
-        if (state.assistant.attendees.join(",") !== addresses.join(",")) await store.setAssistantAttendees(addresses);
-        else await store.loadBusy();
-        const after = store.getSnapshot();
-        if (after.assistant.status === "error") throw new Error("Free-busy could not be loaded");
-        blocks.push(...after.assistant.busy);
-      });
-      return blocks;
+    getFreeBusy(addresses, start, end) {
+      return options.getFreeBusy ? options.getFreeBusy(addresses, start, end) : store.readFreeBusy(addresses, start, end);
     },
     log: options.log ?? ((action, error) => console.warn(`[calendar] ${action} failed`, error)),
   };

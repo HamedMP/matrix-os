@@ -209,11 +209,12 @@ export function createWriteActions(ctx: StoreContext, hooks: { onProposalUsed(pr
         ctx.set((current) => ({ ...current, mutationError: connection }));
         return false;
       }
+      // An empty account address is unknown: no attendee is guessed to be the owner.
       const owner = connection.account.address.toLowerCase();
       const optimistic: CalendarEvent = {
         ...previous,
         myResponse: response,
-        attendees: previous.attendees.map((attendee) => (attendee.address.toLowerCase() === owner ? { ...attendee, response } : attendee)),
+        attendees: previous.attendees.map((attendee) => (owner && attendee.address.toLowerCase() === owner ? { ...attendee, response } : attendee)),
       };
       const write: PendingWrite = { id: ctx.nextId("write"), kind: "respond", eventId, optimistic, previous };
       begin(ctx, write);

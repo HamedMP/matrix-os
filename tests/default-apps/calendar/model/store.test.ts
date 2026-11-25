@@ -261,6 +261,65 @@ describe("calendar store: scheduling assistant and proposals", () => {
     expect(calls[calls.length - 1].args[1]).toBe("2026-11-30T00:00:00-05:00");
   });
 
+  it("drops a slow busy reply once the guests were cleared, so it cannot repaint the grid", async () => {
+    const { store, provider } = setup();
+    provider.busy = [{ address: "ana@example.com", start: "2026-11-23T16:00:00Z", end: "2026-11-23T19:00:00Z" }];
+    await store.init();
+    let release: () => void = () => undefined;
+    const original = provider.getFreeBusy.bind(provider);
+    provider.getFreeBusy = async (...args) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return original(...args);
+    };
+    const slow = store.setAssistantAttendees(["ana@example.com"]);
+    await store.setAssistantAttendees([]);
+    release();
+    await slow;
+    const { assistant } = store.getSnapshot();
+    expect(assistant.status).toBe("idle");
+    expect(assistant.busy).toEqual([]);
+    expect(assistant.overlays).toEqual({});
+  });
+
+  it("drops a slow busy reply once no calendar is connected for the next lookup", async () => {
+    const { provider } = setup();
+    provider.busy = [{ address: "ana@example.com", start: "2026-11-23T16:00:00Z", end: "2026-11-23T19:00:00Z" }];
+    let connected = true;
+    const connections = [{ account: ACCOUNT, provider }];
+    const guarded = createCalendarStore({ connect: async () => (connected ? connections : []), now: () => NOW, log: () => undefined });
+    await guarded.init();
+    let release: () => void = () => undefined;
+    const original = provider.getFreeBusy.bind(provider);
+    provider.getFreeBusy = async (...args) => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return original(...args);
+    };
+    const slow = guarded.setAssistantAttendees(["ana@example.com"]);
+    connected = false;
+    await guarded.loadAccounts();
+    await guarded.setAssistantAttendees(["ben@example.com"]);
+    release();
+    await slow;
+    expect(guarded.getSnapshot().assistant.status).toBe("error");
+    expect(guarded.getSnapshot().assistant.overlays).toEqual({});
+  });
+
+  it("finds no slots, without throwing, for a length the search does not support", async () => {
+    const { store } = setup();
+    await store.init();
+    store.findSlots({ maxResults: 1 });
+    expect(store.getSnapshot().proposals).toHaveLength(1);
+    for (const durationMinutes of [-30, 0, 1441, 2.5]) {
+      expect(() => store.findSlots({ durationMinutes })).not.toThrow();
+      expect(store.findSlots({ durationMinutes })).toEqual([]);
+    }
+    expect(store.getSnapshot().proposals.filter((proposal) => proposal.source === "assistant")).toEqual([]);
+  });
+
   it("loads agent proposals, ignores malformed ones and deletes a dismissed row", async () => {
     const rows = [
       { id: "6f1c1d1e-0000-4000-8000-000000000001", start_at: "2026-11-24T15:00:00Z", end_at: "2026-11-24T15:30:00Z", title: "1:1", attendees: [{ address: "bo@example.com" }], note: "Both free" },

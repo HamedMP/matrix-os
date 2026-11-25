@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import type { EventDraft, InviteOptions } from "../../../../home/apps/_shared/office-accounts/types/calendar";
-import { dayColumn, settle, setup } from "./helpers";
+import type { EventChanges, EventDraft, InviteOptions } from "../../../../home/apps/_shared/office-accounts/types/calendar";
+import { REPEAT_FIXED_HINT, SLOT_LENGTH_HINT } from "../../../../home/apps/calendar/src/ui/composerOptions";
+import { event } from "../model/fixtures";
+import { baseEvents, dayColumn, settle, setup } from "./helpers";
 
 afterEach(cleanup);
 
@@ -111,6 +113,104 @@ describe("event composer", () => {
     const startTime = (within(composer()).getByLabelText("Start time") as HTMLInputElement).value;
     expect(startTime).toMatch(/^\d{2}:\d{2}$/);
     expect(document.querySelector(".cal-proposal")?.getAttribute("aria-label")).toMatch(/^Suggested time/);
+  });
+
+  it("shows an existing event's repeat and reminders as unchanged and does not let the draft overwrite them", async () => {
+    const weekly = event({
+      id: "work/weekly", calendarId: "work", title: "Weekly review", start: "2026-11-24T15:00:00Z", end: "2026-11-24T15:30:00Z",
+      recurrenceText: "Every week on Tuesday", seriesId: "work/weekly-series",
+    });
+    const { store, provider } = await setup({ events: [...baseEvents(), weekly] });
+    act(() => {
+      store.openEditDraft("work/weekly");
+    });
+    const form = screen.getByRole("form", { name: "Edit event" });
+    const repeat = within(form).getByLabelText("Repeat") as HTMLSelectElement;
+    expect(repeat.disabled).toBe(true);
+    expect(repeat.selectedOptions[0]?.textContent).toBe("Every week on Tuesday");
+    const reminder = within(form).getByLabelText("Reminder") as HTMLSelectElement;
+    expect(reminder.disabled).toBe(true);
+    expect(reminder.selectedOptions[0]?.textContent).toBe("Unchanged");
+    expect(within(form).getByText(REPEAT_FIXED_HINT)).toBeTruthy();
+
+    act(() => {
+      store.setDraftRecurrence(null);
+      store.setDraftReminders([]);
+    });
+    type("Title", "Weekly review (moved)");
+    fireEvent.click(within(form).getByRole("button", { name: "Save" }));
+    await settle();
+    const changes = provider.callsTo("updateEvent")[0].args[1] as EventChanges;
+    expect(changes).toEqual({ title: "Weekly review (moved)" });
+  });
+
+  it("shows a one-off event as not repeating, without offering a repeat rule it cannot apply", async () => {
+    const { store } = await setup();
+    act(() => {
+      store.openEditDraft("work/standup");
+    });
+    const repeat = within(composer()).getByLabelText("Repeat") as HTMLSelectElement;
+    expect(repeat.disabled).toBe(true);
+    expect(repeat.selectedOptions[0]?.textContent).toBe("Does not repeat");
+    expect(repeat.options).toHaveLength(1);
+  });
+
+  it("keeps the composer open with its message when the end moves before the start with guests loaded", async () => {
+    const context = await openComposerAt9();
+    context.provider.busy = [{ address: "ana@example.com", start: "2026-11-24T14:00:00Z", end: "2026-11-24T16:00:00Z" }];
+    addGuest("ana@example.com");
+    await settle();
+    await settle();
+    expect(within(composer()).getAllByRole("button", { name: /–/ }).length).toBeGreaterThan(0);
+    for (const end of ["08:00", "09:00"]) {
+      type("End time", end);
+      await settle();
+      expect(screen.getByRole("form", { name: "New event" })).toBeTruthy();
+      const assistant = within(composer()).getByRole("region", { name: "Scheduling assistant" });
+      expect(within(assistant).queryAllByRole("button", { name: /–/ })).toHaveLength(0);
+      expect(within(assistant).getByText(SLOT_LENGTH_HINT)).toBeTruthy();
+    }
+    // More than a day long.
+    fireEvent.change(within(composer()).getByLabelText("End date"), { target: { value: "2026-11-25" } });
+    type("End time", "10:00");
+    await settle();
+    expect(within(composer()).getByText(SLOT_LENGTH_HINT)).toBeTruthy();
+    expect(document.querySelectorAll(".cal-proposal--assistant")).toHaveLength(0);
+  });
+
+  it("suggests times only after the owner's own events for a new week have loaded", async () => {
+    // The owner is busy Monday 30 November 09:00-12:00 in New York.
+    const busyMonday = event({ id: "work/planning", calendarId: "work", title: "Planning", start: "2026-11-30T14:00:00Z", end: "2026-11-30T17:00:00Z" });
+    const { store, provider } = await openComposerAt9();
+    provider.events = [...provider.events, busyMonday];
+    addGuest("ana@example.com");
+    await settle();
+    let releaseEvents: () => void = () => undefined;
+    const listEvents = provider.listEvents.bind(provider);
+    provider.listEvents = async (request) => {
+      await new Promise<void>((resolve) => {
+        releaseEvents = resolve;
+      });
+      return listEvents(request);
+    };
+    act(() => {
+      store.shift(1);
+    });
+    // Availability for the new week answers first; the owner's events are still loading.
+    await settle();
+    expect(store.getSnapshot().assistant.status).toBe("ready");
+    expect(store.getSnapshot().eventsStatus).toBe("loading");
+    releaseEvents();
+    await settle();
+    await settle();
+    const suggestions = store.getSnapshot().proposals.filter((proposal) => proposal.source === "assistant");
+    expect(suggestions.length).toBeGreaterThan(0);
+    const planningStart = Date.parse(busyMonday.start);
+    const planningEnd = Date.parse(busyMonday.end);
+    for (const proposal of suggestions) {
+      const overlaps = Date.parse(proposal.start) < planningEnd && Date.parse(proposal.end) > planningStart;
+      expect(overlaps).toBe(false);
+    }
   });
 
   it("opens a draft from an agent proposal on the grid without creating anything", async () => {

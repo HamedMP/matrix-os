@@ -39,6 +39,12 @@ export interface DraftState {
   draft: EventDraft;
   /** The proposal this draft came from; it is removed once the event is created. */
   proposalId: string | null;
+  /**
+   * Edit drafts only: how the event repeats, as the provider describes it, or
+   * null when it does not repeat. An event's repeat rule and reminders are not
+   * carried into the draft (see `draftFromEvent`), so they stay unchanged.
+   */
+  repeat: string | null;
   issues: EventDraftIssue[];
   status: "editing" | "saving";
   /** A fixed, safe sentence; never provider text. */
@@ -52,6 +58,7 @@ export function draftState(draft: EventDraft, extra: Partial<Omit<DraftState, "d
     original: extra.original ?? null,
     draft,
     proposalId: extra.proposalId ?? null,
+    repeat: extra.repeat ?? null,
     issues: eventDraftIssues(draft),
     status: extra.status ?? "editing",
     error: extra.error ?? null,
@@ -132,6 +139,13 @@ function draftAttendee(attendee: CalendarAttendee): EventDraftAttendee {
   if (attendee.name) result.name = attendee.name;
   if (attendee.optional) result.optional = true;
   return result;
+}
+
+/** How an existing event repeats, for display: its description, a generic one for a series occurrence, or null. */
+export function eventRepeat(event: CalendarEvent): string | null {
+  const text = event.recurrenceText?.trim();
+  if (text) return text;
+  return event.seriesId ? "Repeats" : null;
 }
 
 /** The editable fields of an existing event. Recurrence and reminders stay as the provider holds them. */

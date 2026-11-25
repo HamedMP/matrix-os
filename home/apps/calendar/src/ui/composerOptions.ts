@@ -131,3 +131,9 @@ export function issueText(issue: EventDraftIssue): string {
 }
 
 export const TITLE_REQUIRED = "Add a title.";
+
+/** Under an edit draft's repeat and reminder fields, which keep the event's own settings. */
+export const REPEAT_FIXED_HINT = "Repeat and reminders of an existing event stay as they are.";
+
+/** In the scheduling assistant when the draft's length cannot be searched for. */
+export const SLOT_LENGTH_HINT = "Set an end after the start, within 24 hours, to see suggested times.";

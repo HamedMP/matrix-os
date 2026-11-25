@@ -8,6 +8,7 @@ import { instantToMs } from "../../../_shared/office-accounts/types/calendar";
 import type { AssistantState } from "../model";
 import type { Proposal } from "../model/proposals";
 import { personColorClass } from "./colors";
+import { SLOT_LENGTH_HINT } from "./composerOptions";
 import { durationLabel, formatShortDate, formatTime } from "./format";
 import { dayKeyAt } from "../model/dates";
 
@@ -17,14 +18,18 @@ export interface SchedulingAssistantProps {
   timeZone: string;
   /** Length of the meeting being searched for. */
   durationMinutes: number;
+  /** False when that length cannot be searched for; the reason is shown instead of suggestions. */
+  searchable: boolean;
+  /** True once availability and the owner's own events are loaded. */
+  ready: boolean;
   onApply(proposalId: string): void;
   onFind(): void;
   onRetry(): void;
 }
 
-export function SchedulingAssistant({ assistant, proposals, timeZone, durationMinutes, onApply, onFind, onRetry }: SchedulingAssistantProps) {
+export function SchedulingAssistant({ assistant, proposals, timeZone, durationMinutes, searchable, ready, onApply, onFind, onRetry }: SchedulingAssistantProps) {
   if (assistant.attendees.length === 0) return null;
-  const suggestions = proposals.filter((proposal) => proposal.source === "assistant");
+  const suggestions = searchable ? proposals.filter((proposal) => proposal.source === "assistant") : [];
   return (
     <section className="cal-assistant" aria-label="Scheduling assistant">
       <div className="cal-assistant__head">
@@ -46,12 +51,13 @@ export function SchedulingAssistant({ assistant, proposals, timeZone, durationMi
         </p>
       )}
       <div className="cal-assistant__head">
-        <h3>Suggested times ({durationLabel(durationMinutes)})</h3>
-        <button type="button" className="oui-icon-button" aria-label="Find times again" onClick={onFind} disabled={assistant.status !== "ready"}>
+        <h3>{searchable ? `Suggested times (${durationLabel(durationMinutes)})` : "Suggested times"}</h3>
+        <button type="button" className="oui-icon-button" aria-label="Find times again" onClick={onFind} disabled={!ready || !searchable}>
           <RefreshCw size={14} />
         </button>
       </div>
-      {assistant.status === "ready" && suggestions.length === 0 && (
+      {!searchable && <p className="cal-assistant__none">{SLOT_LENGTH_HINT}</p>}
+      {searchable && ready && suggestions.length === 0 && (
         <p className="cal-assistant__none">No common free time in this range. Try the next week.</p>
       )}
       <ul className="cal-assistant__slots">

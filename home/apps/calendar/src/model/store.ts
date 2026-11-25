@@ -6,8 +6,16 @@
  * writes are in `store-writes.ts`, drafts, the scheduling assistant and
  * proposals in `store-schedule.ts`.
  */
-import { ProviderError, toProviderError, type CalendarInfo } from "../../../_shared/office-accounts/types/calendar";
-import { cacheKey, freshEntry, invalidate, putEntry, touchEntries } from "./cache";
+import {
+  MAX_EVENT_RANGE_DAYS,
+  ProviderError,
+  instantToMs,
+  toProviderError,
+  type CalendarEvent,
+  type CalendarInfo,
+  type IsoInstant,
+} from "../../../_shared/office-accounts/types/calendar";
+import { cacheKey, eventsInRange, freshEntry, invalidate, putEntry, touchEntries, type EventCache } from "./cache";
 import { dayKeyAt, isDayKey, resolveTimeZone, type DayKey } from "./dates";
 import {
   DEFAULT_PREFERENCES,
@@ -32,6 +40,7 @@ import {
 import { createWriteActions, reapplyPending, type WriteActions } from "./store-writes";
 
 export const MAX_SUBSCRIBERS = 64;
+const MS_PER_DAY = 86_400_000;
 
 export interface CalendarStoreOptions {
   /** Lists connected accounts with their provider adapters. */
@@ -55,6 +64,13 @@ export interface CalendarStore extends WriteActions, ScheduleActions {
   loadAccounts(): Promise<void>;
   /** Loads events of visible calendars for the current range; cached ranges are reused unless `force`. */
   loadEvents(options?: { force?: boolean }): Promise<void>;
+  /**
+   * Events of visible calendars in `[start, end)`, at most `MAX_EVENT_RANGE_DAYS`
+   * long, fetched for exactly that range (fresh cache entries are reused) and
+   * with unconfirmed writes applied. The grid does not move. Rejects, instead
+   * of answering in part, when any calendar cannot be read.
+   */
+  readEvents(start: IsoInstant, end: IsoInstant): Promise<CalendarEvent[]>;
   /** Drops the cache and reloads. */
   refresh(): Promise<void>;
   setView(view: CalendarView): void;
@@ -149,6 +165,38 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     return promise;
   }
 
+  type FetchResults = PromiseSettledResult<{ calendarIds: string[]; events: CalendarEvent[] }>[];
+
+  /** One `listEvents` call per account for the given calendars and range. */
+  function fetchEvents(calendars: readonly CalendarInfo[], start: IsoInstant, end: IsoInstant): Promise<FetchResults> {
+    const byAccount: Record<string, string[]> = {};
+    for (const calendar of calendars) (byAccount[calendar.accountId] ??= []).push(calendar.id);
+    return Promise.allSettled(Object.entries(byAccount).map(async ([accountId, calendarIds]) => {
+      const connection = ctx.connectionFor(accountId);
+      if (!connection) throw new ProviderError("not_connected");
+      const events = await connection.provider.listEvents({ calendarIds, start, end });
+      return { calendarIds, events };
+    }));
+  }
+
+  /** The cache with every fulfilled result stored for the range; the first failure, reported, as a fixed sentence. */
+  function storeResults(cache: EventCache, results: FetchResults, start: IsoInstant, end: IsoInstant, action: string): { cache: EventCache; error: string | null } {
+    let error: string | null = null;
+    let nextCache = cache;
+    const fetchedAt = now();
+    for (const result of results) {
+      if (result.status === "rejected") {
+        error ??= ctx.report(action, result.reason);
+        continue;
+      }
+      for (const calendarId of result.value.calendarIds) {
+        const events = result.value.events.filter((event) => event.calendarId === calendarId);
+        nextCache = putEntry(nextCache, { calendarId, start, end, events, fetchedAt });
+      }
+    }
+    return { cache: nextCache, error };
+  }
+
   async function runLoadEvents(loadOptions: { force?: boolean }): Promise<void> {
     const { range, calendars, cache } = state;
     const visible = calendars.filter((calendar) => calendar.visible);
@@ -162,32 +210,38 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     }
     const token = ++eventsToken;
     ctx.set((current) => ({ ...current, eventsStatus: "loading", eventsError: null }));
-    const byAccount: Record<string, string[]> = {};
-    for (const calendar of missing) (byAccount[calendar.accountId] ??= []).push(calendar.id);
-    const results = await Promise.allSettled(Object.entries(byAccount).map(async ([accountId, calendarIds]) => {
-      const connection = ctx.connectionFor(accountId);
-      if (!connection) throw new ProviderError("not_connected");
-      const events = await connection.provider.listEvents({ calendarIds, start: range.start, end: range.end });
-      return { calendarIds, events };
-    }));
-    let error: string | null = null;
-    const fetchedAt = now();
+    const results = await fetchEvents(missing, range.start, range.end);
     ctx.set((current) => {
-      let nextCache = current.cache;
-      for (const result of results) {
-        if (result.status === "rejected") {
-          error ??= ctx.report("load events", result.reason);
-          continue;
-        }
-        for (const calendarId of result.value.calendarIds) {
-          const events = result.value.events.filter((event) => event.calendarId === calendarId);
-          nextCache = putEntry(nextCache, { calendarId, start: range.start, end: range.end, events, fetchedAt });
-        }
-      }
-      nextCache = reapplyPending(nextCache, current.pending);
+      const stored = storeResults(current.cache, results, range.start, range.end, "load events");
+      const nextCache = reapplyPending(stored.cache, current.pending);
       if (token !== eventsToken) return { ...current, cache: nextCache };
-      return { ...current, cache: nextCache, eventsStatus: error ? "error" : "ready", eventsError: error };
+      return { ...current, cache: nextCache, eventsStatus: stored.error ? "error" : "ready", eventsError: stored.error };
     });
+  }
+
+  async function readEvents(start: IsoInstant, end: IsoInstant): Promise<CalendarEvent[]> {
+    const startMs = instantToMs(start);
+    const endMs = instantToMs(end);
+    if (!(endMs > startMs) || endMs - startMs > MAX_EVENT_RANGE_DAYS * MS_PER_DAY) {
+      throw new RangeError(`An event range must end after it starts and span at most ${MAX_EVENT_RANGE_DAYS} days`);
+    }
+    const visible = state.calendars.filter((calendar) => calendar.visible);
+    const keys = visible.map((calendar) => cacheKey(calendar.id, start, end));
+    const at = now();
+    const missing = visible.filter((_, index) => !freshEntry(state.cache, keys[index], at));
+    if (missing.length > 0) {
+      const results = await fetchEvents(missing, start, end);
+      // `ctx.set` runs synchronously, so `state` is the state the update applies to.
+      const stored = storeResults(state.cache, results, start, end, "read events");
+      ctx.set((current) => ({ ...current, cache: reapplyPending(stored.cache, current.pending) }));
+      if (stored.error !== null) throw new ProviderError("failed");
+    }
+    ctx.set((current) => ({ ...current, cache: touchEntries(current.cache, keys) }));
+    const { cache, calendars } = state;
+    const ids = calendars.filter((calendar) => calendar.visible).map((calendar) => calendar.id);
+    // Every visible calendar must have this range cached; a calendar shown or evicted meanwhile is not an answer.
+    if (ids.some((id) => !cache.entries[cacheKey(id, start, end)])) throw new ProviderError("failed");
+    return eventsInRange(cache, ids, start, end);
   }
 
   async function loadAccounts(): Promise<void> {
@@ -260,6 +314,7 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
 
     loadAccounts,
     loadEvents,
+    readEvents,
 
     async refresh() {
       ctx.set((current) => ({ ...current, cache: reapplyPending(invalidate(current.cache), current.pending) }));

@@ -43,7 +43,8 @@
  * `updateEvent`, `moveEvent`, `deleteEvent`, `respond`. Call them only from an
  * explicit click; `sendInvites` must be what the owner confirmed.
  * Assistant: `setAssistantAttendees`, `setAssistantDuration`, `loadBusy`,
- * `findSlots` (adds "assistant" proposals). Agent proposals: `receiveProposals`,
+ * `findSlots` (adds "assistant" proposals). Read-only lookups for any window,
+ * without moving the grid: `readEvents`, `readFreeBusy`. Agent proposals: `receiveProposals`,
  * `loadAgentProposals` (rows of the `calendar_proposals` table),
  * `dismissProposal`, `clearProposals`.
  *

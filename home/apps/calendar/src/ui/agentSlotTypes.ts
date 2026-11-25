@@ -13,7 +13,7 @@ export type AgentHighlight =
 
 export interface AgentSlotPanelProps {
   store: CalendarStore;
-  /** Free-busy from a provider; without it the panel asks the store's scheduling assistant. */
+  /** Free-busy from a provider; without it the panel asks the store's provider lookup (`readFreeBusy`). */
   getFreeBusy?: (addresses: string[], start: IsoInstant, end: IsoInstant) => Promise<BusyBlock[]>;
   onHighlight?: (target: AgentHighlight) => void;
   onClose?: () => void;

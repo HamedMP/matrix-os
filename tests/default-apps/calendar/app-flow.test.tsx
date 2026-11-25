@@ -252,6 +252,18 @@ describe("Calendar app journey", () => {
     expect(within(composer()).getByRole("button", { name: "Send invite" })).toBeTruthy();
     expect(bridge.callsTo("create_event_with_attendees")).toHaveLength(0);
     expect(bridge.calls.every((call) => ["list_calendars", "list_events", "free_busy"].includes(call.action))).toBe(true);
+
+    // Cancelling the draft brings the assistant back with its answer, so another time can be picked.
+    fireEvent.click(within(composer()).getByRole("button", { name: "Cancel" }));
+    await settle();
+    expect(screen.queryByRole("form", { name: "New event" })).toBeNull();
+    const back = within(screen.getByRole("complementary", { name: "Agent" })).getByRole("article", { name: "Suggested times" });
+    const again = within(back).getAllByRole("button", { name: /^Open draft for / });
+    expect(again).toHaveLength(2);
+    fireEvent.click(again[1]);
+    await settle();
+    expect((within(composer()).getByLabelText("Title") as HTMLInputElement).value).toBe("Sync with Ana");
+    expect(bridge.prompts).toHaveLength(1);
   });
 
   it("shows the connect empty state when no calendar account is connected", async () => {

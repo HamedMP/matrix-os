@@ -9,6 +9,7 @@
 import { isValidMailAddress } from "../../../_shared/office-accounts/types/addresses";
 import {
   MAX_FREE_BUSY_ADDRESSES,
+  ProviderError,
   instantToMs,
   type BusyBlock,
   type CalendarInfo,
@@ -28,6 +29,7 @@ import {
   draftFromEvent,
   draftFromProposal,
   draftState,
+  eventRepeat,
   removeDraftAttendee,
   setAttendeeOptional,
   setDraftAllDay,
@@ -40,8 +42,8 @@ import {
 } from "./drafts";
 import type { CalendarPersistence } from "./preferences";
 import { mergeProposals, parseProposals, proposalsFromSlots, type Proposal, type ProposalSource } from "./proposals";
-import { busyOverlays, findSlots } from "./slots";
-import { MAX_BUSY_BLOCKS, type CalendarState, type StoreContext } from "./store-state";
+import { MAX_SLOT_RESULTS, busyOverlays, findSlots, isSlotDuration } from "./slots";
+import { MAX_BUSY_BLOCKS, type CalendarConnection, type CalendarState, type StoreContext } from "./store-state";
 
 export const NO_CALENDAR_MESSAGE = "Connect a calendar you can write to first.";
 
@@ -69,7 +71,8 @@ export function normalizeAttendeeAddresses(addresses: readonly string[]): string
 
 /** The owner's own timed events in the range as busy blocks (declined and all-day events do not block). */
 export function ownerBusy(state: CalendarState): BusyBlock[] {
-  const owner = state.accounts[0]?.address ?? "me";
+  // An empty address means the account's address is unknown; the blocks still count as the owner's.
+  const owner = state.accounts[0]?.address || "me";
   return state.events
     .filter((event) => !event.allDay && event.myResponse !== "declined")
     .map((event) => ({ address: owner, start: event.start, end: event.end, status: event.myResponse === "tentative" ? "tentative" : "busy" }));
@@ -108,7 +111,17 @@ export interface ScheduleActions {
   setAssistantDuration(minutes: number): void;
   /** (Re)fetches busy time for the visible range. */
   loadBusy(): Promise<void>;
-  /** Finds common free slots in the visible range and shows them as assistant proposals. */
+  /**
+   * Busy time of people for any range, straight from the provider that serves
+   * the draft's (else the default) calendar. Read only: the grid's overlays are
+   * not changed. Rejects when no calendar is connected or the lookup fails.
+   */
+  readFreeBusy(addresses: readonly string[], start: IsoInstant, end: IsoInstant): Promise<BusyBlock[]>;
+  /**
+   * Finds common free slots in the visible range and shows them as assistant
+   * proposals. A length the search does not support (see `isSlotDuration`)
+   * finds nothing and clears the assistant's earlier suggestions.
+   */
   findSlots(request?: FindSlotsRequest): Proposal[];
 
   /** Validates and shows proposals from an untrusted source, replacing that source's earlier ones. */
@@ -158,22 +171,32 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
     };
   }
 
+  /** The connection that answers free-busy: the draft's calendar account, else the default calendar's, else any. */
+  function busyConnection(state: CalendarState): CalendarConnection | null {
+    const calendarId = state.draft?.draft.calendarId ?? defaultCalendar(state.calendars)?.id;
+    const accountId = state.calendars.find((calendar) => calendar.id === calendarId)?.accountId;
+    return (accountId ? ctx.connectionFor(accountId) : null) ?? ctx.connections()[0] ?? null;
+  }
+
   async function loadBusy(): Promise<void> {
+    // Every call supersedes the one before, including calls that return early,
+    // so a slow earlier reply can never repaint guests that were cleared.
+    const token = ++busyToken;
     const state = ctx.get();
     const { attendees } = state.assistant;
     if (attendees.length === 0) {
       ctx.set((current) => ({ ...current, assistant: { ...current.assistant, status: "idle", error: null, busy: [], busyStart: null, busyEnd: null, overlays: {} } }));
       return;
     }
-    const calendarId = state.draft?.draft.calendarId;
-    const accountId = state.calendars.find((calendar) => calendar.id === calendarId)?.accountId;
-    const connection = (accountId ? ctx.connectionFor(accountId) : null) ?? ctx.connections()[0] ?? null;
+    const connection = busyConnection(state);
     if (!connection) {
-      ctx.set((current) => ({ ...current, assistant: { ...current.assistant, status: "error", error: NO_CALENDAR_MESSAGE } }));
+      ctx.set((current) => ({
+        ...current,
+        assistant: { ...current.assistant, status: "error", error: NO_CALENDAR_MESSAGE, busy: [], busyStart: null, busyEnd: null, overlays: {} },
+      }));
       return;
     }
     const { start, end } = state.range;
-    const token = ++busyToken;
     ctx.set((current) => ({ ...current, assistant: { ...current.assistant, status: "loading", error: null } }));
     try {
       const busy = await connection.provider.getFreeBusy(attendees, start, end);
@@ -227,7 +250,7 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
       const event = findCachedEvent(ctx.get().cache, eventId);
       if (!event || eventId.startsWith("pending:")) return false;
       const draft = draftFromEvent(event);
-      return open(draft, { mode: "edit", eventId, original: draft });
+      return open(draft, { mode: "edit", eventId, original: draft, repeat: eventRepeat(event) });
     },
 
     openDraftFromProposal(proposalId) {
@@ -259,10 +282,14 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
     setDraftOnlineMeeting(on) {
       edit((draft) => setDraftOnlineMeeting(draft, on));
     },
+    // An existing event's repeat rule and reminders are not read back from the
+    // provider, so an edit draft leaves them as the provider holds them.
     setDraftRecurrence(recurrence) {
+      if (ctx.get().draft?.mode === "edit") return;
       edit((draft) => setDraftRecurrence(draft, recurrence));
     },
     setDraftReminders(reminders) {
+      if (ctx.get().draft?.mode === "edit") return;
       edit((draft) => setDraftReminders(draft, reminders));
     },
     closeDraft() {
@@ -280,8 +307,25 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
     },
     loadBusy,
 
+    async readFreeBusy(addresses, start, end) {
+      const people = normalizeAttendeeAddresses(addresses);
+      if (people.length === 0) return [];
+      const connection = busyConnection(ctx.get());
+      if (!connection) throw new ProviderError("not_connected");
+      const busy = await connection.provider.getFreeBusy(people, start, end);
+      return busy.slice(0, MAX_BUSY_BLOCKS);
+    },
+
     findSlots(request = {}) {
       const state = ctx.get();
+      const durationMinutes = request.durationMinutes ?? state.assistant.durationMinutes;
+      const maxResults = request.maxResults ?? 5;
+      if (!isSlotDuration(durationMinutes) || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_SLOT_RESULTS) {
+        ctx.set((current) => (current.proposals.some((item) => item.source === "assistant")
+          ? { ...current, proposals: current.proposals.filter((item) => item.source !== "assistant") }
+          : current));
+        return [];
+      }
       const busy = [
         ...(state.assistant.busyStart === state.range.start && state.assistant.busyEnd === state.range.end ? state.assistant.busy : []),
         ...(request.includeOwnEvents === false ? [] : ownerBusy(state)),
@@ -290,8 +334,8 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
         busy,
         rangeStart: state.range.start,
         rangeEnd: state.range.end,
-        durationMinutes: request.durationMinutes ?? state.assistant.durationMinutes,
-        maxResults: request.maxResults ?? 5,
+        durationMinutes,
+        maxResults,
         timeZone: state.timeZone,
         workingHours: state.preferences.workingHours,
         notBefore: ctx.now(),

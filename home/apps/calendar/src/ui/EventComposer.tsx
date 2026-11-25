@@ -31,7 +31,7 @@ export function EventComposer({ store, state, draftState, onApplyProposal }: Eve
   const saving = draftState.status === "saving";
   const durationMinutes = Math.round((instantToMs(draft.end) - instantToMs(draft.start)) / 60_000);
   const writable = useMemo(() => state.calendars.filter((calendar) => calendar.writable), [state.calendars]);
-  useComposerAssistant(store, draft, state.assistant, durationMinutes);
+  const search = useComposerAssistant(store, draft, state, durationMinutes);
 
   const titleError = attempted && !draft.title.trim() ? TITLE_REQUIRED : null;
   const heading = draftState.mode === "edit" ? "Edit event" : "New event";
@@ -68,6 +68,8 @@ export function EventComposer({ store, state, draftState, onApplyProposal }: Eve
           proposals={state.proposals}
           timeZone={draft.allDay ? state.timeZone : draft.timeZone}
           durationMinutes={draft.allDay ? state.assistant.durationMinutes : durationMinutes}
+          searchable={search.searchable}
+          ready={search.ready}
           onApply={onApplyProposal}
           onFind={() => store.findSlots({ durationMinutes: draft.allDay ? undefined : durationMinutes })}
           onRetry={() => void store.loadBusy()}
