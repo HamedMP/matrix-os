@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { ChError, type ChClient } from "./ch-client.js";
 import { run, type Exec } from "./exec.js";
+import { fitsVmMemory } from "./memory-admission.js";
 import { isVmId, writeFileAtomic, type VmRecord, type VmStore, type VmTier } from "./vm-store.js";
 
 // VM lifecycle on one metal host: create (thin clone of the golden LV plus a
@@ -103,6 +104,9 @@ export interface VmLifecycleDeps {
   // Returns a client for the VM's API socket; the lifecycle closes it after each operation.
   ch: (id: string) => ChClient;
   pool: { freeBytes(): Promise<number> };
+  // Host-wide ceiling for VM RAM including per-VMM overhead. The process entry
+  // always wires the production budget.
+  memoryBudgetMiB?: () => number;
   gatewayHealth: (ip: string, signal: AbortSignal) => Promise<boolean>;
   // Asks the guest agent to drop caches and compact before a snapshot (wired in H5).
   trim: (id: string, signal: AbortSignal) => Promise<void>;
@@ -228,6 +232,9 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   const log = deps.log ?? ((event, fields) => console.error(JSON.stringify({ event, ...fields })));
   const inflight = new Map<string, { kind: string; promise: Promise<unknown>; accepted: Promise<void> }>();
   let allocation: Promise<unknown> = Promise.resolve();
+  // The memory lock never waits on a VM's operation queue. Create can hold
+  // the address lock while tearing down a previous failed VM.
+  let memoryAllocation: Promise<unknown> = Promise.resolve();
   // Every create() call from entry until it settles, so idle() also waits for
   // a create that is still allocating its record. Capped by maxInFlight.
   const creates = new Set<Promise<unknown>>();
@@ -277,6 +284,31 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       settle();
     }, settle);
     return promise;
+  }
+
+  function allocateMemory<T>(operation: () => Promise<T>): Promise<T> {
+    const claim = memoryAllocation.then(operation);
+    memoryAllocation = claim.then(() => undefined, (error: unknown) => error);
+    return claim;
+  }
+
+  function checkMemory(
+    records: readonly VmRecord[],
+    vmId: string | undefined,
+    requestedMiB: number,
+    refusal: "capacity" | "busy",
+  ): void {
+    if (deps.memoryBudgetMiB && !fitsVmMemory(deps.memoryBudgetMiB(), records, vmId, requestedMiB)) {
+      throw new LifecycleError(refusal, "host VM memory is fully reserved");
+    }
+  }
+
+  function reserveWakeMemory(record: VmRecord, memoryReservationMiB: number): Promise<VmRecord> {
+    return allocateMemory(async () => {
+      checkMemory(await store.list(), record.id, memoryReservationMiB, "busy");
+      // Publish before starting systemd so simultaneous wakes see the claim.
+      return save(record, { state: "resuming", memoryReservationMiB });
+    });
   }
 
   const fencedKind = (kind: string, fence: GenerationFence) =>
@@ -499,12 +531,16 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
         mac: macFor(address),
         bootMiB: spec.bootMiB,
         maxMiB: spec.maxMiB,
+        memoryReservationMiB: spec.maxMiB,
         diskGiB: spec.diskGiB,
         chVersion: cfg.chVersion,
         snapshot: null,
         updatedAt: new Date(clock.now()).toISOString(),
       };
-      await store.put(record);
+      await allocateMemory(async () => {
+        if (deps.memoryBudgetMiB) checkMemory(await store.list(), undefined, spec.maxMiB, "capacity");
+        await store.put(record);
+      });
       // Another machine's VM may still hold this handle: a re-provision creates
       // the new VM before the platform tears the old one down. Ingress routes
       // the handle to the better VM, so this is a warning, not a refusal.
@@ -513,10 +549,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       return { record, fresh: true, address, extend: spec.diskGiB * GiB > golden };
     });
     // The caller receives claim's rejection; the chain only needs to keep moving.
-    allocation = claim.then(
-      () => undefined,
-      (error: unknown) => error,
-    );
+    allocation = claim.then(() => undefined, (error: unknown) => error);
     const { record, fresh, address, extend } = await claim;
     if (!fresh) return record;
 
@@ -557,12 +590,22 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     }
   }
 
+  async function writeUnitMemory(record: VmRecord, maxMiB: number): Promise<void> {
+    const envPath = join(cfg.vmsDir, record.id, "unit.env");
+    const env = await readFile(envPath, "utf8");
+    const updated = env.replace(/^HOTPLUG_MIB=\d+$/m, `HOTPLUG_MIB=${maxMiB - record.bootMiB}`);
+    if (updated !== env) await writeFileAtomic(envPath, updated, 0o644);
+  }
+
   async function coldBoot(record: VmRecord): Promise<VmRecord> {
     await stopUnits(record.id);
+    await writeUnitMemory(record, record.maxMiB);
     await dropSnapshot(record.id);
     await sh(["systemctl", "start", vmUnit(record.id)]);
     // The record carries the version of the VMM now running, which labels its next snapshot.
-    return save(record, { state: "running", snapshot: null, chVersion: cfg.chVersion });
+    return save(record, {
+      state: "running", snapshot: null, chVersion: cfg.chVersion, memoryReservationMiB: record.maxMiB,
+    });
   }
 
   async function restore(record: VmRecord): Promise<void> {
@@ -609,13 +652,24 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
 
   // Brings a stopped or suspended VM to running; does not wait for the gateway.
   async function wake(record: VmRecord): Promise<VmRecord> {
-    if (record.state === "running") return (await runningVmNeedsBoot(record.id)) ? coldBoot(record) : record;
+    if (record.state === "running" && !(await runningVmNeedsBoot(record.id))) return record;
     if (record.state === "creating") throw new LifecycleError("conflict", "VM is still being created");
     const snapshot = record.snapshot;
-    if (record.state !== "suspended" || snapshot === null || snapshot.chVersion !== cfg.chVersion) {
-      return coldBoot(record);
+    const snapshotMemoryMiB = record.memoryReservationMiB;
+    // Older snapshots have neither a known memory ceiling nor a bounded
+    // console. Cold boot those disks with the current unit policy.
+    const canRestore = record.state === "suspended" && snapshot !== null &&
+      snapshot.chVersion === cfg.chVersion && snapshotMemoryMiB !== undefined;
+    const reservation = canRestore ? Math.max(record.maxMiB, snapshotMemoryMiB) : record.maxMiB;
+    const resuming = await reserveWakeMemory(record, reservation);
+    if (!canRestore) {
+      try {
+        return await coldBoot(resuming);
+      } catch (error: unknown) {
+        await save(resuming, { state: "failed" });
+        throw error;
+      }
     }
-    const resuming = await save(record, { state: "resuming" });
     try {
       await restore(resuming);
       return await save(resuming, { state: "running", chVersion: cfg.chVersion });
@@ -738,7 +792,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     await stopUnits(record.id);
     // A snapshot is only valid with the disk it was taken against; a stop ends that.
     await dropSnapshot(record.id);
-    return save(record, { state: "stopped", snapshot: null });
+    return save(record, { state: "stopped", snapshot: null, memoryReservationMiB: undefined });
   }
 
   async function destroy(id: string): Promise<void> {
@@ -794,10 +848,16 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
         if (actualMiB > maxMiB) await client.resizeMemory(maxMiB * MiB, chSignal());
       });
     }
-    const envPath = join(cfg.vmsDir, id, "unit.env");
-    const env = await readFile(envPath, "utf8");
-    await writeFileAtomic(envPath, env.replace(/^HOTPLUG_MIB=\d+$/m, `HOTPLUG_MIB=${maxMiB - record.bootMiB}`), 0o644);
-    return save(record, { tier, maxMiB });
+    return allocateMemory(async () => {
+      const holdsMemory = record.state !== "suspended" && record.state !== "stopped";
+      const previousReserve = record.memoryReservationMiB ?? record.maxMiB;
+      const reserved = holdsMemory ? Math.max(previousReserve, maxMiB) : record.memoryReservationMiB;
+      if (holdsMemory && maxMiB > previousReserve) {
+        checkMemory(await store.list(), id, maxMiB, "busy");
+      }
+      await writeUnitMemory(record, maxMiB);
+      return save(record, { tier, maxMiB, memoryReservationMiB: reserved });
+    });
   }
 
   async function idle(): Promise<void> {

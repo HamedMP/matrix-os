@@ -109,7 +109,7 @@ export async function reconcileVms(deps: ReconcileDeps): Promise<void> {
       log("reconcile.query_failed", { id: record.id, ...errorFields(error) });
       return;
     }
-    await deps.store.put({ ...record, state: "stopped", snapshot: null, updatedAt: new Date(now()).toISOString() });
+    await deps.store.put({ ...record, state: "stopped", snapshot: null, memoryReservationMiB: undefined, updatedAt: new Date(now()).toISOString() });
     log("reconcile.settled", { id: record.id, from: record.state, to: "stopped" });
   }
 

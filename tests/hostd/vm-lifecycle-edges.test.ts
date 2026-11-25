@@ -290,6 +290,35 @@ describe("VM lifecycle edges", () => {
     expect(execCalls.some(([, action]) => action === "stop" || action === "start")).toBe(false);
   });
 
+  it("admits only one concurrent wake when RAM fits one VM", async () => {
+    const lifecycle = make({ memoryBudgetMiB: () => 10_000 });
+    const first = await lifecycle.create(spec);
+    await lifecycle.suspend(first.id);
+    const second = await lifecycle.create({ ...spec, machineId: "machine-2", handle: "bob" });
+    await lifecycle.suspend(second.id);
+    execCalls.length = 0;
+
+    const attempts = await Promise.allSettled([lifecycle.resume(first.id, 1000), lifecycle.resume(second.id, 1000)]);
+    expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+    expect(attempts.find((attempt) => attempt.status === "rejected")).toMatchObject({ reason: { code: "busy" } });
+    const stopped = (await store.list()).find((record) => record.state === "suspended")!;
+    expect(stopped.snapshot).not.toBeNull();
+    expect(execCalls.filter(([, action]) => action === "start")).toHaveLength(1);
+
+    const running = (await store.list()).find((record) => record.state === "running")!;
+    await lifecycle.stop(running.id);
+    await expect(lifecycle.resume(stopped.id, 1000)).resolves.toBe("running");
+  });
+
+  it("rejects a new VM and a policy increase that exceed the shared memory budget", async () => {
+    const lifecycle = make({ memoryBudgetMiB: () => 10_000 });
+    const vm = await lifecycle.create(spec);
+
+    await expect(lifecycle.create({ ...spec, machineId: "machine-2" })).rejects.toMatchObject({ code: "capacity" });
+    await expect(lifecycle.setPolicy(vm.id, { tier: "paid", maxMiB: 16384 })).rejects.toMatchObject({ code: "busy" });
+    expect(await store.list()).toEqual([expect.objectContaining({ id: vm.id, maxMiB: 8192, state: "running" })]);
+  });
+
   it("logs a throwing health probe and keeps waiting", async () => {
     let calls = 0;
     const lifecycle = make({
@@ -451,7 +480,8 @@ describe("repeated create never destroys a VM that has a real disk", () => {
   });
 
   it("marks a failed create, and clears the marker once the VM runs", async () => {
-    execFail = (argv) => (argv[0] === "lvcreate" ? 5 : undefined);
+    // The disk and unit environment must exist for start to retry the boot.
+    execFail = (argv) => (argv[0] === "systemctl" && argv[1] === "start" ? 5 : undefined);
     const lifecycle = make();
     await expect(lifecycle.create(spec)).rejects.toMatchObject({ code: "failed" });
     const [failed] = await store.list();
