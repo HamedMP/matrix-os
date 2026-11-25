@@ -104,6 +104,24 @@ describe("Share terminal dialog (spec 2710 J1)", () => {
     expect(post).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ organizationId: "org_other" }));
   });
 
+  it("keeps a stopped share stopped when a typing retry finishes late (Greptile on #3679)", async () => {
+    const post = vi.fn(async () => ({ eligible: true, resourceRevision: "4", confirmationToken: "c".repeat(64), existingScopeId: scopeId, existingLifecycle: "shared" }));
+    const get = vi.fn(async (path: string) => path.endsWith("/grants") ? [] : path.includes("/members") ? { members: [] } : scope());
+    let finishRetry!: () => void;
+    const patch = vi.fn()
+      .mockRejectedValueOnce(new Error("CollaborationUnavailable"))
+      .mockImplementationOnce(() => new Promise((resolve) => { finishRetry = () => resolve({}); }))
+      .mockResolvedValue({});
+    render(<ShareTerminalDialog target={target} platformHost={platformHost} team={teamWith({ post, get, delete: vi.fn(), patch, put: vi.fn() })} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Stop sharing" }));
+    expect(await screen.findByRole("button", { name: "Share terminal" })).toBeTruthy();
+    finishRetry();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("button", { name: "Stop sharing" })).toBeNull();
+  });
+
   it("asks a person with no organization to join one first", async () => {
     const team: TeamCollaboration = { api: () => ({}) as CollaborationDirectApi, organizations: async () => [] };
     render(<ShareTerminalDialog target={target} platformHost={platformHost} team={team} onClose={vi.fn()} />);

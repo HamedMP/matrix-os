@@ -41,6 +41,9 @@ export function useShareFlow(
   useEffect(() => {
     if (!target || !ready || !platformHost) return;
     let active = true;
+    const request = live.current;
+    // Late results count only while nothing newer (share, stop) started.
+    const current = () => active && request === live.current;
     const chosen = ready.organizations[0]?.organizationId ?? null;
     setOrganizationId(chosen);
     setLabel(target.computerLabel.slice(0, MAX_LABEL));
@@ -50,24 +53,25 @@ export function useShareFlow(
       if (!runtimeId || !chosen) throw new Error("runtime unavailable");
       // A tab is shared within at most one organization: look in each the person belongs to.
       const existing = await findAcrossOrganizations(ready, runtimeId, target.terminalId);
-      if (!active) return;
+      if (!current()) return;
       if (!existing) { setStep({ kind: "confirm" }); return; }
       if (existing.organizationId) setOrganizationId(existing.organizationId);
       setStep({ kind: "shared", scope: existing });
       // Finishes a typing setting an earlier session left unsaved.
       void syncEditorTyping(ready.api, existing.id).catch((error: unknown) => {
         console.warn("[terminal-window] typing sync failed:", error instanceof Error ? error.name : "UnknownError");
-        if (active) setStep({ kind: "shared", scope: existing, error: TYPING_FAILED });
+        if (current()) setStep({ kind: "shared", scope: existing, error: TYPING_FAILED });
       });
     })().catch((error: unknown) => {
       console.warn("[terminal-window] share lookup failed:", error instanceof Error ? error.name : "UnknownError");
-      if (active) setStep({ kind: "confirm" });
+      if (current()) setStep({ kind: "confirm" });
     });
     return () => { active = false; };
   }, [platformHost, ready, target]);
 
   const share = useCallback(async () => {
     if (!target || !ready || !platformHost || !organizationId || !label.trim()) return;
+    live.current += 1;
     const request = live.current;
     setStep({ kind: "working" });
     try {
@@ -83,6 +87,8 @@ export function useShareFlow(
 
   const stop = useCallback(async (scope: CollaborationScope) => {
     if (!ready) return;
+    // Stopping supersedes every pending result (a typing retry, the lookup on open): none may reopen the share.
+    live.current += 1;
     const request = live.current;
     setStep({ kind: "working" });
     try {

@@ -76,11 +76,13 @@ describe("team terminal owner flow (spec 2710 J1, J5, J6)", () => {
 
   it("stops sharing by revoking every live grant at the current revision, then withdraws typing", async () => {
     let revision = 3;
+    const revoked = new Set<string>();
     const api = fakeApi({
       get: (path) => path.endsWith("/grants")
         ? [grant("20000000-0000-4000-8000-000000000001", "contributor"), grant("20000000-0000-4000-8000-000000000002", "viewer"), grant("20000000-0000-4000-8000-000000000004", "viewer", "revoked")]
+          .map((entry) => (revoked.has(entry.id) ? { ...entry, state: "revoked" } : entry))
         : scope(String(revision)),
-      delete: () => { revision += 1; return {}; },
+      delete: (path) => { revision += 1; revoked.add(path.split("/").at(-1)!); return {}; },
     });
     await stopSharingTeamTerminal(api, scopeId);
     expect(api.delete).toHaveBeenCalledTimes(2);
@@ -88,6 +90,21 @@ describe("team terminal owner flow (spec 2710 J1, J5, J6)", () => {
       expect.objectContaining({ expectedRevision: "3", expectedMemberRevision: "2" }));
     expect(api.delete).toHaveBeenNthCalledWith(2, expect.any(String), expect.objectContaining({ expectedRevision: "4" }));
     expect(api.patch).toHaveBeenLastCalledWith(`/api/collaboration/scopes/${scopeId}/terminal`, { contributorControl: false });
+  });
+
+  it("ends a grant that committed while stopping, and refuses to report a share that keeps access (Greptile on #3679)", async () => {
+    let listed = 0;
+    const late = grant("20000000-0000-4000-8000-000000000009", "viewer");
+    const api = fakeApi({ get: (path) => {
+      if (!path.endsWith("/grants")) return scope();
+      listed += 1;
+      return listed === 1 ? [] : listed === 2 ? [late] : [];
+    } });
+    // The first list was empty; a grant landed before the second.
+    await stopSharingTeamTerminal(api, scopeId);
+    expect(api.delete).toHaveBeenCalledWith(expect.stringContaining(late.id), expect.anything());
+    const stuck = fakeApi({ get: (path) => path.endsWith("/grants") ? [late] : scope() });
+    await expect(stopSharingTeamTerminal(stuck, scopeId)).rejects.toBeInstanceOf(TeamShareError);
   });
 
   it("takes control on the exact terminal incarnation", async () => {

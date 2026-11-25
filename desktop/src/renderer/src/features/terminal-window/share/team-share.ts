@@ -82,9 +82,30 @@ export async function syncEditorTyping(api: TeamShareApi, scopeId: string): Prom
   return editors;
 }
 
-/** Ends every grant, then withdraws typing. Live sockets close when each grant commits. */
+const MAX_STOP_PASSES = 3;
+
+/**
+ * Ends every grant, then withdraws typing. Live sockets close when each grant
+ * commits. It lists again after revoking, so a grant that committed meanwhile
+ * is ended too, and fails rather than report a share that still has access.
+ */
 export async function stopSharingTeamTerminal(api: TeamShareApi, scopeId: string): Promise<void> {
-  const grants = (await liveGrants(api, scopeId)).slice(0, MAX_GRANTS_REVOKED);
+  for (let pass = 0; pass < MAX_STOP_PASSES; pass += 1) {
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop -- each pass reads what the last one left.
+    const grants = (await liveGrants(api, scopeId)).slice(0, MAX_GRANTS_REVOKED);
+    if (grants.length === 0) {
+      // An empty first read is checked once more: a grant may have committed just after it.
+      if (pass === 0) continue;
+      if (api.patch) await api.patch(`${scopePath(scopeId)}/terminal`, { contributorControl: false });
+      return;
+    }
+    // react-doctor-disable-next-line react-doctor/async-await-in-loop -- revocations are ordered by scope revision.
+    await revokeGrants(api, scopeId, grants);
+  }
+  throw new TeamShareError("unavailable");
+}
+
+async function revokeGrants(api: TeamShareApi, scopeId: string, grants: Awaited<ReturnType<typeof liveGrants>>): Promise<void> {
   for (const grant of grants) {
     // Each revocation moves the scope revision, so the next one reads it again.
     // react-doctor-disable-next-line react-doctor/async-await-in-loop -- revocations are ordered: each needs the revision the previous one committed.
@@ -95,7 +116,6 @@ export async function stopSharingTeamTerminal(api: TeamShareApi, scopeId: string
       expectedMemberRevision: grant.revision,
     });
   }
-  if (api.patch) await api.patch(`${scopePath(scopeId)}/terminal`, { contributorControl: false });
 }
 
 /** The owner takes control (`owner`) or hands it back (`shared`). */

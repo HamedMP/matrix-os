@@ -1,5 +1,6 @@
 // Spec 2710 J1/J6: the owner shares one terminal with people in their
 // organization as Viewer or Editor, and can stop sharing at any time.
+import { useState } from "react";
 import { AudienceGrantPicker, Button, Dialog, DialogFooter, DialogTitle, Input, type CollaborationDirectApi } from "@matrix-os/ui";
 import type { CollaborationScope } from "@matrix-os/contracts";
 import { useTeamCollaborationState, type TeamCollaboration, type TeamCollaborationState, type TeamOrganization } from "./use-team-collaboration";
@@ -23,6 +24,7 @@ export function ShareTerminalDialog({ target, platformHost, team: teamClient, on
 }) {
   const teamState = useTeamCollaborationState(teamClient, target !== null);
   const ready = teamState.status === "ready" ? teamState : null;
+  const [accessPending, setAccessPending] = useState(false);
   const { step, label, setLabel, organizationId, setOrganizationId, share, stop, syncTyping } = useShareFlow(target, platformHost, ready);
   if (!target) return null;
   const editing = step.kind === "confirm" || step.kind === "failed";
@@ -39,10 +41,10 @@ export function ShareTerminalDialog({ target, platformHost, team: teamClient, on
           <StepStatus step={step} />
           {editing ? <ShareSetup organizations={ready.organizations} organizationId={organizationId} onOrganization={setOrganizationId}
             label={label} onLabel={setLabel} /> : null}
-          {step.kind === "shared" ? <SharedAccess api={ready.api} step={step} onSyncTyping={syncTyping} /> : null}
+          {step.kind === "shared" ? <SharedAccess api={ready.api} step={step} onSyncTyping={syncTyping} onPendingChange={setAccessPending} /> : null}
         </div>
       ) : null}
-      <ShareFooter step={step} canShare={Boolean(ready && editing && label.trim() && organizationId)} showShare={Boolean(ready && editing)}
+      <ShareFooter step={step} stopDisabled={accessPending} canShare={Boolean(ready && editing && label.trim() && organizationId)} showShare={Boolean(ready && editing)}
         onShare={() => { void share(); }} onStop={(scope) => { void stop(scope); }} onClose={onClose} />
     </Dialog>
   );
@@ -90,10 +92,11 @@ function ShareSetup({ organizations, organizationId, onOrganization, label, onLa
 }
 
 
-function SharedAccess({ api, step, onSyncTyping }: {
+function SharedAccess({ api, step, onSyncTyping, onPendingChange }: {
   api: CollaborationDirectApi;
   step: Extract<ShareStep, { kind: "shared" }>;
   onSyncTyping(scope: CollaborationScope): Promise<void>;
+  onPendingChange(pending: boolean): void;
 }) {
   return (
     <>
@@ -103,13 +106,15 @@ function SharedAccess({ api, step, onSyncTyping }: {
           {step.error === TYPING_FAILED ? <Button size="sm" variant="secondary" onClick={() => { void onSyncTyping(step.scope); }}>Retry</Button> : null}
         </div>
       ) : null}
-      <AudienceGrantPicker api={api} scope={step.scope} onRefresh={() => onSyncTyping(step.scope)} />
+      <AudienceGrantPicker api={api} scope={step.scope} onRefresh={() => onSyncTyping(step.scope)} onPendingChange={onPendingChange} />
     </>
   );
 }
 
-function ShareFooter({ step, canShare, showShare, onShare, onStop, onClose }: {
+function ShareFooter({ step, stopDisabled, canShare, showShare, onShare, onStop, onClose }: {
   step: ShareStep;
+  /** While an access change is in flight, stopping waits so it cannot miss that grant. */
+  stopDisabled: boolean;
   canShare: boolean;
   showShare: boolean;
   onShare(): void;
@@ -118,7 +123,7 @@ function ShareFooter({ step, canShare, showShare, onShare, onStop, onClose }: {
 }) {
   return (
     <DialogFooter>
-      {step.kind === "shared" ? <Button variant="destructive" onClick={() => onStop(step.scope)}>Stop sharing</Button> : null}
+      {step.kind === "shared" ? <Button variant="destructive" disabled={stopDisabled} onClick={() => onStop(step.scope)}>Stop sharing</Button> : null}
       {showShare ? <Button variant="primary" disabled={!canShare} onClick={onShare}>Share terminal</Button> : null}
       <Button variant="secondary" onClick={onClose}>{step.kind === "shared" ? "Done" : "Cancel"}</Button>
     </DialogFooter>

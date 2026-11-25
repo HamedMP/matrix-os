@@ -13,11 +13,13 @@ const buttonClass = "rounded-lg border px-3 py-2 text-sm transition-colors hover
 
 type Member = z.infer<typeof OrganizationManagementMembersPageSchema>["members"][number];
 
-export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = true }: {
+export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = true, onPendingChange }: {
   api: CollaborationApi;
   scope: CollaborationScope;
   onRefresh?: () => Promise<unknown>;
   allowNewGrants?: boolean;
+  /** Told while an access change is in flight, so a caller can hold actions that would race it. */
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const [members, setMembers] = useState<Member[]>([]);
   const [grants, setGrants] = useState<z.infer<typeof GrantsSchema>>([]);
@@ -26,7 +28,8 @@ export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = tr
   const [preset, setPreset] = useState<"viewer" | "contributor">("contributor");
   const [revision, setRevision] = useState(scope.revision);
   const [loading, setLoading] = useState(true);
-  const [pending, setPending] = useState(false);
+  const [pending, setPendingState] = useState(false);
+  const setPending = (next: boolean) => { setPendingState(next); onPendingChange?.(next); };
   const [error, setError] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [retryToken, setRetryToken] = useState(0);
