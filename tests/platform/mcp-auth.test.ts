@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose";
-import { createMcpTokenVerifier, McpAuthError } from "../../packages/platform/src/mcp-auth.js";
+import { createMcpTokenVerifier, McpAuthError, parseMcpRequiredScopes } from "../../packages/platform/src/mcp-auth.js";
 
 const issuer = "https://login.example.com";
 const resourceUrl = "https://api.matrix-os.com/mcp";
@@ -14,16 +14,28 @@ beforeAll(async () => {
   jwk = { ...await exportJWK(pair.publicKey), kid: "test-key", alg: "RS256", use: "sig" };
 });
 
+// Mirrors the claim and header shape of Clerk's own OAuth access-token JWT fixture
+// (@clerk/backend `mockSignedOAuthAccessTokenJwt`): `typ: at+jwt`, `sid`, `azp`, `nbf`, `jti: oat_...`.
 function sign(overrides: JWTPayload = {}, header: Record<string, unknown> = {}) {
   const now = Math.floor(Date.now() / 1000);
   return new SignJWT({
-    iss: issuer, aud: resourceUrl, sub: "user_abc123", client_id: "client_test",
-    scope: "matrix:computer", iat: now, exp: now + 300, ...overrides,
-  }).setProtectedHeader({ alg: "RS256", kid: "test-key", ...header }).sign(privateKey);
+    iss: issuer, aud: resourceUrl, sub: "user_abc123", client_id: "client_test", azp: "https://claude.ai",
+    sid: "sess_abc123", jti: "oat_abc123", scope: "matrix:computer", iat: now, nbf: now - 10, exp: now + 300,
+    ...overrides,
+  }).setProtectedHeader({ alg: "RS256", kid: "test-key", typ: "at+jwt", ...header }).sign(privateKey);
 }
 
-function setup(fetchMock = vi.fn().mockImplementation(async () => Response.json({ keys: [jwk] }))) {
-  return { fetchMock, verify: createMcpTokenVerifier({ issuer, resourceUrl, jwksUrl, fetch: fetchMock }) };
+function setup(fetchMock = vi.fn().mockImplementation(async () => Response.json({ keys: [jwk] })),
+  requiredScopes?: string[]) {
+  return { fetchMock, verify: createMcpTokenVerifier({ issuer, resourceUrl, jwksUrl, fetch: fetchMock, requiredScopes }) };
+}
+
+/** A Clerk session JWT: `typ: JWT`, a session category, `sid`, no OAuth client or resource audience. */
+function signSession(overrides: JWTPayload = {}, header: Record<string, unknown> = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  return new SignJWT({ iss: issuer, sub: "user_abc123", sid: "sess_abc123", azp: "https://app.matrix-os.com",
+    iat: now, nbf: now - 10, exp: now + 60, v: 2, ...overrides })
+    .setProtectedHeader({ alg: "RS256", kid: "test-key", typ: "JWT", cat: "cl_B7d4PD111AAA", ...header }).sign(privateKey);
 }
 
 describe("hosted MCP OAuth access token verification", () => {
@@ -38,11 +50,57 @@ describe("hosted MCP OAuth access token verification", () => {
   });
 
   it.each([
-    { iss: "https://attacker.example" }, { aud: "client_test" },
-    { aud: [resourceUrl, "https://other.example"] }, { exp: 1 }, { exp: undefined },
+    { aud: [resourceUrl] }, { aud: ["https://other.example", resourceUrl] },
+  ])("accepts an audience array that includes the canonical resource: %j", async (claims) => {
+    await expect(setup().verify(await sign(claims))).resolves.toMatchObject({ userId: "user_abc123" });
+  });
+
+  it("accepts Clerk OAuth tokens that carry the authorizing session id and either access-token typ", async () => {
+    await expect(setup().verify(await sign({ sid: "sess_123" }))).resolves.toMatchObject({ clientId: "client_test" });
+    await expect(setup().verify(await sign({}, { typ: "application/at+jwt" }))).resolves.toMatchObject({ userId: "user_abc123" });
+  });
+
+  it("tolerates small clock skew between Clerk and the platform", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await expect(setup().verify(await sign({ iat: now + 3, nbf: now + 3 }))).resolves.toMatchObject({ userId: "user_abc123" });
+  });
+
+  it("never applies clock skew to expiry, so recently expired tokens get a renewable 401", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    for (const exp of [now, now - 2]) {
+      await expect(setup().verify(await sign({ iat: now - 300, nbf: now - 300, exp })))
+        .rejects.toMatchObject({ status: 401, code: "invalid_token" });
+    }
+  });
+
+  it.each([
+    ["session token", () => signSession()],
+    ["session token with a resource audience", () => signSession({ aud: resourceUrl, client_id: "client_test", scope: "matrix:computer" })],
+    ["JWT-template token", () => sign({}, { typ: "JWT" })],
+    ["untyped token", () => sign({}, { typ: undefined })],
+    ["session category", () => sign({}, { cat: "cl_B7d4PD111AAA" })],
+    ["M2M category", () => sign({}, { cat: "cl_B7d4PD333AAA" })],
+    ["M2M subject", () => sign({ sub: "mch_abc123" })],
+  ])("rejects non-OAuth Clerk tokens signed by the same instance: %s", async (_name, token) => {
+    await expect(setup().verify(await token())).rejects.toMatchObject({ status: 401, code: "invalid_token" });
+  });
+
+  it("serves repeated and concurrent verifications from one JWKS fetch", async () => {
+    const { verify, fetchMock } = setup();
+    const tokens = await Promise.all(Array.from({ length: 20 }, (_, i) => sign({ sub: `user_u${i}` })));
+    const principals = await Promise.all(tokens.map(verify));
+    expect(principals.map((p) => p.userId)).toEqual(tokens.map((_, i) => `user_u${i}`));
+    await verify(tokens[0]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { iss: "https://attacker.example" }, { iss: `${issuer}/` }, { aud: "client_test" }, { aud: undefined },
+    { aud: ["https://other.example"] }, { aud: [`${resourceUrl}/extra`] }, { aud: "https://api.matrix-os.com" },
+    { exp: 1 }, { exp: undefined }, { nbf: Math.floor(Date.now() / 1000) + 600 },
     { iat: undefined }, { iat: Math.floor(Date.now() / 1000) + 600 },
     { sub: undefined }, { sub: "org_abc" }, { sub: "user_../alice" },
-    { client_id: undefined }, { client_id: "" }, { sid: "sess_123" }, { sid: null },
+    { client_id: undefined }, { client_id: "" },
   ])("rejects invalid or session-shaped claims: %j", async (claims) => {
     await expect(setup().verify(await sign(claims))).rejects.toMatchObject({ status: 401, code: "invalid_token" });
   });
@@ -65,11 +123,72 @@ describe("hosted MCP OAuth access token verification", () => {
     await expect(setup().verify(await sign(claims))).resolves.toMatchObject({ userId: "user_abc123" });
   });
 
+  it("enforces every configured required scope instead of a hard-coded scope", async () => {
+    const custom = setup(undefined, ["profile", "email"]);
+    await expect(custom.verify(await sign({ scope: "openid email profile" }))).resolves.toMatchObject({ userId: "user_abc123" });
+    await expect(custom.verify(await sign({ scope: "matrix:computer profile" })))
+      .rejects.toMatchObject({ status: 403, code: "insufficient_scope" });
+  });
+
+  it.each([
+    [undefined, ["matrix:computer"]], ["", ["matrix:computer"]], ["  ", ["matrix:computer"]],
+    ["matrix:computer", ["matrix:computer"]], ["profile, email  matrix:computer,email", ["profile", "email", "matrix:computer"]],
+  ])("parses MATRIX_MCP_REQUIRED_SCOPES %j", (raw, expected) => {
+    expect(parseMcpRequiredScopes(raw)).toEqual(expected);
+  });
+
+  it.each(['matrix"computer', "a\\b", "x".repeat(257), Array.from({ length: 17 }, (_, i) => `s${i}`).join(" ")])(
+    "rejects unsafe MATRIX_MCP_REQUIRED_SCOPES %j", (raw) => {
+      expect(() => parseMcpRequiredScopes(raw)).toThrow("Invalid MCP configuration");
+    });
+
+  it("logs one coarse, credential-free diagnostic line per rejection", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { verify } = setup();
+      const token = await sign({ aud: ["https://other.example"], client_id: "client_secretish", sub: "user_private1" });
+      await expect(verify(token)).rejects.toMatchObject({ code: "invalid_token" });
+      await expect(verify("oat_opaque_secret_value")).rejects.toMatchObject({ code: "invalid_token" });
+      await expect(verify(await signSession())).rejects.toMatchObject({ code: "invalid_token" });
+      await expect(verify(await sign({ scope: "openid" }))).rejects.toMatchObject({ code: "insufficient_scope" });
+      expect(warn).toHaveBeenCalledTimes(4);
+      const lines = warn.mock.calls.map((call) => call.map(String).join(" "));
+      expect(lines[0]).toMatch(/^\[mcp\] auth rejected: audience /);
+      expect(lines[0]).toContain('"aud":"array"');
+      expect(lines[0]).toContain('"audIncludesResource":false');
+      expect(lines[0]).toContain('"typ":"at+jwt"');
+      expect(lines[0]).toContain(`"iss":"${issuer}"`);
+      expect(lines[0]).toContain('"clientId":true');
+      expect(lines[0]).toContain('"sid":true');
+      expect(lines[1]).toMatch(/^\[mcp\] auth rejected: opaque_token /);
+      expect(lines[1]).toContain('"kind":"opaque"');
+      expect(lines[2]).toMatch(/^\[mcp\] auth rejected: token_type /);
+      expect(lines[2]).toContain('"typ":"JWT"');
+      expect(lines[3]).toMatch(/^\[mcp\] auth rejected: scope /);
+      for (const line of lines) {
+        for (const secret of [token, "oat_opaque", "client_secretish", "user_private1", "sess_abc123", "openid", "https://other.example"]) {
+          expect(line).not.toContain(secret);
+        }
+      }
+    } finally { warn.mockRestore(); }
+  });
+
+  it("never echoes an untrusted issuer value into diagnostics", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await expect(setup().verify(await sign({ iss: "https://evil.example/\n[mcp] forged" }))).rejects.toMatchObject({ code: "invalid_token" });
+      const line = warn.mock.calls.map((call) => call.map(String).join(" ")).join("\n");
+      expect(line).toMatch(/^\[mcp\] auth rejected: issuer /);
+      expect(line).toContain('"iss":"other"');
+      expect(line).not.toContain("forged");
+    } finally { warn.mockRestore(); }
+  });
+
   it("rejects signature tampering, unknown keys, opaque credentials, and oversized tokens", async () => {
     const token = await sign();
     const [header, payload, signature] = token.split(".");
     const tampered = `${header}.${payload}.${signature[0] === "A" ? "B" : "A"}${signature.slice(1)}`;
-    for (const invalid of [tampered, await sign({}, { kid: "unknown" }), "sync_secret", "x".repeat(16_385)]) {
+    for (const invalid of [tampered, await sign({}, { kid: "unknown" }), "sync_secret", "oat_8XOIucKvqHVr5tYP123", "x".repeat(16_385)]) {
       await expect(setup().verify(invalid)).rejects.toMatchObject({ status: 401, code: "invalid_token" });
     }
   });
