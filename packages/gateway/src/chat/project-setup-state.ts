@@ -297,11 +297,6 @@ export function applyProjectSetupInterview(current: ProjectSetupDraft, text: str
 
 export function projectSetupInterviewPrompt(draft: ProjectSetupDraft, context: ProjectSetupInterviewContext,
   transcript: readonly { role: "user" | "assistant"; text: string }[]): string {
-  const interpretedAnswers = {
-    purpose: draft.answers.purpose.slice(0, 768),
-    guidance: draft.answers.guidance?.slice(0, 768),
-    skillInstructions: draft.answers.skillInstructions?.slice(0, 768),
-  };
   const userSelectedSkill = draft.skill?.source === "user" ? draft.skill : undefined;
   const reviewedDraft = draft.proposals.filter(file => file.status === "pending" && file.path !== "CLAUDE.md" && file.path !== userSelectedSkill?.path)
     .map(file => ({ path: file.path, content: file.content }));
@@ -321,7 +316,7 @@ export function projectSetupInterviewPrompt(draft: ProjectSetupDraft, context: P
   // Include complete recent replies within the restricted admission budget, counting
   // multi-byte text and JSON escaping. Prefer the current reply over older history.
   const recent: typeof transcript[number][] = [];
-  const data = { context, transcript: recent, interpretedAnswers, reviewedDraft, requestedConnection: draft.mcp, stagedSkill: userSelectedSkill?.name };
+  const data = { context, transcript: recent, interpretedAnswers: draft.answers, reviewedDraft, requestedConnection: draft.mcp, stagedSkill: userSelectedSkill?.name };
   let remaining = 58 * 1024 - Buffer.byteLength(instructions) - Buffer.byteLength(JSON.stringify(data)) - 1;
   if (remaining < 0) throw new ProjectSetupError("invalid");
   for (let index = transcript.length - 1; index >= 0; index--) {

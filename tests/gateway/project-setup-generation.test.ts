@@ -122,6 +122,18 @@ it("supplies complete pending file drafts and the latest correction to the inter
   expect(() => projectSetupInterviewPrompt(draft, context, [correction])).toThrow();
 });
 
+it("retains accepted answer requirements after their original turns leave the interview transcript", () => {
+  const context = { project: { name: "Portfolio" }, skills: [], instructionFiles: [], mcpServices: [] };
+  const purpose = "A multilingual artwork archive. ".repeat(40) + "Include a contributors index.";
+  const draft = beginProjectSetupInterview(initialProjectSetup("chat_archive", "archive", purpose, "msg_setup"));
+  draft.answers.guidance = "Preserve existing translation keys. ".repeat(40) + "Ask before publishing.";
+  draft.answers.skillInstructions = "Check the changelog for every release. ".repeat(40) + "Keep dated review notes.";
+  const history = Array.from({ length: 12 }, (_, index) => ({ role: "user" as const, text: `Follow-up reply ${index}` }));
+  const data = JSON.parse(projectSetupInterviewPrompt(draft, context, history).split("\n").at(-1)!);
+  expect(data.interpretedAnswers).toEqual(draft.answers);
+  expect(data.transcript).toEqual(history);
+});
+
 it("asks for a short actionable reply and accepts complete legacy answers and details", () => {
   const context = { project: { name: "Illustration archive" }, skills: [], instructionFiles: [], mcpServices: [] };
   const draft = beginProjectSetupInterview(initialProjectSetup("chat_archive", "archive", "Illustrations", "msg_setup"));
