@@ -54,13 +54,18 @@ it("keeps HTTP and fresh WebSocket credentials on the pilot canonical origin", a
 });
 
 it("accepts only the selected build target Gmail launcher and leaves Pipedream available", async () => {
-  const fetchMock = jest.spyOn(global, "fetch");
   const { createIntegrationConnectUrl } = require("../lib/requests/integrations");
+  // Expo installs its fetch implementation while loading the native callback
+  // dependencies, so intercept the implementation the request will actually use.
+  const fetchMock = jest.spyOn(global, "fetch");
   const state = "a".repeat(43);
   const accepted = `${pilot}/auth/gmail?state=${state}`;
   for (const url of [accepted, "https://pipedream.com/connect/fixture"]) {
     fetchMock.mockResolvedValueOnce(response({ url, service: "gmail" }));
     await expect(createIntegrationConnectUrl("clerk-fixture", `${pilot}/vm/pilot-box`, "gmail", { connectionMethod: "matrix" })).resolves.toBe(url);
+    expect(fetchMock).toHaveBeenLastCalledWith(`${pilot}/vm/pilot-box/api/integrations/connect`, expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer clerk-fixture" }), method: "POST",
+    }));
   }
   for (const url of [`${production}/auth/gmail?state=${state}`, `${pilot}.evil.invalid/auth/gmail?state=${state}`, `${accepted}&redirect=evil`, `${pilot}/other?state=${state}`]) {
     fetchMock.mockResolvedValueOnce(response({ url, service: "gmail" }));
