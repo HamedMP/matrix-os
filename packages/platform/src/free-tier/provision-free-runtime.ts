@@ -79,7 +79,7 @@ type Admission =
   | { kind: 'waitlisted' | 'busy' | 'runtime_exists' | 'plan_unavailable' | 'deletion_pending' | 'checkout_pending' };
 
 /**
- * A paid checkout for the free slot is in flight: any `open` attempt (whatever
+ * A paid checkout for the free slot is in flight: a `creating` claim, an `open` attempt (whatever
  * its age; a Stripe session stays open for up to 24 hours), a `paid` attempt
  * no subscription event for the slot has followed yet, or an active
  * prebilling intent. A `paid` attempt stays `paid` forever, so one whose
@@ -90,7 +90,7 @@ type Admission =
 async function paidCheckoutPending(db: PlatformDB, clerkUserId: string): Promise<boolean> {
   const attempt = await db.executor.selectFrom('billing_checkout_attempts as a').select('a.id')
     .where('a.clerk_user_id', '=', clerkUserId).where('a.runtime_slot', '=', FREE_RUNTIME_SLOT)
-    .where((eb) => eb.or([eb('a.status', '=', 'open'), eb.and([eb('a.status', '=', 'paid'),
+    .where((eb) => eb.or([eb('a.status', 'in', ['creating', 'open']), eb.and([eb('a.status', '=', 'paid'),
       eb.not(eb.exists(eb.selectFrom('billing_subscriptions as s').select(sql<number>`1`.as('one'))
         .whereRef('s.clerk_user_id', '=', 'a.clerk_user_id').whereRef('s.runtime_slot', '=', 'a.runtime_slot')
         .where(sql<boolean>`s.latest_event_created_at::timestamptz >= a.created_at::timestamptz`)))])]))

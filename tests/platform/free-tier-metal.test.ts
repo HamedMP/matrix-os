@@ -534,9 +534,9 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(await getBillingEntitlement(db, OWNER)).toMatchObject({ source: 'stripe', status: 'active' });
   });
 
-  it('gives an invited owner with a settling paid checkout no free admission', async () => {
+  it.each(['creating', 'open'] as const)('blocks free admission while checkout is %s', async (status) => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
-    await insertCheckoutAttempt(db, { id: 'att-1', clerkUserId: OWNER, stripeSessionId: 'cs_open', createdAt: new Date(Date.now() - 60_000).toISOString() });
+    await insertCheckoutAttempt(db, { id: 'att-1', clerkUserId: OWNER, stripeSessionId: 'cs_open', status, createdAt: new Date(Date.now() - 60_000).toISOString() });
     const routes = routesFor().routes;
 
     expect((await request(routes)).status).toBe(402);
