@@ -10,7 +10,7 @@
  * other apps needs the keyboard shortcut.
  */
 
-import type { DocumentEditorController } from "../../editor/index";
+import { type DocumentEditorController, parsePlainText } from "../../editor/index";
 
 /** `own`: kept or pasted inside this document only. `blocked`: nothing could be pasted. */
 export type ClipboardOutcome = "done" | "nothing" | "own" | "blocked";
@@ -79,16 +79,9 @@ export async function pasteText(editor: DocumentEditorController, env: Clipboard
   if (text === null) return "blocked";
   if (text === "") return "nothing";
   editor.focus();
-  const lines = text.split(/\r\n|\r|\n/);
-  // One undo step; each line break of the clipboard text starts a paragraph, as Ctrl+V does.
-  const changed = editor.session.batch(() => {
-    let any = false;
-    lines.forEach((line, index) => {
-      if (line !== "") any = editor.insertText(line) || any;
-      if (index < lines.length - 1) any = editor.insertParagraph() || any;
-    });
-    return any;
-  }, { origin: "editor" });
+  // The paste command Ctrl+V runs: one undo step, each line break starts a paragraph, and the caret
+  // is carried through the engine from line to line instead of read back from the page in between.
+  const changed = editor.paste(parsePlainText(text));
   if (!changed) return "nothing";
   return system === null ? "own" : "done";
 }

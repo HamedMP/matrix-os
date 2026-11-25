@@ -13,6 +13,7 @@ import type {
   TextRange,
 } from "../../../_shared/office-engine/index";
 import type { DocumentSession, SessionApplyOptions } from "../session/index";
+import type { PasteContent } from "./paste";
 
 /**
  * What the document shows.
@@ -127,6 +128,8 @@ export interface DocumentEditorController {
   insertParagraph(): boolean;
   /** Deletes the selection, or does nothing when it is collapsed. */
   deleteSelection(): boolean;
+  /** Replaces the selection with pasted paragraphs as one undo step (what Ctrl+V runs). */
+  paste(content: PasteContent): boolean;
   /**
    * Formats the selection. A name toggles that property; a patch sets it.
    * With a collapsed selection the format applies to the text typed next.

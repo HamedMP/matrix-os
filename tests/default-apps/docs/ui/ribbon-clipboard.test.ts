@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Ribbon Cut, Copy and Paste: the browser's own copy command first (so the
  * editor's copy and cut handlers run), the async clipboard as the fallback,
@@ -7,8 +8,9 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import type { DocumentEditorController } from "../../../../home/apps/docs/src/editor/index";
+import type { DocumentEditorController, PasteContent } from "../../../../home/apps/docs/src/editor/index";
 import { copySelection, noteCopied, pasteText } from "../../../../home/apps/docs/src/ui/ribbon/clipboard";
+import { bodyParagraphs, caret, caretOf, mount } from "../editor/helpers";
 
 const at = (offset: number) => ({ blockId: "b1", offset });
 
@@ -20,15 +22,14 @@ function fakeEditor(collapsed = false) {
     getSelectedText: () => "Hello",
     deleteSelection: vi.fn(() => true),
     focus: vi.fn(),
-    insertText: vi.fn((text: string) => {
-      inserted.push(text);
+    // Records the pasted paragraphs, with "¶" for each paragraph break.
+    paste: vi.fn((content: PasteContent) => {
+      content.paragraphs.forEach((segments, index) => {
+        if (index > 0) inserted.push("¶");
+        if (segments.length > 0) inserted.push(segments.map((segment) => segment.text).join(""));
+      });
       return true;
     }),
-    insertParagraph: vi.fn(() => {
-      inserted.push("¶");
-      return true;
-    }),
-    session: { batch: <T,>(fn: () => T) => fn() },
   };
   return { editor: editor as unknown as DocumentEditorController, raw: editor, inserted };
 }
@@ -95,5 +96,24 @@ describe("ribbon clipboard", () => {
     expect(await pasteText(editor, { clipboard: { readText: async () => Promise.reject(new Error("denied")), writeText: vi.fn() } })).toBe("blocked");
     expect(await pasteText(editor, { clipboard: null })).toBe("blocked");
     warn.mockRestore();
+  });
+
+  it("pastes several lines into the live document: each line lands after the one before, as Ctrl+V does", async () => {
+    const m = await mount({ paragraphs: ["Hello world", "Last"] });
+    try {
+      const [first] = bodyParagraphs(m.doc).map((block) => block.id);
+      // The ribbon refocuses the editor before pasting; focus it first so jsdom keeps the caret in place.
+      m.editor.focus();
+      caret(m, first!, 5);
+      const clipboard = { readText: async () => "One two three\nSecond line\n\nFourth", writeText: vi.fn() };
+      expect(await pasteText(m.editor, { clipboard })).toBe("done");
+      expect(bodyParagraphs(m.doc).map((block) => block.text)).toEqual(["HelloOne two three", "Second line", "", "Fourth world", "Last"]);
+      expect(caretOf(m)).toEqual({ blockId: bodyParagraphs(m.doc)[3]!.id, offset: 6 });
+      // One undo step takes the whole paste back.
+      m.editor.undo();
+      expect(bodyParagraphs(m.doc).map((block) => block.text)).toEqual(["Hello world", "Last"]);
+    } finally {
+      m.unmount();
+    }
   });
 });

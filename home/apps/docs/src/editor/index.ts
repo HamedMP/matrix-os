@@ -25,7 +25,7 @@
  * | Member | Purpose |
  * | --- | --- |
  * | `applyOps(ops, options?)` | Engine operations through the session, then the caret goes where the last one says. |
- * | `insertText`, `insertParagraph`, `deleteSelection` | The same commands the keyboard runs, on the current selection. |
+ * | `insertText`, `insertParagraph`, `deleteSelection`, `paste(content)` | The same commands the keyboard runs, on the current selection. |
  * | `format("bold" \| "italic" \| "underline" \| "strike" \| patch)` | Toggle or set character formatting; with a caret it arms the next typed text. |
  * | `setParagraphStyle(patch)` | Heading level, alignment, indents on the selected paragraphs. |
  * | `undo()`, `redo()` | The session history. |
@@ -98,7 +98,7 @@ export { AUTHOR_COLOR_COUNT, authorColorSlot } from "./authors";
 export { MAX_HIGHLIGHTS_PER_LAYER, MAX_HIGHLIGHT_LAYERS } from "./highlights";
 export { ModelIndex } from "./model-index";
 export { domFromOffset, positionFromDom } from "./position-map";
-export { readClipboard } from "./paste";
+export { parsePlainText, readClipboard } from "./paste";
 export type { PasteContent, PasteSegment } from "./paste";
 export type {
   ActiveFormat,
