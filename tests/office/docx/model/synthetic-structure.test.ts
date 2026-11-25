@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { ParagraphBlock, SectionBreakBlock, TableBlock } from "../../../../packages/office/src/api/docx.js";
 import { openDocx } from "../../../../packages/office/src/docx/index.js";
 import { getDocxIndex } from "../../../../packages/office/src/docx/internal.js";
+import type { IdState } from "../../../../packages/office/src/docx/model/structure.js";
+import type { XmlElement } from "../../../../packages/office/src/api/xml.js";
 import { isOfficeError } from "../../../../packages/office/src/errors.js";
-import { createElement, insertBefore } from "../../../../packages/office/src/xml/index.js";
+import { createElement, insertBefore, remove } from "../../../../packages/office/src/xml/index.js";
 import { buildAndReopen, buildDocument, buildPackage, cell, p, r, row, tbl } from "./build.js";
 
 const texts = (blocks: Array<{ type: string }>): string[] =>
@@ -30,6 +32,42 @@ describe("block ids", () => {
       ["p_0A0A0A01", "one"],
       ["p_0A0A0A02", "two"],
     ]);
+  });
+
+  it("keeps no record of the ids it hands out once the first structure is built", () => {
+    const body = `<w:p w14:paraId="0A0A0A01">${r("one")}</w:p><w:p w14:paraId="0A0A0A01">${r("duplicate id")}</w:p>${p(r("no id"))}`;
+    const document = buildDocument({ body });
+    expect(document.getView().body.blocks.map((block) => block.id)).toEqual(["p_0A0A0A01", "b2", "b3"]);
+    const index = getDocxIndex(document);
+    // The counters of the handle itself, as every rebuild after an edit uses them.
+    const ids = (index as unknown as { blockIds: IdState }).blockIds;
+    expect(ids.used.size).toBe(0);
+    const anchor = index.requireBlock("p_0A0A0A01").element;
+    const seen = new Set<string>(["p_0A0A0A01", "b2", "b3"]);
+    for (let round = 0; round < 50; round++) {
+      const added = createElement("w:p", [], [createElement("w:r", [], [createElement("w:t", [], [`round ${round}`])])]);
+      insertBefore(anchor, added);
+      index.markDirty(added);
+      const id = index.blockOf(added)?.id as string;
+      expect(seen.has(id)).toBe(false);
+      seen.add(id);
+      const parent = added.parent as XmlElement;
+      remove(added);
+      index.markDirty(parent);
+      void index.structure;
+    }
+    expect(ids.used.size).toBe(0);
+  });
+
+  it("hands out distinct paragraph ids without keeping each one it handed out", () => {
+    const body = `<w:p w14:paraId="00000002">${r("one")}</w:p><w:p w14:paraId="00000005">${r("two")}</w:p>`;
+    const index = getDocxIndex(buildDocument({ body }));
+    const handedOut = new Set<string>();
+    for (let round = 0; round < 50; round++) handedOut.add(index.allocateParaId());
+    expect(handedOut.size).toBe(50);
+    expect(handedOut.has("00000002") || handedOut.has("00000005")).toBe(false);
+    const counters = (index as unknown as { counters: { paraIds: Set<string> } }).counters;
+    expect(counters.paraIds.size).toBe(2);
   });
 
   it("looks through content controls and puts block-level bookmarks on the next paragraph", () => {

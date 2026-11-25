@@ -58,6 +58,7 @@ interface IdCounters {
   nextAnnotation: number;
   nextComment: number;
   nextParaId: number;
+  /** The paraIds the document held when the counters were first read; bounded by its size. */
   readonly paraIds: Set<string>;
 }
 
@@ -302,10 +303,8 @@ export class DocxIndex {
       if (counters.nextParaId >= 0x7fffffff || counters.nextParaId < 1) counters.nextParaId = 1;
       const id = counters.nextParaId.toString(16).toUpperCase().padStart(8, "0");
       counters.nextParaId += 1;
-      if (!counters.paraIds.has(id)) {
-        counters.paraIds.add(id);
-        return id;
-      }
+      // The counter only moves forward, so ids handed out before need no record.
+      if (!counters.paraIds.has(id)) return id;
     }
     throw new OfficeError("limit_exceeded", "no free paragraph id");
   }

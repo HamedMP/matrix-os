@@ -77,7 +77,11 @@ export interface IdState {
   nextBlock: number;
   /** True until the first structure is built: only then are ids taken from `w14:paraId`. */
   initial: boolean;
-  /** Ids ever handed out. Grows with the blocks ever created in this handle. */
+  /**
+   * The `p_` ids taken from `w14:paraId` during the first build, to give a
+   * repeated paraId a counter id instead. Emptied once that build is done:
+   * later ids come from the counter, whose `b` ids never meet a `p_` one.
+   */
   readonly used: Set<BlockId>;
 }
 
@@ -157,9 +161,9 @@ class Builder {
       const paraId = attr(element, "w14:paraId");
       if (paraId !== null && /^[0-9A-Fa-f]{1,8}$/.test(paraId) && !this.ids.used.has(`p_${paraId.toUpperCase()}`)) {
         id = `p_${paraId.toUpperCase()}`;
+        this.ids.used.add(id);
       }
     }
-    this.ids.used.add(id);
     if (tags === undefined) this.store.tags.set(element, { blockId: id });
     else tags.blockId = id;
     return id;
@@ -362,6 +366,7 @@ export function buildStructure(store: PartStore, ids: IdState, limits: DocxLimit
     });
   }
   ids.initial = false;
+  ids.used.clear();
   return builder.structure;
 }
 
