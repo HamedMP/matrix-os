@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RuntimeLifecycleStatus } from '@matrix-os/contracts/runtime-lifecycle';
+import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
+import { getRuntimeEntitlementDecisionForUser } from '../../packages/platform/src/runtime-entitlement.js';
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
 import {
   getUserMachine,
@@ -147,6 +149,25 @@ describe('metal idle sleeper', () => {
     expect(stop.mock.calls[0]?.[0]).toMatchObject({ machineId: idle, generation: GENERATION });
     expect(await machine(idle)).toMatchObject({ status: 'suspended', nextWakeAt: null, idleGuardAt: null, awakeSince: null });
     expect(await machine(active)).toMatchObject({ status: 'running' });
+  });
+
+  it.each(['running', 'suspended'] as const)('keeps a %s computer reachable during deletion grace', async (status) => {
+    const id = await seedMachine({ overrides: { status, activationState: 'authorized' } });
+    const owner = (await machine(id)).clerkUserId;
+    const secret = 'deletion-test-secret'.repeat(2);
+    const env = { ACCOUNT_DELETION_SECRET: secret };
+    const deletion = new AccountDeletionRepository(db.kysely, { secret, now: () => NOW });
+    const job = await deletion.accept({ clerkUserId: owner, appleTokens: [] }, false);
+    const { sleeper: s, stop } = sleeper({ env });
+
+    await s.sleepTick(NOW);
+
+    expect(stop).not.toHaveBeenCalled();
+    expect((await machine(id)).status).toBe(status);
+    expect(await getRuntimeEntitlementDecisionForUser(db, owner, env, 'primary', 'customer', NOW))
+      .toMatchObject({ runtimeProxyAllowed: true });
+    expect(await getRuntimeEntitlementDecisionForUser(db, owner, env, 'primary', 'customer', new Date(job.due_at)))
+      .toMatchObject({ runtimeProxyAllowed: false });
   });
 
   it('sleeps a VM with no owner activity once it has been awake for 60 minutes', async () => {

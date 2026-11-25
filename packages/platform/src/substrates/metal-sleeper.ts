@@ -4,6 +4,7 @@ import type { RuntimeLifecycleStatus } from '@matrix-os/contracts/runtime-lifecy
 import { mapUserMachine } from '../database/user-machine-records.js';
 import { getUserMachine } from '../database/user-machines.js';
 import type { PlatformDatabase, PlatformDB, UserMachineRecord } from '../db.js';
+import { getAccountDeletionAdmission } from '../account-deletion/admission.js';
 import { resolveEffectiveBillingEntitlementForSlot } from '../billing-entitlement-resolver.js';
 import { wakeAfterSuspendAttempt, wakeOnDemandRuntime } from './substrate-wake.js';
 import type { OnDemandRuntimeSubstrate, RuntimeRef } from './types.js';
@@ -291,10 +292,13 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
   async function sleepOne(machine: UserMachineRecord, tickNow: Date, clock: () => Date, signal: AbortSignal): Promise<void> {
     // Bookkeeping (alerts, the guard stamp) uses the tick time; decisions use the current time.
     const tickMs = tickNow.getTime();
-    // Only the resolved effective plan decides: an active override or a live
-    // paid subscription for this slot wins over a stored free entitlement.
+    const env = deps.env ?? process.env;
+    const deletion = await getAccountDeletionAdmission(db, machine.clerkUserId, env, clock());
+    if (deletion.runtimeAccess !== 'normal') return;
+
+    // An active override or a live paid subscription wins over a stored free entitlement.
     const effective = await resolveEffectiveBillingEntitlementForSlot(
-      db, machine.clerkUserId, clock(), machine.runtimeSlot, deps.env ?? process.env);
+      db, machine.clerkUserId, clock(), machine.runtimeSlot, env);
     if (effective?.source !== 'free') {
       log('sleep_skipped_paid', { machineId: machine.machineId });
       return;
