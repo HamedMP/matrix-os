@@ -7,6 +7,8 @@ import { isPublicShellPath } from '../../shell/src/lib/proxy-routes';
 import { finishSlackDevOAuth, loadSlackDevOAuthConfig, readSlackDevOAuthLocation, startSlackDevOAuth } from '../../shell/src/lib/slack-dev-oauth';
 
 const query = { state: 'a'.repeat(43), code: 'opaque.code' };
+const ticket = ['v1', 'a'.repeat(16), 'A'.repeat(22), 'b'.repeat(96)].join('.');
+const ticketFragment = '#' + new URLSearchParams({ ticket });
 const devPage = 'https://app.matrix-os.com/vm/fixture-dev/slack/oauth/complete';
 const devConfig = {
   handle: 'fixture-dev', machineId: '11111111-2222-4333-8444-555555555555', organizationId: 'org_fixture',
@@ -17,7 +19,7 @@ describe('Dev browser Slack OAuth', () => {
     const layout = readFileSync(new URL('../../shell/src/app/layout.tsx', import.meta.url), 'utf8');
     expect(layout).toMatch(/id="matrix-slack-dev-oauth-privacy" strategy="beforeInteractive"\s*>\{SLACK_DEV_OAUTH_SCRUB_SCRIPT\}/);
     expect(layout.indexOf('id="matrix-slack-dev-oauth-privacy"')).toBeLessThan(layout.indexOf('/billing/tracking.js'));
-    const location = new URL(devPage + '#' + new URLSearchParams(query));
+    const location = new URL(devPage + ticketFragment);
     const capture = vi.fn();
     const listener = vi.fn((_, receive: (event: { detail: typeof capture }) => void) => receive({ detail: capture }));
     const replaceState = vi.fn((_, __, path: string) => { location.href = 'https://app.matrix-os.com' + path; });
@@ -25,18 +27,20 @@ describe('Dev browser Slack OAuth', () => {
     expect(location.href).toBe(devPage);
     expect(replaceState).toHaveBeenCalledBefore(listener);
     expect(listener).toHaveBeenCalledWith('matrix-slack-dev-oauth-handoff', expect.any(Function), { once: true });
-    expect(capture).toHaveBeenCalledWith({ search: '', hash: '#' + new URLSearchParams(query) });
+    expect(capture).toHaveBeenCalledWith({ search: '', hash: ticketFragment });
     const otherPage = new URL(devPage.replace('fixture-dev', 'other-machine') + '#unrelated');
     runInNewContext(SLACK_DEV_OAUTH_SCRUB_SCRIPT, { window: { location: otherPage, history: { replaceState }, addEventListener: listener } });
     expect(otherPage.hash).toBe('#unrelated');
     expect(replaceState).toHaveBeenCalledOnce();
   });
-  it('accepts provider state only from a fragment on the exact first-party Dev page', () => {
-    const form = new URLSearchParams(query);
-    expect(readSlackDevOAuthLocation(new URL(devPage + '#' + form))).toEqual({ handle: devConfig.handle, query });
-    expect(readSlackDevOAuthLocation(new URL(devPage + '?' + form))).toBeNull();
-    expect(readSlackDevOAuthLocation(new URL(devPage.replace('app.matrix-os.com', 'other.test') + '#' + form))).toBeNull();
+  it('accepts one bounded sealed ticket in the exact Dev fragment and rejects plaintext callback fields', () => {
+    expect(readSlackDevOAuthLocation(new URL(devPage + ticketFragment))).toEqual({ handle: devConfig.handle, ticket });
+    expect(readSlackDevOAuthLocation(new URL(devPage + '?' + ticketFragment.slice(1)))).toBeNull();
+    expect(readSlackDevOAuthLocation(new URL(devPage.replace('app.matrix-os.com', 'other.test') + ticketFragment))).toBeNull();
     expect(readSlackDevOAuthLocation(new URL(devPage.replace('fixture-dev', 'primary')))).toBeNull();
+    for (const invalid of [
+      '#' + new URLSearchParams(query), ticketFragment + '&code=plaintext', ticketFragment + '&ticket=' + ticket, ticketFragment + 'a'.repeat(3_000),
+    ]) expect(readSlackDevOAuthLocation(new URL(devPage + invalid))).toEqual({ handle: devConfig.handle, error: 'invalid' });
   });
   it('reads the bound target using same-origin authentication and refuses a different VM or tag', async () => {
     const fetch = vi.fn().mockResolvedValue(Response.json(devConfig));
@@ -52,16 +56,17 @@ describe('Dev browser Slack OAuth', () => {
   it('requests a fresh session only on invocation and sends it only to the validated tag, without cookies or URL secrets', async () => {
     const token = vi.fn().mockResolvedValue('real-clerk-bearer');
     const fetch = vi.fn().mockResolvedValue(Response.json({ connected: true }));
-    expect(await finishSlackDevOAuth(devConfig, query, token, fetch)).toBe('connected');
+    expect(await finishSlackDevOAuth(devConfig, ticket, token, fetch)).toBe('connected');
     expect(token).toHaveBeenCalledExactlyOnceWith({ skipCache: true });
     expect(fetch).toHaveBeenCalledWith(devConfig.platformOrigin + '/api/slack/oauth/complete', expect.objectContaining({
       method: 'POST', credentials: 'omit', redirect: 'error', cache: 'no-store', referrerPolicy: 'no-referrer',
       headers: expect.objectContaining({ authorization: 'Bearer real-clerk-bearer' }),
-      body: JSON.stringify(query),
+      body: JSON.stringify({ ticket }),
     }));
     token.mockClear();
     fetch.mockClear();
-    expect(await finishSlackDevOAuth({ ...devConfig, platformOrigin: 'https://other.example' }, query, token, fetch)).toBe('unavailable');
+    expect(await finishSlackDevOAuth({ ...devConfig, platformOrigin: 'https://other.example' }, ticket, token, fetch)).toBe('unavailable');
+    expect(await finishSlackDevOAuth(devConfig, query.code, token, fetch)).toBe('unavailable');
     expect(token).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
     fetch.mockResolvedValueOnce(Response.json({ url: 'https://other.example/oauth/v2/authorize' }));

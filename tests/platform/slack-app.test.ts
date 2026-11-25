@@ -572,7 +572,7 @@ describe("Slack Dev read-only callbacks", () => {
   const installation = { appId: "A123", teamId: "T123", botUserId: "UBOT",
     botToken: "xoxb-slack-fixture", slackUserId: "U123" };
 
-  it("returns a browser callback to the pinned Dev page and completes by Clerk-authenticated POST", async () => {
+  it("seals the callback for the pinned Dev page and exchanges the code only after authenticated confirmation", async () => {
     const taggedOrigin = 'https://slack-dev-a1234567---matrix-platform-preview-fixture-ey.a.run.app';
     const browser = 'https://app.matrix-os.com';
     app = makeApp({ config: { ...config, publicBaseUrl: taggedOrigin }, readOnlyDev: dev, devBrowserOAuth: true,
@@ -612,24 +612,56 @@ describe("Slack Dev read-only callbacks", () => {
     expect(handoff.origin).toBe(browser);
     expect(handoff.pathname).toBe('/vm/owner-dev/slack/oauth/complete');
     expect(handoff.search).toBe('');
-    expect(Object.fromEntries(new URLSearchParams(handoff.hash.slice(1)))).toEqual(query);
+    const fragment = new URLSearchParams(handoff.hash.slice(1));
+    expect([...fragment.keys()]).toEqual(['ticket']);
+    expect(handoff.href).not.toContain(query.state);
+    expect(handoff.href).not.toContain(query.code);
+    const ticket = fragment.get('ticket')!;
+    const browserBody = { ticket };
     expect(callback.headers.get('cache-control')).toBe('no-store');
     expect(callback.headers.get('referrer-policy')).toBe('no-referrer');
     expect(api.exchangeCode).not.toHaveBeenCalled();
+    const getOAuthState = vi.spyOn(repo, 'getOAuthState');
     actor = 'user_other';
-    expect((await request('/api/slack/oauth/complete', query)).status).toBe(403);
+    expect((await request('/api/slack/oauth/complete', browserBody)).status).toBe(403);
     actor = dev.ownerId;
-    expect((await request('/api/slack/oauth/complete', query, { origin: 'https://other.example' })).status).toBe(403);
-    expect((await request('/api/slack/oauth/complete', query, { cookie: '__session=nope' })).status).toBe(403);
+    expect((await request('/api/slack/oauth/complete', browserBody, { origin: 'https://other.example' })).status).toBe(403);
+    expect((await request('/api/slack/oauth/complete', browserBody, { cookie: '__session=nope' })).status).toBe(403);
+    expect((await request('/api/slack/oauth/complete', query)).status).toBe(422);
+    const [version, iv, tag, ciphertext] = ticket.split('.');
+    const tampered = [version, iv, tag, (ciphertext.startsWith('A') ? 'B' : 'A') + ciphertext.slice(1)].join('.');
+    expect((await request('/api/slack/oauth/complete', { ticket: tampered })).status).toBe(422);
+    for (const override of [
+      { config: { ...config, publicBaseUrl: taggedOrigin, appId: 'A456' } },
+      { readOnlyDev: { ...dev, machineId: 'b1234567-1234-4123-8123-123456789abc' } },
+    ]) {
+      const other = makeApp({ config: { ...config, publicBaseUrl: taggedOrigin }, readOnlyDev: dev, devBrowserOAuth: true, ...override });
+      const response = await other.request(taggedOrigin + '/api/slack/oauth/complete', {
+        method: 'POST', headers, body: JSON.stringify(browserBody),
+      });
+      expect(response.status).toBe(422);
+      await other.shutdownSlack();
+    }
+    expect(getOAuthState).not.toHaveBeenCalled();
     expect(api.exchangeCode).not.toHaveBeenCalled();
     api.exchangeCode.mockResolvedValueOnce(installation);
-    const result = await request('/api/slack/oauth/complete', query);
+    const result = await request('/api/slack/oauth/complete', browserBody);
     expect(result.status).toBe(200);
     expect(result.headers.get('access-control-allow-origin')).toBe(browser);
     expect(result.headers.get('referrer-policy')).toBe('no-referrer');
     expect((await result.json()).connected).toBe(true);
     expect(api.exchangeCode).toHaveBeenCalledExactlyOnceWith({ code: query.code, redirectUri: providerCallback });
-    expect((await request('/api/slack/oauth/complete', query)).status).toBe(409);
+    expect((await request('/api/slack/oauth/complete', browserBody)).status).toBe(409);
+
+    const next = await request('/api/slack/install', { organizationId: org });
+    const nextState = new URL((await next.json()).url).searchParams.get('state')!;
+    const expiredCallback = await app.request(providerCallback + '?' + new URLSearchParams({ ...query, state: nextState }),
+      { headers: { accept: 'text/html' } });
+    const expiredTicket = new URLSearchParams(new URL(expiredCallback.headers.get('location')!).hash.slice(1)).get('ticket');
+    await db.updateTable('slack_oauth_states').set({ expires_at: clock })
+      .where('hash', '=', createHash('sha256').update(nextState).digest('hex')).execute();
+    expect((await request('/api/slack/oauth/complete', { ticket: expiredTicket })).status).toBe(409);
+    expect(api.exchangeCode).toHaveBeenCalledTimes(1);
   });
 
   it("does not add the browser POST or CORS to an ordinary Slack installation", async () => {

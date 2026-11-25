@@ -1,13 +1,13 @@
 import {
   SLACK_DEV_OAUTH_CONFIG_PATH,
   SLACK_DEV_OAUTH_FINISH_PATH,
+  SLACK_DEV_OAUTH_TICKET_MAX_LENGTH,
   SlackDevHandleSchema,
   SlackDevOAuthBrowserConfigSchema,
+  SlackDevOAuthTicketSchema,
   type SlackDevOAuthBrowserConfig,
-  type SlackOAuthCallbackQuery,
 } from '@matrix-os/contracts/slack-bridge';
 import {
-  readSlackOAuthQuery,
   refreshSlackOAuthToken,
   slackOAuthFailure,
   type SlackOAuthResult,
@@ -19,15 +19,18 @@ type SlackOAuthFailure = Exclude<SlackOAuthResult, 'connected'>;
 
 export function readSlackDevOAuthLocation(url: URL): {
   handle: string;
-  query?: SlackOAuthCallbackQuery;
+  ticket?: string;
   error?: 'cancelled' | 'invalid';
 } | null {
   const handle = slackDevOAuthHandle(url);
   if (!handle || url.search) return null;
   if (!url.hash) return { handle };
   if (url.hash === '#error=access_denied') return { handle, error: 'cancelled' };
-  const query = readSlackOAuthQuery(url.hash.slice(1));
-  return query ? { handle, query } : { handle, error: 'invalid' };
+  if (url.hash.length > '#ticket='.length + SLACK_DEV_OAUTH_TICKET_MAX_LENGTH) return { handle, error: 'invalid' };
+  const params = new URLSearchParams(url.hash.slice(1));
+  if (params.size !== 1) return { handle, error: 'invalid' };
+  const parsed = SlackDevOAuthTicketSchema.safeParse({ ticket: params.get('ticket') });
+  return parsed.success ? { handle, ticket: parsed.data.ticket } : { handle, error: 'invalid' };
 }
 
 export async function loadSlackDevOAuthConfig(handle: string,
@@ -84,9 +87,11 @@ export async function startSlackDevOAuth(config: SlackDevOAuthBrowserConfig,
   return { status: 'unavailable' };
 }
 
-export async function finishSlackDevOAuth(config: SlackDevOAuthBrowserConfig, query: SlackOAuthCallbackQuery,
+export async function finishSlackDevOAuth(config: SlackDevOAuthBrowserConfig, ticket: string,
   getToken: SlackOAuthTokenReader, fetchImpl: typeof fetch = fetch): Promise<SlackOAuthResult> {
-  const result = await postSlackDevOAuth(config, SLACK_DEV_OAUTH_FINISH_PATH, query, getToken, fetchImpl);
+  const request = SlackDevOAuthTicketSchema.safeParse({ ticket });
+  if (!request.success) return 'unavailable';
+  const result = await postSlackDevOAuth(config, SLACK_DEV_OAUTH_FINISH_PATH, request.data, getToken, fetchImpl);
   if ('status' in result) return result.status;
   const data = result.data;
   return data !== null && typeof data === 'object' && 'connected' in data && data.connected === true ? 'connected' : 'unavailable';

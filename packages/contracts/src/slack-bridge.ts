@@ -11,6 +11,10 @@ export const SlackOAuthCallbackQuerySchema = z.object({
   code: z.string().min(1).max(2_048).regex(/^[A-Za-z0-9._-]+$/),
 }).strict();
 export type SlackOAuthCallbackQuery = z.infer<typeof SlackOAuthCallbackQuerySchema>;
+export const SLACK_DEV_OAUTH_TICKET_MAX_LENGTH = 3_000;
+export const SlackDevOAuthTicketSchema = z.strictObject({
+  ticket: z.string().max(SLACK_DEV_OAUTH_TICKET_MAX_LENGTH).regex(/^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]+$/),
+});
 
 const Actor = z.string().regex(/^user_[A-Za-z0-9_-]{1,123}$/);
 const Organization = z.string().regex(/^org_[A-Za-z0-9_-]{1,124}$/);

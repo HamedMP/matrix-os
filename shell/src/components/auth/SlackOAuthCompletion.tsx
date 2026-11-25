@@ -34,15 +34,15 @@ function SlackDevOAuth({ handle, handoff }: { handle: string; handoff: ReturnTyp
     return () => { active = false; };
   }, [handle, isLoaded, isSignedIn]);
 
-  const query = handoff?.query;
-  const completing = query && result !== 'expired';
+  const ticket = handoff?.ticket;
+  const completing = ticket && result !== 'expired';
   const submit = async () => {
     if (pending.current || !config || !isLoaded || !isSignedIn) return;
     pending.current = true;
     setBusy(true);
     try {
       if (completing) {
-        setResult(await finishSlackDevOAuth(config, query, getToken));
+        setResult(await finishSlackDevOAuth(config, ticket, getToken));
         return;
       }
       const start = await startSlackDevOAuth(config, getToken);
@@ -59,7 +59,7 @@ function SlackDevOAuth({ handle, handoff }: { handle: string; handoff: ReturnTyp
   if (!config) return <p role="alert">Slack installation is unavailable on this computer.</p>;
   const status = result ? messages[result] : handoff?.error === 'cancelled' ? 'Slack authorization was cancelled.'
     : !handoff || handoff.error === 'invalid' ? 'This installation return is invalid. Start a fresh installation.'
-    : query ? 'Confirm the account that started installation.' : 'Authorize read-only Slack access for this Dev computer.';
+    : ticket ? 'Confirm the account that started installation.' : 'Authorize read-only Slack access for this Dev computer.';
   return <div className="ph-no-capture space-y-5">
     <p role="status">{status}</p>
     {result !== 'connected' && <button type="button" onClick={submit} disabled={busy}
