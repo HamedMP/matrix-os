@@ -51,7 +51,10 @@ const exec: Exec = async (argv) => {
   if (argv[0] === "ip") return { code: 0, stdout: "[]", stderr: "" };
   if (argv[0] === "lvs" && argv.includes("data_percent,metadata_percent")) return { code: 0, stdout: "  10.00  5.00\n", stderr: "" };
   if (argv[0] === "lvs" && argv.includes("lv_size")) return { code: 0, stdout: "  21474836480\n", stderr: "" };
-  if (argv[1] === "is-active") return { code: active.has(argv[2]!) ? 0 : 3, stdout: "", stderr: "" };
+  if (argv[1] === "is-active") {
+    const states = argv.slice(2).map((unit) => active.has(unit) ? "active" : "inactive");
+    return { code: states.includes("active") ? 0 : 3, stdout: states.join("\n"), stderr: "" };
+  }
   // lvs of a VM disk: exit 5 with LVM's "no such LV" message.
   if (argv[0] === "lvs") return { code: 5, stdout: "", stderr: '  Failed to find logical volume "vmvg/mx-x"\n' };
   return { code: 0, stdout: "", stderr: "" };
@@ -146,8 +149,10 @@ async function free(): Promise<string> {
 }
 const apiCall = (method: string, path: string, body?: unknown) =>
   call(port(hostd!.api), method, path, { authorization: `Bearer ${API_TOKEN}` }, body);
-const ingressCall = (handle: string) =>
-  call(port(hostd!.ingress.server), "GET", "/", { host: `${handle}.matrix-os.com`, "x-matrix-host-auth": INGRESS_TOKEN });
+const ingressCall = (handle: string, id: string) =>
+  call(port(hostd!.ingress.server), "GET", "/", {
+    host: `${handle}.matrix-os.com`, "x-matrix-host-auth": INGRESS_TOKEN, "x-matrix-vm-target": `${id}:1`,
+  });
 
 const createBody = {
   machineId: "machine-1",
@@ -215,11 +220,27 @@ describe("hostd main", () => {
 
   it("queries permanent host neighbors before routing to a running guest", async () => {
     hostd = await startHostd(config, overrides());
-    expect((await apiCall("POST", "/v1/vms", createBody)).status).toBe(201);
-    expect(await ingressCall("alice")).toMatchObject({
+    const reply = await apiCall("POST", "/v1/vms", createBody);
+    expect(reply.status).toBe(201);
+    const { id } = JSON.parse(reply.body) as { id: string };
+    active.add(`matrix-vm@${id}.service`);
+    expect(await ingressCall("alice", id)).toMatchObject({
       status: 503, body: '{"error":"runtime_unavailable"}',
     });
     expect(events).toContain("exec:ip -j -4 neigh show dev brmx nud permanent");
+  });
+
+  it("signals wake after the VMM exits without an update to the running record", async () => {
+    hostd = await startHostd(config, overrides());
+    const { id } = JSON.parse((await apiCall("POST", "/v1/vms", createBody)).body) as { id: string };
+    const unit = `matrix-vm@${id}.service`;
+    const restoreUnit = `matrix-vm-restore@${id}.service`;
+    active.add(restoreUnit);
+    expect(JSON.parse((await ingressCall("alice", id)).body)).toEqual({ error: "runtime_unavailable" });
+    active.delete(restoreUnit);
+    expect(JSON.parse((await ingressCall("alice", id)).body)).toEqual({ error: "runtime_asleep" });
+    expect(events).toContain(`exec:systemctl is-active ${unit} ${restoreUnit}`);
+    await expect(hostd.store.get(id)).resolves.toMatchObject({ state: "running" });
   });
 
   it("applies the configured thin pool thresholds: create answers 503 capacity past them", async () => {
@@ -232,12 +253,12 @@ describe("hostd main", () => {
 
   it("shares one store: a VM created and suspended through the API is seen by the ingress at once", async () => {
     hostd = await startHostd(config, overrides());
-    expect(JSON.parse((await ingressCall("alice")).body)).toEqual({ error: "runtime_unknown" });
+    expect(JSON.parse((await ingressCall("alice", "vm_0123456789abcdef01234567")).body)).toEqual({ error: "runtime_unknown" });
     const created = JSON.parse((await apiCall("POST", "/v1/vms", createBody)).body) as { id: string };
     expect((await apiCall("POST", `/v1/vms/${created.id}/suspend`)).status).toBe(202);
     await hostd.lifecycle.idle();
     // The ingress index is younger than its 2 s max age: only a change notification refreshes it.
-    const asleep = await ingressCall("alice");
+    const asleep = await ingressCall("alice", created.id);
     expect(asleep.status).toBe(503);
     expect(JSON.parse(asleep.body)).toEqual({ error: "runtime_asleep" });
     expect(events).toContain(`trim:${created.id}`);
@@ -251,7 +272,7 @@ describe("hostd main", () => {
     expect(hostd.idleSeconds(record)).toBe(90);
     await apiCall("POST", `/v1/vms/${created.id}/suspend`);
     await hostd.lifecycle.idle();
-    await ingressCall("alice");
+    await ingressCall("alice", created.id);
     t += 5_000;
     expect(hostd.idleSeconds(record)).toBe(5);
   });

@@ -90,6 +90,16 @@ async function readVmBindings(exec: Exec, bridge: string): Promise<ReadonlyMap<s
   return bindings;
 }
 
+async function vmUnitsOffline(exec: Exec, id: string): Promise<boolean> {
+  const result = await exec(["systemctl", "is-active", `matrix-vm@${id}.service`, `matrix-vm-restore@${id}.service`], {
+    signal: AbortSignal.timeout(2_000),
+  });
+  if (result.code === 0) return false;
+  if (result.code !== 3 && result.code !== 4) throw new Error(`could not determine VM liveness (exit ${result.code})`);
+  const states = result.stdout.trim().split(/\s+/);
+  return states.length === 2 && states.every((state) => state === "inactive" || state === "failed" || state === "unknown");
+}
+
 function closeServer(server: Server): Promise<void> {
   if (!server.listening) return Promise.resolve();
   server.closeAllConnections();
@@ -148,6 +158,7 @@ export async function startHostd(config: HostdConfig, overrides: HostdOverrides 
     store,
     hostAuthToken: config.ingressToken,
     readVmBindings: () => readVmBindings(exec, overrides.lifecycleConfig?.bridge ?? DEFAULT_LIFECYCLE_CONFIG.bridge),
+    vmIsOffline: (id) => vmUnitsOffline(exec, id),
     tls,
     upstreamPort: overrides.ingressUpstreamPort,
     log,
