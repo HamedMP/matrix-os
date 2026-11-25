@@ -676,7 +676,8 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       log('stale_fail_failed', { machineId: row.machineId, code: errorCode(error) });
       return 'error';
     }
-    if (failed && deps.drainMachineDeletions) {
+    if (failed && deps.drainMachineDeletions
+      && (teardown === 'await' || backgroundDestroys.size < BACKGROUND_DESTROY_MAX)) {
       const drain = deps.drainMachineDeletions;
       const destroy = (async () => {
         try {
@@ -689,7 +690,7 @@ export function createMetalProvisioner(deps: MetalProvisionerDeps) {
       // the queued deletion stays the durable fallback. Tracked for drain().
       if (teardown === 'await') {
         await destroy;
-      } else if (backgroundDestroys.size < BACKGROUND_DESTROY_MAX) {
+      } else {
         backgroundDestroys.add(destroy);
         void destroy.finally(() => { backgroundDestroys.delete(destroy); });
       }
