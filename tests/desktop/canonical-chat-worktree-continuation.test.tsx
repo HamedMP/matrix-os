@@ -3,8 +3,10 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import type { CanonicalChatDetailResponse, CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
+import { createCanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
+import type { ApiClient } from "@desktop/renderer/src/lib/api";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useBoard } from "@desktop/renderer/src/stores/board";
 import { useProviderPreferences } from "@desktop/renderer/src/features/settings/provider-preferences";
@@ -99,16 +101,71 @@ describe("native Chat worktree continuation", () => {
     ));
   });
 
-  it("refuses an obsolete worktree binding after the Chat moved to another project", async () => {
+  it.each(["project_new", null])("sends an ordinary reply after the owner changes project scope to %s", async projectId => {
     const fixture = worktreeFixture();
-    fixture.detail.record.projectId = "project_new";
-    openWorkspace(fixture);
-    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-    await setSharedComposerText(editor, "Continue the source change.");
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await screen.findByRole("alert");
-    expect(fixture.client.admitTurn).not.toHaveBeenCalled();
-    expect(editor.textContent).toBe("Continue the source change.");
+    const { projectId: originalProjectId, ...unassignedRecord } = fixture.detail.record;
+    const chatId = fixture.detail.record.chat.id;
+    const baseRevision = fixture.detail.record.chat.revision;
+    const baseMessageSeq = fixture.detail.record.chat.messageCount;
+    const movedRecord = { ...unassignedRecord,
+      chat: { ...unassignedRecord.chat, revision: baseRevision + 1 },
+      ...(projectId === null ? {} : { projectId }),
+    };
+    let persisted = fixture.detail;
+    const patch = vi.fn(async (_path: string, _body: unknown) => {
+      persisted = { ...persisted, record: movedRecord };
+      return movedRecord;
+    });
+    const { snapshot: accepted } = createCanonicalChatFixture("accepted");
+    const [message] = accepted.messages;
+    const [turn] = accepted.turns;
+    const [run] = accepted.runs;
+    const effectiveRoot = projectId === null ? undefined : { kind: "project", projectId };
+    const post = vi.fn(async (_path: string, input: CanonicalCreateChatTurnRequest) => ({
+      admission: "accepted",
+      record: { ...movedRecord, chat: { ...movedRecord.chat, revision: baseRevision + 2, messageCount: baseMessageSeq + 1 },
+        activeRun: accepted.chat.activeRun },
+      message: { ...message!, chatId, seq: baseMessageSeq + 1, parts: input.parts },
+      turn: { ...turn!, chatId, baseMessageSeq, clientRequestId: input.clientRequestId },
+      run: { ...run!, chatId, historyBoundarySeq: baseMessageSeq, executionRoot: effectiveRoot,
+        executionRootFingerprint: effectiveRoot ? run!.executionRootFingerprint : undefined },
+    }));
+    const transport = { get: async () => persisted, patch, post, delete: vi.fn() };
+    const { updateProject, getDetail, admitTurn } = createCanonicalChatClient(
+      transport as Pick<ApiClient, "get" | "post" | "patch" | "delete">,
+      { trackEvent: vi.fn() },
+    );
+    const client = { ...fixture.client, updateProject, getDetail, admitTurn };
+    const open = (scope: string | null) => renderHook(() => useCanonicalChatRouteController({
+      client, projectId: scope, active: true, initialChatId: chatId,
+    }));
+    const original = open(originalProjectId ?? null);
+    await waitFor(() => expect(original.result.current.detail?.runs[0]?.executionRoot).toEqual(worktree));
+    await act(async () => { expect(await original.result.current.moveProject(projectId)).toEqual(movedRecord); });
+    expect(patch).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining(`/api/chats/${chatId}/project?`), { baseRevision, projectId },
+    );
+    original.unmount();
+
+    const moved = open(projectId);
+    await waitFor(() => expect(moved.result.current.detail?.record).toEqual(movedRecord));
+    expect(moved.result.current.detail?.runs[0]?.executionRoot).toEqual(worktree);
+    const parts = [{ type: "text" as const, text: "Reply in the new scope." }];
+    await act(async () => {
+      const receipt = await moved.result.current.submitTurn({ parts,
+        selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
+        interactionMode: "default", permissionMode: "supervised" }, "Follow-up");
+      expect(receipt).toMatchObject({ admission: "accepted", message: { id: message!.id, parts },
+        turn: { id: turn!.id }, run: { id: run!.id } });
+      expect(receipt?.run.executionRoot).toEqual(effectiveRoot);
+    });
+    expect(post).toHaveBeenCalledExactlyOnceWith(
+      expect.stringContaining(`/api/chats/${chatId}/turns?`),
+      expect.objectContaining({ baseRevision: baseRevision + 1, parts }),
+      expect.anything(),
+    );
+    // Omitting the historical root selects the current project or owner home at the gateway.
+    expect(post.mock.calls[0]![1]).not.toHaveProperty("executionRoot");
   });
 
   it("does not resurrect an earlier worktree after a deliberate project-root run", async () => {

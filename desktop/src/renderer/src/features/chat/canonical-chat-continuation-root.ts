@@ -10,8 +10,14 @@ export function withChatContinuationRoot<T extends Pick<CanonicalCreateChatTurnR
   if (selectedChatId === null) return input;
   if (!detail || detail.record.chat.id !== selectedChatId) throw new AppError("server");
   const { record } = detail;
-  // Explicit selections and shared/Bot execution keep their existing admission rules.
-  if (input.executionRoot || record.chat.ownerScope.type !== "personal" || record.chat.collaboration?.mode === "shared") return input;
+  // Shared and Bot Chats keep their existing admission rules.
+  if (record.chat.ownerScope.type !== "personal" || record.chat.collaboration?.mode === "shared") return input;
+  if (input.executionRoot) {
+    if (input.executionRoot.kind === "worktree" && input.executionRoot.projectId !== record.projectId) {
+      throw new AppError("server");
+    }
+    return input;
+  }
   const active = record.activeRun;
   const run = active ? detail.runs.find(candidate => candidate.id === active.runId) : detail.runs.at(-1);
   if ((active && (!run || run.turnId !== active.turnId)) || (run && run.chatId !== selectedChatId)) {
@@ -19,8 +25,12 @@ export function withChatContinuationRoot<T extends Pick<CanonicalCreateChatTurnR
   }
   const root = run?.executionRoot;
   if (root?.kind !== "worktree") return input;
-  // A project move must not silently execute at the project root or an old worktree.
-  if (root.projectId !== record.projectId) throw new AppError("server");
+  if (root.projectId !== record.projectId) {
+    if (active) throw new AppError("server");
+    // An idle Chat can retain run history after a project move. Let the
+    // gateway resolve an ordinary reply from the Chat's current assignment.
+    return input;
+  }
   // The gateway revalidates current ownership, existence and worktree availability.
   return { ...input, executionRoot: root };
 }

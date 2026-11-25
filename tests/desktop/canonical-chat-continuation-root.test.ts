@@ -41,6 +41,18 @@ describe("canonical Chat continuation scope", () => {
     expect(() => withChatContinuationRoot(input, detail, detail.record.chat.id)).toThrow(AppError);
   });
 
+  it.each(["project_new", undefined])("refuses an explicit stale worktree after a change to %s", projectId => {
+    const detail = context();
+    detail.record.projectId = projectId;
+    expect(() => withChatContinuationRoot({ ...input, executionRoot: worktree }, detail, detail.record.chat.id)).toThrow(AppError);
+  });
+
+  it("preserves an explicit worktree that still belongs to the Chat's project", () => {
+    const detail = context();
+    const explicit = { ...input, executionRoot: worktree };
+    expect(withChatContinuationRoot(explicit, detail, detail.record.chat.id)).toBe(explicit);
+  });
+
   it("rejects missing or different selected-Chat detail, including explicit roots", () => {
     const detail = context();
     expect(() => withChatContinuationRoot(input, null, detail.record.chat.id)).toThrow(AppError);
