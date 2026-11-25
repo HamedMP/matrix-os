@@ -102,10 +102,8 @@ shell/playwright-report/
 .zencoder/
 .agents/skills/
 .claude/skills/*
-# Repo-shared agent skills are explicitly re-included (preview environments,
-# funded AI ledger verification)
+# Repo-shared agent skills are explicitly re-included (preview environments)
 !.claude/skills/preview-env/
-!.claude/skills/verify-funded-ai-ledger/
 /skills/
 skills-lock.json
 # Symphony worker skills must be present in unattended repo clones
@@ -150,6 +148,10 @@ skills-lock.json
 !.agents/skills/product-demo-video/
 !.agents/skills/product-demo-video/**
 !.claude/skills/product-demo-video
+# Funded AI ledger verification: a TLA+ model check, linked for Claude Code
+!.agents/skills/verify-funded-ai-ledger/
+!.agents/skills/verify-funded-ai-ledger/**
+!.claude/skills/verify-funded-ai-ledger
 # Skills shipped in the matrix-dev plugin: symlinks to the canonical .agents/skills copies
 !.claude/skills/daily-update
 !.claude/skills/monitor-stack-reviews

@@ -37,10 +37,13 @@ command -v java >/dev/null || { echo "Java 11 or newer is required to run TLC (a
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/matrix-os-tla"
 tlc="$cache/tla2tools-1.7.4.jar"
 tlc_sha=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
-if ! echo "$tlc_sha  $tlc" | sha256sum -c --status 2>/dev/null; then
+if command -v sha256sum >/dev/null; then sha256() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null; then sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else echo "sha256sum or shasum is required to check the TLC download"; exit 2; fi
+if [ ! -f "$tlc" ] || [ "$(sha256 "$tlc")" != "$tlc_sha" ]; then
   mkdir -p "$cache"
   curl -fsSL --max-time 120 -o "$tlc" https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
-  echo "$tlc_sha  $tlc" | sha256sum -c --status || { echo "TLC download does not match its pinned checksum"; exit 2; }
+  [ "$(sha256 "$tlc")" = "$tlc_sha" ] || { echo "TLC download does not match its pinned checksum"; exit 2; }
 fi
 
 out="$(mktemp -d)"

@@ -12,12 +12,12 @@ Sync commit: `5330dda1a707e951a18d21019f1229c943437579` (the model describes the
 ## Run it
 
 ```bash
-.claude/skills/verify-funded-ai-ledger/check.sh            # the rules, about 1 minute
-.claude/skills/verify-funded-ai-ledger/check.sh --mutants  # plus: prove each rule can still fail, about 3 more minutes
-.claude/skills/verify-funded-ai-ledger/check.sh --drift    # only: which covered files changed since the sync commit
+.agents/skills/verify-funded-ai-ledger/check.sh            # the rules, about 1 minute
+.agents/skills/verify-funded-ai-ledger/check.sh --mutants  # plus: prove each rule can still fail, about 3 more minutes
+.agents/skills/verify-funded-ai-ledger/check.sh --drift    # only: which covered files changed since the sync commit
 ```
 
-It needs Java 11 or newer and `python3`. The first run downloads TLC 1.7.4 and checks it against a pinned SHA-256.
+It needs Java 11 or newer, `python3`, `curl`, and `sha256sum` or `shasum` (Linux and macOS both work). The first run downloads TLC 1.7.4 and checks it against a pinned SHA-256.
 
 Each line of output is one of:
 
