@@ -4,6 +4,7 @@ import type { CanonicalChatMessage } from "@matrix-os/contracts";
 import { createChatMacTerminalService } from "@desktop/main/chat-mac-terminal/service";
 import { MAC_VERIFICATION_SOURCE_BY_RECIPE, type MacVerificationTerminalIntent } from "@matrix-os/contracts/mac-verification-terminal";
 import {
+  ChatElectronPreviewTransportInterruptedError,
   createChatElectronPreviewTransport,
   MacTerminalDeliveryRejectedError,
 } from "@desktop/main/chat-electron-preview/transport";
@@ -196,25 +197,16 @@ describe("authenticated Chat Electron preview transport", () => {
     expect(body.parts).toHaveLength(1);
   });
 
-  it("selects the Files verifier from authenticated worktree bytes without a typed terminal request", async () => {
-    const mock = mockTransport();
-    const path = MAC_VERIFICATION_SOURCE_BY_RECIPE["files-trash"];
-    const base = 'const item = { label: "Move to Trash", onSelect };\n';
-    const updated = base.replace("Move to Trash", "Send to Trash");
-    mock.setSource(updated, base, path);
-    mock.setGit(originHead, ` M ${path}\0`);
-    expect(await mock.service.read(verificationTarget)).toMatchObject({
-      recipe: "files-trash", label: "Send to Trash", sourceSha256: sha256(updated),
-    });
-  });
-
-  it("runs a terminal Files intent only for the exact source, and rejects a changed intent before returning evidence", async () => {
+  it("verifies authenticated Files source with or without a Terminal intent", async () => {
     const mock = mockTransport();
     const filesPath = MAC_VERIFICATION_SOURCE_BY_RECIPE["files-trash"];
     const base = 'const item = { label: "Move to Trash", onSelect };\n';
     const updated = base.replace("Move to Trash", "Send to Trash");
     mock.setSource(updated, base, filesPath);
     mock.setGit(originHead, ` M ${filesPath}\0`);
+    expect(await mock.service.read(verificationTarget)).toMatchObject({
+      recipe: "files-trash", label: "Send to Trash", sourceSha256: sha256(updated),
+    });
     const intent = { version: 1, chatId, runId, projectId, worktreeId, recipe: "files-trash",
       baseSha, sourceSha256: sha256(updated) } as const;
     mock.setTerminalIntent(intent);
@@ -222,6 +214,8 @@ describe("authenticated Chat Electron preview transport", () => {
     expect(terminalIntentDigest).toBe(sha256(JSON.stringify(intent)));
     const request = await mock.service.read({ ...verificationTarget, terminalIntentDigest: terminalIntentDigest! });
     expect(request).toMatchObject({ recipe: "files-trash", label: "Send to Trash", worktreeId, terminalIntentDigest });
+    mock.fetchFn.mockImplementationOnce(mock.fetchFn.getMockImplementation()!).mockResolvedValueOnce(new Response(null, { status: 502 }));
+    await expect(mock.service.returnResult(request!, { png, testSummary: "Files checks passed" })).rejects.toBeInstanceOf(ChatElectronPreviewTransportInterruptedError);
     mock.setTerminalIntent({ ...intent, sourceSha256: sha256(base) });
     await expect(mock.service.read({ ...verificationTarget, terminalIntentDigest: terminalIntentDigest! })).resolves.toBeNull();
     await expect(mock.service.returnResult(request!, { png, testSummary: "Files checks passed" })).rejects.toThrow("source changed");
