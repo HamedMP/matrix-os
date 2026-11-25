@@ -572,6 +572,75 @@ describe("Slack Dev read-only callbacks", () => {
   const installation = { appId: "A123", teamId: "T123", botUserId: "UBOT",
     botToken: "xoxb-slack-fixture", slackUserId: "U123" };
 
+  it("returns a browser callback to the pinned Dev page and completes by Clerk-authenticated POST", async () => {
+    const taggedOrigin = 'https://slack-dev-a1234567---matrix-platform-preview-fixture-ey.a.run.app';
+    const browser = 'https://app.matrix-os.com';
+    app = makeApp({ config: { ...config, publicBaseUrl: taggedOrigin }, readOnlyDev: dev, devBrowserOAuth: true,
+      resolveActor: async c => c.req.header('authorization') === 'Bearer clerk-current' ? actor : null });
+    const headers = { origin: browser, authorization: 'Bearer clerk-current', 'content-type': 'application/json' };
+    const request = (path: string, body: object, overrides: Record<string, string> = {}) =>
+      app.request(taggedOrigin + path, { method: 'POST', headers: { ...headers, ...overrides }, body: JSON.stringify(body) });
+    const allowed = await app.request(taggedOrigin + '/api/slack/install', { method: 'OPTIONS', headers: {
+      origin: browser, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type',
+    } });
+    expect(allowed.status).toBe(204);
+    expect(allowed.headers.get('access-control-allow-origin')).toBe(browser);
+    expect(allowed.headers.get('access-control-allow-credentials')).toBeNull();
+    for (const [path, denied] of [
+      ['/api/slack/install', { origin: 'https://other.example' }],
+      ['/api/slack/install', { 'access-control-request-headers': 'authorization,x-unknown' }],
+      ['/api/slack/oauth/callback', {}],
+    ] as const) {
+      const response = await app.request(taggedOrigin + path, { method: 'OPTIONS', headers: {
+        origin: browser, 'access-control-request-method': 'POST',
+        'access-control-request-headers': 'authorization,content-type', ...denied,
+      } });
+      expect(response.headers.get('access-control-allow-origin')).toBeNull();
+    }
+    expect((await request('/api/slack/install', { organizationId: org }, { cookie: '__session=nope' })).status).toBe(403);
+    expect((await request('/api/slack/install', { organizationId: org }, { authorization: '' })).status).toBe(403);
+    const start = await request('/api/slack/install', { organizationId: org });
+    expect(start.status).toBe(200);
+    const provider = new URL((await start.json()).url);
+    const providerCallback = provider.searchParams.get('redirect_uri');
+    expect(providerCallback).toBe(taggedOrigin + '/api/slack/oauth/callback');
+    expect(provider.searchParams.get('scope')).toBe('channels:history,channels:read');
+    const query = { state: provider.searchParams.get('state')!, code: 'opaque.code' };
+    const callback = await app.request(providerCallback + '?' + new URLSearchParams(query), { headers: { accept: 'text/html' } });
+    const handoff = new URL(callback.headers.get('location')!);
+    expect(callback.status).toBe(303);
+    expect(handoff.origin).toBe(browser);
+    expect(handoff.pathname).toBe('/vm/owner-dev/slack/oauth/complete');
+    expect(handoff.search).toBe('');
+    expect(Object.fromEntries(new URLSearchParams(handoff.hash.slice(1)))).toEqual(query);
+    expect(callback.headers.get('cache-control')).toBe('no-store');
+    expect(callback.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(api.exchangeCode).not.toHaveBeenCalled();
+    actor = 'user_other';
+    expect((await request('/api/slack/oauth/complete', query)).status).toBe(403);
+    actor = dev.ownerId;
+    expect((await request('/api/slack/oauth/complete', query, { origin: 'https://other.example' })).status).toBe(403);
+    expect((await request('/api/slack/oauth/complete', query, { cookie: '__session=nope' })).status).toBe(403);
+    expect(api.exchangeCode).not.toHaveBeenCalled();
+    api.exchangeCode.mockResolvedValueOnce(installation);
+    const result = await request('/api/slack/oauth/complete', query);
+    expect(result.status).toBe(200);
+    expect(result.headers.get('access-control-allow-origin')).toBe(browser);
+    expect(result.headers.get('referrer-policy')).toBe('no-referrer');
+    expect((await result.json()).connected).toBe(true);
+    expect(api.exchangeCode).toHaveBeenCalledExactlyOnceWith({ code: query.code, redirectUri: providerCallback });
+    expect((await request('/api/slack/oauth/complete', query)).status).toBe(409);
+  });
+
+  it("does not add the browser POST or CORS to an ordinary Slack installation", async () => {
+    app = makeApp({ devBrowserOAuth: true });
+    const options = await app.request('/api/slack/oauth/complete', { method: 'OPTIONS', headers: {
+      origin: config.publicBaseUrl, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type',
+    } });
+    expect(options.headers.get('access-control-allow-origin')).toBeNull();
+    expect((await mutation('/api/slack/oauth/complete')).status).toBe(404);
+  });
+
   it("binds OAuth to the pinned Matrix owner, team and Slack installer without sending a DM", async () => {
     app = makeApp({ readOnlyDev: dev });
     actor = "user_other";

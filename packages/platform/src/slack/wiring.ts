@@ -21,7 +21,7 @@ export function loadSlackAppConfig(env: Record<string, string | undefined>): Sla
 }
 
 /** The caller owns the shared database. close() drains this component only, never destroys the pool. */
-export async function createSlackApp(options: SlackAuthorityDependencies & SlackThreadContextOptions & Pick<SlackAppRouteOptions, "readOnlyDev"> & {
+export async function createSlackApp(options: SlackAuthorityDependencies & SlackThreadContextOptions & Pick<SlackAppRouteOptions, "readOnlyDev" | "devBrowserOAuth"> & {
   db: Kysely<SlackDatabase>; config: SlackAppConfig; api?: SlackApi; fetchImpl?: typeof fetch; now?: () => Date; startCleanup?: boolean; linkTransaction?: SlackLinkTransaction;
 }) {
   await bootstrapSlackDatabase(options.db);

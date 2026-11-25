@@ -2,7 +2,8 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { SLACK_OAUTH_COMPLETION_PATH, SlackOAuthCallbackQuerySchema } from '@matrix-os/contracts/slack-bridge';
+import { SLACK_DEV_OAUTH_BROWSER_ORIGIN, SLACK_DEV_OAUTH_FINISH_PATH, SLACK_OAUTH_COMPLETION_PATH,
+  SlackOAuthCallbackQuerySchema, slackDevOAuthCompletionPath } from '@matrix-os/contracts/slack-bridge';
 import { createSlackContextRoutes } from "./context-routes.js";
 import { createSlackThreadContext, type SlackThreadContextOptions } from "./thread-context.js";
 import { createSlackLinkPage } from "./link-page.js";
@@ -26,6 +27,7 @@ const digest = (text: string) => createHash("sha256").update(text).digest("hex")
 
 export type SlackAppRouteOptions = SlackAuthorityDependencies & SlackThreadContextOptions & {
   config: SlackAppConfig; repository: SlackRepository; api: SlackApi; now?: () => Date; readOnlyDev?: SlackDevAcceptance;
+  devBrowserOAuth?: boolean;
 };
 
 export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { shutdownSlack(): Promise<void> } {
@@ -36,6 +38,8 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
   const publicUrl = new URL(options.config.publicBaseUrl);
   if (publicUrl.protocol !== "https:" || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash || publicUrl.pathname !== "/") throw new Error("Slack public origin unavailable");
   const callbackUrl = `${publicUrl.origin}/api/slack/oauth/callback`;
+  const browserReturn = dev && options.devBrowserOAuth
+    ? SLACK_DEV_OAUTH_BROWSER_ORIGIN + slackDevOAuthCompletionPath(dev.handle) : undefined;
   const activeEvents = new Set<Promise<Response>>();
   let closed = false;
   const limit = bodyLimit({ maxSize: 256 * 1024, onError: (c) => fail(c, "Request too large", 413) });
@@ -43,12 +47,36 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     console.warn("[slack] request failed", error.name);
     return fail(c, "Slack unavailable", 503);
   });
+  if (browserReturn) {
+    app.on("OPTIONS", ["/api/slack/install", SLACK_DEV_OAUTH_FINISH_PATH], c => {
+      const headers = c.req.header("access-control-request-headers")?.toLowerCase().split(",").map(name => name.trim());
+      if (c.req.header("origin") !== SLACK_DEV_OAUTH_BROWSER_ORIGIN || c.req.header("cookie")
+        || c.req.header("access-control-request-method") !== "POST" || new URL(c.req.url).search
+        || !headers || headers.length !== 2 || !headers.includes("authorization") || !headers.includes("content-type")) {
+        return fail(c, "Forbidden", 403);
+      }
+      devBrowserHeaders(c);
+      c.header("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
+      c.header("Access-Control-Allow-Methods", "POST");
+      c.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
+      return c.body(null, 204);
+    });
+  }
   app.use("/api/slack/*", async (c, next) => {
     if (["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method)) {
       const origin = c.req.header("origin");
-      const bearer = /^Bearer [A-Za-z0-9._~-]{1,4096}$/i.test(c.req.header("authorization") ?? "");
+      const bearer = hasCookieLessBearer(c);
+      if (browserReturn && c.req.method === "POST"
+        && (c.req.path === "/api/slack/install" || c.req.path === SLACK_DEV_OAUTH_FINISH_PATH)
+        && origin === SLACK_DEV_OAUTH_BROWSER_ORIGIN) {
+        devBrowserHeaders(c);
+        if (!bearer || !/^application\/json(?:;\s*charset=utf-8)?$/i.test(c.req.header("content-type") ?? "")
+          || new URL(c.req.url).search) return fail(c, "Forbidden", 403);
+        await next();
+        return;
+      }
       // Cookie-bearing requests never inherit a Bearer bypass; the auth resolver must authenticate the Bearer for native callers.
-      if (origin !== publicUrl.origin && !(origin === undefined && bearer && !c.req.header("cookie"))) return fail(c, "Forbidden", 403);
+      if (origin !== publicUrl.origin && !(origin === undefined && bearer)) return fail(c, "Forbidden", 403);
     }
     await next();
   });
@@ -75,22 +103,38 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
 
   app.get("/api/slack/oauth/callback", limit, async (c) => {
     c.header('Cache-Control', 'no-store'); c.header('Referrer-Policy', 'no-referrer');
-    const actorId = await actor(c);
+    const actorId = browserReturn && !hasCookieLessBearer(c) ? null : await actor(c);
     if (!actorId) {
       const query = CallbackQuerySchema.safeParse(c.req.query());
-      if (query.success && c.req.header('accept')?.includes('text/html') && !c.req.header('authorization')) {
+      if (c.req.header('accept')?.includes('text/html') && !c.req.header('authorization')) {
+        if (browserReturn && c.req.query("error") === "access_denied") return c.redirect(browserReturn + "#error=access_denied", 303);
         // The browser refreshes its own Clerk session. State never supplies identity.
-        return c.redirect(SLACK_OAUTH_COMPLETION_PATH + '?' + new URLSearchParams(query.data).toString(), 303);
+        if (query.success) return c.redirect((browserReturn ? browserReturn + "#" : SLACK_OAUTH_COMPLETION_PATH + "?")
+          + new URLSearchParams(query.data).toString(), 303);
       }
       return fail(c, "Unauthorized", 401);
     }
-    const parsed = CallbackQuerySchema.safeParse(c.req.query()); if (!parsed.success) return fail(c, "Invalid request", 422);
-    const hash = digest(parsed.data.state);
+    const parsed = CallbackQuerySchema.safeParse(c.req.query());
+    if (!parsed.success) return fail(c, "Invalid request", 422);
+    return finishInstallation(c, actorId, parsed.data);
+  });
+
+  if (browserReturn) {
+    app.post(SLACK_DEV_OAUTH_FINISH_PATH, bodyLimit({ maxSize: 8 * 1024, onError: c => fail(c, "Request too large", 413) }), async c => {
+      if (c.req.header("origin") !== SLACK_DEV_OAUTH_BROWSER_ORIGIN || !hasCookieLessBearer(c)) return fail(c, "Forbidden", 403);
+      const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
+      const query = await parse(c, CallbackQuerySchema); if (!query) return fail(c, "Invalid request", 422);
+      return finishInstallation(c, actorId, query);
+    });
+  }
+
+  async function finishInstallation(c: Context, actorId: string, query: z.infer<typeof CallbackQuerySchema>) {
+    const hash = digest(query.state);
     const state = await options.repository.getOAuthState(hash);
     if (!state) return fail(c, "Request expired", 409);
     if (state.appId !== options.config.appId || state.actorId !== actorId || !isDevInstaller(actorId, state.organizationId) || !await options.requireOrgAdmin({ actorId, organizationId: state.organizationId })) return fail(c, "Forbidden", 403);
     try { await options.repository.consumeOAuthState(hash, actorId); } catch (error: unknown) { return repositoryFailure(c, error); }
-    const installed = await options.api.exchangeCode({ code: parsed.data.code, redirectUri: callbackUrl });
+    const installed = await options.api.exchangeCode({ code: query.code, redirectUri: callbackUrl });
     if (installed.appId !== options.config.appId || (dev && (installed.teamId !== dev.teamId || installed.slackUserId !== dev.ownerSlackId))) {
       return fail(c, "Forbidden", 403);
     }
@@ -102,7 +146,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
       dev ? { oauthStateHash: hash, ownerSlackUserId: dev.ownerSlackId } : { oauthStateHash: hash });
       return c.json({ connected: true, teamId: installed.teamId, ...(ownerBinding ? { ownerBinding } : {}) });
     } catch (error: unknown) { return repositoryFailure(c, error); }
-  });
+  }
 
   app.post("/api/slack/link/complete", limit, async (c) => {
     if (dev) return fail(c, "Forbidden", 403);
@@ -285,3 +329,14 @@ function repositoryFailure(c: Context, error: unknown) {
   console.warn("[slack] database request failed", error instanceof Error ? error.name : "UnknownError"); return fail(c, "Slack unavailable", 503);
 }
 function fail(c: Context, error: string, status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503) { c.header("Cache-Control", "no-store"); return c.json({ error }, status); }
+
+function hasCookieLessBearer(c: Context): boolean {
+  return !c.req.header("cookie") && /^Bearer [A-Za-z0-9._~-]{1,4096}$/i.test(c.req.header("authorization") ?? "");
+}
+
+function devBrowserHeaders(c: Context): void {
+  c.header("Access-Control-Allow-Origin", SLACK_DEV_OAUTH_BROWSER_ORIGIN);
+  c.header("Vary", "Origin");
+  c.header("Cache-Control", "no-store");
+  c.header("Referrer-Policy", "no-referrer");
+}

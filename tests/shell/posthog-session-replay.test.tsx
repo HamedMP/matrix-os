@@ -146,6 +146,22 @@ describe("shell session replay init", () => {
     const layout = readFileSync(join(process.cwd(), "shell/src/app/layout.tsx"), "utf8");
     expect(layout).toMatch(/data-posthog-disable-replay=\{process\.env\.POSTHOG_DISABLE_REPLAY/);
   });
+
+  it("does not initialize replay or queue identity on the exact Dev Slack OAuth page", async () => {
+    posthogMock.identify.mockClear();
+    const { identifyPostHogUser, initializeShellPostHog } = await importShellPostHog();
+    vi.stubGlobal("window", {
+      location: new URL("https://app.matrix-os.com/vm/fixture-dev/slack/oauth/complete#state=synthetic&code=synthetic"),
+    });
+    try {
+      initializeShellPostHog(TEST_CONFIG);
+      identifyPostHogUser("user_fixture", {}, TEST_CONFIG);
+      expect(posthogMock.init).not.toHaveBeenCalled();
+      expect(posthogMock.identify).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 class ResizeObserverMock {

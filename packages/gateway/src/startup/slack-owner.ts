@@ -1,10 +1,12 @@
 import { createSlackSummarySubmitter, type SlackMentionSummaries } from "../slack/mention-summary.js";
 import {Hono} from "hono";
+import { SLACK_DEV_OAUTH_CONFIG_PATH, SlackDevOAuthBrowserConfigSchema } from "@matrix-os/contracts/slack-bridge";
 import type {SlackBridgeEnvelope,SlackPublicationIdentity} from "@matrix-os/contracts/slack-bridge";
 import type {CollaborationAuthority} from "../collaboration/authority.js";
 import {createSlackBridgeRoutes} from "./slack-bridge.js";
 import type { SlackDevTarget } from "./slack-platform.js";
 import type { PrivateSlackThreadContext } from "../slack/private-thread-context.js";
+import { getOptionalRequestPrincipal, hasVerifiedRuntimeBearer } from "../request-principal.js";
 
 interface SlackInboxTransport {
   receive(envelope:SlackBridgeEnvelope):Promise<unknown>;
@@ -77,6 +79,23 @@ export async function startOwnerSlack(options:{app:Hono;ownerId?:string;token?:s
   let personal:SlackPersonalService|undefined;
   let company:Awaited<ReturnType<typeof startSlackCompany>>|undefined;
   const ownerId=options.ownerId??"";
+  const dev = options.devTarget;
+  const browser = SlackDevOAuthBrowserConfigSchema.safeParse({
+    handle: dev?.handle, machineId: dev?.machineId, organizationId: dev?.organizationId,
+    platformOrigin: options.platformUrl?.replace(/\/$/, ""),
+  });
+  if (browser.success && dev?.ownerId === ownerId && browser.data.handle === options.handle) {
+    options.app.get(SLACK_DEV_OAUTH_CONFIG_PATH, c => {
+      c.header("Cache-Control", "no-store");
+      if (new URL(c.req.url).search) return c.notFound();
+      if (!hasVerifiedRuntimeBearer(c)) return c.json({ error: "Forbidden" }, 403);
+      const principal = getOptionalRequestPrincipal(c);
+      if (principal?.source !== "platform-verified" || principal.userId !== ownerId) {
+        return c.json({ error: "Forbidden" }, 403);
+      }
+      return c.json(browser.data);
+    });
+  }
   const authority=options.collaboration?.authority??{async authorize(){throw new Error("SlackAuthorityUnavailable");}};
   if(/^user_[A-Za-z0-9_-]+$/.test(ownerId) && options.token && options.platformUrl && options.handle
     && options.repository && options.orchestrator && options.executionRoots && options.bots) {

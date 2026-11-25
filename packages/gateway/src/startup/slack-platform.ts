@@ -1,11 +1,12 @@
-import { SlackThreadContextEnvelopeSchema } from "@matrix-os/contracts/slack-bridge";
+import { SlackDevHandleSchema, SlackDevOAuthBrowserConfigSchema, SlackThreadContextEnvelopeSchema } from "@matrix-os/contracts/slack-bridge";
 import { z } from "zod/v4";
 
 const { ownerId, botId, chatId, event } = SlackThreadContextEnvelopeSchema.shape;
 const SlackDevTargetSchema = z.object({
   ownerId, botId, chatId,
   machineId: z.uuid(),
-  handle: z.string().regex(/^[a-z0-9][a-z0-9-]{0,58}-dev$/),
+  handle: SlackDevHandleSchema,
+  organizationId: SlackDevOAuthBrowserConfigSchema.shape.organizationId.optional(),
   appId: event.shape.appId,
   teamId: event.shape.teamId,
   channelId: event.shape.channelId,
@@ -31,7 +32,10 @@ function resolveDevSlackPlatform(env: NodeJS.ProcessEnv, configured: string): Sl
   const target = SlackDevTargetSchema.safeParse(value);
   if (!target.success) return;
   const devTarget = target.data;
-  if (devTarget.ownerId !== env.MATRIX_USER_ID?.trim() || devTarget.handle !== env.MATRIX_HANDLE
+  const ownerId = env.MATRIX_USER_ID?.trim() || undefined;
+  const clerkOwnerId = env.MATRIX_CLERK_USER_ID?.trim() || undefined;
+  if (ownerId && clerkOwnerId && ownerId !== clerkOwnerId) return;
+  if (devTarget.ownerId !== (ownerId ?? clerkOwnerId) || devTarget.handle !== env.MATRIX_HANDLE
     || devTarget.machineId !== env.MATRIX_MACHINE_ID) return;
 
   const { MATRIX_SLACK_PLATFORM_URL: platformUrl, MATRIX_SLACK_PLATFORM_TOKEN: token } = env;

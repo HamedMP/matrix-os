@@ -5,6 +5,7 @@ import { resolveSlackPlatform } from "../../packages/gateway/src/startup/slack-p
 import { createSlackOwnerClient } from "../../packages/gateway/src/startup/slack-owner-client.js";
 import { startOwnerSlack } from "../../packages/gateway/src/startup/slack-owner.js";
 import { signSlackBridgeRequest, signSlackContextSource } from "../../packages/contracts/src/slack-bridge.js";
+import { markAuthContextReady, markVerifiedRuntimeBearer, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 const core = { PLATFORM_INTERNAL_URL: "https://core.example.test", UPGRADE_TOKEN: "c".repeat(64),
   MATRIX_HANDLE: "pr-3482", MATRIX_RUNTIME_SLOT: "pr-3482", MATRIX_MACHINE_ID: "11111111-2222-4333-8444-555555555555", MATRIX_PREVIEW_RUNTIME: "true" };
 const preview = { ...core, MATRIX_SLACK_PLATFORM_URL: "https://pr-3482---matrix-platform-preview-fixture-ey.a.run.app",
@@ -69,12 +70,49 @@ const dev = {
   MATRIX_SLACK_DEV_TARGET: JSON.stringify(devTarget), MATRIX_SLACK_PLATFORM_TOKEN: "d".repeat(64),
   MATRIX_SLACK_PLATFORM_URL: "https://slack-dev-11111111---matrix-platform-preview-fixture-ey.a.run.app",
 };
+it("discovers only the pinned Dev callback for the verified owner", async () => {
+  const expected = { ...devTarget, organizationId: "org_fixture" };
+  const selected = resolveSlackPlatform({ ...dev, MATRIX_SLACK_DEV_TARGET: JSON.stringify(expected) });
+  const app = new Hono();
+  let verifiedActor: string | undefined;
+  app.use("*", async (c, next) => {
+    markAuthContextReady(c);
+    if (verifiedActor) {
+      markVerifiedRuntimeBearer(c);
+      setPlatformVerifiedPrincipal(c, verifiedActor);
+    }
+    await next();
+  });
+  const runtime = await startOwnerSlack({ app, ...selected.connection, ownerId: devTarget.ownerId,
+    repository: null, orchestrator: null, executionRoots: null, collaboration: null, bots: undefined });
+  try {
+    const path = "/api/slack/dev-oauth/config";
+    expect((await app.request(path, { headers: { "x-platform-user-id": devTarget.ownerId } })).status).toBe(403);
+    verifiedActor = "user_other";
+    expect((await app.request(path)).status).toBe(403);
+    verifiedActor = devTarget.ownerId;
+    const response = await app.request(path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      handle: expected.handle, machineId: expected.machineId, organizationId: expected.organizationId,
+      platformOrigin: dev.MATRIX_SLACK_PLATFORM_URL,
+    });
+    expect((await app.request(path + "?url=https://other.example")).status).toBe(404);
+  } finally { await runtime.close(); }
+});
 it("selects the dedicated Slack transport only for the exact opted-in Dev computer", () => {
   const selected = resolveSlackPlatform(dev);
   expect(selected.connection).toEqual({
     devTarget, platformUrl: dev.MATRIX_SLACK_PLATFORM_URL, token: dev.MATRIX_SLACK_PLATFORM_TOKEN, handle: devTarget.handle,
   });
   expect(selected.botConnection).toMatchObject({ ...selected.connection, machineId: devTarget.machineId, runtimeSlot: "dev" });
+});
+it("accepts the provisioned Clerk owner and fails closed on contradictory owner IDs", () => {
+  const expected = resolveSlackPlatform(dev);
+  expect(resolveSlackPlatform({ ...dev, MATRIX_USER_ID: undefined, MATRIX_CLERK_USER_ID: devTarget.ownerId })).toEqual(expected);
+  expect(resolveSlackPlatform({ ...dev, MATRIX_CLERK_USER_ID: devTarget.ownerId })).toEqual(expected);
+  expect(resolveSlackPlatform({ ...dev, MATRIX_CLERK_USER_ID: "user_other" })).toEqual({ connection: undefined, botConnection: null });
 });
 it.each([
   { MATRIX_SLACK_DEV_TARGET: "" }, { MATRIX_SLACK_DEV_TARGET: "bad json" },

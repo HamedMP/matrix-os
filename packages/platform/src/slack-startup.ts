@@ -87,6 +87,7 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
     linkTransaction: (actorId, work) => withAccountDeletionAdmission(options.db, actorId,
       trx => work(trx.executor as unknown as Kysely<SlackDatabase>), options.env),
     contextGrant, mentionSummaryRule, readOnlyDev: dev,
+    devBrowserOAuth: options.env.SLACK_DEV_CALLBACK_ONLY === "true" && options.env.SLACK_DEV_BROWSER_OAUTH === "true",
     dispatchContext: async (envelope, signal) => {
       const home = await homeFor(envelope.ownerId);
       if (home.ownerId !== envelope.ownerId || home.runtimeId !== envelope.runtimeId) throw new Error("Slack destination changed");

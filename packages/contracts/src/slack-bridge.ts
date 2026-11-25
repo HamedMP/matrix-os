@@ -3,6 +3,9 @@ import { ChatAgentIdSchema } from "#chat-agent-context";
 import { CanonicalChatIdSchema } from "#canonical-chat";
 
 export const SLACK_OAUTH_COMPLETION_PATH = '/slack/oauth/complete';
+export const SLACK_DEV_OAUTH_BROWSER_ORIGIN = 'https://app.matrix-os.com';
+export const SLACK_DEV_OAUTH_CONFIG_PATH = '/api/slack/dev-oauth/config';
+export const SLACK_DEV_OAUTH_FINISH_PATH = '/api/slack/oauth/complete';
 export const SlackOAuthCallbackQuerySchema = z.object({
   state: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   code: z.string().min(1).max(2_048).regex(/^[A-Za-z0-9._-]+$/),
@@ -11,6 +14,22 @@ export type SlackOAuthCallbackQuery = z.infer<typeof SlackOAuthCallbackQuerySche
 
 const Actor = z.string().regex(/^user_[A-Za-z0-9_-]{1,123}$/);
 const Organization = z.string().regex(/^org_[A-Za-z0-9_-]{1,124}$/);
+export const SlackDevHandleSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,58}-dev$/);
+export const SlackDevOAuthBrowserConfigSchema = z.strictObject({
+  handle: SlackDevHandleSchema,
+  machineId: z.uuid(),
+  organizationId: Organization,
+  platformOrigin: z.string().max(255),
+}).refine(config => {
+  const tag = config.machineId.slice(0, 8).toLowerCase();
+  return new RegExp(`^https://slack-dev-${tag}---matrix-platform-preview-[a-z0-9]+(?:-[a-z0-9]+)*\\.a\\.run\\.app$`).test(config.platformOrigin);
+});
+export type SlackDevOAuthBrowserConfig = z.infer<typeof SlackDevOAuthBrowserConfigSchema>;
+
+export function slackDevOAuthCompletionPath(handle: string): string {
+  return `/vm/${SlackDevHandleSchema.parse(handle)}${SLACK_OAUTH_COMPLETION_PATH}`;
+}
+
 const Timestamp = z.string().regex(/^\d{1,16}\.\d{1,8}$/);
 export const SlackBridgeEnvelopeSchema = z.object({
   ownerId: Actor, organizationId: Organization, actorId: Actor, channelScopeId: z.uuid().optional(),
