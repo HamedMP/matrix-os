@@ -28,9 +28,9 @@ async function mark(extra: Record<string, unknown> = {}) {
     consentId: 'consent_one', profileId: 'managed', profileRevision: 1, purposeId: 'assistant',
     expiresAt: future(), retentionDeadline: future(), ...extra });
 }
-async function admit(repo: ChatRepository, suffix = 'one', subject = owner) {
+async function admit(repo: ChatRepository, suffix = 'one', subject: { type: 'personal' | 'organization'; ownerId: string } = owner, creator = repo) {
   const chatId = `chat_${suffix}`;
-  const created = await repo.create(subject, { id: chatId, clientRequestId: `req_create_${suffix}`, title: 'Synthetic' });
+  const created = await creator.create(subject, { id: chatId, clientRequestId: `req_create_${suffix}`, title: 'Synthetic' });
   const at = new Date().toISOString();
   const message = { id: `msg_user_${suffix}`, chatId, seq: 1, role: 'user' as const, state: 'committed' as const,
     purpose: 'ai_request' as const, turnId: `cturn_${suffix}`, parts: [{ type: 'text' as const, text: 'preserve owner words' }], createdAt: at };
@@ -95,6 +95,24 @@ describe('durable run and queue context snapshot copies', () => {
     if (mode==='expired') await sql`UPDATE google_ordinary_copy_receipts SET expires_at=clock_timestamp()-interval '1 second'`.execute(repository.kysely);
     if (mode==='modified') await sql`UPDATE chat_queued_turns SET context_snapshot=jsonb_set(context_snapshot,'{chats,0,text}','"unproven"')`.execute(repository.kysely);
     await mark(); await expect(enqueue()).rejects.toThrow(); expect(await inspectQueue()).toBeNull();
+  });
+  it('admits turns and queues in untainted unknown, shared and organization chats', async () => {
+    await admit(repository, 'legacy', owner, new ChatRepository(repository.kysely));
+    await admit(repository, 'org', { type: 'organization', ownerId: 'org_one' });
+    await sql`INSERT INTO collaboration_scopes(id,owner_type,owner_id,kind,resource_id,membership_mode,lifecycle,authority_runtime_id)
+      VALUES('10000000-0000-4000-8000-000000000096','personal',${owner.ownerId},'chat',${key.chatId},'direct','shared','runtime_test')`.execute(repository.kysely);
+    await enqueue();
+    expect((await sql`SELECT id FROM chat_runs ORDER BY id`.execute(repository.kysely)).rows.map(row => (row as { id: string }).id))
+      .toEqual(['run_legacy', 'run_one', 'run_org']);
+    expect(await inspectRun('run_legacy')).toBeNull();
+  });
+  it('still refuses turn admission in a Google-tainted unknown chat', async () => {
+    const legacy = new ChatRepository(repository.kysely);
+    await legacy.create(owner, { id: 'chat_legacy', clientRequestId: 'req_create_legacy', title: 'Legacy' });
+    await contexts.mark({ ownerId: owner.ownerId, chatId: 'chat_legacy', googleAccountId: account, consentId: 'consent_one', profileId: 'managed',
+      profileRevision: 1, purposeId: 'assistant', expiresAt: future(), retentionDeadline: future() });
+    await expect(admit(repository, 'legacy', owner, { create: async () => legacy.get(owner, 'chat_legacy').then(chat => chat!) } as never)).rejects.toThrow();
+    expect((await sql`SELECT id FROM chat_runs WHERE chat_id='chat_legacy'`.execute(repository.kysely)).rows).toEqual([]);
   });
   it('never certifies an uninstalled-writer snapshot once its chat is Google-tainted', async () => {
     await enqueue(new ChatRepository(repository.kysely));

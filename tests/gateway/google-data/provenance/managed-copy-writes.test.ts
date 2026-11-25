@@ -206,7 +206,20 @@ describe('atomic Google-derived managed Pi copies', () => {
     await expect(sessions.load(key)).rejects.toThrow();
     await expect(sessions.save(request(1))).rejects.toThrow();
     await new ChatRepository(db).create(owner, { id: 'chat_unknown', clientRequestId: 'req_unknown', title: 'Legacy' });
+    await createManagedPiSessionsRepository(db).save({ ...request(), chatId: 'chat_unknown' });
+    await contexts.mark({ ...key, chatId: 'chat_unknown', googleAccountId: account, consentId: 'consent_one', profileId: 'managed', profileRevision: 1,
+      purposeId: 'assistant', expiresAt: future(), retentionDeadline: future() });
     await expect(sessions.load({ ...key, chatId: 'chat_unknown' })).rejects.toThrow();
+    await expect(sessions.save({ ...request(1), chatId: 'chat_unknown' })).rejects.toThrow();
+  });
+  it('keeps managed sessions working in an untainted pre-deploy (unknown) chat', async () => {
+    await new ChatRepository(db).create(owner, { id: 'chat_legacy', clientRequestId: 'req_legacy', title: 'Legacy' });
+    const legacy = { ...key, chatId: 'chat_legacy' };
+    expect((await sessions.load(legacy)).revision).toBe(0);
+    expect((await sessions.save({ ...request(), chatId: legacy.chatId })).revision).toBe(1);
+    expect((await sessions.load(legacy)).revision).toBe(1);
+    expect(await provenance.inspect(key.ownerId, 'session', managedPiSessionEntityRef(legacy.chatId))).toBeNull();
+    expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(db)).rows).toEqual([]);
   });
   it('leaves ordinary born chats and uninstalled repository behavior unchanged', async () => {
     await sessions.save({ ...request(), messages: [{ role: 'user', content: 'ordinary' }] });

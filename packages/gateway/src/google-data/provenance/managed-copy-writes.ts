@@ -9,6 +9,7 @@ import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runti
 import { originKey, validateOpaque, GoogleProvenanceUnavailable, type GoogleCopy, type GoogleOrigin, type PurgeHandlers } from './contracts.js';
 import { createGoogleProvenanceStore } from './store.js';
 import { boundedProvenanceTransaction } from './transaction.js';
+import { untaintedOutsideGoogleProvenance } from './google-taint.js';
 import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipt, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
 
 const MAX_HASH_BYTES = BOT_SESSION_MAX_BYTES * 2 + 32_768;
@@ -78,6 +79,8 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
     };
     live();
     const result = await boundedProvenanceTransaction<OwnerBotDatabase, T>(executor, async tx => {
+      // An untainted unknown (pre-deploy) chat keeps its pre-pilot session behavior; taint keeps the strict path.
+      if (await untaintedOutsideGoogleProvenance<OwnerBotDatabase>(tx, owner, key.chatId, now, { sharing: false })) return content(tx);
       const history = createGoogleModelHistoryStore<OwnerBotDatabase>(tx, { now });
       const inspect = async () => {
         check(signal);
