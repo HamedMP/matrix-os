@@ -279,6 +279,36 @@ describe("native Chat worktree continuation", () => {
     }
   });
 
+  it("allocates no request ID when a worktree check finishes after leaving the Chat", async () => {
+    const { client, detail, providerCatalog } = worktreeFixture();
+    const project = { id: worktree.projectId, slug: "matrix-os", name: "Matrix OS", kind: "scratch" as const };
+    useBoard.setState({ projects: [project] });
+    let finishInventory!: (value: { worktrees: [] }) => void;
+    const inventory = new Promise<{ worktrees: [] }>(resolve => { finishInventory = resolve; });
+    const get = vi.fn(async (path: string) => {
+      if (path === "/api/projects/matrix-os/worktrees") return inventory;
+      throw new Error("Unexpected fixture request");
+    });
+    const api = { get } as unknown as ApiClient;
+    const workspace = (active: boolean) => <CanonicalChatWorkspace client={client} api={api}
+      projectId={project.id} initialChatId={detail.record.chat.id} initialView="conversation"
+      active={active} catalog={providerCatalog} />;
+    const view = render(workspace(true));
+    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+    await setSharedComposerText(editor, "Keep this draft.");
+    const requestId = vi.spyOn(crypto, "randomUUID");
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(get).toHaveBeenCalledWith("/api/projects/matrix-os/worktrees", expect.anything()));
+      view.rerender(workspace(false));
+      await act(async () => { finishInventory({ worktrees: [] }); });
+      expect(client.admitTurn).not.toHaveBeenCalled();
+      expect(requestId).not.toHaveBeenCalled();
+    } finally {
+      requestId.mockRestore();
+    }
+  });
+
   it("keeps the exact worktree request when the worktree disappears after an unconfirmed send", async () => {
     const fixture = worktreeFixture();
     const project = { id: worktree.projectId, slug: "matrix-os", name: "Matrix OS", kind: "scratch" as const };

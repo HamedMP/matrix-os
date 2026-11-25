@@ -476,7 +476,6 @@ export function useCanonicalChatRouteController({
     input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
     worktree: Extract<CanonicalChatExecutionRootRef, { kind: "worktree" }>,
     revision: number,
-    requestId?: string,
   ) => {
     const current = detailRef.current;
     const chatId = activeChatIdRef.current;
@@ -487,7 +486,7 @@ export function useCanonicalChatRouteController({
     const inherited = withChatContinuationRoot(input, current, chatId);
     const root = inherited.executionRoot;
     return !input.executionRoot && root?.kind === "worktree" && root.projectId === worktree.projectId
-      && root.worktreeId === worktree.worktreeId && !hasUnresolvedTurn(inherited, requestId);
+      && root.worktreeId === worktree.worktreeId && !hasUnresolvedTurn(inherited);
   };
 
   const submitTurn = useCallback(async (

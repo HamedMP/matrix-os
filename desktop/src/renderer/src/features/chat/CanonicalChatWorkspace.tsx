@@ -732,27 +732,26 @@ function CanonicalChatWorkspaceContent({
         ...(executionRoot ? { executionRoot }
           : submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } } : {}),
       };
-      const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
-      const attempt = mentionRequests.resolve(client, requestScope, permissionResources.length ? input : { ...input, draftRevision }, "send");
-      const clientRequestId = attempt?.clientRequestId;
       const chatRevision = controller.detail?.record.chat.revision;
       if (plainReply && !useCheckout && api && chatWorktree && chatRevision !== undefined
-        && controller.canOfferProjectCheckout(input, chatWorktree, chatRevision, clientRequestId)) {
+        && controller.canOfferProjectCheckout(input, chatWorktree, chatRevision)) {
         const slug = projects.find(project => project.id === chatWorktree.projectId)?.slug
           ?? projects.find(project => project.slug === chatWorktree.projectId)?.slug;
         if (slug) {
           const isCurrentWorktree = () => isCurrentSubmission()
-            && controller.canOfferProjectCheckout(input, chatWorktree, chatRevision, clientRequestId);
+            && controller.canOfferProjectCheckout(input, chatWorktree, chatRevision);
           const missing = await isHistoricalWorktreeMissing(api, slug, chatWorktree, isCurrentWorktree);
           if (!isCurrentWorktree()) return;
           if (missing) {
-            if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
             setCheckout({ client, scope: projectCheckoutScope, revision: chatRevision,
               worktreeId: chatWorktree.worktreeId, selected: false });
             return;
           }
         }
       }
+      const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
+      const attempt = mentionRequests.resolve(client, requestScope, permissionResources.length ? input : { ...input, draftRevision }, "send");
+      const clientRequestId = attempt?.clientRequestId;
       if (useCheckout && currentCheckout && !currentCheckout.requestId) {
         setCheckout(current => current === currentCheckout ? { ...current, requestId: clientRequestId } : current);
       } else if (plainReply && currentCheckout && !useCheckout) {
