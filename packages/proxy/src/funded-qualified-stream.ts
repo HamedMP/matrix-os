@@ -25,7 +25,8 @@ export function coalesceQualifiedResponse(source: ReadableStream<Uint8Array>, op
         if (cancelled) return;
         if (!size && !ended && chunks >= 64) throw new Error('Invalid response chunks');
         if (size) controller.enqueue(bytes.subarray(0, size)); else if (ended) controller.close();
-      } catch (error) {
+      } catch (error: unknown) {
+        console.warn('[qualified-relay] Batch stream unavailable', error instanceof Error ? 'Error' : 'UnknownError');
         ended = true; await reader.cancel().catch(cleanup => console.warn('[qualified-relay] Batch cleanup:', cleanup instanceof Error ? cleanup.name : 'UnknownError'));
         controller.error(new Error('AI response stream failed'));
       } finally { if (timer) clearTimeout(timer); }
