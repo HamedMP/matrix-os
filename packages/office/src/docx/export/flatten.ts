@@ -81,6 +81,13 @@ export interface RunFilter {
   rowGone?(table: TableBlock, rowIndex: number, view: DocxTextView): boolean;
   /** The cells of a row that are gone in the view, by position (`true` where gone), or null when all stay. */
   cellsGone?(table: TableBlock, rowIndex: number, view: DocxTextView): readonly (boolean | undefined)[] | null;
+  /**
+   * The paragraph as the view shows it: the style its properties in that
+   * view give it, and the numbering label counted among the paragraphs the
+   * view keeps. Without it the paragraph is shown with its current style and
+   * the label counted over every paragraph.
+   */
+  paragraphIn?(block: ParagraphBlock, view: DocxTextView): ParagraphBlock;
 }
 
 /** The filter that uses the revision mark of each run only. */
@@ -175,14 +182,15 @@ function flattenWith(source: readonly DocxBlock[], view: DocxTextView, filter: R
       return;
     }
     const runs = view === "markup" ? block.runs : filter(block, view);
+    const shown = view === "markup" ? block : (filter.paragraphIn?.(block, view) ?? block);
     let paragraph: FlatParagraph;
     if (carry === null) {
-      paragraph = { type: "paragraph", block, blockIds: [block.id], runs, bookmarks: [...block.bookmarks] };
+      paragraph = { type: "paragraph", block: shown, blockIds: [block.id], runs, bookmarks: [...block.bookmarks] };
     } else {
       const visible = carry.runs.length > 0;
       paragraph = {
         type: "paragraph",
-        block: visible ? carry.block : block,
+        block: visible ? carry.block : shown,
         blockIds: [...carry.blockIds, block.id],
         runs: [...carry.runs, ...runs],
         bookmarks: [...carry.bookmarks, ...block.bookmarks],
