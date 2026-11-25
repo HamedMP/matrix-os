@@ -69,7 +69,7 @@ describe("Docs save states", () => {
   it("asks for a name when saving a new document", async () => {
     const bridge = installBridge({});
     renderApp();
-    fireEvent.click(await screen.findByRole("button", { name: /New blank document/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Blank document/ }));
     const surface = await findSurface();
     expect(saveState()).toBe("Not saved yet");
     act(() => typeInto(surface, "Hello"));

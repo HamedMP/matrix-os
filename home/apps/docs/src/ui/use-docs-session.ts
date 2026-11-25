@@ -12,6 +12,7 @@ import { useToast, watchLeave } from "../../../_shared/office-ui";
 import { DocumentSession, type LocalFileInput, type OpenResult, type RecentFile, RecentFilesStore } from "../session/index";
 import { isDocxPath } from "./file-picker-model";
 import { saveForLeave } from "./leave-flow";
+import { DOCS_TEMPLATES, type DocsTemplateId, templateMarkdown } from "./templates";
 
 /** Longest Markdown accepted for a new document. */
 export const MAX_MARKDOWN_LENGTH = 1_000_000;
@@ -50,21 +51,41 @@ export function useDocsSession(bridge: MatrixOSBridge | undefined, author: strin
   return handles;
 }
 
+export interface RecentDocuments {
+  items: RecentFile[];
+  /** True until the first read finished. */
+  loading: boolean;
+  /** Forgets a document, then reads the list again. */
+  remove(path: string): Promise<void>;
+}
+
 /** The recent documents, read again whenever another document becomes active. */
-export function useRecentDocuments(recents: RecentFilesStore | null, documentKey: number): RecentFile[] {
-  const [list, setList] = useState<RecentFile[]>([]);
+export function useRecentDocuments(recents: RecentFilesStore | null, documentKey: number): RecentDocuments {
+  const [items, setItems] = useState<RecentFile[]>([]);
+  const [loading, setLoading] = useState(recents !== null);
   useEffect(() => {
     if (recents === null) return undefined;
     let live = true;
     // The store logs and swallows its own failures and resolves an empty list.
     void recents.list().then((entries) => {
-      if (live) setList(entries);
+      if (!live) return;
+      setItems(entries);
+      setLoading(false);
     });
     return () => {
       live = false;
     };
   }, [recents, documentKey]);
-  return list;
+  const remove = useCallback(
+    async (path: string) => {
+      if (recents === null) return;
+      // The list shows what the store holds after the delete, so a failed delete keeps the entry.
+      await recents.remove(path);
+      setItems(await recents.list());
+    },
+    [recents],
+  );
+  return { items, loading, remove };
 }
 
 export type BlockedReason = "unsaved_changes" | "conflict" | "save_failed";
@@ -88,6 +109,8 @@ export interface DocumentActions {
   openLocalFile(file: LocalFileInput): Promise<void>;
   newBlank(): Promise<void>;
   newFromMarkdown(markdown: string): Promise<void>;
+  /** Starts a document from a start-screen template. */
+  newFromTemplate(id: DocsTemplateId): Promise<void>;
   /** Back to the start screen (the home button, File > Close). Asks first when there are unsaved changes. */
   closeDocument(): Promise<void>;
   pending: PendingLeave | null;
@@ -167,6 +190,19 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
     [run, session, author],
   );
 
+  const newFromTemplate = useCallback(
+    async (id: DocsTemplateId) => {
+      const template = DOCS_TEMPLATES.find((entry) => entry.id === id);
+      const markdown = template === undefined ? null : templateMarkdown(template.id, { author, date: new Date() });
+      if (template === undefined || markdown === null) {
+        await newBlank();
+        return;
+      }
+      await run((discardChanges) => session!.adopt(createDocxFromMarkdown(markdown, { title: template.name, author }), { name: template.name, discardChanges }), null);
+    },
+    [run, session, author, newBlank],
+  );
+
   const closeDocument = useCallback(async () => {
     if (session === null) return;
     const attempt: Attempt = (discardChanges) => session.close({ discardChanges });
@@ -203,5 +239,5 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
   const cancelPending = useCallback(() => setPending(null), []);
 
   const publicPending: PendingLeave | null = pending === null ? null : { reason: pending.reason, name: pending.name, local: pending.local, busy: pending.busy, error: pending.error };
-  return { openPath, openLocalFile, newBlank, newFromMarkdown, closeDocument, pending: publicPending, savePending, discardPending, cancelPending };
+  return { openPath, openLocalFile, newBlank, newFromMarkdown, newFromTemplate, closeDocument, pending: publicPending, savePending, discardPending, cancelPending };
 }

@@ -7,17 +7,14 @@
 import { FileText } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import type { MatrixOSBridge, MatrixOSFiles } from "../../../_shared/matrix-os";
-import { AppFrame, DOCX_MIME, EmptyState, FileDropZone, LocalFileError, Spinner, pickLocalFile, useToast } from "../../../_shared/office-ui";
+import { AppFrame, EmptyState, FileDropZone, LocalFileError, Spinner, pickLocalFile, useToast } from "../../../_shared/office-ui";
 import { useSessionState } from "../editor/index";
 import { MarkdownDialog, SaveAsDialog, UnsavedDialog } from "./dialogs";
 import { DocsWorkspace, type WorkspaceFileCommands } from "./DocsWorkspace";
 import { FilePickerDialog } from "./FilePickerDialog";
-import { StartScreen } from "./StartScreen";
+import { DOCS_ACCEPT, StartScreen } from "./StartScreen";
 import { type SessionHandles, useDocsSession, useDocumentActions, useRecentDocuments } from "./use-docs-session";
 import { useOpenRequests } from "./use-open-requests";
-
-/** What "Open from this computer" and a drop accept. */
-const LOCAL_ACCEPT: readonly string[] = [".docx", DOCX_MIME];
 
 export interface DocsAppProps {
   bridge: MatrixOSBridge | undefined;
@@ -98,7 +95,7 @@ function DocsHome({ handles, files, author }: { handles: SessionHandles; files: 
   );
   const openFromComputer = useCallback(async () => {
     try {
-      const file = await pickLocalFile({ accept: LOCAL_ACCEPT });
+      const file = await pickLocalFile({ accept: DOCS_ACCEPT });
       if (file !== null) await openLocalFile(file);
     } catch (error) {
       rejectLocal(error);
@@ -124,18 +121,20 @@ function DocsHome({ handles, files, author }: { handles: SessionHandles; files: 
         <DocsWorkspace session={session} state={state} file={commands} pickDocument={pickDocument} />
       ) : (
         <StartScreen
-          recents={recents}
+          files={files}
+          recents={recents.items}
+          recentsLoading={recents.loading}
+          onRemoveRecent={recents.remove}
           loading={state.status === "loading"}
           error={state.status === "error" ? state.error : null}
-          onNewBlank={commands.newBlank}
-          onOpen={commands.openFromMatrix}
+          onTemplate={(id) => void actions.newFromTemplate(id)}
           onOpenLocal={commands.openFromComputer}
           onNewFromMarkdown={commands.newFromMarkdown}
-          onOpenRecent={(path) => void openPath(path)}
+          onOpenPath={(path) => void openPath(path)}
         />
       )}
       <FileDropZone
-        accept={LOCAL_ACCEPT}
+        accept={DOCS_ACCEPT}
         label="Drop a Word document to open it"
         disabled={state.status === "loading"}
         onFile={(file) => void openLocalFile(file)}

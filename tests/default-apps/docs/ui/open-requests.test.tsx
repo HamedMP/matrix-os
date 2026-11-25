@@ -33,7 +33,7 @@ describe("Docs open requests", () => {
   it("refuses a request for a file that is not a Word document without reading it", async () => {
     const bridge = installBridge({ "data.xlsx": new Uint8Array([1, 2, 3]) });
     renderApp();
-    await screen.findByRole("button", { name: /New blank document/ });
+    await screen.findByRole("button", { name: /^Blank document/ });
     act(() => bridge.sendOpenRequest("data.xlsx"));
     expect(await screen.findByText(/Docs opens \.docx documents/)).toBeTruthy();
     expect(bridge.files.reads).toEqual([]);
@@ -54,7 +54,7 @@ describe("Docs open requests", () => {
   it("asks before discarding an unsaved new document for an incoming request", async () => {
     const bridge = installBridge({ "b.docx": await docxFromParagraphs(["Second"]) });
     renderApp();
-    fireEvent.click(await screen.findByRole("button", { name: /New blank document/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Blank document/ }));
     const surface = await findSurface();
     act(() => typeInto(surface, "x"));
     act(() => bridge.sendOpenRequest("b.docx"));

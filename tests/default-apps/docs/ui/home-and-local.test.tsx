@@ -40,7 +40,7 @@ function backHome(): void {
 
 async function recentNames(): Promise<string[]> {
   const heading = await screen.findByRole("heading", { name: "Recent documents" });
-  return [...heading.parentElement!.querySelectorAll(".docs-start__recent-name")].map((node) => node.textContent ?? "");
+  return [...heading.closest("section")!.querySelectorAll(".oui-recent__name")].map((node) => node.textContent ?? "");
 }
 
 /** Makes the next hidden file input "choose" this file. */
@@ -106,7 +106,7 @@ describe("Docs back to home", () => {
   it("asks where to save a new document before going home, then lists it", async () => {
     const bridge = installBridge({});
     renderApp();
-    fireEvent.click(await screen.findByRole("button", { name: /New blank document/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Blank document/ }));
     const surface = await findSurface();
     act(() => typeInto(surface, "Hello"));
     backHome();
@@ -124,7 +124,7 @@ describe("Docs documents from this computer", () => {
     const bridge = installBridge({});
     renderApp();
     chooseOnNextPicker(await localFile("Report.docx", ["From disk"]));
-    fireEvent.click(await screen.findByRole("button", { name: /Open from this computer/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Choose a file…" }));
     const surface = await findSurface();
     expect(surface.textContent).toBe("From disk");
     expect(titleText()).toBe("Report.docx");
@@ -173,7 +173,7 @@ describe("Docs documents from this computer", () => {
     installBridge({});
     renderApp();
     chooseOnNextPicker(new File(["a,b"], "sales.csv", { type: "text/csv" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Open from this computer/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Choose a file…" }));
     expect(await screen.findByText("The file could not be opened")).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Document" })).toBeNull();
   });

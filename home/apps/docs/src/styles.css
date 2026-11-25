@@ -21,26 +21,7 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
 
 /* ---------------------------------------------------------------- start screen */
 
-.docs-start {
-  box-sizing: border-box;
-  max-width: 880px;
-  margin: 0 auto;
-  padding: 32px 24px 48px;
-  display: grid;
-  gap: 28px;
-}
-.docs-start__error {
-  display: grid;
-  gap: 4px;
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--app-danger) 45%, var(--app-border));
-  border-radius: var(--app-radius, 8px);
-  background: color-mix(in srgb, var(--app-danger) 10%, var(--app-card));
-  font-size: 13px;
-}
-.docs-start__section { display: grid; gap: 12px; }
-.docs-start__heading { margin: 0; font-size: 13px; font-weight: 650; color: var(--app-muted-fg); text-transform: uppercase; letter-spacing: .04em; }
-.docs-start__actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+/* The start screen itself comes from the office kit; these cards remain for the File backstage. */
 .docs-start__card {
   display: grid;
   justify-items: start;
@@ -56,62 +37,16 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
 }
 .docs-start__card svg { color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); }
 .docs-start__card:hover:not(:disabled) { border-color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); }
-.docs-start__card:focus-visible, .docs-start__recent:focus-visible, .docs-picker__entry:focus-visible, .docs-outline__item:focus-visible {
+.docs-start__card:focus-visible, .docs-outline__item:focus-visible {
   outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary)));
   outline-offset: 2px;
 }
 .docs-start__card:disabled { opacity: .6; cursor: default; }
 .docs-start__card-title { font-weight: 650; font-size: 14px; }
-.docs-start__recents, .docs-picker__entries, .docs-outline__list { list-style: none; margin: 0; padding: 0; }
-.docs-start__recents { border: 1px solid var(--app-border); border-radius: var(--app-radius, 8px); background: var(--app-card); overflow: hidden; }
-.docs-start__recents li + li { border-top: 1px solid var(--app-border); }
-.docs-start__recent {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) minmax(0, auto) auto;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 14px;
-  border: 0;
-  background: transparent;
-  color: var(--app-fg);
-  text-align: left;
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-}
-.docs-start__recent:hover:not(:disabled) { background: var(--app-muted); }
-.docs-start__recent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
-.docs-start__recent-time { white-space: nowrap; }
+.docs-outline__list { list-style: none; margin: 0; padding: 0; }
 
 /* ---------------------------------------------------------------- open dialog and forms */
 
-.docs-picker { display: grid; gap: 8px; }
-.docs-picker__crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
-.docs-picker__crumb { display: inline-flex; align-items: center; color: var(--app-muted-fg); }
-.docs-picker__crumb [aria-current="location"] { font-weight: 650; color: var(--app-fg); }
-.docs-picker__list { min-height: 220px; max-height: min(52vh, 420px); overflow: auto; border: 1px solid var(--app-border); border-radius: var(--app-radius, 8px); background: var(--app-card); }
-.docs-picker__list > .docs-muted { padding: 12px; margin: 0; }
-.docs-picker__entry {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 12px;
-  border: 0;
-  background: transparent;
-  color: var(--app-fg);
-  text-align: left;
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-}
-.docs-picker__entry svg { color: var(--app-muted-fg); }
-.docs-picker__entry:hover { background: var(--app-muted); }
-.docs-picker__entry[aria-pressed="true"] { background: color-mix(in srgb, var(--oui-accent-ink, var(--identity-accent, var(--app-primary))) 16%, transparent); }
-.docs-picker__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.docs-picker__footer { display: flex; justify-content: flex-end; gap: 8px; }
 .docs-form { display: grid; gap: 12px; }
 
 /* ---------------------------------------------------------------- title bar, ribbon, banners, status */
@@ -264,9 +199,6 @@ body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-f
     display: block; position: absolute; top: 0; left: 0; bottom: 0; z-index: 5;
     width: min(280px, 85%); box-shadow: 8px 0 24px color-mix(in srgb, var(--app-fg) 18%, transparent);
   }
-  .docs-start { padding: 20px 16px 32px; }
-  .docs-start__recent { grid-template-columns: 16px minmax(0, 1fr) auto; }
-  .docs-start__recent-time { display: none; }
   .docs-save { display: none; }
   .docs-pane { --docs-min-page: 320px; }
 }
