@@ -13,7 +13,7 @@ export interface ChatAdmissionAttempt {
   accepted?: CanonicalChatTurnAdmissionResponse;
   uncertain?: boolean;
   notify?: () => void;
-  confirmed?: () => void;
+  confirmed?: (receipt: CanonicalChatTurnAdmissionResponse) => void;
   resolve: (value: CanonicalChatTurnAdmissionResponse) => void;
   receipt: Promise<CanonicalChatTurnAdmissionResponse>;
   inFlight?: Promise<CanonicalChatTurnAdmissionResponse>;
@@ -48,7 +48,7 @@ export function createCanonicalChatAdmissionTracker() {
     {
       const callbacks = [
         (attempt.canAcknowledge?.() ?? attempt.isCurrent?.()) ? attempt.notify : undefined,
-        attempt.isCurrent?.() ? attempt.confirmed : undefined,
+        attempt.isCurrent?.() ? () => attempt.confirmed?.(accepted) : undefined,
       ];
       for (const callback of callbacks) {
         try { callback?.(); }
@@ -106,7 +106,7 @@ export function createCanonicalChatAdmissionTracker() {
       current: () => CanonicalChatDetailResponse | null;
       isCurrent: () => boolean; onAccepted: () => void;
       canAcknowledge?: () => boolean;
-      onConfirmed?: () => void; onRejected?: () => void;
+      onConfirmed?: (receipt: CanonicalChatTurnAdmissionResponse) => void; onRejected?: () => void;
       definitive: (error: unknown) => boolean;
     }) {
       if (attempt.accepted) return Promise.resolve(attempt.accepted);

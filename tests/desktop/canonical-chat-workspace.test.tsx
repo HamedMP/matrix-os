@@ -214,11 +214,11 @@ describe("CanonicalChatWorkspace", () => {
     vi.mocked(routeClient.getDetail).mockResolvedValue({
       record, messages: snapshot.messages, turns: snapshot.turns, runs: [run], activities: [],
     });
-    vi.mocked(routeClient.admitTurn).mockResolvedValue({
+    vi.mocked(routeClient.admitTurn).mockImplementation(async (_chatId, request) => ({
       record: admittedRecord,
       message: { ...snapshot.messages[0]!, turnId: updatedRun.turnId },
-      turn: { ...snapshot.turns[0]!, id: updatedRun.turnId }, run: updatedRun, admission: "accepted",
-    });
+      turn: { ...snapshot.turns[0]!, id: updatedRun.turnId, clientRequestId: request.clientRequestId }, run: updatedRun, admission: "accepted",
+    }));
     render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialChatId={snapshot.chat.id}
       initialView="conversation" active catalog={providerCatalog} />);
 
@@ -289,7 +289,7 @@ describe("CanonicalChatWorkspace", () => {
     if (sent) {
       expect(await screen.findByRole("button", { name: "Stop" })).toBeTruthy();
       admission.resolve({ record: activeRecord, message: { ...snapshot.messages[0]!, turnId: running.turnId },
-        turn: { ...snapshot.turns[0]!, id: running.turnId }, run: running, admission: "accepted" });
+        turn: { ...snapshot.turns[0]!, id: running.turnId, clientRequestId: vi.mocked(routeClient.admitTurn).mock.calls[0]![1].clientRequestId }, run: running, admission: "accepted" });
       expect(await screen.findByText("Waiting for the worktree run…")).toBeTruthy();
       const completed = { ...running, status: "completed" as const, completedAt: new Date().toISOString() };
       vi.mocked(routeClient.getDetail).mockResolvedValue({ ...detail, runs: [run, completed],
