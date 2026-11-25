@@ -168,19 +168,21 @@ describe("Electron Chat preview", () => {
 });
 
 describe("Mac Verification", () => {
-  it.each(["unavailable", "busy"])("keeps a %s Terminal check idle until the owner retries", async initialStatus => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const digest = "d".repeat(64);
-    let paired = false;
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === "chat:electron-preview-available") {
-        return { available: false, verificationAvailable: true, terminalRequests: true };
-      }
+  function terminalBridge(reply: () => { status: string } | Promise<{ status: string }>, digest = "d".repeat(64)) {
+    const invoke = vi.fn(async (channel: string, _payload?: unknown) => {
+      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: true };
       if (channel === "chat:mac-verification-selection") return { accepted: true };
       if (channel === "chat:mac-verification-terminal-intent") return { digest };
-      return { status: paired ? "returned" : initialStatus };
+      return reply();
     });
     vi.stubGlobal("operator", { invoke });
+    return invoke;
+  }
+
+  it.each(["unavailable", "busy"])("keeps a %s Terminal check idle until the owner retries", async initialStatus => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let paired = false;
+    const invoke = terminalBridge(() => ({ status: paired ? "returned" : initialStatus }));
     await act(async () => {
       render(<StrictMode><ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} /></StrictMode>);
     });
@@ -198,13 +200,7 @@ describe("Mac Verification", () => {
 
   it.each(["returned", "declined", "failed", "already-handled"])("does not retry a terminal request after %s", async status => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: true };
-      if (channel === "chat:mac-verification-selection") return { accepted: true };
-      if (channel === "chat:mac-verification-terminal-intent") return { digest: "d".repeat(64) };
-      return { status };
-    });
-    vi.stubGlobal("operator", { invoke });
+    const invoke = terminalBridge(() => ({ status }));
     await act(async () => {
       render(<ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} />);
     });
@@ -215,13 +211,7 @@ describe("Mac Verification", () => {
 
   it("does not automatically redispatch an unknown IPC outcome", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: true };
-      if (channel === "chat:mac-verification-selection") return { accepted: true };
-      if (channel === "chat:mac-verification-terminal-intent") return { digest: "d".repeat(64) };
-      throw new Error("reply lost after native dispatch");
-    });
-    vi.stubGlobal("operator", { invoke });
+    const invoke = terminalBridge(() => { throw new Error("reply lost after native dispatch"); });
     await act(async () => {
       render(<ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} />);
     });
@@ -234,14 +224,10 @@ describe("Mac Verification", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let settleRetry!: (reply: { status: string }) => void;
     let dispatches = 0;
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: true };
-      if (channel === "chat:mac-verification-selection") return { accepted: true };
-      if (channel === "chat:mac-verification-terminal-intent") return { digest: "d".repeat(64) };
+    terminalBridge(() => {
       if (++dispatches === 1) return { status: "unavailable" };
       return new Promise<{ status: string }>(resolve => { settleRetry = resolve; });
     });
-    vi.stubGlobal("operator", { invoke });
     await act(async () => { render(<ChatElectronPreview {...initialProps} permissionMode="full_access" detail={verificationDetail()} />); });
     const retry = screen.getByRole("button", { name: "Retry Mac verification" });
     await act(async () => { fireEvent.click(retry); fireEvent.click(retry); });
@@ -255,13 +241,7 @@ describe("Mac Verification", () => {
 
   it.each(["run", "worktree", "navigation", "permission", "permission-upgrade", "permission-cycle", "expiry"] as const)("rejects a late retry after %s changes", async reason => {
     vi.useFakeTimers();
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: true };
-      if (channel === "chat:mac-verification-selection") return { accepted: true };
-      if (channel === "chat:mac-verification-terminal-intent") return { digest: "d".repeat(64) };
-      return { status: "unavailable" };
-    });
-    vi.stubGlobal("operator", { invoke });
+    const invoke = terminalBridge(() => ({ status: "unavailable" }));
     const detail = verificationDetail();
     const initialMode = reason === "permission-upgrade" ? "supervised" : "full_access";
     let hook!: ReturnType<typeof renderHook<ReturnType<typeof useChatElectronPreview>, Parameters<typeof useChatElectronPreview>[0]>>;
@@ -294,15 +274,7 @@ describe("Mac Verification", () => {
 
   it("dispatches a Terminal intent once through the same Full Access view", async () => {
     const digest = "d".repeat(64);
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === "chat:electron-preview-available") {
-        return { available: false, verificationAvailable: true, terminalRequests: true };
-      }
-      if (channel === "chat:mac-verification-selection") return { accepted: true };
-      if (channel === "chat:mac-verification-terminal-intent") return { digest };
-      return { status: "returned" };
-    });
-    vi.stubGlobal("operator", { invoke });
+    const invoke = terminalBridge(() => ({ status: "returned" }), digest);
     const props = { ...initialProps, permissionMode: "full_access", detail: detailWithPreview() };
     const { rerender } = render(<StrictMode><ChatElectronPreview {...props} /></StrictMode>);
     expect(await screen.findByText("Mac verification returned to this Chat.")).toBeTruthy();

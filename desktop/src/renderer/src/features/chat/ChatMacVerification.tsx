@@ -2,6 +2,7 @@ import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState }
 import type { CanonicalChatRun } from "@matrix-os/contracts";
 import type { InvokeResponse } from "../../../../shared/ipc-contract";
 import { CHAT_ELECTRON_PREVIEW_MAX_AGE_MS, isCurrentChatElectronPreviewRun } from "../../../../shared/chat-electron-preview";
+import { MATCHING_MAC_BUILD } from "../../../../shared/chat-electron-preview-ipc";
 import { invoke } from "../../lib/operator";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 import { MAC_VERIFICATION_DEFAULT_TASK } from "./mac-verification-workflow";
@@ -18,6 +19,7 @@ export type MacVerificationSubmission = { accept: (run: CanonicalChatRun) => voi
 
 export type MacVerificationDraft = {
   worktree: Worktree;
+  checkCompatibility(): Promise<boolean | undefined>;
   beginSubmission: (draftKey: string) => MacVerificationSubmission | "draft-changed" | undefined;
 };
 
@@ -30,6 +32,7 @@ const STATUS: Record<Attempt["status"], string> = {
   failed: "Mac verification failed.",
   busy: "This Mac is already handling a verification.",
   "already-handled": "This Mac verification was already handled.",
+  incompatible: MATCHING_MAC_BUILD,
 };
 
 export function useMacVerification({ candidate, discoverable = false, available = true, busy, editingQueuedTurn, permissionMode, terminalRequests = false }: {
@@ -224,6 +227,12 @@ export function useMacVerification({ candidate, discoverable = false, available 
 
   const draft: MacVerificationDraft | undefined = candidate && currentIntent?.state === "draft" ? {
     worktree: candidate.worktree,
+    async checkCompatibility() {
+      const { verificationAvailable } = await invoke("chat:electron-preview-available", {
+        target: { chatId: candidate.chatId, runId: currentIntent.runId },
+      });
+      if (pendingIntent.current === currentIntent && selection.current === currentIntent.scope) return verificationAvailable === true;
+    },
     beginSubmission: (draftKey) => {
       if (pendingIntent.current !== currentIntent || selection.current !== currentIntent.scope) return;
       const previous = submittingIntent.current;

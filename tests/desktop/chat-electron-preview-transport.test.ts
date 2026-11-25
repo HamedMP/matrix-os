@@ -189,6 +189,9 @@ function resultWrites(fetchFn: ReturnType<typeof mockTransport>["fetchFn"]) {
 describe("authenticated Chat Electron preview transport", () => {
   it("explains unsupported source support without asking the user to select a checkout", async () => {
     const mock = mockTransport(); mock.setSource(verificationSource);
+    await expect(mock.service.readVerificationBase({ chatId, runId })).resolves.toBe(baseSha);
+    await expect(mock.service.readVerificationBase({ chatId, runId: "run_other" })).resolves.toBeNull();
+    expect(resultWrites(mock.fetchFn)).toEqual([]);
     const request = (await mock.service.read(verificationTarget))!;
     await mock.service.returnResult(request, { error: "unsupported-version" });
     const body = JSON.parse(String(resultWrites(mock.fetchFn)[0]?.[1]?.body));

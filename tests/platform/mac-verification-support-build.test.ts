@@ -41,13 +41,14 @@ async function fixture() {
   for (const name of ["Helpers", "Libraries"]) await mkdir(join(framework, "Versions/A", name));
   await symlink("A", join(framework, "Versions/Current"));
   for (const name of ["Electron Framework", "Resources", "Helpers", "Libraries"]) await symlink(`Versions/Current/${name}`, join(framework, name));
-  return { root, repo, pnpm, electron, baseSha };
+  const prepare = () => prepareMacVerificationSupport({ repository: repo, output: join(root, "kit"), nodePath: process.execPath,
+    pnpmEntry: join(pnpm, "bin/pnpm.cjs"), electronApp: electron, platform: "darwin", arch: process.arch });
+  return { root, repo, pnpm, electron, baseSha, prepare };
 }
 test("packages exact committed source and pinned private tools without dependency CAS, dirty source or secrets", async () => {
   const f = await fixture();
   const out = join(f.root, "kit");
-  await prepareMacVerificationSupport({ repository: f.repo, output: out, nodePath: process.execPath,
-    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch });
+  await f.prepare();
   const manifest = JSON.parse(await readFile(join(out, "manifest.json"), "utf8"));
   expect(manifest).toMatchObject({ version: 3, baseSha: f.baseSha, pnpmVersion: "10.33.4", platform: "darwin", arch: process.arch,
     nodeVersion: process.versions.node });
@@ -76,8 +77,7 @@ test.each(["Electron Framework", "Versions/Current", "Resources"])("rejects pnpm
   const f = await fixture(); const alias = join(f.electron, "Contents/Frameworks/Electron Framework.framework", name);
   await validateMacVerificationElectron(f.electron, process.arch);
   await rm(alias); if (name === "Electron Framework") await copyFile(process.execPath, alias); else await mkdir(alias);
-  await expect(prepareMacVerificationSupport({ repository: f.repo, output: join(f.root, "kit"), nodePath: process.execPath,
-    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch })).rejects.toThrow(/framework alias/);
+  await expect(f.prepare()).rejects.toThrow(/framework alias/);
 });
 
 test("runs the normal installer in an empty private package, never overwriting the cached dependency", async () => {
@@ -101,13 +101,11 @@ test("runs the normal installer in an empty private package, never overwriting t
   await expect(lstat(installed.app)).rejects.toMatchObject({ code: "ENOENT" });
   await writeFile(join(pkg, "install.js"), "process.exit(1);");
   await expect(installFreshMacVerificationElectron({ packageRoot: pkg, temporaryParent: f.root, arch: process.arch })).rejects.toThrow();
-  const { readdir } = await import("node:fs/promises");
   expect((await readdir(f.root)).filter(name => name.startsWith(".mac-verification-electron-"))).toEqual([]);
 });
 test("refuses an unpinned package manager before installing or publishing a kit", async () => {
   const f = await fixture(); await writeFile(join(f.pnpm, "package.json"), JSON.stringify({ name: "pnpm", version: "11.0.0" }));
-  await expect(prepareMacVerificationSupport({ repository: f.repo, output: join(f.root, "kit"), nodePath: process.execPath,
-    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch })).rejects.toThrow(/pnpm/);
+  await expect(f.prepare()).rejects.toThrow(/pnpm/);
 });
 
 test("failed source archiving leaves no published kit or partial checkout", async () => {
@@ -115,14 +113,11 @@ test("failed source archiving leaves no published kit or partial checkout", asyn
   await writeFile(join(f.root, "outside"), "outside source"); await symlink(join(f.root, "outside"), join(f.repo, "bad-link"));
   execFileSync("/usr/bin/git", ["add", "bad-link"], { cwd: f.repo });
   execFileSync("/usr/bin/git", ["-c", "core.hooksPath=/dev/null", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "unsafe source"], { cwd: f.repo });
-  const out = join(f.root, "kit");
-  await expect(prepareMacVerificationSupport({ repository: f.repo, output: out, nodePath: process.execPath,
-    pnpmEntry: join(f.pnpm, "bin/pnpm.cjs"), electronApp: f.electron, platform: "darwin", arch: process.arch })).rejects.toThrow("Unsafe verification archive link");
+  await expect(f.prepare()).rejects.toThrow("Unsafe verification archive link");
   expect((await readdir(f.root)).filter(name => name === "kit" || name.startsWith(".mac-verification-support-"))).toEqual([]);
 });
 test("manifest pin distinguishes missing development support from changed or symlinked resources", async () => {
   const { readMacVerificationSupportPin } = await import("../../scripts/release/mac-verification-support-pin.mjs");
-  const { symlink } = await import("node:fs/promises");
   const root = await mkdtemp(join(tmpdir(), "matrix-support-pin-test-")); roots.push(root);
   expect(readMacVerificationSupportPin(root)).toBeNull();
   const path = join(root, "manifest.json"); await writeFile(path, '{"version":1}');

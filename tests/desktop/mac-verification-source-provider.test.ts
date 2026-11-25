@@ -124,7 +124,10 @@ describe("packaged Mac Verification source preparation", () => {
 
   it("requires the manifest pin compiled into the app and reports missing runtime support safely", async () => {
     const f = await fixture();
+    await expect(f.provider.baseSha()).resolves.toBe(f.manifest.baseSha);
+    expect(await readdir(f.profile)).toEqual([]);
     await writeFile(join(f.kit, "manifest.json"), JSON.stringify(f.manifest) + " ");
+    await expect(f.provider.baseSha()).rejects.toThrow("support-unavailable");
     await expect(f.provider.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("support-unavailable");
     await f.setManifest(f.manifest);
     await rm(join(f.kit, paths.node));

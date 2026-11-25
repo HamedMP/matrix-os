@@ -20,6 +20,7 @@ const PREVIEW_STATUS: Record<PreviewStatus, string> = {
   failed: "Electron preview could not be completed.",
   busy: "This Mac is already handling an Electron preview.",
   "already-handled": "This Electron preview request was already handled.",
+  incompatible: "This worktree revision is incompatible with the installed Desktop build.",
 };
 
 const PREVIEW_DRAFT_INTRO = "Prepare an Electron preview of the Matrix OS sign-in page in this Chat's isolated worktree.";

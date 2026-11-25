@@ -9,7 +9,7 @@ import { createChatElectronPreviewClaims } from "./claims";
 import { runChatElectronPreview } from "./executor";
 import { createChatElectronPreviewService } from "./service";
 import type { ChatElectronPreviewBackgroundBinding, ChatElectronPreviewRequest, createChatElectronPreviewTransport } from "./transport";
-import { createMacVerificationSourceProvider } from "./source-provider";
+import { createMacVerificationSourceProvider, MacVerificationPreparationError } from "./source-provider";
 
 interface RegistrationOptions {
   auth: AuthService;
@@ -46,6 +46,13 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
   const sourceProvider = options.macVerificationAllowed ? createMacVerificationSourceProvider({
     resourcesPath: options.resourcesPath ?? process.resourcesPath, userData,
   }) : null;
+  async function verificationBase() {
+    try { return await sourceProvider?.baseSha(); }
+    catch (error: unknown) {
+      if (error instanceof MacVerificationPreparationError && error.code === "support-unavailable") return undefined;
+      throw error;
+    }
+  }
   function verificationAvailable() {
     return Boolean(sourceProvider || legacySource);
   }
@@ -65,6 +72,9 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
     acquireActionPairing: options.acquireActionPairing,
     ...createChatElectronPreviewClaims(join(userData, "chat-electron-preview-claims")),
     enabled: verificationAvailable(),
+    ...(sourceProvider ? { async hasCompatibleSource(request: ChatElectronPreviewRequest) {
+      return !isAutomatic(request) || request.baseSha === await verificationBase();
+    } } : {}),
     async approve(request, signal) {
       approvedSource = null;
       const source = isAutomatic(request) ? null : await resolveSource(request, signal);
@@ -136,13 +146,18 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
   const check = "chat:electron-preview-available";
   ipc.handle(check, (event, raw) => {
     if (!options.isTrustedSender(event)) throw new Error("invalid request");
-    CHAT_ELECTRON_PREVIEW_INVOKE[check].request.parse(raw);
+    const { target } = CHAT_ELECTRON_PREVIEW_INVOKE[check].request.parse(raw);
     const status = auth.getStatus();
-    return {
+    const response = {
       available: Boolean(legacySource && status.signedIn),
       verificationAvailable: verificationAvailable() && status.signedIn && status.runtimeSlot === "primary",
       ...(verificationAvailable() && status.signedIn && status.runtimeSlot === "primary" ? { terminalRequests: true } : {}),
     };
+    if (!target || !sourceProvider || !response.verificationAvailable) return response;
+    return verificationBase().then(async baseSha => ({
+      ...response,
+      verificationAvailable: Boolean(baseSha && baseSha === await transport.readVerificationBase(target) && options.isTrustedSender(event)),
+    }));
   });
   const terminalIntent = "chat:mac-verification-terminal-intent";
   ipc.handle(terminalIntent, async (event, raw) => {
@@ -238,7 +253,7 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
     openVerification: sourceProvider ? async () => {
       await showMacActivityDialog(options.window(), {
         title: "Matrix", type: "info", message: "Mac Verification is prepared automatically.",
-        detail: "Pair this Mac once, then use /mac-verification in your private worktree Chat. Matrix selects the task version, prepares temporary source, installs pinned dependencies in a private cache, runs supported checks and returns the result to that Chat. Manage Chat Full Access or disconnect in Mac Pairing.",
+        detail: "Pair this Mac once, then use /mac-verification in your private worktree Chat. When the worktree revision matches this signed Desktop build, Matrix prepares temporary source, installs pinned dependencies in a private cache, and returns the check result to that Chat. Manage Chat Full Access or disconnect in Mac Pairing.",
         buttons: ["Done"],
       });
     } : undefined,

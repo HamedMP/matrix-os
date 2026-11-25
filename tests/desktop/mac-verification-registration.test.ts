@@ -21,9 +21,10 @@ const prepared = vi.hoisted(() => ({
   check: vi.fn(async () => true), release: vi.fn(async () => {}),
 }));
 const prepareSource = vi.hoisted(() => vi.fn(async () => prepared));
+const sourceBaseSha = vi.hoisted(() => vi.fn(async () => "a".repeat(40)));
 vi.mock("@desktop/main/chat-electron-preview/source-provider", async original => ({
   ...await original<typeof import("@desktop/main/chat-electron-preview/source-provider")>(),
-  createMacVerificationSourceProvider: () => ({ prepare: prepareSource }),
+  createMacVerificationSourceProvider: () => ({ prepare: prepareSource, baseSha: sourceBaseSha }),
 }));
 const execute = vi.hoisted(() => vi.fn(async () => ({ png: Buffer.from("fixture"), testSummary: "5 passed" })));
 vi.mock("electron", () => ({ dialog: electron }));
@@ -45,6 +46,7 @@ function previewFixture() {
     })),
     returnResult: vi.fn(async () => {}),
     isCurrent: vi.fn(() => true),
+    readVerificationBase: vi.fn(async () => "a".repeat(40)),
   };
   const handlers = new Map();
   const ipc = { handle: (channel: string, callback: unknown) => { handlers.set(channel, callback); } } as Pick<IpcMain, "handle">;
@@ -69,7 +71,7 @@ function previewFixture() {
       return viewId;
     },
     clear: (viewId: string) => handlers.get("chat:mac-verification-selection")("trusted", { viewId, scope: null }),
-    readAvailable: () => handlers.get("chat:electron-preview-available")("trusted", {}),
+    readAvailable: (target?: { chatId: string; runId: string }) => handlers.get("chat:electron-preview-available")("trusted", { target }),
   };
 }
 
@@ -127,12 +129,17 @@ describe("Mac Verification packaged IPC", () => {
 
   it("automatically prepares the admitted source only after paired supervised approval", async () => {
     await withPreview(async ({ run, supervised, prompts }) => {
+      const terminal = { ...verified, terminalIntentDigest: "b".repeat(64) };
+      sourceBaseSha.mockResolvedValueOnce("c".repeat(40));
+      expect(await run(terminal)).toEqual({ status: "incompatible" });
+      expect([prepareSource, supervised, execute].every(mock => !mock.mock.calls.length)).toBe(true);
+      expect(prompts).toEqual([]);
       supervised.mockImplementationOnce(async () => {
         expect(prepareSource).not.toHaveBeenCalled();
         expect(prompts).toEqual(["Approve one Electron Desktop preview?"]);
         return actionPairing();
       });
-      expect(await run(verified)).toEqual({ status: "returned" });
+      expect(await run(terminal)).toEqual({ status: "returned" });
       expect(prepareSource).toHaveBeenCalledWith("a".repeat(40), expect.any(AbortSignal));
       expect(execute).toHaveBeenCalledWith(expect.objectContaining({ checkout: prepared.checkout, toolchain: prepared.toolchain }));
       expect(prepared.release).toHaveBeenCalledOnce();
@@ -158,9 +165,10 @@ describe("Mac Verification packaged IPC", () => {
   });
 
   it("uses the currently selected Chat mode with the already-completed run and permits subsequent Full Access runs", async () => {
-    await withPreview(async ({ openVerification, run, readAvailable, select, clear, prompts, supervised, fullAccess }) => {
+    await withPreview(async ({ run, readAvailable, select, clear, prompts, supervised, fullAccess }) => {
       expect(readAvailable()).toEqual({ available: false, verificationAvailable: true, terminalRequests: true });
-      expect(readAvailable()).toEqual({ available: false, verificationAvailable: true, terminalRequests: true });
+      sourceBaseSha.mockResolvedValueOnce("c".repeat(40));
+      expect(await readAvailable({ chatId: verified.chatId, runId: verified.runId })).toMatchObject({ verificationAvailable: false });
       expect(await run({ chatId: verified.chatId, runId: verified.runId })).toEqual({ status: "unavailable" });
       const view = select();
       expect(await run(verified, view)).toEqual({ status: "returned" });

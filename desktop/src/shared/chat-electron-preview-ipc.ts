@@ -9,8 +9,11 @@ export const ChatElectronPreviewTarget = z.strictObject({
 });
 
 export const ChatElectronPreviewReply = z.strictObject({
-  status: z.enum(["returned", "declined", "unavailable", "failed", "busy", "already-handled"]),
+  status: z.enum(["returned", "declined", "unavailable", "failed", "busy", "already-handled", "incompatible"]),
 });
+
+export const MATCHING_MAC_BUILD = "Install a signed Matrix Desktop build that matches this worktree revision.";
+const PreviewRunRef = ChatElectronPreviewTarget.pick({ chatId: true, runId: true });
 
 const MacVerificationChatScope = z.strictObject({
   chatId: CanonicalChatIdSchema,
@@ -22,7 +25,7 @@ export type MacVerificationChatScope = z.infer<typeof MacVerificationChatScope>;
 
 export const CHAT_ELECTRON_PREVIEW_INVOKE = {
   "chat:electron-preview-available": {
-    request: z.strictObject({}),
+    request: z.strictObject({ target: PreviewRunRef.optional() }),
     response: z.strictObject({ available: z.boolean(), verificationAvailable: z.boolean().optional(), terminalRequests: z.boolean().optional() }),
   },
   "chat:mac-verification-selection": {
@@ -30,7 +33,7 @@ export const CHAT_ELECTRON_PREVIEW_INVOKE = {
     response: z.strictObject({ accepted: z.boolean() }),
   },
   "chat:mac-verification-terminal-intent": {
-    request: ChatElectronPreviewTarget.pick({ chatId: true, runId: true }),
+    request: PreviewRunRef,
     response: z.strictObject({ digest: CanonicalChatActionDigestSchema.nullable() }),
   },
   "chat:electron-preview-run": {

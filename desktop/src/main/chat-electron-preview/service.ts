@@ -28,6 +28,7 @@ interface Dependencies {
   isCurrent(request: ChatElectronPreviewRequest): boolean;
   wasHandled(key: string): Promise<boolean>;
   claim(key: string): Promise<boolean>;
+  hasCompatibleSource?(request: ChatElectronPreviewRequest): Promise<boolean>;
   approve(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<boolean>;
   execute(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<PreviewResult>;
   returnResult(request: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" | MacVerificationPreparationError["code"] }, signal: AbortSignal): Promise<void>;
@@ -105,6 +106,9 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       const remaining = request.expiresAt - Date.now();
       if (remaining <= 0 || signal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
       approvalSignal = AbortSignal.any([signal, AbortSignal.timeout(remaining)]);
+      const compatible = await deps.hasCompatibleSource?.(request);
+      if (approvalSignal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
+      if (compatible === false) return { status: "incompatible" };
       activity = deps.beginActivity?.("preview", request.worktreeId);
       completion = "revoked";
       let approved: boolean;

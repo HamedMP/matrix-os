@@ -196,10 +196,13 @@ describe("CanonicalChatWorkspace", () => {
     ["mention", "@mac", "completed"],
     ["slash", "/mac-verification", "completed"],
     ["failed run", "@mac", "failed"],
+    ["incompatible build", "@mac", "incompatible"],
   ] as const)("uses Mac Verification with an optional change request and binds the result to the accepted run (%s)", async (_mode, trigger, outcome) => {
     useConnection.setState({ status: "signed-in", userId: snapshot.chat.ownerScope.ownerId });
-    const ipc = vi.fn(async (channel: string) => {
-      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true };
+    const ipc = vi.fn(async (channel: string, payload?: unknown) => {
+      if (channel === "chat:electron-preview-available") return {
+        available: false, verificationAvailable: !(outcome === "incompatible" && payload && "target" in Object(payload)),
+      };
       if (channel === "chat:electron-preview-run") return { status: "returned" };
       return { available: false };
     });
@@ -210,7 +213,8 @@ describe("CanonicalChatWorkspace", () => {
       ...snapshot.runs[0]!, status: "completed" as const, completedAt: new Date().toISOString(),
       executionRoot,
     };
-    const updatedRun = { ...run, id: "run_mac_verification_updated", turnId: "cturn_mac_verification_updated", status: outcome };
+    const updatedRun = { ...run, id: "run_mac_verification_updated", turnId: "cturn_mac_verification_updated",
+      status: outcome === "incompatible" ? "completed" as const : outcome };
     const admittedRecord = { ...record, chat: { ...record.chat, revision: record.chat.revision + 1 } };
     vi.mocked(routeClient.getDetail).mockResolvedValue({
       record, messages: snapshot.messages, turns: snapshot.turns, runs: [run], activities: [],
@@ -232,6 +236,12 @@ describe("CanonicalChatWorkspace", () => {
     expect(routeClient.admitTurn).not.toHaveBeenCalled();
     expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    if (outcome === "incompatible") {
+      expect(await screen.findByText(/Install a signed Matrix Desktop build that matches this worktree/)).toBeTruthy();
+      expect(routeClient.admitTurn).not.toHaveBeenCalled();
+      expect(editor.textContent?.trim()).toBe(request);
+      return;
+    }
     await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
       expect.objectContaining({ executionRoot, parts: [
         { type: "text", text: request },

@@ -259,8 +259,7 @@ export function createMacVerificationSourceProvider(options: Options) {
   const kit = join(options.resourcesPath, "mac-verification-support");
   const expectedManifestSha256 = options.expectedManifestSha256 ?? (typeof __MAC_VERIFICATION_SUPPORT_SHA256__ === "undefined"
     ? null : __MAC_VERIFICATION_SUPPORT_SHA256__);
-  async function prepareChecked(baseSha: string, signal: AbortSignal): Promise<PreparedVerificationSource> {
-    signal.throwIfAborted();
+  async function readManifest() {
     let bytes: Buffer;
     let decoded: unknown;
     try {
@@ -274,7 +273,11 @@ export function createMacVerificationSourceProvider(options: Options) {
     const parsed = Manifest.safeParse(decoded);
     if (!parsed.success || parsed.data.platform !== (options.platform ?? process.platform)
       || parsed.data.arch !== (options.arch ?? process.arch)) throw supportError();
-    const manifest = parsed.data;
+    return { manifest: parsed.data, bytes };
+  }
+  async function prepareChecked(baseSha: string, signal: AbortSignal): Promise<PreparedVerificationSource> {
+    signal.throwIfAborted();
+    const { manifest, bytes } = await readManifest();
     if (manifest.baseSha !== baseSha) throw new MacVerificationPreparationError("unsupported-version");
     const root = await realpath(kit);
     const profile = await lstat(options.userData);
@@ -344,6 +347,7 @@ export function createMacVerificationSourceProvider(options: Options) {
     } catch (error: unknown) { await release(); throw error; }
   }
   return {
+    async baseSha() { return (await readManifest()).manifest.baseSha; },
     async prepare(baseSha: string, signal: AbortSignal) {
       try { return await prepareChecked(baseSha, signal); }
       catch (error: unknown) {

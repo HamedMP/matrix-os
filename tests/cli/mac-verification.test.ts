@@ -81,6 +81,33 @@ async function expectedBody(recipe = "files-trash") {
     sourceSha256: createHash("sha256").update(source).digest("hex") });
 }
 
+async function invokePublishedCli(fetchFn: typeof fetch, args: string[], home?: string) {
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const result = await fetchFn(new URL(request.url ?? "/", "http://127.0.0.1"), {
+      method: request.method, ...(request.method === "PUT" ? { body: Buffer.concat(chunks).toString() } : {}),
+    });
+    response.statusCode = result.status;
+    response.setHeader("content-type", "application/json");
+    response.end(Buffer.from(await result.arrayBuffer()));
+  });
+  await new Promise<void>(ready => server.listen(0, "127.0.0.1", ready));
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test Gateway address missing");
+    const bin = resolve(import.meta.dirname, "../../packages/sync-client/bin/matrix.mjs");
+    const { stdout } = await promisify(execFile)(process.execPath, [bin, "--json", "--gateway",
+      `http://127.0.0.1:${address.port}/vm/test-computer`, ...args], {
+      cwd: checkout, timeout: 10_000, env: { ...process.env, ...(home ? { HOME: home } : {}), MATRIX_NO_TELEMETRY: "1" },
+    });
+    return JSON.parse(stdout);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(closed => server.close(() => closed()));
+  }
+}
+
 describe("matrix mac verify terminal request", () => {
   it("queues the exact candidate for the latest completed worktree run and preserves the selected runtime", async () => {
     const { fetchFn, queue } = fixture(detail([resultRun({ id: "run_previous", age: 1000 }), resultRun()]));
@@ -98,39 +125,12 @@ describe("matrix mac verify terminal request", () => {
   });
 
   it("supports leading global flags on the published matrix executable", async () => {
-    let intent: unknown;
-    const server = createServer(async (request, response) => {
-      response.setHeader("content-type", "application/json");
-      if (request.url?.startsWith(`/vm/test-computer/api/chats/${chatId}?`)) {
-        response.end(JSON.stringify(detail()));
-      } else if (request.url?.startsWith("/vm/test-computer/api/files/blob?") && request.method === "PUT") {
-        const body: Buffer[] = [];
-        for await (const bytes of request) body.push(Buffer.from(bytes));
-        const bytes = Buffer.concat(body);
-        intent = JSON.parse(bytes.toString());
-        const path = new URL(request.url, "http://127.0.0.1").searchParams.get("path");
-        response.end(JSON.stringify({ ok: true, path, size: bytes.length }));
-      } else {
-        response.statusCode = 404;
-        response.end("{}");
-      }
-    });
-    await new Promise<void>(ready => server.listen(0, "127.0.0.1", ready));
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("test Gateway address missing");
-    try {
-      const bin = resolve(import.meta.dirname, "../../packages/sync-client/bin/matrix.mjs");
-      const { stdout } = await promisify(execFile)(process.execPath, [
-        bin, "--json", "--gateway", `http://127.0.0.1:${address.port}/vm/test-computer`, "--token", "fixture",
-        "mac", "verify", "--chat", chatId, "--worktree", worktreeId, "--recipe", "files-trash",
-      ], { cwd: checkout, timeout: 10_000, env: { ...process.env, MATRIX_NO_TELEMETRY: "1" } });
-      expect(JSON.parse(stdout)).toEqual({ v: 1, ok: true,
-        data: { status: "queued", chatId, runId, worktreeId, recipe: "files-trash" } });
-      expect(intent).toEqual(JSON.parse(await expectedBody()));
-    } finally {
-      server.closeAllConnections();
-      await new Promise<void>(closed => server.close(() => closed()));
-    }
+    const { fetchFn } = fixture();
+    expect(await invokePublishedCli(fetchFn, ["--token", "fixture", "mac", "verify", "--chat", chatId,
+      "--worktree", worktreeId, "--recipe", "files-trash"])).toEqual({ v: 1, ok: true,
+      data: { status: "queued", chatId, runId, worktreeId, recipe: "files-trash" } });
+    const upload = fetchFn.mock.calls.find(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(upload?.[1]?.body))).toEqual(JSON.parse(await expectedBody()));
   });
 
   it("uses only the named recipe's fixed source file and accepts exact duplicate intent bytes", async () => {
@@ -145,18 +145,11 @@ describe("matrix mac verify terminal request", () => {
     expect(fetchFn.mock.calls.filter(call => call[1]?.method === "PUT")).toHaveLength(1);
   });
 
-  it("fails if the latest completed run claims another worktree, even when an older run matches", async () => {
+  it.each([
+    ["another worktree", { worktree: "wt_ffffffffff12" }], ["a failed run", { status: "failed" as const }],
+  ] as const)("rejects %s on the latest run even when an older run matches", async (_case, options) => {
     const { fetchFn, queue } = fixture(detail([
-      resultRun({ id: "run_previous", age: 1000 }), resultRun({ worktree: "wt_ffffffffff12" }),
-    ]));
-    await expect(queue()).rejects.toMatchObject({ code: "mac_verification_chat_unavailable" });
-    expect(fetchFn).toHaveBeenCalledTimes(1);
-  });
-
-  it("rejects an earlier completed run after a new run fails", async () => {
-    const { fetchFn, queue } = fixture(detail([
-      resultRun({ id: "run_previous", age: 1000 }),
-      resultRun({ status: "failed" }),
+      resultRun({ id: "run_previous", age: 1000 }), resultRun(options),
     ]));
     await expect(queue()).rejects.toMatchObject({ code: "mac_verification_chat_unavailable" });
     expect(fetchFn).toHaveBeenCalledTimes(1);
@@ -266,11 +259,6 @@ describe("matrix mac verify --current active agent request", () => {
     await expect(queue()).rejects.toMatchObject({ code: "mac_verification_worktree_unavailable" });
     expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
   });
-  it("refuses ambiguous active Chats instead of choosing the newest", async () => {
-    const { fetchFn, queue } = currentFixture({ chats: [activeDetail(), activeDetail("chat_another")] });
-    await expect(queue()).rejects.toMatchObject({ code: "mac_verification_context_unavailable" });
-    expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
-  });
   it("queues a current long-running task without treating run duration as Mac permission expiry", async () => {
     const { queue } = currentFixture({ chats: [activeDetail(chatId, { age: 60 * 60_000 })] });
     await expect(queue()).resolves.toMatchObject({ status: "queued", chatId, runId, worktreeId });
@@ -288,11 +276,6 @@ describe("matrix mac verify --current active agent request", () => {
       recipe: "files-trash", cwd: checkout, fetchFn })).rejects.toMatchObject({ code: "mac_verification_invalid_input" });
     expect(fetchFn).not.toHaveBeenCalled();
   });
-  it("does not upload if the admitted run completes during preparation", async () => {
-    const { fetchFn, queue } = currentFixture({ afterRead: activeDetail(chatId, { status: "completed" }) });
-    await expect(queue()).rejects.toMatchObject({ code: "mac_verification_context_unavailable" });
-    expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
-  });
   it("does not upload a source revision changed during Chat discovery", async () => {
     const path = join(checkout, MAC_VERIFICATION_SOURCE_BY_RECIPE["files-trash"]);
     const { fetchFn, queue } = currentFixture({ onFirstDetail: () => writeFile(path, "changed during discovery\n") });
@@ -300,11 +283,6 @@ describe("matrix mac verify --current active agent request", () => {
       await expect(queue()).rejects.toMatchObject({ code: "mac_verification_worktree_unavailable" });
       expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
     } finally { await writeFile(path, source); }
-  });
-  it("rechecks registry target identity before uploading the active-run intent", async () => {
-    const { fetchFn, queue } = currentFixture({ afterInventoryPath: `${checkout}-replaced` });
-    await expect(queue()).rejects.toMatchObject({ code: "mac_verification_context_unavailable" });
-    expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
   });
   it("does not follow a replacement active run after discovery", async () => {
     const replaced = activeDetail();
@@ -314,8 +292,13 @@ describe("matrix mac verify --current active agent request", () => {
     await expect(queue()).rejects.toMatchObject({ code: "mac_verification_context_unavailable" });
     expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
   });
-  it("does not claim unique context from a truncated Chat inventory", async () => {
-    const { fetchFn, queue } = currentFixture({ nextCursor: "chatcur_repeat" });
+  it.each([
+    ["choice between ambiguous active Chats", () => ({ chats: [activeDetail(), activeDetail("chat_another")] })],
+    ["completed run during preparation", () => ({ afterRead: activeDetail(chatId, { status: "completed" }) })],
+    ["replaced registry target", () => ({ afterInventoryPath: `${checkout}-replaced` })],
+    ["truncated Chat inventory", () => ({ nextCursor: "chatcur_repeat" })],
+  ] as const)("does not upload for a %s", async (_case, options) => {
+    const { fetchFn, queue } = currentFixture(options());
     await expect(queue()).rejects.toMatchObject({ code: "mac_verification_context_unavailable" });
     expect(fetchFn.mock.calls.some(call => call[1]?.method === "PUT")).toBe(false);
   });
@@ -327,35 +310,14 @@ describe("matrix mac verify --current active agent request", () => {
 
 describe("matrix mac verify --current published entry", () => {
   it("uses an authenticated owner profile and queues without Chat or worktree arguments", async () => {
-    const f = currentFixture();
-    const server = createServer(async (request, response) => {
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      const result = await f.fetchFn(new URL(request.url ?? "/", "http://127.0.0.1"), {
-        method: request.method, ...(request.method === "PUT" ? { body: Buffer.concat(chunks).toString() } : {}),
-      });
-      response.statusCode = result.status;
-      response.setHeader("content-type", "application/json");
-      response.end(Buffer.from(await result.arrayBuffer()));
-    });
-    await new Promise<void>(ready => server.listen(0, "127.0.0.1", ready));
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("test Gateway address missing");
+    const { fetchFn } = currentFixture();
     const home = await mkdtemp(join(tmpdir(), "matrix-current-mac-profile-"));
     try {
       const auth = join(home, ".matrixos/profiles/cloud"); await mkdir(auth, { recursive: true });
       await writeFile(join(auth, "auth.json"), JSON.stringify({ accessToken: "test-bearer", userId: ownerId,
         handle: "test-computer", expiresAt: Date.now() + 60_000 }));
-      const { stdout } = await promisify(execFile)(process.execPath, [resolve(import.meta.dirname, "../../packages/sync-client/bin/matrix.mjs"),
-        "--json", "--gateway", `http://127.0.0.1:${address.port}/vm/test-computer`,
-        "mac", "verify", "--current", "--recipe", "files-trash"], {
-        cwd: checkout, timeout: 10_000, env: { ...process.env, HOME: home, MATRIX_NO_TELEMETRY: "1" },
-      });
-      expect(JSON.parse(stdout)).toMatchObject({ ok: true, data: { status: "queued", chatId, runId, worktreeId } });
-    } finally {
-      server.closeAllConnections();
-      await new Promise<void>(closed => server.close(() => closed()));
-      await rm(home, { recursive: true, force: true });
-    }
+      expect(await invokePublishedCli(fetchFn, ["mac", "verify", "--current", "--recipe", "files-trash"], home))
+        .toMatchObject({ ok: true, data: { status: "queued", chatId, runId, worktreeId } });
+    } finally { await rm(home, { recursive: true, force: true }); }
   });
 });
