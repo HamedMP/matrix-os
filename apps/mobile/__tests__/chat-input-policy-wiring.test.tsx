@@ -26,6 +26,7 @@ jest.mock("@/lib/queries/use-canonical-chat-detail", () => ({
   }),
 }));
 jest.mock("@/lib/queries/use-canonical-chats", () => ({ useCanonicalChats: () => ({ chats: [] }) }));
+jest.mock("@/lib/queries/use-mark-chat-read", () => ({ useMarkChatRead: jest.fn() }));
 jest.mock("@/lib/queries/use-chat-provider-catalog", () => ({
   useChatProviderCatalog: () => ({ catalog: mockCatalog, isPending: false, isFetching: false }),
 }));
