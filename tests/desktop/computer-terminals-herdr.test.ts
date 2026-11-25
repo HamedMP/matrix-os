@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminals";
-import { listComputerTabs } from "../../desktop/src/renderer/src/features/terminal-window/computer-terminals";
+import { closeComputerTab, createComputerTab, listComputerTabs } from "../../desktop/src/renderer/src/features/terminal-window/computer-terminals";
 
 const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
 const TAB_ID = `tt_${"b".repeat(32)}`;
@@ -64,5 +64,50 @@ describe("Terminal window computer section", () => {
     const tabs = await listComputerTabs(client as never);
     expect(tabs.filter((tab) => tab.group === "main")).toHaveLength(200);
     expect(tabs.filter((tab) => tab.group === "herdr")).toHaveLength(100);
+  });
+
+  // Fault detected (Greptile on #3530): Close and Split in the Terminal window sent a Herdr
+  // pane to Matrix workspace routes, so Close left the program running and showed an error.
+  it("ends a Herdr pane through the Herdr route, not the Matrix tab route", async () => {
+    const client = {
+      getText: vi.fn(async () => JSON.stringify({ available: true, status: "ready", sessions: [
+        { id: "t7", tabId: HERDR_TAB, title: "claude", status: "working" },
+      ] })),
+      delete: vi.fn(async () => ({ ok: true })),
+    };
+    await closeComputerTab(client as never, { workspaceId: HERDR_TERMINAL_WORKSPACE_ID, tabId: HERDR_TAB });
+    expect(client.delete).toHaveBeenCalledTimes(1);
+    expect(client.delete).toHaveBeenCalledWith("/api/terminal/herdr/t7", expect.anything(), expect.anything());
+  });
+
+  it("treats a Herdr pane that is no longer listed as already ended", async () => {
+    const client = {
+      getText: vi.fn(async () => JSON.stringify({ available: true, status: "ready", sessions: [] })),
+      delete: vi.fn(),
+    };
+    await expect(closeComputerTab(client as never, { workspaceId: HERDR_TERMINAL_WORKSPACE_ID, tabId: HERDR_TAB })).resolves.toBeUndefined();
+    expect(client.delete).not.toHaveBeenCalled();
+  });
+
+  it("fails a Herdr close when the computer cannot list its Herdr sessions", async () => {
+    const client = {
+      getText: vi.fn(async () => { throw new Error("http 503"); }),
+      delete: vi.fn(),
+    };
+    await expect(closeComputerTab(client as never, { workspaceId: HERDR_TERMINAL_WORKSPACE_ID, tabId: HERDR_TAB })).rejects.toBeTruthy();
+    expect(client.delete).not.toHaveBeenCalled();
+  });
+
+  it("splits a Herdr pane with a new Matrix tab in the main workspace", async () => {
+    const created = `tt_${"e".repeat(32)}`;
+    const client = {
+      post: vi.fn(async (path: string) => (path.endsWith("/ensure")
+        ? { workspace: { id: WORKSPACE_ID } }
+        : { tab: { id: created, name: "Terminal" } })),
+    };
+    const refKey = await createComputerTab(client as never, "Terminal", { workspaceId: HERDR_TERMINAL_WORKSPACE_ID, cwd: "/tmp" });
+    expect(refKey).toBe(`${WORKSPACE_ID}:${created}`);
+    expect(client.post).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`, { name: "Terminal", cwd: "" });
+    expect(client.post.mock.calls.some(([path]) => String(path).includes(HERDR_TERMINAL_WORKSPACE_ID))).toBe(false);
   });
 });

@@ -2,10 +2,11 @@
 
 import React from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OSWindow, TopBar } from "../../desktop/src/renderer/src/features/desktop-shell/OSWindow";
 import TerminalsTab from "../../desktop/src/renderer/src/features/terminal/TerminalsTab";
+import { useDesktopTerminalControls } from "../../desktop/src/renderer/src/features/terminal/use-desktop-terminal-controls";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useSessions } from "../../desktop/src/renderer/src/stores/sessions";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
@@ -1171,4 +1172,43 @@ describe("TerminalsTab", () => {
     expect(screen.getByText("No shell sessions yet")).toBeTruthy();
   });
 
+});
+
+// Fault detected (Greptile on #3530): a Herdr pane enabled Split, Maximize and Close, which
+// went to Matrix-only pane routes that need a real Matrix workspace, and failed.
+describe("pane controls for a Herdr session", () => {
+  afterEach(() => { cleanup(); });
+  const HERDR_SESSION = `tws_00000000000000000000006865726472:tt_${"9".repeat(32)}`;
+  function controlsProps(onPaneAction?: (action: { type: string }) => void) {
+    const api = { get: vi.fn(async () => ({ preferences: { keyboard: { profile: "mac", overrides: {} } } })), put: vi.fn(), post: vi.fn() };
+    const term = { focus: vi.fn(), scrollToTop: vi.fn(), scrollToBottom: vi.fn() };
+    return {
+      api, term,
+      props: {
+        api: api as never, sessionName: HERDR_SESSION, active: true, socketState: "attached" as const,
+        writable: true, isMac: true, attachmentRef: { current: null }, termRef: { current: term }, onPaneAction,
+      },
+    };
+  }
+
+  it("disables computer pane actions in the main window", async () => {
+    const { api, props } = controlsProps();
+    const { result } = renderHook(() => useDesktopTerminalControls(props));
+    expect(result.current.enabled).toBe(true);
+    expect(result.current.paneActionsEnabled).toBe(false);
+    await act(async () => { await result.current.runAction({ type: "split", direction: "right" }); });
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Terminal window's own pane actions and scrolls the pane's own history", async () => {
+    const onPaneAction = vi.fn();
+    const { api, term, props } = controlsProps(onPaneAction);
+    const { result } = renderHook(() => useDesktopTerminalControls(props));
+    expect(result.current.paneActionsEnabled).toBe(true);
+    await act(async () => { await result.current.runAction({ type: "split", direction: "right" }); });
+    await act(async () => { await result.current.runAction({ type: "scroll", edge: "top" }); });
+    expect(onPaneAction).toHaveBeenCalledWith({ type: "split", direction: "right" });
+    expect(term.scrollToTop).toHaveBeenCalledOnce();
+    expect(api.post).not.toHaveBeenCalled();
+  });
 });
