@@ -880,7 +880,7 @@ describe('lifecycle reader', () => {
   function reader(timeoutMs?: number) {
     const upstream = (): RuntimeUpstream => ({
       url: `${server.origin}/api/system/lifecycle`,
-      hostHeader: 'alice.matrix-os.com',
+      hostHeader: 'app.matrix-os.com',
       tlsServerName: '127.0.0.1',
       headers: { [HOST_AUTH_HEADER]: INGRESS_TOKEN },
       extraCaPem: cert.cert,
@@ -902,7 +902,7 @@ describe('lifecycle reader', () => {
 
     const req = server.requests[0];
     expect(req).toMatchObject({ method: 'GET', path: '/api/system/lifecycle' });
-    expect(req?.headers.host).toBe('alice.matrix-os.com');
+    expect(req?.headers.host).toBe('app.matrix-os.com');
     expect(req?.headers.authorization).toBe(`Bearer ${buildPlatformVerificationToken('alice', PLATFORM_SECRET)}`);
     expect(req?.headers[HOST_AUTH_HEADER]).toBe(INGRESS_TOKEN);
   });
