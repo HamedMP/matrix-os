@@ -70,6 +70,7 @@ export default defineConfig({
       "@matrix-os/contracts/data-imports": path.resolve(__dirname, "packages/contracts/src/data-imports.ts"),
       "@matrix-os/contracts/http-request-deadlines": path.resolve(__dirname, "packages/contracts/src/http-request-deadlines.ts"),
       "@matrix-os/contracts/chat-subagent": path.resolve(__dirname, "packages/contracts/src/chat-subagent.ts"),
+      "@matrix-os/contracts/message-board": path.resolve(__dirname, "packages/contracts/src/message-board/index.ts"),
       "@matrix-os/contracts/app-gallery-bridge-policy": path.resolve(__dirname, "packages/contracts/src/app-gallery-bridge-policy.ts"),
       "@matrix-os/contracts/app-gallery-inventory": path.resolve(__dirname, "packages/contracts/src/app-gallery-inventory.ts"),
       "@matrix-os/contracts/app-gallery": path.resolve(__dirname, "packages/contracts/src/app-gallery.ts"),
