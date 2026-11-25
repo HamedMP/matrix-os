@@ -260,19 +260,18 @@ describe("Sheets app journey", () => {
     expect(screen.getByText(/The file was not changed/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Back to start" }));
     await settle();
-    expect(screen.getByRole("button", { name: /^New blank workbook/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Blank workbook/ })).toBeTruthy();
     expect(os.writes).toEqual([]);
   });
 
-  it("starts on the start screen and opens a .csv through the file picker", async () => {
+  it("starts on the start screen and opens a .csv from the Matrix files there", async () => {
     const os = new FakeMatrixOS();
     os.put("Documents/data.csv", fixture("data.csv"));
     const { container } = await mountApp(os);
     expect(screen.getByText("No recent workbooks")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Open from Matrix/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Documents" }));
-    fireEvent.click(await screen.findByRole("button", { name: "data.csv" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Folder Documents" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^data\.csv/ }));
     await screen.findByRole("tablist", { name: "Sheets" }, { timeout: 5000 });
     expect(screen.getByText("data.csv")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();

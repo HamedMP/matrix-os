@@ -10,6 +10,7 @@
  * one loads, so its edits are saved again right before it is replaced.
  */
 
+import type { Workbook } from "./engine";
 import { toSessionError } from "./file-io";
 import { openLocalSheetSession } from "./local";
 import { createSheetSession, openSheetSession } from "./open";
@@ -123,12 +124,15 @@ export class SessionHost {
     return { status: "opened", session };
   }
 
-  /** Starts a new, unsaved workbook as the current document. */
-  async openNew(options: { discardUnsaved?: boolean; name?: string } = {}): Promise<HostOpenResult> {
+  /**
+   * Starts a new, unsaved workbook as the current document. `template` builds
+   * its starting content; it runs only once the current document was let go.
+   */
+  async openNew(options: { discardUnsaved?: boolean; name?: string; template?: () => Workbook | null } = {}): Promise<HostOpenResult> {
     const ticket = ++this.ticket;
     if (!(await this.release(options.discardUnsaved === true))) return { status: "unsaved" };
     if (ticket !== this.ticket) return { status: "superseded" };
-    const session = createSheetSession(this.deps, { name: options.name });
+    const session = createSheetSession(this.deps, { name: options.name, workbook: options.template?.() ?? undefined });
     this.replace(session);
     return { status: "opened", session };
   }

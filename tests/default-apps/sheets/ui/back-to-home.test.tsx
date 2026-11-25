@@ -29,7 +29,7 @@ function type(app: Awaited<ReturnType<typeof renderApp>>, text: string): void {
 
 async function startScreen(): Promise<void> {
   await flush();
-  expect(screen.getByRole("button", { name: /^New blank workbook/ })).toBeTruthy();
+  expect(screen.getByRole("button", { name: /^Blank workbook/ })).toBeTruthy();
 }
 
 describe("Back to the Sheets start screen", () => {
@@ -40,14 +40,14 @@ describe("Back to the Sheets start screen", () => {
     await startScreen();
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(app.host.session).toBeNull();
-    expect(screen.getByRole("button", { name: /Budget\.xlsx/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Budget\.xlsx, in / })).toBeTruthy();
     const saved = await openXlsx(app.bridge.fileStore.bytes("Reports/Budget.xlsx"));
     expect(saved.getCell(saved.listSheets()[0]!.id, { row: 0, col: 0 }).value).toBe(42);
   });
 
   it("asks Save, Discard or Cancel for a new workbook, and Save asks where before going home", async () => {
     const app = await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: /New blank workbook/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Blank workbook/ }));
     await flush();
     type(app, "draft");
 
@@ -69,7 +69,7 @@ describe("Back to the Sheets start screen", () => {
     await flush();
     await startScreen();
     expect(app.bridge.fileStore.store.has("Documents/Plan.xlsx")).toBe(true);
-    expect(screen.getByRole("button", { name: /Plan\.xlsx/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Plan\.xlsx, in / })).toBeTruthy();
   });
 
   it("keeps the workbook open and shows why when the save fails, and goes home on Discard", async () => {
@@ -98,7 +98,7 @@ describe("Back to the Sheets start screen", () => {
 
   it("does the same through File > Close", async () => {
     const app = await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: /New blank workbook/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Blank workbook/ }));
     await flush();
     type(app, "draft");
     fileClose();
@@ -106,7 +106,7 @@ describe("Back to the Sheets start screen", () => {
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard" }));
     await startScreen();
 
-    fireEvent.click(screen.getByRole("button", { name: /New blank workbook/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Blank workbook/ }));
     await flush();
     fileClose();
     await startScreen();

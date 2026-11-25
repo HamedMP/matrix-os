@@ -1,6 +1,6 @@
 /** Making sessions: from a file in the owner's home, or new and empty. */
 
-import { createXlsx } from "./engine";
+import { type Workbook, createXlsx } from "./engine";
 import { type LoadedWorkbook, SheetSessionError, formatOfPath, loadWorkbook, toSessionError } from "./file-io";
 import { SheetSession } from "./session";
 import type { SessionDeps } from "./types";
@@ -21,8 +21,8 @@ export async function openSheetSession(deps: SessionDeps, path: string): Promise
   return session;
 }
 
-/** A new, empty workbook that has no file yet. `saveAs` gives it one. */
-export function createSheetSession(deps: SessionDeps, options: { name?: string } = {}): SheetSession {
-  const loaded: LoadedWorkbook = { workbook: createXlsx(), csv: null };
+/** A new workbook that has no file yet: empty, or the one given (a template). `saveAs` gives it a file. */
+export function createSheetSession(deps: SessionDeps, options: { name?: string; workbook?: Workbook } = {}): SheetSession {
+  const loaded: LoadedWorkbook = { workbook: options.workbook ?? createXlsx(), csv: null };
   return new SheetSession(deps, loaded, { path: null, format: "xlsx", version: null }, { name: options.name });
 }
