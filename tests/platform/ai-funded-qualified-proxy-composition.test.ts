@@ -72,7 +72,13 @@ describe.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL)('real qualifi
     const reservation = await db.executor.selectFrom('ai_funded_usage_reservations').selectAll().executeTakeFirstOrThrow();
     const balance = await db.executor.selectFrom('ai_funded_runtime_balances').selectAll().executeTakeFirstOrThrow();
     if (boundary === 'none' || boundary === 'start') { expect(reservation.status).toBe('settled'); expect(reservation.actual_microusd).toBe(boundary === 'none' ? 24 : 0); expect(balance.reserved_microusd).toBe(0); }
-    else { expect(reservation.status).toBe('in_flight'); expect(reservation.actual_microusd).toBeNull(); expect(balance.reserved_microusd).toBeGreaterThan(0); }
+    else {
+      // The current customer-charge policy releases this customer hold while retaining unknown provider-cost evidence.
+      expect(reservation.status).toBe('expired'); expect(reservation.actual_microusd).toBeNull();
+      expect(reservation.finalization_mode).toBeNull(); expect(reservation.settlement_response).toBeNull();
+      expect(JSON.parse(reservation.customer_charge_release!)).toMatchObject({ reason: 'gateway_failure', releasedMicrousd: reservation.reserved_microusd });
+      expect(balance.reserved_microusd).toBe(0);
+    }
     expect(provider).toHaveBeenCalledTimes(boundary === 'start' ? 0 : 1);
   });
 });
