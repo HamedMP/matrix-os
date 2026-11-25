@@ -26,7 +26,7 @@ import {
   usageReservationLimit,
 } from "./ai-funded-metering-helpers.js";
 import { createFundedAuthorize } from "./ai-funded-authorization.js";
-import { FREE_MANAGED_MODEL_ID, grantFreeMonthlyAllowance, type FreeFundingConfig } from "./free-tier/funded-policy.js";
+import { FREE_MANAGED_MODEL_ID, grantFreeMonthlyAllowance, isFreeAllowanceEntryId, type FreeFundingConfig } from "./free-tier/funded-policy.js";
 import { isFreePrepaidHold } from "./free-tier/prepaid-unknown-usage.js";
 import { isFreeMetalRuntime } from "./free-tier/free-runtime.js";
 import {
@@ -272,7 +272,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     await withAccountDeletionOwnerLock(transaction, grant.identity.ownerId, async (_locked, admission) => {
       if (!admission.newWorkAllowed) throw new AiFundedPolicyError("access_disabled");
     });
-    const ownerPromotion = grant.kind === "promotional_grant" && grant.entryId.startsWith("promotion:");
+    const ownerPromotion = grant.kind === "promotional_grant"
+      && (grant.entryId.startsWith("promotion:") || isFreeAllowanceEntryId(grant.entryId));
     if (ownerPromotion) {
       // Campaign grants and admission share one owner-wide lock namespace.
       // This serializes handoff with new reservations across every runtime.

@@ -16,6 +16,7 @@ import { AiFundedPolicyError } from '../ai-funded-policy-errors.js';
 export { FREE_MANAGED_MODEL_ID };
 export const FREE_MONTHLY_ALLOWANCE_MICROUSD = 5_000_000;
 const ALLOWANCE_SOURCE = 'matrix-free-monthly-allowance';
+const ALLOWANCE_ENTRY_PREFIX = 'free-monthly:';
 const DAILY_SPEND_LOCK_KEY = 'matrix:free-tier:daily-funded-spend';
 
 export interface FreeFundingConfig {
@@ -37,7 +38,16 @@ function monthBounds(at: Date): { label: string; next: string } {
 
 /** One allowance per owner per month, whichever of the owner's runtimes asks first. */
 export function freeAllowanceEntryId(ownerId: string, at: Date): string {
-  return `free-monthly:${createHash('sha256').update(ownerId).digest('hex')}:${monthBounds(at).label}`;
+  return `${ALLOWANCE_ENTRY_PREFIX}${createHash('sha256').update(ownerId).digest('hex')}:${monthBounds(at).label}`;
+}
+
+/**
+ * The monthly allowance is owner-wide, like a promotion campaign grant:
+ * replaying it on another of the owner's runtimes hands off its unallocated
+ * remainder instead of minting more credit.
+ */
+export function isFreeAllowanceEntryId(entryId: string): boolean {
+  return entryId.startsWith(ALLOWANCE_ENTRY_PREFIX);
 }
 
 export function assertFreeModel(modelId: string): void {
@@ -49,15 +59,19 @@ export function assertFreeModel(modelId: string): void {
  * advisory lock (the grant takes the exclusive fence itself, so a caller
  * holding only the shared funding fence would upgrade it and could deadlock).
  * The ledger insert is idempotent on its entry id; the existence check only
- * skips the grant's locks once the month's allowance exists.
+ * skips the grant's locks once the month's allowance is on this runtime. An
+ * allowance left on a retired runtime (deleted and replaced the same month) is
+ * replayed here, which moves its unspent remainder without a second grant.
  */
 export async function grantFreeMonthlyAllowance(
   trx: PlatformDB, identity: Identity, at: Date, grant: FreeAllowanceGrant,
 ): Promise<void> {
   const entryId = freeAllowanceEntryId(identity.ownerId, at);
-  const existing = await trx.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
-    .where('entry_id', '=', entryId).executeTakeFirst();
-  if (existing) return;
+  const existing = await trx.executor.selectFrom('ai_funded_promotional_grant_balances as g')
+    .innerJoin('user_machines as m', 'm.machine_id', 'g.machine_id')
+    .select(['g.machine_id', 'm.deleted_at'])
+    .where('g.grant_entry_id', '=', entryId).executeTakeFirst();
+  if (existing && (existing.machine_id === identity.machineId || existing.deleted_at === null)) return;
   await grant(trx, {
     entryId, identity, kind: 'promotional_grant', amountMicrousd: FREE_MONTHLY_ALLOWANCE_MICROUSD,
     sourceReference: ALLOWANCE_SOURCE, expiresAt: monthBounds(at).next,

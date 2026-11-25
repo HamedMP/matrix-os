@@ -238,6 +238,31 @@ describe('free funded policy', () => {
     expect((await free.repo.getRuntimeFundingSummary(paid)).policy.enabled).toBe(true);
   });
 
+  it('moves the month\'s unspent allowance to a replacement VM without granting another', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const first = await addRuntime(db, 1, 'free', NOV);
+    await free.spend(await free.credential(first), 2 * USD);
+    const allowance = () => db.executor.selectFrom('ai_funded_promotional_grant_balances')
+      .select(['machine_id', 'remaining_microusd']).where('grant_entry_id', 'like', 'free-monthly:%').execute();
+    const [before] = await allowance();
+    const unspent = Number(before!.remaining_microusd);
+    expect(unspent).toBeGreaterThan(0);
+    // An operator deletes the VM; the owner builds a replacement the same month.
+    await db.executor.updateTable('user_machines').set({ status: 'deleted', deleted_at: NOV.toISOString() })
+      .where('machine_id', '=', first.machineId).execute();
+    const replacement = { ownerId: first.ownerId, machineId: 'free-1-replacement', runtimeSlot: 'primary' };
+    await insertFreeMetalRuntime(db, { machineId: replacement.machineId, clerkUserId: first.ownerId, handle: 'free1r', at: NOV });
+    await db.transaction((trx) => initializeCustomerFundedStarterPolicy(trx, replacement.machineId, { now: NOV.toISOString(), env: ENV }));
+
+    const credential = await free.credential(replacement);
+    await expect(free.authorize(credential, unspent + 1)).rejects.toThrow();
+    await expect(free.authorize(credential, unspent)).resolves.toMatchObject({ reservation: { reservedMicrousd: unspent } });
+    expect((await allowance()).map((row) => [row.machine_id, Number(row.remaining_microusd)]))
+      .toEqual([[replacement.machineId, unspent]]);
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
+      .where('entry_id', 'like', 'free-monthly:%').execute()).toHaveLength(1);
+  });
+
   it('grants no monthly allowance on a funding read while the free runtime is disabled', async () => {
     const free = harness(db, 100 * USD, clock);
     const identity = await addRuntime(db, 1, 'free', NOV);
