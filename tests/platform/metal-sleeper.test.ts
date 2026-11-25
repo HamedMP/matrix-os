@@ -20,6 +20,7 @@ import {
   SCHEDULED_WAKE_LEAD_MS,
   SLEEP_PASS_BUDGET_MS,
   SLEEP_RECHECK_AFTER_MS,
+  WAKE_PASS_BUDGET_MS,
   WAKE_RETRY_MAX_MS,
   createMetalSleeper,
   startMetalSleeperWorker,
@@ -29,6 +30,7 @@ import {
 import { createLifecycleReader } from '../../packages/platform/src/substrates/metal-lifecycle-reader.js';
 import { createMetalHostDirectory, createMetalSubstrate, HOST_AUTH_HEADER } from '../../packages/platform/src/substrates/metal-substrate.js';
 import { createSubstrateRegistry } from '../../packages/platform/src/substrates/registry.js';
+import { WAKE_TIMEOUT_MS } from '../../packages/platform/src/substrates/substrate-wake.js';
 import type {
   EnsureRunningResult,
   OnDemandRuntimeSubstrate,
@@ -208,7 +210,25 @@ describe('metal idle sleeper', () => {
     expect(await machine(paid)).toMatchObject({ status: 'running' });
   });
 
-  it('wakes 60 s before nextScheduledAt', async () => {
+  it('wakes early enough that a scan just missing the wake time still leaves the wake pass and a resume before the job', async () => {
+    const scheduledAt = new Date(NOW.getTime() + HOUR);
+    const id = await seedMachine();
+    const { sleeper: s, ensureRunning } = sleeper({
+      lifecycle: { ok: true, status: { ...IDLE, nextScheduledAt: scheduledAt.toISOString() } },
+    });
+
+    await s.tick(NOW);
+    const wakeAt = Date.parse((await machine(id)).nextWakeAt!);
+    // Worst case: one scan runs just before the saved wake time, the next a full interval later.
+    await s.tick(new Date(wakeAt - 1));
+    expect(ensureRunning).not.toHaveBeenCalled();
+    const firstWakeScan = wakeAt - 1 + METAL_SLEEP_INTERVAL_MS;
+    await s.tick(new Date(firstWakeScan));
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    expect(scheduledAt.getTime() - firstWakeScan).toBeGreaterThanOrEqual(WAKE_PASS_BUDGET_MS + WAKE_TIMEOUT_MS);
+  });
+
+  it('wakes SCHEDULED_WAKE_LEAD_MS before nextScheduledAt', async () => {
     const scheduledAt = new Date(NOW.getTime() + HOUR);
     const id = await seedMachine();
     const { sleeper: s, stop, ensureRunning } = sleeper({
@@ -217,7 +237,7 @@ describe('metal idle sleeper', () => {
 
     await s.tick(NOW);
     const wakeAt = new Date(scheduledAt.getTime() - SCHEDULED_WAKE_LEAD_MS);
-    expect(SCHEDULED_WAKE_LEAD_MS).toBe(60_000);
+    expect(SCHEDULED_WAKE_LEAD_MS).toBe(2 * MINUTE);
     expect(stop).toHaveBeenCalledTimes(1);
     expect(await machine(id)).toMatchObject({ status: 'suspended', nextWakeAt: wakeAt.toISOString() });
 
@@ -281,7 +301,7 @@ describe('metal idle sleeper', () => {
 
   it('wakes after a lost suspend answer even before the next lifecycle check', async () => {
     const id = await seedMachine();
-    const scheduledAt = new Date(NOW.getTime() + 2 * MINUTE);
+    const scheduledAt = new Date(NOW.getTime() + 3 * MINUTE);
     let asleep = false;
     const { sleeper: s, stop, ensureRunning } = sleeper({
       lifecycle: async () => (asleep ? { ok: false, code: 'asleep' }
@@ -417,17 +437,55 @@ describe('metal idle sleeper', () => {
     expect(logs).toContainEqual({ event: 'scheduled_wake_needs_recovery', fields: { machineId: id } });
   });
 
-  it('wakes at most 20 runtimes per tick, earliest first', async () => {
+  it('drains every due wake within one pass, 20 at a time, earliest first', async () => {
     const ids: string[] = [];
-    for (let i = 0; i < 22; i += 1) {
+    for (let i = 0; i < 45; i += 1) {
+      ids.push(await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago((60 - i) * MINUTE), awakeSince: null } }));
+    }
+    let inFlight = 0;
+    let peak = 0;
+    const { sleeper: s, ensureRunning } = sleeper();
+    ensureRunning.mockImplementation(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      return { state: 'running' };
+    });
+
+    await s.tick(NOW);
+
+    expect(ensureRunning).toHaveBeenCalledTimes(45);
+    expect(ensureRunning.mock.calls.map((call) => call[0].machineId)).toEqual(ids);
+    expect(peak).toBeLessThanOrEqual(20);
+  });
+
+  it('wakes each due row at most once per pass while draining', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 25; i += 1) {
       ids.push(await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago((30 - i) * MINUTE), awakeSince: null } }));
     }
     const { sleeper: s, ensureRunning } = sleeper();
+    // A wake still in progress keeps the row asleep and due on a later scan.
+    ensureRunning.mockResolvedValue({ state: 'starting' });
+
+    await s.tick(NOW);
+
+    expect(ensureRunning).toHaveBeenCalledTimes(25);
+    expect(new Set(ensureRunning.mock.calls.map((call) => call[0].machineId))).toEqual(new Set(ids));
+  });
+
+  it('stops fetching more due wakes once the wake pass budget is spent', async () => {
+    for (let i = 0; i < 25; i += 1) {
+      await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago((30 - i) * MINUTE), awakeSince: null } });
+    }
+    let clock = 0;
+    const { sleeper: s, ensureRunning } = sleeper({ elapsedMs: () => clock });
+    ensureRunning.mockImplementation(async () => { clock = WAKE_PASS_BUDGET_MS; return { state: 'running' }; });
 
     await s.tick(NOW);
 
     expect(ensureRunning).toHaveBeenCalledTimes(20);
-    expect(ensureRunning.mock.calls.map((call) => call[0].machineId)).toEqual(ids.slice(0, 20));
   });
 
   it('more than 50 always-skipped candidates still let a sleepable VM sleep', async () => {

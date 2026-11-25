@@ -19,7 +19,7 @@ import type { LifecycleRead } from './metal-lifecycle-reader.js';
  *   an `unknown` busy source, or on an incomplete schedule. The 6 h idle guard
  *   overrides only known busy reasons: awake 6 h with no owner activity for
  *   6 h suspends it and stamps `idle_guard_at`.
- * - `next_wake_at` (60 s before the next scheduled job) is recorded before the
+ * - `next_wake_at` (2 min before the next scheduled job) is recorded before the
  *   suspend; a wake time already past means the runtime stays awake.
  * - Any lifecycle failure (timeout, non-2xx, schema failure) skips the runtime
  *   for this tick. Paid runtimes are never put to sleep; a wake saved while
@@ -32,7 +32,17 @@ import type { LifecycleRead } from './metal-lifecycle-reader.js';
 export const METAL_SLEEP_INTERVAL_MS = 60_000;
 export const IDLE_SLEEP_AFTER_MS = 60 * 60_000;
 export const IDLE_GUARD_AFTER_MS = 6 * 60 * 60_000;
-export const SCHEDULED_WAKE_LEAD_MS = 60_000;
+/**
+ * No new batch of due wakes is fetched once this long has passed since the wake
+ * pass began; the rest wait for the next scan.
+ */
+export const WAKE_PASS_BUDGET_MS = 30_000;
+/**
+ * A saved wake falls up to one scan interval before the scan that sees it, may
+ * wait out the wake pass budget behind earlier batches, and then takes up to one
+ * wake timeout to resume. The lead (2 min) covers all three before the job is due.
+ */
+export const SCHEDULED_WAKE_LEAD_MS = 2 * 60_000;
 /**
  * A just-woken runtime gets this long to start the job it was woken for
  * before it may sleep again (its next scheduled time may already be past).
@@ -41,8 +51,9 @@ export const WAKE_SETTLE_MS = 5 * 60_000;
 export const LIFECYCLE_ALERT_AFTER_MS = 6 * 60 * 60_000;
 export const LIFECYCLE_ALERT_REPEAT_MS = 60 * 60_000;
 export const SLEEP_CANDIDATES_PER_TICK = 50;
+/** Due wakes are fetched in batches of this size, drained until none are due or the wake pass budget is spent. */
 export const WAKES_PER_TICK = 20;
-/** Every due wake of a tick runs at once, so the wake phase takes at most one wake timeout (25 s). */
+/** Every due wake of a batch runs at once, so each batch takes at most one wake timeout (25 s). */
 export const WAKE_CONCURRENCY = 20;
 /** A checked candidate rotates behind the others until this long has passed, so runtimes skipped every tick cannot starve the scan. */
 export const SLEEP_RECHECK_AFTER_MS = 5 * 60_000;
@@ -199,15 +210,36 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
   }
 
   async function wakeDue(now: Date, signal: AbortSignal): Promise<void> {
-    const rows = await db.executor.selectFrom('user_machines as m').selectAll('m')
-      .where('m.substrate', '=', 'metal')
-      .where('m.status', 'in', [ASLEEP_STATUS, 'running'])
-      .where('m.deleted_at', 'is', null)
-      .where('m.next_wake_at', '<=', now)
-      // No plan check: a wake saved while free is honored after an upgrade; plans gate only new sleep.
-      .orderBy('m.next_wake_at').orderBy('m.machine_id')
-      .limit(WAKES_PER_TICK)
-      .execute();
+    const passStart = elapsedMs();
+    // Keyset cursor over (next_wake_at, machine_id): each due row is tried at most
+    // once per pass, even when its wake leaves the row unchanged.
+    type Cursor = { nextWakeAt: Date; machineId: string };
+    let after: Cursor | null = null;
+    while (!signal.aborted) {
+      const cursor: Cursor | null = after;
+      const rows: SleepRow[] = await db.executor.selectFrom('user_machines as m').selectAll('m')
+        .where('m.substrate', '=', 'metal')
+        .where('m.status', 'in', [ASLEEP_STATUS, 'running'])
+        .where('m.deleted_at', 'is', null)
+        .where('m.next_wake_at', '<=', now)
+        .$if(cursor !== null, (query) => query.where(
+          sql<boolean>`(m.next_wake_at, m.machine_id) > (${cursor!.nextWakeAt}, ${cursor!.machineId})`))
+        // No plan check: a wake saved while free is honored after an upgrade; plans gate only new sleep.
+        .orderBy('m.next_wake_at').orderBy('m.machine_id')
+        .limit(WAKES_PER_TICK)
+        .execute();
+      await wakeBatch(rows, now, signal);
+      const last: SleepRow | undefined = rows.at(-1);
+      if (rows.length < WAKES_PER_TICK || !last?.next_wake_at) return;
+      if (elapsedMs() - passStart >= WAKE_PASS_BUDGET_MS) {
+        log('scheduled_wake_budget_spent', { budgetMs: WAKE_PASS_BUDGET_MS });
+        return;
+      }
+      after = { nextWakeAt: last.next_wake_at, machineId: last.machine_id };
+    }
+  }
+
+  async function wakeBatch(rows: SleepRow[], now: Date, signal: AbortSignal): Promise<void> {
     let next = 0;
     const lane = async (): Promise<void> => {
       while (next < rows.length && !signal.aborted) {
