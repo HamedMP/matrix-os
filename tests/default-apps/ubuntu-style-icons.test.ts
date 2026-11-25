@@ -61,6 +61,7 @@ describe("distinct bundled app artwork", () => {
       calculator: "home/apps/calculator/matrix.json",
       "expense-tracker": "home/apps/expense-tracker/matrix.json",
       todo: "home/apps/todo/matrix.json",
+      calendar: "home/apps/calendar/matrix.json",
       docs: "home/apps/docs/matrix.json",
       sheets: "home/apps/sheets/matrix.json",
     };

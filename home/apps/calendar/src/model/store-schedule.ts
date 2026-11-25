@@ -1,0 +1,335 @@
+/**
+ * Draft editing, the scheduling assistant and proposals.
+ *
+ * The assistant fetches attendees' busy time for the visible range, draws it
+ * as overlays, and finds common free slots that become "assistant" proposals.
+ * Agent proposals arrive through `receiveProposals` or the proposals table.
+ * Clicking a proposal opens a draft; nothing is created until the owner saves.
+ */
+import { isValidMailAddress } from "../../../_shared/office-accounts/types/addresses";
+import {
+  MAX_FREE_BUSY_ADDRESSES,
+  instantToMs,
+  type BusyBlock,
+  type CalendarInfo,
+  type EventDraft,
+  type EventDraftAttendee,
+  type EventReminder,
+  type IsoInstant,
+  type Recurrence,
+} from "../../../_shared/office-accounts/types/calendar";
+import { findCachedEvent } from "./cache";
+import { MINUTES_PER_DAY, MS_PER_MINUTE, daySlices, type DayKey } from "./dates";
+import {
+  addDraftAttendee,
+  allDayDraft,
+  draftAt,
+  draftForGrid,
+  draftFromEvent,
+  draftFromProposal,
+  draftState,
+  removeDraftAttendee,
+  setAttendeeOptional,
+  setDraftAllDay,
+  setDraftOnlineMeeting,
+  setDraftRecurrence,
+  setDraftReminders,
+  setDraftTimes,
+  withDraft,
+  type DraftBase,
+} from "./drafts";
+import type { CalendarPersistence } from "./preferences";
+import { mergeProposals, parseProposals, proposalsFromSlots, type Proposal, type ProposalSource } from "./proposals";
+import { busyOverlays, findSlots } from "./slots";
+import { MAX_BUSY_BLOCKS, type CalendarState, type StoreContext } from "./store-state";
+
+export const NO_CALENDAR_MESSAGE = "Connect a calendar you can write to first.";
+
+/** The calendar new events go on: a writable primary calendar, else any writable one. */
+export function defaultCalendar(calendars: readonly CalendarInfo[], preferredId?: string): CalendarInfo | null {
+  const writable = calendars.filter((calendar) => calendar.writable);
+  return writable.find((calendar) => calendar.id === preferredId)
+    ?? writable.find((calendar) => calendar.primary && calendar.visible)
+    ?? writable.find((calendar) => calendar.primary)
+    ?? writable[0]
+    ?? null;
+}
+
+/** Lower-cased, valid, unique addresses, at most `MAX_FREE_BUSY_ADDRESSES`. */
+export function normalizeAttendeeAddresses(addresses: readonly string[]): string[] {
+  const result = new Set<string>();
+  for (const raw of addresses) {
+    const address = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+    if (!address || !isValidMailAddress(address) || result.has(address)) continue;
+    result.add(address);
+    if (result.size >= MAX_FREE_BUSY_ADDRESSES) break;
+  }
+  return [...result];
+}
+
+/** The owner's own timed events in the range as busy blocks (declined and all-day events do not block). */
+export function ownerBusy(state: CalendarState): BusyBlock[] {
+  const owner = state.accounts[0]?.address ?? "me";
+  return state.events
+    .filter((event) => !event.allDay && event.myResponse !== "declined")
+    .map((event) => ({ address: owner, start: event.start, end: event.end, status: event.myResponse === "tentative" ? "tentative" : "busy" }));
+}
+
+export interface FindSlotsRequest {
+  durationMinutes?: number;
+  maxResults?: number;
+  /** Count the owner's own events as busy. Default true. */
+  includeOwnEvents?: boolean;
+  /** Title and attendees copied onto each proposal. */
+  title?: string;
+}
+
+export interface ScheduleActions {
+  openNewDraft(input?: { start?: IsoInstant; durationMinutes?: number; calendarId?: string }): boolean;
+  /** A click or drag on the time grid: wall-clock minutes on a day in the grid's zone. */
+  openDraftForGrid(day: DayKey, startMinute: number, endMinute?: number): boolean;
+  /** A click in the bar row or a month cell. */
+  openAllDayDraft(startDay: DayKey, lastDay?: DayKey): boolean;
+  openEditDraft(eventId: string): boolean;
+  openDraftFromProposal(proposalId: string): boolean;
+  patchDraft(patch: Partial<Pick<EventDraft, "title" | "location" | "descriptionText" | "calendarId">>): void;
+  setDraftTimes(startWall: string, endWall: string, timeZone?: string): void;
+  setDraftAllDay(allDay: boolean): void;
+  addDraftAttendee(attendee: EventDraftAttendee): void;
+  removeDraftAttendee(address: string): void;
+  setDraftAttendeeOptional(address: string, optional: boolean): void;
+  setDraftOnlineMeeting(on: boolean): void;
+  setDraftRecurrence(recurrence: Recurrence | null): void;
+  setDraftReminders(reminders: readonly EventReminder[] | null): void;
+  closeDraft(): void;
+
+  /** Whose busy time to overlay. Fetches it for the visible range. */
+  setAssistantAttendees(addresses: readonly string[]): Promise<void>;
+  setAssistantDuration(minutes: number): void;
+  /** (Re)fetches busy time for the visible range. */
+  loadBusy(): Promise<void>;
+  /** Finds common free slots in the visible range and shows them as assistant proposals. */
+  findSlots(request?: FindSlotsRequest): Proposal[];
+
+  /** Validates and shows proposals from an untrusted source, replacing that source's earlier ones. */
+  receiveProposals(raw: unknown, source?: ProposalSource): Proposal[];
+  /** Reads the agent's proposals from the proposals table. */
+  loadAgentProposals(): Promise<void>;
+  dismissProposal(proposalId: string): void;
+  clearProposals(source?: ProposalSource): void;
+  /** Removes a proposal after it became an event (also deletes its stored row). */
+  proposalUsed(proposalId: string): void;
+}
+
+export function createScheduleActions(ctx: StoreContext, persistence: CalendarPersistence): ScheduleActions {
+  let busyToken = 0;
+
+  function base(calendarId?: string): DraftBase | null {
+    const state = ctx.get();
+    const calendar = defaultCalendar(state.calendars, calendarId);
+    if (!calendar) {
+      ctx.set((current) => ({ ...current, mutationError: NO_CALENDAR_MESSAGE }));
+      return null;
+    }
+    return { calendarId: calendar.id, timeZone: state.timeZone };
+  }
+
+  function open(draft: EventDraft, extra: Parameters<typeof draftState>[1] = {}): boolean {
+    ctx.set((state) => ({ ...state, mutationError: null, draft: draftState(draft, extra) }));
+    return true;
+  }
+
+  function edit(update: (draft: EventDraft, state: CalendarState) => EventDraft): void {
+    ctx.set((state) => {
+      if (!state.draft || state.draft.status === "saving") return state;
+      try {
+        return { ...state, draft: withDraft(state.draft, update(state.draft.draft, state)) };
+      } catch (error: unknown) {
+        if (!(error instanceof RangeError)) throw error;
+        return { ...state, draft: { ...state.draft, issues: ["invalid_time"] } };
+      }
+    });
+  }
+
+  function recomputeOverlays(state: CalendarState): CalendarState {
+    return {
+      ...state,
+      assistant: { ...state.assistant, overlays: busyOverlays(state.assistant.busy, daySlices(state.range.days, state.timeZone), state.timeZone) },
+    };
+  }
+
+  async function loadBusy(): Promise<void> {
+    const state = ctx.get();
+    const { attendees } = state.assistant;
+    if (attendees.length === 0) {
+      ctx.set((current) => ({ ...current, assistant: { ...current.assistant, status: "idle", error: null, busy: [], busyStart: null, busyEnd: null, overlays: {} } }));
+      return;
+    }
+    const calendarId = state.draft?.draft.calendarId;
+    const accountId = state.calendars.find((calendar) => calendar.id === calendarId)?.accountId;
+    const connection = (accountId ? ctx.connectionFor(accountId) : null) ?? ctx.connections()[0] ?? null;
+    if (!connection) {
+      ctx.set((current) => ({ ...current, assistant: { ...current.assistant, status: "error", error: NO_CALENDAR_MESSAGE } }));
+      return;
+    }
+    const { start, end } = state.range;
+    const token = ++busyToken;
+    ctx.set((current) => ({ ...current, assistant: { ...current.assistant, status: "loading", error: null } }));
+    try {
+      const busy = await connection.provider.getFreeBusy(attendees, start, end);
+      if (token !== busyToken) return;
+      ctx.set((current) => recomputeOverlays({
+        ...current,
+        assistant: { ...current.assistant, status: "ready", busy: busy.slice(0, MAX_BUSY_BLOCKS), busyStart: start, busyEnd: end },
+      }));
+    } catch (error: unknown) {
+      const message = ctx.report("load free-busy", error);
+      if (token !== busyToken) return;
+      ctx.set((current) => ({ ...current, assistant: { ...current.assistant, status: "error", error: message } }));
+    }
+  }
+
+  function removeProposal(proposalId: string): void {
+    const proposal = ctx.get().proposals.find((item) => item.id === proposalId);
+    ctx.set((state) => ({ ...state, proposals: state.proposals.filter((item) => item.id !== proposalId) }));
+    if (proposal?.source === "agent" && proposal.rowId) {
+      persistence.deleteProposal(proposal.rowId).catch((error: unknown) => {
+        ctx.report("delete proposal", error);
+      });
+    }
+  }
+
+  return {
+    openNewDraft(input = {}) {
+      const draftBase = base(input.calendarId);
+      if (!draftBase) return false;
+      const duration = input.durationMinutes ?? ctx.get().preferences.defaultDurationMinutes;
+      const step = 30 * MS_PER_MINUTE;
+      const startMs = input.start ? instantToMs(input.start) : Math.ceil(ctx.now() / step) * step;
+      return open(draftAt(startMs, duration, draftBase));
+    },
+
+    openDraftForGrid(day, startMinute, endMinute) {
+      const draftBase = base();
+      if (!draftBase) return false;
+      const duration = ctx.get().preferences.defaultDurationMinutes;
+      const end = Math.min(MINUTES_PER_DAY, endMinute !== undefined && endMinute > startMinute ? endMinute : startMinute + duration);
+      return open(draftForGrid(day, startMinute, end, draftBase));
+    },
+
+    openAllDayDraft(startDay, lastDay) {
+      const draftBase = base();
+      if (!draftBase) return false;
+      return open(allDayDraft(startDay, lastDay ?? startDay, draftBase));
+    },
+
+    openEditDraft(eventId) {
+      const event = findCachedEvent(ctx.get().cache, eventId);
+      if (!event || eventId.startsWith("pending:")) return false;
+      const draft = draftFromEvent(event);
+      return open(draft, { mode: "edit", eventId, original: draft });
+    },
+
+    openDraftFromProposal(proposalId) {
+      const proposal = ctx.get().proposals.find((item) => item.id === proposalId);
+      if (!proposal) return false;
+      const draftBase = base(proposal.calendarId);
+      if (!draftBase) return false;
+      return open(draftFromProposal(proposal, draftBase), { proposalId });
+    },
+
+    patchDraft(patch) {
+      edit((draft) => ({ ...draft, ...patch }));
+    },
+    setDraftTimes(startWall, endWall, timeZone) {
+      edit((draft, state) => setDraftTimes(draft, startWall, endWall, timeZone ?? (draft.allDay ? state.timeZone : draft.timeZone)));
+    },
+    setDraftAllDay(allDay) {
+      edit((draft, state) => setDraftAllDay(draft, allDay, state.timeZone));
+    },
+    addDraftAttendee(attendee) {
+      edit((draft) => addDraftAttendee(draft, attendee));
+    },
+    removeDraftAttendee(address) {
+      edit((draft) => removeDraftAttendee(draft, address));
+    },
+    setDraftAttendeeOptional(address, optional) {
+      edit((draft) => setAttendeeOptional(draft, address, optional));
+    },
+    setDraftOnlineMeeting(on) {
+      edit((draft) => setDraftOnlineMeeting(draft, on));
+    },
+    setDraftRecurrence(recurrence) {
+      edit((draft) => setDraftRecurrence(draft, recurrence));
+    },
+    setDraftReminders(reminders) {
+      edit((draft) => setDraftReminders(draft, reminders));
+    },
+    closeDraft() {
+      ctx.set((state) => (state.draft?.status === "saving" ? state : { ...state, draft: null }));
+    },
+
+    async setAssistantAttendees(addresses) {
+      const attendees = normalizeAttendeeAddresses(addresses);
+      ctx.set((state) => ({ ...state, assistant: { ...state.assistant, attendees } }));
+      await loadBusy();
+    },
+    setAssistantDuration(minutes) {
+      if (!Number.isInteger(minutes) || minutes < 5 || minutes > MINUTES_PER_DAY) return;
+      ctx.set((state) => ({ ...state, assistant: { ...state.assistant, durationMinutes: minutes } }));
+    },
+    loadBusy,
+
+    findSlots(request = {}) {
+      const state = ctx.get();
+      const busy = [
+        ...(state.assistant.busyStart === state.range.start && state.assistant.busyEnd === state.range.end ? state.assistant.busy : []),
+        ...(request.includeOwnEvents === false ? [] : ownerBusy(state)),
+      ];
+      const slots = findSlots({
+        busy,
+        rangeStart: state.range.start,
+        rangeEnd: state.range.end,
+        durationMinutes: request.durationMinutes ?? state.assistant.durationMinutes,
+        maxResults: request.maxResults ?? 5,
+        timeZone: state.timeZone,
+        workingHours: state.preferences.workingHours,
+        notBefore: ctx.now(),
+        distinct: true,
+      });
+      const attendees = state.assistant.attendees.map((address) => ({ address }));
+      const proposals = proposalsFromSlots(slots, { title: request.title ?? state.draft?.draft.title, attendees });
+      ctx.set((current) => ({ ...current, proposals: mergeProposals(current.proposals, proposals, "assistant") }));
+      return proposals;
+    },
+
+    receiveProposals(raw, source = "agent") {
+      const proposals = parseProposals(raw, source);
+      ctx.set((state) => ({ ...state, proposals: mergeProposals(state.proposals, proposals, source) }));
+      return proposals;
+    },
+
+    async loadAgentProposals() {
+      try {
+        const rows = await persistence.loadProposals();
+        const proposals = parseProposals(rows, "agent");
+        ctx.set((state) => ({ ...state, proposals: mergeProposals(state.proposals, proposals, "agent") }));
+      } catch (error: unknown) {
+        ctx.report("load proposals", error);
+      }
+    },
+
+    dismissProposal: removeProposal,
+    proposalUsed: removeProposal,
+
+    clearProposals(source) {
+      ctx.set((state) => ({ ...state, proposals: source ? state.proposals.filter((item) => item.source !== source) : [] }));
+    },
+  };
+}
+
+/** Called by the store after navigation: overlays follow the new range, and stale busy data is refetched. */
+export function busyNeedsReload(state: CalendarState): boolean {
+  return state.assistant.attendees.length > 0
+    && (state.assistant.busyStart !== state.range.start || state.assistant.busyEnd !== state.range.end);
+}

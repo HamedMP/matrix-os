@@ -42,8 +42,8 @@ async function capabilitiesAi(app: string): Promise<unknown> {
 }
 
 it("grants app AI to the shipped first-party office apps in a fresh install", async () => {
-  for (const slug of ["docs", "sheets"]) await installApp(slug, await shippedManifest(slug));
-  for (const slug of ["docs", "sheets"]) {
+  for (const slug of ["calendar", "docs", "sheets"]) await installApp(slug, await shippedManifest(slug));
+  for (const slug of ["calendar", "docs", "sheets"]) {
     expect(await isAppAiAllowed(homePath, slug)).toBe(true);
     expect(await capabilitiesAi(slug)).toBe(true);
   }

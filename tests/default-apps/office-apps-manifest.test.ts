@@ -11,7 +11,7 @@ import { parseManifest } from "../../packages/gateway/src/app-runtime/manifest-s
 const REPO_ROOT = join(__dirname, "..", "..");
 const APPS_DIR = join(REPO_ROOT, "home", "apps");
 const ICONS_DIR = join(REPO_ROOT, "home", "system", "icons");
-const OFFICE_APPS = ["docs", "sheets"] as const;
+const OFFICE_APPS = ["calendar", "docs", "sheets"] as const;
 /** Apps that edit owner files. */
 const FILE_APPS = new Set<string>(["docs", "sheets"]);
 
@@ -98,6 +98,8 @@ describe.each(OFFICE_APPS)("office app %s", (app) => {
     for (const path of ["src", "../_shared/office-ui", "../_shared/office-engine", "../_shared/matrix-os.d.ts"]) {
       expect(tsconfig.include).toContain(path);
     }
+    // Calendar also compiles the shared account and provider layer.
+    if (app === "calendar") expect(tsconfig.include).toContain("../_shared/office-accounts");
     // Shared sources must resolve the app's own React types, not the root workspace copy.
     expect(tsconfig.compilerOptions.paths?.react).toEqual(["./node_modules/@types/react"]);
   });

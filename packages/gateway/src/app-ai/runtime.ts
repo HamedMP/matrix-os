@@ -35,7 +35,7 @@ const PolicySchema = z.strictObject({
  * copy is the visible, non-imported first-party app; an owner-written
  * system/app-ai.json is authoritative and can revoke it.
  */
-const FIRST_PARTY_AI_DEFAULT_APPS = ["docs", "sheets"] as const;
+const FIRST_PARTY_AI_DEFAULT_APPS = ["calendar", "docs", "sheets"] as const;
 async function firstPartyDefaultPolicy(homePath: string): Promise<z.infer<typeof PolicySchema>> {
     const trusted = await Promise.all(FIRST_PARTY_AI_DEFAULT_APPS.map(async app => (await isTrustedFirstPartyApp(homePath, app)) ? [app] : []));
     return { apps: trusted.flat() };

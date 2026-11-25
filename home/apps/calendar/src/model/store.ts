@@ -1,0 +1,318 @@
+/**
+ * The Calendar store: one serialisable state object with `subscribe` and
+ * `getSnapshot` (ready for React's `useSyncExternalStore`), plus actions.
+ *
+ * Navigation, accounts, calendar visibility and event loading live here;
+ * writes are in `store-writes.ts`, drafts, the scheduling assistant and
+ * proposals in `store-schedule.ts`.
+ */
+import { ProviderError, toProviderError, type CalendarInfo } from "../../../_shared/office-accounts/types/calendar";
+import { cacheKey, freshEntry, invalidate, putEntry, touchEntries } from "./cache";
+import { dayKeyAt, isDayKey, resolveTimeZone, type DayKey } from "./dates";
+import {
+  DEFAULT_PREFERENCES,
+  createMemoryPersistence,
+  parsePreferences,
+  withCalendarVisibility,
+  type CalendarPersistence,
+  type CalendarPreferences,
+} from "./preferences";
+import { isCalendarView, shiftAnchor, type CalendarView } from "./ranges";
+import { busyNeedsReload, createScheduleActions, type ScheduleActions } from "./store-schedule";
+import {
+  MAX_ACCOUNTS,
+  MAX_CALENDARS_PER_ACCOUNT,
+  initialState,
+  rangeFor,
+  withDerived,
+  type CalendarConnection,
+  type CalendarState,
+  type StoreContext,
+} from "./store-state";
+import { createWriteActions, reapplyPending, type WriteActions } from "./store-writes";
+
+export const MAX_SUBSCRIBERS = 64;
+
+export interface CalendarStoreOptions {
+  /** Lists connected accounts with their provider adapters. */
+  connect(): Promise<CalendarConnection[]>;
+  persistence?: CalendarPersistence;
+  now?: () => number;
+  /** Where real errors are logged; the state only ever holds fixed sentences. */
+  log?: (action: string, error: unknown) => void;
+}
+
+/** Preference fields the owner can change from settings. */
+export type PreferenceChanges = Partial<Pick<CalendarPreferences,
+  "weekStart" | "workDays" | "workingHours" | "agendaDays" | "timeZone" | "defaultDurationMinutes">>;
+
+export interface CalendarStore extends WriteActions, ScheduleActions {
+  getSnapshot(): CalendarState;
+  /** Returns an unsubscribe function. At most `MAX_SUBSCRIBERS` at once. */
+  subscribe(listener: () => void): () => void;
+  /** Loads preferences, accounts, calendars, events and agent proposals. */
+  init(): Promise<void>;
+  loadAccounts(): Promise<void>;
+  /** Loads events of visible calendars for the current range; cached ranges are reused unless `force`. */
+  loadEvents(options?: { force?: boolean }): Promise<void>;
+  /** Drops the cache and reloads. */
+  refresh(): Promise<void>;
+  setView(view: CalendarView): void;
+  goToDate(day: DayKey): void;
+  /** Moves whole views forward (positive) or back. */
+  shift(steps: number): void;
+  goToToday(): void;
+  setCalendarVisible(calendarId: string, visible: boolean): void;
+  setPreferences(changes: PreferenceChanges): void;
+  /** Resolves when every queued preference write has finished. */
+  flush(): Promise<void>;
+}
+
+function defaultLog(action: string, error: unknown): void {
+  console.warn(`[calendar] ${action} failed`, error);
+}
+
+export function createCalendarStore(options: CalendarStoreOptions): CalendarStore {
+  const now = options.now ?? Date.now;
+  const log = options.log ?? defaultLog;
+  const persistence = options.persistence ?? createMemoryPersistence();
+  let state = initialState(DEFAULT_PREFERENCES, now());
+  let connections: CalendarConnection[] = [];
+  const listeners: Array<() => void> = [];
+  let idCounter = 0;
+  let eventsToken = 0;
+  let saveQueue: Promise<void> = Promise.resolve();
+  let inflight: { key: string; promise: Promise<void> } | null = null;
+
+  const ctx: StoreContext = {
+    get: () => state,
+    set(update) {
+      const next = update(state);
+      if (next === state) return;
+      state = withDerived(next);
+      for (const listener of [...listeners]) listener();
+    },
+    connections: () => connections,
+    connectionFor: (accountId) => connections.find((connection) => connection.account.id === accountId) ?? null,
+    now,
+    nextId(prefix) {
+      idCounter += 1;
+      return `${prefix}:${idCounter}`;
+    },
+    report(action, error) {
+      log(action, error);
+      return toProviderError(error).message;
+    },
+  };
+
+  const schedule = createScheduleActions(ctx, persistence);
+  const writes = createWriteActions(ctx, { onProposalUsed: (id) => schedule.proposalUsed(id) });
+
+  function savePreferences(): void {
+    const snapshot = state.preferences;
+    saveQueue = saveQueue
+      .then(() => persistence.savePreferences(snapshot))
+      .catch((error: unknown) => log("save preferences", error));
+  }
+
+  function applyCalendarVisibility(calendars: CalendarInfo[], preferences: CalendarPreferences): CalendarInfo[] {
+    return calendars.map((calendar) => ({ ...calendar, visible: preferences.calendarVisibility[calendar.id] ?? calendar.visible }));
+  }
+
+  /** After the range changed: overlays follow, events and stale busy time are fetched. */
+  function afterNavigation(): void {
+    if (busyNeedsReload(state)) {
+      ctx.set((current) => ({ ...current, assistant: { ...current.assistant, overlays: {} } }));
+      void schedule.loadBusy();
+    }
+    void loadEvents();
+  }
+
+  function navigate(anchor: DayKey, view: CalendarView = state.preferences.view): void {
+    ctx.set((current) => ({
+      ...current,
+      today: dayKeyAt(now(), current.timeZone),
+      range: rangeFor(current.preferences, current.timeZone, anchor, view),
+    }));
+    afterNavigation();
+  }
+
+  /** The same request while one is in flight returns that request instead of fetching twice. */
+  function loadEvents(loadOptions: { force?: boolean } = {}): Promise<void> {
+    const { range, calendars } = state;
+    const key = [range.start, range.end, loadOptions.force ? "force" : "", ...calendars.filter((c) => c.visible).map((c) => c.id)].join("|");
+    if (inflight?.key === key) return inflight.promise;
+    const promise = runLoadEvents(loadOptions).finally(() => {
+      if (inflight?.promise === promise) inflight = null;
+    });
+    inflight = { key, promise };
+    return promise;
+  }
+
+  async function runLoadEvents(loadOptions: { force?: boolean }): Promise<void> {
+    const { range, calendars, cache } = state;
+    const visible = calendars.filter((calendar) => calendar.visible);
+    const keys = visible.map((calendar) => cacheKey(calendar.id, range.start, range.end));
+    const at = now();
+    const missing = visible.filter((_, index) => loadOptions.force || !freshEntry(cache, keys[index], at));
+    ctx.set((current) => ({ ...current, cache: touchEntries(current.cache, keys) }));
+    if (missing.length === 0) {
+      ctx.set((current) => ({ ...current, eventsStatus: "ready", eventsError: null }));
+      return;
+    }
+    const token = ++eventsToken;
+    ctx.set((current) => ({ ...current, eventsStatus: "loading", eventsError: null }));
+    const byAccount: Record<string, string[]> = {};
+    for (const calendar of missing) (byAccount[calendar.accountId] ??= []).push(calendar.id);
+    const results = await Promise.allSettled(Object.entries(byAccount).map(async ([accountId, calendarIds]) => {
+      const connection = ctx.connectionFor(accountId);
+      if (!connection) throw new ProviderError("not_connected");
+      const events = await connection.provider.listEvents({ calendarIds, start: range.start, end: range.end });
+      return { calendarIds, events };
+    }));
+    let error: string | null = null;
+    const fetchedAt = now();
+    ctx.set((current) => {
+      let nextCache = current.cache;
+      for (const result of results) {
+        if (result.status === "rejected") {
+          error ??= ctx.report("load events", result.reason);
+          continue;
+        }
+        for (const calendarId of result.value.calendarIds) {
+          const events = result.value.events.filter((event) => event.calendarId === calendarId);
+          nextCache = putEntry(nextCache, { calendarId, start: range.start, end: range.end, events, fetchedAt });
+        }
+      }
+      nextCache = reapplyPending(nextCache, current.pending);
+      if (token !== eventsToken) return { ...current, cache: nextCache };
+      return { ...current, cache: nextCache, eventsStatus: error ? "error" : "ready", eventsError: error };
+    });
+  }
+
+  async function loadAccounts(): Promise<void> {
+    ctx.set((current) => ({ ...current, accountsStatus: "loading", accountsError: null }));
+    try {
+      connections = (await options.connect()).slice(0, MAX_ACCOUNTS);
+    } catch (error: unknown) {
+      const message = ctx.report("list accounts", error);
+      ctx.set((current) => ({ ...current, accountsStatus: "error", accountsError: message }));
+      return;
+    }
+    const results = await Promise.allSettled(connections.map((connection) => connection.provider.listCalendars()));
+    let error: string | null = null;
+    const calendars: CalendarInfo[] = [];
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        error ??= ctx.report("list calendars", result.reason);
+        return;
+      }
+      const accountId = connections[index].account.id;
+      calendars.push(...result.value.slice(0, MAX_CALENDARS_PER_ACCOUNT).map((calendar) => ({ ...calendar, accountId })));
+    });
+    ctx.set((current) => ({
+      ...current,
+      accounts: connections.map((connection) => ({ ...connection.account })),
+      calendars: applyCalendarVisibility(calendars, current.preferences),
+      accountsStatus: error && calendars.length === 0 ? "error" : "ready",
+      accountsError: error,
+    }));
+    await loadEvents();
+  }
+
+  function applyPreferences(preferences: CalendarPreferences, anchor: DayKey): void {
+    const timeZone = resolveTimeZone(preferences.timeZone);
+    ctx.set((current) => ({
+      ...current,
+      preferences,
+      timeZone,
+      today: dayKeyAt(now(), timeZone),
+      range: rangeFor(preferences, timeZone, anchor),
+      calendars: applyCalendarVisibility(current.calendars, preferences),
+      assistant: current.assistant.attendees.length > 0
+        ? current.assistant
+        : { ...current.assistant, durationMinutes: preferences.defaultDurationMinutes },
+    }));
+  }
+
+  return {
+    ...writes,
+    ...schedule,
+    getSnapshot: () => state,
+    subscribe(listener) {
+      if (listeners.length >= MAX_SUBSCRIBERS) throw new RangeError("Too many calendar store subscribers");
+      listeners.push(listener);
+      return () => {
+        const index = listeners.indexOf(listener);
+        if (index !== -1) listeners.splice(index, 1);
+      };
+    },
+
+    async init() {
+      try {
+        const stored = parsePreferences(await persistence.loadPreferences());
+        applyPreferences(stored, dayKeyAt(now(), resolveTimeZone(stored.timeZone)));
+      } catch (error: unknown) {
+        log("load preferences", error);
+      }
+      await Promise.all([loadAccounts(), schedule.loadAgentProposals()]);
+    },
+
+    loadAccounts,
+    loadEvents,
+
+    async refresh() {
+      ctx.set((current) => ({ ...current, cache: reapplyPending(invalidate(current.cache), current.pending) }));
+      await loadEvents({ force: true });
+    },
+
+    setView(view) {
+      if (!isCalendarView(view) || view === state.preferences.view) return;
+      ctx.set((current) => ({ ...current, preferences: { ...current.preferences, view } }));
+      savePreferences();
+      navigate(state.range.anchor, view);
+    },
+
+    goToDate(day) {
+      if (!isDayKey(day)) return;
+      navigate(day);
+    },
+
+    shift(steps) {
+      if (!Number.isInteger(steps) || steps === 0) return;
+      const { range, preferences, timeZone } = state;
+      navigate(shiftAnchor(range.view, range.anchor, steps, {
+        timeZone,
+        weekStart: preferences.weekStart,
+        workDays: preferences.workDays,
+        agendaDays: preferences.agendaDays,
+      }));
+    },
+
+    goToToday() {
+      navigate(dayKeyAt(now(), state.timeZone));
+    },
+
+    setCalendarVisible(calendarId, visible) {
+      const calendar = state.calendars.find((item) => item.id === calendarId);
+      if (!calendar || calendar.visible === visible) return;
+      ctx.set((current) => {
+        const preferences = withCalendarVisibility(current.preferences, calendarId, visible);
+        return { ...current, preferences, calendars: applyCalendarVisibility(current.calendars, preferences) };
+      });
+      savePreferences();
+      if (visible) void loadEvents();
+    },
+
+    setPreferences(changes) {
+      const merged = parsePreferences({ ...state.preferences, ...changes });
+      applyPreferences(merged, state.range.anchor);
+      savePreferences();
+      afterNavigation();
+    },
+
+    flush() {
+      return saveQueue;
+    },
+  };
+}

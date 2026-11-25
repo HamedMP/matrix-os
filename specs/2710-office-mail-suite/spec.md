@@ -1,24 +1,30 @@
-# 2710: Docs and Sheets with a tracked-changes document engine (Mail and Calendar follow)
+# 2710: Docs, Sheets and Google Calendar with a tracked-changes document engine (Mail and Outlook follow)
 
 Linear: [ENG-542](https://linear.app/matrix-os/issue/ENG-542/add-mail-calendar-docs-and-sheets-apps-with-a-tracked-changes-document)
-Stack: `eng-542/01-office-engine-core` to `eng-542/08-agent-document-tools` (GitHub native stack, cut from the `office-mail-suite-poc` proof of concept)
+Stack: `eng-542/01-office-engine-core` to `eng-542/10-calendar-app` (GitHub native stack, cut from the `office-mail-suite-poc` proof of concept)
 
 ## Delivery
 
-The work ships in two native stacks that share ENG-542.
+The work ships in two parts that share ENG-542 (owner decision, 2026-11-25).
 
-1. **This stack: Docs and Sheets.** The document engine, app file access, the shared
-   office UI kit, the Docs and Sheets apps, and the agent document tools.
-2. **Follow-on stack: Mail and Calendar.** The Mail and Calendar apps, the shared
-   account/provider layer, and the new Gmail, Outlook and calendar integration actions.
-   It stays on the proof-of-concept branch until it has been tested against live
-   accounts. Nothing in this stack ships a mail or calendar surface.
+1. **This stack: Docs, Sheets and Google Calendar.** The document engine, app file
+   access, the shared office UI kit, the Docs and Sheets apps, the agent document
+   tools, the Google Calendar scheduling actions with the calendar provider layer, and
+   the Calendar app. Calendar ships with Google Calendar only; the owner tested it
+   against a live account on the preview.
+2. **Follow-on: Mail and Outlook.** The Mail app and its Gmail actions stay on the
+   proof-of-concept branch until Mail moves to Matrix's direct Gmail connection.
+   Outlook mail and Outlook Calendar are untested (no account) and come with a direct
+   Microsoft connection (see the comment on ENG-355). Nothing in this stack ships a
+   mail surface, a mail action or an Outlook action, and the Calendar app offers no
+   Outlook calendar: an owner with only an Outlook calendar connected sees the normal
+   "Connect a calendar" state.
 
 **Public docs deliverable.** Each stack also needs a separate documentation PR in the
 private `FinnaAI/matrix-os-site` repository under `content/docs/`, alongside its
 implementation and tests. For this stack it covers the Docs and Sheets apps (open,
-edit, save, track changes, reviewing agent edits) and the agent document tools; the
-follow-on stack's PR covers Mail and Calendar. The PR is opened in that repository and
+edit, save, track changes, reviewing agent edits), the agent document tools and the
+Calendar app on Google Calendar; the follow-on stack's PR covers Mail and Outlook. The PR is opened in that repository and
 linked from ENG-542.
 
 Sections below describe the whole design. Items marked *follow-on* are not part of
@@ -39,8 +45,8 @@ Nothing is sent, invited or finalized without an explicit owner action.
 | Docs app | This stack | Open/edit/save `.docx`, track-changes mode, revision review, comments, outline, agent edits as tracked changes, defined terms and cross-reference preview, compare | Page layout fidelity, real-time multi-user co-editing |
 | Sheets app | This stack | Open/edit/save `.xlsx` and `.csv`, formulas, formatting, sheet tabs, agent edits as reviewable cell changes | Charts, pivots, macros |
 | Mail app | Follow-on | Gmail and Outlook: folders/labels, thread list, reading pane, search, triage, composer with redlines, agent drafts, bulk drafts | Push notifications, offline |
-| Calendar app | Follow-on | Google and Outlook: day/work week/week/month/agenda, free-busy overlay, proposals on the grid, invites the owner approves | Rooms/resources |
-| Agent tools | This stack: document and sheet tools. Follow-on: mail and calendar tools | Document, sheet, mail and calendar tools for Chat and coding agents | Scheduled routines |
+| Calendar app | This stack: Google Calendar. Follow-on: Outlook | Day/work week/week/month/agenda, free-busy overlay, proposals on the grid, invites the owner approves | Rooms/resources |
+| Agent tools | This stack: document and sheet tools, and the Google Calendar actions through the connected-service tools. Follow-on: mail tools | Document, sheet, mail and calendar tools for Chat and coding agents | Scheduled routines |
 
 First surface: Web Desktop. The apps are ordinary default apps, so they also load on
 Web Canvas and Electron Desktop; Electron needs bridge parity (in scope, best effort).
@@ -74,13 +80,15 @@ Web Mobile and Native Mobile: out of scope; the apps are not offered on mobile i
    check) backed by `/api/bridge/files/*`, limited to first-party apps whose manifest
    declares the `files` permission. "Open with": Files writes an open request for the
    target app and launches it; the app reads the request on load and on data change.
-4. **Apps** under `home/apps/{docs,sheets}` (this stack) and `home/apps/{mail,calendar}`
+4. **Apps** under `home/apps/{docs,sheets,calendar}` (this stack) and `home/apps/mail`
    (*follow-on*): Vite + React, pure model modules with unit tests in
    `tests/default-apps/`, shared UI in `home/apps/_shared/office-ui/`, shared
-   account/provider layer in `home/apps/_shared/office-accounts/` (*follow-on*).
-5. **Mail and calendar providers** (*follow-on*): apps call `MatrixOS.service(...)`. Gmail and
-   Google Calendar use existing actions plus new compose/scheduling actions; Outlook
-   mail and calendar get new Microsoft Graph actions.
+   account/provider layer in `home/apps/_shared/office-accounts/` (calendar contract
+   and the Google adapter in this stack; mail and Outlook adapters *follow-on*).
+5. **Mail and calendar providers**: apps call `MatrixOS.service(...)`. Google Calendar
+   uses its existing read actions plus four new approval-gated scheduling writes and a
+   free-busy read (this stack). Gmail compose actions and the Outlook mail and calendar
+   actions are *follow-on*.
 6. **Agent tools**: one definition, two registrations (kernel IPC server and the
    integrations MCP server), calling gateway `/api/office/*` routes that run the engine
    on owner files.
@@ -94,8 +102,8 @@ Web Mobile and Native Mobile: out of scope; the apps are not offered on mobile i
   `call-handler.ts`, `call-outcome.ts`, `action-execution.ts`, `read-call.ts`,
   `collection-hook.ts`, `jev-*.ts`, `native-gmail/**`. Open pull requests rewrite them.
   New behaviour goes in new files with a one-line registration.
-- New integration actions (*follow-on*) never use `risk: "destructive"`. Every new write
-  action is added to `MANAGED_WRITE_ACTIONS` in `packages/kernel/src/hooks.ts`.
+- New integration actions never use `risk: "destructive"`. Every new write action is
+  added to `MANAGED_WRITE_ACTIONS` in `packages/kernel/src/hooks.ts`.
 - Tests first. Tests live under `tests/` and import source by relative path.
 - No new npm dependency unless the exact version is already in a lockfile in this repo.
 - All repository patterns in `CLAUDE.md` apply (timeouts on fetch, bounded maps, body
@@ -144,15 +152,19 @@ Web Mobile and Native Mobile: out of scope; the apps are not offered on mobile i
 3. Comparing two `.docx` versions yields a document with tracked revisions.
 4. A `.xlsx` with formulas recalculates after an edit; an agent edit shows old and new
    values per cell and can be accepted or rejected.
-5. *Follow-on.* Mail: list, read, search, file and draft on Gmail and Outlook; an agent draft shows
-   redlines; send requires a click.
-6. *Follow-on.* Calendar: five views, free-busy overlay, agent proposals highlighted, invite sent
-   only after the owner confirms.
-7. `bun run typecheck`, `bun run check:patterns` and the new test suites pass.
-8. The `FinnaAI/matrix-os-site` documentation PR under `content/docs/` for Docs, Sheets
-   and the agent document tools is open and linked from ENG-542.
+5. Calendar on Google Calendar: five views, free-busy overlay, agent proposals
+   highlighted, invite sent only after the owner confirms. The four Google Calendar
+   writes ask for owner approval when an agent calls them.
+6. An owner with no Google Calendar connected, including one with only an Outlook
+   calendar, sees "Connect a calendar"; the app calls no calendar action.
+7. No Gmail, Outlook mail or Outlook Calendar action is added, and no mail surface ships.
+8. *Follow-on.* Mail: list, read, search, file and draft; an agent draft shows redlines;
+   send requires a click. Outlook Calendar in the Calendar app.
+9. `bun run typecheck`, `bun run check:patterns` and the new test suites pass.
+10. The `FinnaAI/matrix-os-site` documentation PR under `content/docs/` for Docs, Sheets,
+    Calendar and the agent document tools is open and linked from ENG-542.
 
-## Surface matrix (Docs and Sheets; each PR body carries the current status)
+## Surface matrix (Docs, Sheets and Calendar; each PR body carries the current status)
 
 | Surface | UI | Behavior | State/recovery | Automated tests | Real evidence |
 | --- | --- | --- | --- | --- | --- |
@@ -163,4 +175,4 @@ Web Mobile and Native Mobile: out of scope; the apps are not offered on mobile i
 | Native Mobile | N/A (not offered on mobile in this stack) | N/A | N/A | N/A | N/A |
 
 Stakeholder review of scope and of the "nothing is sent without approval" rule is
-recommended before Mail and Calendar ship.
+recommended before Calendar ships and again before Mail does.
