@@ -209,6 +209,7 @@ export function createMacActivity(options: Options) {
     begin,
     showHistory: () => showHistory(),
     refresh,
+    flush: history.flush,
     async close() {
       if (!closed) {
         closed = true;

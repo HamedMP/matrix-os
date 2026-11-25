@@ -75,6 +75,7 @@ import { registerChatElectronPreview } from "./chat-electron-preview/register";
 import { createChatElectronPreviewTransport } from "./chat-electron-preview/transport";
 import { registerChatMacTerminal } from "./chat-mac-terminal/register";
 import { createMacActivity } from "./mac-activity/activity";
+import { createMacActivityQuit } from "./mac-activity/quit";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
 import { installShortcuts } from "./shortcuts/install-shortcuts";
@@ -161,8 +162,7 @@ let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
 let navigationCacheDrained = false;
 let drainingNavigationCache = false;
-let closeMacActivity: (() => Promise<void>) | null = null;
-let drainingMacActivity = false;
+let macActivityQuit: ReturnType<typeof createMacActivityQuit> | undefined;
 let planDiagnostics: ReturnType<typeof createPlanDiagnosticStore> | null = null;
 let planDiagnosticsDrained = false;
 let drainingPlanDiagnostics = false;
@@ -277,6 +277,7 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
     },
   });
 
+  macActivityQuit?.watchWindow(win);
   installMainRendererMediaPermissions(win.webContents.session, win.webContents, trustedRendererUrl);
 
   win.once("ready-to-show", () => win.show());
@@ -685,6 +686,7 @@ if (!gotLock) {
             trustedUrl: terminalRendererUrl,
             onLoadError: (error) => logMainError("failed to load Terminal window", error),
           });
+          macActivityQuit?.watchWindow(win);
           win.on("focus", () => {
             terminalMenu?.terminalWindowFocused(true);
             sendTerminalWindowEvent("window:focus-changed", { focused: true });
@@ -749,7 +751,7 @@ if (!gotLock) {
         transport: chatDeviceTransport,
         beginActivity: macActivity?.begin,
         window: () => mainWindow ?? terminalWindowController.current(),
-        isTrustedSender: (event) => !drainingMacActivity && senderRole(windowSenders, event) === "main",
+        isTrustedSender: (event) => !macActivityQuit?.isFenced() && senderRole(windowSenders, event) === "main",
       });
       cancelChatElectronPreview = chatElectronPreview.cancel;
       const localRuntime = resolveLocalTerminalRuntime({
@@ -779,20 +781,25 @@ if (!gotLock) {
         host: localTerminalHost,
         allowed: macTerminalChecksAllowed,
         window: () => mainWindow,
-        isTrustedSender: (event) => !drainingMacActivity && senderRole(windowSenders, event) === "main",
+        isTrustedSender: (event) => !macActivityQuit?.isFenced() && senderRole(windowSenders, event) === "main",
         onBackgroundActiveChange(active) {
           macBackgroundChecksActive = active;
           refreshMacActivity?.();
         },
       });
       cancelChatMacTerminal = macTerminalChecks.cancelAll;
-      if (macActivity) closeMacActivity = async () => {
-        try {
-          await Promise.all([chatElectronPreview.cancel(), macTerminalChecks.cancelAll()]);
-        } finally {
-          await macActivity.close();
-        }
-      };
+      if (macActivity) macActivityQuit = createMacActivityQuit({
+        async drain() {
+          try {
+            await Promise.all([chatElectronPreview.cancel(), macTerminalChecks.cancelAll()]);
+          } finally {
+            await macActivity.flush();
+          }
+        },
+        close: macActivity.close,
+        quit: () => app.quit(),
+        reportError: (error) => logMainError("Mac activity cleanup failed", error),
+      });
       // Both trusted windows host terminals, so both may read copied files.
       registerTerminalClipboardIpc(ipcMain, {
         clipboard,
@@ -1031,23 +1038,8 @@ if (!gotLock) {
   app.on("before-quit", (event) => {
     organizationDriveTransfers?.cancelAll();
     nativeAppChatNavigation?.cancelAll();
-    // Close Mac activity admission before waiting for the renderer analytics flush.
-    if (closeMacActivity) {
-      event.preventDefault();
-      if (!drainingMacActivity) {
-        drainingMacActivity = true;
-        const finish = () => {
-          if (!closeMacActivity) return;
-          closeMacActivity = null;
-          app.quit();
-        };
-        const deadline = setTimeout(finish, 5_000);
-        deadline.unref();
-        void closeMacActivity().catch((error: unknown) => logMainError("Mac activity cleanup failed", error))
-          .finally(() => { clearTimeout(deadline); finish(); });
-      }
-      return;
-    }
+    // Fence Mac activity before waiting for the renderer analytics flush.
+    if (macActivityQuit?.beforeQuit(event)) return;
     if (handleAnalyticsBeforeQuit?.(event)) return;
     if (!navigationCacheDrained && navigationCache) {
       event.preventDefault();
@@ -1093,6 +1085,12 @@ if (!gotLock) {
       }
       return;
     }
+    handleUpdateBeforeQuit?.(event);
+    macActivityQuit?.allowWindowClose(event);
+  });
+
+  app.on("will-quit", () => {
+    macActivityQuit?.finish();
     if (updateCheckTimer) {
       clearInterval(updateCheckTimer);
       updateCheckTimer = null;
@@ -1108,7 +1106,6 @@ if (!gotLock) {
     // Detach only: the local core and its terminals outlive the app.
     localTerminals?.dispose();
     localTerminals = null;
-    handleUpdateBeforeQuit?.(event);
   });
 
   app.on("window-all-closed", () => {
