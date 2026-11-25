@@ -15,6 +15,7 @@ import { mkdirAppFile, writeAppFile } from "./write-ops.js";
 export interface AppFileRouteOptions {
   /** Owner home. Empty or missing means the server is misconfigured: every request is `unavailable`. */
   homePath: string | null | undefined;
+  /** Every identity the owner is known by. A request must come in as one; a write is fenced by the projects of all. */
   ownerIds: readonly string[];
   /** The authenticated principal, or null. May throw when no principal can be resolved. */
   resolveOwner: (context: Context) => string | null;
@@ -62,8 +63,12 @@ async function runOperation(homePath: string, input: AppFileInput, guard: Projec
 export function createAppFileRoutes(options: AppFileRouteOptions): Hono {
   const routes = new Hono();
   const budget = createAppFileAdmission();
-  // The admitted owner of each in-flight request; entries die with their context.
-  const owners = new WeakMap<Context, string>();
+  // A single-owner host may record the owner's projects under any of its
+  // accepted identities, so a write is fenced by the projects of every one,
+  // not only the identity this request came in as.
+  const writeGuard: ProjectWriteGuard = options.projectPathAdmission
+    ? createProjectWriteGuard(options.projectPathAdmission, options.ownerIds)
+    : unguardedProjectWrite;
 
   const admission: MiddlewareHandler = async (context, next) => {
     if (!options.homePath) {
@@ -77,7 +82,6 @@ export function createAppFileRoutes(options: AppFileRouteOptions): Hono {
       return fail(context, "forbidden");
     }
     if (!owner || !options.ownerIds.includes(owner)) return fail(context, "forbidden");
-    owners.set(context, owner);
     const release = budget.enter();
     if (!release) return fail(context, "unavailable");
     try { await next(); }
@@ -105,11 +109,7 @@ export function createAppFileRoutes(options: AppFileRouteOptions): Hono {
       if (!releaseApp) return fail(context, "unavailable");
       try {
         if (!await appFilesAllowed(homePath, app)) throw new AppFileError("forbidden");
-        const owner = owners.get(context);
-        const guard = options.projectPathAdmission
-          ? createProjectWriteGuard(options.projectPathAdmission, owner ? [owner] : [])
-          : unguardedProjectWrite;
-        return context.json(await runOperation(homePath, input, guard), 200);
+        return context.json(await runOperation(homePath, input, writeGuard), 200);
       } catch (error: unknown) {
         logAppFileFailure(input.kind, error);
         return fail(context, appFileErrorCodeFor(error));

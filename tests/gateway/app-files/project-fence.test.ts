@@ -163,4 +163,60 @@ describe("app file writes and the collaboration project fence", () => {
     expect((await post("a.docx")).status).toBe(200);
     expect(await readdir(join(home, "projects/acme"))).toEqual([]);
   });
+
+  // Fault: the guard only asked the fence about projects recorded under the
+  // identity the request came in as, so a host that knows its owner by both
+  // MATRIX_USER_ID and MATRIX_CLERK_USER_ID let one identity overwrite a
+  // shared project recorded under the other.
+  it.each([
+    { caller: "owner", recordedUnder: "clerk-owner" },
+    { caller: "clerk-owner", recordedUnder: "owner" },
+  ])("refuses a $caller write into a shared project recorded under the owner's other identity ($recordedUnder)", async ({ caller, recordedUnder }) => {
+    harness = await createHarness();
+    const home = harness.home;
+    await mkdir(join(home, "projects/acme"), { recursive: true });
+    const target = join(home, "projects/acme/contract.docx");
+    await writeFile(target, "shared copy");
+    const fence = createTestProjectAdmission(home, [{ id: "proj_shared", localPath: "projects/acme", ownerId: recordedUnder, refusal: "scope_required" }]);
+    const app = new Hono();
+    app.use("*", async (context, next) => {
+      context.set("authContextReady" as never, true as never);
+      context.set("platformUserId" as never, caller as never);
+      await next();
+    });
+    registerBridgeFileRoutes(app, {
+      homePath: home,
+      env: { MATRIX_USER_ID: "owner", MATRIX_CLERK_USER_ID: "clerk-owner", NODE_ENV: "production" },
+      projectPathAdmission: fence.admission,
+    });
+    const post = (input: unknown) => app.request(APP_FILES_BRIDGE_PATH, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ app: "docs", input }),
+    });
+    const write = await post({ kind: "files.write", path: "projects/acme/contract.docx", contentBase64: b64("owner copy"), ifVersion: await versionOf(target) });
+    const folder = await post({ kind: "files.mkdir", path: "projects/acme/drafts" });
+    expect([write.status, folder.status]).toEqual([403, 403]);
+    expect(await readFile(target, "utf8")).toBe("shared copy");
+    expect(await readdir(join(home, "projects/acme"))).toEqual(["contract.docx"]);
+  });
+
+  it("admits a write into an unshared project only after every owner identity's projects admit it", async () => {
+    harness = await createHarness();
+    const home = harness.home;
+    await mkdir(join(home, "projects/private"), { recursive: true });
+    const fence = createTestProjectAdmission(home, [
+      { id: "proj_user", localPath: "projects/private", ownerId: "owner", refusal: null },
+      { id: "proj_clerk", localPath: "projects/private", ownerId: "clerk-owner", refusal: null },
+    ]);
+    const host = new Hono();
+    host.route(APP_FILES_BRIDGE_PATH, createAppFileRoutes({
+      homePath: home, ownerIds: ["owner", "clerk-owner"], resolveOwner: () => "clerk-owner", projectPathAdmission: fence.admission,
+    }));
+    const response = await host.request(APP_FILES_BRIDGE_PATH, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ app: "docs", input: { kind: "files.write", path: "projects/private/plan.docx", contentBase64: b64("plan"), ifVersion: null } }),
+    });
+    expect(response.status).toBe(200);
+    expect(fence.events).toEqual(["enter:proj_user", "enter:proj_clerk", "leave:proj_clerk", "leave:proj_user"]);
+    expect(fence.held()).toBe(0);
+  });
 });
