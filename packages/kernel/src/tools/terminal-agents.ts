@@ -214,7 +214,7 @@ function desktopToolDefinitions(tools: TerminalAgentKernelTools) {
     },
     {
       name: "desktop_run",
-      description: "Start a terminal on the owner's linked desktop, as its signed-in user: its shell (PowerShell on Windows), an agent preset (claude, codex, opencode, pi), or a program as argv. To open a page in its browser use argv [\"/usr/bin/open\", url] on darwin, [\"xdg-open\", url] on linux, [\"cmd.exe\", \"/c\", \"start\", \"\", url] on win32. cwd is a folder in that user's home. Returns the terminal's ref for terminal_read, terminal_send, terminal_keys and terminal_wait.",
+      description: "Start a terminal on the owner's linked desktop, as its signed-in user: its shell (PowerShell on Windows), an agent preset (claude, codex, opencode, pi), or a program as argv. To open a page in its browser use argv [\"/usr/bin/open\", url] on darwin, [\"xdg-open\", url] on linux, [\"rundll32.exe\", \"url.dll,FileProtocolHandler\", url] on win32. cwd is a folder in that user's home. Returns the terminal's ref for terminal_read, terminal_send, terminal_keys and terminal_wait.",
       schema: DesktopRunSchema,
       annotations: { readOnlyHint: false, destructiveHint: true },
       handler: (input: unknown) => safely(async () => {

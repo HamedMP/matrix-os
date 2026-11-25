@@ -408,6 +408,13 @@ describe("createAppMenuTemplate", () => {
     const item = appMenu(createAppMenuTemplate(options({ platform: "darwin", stopDesktopLink }))).find((entry) => entry.label === "Stop Computers Using This Device");
     item!.click!();
     expect(stopDesktopLink).toHaveBeenCalledTimes(1);
+    // Windows and Linux pair (2698) from the File menu, which also switches the link on.
+    const openMacPairing = vi.fn();
+    for (const [platform, label] of [["win32", "Pair This PC…"], ["linux", "Pair This Desktop…"]] as const) {
+      const file = createAppMenuTemplate(options({ platform, stopDesktopLink, openMacPairing })).find((entry) => entry.label === "File")!.submenu as Array<{ label?: string; click?: () => void }>;
+      file.find((entry) => entry.label === label)!.click!();
+    }
+    expect(openMacPairing).toHaveBeenCalledTimes(2);
     // Linux and Windows have it in the File menu.
     for (const platform of ["linux", "win32"] as const) {
       const file = createAppMenuTemplate(options({ platform, stopDesktopLink })).find((entry) => entry.label === "File")!.submenu as Array<{ label?: string }>;

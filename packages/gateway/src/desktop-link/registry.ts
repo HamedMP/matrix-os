@@ -230,8 +230,6 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
       }
       return link.capture();
     },
-    /** Where the current pairing is read from (2698's owner table). */
-    usePairing(read: () => Promise<{ deviceId: string | null; revision: number }>): void { pairing = read; },
     /** Every linked device's id, name and adapter, for terminal verbs and the kernel. */
     linked(): Array<{ deviceId: string; name: string; device: DesktopLinkDeviceInfo; adapter: HerdrAdapter }> {
       return [...links.values()].filter((link) => !link.closed).map((link) => ({

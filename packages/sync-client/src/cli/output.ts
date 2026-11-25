@@ -29,6 +29,7 @@ const GENERIC_MESSAGES: Record<string, string> = {
   busy: "Too many requests to that desktop just now. Try again in a minute.",
   screen_recording_not_allowed: "Allow Screen Recording for Matrix OS on the desktop once (System Settings > Privacy & Security > Screen & System Audio Recording), then try again.",
   screenshot_failed: "The desktop could not take a screenshot. Try again.",
+  screenshot_unavailable: "That desktop cannot take screenshots (some Linux Wayland sessions cannot be captured).",
 };
 
 export function formatCliSuccess(data: Record<string, unknown>): string {

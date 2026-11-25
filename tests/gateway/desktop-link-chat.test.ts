@@ -213,7 +213,8 @@ describe("Opening a page on each desktop OS", () => {
   it("uses the OS's own opener", () => {
     expect(openPageArgv("darwin", "https://example.com")).toEqual(["/usr/bin/open", "https://example.com"]);
     expect(openPageArgv("linux", "https://example.com")).toEqual(["xdg-open", "https://example.com"]);
-    expect(openPageArgv("win32", "https://example.com")).toEqual(["cmd.exe", "/c", "start", "", "https://example.com"]);
+    // Fault detected (review): `cmd /c start` cut a URL at its first `&`.
+    expect(openPageArgv("win32", "https://example.com/?a=1&b=2")).toEqual(["rundll32.exe", "url.dll,FileProtocolHandler", "https://example.com/?a=1&b=2"]);
   });
 });
 

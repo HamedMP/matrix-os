@@ -79,7 +79,7 @@ interface AppMenuTemplateOptions {
   openMacVerification?(): void;
   /** Opens the licence texts of bundled third-party components, when this build ships any. */
   openThirdPartyNotices?(): void;
-  /** Switches the Desktop link off for every computer at once (spec 2716). */
+  /** Switches the desktop link off for every computer at once (spec 2716). */
   stopDesktopLink?(): void;
   /** Each registry action shows its first binding as its accelerator. */
   shortcuts: EffectiveShortcuts;

@@ -74,7 +74,7 @@ matrix shell machine open "<desktop>" https://example.com
 This picks the system's own opener: `open` on macOS, `xdg-open` on Linux and
 `start` on Windows. Only `http` and `https` addresses. With `desktop_run`,
 pass that argv yourself: `["/usr/bin/open", url]`, `["xdg-open", url]` or
-`["cmd.exe", "/c", "start", "", url]`.
+`["rundll32.exe", "url.dll,FileProtocolHandler", url]` (not `cmd /c start`, which cuts a URL at `&`).
 
 ## Take a screenshot and look at it
 

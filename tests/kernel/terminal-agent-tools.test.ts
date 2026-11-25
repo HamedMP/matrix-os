@@ -68,7 +68,7 @@ describe("kernel terminal tools", () => {
   // so an input mistake came back looking like the owner's refusal.
   it("refuses a desktop terminal name the desktop would refuse, before calling it", async () => {
     const desktopRun = vi.fn(async () => ({ machine: "desktop", workspaceId: "w", tabId: "t" }));
-    const definitions = terminalAgentToolDefinitions({ ...tools(), desktops: async () => [], desktopRun });
+    const definitions = terminalAgentToolDefinitions({ ...tools(), desktops: async () => [], desktopRun, desktopScreenshot: async () => ({ machine: "desktop", data: "", mediaType: "image/jpeg" }) } as never);
     for (const name of ["Build tests", "t12", "x".repeat(33)]) {
       expect(await find(definitions, "desktop_run").handler({ name })).toMatchObject({ isError: true });
     }

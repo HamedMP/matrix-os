@@ -24,6 +24,9 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # node-pty backs desktop-link terminals on Windows only (spec 2716); macOS uses herdr-core.
+  files:
+    - "!**/node_modules/node-pty/**"
   extendInfo:
     NSMicrophoneUsageDescription: Matrix OS uses the microphone only when you start voice input in Chat.
   notarize: true
@@ -67,6 +70,9 @@ nsis:
   uninstallDisplayName: Matrix OS
 linux:
   category: Utility
+  # node-pty backs desktop-link terminals on Windows only (spec 2716); Linux uses herdr-core.
+  files:
+    - "!**/node_modules/node-pty/**"
   extraResources:
     - from: build/herdr
       to: herdr

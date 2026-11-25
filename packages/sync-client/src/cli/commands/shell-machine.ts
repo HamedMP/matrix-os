@@ -17,7 +17,7 @@ const WAIT_TIMEOUT_MS = 100_000;
 const WAIT_MAX_MS = 90_000;
 const SAFE_CODES = new Set([
   "desktop_offline", "busy", "denied", "not_found", "invalid_request", "forbidden", "blocked", "finished",
-  "screen_recording_not_allowed", "screenshot_failed",
+  "screen_recording_not_allowed", "screenshot_failed", "screenshot_unavailable",
 ]);
 const SCREENSHOT_TIMEOUT_MS = DESKTOP_LINK_CLIENT_TIMEOUT_MS;
 const SCREENSHOT_MAX_BYTES = 8 * 1024 * 1024;
@@ -38,7 +38,8 @@ export function openPageArgv(platform: "darwin" | "linux" | "win32", url: string
   if (platform === "darwin") return ["/usr/bin/open", url];
   if (platform === "linux") return ["xdg-open", url];
   // `start` is a cmd built-in; the empty string is its window title.
-  return ["cmd.exe", "/c", "start", "", url];
+  // Not `cmd /c start`: cmd splits a URL at `&`. The URL handler takes it whole.
+  return ["rundll32.exe", "url.dll,FileProtocolHandler", url];
 }
 
 export function createMachineClient(options: { gatewayUrl: string; token: string; fetch?: typeof fetch }) {

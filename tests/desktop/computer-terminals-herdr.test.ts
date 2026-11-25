@@ -122,7 +122,7 @@ describe("Terminal window: a computer's linked desktop (spec 2716)", () => {
       get: vi.fn(async () => ({ workspaces: [] })),
       getText: vi.fn(async (path: string) => {
         if (path === "/api/desktop-link/machines") return JSON.stringify({ machineId: MACHINE, machines: [{
-          deviceId: MAC, name: "Studio Mac", revision: 1, state: "online", lastSeenAt: null,
+          deviceId: MAC, name: "Studio Mac", revision: 1, state: "online", lastSeenAt: null, device: null,
         }] });
         if (path === `/api/desktop-link/machines/${MAC}/terminals`) return JSON.stringify({ workspaceId: desktopLinkWorkspaceId(MAC), sessions: [{ id: "t1", tabId: DESKTOP_TAB, title: "zsh", status: null }] });
         throw new Error("http 404");
@@ -150,7 +150,7 @@ describe("Terminal window linked desktop panes", () => {
   const desktopApi = () => ({
     getText: vi.fn(async (path: string) => {
       if (path === "/api/desktop-link/machines") {
-        return JSON.stringify({ machineId: "11111111-2222-4333-8444-555555555555", machines: [{ deviceId: DEVICE, name: "Laptop", revision: 1, state: "online", lastSeenAt: null }] });
+        return JSON.stringify({ machineId: "11111111-2222-4333-8444-555555555555", machines: [{ deviceId: DEVICE, name: "Laptop", revision: 1, state: "online", lastSeenAt: null, device: null }] });
       }
       return JSON.stringify({ deviceId: DEVICE, workspaceId: desktopLinkWorkspaceId(DEVICE), sessions: [{ id: "t9", tabId: DESKTOP_TAB, title: "claude", status: null }] });
     }),

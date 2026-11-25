@@ -57,6 +57,18 @@ describe("desktop screenshots", () => {
     expect(await refused.json()).toEqual({ error: "screenshot_unavailable" });
   });
 
+  // Fault detected (review): the CLI did not pass screenshot_unavailable through, so an
+  // agent saw a generic failure and kept retrying a desktop that can never capture.
+  it("tells the CLI caller plainly that the desktop cannot capture its screen", async () => {
+    const { base } = await linkedMac("unavailable");
+    const errors: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation((line: unknown) => { errors.push(String(line)); });
+    cleanup.push(() => { error.mockRestore(); process.exitCode = 0; });
+    const out = join(mkdtempSync(join(tmpdir(), "shot-")), "shot.jpg");
+    await runCommand(shellMachineCommand, { rawArgs: ["screenshot", "Hamed's MacBook", "--out", out, "--gateway", `http://${base}`, "--token", LOCAL_TOKEN] });
+    expect(errors.join("\n")).toContain("cannot take screenshots");
+  });
+
   it("takes at most six a minute per desktop", async () => {
     const { http, path } = await linkedMac(Buffer.from([0xff, 0xd8]));
     const statuses: number[] = [];

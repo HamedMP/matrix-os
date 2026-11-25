@@ -42,7 +42,7 @@ export function installAppMenu(options: {
   shortcuts: Pick<ShortcutService, "snapshot" | "onChange">;
   /** Delivers a Terminal window shortcut to that window (spec 2706). */
   sendTerminalCommand(command: TerminalWindowCommand): void;
-  /** Switches the Desktop link off for every computer (spec 2716). */
+  /** Switches the desktop link off for every computer (spec 2716). */
   stopDesktopLink?(): void;
 }): {
   terminalWindowFocused(focused: boolean): void;
