@@ -9,7 +9,7 @@ describe('pilot-only actual owner-pool acquisition timeout', () => {
     const construct=vi.spyOn(pg,'Pool').mockImplementation(function(config) { configs.push(config!); return new ActualPool(config); });
     const ordinary=createAppDb('postgresql://synthetic@127.0.0.1/owner_test');
     const pilot=createAppDb('postgresql://synthetic@127.0.0.1/owner_test',{connectionTimeoutMillis:2000});
-    try { expect(configs).toEqual([{connectionString:'postgresql://synthetic@127.0.0.1/owner_test',max:10},{connectionString:'postgresql://synthetic@127.0.0.1/owner_test',max:10,connectionTimeoutMillis:2000}]); }
+    try { expect(configs).toEqual([{connectionString:'postgresql://synthetic@127.0.0.1/owner_test',max:10,connectionTimeoutMillis:5000},{connectionString:'postgresql://synthetic@127.0.0.1/owner_test',max:10,connectionTimeoutMillis:2000}]); }
     finally { await ordinary.db.destroy(); await pilot.db.destroy(); construct.mockRestore(); }
     expect(()=>createAppDb('postgresql://synthetic@127.0.0.1/owner_test',{connectionTimeoutMillis:0 as never})).toThrow('Owner database configuration unavailable');
   });

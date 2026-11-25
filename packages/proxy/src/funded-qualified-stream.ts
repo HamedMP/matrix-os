@@ -29,7 +29,7 @@ export function coalesceQualifiedResponse(source: ReadableStream<Uint8Array>, op
         if (size) controller.enqueue(bytes.subarray(0, size)); else if (ended) controller.close();
       } catch (error: unknown) {
         console.warn('[qualified-relay] Batch stream unavailable', error instanceof Error ? 'Error' : 'UnknownError');
-        ended = true; await reader.cancel().catch(cleanup => console.warn('[qualified-relay] Batch cleanup:', cleanup instanceof Error ? cleanup.name : 'UnknownError'));
+        ended = true; await reader.cancel().catch((cleanup: unknown) => console.warn('[qualified-relay] Batch cleanup unavailable', cleanup instanceof Error ? 'Error' : 'UnknownError'));
         controller.error(new Error('AI response stream failed'));
       } finally { if (timer) clearTimeout(timer); }
     },
