@@ -369,6 +369,9 @@ describe("coding agent contracts", () => {
         completed: false,
       },
     }).attentionPush.completed).toBe(false);
+    expect(CodingAgentNotificationPreferencesUpdateSchema.parse({ attentionPush: { approval: false } })).toEqual({ attentionPush: { approval: false } });
+    expect(CodingAgentNotificationPreferencesUpdateSchema.safeParse({ attentionPush: {} }).success).toBe(false);
+    expect(CodingAgentNotificationPreferencesUpdateSchema.safeParse({ attentionPush: { approval: false, extra: true } }).success).toBe(false);
 
     expect(() =>
       CodingAgentNotificationPreferencesSchema.parse({

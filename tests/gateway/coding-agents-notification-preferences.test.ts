@@ -12,7 +12,7 @@ const principal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 function jsonRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
     method: "PUT",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "if-match": '"0"' },
     body: JSON.stringify(body),
   });
 }

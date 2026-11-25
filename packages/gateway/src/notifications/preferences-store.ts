@@ -3,9 +3,11 @@ import { mkdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import {
   CodingAgentNotificationPreferencesSchema,
+  CodingAgentNotificationPreferencesUpdateSchema,
   DEFAULT_NOTIFICATION_PREFERENCES,
   NotificationPreferencesSchema,
   type CodingAgentNotificationPreferences,
+  type CodingAgentNotificationPreferencesUpdate,
   type NotificationPreferences,
 } from "@matrix-os/contracts";
 import { withPinnedSystemDir, type PinnedSystemDir } from "../get-started/owner-system-dir.js";
@@ -32,7 +34,7 @@ export interface NotificationPreferenceStore {
   assertOwner(principal: RequestPrincipal): void;
   load(principal: RequestPrincipal): Promise<NotificationPreferences>;
   save(principal: RequestPrincipal, document: NotificationPreferences): Promise<NotificationPreferences>;
-  updateLegacy(principal: RequestPrincipal, document: CodingAgentNotificationPreferences): Promise<NotificationPreferences>;
+  updateLegacy(principal: RequestPrincipal, patch: CodingAgentNotificationPreferencesUpdate, expectedRevision?: number): Promise<NotificationPreferences>;
 }
 export interface NotificationPreferenceStoreOptions {
   homePath: string;
@@ -59,11 +61,13 @@ async function legacyPreferences(dir: PinnedSystemDir, ownerIds: readonly string
   return null;
 }
 
-function withLegacyEvents(document: NotificationPreferences, legacy: CodingAgentNotificationPreferences): NotificationPreferences {
-  return { ...document, events: { ...document.events,
-    approval: legacy.attentionPush.approval, question: legacy.attentionPush.input,
-    replyFinished: legacy.attentionPush.completed, runFailed: legacy.attentionPush.failed,
-  } };
+function withLegacyEvents(document: NotificationPreferences, legacy: CodingAgentNotificationPreferencesUpdate): NotificationPreferences {
+  const events = { ...document.events };
+  for (const kind of Object.keys(KIND_MAP) as Array<keyof typeof KIND_MAP>) {
+    const enabled = legacy.attentionPush[kind];
+    if (enabled !== undefined) events[KIND_MAP[kind]] = enabled;
+  }
+  return { ...document, events };
 }
 
 export function projectLegacyNotificationPreferences(document: NotificationPreferences): CodingAgentNotificationPreferences {
@@ -137,10 +141,13 @@ export function createNotificationPreferenceStore(options: NotificationPreferenc
         return commit(dir, parsed, current);
       });
     },
-    updateLegacy(principal, document) {
+    updateLegacy(principal, document, expectedRevision) {
       assertOwner(principal);
-      const parsed = CodingAgentNotificationPreferencesSchema.parse(document);
-      return locked(principal, (dir, current) => commit(dir, withLegacyEvents(current, parsed), current));
+      const parsed = CodingAgentNotificationPreferencesUpdateSchema.parse(document);
+      return locked(principal, (dir, current) => {
+        if (expectedRevision !== undefined && expectedRevision !== current.revision) throw new NotificationPreferencesConflictError();
+        return commit(dir, withLegacyEvents(current, parsed), current);
+      });
     },
   };
 }
