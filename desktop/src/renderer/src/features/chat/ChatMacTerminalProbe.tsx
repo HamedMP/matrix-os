@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
+import { Button } from "@matrix-os/ui";
 import {
   getLatestCompletedMacTerminalRun,
   getMacTerminalProbeMarkerForRun,
@@ -30,7 +31,6 @@ const RUN_STATUS: Record<RunStatus, string> = {
   failed: "The Mac terminal check could not be completed.",
   "already-handled": "This Mac terminal check was already handled.",
 };
-const BUTTON_CLASS = "rounded px-2 py-1 font-medium hover:bg-[var(--bg-hover)]";
 
 function makeDraft(targetId: string): string {
   return [
@@ -167,7 +167,9 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft }: ChatM
     <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-[var(--text-secondary)]">
       {status ? <span role="status">{status}</span> : null}
       {onDraft && !activeRun && preparationStatus !== "preparing" && preparationStatus !== "ready" && (!runId || result) ? (
-        <button type="button" className={BUTTON_CLASS} onClick={() => { void prepare(); }}>Request Mac terminal check</button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => { void prepare(); }}>
+          Request Mac terminal check
+        </Button>
       ) : null}
     </div>
   );

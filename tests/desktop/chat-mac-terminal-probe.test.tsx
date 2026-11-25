@@ -112,7 +112,9 @@ describe("Mac terminal check", () => {
     const onDraft = vi.fn(() => true);
     const chatDetail = { ...detail(), messages: snapshot.messages };
     const view = render(<ChatMacTerminalProbe {...props} detail={chatDetail} onDraft={onDraft} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Request Mac terminal check" }));
+    const requestButton = await screen.findByRole("button", { name: "Request Mac terminal check" });
+    expect(requestButton.classList.contains("matrix-btn-ghost")).toBe(true);
+    fireEvent.click(requestButton);
     view.rerender(<ChatMacTerminalProbe {...props} detail={chatDetail} />);
     await act(async () => { finishApproval(ready()); });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("chat:mac-terminal-cancel", { chatId: chat.id }));
