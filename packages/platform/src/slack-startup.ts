@@ -7,10 +7,12 @@ import { getRunningUserMachineByClerkId, getRunningUserMachineByHandle, getUserM
 import { createJourneyUserResolver } from "./journey-routes.js";
 import { buildPlatformVerificationToken, timingSafeTokenEquals } from "./platform-token.js";
 import type { PlatformCollaborationComposition } from "./collaboration/wiring.js";
+import type { PlatformOrganizations } from "./organizations/wiring.js";
 import { createSlackApp, loadSlackAppConfig } from "./slack/wiring.js";
 import type { SlackDatabase } from "./slack/database.js";
 import { loadSlackDevThreadContextGrant, loadSlackThreadContextGrant } from "./slack/thread-context.js";
 import { loadSlackMentionSummaryRule } from "./slack/mention-summary.js";
+import { createSlackDevHomeDispatcher, loadSlackDevIngressCertificate } from "./slack-dev-home-tls.js";
 import { createSlackHomeTransport, type SlackHome } from "./slack-home-transport.js";
 import { createSlackMachineResolver, isSlackDevMachineAvailable, isSlackMachineAvailable, loadSlackDevAcceptance, loadSlackPreviewHandle } from "./slack/home-resolver.js";
 
@@ -23,10 +25,12 @@ function unavailable() {
   return {routes,async close(){}};
 }
 export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:PlatformDB;platformSecret:string;platformJwtSecret:string;
-  clerkAuth?:ClerkAuth;collaboration?:PlatformCollaborationComposition;customerVpsProxyDispatcher?:Agent;fetchImpl?:typeof fetch;startCleanup?:boolean}) {
+  clerkAuth?:ClerkAuth;collaboration?:PlatformCollaborationComposition;devOrganizations?:Pick<PlatformOrganizations, "repository" | "projection">;
+  customerVpsProxyDispatcher?:Agent;fetchImpl?:typeof fetch;startCleanup?:boolean}) {
   let config: ReturnType<typeof loadSlackAppConfig>;
   let previewHandle: string | undefined;
   let devConfig: ReturnType<typeof loadSlackDevAcceptance>;
+  let devIngressCertificate: ReturnType<typeof loadSlackDevIngressCertificate> | undefined;
   let contextGrant: ReturnType<typeof loadSlackThreadContextGrant>;
   try {
     config = loadSlackAppConfig(options.env);
@@ -37,6 +41,7 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
         || timingSafeTokenEquals(devConfig.bridgeToken, buildPlatformVerificationToken(dev.handle, options.platformSecret))) {
         throw new Error("Slack Dev callback unavailable");
       }
+      devIngressCertificate = loadSlackDevIngressCertificate(options.env.SLACK_DEV_INGRESS_CA_PEM);
       contextGrant = loadSlackDevThreadContextGrant(options.env, dev, config.appId);
     } else {
       previewHandle = loadSlackPreviewHandle(options.env);
@@ -51,21 +56,27 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
     catch (error) { console.warn("[slack] thread context configuration unavailable", error instanceof Error ? error.name : "UnknownError"); }
   }
   const mentionSummaryRule = dev ? undefined : loadSlackMentionSummaryRule(options.env, contextGrant, previewHandle);
-  const collaboration=options.collaboration;
-  if(!config || !collaboration || !("organizations" in collaboration) || !collaboration.organizations || !options.platformSecret) return unavailable();
-  const organizations=collaboration.organizations;
-  const directory=collaboration.repository;
+  const collaboration = options.collaboration && "organizations" in options.collaboration ? options.collaboration : undefined;
+  const organizations = (dev ? options.devOrganizations : undefined) ?? collaboration?.organizations;
+  if (!config || !organizations || !options.platformSecret) return unavailable();
   const resolveActor = createJourneyUserResolver({ clerkAuth: options.clerkAuth, syncJwtSecret: dev ? undefined : options.platformJwtSecret });
   async function getDevMachine() {
     if (!dev) return undefined;
     const machine = await getUserMachine(options.db, dev.machineId);
     return isSlackDevMachineAvailable(machine, dev) ? machine : undefined;
   }
-  const fetchImpl:typeof fetch=options.fetchImpl??((input,init)=>fetch(input,{...init,signal:init?.signal??AbortSignal.timeout(10_000),
-    ...(options.customerVpsProxyDispatcher?{dispatcher:options.customerVpsProxyDispatcher}:{})} as RequestInit));
-  const rpc=createSlackHomeTransport({fetchImpl});
+  const fetchImpl: typeof fetch = options.fetchImpl ?? (dev ? fetch : (input, init) => fetch(input, {
+    ...init, signal: init?.signal ?? AbortSignal.timeout(10_000),
+    ...(options.customerVpsProxyDispatcher ? { dispatcher: options.customerVpsProxyDispatcher } : {}),
+  } as RequestInit));
+  const devHomeDispatcher = devIngressCertificate ? createSlackDevHomeDispatcher(devIngressCertificate) : undefined;
+  const rpc = createSlackHomeTransport({
+    fetchImpl: devHomeDispatcher
+      ? (input, init) => fetchImpl(input, { ...init, dispatcher: devHomeDispatcher } as RequestInit)
+      : fetchImpl,
+  });
   const resolveMachine=createSlackMachineResolver({previewHandle, devAcceptance: dev,
-    findDirectoryRoute:scopeId=>directory.getDirectoryRoute(scopeId),
+    findDirectoryRoute: async scopeId => collaboration?.repository.getDirectoryRoute(scopeId),
     findMachineById:id=>getUserMachine(options.db,id),
     findPersonalMachine:(actorId,slot)=>getRunningUserMachineByClerkId(options.db,actorId,slot)});
   async function homeFor(actorId:string,scopeId?:string,organizationId?:string):Promise<SlackHome & {runtimeId:string}> {
@@ -130,6 +141,9 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
       return (await rpc(home,"authorize",{ownerId,organizationId:destination.organizationId,actorId:destination.actorId,scopeId:destination.scopeId,
         ...(publication?{action:"publish_reply",appId:destination.appId,teamId:destination.teamId,eventId:destination.eventId,textDigest:publication.textDigest}:{action:"discuss"})})).allowed===true;
     },
+  }).catch(async (error: unknown) => {
+    await devHomeDispatcher?.destroy();
+    throw error;
   });
   if (!dev) return slack;
   const routes = new Hono();
@@ -143,7 +157,14 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
   }
   routes.route("/", slack.routes);
   for (const path of slackPaths) routes.all(path, c => c.json({ error: "Not found" }, 404));
-  return { ...slack, routes };
+  return {
+    ...slack,
+    routes,
+    async close() {
+      try { await slack.close(); }
+      finally { await devHomeDispatcher?.close(); }
+    },
+  };
 }
 
 function isDevCallbackOrigin(publicBaseUrl: string, machineId: string): boolean {
