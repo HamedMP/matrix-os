@@ -102,8 +102,10 @@ shell/playwright-report/
 .zencoder/
 .agents/skills/
 .claude/skills/*
-# Repo-shared agent skills are explicitly re-included (preview environments)
+# Repo-shared agent skills are explicitly re-included (preview environments,
+# funded AI ledger verification)
 !.claude/skills/preview-env/
+!.claude/skills/verify-funded-ai-ledger/
 /skills/
 skills-lock.json
 # Symphony worker skills must be present in unattended repo clones
