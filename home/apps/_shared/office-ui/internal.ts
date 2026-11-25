@@ -37,8 +37,13 @@ export function useLatest<T>(value: T): RefObject<T> {
   return ref;
 }
 
-/** Active focus traps, innermost last. Only the innermost one handles keys whose focus was lost. */
-const activeTraps: HTMLElement[] = [];
+interface ActiveTrap {
+  container: HTMLElement;
+  handlesEscape: () => boolean;
+}
+
+/** Active focus traps, innermost last. */
+const activeTraps: ActiveTrap[] = [];
 
 /** True when no element has focus, as after the focused element was removed from the page. */
 function focusIsLost(): boolean {
@@ -47,11 +52,35 @@ function focusIsLost(): boolean {
 }
 
 /**
+ * The trap that answers a key: the innermost one holding the event target
+ * (for Escape, the innermost one with an Escape handler), or the innermost one
+ * when focus was lost because the focused control was removed.
+ */
+function trapFor(event: KeyboardEvent): HTMLElement | null {
+  const lost = focusIsLost();
+  const target = event.target instanceof Node ? event.target : null;
+  for (let index = activeTraps.length - 1; index >= 0; index--) {
+    const trap = activeTraps[index];
+    if (!lost && !(target && trap.container.contains(target))) continue;
+    if (event.key === "Escape" && !trap.handlesEscape()) {
+      if (lost) return null;
+      continue;
+    }
+    return trap.container;
+  }
+  return null;
+}
+
+/**
  * Modal focus management: on activation remember the focused element, move focus
  * inside the container, keep Tab cycling inside it, call onEscape for Escape and
  * restore focus to the remembered element when deactivated or unmounted. When
  * the focused control inside is removed (focus falls back to the page), the
  * innermost trap still answers Escape and Tab.
+ *
+ * Keys are handled on the document after React has delivered them, so a
+ * control inside can consume Escape or Tab first (clearing a filter, reverting
+ * an edit, closing its own menu) with preventDefault or stopPropagation.
  */
 export function useFocusTrap(
   containerRef: RefObject<HTMLElement | null>,
@@ -70,6 +99,8 @@ export function useFocusTrap(
     initial.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" && event.key !== "Tab") return;
+      if (event.defaultPrevented || trapFor(event) !== container) return;
       if (event.key === "Escape") {
         if (!onEscape.current) return;
         event.stopPropagation();
@@ -77,7 +108,6 @@ export function useFocusTrap(
         onEscape.current();
         return;
       }
-      if (event.key !== "Tab") return;
       const items = focusableWithin(container);
       if (items.length === 0) {
         event.preventDefault();
@@ -95,17 +125,12 @@ export function useFocusTrap(
         first.focus();
       }
     };
-    const onLostFocusKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || !focusIsLost() || activeTraps[activeTraps.length - 1] !== container) return;
-      onKeyDown(event);
-    };
-    activeTraps.push(container);
-    container.addEventListener("keydown", onKeyDown);
-    document.addEventListener("keydown", onLostFocusKeyDown);
+    const trap: ActiveTrap = { container, handlesEscape: () => Boolean(onEscape.current) };
+    activeTraps.push(trap);
+    document.addEventListener("keydown", onKeyDown);
     return () => {
-      container.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("keydown", onLostFocusKeyDown);
-      const at = activeTraps.lastIndexOf(container);
+      document.removeEventListener("keydown", onKeyDown);
+      const at = activeTraps.lastIndexOf(trap);
       if (at !== -1) activeTraps.splice(at, 1);
       if (previous && previous.isConnected) previous.focus();
     };

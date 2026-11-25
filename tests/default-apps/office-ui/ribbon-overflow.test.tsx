@@ -179,6 +179,37 @@ describe("Ribbon overflow", () => {
     expect(document.activeElement).toBe(overflow);
   });
 
+  it("reverts an edited font size on Escape inside a group popover without closing it", () => {
+    const onSize = vi.fn();
+    const sized: RibbonTab[] = [
+      {
+        id: "home",
+        label: "Home",
+        groups: [
+          { id: "clipboard", label: "Clipboard", items: [{ kind: "button", id: "copy", label: "Copy", onClick: vi.fn() }] },
+          {
+            id: "font",
+            label: "Font",
+            items: [{ kind: "select", id: "size", label: "Font size", value: "11", editable: true, width: 56, options: ["10", "11", "12"].map((value) => ({ value, label: value })), onChange: onSize }],
+          },
+        ],
+      },
+    ];
+    render(<Ribbon tabs={sized} activeTab="home" onTabChange={vi.fn()} />);
+    resize(250);
+    fireEvent.click(screen.getByRole("button", { name: "Font" }));
+    const popover = screen.getByRole("dialog", { name: "Font" });
+    const input = within(popover).getByRole("combobox", { name: "Font size" }) as HTMLInputElement;
+    input.focus();
+    fireEvent.change(input, { target: { value: "99" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input.value).toBe("11");
+    expect(screen.queryByRole("dialog", { name: "Font" })).not.toBeNull();
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Font" })).toBeNull();
+    expect(onSize).not.toHaveBeenCalled();
+  });
+
   it("keeps one tab stop per collapsed group", () => {
     renderRibbon();
     resize(100);

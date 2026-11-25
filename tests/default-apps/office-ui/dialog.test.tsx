@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConfirmSend, Dialog } from "../../../home/apps/_shared/office-ui";
+import { ConfirmSend, Dialog, Dropdown, Popover } from "../../../home/apps/_shared/office-ui";
 
 afterEach(cleanup);
 
@@ -67,6 +67,76 @@ describe("Dialog", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.activeElement).toBe(opener);
+  });
+
+  it("lets a control inside consume Escape before the dialog closes", () => {
+    const onClose = vi.fn();
+    function Filter() {
+      const [query, setQuery] = useState("draft");
+      return (
+        <input
+          aria-label="Filter"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && query !== "") {
+              event.preventDefault();
+              setQuery("");
+            }
+          }}
+        />
+      );
+    }
+    render(<Dialog open onClose={onClose} title="Open"><Filter /><button type="button">Cancel</button></Dialog>);
+    const filter = screen.getByRole("textbox", { name: "Filter" }) as HTMLInputElement;
+    filter.focus();
+    fireEvent.keyDown(filter, { key: "Escape" });
+    expect(filter.value).toBe("");
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(filter, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes only the menu when Escape closes a dropdown inside the dialog", () => {
+    const onClose = vi.fn();
+    render(
+      <Dialog open onClose={onClose} title="Insert">
+        <Dropdown label="Shape" items={[{ id: "box", label: "Box" }]} onSelect={vi.fn()} />
+      </Dialog>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Shape" }));
+    const item = screen.getByRole("menuitem", { name: "Box" });
+    item.focus();
+    fireEvent.keyDown(item, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Insert" })).toBeTruthy();
+  });
+
+  it("closes only the innermost panel when a popover is open inside the dialog", () => {
+    const onClose = vi.fn();
+    const onPopoverClose = vi.fn();
+    function WithPopover() {
+      const anchorRef = useRef<HTMLButtonElement>(null);
+      const [open, setOpen] = useState(false);
+      return (
+        <Dialog open onClose={onClose} title="Format">
+          <button ref={anchorRef} type="button" onClick={() => setOpen(true)}>More</button>
+          <Popover open={open} onClose={() => { onPopoverClose(); setOpen(false); }} anchorRef={anchorRef} label="More options">
+            <button type="button">Bold</button>
+          </Popover>
+        </Dialog>
+      );
+    }
+    render(<WithPopover />);
+    fireEvent.click(screen.getByRole("button", { name: "More" }));
+    const bold = screen.getByRole("button", { name: "Bold" });
+    bold.focus();
+    fireEvent.keyDown(bold, { key: "Escape" });
+    expect(onPopoverClose).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("closes on backdrop click but not on clicks inside the panel", () => {
