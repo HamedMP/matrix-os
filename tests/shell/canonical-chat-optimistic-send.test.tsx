@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import React from "react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState";
+import { ChatInput } from "../../shell/src/components/chat/ChatInput";
+import { useChatComposerDraft } from "../../shell/src/components/chat/useChatComposerDraft";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 
@@ -29,8 +32,8 @@ function attachedStream(): Response {
   }), { headers: { "content-type": "text/event-stream" } });
 }
 
-function fixtureServer({ createGate, uploadGate, createFails, streamOpen = false }: {
-  createGate?: Promise<void>; uploadGate?: Promise<void>; createFails?: boolean; streamOpen?: boolean;
+function fixtureServer({ createGate, uploadGate, admitGate, createFails, streamOpen = false }: {
+  createGate?: Promise<void>; uploadGate?: Promise<void>; admitGate?: Promise<void>; createFails?: boolean; streamOpen?: boolean;
 } = {}) {
   const { snapshot } = createCanonicalChatFixture("completed");
   const { activeRun: _activeRun, providerBinding: _binding, project: _project, ...chat } = snapshot.chat;
@@ -51,6 +54,7 @@ function fixtureServer({ createGate, uploadGate, createFails, streamOpen = false
       return Response.json({ chat: { ...chat, revision: 0, messageCount: 0 } });
     }
     if (url.includes("/turns?") && init?.method === "POST") {
+      await admitGate;
       const body = JSON.parse(init.body as string);
       const base = admitted ?? (url.includes(chat.id) ? existing : { ...existing, messages: [], turns: [], runs: [] });
       const message = { ...snapshot.messages[0]!, id: "msg_sent", seq: 99, role: "user" as const, state: "committed" as const, turnId: "cturn_sent", runId: undefined, parts: body.parts };
@@ -276,4 +280,74 @@ it("does not carry a pending draft send into the next New Chat", async () => {
   create.release();
   await act(async () => { await sending; });
   expect(result.current.sessionId === undefined ? shownCount(result.current.messages, "Old words") : 0).toBe(0);
+});
+
+// The composer and the hook together, as ChatApp wires them: the sent text
+// leaves the composer when its pending message shows, not ~2 s later on
+// acceptance, so the owner never sees it twice.
+function WebChat({ chatId }: { chatId?: string }) {
+  const state = useCanonicalChatState(chatId ? {} : { initialDraft: "draft" });
+  const composer = useChatComposerDraft(state.sessionId ?? "new", "owner");
+  return <>
+    <ul aria-label="Transcript">{state.messages.filter((message) => message.role === "user")
+      .map((message) => <li key={message.id}>{String(message.content)}</li>)}</ul>
+    {chatId && !state.sessionId ? <button type="button" onClick={() => state.switchConversation(chatId)}>Open</button> : null}
+    <ChatInput key={state.sessionId ?? "new"} composer={composer} scope={state.sessionId ?? "new"} permissionMode="supervised" connected busy={false}
+      attachmentsEnabled={false} onSubmit={(text, files, submit) => state.submitMessage(text, files, { ...options, ...submit })} />
+  </>;
+}
+const composerValue = () => (screen.getByPlaceholderText("Reply to chat…") as HTMLTextAreaElement).value;
+const transcriptText = () => screen.getByRole("list", { name: "Transcript" }).textContent;
+
+async function sendFromComposer(text: string) {
+  fireEvent.change(screen.getByPlaceholderText("Reply to chat…"), { target: { value: text } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+}
+
+it("empties the composer when a new Chat's pending message shows, before the Chat exists", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const create = gate();
+  fixtureServer({ createGate: create.opened });
+  render(<WebChat />);
+  await sendFromComposer("Plan the launch");
+
+  await waitFor(() => expect(transcriptText()).toContain("Plan the launch"));
+  expect(composerValue()).toBe("");
+
+  create.release();
+  await waitFor(() => expect(screen.getByRole("list", { name: "Transcript" }).children.length).toBe(1));
+  expect(composerValue()).toBe("");
+});
+
+it("empties the composer when a follow-up's pending message shows, before admission", async () => {
+  vi.stubGlobal("crypto", webcrypto);
+  const admit = gate();
+  const { chat } = fixtureServer({ admitGate: admit.opened });
+  render(<WebChat chatId={chat.id} />);
+  fireEvent.click(screen.getByRole("button", { name: "Open" }));
+  await waitFor(() => expect(transcriptText()).not.toBe(""));
+  const before = screen.getByRole("list", { name: "Transcript" }).children.length;
+  await sendFromComposer("One more thing");
+
+  await waitFor(() => expect(transcriptText()).toContain("One more thing"));
+  expect(composerValue()).toBe("");
+  admit.release();
+  await waitFor(() => expect(screen.getByRole("list", { name: "Transcript" }).children.length).toBe(before + 1));
+  expect(composerValue()).toBe("");
+});
+
+it.each([false, true])("puts a rejected new Chat send back in the composer unless the owner wrote a new draft (typed=%s)", async (typed) => {
+  vi.stubGlobal("crypto", webcrypto);
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const create = gate();
+  fixtureServer({ createGate: create.opened, createFails: true });
+  render(<WebChat />);
+  await sendFromComposer("Do not lose me");
+  await waitFor(() => expect(transcriptText()).toContain("Do not lose me"));
+  expect(composerValue()).toBe("");
+  if (typed) fireEvent.change(screen.getByPlaceholderText("Reply to chat…"), { target: { value: "A newer thought" } });
+
+  create.release();
+  await waitFor(() => expect(transcriptText()).not.toContain("Do not lose me"));
+  expect(composerValue()).toBe(typed ? "A newer thought" : "Do not lose me");
 });

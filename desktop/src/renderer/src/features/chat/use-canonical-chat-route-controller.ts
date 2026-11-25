@@ -498,6 +498,8 @@ export function useCanonicalChatRouteController({
       confirmed?: (receipt: CanonicalChatTurnAdmissionResponse) => void;
       unconfirmed?: () => void;
     },
+    /** The pending message shows; the composer lets its draft go. */
+    onShown?: () => void,
   ) => {
     const routeScope = routeScopeRef.current;
     const selectedChatId = activeChatIdRef.current;
@@ -525,8 +527,10 @@ export function useCanonicalChatRouteController({
         onPrepared: id => {
           latestAdmissionId.current = id;
           if (selectedChatId) pendingRequestId = id;
+          const sessionEnded = () => selectionEpoch.current !== sendDraftSession;
           showPendingSend({ token: pendingToken, identity: admissionIdentity, sourceChatId: selectedChatId ?? undefined, draftSession: sendDraftSession },
-            { requestId: id, chatId: selectedChatId ?? "", parts: input.parts }, () => selectionEpoch.current !== sendDraftSession);
+            { requestId: id, chatId: selectedChatId ?? "", parts: input.parts }, sessionEnded);
+          if ((selectedChatId ?? undefined) !== undefined || !sessionEnded()) onShown?.();
         },
         onAccepted: () => onAccepted?.(), onRejected,
         onConfirmed: (id, receipt) => {
@@ -565,8 +569,9 @@ export function useCanonicalChatRouteController({
       setError(error instanceof ChatAdmissionUnconfirmed ? CHAT_ADMISSION_UNCONFIRMED : canonicalChatSubmitFailureMessage(error));
       return null;
     } finally {
-      // Accepted turns now come from the detail; a rejected send keeps its draft.
-      // Clear only this send's message, even after a chat switch, never a newer one.
+      // Accepted turns now come from the detail; a rejected send's draft goes
+      // back to the composer. Clear only this send's message, even after a chat
+      // switch, never a newer one.
       clearPendingSend(pendingToken);
     }
   }, [client, projectId, admissions, admissionIdentity, showPendingSend, clearPendingSend]);

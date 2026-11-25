@@ -1,6 +1,7 @@
 import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-scope";
 import { SourceChatRoutines } from "./SourceChatRoutines";
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
+import { useComposerSendHandoff } from "./use-composer-send-handoff";
 import { useChatSubmissionError } from "./use-chat-submission-error";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { canonicalChatExecutionControls } from "@matrix-os/contracts";
@@ -254,6 +255,7 @@ function CanonicalChatWorkspaceContent({
     text: draft,
     revision: draftRevision,
     updateIfUnchanged: updateDraftIfUnchanged,
+    restoreIfEmpty: restoreDraftIfEmpty,
     referenceTokens,
     requestIdentity: draftRequestIdentity,
     draftProjectId,
@@ -350,6 +352,7 @@ function CanonicalChatWorkspaceContent({
   const attachmentDraftScope = JSON.stringify([draftScope, draftRequestIdentity, draftProjectId]);
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null, attachmentPolicy.error);
   const [submissionError, setSubmissionError] = useChatSubmissionError(draftScope, draftRevision, attachments.items.map(item => item.localId));
+  const sendHandoff = useComposerSendHandoff(attachments.items);
   const selection = botIdentityUnknown ? null : directBotId ? botPresentation ? { ...botPresentation.selection, options: botPresentation.selection.options ?? [], interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.permissionMode } : null : providerSelection;
   const botRouteAvailable = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const permissionResources = directBotId ? botExecution.consentResources : mentionResources;
@@ -469,7 +472,7 @@ function CanonicalChatWorkspaceContent({
   const serverQueuedTurns = controller.detail?.queuedTurns ?? [];
   const queuedTurns = optimisticQueuedTurns ?? serverQueuedTurns;
   const composerHasContext = referenceTokens.length > 0 || attachments.items.length > 0;
-  const composerHasInput = composerHasContext || Boolean(draft.trim());
+  const composerHasInput = Boolean(draft.trim() || referenceTokens.length || sendHandoff.visibleAttachments.length);
   const canStageWorktreeDraft = nativeChatChecksActive && !activeRun && !editingQueuedTurn
     && !uploadingAttachments && !composerHasContext;
   const stageWorktreeDraft: StageChatWorktreeDraft | undefined = !canStageWorktreeDraft ? undefined : (
@@ -659,6 +662,7 @@ function CanonicalChatWorkspaceContent({
     const pendingReply = pendingChatReply();
     let verificationSubmission: MacVerificationSubmission | undefined;
     let verificationUnconfirmed = false;
+    let handoff: ReturnType<typeof sendHandoff.begin> | undefined;
     setUploadingAttachments(true);
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
@@ -781,14 +785,27 @@ function CanonicalChatWorkspaceContent({
           for (const id of submittedAttachmentIds) attachments.remove(id);
         },
       });
+      // The draft leaves the composer when its pending message shows, and comes back if not admitted.
+      handoff = sendHandoff.begin({
+        attachmentIds: submittedAttachmentIds,
+        clear: () => { if (!isCurrentOwner()) return false; updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] }); return true; },
+        // The same ownership fence as acknowledgement: never write into another client, auth or runtime.
+        restore: createComposerAcknowledgement({
+          runtimeGeneration, identity: owner.identity, retained: draftRetentionIdentity !== undefined,
+          client: owner.client, currentClient: () => composerOwner.current.client,
+          settle: () => restoreDraftIfEmpty(draftRevision, { text: draft, referenceTokens }),
+        }),
+        settle: acknowledgeAccepted,
+      });
       const admitted = attempt?.operation === "queue"
-        ? await controller.queueTurn({ ...input, clientRequestId }, acknowledgeAccepted)
-        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId, acknowledgeAccepted, settleRequest,
+        ? await controller.queueTurn({ ...input, clientRequestId }, handoff.accepted)
+        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId, handoff.accepted, settleRequest,
           verificationSubmission && verification ? {
             draftKey: verificationDraftScope,
             confirmed: (receipt) => { if (isSameOwner()) verificationSubmission?.accept(receipt.run); },
             unconfirmed: () => { verificationUnconfirmed = isCurrentOwner(); },
-          } : ordinaryReply && routedComposerChatId ? { draftKey: verificationDraftScope } : undefined);
+          } : ordinaryReply && routedComposerChatId ? { draftKey: verificationDraftScope } : undefined, handoff.shown);
+      if (!admitted) handoff.rejected();
       if (!admitted || !isCurrentOwner()) return;
       if ("record" in admitted) {
         reportedChatId.current = admitted.record.chat.id;
@@ -802,6 +819,7 @@ function CanonicalChatWorkspaceContent({
         setDraftProjectId(admittedProjectId);
       }
     } catch (error) {
+      handoff?.rejected();
       console.warn("[chat] Submission unavailable", error instanceof Error ? error.name : "UnknownError");
       if (isCurrentOwner()) setSubmissionError(error instanceof ChatAdmissionUnconfirmed ? CHAT_ADMISSION_UNCONFIRMED : chatSendFailureMessage("submission_failed"));
     } finally {
@@ -1035,9 +1053,7 @@ function CanonicalChatWorkspaceContent({
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
         disabled={controller.status === "loading" || uploadingAttachments}
-        canSubmit={Boolean(selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && (
-          draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
-        ))}
+        canSubmit={Boolean(selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && composerHasInput)}
         catalog={providerCatalog}
         attachmentsEnabled={attachmentPolicy.enabled}
         automaticRouting={botPresentation?.kind === "recipe"}
@@ -1052,7 +1068,7 @@ function CanonicalChatWorkspaceContent({
         onAttach={matrixAttachments.onAttach}
         attachments={(
           <AttachmentPreviewRow
-            items={attachments.items}
+            items={sendHandoff.visibleAttachments}
             selectionError={matrixAttachments.error ?? attachments.selectionError}
             disabled={uploadingAttachments}
             onRemove={attachments.remove}

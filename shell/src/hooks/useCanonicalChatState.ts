@@ -529,9 +529,14 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     const pendingToken = {};
     const sendDraftSession = draftSessionRef.current;
-    const showPending = (turn: Omit<PendingCanonicalTurn, "createdAt">) => setPendingSend(previous =>
-      sourceChatId === undefined && draftSessionRef.current !== sendDraftSession ? previous
+    const showPending = (turn: Omit<PendingCanonicalTurn, "createdAt">) => {
+      // A draft send whose New Chat session has ended no longer shows.
+      if (sourceChatId === undefined && draftSessionRef.current !== sendDraftSession) return;
+      setPendingSend(previous => sourceChatId === undefined && draftSessionRef.current !== sendDraftSession ? previous
         : nextPendingCanonicalSend(previous, { token: pendingToken, identity: navigationIdentity, sourceChatId, draftSession: sendDraftSession }, turn));
+      // Shown: the composer empties now, not on acceptance, so the text never shows twice.
+      options.onShown?.();
+    };
     const optimisticParts = optimisticCanonicalSendParts(text, options.promptText, options.resources);
     const send = async () => {
       const uploadedReferences: string[] = [];
@@ -689,7 +694,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     return send().finally(() => {
       // Clear only this send's message; a newer send may already show its own.
       // An accepted send's turn is in the detail by now; a rejected send's text
-      // stays in the composer, which clears only on acceptance.
+      // goes back to the composer, which let it go when the message showed.
       setPendingSend(pending => pending?.token === pendingToken ? null : pending);
       if (!isCurrent()) return;
       submittingRef.current = false;
