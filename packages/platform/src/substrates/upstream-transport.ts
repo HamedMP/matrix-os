@@ -2,7 +2,7 @@ import { rootCertificates } from 'node:tls';
 import { isIP } from 'node:net';
 import { Agent, buildConnector, type Dispatcher } from 'undici';
 import { CUSTOMER_VPS_KEEP_ALIVE_MAX_TIMEOUT_MS, CUSTOMER_VPS_KEEP_ALIVE_TIMEOUT_MS } from '../customer-vps-dispatcher.js';
-import { HOST_AUTH_HEADER } from './metal-substrate.js';
+import { HOST_AUTH_HEADER, VM_TARGET_HEADER } from './metal-substrate.js';
 import type { RuntimeUpstream } from './types.js';
 
 /**
@@ -25,7 +25,7 @@ export const UPSTREAM_HOST_HEADER = 'x-matrix-upstream-host';
  */
 export const INGRESS_ERROR_HEADER = 'x-matrix-ingress-error';
 /** Header names that only the platform or ingress may set, never a client; never returned to clients. */
-const RESERVED_UPSTREAM_HEADERS = [HOST_AUTH_HEADER, UPSTREAM_HOST_HEADER, INGRESS_ERROR_HEADER] as const;
+const RESERVED_UPSTREAM_HEADERS = [HOST_AUTH_HEADER, VM_TARGET_HEADER, UPSTREAM_HOST_HEADER, INGRESS_ERROR_HEADER] as const;
 const MAX_VERIFIED_DISPATCHERS = 32;
 
 function credentialNames(upstream: RuntimeUpstream): string[] {

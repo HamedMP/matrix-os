@@ -110,17 +110,20 @@ describe('metal substrate routing', () => {
     expect(substrate.resolveUpstream(machine(), { path: '/' })?.url).toBe('https://metal.example.test:443/');
   });
 
-  it('upstream headers carry x-matrix-host-auth', async () => {
+  it('upstream headers carry the selected VM id and generation with host authentication', async () => {
     const substrate = await primed(metalHost());
 
     expect(substrate.resolveUpstream(machine(), { path: '/' })?.headers).toEqual({
       'x-matrix-host-auth': INGRESS_TOKEN,
+      'x-matrix-vm-target': `${VM_ID}:3`,
     });
   });
 
   it.each([
     ['the machine is not running', machine({ status: 'suspended' })],
     ['the machine has no host', machine({ metalHostId: null })],
+    ['the selected machine has no VM id', machine({ metalVmId: null })],
+    ['the selected machine generation is invalid', machine({ generation: -1 })],
     ['the host is unknown', machine({ metalHostId: 'metal-404' })],
   ])('resolveUpstream is null when %s', async (_name, m) => {
     const substrate = await primed(metalHost());

@@ -28,7 +28,8 @@ describe('upstream transport for host ingress upstreams', () => {
   function upstream(overrides: Partial<RuntimeUpstream> = {}): RuntimeUpstream {
     return {
       url: `https://127.0.0.1:${port}/api/x`, hostHeader: 'alice.matrix-os.com', tlsServerName: 'fake-hostd.test',
-      headers: { 'x-matrix-host-auth': 'ingress-token' }, extraCaPem: cert.cert, ...overrides,
+      headers: { 'x-matrix-host-auth': 'ingress-token', 'x-matrix-vm-target': 'vm_0123456789abcdef01234567:3' },
+      extraCaPem: cert.cert, ...overrides,
     };
   }
 
@@ -40,15 +41,20 @@ describe('upstream transport for host ingress upstreams', () => {
   }
 
   it('verifies the certificate under the TLS server name while sending the runtime Host', async () => {
-    const response = await send(upstream(), { 'x-matrix-upstream-host': 'bob.matrix-os.com', 'x-matrix-host-auth': 'forged' });
+    const response = await send(upstream(), {
+      'x-matrix-upstream-host': 'bob.matrix-os.com', 'x-matrix-host-auth': 'forged', 'x-matrix-vm-target': 'forged',
+    });
     expect(response.status).toBe(200);
     const seen = ingress.requests.at(-1)!;
     expect(seen.headers.host).toBe('alice.matrix-os.com');
     expect(seen.headers['x-matrix-host-auth']).toBe('ingress-token');
+    expect(seen.headers['x-matrix-vm-target']).toBe('vm_0123456789abcdef01234567:3');
     expect(seen.headers['x-matrix-upstream-host']).toBeUndefined();
     const responseHeaders = new Headers(response.headers);
+    responseHeaders.set('x-matrix-vm-target', 'echoed');
     stripUpstreamCredentials(responseHeaders, upstream());
     expect(responseHeaders.has('x-matrix-host-auth')).toBe(false);
+    expect(responseHeaders.has('x-matrix-vm-target')).toBe(false);
   });
 
   it('refuses an ingress whose certificate does not match the TLS server name', async () => {
@@ -65,7 +71,7 @@ describe('upstream transport for host ingress upstreams', () => {
     const vps = { url: 'https://203.0.113.5:443/', hostHeader: 'alice.matrix-os.com' };
     const sentinel = {} as never;
     expect(dispatcherForUpstream(vps, sentinel)).toBe(sentinel);
-    const headers = new Headers({ 'x-matrix-host-auth': 'forged', 'x-matrix-upstream-host': 'bob.matrix-os.com' });
+    const headers = new Headers({ 'x-matrix-host-auth': 'forged', 'x-matrix-upstream-host': 'bob.matrix-os.com', 'x-matrix-vm-target': 'forged' });
     applyUpstreamCredentials(headers, vps);
     expect([...headers.keys()]).toEqual([]);
   });

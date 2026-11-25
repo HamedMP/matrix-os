@@ -1,3 +1,4 @@
+import { HostdVmIdSchema } from '@matrix-os/contracts';
 import type { Dispatcher } from 'undici';
 import {
   createHostdClient,
@@ -25,11 +26,12 @@ import type {
  * Metal substrate (spec 2691, ENG-520): free-tier VMs on Matrix-operated
  * bare-metal hosts, reached through each host's authenticated ingress and
  * woken through hostd. Routing never targets the VM address; the ingress
- * routes by the handle Host header and never wakes a VM by itself.
+ * verifies the selected VM id, generation and handle without waking it directly.
  */
 
 export const METAL_RESUME_BUDGET_MS = 8_000;
 export const HOST_AUTH_HEADER = 'x-matrix-host-auth';
+export const VM_TARGET_HEADER = 'x-matrix-vm-target';
 const DEFAULT_INGRESS_PORT = 443;
 const HOST_CACHE_TTL_MS = 60_000;
 const HOST_CACHE_MAX_ENTRIES = 256;
@@ -186,7 +188,6 @@ export function createMetalSubstrate(deps: MetalSubstrateDeps): OnDemandRuntimeS
   const log = deps.log ?? defaultLog;
   let dispatcher = deps.dispatcher;
   const hostdDispatcher = () => (dispatcher ??= createHostdDispatcher(deps.caPem));
-  const upstreamHeaders = Object.freeze({ [HOST_AUTH_HEADER]: deps.ingressToken });
 
   function logHostdError(event: string, ref: RuntimeRef, error: HostdError): void {
     log(event, { machineId: ref.machineId, code: error.code });
@@ -232,6 +233,9 @@ export function createMetalSubstrate(deps: MetalSubstrateDeps): OnDemandRuntimeS
 
     resolveUpstream(machine, target) {
       if (machine.status !== 'running' || machine.substrate !== 'metal' || !machine.metalHostId) return null;
+      const vmId = HostdVmIdSchema.safeParse(machine.metalVmId);
+      const { generation } = machine;
+      if (!vmId.success || typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation < 0) return null;
       const host = deps.hosts.peek(machine.metalHostId);
       if (!host || host.status === 'down') return null;
       const { hostname, port } = splitIngress(host.ingressHost);
@@ -240,7 +244,7 @@ export function createMetalSubstrate(deps: MetalSubstrateDeps): OnDemandRuntimeS
         url: `https://${hostname}:${port}${path}${target.queryString ?? ''}`,
         hostHeader: `${machine.handle}.matrix-os.com`,
         tlsServerName: hostname,
-        headers: upstreamHeaders,
+        headers: { [HOST_AUTH_HEADER]: deps.ingressToken, [VM_TARGET_HEADER]: `${vmId.data}:${generation}` },
         ...(deps.caPem ? { extraCaPem: deps.caPem } : {}),
       };
     },

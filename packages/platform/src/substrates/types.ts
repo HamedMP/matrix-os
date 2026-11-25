@@ -21,6 +21,8 @@ export interface RoutableMachine {
   metalHostId?: string | null;
   /** Metal substrate: the hostd VM id. */
   metalVmId?: string | null;
+  /** Metal substrate: the selected machine generation. */
+  generation?: number;
 }
 
 export interface RuntimeUpstreamTarget {
