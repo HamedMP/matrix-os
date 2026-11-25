@@ -134,6 +134,10 @@ export interface ThinPoolUsage {
   metadataPercent: number;
 }
 
+export interface AutomaticResize extends Pick<VmRecord, "tier" | "maxMiB"> {
+  action: "grow" | "shrink";
+}
+
 export interface VmLifecycle {
   create(spec: CreateVmSpec): Promise<VmRecord>;
   // The thin pool's data and metadata use; rejects with capacity when unreadable
@@ -145,7 +149,7 @@ export interface VmLifecycle {
   stop(id: string): Promise<VmRecord>;
   destroy(id: string): Promise<void>;
   // Hotplugs or unplugs memory to targetMiB; refuses unless the VM is running.
-  resize(id: string, targetMiB: number): Promise<void>;
+  resize(id: string, targetMiB: number, automatic?: AutomaticResize): Promise<void>;
   // Changes tier and memory ceiling; a raised ceiling takes effect at the next cold boot.
   setPolicy(id: string, policy: { tier: VmTier; maxMiB: number }): Promise<VmRecord>;
   // Resolves once every operation queued so far has settled.
@@ -845,18 +849,25 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     await store.remove(id);
   }
 
-  async function resize(id: string, targetMiB: number): Promise<void> {
+  async function resize(id: string, targetMiB: number, automatic?: AutomaticResize): Promise<void> {
     const record = await load(id);
     if (!Number.isSafeInteger(targetMiB) || targetMiB < record.bootMiB) {
       throw new LifecycleError("invalid", "memory target out of range");
     }
     if (record.state !== "running") throw new LifecycleError("conflict", `VM is ${record.state}`);
+    if (automatic && (record.tier !== automatic.tier || record.maxMiB !== automatic.maxMiB ||
+      (record.tier === "paid" && automatic.action === "shrink"))) {
+      throw new LifecycleError("conflict", "VM memory policy changed");
+    }
     await withCh(id, async (client) => {
       // Above the ceiling only as a downward step: a lowered ceiling may sit
       // below what the guest still holds while it gives memory back.
-      if (targetMiB > record.maxMiB) {
+      if (targetMiB > record.maxMiB || (automatic && record.tier === "paid")) {
         const actualMiB = Math.floor((await client.info(chSignal())).memoryActualBytes / MiB);
-        if (targetMiB >= actualMiB) throw new LifecycleError("invalid", "memory target out of range");
+        if (automatic && record.tier === "paid" && targetMiB <= actualMiB) {
+          throw new LifecycleError("conflict", "paid VM memory already meets the target");
+        }
+        if (targetMiB > record.maxMiB && targetMiB >= actualMiB) throw new LifecycleError("invalid", "memory target out of range");
       }
       await client.resizeMemory(targetMiB * MiB, chSignal());
     });
@@ -905,7 +916,9 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   return {
     create,
     thinPoolUsage,
-    resize: (id, targetMiB) => enqueue(id, `resize:${targetMiB}`, () => resize(id, targetMiB)),
+    resize: (id, targetMiB, automatic) => enqueue(id,
+      automatic ? `auto-resize:${targetMiB}:${automatic.tier}:${automatic.maxMiB}:${automatic.action}` : `resize:${targetMiB}`,
+      () => resize(id, targetMiB, automatic)),
     setPolicy: (id, policy) =>
       enqueue(id, `policy:${policy.tier}:${policy.maxMiB}`, () => setPolicy(id, policy)),
     idle,

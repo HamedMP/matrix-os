@@ -3,6 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { ChClient } from "./ch-client.js";
 import type { GuestClient } from "./guest-client.js";
 import type { VmRecord, VmStore, VmTier } from "./vm-store.js";
+import type { AutomaticResize } from "./vm-lifecycle.js";
 
 // Memory controller: every interval, samples each running VM (guest agent
 // stats plus Cloud Hypervisor's actual memory size) and hotplugs or unplugs
@@ -72,7 +73,7 @@ export interface MemoryControllerDeps {
   guest: (id: string) => Pick<GuestClient, "stats">;
   // The lifecycle's resize op: it runs in the VM's operation queue, so a
   // resize can never race a suspend or a restore.
-  resize: (id: string, targetMiB: number) => Promise<void>;
+  resize: (id: string, targetMiB: number, automatic: AutomaticResize) => Promise<void>;
   hostAvailableMiB?: (signal: AbortSignal) => Promise<number>;
   // Seconds since the owner last interacted with the VM (wired in H5/P6).
   idleSeconds?: (record: VmRecord) => number | Promise<number>;
@@ -121,25 +122,30 @@ export function createMemoryController(deps: MemoryControllerDeps): MemoryContro
     // Everything, including the client factory, stays inside the try: one VM's
     // failure must never reject the tick or the loop.
     let ch: ChClient | undefined;
+    let reservedMiB = 0;
     try {
       ch = deps.ch(record.id);
       const info = await ch.info(opSignal());
       if (info.state !== "Running") return;
       const stats = await deps.guest(record.id).stats(opSignal());
       const actualMiB = Math.floor(info.memoryActualBytes / MIB);
+      const idleSeconds = await readIdle(record);
+      const current = await deps.store.get(record.id);
+      if (current?.state !== "running") return;
+      const { bootMiB, maxMiB, tier } = current;
       const decision = decideMemory(
-        { psiSome10: stats.psiSome10, availableMiB: stats.availableMiB, actualMiB, idleSeconds: await readIdle(record) },
-        { bootMiB: record.bootMiB, maxMiB: record.maxMiB, tier: record.tier, hostAvailableMiB: budget.mib },
+        { psiSome10: stats.psiSome10, availableMiB: stats.availableMiB, actualMiB, idleSeconds },
+        { bootMiB, maxMiB, tier, hostAvailableMiB: budget.mib },
       );
       if (decision.action === "none") return;
       // Spend the headroom before awaiting, so concurrent samples see it.
-      if (decision.action === "grow") budget.mib -= decision.targetMiB - actualMiB;
-      // Cheap early exit; the lifecycle re-checks the state inside its queue.
-      const current = await deps.store.get(record.id);
-      if (current?.state !== "running") return;
-      await deps.resize(record.id, decision.targetMiB);
+      if (decision.action === "grow") reservedMiB = decision.targetMiB - actualMiB;
+      budget.mib -= reservedMiB;
+      await deps.resize(record.id, decision.targetMiB, { tier, maxMiB, action: decision.action });
+      reservedMiB = 0;
       log("memory.resized", { id: record.id, action: decision.action, fromMiB: actualMiB, toMiB: decision.targetMiB });
     } catch (error: unknown) {
+      budget.mib += reservedMiB;
       log("memory.sample_failed", { id: record.id, ...errorFields(error) });
     } finally {
       if (ch !== undefined) {

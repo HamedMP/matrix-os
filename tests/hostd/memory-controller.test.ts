@@ -249,6 +249,32 @@ describe("memory controller loop", () => {
     expect(h.resizes).toHaveLength(1);
   });
 
+  it("returns a refused grow's budget to the next VM in the same tick", async () => {
+    const h = harness([
+      { record: record("vm_a"), actualMiB: 2048, stats: PRESSURED },
+      { record: record("vm_b"), actualMiB: 2048, stats: PRESSURED },
+    ], { hostAvailableMiB: async () => 33000, concurrency: 1 });
+    const resize = h.deps.resize;
+    h.deps.resize = async (id, ...args) => {
+      if (id === "vm_a") throw new Error("VM unavailable");
+      return resize(id, ...args);
+    };
+    await createMemoryController(h.deps).tick();
+    expect(h.resizes).toEqual([{ id: "vm_b", bytes: 3072 * MiB }]);
+  });
+
+  it("rechecks the tier after sampling the guest, so a paid upgrade prevents a shrink", async () => {
+    const fixture = { record: record("vm_a"), actualMiB: 4096, stats: IDLE };
+    const h = harness([fixture], { idleSeconds: () => 700 });
+    const guest = h.deps.guest;
+    h.deps.guest = (id) => ({ async stats(signal) {
+      fixture.record = { ...fixture.record, tier: "paid" };
+      return guest(id).stats(signal);
+    } });
+    await createMemoryController(h.deps).tick();
+    expect(h.resizes).toEqual([]);
+  });
+
   it("never grows when host memory cannot be read", async () => {
     const h = harness([{ record: record("vm_a"), actualMiB: 2048, stats: PRESSURED }], {
       hostAvailableMiB: async () => {

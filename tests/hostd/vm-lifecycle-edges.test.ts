@@ -778,6 +778,16 @@ describe("lost pause replies, lowered memory ceilings, and unreadable LVM on des
     await expect(lifecycle.resize(vm.id, 17408)).rejects.toMatchObject({ code: "invalid" });
   });
 
+  it("rejects an automatic shrink queued after a paid tier change", async () => {
+    const lifecycle = make();
+    const vm = await lifecycle.create(spec);
+    chOverrides = { info: async () => ({ state: "Running", memoryActualBytes: 4096 * 1024 ** 2 }) };
+    const upgrading = lifecycle.setPolicy(vm.id, { tier: "paid", maxMiB: 16384 });
+    const shrinking = lifecycle.resize(vm.id, 3072, { tier: "free", maxMiB: 8192, action: "shrink" });
+    await expect(shrinking).rejects.toMatchObject({ code: "conflict" });
+    await expect(upgrading).resolves.toMatchObject({ tier: "paid" });
+  });
+
   it("keeps the record when LVM cannot say whether the disk exists, and drops it once the LV is gone", async () => {
     const lifecycle = make();
     const vm = await lifecycle.create(spec);
