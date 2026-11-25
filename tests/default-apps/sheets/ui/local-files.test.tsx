@@ -29,7 +29,7 @@ function chooseOnComputer(file: File): void {
 async function openLocal(name = "Budget.xlsx") {
   const app = await renderApp();
   chooseOnComputer(new File([(await workbookBytes()) as BlobPart], name));
-  fireEvent.click(screen.getByRole("button", { name: /^Open from this computer/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Choose a file…" }));
   await flush();
   await flush();
   return app;
@@ -86,7 +86,7 @@ describe("a workbook from this computer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Back to Sheets home" }));
     await flush();
-    expect(screen.getByRole("button", { name: /Budget\.xlsx/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Budget\.xlsx, in / })).toBeTruthy();
   });
 
   it("asks before leaving unsaved edits, and Save downloads them and goes home without a recent entry", async () => {
@@ -106,7 +106,7 @@ describe("a workbook from this computer", () => {
 
   it("opens a spreadsheet dropped on the window and refuses other files", async () => {
     const app = await renderApp();
-    const target = screen.getByRole("button", { name: /^New blank workbook/ });
+    const target = screen.getByRole("button", { name: /^Blank workbook/ });
     const transfer = (files: File[]) => ({ types: ["Files"], files, dropEffect: "none" });
     fireEvent.dragEnter(target, { dataTransfer: transfer([]) });
     fireEvent.drop(target, { dataTransfer: transfer([new File(["x"], "photo.png")]) });
@@ -124,11 +124,11 @@ describe("a workbook from this computer", () => {
   it("says why a file that is not a spreadsheet does not open", async () => {
     await renderApp();
     chooseOnComputer(new File(["not a zip"], "broken.xlsx"));
-    fireEvent.click(screen.getByRole("button", { name: /^Open from this computer/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose a file…" }));
     await flush();
     await flush();
     expect(document.querySelector(".oui-toast--danger .oui-toast__title")?.textContent).toBe("broken.xlsx could not be opened");
-    expect(screen.getByRole("button", { name: /^New blank workbook/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Blank workbook/ })).toBeTruthy();
   });
 });
 

@@ -157,9 +157,9 @@ export function SheetsApp({ bridge, sessionDeps, host: givenHost, download = dow
       ) : (
         <StartScreen
           recents={recents}
+          files={bridge.files}
           opening={hostState.opening}
-          onNew={() => void run({ kind: "new" })}
-          onOpen={() => setPickerOpen(true)}
+          onTemplate={(template) => void run({ kind: "new", template })}
           onOpenLocal={openFromComputer}
           onImport={() => setImportOpen(true)}
           onOpenPath={(path) => void run({ kind: "open", path })}

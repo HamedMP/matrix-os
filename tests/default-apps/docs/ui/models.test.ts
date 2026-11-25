@@ -5,7 +5,7 @@ import { findMatches, replaceOps } from "../../../../home/apps/docs/src/ui/find-
 import { visibleParagraphs } from "../../../../home/apps/docs/src/ui/text-index";
 import { blockOrder, buildOutline, currentOutlineEntry } from "../../../../home/apps/docs/src/ui/outline-model";
 import { buildReferenceIndex, referenceIdsAt, referenceInfo } from "../../../../home/apps/docs/src/ui/references-model";
-import { breadcrumbs, isDocxPath, parentOf, pickerEntries } from "../../../../home/apps/docs/src/ui/file-picker-model";
+import { isDocxPath } from "../../../../home/apps/docs/src/ui/file-picker-model";
 import { countWords, describeSaveState } from "../../../../home/apps/docs/src/ui/status-model";
 import { buildExport } from "../../../../home/apps/docs/src/ui/exports";
 import type { SessionState } from "../../../../home/apps/docs/src/session/index";
@@ -138,39 +138,7 @@ describe("references model", () => {
 });
 
 describe("file picker model", () => {
-  const entry = (name: string, kind: "file" | "dir", dir = "") => ({
-    name,
-    path: dir === "" ? name : `${dir}/${name}`,
-    kind,
-    size: 0,
-    modifiedAt: "2026-11-20T09:00:00.000Z",
-  });
-
-  it("keeps folders and Word documents and hides protected and hidden entries", () => {
-    const listed = [
-      entry("system", "dir"),
-      entry("agents", "dir"),
-      entry(".cache", "dir"),
-      entry("Documents", "dir"),
-      entry("plan.docx", "file"),
-      entry("PLAN2.DOCX", "file"),
-      entry("~$plan.docx", "file"),
-      entry("sheet.xlsx", "file"),
-      entry("notes.md", "file"),
-    ];
-    expect(pickerEntries("", listed).map((item) => item.name)).toEqual(["Documents", "plan.docx", "PLAN2.DOCX"]);
-    expect(pickerEntries("Documents", [entry("system", "dir", "Documents")]).map((item) => item.name)).toEqual(["system"]);
-  });
-
-  it("builds breadcrumbs and parents", () => {
-    expect(breadcrumbs("")).toEqual([{ label: "Home", path: "" }]);
-    expect(breadcrumbs("Documents/Legal")).toEqual([
-      { label: "Home", path: "" },
-      { label: "Documents", path: "Documents" },
-      { label: "Legal", path: "Documents/Legal" },
-    ]);
-    expect(parentOf("Documents/Legal")).toBe("Documents");
-    expect(parentOf("Documents")).toBe("");
+  it("recognises .docx paths in the home", () => {
     expect(isDocxPath("a/b.DocX")).toBe(true);
     expect(isDocxPath("a/b.doc")).toBe(false);
     expect(isDocxPath("../b.docx")).toBe(false);

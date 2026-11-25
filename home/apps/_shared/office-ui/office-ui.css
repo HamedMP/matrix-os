@@ -1,5 +1,6 @@
 /* Matrix OS office UI kit. Only the shared --app-* and --identity-* tokens are
  * used, so light and dark themes follow the Matrix theme bridge automatically. */
+@import "./start.css";
 .oui-root, .oui-dialog, .oui-popover, .oui-toasts, .oui-agent, .oui-review,
 .oui-ribbon, .oui-backstage, .oui-menu--floating, .oui-dropzone, .oui-doc-title {
   --oui-accent: var(--identity-accent, var(--app-primary));

@@ -1,0 +1,333 @@
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { Select } from "./Fields";
+import { FileThumb, type FileThumbKind } from "./FileThumb";
+import { Skeleton } from "./Feedback";
+import { cx } from "./internal";
+import { ROW_ATTRIBUTE, useRovingRows } from "./roving";
+import {
+  MAX_BROWSER_ROWS,
+  MAX_QUERY_LENGTH,
+  breadcrumbTrail,
+  browsableEntries,
+  exactTime,
+  filterEntries,
+  parentDir,
+  relativeTime,
+  sortEntries,
+  type Crumb,
+  type StartFileEntry,
+  type StartSort,
+} from "./start-model";
+
+/** The part of `MatrixOS.files` the browser uses. */
+export interface BrowserFiles {
+  list(dir: string, options?: { limit?: number }): Promise<{ entries: StartFileEntry[]; truncated: boolean }>;
+}
+
+export interface MatrixFileBrowserProps {
+  files: BrowserFiles;
+  /** Extensions to list (".docx"); folders are always listed. */
+  accept: readonly string[];
+  onOpen: (path: string) => void;
+  /** App name for messages ("Docs is not allowed to look in this folder."). */
+  appName: string;
+  /** What the files are called, for empty folders ("Word documents"). */
+  fileNoun: string;
+  kindOf: (entry: StartFileEntry) => { kind: FileThumbKind; tag?: string };
+  /** Where browsing starts (default the home root). */
+  initialDir?: string;
+  disabled?: boolean;
+  /** Receives the search field, so a call to action can focus it. */
+  searchRef?: RefObject<HTMLInputElement | null>;
+  now?: number;
+  className?: string;
+}
+
+type Listing =
+  | { status: "loading"; dir: string }
+  | { status: "ready"; dir: string; entries: StartFileEntry[]; truncated: boolean }
+  | { status: "error"; dir: string; message: string };
+
+function errorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error ? (error as { code: unknown }).code : null;
+}
+
+function listingMessage(error: unknown, appName: string): string {
+  const code = errorCode(error);
+  if (code === "forbidden") return `${appName} is not allowed to look in this folder.`;
+  if (code === "not_found") return "This folder no longer exists.";
+  return "This folder could not be listed. Try again in a moment.";
+}
+
+const SORT_OPTIONS = [
+  { value: "name", label: "Name" },
+  { value: "modified", label: "Last changed" },
+] as const;
+
+/**
+ * The owner's Matrix home, one folder at a time: breadcrumbs, a name filter
+ * for the folder, sorting, and only the folders and file types the app opens.
+ * Clicking a folder enters it, clicking a file opens it. Up/Down move between
+ * rows; Backspace goes up a folder.
+ */
+export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, kindOf, initialDir = "", disabled, searchRef, now, className }: MatrixFileBrowserProps) {
+  const [dir, setDir] = useState(initialDir);
+  const [attempt, setAttempt] = useState(0);
+  const [listing, setListing] = useState<Listing>({ status: "loading", dir: initialDir });
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<StartSort>("name");
+  const listRef = useRef<HTMLUListElement>(null);
+  const focusAfterLoad = useRef(false);
+  // A string key, so an inline `accept` array does not list the folder again on every render.
+  const acceptKey = accept.join(",");
+
+  useEffect(() => {
+    let live = true;
+    files.list(dir).then(
+      (result) => {
+        if (live) setListing({ status: "ready", dir, entries: browsableEntries(dir, result.entries, acceptKey.split(",")), truncated: result.truncated });
+      },
+      (error: unknown) => {
+        console.warn(`[${appName.toLowerCase()}] could not list a folder`, errorCode(error) ?? (error instanceof Error ? error.name : typeof error));
+        if (live) setListing({ status: "error", dir, message: listingMessage(error, appName) });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [files, dir, attempt, appName, acceptKey]);
+
+  const shown = useMemo(() => {
+    if (listing.status !== "ready") return { rows: [] as StartFileEntry[], total: 0 };
+    const matches = sortEntries(filterEntries(listing.entries, query), sort);
+    return { rows: matches.slice(0, MAX_BROWSER_ROWS), total: matches.length };
+  }, [listing, query, sort]);
+  const roving = useRovingRows(shown.rows.map((entry) => entry.path));
+
+  useEffect(() => {
+    if (listing.status !== "loading" && focusAfterLoad.current) {
+      focusAfterLoad.current = false;
+      listRef.current?.querySelector<HTMLElement>(`[${ROW_ATTRIBUTE}]`)?.focus();
+    }
+  }, [listing]);
+
+  const goTo = (path: string, moveFocus: boolean) => {
+    focusAfterLoad.current = moveFocus;
+    setQuery("");
+    setListing({ status: "loading", dir: path });
+    setDir(path);
+  };
+  const retry = () => {
+    setListing({ status: "loading", dir });
+    setAttempt((value) => value + 1);
+  };
+
+  const onListKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
+    if (event.key === "Backspace" && dir !== "") {
+      event.preventDefault();
+      goTo(parentDir(dir), true);
+      return;
+    }
+    roving.onKeyDown(event);
+  };
+
+  const crumbs = breadcrumbTrail(dir);
+  const loading = listing.status === "loading";
+  const clock = now ?? Date.now();
+  return (
+    <div className={cx("oui-browser", className)}>
+      <div className="oui-browser__bar">
+        <Crumbs trail={crumbs} onGo={(path) => goTo(path, true)} />
+        <div className="oui-browser__tools">
+          <SearchField
+            inputRef={searchRef}
+            query={query}
+            onQuery={setQuery}
+            onEnterList={() => {
+              const first = listRef.current?.querySelector<HTMLElement>(`[${ROW_ATTRIBUTE}]`);
+              first?.focus();
+              return first !== null && first !== undefined;
+            }}
+          />
+          <Select className="oui-browser__sort" label="Sort by" hideLabel value={sort} options={SORT_OPTIONS} onChange={(value) => setSort(value === "modified" ? "modified" : "name")} />
+        </div>
+      </div>
+      <div className="oui-browser__body" aria-busy={loading || undefined}>
+        <BrowserStatus
+          listing={listing}
+          matches={shown.total}
+          query={query}
+          fileNoun={fileNoun}
+          onRetry={retry}
+          onUp={dir === "" ? null : () => goTo(parentDir(dir), true)}
+          onClearQuery={() => setQuery("")}
+        />
+        {shown.rows.length > 0 && (
+          <ul ref={listRef} className="oui-browser__list" aria-label="Folders and files" onKeyDown={onListKeyDown}>
+            {shown.rows.map((entry) => {
+              const folder = entry.kind === "dir";
+              const look = folder ? { kind: "folder" as const } : kindOf(entry);
+              const when = folder ? "" : relativeTime(entry.modifiedAt, clock);
+              return (
+                <li key={entry.path}>
+                  <button
+                    type="button"
+                    className={cx("oui-browser__row", folder && "is-folder")}
+                    {...{ [ROW_ATTRIBUTE]: "" }}
+                    tabIndex={roving.current === entry.path ? 0 : -1}
+                    aria-label={folder ? `Folder ${entry.name}` : `${entry.name}${when ? `, changed ${when.toLowerCase()}` : ""}`}
+                    disabled={disabled && !folder}
+                    onFocus={() => roving.focusRow(entry.path)}
+                    onClick={() => (folder ? goTo(entry.path, true) : onOpen(entry.path))}
+                  >
+                    <FileThumb kind={look.kind} tag={look.tag} size="sm" />
+                    <span className="oui-browser__name">{entry.name}</span>
+                    {folder ? (
+                      <svg className="oui-browser__enter" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                        <path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    ) : (
+                      <span className="oui-browser__when" title={exactTime(entry.modifiedAt)}>
+                        {when}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+      {listing.status === "ready" && (shown.total > shown.rows.length || listing.truncated) && (
+        <p className="oui-browser__note">
+          {shown.total > shown.rows.length ? `Showing ${shown.rows.length} of ${shown.total}. Filter to find the rest.` : "This folder holds more items than can be listed. Filter by name or open a subfolder."}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Chevron({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function Crumbs({ trail, onGo }: { trail: readonly Crumb[]; onGo: (path: string) => void }) {
+  return (
+    <nav className="oui-browser__crumbs" aria-label="Folder path">
+      <ol>
+        {trail.map((crumb, index) => {
+          const last = index === trail.length - 1;
+          return (
+            <li key={crumb.path}>
+              {index > 0 && <Chevron className="oui-browser__sep" />}
+              <button type="button" className={cx("oui-browser__crumb", last && "is-current")} aria-current={last ? "location" : undefined} onClick={() => !last && onGo(crumb.path)}>
+                {crumb.label}
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}
+
+interface SearchFieldProps {
+  inputRef?: RefObject<HTMLInputElement | null>;
+  query: string;
+  onQuery: (query: string) => void;
+  /** Moves focus to the first row; false when there is none. */
+  onEnterList: () => boolean;
+}
+
+function SearchField({ inputRef, query, onQuery, onEnterList }: SearchFieldProps) {
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown" && onEnterList()) event.preventDefault();
+    else if (event.key === "Escape" && query !== "") {
+      event.preventDefault();
+      onQuery("");
+    }
+  };
+  return (
+    <label className="oui-browser__search">
+      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M10.5 10.5L14 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+      <span className="oui-sr-only">Filter this folder by name</span>
+      <input
+        ref={inputRef}
+        type="search"
+        className="oui-input"
+        placeholder="Filter this folder"
+        value={query}
+        maxLength={MAX_QUERY_LENGTH}
+        onChange={(event) => onQuery(event.target.value)}
+        onKeyDown={onKeyDown}
+      />
+    </label>
+  );
+}
+
+interface BrowserStatusProps {
+  listing: Listing;
+  /** Entries that match the filter. */
+  matches: number;
+  query: string;
+  fileNoun: string;
+  onRetry: () => void;
+  /** Goes to the parent folder; null at the home root. */
+  onUp: (() => void) | null;
+  onClearQuery: () => void;
+}
+
+/** Loading, failure, empty folder and no-match states; nothing once rows are shown. */
+function BrowserStatus({ listing, matches, query, fileNoun, onRetry, onUp, onClearQuery }: BrowserStatusProps) {
+  if (listing.status === "loading") {
+    return (
+      <div className="oui-browser__loading" role="status">
+        <span className="oui-sr-only">Loading folder</span>
+        {[0, 1, 2, 3].map((row) => (
+          <div key={row} className="oui-browser__ghost">
+            <Skeleton width={26} height={32} radius={4} />
+            <Skeleton width={`${46 - row * 7}%`} height={12} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (listing.status === "error") {
+    return (
+      <div role="alert" className="oui-browser__notice">
+        <p>{listing.message}</p>
+        <button type="button" className="oui-button" onClick={onRetry}>
+          Try again
+        </button>
+      </div>
+    );
+  }
+  if (listing.entries.length === 0) {
+    return (
+      <div className="oui-browser__notice">
+        <p>No folders or {fileNoun} here.</p>
+        {onUp && (
+          <button type="button" className="oui-button" onClick={onUp}>
+            Up one folder
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (matches > 0) return null;
+  return (
+    <div className="oui-browser__notice" role="status">
+      <p>Nothing in this folder matches “{query.trim()}”.</p>
+      <button type="button" className="oui-button" onClick={onClearQuery}>
+        Clear filter
+      </button>
+    </div>
+  );
+}

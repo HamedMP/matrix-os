@@ -12,12 +12,14 @@
 import { useCallback, useState } from "react";
 import { LocalFileError, type LocalFile, pickLocalFile, useToast } from "../../../_shared/office-ui";
 import { type RecentFiles, type SessionHost, fileName } from "../session";
+import type { Workbook } from "../session/engine";
 import { logFailure } from "./bridge";
 import { type Download, describeSave, saveDocument } from "./file-actions";
+import { type SheetsTemplateId, buildTemplate, sheetsTemplate } from "./templates";
 
 export type DocumentAction =
   | { kind: "open"; path: string }
-  | { kind: "new"; rows?: string[][] }
+  | { kind: "new"; rows?: string[][]; template?: SheetsTemplateId }
   | { kind: "local"; name: string; bytes: Uint8Array }
   | { kind: "close" };
 
@@ -48,6 +50,14 @@ export interface DocumentFlow {
   rejectLocalFile(error: LocalFileError): void;
 }
 
+/** Name and starting content of a new workbook: imported rows, a template, or blank. */
+function newWorkbookOptions(action: { rows?: string[][]; template?: SheetsTemplateId }): { name?: string; template?: () => Workbook | null } {
+  if (action.rows) return { name: "Imported.xlsx" };
+  const template = action.template === undefined ? null : sheetsTemplate(action.template);
+  if (template === null || template.id === "blank") return {};
+  return { name: template.name, template: () => buildTemplate(template.id) };
+}
+
 export function useDocumentFlow(host: SessionHost, recents: RecentFiles, download: Download): DocumentFlow {
   const toast = useToast();
   const [pending, setPending] = useState<DocumentAction | null>(null);
@@ -68,7 +78,7 @@ export function useDocumentFlow(host: SessionHost, recents: RecentFiles, downloa
           ? await host.open(action.path, { discardUnsaved })
           : action.kind === "local"
             ? await host.openLocal(action.name, action.bytes, { discardUnsaved })
-            : await host.openNew({ discardUnsaved, name: action.rows ? "Imported.xlsx" : undefined });
+            : await host.openNew({ discardUnsaved, ...newWorkbookOptions(action) });
       if (result.status === "unsaved") {
         setPending(action);
         return;

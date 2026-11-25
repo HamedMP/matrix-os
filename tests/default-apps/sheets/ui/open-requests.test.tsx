@@ -45,7 +45,7 @@ describe("Sheets open requests", () => {
     expect(app.host.session).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Back to start" }));
     await flush();
-    expect(screen.getByRole("button", { name: /New blank workbook/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Blank workbook/ })).toBeTruthy();
   });
 
   it("keeps the open workbook and says so when a requested file does not open", async () => {
@@ -58,7 +58,7 @@ describe("Sheets open requests", () => {
 
   it("asks before dropping edits that cannot be saved", async () => {
     const app = await renderApp();
-    fireEvent.click(screen.getByRole("button", { name: /New blank workbook/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Blank workbook/ }));
     await flush();
     act(() => {
       app.session().setCellInput(app.session().getState().activeSheetId, { row: 0, col: 0 }, "draft");
@@ -76,21 +76,20 @@ describe("Sheets open requests", () => {
 });
 
 describe("Sheets start screen", () => {
-  it("lists recent workbooks, opens through the picker and imports pasted CSV", async () => {
+  it("lists recent workbooks, opens from the Matrix files and imports pasted CSV", async () => {
     const app = await renderApp(async (bridge) => {
       bridge.fileStore.put("Reports/Q3.xlsx", await workbookBytes());
       bridge.fileStore.put("Reports/notes.txt", encode("x"));
       await bridge.db.insert("recent_files", { path: "Reports/Q3.xlsx", name: "Q3.xlsx", opened_at: "2026-11-01T10:00:00Z" });
     });
-    expect(screen.getByRole("button", { name: /Q3\.xlsx/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Q3\.xlsx, in Reports/ })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Open from Matrix/ }));
     await flush();
-    fireEvent.click(screen.getByRole("button", { name: "Reports" }));
+    fireEvent.click(screen.getByRole("button", { name: "Folder Reports" }));
     await flush();
-    const list = screen.getByRole("list", { name: "Files and folders" });
+    const list = screen.getByRole("list", { name: "Folders and files" });
     expect(within(list).queryByText("notes.txt")).toBeNull();
-    fireEvent.click(within(list).getByRole("button", { name: "Q3.xlsx" }));
+    fireEvent.click(within(list).getByRole("button", { name: /^Q3\.xlsx/ }));
     await flush();
     expect(screen.getByRole("heading", { name: "Q3.xlsx" })).toBeTruthy();
 

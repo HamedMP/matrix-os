@@ -64,11 +64,10 @@ async function entries(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
 async function pickFromDialog(dialogName: string, folder: string, file: string): Promise<void> {
   const dialog = await screen.findByRole("dialog", { name: dialogName });
   fireEvent.click(await within(dialog).findByRole("button", { name: `Folder ${folder}` }));
-  const doc = await within(dialog).findByRole("button", { name: `Document ${file}` });
+  const doc = await within(dialog).findByRole("button", { name: new RegExp(`^${file.replace(".", "\\.")}`) });
   // Only folders and Word documents are offered.
   expect(within(dialog).queryByText("notes.txt")).toBeNull();
   fireEvent.click(doc);
-  fireEvent.click(within(dialog).getByRole("button", { name: "Open" }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: dialogName })).toBeNull());
 }
 
@@ -89,12 +88,15 @@ describe("Docs app journey", () => {
     // Start screen: actions and the recent-documents empty state.
     expect(await screen.findByRole("heading", { name: "Recent documents" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "No recent documents" })).toBeTruthy();
-    expect(screen.getByText("Documents you open appear here.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Browse files…" })).toBeTruthy();
+    expect(screen.getByText("Documents you open or save appear here, so you can pick them up again.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Browse your files" })).toBeTruthy();
 
-    // Open the contract from the Open dialog.
-    fireEvent.click(screen.getByRole("button", { name: /Open from Matrix…/ }));
-    await pickFromDialog("Open a document", "Documents", "contract.docx");
+    // Open the contract from the Matrix files on the start screen.
+    const browser = await screen.findByRole("list", { name: "Folders and files" });
+    fireEvent.click(within(browser).getByRole("button", { name: "Folder Documents" }));
+    const contract = await screen.findByRole("button", { name: /^contract\.docx/ });
+    expect(screen.queryByText("notes.txt")).toBeNull();
+    fireEvent.click(contract);
     const surface = await findSurface();
     await waitFor(() => expect(titleText()).toBe("contract.docx"));
     expect(surface.textContent).toContain("initial period of 24 months");
@@ -194,7 +196,7 @@ describe("Docs app journey", () => {
     const confirm = await screen.findByRole("alertdialog", { name: /^Save changes to/ });
     fireEvent.click(within(confirm).getByRole("button", { name: "Discard" }));
     const recent = await screen.findByRole("heading", { name: "Recent documents" });
-    const list = recent.parentElement!;
+    const list = recent.closest("section")!;
     await waitFor(() => expect(within(list).getByText("contract (copy).docx")).toBeTruthy());
     expect(within(list).getByText("contract.docx")).toBeTruthy();
 
