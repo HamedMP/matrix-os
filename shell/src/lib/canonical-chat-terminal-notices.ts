@@ -16,6 +16,19 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
     if (scheduled) message.scheduledMessage = scheduled;
     const receipt = source && routineReceiptMessage(source, detail.record?.chat.id);
     if (receipt) message.routineReceipt = receipt;
+    // The Web system role also represents tool output. Check the persisted
+    // sender and shape before interpreting the legacy textual receipt.
+    if (source?.role === "system"
+      && source.chatId === detail.record?.chat.id
+      && source.purpose === "system"
+      && source.state === "committed"
+      && source.actorId === undefined
+      && source.turnId === undefined
+      && source.runId === undefined
+      && source.parts.length === 1
+      && source.parts[0]?.type === "text") {
+      message.slackRuleReceiptText = source.parts[0].text;
+    }
     const context = source?.turnId ? contextsByTurn[source.turnId] : undefined;
     if (source?.role === "user" && context) message.metadata = { ...message.metadata, chatRunContext: context };
     const turn=detail.turns.find(turn=>turn.inputMessageId===source?.id&&turn.chatId===source.chatId);
