@@ -32,7 +32,6 @@ import type {
 } from "../../agent/index";
 import type { Revision, TextRange } from "../../../../_shared/office-engine/index";
 import {
-  type CardLineage,
   type CardView,
   type ChangeOutcome,
   WHOLE_CARD,
@@ -40,8 +39,9 @@ import {
   changeKey,
   changeRevisions,
   deriveCardView,
-  lineageOf,
+  splitPieces,
   unitKeys,
+  withPieces,
   withoutReopened,
 } from "./card-revisions";
 import type { DocumentChange, DocumentSession } from "../../session/index";
@@ -83,10 +83,12 @@ export type AssistantCard =
        * outlives the resolution it describes.
        */
       resolutions: Readonly<Record<string, ChangeOutcome>>;
-      /** Finds the pieces the document split off this card's revisions; set when the card is added. */
-      lineage?: CardLineage;
+      /** Revisions the document split off this card's revisions later (the owner typed inside one). */
+      pieces?: string[];
     }
   | { id: string; type: "answer"; title: string; documentKey: number; segments: AnswerSegment[]; notes: string[] };
+
+type EditCard = Extract<AssistantCard, { type: "edit" }>;
 
 export interface ReviewCursor {
   cardId: string;
@@ -134,6 +136,8 @@ export class AssistantStore {
   private links: AssistantLinks;
   /** The document this store belongs to. */
   readonly documentKey: number;
+  /** The document's revisions when the store last looked, to find what the next change splits off. */
+  private seen: readonly Revision[] = [];
 
   constructor(private readonly options: AssistantStoreOptions) {
     this.links = { generate: options.generate, getSelection: options.getSelection };
@@ -335,6 +339,7 @@ export class AssistantStore {
       this.cancel();
       return;
     }
+    this.trackSplits();
     let cards: AssistantCard[] | null = null;
     for (const card of this.state.cards) {
       if (card.type !== "edit") continue;
@@ -356,7 +361,19 @@ export class AssistantStore {
     for (const other of this.state.cards) {
       if (other.type === "edit" && other.id !== cardId && other.documentKey === documentKey) for (const id of other.revisionIds) claimed.add(id);
     }
-    return cardRevisions(doc.listRevisions(), card.revisionIds, card.lineage, claimed);
+    return cardRevisions(doc.listRevisions(), card.revisionIds, card.pieces ?? [], claimed);
+  }
+
+  /** Gives each revision the last change split off a card's revision to that card. */
+  private trackSplits(): void {
+    const doc = this.options.session.document;
+    const edits = this.state.cards.filter((card): card is EditCard => card.type === "edit" && card.documentKey === this.documentKey);
+    if (doc === null || edits.length === 0) return;
+    const before = this.seen;
+    this.seen = doc.listRevisions();
+    const owners = new Map(edits.flatMap((card) => [...card.revisionIds, ...(card.pieces ?? [])].map((id) => [id, card.id] as const)));
+    const found = splitPieces(before, this.seen, (id) => owners.get(id));
+    if (found.size > 0) this.patch({ cards: this.state.cards.map((card) => (card.type === "edit" ? withPieces(card, found) : card)) });
   }
 
   private card(cardId: string): AssistantCard | undefined {
@@ -451,10 +468,12 @@ export class AssistantStore {
   }
 
   private addCard(card: AssistantCard): void {
-    let added = card;
     const doc = this.options.session.document;
-    if (card.type === "edit" && doc !== null) added = { ...card, lineage: lineageOf(doc.listRevisions(), card.revisionIds) };
-    this.patch({ cards: [...this.state.cards, added].slice(-MAX_CARDS) });
+    // Splits are found against the document as the card first sees it.
+    if (card.type === "edit" && doc !== null && card.documentKey === this.documentKey && this.options.session.getState().documentKey === this.documentKey) {
+      this.seen = doc.listRevisions();
+    }
+    this.patch({ cards: [...this.state.cards, card].slice(-MAX_CARDS) });
   }
 
   private replaceCard(card: AssistantCard): void {
