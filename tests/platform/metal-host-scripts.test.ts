@@ -646,6 +646,30 @@ printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
     }
   });
 
+  it("keeps tenant rules in the same nftables transaction on system reload and restart", async () => {
+    const dropInPath = "systemd/nftables.service.d/60-matrix-hostd.conf";
+    const wrapper = "/usr/local/share/matrix-hostd/system-nftables.nft";
+    const dropIn = await readFile(`${DIR}/${dropInPath}`, "utf8");
+    const exec = `/usr/sbin/nft -f ${wrapper}`;
+    expect(dropIn.match(/^ExecStart=.*$/gm)).toEqual(["ExecStart=", `ExecStart=${exec}`]);
+    expect(dropIn.match(/^ExecReload=.*$/gm)).toEqual(["ExecReload=", `ExecReload=${exec}`]);
+    // The stock stop action flushes every table before ExecStart can run.
+    expect(dropIn.match(/^ExecStop=.*$/gm)).toEqual(["ExecStop="]);
+    const rules = await readFile(`${DIR}/system-nftables.nft`, "utf8");
+    expect(rules.match(/^include .*$/gm)).toEqual([
+      'include "/etc/nftables.conf"',
+      'include "/etc/matrix-hostd/nftables-tenant.nft"',
+    ]);
+    const provision = await readFile(`${DIR}/provision-host.sh`, "utf8");
+    const installWrapper = provision.indexOf(`install_file "$SCRIPT_DIR/system-nftables.nft" ${wrapper}`);
+    const tenantLoad = provision.indexOf("systemctl reload-or-restart matrix-hostd-tenant-nft.service");
+    const installDropIn = provision.indexOf(`install_file "$SCRIPT_DIR/${dropInPath}"`);
+    expect(installWrapper).toBeGreaterThan(-1);
+    expect(tenantLoad).toBeGreaterThan(installWrapper);
+    expect(installDropIn).toBeGreaterThan(tenantLoad);
+    expect(provision.indexOf("systemctl daemon-reload", installDropIn)).toBeGreaterThan(installDropIn);
+  });
+
   it("wires the units so only a confirmed firewall survives reboot or hostd restarts", async () => {
     const hostd = await readFile("distro/metal-host/systemd/matrix-hostd.service", "utf8");
     expect(hostd).not.toMatch(/^(Wants|Requires|BindsTo)=.*matrix-hostd-nft/m);

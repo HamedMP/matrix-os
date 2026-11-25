@@ -2,7 +2,7 @@
 Description=Matrix tenant network isolation
 Wants=network-pre.target
 After=nftables.service network-pre.target
-ReloadPropagatedFrom=nftables.service
+# The nftables.service drop-in already includes the active tenant rules on reload.
 
 [Service]
 Type=oneshot

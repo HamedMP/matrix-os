@@ -21,7 +21,7 @@ idempotent: re-running one repairs drift and changes nothing else.
 | Memory snapshots | `/var/lib/matrix-hostd/snapshots`, ext4 on its own thin LV `vmvg/hostd-snapshots` (never the root fs) |
 | Host swap | thick LV `vmvg/hostd-swap` with zswap in front |
 | VM network | bridge `brmx` 10.78.0.1/22, NAT out the public interface |
-| Firewall | `table inet matrix_hostd` and `table ip matrix_hostd_nat` only, loaded by `matrix-hostd-nft.service` |
+| Firewall | `matrix-hostd-nft.service` loads `table inet matrix_hostd`. The tenant unit loads `table inet matrix_hostd_tenant` and `table ip matrix_hostd_nat`. |
 
 hostd runs as root (it drives LVM, systemd units and taps), so it reaches
 each VM's `ch.sock` and `vsock.sock` without group access; the VMM runs as the
@@ -107,6 +107,11 @@ it (a re-run that installed new files and died before arming). Outside an open w
 the unit loads only rules matching it, and provisioning treats any difference
 as a change to arm, so rules installed by a run that died before arming are
 never reloaded or loaded at boot.
+
+Provisioning installs an `nftables.service` drop-in on metal hosts. A service
+restart or reload applies `/etc/nftables.conf` and the rendered Matrix tenant
+rules together in one nft transaction. Stopping `nftables.service` leaves
+the loaded rules in place so guests keep their network restrictions.
 
 Never run `nft flush ruleset` or reload another tool's ruleset to fix hostd's;
 `systemctl reload matrix-hostd-nft` replaces only hostd's tables.

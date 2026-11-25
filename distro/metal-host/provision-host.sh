@@ -395,6 +395,7 @@ log "firewall dry run: ruleset parses and accepts SSH on $wan"
 install_file "$SCRIPT_DIR/matrix-hostd-nft" /usr/local/libexec/matrix-hostd-nft 0755 >/dev/null
 install_file "$SCRIPT_DIR/nftables.conf" /usr/local/share/matrix-hostd/nftables.conf 0644 >/dev/null
 install_file "$SCRIPT_DIR/nftables-tenant.conf" /usr/local/share/matrix-hostd/nftables-tenant.conf 0644 >/dev/null
+install_file "$SCRIPT_DIR/system-nftables.nft" /usr/local/share/matrix-hostd/system-nftables.nft 0644 >/dev/null
 install -d -m 0755 "$ETC_DIR"
 write_file "$ETC_DIR/nft.env" 0644 >/dev/null <<EOF
 WAN=$wan
@@ -466,6 +467,10 @@ systemctl daemon-reload
 # Install mandatory isolation before touching the revertible public firewall.
 systemctl enable --quiet matrix-hostd-tenant-nft.service
 systemctl reload-or-restart matrix-hostd-tenant-nft.service
+# The drop-in includes the rendered file created by the tenant unit above.
+system_nft_changed="$(install_file "$SCRIPT_DIR/systemd/nftables.service.d/60-matrix-hostd.conf" \
+  /etc/systemd/system/nftables.service.d/60-matrix-hostd.conf 0644)"
+if [ -n "$system_nft_changed" ]; then systemctl daemon-reload; fi
 # The public firewall unit is enabled only by `--confirm-firewall`.
 systemctl enable --quiet matrix-hostd.service
 if [ -n "$nft_changed$units_changed" ] || ! systemctl is-active --quiet matrix-hostd-nft.service; then
