@@ -9,6 +9,7 @@ const workflow = parse(readFileSync(".github/workflows/platform-cloud-run.yml", 
 const buildStep = workflow.jobs.deploy.steps.find((step: { name?: string }) => step.name === "Build platform image");
 const digest = `sha256:${"a".repeat(64)}`;
 const fakeCloud = `
+poll_sleeps=0
 gcloud() {
   case "$1 $2" in
     'secrets versions') echo 'test-clerk-key' ;;
@@ -19,7 +20,11 @@ gcloud() {
     'builds describe')
       case "$*" in
         *'value(status)'*)
-          if [[ "$SCENARIO" == cloud-timeout ]]; then echo TIMEOUT; else echo SUCCESS; fi
+          case "$SCENARIO" in
+            cloud-timeout) echo TIMEOUT ;;
+            elapsed-deadline) echo WORKING ;;
+            *) echo SUCCESS ;;
+          esac
           ;;
         *'timing,steps.timing,results.images'*) printf 'timing:\\n  BUILD: {}\\n  PUSH: {}\\n' ;;
         *) echo 'failure metadata' ;;
@@ -34,15 +39,24 @@ gcloud() {
 }
 timeout() {
   if [[ "$*" == *'value(status)' ]]; then
-    [[ "$1" =~ ^(209[6-9]|2100)s$ ]] || return 93
+    [[ "$1" =~ ^([0-9]+)s$ ]] || return 93
+    local remaining=$((BASH_REMATCH[1]))
+    local expected=$((2100 - poll_sleeps * 700))
+    (( remaining <= expected && remaining > expected - 5 )) || return 93
     if [[ "$SCENARIO" == poll-deadline ]]; then return 124; fi
   fi
   shift
   "$@"
 }
+sleep() {
+  # Simulate time spent waiting without making the test wait wall-clock minutes.
+  (( poll_sleeps += 1 ))
+  echo "Cloud Build poll sleep $poll_sleeps"
+  SECONDS=$((SECONDS + 700))
+}
 `;
 
-it.each(["success", "poll-deadline", "cloud-timeout", "invalid-digest"])(
+it.each(["success", "poll-deadline", "elapsed-deadline", "cloud-timeout", "invalid-digest"])(
   "bounds the platform image publish and records its outcome when %s",
   (scenario) => {
     const tempDir = mkdtempSync(join(tmpdir(), "matrix-platform-image-"));
@@ -78,7 +92,13 @@ it.each(["success", "poll-deadline", "cloud-timeout", "invalid-digest"])(
       } else {
         expect(outputs).not.toContain("IMAGE_DIGEST=");
       }
-      if (scenario === "poll-deadline" || scenario === "cloud-timeout") {
+      if (scenario === "elapsed-deadline") {
+        expect(result.stdout.match(/Cloud Build poll sleep/g)).toHaveLength(3);
+      }
+      if (scenario === "poll-deadline" || scenario === "elapsed-deadline") {
+        expect(result.stderr).toContain("Timed out waiting for Cloud Build build-42");
+      }
+      if (scenario !== "success" && scenario !== "invalid-digest") {
         expect(result.stdout).toContain("failure metadata");
         expect(result.stdout).toContain("Cloud Build logs");
       }
