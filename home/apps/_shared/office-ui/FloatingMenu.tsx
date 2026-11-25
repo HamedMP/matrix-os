@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { DropdownItem } from "./Dropdown";
-import { cx, moveFocus, useIsomorphicLayoutEffect, useLatest } from "./internal";
-import { floatingContainer, placeFloating } from "./Popover";
+import { cx, layerHost, moveFocus, useIsomorphicLayoutEffect, useLatest } from "./internal";
+import { placeFloating } from "./Popover";
 
 export interface FloatingMenuProps {
   anchorRef: RefObject<HTMLElement | null>;
@@ -21,7 +21,8 @@ function menuItemsOf(menu: HTMLElement | null): HTMLElement[] {
 }
 
 /**
- * A menu rendered outside clipping containers (the ribbon row hides overflow).
+ * A menu rendered outside clipping containers (the ribbon row hides overflow),
+ * in the layer holding its anchor (see layerHost) so it stays above it.
  * Keys are handled with a native listener so an enclosing popover's focus trap
  * never sees the menu's Escape.
  */
@@ -93,6 +94,7 @@ export function FloatingMenu({ anchorRef, label, items, onSelect, onClose, initi
       role="menu"
       aria-label={label}
       data-oui-float=""
+      data-oui-layer=""
       className="oui-menu oui-menu--floating"
       style={{ top: position.top, left: position.left }}
     >
@@ -118,7 +120,7 @@ export function FloatingMenu({ anchorRef, label, items, onSelect, onClose, initi
         </div>
       ))}
     </div>,
-    floatingContainer(anchorRef.current),
+    layerHost(anchorRef.current),
   );
 }
 

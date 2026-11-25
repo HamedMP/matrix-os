@@ -75,6 +75,7 @@ function DialogSurface({ onClose, title, description, children, footer, initialF
     <div
       role="presentation"
       className="oui-backdrop"
+      data-oui-layer=""
       data-testid="oui-dialog-backdrop"
       onMouseDown={(event) => {
         downOnBackdrop.current = event.target === event.currentTarget;

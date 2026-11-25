@@ -10,7 +10,7 @@ import {
   type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
-import { cx, useFocusTrap, useIsomorphicLayoutEffect, useOutsidePointer } from "./internal";
+import { cx, layerHost, useFocusTrap, useIsomorphicLayoutEffect, useOutsidePointer } from "./internal";
 
 export interface PopoverProps {
   open: boolean;
@@ -43,16 +43,11 @@ export function placeFloating(anchor: DOMRect, panel: DOMRect, placement: NonNul
 }
 
 /**
- * Where floating surfaces render: inside the popover that holds the anchor, so
- * a nested popover or menu counts as inside its parent, else the document body.
- */
-export function floatingContainer(anchor: HTMLElement | null): HTMLElement {
-  return anchor?.closest<HTMLElement>(".oui-popover") ?? document.body;
-}
-
-/**
  * Non-modal floating panel anchored to an element. Escape and outside clicks
- * close it; focus moves in on open and back to the anchor on close.
+ * close it; focus moves in on open and back to the anchor on close. It renders
+ * in the layer holding its anchor (see layerHost), so one opened in a dialog,
+ * the backstage or another popover stays above it, and a click in it is not a
+ * click outside its parent.
  */
 export function Popover({ open, onClose, anchorRef, children, label, placement = "bottom-start", className }: PopoverProps) {
   if (!open || typeof document === "undefined") return null;
@@ -60,7 +55,7 @@ export function Popover({ open, onClose, anchorRef, children, label, placement =
     <PopoverSurface onClose={onClose} anchorRef={anchorRef} label={label} placement={placement} className={className}>
       {children}
     </PopoverSurface>,
-    floatingContainer(anchorRef.current),
+    layerHost(anchorRef.current),
   );
 }
 
@@ -94,7 +89,7 @@ function PopoverSurface({ onClose, anchorRef, children, label, placement, classN
   }, [anchorRef, placement]);
 
   return (
-    <div ref={panelRef} role="dialog" aria-label={label} tabIndex={-1} className={cx("oui-popover", className)} style={{ top: position.top, left: position.left }}>
+    <div ref={panelRef} role="dialog" aria-label={label} tabIndex={-1} data-oui-layer="" className={cx("oui-popover", className)} style={{ top: position.top, left: position.left }}>
       {children}
     </div>
   );

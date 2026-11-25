@@ -151,6 +151,8 @@
 .oui-tabs__panel { flex: 1; min-height: 0; overflow: auto; outline: none; }
 
 /* Dialog and popover */
+/* Floating layer roots (see layerHost): always a stacking context, so surfaces nested in one stay above it. */
+[data-oui-layer] { isolation: isolate; }
 .oui-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px; background: color-mix(in srgb, var(--app-fg) 32%, transparent); }
 .oui-dialog { display: flex; flex-direction: column; width: 100%; max-height: calc(100vh - 32px); overflow: auto; border: 1px solid var(--oui-line); border-radius: var(--oui-radius); background: var(--app-card); box-shadow: var(--oui-shadow); outline: none; }
 .oui-dialog--sm { max-width: 400px; }

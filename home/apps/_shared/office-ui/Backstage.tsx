@@ -81,7 +81,7 @@ export function BackstageView({ label, backstage, item, onItemChange, onClose, t
 
   if (typeof document === "undefined") return null;
   return createPortal(
-    <div ref={panelRef} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} className="oui-backstage" style={{ top }}>
+    <div ref={panelRef} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1} data-oui-layer="" className="oui-backstage" style={{ top }}>
       <div className="oui-backstage__nav" onKeyDown={onNavKeyDown}>
         <button type="button" className="oui-backstage__back" aria-label={backLabel} title={tooltipFor(backLabel, "Esc")} onClick={onClose}>
           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">

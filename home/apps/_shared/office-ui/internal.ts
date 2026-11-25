@@ -37,6 +37,18 @@ export function useLatest<T>(value: T): RefObject<T> {
   return ref;
 }
 
+/**
+ * The one layering rule for floating surfaces. The root of every layer that
+ * floats over the page (dialog backdrop, backstage, popover, floating menu)
+ * carries `data-oui-layer` and is a stacking context. A surface anchored to an
+ * element renders inside the layer that holds the anchor, so it paints above
+ * that layer whatever their z-index values; without one it renders in the
+ * document body.
+ */
+export function layerHost(anchor: Element | null): HTMLElement {
+  return anchor?.closest<HTMLElement>("[data-oui-layer]") ?? document.body;
+}
+
 interface ActiveTrap {
   container: HTMLElement;
   handlesEscape: () => boolean;
