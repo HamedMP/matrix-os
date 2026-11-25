@@ -90,13 +90,20 @@ describe('canonical assistant delta copy writer foundation', () => {
     expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
     expect(await repository.kysely.selectFrom('chat_messages').select('id').where('id', '=', key.messageId).execute()).toEqual([]);
   });
-  it('refuses a new receipt at the owner cap without evicting live proof or writing content', async () => {
+  it('writes ordinary content without a new receipt at the owner cap and keeps live proof', async () => {
     await sql`INSERT INTO google_ordinary_copy_receipts(owner_id,chat_id,kind,entity_ref,content_hash,expires_at)
       SELECT ${owner.ownerId},${key.chatId},'derived','synthetic_'||n,repeat('a',64),clock_timestamp()+interval '1 day'
-      FROM generate_series(1,10000) n`.execute(repository.kysely);
-    await expect(repository.appendAssistantDelta(owner, delta('Must not persist'))).rejects.toThrow();
-    expect((await sql`SELECT count(*)::int AS n FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([{ n: 10000 }]);
-    expect(await repository.kysely.selectFrom('chat_messages').select('id').where('id', '=', key.messageId).execute()).toEqual([]);
+      FROM generate_series(1,100000) n`.execute(repository.kysely);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await repository.appendAssistantDelta(owner, delta('Ordinary content still persists'));
+    } finally { warn.mockRestore(); }
+    expect((await sql`SELECT count(*)::int AS n FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([{ n: 100000 }]);
+    expect((await repository.kysely.selectFrom('chat_messages').select('parts').where('id', '=', key.messageId).executeTakeFirstOrThrow()).parts)
+      .toEqual([{ type: 'text', text: 'Ordinary content still persists' }]);
+    // The unreceipted copy is simply unprovable: a later first Gmail collection fails closed for it.
+    await mark();
+    await expect(repository.appendAssistantDelta(owner, delta(' Gmail summary'))).rejects.toThrow();
   });
   it('cleans at most 100 expired receipts during a trusted write', async () => {
     await sql`INSERT INTO google_ordinary_copy_receipts(owner_id,chat_id,kind,entity_ref,content_hash,expires_at)
