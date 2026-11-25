@@ -279,6 +279,27 @@ describe('metal idle sleeper', () => {
     expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
   });
 
+  it('wakes after a lost suspend answer even before the next lifecycle check', async () => {
+    const id = await seedMachine();
+    const scheduledAt = new Date(NOW.getTime() + 2 * MINUTE);
+    let asleep = false;
+    const { sleeper: s, stop, ensureRunning } = sleeper({
+      lifecycle: async () => (asleep ? { ok: false, code: 'asleep' }
+        : { ok: true, status: { ...IDLE, nextScheduledAt: scheduledAt.toISOString() } }),
+    });
+    // hostd suspended the VM, but its answer never arrived.
+    stop.mockImplementationOnce(async () => { asleep = true; throw new DOMException('timed out', 'TimeoutError'); });
+
+    await s.tick(NOW);
+    const wakeAt = new Date(scheduledAt.getTime() - SCHEDULED_WAKE_LEAD_MS);
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: wakeAt.toISOString() });
+
+    await s.tick(wakeAt);
+    await s.tick(new Date(wakeAt.getTime() + MINUTE));
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
+  });
+
   it('lifecycle timeout skips the machine this tick', async () => {
     const slow = await seedMachine();
     const ok = await seedMachine();
@@ -793,6 +814,23 @@ describe('metal sleeper worker', () => {
     expect(tick).toHaveBeenCalledTimes(2);
     expect(vi.getTimerCount()).toBe(0);
     release();
+  });
+
+  it('keeps scanning scheduled wakes while the idle sleep worker is still in flight', async () => {
+    vi.useFakeTimers();
+    const sleep = vi.fn((_now: Date, signal: AbortSignal) => new Promise<void>((resolve) => {
+      signal.addEventListener('abort', () => resolve(), { once: true });
+    }));
+    const wake = vi.fn(async () => {});
+    const worker = startMetalSleeperWorker({ sleeper: { tick: sleep }, scheduledWake: { tick: wake }, log: () => {} });
+    try {
+      await vi.advanceTimersByTimeAsync(METAL_SLEEP_INTERVAL_MS);
+      expect(sleep).toHaveBeenCalledTimes(1);
+      expect(wake).toHaveBeenCalledTimes(2);
+    } finally {
+      worker.stop();
+      await worker.drain();
+    }
   });
 
   it('ticks only while holding the cluster-wide singleton', async () => {

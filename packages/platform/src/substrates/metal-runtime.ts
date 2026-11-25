@@ -8,7 +8,7 @@ import { createMetalProvisioner, type MetalProvisioner } from './metal-provision
 import { createMetalVmDeletionDrainer } from './metal-vm-deletions.js';
 import { createLifecycleReader } from './metal-lifecycle-reader.js';
 import { createMetalSleeper, startMetalSleeperWorker, type MetalSleeperWorker } from './metal-sleeper.js';
-import { METAL_MAINTENANCE_LOCK_KEY, METAL_SLEEPER_LOCK_KEY, runAsSingleton } from './metal-singleton.js';
+import { METAL_MAINTENANCE_LOCK_KEY, METAL_SCHEDULED_WAKE_LOCK_KEY, METAL_SLEEPER_LOCK_KEY, runAsSingleton } from './metal-singleton.js';
 import type { SubstrateRegistry } from './registry.js';
 import type { OnDemandRuntimeSubstrate } from './types.js';
 
@@ -203,5 +203,9 @@ function startConfiguredSleeper(
     substrate: metal as OnDemandRuntimeSubstrate,
     readLifecycle: createLifecycleReader({ substrates, platformSecret }),
   });
-  return startMetalSleeperWorker({ sleeper, singleton: (run) => runAsSingleton(db, METAL_SLEEPER_LOCK_KEY, run) });
+  return startMetalSleeperWorker({
+    sleeper: { tick: sleeper.sleepTick },
+    singleton: (run) => runAsSingleton(db, METAL_SLEEPER_LOCK_KEY, run),
+    scheduledWake: { tick: sleeper.wakeTick, singleton: (run) => runAsSingleton(db, METAL_SCHEDULED_WAKE_LOCK_KEY, run) },
+  });
 }

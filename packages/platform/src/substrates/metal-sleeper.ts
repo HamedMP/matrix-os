@@ -11,8 +11,7 @@ import type { LifecycleRead } from './metal-lifecycle-reader.js';
 
 /**
  * Idle sleep and scheduled wake for free metal runtimes (spec 2691, ENG-520
- * Task P6). Every tick first wakes sleeping free runtimes whose scheduled wake
- * is due, then puts idle free runtimes to sleep:
+ * Task P6). Scheduled wakes and idle sleep run on independent worker lanes:
  *
  * - A candidate is a running free metal runtime with no owner activity for
  *   60 minutes (or none ever, and awake for 60 minutes).
@@ -48,9 +47,8 @@ export const WAKE_CONCURRENCY = 20;
 /** A checked candidate rotates behind the others until this long has passed, so runtimes skipped every tick cannot starve the scan. */
 export const SLEEP_RECHECK_AFTER_MS = 5 * 60_000;
 /**
- * No sleep candidate starts once this long has passed since the pass began
- * (wake phase included). With the 10 s lifecycle read and the suspend wait
- * below, a pass ends inside the 60 s interval, so the next tick's wakes run.
+ * No sleep candidate starts once this long has passed since the sleep pass began.
+ * Scheduled wakes run independently, even during a slow suspend or its recovery.
  */
 export const SLEEP_PASS_BUDGET_MS = 30_000;
 /** The platform waits this long for hostd's suspend answer; a late answer is handled as a lost one. */
@@ -86,8 +84,10 @@ export interface MetalSleeperDeps {
 }
 
 export interface MetalSleeper {
-  /** One pass: scheduled wakes, then idle sleep. A call while a pass runs joins it. */
+  /** Runs a complete pass, with wakes first. */
   tick(now: Date, signal?: AbortSignal): Promise<void>;
+  wakeTick(now: Date, signal?: AbortSignal): Promise<void>;
+  sleepTick(now: Date, signal?: AbortSignal): Promise<void>;
 }
 
 type Eb = ExpressionBuilder<PlatformDatabase & { m: PlatformDatabase['user_machines'] }, 'm'>;
@@ -176,23 +176,32 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     return { sleep: true, guard, nextWakeAt: new Date(wakeAt) };
   }
 
+  type SleepRow = Selectable<PlatformDatabase['user_machines']>;
+
+  function updateSavedWake(row: SleepRow, changes: {
+    next_wake_at: Date | null; wake_failures?: number; awake_since?: Date;
+  }) {
+    return db.executor.updateTable('user_machines').set(changes)
+      .where('machine_id', '=', row.machine_id)
+      .where('generation', '=', row.generation)
+      .where('status', '=', row.status)
+      .where('next_wake_at', row.next_wake_at === null ? 'is' : '=', row.next_wake_at)
+      .where('wake_failures', '=', row.wake_failures)
+      .where('deleted_at', 'is', null);
+  }
+
   /** Moves a failed wake behind fresh ones: retry after 1, 2, 4 … minutes, at most 15. */
-  async function backOff(machineId: string, generation: number, failures: number, now: Date): Promise<void> {
-    const delay = Math.min(WAKE_RETRY_BASE_MS * 2 ** Math.min(failures, 16), WAKE_RETRY_MAX_MS);
-    await db.executor.updateTable('user_machines')
-      .set({ next_wake_at: new Date(now.getTime() + delay), wake_failures: failures + 1 })
-      .where('machine_id', '=', machineId)
-      .where('generation', '=', generation)
-      .where('status', '=', ASLEEP_STATUS)
-      .where('wake_failures', '=', failures)
-      .where('deleted_at', 'is', null)
-      .execute();
+  async function backOff(row: SleepRow, now: Date): Promise<void> {
+    const delay = Math.min(WAKE_RETRY_BASE_MS * 2 ** Math.min(row.wake_failures, 16), WAKE_RETRY_MAX_MS);
+    await updateSavedWake(row, {
+      next_wake_at: new Date(now.getTime() + delay), wake_failures: row.wake_failures + 1,
+    }).execute();
   }
 
   async function wakeDue(now: Date, signal: AbortSignal): Promise<void> {
     const rows = await db.executor.selectFrom('user_machines as m').selectAll('m')
       .where('m.substrate', '=', 'metal')
-      .where('m.status', '=', ASLEEP_STATUS)
+      .where('m.status', 'in', [ASLEEP_STATUS, 'running'])
       .where('m.deleted_at', 'is', null)
       .where('m.next_wake_at', '<=', now)
       // No plan check: a wake saved while free is honored after an upgrade; plans gate only new sleep.
@@ -210,8 +219,8 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     await Promise.all(Array.from({ length: Math.min(WAKE_CONCURRENCY, rows.length) }, lane));
   }
 
-  async function wakeOne(row: Selectable<PlatformDatabase['user_machines']>, now: Date, signal: AbortSignal): Promise<void> {
-    if (signal.aborted) return;
+  async function wakeOne(row: SleepRow, now: Date, signal: AbortSignal): Promise<void> {
+    if (signal.aborted || row.next_wake_at === null) return;
     const machine = mapUserMachine(row);
     try {
       const { result } = await wakeOnDemandRuntime(db, substrate, machine, {
@@ -219,26 +228,28 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
         signal,
         log: (message, detail) => log('scheduled_wake_error', { machineId: machine.machineId, message, ...detail }),
       });
-      if (result.state === 'running') return;
+      if (result.state === 'running') {
+        // Owner-routing wakes leave running rows unchanged. Consume this saved wake only
+        // after the host confirms readiness, even when the suspend went unconfirmed.
+        if (machine.status === 'running') {
+          await updateSavedWake(row, { next_wake_at: null, wake_failures: 0, awake_since: now }).execute();
+        }
+        return;
+      }
       if (result.state === 'failed' && result.code === 'needs_recovery') {
         // Retrying cannot help and would hold a wake slot every tick; an operator must recover it.
-        await db.executor.updateTable('user_machines').set({ next_wake_at: null })
-          .where('machine_id', '=', machine.machineId)
-          .where('generation', '=', machine.generation)
-          .where('status', '=', machine.status)
-          .where('deleted_at', 'is', null)
-          .execute();
+        await updateSavedWake(row, { next_wake_at: null }).execute();
         log('scheduled_wake_needs_recovery', { machineId: machine.machineId });
         return;
       }
       log('scheduled_wake_failed', {
         machineId: machine.machineId, state: result.state, ...(result.state === 'failed' ? { code: result.code } : {}),
       });
-      await backOff(row.machine_id, row.generation, row.wake_failures, now);
+      await backOff(row, now);
     } catch (error: unknown) {
       if (signal.aborted) return;
       log('scheduled_wake_failed', { machineId: machine.machineId, state: 'error', code: errorCode(error) });
-      await backOff(row.machine_id, row.generation, row.wake_failures, now).catch((backOffError: unknown) => {
+      await backOff(row, now).catch((backOffError: unknown) => {
         log('scheduled_wake_backoff_failed', { machineId: machine.machineId, code: errorCode(backOffError) });
       });
     }
@@ -290,6 +301,7 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     const idleBefore = new Date(nowMs - (verdict.guard ? IDLE_GUARD_AFTER_MS : IDLE_SLEEP_AFTER_MS));
     const claimed = await db.executor.updateTable('user_machines')
       .set({ next_wake_at: verdict.nextWakeAt })
+      .where('next_wake_at', machine.nextWakeAt === null ? 'is' : '=', machine.nextWakeAt)
       .where('machine_id', '=', machine.machineId)
       .where('generation', '=', machine.generation)
       .where('status', '=', 'running')
@@ -310,10 +322,21 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       .where('machine_id', '=', machine.machineId)
       .where('generation', '=', machine.generation)
       .where('status', '=', 'running')
+      .where('next_wake_at', verdict.nextWakeAt === null ? 'is' : '=', verdict.nextWakeAt)
       .where('deleted_at', 'is', null)
       .execute();
-    // Recheck the scheduled job against the time now: suspending inside the
-    // wake lead would leave too little time to wake the VM for it.
+    // Activity can land after the claim. Avoid stopping a guest that has
+    // already resumed work, and keep the post-stop guard for activity in flight.
+    const beforeStop = await getUserMachine(db, machine.machineId);
+    if (!beforeStop || beforeStop.deletedAt || beforeStop.generation !== machine.generation
+      || beforeStop.status !== 'running' || ms(beforeStop.nextWakeAt) !== (verdict.nextWakeAt?.getTime() ?? null)) return;
+    const lastWorkedAt = ms(beforeStop.lastActivityAt ?? beforeStop.awakeSince);
+    if (lastWorkedAt === null || lastWorkedAt > idleBefore.getTime()) {
+      log('sleep_skipped_changed', { machineId: machine.machineId });
+      await release();
+      return;
+    }
+    // Check the deadline after the final database read so hostd still has the lead time.
     if (verdict.nextWakeAt && verdict.nextWakeAt.getTime() <= clock().getTime()) {
       log('sleep_skipped_deadline', { machineId: machine.machineId });
       await release();
@@ -383,6 +406,7 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       .where('m.status', '=', 'running')
       .where('m.deleted_at', 'is', null)
       .where('m.awake_since', '<=', settledBefore)
+      .where((eb) => eb.or([eb('m.next_wake_at', 'is', null), eb('m.next_wake_at', '>', now)]))
       .where((eb) => eb.or([eb('m.sleep_checked_at', 'is', null), eb('m.sleep_checked_at', '<=', recheckBefore)]))
       .where((eb) => eb.or([
         eb('m.last_activity_at', '<=', idleBefore),
@@ -418,15 +442,26 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     }
   }
 
-  async function pass(now: Date, signal: AbortSignal): Promise<void> {
-    const passStart = elapsedMs();
-    const clock = () => new Date(now.getTime() + Math.max(0, elapsedMs() - passStart));
+  async function wakeTick(now: Date, signal = new AbortController().signal): Promise<void> {
     await db.ready;
     await wakeDue(now, signal);
+  }
+
+  async function sleepTick(now: Date, signal = new AbortController().signal, passStart = elapsedMs()): Promise<void> {
+    const clock = () => new Date(now.getTime() + Math.max(0, elapsedMs() - passStart));
+    await db.ready;
     if (!signal.aborted) await sleepIdle(now, clock, passStart, signal);
   }
 
+  async function pass(now: Date, signal: AbortSignal): Promise<void> {
+    const passStart = elapsedMs();
+    await wakeTick(now, signal);
+    await sleepTick(now, signal, passStart);
+  }
+
   return {
+    wakeTick,
+    sleepTick,
     tick(now, signal = new AbortController().signal) {
       if (running) return running;
       const current = pass(now, signal).finally(() => {
@@ -448,9 +483,10 @@ export interface MetalSleeperWorker {
   drain(): Promise<void>;
 }
 
-/** Ticks now and every `intervalMs`; a tick while one is still running is skipped. */
+/** Ticks now and every `intervalMs`; a busy lane skips its next tick independently. */
 export function startMetalSleeperWorker(input: {
-  sleeper: MetalSleeper;
+  sleeper: Pick<MetalSleeper, 'tick'>;
+  scheduledWake?: { tick: MetalSleeper['tick']; singleton?: (run: () => Promise<void>) => Promise<unknown> };
   intervalMs?: number;
   now?: () => Date;
   /** Runs a tick only while holding a cluster-wide lock (see metal-singleton.ts). */
@@ -460,19 +496,27 @@ export function startMetalSleeperWorker(input: {
   const log = input.log ?? defaultLog;
   const now = input.now ?? (() => new Date());
   const controller = new AbortController();
-  let inFlight: Promise<void> | undefined;
+  function lane(runTick: MetalSleeper['tick'], singleton?: (run: () => Promise<void>) => Promise<unknown>) {
+    let inFlight: Promise<void> | undefined;
+    return {
+      tick(): void {
+        if (controller.signal.aborted || inFlight) return;
+        const run = () => runTick(now(), controller.signal);
+        inFlight = (singleton ? singleton(run).then(() => undefined) : run())
+          .catch((error: unknown) => {
+            if (!controller.signal.aborted) log('sleeper_tick_failed', { code: errorCode(error) });
+          })
+          .finally(() => { inFlight = undefined; });
+      },
+      drain: () => inFlight,
+    };
+  }
 
+  const sleep = lane(input.sleeper.tick, input.singleton);
+  const wake = input.scheduledWake && lane(input.scheduledWake.tick, input.scheduledWake.singleton);
   const tick = (): void => {
-    if (controller.signal.aborted || inFlight) return;
-    const run = async (): Promise<void> => { await input.sleeper.tick(now(), controller.signal); };
-    const current = (input.singleton ? input.singleton(run).then(() => undefined) : run())
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted) log('sleeper_tick_failed', { code: errorCode(error) });
-      })
-      .finally(() => {
-        if (inFlight === current) inFlight = undefined;
-      });
-    inFlight = current;
+    wake?.tick();
+    sleep.tick();
   };
 
   tick();
@@ -483,8 +527,8 @@ export function startMetalSleeperWorker(input: {
       clearInterval(interval);
       controller.abort();
     },
-    drain() {
-      return inFlight ?? Promise.resolve();
+    async drain() {
+      await Promise.all([wake?.drain(), sleep.drain()]);
     },
   };
 }
