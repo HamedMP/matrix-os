@@ -40,7 +40,9 @@ export async function reconcileVms(deps: ReconcileDeps): Promise<void> {
 
   async function isActive(unit: string): Promise<boolean> {
     const result = await deps.exec(["systemctl", "is-active", unit], { signal: AbortSignal.timeout(execTimeoutMs) });
-    return result.code === 0;
+    if (result.code === 0 || /^(activating|reloading|deactivating)$/m.test(result.stdout)) return true;
+    if (result.code === 3 || result.code === 4) return false;
+    throw new Error(`could not determine systemd unit state (exit ${result.code})`);
   }
 
   // The newest file mtime of a complete snapshot, or null.
@@ -92,7 +94,7 @@ export async function reconcileVms(deps: ReconcileDeps): Promise<void> {
         snapshot: { dir: join(deps.snapshotsDir, id), takenAt: new Date(takenAt).toISOString(), chVersion: record.chVersion },
       };
     }
-    return failed(record);
+    return { ...failed(record), memoryReservationMiB: null };
   }
 
   // Only a record that never finished creating holds no owner data.
@@ -100,22 +102,31 @@ export async function reconcileVms(deps: ReconcileDeps): Promise<void> {
     return record.state === "creating" ? { state: "failed", failedDuring: "create" } : { state: "failed" };
   }
 
-  // A running record whose units are inactive is stopped. A query failure
-  // leaves it as it is: marking a live VM stopped would make a wake reboot it.
-  async function checkRunning(record: VmRecord): Promise<void> {
+  // Release only after both units are confirmed offline. Keep failed records
+  // and their failure markers so retries still distinguish create failures.
+  async function releaseOfflineMemory(record: VmRecord): Promise<void> {
     try {
       if (await unitsActive(record.id)) return;
     } catch (error: unknown) {
       log("reconcile.query_failed", { id: record.id, ...errorFields(error) });
       return;
     }
-    await deps.store.put({ ...record, state: "stopped", snapshot: null, memoryReservationMiB: undefined, updatedAt: new Date(now()).toISOString() });
-    log("reconcile.settled", { id: record.id, from: record.state, to: "stopped" });
+    const state = record.state === "failed" ? "failed" : "stopped";
+    await deps.store.put({
+      ...record,
+      state,
+      snapshot: state === "failed" ? record.snapshot : null,
+      memoryReservationMiB: null,
+      updatedAt: new Date(now()).toISOString(),
+    });
+    log("reconcile.settled", { id: record.id, from: record.state, to: state });
   }
 
   for (const record of await deps.store.list()) {
-    if (record.state === "running") {
-      await checkRunning(record);
+    if (record.state === "running" ||
+        (record.state === "failed" && record.memoryReservationMiB !== null) ||
+        (record.state === "stopped" && typeof record.memoryReservationMiB === "number")) {
+      await releaseOfflineMemory(record);
       continue;
     }
     if (!TRANSITIONAL.has(record.state)) continue;

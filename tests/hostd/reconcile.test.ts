@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ChClient, ChVmState } from "../../packages/hostd/src/ch-client.js";
 import type { Exec } from "../../packages/hostd/src/exec.js";
+import { fitsVmMemory } from "../../packages/hostd/src/memory-admission.js";
 import { reconcileVms } from "../../packages/hostd/src/reconcile.js";
 import { createVmStore, type VmRecord, type VmState, type VmStore } from "../../packages/hostd/src/vm-store.js";
 
@@ -185,6 +186,32 @@ describe("startup reconciliation", () => {
     await expect(store.get(ID)).resolves.toMatchObject({ state: "stopped", snapshot: null });
   });
 
+  it.each([8192, undefined])("reclaims failed VM RAM after both units stop (reservation %s)", async (reservation) => {
+    await store.put(record("failed", { failedDuring: "create", memoryReservationMiB: reservation }));
+    expect(fitsVmMemory(10_000, await store.list(), undefined, 8192)).toBe(false);
+
+    await run();
+
+    expect(fitsVmMemory(10_000, await store.list(), undefined, 8192)).toBe(true);
+    expect(await store.get(ID)).toMatchObject({ id: ID, state: "failed", failedDuring: "create" });
+    expect(execCalls).toEqual([
+      ["systemctl", "is-active", `matrix-vm@${ID}.service`],
+      ["systemctl", "is-active", `matrix-vm-restore@${ID}.service`],
+    ]);
+  });
+
+  it("keeps a failed VM's reservation when its restore unit is active or systemd is unavailable", async () => {
+    await store.put(record("failed", { memoryReservationMiB: 8192 }));
+    active.add(`matrix-vm-restore@${ID}.service`);
+    await run();
+    expect(fitsVmMemory(10_000, await store.list(), undefined, 8192)).toBe(false);
+
+    active.clear();
+    const busyBus: Exec = async () => ({ code: 1, stdout: "", stderr: "bus unavailable" });
+    await reconcileVms({ store, exec: busyBus, ch: () => ch(), snapshotsDir, log: () => undefined });
+    expect(fitsVmMemory(10_000, await store.list(), undefined, 8192)).toBe(false);
+  });
+
   it("marks a running record whose units are inactive (host reboot, crash mid-stop) stopped", async () => {
     await store.put(record("running", { snapshot: { dir: "/s", takenAt: UPDATED, chVersion: "v54.1" } }));
     await run();
@@ -212,7 +239,10 @@ describe("startup reconciliation", () => {
 
   it("leaves settled records alone", async () => {
     for (const [i, state] of (["running", "suspended", "stopped", "failed"] as const).entries()) {
-      await store.put(record(state, { id: `vm_${String(i).repeat(24)}` }));
+      await store.put(record(state, {
+        id: `vm_${String(i).repeat(24)}`,
+        memoryReservationMiB: state === "failed" ? null : undefined,
+      }));
     }
     active.add(`matrix-vm@vm_${"0".repeat(24)}.service`);
     await run();

@@ -18,7 +18,7 @@ export function fitsVmMemory(
 ): boolean {
   let committedMiB = requestedMiB + PER_VMM_RESERVE_MIB;
   for (const record of records) {
-    if (record.id === vmId || record.state === "suspended") continue;
+    if (record.id === vmId || record.state === "suspended" || record.memoryReservationMiB === null) continue;
     if (record.state === "stopped" && record.memoryReservationMiB === undefined) continue;
     // A failed transition can leave a VMM alive. Keep its reservation until
     // hostd observes it off, stops it, or destroys it.

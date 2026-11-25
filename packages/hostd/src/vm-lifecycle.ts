@@ -662,7 +662,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     // Older snapshots have neither a known memory ceiling nor a bounded
     // console. Cold boot those disks with the current unit policy.
     const canRestore = record.state === "suspended" && snapshot !== null &&
-      snapshot.chVersion === cfg.chVersion && snapshotMemoryMiB !== undefined;
+      snapshot.chVersion === cfg.chVersion && typeof snapshotMemoryMiB === "number";
     const reservation = canRestore ? Math.max(record.maxMiB, snapshotMemoryMiB) : record.maxMiB;
     const resuming = await reserveWakeMemory(record, reservation);
     if (!canRestore) {
@@ -852,7 +852,9 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       });
     }
     return allocateMemory(async () => {
-      const holdsMemory = record.state !== "suspended" && record.state !== "stopped";
+      const holdsMemory = record.state !== "suspended" &&
+        (record.state !== "stopped" || typeof record.memoryReservationMiB === "number") &&
+        record.memoryReservationMiB !== null;
       const previousReserve = record.memoryReservationMiB ?? record.maxMiB;
       const reserved = holdsMemory ? Math.max(previousReserve, maxMiB) : record.memoryReservationMiB;
       if (holdsMemory && maxMiB > previousReserve) {

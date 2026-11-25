@@ -29,7 +29,8 @@ export interface VmRecord {
   maxMiB: number;
   // The ceiling reserved when this VMM started. Retained across suspend so
   // a restore still accounts for RAM from before a later policy change.
-  memoryReservationMiB?: number;
+  // Null means the VMM was confirmed offline and its reservation was released.
+  memoryReservationMiB?: number | null;
   diskGiB: number;
   chVersion: string;
   snapshot: VmSnapshotRef | null;
@@ -124,7 +125,7 @@ export function parseVmRecord(value: unknown): VmRecord {
     isString(r.mac, 17) &&
     isCount(r.bootMiB) &&
     isCount(r.maxMiB) &&
-    (r.memoryReservationMiB === undefined || (isCount(r.memoryReservationMiB) && r.memoryReservationMiB >= r.bootMiB)) &&
+    (r.memoryReservationMiB == null || (isCount(r.memoryReservationMiB) && r.memoryReservationMiB >= r.bootMiB)) &&
     isCount(r.diskGiB) &&
     isString(r.chVersion) &&
     (r.snapshot === null || isSnapshot(r.snapshot)) &&
@@ -143,7 +144,7 @@ export function parseVmRecord(value: unknown): VmRecord {
     mac: r.mac as string,
     bootMiB: r.bootMiB as number,
     maxMiB: r.maxMiB as number,
-    ...(r.memoryReservationMiB === undefined ? {} : { memoryReservationMiB: r.memoryReservationMiB as number }),
+    ...(r.memoryReservationMiB === undefined ? {} : { memoryReservationMiB: r.memoryReservationMiB as number | null }),
     diskGiB: r.diskGiB as number,
     chVersion: r.chVersion as string,
     snapshot: snapshot === null ? null : { dir: snapshot.dir, takenAt: snapshot.takenAt, chVersion: snapshot.chVersion },
