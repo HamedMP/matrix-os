@@ -545,12 +545,12 @@ describe("local terminal host against a scripted core", () => {
     expect(argv[6]).toContain("/usr/bin/uname -m");
     expect(argv[6]).toContain("/usr/bin/sw_vers -productVersion");
     const run = probe.run(new AbortController().signal);
+    const complete = vi.fn();
+    void run.then(complete, complete);
     try {
       await attached();
       output(`MATRIX_MAC_PROBE_READY:${tag}:\r\n`);
       await vi.waitFor(() => expect(input()).toHaveLength(1));
-      const complete = vi.fn();
-      void run.then(complete, complete);
       output(`MATRIX_MAC_CHECKS:${tag}:Darwin,arm64,USER_VALUE:\r\n`);
       output(`MATRIX_MAC_PROBE_RESULT:${tag}:Darwin:\r\n`);
       output("MATRIX_MAC_CHECKS:wrong:Darwin,arm64,15.7.2:\r\n");
@@ -561,7 +561,6 @@ describe("local terminal host against a scripted core", () => {
       await expect(run).resolves.toEqual({ kernel: "Darwin", architecture: "arm64", macOSVersion: "15.7.2" });
       expect(input()).toHaveLength(1);
     } finally {
-      void run.catch(() => undefined);
       await probe.dispose();
     }
   });
