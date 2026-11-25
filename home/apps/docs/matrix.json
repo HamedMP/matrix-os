@@ -33,12 +33,11 @@
     "tables": {
       "recent_documents": {
         "columns": {
-          "path": "text",
-          "name": "text",
-          "opened_at": "text"
+          "slot": "text",
+          "payload": "jsonb"
         },
-        "indexes": [
-          "opened_at"
+        "uniqueIndexes": [
+          "slot"
         ]
       }
     }

@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDocxFromMarkdown, openDocx, toPlainText } from "../../../../home/apps/_shared/office-engine/index";
+import { RecentFilesStore } from "../../../../home/apps/docs/src/session/index";
 import { templateMarkdown } from "../../../../home/apps/docs/src/ui/templates";
 import { docxFromParagraphs, fileMenu, findSurface, installBridge, renderApp, titleText } from "./harness";
 
@@ -14,7 +15,7 @@ function matrixList(): Promise<HTMLElement> {
 describe("Docs start screen", () => {
   it("lists recent documents with their folder and opens one", async () => {
     const bridge = installBridge({ "Documents/plan.docx": await docxFromParagraphs(["Plan"]) });
-    await bridge.db.insert("recent_documents", { path: "Documents/plan.docx", name: "plan.docx", opened_at: "2026-11-22T10:00:00.000Z" });
+    await new RecentFilesStore({ db: bridge.db }).touch({ path: "Documents/plan.docx", name: "plan.docx" });
     renderApp();
     const recent = await screen.findByRole("button", { name: /^plan\.docx, in Documents/ });
     expect(recent.textContent).toContain("Documents");
@@ -24,8 +25,9 @@ describe("Docs start screen", () => {
 
   it("removes a document from the recent list and the store", async () => {
     const bridge = installBridge({ "a.docx": await docxFromParagraphs(["A"]), "b.docx": await docxFromParagraphs(["B"]) });
-    await bridge.db.insert("recent_documents", { path: "a.docx", name: "a.docx", opened_at: "2026-11-22T10:00:00.000Z" });
-    await bridge.db.insert("recent_documents", { path: "b.docx", name: "b.docx", opened_at: "2026-11-23T10:00:00.000Z" });
+    const seed = new RecentFilesStore({ db: bridge.db });
+    await seed.touch({ path: "a.docx", name: "a.docx" });
+    await seed.touch({ path: "b.docx", name: "b.docx" });
     renderApp();
     fireEvent.click(await screen.findByRole("button", { name: "Remove a.docx from recent" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: /^a\.docx, in/ })).toBeNull());
@@ -33,7 +35,7 @@ describe("Docs start screen", () => {
     left.focus();
     fireEvent.keyDown(left, { key: "Delete" });
     expect(await screen.findByRole("heading", { name: "No recent documents" })).toBeTruthy();
-    expect(await bridge.db.find("recent_documents", {})).toEqual([]);
+    expect(await new RecentFilesStore({ db: bridge.db }).list()).toEqual([]);
   });
 
   it("starts a blank document", async () => {

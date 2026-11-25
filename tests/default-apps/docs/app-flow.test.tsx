@@ -11,6 +11,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openDocx, opc } from "../../../home/apps/_shared/office-engine/index";
+import { RecentFilesStore } from "../../../home/apps/docs/src/session/index";
 import { envelope, fixture } from "./agent/helpers";
 import { type FakeBridge, fileMenu, findSurface, installBridge, renderApp, titleText } from "./ui/harness";
 
@@ -101,7 +102,7 @@ describe("Docs app journey", () => {
     await waitFor(() => expect(titleText()).toBe("contract.docx"));
     expect(surface.textContent).toContain("initial period of 24 months");
     expect(screen.getByTestId("save-state").textContent).toMatch(/Saved/);
-    await waitFor(() => expect(bridge.db.rows("recent_documents").map((row) => row.path)).toEqual([CONTRACT]));
+    await waitFor(async () => expect((await new RecentFilesStore({ db: bridge.db }).list()).map((entry) => entry.path)).toEqual([CONTRACT]));
 
     // Acceptance 1: saving without edits keeps every part byte-identical.
     fileMenu("Save a copy");

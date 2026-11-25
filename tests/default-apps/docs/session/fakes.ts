@@ -4,6 +4,8 @@
  * home/apps/_shared/matrix-os.d.ts, including the `BridgeFileError` shape.
  */
 
+import { isDeepStrictEqual } from "node:util";
+import docsManifest from "../../../../home/apps/docs/matrix.json";
 import type {
   BridgeFileContent,
   BridgeFileErrorCode,
@@ -110,15 +112,29 @@ export function createFakeFiles(initial: Record<string, Uint8Array> = {}): FakeF
 export interface FakeDb {
   find(table: string, options?: MatrixOSDbFindOptions): Promise<MatrixOSDbRow[]>;
   insert(table: string, data: MatrixOSDbRow): Promise<{ id: string }>;
+  /** Like the gateway: rows that collide with a declared unique index are skipped (ON CONFLICT DO NOTHING). */
+  bulkInsert(table: string, rows: MatrixOSDbRow[]): Promise<{ ids: string[] }>;
   update(table: string, id: string, data: MatrixOSDbRow): Promise<{ ok: true }>;
+  /** Like the gateway: writes only while the stored `payload` still equals `expectedPayload`. */
+  compareAndSwap(table: string, id: string, expectedPayload: MatrixOSDbRow, data: MatrixOSDbRow): Promise<{ ok: boolean }>;
   delete(table: string, id: string): Promise<{ ok: true }>;
   rows(table: string): MatrixOSDbRow[];
+  /** Every write call, in order, as `method table`. Each one is a single statement in the gateway. */
+  readonly writes: string[];
   /** The next call of any method rejects. */
   failNext(): void;
 }
 
+/** The unique indexes the Docs manifest declares, so the fake enforces the same constraints. */
+function docsUniqueIndexes(): Map<string, string[]> {
+  const manifest: { storage?: { tables?: Record<string, { uniqueIndexes?: string[] }> } } = docsManifest;
+  return new Map(Object.entries(manifest.storage?.tables ?? {}).map(([table, definition]) => [table, definition.uniqueIndexes ?? []]));
+}
+
 export function createFakeDb(): FakeDb {
   const tables = new Map<string, MatrixOSDbRow[]>();
+  const uniqueIndexes = docsUniqueIndexes();
+  const writes: string[] = [];
   let counter = 0;
   let fail = false;
   const rowsOf = (table: string): MatrixOSDbRow[] => {
@@ -147,28 +163,56 @@ export function createFakeDb(): FakeDb {
         });
       }
       const offset = options.offset ?? 0;
-      return rows.slice(offset, offset + (options.limit ?? rows.length)).map((row) => ({ ...row }));
+      return rows.slice(offset, offset + (options.limit ?? rows.length)).map((row) => structuredClone(row));
     },
     async insert(table, data) {
       guard();
+      writes.push(`insert ${table}`);
       const id = `row${++counter}`;
       rowsOf(table).push({ ...data, id });
       return { id };
     },
+    async bulkInsert(table, rows) {
+      guard();
+      writes.push(`bulkInsert ${table}`);
+      const stored = rowsOf(table);
+      const ids: string[] = [];
+      for (const data of rows) {
+        const collides = (uniqueIndexes.get(table) ?? []).some((column) =>
+          data[column] !== null && data[column] !== undefined && stored.some((row) => row[column] === data[column]),
+        );
+        if (collides) continue;
+        const id = `row${++counter}`;
+        stored.push(structuredClone({ ...data, id }));
+        ids.push(id);
+      }
+      return { ids };
+    },
     async update(table, id, data) {
       guard();
+      writes.push(`update ${table}`);
       const row = rowsOf(table).find((candidate) => candidate.id === id);
       if (row !== undefined) Object.assign(row, data);
       return { ok: true };
     },
+    async compareAndSwap(table, id, expectedPayload, data) {
+      guard();
+      writes.push(`compareAndSwap ${table}`);
+      const row = rowsOf(table).find((candidate) => candidate.id === id);
+      if (row === undefined || !isDeepStrictEqual(row.payload, expectedPayload)) return { ok: false };
+      Object.assign(row, structuredClone(data));
+      return { ok: true };
+    },
     async delete(table, id) {
       guard();
+      writes.push(`delete ${table}`);
       const rows = rowsOf(table);
       const at = rows.findIndex((candidate) => candidate.id === id);
       if (at >= 0) rows.splice(at, 1);
       return { ok: true };
     },
-    rows: (table) => rowsOf(table).map((row) => ({ ...row })),
+    rows: (table) => rowsOf(table).map((row) => structuredClone(row)),
+    writes,
     failNext() {
       fail = true;
     },

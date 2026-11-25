@@ -21,7 +21,7 @@ async function localHarness(options: { autosave?: boolean } = {}) {
   const recents = new RecentFilesStore({ db, log: () => undefined });
   const saved = downloads();
   const setup = await harness({ "Documents/plan.docx": ["Matrix plan"] }, { recents, download: saved.download, autosave: options.autosave ?? false, autosaveDelayMs: 0 });
-  return { ...setup, db, saved };
+  return { ...setup, db, recents, saved };
 }
 
 function type(session: Awaited<ReturnType<typeof harness>>["session"], text: string): void {
@@ -84,13 +84,13 @@ describe("document session: local documents", () => {
   });
 
   it("becomes a Matrix document after Save a copy to Matrix, with a recent entry and autosave", async () => {
-    const { session, files, db } = await localHarness({ autosave: true });
+    const { session, files, recents } = await localHarness({ autosave: true });
     await session.openLocal({ name: "Report.docx", bytes: await docxBytes(["From disk"]) });
     type(session, "Edited ");
     const result = await session.saveAs("Documents/Report.docx");
     expect(result).toMatchObject({ status: "saved", path: "Documents/Report.docx" });
     expect(session.getState()).toMatchObject({ source: "matrix", path: "Documents/Report.docx", name: "Report.docx", dirty: false });
-    await vi.waitFor(() => expect(db.rows(RECENT_FILES_TABLE).map((row) => row.path)).toEqual(["Documents/Report.docx"]));
+    await vi.waitFor(async () => expect((await recents.list()).map((entry) => entry.path)).toEqual(["Documents/Report.docx"]));
     type(session, "Again ");
     await vi.waitFor(() => expect(files.writes.map((write) => write.path)).toEqual(["Documents/Report.docx", "Documents/Report.docx"]));
   });
