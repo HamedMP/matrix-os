@@ -1,5 +1,7 @@
 # Pair a Mac with a Matrix Computer
 
+> **Transport (2026-11-25).** [2716](../2716-desktop-link/spec.md) is the transport half of this spec: the desktop link admits only the paired device at the current revision, and pairing extends to Linux and Windows. "One Mac" below reads as one paired desktop.
+
 Tracking [ENG-495](https://linear.app/matrix-os/issue/ENG-495/cloud-matrix-controls-the-desktop-computer-terminals-and-apps). Builds on the native Mac activity stack.
 
 A signed-in macOS Matrix client offers **Mac Pairing…** in its application menu. With the selected primary Computer supporting pairing, the owner can inspect the binding, explicitly pair this Mac, and explicitly disconnect this Mac. One Mac is paired per owner and Computer in this slice. Disconnecting the Mac removes that binding. The device key stays encrypted on the Mac for a future explicit re-pair. An existing binding on a different Mac cannot be silently replaced.

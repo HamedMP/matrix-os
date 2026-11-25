@@ -6,7 +6,8 @@ Related: [ENG-521](https://linear.app/matrix-os/issue/ENG-521) (Terminal window)
 [ENG-524](https://linear.app/matrix-os/issue/ENG-524) / `specs/2707-owned-machines` (owned computers),
 [ENG-570](https://linear.app/matrix-os/issue/ENG-570) / `specs/2710-team-terminals` (sharing),
 [ENG-519](https://linear.app/matrix-os/issue/ENG-519) / `specs/2701-herdr-self-host` (gateway herdr-core client),
-[ENG-495](https://linear.app/matrix-os/issue/ENG-495) / `specs/2698-mac-device-pairing` (device identity).
+[ENG-495](https://linear.app/matrix-os/issue/ENG-495) / `specs/2698-mac-device-pairing` (pairing, consent, Mac Activity).
+This spec is the transport half of 2698: see [One system with 2698](#one-system-with-2698-hamed-2026-11-25).
 Builds on: `specs/651-desktop-terminal-window`, `specs/2706-terminal-window-herdr`.
 
 ## Goal
@@ -38,31 +39,162 @@ desktop.
 - Sharing a desktop with anyone else. ENG-570 shares single terminals; this spec
   adds no share path for desktop terminals (see Auth).
 
+## One system with 2698 (Hamed, 2026-11-25)
+
+2698 (ENG-495, merged on main) and this spec are one system. 2698 owns who a
+desktop is and what the owner allowed; this spec owns how the computer reaches it.
+
+| Concern | Owner | Where |
+| --- | --- | --- |
+| Device key | 2698 | `desktop/src/main/desktop-pairing/key-store.ts` (`createPairingKeyStore`), unchanged |
+| Pairing (device ID, revision, enrol, disconnect) | 2698 | `/api/desktop-pairing`, owner table `desktop_pairings`, unchanged contract |
+| Consent | 2698 | Native approval per action, or the owner's Full Access consent bound to the pairing revision ([Consent](#consent)) |
+| Activity and Stop | 2698 | Mac Activity indicator (all three platforms), Stop |
+| Mac Verification | 2698 | Unchanged here; moves onto the link in the follow-up stack |
+| Transport | 2716 | `/ws/desktop-link`, the only path from a computer to a desktop |
+
+- **Admission is pairing.** The link admits exactly the device paired with this
+  computer, at the current pairing revision, proved with the pairing key. There is
+  no second enrolment, table or key store: this spec's former
+  `desktop_link_devices` table, `/api/desktop-link/enrol*` routes and its copy of
+  `key-store.ts` are dropped.
+- **Revocation is a revision bump.** Disconnect (desktop) or Remove (computer)
+  goes through `DELETE /api/desktop-pairing/:deviceId`; the revision bump closes the
+  live link at once ([Revocation](#revocation)).
+- **Pairing beyond macOS.** Linux and Windows pair the same way ([Pairing on
+  Linux and Windows](#pairing-on-linux-and-windows)).
+- **Retired later, not here.** 2698's terminal-check paths (#3460 background
+  checks, #3468 terminal checks, #3484 snapshot and watch) and its 3-second Chat
+  polling loop keep working unchanged in this stack. A follow-up stack retires them
+  and moves Mac Verification onto the link. The superseded 2698 sections carry a
+  note pointing here.
+
+### Decisions (Hamed, 2026-11-25)
+
+- **D1 Desktops per computer**: one paired desktop per owner and computer, as
+  2698's `desktop_pairings` (owner, machine) key has it. Pairing another device
+  asks to disconnect the first. Multi-desktop is a later pairing schema change.
+- **D2 Consent for link actions**: native approval per action, or Full Access for
+  this desktop ([Consent](#consent)).
+- **D3 Device name, system and last seen**: nullable columns on
+  `desktop_pairings`, added by an idempotent `ALTER TABLE … ADD COLUMN IF NOT
+  EXISTS` in the link's layer: `device_name` (1–64 printable characters),
+  `device_platform` (`darwin` \| `linux` \| `win32`), `device_arch` (`x64` \| `arm64`),
+  `device_screenshot` (boolean) and `last_seen_at`. They are written only for the
+  paired device at its current revision (`WHERE device_id = … AND revision = …`):
+  once on admission, and `last_seen_at` by a targeted update at most once a
+  minute per device. Pair and disconnect clear them in the same statement that
+  bumps the revision, so a new pairing never inherits an old device's
+  description. The name is the desktop's own report: shown, never used for
+  authorization.
+- **D4 Linux without a system keyring**: pairing is unavailable and says so
+  (2698's key store refuses `basic_text`). No weaker fallback.
+
+### Consent
+
+Recommended (D2). The link being on never runs anything by itself:
+
+| Action from the computer | Consent |
+| --- | --- |
+| Start a terminal, program or agent (`terminal.run`) | Native approval on the desktop naming the computer and the command, unless Full Access is allowed |
+| Read, type into, wait on, interrupt or end a terminal the link started | Covered by that terminal's start approval |
+| List terminals (titles and status) | None: the computer sees every terminal's title (Risks 2) |
+| Read or type into a terminal the link did not start | Native approval per terminal (2698 existing-terminal rule), unless Full Access is allowed |
+| Screenshot | Native approval per capture, unless Full Access is allowed |
+
+**Full Access for this desktop** is the owner's one-time native consent on the
+desktop, stored like 2698's Chat Full Access (encrypted, bound to owner, computer,
+device and pairing revision; capability `desktop-link`, separate from
+`mac-verification`). Re-pairing drops it. The pairing dialog offers **Allow / Revoke
+Desktop Link Full Access** on every platform; Full Access is read fresh on every
+check, so revoking takes effect on the next action.
+
+- The approval names the computer and the request ("matrix-demo wants to run a
+  command on this Mac") and shows the whole command: control, zero-width and
+  direction characters become spaces and whitespace runs collapse; a command
+  longer than 500 characters is refused, never shortened. One approval is on screen at a time; at most four wait; more are
+  refused at once. Approved terminals are remembered for the pairing revision
+  (≤ 256, oldest forgotten first); Stop, disconnect, sign-out, an account or
+  computer switch, and re-pairing forget them and close any approval on screen.
+- Deadlines nest: approval 60 s, the computer's core call or screenshot 75 s,
+  clients that may trigger an approval (shell, Electron, `matrix shell machine`)
+  90 s. Each approval's deadline starts when the request arrives, not when its
+  dialog shows; an answer after it counts as no. The computer's own terminal
+  listing waits at most 3 s on a desktop, then leaves its terminals out.
+- While an approval is on screen, later bytes on that core stream wait behind it
+  (the guard keeps order); heartbeats and other streams do not.
+- Calls waiting for the owner are decided off the core stream's queue: other
+  calls, typing, resizes and credit on the same stream keep moving.
+- The guard refuses: a start carrying both `argv` and `line` (the owner sees one
+  program); a start naming `parent` or `caller`; a terminal call that names no
+  terminal or a name instead of an address (`^t[0-9]+[a-z]{0,2}$`); and any call
+  reusing the id of a call still awaiting its answer, so the core's answer to an
+  approved start (which marks that terminal covered) can never be a reply to
+  another call. A core frame the guard cannot decode ends the stream.
+- A declined screenshot answers `capture-failed` with reason `declined`
+  (`denied` to API, CLI and Chat); a declined start or terminal call gets the
+  guard's `denied` JSON-RPC error and never reaches the core.
+- Activity: on macOS, where 2698's Mac Activity indicator runs, the link is one
+  entry (kind `desktop-link`, no worktree) while it is on, recorded as stopped,
+  revoked or failed when it ends; the indicator's Stop closes the link and keeps
+  the pairing. On Windows and Linux, Stop is the File menu's **Stop Computers
+  Using This Device** and the pairing dialog; a tray indicator there is a follow-up.
+
+### Pairing on Linux and Windows
+
+2698's code is device-neutral except for these, which this stack changes:
+
+- `desktop/src/main/index.ts` creates `createDesktopPairing` on every platform,
+  not only `darwin`.
+- Menu: macOS app menu **Mac Pairing…** (unchanged); File menu **Pair This PC…**
+  (Windows) and **Pair This Desktop…** (Linux). Dialog copy uses the same noun
+  (this Mac, this PC, this desktop). Chat Full Access for Mac Verification stays
+  macOS-only.
+- The Terminal window panel shows the link's state with Turn off / Turn on and,
+  when unpaired, **Pair this device with your computer…**, which opens the same
+  native dialog (IPC `desktop-link:pair`).
+- Key protection: Windows DPAPI via `safeStorage`; Linux needs libsecret or
+  KWallet. `basic_text` keeps refusing (D4).
+- Activity indicator: macOS only in this stack (see [Consent](#consent)); Windows
+  and Linux stop from the File menu.
+- Contracts, routes and `desktop_pairings` need no change: nothing in them is
+  macOS-specific. The gateway gate stays `MATRIX_DESKTOP_PAIRING_ENABLED=1`, primary
+  runtime slot, HTTPS origin; the link additionally needs
+  `MATRIX_DESKTOP_LINK_ENABLED=1`.
+
 ## Platforms (Hamed, 2026-11-25)
 
 | | macOS | Linux | Windows |
 | --- | --- | --- | --- |
 | Terminal core | Bundled herdr-core (darwin-arm64, darwin-x64) | Bundled herdr-core (linux-x64; the manifest pins linux-arm64 too, but no arm64 AppImage is built yet) | In-process ConPTY core via node-pty (herdr-core has no Windows build) |
 | Default shell | Login shell | Login shell | PowerShell (`powershell.exe -NoLogo`) |
-| Switch on | Terminal window panel | Terminal window panel | File menu: Let a Computer Use This Device… (native dialogs; Windows has no Terminal window) |
-| Switch off | Panel, app menu | Panel, File menu | File menu |
+| Pair, switch on | App menu: Mac Pairing… | File menu: Pair This Desktop… | File menu: Pair This PC… (Windows has no Terminal window) |
+| Switch off, Stop | Activity indicator, pairing dialog, Terminal window panel | Same | Activity indicator, pairing dialog |
 | Screenshot | desktopCapturer; needs Screen Recording for Matrix OS | desktopCapturer; `screenshot_unavailable` where the session cannot be captured (some Wayland sessions) | desktopCapturer |
 | Open a page | `/usr/bin/open` | `xdg-open` | `cmd.exe /c start "" <url>` |
 | Verified live | Planned on Hamed's Mac | Not yet (no Linux desktop machine) | Not yet (no Windows machine) |
 
 Each desktop reports `{platform, arch, capabilities: {terminals, screenshot,
 input: false}}` in its proof on every connect. The gateway keeps the last
-report with the enrolment, and `desktop_list`, `matrix shell machine ls`,
+report in `desktop_pairings` (D3), and `desktop_list`, `matrix shell machine ls`,
 `open` and the Desktops group use it.
 
 **Windows core.** A small in-process core speaks the part of herdr-core's
 framed protocol the computer's Herdr adapter uses: the `hello` handshake,
 `terminal.list`, `terminal.run`, `terminal.attach`, `terminal.kill`, and the
-DATA, CREDIT, RESIZE and CLOSE stream frames. The guard sits in front of it
+DATA, CREDIT, RESIZE and CLOSE stream frames. That is everything the adapter
+asks of a core (`HERDR_SESSION_METHODS`): reads and waits for agents and Chat
+(`read`, `wait`, `screen`) are built on `terminal.attach` with history, so
+herdr-core's `terminal.read`, `terminal.wait` and `events.subscribe` are not
+needed here, and the core announces only the `framed`, `attach` and `shell`
+features. The guard sits in front of it
 exactly as in front of herdr-core, and checks folders with Windows path rules.
 Caps: 16 live terminals, 64 records, 8 viewers per terminal, 512 KiB of
-history per terminal, a 1 MiB credit window per viewer (the program is
-paused while any viewer is behind, a viewer 2 MiB behind is dropped). The
+history per terminal, a 1 MiB credit window per viewer. A viewer out of
+credit pauses the program; a viewer 2 MiB behind is dropped, and so is any
+viewer still behind 10 s after the pause began (a paused program stops
+producing, so a stalled viewer would otherwise hold it paused for everyone).
+The
 shell gets the user's environment without `ELECTRON_*`, `NODE_OPTIONS` or
 `MATRIX_*`. Every terminal ends when the app quits (there is no daemon).
 node-pty ships in the Windows package only.
@@ -99,35 +231,33 @@ node-pty ships in the Windows package only.
 
 ## Journey
 
-1. **Enable on the desktop.** In the Electron Terminal window, the "This Computer"
-   header has **Let a Matrix computer use this device…**. The person picks one of
-   their computers (from the inventory the Terminal window already loads). A
-   confirmation says: "*matrix-demo* will be able to open terminals and run
-   agents on this device as *hamed*. That is full shell access. You can switch it
-   off here or from the app menu at any time." Confirm enrols the desktop with that
-   computer and opens the link. Off by default; never enabled implicitly.
+1. **Pair on the desktop.** The person pairs the desktop with their primary
+   computer through 2698's pairing dialog (Mac Pairing… on macOS, Pair This PC…
+   on Windows, Pair This Desktop… on Linux, or from the Terminal window panel).
+   Pairing opens the link. Off by default; never paired implicitly.
 2. **See it on the computer.** Within 5 s the computer's Terminal app (Web
-   Desktop, Web Canvas, Electron OS view) and its Terminal-window section show a
-   **desktops** group with "Hamed's MacBook Pro · Online", its terminals with
-   status, and **New terminal** / agent presets (Claude, Codex, OpenCode, Pi).
+   Desktop, Web Canvas, Electron OS view) shows a **Desktops** group with
+   "Hamed's MacBook Pro · macOS arm64 · Online", its terminals with status, and
+   **New terminal** / agent presets (Claude, Codex, OpenCode, Pi). The Electron
+   Terminal window lists the same terminals under "Desktop · Hamed's MacBook Pro".
 3. **Use it.** Opening a terminal attaches live; typing, resize, paste and
    Herdr status work as with any Herdr terminal. Agents on the computer use
    `matrix shell machine run <desktop> -- …`, `read`, `send`, `kill`.
 4. **Know it is on.** While the link is up, the desktop shows it: the Terminal
-   window sidebar ("matrix-demo can use this device · 2 terminals open from it",
-   with **Turn off**), and the app menu always offers **Matrix OS → Stop
-   Computers Using This device**.
-   Terminals started from the computer carry the label
-   `matrix.from=<computer>` and a small "from matrix-demo" tag.
-5. **Switch off (desktop).** **Turn off** or the app-menu item closes
-   the link at once. The computer shows "off on the desktop". Terminals keep
+   window sidebar ("matrix-demo can use this device", with **Turn off**), the
+   activity indicator on macOS, and the app menu's **Stop Computers Using This
+   Device**. Terminals started from the computer carry the label
+   `matrix.from=<computer>` (not shown as a separate tag in this stack).
+5. **Switch off (desktop).** **Stop** in the activity indicator, **Turn off** in
+   the Terminal window, or **Disconnect** in the pairing dialog closes the link
+   at once (Disconnect also ends the pairing). The computer shows "off on the desktop". Terminals keep
    running on the desktop (like any Herdr terminal); the computer can no longer
    see or reach them. Switching on again needs no new confirmation for the same
    computer, but does need the person's click.
-6. **Remove (computer).** The machine row's **Remove** (confirm) revokes the
-   enrolment. The live link closes within 1 s and the desktop shows "Removed by
-   matrix-demo"; reconnecting is refused until the person enables it again on
-   the desktop (a fresh enrolment).
+6. **Remove (computer).** The machine row's **Remove** (confirm) disconnects the
+   pairing (`DELETE /api/desktop-pairing/:deviceId`, revision bump). The live link
+   closes within 1 s and the desktop shows "Removed by matrix-demo"; reconnecting
+   is refused until the person pairs again on the desktop.
 7. **Sleep and networks.** Lid closed: the computer shows "offline · last seen
    2 min ago"; open viewers show "reconnecting". On wake the link is back
    within 5 s of network availability and viewers re-attach with history.
@@ -137,7 +267,7 @@ node-pty ships in the Windows package only.
 | Surface | Scope in this spec |
 | --- | --- |
 | Electron Desktop (desktop side) | Enable, confirmation, status header, app-menu toggle, link client, desktop-side guard |
-| Electron Desktop (computer side) | Terminal window computer section and OS-view Terminal: Machines group, open, new, agents, remove |
+| Electron Desktop (computer side) | OS-view Terminal: Desktops group (open, new, agents, remove). Terminal window: each computer's section lists its linked desktop's terminals as a "Desktop · <name>" group and opens them; starting one there is a follow-up |
 | Web Desktop | Terminal app Machines group, same actions |
 | Web Canvas | Same component as Web Desktop |
 | `matrix` CLI (and agents in the computer's terminals) | `matrix shell machine ls|terminals|run|read|send|kill` |
@@ -146,7 +276,7 @@ node-pty ships in the Windows package only.
 
 On the desktop itself, the computer's Desktops group leaves that desktop out
 (it already shows those terminals as "This Computer"), using the device ids
-saved at enrolment (`desktop-link:this-device`, both windows; no key is read).
+of its pairing (`desktop-link:this-device`, both windows; no key is read).
 A terminal started from the Desktops group opens at once.
 
 Terminals on a desktop use their own workspace id per desktop in every `TerminalRef`:
@@ -164,20 +294,24 @@ Browser / CLI / kernel ──► computer gateway ──(WS, desktop dialled out
 
 ### Link protocol (`/ws/desktop-link`)
 
-One WebSocket per enrolled desktop and computer. Electron main dials
+One WebSocket per paired desktop and computer. Electron main dials
 `wss://<computer route>/ws/desktop-link` with `Authorization: Bearer <computer-scoped
 token>` (the credential broker's token for that computer, never a renderer
 value). The same platform routing that serves `/ws/terminal/tab` today carries
 it, for VPS and owned computers alike.
 
 1. **Admission (text frames, JSON, Zod-validated, each ≤ 4 KiB).**
-   - Gateway → `{"t":"challenge","nonce":<32 random bytes b64url>,"computer":<machine id>}`.
-   - desktop → `{"t":"proof","deviceId","sig","app":{"version","os"},"name"}`.
+   - Gateway → `{"t":"challenge","nonce":<32 random bytes b64url>,"machineId":<machine id>}`.
+   - desktop → `{"t":"proof","name","deviceId","revision","signature","app":{"version","os"},"device":{platform,arch,capabilities}}`.
      `sig` is Ed25519 over the domain-separated message
      `JSON.stringify(["matrix-desktop-link-v1", ownerId, computerMachineId, deviceId, revision, nonce])`,
      built by the shared proof helper (see Device identity).
-   - Gateway verifies the device is enrolled for this owner, not revoked, the
-     revision matches and the signature is valid. Then `{"t":"ready"}`. Any
+   - Gateway reads `desktop_pairings` through 2698's `DesktopPairingRepository`:
+     the proof's device must be the paired device at exactly the current
+     revision (`readRegisteredKey(deviceId, revision)`), and the signature must
+     verify against that key. The upgrade is admitted only for the bearer the
+     pairing routes accept (verified runtime bearer, owner principal from `jwt` or
+     `platform-verified`). Then `{"t":"ready"}`. Any
      failure closes with a coarse code (`4401` auth, `4403` revoked or
      disabled, `4409` replaced, `4429` rate limited) and no detail.
    - Admission must finish within 10 s of the upgrade.
@@ -198,9 +332,11 @@ it, for VPS and owned computers alike.
    arrive between its `open(n)` and that `opened(n)`, so a late reply from an
    old stream never reaches a new handshake.
 4. **Control (text frames).** `ping`/`pong` every 15 s from both ends;
-   `{"t":"state","terminalsFromComputer":n}` gateway → desktop for the status
-   header; `{"t":"bye","reason":...}` before a clean close (desktop: `disabled`,
-   `signed-out`, `quit`; gateway: `removed`, `shutdown`).
+   `{"t":"bye","reason":...}` before a clean close (desktop: `disabled`,
+   `signed-out`, `quit`; gateway: `removed`, `shutdown`); the close code, not the
+   reason, decides what happens next. Screenshots: `capture` → `capture-part`
+   (≤ 48 KiB of base64 each, ≤ 8 MiB in all) or `capture-failed`
+   (`permission` | `declined` | `unavailable` | `failed` | `too_large`).
 
 ### desktop-side guard (`desktop/src/main/desktop-link/guard.ts`)
 
@@ -216,7 +352,7 @@ channel 0 it parses JSON-RPC and forwards only:
 | --- | --- |
 | `hello` | only as the stream's first, unframed line, `framed: true` |
 | `terminal.list`, `terminal.get`, `terminal.read`, `terminal.wait`, `events.subscribe` | no `on`; no `terminal` address containing `/` |
-| `terminal.run` | no `on`; `cwd` resolves (realpath) inside the macOS user's home; no `env` beyond an allowlist (`TERM`, `COLORTERM`, `LANG`, `LC_*`); `argv` ≤ 64 entries, each ≤ 4 KiB; label `matrix.from` forced to the enrolled computer name |
+| `terminal.run` | no `on`; `cwd` resolves (realpath) inside the macOS user's home; no `env` beyond an allowlist (`TERM`, `COLORTERM`, `LANG`, `LC_*`); `argv` ≤ 64 entries, each ≤ 4 KiB; label `matrix.from` forced to the paired computer name |
 | `terminal.attach`, `terminal.send`, `terminal.keys`, `terminal.interrupt`, `terminal.kill`, `terminal.rm`, `terminal.label` | no `/` in the address; `terminal.label` may not change `matrix.from` |
 | `terminal.put`, `terminal.put_begin/_chunk/_finish/_abort` | file ≤ 16 MiB, name per herdr-core rules (pasted images) |
 
@@ -252,40 +388,27 @@ the confirmation says so.
 - **Second allowlist**: the gateway wraps the connection with
   `restrictHcConnection` (2701) using the same method list, so it never even
   tries what the desktop would refuse.
-- **Store**: owner Postgres via Kysely, table `desktop_link_devices`
-  (`device_id` PK = SHA-256 of the SPKI public key, `owner_id`, `public_key`,
-  `name`, `computer_label`, `revision`, `enrolled_at`, `revoked_at`,
-  `last_seen_at`). Enrol and revoke are single statements with
-  `WHERE revision = :base`; enrol is `INSERT … ON CONFLICT (device_id) DO
-  UPDATE … WHERE desktop_link_devices.revoked_at IS NOT NULL` so a live enrolment
-  is never silently replaced.
+- **Store**: no table of its own. Pairing state is 2698's `desktop_pairings`
+  (revision-fenced, single statements). The pairing routes notify the registry
+  after a pair or disconnect commits (an in-process `onPairingChanged(state)`
+  passed in at startup), and the registry also re-reads the pairing before each
+  new core stream and screenshot, so a missed notice cannot keep a revoked link
+  working. Name, system and last seen are the nullable D3 columns.
 - **Agents on the computer**: the local terminal token (2692) is accepted on
   the desktop terminal routes and the machine list only, from a direct loopback
   caller, so an agent in one of the computer's terminals can use
-  `matrix shell machine …`. Enrolling, removing and the link socket still need
+  `matrix shell machine …`. Pairing, removing and the link socket still need
   the owner's signed-in session.
 
 ### Device identity
 
-**One key module, shared with 2698 (ENG-495).** The desktop's device key is the
-one 2698 (#3483) already defines; this spec adds no second key store:
-
-- Key store: `desktop/src/main/desktop-pairing/key-store.ts`,
-  `createPairingKeyStore(userData, safeStorage)` → `load` / `loadOrCreate`
-  `({ ownerId, origin })`. Ed25519 created in Electron main, PKCS#8 private key
-  encrypted with `safeStorage` (refuses `basic_text`), `0600` file under
-  `userData/desktop-pairing/`, device ID = SHA-256 of the public SPKI bytes.
-- Proof messages: `packages/contracts/src/desktop-pairing.ts`. Desktop link adds
-  `desktopLinkProofMessage()` beside `desktopPairingProofMessage()`, sharing the
-  same domain-separated `proofMessage(domain, …)` helper with domain
-  `matrix-desktop-link-v1`, so a pairing or Chat-action signature can never be
-  replayed as a link proof and the reverse.
-- Enrolments stay per purpose: 2698 keeps `desktop_pairings` (one desktop per
-  owner and computer, Chat actions); this spec keeps `desktop_link_devices`. One
-  key, two independent consents and revocations.
-- Ownership: whichever PR merges first lands the module at that exact path;
-  the other rebases onto it. Layer 2 (gateway) does not depend on it; layer 3
-  (Electron) does.
+2698's, unchanged: `createPairingKeyStore(userData, safeStorage)` in
+`desktop/src/main/desktop-pairing/key-store.ts`, scope `{ ownerId, origin }`,
+Ed25519 encrypted with `safeStorage`, device ID = SHA-256 of the SPKI bytes. The
+link adds one signing domain beside 2698's enrolment and action proofs,
+`desktopLinkProofMessage()` = `["matrix-desktop-link-v1", ownerId, machineId,
+deviceId, revision, nonce]`, so no pairing or Chat-action signature can be replayed
+as a link proof and the reverse.
 
 ## Security architecture
 
@@ -293,25 +416,27 @@ one 2698 (#3483) already defines; this spec adds no second key store:
 
 | Route | Caller | Auth | Notes |
 | --- | --- | --- | --- |
-| `POST /api/desktop-link/enrol/challenge` | Electron main | Owner bearer (computer-scoped JWT, `requireRequestPrincipal`, owner only) | `bodyLimit` 4 KiB; ≤ 5 live challenges per owner, 60 s TTL, single use |
-| `POST /api/desktop-link/enrol` | Electron main | Owner bearer + Ed25519 proof over the challenge | `bodyLimit` 8 KiB; ≤ 5 enrolled devices per owner |
-| `GET /ws/desktop-link` | Electron main | Owner bearer header on upgrade + per-connection challenge proof | Not in the query-token allowlist (header only; no browser can open it) |
+| `/api/desktop-pairing/*` | Electron main, owner shells | 2698, unchanged | Pair and disconnect; Remove in the Desktops group calls its `DELETE` |
+| `GET /ws/desktop-link` | Electron main | Same gate as the pairing routes on upgrade + per-connection proof from the paired key at the current revision | Not in the query-token allowlist (header only; no browser can open it) |
 | `GET /api/desktop-link/machines` | Owner shells, CLI, agents | Owner principal or local terminal token | Name, state, last seen, this computer's id; never keys |
-| `DELETE /api/desktop-link/machines/:deviceId` | Owner shells | Owner principal | `bodyLimit` 1 KiB, `If-Match: "desktop-link-<machine>-<device>-<revision>"`, closes live link |
 | `GET /api/desktop-link/machines/:deviceId/terminals` | Owner shells, CLI, agents | Owner principal or local terminal token | |
 | `POST /api/desktop-link/machines/:deviceId/terminals` | Owner shells, CLI, agents | Same | `bodyLimit` 96 KiB; `{cols, rows, agent? \| argv?, cwd?, name?}`; 10 per minute per desktop |
 | `DELETE /api/desktop-link/machines/:deviceId/terminals/:address` | Owner shells, CLI, agents | Same | `bodyLimit` 1 KiB |
 | `GET /api/desktop-link/machines/:deviceId/terminals/:address/screen?lines=` | CLI, agents | Same | ≤ 2,000 lines |
 | `POST /api/desktop-link/machines/:deviceId/terminals/:address/input` | CLI, agents | Same | `bodyLimit` 96 KiB, ≤ 64 KiB of input |
+| `POST /api/desktop-link/machines/:deviceId/terminals/:address/keys` | CLI, agents, Chat | Same | `bodyLimit` 1 KiB; named keys only |
+| `POST /api/desktop-link/machines/:deviceId/terminals/:address/interrupt` | CLI, agents, Chat | Same | `bodyLimit` 1 KiB |
+| `POST /api/desktop-link/machines/:deviceId/terminals/:address/wait` | CLI, agents, Chat | Same | `bodyLimit` 1 KiB; `{output?, timeoutMs?}` bounded by the terminal-wait maximum |
+| `POST /api/desktop-link/machines/:deviceId/screenshot` | CLI, agents, Chat | Same | `bodyLimit` 1 KiB; 6 per minute per desktop; JPEG ≤ 8 MiB; owner approval or Full Access on the desktop |
 | `GET /ws/desktop-link/terminal?workspaceId=&tabId=\|id=&lease=` | Owner shells | Owner principal; path added to `WS_QUERY_TOKEN_PATHS` | 2701's Herdr viewer socket per desktop; observe by default; write lease as `/ws/terminal/tab` |
 
 Who can open a terminal on the desktop:
 
-- **Allowed**: the owner principal of the computer the desktop enrolled with, and
+- **Allowed**, after the desktop's [consent](#consent): the owner principal of the computer the desktop is paired with, and
   that computer's own kernel and agents acting for the owner.
 - **Refused**: org members, guests, ENG-570 collaborators, app-share or
   preview principals, platform operators, other computers of the same owner
-  (each computer needs its own enrolment), and any request without the owner
+  (each computer needs its own pairing), and any request without the owner
   principal. Collaboration and share scopes never resolve to `desktop-link` routes.
 - **Sharing**: none in this stack. A later ENG-570 extension may let the owner
   share one *terminal* (never the machine) after an explicit, per-terminal
@@ -333,8 +458,9 @@ Who can open a terminal on the desktop:
 
 ### Errors
 
-Clients get coarse codes only: `desktop_offline`, `desktop_disabled`, `desktop_removed`,
-`desktop_unsupported`, `busy`, `not_found`, `denied`. No herdr-core messages,
+Clients get coarse codes only: `desktop_offline`, `busy`, `not_found`, `denied`
+(the desktop's guard or owner refused), `screen_recording_not_allowed`,
+`screenshot_unavailable`, `screenshot_failed`. No herdr-core messages,
 paths, versions, stderr or Postgres errors leave the gateway or Electron main;
 details go to server-side logs with the device ID, never the bearer.
 
@@ -343,8 +469,9 @@ details go to server-side logs with the device ID, never the bearer.
 - The bearer travels only in the upgrade header from Electron main; never in a
   URL, log or renderer. The link closes at the bearer's `exp`; Electron
   reconnects with a fresh token from the broker.
-- The private device key never leaves Electron main. Sign-out deletes the
-  profile's link keys and closes links.
+- The private device key never leaves Electron main. Sign-out, an account or
+  computer change closes links; the key stays encrypted for a later explicit
+  re-pair, as in 2698.
 - Nothing about the desktop (keys, names, terminals) is sent to the platform; the
   platform only routes the WebSocket.
 
@@ -388,19 +515,23 @@ the desktop without SSH or Tailscale.
 
 | Action | Effect | Bound |
 | --- | --- | --- |
-| desktop: header toggle or app-menu item off | Link closed with `bye`; guard stops forwarding before the close is sent; preference stored per computer | Immediate (same tick) |
-| desktop: sign out, switch account, profile change | All links closed; keys deleted | Immediate |
-| Computer: Remove machine | Row revoked (revision bump), live link closed `4403`, open viewers get `desktop_removed` | ≤ 1 s |
-| Owner credential revoked on the platform | Gateway refuses the next upgrade; live link ends at token `exp` | ≤ token lifetime (computer-scoped tokens, today ≤ 1 h) |
+| Desktop: Stop (activity indicator) or Turn off | Link closed with `bye`; guard stops forwarding first; pairing kept; stays off until the person turns it on | Immediate (same tick) |
+| Desktop: Disconnect (pairing dialog) | Link closed before the `DELETE` is sent (2698: grants end on confirm); revision bump | Immediate |
+| Desktop: Revoke Full Access | Later actions need per-action approval again; link stays | Immediate |
+| Computer: Remove | `DELETE /api/desktop-pairing/:deviceId`; registry closes the link `4403`; open viewers get `desktop_removed` | ≤ 1 s |
+| Re-pair (new revision) | Old link and its grants closed; Full Access needs fresh consent | ≤ 1 s |
+| Sign out, account or computer change | All links closed | Immediate |
+| Owner credential revoked on the platform | Gateway refuses the next upgrade; live link ends at token `exp` | ≤ token lifetime |
 | App quit | Socket closes; computer shows offline | Immediate |
 
-A disabled or removed desktop never reconnects by itself. Terminals already
+A stopped or removed desktop never reconnects by itself. Terminals already
 running on the desktop keep running; only the computer's access ends.
 
 ## Integration wiring
 
-- **Gateway start** (`server.ts`): create `DesktopLinkStore(kysely)` after the owner
-  database; create `DesktopLinkRegistry({ store, now, caps })`; register
+- **Gateway start** (`server.ts`): create `DesktopLinkRegistry({ pairing, now, caps })`
+  over 2698's `DesktopPairingRepository` and pass its `onPairingChanged` to
+  `createRuntimeDesktopPairingRoutes`; register
   `/api/desktop-link/*` and `/ws/desktop-link*` routes; add the browser attach pattern
   to `WS_QUERY_TOKEN_PATH_PATTERNS` and the route group to
   `server/route-inventory.ts`; register the desktop machines as a status source for
@@ -409,9 +540,10 @@ running on the desktop keep running; only the computer's access ends.
   `HcConnection`s, then links; the store is closed with the owner database by
   its owner, never by the registry.
 - **Electron start** (`desktop/src/main/index.ts`): after auth and the local
-  terminal host are ready, create `DesktopLinkService({ host, broker, keys, prefs,
-  powerMonitor, net })`; it opens links only for computers whose preference is
-  on. IPC: `desktop-link:status`, `desktop-link:enable`, `desktop-link:disable` (validated
+  terminal host are ready, create `DesktopLinkService({ host, pairing, prefs,
+  powerMonitor, net })` with 2698's `createDesktopPairing` (key store, pairing
+  state, consent); it opens a link only while this desktop is paired and not
+  stopped. IPC: `desktop-link:status`, `desktop-link:enable`, `desktop-link:disable` (validated
   Zod payloads, computer slot only); menu item wired through
   `platform/menu-template.ts`.
 - **Cross-package**: the gateway and Electron share `packages/herdr-core-client`
@@ -427,12 +559,12 @@ running on the desktop keep running; only the computer's access ends.
 | Gateway restarts | Links drop; Electron reconnects with backoff; no state lost (Postgres rows) |
 | desktop core restarts or is upgraded | The desktop's core socket closes; the desktop sends `end` for that stream. The gateway's `HcConnection` for it ends (pending calls fail, attachments report `disconnected`). The adapter opens a new stream: a fresh core connection, a fresh guard and a fresh handshake, on the same WebSocket. Unsupported version → `desktop_unsupported` on the computer, "update Matrix OS" on the desktop |
 | Two links for one device | Newer admitted link wins; older closed `4409` |
-| Enrol race (two tabs, two clicks) | Revision-fenced statement; loser gets `conflict` and re-reads |
-| Lost enrol reply | Electron re-reads `GET /api/desktop-link/machines`-equivalent status before retrying |
+| Pair race, lost pair reply | 2698: revision-fenced statement; a fresh read reconciles; never resubmitted |
+| Pairing changes during a link action | Registry re-reads pairing before each stream and capture; a mismatch closes the link `4403` |
 | Slow viewer | herdr-core credit flow control stalls only that viewer's channel (credit returns only as the viewer's own socket drains, as in 2701's `herdr/ws.ts`); a browser viewer socket over its cap is closed alone |
 | Slow or stuck link | The link's own WebSocket queue (shared by every channel) over 8 MiB on either end closes the whole link (`1008`); the desktop reconnects with backoff and viewers re-attach. Credit flow control keeps a healthy link far below this |
 | Malformed or denied frames | Denied calls get errors; malformed JSON or a frame > cap closes the link (`1008`) |
-| Partial enrol (row written, link never opens) | Row shows offline; harmless; removable |
+| Paired, link never opens | Desktops group shows "Paired desktop · offline"; Remove still works |
 
 ### Deadlines
 
@@ -442,16 +574,21 @@ running on the desktop keep running; only the computer's access ends.
 | herdr-core handshake over the link | 10 s | Close, retry with backoff |
 | Each core call | 10 s (`terminal.wait`/`run --wait` use their own timeout + 10 s) | Call rejected `desktop_offline` |
 | Ping without pong | 45 s | Link closed |
-| Enrol challenge | 60 s | Discarded |
+| Link admission challenge | 10 s (admission deadline) | Close `4401` |
 | HTTP calls from Electron | `AbortSignal.timeout(10_000)`, `redirect: "error"` | Error state in UI |
 
 ## Resource management
 
 | Resource | Cap | Eviction |
 | --- | --- | --- |
-| Enrolled devices per owner | 5 | Enrol refused until one is removed |
-| Live links per owner | 5 (one per device) | Replace by device; stale sweep every 30 s by `lastPong` |
-| Challenges | 5 per owner, 100 total | 60 s TTL sweep |
+| Paired desktops per computer | 1 (2698, D1) | Pairing another asks to disconnect the first |
+| Live links per computer | 1 (the paired desktop) | Replaced by a newer link of the same device; stale sweep every 15 s by last pong (45 s) |
+| Admission attempts | 30 a minute per computer | Refused `4429` |
+| Admission challenge | one nonce per connection, 10 s | Closed `4401` |
+| Calls in flight per core stream (guard) | 256 | Further calls refused |
+| Approvals waiting on the desktop | 1 on screen, 4 waiting | Further approvals refused |
+| Remembered approved terminals | 256 per pairing revision | Oldest forgotten first |
+| Windows core | 16 live terminals, 64 records, 8 viewers, 512 KiB history, 1 MiB credit, 2 MiB queue | Viewer dropped at 2 MiB or after a 10 s pause |
 | Attachments per link | 32 (herdr-core-client `MAX_STREAMS`) | `busy` |
 | Viewers per terminal / per owner | 8 / 32 | Oldest stale viewer evicted; shutdown drain |
 | Pending calls per link | 64 | `busy` |
@@ -470,10 +607,10 @@ their link. No temp files.
    Claude from the agent preset.
 2. From a terminal on the computer, `matrix shell machine run <desktop> -- uname
    -s` then `matrix shell machine read <desktop> <id>` shows `Darwin`.
-3. Choose Stop Computers Using This device: the open viewer shows "off on the desktop" within
-   1 s; new calls get `desktop_disabled`; the terminal keeps running on the desktop.
-4. Remove the desktop from the computer: the desktop shows "Removed"; re-enable needs
-   a fresh confirmation; old device proof is refused.
+3. Choose Stop Computers Using This Device: the open viewer disconnects within
+   1 s; new calls get `desktop_offline`; the terminal keeps running on the desktop.
+4. Remove the desktop from the computer: the desktop shows it is no longer paired;
+   turning it on again needs a fresh pairing; the old revision's proof is refused.
 5. Sleep the desktop 2 minutes: computer shows offline; on wake the viewer
    re-attaches with history within 5 s of network.
 6. With a forged gateway (test harness), `machine.exec`, `file.read`, any `on`
@@ -513,28 +650,27 @@ their link. No temp files.
 - End to end: Electron `DesktopLinkService` against a local gateway and real core
   (layer 3), then live desktop + preview VPS (last layer).
 
-## Delivery stack (GitHub native stack, ENG-574, ≤ 10 layers)
+## Delivery stack (GitHub native stack, ENG-574, ≤ 7 layers)
 
 | # | PR | Main code |
 | --- | --- | --- |
-| 1 | Spec (this file) | specs |
-| 2 | Gateway: store + migration, enrolment routes, `/ws/desktop-link` admission, registry, `HcConnection` over the link | gateway, contracts |
-| 3 | Electron: device keys, guard, `DesktopLinkService` (reconnect, sleep, toggle, menu, IPC) | desktop |
+| 1 | Spec (this file; 2698 superseded notes) | specs |
+| 2 | Gateway: `/ws/desktop-link` admission over 2698 pairing, link proof domain, registry, revocation hook in the pairing routes, `HcConnection` over the link | gateway, contracts |
+| 3 | Electron: guard, `DesktopLinkService` on 2698's key store and pairing, consent and Full Access, activity kind, pairing on Linux and Windows | desktop |
 | 4 | Gateway: desktop terminal routes, viewer socket, local-token access for agents, `matrix shell machine` | gateway, sync-client |
-| 5 | Surfaces: desktop-side controls (Terminal window, confirmation, app menu, IPC) and the shared Desktops group on Web Desktop, Web Canvas and Electron Desktop | ui, shell, desktop |
-| 6 | Chat and agents: desktop terminals in the terminal pipeline, `desktop_list`/`desktop_run`, keys/interrupt/wait routes, CLI | gateway, kernel, sync-client |
-| 7 | Platforms: each desktop's OS, arch and capabilities; screenshots through desktopCapturer; `desktop_screenshot`; per-OS `open`; the `matrix-linked-desktop` skill | gateway, desktop, kernel, sync-client, ui, skills |
-| 8 | Windows: the ConPTY core, Windows path rules in the guard, the File menu switch, node-pty in the Windows package | desktop |
-| 9 | Live qualification fixes, repo docs; plus a separate public documentation PR in `FinnaAI/matrix-os-site` under `content/docs/` (enable, switch off, remove, Screen Recording, per-OS notes) | docs, fixes, site |
+| 5 | Surfaces: Desktops group on Web Desktop, Web Canvas and Electron Desktop (Remove = pairing disconnect), Terminal window link state | ui, shell, desktop |
+| 6 | Chat and agents: desktop terminals in the terminal pipeline, `desktop_list`/`desktop_run`, keys/interrupt/wait routes, CLI, skill | gateway, kernel, sync-client, skills |
+| 7 | Platforms: OS, arch and capabilities; screenshots; `desktop_screenshot`; per-OS `open`; Windows ConPTY core and path rules | gateway, desktop, kernel, sync-client, ui |
 
-Layer 2 needs `packages/herdr-core-client` (#3527). If it has not merged when
-layer 2 starts, the stack bases on it or waits; it does not copy the client.
+Docs, live qualification fixes and the public site PR follow on the preview VPS
+check. Follow-up stack (not ENG-574): retire 2698's terminal-check paths and
+3-second polling, and move Mac Verification onto the link.
 
 ## Risks and open questions
 
-1. **2698 overlap (ENG-495, Yuhan).** Resolved as above: one key module at
-   `desktop/src/main/desktop-pairing/key-store.ts`, separate enrolments per
-   purpose. Flagged on #3483 for Yuhan's agreement.
+1. **2698 overlap (ENG-495).** Resolved (Hamed, 2026-11-25): one system, see
+   [One system with 2698](#one-system-with-2698-hamed-2026-11-25). Decisions D1 to
+   D4 are decided there.
 2. **Which terminals the computer sees. Decision (Hamed, 2026-11-24):** the
    computer sees every terminal in the desktop app's private core, including ones
    the person opened locally. It is the same owner, it matches Herdr's machine
@@ -542,15 +678,30 @@ layer 2 starts, the stack bases on it or waits; it does not copy the client.
    *Rejected alternative:* only terminals the computer started (`matrix.from`
    filter in the guard). It hides local agents from the computer's agents and
    breaks parity. Left open for Nima's review comment; switching is a guard
-   filter, not a protocol change.
+   filter, not a protocol change. *Exposure (review):* listing (`terminal.list`,
+   `terminal.get`, `events.subscribe`) needs no approval and returns what the core
+   reports, which can include a terminal's program, arguments and folder, not
+   only its title and status. Arguments can hold secrets. Reading the screen,
+   typing and ending still need approval. Filtering these answers down to
+   address, title and status is a follow-up.
 3. **Full shell access.** A terminal on the desktop is the signed-in user's shell. A
    compromised computer gateway can run anything the user can. Mitigations:
-   off by default, per-computer opt-in, visible indicator, instant off, guard
+   pairing (2698) is the opt-in, the owner approves each start, screenshot and
+   foreign terminal on the desktop, a visible indicator, instant off, guard
    limits to Herdr terminals. This is the core trade-off for review.
+   *Full Access widens it (review):* with Desktop Link Full Access allowed, any
+   process on the computer holding the owner's local terminal token (its agents,
+   scripts and dev servers run as the same user) can start programs on the
+   desktop without a prompt. The pairing dialog says so before the owner allows it.
+   *Folder checks race (review):* the guard resolves symlinks before the core
+   changes into the folder; a process already on the desktop could swap a link
+   in between. It already runs as the same user, so this adds nothing it could
+   not do directly.
 4. **Token lifetime as the platform-revocation bound.** If computer-scoped
    tokens live longer than 1 h, add a gateway re-validation tick.
 5. **herdr-core version skew** between the desktop app and the computer's client:
-   pinned 0.1.x range; out-of-range shows `desktop_unsupported`.
+   pinned 0.1.x range; an out-of-range core fails the stream's handshake and the
+   desktop shows as unreachable (`desktop_offline`).
 6. **Keychain prompt in development.** A fresh profile triggers the "Matrix OS
    Safe Storage" prompt; live qualification uses a profile that already holds
    access, or a dev-only key store, never approving a prompt on the owner's

@@ -1,5 +1,7 @@
 # Bind Mac Chat actions to a device pairing
 
+> **Partly superseded (2026-11-25).** The pairing proof stays. The 3-second polling loop and the terminal-check grants are retired in a follow-up stack: the [2716](../2716-desktop-link/spec.md) link closes on a pairing revision bump instead.
+
 Tracking ENG-495. The existing one-time terminal check, background checks and Electron preview continue to require their own native approval and exact Chat/worktree checks. After consent, every new local grant proves possession of the paired Mac key before it allocates a PTY, starts a preview, or accepts a background request. The new development build requires this proof for these actions. Ordinary Matrix Chat, hosted Terminal and the native Mac Terminal remain independent.
 
 ## Gateway contract
