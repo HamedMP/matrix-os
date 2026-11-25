@@ -47,6 +47,12 @@ export function DesktopMachinesGroup({ state, selectedRefKey, hideDeviceIds = []
   const busy = new Set(state.busy);
   const machines = state.desktops.machines.filter((machine) => !hidden.has(machine.deviceId));
   if (machines.length === 0) return null;
+  // A terminal started here opens at once, as a new Matrix tab does.
+  const open = (deviceId: string, agent: DesktopAgent | undefined, title: string) => {
+    void state.start(deviceId, agent).then((started) => {
+      if (started) onOpen(deviceId, { id: started.id, tabId: started.tabId, title, status: null });
+    });
+  };
   return (
     // The group sits on each surface's own drawer (dark on Web Terminal), so its buttons take
     // the surface's foreground instead of the page theme's.
@@ -129,12 +135,12 @@ export function DesktopMachinesGroup({ state, selectedRefKey, hideDeviceIds = []
                   })}
                 </ul>
                 <div role="group" aria-label={`Start on ${machine.name}`} style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: "4px 8px 0 20px" }}>
-                  <Button variant="secondary" size="sm" disabled={starting} onClick={() => { void state.start(machine.deviceId); }}>
+                  <Button variant="secondary" size="sm" disabled={starting} onClick={() => open(machine.deviceId, undefined, "Terminal")}>
                     {starting ? "Starting…" : "New terminal"}
                   </Button>
                   {AGENTS.map((agent) => (
                     <Button key={agent.id} variant="ghost" size="sm" disabled={starting} aria-label={`Start ${agent.label} on ${machine.name}`}
-                      onClick={() => { void state.start(machine.deviceId, agent.id); }}>
+                      onClick={() => open(machine.deviceId, agent.id, agent.label)}>
                       {agent.label}
                     </Button>
                   ))}

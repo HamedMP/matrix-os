@@ -11,6 +11,7 @@ function setup(overrides: Partial<DesktopLinkService> = {}) {
   const listeners: Array<(status: DesktopLinkStatus) => void> = [];
   const service = {
     statuses: vi.fn(() => [{ slot: "primary", computerName: "matrix-demo", state: "on", terminalsFromComputer: 1 }]),
+    deviceIds: vi.fn(() => ["c".repeat(64)]),
     enable: vi.fn(async () => undefined),
     disable: vi.fn(async () => undefined),
     onStatus: vi.fn((listener: (status: DesktopLinkStatus) => void) => { listeners.push(listener); return () => undefined; }),
@@ -24,11 +25,13 @@ function setup(overrides: Partial<DesktopLinkService> = {}) {
 }
 
 describe("Desktop link IPC", () => {
-  it("is only for the Terminal window", () => {
+  it("changes and reports links only from the Terminal window; both windows may ask which desktop this is", () => {
     for (const channel of ["desktop-link:status", "desktop-link:enable", "desktop-link:disable"] as const) {
       expect(TERMINAL_WINDOW_INVOKE_CHANNELS).toContain(channel);
       expect(windowMayInvoke("main", channel, {})).toBe(false);
     }
+    expect(windowMayInvoke("main", "desktop-link:this-device", {})).toBe(true);
+    expect(windowMayInvoke("terminal", "desktop-link:this-device", {})).toBe(true);
   });
 
   it("refuses other senders and malformed payloads before touching the service", async () => {
@@ -49,6 +52,7 @@ describe("Desktop link IPC", () => {
     await expect(call("desktop-link:enable", { slot: "boom", computerName: "x" })).resolves.toEqual({ ok: false, reason: "unavailable" });
     await expect(call("desktop-link:disable", { slot: "primary" })).resolves.toEqual({ ok: true });
     expect(service.disable).toHaveBeenCalledWith("primary");
+    await expect(call("desktop-link:this-device", {})).resolves.toEqual({ deviceIds: ["c".repeat(64)] });
     await expect(call("desktop-link:status", {})).resolves.toEqual({ computers: [{ slot: "primary", computerName: "matrix-demo", state: "on", terminalsFromComputer: 1 }] });
   });
 

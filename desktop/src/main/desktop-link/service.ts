@@ -385,6 +385,10 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
     },
 
     statuses(): DesktopLinkStatus[] { return [...links.values()].map(status); },
+    /** This device's device ids, from its enrolments (no key is read). */
+    deviceIds(): string[] {
+      return [...new Set(Object.values(prefs.computers).flatMap((saved) => (saved.deviceId ? [saved.deviceId] : [])))];
+    },
     onStatus(listener: (status: DesktopLinkStatus) => void): () => void {
       events.on("status", listener);
       return () => { events.off("status", listener); };
@@ -420,6 +424,7 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
           const enrolment = DesktopLinkEnrolmentSchema.parse(await enrolled.json());
           await savePrefs({ computers: { ...prefs.computers, [slot]: {
             enabled: true, computerName: link.computerName, machineId: enrolment.machineId, revision: enrolment.revision,
+            deviceId: enrolment.deviceId,
           } } });
         } else if (saved) {
           // Already enrolled at the saved revision (a lost reply earlier): keep it.

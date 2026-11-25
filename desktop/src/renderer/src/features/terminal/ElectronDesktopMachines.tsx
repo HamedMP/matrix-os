@@ -1,10 +1,32 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { z } from "zod/v4";
 import { desktopLinkWorkspaceId } from "@matrix-os/contracts/desktop-link";
 import { DesktopMachinesGroup, useDesktopMachines, type DesktopLinkRequest } from "@matrix-os/ui/desktop-link";
 
 import { AppError } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
 import type { ShellSessionSummary } from "../../stores/shell-sessions";
+import { invoke } from "../../lib/operator";
+
+const ThisDeviceSchema = z.strictObject({ deviceIds: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(20) });
+const NONE: readonly string[] = [];
+
+/** This device's own device ids: the computer's desktops list here leaves it out (it is "This Computer"). */
+function useThisDevice(): readonly string[] {
+  const [deviceIds, setDeviceIds] = useState<readonly string[]>(NONE);
+  useEffect(() => {
+    let live = true;
+    invoke("desktop-link:this-device", {}).then(
+      (reply) => {
+        const parsed = ThisDeviceSchema.safeParse(reply);
+        if (live && parsed.success) setDeviceIds(parsed.data.deviceIds);
+      },
+      (error: unknown) => { console.warn("[desktop-link] this-device failed", error instanceof Error ? error.name : "unknown_error"); },
+    );
+    return () => { live = false; };
+  }, []);
+  return deviceIds;
+}
 
 /** A failed answer as the status the shared client reads; its body never reaches the UI. */
 function asResponse(error: unknown): Response {
@@ -48,9 +70,11 @@ export function ElectronDesktopMachines({ api, selectedName, onOpen }: {
 }) {
   const request = useMemo(() => (api ? desktopLinkRequest(api) : null), [api]);
   const desktops = useDesktopMachines({ request });
+  const thisDevice = useThisDevice();
   return (
     <DesktopMachinesGroup
       state={desktops}
+      hideDeviceIds={thisDevice}
       selectedRefKey={selectedName}
       onOpen={(deviceId, session) => onOpen(electronDesktopSession(deviceId, session))}
       style={{ color: "var(--text-primary)", maxHeight: "40%", overflowY: "auto" }}

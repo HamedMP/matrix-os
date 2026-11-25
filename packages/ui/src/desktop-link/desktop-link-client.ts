@@ -72,17 +72,20 @@ export async function loadDesktopTerminals(request: DesktopLinkRequest, deviceId
   return parsed.data;
 }
 
-/** Starts the desktop user's shell, or an agent preset, at home. Returns the terminal id. */
-export async function startDesktopTerminal(request: DesktopLinkRequest, deviceId: string, agent?: DesktopAgent): Promise<string> {
+export interface StartedDesktopTerminal { id: string; tabId: string }
+
+/** Starts the desktop user's shell, or an agent preset, at home. Returns the terminal and the tab id it opens by. */
+export async function startDesktopTerminal(request: DesktopLinkRequest, deviceId: string, agent?: DesktopAgent): Promise<StartedDesktopTerminal> {
   const response = await request(`${DESKTOP_LINK_API}/machines/${deviceId}/terminals`, {
     method: "POST", signal: AbortSignal.timeout(TIMEOUT_MS),
     headers: { "content-type": "application/json" }, body: JSON.stringify(agent ? { agent } : {}),
   });
   const body = await readJson(response);
   if (!response.ok) throw failure(response, body);
-  const id = (body as { id?: unknown } | null)?.id;
+  const { id, tabId } = (body ?? {}) as { id?: unknown; tabId?: unknown };
   if (typeof id !== "string" || !/^t[0-9]{1,6}[a-z]{0,2}$/.test(id)) throw new DesktopLinkRequestError("failed");
-  return id;
+  if (typeof tabId !== "string" || !/^tt_[0-9a-f]{32}$/.test(tabId)) throw new DesktopLinkRequestError("failed");
+  return { id, tabId };
 }
 
 export async function closeDesktopTerminal(request: DesktopLinkRequest, deviceId: string, id: string): Promise<void> {

@@ -46,7 +46,7 @@ describe("IPC sender policy", () => {
       "local-terminal:ssh-login", "local-terminal:tailscale-peers", "local-terminal:machine-login",
       "local-terminal:rename", "local-terminal:resize", "local-terminal:seen", "local-terminal:watch",
       // Which computers may use this device (spec 2716).
-      "desktop-link:status", "desktop-link:enable", "desktop-link:disable",
+      "desktop-link:status", "desktop-link:enable", "desktop-link:disable", "desktop-link:this-device",
     ].sort();
     const { terminal, authorize, from } = setup();
     expect(allChannels.filter((channel) => authorize(from(terminal), channel)).sort()).toEqual(expected);

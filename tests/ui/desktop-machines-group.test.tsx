@@ -36,7 +36,7 @@ function gateway(overrides: Partial<Record<string, (init: Parameters<DesktopLink
     if (key === `GET /api/desktop-link/machines/${MAC}/terminals`) {
       return json({ deviceId: MAC, workspaceId: desktopLinkWorkspaceId(MAC), sessions: [{ id: "t1", tabId: tab, title: "claude", status: "working" }] });
     }
-    if (key === `POST /api/desktop-link/machines/${MAC}/terminals`) return json({ deviceId: MAC, id: "t2" }, 201);
+    if (key === `POST /api/desktop-link/machines/${MAC}/terminals`) return json({ deviceId: MAC, id: "t2", workspaceId: desktopLinkWorkspaceId(MAC), tabId: `tt_${"2".repeat(32)}` }, 201);
     if (key === `DELETE /api/desktop-link/machines/${MAC}`) return json({ deviceId: MAC, revision: 3 });
     return json({ error: "not_found" }, 404);
   });
@@ -79,6 +79,16 @@ describe("desktops group", () => {
     await mounted(request);
     const group = screen.getByRole("region", { name: "Desktops" });
     expect(group.style.getPropertyValue("--matrix-fg")).toBe("currentColor");
+  });
+
+  it("opens a terminal it starts at once, and leaves this device out of its own list", async () => {
+    const { request } = gateway();
+    const { onOpen, view, result } = await mounted(request);
+    fireEvent.click(screen.getByRole("button", { name: "Start Codex on Hamed's MacBook Pro" }));
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(MAC, expect.objectContaining({ id: "t2", tabId: `tt_${"2".repeat(32)}`, title: "Codex" })));
+    view.rerender(<DesktopMachinesGroup state={result.current} hideDeviceIds={[MAC]} onOpen={onOpen} />);
+    expect(screen.queryByText("Hamed's MacBook Pro")).toBeNull();
+    expect(screen.getByText("Studio")).toBeTruthy();
   });
 
   it("starts a shell or an agent preset on the desktop", async () => {
