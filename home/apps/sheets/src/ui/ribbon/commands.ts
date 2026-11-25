@@ -107,7 +107,8 @@ export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
     });
   };
   const withSelection = (action: (selection: NonNullable<ReturnType<typeof selectionFromGrid>>) => void) => () => {
-    controller.commitEdit();
+    // A refused formula keeps the editor open with its message; the action would read the old content.
+    if (!controller.commitEdit()) return;
     const selection = selectionFromGrid(controller);
     if (selection === null) return;
     ctx.openPanel("assistant");
@@ -217,7 +218,7 @@ export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
     },
     "trace-clear": () => run(() => controller.clearDecorations(TRACE_LAYER)),
     recalculate: () => {
-      controller.commitEdit();
+      if (!controller.commitEdit()) return;
       session.recalculate();
       notify(session.getState().calcComplete ? "Recalculated every formula." : "Recalculated as far as the limits allow; some values may be out of date.", "info");
       done();
@@ -230,11 +231,11 @@ export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
     "sort-desc": () => run(() => controller.sort(true)),
     "filter-toggle": () => run(() => (controller.isFiltered ? controller.filter(null) : controller.filterByValue())),
     "remove-duplicates": () => {
-      controller.commitEdit();
+      if (!controller.commitEdit()) return;
       report(removeDuplicateRows(controller));
     },
     "text-to-columns": (id) => {
-      controller.commitEdit();
+      if (!controller.commitEdit()) return;
       if (SPLIT_DELIMITERS.some((entry) => entry.id === id)) report(splitTextToColumns(controller, id as SplitDelimiterId));
     },
 
@@ -257,7 +258,7 @@ export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
     "assistant-explain": withSelection((selection) => void ctx.assistant.explain(selection)),
     "assistant-trace": withSelection((selection) => void ctx.assistant.trace(selection)),
     "assistant-check": () => {
-      controller.commitEdit();
+      if (!controller.commitEdit()) return;
       ctx.openPanel("assistant");
       void ctx.assistant.check();
     },

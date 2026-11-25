@@ -4,7 +4,7 @@
  */
 
 import { type CellAddress, type CellRange, type SheetCellRef, type SheetId, type Workbook, formatA1, formatA1Range, isOfficeError } from "./engine";
-import { MAX_HIGHLIGHTS, MAX_TRACE_DEPTH, MAX_TRACE_NODES, MAX_TRACE_RANGE_CELLS } from "./limits";
+import { MAX_HIGHLIGHTS, MAX_TRACE_DEPTH, MAX_TRACE_NODES, MAX_TRACE_RANGE_CELLS, MAX_TRACE_SCAN_CELLS } from "./limits";
 
 export type TraceNodeKind =
   /** A formula cell; `children` are what it reads. */
@@ -29,6 +29,8 @@ export interface TraceNode {
   children: TraceNode[];
   /** Cells of a range that were not expanded, or formula sources not followed because a bound was reached. */
   omitted: number;
+  /** True when the scan bound stopped reading a range before its end: it may hold more cells than `omitted` counts. */
+  unscanned: boolean;
 }
 
 export interface Trace {
@@ -46,6 +48,8 @@ export interface TraceLimits {
   maxNodes?: number;
   maxDepth?: number;
   maxRangeCells?: number;
+  /** Most cell positions read while looking for the filled cells of ranges. */
+  maxScanCells?: number;
 }
 
 interface Walk {
@@ -59,6 +63,9 @@ interface Walk {
   maxNodes: number;
   maxDepth: number;
   maxRangeCells: number;
+  /** Cell positions of ranges read so far, empty ones included. */
+  scanned: number;
+  maxScanCells: number;
 }
 
 function keyOf(sheet: SheetId, row: number, col: number): string {
@@ -84,7 +91,7 @@ function cellNode(walk: Walk, sheet: SheetId, address: CellAddress, depth: numbe
   const location = `${nameOf(walk, sheet)}!${formatA1(address)}`;
   const key = keyOf(sheet, address.row, address.col);
   const cell = walk.workbook.getCell(sheet, address);
-  const base = { sheet, location, row: address.row, col: address.col, display: cell.display, formula: cell.formula, children: [] as TraceNode[], omitted: 0 };
+  const base = { sheet, location, row: address.row, col: address.col, display: cell.display, formula: cell.formula, children: [] as TraceNode[], omitted: 0, unscanned: false };
   if (walk.seen.has(key)) return { ...base, kind: "repeat" };
   walk.seen.add(key);
   if (walk.cells.length < MAX_HIGHLIGHTS) walk.cells.push({ sheet, row: address.row, col: address.col });
@@ -120,8 +127,9 @@ function sourceNode(walk: Walk, sheet: SheetId, range: CellRange, depth: number)
     formula: null,
     children: [],
     omitted: 0,
+    unscanned: false,
   };
-  // Only cells that hold something are sources; the used part of the sheet bounds the scan.
+  // Only cells that hold something are sources; the used part of the sheet and the scan bound limit the positions read.
   const used = walk.workbook.getSheet(sheet).dimensions;
   if (used === null) return node;
   const top = Math.max(range.start.row, used.start.row);
@@ -130,6 +138,12 @@ function sourceNode(walk: Walk, sheet: SheetId, range: CellRange, depth: number)
   const right = Math.min(range.end.col, used.end.col);
   for (let row = top; row <= bottom; row++) {
     for (let col = left; col <= right; col++) {
+      if (walk.scanned >= walk.maxScanCells) {
+        node.unscanned = true;
+        walk.truncated = true;
+        return node;
+      }
+      walk.scanned += 1;
       const cell = walk.workbook.getCell(sheet, { row, col });
       if (cell.value === null && cell.formula === null) continue;
       if (node.children.length >= walk.maxRangeCells || depth + 1 > walk.maxDepth || walk.nodes >= walk.maxNodes) {
@@ -156,6 +170,8 @@ export function traceValue(workbook: Workbook, sheet: SheetId, address: CellAddr
     maxNodes: limits.maxNodes ?? MAX_TRACE_NODES,
     maxDepth: limits.maxDepth ?? MAX_TRACE_DEPTH,
     maxRangeCells: limits.maxRangeCells ?? MAX_TRACE_RANGE_CELLS,
+    scanned: 0,
+    maxScanCells: limits.maxScanCells ?? MAX_TRACE_SCAN_CELLS,
   };
   const root = cellNode(walk, sheet, address, 0);
   return { root, nodeCount: walk.nodes, truncated: walk.truncated, inputs: walk.inputs, cells: walk.cells };
@@ -186,7 +202,8 @@ export function traceText(trace: Trace, maxChars = 12_000): string {
   let cut = false;
   const visit = (node: TraceNode, depth: number): void => {
     if (cut) return;
-    const text = `${"  ".repeat(depth)}${line(node).replace(/[\r\n]+/g, " ")}${node.omitted > 0 ? ` (+${node.omitted} more not followed)` : ""}`;
+    const more = node.unscanned ? " (not read to the end; more cells may follow)" : node.omitted > 0 ? ` (+${node.omitted} more not followed)` : "";
+    const text = `${"  ".repeat(depth)}${line(node).replace(/[\r\n]+/g, " ")}${more}`;
     if (length + text.length + 1 > maxChars) {
       cut = true;
       return;
@@ -200,19 +217,26 @@ export function traceText(trace: Trace, maxChars = 12_000): string {
   return lines.join("\n");
 }
 
-/** Cells read directly by the formulas of a range, for highlighting (bounded). */
-export function directPrecedents(workbook: Workbook, sheet: SheetId, range: CellRange): SheetCellRef[] {
+/**
+ * Cells read directly by the formulas of a range, for highlighting. Bounded
+ * by `MAX_HIGHLIGHTS` cells found and `maxScanCells` positions read, empty
+ * and repeated ones included.
+ */
+export function directPrecedents(workbook: Workbook, sheet: SheetId, range: CellRange, maxScanCells = MAX_TRACE_SCAN_CELLS): SheetCellRef[] {
   const out: SheetCellRef[] = [];
   const seen = new Set<string>();
   const used = workbook.getSheet(sheet).dimensions;
   if (used === null) return out;
+  let scanned = 0;
   for (let row = Math.max(range.start.row, used.start.row); row <= Math.min(range.end.row, used.end.row); row++) {
     for (let col = Math.max(range.start.col, used.start.col); col <= Math.min(range.end.col, used.end.col); col++) {
+      if (++scanned > maxScanCells) return out;
       for (const source of workbook.precedents(sheet, { row, col })) {
         const info = workbook.getSheet(source.sheet).dimensions;
         if (info === null) continue;
         for (let r = Math.max(source.start.row, info.start.row); r <= Math.min(source.end.row, info.end.row); r++) {
           for (let c = Math.max(source.start.col, info.start.col); c <= Math.min(source.end.col, info.end.col); c++) {
+            if (++scanned > maxScanCells) return out;
             const key = keyOf(source.sheet, r, c);
             if (seen.has(key)) continue;
             seen.add(key);

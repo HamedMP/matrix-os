@@ -49,8 +49,9 @@
  * Local documents
  * - `host.openLocal(name, bytes)` opens a file chosen on this computer:
  *   `state.source` is `"local"`, the path is null and autosave is off. Save
- *   it with `exportSessionFile(session)` (bytes, name, MIME type) followed by
- *   `session.markDownloaded()`; `session.saveAs(path)` makes it a Matrix
+ *   it with `exportSessionFile(session)` (bytes, name, MIME type, mark)
+ *   followed by `session.markDownloaded(file.mark)`, which leaves edits made
+ *   during the export unsaved; `session.saveAs(path)` makes it a Matrix
  *   document with autosave. `exportSessionFile(session, "xlsx")` downloads a
  *   copy of any document.
  *

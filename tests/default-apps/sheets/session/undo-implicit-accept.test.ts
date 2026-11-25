@@ -41,3 +41,33 @@ describe("undo after the owner types over a cell the assistant proposed", () => 
     expect(session.workbook.listChanges()).toHaveLength(1);
   });
 });
+
+describe("an edit that fails after writing over a proposed cell", () => {
+  it("puts the proposal back for review along with the cell's content", async () => {
+    const { session, sheet } = await proposed();
+    // The first write accepts the pending change on B2; the second write does not parse and fails the whole edit.
+    const result = session.applyEdits([
+      { sheet, row: 1, col: 1, value: 555 },
+      { sheet, row: 1, col: 2, formula: "=1+" },
+    ]);
+    expect(result).toMatchObject({ ok: false });
+    expect(session.cell(sheet, 1, 1).value).toBe(999);
+    expect(session.workbook.listChanges()).toMatchObject([{ row: 1, col: 1, oldValue: 50000, newValue: 999, author: "Matrix Assistant", label: "Lower the price" }]);
+    expect(session.cell(sheet, 1, 1).pendingChangeId).not.toBeNull();
+
+    session.rejectChanges("all");
+    expect(session.cell(sheet, 1, 1).value).toBe(50000);
+  });
+
+  it("keeps the undo history of earlier edits", async () => {
+    const { session, sheet } = await proposed();
+    session.setCellInput(sheet, { row: 5, col: 5 }, "7");
+    session.applyEdits([
+      { sheet, row: 1, col: 1, value: 555 },
+      { sheet, row: 1, col: 2, formula: "=1+" },
+    ]);
+    expect(session.getState().canUndo).toBe(true);
+    expect(session.undo()).toMatchObject({ ok: true });
+    expect(session.cell(sheet, 5, 5).value).toBeNull();
+  });
+});

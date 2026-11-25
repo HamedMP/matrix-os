@@ -11,6 +11,13 @@ import { isOfficeError, parseCsv } from "../session/engine";
 /** Largest paste accepted, in characters. */
 export const MAX_IMPORT_CHARS = 5_000_000;
 export const MAX_IMPORT_CELLS = 500_000;
+/**
+ * Most positions of the pasted table read back, empty ones included. A few
+ * long rows among short ones make the table much larger than its cells.
+ */
+export const MAX_IMPORT_AREA = 4 * MAX_IMPORT_CELLS;
+
+const TOO_MANY_CELLS = "The pasted text has more cells than Sheets imports at once.";
 
 export type ImportResult = { ok: true; rows: string[][] } | { ok: false; message: string };
 
@@ -22,6 +29,7 @@ export function parsePastedTable(text: string): ImportResult {
     const sheet = workbook.listSheets()[0];
     const used = sheet?.dimensions ?? null;
     if (sheet === undefined || used === null) return { ok: false, message: "No rows were found in the pasted text." };
+    if ((used.end.row + 1) * (used.end.col + 1) > MAX_IMPORT_AREA) return { ok: false, message: TOO_MANY_CELLS };
     const rows: string[][] = [];
     for (let row = 0; row <= used.end.row; row++) {
       const fields: string[] = [];
@@ -35,7 +43,7 @@ export function parsePastedTable(text: string): ImportResult {
     }
     return { ok: true, rows };
   } catch (error: unknown) {
-    if (isOfficeError(error)) return { ok: false, message: "The pasted text has more cells than Sheets imports at once." };
+    if (isOfficeError(error)) return { ok: false, message: TOO_MANY_CELLS };
     throw error;
   }
 }

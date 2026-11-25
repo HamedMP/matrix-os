@@ -107,4 +107,18 @@ describe("SheetsAgentPanel", () => {
     expect((screen.getByRole("button", { name: "Check for hard-coded values" }) as HTMLButtonElement).disabled).toBe(false);
     assistant.dispose();
   });
+
+  it("does nothing when the cell editor's text was refused", async () => {
+    installBridge();
+    const model = await openModel();
+    const assistant = new SheetsAssistant({ session: model.session, ai: bridgeSheetsAi(window), now: NOW });
+    const selection = { sheet: model.sheets.summary, range: { start: { row: 3, col: 1 }, end: { row: 3, col: 1 } } };
+    render(<SheetsAgentPanel assistant={assistant} getSelection={() => selection} beforeAction={() => false} />);
+    fireEvent.click(screen.getByRole("button", { name: "Check for hard-coded values" }));
+    fireEvent.click(screen.getByRole("button", { name: "Format as table" }));
+    await settle();
+    expect(assistant.getState().messages).toEqual([]);
+    expect(model.session.workbook.listChanges()).toEqual([]);
+    assistant.dispose();
+  });
 });

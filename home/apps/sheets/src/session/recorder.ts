@@ -12,6 +12,7 @@
  */
 
 import {
+  type CellChange,
   type CellMutation,
   type CellRange,
   type FrozenPanes,
@@ -141,12 +142,17 @@ export class Recorder {
     return { entry, changed: true };
   }
 
-  /** Takes back everything the open transaction did and drops it. */
-  rollback(): void {
+  /**
+   * Takes back everything the open transaction did and drops it. `accepted`
+   * are the proposed changes it accepted by writing over their cells; they
+   * are proposed again, so they stay pending for review.
+   */
+  rollback(accepted: readonly CellChange[] = []): void {
     const open = this.requireOpen();
     this.flushCells(open);
     this.open = null;
-    this.replay(() => applyEntry(this.internals, { label: open.label, steps: open.steps }, false));
+    const steps: HistoryStep[] = accepted.length > 0 ? [{ kind: "accepted", changes: [...accepted] }, ...open.steps] : open.steps;
+    this.replay(() => applyEntry(this.internals, { label: open.label, steps }, false));
     if (open.overflow) this.history.clear();
   }
 

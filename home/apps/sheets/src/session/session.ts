@@ -232,7 +232,8 @@ export class SheetSession {
     try {
       run(transactionFor(this.recorder, this.wb));
     } catch (error: unknown) {
-      this.recorder.rollback();
+      // Changes accepted by writing over their cells are proposed again.
+      this.recorder.rollback(acceptedBy(pending, this.wb.listChanges()));
       if (!isOfficeError(error) && !(error instanceof SheetSessionError)) this.log("an edit failed", error);
       return failure(error);
     }
@@ -434,10 +435,15 @@ export class SheetSession {
     return serializeWorkbook(this.wb, format, format === this.saver.format ? this.saver.csv : null);
   }
 
-  /** A local document's edits were downloaded to the computer: it counts as saved. */
-  markDownloaded(): void {
+  /** Grows with every edit; read before an export and passed to `markDownloaded` after it. */
+  editMark(): number {
+    return this.editSeq;
+  }
+
+  /** A local document's edits up to `mark` were downloaded: those count as saved, later ones stay unsaved. */
+  markDownloaded(mark: number = this.editSeq): void {
     if (this.disposed || this.getState().source !== "local") return;
-    this.saver.markSaved();
+    this.saver.markSaved(Math.min(mark, this.editSeq));
   }
 
   /** Calculates out-of-date and volatile formulas now. Not an edit: nothing is marked unsaved. */

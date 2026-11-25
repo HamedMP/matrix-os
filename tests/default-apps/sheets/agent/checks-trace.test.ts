@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createXlsx } from "../../../../home/apps/_shared/office-engine/index";
-import { checkWorkbook, traceText, traceValue } from "../../../../home/apps/sheets/src/agent";
+import { checkWorkbook, directPrecedents, traceText, traceValue } from "../../../../home/apps/sheets/src/agent";
+import type { Workbook } from "../../../../home/apps/_shared/office-engine/index";
 import { openModel } from "../review/fixture";
 
 describe("deterministic checks", () => {
@@ -71,5 +72,47 @@ describe("tracing a value", () => {
     const trace = traceValue(session.workbook, sheets.summary, { row: 1, col: 1 });
     expect(trace.root).toMatchObject({ kind: "input", children: [] });
     expect(trace.inputs).toHaveLength(1);
+  });
+
+  describe("over a formula that covers a large, mostly empty area", () => {
+    // Two values far apart make the used area of the sheet large; the formula reads all of it.
+    function sparse(): { workbook: Workbook; sheet: string; reads: () => number } {
+      const workbook = createXlsx();
+      const sheet = workbook.listSheets()[0]!.id;
+      workbook.setCell(sheet, { row: 0, col: 0 }, 1);
+      workbook.setCell(sheet, { row: 199_999, col: 49 }, 2);
+      workbook.setFormula(sheet, { row: 0, col: 60 }, "SUM(A1:AX200000)");
+      workbook.recalc();
+      let count = 0;
+      const getCell = workbook.getCell.bind(workbook);
+      const precedents = workbook.precedents.bind(workbook);
+      workbook.getCell = (...args) => {
+        count += 1;
+        return getCell(...args);
+      };
+      workbook.precedents = (...args) => {
+        count += 1;
+        return precedents(...args);
+      };
+      return { workbook, sheet, reads: () => count };
+    }
+
+    it("reads a bounded number of positions and says the range was not read to the end", () => {
+      const { workbook, sheet, reads } = sparse();
+      const trace = traceValue(workbook, sheet, { row: 0, col: 60 }, { maxScanCells: 5_000 });
+      expect(reads()).toBeLessThan(6_000);
+      expect(trace.truncated).toBe(true);
+      const range = trace.root.children[0]!;
+      expect(range).toMatchObject({ kind: "range", unscanned: true });
+      expect(range.children.map((child) => child.location)).toEqual(["Sheet1!A1"]);
+      expect(traceText(trace)).toContain("not read to the end");
+    });
+
+    it("finds the highlighted sources of a selection within the same bound", () => {
+      const { workbook, sheet, reads } = sparse();
+      // The selection holds no formula: every position in it is looked at and none reads anything.
+      expect(directPrecedents(workbook, sheet, { start: { row: 0, col: 0 }, end: { row: 199_999, col: 49 } }, 5_000)).toEqual([]);
+      expect(reads()).toBeLessThanOrEqual(5_001);
+    });
   });
 });

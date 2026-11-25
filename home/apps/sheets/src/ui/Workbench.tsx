@@ -97,7 +97,8 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", files
   }, [toast]);
 
   const save = useCallback(() => {
-    controller.commitEdit();
+    // Text the editor refused stays there with its message; saving now would leave it out.
+    if (!controller.commitEdit()) return;
     void saveDocument(session, download, notify).then((result) => {
       if (result === "needs-path") files.saveAs("save");
     });
@@ -129,9 +130,9 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", files
   const aiAvailable = ai !== null && aiAccess === "available";
 
   const fileCommands: FileCommands = useMemo(() => {
+    // A file command runs only once the editor's text is stored: a refused formula keeps the editor open and stops it.
     const commit = (action: () => void) => () => {
-      controller.commitEdit();
-      action();
+      if (controller.commitEdit()) action();
     };
     return {
       newWorkbook: commit(files.newWorkbook),

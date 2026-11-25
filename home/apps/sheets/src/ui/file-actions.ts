@@ -17,19 +17,24 @@ const NO_DOWNLOAD = "This window cannot download files. Save a copy to Matrix in
  * or as a copy in `format`. False when nothing was downloaded.
  */
 export async function downloadWorkbook(session: SheetSession, download: Download, notify: Notify, format?: SheetFileFormat): Promise<boolean> {
+  return (await exportAndDownload(session, download, notify, format)) !== null;
+}
+
+/** Downloads the workbook; resolves with the edit mark the file holds, or null when nothing was downloaded. */
+async function exportAndDownload(session: SheetSession, download: Download, notify: Notify, format?: SheetFileFormat): Promise<number | null> {
   const file = await exportSessionFile(session, format);
   if (!file.ok) {
     notify(file.message, "danger");
-    return false;
+    return null;
   }
   try {
     download(file.name, file.bytes, file.mimeType);
   } catch (error: unknown) {
     logFailure("download failed", error);
     notify(NO_DOWNLOAD, "danger");
-    return false;
+    return null;
   }
-  return true;
+  return file.mark;
 }
 
 export type SaveResult = "saved" | "needs-path" | "failed";
@@ -43,8 +48,10 @@ export type SaveResult = "saved" | "needs-path" | "failed";
 export async function saveDocument(session: SheetSession, download: Download, notify: Notify): Promise<SaveResult> {
   const state = session.getState();
   if (state.source === "local") {
-    if (!(await downloadWorkbook(session, download, notify))) return "failed";
-    session.markDownloaded();
+    const mark = await exportAndDownload(session, download, notify);
+    if (mark === null) return "failed";
+    // Edits made while the file was packed are not in it: they stay unsaved.
+    session.markDownloaded(mark);
     notify(`Downloaded ${state.name} to this computer.`, "success");
     return "saved";
   }
@@ -70,9 +77,9 @@ export function describeSave(outcome: SaveOutcome, verb = "Saved"): { message: s
   }
 }
 
-/** Saves to the file's own path. Text still in the cell editor is stored first. */
+/** Saves to the file's own path. Text still in the cell editor is stored first; when it is refused, nothing is saved. */
 export async function saveNow(session: SheetSession, controller: SheetGridController, notify: Notify): Promise<void> {
-  controller.commitEdit();
+  if (!controller.commitEdit()) return;
   const outcome = await session.save();
   if (outcome.status === "saved" || outcome.status === "unchanged") return;
   const text = describeSave(outcome);
@@ -80,7 +87,7 @@ export async function saveNow(session: SheetSession, controller: SheetGridContro
 }
 
 export async function saveCopyNow(session: SheetSession, controller: SheetGridController, notify: Notify): Promise<void> {
-  controller.commitEdit();
+  if (!controller.commitEdit()) return;
   const outcome = await session.saveCopy();
   const text = describeSave(outcome, "Saved a copy");
   if (text !== null) notify(outcome.status === "saved" ? `${text.message} You are now editing the copy.` : text.message, text.tone);
@@ -94,7 +101,7 @@ export function workbookPathFor(path: string, attempt = 1): string {
 
 /** Saves a CSV or TSV file as a workbook beside it, which keeps pending changes for review, and continues there. */
 export async function saveAsWorkbookNow(session: SheetSession, controller: SheetGridController, notify: Notify): Promise<void> {
-  controller.commitEdit();
+  if (!controller.commitEdit()) return;
   const path = session.getState().path;
   if (path === null) return;
   let outcome: SaveOutcome = { status: "unchanged" };

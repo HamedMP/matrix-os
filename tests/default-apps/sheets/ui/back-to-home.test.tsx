@@ -111,4 +111,44 @@ describe("Back to the Sheets start screen", () => {
     fileClose();
     await startScreen();
   });
+
+  describe("with text in the cell editor that cannot be stored", () => {
+    function typeBadFormula(app: Awaited<ReturnType<typeof renderApp>>): void {
+      const grid = app.container.querySelector<HTMLElement>("[role='grid']")!;
+      act(() => grid.focus());
+      fireEvent.keyDown(grid, { key: "=" });
+      const input = app.container.querySelector<HTMLTextAreaElement>(".sg-input--cell textarea")!;
+      fireEvent.change(input, { target: { value: "=1+" } });
+    }
+
+    function editorText(app: Awaited<ReturnType<typeof renderApp>>): string | null {
+      return app.container.querySelector<HTMLTextAreaElement>(".sg-input--cell textarea")?.value ?? null;
+    }
+
+    it("stays on the workbook with the editor open instead of going home", async () => {
+      const app = await renderWithWorkbook();
+      typeBadFormula(app);
+      goHome();
+      await flush();
+      expect(app.host.session).not.toBeNull();
+      expect(editorText(app)).toBe("=1+");
+
+      fileClose();
+      await flush();
+      expect(app.host.session).not.toBeNull();
+      expect(editorText(app)).toBe("=1+");
+    });
+
+    it("does not save until the text is fixed", async () => {
+      const app = await renderWithWorkbook();
+      act(() => {
+        app.session().setCellInput(app.session().getState().activeSheetId, { row: 5, col: 5 }, "7");
+      });
+      typeBadFormula(app);
+      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+      await flush();
+      expect(app.bridge.fileStore.writes).toEqual([]);
+      expect(editorText(app)).toBe("=1+");
+    });
+  });
 });

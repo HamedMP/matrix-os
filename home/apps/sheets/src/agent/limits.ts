@@ -20,6 +20,12 @@ export const MAX_FINDINGS = 200;
 export const MAX_TRACE_NODES = 400;
 export const MAX_TRACE_DEPTH = 10;
 export const MAX_TRACE_RANGE_CELLS = 60;
+/**
+ * Most cell positions one trace, or one search for the cells a selection
+ * reads, looks at, empty ones included. A formula over a large sparse area
+ * would otherwise read every position in it.
+ */
+export const MAX_TRACE_SCAN_CELLS = 100_000;
 /** Most precedent cells highlighted on the grid. */
 export const MAX_HIGHLIGHTS = 2_000;
 /** How long one model call may take before the assistant gives up. */

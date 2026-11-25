@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createXlsx } from "../../../../home/apps/_shared/office-engine/index";
 import { openSheetSession } from "../../../../home/apps/sheets/src/session";
 import { findMatches, nextMatch, planReplaceAll, replaceText } from "../../../../home/apps/sheets/src/ui/find-replace";
+import { MAX_IMPORT_AREA, parsePastedTable } from "../../../../home/apps/sheets/src/ui/import-csv";
 import { goToNames, resolveGoTo } from "../../../../home/apps/sheets/src/ui/name-box";
 import { changeDecimals, presetOf } from "../../../../home/apps/sheets/src/ui/number-format";
 import { selectionStats } from "../../../../home/apps/sheets/src/ui/selection-stats";
@@ -139,5 +140,17 @@ describe("sheet tabs model", () => {
     expect(await store.load("f59.xlsx")).toEqual({ order: ["a"], colors: {} });
     const broken = new TabLookStore({ readData: async () => Promise.reject(new Error("down")) });
     expect(await broken.load("x.xlsx")).toEqual(EMPTY_LOOK);
+  });
+});
+
+describe("importing pasted rows", () => {
+  it("reads fields as text and keeps a leading = from becoming a formula", () => {
+    expect(parsePastedTable("name,amount\nTea,=1+1\n")).toEqual({ ok: true, rows: [["name", "amount"], ["Tea", "'=1+1"]] });
+  });
+
+  it("refuses a paste whose rows span more positions than it reads, without reading them", () => {
+    // One wide row over many short ones: few cells, but a table of rows x widest row.
+    const text = `${"a,".repeat(9_999)}a\n${"x\n".repeat(Math.ceil(MAX_IMPORT_AREA / 10_000))}`;
+    expect(parsePastedTable(text)).toEqual({ ok: false, message: "The pasted text has more cells than Sheets imports at once." });
   });
 });

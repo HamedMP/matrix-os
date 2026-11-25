@@ -29,7 +29,11 @@ export interface SheetPanels {
  */
 export function useSheetPanels(session: SheetSession, grid: SheetGridController, ai: SheetsAi | null, onReview: (changeId: string | null) => void): SheetPanels {
   const review = useMemo(() => new SheetReviewController(session, grid, logFailure), [session, grid]);
-  useEffect(() => () => review.dispose(), [review]);
+  // StrictMode sets effects up, cleans them up and sets them up again with the same objects: attach in the setup.
+  useEffect(() => {
+    review.attach();
+    return () => review.dispose();
+  }, [review]);
   const assistant = useMemo(
     () =>
       new SheetsAssistant({
@@ -44,7 +48,10 @@ export function useSheetPanels(session: SheetSession, grid: SheetGridController,
       }),
     [session, ai, grid, review, onReview],
   );
-  useEffect(() => () => assistant.dispose(), [assistant]);
+  useEffect(() => {
+    assistant.attach();
+    return () => assistant.dispose();
+  }, [assistant]);
   return { review, assistant };
 }
 

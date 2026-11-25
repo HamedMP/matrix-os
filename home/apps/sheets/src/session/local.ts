@@ -4,7 +4,7 @@
  * A workbook opened from a local file has no Matrix path: it is a session
  * with `source: "local"`, autosave off, and no recent-files entry. Saving it
  * means downloading the updated file under the same name
- * (`exportSessionFile`, then `session.markDownloaded()`); `session.saveAs`
+ * (`exportSessionFile`, then `session.markDownloaded(file.mark)`); `session.saveAs`
  * to a Matrix path makes it a normal Matrix document.
  */
 
@@ -35,7 +35,8 @@ export async function openLocalSheetSession(deps: SessionDeps, name: string, byt
   return new SheetSession(deps, loaded, { path: null, format, version: null }, { name: clean, source: "local" });
 }
 
-export type ExportedFile = { ok: true; name: string; bytes: Uint8Array; mimeType: string } | SessionFailure;
+/** `mark` is the session's `editMark()` when the export started: the file holds the edits up to it. */
+export type ExportedFile = { ok: true; name: string; bytes: Uint8Array; mimeType: string; mark: number } | SessionFailure;
 
 /**
  * The workbook as a file to download: in its own format and name, or as a
@@ -46,9 +47,10 @@ export async function exportSessionFile(session: SheetSession, format: SheetFile
   const state = session.getState();
   if (format !== "xlsx" && session.workbook.listChanges().length > 0) return failure(new SheetSessionError("review_pending"));
   const stem = state.name.replace(/\.(xlsx|csv|tsv)$/i, "") || "Workbook";
+  const mark = session.editMark();
   try {
     const bytes = await session.serialize(format);
-    return { ok: true, name: `${stem}.${format}`, bytes, mimeType: MIME_TYPES[format] };
+    return { ok: true, name: `${stem}.${format}`, bytes, mimeType: MIME_TYPES[format], mark };
   } catch (error: unknown) {
     return failure(error);
   }

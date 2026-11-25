@@ -16,8 +16,8 @@ export interface SheetsAgentPanelProps {
   assistant: SheetsAssistant;
   /** The selection actions apply to; usually `() => selectionFromGrid(gridController)`. */
   getSelection: () => SheetSelection | null;
-  /** Called before an action reads the workbook, e.g. `gridController.commitEdit()`. */
-  beforeAction?: () => void;
+  /** Called before an action reads the workbook, e.g. `gridController.commitEdit()`. False stops the action. */
+  beforeAction?: () => boolean | void;
   onClose?: () => void;
   /** False when this host has no model: AI actions are off, the checks and formatting still work. */
   aiAvailable?: boolean;
@@ -35,7 +35,7 @@ export function SheetsAgentPanel({ assistant, getSelection, beforeAction, onClos
   const results = useMemo(() => state.results.map((result) => toAgentResult(result, assistant)), [state.results, assistant]);
 
   const withSelection = (action: (selection: SheetSelection) => void) => () => {
-    beforeAction?.();
+    if (beforeAction?.() === false) return;
     const selection = getSelection();
     if (selection === null) {
       setHint("Select a cell or a range on the sheet first.");
@@ -55,7 +55,7 @@ export function SheetsAgentPanel({ assistant, getSelection, beforeAction, onClos
           showLabel
           disabled={state.busy}
           onClick={() => {
-            beforeAction?.();
+            if (beforeAction?.() === false) return;
             setHint(null);
             void assistant.check();
           }}

@@ -325,13 +325,16 @@ export class SaveController {
     this.saveError = null;
   }
 
-  /** The edits so far were saved somewhere else (a download of a local file): the document counts as saved. */
-  markSaved(): void {
+  /**
+   * The edits up to `seq` (default: all so far) were saved somewhere else, a
+   * download of a local file. Edits after `seq` stay unsaved.
+   */
+  markSaved(seq: number = this.host.editSeq()): void {
     if (this.disposed) return;
     this.cancelTimer();
-    this.savedSeq = this.host.editSeq();
+    this.savedSeq = seq;
     this.lastSavedAt = this.options.now();
-    this.saveState = "saved";
+    this.saveState = this.dirty ? "idle" : "saved";
     this.saveError = null;
     this.host.changed();
   }

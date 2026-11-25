@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { createXlsx, openXlsx } from "../../../../home/apps/_shared/office-engine/index";
 import { runProposal } from "../../../../home/apps/sheets/src/agent";
 import { SessionHost, exportSessionFile, openLocalSheetSession, openSheetSession } from "../../../../home/apps/sheets/src/session";
+import { saveDocument } from "../../../../home/apps/sheets/src/ui/file-actions";
 import { encode, harness, sampleXlsx, settle } from "./fakes";
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -44,6 +45,24 @@ describe("a workbook opened from this computer", () => {
     session.markDownloaded();
     expect(session.getState()).toMatchObject({ dirty: false, saveState: "saved", source: "local" });
     expect(h.files.writes).toEqual([]);
+  });
+
+  it("keeps an edit made while the download was being packed unsaved", async () => {
+    const h = harness();
+    const session = await openLocalSheetSession(h.deps, "Budget.xlsx", await sampleXlsx());
+    const sheet = session.getState().activeSheetId;
+    session.setCellInput(sheet, { row: 0, col: 0 }, "40");
+    const downloads: Uint8Array[] = [];
+    const saving = saveDocument(session, (_name, bytes) => downloads.push(bytes), () => undefined);
+    // The export is still being packed: this edit is not in the file that is downloaded.
+    session.setCellInput(sheet, { row: 0, col: 1 }, "late");
+
+    expect(await saving).toBe("saved");
+    expect(downloads).toHaveLength(1);
+    const saved = await openXlsx(downloads[0]!);
+    expect(saved.getCell(saved.listSheets()[0]!.id, { row: 0, col: 1 }).value).not.toBe("late");
+    expect(session.getState().dirty).toBe(true);
+    expect(session.getState().saveState).not.toBe("saved");
   });
 
   it("writes a CSV back in the delimiter it was read with, and downloads a copy as .xlsx", async () => {

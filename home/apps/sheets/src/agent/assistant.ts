@@ -69,7 +69,7 @@ function capitalise(text: string): string {
 export class SheetsAssistant {
   private state: AssistantState = { messages: [], statusLines: [], results: [], busy: false };
   private readonly listeners = new Set<() => void>();
-  private readonly unsubscribe: () => void;
+  private unsubscribe: (() => void) | null = null;
   private grid: AssistantGrid | null;
   private controller: AbortController | null = null;
   private seq = 0;
@@ -77,9 +77,23 @@ export class SheetsAssistant {
 
   constructor(private readonly deps: AssistantDeps) {
     this.grid = deps.grid ?? null;
-    this.unsubscribe = deps.session.subscribe((event) => {
+    this.attach();
+  }
+
+  /**
+   * Follows the session's changes; the constructor does this. After
+   * `dispose`, attaching again brings the cards up to date and resumes, so a
+   * component can dispose in an effect's cleanup and attach in its setup.
+   */
+  attach(): void {
+    if (this.unsubscribe !== null) return;
+    this.disposed = false;
+    // An action cancelled by `dispose` that ended meanwhile could not clear `busy`.
+    if (this.state.busy && this.controller === null) this.state = { ...this.state, busy: false };
+    this.unsubscribe = this.deps.session.subscribe((event) => {
       if (event.type === "change") this.syncProposals();
     });
+    this.syncProposals();
   }
 
   getState(): AssistantState {
@@ -347,7 +361,8 @@ export class SheetsAssistant {
     this.cancel();
     this.clearHighlights();
     this.disposed = true;
-    this.unsubscribe();
+    this.unsubscribe?.();
+    this.unsubscribe = null;
     this.listeners.clear();
   }
 }

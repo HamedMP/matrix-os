@@ -57,7 +57,7 @@ const FAILED_NOTICE = "The change could not be resolved. Try again.";
 export class SheetReviewController {
   private grid: ReviewGrid | null;
   private readonly listeners = new Set<() => void>();
-  private readonly unsubscribe: () => void;
+  private unsubscribe: (() => void) | null = null;
   private state: ReviewState;
   private markupOn = false;
   private disposed = false;
@@ -69,9 +69,21 @@ export class SheetReviewController {
   ) {
     this.grid = grid;
     this.state = this.build(null, [], null, -1);
-    this.unsubscribe = session.subscribe((event) => {
+    this.attach();
+  }
+
+  /**
+   * Follows the session's changes; the constructor does this. After
+   * `dispose`, attaching again reads the journal again and resumes, so a
+   * component can dispose in an effect's cleanup and attach in its setup.
+   */
+  attach(): void {
+    if (this.unsubscribe !== null) return;
+    this.disposed = false;
+    this.unsubscribe = this.session.subscribe((event) => {
       if (event.type === "change") this.refresh();
     });
+    this.refresh();
   }
 
   getState(): ReviewState {
@@ -277,11 +289,13 @@ export class SheetReviewController {
     }
   }
 
+  /** Stops following the session and clears the markup. `attach` resumes. */
   dispose(): void {
     if (this.disposed) return;
     this.grid?.clearDecorations(MARKUP_LAYER);
     this.disposed = true;
-    this.unsubscribe();
+    this.unsubscribe?.();
+    this.unsubscribe = null;
     this.listeners.clear();
   }
 }
