@@ -23,8 +23,11 @@ function scope() {
 }
 
 function teamWith(api: Partial<CollaborationDirectApi>): TeamCollaboration {
+  // These tabs are shared on their own: the whole computer is not.
+  const get = api.get;
+  const wrapped = { ...api, get: async (path: string) => path.endsWith("/terminal/team/computer") ? { shared: false, canOpenTabs: false } : get?.(path) };
   return {
-    api: () => api as CollaborationDirectApi,
+    api: () => wrapped as CollaborationDirectApi,
     organizations: async () => [{ organizationId: "org_team", name: "Acme" }],
   };
 }

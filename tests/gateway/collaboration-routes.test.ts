@@ -68,6 +68,7 @@ describe("collaboration gateway routes", () => {
   const teamComputers = {
     policy: vi.fn(async () => ({ organizationId: "org_matrix_team", computerLabel: "team-dev-1", grants: [{ audience: { kind: "organization" }, preset: "contributor" }] })),
     isComputerScope: vi.fn(async () => true),
+    stopping: vi.fn(async () => false),
     share: vi.fn(async () => 1),
     stop: vi.fn(async () => undefined),
     openTab: vi.fn(async () => "10000000-0000-4000-8000-0000000000f1"),

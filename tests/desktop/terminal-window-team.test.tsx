@@ -267,3 +267,15 @@ describe("Shared computer (spec 2710 layer 6)", () => {
     expect(screen.queryByRole("button", { name: /New terminal on/ })).toBeNull();
   });
 });
+
+describe("Shared computer new tab failure (Greptile on #3689)", () => {
+  it("says the new terminal could not be opened instead of failing silently", async () => {
+    const onOpen = vi.fn();
+    render(<TeamSpaces selectedKey={null} onOpen={onOpen} onAccept={vi.fn()} onOpenTab={vi.fn(async () => null)} onRetry={vi.fn()} state={{ status: "ready", terminals: [
+      { kind: "ready", scopeId: scopeA, ownerId: "user_nima", runtimeId, projection: { ...projection(scopeA, "editor"), computerShared: true, canOpenTabs: true } as never },
+    ] }} />);
+    fireEvent.click(screen.getByRole("button", { name: "New terminal on Nima's team-dev-1" }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Couldn't open a terminal there.");
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+});

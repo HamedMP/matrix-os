@@ -8,7 +8,7 @@ import {
   TeamTerminalLabelRequestSchema,
   TeamTerminalProjectionSchema,
 } from "@matrix-os/contracts";
-import { TeamComputerShareError } from "./team-computer-share.js";
+import { policyLetsOpenTabs, TeamComputerShareError } from "./team-computer-share.js";
 import { CollaborationAuthorizationError } from "./authority.js";
 import { readTeamTerminalLabel, writeTeamTerminalLabel } from "./team-terminal-labels.js";
 import type { Hono } from "hono";
@@ -67,7 +67,7 @@ export function registerTerminalRoutes(routes: Hono, options: CollaborationRoute
       role: context.role,
       status: terminal.status,
       inputMode: dispatcher.inputMode(scopeId, terminal.incarnation),
-      ...(await computerAccess(options, scopeId, context.role)),
+      ...(await computerAccess(options, scopeId, context.role, context.actorId)),
       ...(TeamTerminalProjectionSchema.shape.size.safeParse(info?.size).data ? { size: info!.size } : {}),
     }));
   }));
@@ -91,10 +91,12 @@ export function registerTerminalRoutes(routes: Hono, options: CollaborationRoute
     const computers = requireTeamComputers(options);
     const policy = await computers.policy();
     const shared = Boolean(policy) && (context.role === "owner" || await computers.isComputerScope(scopeId));
+    const stopping = context.role === "owner" && await computers.stopping();
     return c.json(TeamComputerShareSchema.parse({
       shared,
+      ...(stopping ? { stopping } : {}),
       ...(context.role === "owner" && policy ? { grants: policy.grants } : {}),
-      canOpenTabs: shared && context.role !== "viewer",
+      canOpenTabs: shared && context.role !== "viewer" && (context.role === "owner" || policyLetsOpenTabs(policy!, context.actorId)),
     }));
   }));
 
@@ -156,8 +158,10 @@ function requireTeamComputers(options: CollaborationRouteOptions) {
   return options.teamComputers;
 }
 
-async function computerAccess(options: CollaborationRouteOptions, scopeId: string, role: string): Promise<{ computerShared?: boolean; canOpenTabs?: boolean }> {
-  if (!options.teamComputers) return {};
-  const computerShared = await options.teamComputers.isComputerScope(scopeId);
-  return computerShared ? { computerShared, canOpenTabs: role !== "viewer" } : {};
+async function computerAccess(options: CollaborationRouteOptions, scopeId: string, role: string, actorId: string): Promise<{ computerShared?: boolean; canOpenTabs?: boolean }> {
+  if (!options.teamComputers || !await options.teamComputers.isComputerScope(scopeId)) return {};
+  const policy = await options.teamComputers.policy();
+  // Only people a new tab would be shared with may open one; a hand-added Editor may not.
+  const canOpenTabs = Boolean(policy) && role !== "viewer" && (role === "owner" || policyLetsOpenTabs(policy!, actorId));
+  return { computerShared: true, canOpenTabs };
 }

@@ -61,24 +61,31 @@ function NewTabButton({ group, onOpenTab, onOpen }: {
   onOpen(key: string): void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const from = group.terminals.find((terminal) => terminal.kind === "ready" && terminal.projection.canOpenTabs);
   if (!from) return null;
   const open = async () => {
     if (busy) return;
     setBusy(true);
+    setFailed(false);
+    let created: string | null = null;
     try {
-      const created = await onOpenTab(from.scopeId);
-      if (created) onOpen(teamRowKey(created));
+      created = await onOpenTab(from.scopeId);
     } finally {
       setBusy(false);
     }
+    if (created) onOpen(teamRowKey(created));
+    else setFailed(true);
   };
   return (
+    <>
+    {failed ? <span role="alert" className="text-[11px]">Couldn't open a terminal there.</span> : null}
     <button type="button" aria-label={`New terminal on ${group.name}`} title="New terminal on this shared computer" disabled={busy}
       onClick={() => { void open(); }}
       className="no-drag flex size-5 shrink-0 items-center justify-center rounded outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-current disabled:opacity-50">
       <Plus size={12} aria-hidden="true" />
     </button>
+    </>
   );
 }
 

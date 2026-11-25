@@ -173,6 +173,8 @@ export const TeamComputerShareRequestSchema = z.object({
 
 export const TeamComputerShareSchema = z.object({
   shared: z.boolean(),
+  /** A stop started and has not finished: the owner should stop again. */
+  stopping: z.boolean().optional(),
   /** Owner only: the people and roles every tab is shared with. */
   grants: z.array(TeamComputerGrantSchema).max(TEAM_COMPUTER_MAX_GRANTS).optional(),
   canOpenTabs: z.boolean(),

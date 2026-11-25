@@ -138,3 +138,11 @@ describe("whole-computer sharing from the owner's dialog (spec 2710 layer 6)", (
     expect(api.put).not.toHaveBeenCalled();
   });
 });
+
+describe("computer share state (Greptile on #3689)", () => {
+  it("treats an unfinished stop as still shared, so the owner is offered Stop again", async () => {
+    const { readComputerShare } = await import("@desktop/renderer/src/features/terminal-window/share/team-share");
+    const api = fakeApi({ get: () => ({ shared: false, stopping: true, canOpenTabs: false }) });
+    await expect(readComputerShare(api, scopeId)).resolves.toBe(true);
+  });
+});

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CollaborationDirectApi } from "@matrix-os/ui";
 import type { CollaborationScope } from "@matrix-os/contracts";
 import { computerRuntimeId, type TeamOrganization } from "./use-team-collaboration";
-import { findTeamTerminal, prepareTeamTerminal, stopSharingTeamTerminal, syncEditorTyping } from "./team-share";
+import { findTeamTerminal, prepareTeamTerminal, readComputerShare, shareComputer, stopSharingComputer, stopSharingTeamTerminal, syncEditorTyping } from "./team-share";
 import type { ShareTarget } from "./ShareTerminalDialog";
 
 export const MAX_LABEL = 64;
@@ -92,6 +92,8 @@ export function useShareFlow(
     const request = live.current;
     setStep({ kind: "working" });
     try {
+      // A shared computer would share this tab again on its next pass: stop the computer first.
+      if (await readComputerShare(ready.api, scope.id)) await stopSharingComputer(ready.api, scope.id);
       await stopSharingTeamTerminal(ready.api, scope.id);
       if (request === live.current) setStep({ kind: "confirm" });
     } catch (error: unknown) {
@@ -107,6 +109,8 @@ export function useShareFlow(
     const request = live.current;
     try {
       await syncEditorTyping(ready.api, scope.id);
+      // While the whole computer is shared, its policy decides every tab's access: this change becomes the policy.
+      if (await readComputerShare(ready.api, scope.id)) await shareComputer(ready.api, scope.id);
       if (request === live.current) setStep({ kind: "shared", scope });
     } catch (error: unknown) {
       console.warn("[terminal-window] typing sync failed:", error instanceof Error ? error.name : "UnknownError");

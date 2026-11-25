@@ -9,6 +9,8 @@ import { clearTeamSessions, updateTeamSession } from "./team-session-store";
 import { createTeamTerminalSocket } from "./team-terminal-socket";
 
 const REFRESH_MS = 30_000;
+const JOIN_ATTEMPTS = 5;
+const JOIN_RETRY_MS = 1_500;
 
 export type TeamTerminalsState =
   | { status: "idle" }
@@ -72,17 +74,25 @@ export function useTeamTerminals(team: TeamCollaboration, enabled: boolean) {
     }
   }, [load, team]);
 
-  /** Opens a new tab on a shared computer, joins it, and returns it to show. */
+  /** Opens a new tab on a shared computer, joins it, and returns it to show; null with a logged reason on failure. */
   const openTab = useCallback(async (fromScopeId: string): Promise<string | null> => {
     const api = team.api();
     if (!api) return null;
     try {
       const scopeId = await openTeamComputerTab(api, fromScopeId);
-      const terminals = await listTeamTerminals(api);
-      const created = terminals.find((terminal) => terminal.scopeId === scopeId);
-      if (created?.kind === "pending") await acceptTeamTerminal(api, created);
-      await load(true);
-      return scopeId;
+      // Discovery learns of the new share a moment later: wait for it, then join it.
+      for (let attempt = 0; attempt < JOIN_ATTEMPTS; attempt += 1) {
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- bounded retries, each after the previous listing.
+        const created = (await listTeamTerminals(api)).find((terminal) => terminal.scopeId === scopeId);
+        if (created?.kind === "pending") await acceptTeamTerminal(api, created);
+        if (created) {
+          await load(true);
+          return scopeId;
+        }
+        // react-doctor-disable-next-line react-doctor/async-await-in-loop -- a short wait between bounded retries.
+        await new Promise((resolve) => setTimeout(resolve, JOIN_RETRY_MS));
+      }
+      throw new Error("new tab not listed");
     } catch (error: unknown) {
       console.warn("[terminal-window] shared computer tab failed:", error instanceof Error ? error.name : "UnknownError");
       return null;

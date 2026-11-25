@@ -140,7 +140,9 @@ export async function findTeamTerminal(api: TeamShareApi, input: { runtimeId: st
 
 /** Spec 2710 layer 6: whether this computer is shared as a whole. */
 export async function readComputerShare(api: TeamShareApi, scopeId: string): Promise<boolean> {
-  return TeamComputerShareSchema.parse(await api.get(`${scopePath(scopeId)}/terminal/team/computer`)).shared;
+  const state = TeamComputerShareSchema.parse(await api.get(`${scopePath(scopeId)}/terminal/team/computer`));
+  // A stop that did not finish still counts: stopping again completes it.
+  return state.shared || state.stopping === true;
 }
 
 /** Shares every tab on the computer with the people this terminal is shared with. */
