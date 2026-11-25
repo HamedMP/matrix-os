@@ -4,7 +4,7 @@
  */
 import {
   MAIL_PAGE_DEFAULT, MAX_ATTACHMENT_READ_BYTES, MAX_MODIFY_THREADS, MAX_SENT_SAMPLES,
-  ProviderError, base64DecodedBytes, clampPageLimit, compareInstants, isEmptyThreadChange, isValidMailAddress,
+  ProviderError, base64DecodedBytes, clampPageLimit, compareInstants, fitReplyThreading, isEmptyThreadChange, isValidMailAddress,
   normalizeMailAddress, replyHeaders, toProviderError,
   type AttachmentContent, type Draft, type ListThreadsRequest, type MailFolder, type MailMessage, type MailProvider,
   type MailThread, type Page, type ThreadChange, type ThreadSummary,
@@ -127,7 +127,8 @@ export function createGmailProvider(options: MailAdapterOptions): MailProvider {
     const original = await fetchMessage(gmailId(draft.inReplyToMessageId));
     const headers = replyHeaders(original);
     if (!headers.inReplyTo) return null;
-    return { threadId: gmailId(draft.threadId ?? original.threadId), inReplyTo: headers.inReplyTo, references: headers.references };
+    const threadId = gmailId(draft.threadId ?? original.threadId);
+    return { threadId, inReplyTo: headers.inReplyTo, references: fitReplyThreading(threadId, headers.inReplyTo, headers.references) };
   }
 
   return {

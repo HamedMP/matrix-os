@@ -63,7 +63,8 @@ Tests: `tests/default-apps/office-accounts-types.test.ts`.
 - **Drafts.** `saveDraft` creates when `id` is absent and replaces otherwise. New
   attachments carry `contentBase64` (standard base64); stored ones carry `id`. Check
   `draftIssues(draft)` before saving: a draft must fit in `MAX_DRAFT_REQUEST_BYTES`
-  (60,000 bytes) because a request to the gateway is limited to 64 KiB.
+  (60,000 bytes, counted as the shell bridge counts its escaped request frame,
+  with room kept for reply threading) because a request is limited to 64 KiB.
 - **Free-busy.** A person whose availability cannot be read gets one block with
   `status: "unknown"` covering the whole range, so it never looks like free time.
 - **Limits.** `MAIL_PAGE_MAX` (50), `MAX_MODIFY_THREADS` (100), `MAX_SENT_SAMPLES` (20),

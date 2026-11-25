@@ -389,14 +389,48 @@ export type DraftIssue =
   | "too_many_attachments"
   | "too_large";
 
-/** Bytes this draft occupies in the request that carries it to the gateway. */
+/**
+ * Room kept for a reply's `threadId`, `In-Reply-To` and `References`, counted
+ * the way `draftRequestBytes` counts. Adapters trim `References` to fit it
+ * (`fitReplyThreading`).
+ */
+export const MAX_REPLY_THREADING_BYTES = 4096;
+
+/**
+ * Bytes `value` occupies in the shell bridge's request frame. The bridge
+ * measures the whole frame, where the params JSON is a string escaped a second
+ * time, so every quote, backslash and line break in the content counts more
+ * than once. This is never less than the params' own JSON size, which the
+ * gateway measures.
+ */
+export function bridgeRequestBytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(JSON.stringify(value))).length;
+}
+
+/**
+ * Bytes this draft occupies in the request that carries it to the gateway, as
+ * the bridge counts them, plus `MAX_REPLY_THREADING_BYTES` for a reply.
+ */
 export function draftRequestBytes(draft: Draft): number {
   const recipients = (list: MailAddress[]) => list.map(({ address, name }) => ({ address, name }));
-  return new TextEncoder().encode(JSON.stringify({
+  return bridgeRequestBytes({
     to: recipients(draft.to), cc: recipients(draft.cc), bcc: recipients(draft.bcc),
     subject: draft.subject, bodyHtml: draft.bodyHtml, bodyText: draft.bodyText,
     attachments: draft.attachments.map(({ name, mimeType, contentBase64 }) => ({ filename: name, mimeType, contentBase64 })),
-  })).length;
+  }) + (draft.inReplyToMessageId ? MAX_REPLY_THREADING_BYTES : 0);
+}
+
+/**
+ * Drops `References` ids after the thread root, oldest first, until the
+ * threading fields fit `MAX_REPLY_THREADING_BYTES`. The id being answered is
+ * the last reference, so it is the last one dropped.
+ */
+export function fitReplyThreading(threadId: string, inReplyTo: string, references: readonly string[]): string[] {
+  let kept = [...references];
+  while (kept.length > 0 && bridgeRequestBytes({ threadId, inReplyTo, references: kept }) > MAX_REPLY_THREADING_BYTES) {
+    kept = kept.length > 2 ? [kept[0], ...kept.slice(2)] : kept.slice(1);
+  }
+  return kept;
 }
 
 /**
