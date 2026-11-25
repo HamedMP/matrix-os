@@ -10,11 +10,12 @@ import {
   type ComposerReferenceToken,
   type SharedChatComposerSubmission,
 } from "../../desktop/src/renderer/src/features/chat/SharedChatComposer";
+import type { ComposerMentionAction } from "../../desktop/src/renderer/src/features/chat/ComposerMentionActions";
 import {
   createCanonicalComposerSelection,
   type CanonicalComposerSelection,
 } from "../../desktop/src/renderer/src/features/chat/canonical-composer-state";
-import { insertSharedComposerTextAtSelection, mockSharedComposerPopoverLayout } from "./shared-chat-composer-test-utils";
+import { appendSharedComposerText, insertSharedComposerTextAtSelection, mockSharedComposerPopoverLayout } from "./shared-chat-composer-test-utils";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -184,6 +185,7 @@ function Harness({
   onNewChat,
   disabled = false,
   speech = false,
+  mentionActions,
 }: {
   locked?: boolean;
   onSubmit?: (submission: SharedChatComposerSubmission) => void;
@@ -199,6 +201,7 @@ function Harness({
   onNewChat?: () => void;
   disabled?: boolean;
   speech?: boolean;
+  mentionActions?: readonly ComposerMentionAction[];
 }) {
   const catalog = catalogFixture();
   const [value, setValue] = useState(initialValue);
@@ -227,6 +230,7 @@ function Harness({
         { kind: "folder", id: "src", label: "src" },
       ]}
       resourceSearch={resourceSearch}
+      mentionActions={mentionActions}
       onAttach={onAttach ?? undefined}
       onProviderSetup={(instance, action) => onProviderSetup(instance.id, action.id)}
       menuSide={menuSide}
@@ -460,6 +464,24 @@ describe("SharedChatComposer", () => {
     expect(mentionPalette.closest('[data-slot="shared-chat-composer"]')).toBeNull();
     expect(screen.getByRole("option", { name: "Attach files" })).toBeTruthy();
     expect(screen.getByRole("option", { name: /README.md/ })).toBeTruthy();
+  });
+
+  it("clears only a selected local action trigger so it can be selected again", async () => {
+    const select = vi.fn();
+    const watch = { label: "Watch a terminal", kind: "terminal", keywords: "screen", consumeTrigger: true, select } as const;
+    const check = { label: "Check a terminal", kind: "terminal", keywords: "screen", select: vi.fn() } as const;
+    render(<Harness initialValue="Keep this draft @watch" mentionActions={[watch, check]} />);
+    const editor = screen.getByRole("textbox", { name: "Message chat" });
+    const pickWatch = async () => fireEvent.click(await screen.findByRole("option", { name: "Watch a terminal" }));
+
+    await pickWatch();
+    await waitFor(() => expect(editor.textContent).toBe("Keep this draft "));
+    await appendSharedComposerText(editor, "@");
+    expect(screen.queryByRole("option", { name: "Check a terminal" })).toBeNull();
+    await pickWatch();
+
+    await waitFor(() => expect(editor.textContent).toBe("Keep this draft "));
+    expect(select.mock.calls).toEqual([["Keep this draft @watch"], ["Keep this draft @"]]);
   });
 
   it("records a safe diagnostic when remote resource search fails", async () => {
