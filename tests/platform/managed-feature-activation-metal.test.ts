@@ -14,13 +14,13 @@ import {
 } from '../../packages/platform/src/managed-feature-activation.js';
 import { wakeOnDemandRuntime } from '../../packages/platform/src/substrates/substrate-wake.js';
 import type { FakeIngressRequest } from './fake-metal-ingress.js';
-import { createMetalWakeRig, HANDLE, INGRESS_TOKEN, OWNER, type MetalWakeRig } from './metal-wake-rig.js';
+import { createMetalWakeRig, GENERATION, HANDLE, INGRESS_TOKEN, OWNER, VM_ID, type MetalWakeRig } from './metal-wake-rig.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 /**
  * Matrix AI activation for metal runtimes (spec 2691, ENG-520 Task P8).
  * A metal VM has no public IPv4; the funded config must reach it through the
- * host ingress (credential, verified TLS, handle Host) the routing proxy uses.
+ * host ingress (credential, verified TLS, canonical Host, exact VM target) the routing proxy uses.
  *
  * Faults detected: activation sent to a public IPv4 a metal VM does not have
  * (every free runtime stuck without Matrix AI), activation that wakes or keeps
@@ -93,7 +93,8 @@ describe('managed feature activation for metal runtimes', () => {
     expect(config.map((request) => request.method)).toEqual(['GET', 'POST', 'GET']);
     for (const request of config) {
       expect(request.headers['x-matrix-host-auth']).toBe(INGRESS_TOKEN);
-      expect(request.headers.host).toContain(HANDLE);
+      expect(request.headers.host).toBe('app.matrix-os.com');
+      expect(request.headers['x-matrix-vm-target']).toBe(`${VM_ID}:${GENERATION}`);
       expect(request.headers['x-matrix-upstream-host']).toBeUndefined();
       expect(request.headers.authorization).toMatch(/^Bearer \S+$/);
     }
