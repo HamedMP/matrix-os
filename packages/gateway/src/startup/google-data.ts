@@ -121,7 +121,7 @@ export async function createGoogleBrokerRuntime<DB>(options: {
       if (options.pilotAdmission && !pilotOwner(binding) && await managed.required(binding, input.signal)) return { allowed: false };
       if (options.pilotAdmission?.enabled) {
         try { await admitContext(binding, input.signal); }
-        catch (error) { console.warn('[google-data] Context admission unavailable'); return { allowed: false }; }
+        catch (error) { console.warn('[google-data] Context admission unavailable', error instanceof Error ? 'Error' : 'UnknownError'); return { allowed: false }; }
       }
       const result = await authority.authorize({ ...input, binding, identity: candidate });
       if (result.allowed && result.googleOrigin && options.pilotAdmission && !pilotOwner(binding)) return { allowed: false };
