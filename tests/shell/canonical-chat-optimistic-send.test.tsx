@@ -351,27 +351,111 @@ it("empties the composer when a follow-up's pending message shows, before admiss
   expect(composerValue()).toBe("");
 });
 
+function ChatScreen({ draft = false }: { draft?: boolean }) {
+  const state = useCanonicalChatState(draft ? { initialDraft: "draft" } : {});
+  return <>
+    <output data-testid="selected-chat">{state.sessionId}</output>
+    <ChatApp messages={state.messages} sessionId={state.sessionId} busy={state.busy} connected
+      composerIdentity={state.composerIdentity} conversations={state.conversations} onNewChat={state.createChat}
+      onSwitchConversation={state.switchConversation} onSubmit={state.submitMessage}
+      providerSelection={state.providerSelection} />
+  </>;
+}
+
+function setupChatScreen() {
+  vi.stubGlobal("crypto", webcrypto);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  localStorage.clear();
+}
+
+it("carries a follow-up draft into the Chat when its first send succeeds", async () => {
+  setupChatScreen();
+  const admission = gate();
+  const { chat } = fixtureServer({ admitGate: admission.opened, streamOpen: true });
+  render(<ChatScreen draft />);
+  const initialEditor = await screen.findByPlaceholderText("How can I help you today?");
+  fireEvent.change(initialEditor, { target: { value: "First admitted message" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await screen.findByText("First admitted message", { exact: true, selector: "span" });
+  const pendingEditor = screen.getByPlaceholderText("Reply to chat…");
+  expect(pendingEditor).not.toBe(initialEditor);
+  expect(composerValue()).toBe("");
+  fireEvent.change(pendingEditor, { target: { value: "Follow-up while sending" } });
+  admission.release();
+
+  await waitFor(() => expect(screen.getByTestId("selected-chat").textContent).toBe(chat.id));
+  expect(composerValue()).toBe("Follow-up while sending");
+  expect(screen.queryByText("Follow-up while sending", { exact: true, selector: "span" })).toBeNull();
+});
+
+it.each([false, true])("replays an unconfirmed admission after a model change (newer draft=%s)", async (typed) => {
+  setupChatScreen();
+  const admission = gate();
+  const catalog = createCanonicalProviderCatalogFixture();
+  const instance = catalog.instances[0]!;
+  const originalModel = instance.models[0]!;
+  instance.models.push({ ...originalModel, id: "retry-fixture-model", displayName: "Retry fixture model" });
+  const { snapshot } = createCanonicalChatFixture("completed");
+  const { activeRun: _active, providerBinding: _binding, project: _project, ...chat } = snapshot.chat;
+  let revision = chat.revision;
+  const record = () => ({ chat: { ...chat, revision } });
+  const requests: unknown[] = [];
+  const reads: number[] = [];
+  stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes(canonicalChatProviderCatalogPath())) return Response.json(catalog);
+    if (url.includes("/events?")) return attachedStream();
+    if (url.includes("/api/chats?")) return Response.json({ items: [record()] });
+    if (url.includes("/turns?") && init?.method === "POST") {
+      requests.push(JSON.parse(init.body as string));
+      if (requests.length === 1) {
+        await admission.opened;
+        throw new TypeError("Acknowledgement unavailable");
+      }
+      return Response.json({ error: { code: "conflict" } }, { status: 409 });
+    }
+    if (url.includes(`/api/chats/${chat.id}?`)) {
+      reads.push(revision);
+      return Response.json({ record: record(), messages: snapshot.messages, turns: snapshot.turns, runs: snapshot.runs, activities: [] });
+    }
+    return Response.json({});
+  }));
+  render(<ChatScreen />);
+  await waitFor(() => expect(screen.getByTestId("selected-chat").textContent).toBe(chat.id));
+  const editor = screen.getByRole("textbox", { name: "Message chat" });
+  fireEvent.change(editor, { target: { value: "Run this once" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await screen.findByText("Run this once", { exact: true, selector: "span" });
+  if (typed) fireEvent.change(screen.getByRole("textbox", { name: "Message chat" }), { target: { value: "My separate follow-up" } });
+  admission.release();
+  const retry = await screen.findByRole("button", { name: "Retry message" });
+  expect(requests).toHaveLength(1);
+
+  // The refreshed transcript does not contain the uncertain admission's receipt.
+  revision += 3;
+  await act(async () => { fireEvent.focus(window); });
+  await waitFor(() => expect(reads).toContain(revision));
+  fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+  fireEvent.click(await screen.findByText("Retry fixture model", { exact: true }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-model")).toBe("retry-fixture-model"));
+  fireEvent.click(retry);
+  await waitFor(() => expect(requests).toHaveLength(2));
+
+  expect(requests[0]).toMatchObject({ selection: { model: originalModel.id }, baseRevision: chat.revision });
+  expect(requests[1]).toEqual(requests[0]);
+  expect(composerValue()).toBe(typed ? "My separate follow-up" : "");
+});
+
 it.each([
   { typed: false, attached: false },
   { typed: true, attached: false },
   { typed: true, attached: true },
 ])("keeps a rejected first message retryable across composer mounts (typed=$typed, attached=$attached)", async ({ typed, attached }) => {
-  vi.stubGlobal("crypto", webcrypto);
-  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  setupChatScreen();
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const create = gate();
   const { chat, createRequestIds, uploadedPaths } = fixtureServer({ createGate: create.opened, firstCreateFails: true });
-  function ChatScreen() {
-    const state = useCanonicalChatState({ initialDraft: "draft" });
-    return <>
-      <output data-testid="selected-chat">{state.sessionId}</output>
-      <ChatApp messages={state.messages} sessionId={state.sessionId} busy={state.busy} connected
-        composerIdentity={state.composerIdentity} conversations={[]} onNewChat={state.createChat}
-        onSwitchConversation={state.switchConversation} onSubmit={state.submitMessage}
-        providerSelection={state.providerSelection} />
-    </>;
-  }
-  render(<ChatScreen />);
+  render(<ChatScreen draft />);
   const newChatInput = await screen.findByPlaceholderText("How can I help you today?");
   fireEvent.change(newChatInput, { target: { value: "Do not lose me" } });
   if (attached) {

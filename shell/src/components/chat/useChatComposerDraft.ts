@@ -3,12 +3,20 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { CanonicalChatResourceReference } from "@matrix-os/contracts";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 
+export type PreparedChatSubmission = Omit<ChatSubmitOptions, "onAccepted" | "onShown" | "onAdmissionUnconfirmed">;
+export type WebChatSubmitOptions = ChatSubmitOptions & {
+  onPrepared?: (submission: PreparedChatSubmission) => void;
+  retrySubmission?: PreparedChatSubmission;
+};
+
 export type FailedChatSend = {
   text: string;
   prompt: string;
   files: readonly File[];
   options: Required<Pick<ChatSubmitOptions, "resources" | "clientRequestId" | "permissionMode">>
     & Pick<ChatSubmitOptions, "projectSkillProjectId">;
+  submission?: PreparedChatSubmission;
+  unconfirmed?: boolean;
   projectScope?: string;
   harnessId?: string;
   permissionMode: string;
@@ -70,7 +78,7 @@ export function useChatComposerDraft(scope: string, identity: unknown, retryBind
       const { failure: _sent, ...remaining } = saved;
       return { identity, drafts: { ...current.drafts, [scope]: remaining } };
     }),
-    /** Carry the follow-up draft into the Chat opened by a successful retry. */
+    /** Carry the follow-up draft into the Chat opened by an accepted send. */
     moveDraft: (target: string) => setStore(current => {
       if (current.identity !== identity || target === scope) return current;
       const source = current.drafts[scope];

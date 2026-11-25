@@ -688,6 +688,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         }
         if (!isCurrent()) return false;
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
+        if (!turnAdmitted && !definitelyUnadmitted) options.onAdmissionUnconfirmed?.();
         if (activeChatIdRef.current === sourceChatId) setSafeError(error instanceof ChatAdmissionUnconfirmed
           ? CHAT_ADMISSION_UNCONFIRMED : canonicalShellChatFailureMessage(error));
         return turnAdmitted;

@@ -123,6 +123,8 @@ export interface ChatSubmitOptions {
   onAccepted?: (openedChatId?: string) => void;
   /** The pending message is visible in the transcript; the composer may let the draft go. */
   onShown?: () => void;
+  /** The gateway might have accepted the send even though acknowledgement was unavailable. */
+  onAdmissionUnconfirmed?: () => void;
   resources?: CanonicalChatResourceReference[];
   clientRequestId?: string;
   displayText?: string;

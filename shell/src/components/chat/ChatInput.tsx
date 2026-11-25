@@ -22,13 +22,12 @@ import {
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { Attachments, useAttachments } from "@/components/ai-elements/attachments";
 import { encodeChatAttachments } from "@/components/ai-elements/attachments-utils";
-import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatMentionControls, useChatMentionPermission, useBotMentionNavigation, type ChatAgentClient } from "@matrix-os/ui";
 import { ChatMentionTokens, FailedChatMessage } from "./ChatInputExtras";
 import { handleChatInputKey } from "./chat-input-keyboard";
 import { chatInputPlaceholder, canSendChatInput } from "./chat-input-placeholder";
 import { ChatMentionPicker } from "./ChatMentionPicker";
-import type { ChatComposerDraft, FailedChatSend } from "./useChatComposerDraft";
+import type { ChatComposerDraft, FailedChatSend, WebChatSubmitOptions } from "./useChatComposerDraft";
 import {
   BrowserSpeechClientError,
   createBrowserSpeechClient,
@@ -76,7 +75,7 @@ export function ChatInput({
   busy: boolean;
   activeRunId?: string;
   onAbortCurrent?: () => void;
-  onSubmit: (text: string, files?: ChatSendFiles, options?: ChatSubmitOptions) => void | Promise<boolean>;
+  onSubmit: (text: string, files?: ChatSendFiles, options?: WebChatSubmitOptions) => void | Promise<boolean>;
   autoFocus?: boolean;
   draftRequest?: ChatAgentDraftRequest | null;
   onDraftConsumed?: (id: number) => void;
@@ -188,6 +187,7 @@ export function ChatInput({
       const files = failedSend.files.length ? await encodeChatAttachments(failedSend.files) : undefined;
       const accepted = await onSubmit(failedSend.prompt, files, {
         ...failedSend.options,
+        retrySubmission: failedSend.submission,
         onAccepted: chatId => {
           if (chatId) composer.moveDraft(chatId);
           clearFailedSend(requestId);
@@ -262,7 +262,6 @@ export function ChatInput({
       ...(projectSkillProjectId ? { projectSkillProjectId } : {}),
     };
     let retry: FailedChatSend | undefined;
-    let restored = false;
     const clearSubmittedContext = () => {
       projectSkillDraft.clear();
       for (const id of submittedIds) removeFile(id);
@@ -284,8 +283,7 @@ export function ChatInput({
       restore: () => {
         draftCleared = false;
         if (!retry) return;
-        restored = true;
-        const keepForRetry = retry.files.length > 0 || Boolean(projectSkillProjectId && !projectSkillDraft.isCurrent());
+        const keepForRetry = Boolean(retry.unconfirmed || retry.files.length || (projectSkillProjectId && !projectSkillDraft.isCurrent()));
         composer.restore(submittedDraft, retry, keepForRetry);
         if (keepForRetry || composer.hasNewerDraft(submittedDraft)) clearSubmittedContext();
         else setSentAttachmentIds([]);
@@ -306,13 +304,16 @@ export function ChatInput({
       const files = attachments.length ? await getBase64Files() : undefined;
       if (projectSkillProjectId && !currentSkillScope()) return;
       const prompt = projectSkillDraft.prompt(text || (files?.length ? `Attached ${files.length} file(s)` : ""));
-      retry = { text, prompt, files: attachments.map(({ file }) => file), options: submissionOptions,
+      const submitted: FailedChatSend = { text, prompt, files: attachments.map(({ file }) => file), options: submissionOptions,
         projectScope: projectSlash?.scope, harnessId: slashInstance?.id, permissionMode };
+      retry = submitted;
       const accepted = await onSubmit(prompt, files, {
         ...submissionOptions,
+        onPrepared: submission => { submitted.submission = submission; },
+        onAdmissionUnconfirmed: () => { submitted.unconfirmed = true; },
         onAccepted: chatId => {
           handoff.accepted();
-          if (restored && chatId) composer.moveDraft(chatId);
+          if (chatId) composer.moveDraft(chatId);
         },
         onShown: handoff.shown,
       });
@@ -384,7 +385,7 @@ export function ChatInput({
       {botMention.pending ? <p role="status" className="text-xs">Opening bot Chat…</p> : null}
       {botMention.error || botMention.notice ? <p role="alert" className="text-xs">{botMention.error || botMention.notice}</p> : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
-      {failedSend ? <FailedChatMessage text={failedSend.text} canRetry={Boolean(canRetry)} sending={sending}
+      {failedSend ? <FailedChatMessage text={failedSend.text} canRetry={Boolean(canRetry)} sending={sending} unconfirmed={failedSend.unconfirmed}
         onRetry={() => void retryFailedSend()} onDiscard={() => clearFailedSend(failedSend.options.clientRequestId)} /> : null}
       {!matrixPickerOpen && matrixAttachment.error ? <p role="alert" className="text-xs text-destructive">{matrixAttachment.error}</p> : null}
       {!matrixPickerOpen && matrixAttachment.pending ? <p role="status" className="text-xs">Reading Matrix file…</p> : null}

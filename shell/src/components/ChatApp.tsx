@@ -29,7 +29,7 @@ import { WebChatComposerControls } from "./chat/WebChatComposerControls";
 import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
-import { useChatComposerDraft } from "./chat/useChatComposerDraft";
+import { useChatComposerDraft, type PreparedChatSubmission, type WebChatSubmitOptions } from "./chat/useChatComposerDraft";
 import { appendSideChatAnswer } from "./chat/useWebChatHistory";
 import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, createAgentProviderCatalogSource, useChatAgentsNavigation, useCloseAgentsOnDraftRequest, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
@@ -489,26 +489,36 @@ function ChatAppContent({
   const submitWithHermesSetup = (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
-    mentionOptions?: ChatSubmitOptions,
+    mentionOptions?: WebChatSubmitOptions,
   ) => {
     // Attachment reads can finish after this composer has left its Chat or draft.
     if (liveSubmitScope.current !== submitScope || (isCurrentAuthority && !isCurrentAuthority()) || botIdentityUnknown) {
       return Promise.resolve(false);
     }
-    if (directBotId) {
-      if (!botPresentation || !botPresentation.available) return Promise.resolve(false);
-      return onSubmit(text, files, { displayText: text, instanceId: botPresentation.selection.instanceId, model: botPresentation.selection.model,
+    if (directBotId && !botPresentation?.available) return Promise.resolve(false);
+    const callbacks = {
+      ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
+      ...(mentionOptions?.onShown ? { onShown: mentionOptions.onShown } : {}),
+      ...(mentionOptions?.onAdmissionUnconfirmed ? { onAdmissionUnconfirmed: mentionOptions.onAdmissionUnconfirmed } : {}),
+    };
+    if (mentionOptions?.retrySubmission) {
+      return onSubmit(text, files, { ...mentionOptions.retrySubmission, ...callbacks });
+    }
+    const submit = (submission: PreparedChatSubmission) => {
+      mentionOptions?.onPrepared?.(submission);
+      return onSubmit(text, files, { ...submission, ...callbacks });
+    };
+    if (directBotId && botPresentation) {
+      return submit({ displayText: text, instanceId: botPresentation.selection.instanceId, model: botPresentation.selection.model,
         interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.kind === "custom" ? mentionOptions?.permissionMode ?? botPresentation.permissionMode : "default", modelOptions: botPresentation.selection.options ?? [],
         ...((botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources)?.length ? { resources: botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources } : {}),
         ...(mentionOptions?.clientRequestId ? { clientRequestId: mentionOptions.clientRequestId } : {}),
-        ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
-        ...(mentionOptions?.onShown ? { onShown: mentionOptions.onShown } : {}),
       });
     }
     if (!providerState.selected || !providerState.selectionAvailable) return Promise.resolve(false);
     const usesChannels = providerState.selected.driverKind === "hermes";
     const promptText = usesChannels ? createChannelConfiguredPrompt(text, selectedChannels) : text;
-    return onSubmit(text, files, {
+    return submit({
       displayText: text,
       ...(promptText === text ? {} : { promptText }),
       instanceId: providerState.selected.instanceId,
@@ -518,8 +528,6 @@ function ChatAppContent({
       ...(mentionOptions?.resources?.length ? { resources: mentionOptions.resources } : {}),
       ...(mentionOptions?.projectSkillProjectId ? { projectSkillProjectId: mentionOptions.projectSkillProjectId } : {}),
       ...(mentionOptions?.clientRequestId ? { clientRequestId: mentionOptions.clientRequestId } : {}),
-      ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
-      ...(mentionOptions?.onShown ? { onShown: mentionOptions.onShown } : {}),
       modelOptions: providerState.selected.selectedOptions,
     });
   };
