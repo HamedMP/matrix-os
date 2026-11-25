@@ -270,10 +270,13 @@ Matrix Chat and from external clients such as Claude Code.
 - **Ids.** Broker service ids are unchanged. App ids use the same
   `<name>-<connection hex>` rule over the merged list; an app id equal to a
   broker id is omitted, never shadowing it.
-- **Tools and execution.** Tools are the registry actions with a JSON Schema
-  built from their params. Calls re-read the connection at dispatch, validate
-  params, and run `executeIntegrationAction` with the platform-owned Pipedream
-  client under the 30 s Core deadline. Output is wrapped as untrusted and
+- **Tools and execution.** Tools are the registry actions; the advertised
+  JSON Schema is the action's `paramsSchema` when present, else its params.
+  Calls re-read the connection at dispatch, validate params, and run
+  `executeIntegrationAction` with the platform-owned Pipedream client. A read
+  is abandoned at the 30 s Core deadline or on cancel; a dispatched write is
+  never abandoned (the provider helpers take no signal) and runs to its own
+  provider timeouts, so Core never reports "cancelled" for a write that lands. Output is wrapped as untrusted and
   bounded by the Core byte cap; usage rows use the connection id and
   `connect-app:<service>`. Provider errors reach clients as generic Core errors.
 - **Policy.**

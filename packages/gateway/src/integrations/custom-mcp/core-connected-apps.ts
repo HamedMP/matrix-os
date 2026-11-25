@@ -12,7 +12,8 @@ import { executeIntegrationAction } from "../action-execution.js";
 import { validateActionParams } from "../parameter-validation.js";
 import type { PipedreamConnectClient } from "../pipedream.js";
 import { getService } from "../registry.js";
-import type { ActionParam, IntegrationActionRisk, ServiceDefinition } from "../types.js";
+import { z } from "zod/v4";
+import type { ActionParam, IntegrationActionRisk, ServiceAction, ServiceDefinition } from "../types.js";
 import type { PlatformDb } from "../../platform-db.js";
 
 /** Bounds one owner's Core inventory; extra connections are omitted, never partially listed. */
@@ -64,13 +65,36 @@ function paramSchema(param: ActionParam): Record<string, unknown> {
 }
 
 /** JSON Schema from the registry params, the same contract `validateActionParams` enforces. */
-export function connectedAppInputSchema(params: Record<string, ActionParam>): Record<string, unknown> {
+export function connectedAppParamsSchema(params: Record<string, ActionParam>): Record<string, unknown> {
   const required = Object.entries(params).filter(([, param]) => param.required).map(([name]) => name);
   return {
     type: "object",
     properties: Object.fromEntries(Object.entries(params).map(([name, param]) => [name, paramSchema(param)])),
     ...(required.length > 0 ? { required } : {}),
   };
+}
+
+const advertisedSchemas = new WeakMap<ServiceAction, Record<string, unknown>>();
+
+/**
+ * The input contract execution enforces: the action's `paramsSchema` when it
+ * has one (nullable values, enums, nested objects), else its params. Registry
+ * actions are static, so each conversion is computed once per action.
+ */
+export function connectedAppInputSchema(action: ServiceAction): Record<string, unknown> {
+  const cached = advertisedSchemas.get(action);
+  if (cached) return cached;
+  let schema = connectedAppParamsSchema(action.params);
+  if (action.paramsSchema) {
+    try {
+      const { $schema: _dialect, ...converted } = z.toJSONSchema(action.paramsSchema, { io: "input", unrepresentable: "any" }) as Record<string, unknown>;
+      schema = converted;
+    } catch (error: unknown) {
+      console.warn("[core-mcp] action schema not representable; advertising params", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+  advertisedSchemas.set(action, schema);
+  return schema;
 }
 
 /** Only Pipedream-backed registry services; presets reach Core through the broker. */
@@ -117,7 +141,7 @@ export function createCoreConnectedApps(options: {
         apps.push({
           connectionId: row.id, serviceId: def.id, name: displayName(def, row.account_label), accountLabel: row.account_label,
           tools: Object.entries(def.actions).map(([name, action]) => ({
-            name, description: action.description, inputSchema: connectedAppInputSchema(action.params), risk: action.risk,
+            name, description: action.description, inputSchema: connectedAppInputSchema(action), risk: action.risk,
           })),
         });
       }
@@ -129,16 +153,20 @@ export function createCoreConnectedApps(options: {
       const connection = (await options.db.listConnectedServices(input.userId)).find(row =>
         row.id === input.connectionId && row.user_id === input.userId && row.status === "active");
       const def = connection ? pipedreamService(connection.service) : undefined;
-      const actionDef = def?.actions[input.action];
+      const actionDef = def && Object.hasOwn(def.actions, input.action) ? def.actions[input.action] : undefined;
       if (!connection || !def || !actionDef) throw new CoreConnectedAppError("forbidden");
       if (!validateActionParams(actionDef, input.arguments).valid) throw new CoreConnectedAppError("invalid");
       const user = await options.db.getUserById(input.userId);
       if (!user?.pipedream_external_id) throw new CoreConnectedAppError("unavailable");
       input.signal.throwIfAborted();
-      const { data } = await abortable(execute({
+      const running = execute({
         pipedream: options.pipedream, externalUserId: user.pipedream_external_id, connection, def, actionDef,
         serviceId: def.id, actionId: input.action, params: input.arguments ?? {},
-      }), input.signal);
+      });
+      // A dispatched write is never abandoned: the provider helpers take no signal, so a
+      // cancelled caller would otherwise be told "cancelled" while the write still lands.
+      // It runs to its own provider timeouts and reports the real outcome. Reads may be abandoned.
+      const { data } = actionDef.risk === "read" ? await abortable(running, input.signal) : await running;
       try { await options.db.touchServiceUsage(connection.id); }
       catch (error: unknown) {
         // Usage metadata is best effort after the provider succeeded; never lose the result.
