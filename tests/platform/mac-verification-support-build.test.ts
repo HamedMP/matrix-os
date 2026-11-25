@@ -136,7 +136,6 @@ test("uses pnpm lifecycle's actual package entry instead of a self-update PATH w
   await expect(readPnpmEntry({ args: ["node", "prepare.mjs"], env: {} })).rejects.toThrow(/pnpm run/);
 });
 
-
 test("seals only bounded files, rejecting links and preserving an existing archive destination", async () => {
   const root = await mkdtemp(join(tmpdir(), "matrix-store-archive-test-")); roots.push(root);
   const store = join(root, "store"); await mkdir(store);
