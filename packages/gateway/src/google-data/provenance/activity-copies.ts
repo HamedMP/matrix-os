@@ -120,6 +120,7 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
         const deleted = await current.deleteFrom('chat_run_events').where('chat_id', '=', key.chatId).where('run_id', '=', key.runId)
           .where('id', 'in', retired.map(row => row.id)).returning('id').execute();
         if (deleted.length !== retired.length) deny();
+        for (const row of retired) await retireOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived', entityRef: googleActivityEntityRef(row.id) });
         live();
       }
       const after = await payloads(current, key); const fresh = await inspect();
