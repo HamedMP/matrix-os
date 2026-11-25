@@ -25,7 +25,7 @@ export function McpServersSection() {
   const api = useConnection((state) => state.api);
   const platformHost = useConnection((state) => state.platformHost);
   const [servers, setServers] = useState<McpServer[]>([]);
-  const { presets, catalogState, loadCatalog, inventoryFor } = useRemoteMcpPresets(api);
+  const { presets, catalogState, loadCatalog, inventoryFor, appsLoaded } = useRemoteMcpPresets(api);
   const [connectingPreset, setConnectingPreset] = useState<string | null>(null);
   const serversRef = useRef<McpServer[]>([]);
   const saveGenerationsRef = useRef<Record<string, number>>({});
@@ -37,6 +37,8 @@ export function McpServersSection() {
   const [diagnosing, setDiagnosing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // The computer whose list last loaded; refreshes keep its rows mounted so open rows and results survive.
+  const [loadedFor, setLoadedFor] = useState<typeof api>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,6 +53,7 @@ export function McpServersSection() {
       if (!api) { replaceServers([]); return; }
       replaceServers(await api.get<McpServer[]>("/api/mcp-servers"));
       setLoaded(true);
+      setLoadedFor(api);
       setError(null);
     } catch (loadError: unknown) {
       setError(loadError instanceof AppError && loadError.detail === CUSTOM_MCP_UNAVAILABLE
@@ -226,7 +229,7 @@ export function McpServersSection() {
     <MatrixMcpEndpointCard endpointUrl={matrixMcpEndpointUrl(platformHost)} connectedServices={connectedServices} />
     <fieldset disabled={!loaded || loading || !api || diagnosing} className="min-w-0 space-y-8">
     {!api ? <p className="text-sm" style={{ color: "var(--text-tertiary)" }}>Connect a Matrix computer to manage MCP servers.</p> : null}
-    {api && loaded && (servers.length > 0 || !error) ? <section className="space-y-3">
+    {api && loadedFor === api && (servers.length > 0 || !error) ? <section className="space-y-3">
       <McpSectionHeading title="Connected services" count={inventory.length || undefined} description="Choose which tools agents and clients may use." />
       <McpConnectionInventory
       entries={inventory}
@@ -250,7 +253,7 @@ export function McpServersSection() {
         onToggleServer={() => queuePolicyUpdate(server.id, (current) => ({ ...current, enabled: !current.enabled }))} />
         </>;
       }} /></section> : null}
-    <McpAddServicesSection hasConnections={loaded ? inventory.length > 0 : undefined}>
+    <McpAddServicesSection hasConnections={api && loadedFor === api && appsLoaded ? inventory.length > 0 : undefined}>
       <RemoteMcpPresetPicker presets={presets} state={catalogState} connections={servers.map((server) => ({ serverId: server.id, url: server.url, status: server.status }))}
         connectingId={connectingPreset} disabled={busy} onConnect={(presetId) => { void connectPreset(presetId); }} onFinishSignIn={(serverId) => { void authorize(serverId); }} onRetry={loadCatalog} />
       <McpCustomServerForm name={name} url={url} authMode={authMode} credential={credential}

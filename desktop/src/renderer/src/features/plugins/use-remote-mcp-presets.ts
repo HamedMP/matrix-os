@@ -39,5 +39,7 @@ export function useRemoteMcpPresets(api: ApiClient | null) {
       Object.fromEntries(availableApps.map((app) => [app.id, app.name])),
     );
 
-  return { presets, catalogState, loadCatalog, inventoryFor };
+  /** Connected apps for this computer have loaded, so the inventory is complete. */
+  const appsLoaded = api !== null && connectionsSource === api;
+  return { presets, catalogState, loadCatalog, inventoryFor, appsLoaded };
 }

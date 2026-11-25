@@ -91,6 +91,23 @@ for (const [surface, Component] of [["Web", CustomMcpServersPanel], ["Electron",
       expect(screen.queryByText(/private upstream output/)).toBeNull();
     });
 
+    // Fault: Discover refreshes the list, which remounts the rows collapsed and hides the tools the user just found.
+    it("keeps the row open with its result after Discover refreshes a slow list", async () => {
+      let delayLists = false;
+      const fetchFn = setup(async () => Response.json({ ...server, enabled: true, status: "ready", tools: [{ ...tool, enabled: true }] }));
+      const original = fetchFn.getMockImplementation()!;
+      fetchFn.mockImplementation(async (input: unknown, init?: RequestInit) => {
+        if (delayLists && (init?.method ?? "GET") === "GET") await new Promise((resolve) => setTimeout(resolve, 30));
+        return original(input, init);
+      });
+      await expandTools();
+      delayLists = true;
+      fireEvent.click(await screen.findByRole("button", { name: "Discover", exact: true }));
+      expect(await screen.findByText("Found 1 tool. New tools are enabled by default; review permissions below.")).not.toBeNull();
+      expect(screen.getByRole("button", { name: "1 tool for Research" }).getAttribute("aria-expanded")).toBe("true");
+      expect(screen.getByRole("checkbox")).not.toBeNull();
+    });
+
     it("explains an empty catalog", async () => {
       setup(async () => Response.json({ ...server, tools: [] }));
       await expandTools();

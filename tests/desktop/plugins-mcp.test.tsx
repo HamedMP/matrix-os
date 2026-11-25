@@ -279,3 +279,30 @@ describe("desktop MCP inventory with competing connected-app loads", () => {
     expect(await screen.findByText(/Carol work/)).not.toBeNull();
   });
 });
+
+describe("desktop MCP gallery initial state", () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  // Fault: an empty MCP-server list arrives before connected apps, so the gallery stays open for a user who already has connections.
+  it("waits for connected apps before choosing whether the gallery starts open", async () => {
+    let releaseApps!: () => void;
+    const appsGate = new Promise<void>((resolve) => { releaseApps = resolve; });
+    const api = makeApi();
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === "/api/mcp-servers/catalog") return { presets: [] } as never;
+      if (path === "/api/integrations/available") return [{ id: "gmail", name: "Gmail", category: "google" }] as never;
+      if (path === "/api/integrations") {
+        await appsGate;
+        return [{ id: "conn-1", service: "gmail", account_label: "Dana work", status: "active" }] as never;
+      }
+      return [] as never;
+    });
+    useIntegrations.setState({ connections: [], connectionsSource: null });
+    useConnection.setState({ status: "signed-in", handle: "dana", api: api as never });
+    render(<McpServersSection />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add MCP" }).matches(":disabled")).toBe(false));
+    await act(async () => { releaseApps(); });
+    expect(await screen.findByText(/Dana work/)).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Add MCP" }).getAttribute("aria-expanded")).toBe("false");
+  });
+});
