@@ -72,10 +72,11 @@ function paidEntitlement(owner: string): BillingEntitlement {
 function fakeSubstrate() {
   const stop = vi.fn(async (): Promise<StopRuntimeResult> => ({ state: 'stopping' }));
   const ensureRunning = vi.fn(async (): Promise<EnsureRunningResult> => ({ state: 'running' }));
+  const isSuspended = vi.fn(async () => true);
   const substrate: OnDemandRuntimeSubstrate = {
-    kind: 'metal', startsOnDemand: true, resolveUpstream: () => null, stop, ensureRunning, isSuspended: async () => true,
+    kind: 'metal', startsOnDemand: true, resolveUpstream: () => null, stop, ensureRunning, isSuspended,
   };
-  return { substrate, stop, ensureRunning };
+  return { substrate, stop, ensureRunning, isSuspended };
 }
 
 describe('metal idle sleeper', () => {
@@ -548,6 +549,22 @@ describe('metal idle sleeper', () => {
     await s.tick(new Date(wakeAt));
     expect(ensureRunning).toHaveBeenCalledTimes(1);
     expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null });
+  });
+
+  it('preserves a scheduled wake that completes during sleep confirmation', async () => {
+    const wakeAt = new Date(NOW.getTime() + MINUTE);
+    const id = await seedMachine({ overrides: { nextWakeAt: wakeAt } });
+    const { sleeper: s, isSuspended, ensureRunning } = sleeper({ lifecycle: { ok: false, code: 'asleep' } });
+    isSuspended.mockImplementationOnce(async () => {
+      // The host's suspended observation arrives after the wake lane committed.
+      await s.wakeTick(wakeAt);
+      return true;
+    });
+
+    await s.sleepTick(NOW);
+
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    expect(await machine(id)).toMatchObject({ status: 'running', nextWakeAt: null, awakeSince: wakeAt.toISOString() });
   });
 
   it('stops starting sleep candidates once the pass budget is spent', async () => {

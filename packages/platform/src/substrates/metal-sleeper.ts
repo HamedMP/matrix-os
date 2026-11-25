@@ -5,7 +5,6 @@ import { mapUserMachine } from '../database/user-machine-records.js';
 import { getUserMachine } from '../database/user-machines.js';
 import type { PlatformDatabase, PlatformDB, UserMachineRecord } from '../db.js';
 import { resolveEffectiveBillingEntitlementForSlot } from '../billing-entitlement-resolver.js';
-import { markRuntimeAsleep } from './runtime-asleep.js';
 import { wakeAfterSuspendAttempt, wakeOnDemandRuntime } from './substrate-wake.js';
 import type { OnDemandRuntimeSubstrate, RuntimeRef } from './types.js';
 import type { LifecycleRead } from './metal-lifecycle-reader.js';
@@ -317,8 +316,21 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       // provider before recording sleep after a late suspend or a restart.
       if (!await substrate.isSuspended(refFor(machine), signal)) return;
       noteHealthy(machine.machineId);
-      await markRuntimeAsleep(db, machine);
-      log('sleep_recorded_host_asleep', { machineId: machine.machineId });
+      // A scheduled wake can complete while the host read is in flight and
+      // leave the machine running with a new awake stamp and wake time.
+      const previousWake = machine.nextWakeAt === null ? null : new Date(machine.nextWakeAt);
+      const previousAwake = machine.awakeSince === null ? null : new Date(machine.awakeSince);
+      const recorded = await db.executor.updateTable('user_machines')
+        .set({ status: 'suspended' })
+        .where('machine_id', '=', machine.machineId)
+        .where('generation', '=', machine.generation)
+        .where('status', '=', 'running')
+        .where('deleted_at', 'is', null)
+        .where('next_wake_at', previousWake === null ? 'is' : '=', previousWake)
+        .where('awake_since', previousAwake === null ? 'is' : '=', previousAwake)
+        .returning('machine_id')
+        .executeTakeFirst();
+      if (recorded) log('sleep_recorded_host_asleep', { machineId: machine.machineId });
       return;
     }
     if (!read.ok) {
