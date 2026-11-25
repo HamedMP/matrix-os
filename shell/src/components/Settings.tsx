@@ -405,7 +405,7 @@ function SettingsFrame({
                 <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession} />
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
-              {activeSection === "messaging" && <MessagingSection />}
+              {activeSection === "messaging" && <MessagingSection mobile={mobile} />}
               {activeSection === "channels" && <ChannelsSection />}
               {activeSection === "integrations" && (
                 <IntegrationsSection active={open} onOpenGithubDisconnectTerminal={onOpenGithubDisconnectTerminal} />
