@@ -82,6 +82,23 @@ describe("approved background Mac terminal checks", () => {
     expect(deps.prepareTerminal).not.toHaveBeenCalled();
   });
 
+  it("records a bounded diagnostic for approval errors without leaking their messages", async () => {
+    const { deps, service } = fixture();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    deps.approve.mockRejectedValueOnce(new Error("private approval details"));
+
+    try {
+      expect(await service.start(ref)).toEqual({ status: "failed" });
+      expect(deps.reportEvent).toHaveBeenCalledExactlyOnceWith("failed", "approval-failed");
+      expect(warning).toHaveBeenCalledExactlyOnceWith(
+        "[chat-mac-terminal-background]", "approval-failed", "Error",
+      );
+      expect(service.isBusy()).toBe(false);
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   it("polls and returns two distinct checks after one approval without a renderer dispatch", async () => {
     const { deps, first, second, service, approve, request } = fixture();
     const grant = await approve();

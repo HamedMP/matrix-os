@@ -63,11 +63,16 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
   const isLive = (grant: Grant) => active === grant && !grant.operation.signal.aborted && Date.now() < grant.expiresAt;
   const isCurrent = (grant: Grant) => isLive(grant) && deps.isTerminalContextCurrent(grant.context);
 
+  function reportFailure(reason: FailureReason, error: unknown) {
+    console.warn("[chat-mac-terminal-background]", reason, error instanceof Error ? "Error" : "NonError");
+    deps.reportEvent("failed", reason);
+  }
+
   async function dispose(terminal: ChatTerminalProbe) {
     try {
       await terminal.dispose();
     } catch (error: unknown) {
-      deps.reportEvent("failed", "terminal-cleanup-failed");
+      reportFailure("terminal-cleanup-failed", error);
     }
   }
 
@@ -175,7 +180,7 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
       grant.phase = "returning";
       inspect(grant);
     } catch (error: unknown) {
-      if (isCurrent(grant)) deps.reportEvent("failed", "terminal-failed");
+      if (isCurrent(grant)) reportFailure("terminal-failed", error);
     } finally {
       if (!grant.pending) {
         grant.phase = "waiting";
@@ -256,7 +261,7 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
       return { status: "ready", targetId: grant.targetId, expiresAt: grant.expiresAt, remaining: MAX_CHECKS };
     } catch (error: unknown) {
       if (operation.signal.aborted) return { status: "unavailable" };
-      deps.reportEvent("failed", "approval-failed");
+      reportFailure("approval-failed", error);
       return { status: "failed" };
     } finally {
       preparing = null;
