@@ -138,11 +138,29 @@ it("sends a whole answer to the Agent from review and can retry without echoing 
   expect(ProjectSetupUpdateRequestSchema.parse(client.patch.mock.calls[0]?.[1]).action).toEqual({
     type: "interview_answer", text, selection,
   });
-  expect(result.current.canAnswer).toBe(false);
+  expect(result.current.canAnswer).toBe(true);
   await act(async () => expect(await result.current.retryInterview()).toBe(true));
   expect(ProjectSetupUpdateRequestSchema.parse(client.patch.mock.calls[1]?.[1]).action).toEqual({
     type: "interview_retry", selection,
   });
+});
+
+it.each(["failed", "unavailable"])("lets the owner send a corrected answer after setup is %s", async (status) => {
+  const client = transport();
+  const failed = { ...interviewDraft, step: "review", interview: { focus: "review", suggestions: [] }, generation: { status } };
+  client.get.mockResolvedValue({ draft: failed });
+  client.patch.mockResolvedValueOnce({ draft: { ...failed, revision: 2, generation: { status: "running", runId: "run_setup" } } });
+  const { result } = renderHook(() => useProjectSetup({
+    client, scope: "owner:computer", projectId: "project_a", chatId: "chat_setup", eligible: true, selection,
+  }));
+  await act(async () => {});
+  expect(result.current.canAnswer).toBe(true);
+  const text = "Use the shorter release notes.";
+  await act(async () => expect(await result.current.answer(text)).toBe(true));
+  expect(ProjectSetupUpdateRequestSchema.parse(client.patch.mock.calls[0]?.[1]).action).toEqual({
+    type: "interview_answer", text, selection,
+  });
+  expect(result.current.canAnswer).toBe(false);
 });
 
 it("keeps an explicit MCP skip in the scoped interview flow with the selected model", async () => {

@@ -13,7 +13,7 @@ import { appendProjectSetupTranscript } from "../../packages/gateway/src/chat/pr
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { SideChatRepository } from "../../packages/gateway/src/chat/side-chat-repository.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
-import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
+import { CanonicalChatProviderRegistry, type CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { applyProjectSetupInterview, beginProjectSetupInterview, initialProjectSetup, projectSetupInterviewPrompt, transitionProjectSetupInterview } from "../../packages/gateway/src/chat/project-setup-state.js";
 import { generateProjectSetup, syncProjectSetupGeneration } from "../../packages/gateway/src/chat/project-setup-generation.js";
 import { ProjectSetupService } from "../../packages/gateway/src/chat/project-setup-service.js";
@@ -118,8 +118,18 @@ it("supplies complete pending file drafts and the latest correction to the inter
   expect(data.reviewedDraft).toEqual(draft.proposals.map(({ path, content }) => ({ path, content })));
   expect(data.transcript).toEqual([correction]);
 
-  draft.proposals[0]!.content = "a".repeat(58 * 1024);
-  expect(() => projectSetupInterviewPrompt(draft, context, [correction])).toThrow();
+  // Quotes and backslashes double in the JSON prompt. The just-entered
+  // answer still reaches the Agent, and the full file stays in Review.
+  draft.proposals[0]!.content = '"\\'.repeat(30_000);
+  const latest = { ...correction, text: "修正".repeat(2048) };
+  const bounded = projectSetupInterviewPrompt(draft, context, [correction, latest]);
+  expect(Buffer.byteLength(bounded)).toBeLessThanOrEqual(58 * 1024);
+  const projected = JSON.parse(bounded.split("\n").at(-1)!);
+  expect(projected.transcript.at(-1)).toEqual(latest);
+  expect(projected.reviewedDraft).toEqual([
+    { path: "AGENTS.md" }, { path: ".agents/skills/release-check/SKILL.md", content: skill },
+  ]);
+  expect(draft.proposals[0]!.content).toHaveLength(60_000);
 });
 
 it("retains accepted answer requirements after their original turns leave the interview transcript", () => {
@@ -272,6 +282,88 @@ describe("admitted project setup generation", () => {
       expect(storeRequest).toContain("Store Operations");
       expect(storeRequest).not.toContain("Release Notes");
       expect(storeRequest).not.toContain(accepted);
+    } finally { await orchestrator.close(); }
+  });
+  it("admits a Japanese correction on a full accepted draft and preserves its reviewed Markdown", async () => {
+    const selection = { instanceId: "pi_default", model: "gpt-5.6-sol" };
+    const available = catalog();
+    available.instances[0]!.driverKind = "matrix_pi";
+    available.instances[0]!.id = selection.instanceId;
+    const catalogs = { getCatalog: async () => available };
+    const roots: ChatExecutionRootResolver = {
+      resolve: async (_owner, ref) => ({ ref, fingerprint: executionRootFingerprint, primaryWorkspaceRoot: "/safe/project", projectSlug: "project_a" }),
+      revalidate: async (scope, resolved) => roots.resolve(scope, resolved.ref),
+    };
+    const answers = {
+      purpose: "作品管理".repeat(1000),
+      guidance: "整理手順".repeat(1000),
+      skillInstructions: "公開確認".repeat(1000),
+    };
+    const correction = "公開前に必ず確認してください。";
+    const review = { guidance: "# 作業方針\n" + "確認項目".repeat(1500),
+      skill: { name: "review-release", description: "公開手順", instructions: "確認手順".repeat(1250) } };
+    const start = vi.fn(async function* (_input: CanonicalProviderRunInput) {
+      const output = [
+        { reply: "何を確認しますか？", focus: "guidance", suggestions: [], answers },
+        { reply: "保存する内容を確認してください。", focus: "review", suggestions: [], review },
+        { reply: "公開前に確認します。", focus: "review", suggestions: [], review: {} },
+      ][start.mock.calls.length - 1];
+      const encoded = JSON.stringify(output);
+      for (let offset = 0; offset < encoded.length; offset += 3_000) {
+        yield { type: "assistant.delta" as const, messageId: "result", delta: encoded.slice(offset, offset + 3_000) };
+      }
+      yield { type: "run.completed" as const, outcome: "completed" as const };
+    });
+    const orchestrator = new CanonicalChatOrchestrator({
+      repository, catalog: catalogs, executionRoots: roots,
+      adapters: new CanonicalChatProviderRegistry([{ ...adapter(start), driverKind: "matrix_pi" }]),
+    });
+    const create = vi.fn(async (_path: string, _content: string) => {});
+    const service = new ProjectSetupService({
+      repository, homePath: "/tmp/project-setup-tests", executionRoots: roots,
+      generation: { repository, orchestrator, catalog: catalogs },
+      openWorkspace: async () => ({
+        fingerprint: "b".repeat(64), executionRootFingerprint, projectSlug: "project_a", create,
+        close: async () => {}, revalidate: async () => {}, read: async () => null,
+        interviewContext: async () => ({ project: { name: "作品管理" }, instructionFiles: [], skills: [], mcpServices: [] }),
+      }),
+    });
+    const update = (draft: NonNullable<Awaited<ReturnType<typeof service.start>>["draft"]>, name: string,
+      action: Parameters<typeof service.update>[3]["action"]) => service.update(principal, owner, draft.chatId, {
+      baseRevision: draft.revision, clientRequestId: `req_${name}`, action,
+    });
+    const sync = async (draft: Parameters<typeof update>[0], name: string) => {
+      await orchestrator.drain();
+      return update(draft, name, { type: "sync_generation" });
+    };
+    try {
+      const opening = await service.start(owner, "project_a", { mode: "interview", clientRequestId: "req_full_start", currentSelection: selection }, principal);
+      const guidance = await sync(opening.draft!, "full_opened");
+      expect(guidance.draft?.generation?.status).toBe("completed");
+      expect(guidance.draft?.answers).toEqual(answers);
+      const requestReview = await update(guidance.draft!, "request_review", { type: "interview_answer", text: "内容を確認します。", selection });
+      const full = await sync(requestReview.draft!, "full_review");
+      expect(full.draft?.step).toBe("review");
+      expect(full.draft?.proposals[0]?.content).toBe(review.guidance);
+      expect(full.draft?.proposals.at(-1)?.content).toContain(review.skill.instructions);
+      const corrected = await update(full.draft!, "correct_full", { type: "interview_answer", text: correction, selection });
+      expect(corrected.draft?.generation?.status).toBe("running");
+      const reviewed = await sync(corrected.draft!, "review_corrected");
+      expect(reviewed.draft?.generation?.status).toBe("completed");
+      expect(reviewed.draft?.answers).toEqual(answers);
+      expect(reviewed.draft?.proposals).toEqual(full.draft?.proposals);
+      expect(start).toHaveBeenCalledTimes(3);
+      const prompt = start.mock.calls.at(-1)![0].prompt;
+      expect(Buffer.byteLength(prompt, "utf8")).toBeLessThanOrEqual(58 * 1024);
+      const modelInput = JSON.parse(prompt.split("\n").at(-1)!);
+      expect(modelInput.transcript.at(-1)).toEqual({ role: "user", text: correction });
+      expect(modelInput.interpretedAnswers).toEqual(answers);
+      expect(modelInput.reviewedDraft).toEqual([
+        { path: "AGENTS.md", content: review.guidance }, { path: ".agents/skills/review-release/SKILL.md" },
+      ]);
+      const saved = await update(reviewed.draft!, "save_full", { type: "save" });
+      expect(saved.draft?.step).toBe("saved");
+      expect(create.mock.calls).toEqual(full.draft!.proposals.map(file => [file.path, file.content]));
     } finally { await orchestrator.close(); }
   });
   it("starts a fresh restricted run instead of resuming a broader native session and binds its result", async () => {

@@ -186,7 +186,7 @@ function ProjectSetupControlsScoped({
         ) : (
           <>
             <p role="alert" className="text-xs">
-              Project setup couldn’t continue with this model. Your answers are kept. Choose a supported model and retry.
+              The Agent couldn’t continue. Your answers are kept. Send a revised answer or retry with the selected model.
             </p>
             <div className="flex flex-wrap gap-2">
               <Action disabled={busy || !selection} onClick={() => { void setup.retryInterview(); }}>

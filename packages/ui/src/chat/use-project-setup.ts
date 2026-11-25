@@ -184,7 +184,7 @@ export function useProjectSetup(options: Options) {
   const pollingGeneration = eligible && waiting
     ? JSON.stringify([identity, draft?.revision, draft?.generation?.runId])
     : null;
-  const canAnswer = active && !currentState.pending && !waiting && !setupReplyFailed(draft)
+  const canAnswer = active && !currentState.pending && !waiting
     && (!mcpHandoff || Boolean(draft?.interview));
   const retryInterview = () =>
     strictSelection && setupReplyFailed(stateRef.current.draft)
@@ -211,7 +211,7 @@ export function useProjectSetup(options: Options) {
   const answer = async (text: string): Promise<boolean> => {
     const current = stateRef.current.draft;
     const reply = text.trim();
-    if (!current || !reply || !canAnswer || waitingForSetupReply(current) || setupReplyFailed(current)) return false;
+    if (!current || !reply || !canAnswer || waitingForSetupReply(current)) return false;
     if (current.interview)
       return dispatch({ type: "interview_answer", text: reply, ...(strictSelection ? { selection: strictSelection } : {}) });
     if (current.step === "review")
