@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ChClient, ChVmInfo } from "../../packages/hostd/src/ch-client.js";
 import type { Exec } from "../../packages/hostd/src/exec.js";
@@ -39,9 +40,11 @@ let lvExists: boolean;
 // What lvs prints, exit code 5, for an LV that does not exist.
 const LV_MISSING = '  Failed to find logical volume "vmvg/mx-x"\n';
 let chState: ChVmInfo["state"];
+let memoryActualBytes: number;
 let snapshotError: Error | null;
 let resumeError: Error | null;
 let trimGate: Deferred | null;
+let startGate: Deferred | null;
 let healthy: (now: number) => boolean;
 let freeBytes: number;
 let clock: LifecycleClock & { t: number };
@@ -70,7 +73,10 @@ const fakeExec: Exec = async (argv) => {
   if (cmd[0] === "lvs") return lvExists ? { code: 0, stdout: "", stderr: "" } : { code: 5, stdout: "", stderr: LV_MISSING };
   if (cmd[0] === "lvremove") lvExists = false;
   if (cmd[0] === "lvcreate") lvExists = true;
-  if (cmd[0] === "systemctl" && cmd[1] === "start") chState = cmd[2]!.startsWith("matrix-vm-restore@") ? "Paused" : "Running";
+  if (cmd[0] === "systemctl" && cmd[1] === "start") {
+    if (startGate) await startGate.promise;
+    chState = cmd[2]!.startsWith("matrix-vm-restore@") ? "Paused" : "Running";
+  }
   const fail = execFailures.get(cmd[0]!);
   if (fail !== undefined) return { code: fail, stdout: "", stderr: "boom /secret/path" };
   return { code: 0, stdout: "", stderr: "" };
@@ -80,7 +86,7 @@ function fakeCh(): ChClient {
   return {
     async info() {
       events.push("ch:info");
-      return { state: chState, memoryActualBytes: 2048 * 1024 * 1024 };
+      return { state: chState, memoryActualBytes };
     },
     async pause() {
       events.push("ch:pause");
@@ -139,9 +145,11 @@ beforeEach(async () => {
   execFailures = new Map();
   lvExists = false;
   chState = "Shutdown";
+  memoryActualBytes = 2 * 1024 ** 3;
   snapshotError = null;
   resumeError = null;
   trimGate = null;
+  startGate = null;
   healthy = () => true;
   freeBytes = 1024 ** 4;
   clock = {
@@ -263,6 +271,34 @@ describe("VM lifecycle", () => {
     await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
   });
 
+  it("refuses to pause a grown guest when its current snapshot will not fit", async () => {
+    const vm = await createRunning();
+    memoryActualBytes = 8 * 1024 ** 3;
+    freeBytes = 5 * 1024 ** 3;
+    await expect(lifecycle.suspend(vm.id)).rejects.toMatchObject({ code: "pool_full" });
+    expect(count("ch:pause")).toBe(0);
+    await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("holds snapshot space for one VM until its suspend finishes", async () => {
+    const first = await createRunning();
+    const second = await lifecycle.create({ ...spec, machineId: "machine-2", handle: "bob" });
+    freeBytes = 6 * 1024 ** 3;
+    trimGate = deferred();
+    const pending = lifecycle.suspend(first.id);
+    await expect.poll(() => count("trim")).toBe(1);
+    const competing = lifecycle.suspend(second.id);
+    try {
+      const result = competing.then(() => "suspended", (error: LifecycleError) => error.code);
+      await expect(Promise.race([result, delay(100, "pending")])).resolves.toBe("pool_full");
+      await expect(store.get(second.id)).resolves.toMatchObject({ state: "running" });
+    } finally {
+      trimGate.resolve();
+      await Promise.allSettled([pending, competing]);
+    }
+    await expect(lifecycle.suspend(second.id)).resolves.toMatchObject({ state: "suspended" });
+  });
+
   it("prepares the same bound network before cold boot and restore", async () => {
     for (const name of ["matrix-vm@.service", "matrix-vm-restore@.service"]) {
       const unit = await readFile(join(UNIT_DIR, name), "utf8");
@@ -315,7 +351,7 @@ describe("VM lifecycle", () => {
     trimGate = deferred();
     const suspending = lifecycle.suspend(vm.id);
     await Promise.resolve();
-    const resuming = lifecycle.resume(vm.id, 2000);
+    const resuming = lifecycle.resume(vm.id, 8000);
     trimGate.resolve();
     await suspending;
     await expect(resuming).resolves.toBe("running");
@@ -325,6 +361,35 @@ describe("VM lifecycle", () => {
     const snapAt = events.findIndex((e) => e.startsWith("ch:snapshot"));
     const restoreAt = events.findIndex((e) => e.startsWith("exec:systemctl start matrix-vm-restore@"));
     expect(snapAt).toBeLessThan(restoreAt);
+    await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("returns starting on time behind a suspend and lets the queued wake continue", async () => {
+    const vm = await createRunning();
+    trimGate = deferred();
+    const suspending = lifecycle.suspend(vm.id);
+    const resuming = lifecycle.resume(vm.id, 25, { expectedGeneration: vm.generation });
+    try {
+      await expect(Promise.race([resuming, delay(150, "late")])).resolves.toBe("starting");
+    } finally {
+      trimGate.resolve();
+      await Promise.allSettled([suspending, resuming]);
+      await lifecycle.idle();
+    }
+    await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("returns starting on time while the restore unit is still starting", async () => {
+    const vm = await createSuspended();
+    startGate = deferred();
+    const resuming = lifecycle.resume(vm.id, 25);
+    try {
+      await expect(Promise.race([resuming, delay(150, "late")])).resolves.toBe("starting");
+    } finally {
+      startGate.resolve();
+      await Promise.allSettled([resuming]);
+      await lifecycle.idle();
+    }
     await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
   });
 

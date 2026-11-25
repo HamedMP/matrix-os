@@ -235,6 +235,8 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   // The memory lock never waits on a VM's operation queue. Create can hold
   // the address lock while tearing down a previous failed VM.
   let memoryAllocation: Promise<unknown> = Promise.resolve();
+  let snapshotAllocation: Promise<unknown> = Promise.resolve();
+  let reservedSnapshotBytes = 0;
   // Every create() call from entry until it settles, so idle() also waits for
   // a create that is still allocating its record. Capped by maxInFlight.
   const creates = new Set<Promise<unknown>>();
@@ -688,28 +690,56 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     }
   }
 
-  async function waitHealthy(record: VmRecord, deadline: number): Promise<ResumeResult> {
-    for (;;) {
+  async function waitHealthy(record: VmRecord, deadline: number, signal: AbortSignal): Promise<ResumeResult> {
+    while (!signal.aborted) {
       const remaining = deadline - clock.now();
+      if (remaining <= 0) break;
       let healthy = false;
       try {
-        healthy = await deps.gatewayHealth(record.privateIPv4, AbortSignal.timeout(Math.min(Math.max(remaining, 100), 2000)));
+        healthy = await deps.gatewayHealth(record.privateIPv4, AbortSignal.any([signal, AbortSignal.timeout(Math.min(remaining, 2000))]));
       } catch (error: unknown) {
+        if (signal.aborted) break;
         log("vm_health_probe_failed", { id: record.id, ...errorFields(error) });
       }
       if (healthy) return "running";
-      if (clock.now() >= deadline) return "starting";
-      await clock.sleep(Math.min(HEALTH_POLL_MS, Math.max(deadline - clock.now(), 1)));
+      const sleepMs = Math.min(HEALTH_POLL_MS, deadline - clock.now());
+      if (sleepMs <= 0) break;
+      await clock.sleep(sleepMs);
     }
+    return "starting";
   }
 
   async function suspend(record: VmRecord): Promise<VmRecord> {
     if (record.state === "suspended") return record;
     if (record.state !== "running") throw new LifecycleError("conflict", `VM is ${record.state}`);
-    if ((await deps.pool.freeBytes()) < 2 * record.bootMiB * MiB) {
-      log("vm_suspend_pool_full", { id: record.id });
-      throw new LifecycleError("pool_full", "snapshot pool is full");
+    // virtio-mem pages that are plugged now can be written into the snapshot.
+    // Keep the existing 2x safety margin and account for other writers until
+    // their snapshot is published or cleaned up.
+    let memoryActualBytes = Math.max(record.maxMiB, record.memoryReservationMiB ?? 0) * MiB;
+    try {
+      ({ memoryActualBytes } = await withCh(record.id, (client) => client.info(chSignal())));
+    } catch (error: unknown) {
+      // A failed probe must never turn a grown guest back into a boot-sized estimate.
+      log("vm_snapshot_size_probe_failed", { id: record.id, ...errorFields(error) });
     }
+    const bytes = 2 * Math.max(record.bootMiB * MiB, memoryActualBytes);
+    const claim = snapshotAllocation.then(async () => {
+      if ((await deps.pool.freeBytes()) - reservedSnapshotBytes < bytes) {
+        log("vm_suspend_pool_full", { id: record.id });
+        throw new LifecycleError("pool_full", "snapshot pool is full");
+      }
+      reservedSnapshotBytes += bytes;
+    });
+    snapshotAllocation = claim.then(() => undefined, (error: unknown) => error);
+    await claim;
+    try {
+      return await snapshotVm(record);
+    } finally {
+      reservedSnapshotBytes -= bytes;
+    }
+  }
+
+  async function snapshotVm(record: VmRecord): Promise<VmRecord> {
     const suspending = await save(record, { state: "suspending" });
     try {
       await deps.trim(record.id, AbortSignal.timeout(cfg.chTimeoutMs));
@@ -892,10 +922,31 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
         options.onAccepted,
       ),
     async resume(id, budgetMs, fence = {}) {
-      // Concurrent callers share the wake; each waits for health on its own budget.
-      const deadline = clock.now() + Math.max(0, budgetMs);
-      const record = await enqueue(id, fencedKind("resume", fence), async () => wake(await loadFenced(id, fence)));
-      return waitHealthy(record, deadline);
+      // Concurrent callers share the wake. The caller's deadline also covers
+      // queueing and systemd, and only cancels its gateway probes.
+      const budget = Math.max(0, budgetMs);
+      const deadline = clock.now() + budget;
+      const probes = new AbortController();
+      const waking = enqueue(id, fencedKind("resume", fence), async () => wake(await loadFenced(id, fence)));
+      const response = waking.then(
+        (record) => waitHealthy(record, deadline, probes.signal),
+        (error: unknown) => {
+          if (probes.signal.aborted) log("vm_wake_after_deadline_failed", { id, ...errorFields(error) });
+          throw error;
+        },
+      );
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const starting = new Promise<ResumeResult>((resolve) => {
+        timer = setTimeout(() => {
+          resolve("starting");
+          probes.abort();
+        }, budget);
+      });
+      try {
+        return await Promise.race([response, starting]);
+      } finally {
+        clearTimeout(timer);
+      }
     },
     stop: (id) => enqueue(id, "stop", async () => stop(await load(id))),
     destroy: (id) => enqueue(id, "destroy", () => destroy(id)),

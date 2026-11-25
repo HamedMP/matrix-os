@@ -741,9 +741,16 @@ describe("lost pause replies, lowered memory ceilings, and unreadable LVM on des
   it("marks the VM failed when its state cannot be read after a lost pause reply", async () => {
     const lifecycle = make();
     const vm = await lifecycle.create(spec);
+    let pauseSent = false;
     chOverrides = {
-      pause: async () => Promise.reject(new ChError("timeout", "pause reply lost")),
-      info: async () => Promise.reject(new ChError("unreachable", "socket gone")),
+      async pause() {
+        pauseSent = true;
+        throw new ChError("timeout", "pause reply lost");
+      },
+      async info() {
+        if (pauseSent) throw new ChError("unreachable", "socket gone");
+        return { state: "Running", memoryActualBytes: 2048 * 1024 * 1024 };
+      },
     };
     await expect(lifecycle.suspend(vm.id)).rejects.toMatchObject({ code: "snapshot_failed" });
     await expect(store.get(vm.id)).resolves.toMatchObject({ state: "failed" });
