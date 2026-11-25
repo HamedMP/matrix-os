@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_BUSY_INTERVALS,
   createCalendarProvider,
   descriptionToText,
   htmlToText,
@@ -29,6 +30,19 @@ describe("free-busy merging", () => {
       { address: "ana@example.com", start: "2026-11-23T11:00:00Z", end: "2026-11-23T11:30:00Z", status: "outOfOffice" },
       { address: "ana@example.com", start: "2026-11-23T11:30:00Z", end: "2026-11-23T12:00:00Z", status: "tentative" },
     ]);
+  });
+
+  it("marks the whole range unknown instead of cutting a reply with more intervals than it reads", () => {
+    const start = ms("2026-11-23T00:00:00Z");
+    const many = Array.from({ length: MAX_BUSY_INTERVALS + 1 }, (_, index) => ({
+      startMs: start + index * 60_000, endMs: start + index * 60_000 + 30_000, status: "busy" as const,
+    }));
+
+    expect(mergeBusyIntervals("ana@example.com", many, start, ms("2026-11-25T00:00:00Z"))).toEqual([
+      { address: "ana@example.com", start: "2026-11-23T00:00:00Z", end: "2026-11-25T00:00:00Z", status: "unknown" },
+    ]);
+    expect(mergeBusyIntervals("ana@example.com", many.slice(0, MAX_BUSY_INTERVALS), start, ms("2026-11-25T00:00:00Z")))
+      .toHaveLength(MAX_BUSY_INTERVALS);
   });
 });
 
@@ -98,6 +112,45 @@ describe("connected calendar accounts", () => {
       { service: "microsoft_outlook_calendar", account_label: "me@contoso.com", account_email: null, status: "active" },
     ];
     expect(await listCalendarAccounts(bridge)).toEqual([]);
+  });
+
+  it("reads the owner's address from the primary calendar when the host lists only a label, never using the label", async () => {
+    const bridge = new AccountsBridge();
+    bridge.rows = [
+      { service: "google_calendar", account_label: "Work", status: "active" },
+      { service: "google_calendar", account_label: "Side", account_email: null, status: "active" },
+    ];
+    bridge.reply("google_calendar", "list_calendars",
+      { items: [{ id: "team@group.calendar.google.com" }], nextPageToken: "next" },
+      { items: [{ id: "Owner@Example.com", primary: true }] },
+      { items: [{ id: "shared@group.calendar.google.com", primary: false }] });
+
+    const accounts = await listCalendarAccounts(bridge);
+
+    expect(bridge.calls.map(({ action, params, label }) => ({ action, params, label }))).toEqual([
+      { action: "list_calendars", params: { maxResults: 250 }, label: "Work" },
+      { action: "list_calendars", params: { maxResults: 250, pageToken: "next" }, label: "Work" },
+      { action: "list_calendars", params: { maxResults: 250 }, label: "Side" },
+    ]);
+    expect(accounts).toEqual([
+      { account: { id: calendarAccountId("google", "owner@example.com"), provider: "google", address: "owner@example.com", displayName: "Work" }, label: "Work" },
+      { account: { id: calendarAccountId("google", "label:side"), provider: "google", address: "", displayName: "Side" }, label: "Side" },
+    ]);
+  });
+
+  it("keeps an account whose address cannot be read, and stops reading once the host is rate limited", async () => {
+    const bridge = new AccountsBridge();
+    bridge.rows = [
+      { service: "google_calendar", account_label: "Work", status: "active" },
+      { service: "google_calendar", account_label: "Side", status: "active" },
+    ];
+    bridge.fail("google_calendar", "list_calendars", statusError(429));
+
+    const accounts = await listCalendarAccounts(bridge);
+
+    expect(bridge.calls).toHaveLength(1);
+    expect(accounts.map(({ account }) => account.address)).toEqual(["", ""]);
+    expect(accounts.map(({ label }) => label)).toEqual(["Work", "Side"]);
   });
 
   it("maps a failed account listing to a provider error", async () => {

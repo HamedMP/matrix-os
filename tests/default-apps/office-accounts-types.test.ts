@@ -101,6 +101,22 @@ describe("instants: ISO strings that always carry an offset", () => {
     expect(instantFromWallTime("2026-03-08T12:00:00", "America/Los_Angeles")).toBe("2026-03-08T12:00:00-07:00");
     expect(() => instantFromWallTime("2026-11-23T09:00:00Z", "UTC")).toThrow(RangeError);
   });
+
+  it("moves a time skipped by a daylight-saving change forward by the gap, never back before it", () => {
+    expect(instantFromWallTime("2026-03-08T02:30:00", "America/New_York")).toBe("2026-03-08T03:30:00-04:00");
+    expect(instantFromWallTime("2026-03-08T02:00:00", "America/New_York")).toBe("2026-03-08T03:00:00-04:00");
+    expect(instantFromWallTime("2026-03-29T02:15:00", "Europe/Berlin")).toBe("2026-03-29T03:15:00+02:00");
+    // A 30 minute gap.
+    expect(instantFromWallTime("2026-10-04T02:15:00", "Australia/Lord_Howe")).toBe("2026-10-04T02:45:00+11:00");
+    // Times either side of the gap are unchanged.
+    expect(instantFromWallTime("2026-03-08T01:59:00", "America/New_York")).toBe("2026-03-08T01:59:00-05:00");
+    expect(instantFromWallTime("2026-03-08T03:00:00", "America/New_York")).toBe("2026-03-08T03:00:00-04:00");
+  });
+
+  it("picks the first of two moments when clocks go back and show a time twice", () => {
+    expect(instantFromWallTime("2026-11-01T01:30:00", "America/New_York")).toBe("2026-11-01T01:30:00-04:00");
+    expect(instantFromWallTime("2026-10-25T02:30:00", "Europe/Berlin")).toBe("2026-10-25T02:30:00+02:00");
+  });
 });
 
 describe("provider errors: one typed failure for every adapter", () => {
@@ -137,7 +153,11 @@ describe("provider errors: one typed failure for every adapter", () => {
     expect(providerErrorCodeForStatus(409)).toBe("multiple_accounts");
     expect(providerErrorCodeForStatus(429)).toBe("rate_limited");
     expect(providerErrorCodeForStatus(503)).toBe("failed");
-    expect(providerErrorCodeForStatus(400)).toBe("failed");
+    expect(providerErrorCodeForStatus(502)).toBe("failed");
+    // A refused request or an app without access fails the same way again: no retry.
+    expect(providerErrorCodeForStatus(400)).toBe("not_supported");
+    expect(providerErrorCodeForStatus(403)).toBe("not_supported");
+    expect(providerErrorCodeForStatus(413)).toBe("not_supported");
     expect(isRetryableProviderError(new ProviderError("rate_limited"))).toBe(true);
     expect(isRetryableProviderError(new ProviderError("failed"))).toBe(true);
     expect(isRetryableProviderError(new ProviderError("not_connected"))).toBe(false);

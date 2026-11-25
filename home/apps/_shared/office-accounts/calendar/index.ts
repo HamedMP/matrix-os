@@ -9,7 +9,7 @@ export { createGoogleCalendarProvider } from "./google-provider.js";
 export { createCalendarProvider, defaultCalendarBridge, listCalendarAccounts, MAX_CALENDAR_ACCOUNTS } from "./accounts.js";
 export type { CalendarAccountsBridge, ConnectedCalendarAccount } from "./accounts.js";
 export type { CalendarProviderOptions, CalendarServiceBridge } from "./service.js";
-export { mergeBusyIntervals } from "./busy.js";
+export { MAX_BUSY_INTERVALS, mergeBusyIntervals } from "./busy.js";
 export type { BusyInterval } from "./busy.js";
 export { htmlToText, descriptionToText } from "./description.js";
 export { ianaZone } from "./zones.js";

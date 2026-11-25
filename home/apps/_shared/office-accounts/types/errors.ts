@@ -77,12 +77,14 @@ export function toProviderError(value: unknown): ProviderError {
 /**
  * Maps the status of a failed `MatrixOS.service(...)` call to a code:
  * 404 no matching account, 409 several accounts and no label given, 429 the
- * app request budget is used up. Every other failure is `failed`.
+ * app request budget is used up, 400, 403 and 413 a request the app may not or
+ * cannot make (retrying fails the same way). Every other failure is `failed`.
  */
 export function providerErrorCodeForStatus(status: number): ProviderErrorCode {
   if (status === 404) return "not_connected";
   if (status === 409) return "multiple_accounts";
   if (status === 429) return "rate_limited";
+  if (status === 400 || status === 403 || status === 413) return "not_supported";
   return "failed";
 }
 

@@ -63,7 +63,14 @@ Tests: `tests/default-apps/office-accounts/calendar/`.
 
 - **Ids.** Account ids come from `calendarAccountId`. A `CalendarEvent.id` is built with
   `composeEventId(calendarId, providerEventId)` so no method needs a separate calendar id.
-- **Free-busy.** A person whose availability cannot be read gets one block with
-  `status: "unknown"` covering the whole range, so it never looks like free time.
+- **Free-busy.** A person whose availability cannot be read, or whose reply is larger
+  than the adapter reads, gets one block with `status: "unknown"` covering the whole
+  range, so it never looks like free time. A list longer than the adapter reads is
+  refused, never returned in part.
+- **Cached events.** The event cache is bounded and evicts. A write that needs the
+  stored event (a guest list that must keep booked rooms, a repeat rule, a partial time
+  change) reads it with `get_event` when the cache no longer holds it.
+- **Owner address.** `CalendarAccount.address` is the real address or empty, never an
+  account label. A reply uses the attendee entry Google marks as the owner's.
 - **Limits.** `MAX_EVENT_ATTENDEES` (100), `MAX_FREE_BUSY_ADDRESSES` (20),
   `MAX_EVENT_RANGE_DAYS` (62).

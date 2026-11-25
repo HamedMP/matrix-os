@@ -47,7 +47,7 @@ const createParams = {
 };
 const teamEvents = `${api}/calendars/team%23ops%40group.calendar.google.com/events`;
 
-type Case = [string, Record<string, unknown>, "POST" | "PATCH" | "DELETE", string, Record<string, unknown>];
+type Case = [string, Record<string, unknown>, "GET" | "POST" | "PATCH" | "DELETE", string, Record<string, unknown>];
 const cases: Case[] = [
   ["create_event_with_attendees", createParams, "POST", `${teamEvents}?sendUpdates=all&conferenceDataVersion=1`, { body: {
     summary: "Planning",
@@ -97,15 +97,17 @@ const cases: Case[] = [
       timeMin: "2026-10-19T00:00:00+02:00", timeMax: "2026-10-26T00:00:00Z",
       items: [{ id: "primary" }, { id: "ada@example.com" }, { id: "team#ops@group.calendar.google.com" }],
     } }],
+  ["get_event", { eventId: "abc123_20261019T080000Z" }, "GET", `${api}/calendars/primary/events/abc123_20261019T080000Z`, { params: undefined }],
+  ["get_event", { calendarId: "team#ops@group.calendar.google.com", eventId: "series01" }, "GET", `${teamEvents}/series01`, { params: undefined }],
 ];
 
 describe("Google Calendar scheduling actions", () => {
-  it("exports exactly the four writes and the one read with their risk", () => {
+  it("exports exactly the four writes and the two reads with their risk", () => {
     expect(Object.keys(GOOGLE_CALENDAR_SCHEDULING_WRITE_ACTIONS)).toEqual([SERVICE]);
     expect(Object.keys(writes).sort()).toEqual(["create_event_with_attendees", "delete_event", "respond_event", "update_event_details"]);
-    expect(Object.keys(reads)).toEqual(["free_busy"]);
+    expect(Object.keys(reads).sort()).toEqual(["free_busy", "get_event"]);
     for (const action of Object.values(writes)) expect(action.risk).toBe("write");
-    expect(reads.free_busy!.risk).toBe("read");
+    for (const action of Object.values(reads)) expect(action.risk).toBe("read");
     for (const action of Object.values(all)) {
       expect(action.paramsSchema).toBeDefined();
       expect(action.directApi).toBeDefined();
@@ -120,7 +122,7 @@ describe("Google Calendar scheduling actions", () => {
     for (const key of Object.keys(params)) expect(action.params[key], `${actionId}.${key} metadata`).toBeDefined();
     const { fake, result } = await run(actionId, params);
     expect(result.data).toBeDefined();
-    const spy = method === "POST" ? fake.proxyPost : method === "PATCH" ? fake.proxyPatch : fake.proxyDelete;
+    const spy = method === "GET" ? fake.proxyGet : method === "POST" ? fake.proxyPost : method === "PATCH" ? fake.proxyPatch : fake.proxyDelete;
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy.mock.calls[0]![0]).toStrictEqual({ externalUserId: "owner", accountId: "account", url, ...payload });
     for (const other of [fake.proxyGet, fake.proxyPost, fake.proxyPatch, fake.proxyDelete, fake.proxyPut].filter(s => s !== spy)) {
@@ -138,6 +140,7 @@ describe("Google Calendar scheduling actions", () => {
     update_event_details: { sendUpdates: "none", summary: "x" },
     delete_event: { sendUpdates: "none" },
     respond_event: { sendUpdates: "none", selfEmail: "me@example.com", response: "accepted" },
+    get_event: {},
   };
   it.each(Object.keys(eventBases))("rejects path-injection ids for %s at the schema and in url()", (actionId) => {
     const action = all[actionId]!;
@@ -292,5 +295,7 @@ describe("Google Calendar scheduling actions", () => {
     expect(writes.create_event_with_attendees!.params.reminders!.type).toBe("array");
     expect(Object.keys(writes.respond_event!.params).sort()).toEqual(["calendarId", "comment", "eventId", "response", "selfEmail", "sendUpdates"]);
     expect(reads.free_busy!.params.items).toMatchObject({ type: "array", required: true });
+    expect(Object.keys(reads.get_event!.params).sort()).toEqual(["calendarId", "eventId"]);
+    expect(reads.get_event!.params.eventId).toMatchObject({ type: "string", required: true });
   });
 });

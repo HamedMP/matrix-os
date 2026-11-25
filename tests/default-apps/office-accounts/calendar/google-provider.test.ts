@@ -270,9 +270,10 @@ describe("Google calendar adapter: writes", () => {
 
   it("asks for start, end and the all-day flag together when it cannot tell them", async () => {
     const { bridge, provider } = setup();
-    await expect(provider.updateEvent(`${PRIMARY}/unknown1`, { start: "2026-11-23T09:00:00Z" }, { sendInvites: true }))
+    bridge.reply(SERVICE, "get_event", { id: "gone1", status: "cancelled" });
+    await expect(provider.updateEvent(`${PRIMARY}/gone1`, { start: "2026-11-23T09:00:00Z" }, { sendInvites: true }))
       .rejects.toMatchObject({ code: "not_supported" });
-    expect(bridge.calls).toEqual([]);
+    expect(bridge.callsTo("update_event_details")).toEqual([]);
   });
 
   it("deletes and responds with the stated notification choice", async () => {

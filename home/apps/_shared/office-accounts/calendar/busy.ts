@@ -14,12 +14,17 @@ export interface BusyInterval {
 
 const STRENGTH: Readonly<Record<BusyStatus, number>> = { unknown: 1, tentative: 2, busy: 3, outOfOffice: 4 };
 
-/** Upper bound on intervals read per person; a busier reply is cut. */
+/**
+ * Upper bound on intervals read per person. A busier reply is not cut short,
+ * which would make the rest of the range look free: the whole range is unknown.
+ */
 export const MAX_BUSY_INTERVALS = 2000;
 
 export function mergeBusyIntervals(address: string, intervals: readonly BusyInterval[], rangeStartMs: number, rangeEndMs: number): BusyBlock[] {
+  if (intervals.length > MAX_BUSY_INTERVALS) {
+    return [unknownBlock(address, instantFromMs(rangeStartMs, 0), instantFromMs(rangeEndMs, 0))];
+  }
   const clipped = intervals
-    .slice(0, MAX_BUSY_INTERVALS)
     .map((interval) => ({ ...interval, startMs: Math.max(interval.startMs, rangeStartMs), endMs: Math.min(interval.endMs, rangeEndMs) }))
     .filter((interval) => Number.isFinite(interval.startMs) && Number.isFinite(interval.endMs) && interval.endMs > interval.startMs);
   if (clipped.length === 0) return [];

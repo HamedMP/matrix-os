@@ -6,6 +6,7 @@ import type { DirectApi, ServiceAction } from "./types.js";
 // https://developers.google.com/workspace/calendar/api/v3/reference/events/insert
 // https://developers.google.com/workspace/calendar/api/v3/reference/events/patch
 // https://developers.google.com/workspace/calendar/api/v3/reference/events/delete
+// https://developers.google.com/workspace/calendar/api/v3/reference/events/get
 // https://developers.google.com/workspace/calendar/api/v3/reference/freebusy/query
 const api = "https://www.googleapis.com/calendar/v3";
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -140,6 +141,7 @@ const respondFields = {
   sendUpdates,
 };
 const deleteFields = { calendarId, eventId, sendUpdates };
+const getFields = { calendarId, eventId };
 const freeBusyItem = z.union([calendarIdSchema, z.email().max(254)]);
 const freeBusyFields = {
   items: field(z.array(freeBusyItem).min(1).max(20).refine(list => new Set(list).size === list.length),
@@ -194,6 +196,9 @@ export const GOOGLE_CALENDAR_SCHEDULING_WRITE_ACTIONS: Record<string, Record<str
 
 /** Reads for `google_calendar`. */
 export const GOOGLE_CALENDAR_SCHEDULING_READ_ACTIONS: Record<string, ServiceAction> = {
+  get_event: scheduling(
+    "Read one event or recurring series with its full attendee list, rooms and your own attendee entry",
+    "read", getFields, { method: "GET", url: eventUrl }, fieldsSchema(getFields)),
   free_busy: scheduling(
     "Read busy times for up to 20 calendars or people over at most 62 days",
     "read", freeBusyFields, {

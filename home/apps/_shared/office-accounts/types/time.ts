@@ -157,10 +157,15 @@ export function instantInZone(ms: number, timeZone: string): IsoInstant {
   return instantFromMs(ms, zoneOffsetMinutes(ms, timeZone));
 }
 
+const WALL_TIME_SEARCH_MS = 86_400_000;
+
 /**
  * The instant at which clocks in `timeZone` show `wallTime`
- * (`YYYY-MM-DDTHH:mm:ss`, no offset). A time skipped by a daylight-saving
- * change resolves to the moment just after the gap.
+ * (`YYYY-MM-DDTHH:mm:ss`, no offset), by the rule Temporal calls `compatible`:
+ *
+ * - A time skipped by a daylight-saving change moves forward by the length of
+ *   the gap: 02:30 on a night clocks jump from 02:00 to 03:00 becomes 03:30.
+ * - A time shown twice when clocks go back is the first of the two moments.
  */
 export function instantFromWallTime(wallTime: string, timeZone: string): IsoInstant {
   const match = WALL_TIME.exec(wallTime);
@@ -169,8 +174,14 @@ export function instantFromWallTime(wallTime: string, timeZone: string): IsoInst
     throw new RangeError("Expected wall-clock time as YYYY-MM-DDTHH:mm:ss");
   }
   const naive = Date.parse(`${wallTime}Z`);
-  let ms = naive - zoneOffsetMinutes(naive, timeZone) * 60_000;
-  const settled = zoneOffsetMinutes(ms, timeZone);
-  ms = naive - settled * 60_000;
+  // The offsets in force a day either side cover any single change near this time.
+  const before = zoneOffsetMinutes(naive - WALL_TIME_SEARCH_MS, timeZone);
+  const after = zoneOffsetMinutes(naive + WALL_TIME_SEARCH_MS, timeZone);
+  const moments = [...new Set([before, after, zoneOffsetMinutes(naive, timeZone)])]
+    .map((offset) => naive - offset * 60_000)
+    .filter((ms) => ms + zoneOffsetMinutes(ms, timeZone) * 60_000 === naive)
+    .sort((a, b) => a - b);
+  // No moment shows this time, so it is in a gap: read it with the offset before the gap.
+  const ms = moments[0] ?? naive - before * 60_000;
   return instantFromMs(ms, zoneOffsetMinutes(ms, timeZone));
 }

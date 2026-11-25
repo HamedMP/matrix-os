@@ -8,7 +8,7 @@ import type { MatrixOSBridge, MatrixOSConnectedService } from "../../matrix-os";
 import { CALENDAR_SERVICE_IDS, ProviderError, calendarAccountId } from "../types/calendar.js";
 import type { CalendarAccount, CalendarProvider, CalendarProviderId } from "../types/calendar.js";
 import { isValidMailAddress } from "../types/addresses.js";
-import { createGoogleCalendarProvider } from "./google-provider.js";
+import { createGoogleCalendarProvider, readGoogleAccountAddress } from "./google-provider.js";
 import { calendarBridgeFailure } from "./service.js";
 import type { CalendarServiceBridge } from "./service.js";
 
@@ -36,20 +36,37 @@ export function defaultCalendarBridge(): CalendarAccountsBridge {
   return candidate as CalendarAccountsBridge;
 }
 
-function toAccount(row: MatrixOSConnectedService): ConnectedCalendarAccount | undefined {
+interface ConnectedRow {
+  provider: CalendarProviderId;
+  label: string;
+  /** Empty when the host did not share a valid address. */
+  email: string;
+}
+
+function connectedRow(row: MatrixOSConnectedService): ConnectedRow | undefined {
   const provider = PROVIDER_FOR_SERVICE.get(row.service);
   if (!provider || row.status !== "active") return undefined;
   const label = String(row.account_label ?? "").trim();
+  if (!label) return undefined;
   const email = String(row.account_email ?? "").trim().toLowerCase();
-  const address = isValidMailAddress(email) ? email : label.toLowerCase();
-  if (!label || !address) return undefined;
-  return {
-    account: { id: calendarAccountId(provider, address), provider, address, displayName: label },
-    label,
-  };
+  return { provider, label, email: isValidMailAddress(email) ? email : "" };
 }
 
-/** Active Google Calendar accounts, in the order the host lists them. */
+function toAccount({ provider, label }: ConnectedRow, address: string): ConnectedCalendarAccount {
+  // An account whose address is unknown is told apart by its label, which the
+  // host keeps unique per service; the label is never used as an address.
+  const id = calendarAccountId(provider, address || `label:${label}`);
+  return { account: { id, provider, address, displayName: label }, label };
+}
+
+/**
+ * Active Google Calendar accounts, in the order the host lists them.
+ *
+ * A host that lists an account by its label only (the app capability route
+ * does) gets its address from the account's primary calendar. When that cannot
+ * be read the account keeps `address: ""`; its adapter then reads the owner's
+ * address per event and refuses to answer an invitation it cannot attribute.
+ */
 export async function listCalendarAccounts(bridge: CalendarAccountsBridge = defaultCalendarBridge()): Promise<ConnectedCalendarAccount[]> {
   let rows: MatrixOSConnectedService[];
   try {
@@ -61,12 +78,26 @@ export async function listCalendarAccounts(bridge: CalendarAccountsBridge = defa
   }
   const seen = new Set<string>();
   const accounts: ConnectedCalendarAccount[] = [];
+  // Reading addresses stops once the host's request budget is used up.
+  let canReadAddresses = true;
   for (const row of Array.isArray(rows) ? rows : []) {
-    const entry = toAccount(row);
-    if (!entry || seen.has(entry.account.id)) continue;
-    seen.add(entry.account.id);
-    accounts.push(entry);
     if (accounts.length >= MAX_CALENDAR_ACCOUNTS) break;
+    const entry = connectedRow(row);
+    if (!entry || (entry.email && seen.has(calendarAccountId(entry.provider, entry.email)))) continue;
+    let address = entry.email;
+    if (!address && canReadAddresses) {
+      try {
+        address = await readGoogleAccountAddress(bridge, entry.label) ?? "";
+      } catch (error: unknown) {
+        if (!(error instanceof ProviderError)) throw error;
+        console.warn("[office-accounts] account address unavailable", error.code);
+        if (error.code === "rate_limited") canReadAddresses = false;
+      }
+    }
+    const connected = toAccount(entry, address);
+    if (seen.has(connected.account.id)) continue;
+    seen.add(connected.account.id);
+    accounts.push(connected);
   }
   return accounts;
 }

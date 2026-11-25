@@ -5,7 +5,9 @@
 import {
   MAX_EVENT_ATTENDEES,
   MAX_EVENT_RANGE_DAYS,
+  MAX_EVENT_REMINDERS,
   MAX_FREE_BUSY_ADDRESSES,
+  MAX_REMINDER_MINUTES,
   ProviderError,
   allDayDate,
   allDayInstant,
@@ -13,6 +15,7 @@ import {
   instantFromMs,
   instantToMs,
   isIsoInstant,
+  isValidRecurrence,
   splitEventId,
 } from "../types/calendar.js";
 import { isValidMailAddress } from "../types/addresses.js";
@@ -22,7 +25,9 @@ import type {
   EventChanges,
   EventDraft,
   EventDraftAttendee,
+  EventReminder,
   IsoInstant,
+  Recurrence,
 } from "../types/calendar.js";
 
 export const DAY_MS = 86_400_000;
@@ -81,7 +86,22 @@ export function requireEventId(eventId: string): { calendarId: string; providerE
 export function requireDraft(draft: EventDraft): void {
   if (!draft.calendarId || draft.calendarId.includes("/")) throw notSupported("Choose a calendar.");
   if (eventDraftIssues(draft).length > 0) throw notSupported("Check the event details.");
+  requireTimes({ allDay: draft.allDay, start: draft.start, end: draft.end, timeZone: draft.timeZone });
   requireTitle(draft.title);
+}
+
+/** The checks `eventDraftIssues` makes on a draft, for the same fields in a change. */
+export function requireRecurrence(recurrence: Recurrence): Recurrence {
+  if (!isValidRecurrence(recurrence)) throw notSupported("Check how the event repeats.");
+  return recurrence;
+}
+
+export function requireReminders(reminders: readonly EventReminder[]): readonly EventReminder[] {
+  const valid = reminders.length <= MAX_EVENT_REMINDERS && reminders.every((reminder) =>
+    Number.isInteger(reminder.minutesBefore) && reminder.minutesBefore >= 0 && reminder.minutesBefore <= MAX_REMINDER_MINUTES
+    && (reminder.method === "popup" || reminder.method === "email"));
+  if (!valid) throw notSupported("Check the reminders.");
+  return reminders;
 }
 
 export function requireTitle(title: string): string {
@@ -124,6 +144,16 @@ export interface ResolvedTimes {
 }
 
 const TIME_KEYS = ["start", "end", "allDay", "timeZone"] as const;
+
+/**
+ * True when a change touches time but leaves out a part `resolveChangedTimes`
+ * needs: start, end, the all-day flag, or the zone of a timed event.
+ */
+export function changeNeedsStoredTimes(changes: EventChanges): boolean {
+  if (!TIME_KEYS.some((key) => changes[key] !== undefined)) return false;
+  return changes.allDay === undefined || changes.start === undefined || changes.end === undefined
+    || (!changes.allDay && changes.timeZone === undefined);
+}
 
 /**
  * The full time of an updated event, or undefined when the change does not
@@ -212,11 +242,19 @@ export function randomSalt(): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/** What the adapters remember about an event they returned, for later writes. */
+/**
+ * What the adapters remember about an event they returned, for later writes.
+ * The cache can evict any entry, so a write that needs one reads the event
+ * again instead of assuming what it held.
+ */
 export interface CachedEvent {
   event: CalendarEvent;
   /** Rooms and other resources the normalised attendee list leaves out. */
   resources: { address: string; name: string; response: AttendeeResponse }[];
+  /** False when the provider left guests out, so the lists above are partial. */
+  attendeesComplete: boolean;
+  /** The owner's address as it appears in the attendee list, when the provider marks it. */
+  selfAddress?: string;
 }
 
 export const MAX_CACHED_EVENTS = 1000;

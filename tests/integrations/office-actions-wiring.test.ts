@@ -11,13 +11,13 @@ const OFFICE_WRITES = [
   "google_calendar/create_event_with_attendees", "google_calendar/update_event_details",
   "google_calendar/delete_event", "google_calendar/respond_event",
 ];
-const OFFICE_READS = ["google_calendar/free_busy"];
+const OFFICE_READS = ["google_calendar/free_busy", "google_calendar/get_event"];
 const keys = (map: Record<string, Record<string, unknown>>) =>
   Object.entries(map).flatMap(([service, actions]) => Object.keys(actions).map(action => `${service}/${action}`));
 const MIB = 1024 * 1024;
 
 describe("office calendar action wiring", () => {
-  it("collects exactly the 4 reviewed writes and 1 reviewed read", () => {
+  it("collects exactly the 4 reviewed writes and 2 reviewed reads", () => {
     expect(keys(OFFICE_WRITE_ACTIONS).sort()).toEqual([...OFFICE_WRITES].sort());
     expect(keys(OFFICE_READ_ACTIONS).sort()).toEqual([...OFFICE_READS].sort());
   });

@@ -3,6 +3,7 @@
  * Everything read here is untrusted text from other people.
  */
 import { composeEventId } from "../types/calendar.js";
+import { isValidMailAddress } from "../types/addresses.js";
 import type {
   AttendeeResponse,
   CalendarAccount,
@@ -100,6 +101,7 @@ export function normalizeGoogleEvent(raw: JsonRecord, calendarId: string, accoun
   const attendees: CalendarAttendee[] = [];
   const resources: CachedEvent["resources"] = [];
   let myResponse: AttendeeResponse | null = null;
+  let selfAddress: string | undefined;
   for (const entry of asArray(raw.attendees)) {
     const person = asRecord(entry);
     const address = asString(person.email).trim().toLowerCase();
@@ -112,7 +114,8 @@ export function normalizeGoogleEvent(raw: JsonRecord, calendarId: string, accoun
     const attendee: CalendarAttendee = { address, name, response: response(person.responseStatus), organizer: person.organizer === true };
     if (person.optional === true) attendee.optional = true;
     attendees.push(attendee);
-    const isSelf = person.self === true || address === account.address;
+    if (person.self === true && isValidMailAddress(address)) selfAddress = address;
+    const isSelf = person.self === true || (account.address !== "" && address === account.address);
     if (isSelf && !attendee.organizer) myResponse = attendee.response;
   }
 
@@ -136,5 +139,5 @@ export function normalizeGoogleEvent(raw: JsonRecord, calendarId: string, accoun
   if (recurrenceText) event.recurrenceText = recurrenceText;
   if (recurring && !recurring.includes("/")) event.seriesId = composeEventId(calendarId, recurring);
   if (meeting) event.onlineMeeting = meeting;
-  return { event, resources };
+  return { event, resources, attendeesComplete: raw.attendeesOmitted !== true, ...(selfAddress ? { selfAddress } : {}) };
 }

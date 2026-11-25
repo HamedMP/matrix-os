@@ -38,7 +38,12 @@ export interface CalendarAccount {
   /** Stable and opaque. Build it with `calendarAccountId`. */
   id: string;
   provider: CalendarProviderId;
-  /** The owner's address on this account, lower-cased. */
+  /**
+   * The owner's address on this account, lower-cased. Empty when it cannot be
+   * read; never an account label. Answering an invitation then works only for
+   * events where the provider marks the owner's own attendee entry, and is
+   * otherwise refused with `not_supported`.
+   */
   address: string;
   displayName: string;
 }
@@ -205,7 +210,11 @@ export interface CalendarProvider {
   /** Occurrences of recurring events are returned as separate events, ordered by start. */
   listEvents(request: ListEventsRequest): Promise<CalendarEvent[]>;
   createEvent(draft: EventDraft, options: InviteOptions): Promise<CalendarEvent>;
-  /** An occurrence id changes that occurrence; a `seriesId` changes the whole series. */
+  /**
+   * An occurrence id changes that occurrence; a `seriesId` changes the whole
+   * series. A repeat rule is set on a series or a single event, never on one
+   * occurrence (`not_supported`).
+   */
   updateEvent(eventId: string, changes: EventChanges, options: InviteOptions): Promise<CalendarEvent>;
   /** Moves the event to the provider's trash where one exists. Same id rule as `updateEvent`. */
   deleteEvent(eventId: string, options: InviteOptions): Promise<void>;
