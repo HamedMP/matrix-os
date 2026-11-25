@@ -2,11 +2,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { RuntimeLifecycleStatus } from '@matrix-os/contracts/runtime-lifecycle';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { getRuntimeEntitlementDecisionForUser } from '../../packages/platform/src/runtime-entitlement.js';
+import { resolveEffectiveBillingEntitlementForSlot } from '../../packages/platform/src/billing-entitlement-resolver.js';
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
 import {
   getUserMachine,
   insertUserMachine,
   upsertBillingEntitlement,
+  upsertBillingSubscription,
   type NewUserMachine,
   type PlatformDB,
   type UserMachineRecord,
@@ -220,6 +222,61 @@ describe('metal idle sleeper', () => {
       event: 'idle_guard_suspended',
       fields: { machineId: stuck, busyReasons: ['routine', 'background_agent'] },
     });
+  });
+
+  const stripeEnv = { MATRIX_BILLING_PROVIDER: 'stripe', STRIPE_PRICE_MATRIX_STARTER_MONTHLY: 'price_1' };
+
+  async function changePlan(owner: string, failedTrial = false) {
+    await upsertBillingSubscription(db, {
+      clerkUserId: owner, runtimeSlot: 'primary', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1',
+      planSlug: 'matrix_starter', stripePriceId: 'price_1', billingInterval: 'monthly', status: 'active',
+      ...(failedTrial ? { trialEndsAt: NOW.toISOString(), firstTrialPaymentFailedAt: NOW.toISOString() } : {}),
+      currentPeriodEnd: new Date(NOW.getTime() + HOUR).toISOString(), gracePeriodEndsAt: null,
+      latestEventCreatedAt: NOW.toISOString(), latestEventId: 'evt_upgrade', updatedAt: NOW.toISOString(),
+    });
+    await upsertBillingEntitlement(db, paidEntitlement(owner));
+  }
+
+  it.each(['lifecycle read', 'host suspend', 'lost suspend response'] as const)(
+    'keeps a paid computer running after an upgrade during the %s', async (when) => {
+      const id = await seedMachine();
+      const owner = (await machine(id)).clerkUserId;
+      const { sleeper: s, stop, ensureRunning } = sleeper({
+        env: stripeEnv,
+        lifecycle: async () => {
+          if (when === 'lifecycle read') await changePlan(owner);
+          return { ok: true, status: IDLE };
+        },
+      });
+      if (when !== 'lifecycle read') {
+        stop.mockImplementationOnce(async () => {
+          await changePlan(owner);
+          if (when === 'lost suspend response') throw new Error('Host suspend response was lost');
+          return { state: 'stopping' };
+        });
+      }
+
+      await s.sleepTick(NOW);
+
+      expect((await resolveEffectiveBillingEntitlementForSlot(db, owner, NOW, 'primary', stripeEnv))?.source).toBe('stripe');
+      expect(stop).toHaveBeenCalledTimes(when === 'lifecycle read' ? 0 : 1);
+      expect(ensureRunning).toHaveBeenCalledTimes(when === 'lifecycle read' ? 0 : 1);
+      const runtime = await machine(id);
+      expect(runtime.status).toBe('running');
+      if (when === 'lost suspend response') expect(runtime.nextWakeAt).not.toBeNull();
+      else expect(runtime.nextWakeAt).toBeNull();
+    },
+  );
+
+  it('does not wake a billing-suspended computer for a saved scheduled job', async () => {
+    const id = await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago(MINUTE) } });
+    await changePlan((await machine(id)).clerkUserId, true);
+    const { sleeper: s, ensureRunning } = sleeper({ env: stripeEnv });
+
+    await s.wakeTick(NOW);
+
+    expect(ensureRunning).not.toHaveBeenCalled();
+    expect((await machine(id)).status).toBe('suspended');
   });
 
   it('never sleeps paid VMs', async () => {

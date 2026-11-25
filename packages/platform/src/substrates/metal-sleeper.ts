@@ -4,7 +4,9 @@ import type { RuntimeLifecycleStatus } from '@matrix-os/contracts/runtime-lifecy
 import { mapUserMachine } from '../database/user-machine-records.js';
 import { getUserMachine } from '../database/user-machines.js';
 import type { PlatformDatabase, PlatformDB, UserMachineRecord } from '../db.js';
-import { getAccountDeletionAdmission } from '../account-deletion/admission.js';
+import { getAccountDeletionAdmission, withAccountDeletionOwnerLock } from '../account-deletion/admission.js';
+import { getRuntimeAccessDecision } from '../billing.js';
+import { getRuntimeEntitlementDecisionForUser } from '../runtime-entitlement.js';
 import { resolveEffectiveBillingEntitlementForSlot } from '../billing-entitlement-resolver.js';
 import { wakeAfterSuspendAttempt, wakeOnDemandRuntime } from './substrate-wake.js';
 import type { OnDemandRuntimeSubstrate, RuntimeRef } from './types.js';
@@ -226,7 +228,7 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
         .where('m.next_wake_at', '<=', now)
         .$if(cursor !== null, (query) => query.where(
           sql<boolean>`(m.next_wake_at, m.machine_id) > (${cursor!.nextWakeAt}, ${cursor!.machineId})`))
-        // No plan check: a wake saved while free is honored after an upgrade; plans gate only new sleep.
+        // Keep scheduled wakes after upgrades. wakeOne checks whether current access permits starting the runtime.
         .orderBy('m.next_wake_at').orderBy('m.machine_id')
         .limit(WAKES_PER_TICK)
         .execute();
@@ -257,6 +259,12 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     if (signal.aborted || row.next_wake_at === null) return;
     const machine = mapUserMachine(row);
     try {
+      const access = await getRuntimeEntitlementDecisionForUser(
+        db, machine.clerkUserId, deps.env ?? process.env, machine.runtimeSlot, machine.provisioningClass, now);
+      if (!access.runtimeProxyAllowed) {
+        await backOff(row, now);
+        return;
+      }
       const { result } = await wakeOnDemandRuntime(db, substrate, machine, {
         now: () => now,
         signal,
@@ -297,9 +305,9 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     if (deletion.runtimeAccess !== 'normal') return;
 
     // An active override or a live paid subscription wins over a stored free entitlement.
-    const effective = await resolveEffectiveBillingEntitlementForSlot(
-      db, machine.clerkUserId, clock(), machine.runtimeSlot, env);
-    if (effective?.source !== 'free') {
+    const resolvePlan = (source: PlatformDB, at = clock()) => resolveEffectiveBillingEntitlementForSlot(
+      source, machine.clerkUserId, at, machine.runtimeSlot, env);
+    if ((await resolvePlan(db))?.source !== 'free') {
       log('sleep_skipped_paid', { machineId: machine.machineId });
       return;
     }
@@ -388,6 +396,11 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       await release();
       return;
     }
+    if ((await resolvePlan(db))?.source !== 'free') {
+      log('sleep_skipped_paid', { machineId: machine.machineId });
+      await release();
+      return;
+    }
     // Check the deadline after the final database read so hostd still has the lead time.
     if (verdict.nextWakeAt && verdict.nextWakeAt.getTime() <= clock().getTime()) {
       log('sleep_skipped_deadline', { machineId: machine.machineId });
@@ -417,25 +430,55 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     // A due wake may have run while the suspend request traveled to hostd.
     // Favor readiness at its deadline even when the suspend reply was lost.
     const due = verdict.nextWakeAt !== null && verdict.nextWakeAt.getTime() <= clock().getTime();
-    if (!accepted && !due) return;
-
-    // Recorded only while still idle: owner activity that arrived during the
-    // suspend cancels it below instead of leaving their work interrupted.
+    // Serialize the final state change with billing writes. Host calls stay outside this lock.
     const awakeWhenClaimed = beforeStop.awakeSince === null ? null : new Date(beforeStop.awakeSince);
-    const recorded = suspended && !due && await db.executor.updateTable('user_machines')
-      .set({ status: ASLEEP_STATUS, awake_since: null, wake_failures: 0, ...(verdict.guard ? { idle_guard_at: tickNow } : {}) })
-      .where('machine_id', '=', machine.machineId)
-      .where('generation', '=', machine.generation)
-      .where('status', '=', 'running')
-      .where('next_wake_at', verdict.nextWakeAt === null ? 'is' : '=', verdict.nextWakeAt)
-      .where('awake_since', awakeWhenClaimed === null ? 'is' : '=', awakeWhenClaimed)
-      .where('deleted_at', 'is', null)
-      .where((eb) => eb.or([
-        eb('last_activity_at', '<=', idleBefore),
-        eb.and([eb('last_activity_at', 'is', null), eb('awake_since', '<=', idleBefore)]),
-      ]))
-      .returning('machine_id')
-      .executeTakeFirst();
+    const completion = await withAccountDeletionOwnerLock(db, machine.clerkUserId, async (trx, admission) => {
+      const at = clock();
+      const effective = await resolvePlan(trx, at);
+      if (effective?.source !== 'free' || admission.runtimeAccess !== 'normal') {
+        const canResume = admission.runtimeAccess === 'grace'
+          || (admission.runtimeAccess === 'normal' && getRuntimeAccessDecision(effective, at).runtimeProxyAllowed);
+        // Persist a retry before attempting compensation, even for VMs with no scheduled jobs.
+        const recovery = canResume ? await trx.executor.updateTable('user_machines')
+          .set({ next_wake_at: suspended ? at : new Date(at.getTime() + WAKE_RETRY_BASE_MS), wake_failures: 0 })
+          .where('machine_id', '=', machine.machineId)
+          .where('generation', '=', machine.generation)
+          .where('status', 'in', ['running', ASLEEP_STATUS])
+          .where('deleted_at', 'is', null)
+          .returningAll()
+          .executeTakeFirst() : undefined;
+        return { kind: 'changed' as const, recovery };
+      }
+      // Record sleep only if no owner activity or scheduled wake won while hostd was suspending.
+      const recorded = suspended && !due && await trx.executor.updateTable('user_machines')
+        .set({ status: ASLEEP_STATUS, awake_since: null, wake_failures: 0, ...(verdict.guard ? { idle_guard_at: tickNow } : {}) })
+        .where('machine_id', '=', machine.machineId)
+        .where('generation', '=', machine.generation)
+        .where('status', '=', 'running')
+        .where('next_wake_at', verdict.nextWakeAt === null ? 'is' : '=', verdict.nextWakeAt)
+        .where('awake_since', awakeWhenClaimed === null ? 'is' : '=', awakeWhenClaimed)
+        .where('deleted_at', 'is', null)
+        .where((eb) => eb.or([
+          eb('last_activity_at', '<=', idleBefore),
+          eb.and([eb('last_activity_at', 'is', null), eb('awake_since', '<=', idleBefore)]),
+        ]))
+        .returning('machine_id')
+        .executeTakeFirst();
+      return { kind: 'free' as const, recorded };
+    }, env);
+    if (completion.kind === 'changed') {
+      if (!completion.recovery) return;
+      const recovery = completion.recovery;
+      const { result } = await wakeAfterSuspendAttempt(db, substrate, mapUserMachine(recovery), { now: clock, signal,
+        log: (message, detail) => log('sleep_cancel_resume_error', { machineId: machine.machineId, message, ...detail }) });
+      // If suspension was unconfirmed, keep the delayed verification even when the first resume sees a running VM.
+      if (suspended && result.state === 'running') {
+        await updateSavedWake(recovery, { next_wake_at: null, wake_failures: 0, awake_since: clock() }).execute();
+      }
+      return;
+    }
+    if (!accepted && !due) return;
+    const { recorded } = completion;
     if (!recorded) {
       const current = await getUserMachine(db, machine.machineId);
       if (current && !current.deletedAt && current.generation === machine.generation && current.status === 'running') {
