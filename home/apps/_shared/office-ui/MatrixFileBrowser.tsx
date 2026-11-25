@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { Select } from "./Fields";
 import { FileThumb, type FileThumbKind } from "./FileThumb";
 import { Skeleton } from "./Feedback";
@@ -161,7 +161,8 @@ export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, ki
   }, [visible, query, sort]);
   const roving = useRovingRows(shown.rows.map((entry) => entry.path));
 
-  useEffect(() => {
+  // A layout effect, so focus lands in the same commit that draws the rows.
+  useLayoutEffect(() => {
     if (listing.status !== "loading" && focusAfterLoad.current) {
       focusAfterLoad.current = false;
       listRef.current?.querySelector<HTMLElement>(`[${ROW_ATTRIBUTE}]`)?.focus();
