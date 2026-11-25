@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { link, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -130,6 +130,53 @@ describe("Mac activity", () => {
     const path = join(userData, "mac-activity", "events.json");
     expect((await stat(path)).mode & 0o777).toBe(0o600);
     expect(await readFile(path, "utf8")).not.toContain("private command output");
+  });
+
+  it.each([
+    ["truncated JSON", '{"version":1,"rows":['],
+    ["invalid rows", '{"version":1,"rows":[{"scope":"invalid"}]}'],
+  ])("can save fresh activity after reopening history with %s", async (_damage, contents) => {
+    const userData = await directory();
+    const activityDir = join(userData, "mac-activity");
+    await mkdir(activityDir, { mode: 0o700 });
+    const path = join(activityDir, "events.json");
+    await writeFile(path, contents, { mode: 0o600 });
+
+    const history = createMacActivityHistory(userData);
+    expect(await history.read(scope)).toBeNull();
+    await Promise.all([
+      history.append(scope, { kind: "terminal", phase: "returned", worktreeId: worktree }),
+      history.append(other, { kind: "preview", phase: "stopped", worktreeId: anotherWorktree }),
+    ]);
+
+    const reopened = createMacActivityHistory(userData);
+    expect(await reopened.read(scope)).toEqual([
+      { kind: "terminal", phase: "returned", worktreeId: worktree, at: expect.any(Number) },
+    ]);
+    expect(await reopened.read(other)).toEqual([
+      { kind: "preview", phase: "stopped", worktreeId: anotherWorktree, at: expect.any(Number) },
+    ]);
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  it.each([
+    ["a future format", '{"version":2,"rows":[]}', 0o600],
+    ["an oversized file", " ".repeat(64 * 1024 + 1), 0o600],
+    ["a nonprivate file", "truncated", 0o644],
+    ["a hard link", "truncated", 0o600],
+  ])("does not replace %s during append", async (obstacle, contents, mode) => {
+    const userData = await directory();
+    const activityDir = join(userData, "mac-activity");
+    await mkdir(activityDir, { mode: 0o700 });
+    const path = join(activityDir, "events.json");
+    await writeFile(path, contents, { mode });
+    if (obstacle === "a hard link") await link(path, join(userData, "another-link"));
+    const history = createMacActivityHistory(userData);
+
+    await history.append(scope, { kind: "terminal", phase: "returned", worktreeId: worktree });
+
+    expect(await history.read(scope)).toBeNull();
+    expect(await readFile(path, "utf8")).toBe(contents);
   });
 
   it("caps retained rows, prunes expired events, and refuses symlinked history", async () => {

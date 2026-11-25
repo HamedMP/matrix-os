@@ -68,11 +68,11 @@ export function createMacActivity(options: Options) {
     const previous = tray;
     tray = undefined;
     try { previous?.destroy(); }
-    catch (error: unknown) { warnTray(); }
+    catch (error: unknown) { warnTray(error); }
   }
 
-  function warnTray() {
-    if (!warnedTray) console.warn("[mac-activity] menu bar status unavailable");
+  function warnTray(error: unknown) {
+    if (!warnedTray) console.warn("[mac-activity] menu bar status unavailable", error instanceof Error ? "Error" : "NonError");
     warnedTray = true;
   }
 
@@ -126,7 +126,7 @@ export function createMacActivity(options: Options) {
         signal: request.signal,
       });
     } catch (error: unknown) {
-      if (!request.signal.aborted) console.warn("[mac-activity] history dialog unavailable");
+      if (!request.signal.aborted) console.warn("[mac-activity] history dialog unavailable", error instanceof Error ? "Error" : "NonError");
     } finally {
       if (historyDialog === request) historyDialog = undefined;
     }
@@ -141,7 +141,7 @@ export function createMacActivity(options: Options) {
     try {
       await options.stop();
     } catch (error: unknown) {
-      console.warn("[mac-activity] stop failed");
+      console.warn("[mac-activity] stop failed", error instanceof Error ? "Error" : "NonError");
     } finally {
       if (stopping === request) {
         stopping = undefined;
@@ -179,7 +179,7 @@ export function createMacActivity(options: Options) {
       ]));
       warnedTray = false;
     } catch (error: unknown) {
-      warnTray();
+      warnTray(error);
       clearTray();
     }
   }

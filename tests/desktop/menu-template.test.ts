@@ -53,23 +53,15 @@ function accelerators(template: MenuItemConstructorOptions[], platform: Platform
 describe("createAppMenuTemplate", () => {
   it("opens local Mac activity history from the native menu without a renderer action", () => {
     const openMacActivity = vi.fn();
-    const send = vi.fn();
-    const options = {
-      appName: "Matrix OS", isPackaged: false, platform: "darwin" as const,
-      openExternal: vi.fn(), send, adjustZoom: vi.fn(), checkForUpdates: vi.fn(), quitApp: vi.fn(),
-      openMacActivity,
-    };
-    function historyItem(template: ReturnType<typeof createAppMenuTemplate>) {
-      const menu = template.find(item => item.label === "Matrix OS");
-      return Array.isArray(menu?.submenu) ? menu.submenu.find(item => item.label === "Recent Mac Activity…") : undefined;
+    const menuOptions = options({ isPackaged: false, openMacActivity });
+    function historyItem(opts: Parameters<typeof createAppMenuTemplate>[0]) {
+      return find(submenu(createAppMenuTemplate(opts), "Matrix OS"), "Recent Mac Activity…");
     }
-    const item = historyItem(createAppMenuTemplate(options));
-    if (!item?.click) throw new Error("missing native activity history");
-    item.click({} as never, {} as never, {} as never);
+    click(historyItem(menuOptions));
     expect(openMacActivity).toHaveBeenCalledOnce();
-    expect(send).not.toHaveBeenCalled();
-    expect(historyItem(createAppMenuTemplate({ ...options, openMacActivity: undefined }))).toBeUndefined();
-    expect(historyItem(createAppMenuTemplate({ ...options, platform: "linux" }))).toBeUndefined();
+    expect(menuOptions.send).not.toHaveBeenCalled();
+    expect(historyItem(options({ isPackaged: false }))).toBeUndefined();
+    expect(historyItem(options({ isPackaged: false, platform: "linux", openMacActivity }))).toBeUndefined();
   });
 
   it("offers a native stop control for enabled Mac background checks independent of the renderer", () => {
