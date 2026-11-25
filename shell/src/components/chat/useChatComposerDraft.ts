@@ -46,6 +46,17 @@ export function useChatComposerDraft(scope: string, identity: unknown) {
     // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- Stable identity prevents replaying a pending external draft request.
     setText: useCallback((text: string) => update({ text }), [update]),
     setResources: (resources: CanonicalChatResourceReference[]) => update({ resources }),
+    /** Carry the follow-up draft into the Chat opened by a successful retry. */
+    moveDraft: (target: string) => setStore(current => {
+      if (current.identity !== identity || target === scope) return current;
+      const source = current.drafts[scope];
+      const destination = current.drafts[target];
+      if (!source || (!source.text.trim() && !source.resources.length) ||
+        (destination && (destination.text.trim() || destination.resources.length))) return current;
+      const drafts = { ...current.drafts, [target]: source };
+      delete drafts[scope];
+      return { identity, drafts };
+    }),
     /** Puts a sent draft back after its send was not admitted, unless the owner has written a new one. */
     restore: (sent: Draft) => setStore((current) => {
       if (current.identity !== identity || (!sent.text.trim() && !sent.resources.length)) return current;

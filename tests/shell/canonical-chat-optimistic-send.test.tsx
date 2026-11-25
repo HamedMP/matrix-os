@@ -32,8 +32,8 @@ function attachedStream(): Response {
   }), { headers: { "content-type": "text/event-stream" } });
 }
 
-function fixtureServer({ createGate, uploadGate, admitGate, createFails, streamOpen = false }: {
-  createGate?: Promise<void>; uploadGate?: Promise<void>; admitGate?: Promise<void>; createFails?: boolean; streamOpen?: boolean;
+function fixtureServer({ createGate, uploadGate, admitGate, createFails, firstCreateFails, streamOpen = false }: {
+  createGate?: Promise<void>; uploadGate?: Promise<void>; admitGate?: Promise<void>; createFails?: boolean; firstCreateFails?: boolean; streamOpen?: boolean;
 } = {}) {
   const { snapshot } = createCanonicalChatFixture("completed");
   const { activeRun: _activeRun, providerBinding: _binding, project: _project, ...chat } = snapshot.chat;
@@ -41,6 +41,7 @@ function fixtureServer({ createGate, uploadGate, admitGate, createFails, streamO
   const existing = { record, messages: snapshot.messages, turns: snapshot.turns, runs: snapshot.runs, activities: [] };
   let admitted: typeof existing | null = null;
   const reads = { list: 0, detail: 0 };
+  const createRequestIds: string[] = [];
   stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) return streamOpen ? attachedStream() : new Response(new ReadableStream());
     if (url.includes("/api/files/blob?")) {
@@ -49,8 +50,11 @@ function fixtureServer({ createGate, uploadGate, admitGate, createFails, streamO
       return Response.json({ ok: true, path, size: 5 });
     }
     if (url.includes("/api/chats?") && init?.method === "POST") {
+      createRequestIds.push(JSON.parse(init.body as string).clientRequestId);
       await createGate;
-      if (createFails) return Response.json({ error: { code: "unavailable" } }, { status: 503 });
+      if (createFails || (firstCreateFails && createRequestIds.length === 1)) {
+        return Response.json({ error: { code: "unavailable" } }, { status: 503 });
+      }
       return Response.json({ chat: { ...chat, revision: 0, messageCount: 0 } });
     }
     if (url.includes("/turns?") && init?.method === "POST") {
@@ -71,7 +75,7 @@ function fixtureServer({ createGate, uploadGate, admitGate, createFails, streamO
     reads.detail += 1;
     return Response.json(admitted ?? existing);
   }));
-  return { chat, reads };
+  return { chat, reads, createRequestIds };
 }
 
 const shownCount = (messages: { role: string; content: unknown }[], text: string) =>
@@ -289,7 +293,7 @@ function WebChat({ chatId }: { chatId?: string }) {
   const state = useCanonicalChatState(chatId ? {} : { initialDraft: "draft" });
   const composer = useChatComposerDraft(state.sessionId ?? "new", "owner");
   return <>
-    <ul aria-label="Transcript">{state.messages.filter((message) => message.role === "user")
+    <ul aria-label="Transcript" data-chat-id={state.sessionId}>{state.messages.filter((message) => message.role === "user")
       .map((message) => <li key={message.id}>{String(message.content)}</li>)}</ul>
     {chatId && !state.sessionId ? <button type="button" onClick={() => state.switchConversation(chatId)}>Open</button> : null}
     <ChatInput key={state.sessionId ?? "new"} composer={composer} scope={state.sessionId ?? "new"} permissionMode="supervised" connected busy={false}
@@ -336,11 +340,11 @@ it("empties the composer when a follow-up's pending message shows, before admiss
   expect(composerValue()).toBe("");
 });
 
-it.each([false, true])("puts a rejected new Chat send back in the composer unless the owner wrote a new draft (typed=%s)", async (typed) => {
+it.each([false, true])("keeps a rejected first message retryable while preserving any newer draft (typed=%s)", async (typed) => {
   vi.stubGlobal("crypto", webcrypto);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const create = gate();
-  fixtureServer({ createGate: create.opened, createFails: true });
+  const { chat, createRequestIds } = fixtureServer({ createGate: create.opened, firstCreateFails: true });
   render(<WebChat />);
   await sendFromComposer("Do not lose me");
   await waitFor(() => expect(transcriptText()).toContain("Do not lose me"));
@@ -350,4 +354,11 @@ it.each([false, true])("puts a rejected new Chat send back in the composer unles
   create.release();
   await waitFor(() => expect(transcriptText()).not.toContain("Do not lose me"));
   expect(composerValue()).toBe(typed ? "A newer thought" : "Do not lose me");
+  fireEvent.click(screen.getByRole("button", { name: typed ? "Retry message" : "Send" }));
+  await waitFor(() => expect(transcriptText()).toContain("Do not lose me"));
+  await waitFor(() => expect(screen.getByRole("list", { name: "Transcript" }).getAttribute("data-chat-id")).toBe(chat.id));
+  expect(createRequestIds).toHaveLength(2);
+  expect(composerValue()).toBe(typed ? "A newer thought" : "");
+  expect(createRequestIds[1]).toBe(createRequestIds[0]);
+  expect(transcriptText()).not.toContain("A newer thought");
 });

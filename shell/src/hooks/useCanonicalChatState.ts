@@ -631,6 +631,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           return isCurrent();
         }
         const submittedDraft = composerDraftSequence.current;
+        const opensThisDraft = () => sourceChatId === undefined && activeChatIdRef.current === undefined
+          && draftSessionRef.current === sendDraftSession && composerDraftSequence.current === submittedDraft;
         showPending({ requestId: input.clientRequestId, chatId: record.chat.id, parts });
         const admitted: CanonicalChatClientAdmission = await admitShellChatTurn({ tracker: admissions, identity: navigationIdentity, client, record, input,
           seed: input.clientRequestId, current: () => detailRef.current, isCurrent,
@@ -638,7 +640,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           onPrepared: id => { latestAdmissionId.current = id; },
           onAccepted: () => {
             mentionRequests.accepted(requestScope, input.clientRequestId);
-            options.onAccepted?.();
+            options.onAccepted?.(opensThisDraft() ? record.chat.id : undefined);
           },
           onConfirmed: id => {
             if (isCurrent() && latestAdmissionId.current === id && activeChatIdRef.current === sourceChatId && composerDraftSequence.current === submittedDraft) {
