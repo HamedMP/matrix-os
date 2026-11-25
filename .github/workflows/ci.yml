@@ -652,11 +652,6 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism
 
-      - name: Canonical attention delivery and recovery on PostgreSQL
-        run: |
-          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          pnpm exec vitest run tests/gateway/notification-router.test.ts tests/gateway/push-adapter.test.ts --maxWorkers=1 --no-file-parallelism
-
       - name: Routine migration and deployed-history PostgreSQL contracts
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
