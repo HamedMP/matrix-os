@@ -78,22 +78,26 @@ function McpConnectionRow({ entry, renderActions, renderDetails }: { entry: McpI
       <Collapsible.Root open={expanded} onOpenChange={setExpanded}>
         <div className="flex flex-wrap items-center gap-3 px-4 py-3">
           <McpServiceLogo presetId={mcpEntry?.presetId} name={entry.name} size={32} />
-          <div className="min-w-0 flex-1">
+          <div className="min-w-[10rem] flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <p className="truncate text-sm font-medium" style={{ color: t.text }}>{entry.name}</p>
               <McpStatusPill label={entry.statusLabel} />
             </div>
             <p className="mt-0.5 text-xs" style={{ color: t.muted }}>{rowSubtitle(entry, needsSignIn)}</p>
           </div>
-          {showDetails ? (
-            <Collapsible.Trigger aria-label={`${toolsLabel} for ${entry.name}`}
-              className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition-colors hover:brightness-95 focus-visible:outline focus-visible:outline-2 disabled:opacity-50"
-              style={{ color: t.secondary, background: t.sunken }}>
-              {toolsLabel}
-              <ChevronDown aria-hidden="true" size={14} className="transition-transform" style={{ transform: expanded ? "rotate(180deg)" : undefined }} />
-            </Collapsible.Trigger>
+          {showDetails || (mcpEntry && renderActions) ? (
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              {showDetails ? (
+                <Collapsible.Trigger aria-label={`${toolsLabel} for ${entry.name}`}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition-colors hover:brightness-95 focus-visible:outline focus-visible:outline-2 disabled:opacity-50"
+                  style={{ color: t.secondary, background: t.sunken }}>
+                  {toolsLabel}
+                  <ChevronDown aria-hidden="true" size={14} className="transition-transform" style={{ transform: expanded ? "rotate(180deg)" : undefined }} />
+                </Collapsible.Trigger>
+              ) : null}
+              {mcpEntry && renderActions ? renderActions(mcpEntry) : null}
+            </div>
           ) : null}
-          {mcpEntry && renderActions ? <div className="flex shrink-0 items-center gap-1.5">{renderActions(mcpEntry)}</div> : null}
         </div>
         {mcpEntry && renderDetails ? (
           <Collapsible.Content className="border-t px-4 pb-4" style={{ borderColor: t.border }}>{renderDetails(mcpEntry)}</Collapsible.Content>
