@@ -5,6 +5,7 @@
 import type { Kysely } from "kysely";
 import type { HerdrAdapter } from "../herdr/adapter.js";
 import { readDesktopLinkConfig, registerDesktopLinkRoutes } from "../desktop-link/routes.js";
+import { createDesktopLinkRegistry, type DesktopLinkRegistry } from "../desktop-link/registry.js";
 import { registerDesktopLinkTerminalSocket } from "../desktop-link/terminal-routes.js";
 import type { DesktopLinkDatabase } from "../desktop-link/store.js";
 import { registerHerdrSessionRoutes } from "../herdr/register.js";
@@ -20,12 +21,16 @@ export function registerTerminalSockets(options: Omit<TerminalTabSocketOptions, 
   /** Owner Postgres for enrolled desktops; the Desktop link answers 503 without it. */
   ownerDatabase?: Kysely<DesktopLinkDatabase> | null;
   env?: NodeJS.ProcessEnv;
+  /** Built at startup (createDesktopLinkRegistryFromEnv), so terminal verbs and the kernel see linked desktops too. */
+  desktopLinks?: DesktopLinkRegistry | null;
 }) {
   const { app, upgradeWebSocket, getPrincipal, terminalRuntimeOwnerIds, terminalLiveOwnership, terminalAgents } = options;
   registerTerminalWebSocketRoutes({ ...options, terminalInputActivity: terminalAgents.inputActivity });
   registerTerminalEventWebSocket({ app, upgradeWebSocket, hub: terminalAgents.events, getPrincipal, terminalOwnerIds: terminalRuntimeOwnerIds });
   const desktopLinks = registerDesktopLinkRoutes({
     app, upgradeWebSocket, ownerDatabase: options.ownerDatabase ?? null, config: readDesktopLinkConfig(options.env ?? process.env),
+    ...(options.desktopLinks ? { registry: options.desktopLinks } : {}),
+    verbs: terminalAgents.verbs, waiter: terminalAgents.waiter,
   });
   const desktopViewers = desktopLinks ? registerDesktopLinkTerminalSocket({
     app, upgradeWebSocket, registry: desktopLinks, getPrincipal, terminalOwnerIds: terminalRuntimeOwnerIds,
@@ -47,4 +52,9 @@ export function registerTerminalSockets(options: Omit<TerminalTabSocketOptions, 
       });
     },
   };
+}
+
+/** The linked-desktop registry, when the Desktop link is on for this computer (spec 2716). */
+export function createDesktopLinkRegistryFromEnv(env: NodeJS.ProcessEnv = process.env): DesktopLinkRegistry | null {
+  return readDesktopLinkConfig(env) ? createDesktopLinkRegistry() : null;
 }

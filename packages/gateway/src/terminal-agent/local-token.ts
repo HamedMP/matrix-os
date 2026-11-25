@@ -28,7 +28,7 @@ const LOCAL_ROUTES: Array<{ methods: readonly string[]; path: RegExp }> = [
   { methods: ["GET", "POST"], path: /^\/api\/desktop-link\/machines\/[a-f0-9]{64}\/terminals$/ },
   { methods: ["DELETE"], path: /^\/api\/desktop-link\/machines\/[a-f0-9]{64}\/terminals\/t[0-9]{1,6}[a-z]{0,2}$/ },
   { methods: ["GET"], path: /^\/api\/desktop-link\/machines\/[a-f0-9]{64}\/terminals\/t[0-9]{1,6}[a-z]{0,2}\/screen$/ },
-  { methods: ["POST"], path: /^\/api\/desktop-link\/machines\/[a-f0-9]{64}\/terminals\/t[0-9]{1,6}[a-z]{0,2}\/input$/ },
+  { methods: ["POST"], path: /^\/api\/desktop-link\/machines\/[a-f0-9]{64}\/terminals\/t[0-9]{1,6}[a-z]{0,2}\/(?:input|keys|interrupt|wait)$/ },
 ];
 
 export function isLocalTerminalAgentRoute(method: string, path: string): boolean {

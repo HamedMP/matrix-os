@@ -14,6 +14,9 @@ import { createTerminalTemplates, type TerminalTemplates } from "./templates.js"
 import { createTerminalAgentVerbs, type TerminalAgentVerbs } from "./verbs.js";
 import { createTerminalWaiter, type TerminalWaiter } from "./wait.js";
 import { withHerdrTerminals, type HerdrTerminalSource } from "../herdr/verb-runtime.js";
+import { desktopLinkDevicePrefix, desktopLinkWorkspaceId } from "@matrix-os/contracts/desktop-link";
+import { withDesktopTerminals, type DesktopTerminalSource } from "../desktop-link/verb-runtime.js";
+import { desktopKernelTools, type DesktopKernelSource } from "../desktop-link/kernel-tools.js";
 
 export interface TerminalAgentServices {
   inputActivity: TerminalInputActivity;
@@ -40,17 +43,24 @@ export function createTerminalAgentServices(options: {
   projectAdmission: TerminalWorkspaceProjectAdmission;
   /** The owner's Herdr terminals (spec 2701): reachable by verbs, waits, events and attention, never by agents. */
   herdr?: HerdrTerminalSource;
+  /** Terminals on linked desktops (spec 2716): reachable the same way, and by the kernel's desktop tools. */
+  desktopLinks?: DesktopTerminalSource & DesktopKernelSource;
 }): TerminalAgentServices {
   const { runtime, homePath } = options;
   // Verbs, waits and events see Herdr terminals; starting and supervising agents stays on Matrix tabs.
-  const pipelineRuntime = options.herdr ? withHerdrTerminals(runtime, options.herdr) : runtime;
+  const withHerdr = options.herdr ? withHerdrTerminals(runtime, options.herdr) : runtime;
+  const pipelineRuntime = options.desktopLinks ? withDesktopTerminals(withHerdr, options.desktopLinks) : withHerdr;
   const owners = [...new Set(options.terminalOwnerIds.map((id) => id.trim()).filter(Boolean))];
   const ownerId = () => {
     if (owners.length !== 1) throw new TerminalAgentVerbError("not_found");
     return owners[0]!;
   };
-  const admitWorkspace = async <T>(workspaceId: string, operation: () => Promise<T>): Promise<T> =>
-    options.projectAdmission.withWorkspace(ownerId(), workspaceId, "run", operation);
+  // A linked desktop belongs to no project: the kernel acts as the owner there, as the owner-only routes do.
+  const admitWorkspace = async <T>(workspaceId: string, operation: () => Promise<T>): Promise<T> => {
+    const owner = ownerId();
+    if (desktopLinkDevicePrefix(workspaceId)) return operation();
+    return options.projectAdmission.withWorkspace(owner, workspaceId, "run", operation);
+  };
   const inputActivity = createTerminalInputActivity();
   const status = createTerminalAgentStatusSource({ runtime: pipelineRuntime });
   const verbs = createTerminalAgentVerbs({
@@ -79,9 +89,12 @@ export function createTerminalAgentServices(options: {
   const kernelTools: TerminalAgentKernelTools = {
     async list() {
       const [workspaces, statuses] = await Promise.all([pipelineRuntime.listWorkspaces(), status.list()]);
+      const desktopNames = new Map((options.desktopLinks?.linked() ?? []).map((mac) => [desktopLinkWorkspaceId(mac.deviceId), mac.name]));
       return workspaces.map((workspace) => ({
         workspaceId: workspace.id,
         ...(workspace.scope === "project" ? { projectId: workspace.projectId } : {}),
+        // Terminals on the owner's desktop say so, with the desktop's name.
+        ...(desktopNames.has(workspace.id) ? { machine: desktopNames.get(workspace.id) } : {}),
         tabs: workspace.tabs.filter((tab) => tab.accessScope === "owner").map((tab) => ({
           tabId: tab.id,
           name: tab.name,
@@ -100,6 +113,7 @@ export function createTerminalAgentServices(options: {
     keys: (ref, keys) => admitWorkspace(ref.workspaceId, () => verbs.keys(ref, { keys })),
     interrupt: (ref) => admitWorkspace(ref.workspaceId, () => verbs.interrupt(ref)),
     wait: (ref, input) => waiter.wait(ref, input),
+    ...(options.desktopLinks ? desktopKernelTools(options.desktopLinks, ownerId) : {}),
   };
   return {
     inputActivity, status, verbs, waiter, events, templates, agents, kernelTools,

@@ -18,7 +18,7 @@ import { createDesktopLink, type DesktopLink } from "./link.js";
 import { createChallengeStore, newNonce, verifyDeviceProof } from "./proof.js";
 import { createDesktopLinkRegistry, type DesktopLinkRegistry } from "./registry.js";
 import { DesktopLinkStore, type DesktopLinkDatabase } from "./store.js";
-import { addDesktopLinkTerminalRoutes } from "./terminal-routes.js";
+import { addDesktopLinkTerminalRoutes, type DesktopTerminalVerbs, type DesktopTerminalWaiter } from "./terminal-routes.js";
 
 export const DESKTOP_LINK_API_PREFIX = "/api/desktop-link";
 const ADMISSION_TIMEOUT_MS = 10_000;
@@ -102,6 +102,9 @@ export interface RegisterDesktopLinkOptions {
   now?: () => number;
   registry?: DesktopLinkRegistry;
   log?: (message: string) => void;
+  /** Terminal verbs and waits (2692), for keys, interrupt and wait on desktop terminals. */
+  verbs?: DesktopTerminalVerbs;
+  waiter?: DesktopTerminalWaiter;
 }
 
 /**
@@ -145,13 +148,11 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
   api.use("*", whenReady);
   app.use(DESKTOP_LINK_PATH, whenReady);
   const devices = store;
-  const registry = options.registry ?? createDesktopLinkRegistry({
-    now,
-    seen: (deviceId) => {
-      devices.touch(deviceId, new Date(now())).catch((error: unknown) => {
-        log(`last-seen update failed: ${error instanceof Error ? error.name : "UnknownError"}`);
-      });
-    },
+  const registry = options.registry ?? createDesktopLinkRegistry({ now });
+  registry.observeSeen((deviceId) => {
+    devices.touch(deviceId, new Date(now())).catch((error: unknown) => {
+      log(`last-seen update failed: ${error instanceof Error ? error.name : "UnknownError"}`);
+    });
   });
   const challenges = createChallengeStore({ now });
   const admissions: number[] = [];
@@ -207,7 +208,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
     return c.json({ deviceId: device.data, revision: next });
   });
 
-  addDesktopLinkTerminalRoutes(api, registry, { now, log });
+  addDesktopLinkTerminalRoutes(api, registry, { now, log, ...(options.verbs ? { verbs: options.verbs } : {}), ...(options.waiter ? { waiter: options.waiter } : {}) });
   // Hono copies a sub-app's routes when it is mounted, so mount after defining them.
   app.route(DESKTOP_LINK_API_PREFIX, api);
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   TERMINAL_AGENT_IPC_TOOL_NAMES,
+  terminalAgentIpcToolNames,
   terminalAgentToolDefinitions,
   type TerminalAgentKernelTools,
 } from "../../packages/kernel/src/tools/terminal-agents.js";
@@ -33,6 +34,10 @@ describe("kernel terminal tools", () => {
   it("declares one allowed tool name per definition", () => {
     const definitions = terminalAgentToolDefinitions(tools());
     expect(definitions.map((definition) => `mcp__matrix-os-ipc__${definition.name}`)).toEqual(TERMINAL_AGENT_IPC_TOOL_NAMES);
+    // With a linked desktop (spec 2716) the desktop tools are allowed too, and only then.
+    const withMacs = { ...tools(), desktops: async () => [], desktopRun: async () => ({ machine: "desktop", workspaceId: "w", tabId: "t" }) };
+    expect(terminalAgentToolDefinitions(withMacs).map((definition) => `mcp__matrix-os-ipc__${definition.name}`)).toEqual(terminalAgentIpcToolNames(withMacs));
+    expect(terminalAgentIpcToolNames(tools())).toEqual(TERMINAL_AGENT_IPC_TOOL_NAMES);
   });
 
   it("wraps terminal output as untrusted content", async () => {

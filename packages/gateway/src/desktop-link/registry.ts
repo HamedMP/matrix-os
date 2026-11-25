@@ -9,6 +9,7 @@ import type { DesktopLink } from "./link.js";
 
 export const DESKTOP_LINK_PING_MS = 15_000;
 export const DESKTOP_LINK_STALE_MS = 45_000;
+const MAX_RUNS_PER_MINUTE = 10;
 
 export interface DesktopLinkRegistryOptions {
   now?: () => number;
@@ -31,6 +32,10 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
   const links = new Map<string, DesktopLink>();
   const adapters = new Map<string, HerdrAdapter>();
   let draining = false;
+  // Start times per device, for allowRun. Bounded to twice the link cap, oldest first out.
+  const runs = new Map<string, number[]>();
+  // Set once by the routes when the store is ready (the registry may be built earlier).
+  let seen = options.seen;
 
   function adapterFor(deviceId: string): HerdrAdapter {
     let adapter = adapters.get(deviceId);
@@ -54,7 +59,7 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
         continue;
       }
       link.send({ t: "ping" });
-      options.seen?.(deviceId);
+      seen?.(deviceId);
     }
   }
   const timer = setInterval(sweep, options.pingMs ?? DESKTOP_LINK_PING_MS);
@@ -73,7 +78,7 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
       links.set(deviceId, link);
       if (previous && previous !== link) previous.close(DESKTOP_LINK_CLOSE.replaced);
       adapterFor(deviceId);
-      options.seen?.(deviceId);
+      seen?.(deviceId);
       return true;
     },
     /** The link's WebSocket closed. Only forgets it if it is still the current link. */
@@ -107,6 +112,32 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
       adapter?.close();
     },
     size: () => links.size,
+    /**
+     * One more terminal started on this device by the computer: at most 10 a
+     * minute per desktop, shared by the routes and the kernel.
+     */
+    allowRun(deviceId: string): boolean {
+      const at = now();
+      const recent = (runs.get(deviceId) ?? []).filter((time) => at - time < 60_000);
+      if (recent.length >= MAX_RUNS_PER_MINUTE) { runs.set(deviceId, recent); return false; }
+      recent.push(at);
+      runs.delete(deviceId);
+      runs.set(deviceId, recent);
+      while (runs.size > maxLinks * 2) {
+        const oldest = runs.keys().next().value;
+        if (oldest === undefined) break;
+        runs.delete(oldest);
+      }
+      return true;
+    },
+    /** Where admitted and live links are reported (the store's last-seen time). */
+    observeSeen(listener: (deviceId: string) => void): void { seen = listener; },
+    /** Every linked device's id, name and adapter, for terminal verbs and the kernel. */
+    linked(): Array<{ deviceId: string; name: string; adapter: HerdrAdapter }> {
+      return [...links.values()].filter((link) => !link.closed).map((link) => ({
+        deviceId: link.info.deviceId, name: link.info.name, adapter: adapterFor(link.info.deviceId),
+      }));
+    },
     sweep,
     /** Shutdown: tells each desktop, closes links, then adapters. */
     async drain(): Promise<void> {

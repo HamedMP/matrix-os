@@ -72,7 +72,8 @@ afterAll(async () => db.destroy());
 export async function gateway(options: {
   /** Registers more routes on the same app before it serves (the desktop terminal socket). */
   extend?: (app: Hono, upgradeWebSocket: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"], registry: DesktopLinkRegistry) => void;
-  registry?: DesktopLinkRegistry; enabled?: boolean; ownerDatabase?: Kysely<DesktopLinkDatabase> | null; now?: () => number;
+  registry?: DesktopLinkRegistry; enabled?: boolean;
+  verbs?: Parameters<typeof registerDesktopLinkRoutes>[0]["verbs"]; waiter?: Parameters<typeof registerDesktopLinkRoutes>[0]["waiter"]; ownerDatabase?: Kysely<DesktopLinkDatabase> | null; now?: () => number;
 } = {}) {
   const app = new Hono();
   app.use("*", authMiddleware(SECRET, { localTerminalAgentToken: () => LOCAL_TOKEN }));
@@ -86,6 +87,8 @@ export async function gateway(options: {
     app, upgradeWebSocket: ws.upgradeWebSocket, config,
     ownerDatabase: options.ownerDatabase === undefined ? db : options.ownerDatabase,
     ...(options.registry ? { registry: options.registry } : {}),
+    ...(options.verbs ? { verbs: options.verbs } : {}),
+    ...(options.waiter ? { waiter: options.waiter } : {}),
     ...(options.now ? { now: options.now } : {}),
     log: () => {},
   });
@@ -102,7 +105,7 @@ export async function gateway(options: {
     fetch(`http://${base}${path}`, {
       ...init,
       headers: { ...headers, ...(init.body ? { "content-type": "application/json" } : {}), ...(init.headers as Record<string, string> ?? {}) },
-      signal: AbortSignal.timeout(5_000),
+      signal: init.signal ?? AbortSignal.timeout(5_000),
     });
   return { base, registry, http };
 }
