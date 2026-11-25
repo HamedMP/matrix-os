@@ -259,6 +259,14 @@ describe('canonical assistant delta copy writer foundation', () => {
     await repository.appendAssistantDelta(organization, { chatId: 'chat_org', runId: 'run_org', messageId: 'msg_assistant_org', delta: 'org reply', createdAt: new Date().toISOString() });
     expect(await provenance.inspect(owner.ownerId, 'derived', canonicalMessageEntityRef('msg_assistant_legacy'))).toBeNull();
   });
+  it('does not write assistant output for an aborted call in an untainted unknown chat', async () => {
+    await admit(new ChatRepository(repository.kysely), 'legacy');
+    const controller = new AbortController();
+    controller.abort();
+    await expect(repository.appendAssistantDelta(owner, { chatId: 'chat_legacy', runId: 'run_legacy', messageId: 'msg_assistant_legacy',
+      delta: 'cancelled reply', createdAt: new Date().toISOString() }, controller.signal)).rejects.toThrow();
+    expect(await repository.kysely.selectFrom('chat_messages').select('id').where('id', '=', 'msg_assistant_legacy').executeTakeFirst()).toBeUndefined();
+  });
   it('still refuses assistant output in a Google-tainted unknown chat', async () => {
     await admit(new ChatRepository(repository.kysely), 'legacy');
     await contexts.mark({ ownerId: owner.ownerId, chatId: 'chat_legacy', googleAccountId: account, consentId: 'consent_one', profileId: 'managed',

@@ -68,7 +68,10 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
     let passthrough = false;
     const result = await transact(async tx => {
       // Untainted unknown/shared/organization chats keep their pre-pilot writes; taint keeps the strict path.
-      if (await untaintedOutsideGoogleProvenance(tx, key.owner, key.chatId, now)) { passthrough = true; return content(tx); }
+      if (await untaintedOutsideGoogleProvenance(tx, key.owner, key.chatId, now)) {
+        // Skipping Google checks never skips cancellation: an aborted call must not write or release.
+        passthrough = true; check(signal); const written = await content(tx); check(signal); return written;
+      }
       if (key.owner.type !== 'personal') deny();
       live();
       return boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
@@ -166,8 +169,8 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
       live();
       return result;
     });
-    }, () => { if (!passthrough) live(); return true; });
-    if (!passthrough) live();
+    }, () => { if (passthrough) check(signal); else live(); return true; });
+    if (passthrough) check(signal); else live();
     return result;
   };
   return {

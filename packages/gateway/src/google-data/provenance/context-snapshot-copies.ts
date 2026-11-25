@@ -81,7 +81,10 @@ export function createGoogleContextSnapshotAdapter(db: Kysely<ChatDatabase>, opt
     let passthrough = false;
     const result = await transact(async tx => {
       // Untainted unknown/shared/organization chats keep their pre-pilot writes; taint keeps the strict path.
-      if (await untaintedOutsideGoogleProvenance(tx, owner, chatId, now)) { passthrough = true; return content(tx); }
+      if (await untaintedOutsideGoogleProvenance(tx, owner, chatId, now)) {
+        // Skipping Google checks never skips cancellation: an aborted call must not write or release.
+        passthrough = true; check(signal); const written = await content(tx); check(signal); return written;
+      }
       if (owner.type !== 'personal') deny();
       live();
       return boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
@@ -141,8 +144,8 @@ export function createGoogleContextSnapshotAdapter(db: Kysely<ChatDatabase>, opt
       if (receipts.length) await recordOrdinaryCopyReceipts(current, receipts);
       live(); return result;
     });
-    }, () => { if (!passthrough) live(); return true; });
-    if (!passthrough) live(); return result;
+    }, () => { if (passthrough) check(signal); else live(); return true; });
+    if (passthrough) check(signal); else live(); return result;
   };
   const deletion: NonNullable<PurgeHandlers['derived']> = async input => {
     check(input.signal); const key = fromRef(input.ownerId, input.entityRef); if (!key) return { status: 'unavailable' };

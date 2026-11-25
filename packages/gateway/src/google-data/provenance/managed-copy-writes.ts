@@ -80,7 +80,9 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
     live();
     const result = await boundedProvenanceTransaction<OwnerBotDatabase, T>(executor, async tx => {
       // An untainted unknown (pre-deploy) chat keeps its pre-pilot session behavior; taint keeps the strict path.
-      if (await untaintedOutsideGoogleProvenance<OwnerBotDatabase>(tx, owner, key.chatId, now, { sharing: false })) return content(tx);
+      if (await untaintedOutsideGoogleProvenance<OwnerBotDatabase>(tx, owner, key.chatId, now, { sharing: false })) {
+        check(signal); const written = await content(tx); check(signal); return written;
+      }
       const history = createGoogleModelHistoryStore<OwnerBotDatabase>(tx, { now });
       const inspect = async () => {
         check(signal);
