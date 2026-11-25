@@ -10,6 +10,7 @@ import {
   computeEffectiveEntitlement,
   getRuntimeAccessDecision,
   loadRuntimeCatalog,
+  loadStripePriceCatalog,
   parseBillingEntitlementRecord,
   parseBillingOverrideRecord,
   projectPublicBillingEntitlement,
@@ -17,6 +18,7 @@ import {
 } from '../../packages/platform/src/billing.js';
 import { buildFreeEntitlement } from '../../packages/platform/src/free-tier/free-entitlement.js';
 import { resolveEffectiveBillingEntitlementForSlot } from '../../packages/platform/src/billing-entitlement-resolver.js';
+import { recomputeStripeSummary } from '../../packages/platform/src/billing/stripe-webhook-projection.js';
 import { insertUserMachine, upsertBillingEntitlement, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createBillingRoutes, type StripeBillingClient } from '../../packages/platform/src/billing-routes.js';
 import { createMetalHostsRepository } from '../../packages/platform/src/substrates/metal-hosts-repository.js';
@@ -45,11 +47,11 @@ function paidEntitlement(overrides: Partial<BillingEntitlement> = {}): BillingEn
 const PRICE_ENV = { STRIPE_PRICE_MATRIX_STARTER_MONTHLY: 'price_1' };
 
 async function insertSubscription(db: PlatformDB, clerkUserId: string, changes: {
-  status: string; gracePeriodEndsAt?: string | null; currentPeriodEnd?: string | null; id?: string;
+  status: string; gracePeriodEndsAt?: string | null; currentPeriodEnd?: string | null; id?: string; slot?: string;
 }) {
   await db.executor.insertInto('billing_subscriptions').values({
     stripe_subscription_id: changes.id ?? 'sub_old', stripe_customer_id: 'cus_1', clerk_user_id: clerkUserId,
-    runtime_slot: 'primary', plan_slug: 'matrix_starter', stripe_price_id: 'price_1', billing_interval: 'monthly',
+    runtime_slot: changes.slot ?? 'primary', plan_slug: 'matrix_starter', stripe_price_id: 'price_1', billing_interval: 'monthly',
     price_unit_amount_minor: null, price_currency: null, price_interval_count: null, price_quantity: null,
     status: changes.status, current_period_end: changes.currentPeriodEnd ?? null,
     grace_period_ends_at: changes.gracePeriodEndsAt ?? null, trial_started_at: null, trial_ends_at: null,
@@ -163,6 +165,28 @@ describe('slot-scoped entitlement resolution', () => {
     const primary = await resolveEffectiveBillingEntitlementForSlot(db, 'user_free', NOW, 'primary', PRICE_ENV);
     expect(primary).toMatchObject({ source: 'free', planSlug: 'matrix_free' });
     expect(getRuntimeAccessDecision(primary, NOW, 'metal')).toMatchObject({ runtimeProxyAllowed: true });
+  });
+
+  it('preserves the free primary when checkout activates another slot, then permits a primary upgrade', async () => {
+    const owner = 'user_free';
+    await upsertBillingEntitlement(db, buildFreeEntitlement(owner, NOW));
+    const persistStripeSummary = async () => {
+      const summary = await recomputeStripeSummary(db, owner, loadStripePriceCatalog(PRICE_ENV), PRICE_ENV, NOW);
+      expect(summary).not.toBeNull();
+      await upsertBillingEntitlement(db, summary!);
+    };
+
+    await insertSubscription(db, owner, { status: 'active', id: 'sub_secondary', slot: 'secondary' });
+    await persistStripeSummary();
+    expect(await resolveEffectiveBillingEntitlementForSlot(db, owner, NOW, 'primary', PRICE_ENV))
+      .toMatchObject({ source: 'free' });
+    expect(await resolveEffectiveBillingEntitlementForSlot(db, owner, NOW, 'secondary', PRICE_ENV))
+      .toMatchObject({ source: 'stripe', stripeSubscriptionId: 'sub_secondary' });
+
+    await insertSubscription(db, owner, { status: 'active', id: 'sub_primary' });
+    await persistStripeSummary();
+    expect(await resolveEffectiveBillingEntitlementForSlot(db, owner, NOW, undefined, PRICE_ENV))
+      .toMatchObject({ source: 'stripe', stripeSubscriptionId: 'sub_primary' });
   });
 
   it('resolves a resubscribed former free owner to the live paid subscription', async () => {

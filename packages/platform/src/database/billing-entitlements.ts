@@ -12,7 +12,7 @@ import type {
   NewBillingWebhookEvent,
   PlatformDB,
 } from '../db.js';
-import { grantsNoPaidRights } from '../free-tier/free-entitlement.js';
+import { FREE_RUNTIME_SLOT, grantsNoPaidRights } from '../free-tier/free-entitlement.js';
 import {
   mapBillingEntitlement,
   mapBillingOverride,
@@ -21,6 +21,7 @@ import {
   toBillingOverrideRow,
   toBillingWebhookEventRow,
 } from './billing-records.js';
+import { getBillingSubscriptionByStripeId } from './billing.js';
 
 /** Extracted verbatim from packages/platform/src/db.ts (S01 / T007): billing entitlement, override and webhook event queries. */
 
@@ -28,13 +29,19 @@ import {
  * A Stripe projection replaces the stored entitlement when it is not older,
  * except that one granting no paid rights never replaces a stored free
  * entitlement: a former paid owner on the free plan keeps it while their
- * ended subscription keeps sending updates. A live subscription still wins.
+ * ended subscription keeps sending updates. A live primary subscription may
+ * replace it. Other slots keep their own Stripe subscription records.
  */
 export async function upsertBillingEntitlement(db: PlatformDB, record: NewBillingEntitlement): Promise<void> {
   return withAccountDeletionOwnerLock(db, record.clerkUserId, async (trx, admission) => {
     if (!admission.newWorkAllowed) return;
     const row = toBillingEntitlementRow(record);
-    const keepsFree = record.source === 'stripe' && grantsNoPaidRights(record, new Date(record.updatedAt));
+    const subscription = record.source === 'stripe' && record.stripeSubscriptionId
+      ? await getBillingSubscriptionByStripeId(trx, record.stripeSubscriptionId) : undefined;
+    const isOtherSlot = subscription?.clerkUserId === record.clerkUserId
+      && subscription.runtimeSlot !== FREE_RUNTIME_SLOT;
+    const keepsFree = record.source === 'stripe'
+      && (isOtherSlot || grantsNoPaidRights(record, new Date(record.updatedAt)));
     await trx.executor
       .insertInto('billing_entitlements')
       .values(row)
