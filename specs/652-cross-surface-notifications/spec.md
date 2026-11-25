@@ -118,17 +118,26 @@ A4 implementation notes (ENG-453, 2026-11-20):
   the legacy completion dedupe are unchanged.
 - API parsing and draft logic live in focused helpers. The large GatewayClient
   adds thin delegates only; no new native dependency or persistent phone store.
-- Focused validation: 11 mobile suites / 153 tests pass with normal exit, including
-  retained A1/A3 coverage. Root typecheck and shell typecheck pass. Broad mobile
-  assertions pass (300 suites / 3,785 tests), but worker teardown warns; full mobile
-  typecheck/lint have errors in untouched files. Broader root tests encounter
-  unrelated CI/host-script/UI failures. Native live captures remain unqualified.
+- Validation: 11 focused mobile suites / 153 tests pass, including retained A1/A3
+  coverage. On 2026-11-25 all 300 mobile suites / 3,788 tests pass in-band with
+  normal exit and no forced teardown. Mobile typecheck passes after adding the
+  missing image-prop types to two existing test helpers. Root/shell typechecks
+  pass. Canonical mobile lint retains five errors in four files byte-identical
+  to A4; broader root baseline failures remain documented on [PR #3520](https://github.com/HamedMP/matrix-os/pull/3520).
+- Native iOS screenshots and recordings of the reviewed `bceeb41d0f` runtime are
+  attached to PR #3520: navigation, load/edit/save/reopen, failed-save retention
+  and retry, and real 409 recovery using the production A4 owner-file API in a
+  disposable self-hosted fixture. Cloud push registration/delivery is not claimed.
+  Amin explicitly waived Android evidence for this PR on 2026-11-25: "skip android.
+  ios is enough". Do not build/test/capture Android or run both native platforms
+  concurrently; the original logged-in Android app/data remain untouched.
 - Design/product review of settings copy and native parity is recommended.
   Other OS views are not touched by this Native Mobile release; reviewer approval
   of that release-specific N/A rationale remains required.
-- Public documentation remains a separate private-site PR coordinated by the
-  parent chat. That repository currently returns 404; paste-ready text is in the
-  A5 handoff. No documentation PR or live qualification is claimed here.
+- Public documentation remains a separate deliverable in `FinnaAI/matrix-os-site`,
+  tracked by ENG-453. Repository access remains unavailable on 2026-11-25; access
+  has been requested and paste-ready text is in the A5 handoff. That deliverable
+  is not claimed complete and does not block independent review of A5.
 
 | Starting state | Action | Completion / recovery | Authority | Surface and automated boundary |
 | --- | --- | --- | --- | --- |
