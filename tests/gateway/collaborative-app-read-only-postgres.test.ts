@@ -122,9 +122,12 @@ describe("read-only organization app share", () => {
     const member = await authority.authorize({ scopeId, actorId: memberId, action: "read" });
     await expect(adapter.readData!(member, appId, "settings")).resolves.toEqual({ value: "{\"theme\":\"dark\"}" });
     await expect(adapter.readData!(member, appId, "missing")).resolves.toEqual({ value: null });
-    await expect(adapter.readData!(member, appId, "../secrets")).rejects.toMatchObject({ code: "invalid_action" });
+    // Keys normalize like the owner's own bridge: an app that saved "clock.zones" reads "clockzones".
+    await expect(adapter.readData!(member, appId, "set.tings")).resolves.toEqual({ value: "{\"theme\":\"dark\"}" });
+    await expect(adapter.readData!(member, appId, "..")).rejects.toMatchObject({ code: "invalid_action" });
     await expect(adapter.readData!(member, "other-app", "settings")).rejects.toMatchObject({ code: "not_found" });
-    expect(kv.read).toHaveBeenCalledTimes(2);
+    expect(kv.read).toHaveBeenCalledTimes(3);
+    expect(kv.read).toHaveBeenLastCalledWith(appId, "settings");
   });
 
   it("stops key-value reads once the owner stops sharing", async () => {

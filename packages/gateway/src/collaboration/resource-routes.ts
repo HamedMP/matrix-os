@@ -47,7 +47,8 @@ export interface CollaborationResourceServices {
 }
 
 const MAX_STREAM_BYTES = 256 * 1024 * 1024;
-const DataReadQuerySchema = z.object({ key: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/) }).strict();
+/** The adapter normalizes the key exactly like the owner's own bridge; here it is only bounded. */
+const DataReadQuerySchema = z.object({ key: z.string().min(1).max(256) }).strict();
 
 function safeResponseContentType(value: string | undefined): string {
   if (!value) return "application/octet-stream";

@@ -39,7 +39,8 @@ const EnvelopeSchema = z.object({
   expectedRevision: z.number().int().nonnegative(),
   action: z.unknown(),
 }).strict();
-const DataKeySchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+/** Same normalization as the owner's `/api/bridge/data`: unsupported characters are removed. */
+const DataKeySchema = z.string().min(1).max(256).transform((key) => key.replace(/[^A-Za-z0-9_-]/g, "")).pipe(z.string().min(1));
 const READ_ACTIONS: readonly BridgeQueryBody["action"][] = ["find", "findOne", "count", "schema", "appInfo"];
 const MUTATION_ACTIONS: readonly BridgeQueryBody["action"][] = ["insert", "bulkInsert", "update", "compareAndSwap", "bulkUpdate", "delete"];
 
