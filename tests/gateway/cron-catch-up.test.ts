@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { createCronStore, type CronStore } from "../../packages/gateway/src/cron/store.js";
@@ -173,6 +173,57 @@ describe("cron catch-up of missed runs", () => {
     await vi.waitFor(() => {
       expect(createCronStore(storePath).load()[0]?.lastRunAt).toBe("2026-11-21T12:01:00.000Z");
     });
+  });
+
+  it("a run never rewrites cron.json, so a job added there by another writer survives it", async () => {
+    vi.setSystemTime(new Date("2026-11-21T12:00:00.000Z"));
+    startWith([makeJob({ id: "frequent", schedule: { type: "interval", intervalMs: 60_000 } })]);
+    // Another writer (the kernel's manage_cron tool) adds a job straight to the file.
+    const external = makeJob({ id: "external", schedule: { type: "interval", intervalMs: 60 * 60_000 } });
+    const before = JSON.parse(readFileSync(storePath, "utf-8")) as CronJob[];
+    writeFileSync(storePath, JSON.stringify([...before, external], null, 2));
+    const written = readFileSync(storePath, "utf-8");
+
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(triggersFor(onTrigger, "frequent")).toBe(3);
+    await vi.waitFor(() => {
+      expect(createCronStore(storePath).load().find((j) => j.id === "frequent")?.lastRunAt).toBe("2026-11-21T12:03:00.000Z");
+    });
+    expect(readFileSync(storePath, "utf-8")).toBe(written);
+  });
+
+  it("a more frequent job's runs do not delay an interval job's first run", async () => {
+    vi.setSystemTime(new Date("2026-11-21T12:00:00.000Z"));
+    startWith([
+      makeJob({ id: "frequent", schedule: { type: "interval", intervalMs: 60_000 } }),
+      makeJob({ id: "slow", schedule: { type: "interval", intervalMs: 10 * 60_000 } }),
+    ]);
+    const original = readFileSync(storePath, "utf-8");
+    // Stand-in for the gateway's cron.json watcher: any rewrite of the file restarts every job.
+    for (let minute = 1; minute <= 10; minute += 1) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      const ranAt = new Date(Date.UTC(2026, 10, 21, 12, minute)).toISOString();
+      // Let the run's own persistence land before the "watcher" looks at the file.
+      await vi.waitFor(() => {
+        expect(createCronStore(storePath).load().find((j) => j.id === "frequent")?.lastRunAt).toBe(ranAt);
+      });
+      if (readFileSync(storePath, "utf-8") !== original) {
+        service.stop();
+        service.start();
+      }
+    }
+    expect(triggersFor(onTrigger, "frequent")).toBe(10);
+    expect(triggersFor(onTrigger, "slow")).toBe(1);
+  });
+
+  it("picks up jobs another writer added to cron.json when the service restarts", () => {
+    vi.setSystemTime(new Date("2026-11-21T12:00:00.000Z"));
+    startWith([makeJob({ id: "frequent", schedule: { type: "interval", intervalMs: 60_000 } })]);
+    const before = JSON.parse(readFileSync(storePath, "utf-8")) as CronJob[];
+    writeFileSync(storePath, JSON.stringify([...before, makeJob({ id: "external", schedule: { type: "interval", intervalMs: 5 * 60_000 } })]));
+    service.stop();
+    service.start();
+    expect(service.listJobs().map((j) => j.id).sort()).toEqual(["external", "frequent"]);
   });
 
   it("an interval job restarted before its next run fires at lastRunAt + interval", () => {

@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import { readFileSync, existsSync } from "node:fs";
 import { writeFile, rename } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { CronJob } from "./types.js";
 
 export interface CronStore {
@@ -9,28 +10,63 @@ export interface CronStore {
   add(job: CronJob): void;
   remove(jobId: string): boolean;
   list(): CronJob[];
-  /** Record when a job's run started. Updates the cache now and persists asynchronously (atomic rename). */
+  /**
+   * Record when a job's run started. Updates memory now and persists asynchronously (atomic rename)
+   * to the run-state file, never to cron.json: other writers (the kernel's manage_cron tool) own that
+   * file, and the gateway restarts every job whenever it changes.
+   */
   recordRun(jobId: string, startedAt: string): Promise<void>;
+}
+
+/** Run times live beside the job definitions, in `cron-state.json`. */
+export function cronStatePath(filePath: string): string {
+  return join(dirname(filePath), "cron-state.json");
 }
 
 export function createCronStore(filePath: string): CronStore {
   let cache: CronJob[] | null = null;
-  // Bumped on every cache change; the async flush rewrites until the file holds the latest version.
+  // jobId -> ISO start of its latest run. Pruned to the jobs in cron.json on every flush.
+  let runs: Record<string, string> | null = null;
+  // Bumped on every run-state change; the async flush rewrites until the file holds the latest version.
   let version = 0;
   let flushing: Promise<void> | null = null;
+  const statePath = cronStatePath(filePath);
   // One fixed temp path for async flushes: flushes are serialized, so it is overwritten, never accumulated.
-  const runTmp = filePath + ".run.tmp";
+  const stateTmp = statePath + ".tmp";
   const writeFileNow = fs.writeFileSync as (
     path: fs.PathOrFileDescriptor,
     data: string,
   ) => void;
   const renameNow = fs.renameSync as (oldPath: fs.PathLike, newPath: fs.PathLike) => void;
 
+  function loadRuns(): Record<string, string> {
+    if (runs !== null) return runs;
+    runs = {};
+    if (!existsSync(statePath)) return runs;
+    try {
+      const data: unknown = JSON.parse(readFileSync(statePath, "utf-8"));
+      if (typeof data === "object" && data !== null && !Array.isArray(data)) {
+        for (const [id, at] of Object.entries(data as Record<string, unknown>)) {
+          if (typeof at === "string" && Number.isFinite(Date.parse(at))) runs[id] = at;
+        }
+      }
+    } catch (err: unknown) {
+      console.warn("[cron] Could not load cron run state:", err instanceof Error ? err.message : String(err));
+    }
+    return runs;
+  }
+
+  /** Jobs as stored, with the run-state time (when newer state exists) as `lastRunAt`. */
+  function withRuns(jobs: CronJob[]): CronJob[] {
+    const known = loadRuns();
+    return jobs.map((job) => (known[job.id] ? { ...job, lastRunAt: known[job.id] } : job));
+  }
+
   function load(): CronJob[] {
     if (!existsSync(filePath)) return [];
     try {
       const data = JSON.parse(readFileSync(filePath, "utf-8"));
-      cache = Array.isArray(data) ? data : [];
+      cache = withRuns(Array.isArray(data) ? data : []);
       return cache;
     } catch (err: unknown) {
       console.warn("[cron] Could not load cron store:", err instanceof Error ? err.message : String(err));
@@ -74,8 +110,10 @@ export function createCronStore(filePath: string): CronStore {
     try {
       while (written !== version) {
         const snapshot = version;
-        await writeFile(runTmp, JSON.stringify(cache ?? [], null, 2));
-        await rename(runTmp, filePath);
+        const ids = new Set(list().map((job) => job.id));
+        const pruned = Object.fromEntries(Object.entries(loadRuns()).filter(([id]) => ids.has(id)));
+        await writeFile(stateTmp, JSON.stringify(pruned, null, 2));
+        await rename(stateTmp, statePath);
         written = snapshot;
       }
     } catch (err: unknown) {
@@ -89,6 +127,7 @@ export function createCronStore(filePath: string): CronStore {
   function recordRun(jobId: string, startedAt: string): Promise<void> {
     const jobs = list();
     if (!jobs.some((j) => j.id === jobId)) return Promise.resolve();
+    loadRuns()[jobId] = startedAt;
     cache = jobs.map((j) => (j.id === jobId ? { ...j, lastRunAt: startedAt } : j));
     version++;
     flushing ??= flushLoop();

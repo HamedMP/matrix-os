@@ -231,6 +231,8 @@ export function createCronService(config: CronServiceConfig): CronService {
       const startGeneration = generation;
       const now = Date.now();
       const missed: CronJob[] = [];
+      // Re-read cron.json: the gateway restarts the service when another writer changes it.
+      store.load();
       for (const job of store.list()) {
         scheduleJob(job);
         // At most one catch-up run per job, however many occurrences were missed.
