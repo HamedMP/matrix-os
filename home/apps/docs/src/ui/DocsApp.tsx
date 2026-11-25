@@ -12,7 +12,8 @@ import { useSessionState } from "../editor/index";
 import { MarkdownDialog, SaveAsDialog, UnsavedDialog } from "./dialogs";
 import { DocsWorkspace, type WorkspaceFileCommands } from "./DocsWorkspace";
 import { FilePickerDialog } from "./FilePickerDialog";
-import { DOCS_ACCEPT, StartScreen } from "./StartScreen";
+import { DOCS_ACCEPT } from "./accept";
+import { StartScreen } from "./StartScreen";
 import { type SessionHandles, useDocsSession, useDocumentActions, useRecentDocuments } from "./use-docs-session";
 import { useOpenRequests } from "./use-open-requests";
 

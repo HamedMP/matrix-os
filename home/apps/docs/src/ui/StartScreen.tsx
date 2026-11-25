@@ -5,16 +5,15 @@
 
 import { FileText, FileType2 } from "lucide-react";
 import type { MatrixOSFiles } from "../../../_shared/matrix-os";
-import { AppFrame, DOCX_MIME, OfficeStartScreen, type StartFolderMemory, type StartTemplate } from "../../../_shared/office-ui";
+import { AppFrame, OfficeStartScreen, type StartFolderMemory, type StartTemplate } from "../../../_shared/office-ui";
 import type { RecentFile, SessionError } from "../session/index";
+import { DOCS_ACCEPT } from "./accept";
 import { templateArt } from "./template-art";
 import { DOCS_TEMPLATES, type DocsTemplateId } from "./templates";
 
 /** The launcher artwork, shown where the app introduces itself. */
 const appArtwork = new URL("../../../../system/icons/v3-docs.png", import.meta.url).href;
 
-/** What Docs accepts from this computer. */
-export const DOCS_ACCEPT: readonly string[] = [".docx", DOCX_MIME];
 const BROWSE_ACCEPT: readonly string[] = [".docx"];
 
 const TEMPLATES: readonly StartTemplate[] = DOCS_TEMPLATES.map((template) => ({
