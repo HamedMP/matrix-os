@@ -27,6 +27,8 @@ export interface GooglePilotPurgeReceipt {
 }
 const receiptSchema = z.strictObject({ complete: z.boolean(), pending: z.number().int().nonnegative(), unresolved: z.number().int().nonnegative(), coverage: z.literal('registered-copies-only'), requestIds: z.array(z.uuid()).max(32) });
 const deny = (): never => { throw new GoogleProvenanceUnavailable(); };
+/** Canonical non-terminal run statuses (terminal: completed, failed, aborted). */
+const ACTIVE_RUN_STATUSES = ['accepted', 'running', 'waiting_for_input', 'waiting_for_approval'] as const;
 /** Isolated exact-owner host only. Commands are server-authenticated by the transport composer,
  * not by this helper. No copied content enters its metadata receipt tables. */
 export async function createGooglePilotCopyLifecycle(options: {
@@ -143,14 +145,19 @@ export async function createGooglePilotCopyLifecycle(options: {
             release!();
         }
     }
+    // Only live runs can still write copies. Finished runs of any driver and long histories never block a
+    // registered-copy purge; the execution fence held by withAdmission prevents new runs meanwhile. A chat has
+    // at most one active run (idx_chat_runs_one_active), so the 100-row cap only refuses corrupt state.
     async function quiesceChat(chatId: string) {
         admitted();
         const runs = await boundedProvenanceTransaction(db, tx => tx.selectFrom('chat_runs as r').innerJoin('chats as c', 'c.id', 'r.chat_id').select(['r.id', 'r.driver_kind'])
-            .where('r.chat_id', '=', chatId).where('c.owner_type', '=', 'personal').where('c.owner_id', '=', options.ownerId).limit(101).execute());
+            .where('r.chat_id', '=', chatId).where('r.status', 'in', ACTIVE_RUN_STATUSES).where('c.owner_type', '=', 'personal')
+            .where('c.owner_id', '=', options.ownerId).limit(101).execute());
         admitted();
         if (runs.length > 100)
             deny();
         for (const run of runs) {
+            // Only the managed Pi stop path can prove an active run stopped.
             if (run.driver_kind !== 'matrix_pi')
                 deny();
             await stopped({ ownerId: options.ownerId, chatId, runId: run.id, signal: closing.signal }, async () => {
@@ -162,7 +169,7 @@ export async function createGooglePilotCopyLifecycle(options: {
                     const current = await tx.selectFrom('chat_runs').select(['status', 'turn_id']).where('id', '=', run.id).where('chat_id', '=', chatId).forUpdate().executeTakeFirst();
                     if (!current)
                         deny();
-                    if (['accepted', 'running', 'waiting_for_input', 'waiting_for_approval'].includes(current!.status)) {
+                    if ((ACTIVE_RUN_STATUSES as readonly string[]).includes(current!.status)) {
                         await tx.updateTable('chat_runs').set({ status: 'aborted', outcome: 'aborted', started_at: sql `coalesce(started_at,now())`, completed_at: sql `now()`, updated_at: sql `now()` }).where('id', '=', run.id).execute();
                         await tx.updateTable('chat_turns').set({ status: 'aborted', updated_at: sql `now()` }).where('id', '=', current!.turn_id).where('chat_id', '=', chatId).execute();
                         const revision = Number(chat!.revision) + 1;

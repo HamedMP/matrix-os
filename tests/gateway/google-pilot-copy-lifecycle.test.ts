@@ -125,18 +125,36 @@ describe('durable exact-owner pilot copy cleanup', () => {
     });
     it('resolves hashed activity copies to their chat before accepting any run-status deletion proof', async () => {
         const f=await fixture(true); await admit(f.repository,'two');
-        await sql`UPDATE chat_runs SET driver_kind='matrix_pi' WHERE id='run_two'`.execute(f.repository.kysely);
         const source=(await f.contexts.sourcesForAccount(owner.ownerId,account))[0]!;
         await f.contexts.mark({ownerId:owner.ownerId,chatId:'chat_two',googleAccountId:account,consentId:source.consentId,profileId:source.profileId,profileRevision:source.profileRevision,purposeId:source.purposeId,expiresAt:source.expiresAt,retentionDeadline:source.expiresAt});
         await f.repository.appendRunActivities(owner,'chat_two','run_two',[{id:'event:pilot.tool',chatId:'chat_two',runId:'run_two',occurredAt:new Date().toISOString(),type:'agent.activity',activityId:'tool_pilot',kind:'command',label:'Synthetic',status:'running',summary:'synthetic retained activity'}]);
-        await sql`INSERT INTO chat_runs SELECT (jsonb_populate_record(NULL::chat_runs,to_jsonb(r)||jsonb_build_object('id','run_unknown','driver_kind','codex','attempt',2,'client_request_id','req_unknown','status','failed','outcome','failed','started_at',clock_timestamp(),'completed_at',clock_timestamp()))).* FROM chat_runs r WHERE id='run_two'`.execute(f.repository.kysely);
+        // run_two stays an active nonmanaged (codex) run: only resolving the hashed copy to chat_two refuses it.
         await expect(lifecycle!.purgeAccount(command)).rejects.toThrow();
         expect(JSON.stringify((await f.repository.kysely.selectFrom('chat_run_events').select('event').where('chat_id','=','chat_two').execute()))).toContain('synthetic retained activity');
-        expect(f.stop.mock.calls.some(([input])=>input.runId==='run_unknown')).toBe(false);
+        expect(f.stop.mock.calls.some(([input])=>input.runId==='run_two')).toBe(false);
     });
-    it('refuses nonmanaged runtime history even with terminal canonical status', async () => {
+    it('does not let finished nonmanaged runtime history block registered-copy purge', async () => {
         const f = await fixture(true);
         await sql `UPDATE chat_runs SET driver_kind='codex',status='failed',outcome='failed',started_at=now(),completed_at=now() WHERE id='run_one'`.execute(f.repository.kysely);
+        expect(await lifecycle!.purgeAccount(command)).toMatchObject({ complete: true, pending: 0, unresolved: 0 });
+        expect(f.stop).not.toHaveBeenCalled();
+        expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_one', { limit: 20 }))).not.toContain('synthetic Google-derived result');
+    });
+    it('completes purge for a chat with 150 finished runs including Claude-driver history', async () => {
+        const f = await fixture(true);
+        await sql `INSERT INTO chat_turns SELECT (jsonb_populate_record(NULL::chat_turns,to_jsonb(t)||jsonb_build_object('id','cturn_hist_'||n,
+          'client_request_id','req_turn_hist_'||n,'status','completed'))).* FROM chat_turns t, generate_series(1,150) n WHERE t.id='cturn_one'`.execute(f.repository.kysely);
+        await sql `INSERT INTO chat_runs SELECT (jsonb_populate_record(NULL::chat_runs,to_jsonb(r)||jsonb_build_object('id','run_hist_'||n,'turn_id','cturn_hist_'||n,
+          'driver_kind',CASE WHEN n%2=0 THEN 'claude' ELSE 'matrix_pi' END,'client_request_id','req_hist_'||n,'status','completed',
+          'outcome','completed','started_at',clock_timestamp(),'completed_at',clock_timestamp()))).* FROM chat_runs r, generate_series(1,150) n WHERE r.id='run_one'`.execute(f.repository.kysely);
+        expect(await lifecycle!.purgeAccount(command)).toMatchObject({ complete: true, pending: 0, unresolved: 0 });
+        expect(f.stop).toHaveBeenCalledOnce();
+        expect(f.stop.mock.calls[0]![0].runId).toBe('run_one');
+        expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_one', { limit: 20 }))).not.toContain('synthetic Google-derived result');
+    });
+    it('still refuses purge while a nonmanaged run is active', async () => {
+        const f = await fixture(true);
+        await sql `UPDATE chat_runs SET driver_kind='codex',status='running',started_at=now() WHERE id='run_one'`.execute(f.repository.kysely);
         await expect(lifecycle!.purgeAccount(command)).rejects.toThrow();
         expect(f.stop).not.toHaveBeenCalled();
         expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_one', { limit: 20 }))).toContain('synthetic Google-derived result');
