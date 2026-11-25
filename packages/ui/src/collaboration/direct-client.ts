@@ -64,7 +64,9 @@ const IssuedOwnerRuntimeTicketSchema = z.object({
 
 /** `unauthenticated`: the platform no longer recognizes the actor (sign in again); `denied`: the home ended or refused access. */
 export type CollaborationDirectErrorCode =
-  | "upgrade_required" | "host_offline" | "unauthenticated" | "denied" | "unavailable" | "not_found" | "invalid_request" | "invalid_response";
+  | "upgrade_required" | "host_offline" | "unauthenticated" | "denied" | "unavailable" | "not_found" | "invalid_request" | "invalid_response"
+  /** ENG-579: a write to an app shared view-only; the session and access remain intact. */
+  | "read_only";
 
 /** Safe, generic client error: never carries provider, host or path detail. */
 export class CollaborationDirectError extends Error {
@@ -457,6 +459,9 @@ export function createCollaborationDirectClient(options: CollaborationDirectClie
     const challenged = isPlatformChallenge(response, connected.origin);
     if (challenged) initial.state = "unauthenticated";
     else if (initial.state === "unauthenticated") initial.state = "connected";
+    if (response.status === 403 && !challenged && await isReadOnlyRefusal(response)) {
+      throw new CollaborationDirectError("read_only", "This app is view-only");
+    }
     throwForStatus(response.status, challenged);
     if (response.status === 204) {
       await response.body?.cancel();
@@ -596,6 +601,22 @@ async function guardedFetch(fetchImpl: typeof fetch, url: string, init: RequestI
   } catch (error: unknown) {
     console.warn("[collaboration-direct] request failed", error instanceof Error ? error.name : "UnknownError");
     throw new CollaborationDirectError("unavailable");
+  }
+}
+
+/** Reads a home's small 403 body once; only the exact `read_only` code is distinguished. */
+async function isReadOnlyRefusal(response: Response): Promise<boolean> {
+  if (!response.headers.get("content-type")?.startsWith("application/json")) return false;
+  try {
+    const text = await response.clone().text();
+    if (text.length > 512) return false;
+    const body = JSON.parse(text) as unknown;
+    return typeof body === "object" && body !== null && (body as { code?: unknown }).code === "read_only";
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) {
+      console.warn("[collaboration-direct] refusal body unreadable", error instanceof Error ? error.name : "UnknownError");
+    }
+    return false;
   }
 }
 

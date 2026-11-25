@@ -27,6 +27,12 @@ const BridgeMessageSchema = z.discriminatedUnion("type", [
     type: z.literal("matrix:shared-app:retry"),
     requestId: z.string().min(8).max(128),
   }),
+  // ENG-579: `readData` of a view-only share; `action` carries the key.
+  z.strictObject({
+    type: z.literal("matrix:shared-app:read-data"),
+    requestId: z.string().min(8).max(128),
+    action: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  }),
 ]);
 const BRIDGE_READY_TIMEOUT_MS = 10_000;
 
@@ -40,6 +46,8 @@ export function SharedAppViewer({ target, transport }: {
   const [entry, setEntry] = useState<{ targetKey: string; url: string } | null>(null);
   const [documentGeneration, setDocumentGeneration] = useState(0);
   const [state, setState] = useState<ViewerState>("launching");
+  /** A refused write on a view-only share keeps the app open with an inline notice. */
+  const [viewOnlyNotice, setViewOnlyNotice] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const mounted = useRef(true);
   const requestGeneration = useRef(0);
@@ -52,6 +60,10 @@ export function SharedAppViewer({ target, transport }: {
 
   const applyFailure = useCallback((error: unknown) => {
     const code = error instanceof SharedAppTransportError ? error.code : "unavailable";
+    if (code === "read_only") {
+      setViewOnlyNotice(true);
+      return;
+    }
     if (code === "uncertain") pendingMutationRecovery.current = true;
     if (code === "conflict" || code === "access_ended") pendingMutationRecovery.current = false;
     setState(pendingMutationRecovery.current ? "uncertain" : code);
@@ -143,11 +155,13 @@ export function SharedAppViewer({ target, transport }: {
         setState(pendingMutationRecovery.current ? "uncertain" : "ready");
         return;
       }
-      const work = request.type === "matrix:shared-app:query"
+      const work: Promise<unknown> = request.type === "matrix:shared-app:query"
         ? transport.query(request.action)
         : request.type === "matrix:shared-app:mutate"
           ? transport.mutate(request.action, request.expectedRevision)
-          : recoverMutation();
+          : request.type === "matrix:shared-app:read-data"
+            ? transport.readData(request.action)
+            : recoverMutation();
       const generation = activeDocumentGeneration.current;
       void work.then((result) => {
         if (mounted.current && activeDocumentGeneration.current === generation) reply(event, request.requestId, { ok: true, result });
@@ -205,6 +219,10 @@ export function SharedAppViewer({ target, transport }: {
           {state === "conflict" ? "Review edit" : "Retry"}
         </button> : null}
       </section>
+    </div> : null}
+    {viewOnlyNotice && state === "ready" ? <div role="status" className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-xl border bg-[var(--bg-primary)] px-4 py-3 text-sm shadow-lg">
+      <span className="min-w-0 flex-1">This app is view-only. Ask the owner to make it collaborative.</span>
+      <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={() => setViewOnlyNotice(false)}>Dismiss</button>
     </div> : null}
   </div>;
 }
