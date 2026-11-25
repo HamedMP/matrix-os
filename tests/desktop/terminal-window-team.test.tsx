@@ -188,6 +188,40 @@ describe("Shared pane socket (spec 2710 J3-J6)", () => {
     expect(harness.sent.map((frame) => frame.data!).join("")).toBe(paste);
   });
 
+  it("clears a restored screen before the owner's replay so output is not shown twice (Greptile on #3685)", () => {
+    updateTeamSession(scopeA, { projection: projection(scopeA, "editor") as never });
+    const harness = streamHarness();
+    const socket = createTeamTerminalSocket(() => harness.api, teamSessionName(scopeA), harness.events);
+    socket.connect();
+    expect(harness.events.onOutput).toHaveBeenNthCalledWith(1, "\x1b[2J\x1b[3J\x1b[H", 0);
+    socket.dispose();
+  });
+
+  it("drops typing while the connection is down instead of running it after reconnect (Greptile on #3685)", async () => {
+    vi.useFakeTimers();
+    updateTeamSession(scopeA, { projection: projection(scopeA, "editor") as never });
+    const harness = streamHarness();
+    const socket = createTeamTerminalSocket(() => harness.api, teamSessionName(scopeA), harness.events);
+    socket.connect();
+    harness.ready();
+    socket.sendInput("half");
+    harness.handlers().onDisconnected!();
+    socket.sendInput(" typed offline\r");
+    harness.ready();
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    expect(harness.sent).toEqual([]);
+    socket.sendInput("after\r");
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    expect(harness.sent.map((frame) => frame.data)).toEqual(["after\r"]);
+  });
+
+  it("keeps every listed terminal's record so open panes keep their role (Greptile on #3685)", () => {
+    for (let index = 0; index < 200; index += 1) {
+      updateTeamSession(`10000000-0000-4000-8000-${String(index).padStart(12, "0")}`, { projection: projection(scopeA, "viewer") as never });
+    }
+    expect(teamSession("10000000-0000-4000-8000-000000000000")?.projection?.role).toBe("viewer");
+  });
+
   it("shows that access ended when the owner revokes it or stops sharing", () => {
     updateTeamSession(scopeA, { projection: projection(scopeA, "editor") as never });
     const harness = streamHarness();

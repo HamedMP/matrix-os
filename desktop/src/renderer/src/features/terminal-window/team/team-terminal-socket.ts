@@ -13,6 +13,8 @@ const INPUT_FLUSH_MS = 16;
 /** Characters per frame; well inside the 32 KiB input limit for any UTF-8 text. */
 const INPUT_CHUNK_CHARS = 8_192;
 const MAX_PENDING_CHARS = 256 * 1024;
+/** Erase the screen and scrollback, cursor home. */
+const CLEAR_SCREEN = "\x1b[2J\x1b[3J\x1b[H";
 /** Below the owner's per-socket budget (64 KiB/s), so a long paste arrives whole, a second at a time. */
 const BYTES_PER_SECOND = 56 * 1024;
 
@@ -67,7 +69,8 @@ export function createTeamTerminalSocket(api: () => CollaborationDirectApi | nul
   }
 
   const queue = (data: string) => {
-    if (disposed || !data || viewer()) return;
+    // Typing while the connection is down is dropped: it must not run later against a prompt that changed.
+    if (disposed || !data || viewer() || !ready || !send) return;
     // A stalled socket drops input rather than growing a backlog that would replay later.
     if (pending.length + data.length > MAX_PENDING_CHARS) return;
     pending += data;
@@ -99,6 +102,9 @@ export function createTeamTerminalSocket(api: () => CollaborationDirectApi | nul
       const client = api();
       if (!scopeId || !client || disposed) { events.onState("fatal"); return; }
       events.onState("connecting");
+      // Every connection replays the owner's retained screen, so a screen this pane restored from its
+      // cache is cleared first instead of showing that output twice.
+      events.onOutput(CLEAR_SCREEN, 0);
       followSize();
       stopSize = subscribeTeamSessions(followSize);
       // A Viewer's read-only state is shown by the pane header ("View only"); keystrokes are dropped
@@ -120,6 +126,10 @@ export function createTeamTerminalSocket(api: () => CollaborationDirectApi | nul
         },
         onDisconnected: () => {
           ready = null;
+          send = null;
+          pending = "";
+          if (timer) clearTimeout(timer);
+          timer = null;
           events.onState("reconnecting");
         },
         onPresence: (frame) => updateTeamSession(scopeId, { presence: { inputMode: frame.inputMode, participants: frame.participants, marks: frame.marks } }),

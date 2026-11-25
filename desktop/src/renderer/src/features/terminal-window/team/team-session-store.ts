@@ -7,7 +7,8 @@ import type {
   TeamTerminalProjection,
 } from "@matrix-os/contracts";
 
-const MAX_SESSIONS = 64;
+/** Above the Team list's 200 entries, so listing never evicts an open pane's record. */
+const MAX_SESSIONS = 256;
 
 export interface TeamSessionState {
   projection?: TeamTerminalProjection;
