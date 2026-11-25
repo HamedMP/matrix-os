@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   clearCodingAgentRuntimeSelection,
   useCodingAgentWorkspace,
@@ -32,5 +32,24 @@ describe("clearCodingAgentRuntimeSelection", () => {
       notificationPreferences: null,
       notificationPreferencesError: null,
     });
+  });
+
+  it("ignores an old computer's save response after clearing the selection", async () => {
+    const initial = { attentionPush: { approval: true, input: true, failed: true, completed: true } };
+    let release!: (value: unknown) => void;
+    window.operator = { on: () => () => {}, invoke: vi.fn((channel: string) => {
+      if (channel === "runtime:get-notification-preferences") return Promise.resolve(initial);
+      return new Promise(resolve => { release = resolve; });
+    }) };
+    useCodingAgentWorkspace.setState({ notificationPreferences: initial, notificationPreferencesStatus: "ready" });
+    const save = useCodingAgentWorkspace.getState().updateNotificationPreferences({ attentionPush: { completed: false } });
+    await vi.waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith("runtime:update-notification-preferences", expect.anything()));
+    clearCodingAgentRuntimeSelection();
+    const next = { attentionPush: { approval: false, input: false, failed: false, completed: true } };
+    useCodingAgentWorkspace.setState({ notificationPreferences: next, notificationPreferencesStatus: "ready" });
+    release({ attentionPush: { ...initial.attentionPush, completed: false } });
+    await save;
+    expect(useCodingAgentWorkspace.getState().notificationPreferences).toEqual(next);
+    clearCodingAgentRuntimeSelection();
   });
 });

@@ -122,7 +122,7 @@ export async function listDirectory(
   const dirs: FileTreeEntry[] = [];
   const files: FileTreeEntry[] = [];
 
-  const visible = entries.filter((e) => !e.name.startsWith("."));
+  const visible = entries.filter(e => !e.name.startsWith(".") && !isDeniedFileApiPath(homePath, join(resolved, e.name)));
 
   const dirEntries = visible.filter((e) => e.isDirectory());
   const fileEntries = visible.filter((e) => e.isFile());

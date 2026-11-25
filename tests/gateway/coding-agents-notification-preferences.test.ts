@@ -12,14 +12,14 @@ const principal: RequestPrincipal = { userId: "owner_user", source: "jwt" };
 function jsonRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
     method: "PUT",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "if-match": '"0"' },
     body: JSON.stringify(body),
   });
 }
 
 function appWithStore(homePath: string) {
   const app = new Hono();
-  const notificationPreferences = createCodingAgentNotificationPreferenceStore({ homePath });
+  const notificationPreferences = createCodingAgentNotificationPreferenceStore({ homePath, ownerIds: [principal.userId] });
   let activePrincipal = principal;
   app.route("/api/coding-agents", createCodingAgentRoutes({
     service: { getSummary: async () => {
@@ -114,16 +114,13 @@ describe("coding agent notification preferences", () => {
     });
 
     const stored = await readFile(
-      join(homePath, "system", "coding-agents", "notification-preferences", "owner_user.json"),
+      join(homePath, "system", "notifications.json"),
       "utf-8",
     );
-    expect(JSON.parse(stored)).toEqual({
-      attentionPush: {
-        approval: false,
-        input: true,
-        failed: false,
-        completed: true,
-      },
+    expect(JSON.parse(stored)).toMatchObject({
+      version: 1, revision: 1,
+      events: { approval: false, question: true, runFailed: false, replyFinished: true },
+      content: { showPreview: false, timeSensitive: false },
     });
   });
 
@@ -144,17 +141,7 @@ describe("coding agent notification preferences", () => {
     setPrincipal({ userId: "other_user", source: "jwt" });
     const otherRead = await app.request("/api/coding-agents/notification-preferences");
 
-    expect(otherRead.status).toBe(200);
-    await expect(otherRead.json()).resolves.toEqual({
-      preferences: {
-        attentionPush: {
-          approval: true,
-          input: true,
-          failed: true,
-          completed: true,
-        },
-      },
-    });
+    expect(otherRead.status).toBe(403);
   });
 
   it("rejects malformed or oversized preference updates with safe errors", async () => {

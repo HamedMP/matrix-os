@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 export function resolveWithinHome(
   homePath: string,
@@ -16,7 +16,27 @@ export function resolveWithinHome(
   return null;
 }
 
-const DENIED_FILE_API_PREFIXES = ["data/browser-profiles", "data/app-gallery-staging"];
+const DENIED_FILE_API_PREFIXES = ["data/browser-profiles", "data/app-gallery-staging",
+  // Notification config has an owner/revision boundary; generic files must not bypass it.
+  "system/notifications.json", "system/coding-agents/notification-preferences"];
+
+function fileApiRelativePaths(homePath: string, resolvedPath: string): string[] {
+  const paths = [relative(resolve(homePath), resolvedPath).split(sep).join("/")];
+  if (!existsSync(homePath)) return paths;
+
+  // Missing descendants still inherit the canonical location of an existing parent.
+  let ancestor = resolvedPath;
+  const missingSegments: string[] = [];
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor);
+    if (parent === ancestor) return paths;
+    missingSegments.push(basename(ancestor));
+    ancestor = parent;
+  }
+  const canonicalPath = resolve(realpathSync(ancestor), missingSegments.reverse().join(sep));
+  paths.push(relative(realpathSync(homePath), canonicalPath).split(sep).join("/"));
+  return paths;
+}
 
 // OS-owned subtrees that must never receive user-created folders. Mirrors
 // project-manager.ts's folder-project guard: the home root itself, every
@@ -36,16 +56,15 @@ export function isProtectedHomeSubpath(homePath: string, resolvedPath: string): 
 export function isDeniedFileApiPath(homePath: string, requestedPath: string): boolean {
   const resolved = resolveWithinHome(homePath, requestedPath);
   if (!resolved) return true;
-  const rel = relative(resolve(homePath), resolved).split(sep).join("/");
-  return DENIED_FILE_API_PREFIXES.some((prefix) => rel === prefix || rel.startsWith(`${prefix}/`));
+  return fileApiRelativePaths(homePath, resolved).some(rel => rel === ".." || rel.startsWith("../") || isAbsolute(rel)
+    || DENIED_FILE_API_PREFIXES.some(prefix => rel === prefix || rel.startsWith(`${prefix}/`)));
 }
 
 // True when the resolved path is an ancestor of (or equal to) a denied
 // subtree: granting it as a workspace root would expose the denied content.
 export function containsDeniedFileApiPath(homePath: string, resolvedPath: string): boolean {
-  const rel = relative(resolve(homePath), resolvedPath).split(sep).join("/");
-  if (rel === "") return true;
-  return DENIED_FILE_API_PREFIXES.some((prefix) => prefix === rel || prefix.startsWith(`${rel}/`));
+  return fileApiRelativePaths(homePath, resolvedPath).some(rel => rel === "" || rel === ".." || rel.startsWith("../") || isAbsolute(rel)
+    || DENIED_FILE_API_PREFIXES.some(prefix => prefix === rel || prefix.startsWith(`${rel}/`)));
 }
 
 /** Recursive mutations must not relocate or expose a private subtree through its ancestor. */

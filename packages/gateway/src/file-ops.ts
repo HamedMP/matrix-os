@@ -79,7 +79,7 @@ export async function fileTouch(
   content = "",
 ): Promise<{ ok: boolean; path?: string; error?: string; status?: number }> {
   const resolved = resolveWritableFileApiPath(homePath, requestedPath);
-  if (!resolved) return { ok: false, error: "Invalid path" };
+  if (!resolved || isDeniedFileApiMutationPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
 
   try {
     const dir = dirname(resolved);

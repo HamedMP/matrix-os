@@ -6,7 +6,6 @@ import {
   type AgentThreadSnapshot,
   type AgentThreadComposerDraft,
   type CodingAgentNotificationPreferences,
-  type CodingAgentNotificationPreferencesUpdate,
   type FileReadRequest,
   type FileReadResponse,
   type FileWriteRequest,
@@ -32,6 +31,7 @@ import {
   type FileReference,
 } from "./coding-agent/thread-model";
 import { createThreadSnapshotPoller } from "./coding-agent/thread-snapshot-poller";
+import { createNotificationPreferenceSaveQueue } from "./coding-agent/notification-preferences-save";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "./runtime-generation";
 import { diagnosticErrorKind } from "../lib/errors";
 
@@ -155,8 +155,6 @@ let reviewSnapshotSeq = 0;
 let fileReadSeq = 0;
 let threadSnapshotSeq = 0;
 let notificationPreferencesSeq = 0;
-let notificationPreferencesSaveActive = false;
-let pendingNotificationPreferencePatch: Partial<AttentionPushPreferences> = {};
 let createRequestSeq = 0;
 let actionRequestSeq = 0;
 let activeThreadEventSubscription: (() => void) | null = null;
@@ -277,6 +275,7 @@ export function clearCodingAgentRuntimeSelection(): void {
   fileReadSeq += 1;
   threadSnapshotSeq += 1;
   notificationPreferencesSeq += 1;
+  notificationPreferenceSaves.reset();
   createRequestSeq += 1;
   actionRequestSeq += 1;
   useCodingAgentWorkspace.setState({
@@ -353,49 +352,11 @@ export function codingAgentInputActionKey(threadId: string, inputRequestId: stri
   return `${threadId}:${inputRequestId}`;
 }
 
-async function flushNotificationPreferenceUpdates(): Promise<void> {
-  if (notificationPreferencesSaveActive) return;
-  notificationPreferencesSaveActive = true;
-  try {
-    while (Object.keys(pendingNotificationPreferencePatch).length > 0) {
-      const patch = pendingNotificationPreferencePatch;
-      pendingNotificationPreferencePatch = {};
-      const previous = useCodingAgentWorkspace.getState().notificationPreferences;
-      useCodingAgentWorkspace.setState({
-        notificationPreferencesStatus: "saving",
-        notificationPreferencesError: null,
-      });
-      try {
-        const latest = await invoke("runtime:get-notification-preferences", {});
-        const preferences = await invoke("runtime:update-notification-preferences", {
-          attentionPush: {
-            ...latest.attentionPush,
-            ...patch,
-          },
-        } satisfies CodingAgentNotificationPreferencesUpdate);
-        useCodingAgentWorkspace.setState({
-          notificationPreferencesStatus: "ready",
-          notificationPreferences: preferences,
-          notificationPreferencesError: null,
-        });
-      } catch {
-        console.warn("[coding-agents] notification preferences update failed");
-        pendingNotificationPreferencePatch = {};
-        useCodingAgentWorkspace.setState({
-          notificationPreferencesStatus: "error",
-          notificationPreferences: previous,
-          notificationPreferencesError: "Notification settings could not be saved. Try again.",
-        });
-        return;
-      }
-    }
-  } finally {
-    notificationPreferencesSaveActive = false;
-  }
-  if (Object.keys(pendingNotificationPreferencePatch).length > 0) {
-    await flushNotificationPreferenceUpdates();
-  }
-}
+const notificationPreferenceSaves = createNotificationPreferenceSaveQueue({
+  getState: () => useCodingAgentWorkspace.getState(),
+  setState: patch => useCodingAgentWorkspace.setState(patch),
+  save: request => invoke("runtime:update-notification-preferences", request),
+});
 
 export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set) => ({
   status: "idle",
@@ -573,10 +534,6 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
   },
 
   updateNotificationPreferences: async (request) => {
-    pendingNotificationPreferencePatch = {
-      ...pendingNotificationPreferencePatch,
-      ...request.attentionPush,
-    };
     set((state) => ({
       notificationPreferencesStatus: "saving",
       notificationPreferences: state.notificationPreferences
@@ -590,7 +547,7 @@ export const useCodingAgentWorkspace = create<CodingAgentWorkspaceState>()((set)
         : state.notificationPreferences,
       notificationPreferencesError: null,
     }));
-    await flushNotificationPreferenceUpdates();
+    await notificationPreferenceSaves.enqueue(request.attentionPush);
   },
 
   selectReview: async (reviewId) => {
