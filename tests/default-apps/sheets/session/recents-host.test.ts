@@ -25,7 +25,7 @@ describe("recent files", () => {
       { path: "a/One.xlsx", name: "One.xlsx", openedAt: "2026-11-20T10:00:02.000Z" },
       { path: "Two.csv", name: "Two.csv", openedAt: "2026-11-20T10:00:01.000Z" },
     ]);
-    expect(db.rows).toHaveLength(2);
+    expect(db.recentPaths()).toEqual(["a/One.xlsx", "Two.csv"]);
   });
 
   it("keeps a bounded number of rows and can forget a path", async () => {
@@ -33,11 +33,49 @@ describe("recent files", () => {
     let now = 0;
     const recents = createRecentFiles(db, { now: () => (now += 1000) });
     for (let i = 0; i < MAX_RECENT_FILES + 5; i++) await recents.touch(`file-${i}.xlsx`);
-    expect(db.rows).toHaveLength(MAX_RECENT_FILES);
+    expect(db.recentPaths()).toHaveLength(MAX_RECENT_FILES);
     const list = await recents.list();
     expect(list[0]!.path).toBe(`file-${MAX_RECENT_FILES + 4}.xlsx`);
     await recents.remove(list[0]!.path);
     expect((await recents.list()).some((entry) => entry.path === list[0]!.path)).toBe(false);
+  });
+
+  // Outcome: opening a file updates the list completely or not at all, and windows do not drop each other's entries.
+  // Fault: an insert and the clean-up of old rows run as separate writes, so a failure between them, or
+  // two windows cleaning up from stale lists, leaves the table half updated.
+  it("records each change with one database statement", async () => {
+    const db = new FakeDb();
+    let now = 0;
+    const recents = createRecentFiles(db, { now: () => (now += 1000) });
+    for (let i = 0; i < MAX_RECENT_FILES + 2; i++) await recents.touch(`file-${i}.xlsx`);
+    await recents.touch("file-5.xlsx");
+    await recents.remove("file-6.xlsx");
+    await recents.remove("not-listed.xlsx");
+    expect(db.writes).toEqual(["bulkInsert recent_files", ...Array.from({ length: MAX_RECENT_FILES + 3 }, () => "compareAndSwap recent_files")]);
+    expect(db.rows).toHaveLength(1);
+    expect(db.recentPaths()).toHaveLength(MAX_RECENT_FILES - 1);
+    expect(db.recentPaths()[0]).toBe("file-5.xlsx");
+  });
+
+  it("keeps every file when two windows change the list at the same time", async () => {
+    const db = new FakeDb();
+    const first = createRecentFiles(db);
+    const second = createRecentFiles(db);
+    await Promise.all([first.touch("a.xlsx"), second.touch("b.xlsx")]);
+    await Promise.all([first.touch("c.xlsx"), second.touch("d.xlsx"), first.remove("a.xlsx")]);
+    expect(db.rows).toHaveLength(1);
+    expect(db.recentPaths().sort()).toEqual(["b.xlsx", "c.xlsx", "d.xlsx"]);
+  });
+
+  it("skips stored entries it cannot read and paths that are not file paths", async () => {
+    const db = new FakeDb();
+    const recents = createRecentFiles(db);
+    await recents.touch("a.xlsx");
+    await recents.touch("../escape.xlsx");
+    const row = db.rows[0]!;
+    const payload = row.payload as { entries: unknown[] };
+    row.payload = { entries: [{ path: 42, name: null, openedAt: "2026-11-23T11:00:00.000Z" }, { path: "/abs.xlsx", name: "x", openedAt: "2026-11-23T11:00:01.000Z" }, ...payload.entries] };
+    expect((await recents.list()).map((entry) => entry.path)).toEqual(["a.xlsx"]);
   });
 
   it("never fails the caller when the store is down or missing", async () => {

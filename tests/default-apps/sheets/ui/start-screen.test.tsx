@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { openXlsx } from "../../../../home/apps/_shared/office-engine/index";
+import { createRecentFiles } from "../../../../home/apps/sheets/src/session";
 import { buildTemplate } from "../../../../home/apps/sheets/src/ui/templates";
 import { encode } from "../session/fakes";
 import { flush, renderApp, workbookBytes } from "./harness";
@@ -52,12 +53,12 @@ describe("Sheets start screen", () => {
 
   it("removes a workbook from the recent list", async () => {
     const app = await renderApp(async (bridge) => {
-      await bridge.db.insert("recent_files", { path: "Q3.xlsx", name: "Q3.xlsx", opened_at: "2026-11-01T10:00:00Z" });
+      await createRecentFiles(bridge.db).touch("Q3.xlsx");
     });
     fireEvent.click(screen.getByRole("button", { name: "Remove Q3.xlsx from recent" }));
     await flush();
     expect(screen.getByRole("heading", { name: "No recent workbooks" })).toBeTruthy();
-    expect(app.bridge.db.rows).toEqual([]);
+    expect(app.bridge.db.recentPaths()).toEqual([]);
   });
 
   it("starts a budget from its template, calculated and unsaved", async () => {

@@ -50,6 +50,17 @@ describe("actions on a filtered range leave hidden rows alone", () => {
     h.unmount();
   });
 
+  it("Paste that starts on a hidden row writes from the first visible row below it", async () => {
+    const h = await filteredEast();
+    act(() => h.controller.select({ row: 2, col: 1 }));
+    act(() => {
+      h.controller.paste({ text: "30", html: "" });
+    });
+    expect([value(h, 2, 1), value(h, 3, 1)]).toEqual([2, 30]);
+    expect(h.controller.getActiveRange()).toEqual({ start: { row: 3, col: 1 }, end: { row: 3, col: 1 } });
+    h.unmount();
+  });
+
   it("Paste into a filtered range fills the visible rows in order", async () => {
     const h = await filteredEast();
     act(() => h.controller.select({ row: 1, col: 1 }));
@@ -57,6 +68,21 @@ describe("actions on a filtered range leave hidden rows alone", () => {
       h.controller.paste({ text: "10\n30", html: "" });
     });
     expect([value(h, 1, 1), value(h, 2, 1), value(h, 3, 1), value(h, 4, 1)]).toEqual([10, 2, 30, 4]);
+    h.unmount();
+  });
+});
+
+describe("pasting a table that is too large", () => {
+  it("says so and writes nothing when its spans cover too many cells", async () => {
+    const h = await renderGrid();
+    act(() => h.controller.select({ row: 0, col: 4 }));
+    let pasted = true;
+    act(() => {
+      pasted = h.controller.paste({ text: "x", html: `<table><tr><td colspan="2000">x</td></tr>${"<tr></tr>".repeat(999)}</table>` });
+    });
+    expect(pasted).toBe(false);
+    expect(value(h, 0, 4)).toBeNull();
+    expect(h.container.querySelector("[role='alert']")?.textContent).toContain("That is too many cells for one step.");
     h.unmount();
   });
 });
@@ -87,6 +113,26 @@ describe("cut on a filtered range", () => {
     cutAndPaste(h, { start: { row: 2, col: 1 }, end: { row: 3, col: 1 } });
     expect([value(h, 0, 3), value(h, 1, 3)]).toEqual([3, null]);
     expect([value(h, 2, 1), value(h, 3, 1)]).toEqual([2, null]);
+    h.unmount();
+  });
+
+  // Outcome: a cut pasted at a row the filter hides lands in the first visible row below it, where the
+  // selection then points. Fault: the hidden row is overwritten out of sight and the selection disagrees.
+  it("moves into the first visible row when the paste starts on a hidden row", async () => {
+    const h = await filteredEast();
+    act(() => h.controller.select({ row: 3, col: 1 }));
+    let payload: ReturnType<typeof h.controller.cut> = null;
+    act(() => {
+      payload = h.controller.cut();
+    });
+    // Row 3 (West, 2) is hidden; the name box can still select D3.
+    act(() => h.controller.select({ row: 2, col: 3 }));
+    act(() => {
+      h.controller.paste({ text: payload!.text, html: payload!.html });
+    });
+    expect([value(h, 2, 3), value(h, 3, 3)]).toEqual([null, 3]);
+    expect(value(h, 3, 1)).toBeNull();
+    expect(h.controller.getActiveRange()).toEqual({ start: { row: 3, col: 3 }, end: { row: 3, col: 3 } });
     h.unmount();
   });
 

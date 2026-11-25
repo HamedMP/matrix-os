@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { createRecentFiles } from "../../../../home/apps/sheets/src/session";
 import { encode } from "../session/fakes";
 import { flush, renderApp, renderWithWorkbook, workbookBytes } from "./harness";
 
@@ -18,7 +19,7 @@ describe("Sheets open requests", () => {
     expect(app.bridge.openRequestCalls).toBe(1);
     expect(app.session().getState().path).toBe("Documents/Budget.xlsx");
     expect(app.container.querySelector("[role='gridcell'][data-row='0'][data-col='1']")?.textContent).toBe("6");
-    expect(app.bridge.db.rows.map((row) => row.path)).toEqual(["Documents/Budget.xlsx"]);
+    expect(app.bridge.db.recentPaths()).toEqual(["Documents/Budget.xlsx"]);
   });
 
   it("switches to a file requested while running, saving pending edits first", async () => {
@@ -80,7 +81,7 @@ describe("Sheets start screen", () => {
     const app = await renderApp(async (bridge) => {
       bridge.fileStore.put("Reports/Q3.xlsx", await workbookBytes());
       bridge.fileStore.put("Reports/notes.txt", encode("x"));
-      await bridge.db.insert("recent_files", { path: "Reports/Q3.xlsx", name: "Q3.xlsx", opened_at: "2026-11-01T10:00:00Z" });
+      await createRecentFiles(bridge.db).touch("Reports/Q3.xlsx");
     });
     expect(screen.getByRole("button", { name: /^Q3\.xlsx, in Reports/ })).toBeTruthy();
 

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { createXlsx } from "../../../../home/apps/_shared/office-engine/index";
 import type { SessionDb, SessionDeps, SessionFiles, SessionTimers } from "../../../../home/apps/sheets/src/session";
 
@@ -88,35 +89,51 @@ export class FakeTimers implements SessionTimers {
   }
 }
 
+/**
+ * An in-memory `MatrixOS.db` for the recent-files table. Like the gateway, a
+ * `bulkInsert` row that collides with the unique `slot` index is skipped, and
+ * `compareAndSwap` writes only while the stored `payload` equals the one given.
+ */
 export class FakeDb implements SessionDb {
   rows: Array<Record<string, unknown> & { id: string }> = [];
+  /** Every write call, in order, as `method table`. Each one is a single statement in the gateway. */
+  readonly writes: string[] = [];
   private counter = 0;
   fail = false;
 
-  async find(table: string, options?: { limit?: number }) {
+  async find(table: string, options?: { where?: Record<string, unknown>; limit?: number }) {
     if (this.fail) throw new Error("db down");
     void table;
-    return this.rows.slice(0, options?.limit ?? this.rows.length).map((row) => ({ ...row }));
+    const matching = this.rows.filter((row) => Object.entries(options?.where ?? {}).every(([column, expected]) => row[column] === expected));
+    return matching.slice(0, options?.limit ?? matching.length).map((row) => structuredClone(row));
   }
 
-  async insert(table: string, data: Record<string, unknown>) {
-    void table;
-    const id = `r${++this.counter}`;
-    this.rows.push({ ...data, id });
-    return { id };
+  async bulkInsert(table: string, rows: Array<Record<string, unknown>>) {
+    if (this.fail) throw new Error("db down");
+    this.writes.push(`bulkInsert ${table}`);
+    const ids: string[] = [];
+    for (const data of rows) {
+      if (data.slot !== undefined && data.slot !== null && this.rows.some((row) => row.slot === data.slot)) continue;
+      const id = `r${++this.counter}`;
+      this.rows.push({ ...structuredClone(data), id });
+      ids.push(id);
+    }
+    return { ids };
   }
 
-  async update(table: string, id: string, data: Record<string, unknown>) {
-    void table;
+  async compareAndSwap(table: string, id: string, expectedPayload: Record<string, unknown>, data: Record<string, unknown>) {
+    if (this.fail) throw new Error("db down");
+    this.writes.push(`compareAndSwap ${table}`);
     const row = this.rows.find((entry) => entry.id === id);
-    if (row !== undefined) Object.assign(row, data);
+    if (row === undefined || !isDeepStrictEqual(row.payload, expectedPayload)) return { ok: false };
+    Object.assign(row, structuredClone(data));
     return { ok: true };
   }
 
-  async delete(table: string, id: string) {
-    void table;
-    this.rows = this.rows.filter((row) => row.id !== id);
-    return { ok: true };
+  /** The paths in the stored recent-files list, newest first. */
+  recentPaths(): string[] {
+    const payload = this.rows.find((row) => row.slot === "recent")?.payload as { entries?: Array<{ path: string }> } | undefined;
+    return (payload?.entries ?? []).map((entry) => entry.path);
   }
 }
 

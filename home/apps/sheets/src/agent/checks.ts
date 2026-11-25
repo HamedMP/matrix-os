@@ -12,20 +12,10 @@
  *   between the range and the total cell.
  */
 
-import { type SheetCellRef, type SheetId, type Workbook, formatA1, isOfficeError, parseA1Range } from "./engine";
+import { type Cell, type SheetCellRef, type SheetId, type Workbook, formatA1, isOfficeError, parseA1Range } from "./engine";
 import { MAX_CHECK_CELLS_PER_SHEET, MAX_FINDINGS } from "./limits";
-import {
-  type SheetCells,
-  cellAt,
-  columnHeader,
-  isBlank,
-  isDateCell,
-  isNumber,
-  isText,
-  locationOf,
-  readSheetCells,
-  rowLabel,
-} from "./sheet-read";
+import { SheetIndex } from "./sheet-index";
+import { type SheetCells, cellAt, isBlank, isDateFormat, isNumber, locationOf, readSheetCells } from "./sheet-read";
 
 export type FindingKind = "hardcoded" | "total-mismatch" | "sum-gap";
 
@@ -95,35 +85,23 @@ function amongFormulas(data: SheetCells, row: number, col: number): boolean {
   return false;
 }
 
-/** Sum of the contiguous numbers before a cell along a line, or null when fewer than two. */
-function blockSum(data: SheetCells, row: number, col: number, dRow: number, dCol: number): { sum: number; cells: number } | null {
-  let sum = 0;
-  let cells = 0;
-  for (let step = 1; ; step++) {
-    const cell = cellAt(data, row - step * dRow, col - step * dCol);
-    if (!isNumber(cell)) break;
-    sum += cell.value;
-    cells += 1;
-  }
-  return cells >= 2 ? { sum, cells } : null;
-}
-
 interface LabelIndex {
   /** Lower-case row label to the formula or number cells under a "Total" column header. */
   totals: Map<string, Array<SheetCellRef & { value: number; location: string }>>;
 }
 
-function indexTotals(all: readonly SheetCells[]): LabelIndex {
+function indexTotals(all: readonly SheetIndex[]): LabelIndex {
   const totals: LabelIndex["totals"] = new Map();
-  for (const data of all) {
+  for (const index of all) {
+    const data = index.data;
     for (let r = 0; r < data.rows; r++) {
       for (let c = 0; c < data.cols; c++) {
         const cell = data.cells[r]![c]!;
         if (cell.formula === null || typeof cell.value !== "number") continue;
         const row = data.origin.row + r;
         const col = data.origin.col + c;
-        const header = columnHeader(data, row, col);
-        const label = rowLabel(data, row, col);
+        const header = index.columnHeader(row, col);
+        const label = index.rowLabel(row, col);
         if (header === null || label === null || !TOTAL_WORD.test(header)) continue;
         const key = label.toLowerCase();
         const list = totals.get(key) ?? [];
@@ -139,11 +117,12 @@ function strippedLabel(label: string): string {
   return label.replace(/\b(?:grand\s+)?(?:sub)?totals?\b|\bsum\b|\bof\b/gi, " ").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function checkTypedNumber(workbook: Workbook, data: SheetCells, row: number, col: number, index: LabelIndex, out: Finding[]): void {
+function checkTypedNumber(sheet: SheetIndex, isDate: (cell: Cell) => boolean, row: number, col: number, index: LabelIndex, out: Finding[]): void {
+  const data = sheet.data;
   const cell = cellAt(data, row, col);
-  if (!isNumber(cell) || cell.formula !== null || isDateCell(workbook, cell)) return;
-  const label = rowLabel(data, row, col);
-  const header = columnHeader(data, row, col);
+  if (!isNumber(cell) || cell.formula !== null || isDate(cell)) return;
+  const label = sheet.rowLabel(row, col);
+  const header = sheet.columnHeader(row, col);
   const labelledTotal = (label !== null && TOTAL_WORD.test(label)) || (header !== null && TOTAL_WORD.test(header));
   const surrounded = amongFormulas(data, row, col);
   if (!labelledTotal && !surrounded) return;
@@ -154,7 +133,7 @@ function checkTypedNumber(workbook: Workbook, data: SheetCells, row: number, col
 
   // What the total should be: the block it closes, else the matching formula total elsewhere.
   const totalsColumn = header !== null && TOTAL_WORD.test(header);
-  const block = totalsColumn ? blockSum(data, row, col, 0, 1) : blockSum(data, row, col, 1, 0);
+  const block = sheet.runBefore(row, col, totalsColumn ? "row" : "col");
   if (block !== null) {
     if (close(block.sum, cell.value)) return;
     const first = totalsColumn ? { row, col: col - block.cells } : { row: row - block.cells, col };
@@ -184,7 +163,11 @@ function checkTypedNumber(workbook: Workbook, data: SheetCells, row: number, col
 
 const SUM_PATTERN = /^\s*SUM\(\s*(\$?[A-Z]{1,3}\$?\d+:\$?[A-Z]{1,3}\$?\d+)\s*\)\s*$/i;
 
-function checkSumGap(workbook: Workbook, data: SheetCells, row: number, col: number, out: Finding[]): void {
+/** Addresses of left-out numbers named in a finding; one more says "and more". */
+const MAX_MISSED_NAMED = 5;
+
+function checkSumGap(sheet: SheetIndex, row: number, col: number, out: Finding[]): void {
+  const data = sheet.data;
   const cell = cellAt(data, row, col);
   if (cell === null || cell.formula === null) return;
   const match = SUM_PATTERN.exec(cell.formula);
@@ -200,18 +183,14 @@ function checkSumGap(workbook: Workbook, data: SheetCells, row: number, col: num
   const inRow = range.start.row === row && range.end.row === row && range.end.col < col;
   const inCol = range.start.col === col && range.end.col === col && range.end.row < row;
   if (!inRow && !inCol) return;
-  const missed: string[] = [];
-  const consider = (r: number, c: number): void => {
-    const other = cellAt(data, r, c);
-    if (isNumber(other) && !isDateCell(workbook, other)) missed.push(formatA1({ row: r, col: c }));
-  };
-  if (inRow) {
-    for (let c = range.end.col + 1; c < col; c++) consider(row, c);
-    for (let c = range.start.col - 1; c >= data.origin.col && !isText(cellAt(data, row, c)) && !isBlank(cellAt(data, row, c)); c--) consider(row, c);
-  } else {
-    for (let r = range.end.row + 1; r < row; r++) consider(r, col);
-    for (let r = range.start.row - 1; r >= data.origin.row && !isText(cellAt(data, r, col)) && !isBlank(cellAt(data, r, col)); r--) consider(r, col);
-  }
+  // Numbers between the range and the total, then numbers right before the range up to text or an empty cell.
+  // The index finds them without walking the line, and no more are looked for than the message names.
+  const max = MAX_MISSED_NAMED + 1;
+  const between = inRow ? sheet.countedBetween("row", row, range.end.col + 1, col - 1, max) : sheet.countedBetween("col", col, range.end.row + 1, row - 1, max);
+  const before = inRow
+    ? sheet.countedBackToText("row", row, range.start.col - 1, max - between.length)
+    : sheet.countedBackToText("col", col, range.start.row - 1, max - between.length);
+  const missed = [...between, ...before].map((at) => formatA1(inRow ? { row, col: at } : { row: at, col }));
   if (missed.length === 0) return;
   const location = locationOf(data.name, row, col);
   out.push({
@@ -222,28 +201,48 @@ function checkSumGap(workbook: Workbook, data: SheetCells, row: number, col: num
     col,
     location,
     actual: typeof cell.value === "number" ? cell.value : undefined,
-    message: `${location} adds up ${match[1]!.toUpperCase()} but leaves out ${missed.slice(0, 5).join(", ")}${missed.length > 5 ? " and more" : ""}.`,
+    message: `${location} adds up ${match[1]!.toUpperCase()} but leaves out ${missed.slice(0, MAX_MISSED_NAMED).join(", ")}${missed.length > MAX_MISSED_NAMED ? " and more" : ""}.`,
   });
+}
+
+/** Most cell styles whose date format is remembered during one run; past it the memory starts again. */
+const MAX_STYLE_MEMORY = 4096;
+
+/** True for a number shown as a date or time. The answer for each style is worked out once. */
+function dateCells(workbook: Workbook): (cell: Cell) => boolean {
+  const known = new Map<Cell["styleId"], boolean>();
+  return (cell) => {
+    if (typeof cell.value !== "number") return false;
+    let date = known.get(cell.styleId);
+    if (date === undefined) {
+      date = isDateFormat(workbook.getStyle(cell.styleId).numberFormat);
+      if (known.size >= MAX_STYLE_MEMORY) known.clear();
+      known.set(cell.styleId, date);
+    }
+    return date;
+  };
 }
 
 /** Runs every check over the workbook. Sheets larger than the scan bound are skipped. */
 export function checkWorkbook(workbook: Workbook, options: CheckOptions = {}): Finding[] {
   const wanted = options.sheets === undefined ? null : new Set(options.sheets);
-  const all: SheetCells[] = [];
+  const isDate = dateCells(workbook);
+  const all: SheetIndex[] = [];
   for (const sheet of workbook.listSheets()) {
     const data = readSheetCells(workbook, sheet.id, MAX_CHECK_CELLS_PER_SHEET);
-    if (data !== null) all.push(data);
+    if (data !== null) all.push(new SheetIndex(data, (cell) => !isDate(cell)));
   }
   const index = indexTotals(all);
   const out: Finding[] = [];
-  for (const data of all) {
+  for (const sheet of all) {
+    const data = sheet.data;
     if (wanted !== null && !wanted.has(data.sheet)) continue;
     for (let r = 0; r < data.rows && out.length < MAX_FINDINGS; r++) {
       for (let c = 0; c < data.cols && out.length < MAX_FINDINGS; c++) {
         const row = data.origin.row + r;
         const col = data.origin.col + c;
-        checkTypedNumber(workbook, data, row, col, index, out);
-        checkSumGap(workbook, data, row, col, out);
+        checkTypedNumber(sheet, isDate, row, col, index, out);
+        checkSumGap(sheet, row, col, out);
       }
     }
   }

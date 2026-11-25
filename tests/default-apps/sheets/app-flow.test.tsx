@@ -14,6 +14,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openXlsx } from "../../../home/apps/_shared/office-engine/index";
 import { OPEN_MARKER } from "../../../home/apps/sheets/src/agent";
+import { FakeDb } from "./session/fakes";
 
 const MODEL_PATH = "Documents/model.xlsx";
 type Win = Window & { MatrixOS?: unknown };
@@ -33,7 +34,6 @@ function bridgeError(code: string): Error {
 class FakeMatrixOS {
   readonly fileStore = new Map<string, { bytes: Uint8Array; version: string }>();
   readonly writes: Array<{ path: string; ifVersion: string | null }> = [];
-  readonly rows: Array<Record<string, unknown>> = [];
   readonly kv = new Map<string, unknown>();
   readonly prompts: string[] = [];
   readonly serviceCalls: string[] = [];
@@ -82,27 +82,8 @@ class FakeMatrixOS {
     onOpenRequest: () => () => undefined,
   };
 
-  db = {
-    find: async (table: string, query?: { where?: Record<string, unknown> }) =>
-      table !== "recent_files" ? [] : this.rows.filter((row) => Object.entries(query?.where ?? {}).every(([key, value]) => row[key] === value)),
-    insert: async (table: string, row: Record<string, unknown>) => {
-      if (table !== "recent_files") throw new Error("unknown table");
-      const id = `r${this.rows.length + 1}`;
-      this.rows.push({ id, ...row });
-      return { id };
-    },
-    update: async (table: string, id: string, patch: Record<string, unknown>) => {
-      const row = this.rows.find((candidate) => candidate.id === id);
-      if (table !== "recent_files" || row === undefined) return { ok: false };
-      Object.assign(row, patch);
-      return { ok: true };
-    },
-    delete: async (table: string, id: string) => {
-      const at = this.rows.findIndex((row) => row.id === id);
-      if (table === "recent_files" && at >= 0) this.rows.splice(at, 1);
-      return { ok: at >= 0 };
-    },
-  };
+  /** The recent-files table: one row whose payload lists the files, changed by bulkInsert and compareAndSwap. */
+  readonly db = new FakeDb();
 
   readData = async (key: string) => this.kv.get(key) ?? null;
   writeData = async (key: string, value: unknown) => {
@@ -177,7 +158,7 @@ describe("Sheets app journey", () => {
     const tabs = within(await screen.findByRole("tablist", { name: "Sheets" }, { timeout: 5000 }));
     expect(screen.getByText("model.xlsx")).toBeTruthy();
     expect(tabs.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Assumptions", "Projection", "Summary"]);
-    expect(os.rows.map((row) => row.path)).toEqual([MODEL_PATH]);
+    expect(os.db.recentPaths()).toEqual([MODEL_PATH]);
 
     // The owner raises monthly growth (Assumptions!B3) from 3% to 5%.
     goTo("B3");
@@ -279,7 +260,7 @@ describe("Sheets app journey", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(cellText(container, 0, 1)).toBe("name");
     expect(cellText(container, 5, 1)).toBe("李华");
-    expect(os.rows.map((row) => row.path)).toEqual(["Documents/data.csv"]);
+    expect(os.db.recentPaths()).toEqual(["Documents/data.csv"]);
   });
 
   it("explains that files are unavailable when the window has no bridge", async () => {

@@ -4,6 +4,31 @@ import { checkWorkbook, directPrecedents, traceText, traceValue } from "../../..
 import type { Workbook } from "../../../../home/apps/_shared/office-engine/index";
 import { openModel } from "../review/fixture";
 
+/**
+ * A one-sheet workbook of `rows` by `cols` cells from `make`, counting how
+ * often the checks read a cell of the sheet.
+ */
+function countingWorkbook(rows: number, cols: number, make: (row: number, col: number) => { value: number | string | null; formula: string | null }): { workbook: Workbook; reads: () => number } {
+  let reads = 0;
+  const grid = Array.from({ length: rows }, (_, row) => {
+    const cells = Array.from({ length: cols }, (_, col) => ({ ...make(row, col), styleId: 0, display: "", formulaUnsupported: false, arrayRange: null }));
+    return new Proxy(cells, {
+      get(target, key, receiver) {
+        if (typeof key === "string" && /^\d+$/.test(key)) reads += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+  });
+  const dimensions = { start: { row: 0, col: 0 }, end: { row: rows - 1, col: cols - 1 } };
+  const workbook = {
+    listSheets: () => [{ id: "s1", name: "Sheet1" }],
+    getSheet: () => ({ id: "s1", name: "Sheet1", dimensions }),
+    getRange: () => grid,
+    getStyle: () => createXlsx().getStyle(0),
+  } as unknown as Workbook;
+  return { workbook, reads: () => reads };
+}
+
 describe("deterministic checks", () => {
   it("finds the typed-in total revenue in the model and the projection total it disagrees with", async () => {
     const { session, sheets } = await openModel();
@@ -37,6 +62,47 @@ describe("deterministic checks", () => {
     expect(typed[0]!.actual).toBe(99);
     // B4 and C4 add up: a typed total that agrees is still reported as typed in, not as a mismatch.
     expect(findings.some((finding) => finding.location === "Sheet1!B4" && finding.kind === "total-mismatch")).toBe(false);
+  });
+
+  // Outcome: Check finishes promptly on a large sheet of formulas.
+  // Fault: every formula cell searches its whole column for a header (and its whole row for a label)
+  // from scratch, so a long column of numeric formulas without text costs billions of cell reads.
+  it("reads each cell a bounded number of times, however long its column or row", () => {
+    for (const [rows, cols] of [
+      [4000, 1],
+      [1, 4000],
+    ] as const) {
+      const { workbook, reads } = countingWorkbook(rows, cols, (row, col) => ({ value: row + col + 1, formula: "1+1" }));
+      expect(checkWorkbook(workbook)).toEqual([]);
+      expect(reads()).toBeLessThan(rows * cols * 40);
+    }
+  });
+
+  it("names the numbers a column SUM leaves out on both sides of its range, but not dates", () => {
+    const workbook = createXlsx();
+    const sheet = workbook.listSheets()[0]!.id;
+    // A1 "Amount", A2..A4 numbers, A5..A6 summed, A7 a date, A8..A13 numbers, A14 = SUM(A5:A6).
+    workbook.setRange(sheet, { row: 0, col: 0 }, [["Amount"], [1], [2], [3], [4], [5], [46388], [6], [7], [8], [9], [10], [11]]);
+    workbook.setStyle(sheet, { start: { row: 6, col: 0 }, end: { row: 6, col: 0 } }, { numberFormat: "mmm yyyy" });
+    workbook.setFormula(sheet, { row: 13, col: 0 }, "SUM(A5:A6)");
+    workbook.recalc();
+    const gap = checkWorkbook(workbook).find((finding) => finding.kind === "sum-gap");
+    expect(gap?.message).toBe("Sheet1!A14 adds up A5:A6 but leaves out A8, A9, A10, A11, A12 and more.");
+
+    const short = createXlsx();
+    const only = short.listSheets()[0]!.id;
+    short.setRange(only, { row: 0, col: 0 }, [["Amount"], [1], [2], [3], [4], [null], [5]]);
+    short.setFormula(only, { row: 7, col: 0 }, "SUM(A3:A4)");
+    short.recalc();
+    // A2 is right before the range; A5 and A7 are between the range and the total (A6 is empty).
+    expect(checkWorkbook(short).find((finding) => finding.kind === "sum-gap")?.message).toBe("Sheet1!A8 adds up A3:A4 but leaves out A5, A7, A2.");
+  });
+
+  it("reads each cell a bounded number of times for a column of SUMs over error values", () => {
+    // Every cell is a SUM of the one above that yields an error, so no SUM finds a number it left out.
+    const { workbook, reads } = countingWorkbook(4000, 1, (row) => ({ value: { code: "#DIV/0!" } as never, formula: row === 0 ? "1/0" : `SUM(A${row}:A${row})` }));
+    expect(checkWorkbook(workbook)).toEqual([]);
+    expect(reads()).toBeLessThan(4000 * 40);
   });
 
   it("returns nothing for an empty workbook", () => {

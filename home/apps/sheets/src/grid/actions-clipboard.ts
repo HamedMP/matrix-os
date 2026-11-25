@@ -236,8 +236,10 @@ function pasteMove(ctx: GridContext, clip: InternalClip): boolean {
     ctx.notice(CUT_FILTERED);
     return false;
   }
-  const tile: Tile = { rows, col: origin.col };
-  const plan = planMove(session.workbook, clip.sheet, clip.range, { sheet, row: origin.row, col: origin.col });
+  // The block lands on the visible rows: when the paste starts on a hidden row, at the first visible one below it.
+  const target = { row: rows[0] as number, col: origin.col };
+  const tile: Tile = { rows, col: target.col };
+  const plan = planMove(session.workbook, clip.sheet, clip.range, { sheet, row: target.row, col: target.col });
   if (plan === null) {
     ctx.notice(MOVE_TOO_LARGE);
     return false;
@@ -257,7 +259,7 @@ function pasteMove(ctx: GridContext, clip: InternalClip): boolean {
         for (let c = 0; c < width; c++) {
           const cell = (source[r] as RawCell[])[c] as RawCell;
           const formula = cell.formula === null ? null : (plan.moved.get(`${r},${c}`) ?? cell.formula);
-          write(origin.row + r, origin.col + c, { value: cell.value, formula, styleId: cell.styleId });
+          write(target.row + r, target.col + c, { value: cell.value, formula, styleId: cell.styleId });
         }
       }
       // Formulas elsewhere that read the moved cells now point at their new place.
@@ -319,6 +321,10 @@ export function pasteClipboard(ctx: GridContext, data: { text?: string | null; h
     }
     const table = readClipboard(data);
     if (table === null) return false;
+    if (table.tooLarge === true) {
+      ctx.notice(TOO_MANY);
+      return false;
+    }
     const pasted = pasteExternal(ctx, table);
     if (pasted) clearCopyMark(ctx);
     return pasted;

@@ -50,6 +50,8 @@ export interface ParsedTable {
   sourceRows?: Array<number | null>;
   /** For each cell copied from Sheets without a formula, its stored value; otherwise undefined. */
   values?: Array<Array<ClipboardValue | undefined>>;
+  /** Set when the table covers more than {@link MAX_PASTE_CELLS} cells; it is then read no further and its rows are empty. */
+  tooLarge?: true;
 }
 
 /** Most rows and columns read from a pasted table. */
@@ -57,6 +59,15 @@ export const MAX_PASTE_ROWS = 100_000;
 export const MAX_PASTE_COLS = 2_000;
 /** Most characters of clipboard text or HTML that are parsed. */
 export const MAX_PASTE_CHARS = 20_000_000;
+/**
+ * Most cells a pasted table may cover, its widest row times its rows, empty
+ * cells and spans included: the most one paste writes (`MAX_ACTION_CELLS`).
+ */
+export const MAX_PASTE_CELLS = 500_000;
+
+function tooLargeTable(): ParsedTable {
+  return { rows: [], formulas: [], origin: null, tooLarge: true };
+}
 
 function tsvField(text: string): string {
   return /[\t\n\r"]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
@@ -241,26 +252,34 @@ export function parseHtmlTable(html: string): ParsedTable | null {
   let typed = false;
   /** Cells taken by a row span from a row above: column -> rows left. */
   const held = new Map<number, number>();
+  /** The widest row so far. Rows are padded to it, so the table covers `rows × width` cells. */
+  let width = 0;
+  /** False when this row, `columns` wide, would make the table cover more than MAX_PASTE_CELLS. */
+  const fits = (columns: number): boolean => (rows.length + 1) * Math.max(width, columns) <= MAX_PASTE_CELLS;
   for (const tr of Array.from(table.querySelectorAll("tr"))) {
     if (tr.closest("table") !== table) continue;
     if (rows.length >= MAX_PASTE_ROWS) break;
+    // Checked before a row is added: a row of a wide table, even an empty one, is padded to its width.
+    if (!fits(0)) return tooLargeTable();
     const row: string[] = [];
     const rowFormulas: Array<string | null> = [];
     const rowValues: Array<ClipboardValue | undefined> = [];
     let col = 0;
-    const skipHeld = (): void => {
+    const skipHeld = (): boolean => {
       for (let left = held.get(col); left !== undefined && left > 0; left = held.get(col)) {
+        if (!fits(col + 1)) return false;
         if (left === 1) held.delete(col);
         else held.set(col, left - 1);
         row[col] = "";
         rowFormulas[col] = null;
         col++;
       }
+      return true;
     };
     for (const cell of Array.from(tr.children)) {
       const tag = cell.tagName.toLowerCase();
       if (tag !== "td" && tag !== "th") continue;
-      skipHeld();
+      if (!skipHeld()) return tooLargeTable();
       if (col >= MAX_PASTE_COLS) break;
       const formula = cell.getAttribute("data-sheets-formula");
       const text = cellText(cell);
@@ -268,6 +287,8 @@ export function parseHtmlTable(html: string): ParsedTable | null {
       if (value !== undefined) typed = true;
       const colSpan = span(cell, "colspan", MAX_PASTE_COLS - col);
       const rowSpan = span(cell, "rowspan", MAX_PASTE_ROWS);
+      // The span is checked before it is expanded into cells.
+      if (!fits(col + colSpan)) return tooLargeTable();
       for (let k = 0; k < colSpan; k++) {
         const first = k === 0;
         row[col] = first ? (formula !== null && formula !== "" ? `=${formula}` : text) : "";
@@ -277,15 +298,15 @@ export function parseHtmlTable(html: string): ParsedTable | null {
         col++;
       }
     }
-    skipHeld();
+    if (!skipHeld()) return tooLargeTable();
     const source = /^\d{1,7}$/.exec(tr.getAttribute("data-sheets-row") ?? "");
     sourceRows.push(source === null ? null : Number(source[0]));
     rows.push(row);
     formulas.push(rowFormulas);
     values.push(rowValues);
+    width = Math.max(width, row.length);
   }
   if (rows.length === 0) return null;
-  const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r] as string[];
     const rowFormulas = formulas[r] as Array<string | null>;
@@ -310,6 +331,8 @@ export function readClipboard(data: { html?: string | null; text?: string | null
   if (typeof data.text === "string" && data.text !== "") {
     const rows = parseTsv(data.text);
     if (rows.length === 0) return null;
+    const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
+    if (rows.length * width > MAX_PASTE_CELLS) return tooLargeTable();
     return { rows, formulas: rows.map((row) => row.map(() => null)), origin: null };
   }
   return null;

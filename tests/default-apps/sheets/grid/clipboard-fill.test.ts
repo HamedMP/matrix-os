@@ -68,6 +68,19 @@ describe("HTML table clipboard", () => {
     expect(parseHtmlTable("<p>no table here</p>")).toBeNull();
   });
 
+  // Outcome: a pasted table whose spans cover more cells than one paste writes is refused as too large.
+  // Fault: a few bytes of HTML (one wide colspan, many empty rows) expand into millions of cells and
+  // freeze the app before the size check runs.
+  it("refuses a table whose spans cover too many cells, before expanding them", () => {
+    const wide = `<table><tr><td colspan="2000">x</td></tr>${"<tr></tr>".repeat(999)}</table>`;
+    expect(parseHtmlTable(wide)).toEqual({ rows: [], formulas: [], origin: null, tooLarge: true });
+    const tall = `<table><tr><td rowspan="100000">x</td>${"<td></td>".repeat(1999)}</tr>${"<tr></tr>".repeat(999)}</table>`;
+    expect(parseHtmlTable(tall)?.tooLarge).toBe(true);
+    expect(readClipboard({ html: wide, text: "x" })?.tooLarge).toBe(true);
+    expect(readClipboard({ text: `${"\t".repeat(1999)}x\n${"\n".repeat(999)}` })?.tooLarge).toBe(true);
+    expect(parseHtmlTable(`<table><tr><td colspan="3">x</td></tr><tr><td>1</td></tr></table>`)?.rows).toEqual([["x", "", ""], ["1", "", ""]]);
+  });
+
   it("prefers the table and falls back to text", () => {
     const html = serializeHtmlTable([[{ text: "3", formula: "A1+2" }]]);
     expect(readClipboard({ html, text: "3" })?.rows).toEqual([["=A1+2"]]);

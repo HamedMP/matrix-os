@@ -8,7 +8,7 @@ import type { MatrixOSAi, MatrixOSDb, MatrixOSFiles } from "../../../_shared/mat
 
 export interface SheetsBridge {
   files: Pick<MatrixOSFiles, "list" | "read" | "write" | "openRequest" | "onOpenRequest">;
-  db?: Pick<MatrixOSDb, "find" | "insert" | "update" | "delete"> | null;
+  db?: Pick<MatrixOSDb, "find" | "bulkInsert" | "compareAndSwap"> | null;
   /** Key-value store private to the app; used for tab order and colours. */
   readData?: (key: string) => Promise<unknown>;
   writeData?: (key: string, value: unknown) => Promise<void>;

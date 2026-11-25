@@ -105,7 +105,7 @@ describe("a workbook opened from this computer", () => {
     await settle();
     expect(outcome).toEqual({ status: "saved", path: "Documents/Budget.xlsx" });
     expect(session.getState()).toMatchObject({ source: "matrix", path: "Documents/Budget.xlsx", autosave: true, dirty: false });
-    expect(h.db.rows.map((row) => row.path)).toEqual(["Documents/Budget.xlsx"]);
+    expect(h.db.recentPaths()).toEqual(["Documents/Budget.xlsx"]);
 
     session.setCellInput(sheet, { row: 0, col: 0 }, "41");
     expect(h.timers.pending.size).toBe(1);

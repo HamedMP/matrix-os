@@ -23,15 +23,16 @@ export interface SessionFiles {
   ): Promise<{ path: string; version: string; size: number; modifiedAt: string }>;
 }
 
-/** The part of `window.MatrixOS.db` the recent-files list uses. */
+/** The part of `window.MatrixOS.db` the recent-files list uses: each of its changes is one of these statements. */
 export interface SessionDb {
   find(
     table: string,
     options?: { where?: Record<string, unknown>; orderBy?: Record<string, "asc" | "desc">; limit?: number },
   ): Promise<Array<Record<string, unknown>>>;
-  insert(table: string, data: Record<string, unknown>): Promise<{ id: string }>;
-  update(table: string, id: string, data: Record<string, unknown>): Promise<unknown>;
-  delete(table: string, id: string): Promise<unknown>;
+  /** Inserts rows; a row that collides with a unique index is skipped (ON CONFLICT DO NOTHING). */
+  bulkInsert(table: string, rows: Array<Record<string, unknown>>): Promise<{ ids: string[] }>;
+  /** Updates the row only while its stored `payload` still equals `expectedPayload`. */
+  compareAndSwap(table: string, id: string, expectedPayload: Record<string, unknown>, data: Record<string, unknown>): Promise<{ ok: boolean }>;
 }
 
 /** Timers, replaceable in tests. */

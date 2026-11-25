@@ -9,13 +9,11 @@
     "tables": {
       "recent_files": {
         "columns": {
-          "path": "text",
-          "name": "text",
-          "opened_at": "timestamptz"
+          "slot": "text",
+          "payload": "jsonb"
         },
-        "indexes": [
-          "path",
-          "opened_at"
+        "uniqueIndexes": [
+          "slot"
         ]
       }
     }

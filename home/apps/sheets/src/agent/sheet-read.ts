@@ -1,4 +1,4 @@
-/** Reading cells for the deterministic checks and the trace: bounded and label-aware. */
+/** Reading cells for the deterministic checks and the trace, within a bound. Labels and lines are in `sheet-index.ts`. */
 
 import { type Cell, type CellAddress, type SheetId, type Workbook, formatA1 } from "./engine";
 
@@ -47,28 +47,6 @@ export function isNumber(cell: Cell | null): cell is Cell & { value: number } {
 export function isDateFormat(format: string): boolean {
   const bare = format.replace(/"[^"]*"/g, "").replace(/\\./g, "").replace(/\[[^\]]*\]/g, "");
   return /[dmyhs]/i.test(bare) && !/^general$/i.test(bare.trim());
-}
-
-export function isDateCell(workbook: Workbook, cell: Cell): boolean {
-  return typeof cell.value === "number" && isDateFormat(workbook.getStyle(cell.styleId).numberFormat);
-}
-
-/** The nearest text to the left in the row, skipping numbers: the row's label. */
-export function rowLabel(data: SheetCells, row: number, col: number): string | null {
-  for (let c = col - 1; c >= data.origin.col; c--) {
-    const cell = cellAt(data, row, c);
-    if (isText(cell)) return String(cell.value).trim();
-  }
-  return null;
-}
-
-/** The nearest text above in the column, skipping numbers: the column's header. */
-export function columnHeader(data: SheetCells, row: number, col: number): string | null {
-  for (let r = row - 1; r >= data.origin.row; r--) {
-    const cell = cellAt(data, r, col);
-    if (isText(cell)) return String(cell.value).trim();
-  }
-  return null;
 }
 
 /** `Sheet!A1`. */
