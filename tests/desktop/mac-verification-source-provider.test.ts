@@ -131,17 +131,31 @@ describe("packaged Mac Verification source preparation", () => {
     await expect(f.provider.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("support-unavailable");
   });
 
-  it("recovers a dead preparation writer and refuses live process records", async () => {
+  it.each([
+    ["dead writer", JSON.stringify({ pid: 2147483647, token: "00000000-0000-4000-8000-000000000001", createdAt: 0 })],
+    ["empty lock", ""],
+    ["partial PID", '{"pid":21'],
+    ["partial lock", '{"pid":2147483647,"token":'],
+  ])("recovers from %s and refuses live process records", async (_state, record) => {
     const f = await fixture();
     const workspace = join(f.profile, "mac-verification-support");
     await mkdir(workspace, { mode: 0o700 });
     const lock = join(workspace, "preparation.lock");
-    await writeFile(lock, JSON.stringify({ pid: 2147483647, token: "00000000-0000-4000-8000-000000000001", createdAt: Date.now() - 1000 }), { mode: 0o600 });
-    const recovered = await f.provider.prepare(f.manifest.baseSha, f.signal);
+    await writeFile(lock, record, { mode: 0o600 });
+    const prepare = () => f.provider.prepare(f.manifest.baseSha, f.signal);
+    const attempts = await Promise.allSettled([prepare(), prepare()]);
+    const winners = attempts.filter(attempt => attempt.status === "fulfilled");
+    expect(winners).toHaveLength(1);
+    expect(attempts.find(attempt => attempt.status === "rejected")).toMatchObject({ reason: { code: "preparation-busy" } });
+    const recovered = winners[0]!.value;
     expect(await readFile(lock, "utf8")).toContain(String(process.pid));
     await recovered.release();
-    await writeFile(lock, JSON.stringify({ pid: process.pid, token: "00000000-0000-4000-8000-000000000002", createdAt: 0 }), { mode: 0o600 });
-    await expect(f.provider.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("busy");
+    const active = JSON.stringify({ pid: process.pid, token: "00000000-0000-4000-8000-000000000002", createdAt: 0 });
+    for (const protectedRecord of [active, `{"pid":${process.pid},"token":`, "{}"]) {
+      await writeFile(lock, protectedRecord, { mode: 0o600 });
+      await expect(f.provider.prepare(f.manifest.baseSha, f.signal)).rejects.toThrow("busy");
+      expect(await readFile(lock, "utf8")).toBe(protectedRecord);
+    }
   });
 
   it("prepares the exact candidate without a folder picker, network, or changes to the bundled source", async () => {

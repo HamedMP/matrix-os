@@ -190,7 +190,16 @@ async function extractArchive(archive: string, destination: string, expected: z.
 // registering this provider; the preview service admits one action at a time.
 // This file lock fences provider reuse and recovers crash leftovers inside that
 // lifecycle. It is not a replacement for the native process singleton.
+const lockAcquisitions = new Set<string>();
+const busy = () => new MacVerificationPreparationError("preparation-busy");
 async function profileLock(path: string) {
+  if (lockAcquisitions.has(path) || lockAcquisitions.size >= 64) throw busy();
+  lockAcquisitions.add(path);
+  try { return await acquireProfileLock(path); }
+  finally { lockAcquisitions.delete(path); }
+}
+
+async function acquireProfileLock(path: string) {
   async function create() {
     const lock = await open(path, "wx", 0o600);
     try { await lock.writeFile(JSON.stringify({ pid: process.pid, token: randomUUID(), createdAt: Date.now() })); }
@@ -207,25 +216,35 @@ async function profileLock(path: string) {
   catch (error: unknown) {
     if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
   }
-  const busy = () => new MacVerificationPreparationError("preparation-busy");
   const before = await lstat(path);
-  if (!before.isFile() || before.isSymbolicLink() || before.uid !== process.getuid?.() || before.mode & 0o077) throw busy();
-  let previous: { pid: number; token: string; createdAt: number };
+  if (!before.isFile() || before.isSymbolicLink() || before.uid !== process.getuid?.()
+    || before.mode & 0o077 || before.nlink !== 1) throw busy();
+  let record = "";
+  let pid: number | undefined;
   try {
-    previous = z.strictObject({ pid: z.number().int().positive(), token: z.uuid(), createdAt: z.number().int().nonnegative() })
-      .parse(JSON.parse((await boundedFile(path, 1024)).toString("utf8")));
+    if (before.size) record = (await boundedFile(path, 1024)).toString("utf8");
+    pid = z.strictObject({ pid: z.number().int().positive(), token: z.uuid(), createdAt: z.number().int().nonnegative() })
+      .parse(JSON.parse(record)).pid;
   } catch (error: unknown) {
-    console.warn("[mac-verification] source lock unavailable", error instanceof Error ? error.name : "Error");
-    throw busy();
+    // A crash can leave a prefix of the JSON write. The native singleton and
+    // serialized acquisition rule out a writer when the PID was never completed.
+    const partial = /^\{"pid":([1-9]\d{0,9})(,.*)?$/.exec(record);
+    if (!(error instanceof SyntaxError) || !(partial || '{"pid":'.startsWith(record))) {
+      console.warn("[mac-verification] source lock unavailable", error instanceof Error ? error.name : "Error");
+      throw busy();
+    }
+    if (partial?.[2]) pid = Number(partial[1]);
   }
-  try { process.kill(previous.pid, 0); throw busy(); }
-  catch (error: unknown) {
-    // A live/reused PID, unknown process state or malformed record is never
-    // reclaimed by a timer. Only a dead writer permits crash recovery.
-    if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+  if (pid !== undefined) {
+    if (pid > 2147483647) throw busy();
+    try { process.kill(pid, 0); throw busy(); }
+    catch (error: unknown) {
+      if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+    }
   }
   const current = await lstat(path);
-  if (current.dev !== before.dev || current.ino !== before.ino || current.mtimeMs !== before.mtimeMs) throw busy();
+  if (current.dev !== before.dev || current.ino !== before.ino || current.ctimeMs !== before.ctimeMs
+    || current.size !== before.size || current.mtimeMs !== before.mtimeMs) throw busy();
   await rm(path);
   try { return await create(); }
   catch (error: unknown) {

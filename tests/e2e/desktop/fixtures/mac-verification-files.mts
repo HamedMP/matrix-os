@@ -85,9 +85,10 @@ export async function verifyFilesInElectron({ root, electronPath, profile, png, 
   try {
     const ownerHome = join(temp, "owner");
     const desktopHome = join(temp, "desktop-home");
+    const appData = process.platform === "linux" ? join(desktopHome, ".config") : join(desktopHome, "Library", "Application Support");
     await Promise.all([
       mkdir(join(ownerHome, ".trash"), { recursive: true, mode: 0o700 }),
-      mkdir(join(desktopHome, "Library", "Application Support"), { recursive: true, mode: 0o700 }),
+      mkdir(appData, { recursive: true, mode: 0o700 }),
     ]);
     await Promise.all([
       writeFile(join(ownerHome, disposable), disposableBytes, { flag: "wx" }),
@@ -112,6 +113,9 @@ export async function verifyFilesInElectron({ root, electronPath, profile, png, 
       env: {
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         HOME: desktopHome,
+        ...(process.platform === "linux" ? {
+          XDG_CONFIG_HOME: appData, DISPLAY: process.env.DISPLAY ?? "", XAUTHORITY: process.env.XAUTHORITY ?? "",
+        } : {}),
         TMPDIR: temp,
         LANG: "en_US.UTF-8",
         MATRIX_NO_TELEMETRY: "1",
