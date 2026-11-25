@@ -33,6 +33,10 @@ export async function resolveEffectiveBillingEntitlementForSlot(
         stripeSubscriptionId: subscription.stripeSubscriptionId,
         status: subscription.status,
         currentPeriodEnd: subscription.currentPeriodEnd,
+        trialStartedAt: subscription.trialStartedAt,
+        trialEndsAt: subscription.trialEndsAt,
+        trialConvertedAt: subscription.trialConvertedAt,
+        firstTrialPaymentFailedAt: subscription.firstTrialPaymentFailedAt,
         items: [{ priceId: subscription.stripePriceId, quantity: 1 }],
       }, {
         priceCatalog: loadStripePriceCatalog(env),

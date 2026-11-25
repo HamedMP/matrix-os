@@ -16,6 +16,7 @@ import { type CustomerVpsSpeechActivationTarget } from './customer-vps-speech-ac
 import { type SpeechFleetActivationPageResult } from './speech/fleet-activation.js';
 import { type BillingEntitlement } from './billing.js';
 import { type NewProvisioningJob } from './customer-vps-provisioning-jobs.js';
+import type { SubstrateRegistry } from './substrates/registry.js';
 import type { PreviewRuntimeAccessActivator } from './preview-runtime-activation.js';
 
 export interface ProvisionResponse {
@@ -137,6 +138,7 @@ export interface CustomerVpsServiceDeps {
   db: PlatformDB;
   config: CustomerVpsConfig;
   hetzner: HetznerClient;
+  substrates?: Pick<SubstrateRegistry, 'get'>;
   systemStore: CustomerVpsSystemStore;
   cloudInitTemplate?: string;
   machineIdFactory?: () => string;

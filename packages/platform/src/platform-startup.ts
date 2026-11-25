@@ -975,6 +975,7 @@ async function startPlatformServerWithCleanup(
       config: customerVpsConfig,
       hetzner,
       objectStore: customerVpsObjectStore,
+      substrates: substrateRegistry,
       cloudInitTemplate,
       fetchDispatcher: customerVpsProxyDispatcher,
       resolveBillingEntitlement: stripeBillingEntitlementsEnabled(process.env)

@@ -44,6 +44,7 @@ export const HOSTD_RESUME_GRACE_MS = 2_000;
  * longer than that.
  */
 export const HOSTD_SUSPEND_TIMEOUT_MS = 140_000;
+export const HOSTD_STOP_TIMEOUT_MS = 160_000;
 export const HOSTD_RESPONSE_LIMIT_BYTES = 64 * 1024;
 // The contract permits 4096 VM records. Give the inventory enough room for
 // each record while keeping the smaller bound on every other response.
@@ -225,7 +226,7 @@ export function createHostdClient(
       return call('POST', path, HostdSuspendResponseSchema, { body: body.data, signal, timeoutMs: suspendTimeoutMs });
     },
     async stop(vmId, signal) {
-      return call('POST', vmPath(vmId, '/stop'), HostdStopResponseSchema, { signal });
+      return call('POST', vmPath(vmId, '/stop'), HostdStopResponseSchema, { signal, timeoutMs: HOSTD_STOP_TIMEOUT_MS });
     },
     async destroy(vmId, signal) {
       await call('DELETE', vmPath(vmId), null, { signal });
