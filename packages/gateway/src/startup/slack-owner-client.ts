@@ -1,3 +1,4 @@
+import type { SlackPlatformConnection } from "./slack-platform.js";
 import type { SummaryAccess } from "../slack/mention-summary.js";
 import { z } from "zod/v4";
 import { SlackThreadContextEnrollmentRequestSchema, SlackThreadContextEnrollmentResponseSchema, type SlackThreadContextEnrollmentRequest, SlackEnrolledContextRequestSchema, SlackEnrolledContextResponseSchema, type SlackEnrolledContextRequest, SlackPrivateThreadContextResponseSchema, SlackThreadContextAccessResponseSchema, type SlackBridgeEnvelope, type SlackThreadContextAccess } from "@matrix-os/contracts/slack-bridge";
@@ -5,7 +6,7 @@ import { SlackThreadContextEnrollmentRequestSchema, SlackThreadContextEnrollment
 const ContextSchema=z.object({available:z.literal(true),untrusted:z.literal(true),partial:z.boolean(),messages:z.array(z.object({
   user:z.string().max(80).optional(),ts:z.string().max(32),thread_ts:z.string().max(32).optional(),text:z.string().max(16_384).optional(),
 }).strict()).max(20)}).strict();
-export function createSlackOwnerClient(options:{platformUrl:string;handle:string;token:string;fetchImpl?:typeof fetch}) {
+export function createSlackOwnerClient(options: SlackPlatformConnection & { fetchImpl?: typeof fetch }) {
   const origin=new URL(options.platformUrl);
   const local=["localhost","127.0.0.1","[::1]"].includes(origin.hostname);
   if((origin.protocol!=="https:" && !(origin.protocol==="http:" && local)) || origin.username || origin.password || origin.search || origin.hash || origin.pathname!=="/"
@@ -33,7 +34,8 @@ export function createSlackOwnerClient(options:{platformUrl:string;handle:string
     async discoverThreadEnrollment(input: SlackThreadContextEnrollmentRequest, signal: AbortSignal) {
       try {
         const request = SlackThreadContextEnrollmentRequestSchema.parse(input);
-        const response = await rpc("/internal/slack/thread-context/enrollment", request, signal);
+        // The isolated zero-traffic revision may cold-start on the first lookup.
+        const response = await rpc("/internal/slack/thread-context/enrollment", request, signal, options.devTarget ? 25_000 : undefined);
         const parsed = SlackThreadContextEnrollmentResponseSchema.safeParse(response.body);
         return response.status === 200 && parsed.success ? parsed.data : { available: false as const };
       } catch (error) {

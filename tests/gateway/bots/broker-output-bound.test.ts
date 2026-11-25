@@ -118,3 +118,64 @@ it.each([
  const result=await forwardBotInference({version:1,action:"inference.messages",requestId:"018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1",runtimeHandle:summary.runtimeHandle,executionGeneration:summary.executionGeneration,method:"POST",path:"/v1/messages?beta=true",headers:{},body:JSON.stringify({model:summary.route.modelId,stream:true,max_tokens:2048,messages:[{role:"user",content:"summary"}],...override})},summary,()=>({allowed:true,accessSourceId:"matrix_included",allowedModelIds:[summary.route.modelId]}),{homePath:"/synthetic",lifetime:new AbortController().signal,fetchImpl,consumeReadonlyInference});
  expect(result.ok).toBe(false);expect(fetchImpl).not.toHaveBeenCalled();expect(consumeReadonlyInference).not.toHaveBeenCalled();
 });
+
+it.each(["allowed", "revoked", "oversized"] as const)(
+  "publishes a complete Slack summary with fresh authority and without a Slack lookup per provider event (%s)",
+  async scenario => {
+    const summary = {
+      ...binding, readonlySummary: true as const,
+      route: { ...binding.route, api: "openai-completions" as const, modelId: "@cf/zai-org/glm-5.3", maxOutputTokens: 2048 },
+    };
+    const deltas = Array.from({ length: scenario === "oversized" ? 1300 : 60 }, (_, i) =>
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: scenario === "oversized" ? "x".repeat(1024) : `word-${i} ` } }] })}\n\n`);
+    let providerFinished = false;
+    let checksDuringProviderBody = 0;
+    let checkedAtCompletion = false;
+    let sent = 0;
+    const frames = [...deltas, "data: [DONE]\n\n"];
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent < frames.length) {
+          controller.enqueue(new TextEncoder().encode(frames[sent++]));
+        } else {
+          providerFinished = true;
+          controller.close();
+        }
+      },
+    }, { highWaterMark: 0 });
+    const result = await forwardBotInference({
+      version: 1, action: "inference.chat_completions", responseMode: "stream",
+      requestId: "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1", runtimeHandle: summary.runtimeHandle,
+      executionGeneration: summary.executionGeneration, method: "POST", path: "/v1/chat/completions", headers: {},
+      body: JSON.stringify({ model: summary.route.modelId, stream: true, max_completion_tokens: 2048,
+        messages: [{ role: "user", content: "Summarize synthetic Slack discussion" }] }),
+    }, summary, () => ({ allowed: true, accessSourceId: "matrix_included", allowedModelIds: [summary.route.modelId] }), {
+      homePath: "/synthetic", lifetime: new AbortController().signal,
+      consumeReadonlyInference: async () => true,
+      revalidateBinding: async () => {
+        if (providerFinished) {
+          checkedAtCompletion = true;
+          return scenario !== "revoked";
+        }
+        if (sent > 0) checksDuringProviderBody += 1;
+        return scenario !== "allowed" || checksDuringProviderBody < 10;
+      },
+      resolveCredentials: async () => ({ env: { ANTHROPIC_AUTH_TOKEN: "synthetic", ANTHROPIC_BASE_URL: "https://relay.invalid" } }),
+      fetchImpl: async () => new Response(stream, { headers: { "content-type": "text/event-stream" } }),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok || typeof result.body === "string") throw new Error("Expected a broker stream");
+    const delivered: string[] = [];
+    const consume = async () => { for await (const frame of result.body) delivered.push(frame); };
+    if (scenario === "allowed") {
+      await consume();
+      expect(delivered.join("")).toBe(frames.join(""));
+      expect(checkedAtCompletion).toBe(true);
+    } else {
+      await expect(consume()).rejects.toThrow(scenario === "oversized" ? "response_too_large" : "Inference authority unavailable");
+      expect(delivered).toEqual([]);
+      if (scenario === "revoked") expect(checkedAtCompletion).toBe(true);
+    }
+    expect(checksDuringProviderBody).toBe(0);
+  },
+);

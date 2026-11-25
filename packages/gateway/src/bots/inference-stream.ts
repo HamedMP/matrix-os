@@ -1,4 +1,4 @@
-import { INFERENCE_RESPONSE_BUFFER_MAX_BYTES, INFERENCE_RESPONSE_CHUNK_MAX_BYTES } from '@matrix-os/contracts';
+import { INFERENCE_RESPONSE_BODY_MAX_BYTES, INFERENCE_RESPONSE_BUFFER_MAX_BYTES, INFERENCE_RESPONSE_CHUNK_MAX_BYTES } from '@matrix-os/contracts';
 
 /** Bounds one transport chunk, independently of the lifetime output volume. */
 export function* inferenceChunks(text: string): Generator<string> {
@@ -53,6 +53,18 @@ export async function* inferenceResponseText(response: Response, signal: AbortSi
     void reader.cancel().catch(error => console.warn('[bots] inference body cancellation failed:', error instanceof Error ? error.name : 'UnknownError'));
     reader.releaseLock();
   }
+}
+
+/** Withhold automated output until EOF so its source authority can be checked
+ * immediately before any result is published. Keep the regular body limit. */
+export async function* bufferInferenceOutput(source: AsyncIterable<string>): AsyncGenerator<string> {
+  let pending = "", bytes = 0;
+  for await (const frame of source) {
+    bytes += Buffer.byteLength(frame);
+    if (bytes > INFERENCE_RESPONSE_BODY_MAX_BYTES) throw new RangeError("response_too_large");
+    pending += frame;
+  }
+  if (pending) yield pending;
 }
 
 /** Await at most one source chunk; downstream pull provides backpressure. */

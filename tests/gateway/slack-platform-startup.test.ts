@@ -284,3 +284,20 @@ it("exposes actual enrolled native inventory with Slack-only composition and no 
 it("preserves legacy opaque runtime identifiers when the override pair is absent", () => {
   expect(resolveSlackPlatform({ ...core, MATRIX_MACHINE_ID: "legacy_opaque_runtime" }).botConnection?.machineId).toBe("legacy_opaque_runtime");
 });
+
+it.each([
+  { env: dev, deadline: 25_000 },
+  { env: preview, deadline: 2_000 },
+])("allows only the pinned Dev callback to finish a cold enrollment start ($deadline ms)", async ({ env, deadline }) => {
+  const connection = resolveSlackPlatform(env).botConnection;
+  if (!connection) throw new Error("Expected the test's configured Slack connection");
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  try {
+    const client = createSlackOwnerClient({ ...connection, fetchImpl: async () => Response.json({ available: false }) });
+    const target = { ownerId: devTarget.ownerId, botId: devTarget.botId, chatId: devTarget.chatId, runtimeId: connection.machineId };
+    expect(await client.discoverThreadEnrollment(target, new AbortController().signal)).toEqual({ available: false });
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(deadline);
+  } finally {
+    timeout.mockRestore();
+  }
+});

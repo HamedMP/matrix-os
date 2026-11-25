@@ -14,7 +14,7 @@ import {
   type ScopeRuntimeBrokerResult,
 } from "@matrix-os/scope-runtime/broker-protocol";
 import { z } from "zod/v4";
-import { boundedInferenceSseFrames, guardInferenceStream, inferenceResponseText, publishSelectedChatOutput } from "./inference-stream.js";
+import { boundedInferenceSseFrames, bufferInferenceOutput, guardInferenceStream, inferenceResponseText, publishSelectedChatOutput } from "./inference-stream.js";
 import { forwardChatGptPlanInference } from "./chatgpt-plan-inference.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { FundedAiCredentialError, type MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
@@ -347,10 +347,13 @@ export async function forwardBotInference(
         return failure(request.requestId, 'action_denied');
       }
       if (accessSourceId === 'matrix_included') deps.onFundedFailure?.(binding, undefined);
-      const frames = guardInferenceStream(boundedInferenceSseFrames(inferenceResponseText(response, responseSignal,
-        accessSourceId === "owner_anthropic_key" ? INFERENCE_TIMEOUT_MS : undefined)), {
-          signal: responseSignal, authorized, abort: () => streamLifetime.abort(),
-        });
+      const providerFrames = boundedInferenceSseFrames(inferenceResponseText(response, responseSignal,
+        accessSourceId === "owner_anthropic_key" ? INFERENCE_TIMEOUT_MS : undefined));
+      // Slack authority reads channel membership externally. A private automatic
+      // summary needs a fresh check at publication, not one for every token.
+      const frames = guardInferenceStream(binding.readonlySummary ? bufferInferenceOutput(providerFrames) : providerFrames, {
+        signal: responseSignal, authorized, abort: () => streamLifetime.abort(),
+      });
       return { version: 1, requestId: request.requestId, ok: true, status: response.status,
         headers: safeResponseHeaders(response, 'inference'),
         body: selectedInputCurrent ? publishSelectedChatOutput(frames, selectedInputCurrent, lifecycle) : frames };
