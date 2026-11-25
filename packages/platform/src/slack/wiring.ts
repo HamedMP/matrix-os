@@ -3,7 +3,7 @@ import { z } from "zod/v4";
 import { createSlackApi } from "./api.js";
 import { bootstrapSlackDatabase, type SlackDatabase } from "./database.js";
 import { SlackRepository, type SlackLinkTransaction } from "./repository.js";
-import { createSlackAppRoutes } from "./routes.js";
+import { createSlackAppRoutes, type SlackAppRouteOptions } from "./routes.js";
 import type { SlackThreadContextOptions } from "./thread-context.js";
 import { encryptSlackToken } from "./security.js";
 import { SlackAppIdSchema, type SlackApi, type SlackAppConfig, type SlackAuthorityDependencies } from "./types.js";
@@ -21,18 +21,18 @@ export function loadSlackAppConfig(env: Record<string, string | undefined>): Sla
 }
 
 /** The caller owns the shared database. close() drains this component only, never destroys the pool. */
-export async function createSlackApp(options: SlackAuthorityDependencies & SlackThreadContextOptions & {
+export async function createSlackApp(options: SlackAuthorityDependencies & SlackThreadContextOptions & Pick<SlackAppRouteOptions, "readOnlyDev"> & {
   db: Kysely<SlackDatabase>; config: SlackAppConfig; api?: SlackApi; fetchImpl?: typeof fetch; now?: () => Date; startCleanup?: boolean; linkTransaction?: SlackLinkTransaction;
 }) {
   await bootstrapSlackDatabase(options.db);
   const repository = new SlackRepository(options.db, { now: options.now, linkTransaction: options.linkTransaction });
-  const api = options.api ?? createSlackApi({ clientId: options.config.clientId, clientSecret: options.config.clientSecret, fetchImpl: options.fetchImpl });
+  const api = options.api ?? createSlackApi({ clientId: options.config.clientId, clientSecret: options.config.clientSecret, fetchImpl: options.fetchImpl, readOnlyDev: options.readOnlyDev });
   const routes = createSlackAppRoutes({ ...options, repository, api });
   let closed = false;
   let sweeping: Promise<void> | undefined;
   const cleanup = () => {
     if (closed || sweeping) return;
-    sweeping = repository.cleanup().catch((error: unknown) => console.warn("[slack] cleanup failed", error instanceof Error ? error.name : "UnknownError"))
+    sweeping = repository.cleanup(options.readOnlyDev ? options.config.appId : undefined).catch((error: unknown) => console.warn("[slack] cleanup failed", error instanceof Error ? error.name : "UnknownError"))
       .finally(() => { sweeping = undefined; });
   };
   cleanup();

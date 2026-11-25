@@ -4,10 +4,11 @@ import { z } from "zod/v4";
 import { SlackBridgeEnvelopeSchema, SlackBridgeAuthorizationSchema, SlackThreadContextEnvelopeSchema, verifySlackBridgeRequest,
   SLACK_CONTEXT_SOURCE_HEADER, SLACK_CONTEXT_SOURCE_SIGNATURE_HEADER, verifySlackContextSource,
   type SlackBridgeEnvelope, type SlackPublicationIdentity, type SlackThreadContextEnvelope } from "@matrix-os/contracts/slack-bridge";
+import type { SlackDevTarget } from "./slack-platform.js";
 import { CollaborationAuthorizationError, type CollaborationAuthority } from "../collaboration/authority.js";
 
 export function createSlackBridgeRoutes(options:{ownerId:string;token:string;authority:Pick<CollaborationAuthority,"authorize">;
-  receive(envelope:SlackBridgeEnvelope):Promise<unknown>; receiveContext?(envelope: SlackThreadContextEnvelope): Promise<boolean>; authorizePublication?(input:SlackPublicationIdentity):Promise<boolean>;now?:()=>Date}) {
+  devTarget?: SlackDevTarget; receive(envelope:SlackBridgeEnvelope):Promise<unknown>; receiveContext?(envelope: SlackThreadContextEnvelope): Promise<boolean>; authorizePublication?(input:SlackPublicationIdentity):Promise<boolean>;now?:()=>Date}) {
   const app=new Hono();
   app.onError((error,c)=>{
     if(error instanceof z.ZodError || error instanceof SyntaxError) return c.json({error:"Invalid request"},400);
@@ -24,7 +25,9 @@ export function createSlackBridgeRoutes(options:{ownerId:string;token:string;aut
     }
     await next();
   });
+  const devTarget = options.devTarget;
   app.post("/api/internal/slack/events",async c=>{
+    if (devTarget) return c.json({ error: "Forbidden" }, 403);
     const envelope=SlackBridgeEnvelopeSchema.parse(await c.req.json());
     if(envelope.ownerId!==options.ownerId) return c.json({error:"Forbidden"},403);
     // The service verifies fresh collaboration authority and durably commits before acknowledging.
@@ -42,11 +45,17 @@ export function createSlackBridgeRoutes(options:{ownerId:string;token:string;aut
     if (!extension.valid) return c.json({ error: "Unauthorized" }, 401);
     const envelope = extension.source ? { ...request, source: extension.source } : request;
     if (request.ownerId !== options.ownerId) return c.json({ error: "Forbidden" }, 403);
+    if (devTarget && (!extension.source || request.summary || request.ownerId !== devTarget.ownerId || request.runtimeId !== devTarget.machineId
+      || request.botId !== devTarget.botId || request.chatId !== devTarget.chatId || request.event.teamId !== devTarget.teamId
+      || request.event.appId !== devTarget.appId || request.event.channelId !== devTarget.channelId)) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
     if (!options.receiveContext) return c.json({ error: "Slack unavailable" }, 503);
     if (!await options.receiveContext(envelope)) return c.json({ error: "Forbidden" }, 403);
     return c.json({ accepted: true }, 202);
   });
   app.post("/api/internal/slack/authorize",async c=>{
+    if (devTarget) return c.json({ error: "Forbidden" }, 403);
     const request=SlackBridgeAuthorizationSchema.parse(await c.req.json());
     if(request.ownerId!==options.ownerId) return c.json({allowed:false});
     const action=request.action==="publish_reply"?"discuss":request.action;
