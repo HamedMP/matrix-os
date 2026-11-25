@@ -97,7 +97,7 @@ describe('metal substrate routing', () => {
 
     expect(upstream).toMatchObject({
       url: 'https://metal.example.test:9443/api/projects?view=list',
-      hostHeader: 'alice.matrix-os.com',
+      hostHeader: 'app.matrix-os.com',
       tlsServerName: 'metal.example.test',
     });
     expect(upstream!.url).not.toContain('203.0.113.99');

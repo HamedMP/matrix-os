@@ -242,7 +242,9 @@ export function createMetalSubstrate(deps: MetalSubstrateDeps): OnDemandRuntimeS
       const path = target.path.startsWith('/') ? target.path : `/${target.path}`;
       return {
         url: `https://${hostname}:${port}${path}${target.queryString ?? ''}`,
-        hostHeader: `${machine.handle}.matrix-os.com`,
+        // The exact VM target identifies the guest. Keep the HTTP authority on the
+        // app domain and use the metal hostname only for the TCP/TLS hop.
+        hostHeader: 'app.matrix-os.com',
         tlsServerName: hostname,
         headers: { [HOST_AUTH_HEADER]: deps.ingressToken, [VM_TARGET_HEADER]: `${vmId.data}:${generation}` },
         ...(deps.caPem ? { extraCaPem: deps.caPem } : {}),
