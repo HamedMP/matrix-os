@@ -11,7 +11,7 @@ import { createBotRoutinesRepository } from "../../packages/gateway/src/bots/rep
 import { createCronStore } from "../../packages/gateway/src/cron/store.js";
 import { createCronService, type CronService } from "../../packages/gateway/src/cron/service.js";
 import { createTerminalLiveOwnership } from "../../packages/gateway/src/terminal-live-ownership.js";
-import { createChatRunActivity, gatewayLifecycleSources, readLifecycleStatus } from "../../packages/gateway/src/lifecycle/status.js";
+import { createChatRunActivity, createLifecycleReadGuard, gatewayLifecycleSources, readLifecycleStatus } from "../../packages/gateway/src/lifecycle/status.js";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { insertChat } from "./bots/bot-state-support.js";
 
@@ -112,6 +112,42 @@ describe("lifecycle status", () => {
       });
       expect(status).toEqual({ busy: true, busyReasons: ["unknown"], nextScheduledAt: null, scheduleComplete: true });
       expect(RuntimeLifecycleStatusSchema.parse(status).busyReasons).toEqual(["unknown"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("busy with chat_run while the dispatcher is answering or has queued messages", async () => {
+    for (const dispatcher of [{ activeCount: 1, queueLength: 0 }, { activeCount: 0, queueLength: 2 }]) {
+      const status = await readLifecycleStatus({ dispatcher, now: () => NOW });
+      expect(status).toEqual({ busy: true, busyReasons: ["chat_run"], nextScheduledAt: null, scheduleComplete: true });
+    }
+    const idle = await readLifecycleStatus({ dispatcher: { activeCount: 0, queueLength: 0 }, now: () => NOW });
+    expect(idle.busy).toBe(false);
+  });
+
+  it("reports chat_run once when both chat runs and the dispatcher are busy", async () => {
+    const status = await readLifecycleStatus({
+      chatRuns: { hasActiveRun: async () => true }, dispatcher: { activeCount: 1, queueLength: 0 }, now: () => NOW,
+    });
+    expect(RuntimeLifecycleStatusSchema.parse(status).busyReasons).toEqual(["chat_run"]);
+  });
+
+  it("does not start a second read of a source whose earlier read is still pending", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      let release: (value: boolean) => void = () => undefined;
+      const hasActiveRun = vi.fn(async () => false)
+        .mockImplementationOnce(() => new Promise<boolean>((resolve) => { release = resolve; }));
+      const readGuard = createLifecycleReadGuard();
+      const sources = { chatRuns: { hasActiveRun }, readGuard, timeoutMs: 20, now: () => NOW };
+      expect((await readLifecycleStatus(sources)).busyReasons).toEqual(["unknown"]);
+      expect((await readLifecycleStatus(sources)).busyReasons).toEqual(["unknown"]);
+      expect(hasActiveRun).toHaveBeenCalledTimes(1);
+      release(false);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect((await readLifecycleStatus(sources)).busy).toBe(false);
+      expect(hasActiveRun).toHaveBeenCalledTimes(2);
     } finally {
       warn.mockRestore();
     }
@@ -231,7 +267,9 @@ describe("lifecycle nextScheduledAt with real cron and routines", () => {
       },
     });
     const at = (ms: number) => new Date(NOW.getTime() + ms).toISOString();
-    expect(await routines.hasActiveFire(at(2 * 60_000))).toBe(false);
+    expect(await routines.hasActiveFire(at(30_000))).toBe(false);
+    // Due but not yet claimed by the 15 s scheduler pass: it must keep the computer awake.
+    expect(await routines.hasActiveFire(at(2 * 60_000))).toBe(true);
     const fire = await routines.claim({ ownerId: OWNER, routineId: created.routineId, scheduledFor: dueAt, nextFireAt: at(4 * HOUR), now: at(2 * 60_000) });
     expect(fire).toBeTruthy();
     expect(await routines.hasActiveFire(at(2 * 60_000))).toBe(true);
@@ -254,6 +292,7 @@ describe("gateway lifecycle source composition", () => {
     terminals: { attachedViewerCount: () => 0 },
     backgroundAgents: { anyRunning: async () => false },
     cron: { nextRunAt: () => cronAt },
+    dispatcher: { activeCount: 0, queueLength: 0 },
   };
   let warn: ReturnType<typeof vi.spyOn>;
   beforeEach(() => { warn = vi.spyOn(console, "warn").mockImplementation(() => undefined); });
@@ -298,7 +337,7 @@ describe("gateway lifecycle source composition", () => {
   it("never includes the heartbeat among the composed sources", () => {
     for (const bots of [null, { routines: true }]) {
       const sources = gatewayLifecycleSources({ ...base, ownerDatabaseConfigured: true, chatDb: db, bots });
-      expect(Object.keys(sources).sort()).toEqual(["backgroundAgents", "chatRuns", "cron", "routines", "terminals"]);
+      expect(Object.keys(sources).sort()).toEqual(["backgroundAgents", "chatRuns", "cron", "dispatcher", "routines", "terminals"]);
     }
   });
 });

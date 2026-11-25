@@ -266,7 +266,7 @@ import { registerOperationalRoutes } from "./server/operational-routes.js";
 import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
 import { registerLifecycleRoutes } from "./server/lifecycle-routes.js";
-import { gatewayLifecycleSources, readLifecycleStatus } from "./lifecycle/status.js";
+import { createLifecycleReadGuard, gatewayLifecycleSources, readLifecycleStatus } from "./lifecycle/status.js";
 import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.js";
 import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation.js";
 import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
@@ -1385,10 +1385,12 @@ export async function createGateway(config: GatewayConfig) {
     app, homePath, model: config.model, runningVersion, interactionLogger, pushAdapter,
     posthogErrorTracker, ownerTelemetryDistinctId, upgradeBodyLimit, logBestEffortFailure,
   });
+  const lifecycleReadGuard = createLifecycleReadGuard();
   registerLifecycleRoutes({ app, readStatus: () => readLifecycleStatus(gatewayLifecycleSources({
     ownerDatabaseConfigured: Boolean(databaseUrl), chatDb: chatRepository?.kysely ?? null,
     bots: botServices ? { routines: Boolean(botServices.routines) } : null,
     terminals: terminalLiveOwnership, backgroundAgents: backgroundAgentRuntime, cron: cronService,
+    dispatcher, readGuard: lifecycleReadGuard,
   })) });
 
   // Spec 101: Hermes dashboard proxy (loopback only, auth-gated)

@@ -206,8 +206,15 @@ export function createBotRoutinesRepository(db: BotExecutor, options: { now?: ()
         .orderBy("scheduled_for", "desc").orderBy("fire_id").limit(21).execute();
       return { fires: rows.slice(0, 20).map(fire), truncated: rows.length > 20, requiresReview: await repository.hasUncertain(ownerId, routineId, ex) };
     },
-    /** Whether a live occurrence is executing or due now; expired dispatch leases belong to recovery. Uses idx_bot_routine_fires_pending. */
+    /**
+     * Whether a live occurrence is executing, retrying now, or due but not yet claimed by the scheduler pass.
+     * Expired dispatch leases belong to recovery; routines held by an unfinished or uncertain fire are excluded
+     * exactly as in `due()`. Uses idx_bot_routine_fires_pending and idx_bot_routines_due.
+     */
     async hasActiveFire(now: string) {
+      const due = await db.selectFrom("bot_routines").select("routine_id").where("status", "=", "active")
+        .where("next_fire_at", "<=", now).where(LIVE_ROUTINE).where(NO_UNFINISHED_FIRE).limit(1).executeTakeFirst();
+      if (due) return true;
       return Boolean(await db.selectFrom("bot_routine_fires").select("fire_id").where("status", "in", ["claimed", "dispatched"])
         .where(eb => eb.or([
           eb.and([eb("status", "=", "dispatched"), eb("lease_expires_at", ">", now)]),
