@@ -259,8 +259,11 @@ it.each(["pending", "conflict", "failed"] as const)("keeps oversized %s guidance
 });
 
 it.each(["saved", "already_present"] as const)("allows a preserved %s guidance file beyond the new-file creation limit", (status) => {
-  const existing = { ...draft, proposals: [{ path: "AGENTS.md" as const, content: "g".repeat(8193), status }] };
-  render(<ProjectSetupControls setup={controller(undefined, existing)} transport={null} onOpenMcpSettings={vi.fn()} />);
+  const existing = { ...draft, proposals: [{ path: "AGENTS.md" as const, content: "g".repeat(8193), status, expectedHash: null }] };
+  const markdownEdits = { files: { "AGENTS.md": { value: "Stale draft", baseline: "Old draft", mode: "edit" as const } }, onChange: vi.fn() };
+  render(<ProjectSetupControls setup={controller(undefined, existing)} transport={null} markdownEdits={markdownEdits} />);
+  expect(screen.queryByRole("button", { name: "Edit Markdown" })).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Markdown for AGENTS.md" })).toBeNull();
   expect(screen.queryByText(/Shorten this draft before saving/)).toBeNull();
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(false);
 });

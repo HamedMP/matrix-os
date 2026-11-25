@@ -28,8 +28,11 @@ interface Props extends ProjectSkillSourceActions {
   onOpenFile?: (path: string) => void | Promise<boolean>;
 }
 
+const isPreservedMarkdown = (file: ProjectSetupDraft["proposals"][number]) =>
+  file.status === "saved" || file.status === "already_present";
+
 function guidanceLimit(file: ProjectSetupDraft["proposals"][number]): number | undefined {
-  return !file.path.endsWith("/SKILL.md") && !["saved", "already_present"].includes(file.status) ? 8192 : undefined;
+  return !file.path.endsWith("/SKILL.md") && !isPreservedMarkdown(file) ? 8192 : undefined;
 }
 
 /** Actions follow the canonical assistant message; the transcript stays in Chat. */
@@ -369,13 +372,13 @@ function ProjectSetupControlsScoped({
               >
                 {reviewableFiles.map((file) => (
                   <ProjectSetupMarkdown
-                    key={`${draft.chatId}:${file.path}`}
+                    key={`${draft.chatId}:${file.path}:${isPreservedMarkdown(file)}`}
                     path={file.path}
                     content={file.content}
                     maximumCharacters={guidanceLimit(file)}
-                    initialState={markdownEdits?.files[file.path]}
-                    onStateChange={markdownEdits ? (state) => markdownEdits.onChange(file.path, state) : undefined}
-                    editable={file.path !== "CLAUDE.md" && !file.expectedHash}
+                    initialState={isPreservedMarkdown(file) ? undefined : markdownEdits?.files[file.path]}
+                    onStateChange={markdownEdits && !isPreservedMarkdown(file) ? (state) => markdownEdits.onChange(file.path, state) : undefined}
+                    editable={file.path !== "CLAUDE.md" && !file.expectedHash && !isPreservedMarkdown(file)}
                     busy={busy}
                     onDirtyChange={(dirty) =>
                       setDirtyFiles((current) =>
@@ -395,7 +398,7 @@ function ProjectSetupControlsScoped({
                 className="min-h-8 max-w-full"
                 disabled={
                   busy || needsSkillDraft
-                  || reviewableFiles.some(file => dirtyFiles.includes(file.path) || file.content.length > (guidanceLimit(file) ?? Infinity))
+                  || reviewableFiles.some(file => !isPreservedMarkdown(file) && (dirtyFiles.includes(file.path) || file.content.length > (guidanceLimit(file) ?? Infinity)))
                   || draft.generation?.status === "running"
                 }
                 onClick={() => dispatch({ type: "save" })}
