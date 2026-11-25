@@ -1,4 +1,4 @@
-name: Platform Cloud Run staging qualification
+name: Platform Cloud Run staging startup diagnosis
 
 on:
   workflow_dispatch:
@@ -66,159 +66,17 @@ jobs:
             and any($env[]; .name == "PLATFORM_PREVIEW" and .value == "true")
             and all($env[]; .name != "HETZNER_API_TOKEN" and (.name != "PLATFORM_BACKGROUND_WORKERS_ENABLED" or .value == "false"))
           ' "$RUNNER_TEMP/platform-staging-before.json" >/dev/null
-      - name: Build platform image with a fresh cache tag
-        working-directory: source
+      - name: Diagnose the failed staging startup
         run: |
           set -euo pipefail
-          image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:staging-${EXPECTED_SHA::12}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          cache_image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:staging-buildcache-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "IMAGE=$image" >> "$GITHUB_ENV"
-          echo "CACHE_IMAGE=$cache_image" >> "$GITHUB_ENV"
-          next_public_clerk_publishable_key="$(gcloud secrets versions access latest --secret next-public-clerk-publishable-key --project "$GCP_PROJECT_ID" 2>/dev/null || true)"
-          next_public_posthog_key="$(gcloud secrets versions access latest --secret next-public-posthog-key --project "$GCP_PROJECT_ID" 2>/dev/null || true)"
-          next_public_posthog_project_token="$(gcloud secrets versions access latest --secret next-public-posthog-project-token --project "$GCP_PROJECT_ID" 2>/dev/null || true)"
-          if [ -z "$next_public_clerk_publishable_key" ]; then
-            echo "next-public-clerk-publishable-key is required to build the auth-shell billing surface." >&2
-            exit 1
-          fi
-          build_id=$(gcloud builds submit . \
-            --project "$GCP_PROJECT_ID" \
-            --region "$GCP_REGION" \
-            --config cloudbuild.platform.yaml \
-            --substitutions "_IMAGE=$image,_CACHE_IMAGE=$cache_image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$next_public_clerk_publishable_key,_NEXT_PUBLIC_POSTHOG_KEY=$next_public_posthog_key,_NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$next_public_posthog_project_token,_NEXT_PUBLIC_POSTHOG_HOST=$POSTHOG_PUBLIC_HOST,_NEXT_PUBLIC_POSTHOG_API_HOST=$POSTHOG_PUBLIC_API_HOST,_NEXT_PUBLIC_MATRIX_APP_URL=$MATRIX_APP_URL,_MATRIX_BUILD_SHA=$EXPECTED_SHA" \
-            --async \
-            --format 'value(metadata.build.id)' \
-            --timeout=1800s)
-          if [ -z "$build_id" ]; then
-            build_id=$(gcloud builds list \
-              --project "$GCP_PROJECT_ID" \
-              --region "$GCP_REGION" \
-              --filter "images:$image" \
-              --sort-by '~createTime' \
-              --limit 1 \
-              --format 'value(id)')
-          fi
-          if [ -z "$build_id" ]; then
-            echo "Could not resolve Cloud Build id for $image" >&2
-            exit 1
-          fi
-
-          {
-            echo "### Platform Cloud Run build"
-            echo "- source_sha: \`${EXPECTED_SHA}\`"
-            echo "- lane: \`platform\`"
-            echo "- image: \`${image}\`"
-            echo "- build_id: \`${build_id}\`"
-            echo "- cache_image: \`${cache_image}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          report_cloud_build_timings() {
-            {
-              echo
-              echo '#### Cloud Build phase timings'
-              echo '```yaml'
-              if ! timeout 30s gcloud builds describe "$build_id" \
-                --project "$GCP_PROJECT_ID" \
-                --region "$GCP_REGION" \
-                --format='yaml(startTime,finishTime,timing,steps.timing,results.images)'; then
-                echo 'Could not read Cloud Build phase timings.'
-              fi
-              echo '```'
-            } | tee -a "$GITHUB_STEP_SUMMARY"
-          }
-
-          print_cloud_build_diagnostics() {
-            echo "::group::Cloud Build diagnostics ($build_id)"
-            if ! timeout 30s gcloud builds describe "$build_id" \
-              --project "$GCP_PROJECT_ID" \
-              --region "$GCP_REGION" \
-              --format='yaml(status,statusDetail,failureInfo,logUrl)'; then
-              echo "Could not read Cloud Build failure metadata." >&2
-            fi
-            report_cloud_build_timings
-            if ! timeout 60s gcloud builds log "$build_id" \
-              --project "$GCP_PROJECT_ID" \
-              --region "$GCP_REGION"; then
-              echo "Could not read Cloud Build logs; use the build URL above." >&2
-            fi
-            echo "::endgroup::"
-          }
-
-          poll_deadline=$((SECONDS + 35 * 60))
-          status=''
-          while (( (remaining = poll_deadline - SECONDS) > 0 )); do
-            if status=$(timeout "${remaining}s" gcloud builds describe "$build_id" \
-              --project "$GCP_PROJECT_ID" \
-              --region "$GCP_REGION" \
-              --format 'value(status)'); then
-              :
-            else
-              poll_exit=$?
-              if [ "$poll_exit" -eq 124 ]; then
-                break
-              fi
-              echo "Could not read Cloud Build status for $build_id (exit $poll_exit)." >&2
-              print_cloud_build_diagnostics
-              exit 1
-            fi
-            case "$status" in
-              SUCCESS)
-                break
-                ;;
-              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
-                echo "Cloud Build $build_id ended with status $status" >&2
-                print_cloud_build_diagnostics
-                exit 1
-                ;;
-            esac
-            remaining=$((poll_deadline - SECONDS))
-            if (( remaining > 0 )); then
-              sleep "$((remaining < 5 ? remaining : 5))"
-            fi
-          done
-          if [ "$status" != "SUCCESS" ]; then
-            echo "Timed out waiting for Cloud Build $build_id" >&2
-            print_cloud_build_diagnostics
-            exit 1
-          fi
-          report_cloud_build_timings
-          digest="$(gcloud artifacts docker images describe "$image" \
-            --project "$GCP_PROJECT_ID" \
-            --format='value(image_summary.digest)')"
-          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Could not resolve the immutable platform image digest." >&2
-            exit 1
-          fi
-          image_digest="${image%:*}@${digest}"
-          echo "IMAGE_DIGEST=$image_digest" >> "$GITHUB_ENV"
-          echo "- image_digest: \`${image_digest}\`" >> "$GITHUB_STEP_SUMMARY"
-      - name: Deploy an immutable image as a zero-traffic staging candidate
-        run: |
-          set -euo pipefail
-          tag="qualify-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          gcloud run deploy "$STAGING_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-            --image "$IMAGE_DIGEST" --update-labels "matrix-source-sha=$EXPECTED_SHA" \
-            --tag "$tag" --no-traffic --quiet
-          gcloud run services describe "$STAGING_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-            --format=json > "$RUNNER_TEMP/platform-staging-after.json"
-          serving_revisions() {
-            jq -cS '[.status.traffic[] | select((.percent // 0) > 0) | {revisionName, percent}] | sort_by(.revisionName)' "$1"
-          }
-          test "$(serving_revisions "$RUNNER_TEMP/platform-staging-before.json")" = \
-            "$(serving_revisions "$RUNNER_TEMP/platform-staging-after.json")"
-          candidate="$(jq -er --arg tag "$tag" '.status.traffic[] | select(.tag == $tag and (.percent // 0) == 0) | .url' \
-            "$RUNNER_TEMP/platform-staging-after.json")"
-          revision="$(jq -er --arg tag "$tag" '.status.traffic[] | select(.tag == $tag and (.percent // 0) == 0) | .revisionName' \
-            "$RUNNER_TEMP/platform-staging-after.json")"
-          gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json |
-            jq -e --arg image "$IMAGE_DIGEST" --arg sha "$EXPECTED_SHA" '
-              .spec.containers[0].image == $image and .metadata.labels["matrix-source-sha"] == $sha
-            ' >/dev/null
-          health="$(curl --fail --silent --show-error --retry 3 --retry-all-errors --max-time 10 "$candidate/health")"
-          echo "$health" | jq -e '.status == "ok"' >/dev/null
-          {
-            echo "- staging_revision: $revision"
-            echo "- immutable_image: $IMAGE_DIGEST"
-            echo "- candidate_health: HTTP 200, status ok"
-            echo "- promotion: disabled, serving traffic verified unchanged"
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+          revision=matrix-platform-staging-00008-pam
+          gcloud run revisions describe "$revision" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+            --format='yaml(metadata.name,status.conditions)'
+          gcloud logging read \
+            'resource.type="cloud_run_revision" AND resource.labels.service_name="matrix-platform-staging" AND resource.labels.revision_name="matrix-platform-staging-00008-pam"' \
+            --project "$GCP_PROJECT_ID" --freshness=3h --limit=100 --order=asc \
+            --format='value(timestamp,severity,textPayload)' |
+            sed -E 's#(https?://|postgres(ql)?://)[^ ]+#[redacted URL]#g; s#(sk_(live|test)_[[:alnum:]_]+|Bearer [^ ]+|[[:alnum:]_]+:[^ @]+@)#[redacted credential]#g' |
+            awk 'tolower($0) ~ /auth shell|platform|error|fatal|container|probe|exited|database|listen|warn/ { print substr($0, 1, 350) }'
+          gcloud run services describe "$STAGING_SERVICE" --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json |
+            jq -c '[.status.traffic[] | {revisionName,percent,tag}]'
