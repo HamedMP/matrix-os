@@ -381,12 +381,10 @@ function ProjectSetupControlsScoped({
                     onStateChange={markdownEdits && !isPreservedMarkdown(file) ? (state) => markdownEdits.onChange(file.path, state) : undefined}
                     editable={file.path !== "CLAUDE.md" && !file.expectedHash && !isPreservedMarkdown(file)}
                     busy={busy}
-                    onDirtyChange={(dirty) =>
-                      setDirtyFiles(current => {
-                        if (current.includes(file.path) === dirty) return current;
-                        return dirty ? [...current, file.path] : current.filter(path => path !== file.path);
-                      })
-                    }
+                    onDirtyChange={dirty => setDirtyFiles(current => {
+                      if (current.includes(file.path) === dirty) return current;
+                      return dirty ? [...current, file.path] : current.filter(path => path !== file.path);
+                    })}
                     onApply={(content) => setup.dispatch({ type: "review_file", path: file.path, content })}
                   />
                 ))}

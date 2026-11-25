@@ -3,7 +3,8 @@ import { ProjectSetupActionSchema, ProjectSetupStartRequestSchema, ProjectSetupU
 
 describe("project setup boundary", () => {
   it("accepts a first answer without permitting client-owned scope or file writes", () => {
-    expect(ProjectSetupStartRequestSchema.parse({ clientRequestId: "req_setup", answer: "A portfolio" }).answer).toBe("A portfolio");
+    const start = { clientRequestId: "req_setup", answer: "A portfolio" };
+    expect(ProjectSetupStartRequestSchema.parse(start)).toEqual(start);
     expect(ProjectSetupStartRequestSchema.safeParse({ clientRequestId: "req_setup", answer: "A portfolio", ownerId: "another_owner" }).success).toBe(false);
   });
   it("requires revision and a narrow action", () => {
