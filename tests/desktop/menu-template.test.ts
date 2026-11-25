@@ -53,24 +53,17 @@ function accelerators(template: MenuItemConstructorOptions[], platform: Platform
 describe("createAppMenuTemplate", () => {
   it("opens Mac pairing directly in installed and development Matrix clients", () => {
     const openMacPairing = vi.fn();
-    const options = {
-      appName: "Matrix OS", isPackaged: true, platform: "darwin" as const,
-      openExternal: vi.fn(), send: vi.fn(), adjustZoom: vi.fn(), checkForUpdates: vi.fn(), quitApp: vi.fn(),
-      openMacPairing,
-    };
-    function pairingItem(template: ReturnType<typeof createAppMenuTemplate>) {
-      const menu = template.find(item => item.label === options.appName);
-      return Array.isArray(menu?.submenu) ? menu.submenu.find(item => item.label === "Mac Pairing…") : undefined;
+    const send = vi.fn();
+    function pairingItem(opts: Parameters<typeof createAppMenuTemplate>[0]) {
+      return find(submenu(createAppMenuTemplate(opts), "Matrix OS"), "Mac Pairing…");
     }
     for (const isPackaged of [true, false]) {
-      const item = pairingItem(createAppMenuTemplate({ ...options, isPackaged }));
-      if (!item?.click) throw new Error("missing native Mac pairing action");
-      item.click({} as never, {} as never, {} as never);
+      click(pairingItem(options({ isPackaged, send, openMacPairing })));
     }
     expect(openMacPairing).toHaveBeenCalledTimes(2);
-    expect(options.send).not.toHaveBeenCalled();
-    expect(pairingItem(createAppMenuTemplate({ ...options, openMacPairing: undefined }))).toBeUndefined();
-    expect(pairingItem(createAppMenuTemplate({ ...options, platform: "linux" }))).toBeUndefined();
+    expect(send).not.toHaveBeenCalled();
+    expect(pairingItem(options())).toBeUndefined();
+    expect(pairingItem(options({ platform: "linux", openMacPairing }))).toBeUndefined();
   });
 
   it("opens local Mac activity history from the native menu without a renderer action", () => {

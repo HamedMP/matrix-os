@@ -7,9 +7,10 @@ import { SignJWT } from "jose";
 import { Kysely } from "kysely";
 import { KyselyPGlite } from "kysely-pglite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { authMiddleware } from "../../packages/gateway/src/auth.js";
+import { createAllowedOriginController } from "../../packages/gateway/src/allowed-origins.js";
 import type { DesktopPairingDatabase } from "../../packages/gateway/src/desktop-pairing/database.js";
 import { createRuntimeDesktopPairingRoutes } from "../../packages/gateway/src/desktop-pairing/routes.js";
+import { registerGatewayAccessMiddleware } from "../../packages/gateway/src/server/access-middleware.js";
 
 const path = "/api/desktop-pairing";
 const owner = "owner_test";
@@ -18,6 +19,7 @@ const machineId = "11805f32-14cd-4651-85b0-675c80a65812";
 const secondMachine = "4d6cd449-48d2-4946-95a1-3b4d188eec35";
 const platformSecret = "isolated-runtime-auth-for-pairing-tests";
 const jwtSecret = "separate-isolated-test-jwt-signing-secret";
+const shellOrigin = "https://shell.example";
 
 function testDevice() {
   const keys = generateKeyPairSync("ed25519");
@@ -83,9 +85,12 @@ describe("Desktop pairing routes behind Gateway authentication", () => {
 
   async function gateway(env: NodeJS.ProcessEnv = {}, ownerDatabase: Kysely<DesktopPairingDatabase> | null = db) {
     const app = new Hono();
-    app.use("*", authMiddleware(platformSecret, {
-      resolveMatrixMcpCapability: (token) => token === "scoped-harness-token" ? owner : null,
-    }));
+    registerGatewayAccessMiddleware(app, {
+      resolveAllowedOrigin: createAllowedOriginController({ shellOrigin }).resolve,
+      devAppAuthBypass: false,
+      authToken: platformSecret,
+      auth: { resolveMatrixMcpCapability: (token) => token === "scoped-harness-token" ? owner : null },
+    });
     app.route(path, await createRuntimeDesktopPairingRoutes({
       ownerDatabase, now: () => now,
       env: { MATRIX_DESKTOP_PAIRING_ENABLED: "1", MATRIX_MACHINE_ID: machineId,
@@ -98,7 +103,7 @@ describe("Desktop pairing routes behind Gateway authentication", () => {
     };
     const request = (suffix = "", method = "GET", body?: unknown, auth?: HeadersInit) =>
       raw(suffix, method, body === undefined ? undefined : JSON.stringify(body), auth);
-    return Object.assign(request, { raw });
+    return Object.assign(request, { raw, app });
   }
 
   async function challenge(
@@ -123,6 +128,26 @@ describe("Desktop pairing routes behind Gateway authentication", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     await expect(response.json()).resolves.toEqual({ machineId, deviceId: null, revision: 0 });
+  });
+
+  it("allows first-party preflight, secures auth failures and fences private routine routes before handlers", async () => {
+    const { app } = await gateway();
+    app.get("/api/chats/:chatId", c => c.json({ visible: true }));
+    const preflight = await app.request(path, {
+      method: "OPTIONS",
+      headers: { Origin: shellOrigin, "Access-Control-Request-Method": "GET" },
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("Access-Control-Allow-Origin")).toBe(shellOrigin);
+
+    const hiddenChatPath = "/api/chats/chat_routine_0123456789abcdef0123456789abcdef";
+    const unauthenticated = await app.request(hiddenChatPath, { headers: { Origin: shellOrigin } });
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers.get("Access-Control-Allow-Origin")).toBe(shellOrigin);
+    expect(unauthenticated.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    const auth = { headers: platformOwnerHeaders() };
+    expect((await app.request(hiddenChatPath, auth)).status).toBe(404);
+    expect((await app.request("/api/chats/chat_visible", auth)).status).toBe(200);
   });
 
   it("is unavailable outside an enabled primary Computer with a valid UUID and owner database", async () => {
