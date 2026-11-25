@@ -70,7 +70,7 @@ export function customMcpErrorMessage(status: number, body: unknown): string {
 }
 
 export type McpInventoryEntry =
-  | { kind: "mcp"; id: string; name: string; statusLabel: string; presetId?: string }
+  | { kind: "mcp"; id: string; name: string; statusLabel: string; presetId?: string; toolCount?: number }
   | { kind: "pipedream"; id: string; name: string; statusLabel: string; accountLabel?: string };
 
 const MCP_STATUS_LABELS: Record<string, string> = {
@@ -80,13 +80,13 @@ const MCP_STATUS_LABELS: Record<string, string> = {
 
 /** One inventory of MCP servers plus legacy Pipedream connections (read-only here). */
 export function buildMcpConnectionInventory(
-  servers: ReadonlyArray<{ id: string; name: string; url: string; status: string }>,
+  servers: ReadonlyArray<{ id: string; name: string; url: string; status: string; tools?: readonly unknown[] }>,
   pipedream: ReadonlyArray<{ id: string; service: string; account_label?: string | null; status: string }>,
   serviceNames: Readonly<Record<string, string>> = {},
 ): McpInventoryEntry[] {
   const mcp = servers.map((server): McpInventoryEntry => {
     const presetId = remoteMcpCatalogEntryForUrl(server.url)?.id;
-    return { kind: "mcp", id: server.id, name: server.name, statusLabel: MCP_STATUS_LABELS[server.status] ?? "Unknown", ...(presetId ? { presetId } : {}) };
+    return { kind: "mcp", id: server.id, name: server.name, statusLabel: MCP_STATUS_LABELS[server.status] ?? "Unknown", ...(presetId ? { presetId } : {}), ...(server.tools ? { toolCount: server.tools.length } : {}) };
   });
   const legacy = pipedream.map((connection): McpInventoryEntry => ({
     kind: "pipedream", id: connection.id,

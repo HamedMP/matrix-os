@@ -2,6 +2,7 @@
 
 import {
   MatrixMcpEndpointCard,
+  McpAddServicesSection,
   McpConnectionInventory,
   McpCustomServerForm,
   McpRowAction,
@@ -148,6 +149,8 @@ export function CustomMcpServersPanel({ connectedApps = [], appNames = {} }: {
   const [diagnosing, setDiagnosing] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // Refreshes (Discover, Retry) keep the rows mounted so open rows and their results survive.
+  const [everLoaded, setEverLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -162,6 +165,7 @@ export function CustomMcpServersPanel({ connectedApps = [], appNames = {} }: {
     try {
       replaceServers(await fetchMcpServers());
       setLoaded(true);
+      setEverLoaded(true);
       setError(null);
     } catch (loadError: unknown) {
       setError(loadError instanceof Error && loadError.message === CUSTOM_MCP_UNAVAILABLE
@@ -353,8 +357,8 @@ export function CustomMcpServersPanel({ connectedApps = [], appNames = {} }: {
       {loading && <p role="status" className="text-sm text-muted-foreground">Loading MCP servers…</p>}
       <MatrixMcpEndpointCard endpointUrl={matrixMcpEndpointUrl(platformOrigin)} connectedServices={connectedServices} />
       <fieldset disabled={!loaded || loading || diagnosing} className="min-w-0 space-y-8">
-      {loaded && (inventory.length > 0 || !error) ? <div className="space-y-3">
-        <McpSectionHeading title="Your connections" count={inventory.length || undefined} description="Choose which tools agents and clients may use." />
+      {everLoaded && (inventory.length > 0 || !error) ? <div className="space-y-3">
+        <McpSectionHeading title="Connected services" count={inventory.length || undefined} description="Choose which tools agents and clients may use." />
         <McpConnectionInventory entries={inventory}
         renderActions={(entry) => {
           const server = serverById.get(entry.id);
@@ -387,15 +391,14 @@ export function CustomMcpServersPanel({ connectedApps = [], appNames = {} }: {
             </>
           );
         }} /></div> : null}
-      <div className="space-y-3">
-        <McpSectionHeading title="Add services" description="Each service you connect joins your Matrix MCP. Sign in with the service; Matrix keeps the credentials." />
+      <McpAddServicesSection hasConnections={everLoaded ? inventory.length > 0 : undefined}>
         <RemoteMcpPresetPicker presets={presets} state={catalogState} connections={servers.map((server) => ({ serverId: server.id, url: server.url, status: server.status }))}
           connectingId={busy?.startsWith("preset:") ? busy.slice("preset:".length) : null} disabled={busy !== null}
           onConnect={(presetId) => { void connectPreset(presetId); }} onFinishSignIn={(serverId) => { void authorize(serverId); }} onRetry={loadCatalog} />
-      </div>
-      <McpCustomServerForm name={name} url={url} authMode={authMode} credential={credential}
+        <McpCustomServerForm name={name} url={url} authMode={authMode} credential={credential}
         onNameChange={setName} onUrlChange={setUrl} onAuthModeChange={setAuthMode} onCredentialChange={setCredential}
         canSubmit={busy === null && Boolean(name.trim()) && Boolean(url.trim())} onSubmit={() => { void createServer(); }} />
+      </McpAddServicesSection>
       </fieldset>
     </section>
   );
