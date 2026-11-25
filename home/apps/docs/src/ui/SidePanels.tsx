@@ -1,17 +1,19 @@
 /**
  * The right panel: Review, Assistant and Compare tabs. Review renders the
- * review module's panels around the controller the workspace creates; the
- * Assistant and Compare panels are split into their own chunks and loaded on
- * first use. A load or render failure shows a fallback instead of breaking
- * the app.
+ * review module's panels around the controller the workspace creates. All
+ * three panels are imported directly: the app frame is sandboxed with a null
+ * origin, which refuses a chunk loaded later, so the app ships as one file. A
+ * render failure shows a fallback instead of breaking the app.
  */
 
 import { GitCompareArrows, ListChecks, Sparkles, X } from "lucide-react";
-import { Component, type ComponentType, type ErrorInfo, type ReactNode, Suspense, lazy } from "react";
-import { EmptyState, Spinner, Tabs } from "../../../_shared/office-ui";
+import { Component, type ComponentType, type ErrorInfo, type ReactNode } from "react";
+import { EmptyState, Tabs } from "../../../_shared/office-ui";
 import type { ViewMode } from "../editor/index";
 import type { ReviewController } from "../review/index";
 import type { AssistantStore } from "./agent/assistant-store";
+import { DocsAgentPanel } from "./agent/DocsAgentPanel";
+import { ComparePanel } from "./compare/ComparePanel";
 import type { DocumentSlot } from "./document-slot";
 import type { AssistantRequest, DocsPanelId, DocsPanelProps } from "./panel-types";
 import { ReviewTab } from "./ReviewIntegration";
@@ -42,8 +44,8 @@ const PANELS: ReadonlyArray<{ id: DocsPanelId; label: string; icon: ReactNode }>
 
 const LOADED: Record<DocsPanelId, ComponentType<ShellPanelProps>> = {
   review: ReviewTab,
-  assistant: lazy(() => import("./agent/DocsAgentPanel")),
-  compare: lazy(() => import("./compare/ComparePanel")),
+  assistant: DocsAgentPanel,
+  compare: ComparePanel,
 };
 
 class PanelBoundary extends Component<{ children: ReactNode; resetKey: string }, { failed: boolean; key: string }> {
@@ -90,9 +92,7 @@ export function SidePanels({ active, onChange, panels, ...panelProps }: SidePane
         }
         renderPanel={() => (
           <PanelBoundary resetKey={active}>
-            <Suspense fallback={<Spinner label="Loading panel" />}>
-              <ActivePanel {...panelProps} />
-            </Suspense>
+            <ActivePanel {...panelProps} />
           </PanelBoundary>
         )}
       />

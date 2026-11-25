@@ -14,14 +14,13 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // The single file below is deliberate, so Vite's advice to code-split over 500 kB does not apply.
+    chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          if (id.includes("/node_modules/react") || id.includes("/node_modules/react-dom") || id.includes("/node_modules/scheduler")) {
-            return "react";
-          }
-          return undefined;
-        },
+        // One JavaScript file: the app frame is sandboxed with a null origin, which refuses a
+        // module chunk fetched later, so nothing may be split off (tests/default-apps/single-chunk.ts).
+        inlineDynamicImports: true,
       },
     },
   },
