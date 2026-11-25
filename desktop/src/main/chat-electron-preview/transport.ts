@@ -342,14 +342,14 @@ export function createChatElectronPreviewTransport(
 
     isTerminalRequestCurrent,
 
-    async returnTerminalResult(terminal: MacTerminalRequest, resultInput: z.infer<typeof TerminalResult>): Promise<void> {
+    async returnTerminalResult(terminal: MacTerminalRequest, resultInput: z.infer<typeof TerminalResult>, signal?: AbortSignal): Promise<void> {
       const authority = terminalBindings.get(terminal);
       if (!authority || !isTerminalRequestCurrent(terminal)) throw new Error("Mac terminal request expired or session changed");
       const result = TerminalResult.parse(resultInput);
       const key = sha256(JSON.stringify([terminal.scopeKey, terminal.chatId, terminal.runId]));
 
       async function prepareTurn(binding: RuntimeAuthority) {
-        const detail = await readDetail(binding, terminal.chatId);
+        const detail = await readDetail(binding, terminal.chatId, signal);
         const candidate = detail && getPersonalWorktreeRun(detail, binding.ownerId, terminal);
         const marker = detail && getMacTerminalProbeMarkerForRun(detail, terminal.runId);
         if (!detail || !candidate || candidate.root.projectId !== terminal.projectId
@@ -375,7 +375,7 @@ export function createChatElectronPreviewTransport(
       if (!turn) return;
       const path = chatMessageVersionUrl(`/api/chats/${terminal.chatId}/turns`);
       const response = await request(authority, path, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(turn),
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(turn), signal,
       });
       if (!response.ok) {
         await response.body?.cancel();

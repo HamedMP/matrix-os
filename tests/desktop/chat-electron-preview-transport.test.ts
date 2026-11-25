@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalChatMessage } from "@matrix-os/contracts";
 import { createChatElectronPreviewTransport } from "@desktop/main/chat-electron-preview/transport";
+import { createChatMacTerminalService } from "@desktop/main/chat-mac-terminal/service";
 import type { AuthStatus } from "@desktop/main/auth/auth-service";
 
 const chatId = "chat_original";
@@ -386,6 +387,57 @@ describe("authenticated Chat Mac terminal probe transport", () => {
     change(detail);
     await expect(service.readTerminalRequest(ref)).resolves.toBeNull();
     expect(resultWrites(fetchFn)).toEqual([]);
+  });
+
+  it("does not post the one-time terminal output when its grant is canceled before Chat admission", async () => {
+    const { detail, service: transport, fetchFn } = terminalFixture();
+    const finalRead = Promise.withResolvers<void>();
+    const resumeRead = Promise.withResolvers<void>();
+    const reply = fetchFn.getMockImplementation()!;
+    let terminalRan = false;
+    fetchFn.mockImplementation(async (input, init) => {
+      if (terminalRan && new URL(String(input)).pathname === `/api/chats/${chatId}`) {
+        finalRead.resolve();
+        await resumeRead.promise;
+      }
+      return reply(input, init);
+    });
+    const terminal = {
+      id: targetId,
+      async run(): Promise<"Darwin"> {
+        terminalRan = true;
+        return "Darwin";
+      },
+      dispose: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = createChatMacTerminalService({
+      ...transport,
+      enabled: true,
+      approve: async () => true,
+      prepareTerminal: async () => terminal,
+    });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const grant = await service.prepare({ chatId, worktreeId });
+      if (grant.status !== "ready") throw new Error(`expected a ready terminal, got ${grant.status}`);
+      detail.messages[0]!.parts[0]!.text = terminalMarker.replace(targetId, grant.targetId);
+
+      const running = service.run(ref);
+      await Promise.race([finalRead.promise, running.then(result => {
+        throw new Error(`expected an in-flight Chat read, got ${result.status}`);
+      })]);
+      expect(await service.cancel(chatId)).toBe(true);
+      resumeRead.resolve();
+
+      const result = await running;
+      expect(resultWrites(fetchFn)).toEqual([]);
+      expect(result).toEqual({ status: "unavailable" });
+      expect(terminal.dispose).toHaveBeenCalledTimes(1);
+    } finally {
+      resumeRead.resolve();
+      await service.cancelAll();
+      clock.mockRestore();
+    }
   });
 
   it("uses the same canonical result turn on retries", async () => {

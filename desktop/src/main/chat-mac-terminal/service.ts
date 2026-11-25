@@ -16,7 +16,9 @@ interface Dependencies {
   isTerminalContextCurrent(context: MacTerminalContext): boolean;
   readTerminalRequest(target: RunMacTerminalCheck): Promise<MacTerminalRequest | null>;
   isTerminalRequestCurrent(request: MacTerminalRequest): boolean;
-  returnTerminalResult(request: MacTerminalRequest, result: { terminalId: string; output: "Darwin" }): Promise<void>;
+  returnTerminalResult(
+    request: MacTerminalRequest, result: { terminalId: string; output: "Darwin" }, signal: AbortSignal,
+  ): Promise<void>;
   approve(context: MacTerminalContext, signal: AbortSignal): Promise<boolean>;
   prepareTerminal(): Promise<ProbeTerminal>;
   reportError?(error: unknown): void;
@@ -114,7 +116,7 @@ export function createChatMacTerminalService(deps: Dependencies) {
       const output = await current.terminal.run(signal);
       if (grant !== current || signal.aborted || !deps.isTerminalRequestCurrent(request)
         || !deps.isTerminalContextCurrent(current.context)) return { status: "unavailable" };
-      await deps.returnTerminalResult(request, { terminalId: current.terminal.id, output });
+      await deps.returnTerminalResult(request, { terminalId: current.terminal.id, output }, signal);
       return { status: "returned" };
     } catch (error: unknown) {
       if (signal.aborted) return { status: "unavailable" };

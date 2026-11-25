@@ -35,7 +35,7 @@ describe("approved Matrix Chat Mac terminal grant", () => {
     expect(deps.approve).toHaveBeenCalledTimes(1);
     expect(terminal.run).toHaveBeenCalledTimes(1);
     expect(deps.returnTerminalResult).toHaveBeenCalledWith(expect.objectContaining({ targetId: grant.targetId }),
-      { terminalId: "t7", output: "Darwin" });
+      { terminalId: "t7", output: "Darwin" }, terminal.run.mock.calls[0]![0]);
     expect(await service.run({ chatId: context.chatId, runId: "run_probe" })).toEqual({ status: "already-handled" });
     await service.cancelAll();
     expect(terminal.dispose).toHaveBeenCalledTimes(1);
