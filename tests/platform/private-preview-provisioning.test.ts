@@ -97,6 +97,51 @@ describe('Private Preview provisioning', () => {
     await expect(getProvisioningJobByMachineId(db, started.machineId)).resolves.toMatchObject({ status: 'queued' });
   });
 
+  it('creates a new Private Preview on the preview server type with every developer tool', async () => {
+    const started = await start(service({ HETZNER_SERVER_TYPE: 'cpx22' }), 1907, v1);
+
+    await expect(getUserMachine(db, started.machineId)).resolves.toMatchObject({
+      serverType: 'cx23',
+      location: 'nbg1',
+      developerTools: ['codex', 'claude-code', 'opencode', 'pi'],
+    });
+  });
+
+  it('keeps the customer server type for a Private Preview in a location without the preview type', async () => {
+    const started = await start(service({ HETZNER_LOCATION: 'hil', HETZNER_SERVER_TYPE: 'cpx21' }), 1907, v1);
+
+    await expect(getUserMachine(db, started.machineId)).resolves.toMatchObject({
+      serverType: 'cpx21',
+      location: 'hil',
+    });
+  });
+
+  it('returns an existing cpx22 Private Preview unchanged instead of replacing it', async () => {
+    const machineId = '00000000-0000-4000-8000-000000005630';
+    await insertPrivatePreviewIfAbsent(db, {
+      machineId,
+      clerkUserId: owner,
+      handle: 'pv-1907-0000563a',
+      runtimeSlot: 'pv-1907-0000563a',
+      provisioningClass: 'private-preview',
+      sourcePr: 1907,
+      confirmedBundleVersion: v1,
+      status: 'running',
+      serverType: 'cpx22',
+      developerTools: ['codex'],
+      hetznerServerId: 5630,
+      provisionedAt: '2026-09-28T00:00:00.000Z',
+    });
+
+    await expect(start(service(), 1907, v1)).resolves.toMatchObject({ machineId, status: 'running' });
+    await expect(getProvisioningJobByMachineId(db, machineId)).resolves.toBeUndefined();
+    await expect(getUserMachine(db, machineId)).resolves.toMatchObject({
+      serverType: 'cpx22',
+      developerTools: ['codex'],
+      hetznerServerId: 5630,
+    });
+  });
+
   it('accepts only a registered bundle from the same PR', async () => {
     await expect(start(service(), 1907, otherPr)).rejects.toMatchObject({ status: 409, code: 'invalid_state' });
     await expect(start(service(), 1907, 'v2026.09.30-pr1907-9-1-deadbee')).rejects.toBeInstanceOf(CustomerVpsError);

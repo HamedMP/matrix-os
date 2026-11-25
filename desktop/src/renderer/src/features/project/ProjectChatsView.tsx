@@ -724,6 +724,8 @@ export default function ProjectChatsView({
   inspectorExclusive = false,
   allowLegacyFallback = true,
   eventSource,
+  sharedHeaderContainer,
+  onSharedChatMetadata,
 }: {
   projectId: string;
   active: boolean;
@@ -735,6 +737,8 @@ export default function ProjectChatsView({
   inspectorExclusive?: boolean;
   allowLegacyFallback?: boolean;
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
+  sharedHeaderContainer?: HTMLElement | null;
+  onSharedChatMetadata?: (metadata: { title: string; role: "owner" | "editor" | "viewer" }) => void;
 }) {
   const api = useConnection((state) => state.api);
   const [routeAttempt, setRouteAttempt] = useState(0);
@@ -752,6 +756,8 @@ export default function ProjectChatsView({
       active={active}
       live={visible}
       eventSource={eventSource}
+      sharedHeaderContainer={sharedHeaderContainer}
+      onSharedChatMetadata={onSharedChatMetadata}
       externalNavigation={externalNavigation}
       renderInspector={renderInspector}
       inspectorExclusive={inspectorExclusive}

@@ -220,6 +220,26 @@ Request body (DELETE still receives the mutating body limit):
 
 The existing `Shared with me` aggregate may include this projection, but an app item is always typed as `app`; it never falls through to Chat/project rendering.
 
+Owner presentation (ENG-490): with `fields=display`, each item also carries optional `name` (owner manifest name, at most 120 characters) and `iconUrl` (exactly `/api/collaboration/shared-apps/:scopeId/icon?v=<sha256>` for the item's own scope). Released clients parse items strictly and never send `fields`, so the platform omits both keys for them. `GET /api/collaboration/shared-apps/:scopeId` accepts the same opt-in. The launch target fills `name` and `iconUrl` the same way. Clients never fall back to the member's own `/icons/<slug>` artwork; a missing or failed icon keeps the letter tile.
+
+### `GET /api/collaboration/shared-apps/:scopeId/icon?v=<sha256>`
+
+- Authentication: platform Matrix session (Electron Desktop: bearer attached by the trusted core on the platform origin).
+- Authority: active current-membership app share + current organization membership; otherwise `404`.
+- Validation: Zod `uuid` scope; `v` optional 64-hex; any other or repeated query key is `422`.
+- Response: the requested scope's stored PNG thumbnail (at most 96×96 and 48 KiB), fully decoded and hash-checked, with `X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'; sandbox`, `Cache-Control: private, no-cache`, and `CDN-Cache-Control: no-store`. `ETag` is the quoted hash. Conditional requests still check membership, active state, and stored bytes before `304`; membership revocation must not be hidden by immutable browser caching.
+- Rate limit: per-actor sliding window with a bounded LRU tracker.
+
+### Presentation in `PUT /internal/collaboration/directory`
+
+- Authentication remains the owner runtime service bearer plus `x-matrix-runtime-id`; payload runtime/owner must match it.
+- Optional `app.name` is the owner's bounded manifest name. Optional `app.thumbnail` is `{ contentType: "image/png", sha256: <64-hex>, base64: <canonical base64> }`.
+- The gateway reads at most 8 MiB from a regular non-symlink artwork file, accepts PNG/WebP/JPEG only, limits decoding to 8192 pixels per axis / 16 megapixels, and resizes to a PNG within 96×96 pixels and 48 KiB. Processing is limited to two seconds, presentation resolution to three seconds. Invalid, corrupt, missing, SVG, HTML, symlink, or over-limit artwork uses the existing letter tile.
+- Base64 is at most 64 KiB. The complete UTF-8 event, including routing metadata and all recipients, must fit the unchanged 96 KiB `bodyLimit`; the outbox drops presentation if the complete event exceeds it.
+- Bad thumbnail schema, content type, size, dimensions, hash, or decoding omits only the thumbnail. Routing metadata is delivered without spending retries on presentation failure. There is no upload endpoint or pre-event upload.
+- Name, bytes, content type, and hash are written in the existing revision-fenced directory transaction. A new event replaces previous presentation; stopped/non-app events clear artwork. Older preview `app.iconSha256` is accepted but ignored. An older strict platform's `422` triggers a routing-only resend.
+- Listings contain versioned URLs only and require `fields=display`; no inline artwork reaches released strict clients.
+
 ### `POST /api/collaboration/shared-apps/:scopeId/launch`
 
 Request:
@@ -317,6 +337,8 @@ Clients deduplicate by event/sequence and perform an authoritative read. Events 
 | Share preflight/create | Owner Matrix session | Exact app owner + current membership + current ready build | No |
 | Read/stop share | Owner Matrix session | Exact app owner + current revisions for stop | No |
 | Discover shared app | Platform Matrix session | Current membership in share organization | No |
+| Read shared app icon | Platform Matrix session | Active share + current membership | No |
+| Publish directory presentation | Owner runtime service bearer | Payload owner/runtime match authenticated authority | No |
 | Create/renew launch | Platform session + owner direct-session exchange | Active exact share + current membership + ready build | No |
 | Load bootstrap/assets | Platform session; owner relay signs upstream | Launch actor + active share + current membership + exact build | No |
 | Read app data | Signed owner-runtime direct session | Active share + current membership + declared table | No |
@@ -354,3 +376,4 @@ Unknown, long, provider/path/database-looking messages are replaced by safe copy
 - Only newly created ready app scopes use current-membership full access.
 - Older clients render an app entry as “client update required”; they do not treat it as Chat/project or fall back to a local same-slug app.
 - Native Mobile may list “Open on web” but is not qualified to run V1 shared apps.
+- Shared app presentation is additive. Deploy order: platform (migration + routes) first, then host bundle, then Electron. A gateway that meets a platform without presentation fields gets `422` for the presentation-bearing event and resends routing metadata alone. Clients opt in with `fields=display`, so released strict clients are unaffected.

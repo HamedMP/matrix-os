@@ -41,6 +41,26 @@ async function harness(options: { delayHandshake?: boolean } = {}) {
 }
 
 describe("background agent runtime", () => {
+  it("sweeps dead runners' Browser bearer directories at startup and keeps the timer bounded", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-background-sweep-"));
+    homes.push(homePath);
+    const sweepBrowserTokens = vi.fn(async () => 0);
+    const runtime = createBackgroundAgentRuntime({ homePath, runCommand: vi.fn(async () => ({ stdout: "", stderr: "" })), withLock, sweepBrowserTokens });
+    runtimes.push(runtime);
+    await vi.waitFor(() => expect(sweepBrowserTokens).toHaveBeenCalledTimes(1));
+  });
+
+  it("allows 64 background jobs by default and rejects the 65th", async () => {
+    const h = await harness();
+    const runtime = createBackgroundAgentRuntime({ homePath: h.homePath, runCommand: h.runCommand, withLock });
+    runtimes.push(runtime);
+    for (let index = 0; index < 64; index += 1) {
+      await expect(runtime.start({ sessionId: `sess_capacity_${index}`, launch: h.launch })).resolves.toBeDefined();
+    }
+    await expect(runtime.start({ sessionId: "sess_capacity_overflow", launch: h.launch })).rejects.toThrow(/capacity/i);
+    expect([...h.units.values()].filter(state => state === "active")).toHaveLength(64);
+  });
+
   it("supervises a private launch independently of terminal tabs", async () => {
     const h = await harness();
     const ref = await h.runtime.start({ sessionId: "sess_test", launch: h.launch });

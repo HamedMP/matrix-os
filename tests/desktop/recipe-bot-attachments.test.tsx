@@ -64,7 +64,7 @@ function fixture(status: "completed" | "running", vision = true) {
     authority: vi.fn(async () => ({ agentId: agent.id, revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })),
   } } as unknown as ChatAgentClient;
   const putBytes = vi.fn(async (url: string, file: File) => ({ ok: true, path: decodeURIComponent(url.split("path=")[1] ?? ""), size: file.size }));
-  const props = { api: { putBytes, get: vi.fn(async () => catalog) } as never, client, initialChatId: snapshot.chat.id,
+  const props = { api: { putBytes, get: vi.fn(async () => catalog), getBlob: vi.fn(async () => new Blob(["pixels"], { type: "image/png" })) } as never, client, initialChatId: snapshot.chat.id,
     initialView: "conversation" as const, active: true, catalog };
   const view = render(<CanonicalChatWorkspace {...props}/>);
   return { client, putBytes, props, view };

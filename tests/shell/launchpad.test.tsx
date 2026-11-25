@@ -118,6 +118,27 @@ describe("Launchpad (macos-glass launcher)", () => {
     expect(handlers.onOpenApp).not.toHaveBeenCalled();
     expect(handlers.onClose).toHaveBeenCalled();
   });
+  it.each(["flat", "macos-glass"])("shows the owner's name and platform icon for an organization app in %s", async (style) => {
+    setDesign(style);
+    const iconUrl = `/api/collaboration/shared-apps/${sharedTarget.scopeId}/icon?v=${"c".repeat(64)}`;
+    const decorated = { ...sharedTarget, name: "Team Tracker", iconUrl };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [decorated] }), {
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    act(() => useWindowManager.setState({ windows: [] }));
+    await renderLauncher({ actorId: "user_member" });
+    const tile = await screen.findByRole("button", { name: "Team Tracker" });
+    expect(tile.querySelector("img")?.getAttribute("src")).toBe(iconUrl);
+    // Never the member's own `/icons/<appId>.png`: that would impersonate the owner's artwork.
+    expect(tile.innerHTML).not.toContain(`/icons/${sharedTarget.appId}`);
+    expect(String((fetchMock.mock.calls as unknown as Array<[string]>).find(([url]) => String(url).includes("/shared-apps?"))?.[0]))
+      .toContain("fields=display");
+    fireEvent.click(tile);
+    expect(useWindowManager.getState().windows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: "Team Tracker shared by Owner", sharedAppTarget: decorated }),
+    ]));
+  });
   // Reset before (not after) each test: removing the attribute while a
   // launcher is still mounted would fire useThemeStyle's MutationObserver
   // outside act(). RTL's cleanup unmounts before the next beforeEach runs.
@@ -184,7 +205,17 @@ describe("Launchpad (macos-glass launcher)", () => {
     const response = new Promise<Response>((resolve) => {
       resolveResponse = resolve;
     });
-    vi.stubGlobal("fetch", vi.fn(() => response));
+    // The launcher also loads shared organization apps on open. Hand only the
+    // installed-apps request the deferred response; every other request gets
+    // its own fresh body so no two readers race for one Response stream.
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (new URL(url, "http://localhost").pathname === "/api/apps") return response;
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }));
 
     const { queryClient } = await renderLauncher();
 

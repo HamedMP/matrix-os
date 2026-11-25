@@ -1,4 +1,7 @@
 import {
+  SPEECH_DICTATION_LIMITS_QUERY,
+  SPEECH_EXTENDED_DICTATION_LIMITS,
+  SPEECH_TRANSCRIPTION_CLIENT_TIMEOUT_MS,
   SpeechCancellationResponseSchema,
   SpeechCapabilitiesResponseSchema,
   SpeechRequestIdSchema,
@@ -11,7 +14,7 @@ import {
 
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const CAPABILITY_TIMEOUT_MS = 10_000;
-const TRANSCRIPTION_TIMEOUT_MS = 70_000;
+const TRANSCRIPTION_TIMEOUT_MS = SPEECH_TRANSCRIPTION_CLIENT_TIMEOUT_MS;
 
 type BrowserSpeechErrorCode =
   | "unauthorized"
@@ -96,6 +99,9 @@ function requestUrl(baseUrl: string, path: string, runtimeSlot: string | undefin
     }
     url.searchParams.set("runtime", runtimeSlot);
   }
+  // This client parses the extended dictation policy; a gateway answers
+  // callers that do not say so with the legacy two-minute limits.
+  if (path === "/capabilities") url.searchParams.set(SPEECH_DICTATION_LIMITS_QUERY, SPEECH_EXTENDED_DICTATION_LIMITS);
   return url.toString();
 }
 

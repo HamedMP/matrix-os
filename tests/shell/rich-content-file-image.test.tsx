@@ -13,3 +13,13 @@ it("routes a local Markdown image to File Preview without mounting a broken imag
   fireEvent.click(screen.getByRole("button", { name: "Preview image Generated whale" }));
   expect(openFile).toHaveBeenCalledWith("data/chat-artifacts/whale.png");
 });
+
+it("opens an inline workspace file in the inspector while leaving fenced code intact", () => {
+  const openFile=vi.fn();
+  render(<RichContent openFile={openFile}>{'Changed `desktop/src/nav/MobileNav.tsx`.\n\n```txt\ndesktop/src/nav/MobileNav.tsx\n```'}</RichContent>);
+  const files=screen.getAllByRole('button',{name:'Open MobileNav.tsx'});
+  expect(files).toHaveLength(1);
+  fireEvent.click(files[0]);
+  expect(openFile).toHaveBeenCalledWith('desktop/src/nav/MobileNav.tsx');
+  expect(document.querySelector('pre code')?.textContent).toContain('desktop/src/nav/MobileNav.tsx');
+});

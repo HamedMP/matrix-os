@@ -82,6 +82,11 @@ The workflow therefore uploaded the immutable probe scripts from the commit
 above and required the host's installed Agent SDK to equal the same head's
 pinned `0.3.240` dependency before accepting the result.
 
+The ENG-29 Opus 5.5 compatibility update pins SDK `0.3.301` and native
+harness `2.1.301`. The historical run above does not qualify that upgrade.
+Its current worker/binary tests and live acceptance are tracked in
+[PR #3473](https://github.com/HamedMP/matrix-os/pull/3473).
+
 ## Probe coverage
 
 The JSON report contains only bounded public-safe status:

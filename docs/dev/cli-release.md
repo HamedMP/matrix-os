@@ -4,14 +4,12 @@ The installable Matrix CLI is the `@finnaai/matrix` package in `packages/sync-cl
 
 ## Current Prepared Release
 
-`0.3.22` is the prepared CLI patch release after `0.3.21`. It:
+`0.3.23` is the prepared CLI patch release after `0.3.22`. It:
 
-- adds `matrix update --check` for read-only stable CLI release discovery;
-- adds `matrix update` with verified standalone downloads, atomic replacement and rollback;
-- delegates Homebrew and recognized pnpm global installations to their package manager; and
-- preserves existing profiles, settings and sign-ins.
+- makes `npm install -g @finnaai/matrix` produce a working `matrix` on Linux and macOS (ENG-300); and
+- changes no commands or behavior.
 
-The updater changes only the invoking CLI. It does not update a Matrix computer or promote an OS release channel. CLI 0.3.21 users need the documented installer or package-manager path once to obtain the new command. Existing npm-global packaging limitations remain tracked in ENG-300; this release does not claim to fix them.
+`0.3.22` and earlier fail after `npm install -g`: on Linux the CLI crashes on a missing `zod/v4` module, and on macOS the install aborts while building `fsevents`. The standalone installer (`get.matrix-os.com`) and `pnpm add -g` installs of `0.3.22` are unaffected. After `0.3.23` is published and verified, deprecate `0.3.22` on npm as shown under Rollback.
 
 ## Versioning
 
@@ -23,12 +21,39 @@ The updater changes only the invoking CLI. It does not update a Matrix computer 
 ## Preflight
 
 The CLI bundles the private `@matrix-os/contracts` workspace dependency. Pack
-with `pnpm --config.node-linker=hoisted`, as the release workflows do: plain
-`npm pack` preserves `workspace:*`, and a registry-only dependency cannot
-resolve this private package. The dedicated CLI workflow publishes that exact
+with `node ./scripts/pack-cli.mjs --pack-destination <dir>` from
+`packages/sync-client`, as the release workflows do. It runs
+`pnpm pack --config.node-linker=hoisted` (plain `npm pack` preserves
+`workspace:*`, and a registry-only dependency cannot resolve this private
+package), then removes the dependency lists from the bundled contracts
+manifest. npm treats a bundled package's dependencies as already bundled when
+they sit beside it, which is the layout of `npm install -g` and Homebrew, and
+installs empty `zod` and `micromark` directories. The CLI declares the same
+packages at the same ranges, so npm installs them for the CLI and contracts
+resolves them from there; `pack-cli.mjs` fails if a contracts dependency is
+missing from the CLI's own dependencies. Never publish a bare `pnpm pack` or
+`pnpm publish` of this package. The dedicated CLI workflow publishes that exact
 tarball through npm CLI using trusted-publisher OIDC. Keep the isolated
-package-runner check; it verifies bundled contract files and installs the
-tarball outside the repo.
+package-runner check; it verifies bundled contract files and runs the
+tarball through `npm exec`, `pnpm dlx`, and `npm install -g` outside the repo.
+
+The CLI also declares `fsevents` under `optionalDependencies`. On
+`npm install -g`, npm gives a package that bundles dependencies a hard
+dependency on every package installed beside it. `tsx` pulls in `fsevents` as
+an optional dependency whose build always fails on macOS (it ships a prebuilt
+binary and no `binding.gyp`); normally npm ignores that failure, but the hard
+dependency made it fatal and the install aborted. Declaring `fsevents` optional
+in the CLI keeps the failure harmless. Do not remove the entry or the
+`bundledDependencies` declaration: without the declaration npm prunes the
+contracts files on the next `npm install` in a project, and Homebrew's repack
+drops them.
+
+The `CLI Install Smoke` workflow checks the packed tarball the way users
+install it: `npm install -g` into a clean prefix on macOS and Linux (Node 20
+and 24), a project install followed by a second install, and the Homebrew
+formula on macOS, each ending in `matrix --version`. `CLI Release` calls it and
+will not publish unless it passes; pull requests that touch CLI packaging or
+the formula run it too.
 
 Run these from the repo root before dispatching the release workflow:
 
@@ -60,7 +85,7 @@ the repository's npm ban: installs still use pnpm and scripts still use bun,
 while the npm CLI is invoked only because npm trusted publishing performs the
 OIDC exchange during `npm publish`.
 
-Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.22` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
+Use the manual GitHub Actions workflow named `CLI Release` with `version=0.3.23` and `update_homebrew=true` after this release-preparation PR merges. The workflow:
 
 1. Validates the requested semver, local package version, npm availability, and `cli-v<version>` tag availability.
 2. Installs the workspace and runs the sync-client build, tests, and publish-shape check.
@@ -74,6 +99,22 @@ but a downstream release job failed, select the existing `cli-v<version>` tag
 as the workflow ref and rerun with `allow_existing_npm=true`; this preserves the
 published source revision while completing the GitHub release and Homebrew work.
 
+## Installer Host
+
+`https://get.matrix-os.com` is served by the `matrix-get-worker` Cloudflare
+Worker in `packages/get-worker`. It returns `scripts/install.sh` at `/` and
+`/install.sh`, and 404 for every other path. The script is bundled into the
+Worker at deploy time, so the `Installer Worker` workflow redeploys it on every
+push to `main` that changes `scripts/install.sh` or the Worker, then checks that
+the live response is byte-identical to the committed script. To redeploy by
+hand, dispatch that workflow from `main` with `deploy=true`.
+
+Verify the host at any time:
+
+```bash
+curl -fsSL https://get.matrix-os.com | cmp - scripts/install.sh
+```
+
 ## Post-Release Verification
 
 ```bash
@@ -82,7 +123,12 @@ npm view @finnaai/matrix dist.tarball
 npx --yes @finnaai/matrix --version
 pnpm dlx @finnaai/matrix --version
 brew update && brew info finnaai/tap/matrix
-MATRIX_VERSION=0.3.22 sh scripts/install.sh
+MATRIX_VERSION=0.3.23 sh scripts/install.sh
+# The npm global install, checked through its own binary rather than `matrix` on PATH
+NPM_PREFIX="$(mktemp -d)"
+npm install -g @finnaai/matrix@0.3.23 --prefix "$NPM_PREFIX"
+test "$("$NPM_PREFIX/bin/matrix" --version)" = "0.3.23"
+rm -rf "$NPM_PREFIX"
 matrix --version
 matrix update --help
 matrix update --check --json
@@ -104,17 +150,17 @@ matrix forward 5173
 
 For standalone binaries, also verify the GitHub release contains:
 
-- `matrix-0.3.22-linux-x64` and its `.sha256`
-- `matrix-0.3.22-linux-arm64` and its `.sha256`
-- `matrix-0.3.22-darwin-x64` and its `.sha256`
-- `matrix-0.3.22-darwin-arm64` and its `.sha256`
+- `matrix-0.3.23-linux-x64` and its `.sha256`
+- `matrix-0.3.23-linux-arm64` and its `.sha256`
+- `matrix-0.3.23-darwin-x64` and its `.sha256`
+- `matrix-0.3.23-darwin-arm64` and its `.sha256`
 
-For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3.22.pkg` when the macOS job was enabled.
+For macOS app packaging, also verify the GitHub release contains `MatrixSync-0.3.23.pkg` when the macOS job was enabled.
 
 ## Rollback
 
-npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.22` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
+npm package versions are immutable. If a bad CLI release is published, ship a patch release such as `0.3.23` and update Homebrew through the release workflow. Only deprecate the bad npm version when the replacement is available:
 
 ```bash
-npm deprecate @finnaai/matrix@0.3.21 "Use @finnaai/matrix@0.3.22"
+npm deprecate @finnaai/matrix@0.3.22 "Use @finnaai/matrix@0.3.23"
 ```

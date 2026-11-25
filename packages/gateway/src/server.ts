@@ -58,7 +58,7 @@ import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
 import { createSharedBrowserRuntime } from "./shared-browser/runtime.js";
 import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
-import { createMatrixMcpCapabilityRegistry } from "./chat/matrix-mcp-launch.js";
+import { createGatewayMatrixMcpCapabilities } from "./startup/matrix-mcp-capabilities.js";
 import { createPreviewDrivePlatformClient } from "./chat/preview-drive-platform-client.js";
 import { createPreviewDriveWiring } from "./chat/preview-drive-wiring.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
@@ -322,14 +322,7 @@ export async function createGateway(config: GatewayConfig) {
   const allowedOriginController = createGatewayAllowedOriginController(process.env);
 
   const app = new Hono();
-  const matrixMcpCapabilities = createMatrixMcpCapabilityRegistry({
-    // The VPS runner projects its single owner into both variables. If they
-    // disagree, this runtime cannot safely bind a Chat owner to its broker.
-    configuredOwnerId: process.env.MATRIX_CLERK_USER_ID === process.env.MATRIX_USER_ID
-      ? process.env.MATRIX_CLERK_USER_ID
-      : undefined,
-    previewRuntime: process.env.MATRIX_PREVIEW_RUNTIME === "true",
-  });
+  const { registry: matrixMcpCapabilities, issueCoreMcpRunCapability } = createGatewayMatrixMcpCapabilities(process.env);
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-gateway",
   });
@@ -570,6 +563,7 @@ export async function createGateway(config: GatewayConfig) {
     worktreeManager: codingAgentWorktreeManager,
     agentLauncher: agentCredentialLauncher,
     resolveNativeCodexSubscription: nativeCodexRuntime.resolveSubscription,
+    issueMatrixCoreMcp: ({ ownerId, sessionId, readOnly }) => issueCoreMcpRunCapability(ownerId, sessionId, readOnly ? "discovery" : "call"),
     beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
     terminalRuntime: terminalWorkspaceRuntime,
     terminalLaunch: input => preparedTerminalLaunch ? preparedTerminalLaunch(input) : Promise.resolve(undefined),
@@ -618,6 +612,9 @@ export async function createGateway(config: GatewayConfig) {
         }),
       },
       opencode: {
+        // OpenCode runs for the configured owner only; the registry refuses any other owner.
+        issueMatrixCoreMcp: ({ runId }) => process.env.MATRIX_CLERK_USER_ID
+          ? issueCoreMcpRunCapability(process.env.MATRIX_CLERK_USER_ID, runId, "call") : null,
         resolveCredentialLaunch: createCodingHarnessCredentialResolver({
           harness: "opencode",
           homePath,
@@ -662,7 +659,7 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentProviderRegistry = createCodingAgentProviderRegistry({
     providers: codingAgentRegistryProviders,
     agentCredentials: agentCredentialService,
-    invalidateCredentialDetection: agentCredentialLauncher.invalidateCredentialDetection,
+    invalidateCredentialDetection: nativeCodexRuntime.withIdentityInvalidation(agentCredentialLauncher.invalidateCredentialDetection),
   });
   const codingAgentWorkspaceEnabled = Boolean(codingAgentThreadStore);
   const codingAgentTurnLifecycle = await createCodingAgentTurnLifecycle({
@@ -1331,7 +1328,7 @@ export async function createGateway(config: GatewayConfig) {
 
 
   const { processManager, customMcp, browserLab } = await registerDeferredRuntimeRoutes({
-    app, homePath, ownerDatabase: kyselyInstance, integrationRoutes, internalIntegrationBaseUrl,
+    app, homePath, ownerDatabase: kyselyInstance, integrationRoutes, internalIntegrationBaseUrl, sitePublicApps: { ensureProvisioned: ensureAppProvisioned, getRecord: async (slug) => appRegistry ? appRegistry.get(slug) : null, onChange: ({ app: changedApp, key }) => broadcast({ type: "data:change", app: changedApp, key }) },
     ...(sharedBrowserRuntime && terminalRuntimeOwnerId ? { sharedBrowser: { broker: sharedBrowserRuntime.broker, ownerId: terminalRuntimeOwnerId } } : {}),
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
@@ -1788,7 +1785,7 @@ export async function createGateway(config: GatewayConfig) {
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
   const localChatImportLifecycle = registerCollaborationChatRoutes({
-    browserApprovals: supervisedBrowserRuntime?.control,
+    homePath, fundedCredentialProvider, browserApprovals: supervisedBrowserRuntime?.control,
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
     credentialKey: toolOutputKey, runtimeOwnerIds: terminalRuntimeOwnerIds,

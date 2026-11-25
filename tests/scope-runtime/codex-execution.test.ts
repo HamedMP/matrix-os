@@ -13,7 +13,7 @@ describe("isolated Codex execution boundary", () => {
     });
 
     expect(launch).toEqual({
-      command: "/opt/matrix/runtime/node/bin/codex",
+      command: "/opt/matrix/bin/matrix-codex",
       args: expect.arrayContaining([
         "--ignore-user-config",
         "--strict-config",

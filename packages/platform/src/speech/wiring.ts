@@ -29,19 +29,14 @@ function deriveSecret(secret: string, purpose: "fingerprint" | "funding"): strin
 }
 
 function policy(config: Exclude<PlatformSpeechConfig, { enabled: false }>): PlatformSpeechPolicy {
-  const source = {
-    enabled: true as const,
-    ...config.limits,
-    supportedMediaTypes: ["audio/wav"] as const,
-    languageHints: false,
-  };
+  const shared = { enabled: true as const, supportedMediaTypes: ["audio/wav"] as const, languageHints: false };
   return {
     enabled: true,
     revision: config.policyRevision,
     modelId: config.model,
     microusdPerMinute: config.microusdPerMinute,
-    dictation: source,
-    ownerAudio: config.ownerAudioEnabled ? { ...source } : { enabled: false },
+    dictation: { ...shared, ...config.limits },
+    ownerAudio: config.ownerAudioEnabled ? { ...shared, ...config.ownerAudioLimits } : { enabled: false },
   };
 }
 

@@ -9,7 +9,7 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { SurfaceChromeContext, type SurfaceChromeSpec } from "../../desktop/src/renderer/src/features/desktop-shell/SurfaceChrome";
 
-const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })), deploy: vi.fn(), accessLinks: vi.fn(async () => ({ links: [], nextCursor: null })), slugAvailability: vi.fn(async () => ({ status: "available", suggestions: [] })) } }));
+const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })), deploy: vi.fn(), slugAvailability: vi.fn(async () => ({ status: "available", suggestions: [] })) } }));
 const SHARED_TARGET = {
   scopeId: "10000000-0000-4000-8000-000000000001",
   runtimeId: "runtime_owner",
@@ -141,10 +141,10 @@ describe("EmbedHost", () => {
     const dialog = await screen.findByRole("dialog", { name: "Share app" });
     expect(screen.getByTestId("created-app-surface").contains(dialog)).toBe(true);
     openOrganizationTab();
-    expect(screen.getByLabelText("Share in Matrix Team")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Share in Matrix Team" })).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Share with Matrix Team" }));
     await waitFor(() => expect(gateway.post).toHaveBeenCalledWith("/api/collaboration/apps/notes/share", expect.objectContaining({ organizationId: "org_matrix" })));
-    expect(await screen.findByText("Matrix Team link")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Copy Matrix Team link" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Shared" })).toBeTruthy();
     expect(publishing.client.getConfig).not.toHaveBeenCalled();
     expect(publishing.client.deploy).not.toHaveBeenCalled();

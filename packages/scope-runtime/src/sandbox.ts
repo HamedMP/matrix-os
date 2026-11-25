@@ -13,7 +13,7 @@ import { lstat, readdir, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { SCOPE_RUNTIME_PROFILE_LIMITS, type ScopeRuntimeSandboxManifest, type ScopeRuntimeWorkload } from "./protocol.js";
 
-export const SCOPE_RUNTIME_SANDBOX_POLICY_VERSION = 1;
+export const SCOPE_RUNTIME_SANDBOX_POLICY_VERSION = 2;
 export const SANDBOX_WORKSPACE_MOUNT = "/workspace/project";
 const WORKTREE_TOKEN = "<worktree>";
 
@@ -67,10 +67,20 @@ const SANDBOX_PROPERTY_TEMPLATE = Object.freeze([
   `UnsetEnvironment=${FORBIDDEN_SANDBOX_ENVIRONMENT.join(" ")}`,
 ] as const);
 
+// This is the workload's own isolated namespace, never host networking.
+// Only the SDK -> local HTTP bridge hop uses IP; the bridge reaches the
+// credential broker over its authenticated Unix socket. All external IPs
+// remain denied and there is no interface/route to the host or Internet.
+const BROKER_LOOPBACK_PROPERTIES = Object.freeze([
+  "IPAddressAllow=localhost",
+  "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
+] as const);
+
 export const SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST = createHash("sha256")
   .update(`${[
     `SandboxPolicyVersion=${SCOPE_RUNTIME_SANDBOX_POLICY_VERSION}`,
     ...SANDBOX_PROPERTY_TEMPLATE,
+    `BrokerOnly=${BROKER_LOOPBACK_PROPERTIES.join(",")}`,
     `ForbiddenEnvironment=${FORBIDDEN_SANDBOX_ENVIRONMENT.join(",")}`,
   ].join("\n")}\n`)
   .digest("hex");
@@ -124,6 +134,7 @@ export function buildSandboxSystemdProperties(
 ): string[] {
   const worktree = assertTrustedHostPath(sources.worktreeHostPath);
   const properties = SANDBOX_PROPERTY_TEMPLATE.map((property) => property.replace(WORKTREE_TOKEN, worktree));
+  if (manifest.network === "broker_only") properties.push(...BROKER_LOOPBACK_PROPERTIES);
   if (manifest.worktree.mode === "ro") {
     properties[0] = `BindReadOnlyPaths=${worktree}:${SANDBOX_WORKSPACE_MOUNT}`;
   }

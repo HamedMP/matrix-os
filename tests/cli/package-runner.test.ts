@@ -25,9 +25,25 @@ describe("published CLI package runners", () => {
       );
     }
     const cliRelease = await readFile(resolve(repoRoot, ".github/workflows/cli-release.yml"), "utf8");
-    expect(cliRelease).toContain("pnpm pack --config.node-linker=hoisted");
-    expect(cliRelease).toContain('resolve(process.env.RUNNER_TEMP, result.filename)');
+    expect(cliRelease).toContain('node ./scripts/pack-cli.mjs --pack-destination "$RUNNER_TEMP"');
+    expect(cliRelease).not.toMatch(/^\s*[^#\s].*pnpm pack /m);
     expect(cliRelease).toContain('path: ${{ steps.pack.outputs.tarball }}');
+    // npm versions are immutable, so a clean global install on macOS and Linux gates publication.
+    expect(cliRelease).toContain("uses: ./.github/workflows/cli-install-smoke.yml");
+    expect(cliRelease).toContain("artifact: cli-npm-package");
+    expect(cliRelease).toContain("needs: [package, install-smoke]");
+    const smoke = await readFile(resolve(repoRoot, ".github/workflows/cli-install-smoke.yml"), "utf8");
+    expect(smoke).toContain("os: [macos-latest, ubuntu-latest]");
+    expect(smoke).toContain('npm install --global --prefix "$PREFIX" "$TARBALL"');
+    // Homebrew repacks the unpacked sources before installing; exercise the real formula.
+    expect(smoke).toContain('cp homebrew-tap/Formula/matrix.rb "$FORMULA"');
+    expect(smoke).toContain("brew install matrix-os/smoke/matrix");
+    expect(smoke).toContain("brew test matrix-os/smoke/matrix");
+    // npm prunes undeclared files on the next project install; the CLI must still run afterwards.
+    expect(smoke).toContain("npm install is-number");
+    expect(smoke).toContain('ACTUAL="$(./node_modules/.bin/matrix --version)"');
+    // Packaging changes are checked on the pull request, not first at release time.
+    expect(smoke).toMatch(/pull_request:\n\s+paths:[\s\S]*"homebrew-tap\/\*\*"[\s\S]*"packages\/sync-client\/scripts\/\*\*"/);
     expect(cliRelease).toContain('npm publish "${TARBALLS[0]}" --provenance --access public');
     expect(cliRelease).not.toContain("pnpm publish --config.node-linker=hoisted");
 
@@ -37,12 +53,28 @@ describe("published CLI package runners", () => {
     }
 
     const manualRelease = await readFile(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
-    expect(manualRelease).toContain("pnpm publish --config.node-linker=hoisted");
+    expect(manualRelease).toContain('node ./scripts/pack-cli.mjs --pack-destination "$RUNNER_TEMP"');
+    expect(manualRelease).toContain('pnpm publish "$TARBALL" --provenance --access public --no-git-checks');
+    expect(manualRelease).not.toContain("pnpm publish --config.node-linker=hoisted");
+    const packer = await readFile(resolve(repoRoot, "packages/sync-client/scripts/pack-cli.mjs"), "utf8");
+    expect(packer).toContain('["pack", "--config.node-linker=hoisted", "--pack-destination", destination, "--json"]');
     const validator = await readFile(resolve(repoRoot, "packages/sync-client/scripts/validate-package-runners.mjs"), "utf8");
-    expect(validator).toContain('run("pnpm", [');
+    expect(validator).toContain("await packCli({");
+    expect(validator).toContain('run("npm", ["install", "--global", "--prefix", globalPrefix, tarball]');
     expect(validator).toContain("node_modules/@matrix-os/contracts/package.json");
     const collaboration = await readFile(resolve(repoRoot, "packages/sync-client/src/cli/commands/collaboration.ts"), "utf8");
     expect(collaboration).toContain('from "@matrix-os/contracts/collaboration"');
+  });
+
+  it("declares fsevents optional so a macOS global install survives its failing build", async () => {
+    const pkg = JSON.parse(await readFile(resolve(repoRoot, "packages/sync-client/package.json"), "utf8"));
+    // On `npm install -g`, npm gives a package that bundles dependencies a hard
+    // dependency on everything installed beside it. That makes the build
+    // failure of tsx's optional fsevents fatal unless the CLI itself declares
+    // fsevents optional. Do not remove this entry or the bundle declaration.
+    expect(pkg.optionalDependencies).toEqual({ fsevents: "~2.3.3" });
+    expect(pkg.bundledDependencies).toEqual(["@matrix-os/contracts"]);
+    expect(pkg.dependencies).not.toHaveProperty("fsevents");
   });
 
   it("keeps package metadata compatible with npx and pnpm dlx", async () => {
@@ -149,4 +181,5 @@ describe("published CLI package runners", () => {
     expect(formula).toContain('depends_on "node@20"');
     expect(formula).not.toContain('depends_on "node@24"');
   });
+
 });

@@ -25,6 +25,7 @@ const mustExist = [
   'src/cli/routine-input.ts',
   'src/cli/routine-output.ts',
   'scripts/build-binaries.mjs',
+  'scripts/pack-cli.mjs',
 ];
 
 const missing = mustExist.filter((p) => !existsSync(resolve(pkgRoot, p)));

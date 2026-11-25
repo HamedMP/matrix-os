@@ -37,13 +37,16 @@ function fixture(child = new IdleChild(), settings = {}) {
 }
 
 describe("private native Claude idle recovery", () => {
-  it("marks a protected phase checkpoint and only resumes it on the same live protected child", async () => {
+  it.each([false, true])("marks a protected phase checkpoint and resumes only its exact child (previous prompt: %s)", async legacy => {
     const f = fixture();
     const spawnFn = vi.fn(() => new NativeChild());
     const adapter = createClaudeChatProviderAdapter({
       homePath: "/owner", nativeSessions: f.pool, spawnFn,
       resolveNativeProtocol: async () => ({ command: "/qualified/claude", qualified: true }),
-      resolveSessionSource: async () => ({ fingerprint: "source_a", schedulingAllowed: true }),
+      resolveSessionSource: async () => ({
+        fingerprint: legacy ? "source_current" : "source_a", schedulingAllowed: true,
+        ...(legacy ? { legacy: { fingerprint: "source_a", args: [] } } : {}),
+      }),
       resolveCredentialEnv: async () => ({ HOME: "/owner", ANTHROPIC_API_KEY: "key" }),
     });
     const turn = input("run_followup");

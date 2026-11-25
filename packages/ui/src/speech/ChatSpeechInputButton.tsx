@@ -3,6 +3,7 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 
 import { SpeechInputWaveform } from "./SpeechInputWaveform.js";
 import {
+  formatSpeechClock,
   platformSpeechControlState,
   platformSpeechPreviewQuotaLabel,
   type UsePlatformSpeechDraftResult,
@@ -10,7 +11,8 @@ import {
 
 type SpeechDraft = Pick<UsePlatformSpeechDraftResult,
   "phase" | "error" | "isSupported" | "previewQuota" | "capabilitiesStale" | "elapsedMs" | "inputLevel"
-  | "inputLevelSequence" | "start" | "stop" | "cancel" | "retryCapabilities">;
+  | "inputLevelSequence" | "start" | "stop" | "cancel" | "retryCapabilities">
+  & Partial<Pick<UsePlatformSpeechDraftResult, "maxDurationMs">>;
 
 // What the mic button says and shows in each speech phase; other phases start recording.
 const ACTIVE_PHASES: Partial<Record<SpeechDraft["phase"], { label: string; icon: IconSvgElement; spin?: boolean }>> = {
@@ -70,7 +72,8 @@ export function ChatSpeechInputButton({ speech, disabled }: { speech: SpeechDraf
             color="var(--danger-text, var(--destructive-text, var(--danger)))"
           />
           <span aria-live="polite" className="px-1 text-xs tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-            {Math.floor(speech.elapsedMs / 60_000)}:{String(Math.floor(speech.elapsedMs / 1_000) % 60).padStart(2, "0")}
+            {formatSpeechClock(speech.elapsedMs)}
+            {speech.maxDurationMs ? ` / ${formatSpeechClock(speech.maxDurationMs)}` : null}
           </span>
         </>
       ) : null}

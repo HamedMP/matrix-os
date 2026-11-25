@@ -14,6 +14,8 @@ export type ClaudeNativeSessionTurnOptions = Parameters<typeof runCanonicalCli>[
   input: CanonicalProviderRunInput;
   /** Current account/source/root/model/permission fingerprint; never a scoped Run token. */
   sourceFingerprint: string;
+  /** Verified compatibility for a protected child restored from the previous Chat prompt. */
+  legacySourceFingerprint?: string;
   schedulingAllowed?: boolean;
   requireProtectedSession?: boolean;
   onProtectedSession?: (sessionId: string) => void;
@@ -497,14 +499,17 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
       const key = sessionKey(turn.input); let session = sessions.get(key);
       if (restoring.has(key) || session?.qualifyingRecovery) throw new Error("Native session busy");
       const resume = nativeRecord(turn.input.resumeState)?.sessionId;
+      const protectedResume = typeof resume === "string" && session?.hasProtectedSession(resume) === true;
+      const sourceMatches = session && (session.fingerprint === turn.sourceFingerprint
+        || (protectedResume && turn.schedulingAllowed === true && session.fingerprint === turn.legacySourceFingerprint));
       if (turn.requireProtectedSession) {
-        if (!session || typeof resume !== "string" || !session.hasProtectedSession(resume)) throw new Error("Native protected session unavailable");
-        if (session.fingerprint !== turn.sourceFingerprint) {
+        if (!session || !protectedResume) throw new Error("Native protected session unavailable");
+        if (!sourceMatches) {
           await session.stop();
           throw new Error("Native protected session unavailable");
         }
       }
-      if (session && (session.fingerprint !== turn.sourceFingerprint || !resume || resume !== session.sessionId)) {
+      if (session && (!sourceMatches || !resume || resume !== session.sessionId)) {
         if (turn.input.nativeScheduled) {
           if (turn.input.nativeScheduled.sessionId === session.sessionId && turn.input.nativeScheduled.sourceRunId === session.lastInput.runId) await session.stop();
           throw new Error("Native scheduled source changed");

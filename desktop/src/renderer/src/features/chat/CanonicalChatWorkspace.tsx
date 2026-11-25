@@ -2,7 +2,7 @@ import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-sc
 import { SourceChatRoutines } from "./SourceChatRoutines";
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
 import { useChatSubmissionError } from "./use-chat-submission-error";
-import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
+import { BrowserPermissionReviewProvider, BrowserPermissionReminder, withPendingCanonicalTurn } from "@matrix-os/ui";
 import { canonicalChatExecutionControls } from "@matrix-os/contracts";
 import { chatAttachmentComposerPolicy } from "@matrix-os/ui";
 import { openChatProviderSettings } from "./open-chat-provider-settings";
@@ -54,6 +54,7 @@ import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
 import { normalizeDesktopEditorPath } from "../editor/desktop-editor-store";
 import { useChatFileNavigation } from "../work/ChatFileNavigation";
+import { useSideChatDraft } from "../work/WorkSurfaceRuntime";
 import { resolveChatInspectorTargetForRun, resolveWorkFilesScope } from "../work/work-files-scope";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
@@ -266,6 +267,14 @@ function CanonicalChatWorkspaceContent({
   const [optimisticQueuedTurns, setOptimisticQueuedTurns] = useState<CanonicalChatQueuedTurn[] | null>(null);
   const [editingQueuedTurn, setEditingQueuedTurn] = useState<CanonicalChatQueuedTurn | null>(null);
   const [localComposerFocusRequestId, setLocalComposerFocusRequestId] = useState(0);
+  const sideDraft = useSideChatDraft();
+  const sideDraftRequest = sideDraft?.pending;
+  useEffect(() => {
+    if (!active || !sideDraftRequest || sideDraftRequest.chatId !== routedComposerChatId) return;
+    setDraft(current => current.trim() ? `${current}\n\n${sideDraftRequest.text}` : sideDraftRequest.text);
+    setLocalComposerFocusRequestId(value => value + 1);
+    sideDraft?.consume(sideDraftRequest.id);
+  }, [active, routedComposerChatId, setDraft, sideDraftRequest, sideDraft]);
   const previousRoute = useRef({ initialChatId, initialView, projectId });
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
   const submissionSequence = useRef(0);
@@ -416,7 +425,7 @@ function CanonicalChatWorkspaceContent({
     draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0,
   );
   const transcript = controller.detail ? canonicalChatPresentation({
-    ...controller.detail,
+    ...withPendingCanonicalTurn(controller.detail, controller.pendingTurn),
     streamedMessageIds: controller.streamedMessageIds,
   }) : [];
   const pendingTool = pendingSupervisedTool(transcript);
@@ -1018,7 +1027,9 @@ function CanonicalChatWorkspaceContent({
               runtimeId={`desktop:${runtimeSlot}`} scopeId={sharedScopeId}
               headerContainer={sharedHeaderContainer} onMetadata={onSharedChatMetadata} />
               : <CanonicalSharedChatPanel api={collaborationApi} actorId={actorId}
-                runtimeId={`desktop:${runtimeSlot}`} chatId={controller.detail!.record.chat.id} />
+                runtimeId={`desktop:${runtimeSlot}`} chatId={controller.detail!.record.chat.id}
+                projectId={controller.detail!.record.projectId ?? undefined}
+                headerContainer={sharedHeaderContainer} onMetadata={onSharedChatMetadata} />
           ) : (
             <div role="alert" className="m-auto max-w-lg rounded-2xl border p-8 text-center">
               Shared Chat is unavailable. Reconnect your Matrix account and try again.
@@ -1070,7 +1081,7 @@ function CanonicalChatWorkspaceContent({
                 if (!fileNavigation || !controller.detail) return false;
                 const scope = resolveWorkFilesScope(controller.detail, projects);
                 const target = resolveChatInspectorTargetForRun(
-                  rawPath, scope, executionRoot, controller.detail.record.projectId,
+                  rawPath, scope, executionRoot, projects,
                 );
                 if (!target) return false;
                 fileNavigation.open({ chatId: scope.chatId, target });

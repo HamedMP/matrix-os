@@ -33,7 +33,7 @@ Open `/mcp`, select the Matrix connection, and authenticate through your browser
 Start a new session after installation. Do not also add a manual Matrix MCP
 connection unless you intentionally want duplicate tools.
 
-Prefer tools without skills? Add `https://api.matrix-os.com/mcp` directly as a
+Prefer tools without skills? Add `https://app.matrix-os.com/mcp` directly as a
 Streamable HTTP server. See [Matrix MCP](https://matrix-os.com/docs/mcp).
 
 ## Permissions

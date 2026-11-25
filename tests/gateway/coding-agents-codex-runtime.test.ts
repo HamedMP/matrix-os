@@ -73,7 +73,7 @@ describe("Codex structured event runtime", () => {
         writableRoots: ["/home/matrix/home/projects/repo"],
       },
       providerEventPath: "/home/matrix/home/system/coding-agents/provider-events/sess_test.jsonl",
-    });
+    }, CODEX_VERIFIED_VERSION);
 
     expect(launch.command).toBe(process.execPath);
     expect(launch.args[0]).toMatch(/coding-agents\/codex-app-server-runner\.mjs$/);

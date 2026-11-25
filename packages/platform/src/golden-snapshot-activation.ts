@@ -21,6 +21,12 @@ const LegacyServerProfiles = {
   cax41: { architecture: 'arm', diskGb: 320 },
 } satisfies Record<string, GoldenSnapshotServerProfile>;
 
+// Preview machines are not sold, so their type is not in the billing catalog.
+// The disk size keeps snapshots taken on larger disks off these machines.
+const PreviewServerProfiles = {
+  cx23: { architecture: 'x86', diskGb: 40 },
+} satisfies Record<string, GoldenSnapshotServerProfile>;
+
 const ServerProfiles = MATRIX_HOSTED_MACHINE_PROFILES.reduce<Record<string, GoldenSnapshotServerProfile>>(
   (profiles, profile) => {
     const candidate = { architecture: profile.architecture, diskGb: profile.diskGb };
@@ -32,7 +38,7 @@ const ServerProfiles = MATRIX_HOSTED_MACHINE_PROFILES.reduce<Record<string, Gold
     profiles[profile.serverType] = candidate;
     return profiles;
   },
-  { ...LegacyServerProfiles },
+  { ...LegacyServerProfiles, ...PreviewServerProfiles },
 );
 
 export function getGoldenSnapshotServerProfile(

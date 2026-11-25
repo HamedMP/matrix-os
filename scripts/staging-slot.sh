@@ -114,12 +114,17 @@ cmd_up() {
 
   # Any failure between winning the claim and a healthy start must release
   # the slot, or it stays locked until --reap. Cleared after compose succeeds.
-  trap 'rm -f "$(slot_file "$slot")"' EXIT
+  # Expand the path now: the trap can run after cmd_up's locals are gone,
+  # where reading `slot` fails under `set -u` and leaves the slot claimed.
+  local claimed_file
+  claimed_file="$(slot_file "$slot")"
+  # shellcheck disable=SC2064 # intentional early expansion
+  trap "rm -f -- $(printf '%q' "$claimed_file")" EXIT
 
   branch="$(git -C "$worktree" rev-parse --abbrev-ref HEAD)"
   jq -n --arg worktree "$worktree" --arg branch "$branch" \
     --arg claimedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{worktree: $worktree, branch: $branch, claimedAt: $claimedAt}' > "$(slot_file "$slot")"
+    '{worktree: $worktree, branch: $branch, claimedAt: $claimedAt}' > "$claimed_file"
 
   echo "staging-slot: claimed slot $slot for $branch"
   ensure_worktree_writable "$worktree"

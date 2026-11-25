@@ -374,6 +374,7 @@
 /* Shared foreground connection workflow controls. */
 .matrix-ap-workflow h3, .matrix-ap-connected h3 { font-size: 12px; font-weight: 500; margin: 14px 0 8px; }
 .matrix-ap-workflow-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.matrix-ap-action-group { display: contents; }
 .matrix-ap-key-form { display: grid; gap: 10px; margin-top: 16px; max-width: 520px; }
 .matrix-ap-key-form input[aria-invalid="true"] { border-color: var(--matrix-ap-danger); }
 .matrix-ap-loading-status { display: flex; align-items: center; gap: 8px; }

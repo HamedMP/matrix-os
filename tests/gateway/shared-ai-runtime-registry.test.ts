@@ -1,7 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { SharedAiRuntimeRegistry } from "../../packages/gateway/src/collaboration/shared-ai-runtime-registry.js";
+import { createSharedScopedClient } from "../../packages/gateway/src/collaboration/shared-scoped-client.js";
 const runtime = (suffix: string) => `runtime_${suffix.padStart(32, "0")}`;
 describe("shared AI runtime registry", () => {
+  it("pins the trusted resolved model before the isolated worker can call the broker", async () => {
+    const registry = new SharedAiRuntimeRegistry();
+    const client = createSharedScopedClient({ registry,
+      scopeId: "10000000-0000-4000-8000-000000000001", chatId: "chat_1", ownerId: "owner_1", actorId: "editor_1",
+      providerIdentity: { driverKind: "claude_code", instanceId: "claude_shared", accessSourceId: "owner_claude_profile" },
+      resolveExecutionModel: async model => model === "opus" ? "claude-opus-5" : null,
+      client: { capability: () => { throw new Error("unused"); },
+        createRuntime: async () => ({ runtimeHandle: runtime("1"), executionGeneration: "7", state: "running" as const }),
+        runChat: async request => {
+          expect(request.model).toBe("claude-opus-5");
+          expect(registry.authorize({ ...request, action: "inference.messages", modelId: request.model }))
+            .toMatchObject({ allowed: true, allowedModelIds: ["claude-opus-5"] });
+          return { runtimeHandle: request.runtimeHandle, executionGeneration: request.executionGeneration, text: "Reply" };
+        }, stopRuntime: async () => ({}) },
+    });
+    const state = await client.createRuntime({ scopeHandle: "scope_10000000000040008000000000000001", workload: "chat_ai",
+      adapterId: "claude-code", harnessVersion: "test" });
+    expect(await client.runChat({ ...state, model: "opus", prompt: "Hi" })).toMatchObject({ text: "Reply" });
+    await expect(client.runChat({ ...state, model: "invented", prompt: "Hi" })).rejects.toThrow("execution model");
+  });
   it("authorizes only the exact active runtime generation, action, and selected model", () => {
     const registry = new SharedAiRuntimeRegistry({ now: () => new Date("2026-09-10T00:00:00.000Z") });
     registry.bind({

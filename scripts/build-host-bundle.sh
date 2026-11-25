@@ -26,6 +26,10 @@ if [[ ! "$ZELLIJ_BINARY_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
 fi
 ZELLIJ_ARCHIVE="zellij-x86_64-unknown-linux-musl.tar.gz"
 ZELLIJ_URL="https://github.com/zellij-org/zellij/releases/download/v${ZELLIJ_VERSION}/${ZELLIJ_ARCHIVE}"
+CODEX_VERSION="0.171.0"
+CODEX_ARCHIVE="codex-x86_64-unknown-linux-musl.tar.gz"
+CODEX_ARCHIVE_SHA256="01baa2e47809f8597be5b2f8abd4e4dfe3fb5bcb6e504c2fbaaad97056c15e8d"
+CODEX_URL="https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/${CODEX_ARCHIVE}"
 GH_VERSION="${HOST_BUNDLE_GH_VERSION:-2.86.0}"
 GH_DIST="gh_${GH_VERSION}_linux_amd64"
 GH_ARCHIVE="${GH_DIST}.tar.gz"
@@ -128,6 +132,11 @@ chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/no
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
+# A flat host-bin artifact is installed and restored by the already-running updater.
+curl --fail --location --max-time 240 "$CODEX_URL" -o "$DIST_DIR/$CODEX_ARCHIVE"
+bash "$ROOT_DIR/scripts/stage-host-codex.sh" "$DIST_DIR/$CODEX_ARCHIVE" "$CODEX_ARCHIVE_SHA256" "$STAGE_DIR/bin"
+test "$(timeout --kill-after=5 15 "$STAGE_DIR/bin/matrix-codex" --version)" = "codex-cli $CODEX_VERSION"
+rm -f -- "$DIST_DIR/$CODEX_ARCHIVE"
 chmod 0644 "$STAGE_DIR/bin/matrix-claude-native-recovery.py"
 # Native Browser services live outside app/. Stage separate guarded Preview and
 # customer lifecycle payloads; customer setup is scheduled after core readiness.

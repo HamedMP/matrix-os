@@ -75,7 +75,8 @@ for await(const line of createInterface({input:process.stdin})){
     event, process.version.slice(1), process.execPath, fake, config], { cwd: home,
     env: { ...process.env, HOME: home, CODEX_HOME: join(home, ".codex"), MATRIX_BACKGROUND_AGENT: "1" }, stdio: ["ignore", "pipe", "pipe"] });
   let diagnostics = ""; child.stdout?.resume(); child.stderr?.on("data", bytes => { diagnostics += bytes; });
-  return { home, trace, event, attemptId, child, diagnostics: () => diagnostics };
+  const revoke = () => writeFile(settings, JSON.stringify({ harnesses: [{ ...row, enabled: false }] }));
+  return { home, trace, event, attemptId, child, revoke, diagnostics: () => diagnostics };
 }
 
 it.each([false, true])("rechecks native browser renewal and settles an admitted turn (revoked=%s)", async revoked => {
@@ -85,13 +86,15 @@ it.each([false, true])("rechecks native browser renewal and settles an admitted 
   try {
     await control.prepareBrowser!({ sessionId: "sess_nba", browser: lease(f.attemptId), signal: AbortSignal.timeout(5000) });
     await waitFor(async () => (await records(f.event)).some(row => row.type === "turn.completed"));
+    // Owner consent is withdrawn between turns; the in-place Browser renewal must notice.
+    if (revoked) await f.revoke();
     await control.submitTurn({ sessionId: "sess_nba", turnId: "turn_native_browser_second",
       prompt: "Second admitted turn", modelOptions: [], browser: lease(randomUUID()) });
     if (revoked) {
       await waitFor(async () => f.child.exitCode !== null || f.child.signalCode !== null);
       const trace = await records(f.trace), events = await records(f.event);
       expect(trace.filter(row => row.event === "turn/start")).toHaveLength(1);
-      expect(trace.some(row => row.generation === 2 && row.event === "thread/resume")).toBe(false);
+      expect(trace.some(row => row.event === "thread/resume")).toBe(false);
       expect(events.filter(row => ["turn.completed", "turn.failed", "turn.aborted"].includes(row.type))).toEqual([
         expect.objectContaining({ type: "turn.completed" }), expect.objectContaining({ type: "turn.failed" }),
       ]);
@@ -99,20 +102,27 @@ it.each([false, true])("rechecks native browser renewal and settles an admitted 
     } else {
       await waitFor(async () => (await records(f.event)).filter(row => row.type === "turn.completed").length === 2);
       const trace = await records(f.trace);
-      for (const generation of [1, 2]) {
-        const rows = trace.filter(row => row.generation === generation);
-        const thread = rows.find(row => ["thread/start", "thread/resume"].includes(row.event));
-        for (const method of ["config/read", "account/read"]) {
-          const index = rows.findIndex(row => row.event === method);
-          expect(index).toBeGreaterThanOrEqual(0);
-          expect(index).toBeLessThan(rows.indexOf(thread));
-        }
-        expect(thread.params.modelProvider).toBe("openai");
-        expect(rows.some(row => row.event === "turn/start")).toBe(true);
+      // Same app-server and thread: the Browser lease is renewed in place.
+      expect(trace.filter(row => row.event === "spawn")).toHaveLength(1);
+      expect(trace.some(row => row.event === "thread/resume" || row.event === "closed")).toBe(false);
+      const thread = trace.findIndex(row => row.event === "thread/start");
+      expect(trace[thread].params.modelProvider).toBe("openai");
+      const turns = trace.flatMap((row, index) => row.event === "turn/start" ? [index] : []);
+      expect(turns).toHaveLength(2);
+      // The native account proof and Browser MCP readiness rerun before the follow-up turn.
+      for (const method of ["config/read", "account/read", "mcpServerStatus/list"]) {
+        const between = trace.slice(turns[0]! + 1, turns[1]).filter(row => row.event === method);
+        expect(between.length, method).toBeGreaterThan(0);
       }
-      expect(trace.find(row => row.event === "thread/resume").params.threadId).toBe("native-subscription-browser-thread");
-      expect(trace.findIndex(row => row.event === "closed" && row.generation === 1))
-        .toBeLessThan(trace.findIndex(row => row.event === "spawn" && row.generation === 2));
+      // The initial proof runs concurrently with thread/start but finishes
+      // before the Browser MCP check and the first turn/start.
+      const browserCheck = trace.findIndex(row => row.event === "mcpServerStatus/list");
+      for (const method of ["config/read", "account/read"]) {
+        const proof = trace.findIndex(row => row.event === method);
+        expect(proof, method).toBeGreaterThan(-1);
+        expect(proof, method).toBeLessThan(browserCheck);
+        expect(proof, method).toBeLessThan(turns[0]!);
+      }
     }
   } catch (error) { throw new Error(`${String(error)} ${f.diagnostics()} ${JSON.stringify(await records(f.trace))}`); }
   finally { await stop(f.child); await rm(f.home, { recursive: true, force: true }); }

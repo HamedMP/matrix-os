@@ -23,6 +23,8 @@ const changedMethodDigests: Record<string, string> = {
 
 const historicalAppServerContract = { ...appServerContract, requiredServerProtocolSchemaDigests: {
   ...appServerContract.requiredServerProtocolSchemaDigests, ...changedMethodDigests,
+  // Unchanged from 0.167.x until 0.171.0 added an optional registration scope.
+  "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
 } };
 
 type ProtocolVariant = { properties: { method: { enum: string[] } } };

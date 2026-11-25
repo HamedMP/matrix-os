@@ -23,9 +23,11 @@ it('composes signed OAuth, SDK HTTP, tenant lookup and attenuated gateway authen
         provisionedAt: '2026-09-05T00:00:00.000Z' });
     }
     const { privateKey, publicKey } = await generateKeyPair('RS256');
-    const token = await new SignJWT({ client_id: 'test-client', scope: 'matrix:computer' })
-      .setProtectedHeader({ alg: 'RS256', kid: 'test' }).setIssuer(issuer)
-      .setAudience(resourceUrl).setSubject('user_alice').setIssuedAt().setExpirationTime('5m').sign(privateKey);
+    // Clerk OAuth access-token shape: RFC 9068 typ, authorizing session id, audience array with the resource.
+    const token = await new SignJWT({ client_id: 'test-client', scope: 'openid matrix:computer', sid: 'sess_alice',
+      azp: 'https://claude.ai', jti: 'oat_alice' })
+      .setProtectedHeader({ alg: 'RS256', kid: 'test', typ: 'at+jwt' }).setIssuer(issuer)
+      .setAudience([resourceUrl, 'https://other.example']).setSubject('user_alice').setIssuedAt().setExpirationTime('5m').sign(privateKey);
     const jwk = { ...await exportJWK(publicKey), kid: 'test' };
     const gatewayFetch = vi.fn<typeof fetch>(async (input, init) => {
       expect(String(input)).toContain('https://app.matrix-os.com/vm/alice-primary/');

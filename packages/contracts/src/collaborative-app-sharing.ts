@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 
 import { canonicalSafeErrorText } from "#canonical-chat-primitives";
 import {
+  COLLABORATIVE_APP_ICON_MAX_BYTES,
   CollaborationActorIdSchema,
   CollaborationIdSchema,
   CollaborationOrganizationIdSchema,
@@ -109,6 +110,31 @@ export const CollaborativeAppShareSchema = z.object({
   updatedAt: z.iso.datetime(),
 }).strict();
 
+
+export const CollaborativeAppIconContentTypeSchema = z.enum(["image/png", "image/webp", "image/jpeg"]);
+export type CollaborativeAppIconContentType = z.infer<typeof CollaborativeAppIconContentTypeSchema>;
+
+/**
+ * Raster-only magic-byte sniffing for shared app icons. SVG, HTML, and anything else return null so
+ * active owner content is never served from the platform origin.
+ */
+export function sniffCollaborativeAppIconContentType(bytes: Uint8Array): CollaborativeAppIconContentType | null {
+  if (bytes.byteLength < 12 || bytes.byteLength > COLLABORATIVE_APP_ICON_MAX_BYTES) return null;
+  const startsWith = (offset: number, signature: readonly number[]) =>
+    signature.every((value, index) => bytes[offset + index] === value);
+  if (startsWith(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
+  if (startsWith(0, [0xff, 0xd8, 0xff])) return "image/jpeg";
+  if (startsWith(0, [0x52, 0x49, 0x46, 0x46]) && startsWith(8, [0x57, 0x45, 0x42, 0x50])) return "image/webp";
+  return null;
+}
+
+const COLLABORATIVE_APP_ICON_PATH = /^\/api\/collaboration\/shared-apps\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/icon\?v=[a-f0-9]{64}$/;
+
+/** The only icon URL a shared app directory item may carry: platform-served, scope-confined, versioned. */
+export function collaborativeAppIconPath(scopeId: string, sha256: string): string {
+  return `/api/collaboration/shared-apps/${scopeId}/icon?v=${sha256}`;
+}
+
 export const CollaborativeAppDirectoryItemSchema = z.object({
   scopeId: CollaborationIdSchema,
   runtimeId: z.string().min(1).max(128).regex(/^[A-Za-z0-9:_-]+$/),
@@ -121,7 +147,15 @@ export const CollaborativeAppDirectoryItemSchema = z.object({
   buildId: Sha256Schema,
   shareRevision: CollaborationRevisionSchema,
   owner: CollaborationParticipantSchema,
-}).strict();
+  /** Owner manifest display name captured at share time; absent from older platforms. */
+  name: boundedDisplayText(120, 512).optional(),
+  /** Platform icon route for this scope only; never an owner or member `/icons/<slug>` URL. */
+  iconUrl: z.string().max(256).regex(COLLABORATIVE_APP_ICON_PATH).optional(),
+}).strict().superRefine((item, context) => {
+  if (item.iconUrl && COLLABORATIVE_APP_ICON_PATH.exec(item.iconUrl)?.[1] !== item.scopeId) {
+    context.addIssue({ code: "custom", path: ["iconUrl"], message: "Icon URL must name the item's scope" });
+  }
+});
 
 export const CollaborativeAppDirectoryResponseSchema = z.object({
   items: z.array(CollaborativeAppDirectoryItemSchema).max(100),

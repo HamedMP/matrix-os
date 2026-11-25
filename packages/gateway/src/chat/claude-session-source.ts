@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 import { createClaudeNativeAccountMetadataReader } from "../ai-providers/claude-native-account-metadata.js";
 import type { CodexNativeAccountMetadata } from "../ai-providers/codex-native-account-metadata.js";
 import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata } from "../ai-providers/native-account-metadata-binding.js";
+import { legacyClaudeChatArgs } from "./claude-legacy-launch-guidance.js";
 import type { CanonicalProviderRunInput } from "./provider-adapter.js";
 
 export interface ClaudeSessionSource {
   fingerprint: string;
   schedulingAllowed: boolean;
+  legacy?: { fingerprint: string; args: string[] };
 }
 
 function stableArgs(args: string[]): string[] {
@@ -54,14 +56,18 @@ export async function resolveClaudeSessionSource(options: {
     "HOME", "PATH", "LANG", "LC_ALL", "TZ", "CLAUDE_CONFIG_DIR", "ANTHROPIC_BASE_URL",
     "CLAUDE_CODE_DISABLE_CRON", "NODE_OPTIONS", "MATRIX_NODE_PREFIX",
   ].flatMap(name => env[name] === undefined ? [] : [[name, env[name]]]));
+  const fingerprint = (args: string[]) => createHash("sha256").update(JSON.stringify({
+    owner: input.owner, chatId: input.chatId, instanceId: input.selection.instanceId,
+    selection: input.selection, permissionMode: input.permissionMode, interactionMode: input.interactionMode,
+    executionRoot: input.executionRoot ?? null, homePath: options.homePath, cwd: options.cwd,
+    command: options.command, args: stableArgs(args), environment: stableEnvironment,
+    source: env.ANTHROPIC_API_KEY ? "owner_key" : "owner_native", principal,
+  })).digest("hex");
+  const schedulingAllowed = eligible && principal !== null;
+  const legacyArgs = schedulingAllowed && !input.context?.drives?.length ? legacyClaudeChatArgs(options.args) : undefined;
   return {
-    schedulingAllowed: eligible && principal !== null,
-    fingerprint: createHash("sha256").update(JSON.stringify({
-      owner: input.owner, chatId: input.chatId, instanceId: input.selection.instanceId,
-      selection: input.selection, permissionMode: input.permissionMode, interactionMode: input.interactionMode,
-      executionRoot: input.executionRoot ?? null, homePath: options.homePath, cwd: options.cwd,
-      command: options.command, args: stableArgs(options.args), environment: stableEnvironment,
-      source: env.ANTHROPIC_API_KEY ? "owner_key" : "owner_native", principal,
-    })).digest("hex"),
+    schedulingAllowed,
+    fingerprint: fingerprint(options.args),
+    ...(legacyArgs ? { legacy: { fingerprint: fingerprint(legacyArgs), args: legacyArgs } } : {}),
   };
 }

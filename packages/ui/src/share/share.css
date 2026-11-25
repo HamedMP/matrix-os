@@ -19,6 +19,7 @@
   --share-success-bg: color-mix(in srgb, #22c55e 10%, var(--share-bg));
   --share-danger-fg: var(--destructive, var(--danger, #b91c1c));
   --share-danger-border: color-mix(in srgb, var(--share-danger-fg) 45%, var(--share-bg));
+  --share-danger-bg: color-mix(in srgb, var(--share-danger-fg) 10%, var(--share-bg));
   color: var(--share-fg);
   background: var(--share-bg);
   font-family: var(--font-sans, var(--font-ui, Inter, system-ui, sans-serif));
