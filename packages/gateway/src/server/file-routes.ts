@@ -13,6 +13,7 @@ import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
   isDeniedFileApiPath,
+  isDeniedFileApiMutationPath,
   resolveExistingFileApiPath,
   resolveWithinHome,
   resolveWritableFileApiPath,
@@ -373,7 +374,7 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   app.put("/files/*", fileBodyLimit, async (c) => {
     const filePath = c.req.path.replace("/files/", "");
     const fullPath = resolveWritableFileApiPath(homePath, filePath);
-    if (!fullPath) return c.text("Invalid path", 403);
+    if (!fullPath || isDeniedFileApiMutationPath(homePath, filePath)) return c.text("Invalid path", 403);
     return withProjectFileAdmission(c, [filePath], async () => {
       const content = await c.req.text();
       if (fullPath === resolveWithinHome(homePath, "system/soul.md")) {

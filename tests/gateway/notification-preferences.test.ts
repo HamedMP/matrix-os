@@ -28,8 +28,9 @@ async function fixture() {
   }));
   return { homePath, app, store, legacy, setPrincipal: (next: RequestPrincipal) => { activePrincipal = next; } };
 }
-function put(app: Hono, body: unknown, route = path) {
-  return app.request(route, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+async function put(app: Hono, body: unknown, route = path) {
+  const etag = route === path ? null : (await app.request(route)).headers.get("etag") ?? '"0"';
+  return app.request(route, { method: "PUT", headers: { "content-type": "application/json", ...(etag ? { "if-match": etag } : {}) }, body: JSON.stringify(body) });
 }
 const defaults = () => structuredClone(DEFAULT_NOTIFICATION_PREFERENCES);
 
@@ -105,6 +106,50 @@ describe("owner notification preferences API", () => {
     const stale = await put(app, defaults());
     expect(stale.status).toBe(409);
     expect((await stale.json()).error.code).toBe("notification_preferences_conflict");
+  });
+  it("rejects stale or unconditional legacy replacements after a mobile edit", async () => {
+    const { app } = await fixture();
+    const legacyPath = "/api/coding-agents/notification-preferences";
+    const oldDocument = (await (await app.request(legacyPath)).json()).preferences;
+    const mobile = defaults(); mobile.events.approval = false;
+    expect((await put(app, mobile)).status).toBe(200);
+    oldDocument.attentionPush.completed = false;
+    const legacyPut = (etag?: string) => app.request(legacyPath, { method: "PUT",
+      headers: { "content-type": "application/json", ...(etag ? { "if-match": etag } : {}) }, body: JSON.stringify(oldDocument) });
+    expect((await legacyPut('"0"')).status).toBe(409);
+    expect((await legacyPut()).status).toBe(409);
+    const latest = await app.request(legacyPath);
+    expect(latest.headers.get("etag")).toBe('"1"');
+    expect((await latest.json()).preferences.attentionPush.approval).toBe(false);
+    expect((await legacyPut('"1"')).status).toBe(200);
+  });
+  it("serializes the revision precondition for concurrent legacy replacements", async () => {
+    const { app } = await fixture();
+    const route = "/api/coding-agents/notification-preferences";
+    const initial = await app.request(route);
+    const base = (await initial.json()).preferences;
+    const requests = [{ attentionPush: { ...base.attentionPush, approval: false } },
+      { attentionPush: { ...base.attentionPush, completed: false } }];
+    const responses = await Promise.all(requests.map(body => app.request(route, { method: "PUT",
+      headers: { "content-type": "application/json", "if-match": initial.headers.get("etag")! }, body: JSON.stringify(body) })));
+    expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
+    const winner = await responses.find(response => response.status === 200)!.json();
+    expect(await (await app.request(route)).json()).toEqual(winner);
+    expect((await (await app.request(path)).json()).preferences.revision).toBe(1);
+  });
+  it("patches only supplied legacy switches without defaulting disabled switches back on", async () => {
+    const { app } = await fixture();
+    const document = defaults();
+    Object.assign(document.events, { approval: false, question: false, runFailed: false, replyFinished: false });
+    document.phone.mode = "never";
+    expect((await put(app, document)).status).toBe(200);
+    const patch = (body: unknown) => app.request("/api/coding-agents/notification-preferences", { method: "PATCH",
+      headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect((await patch({ attentionPush: { approval: true } })).status).toBe(200);
+    expect((await (await app.request(path)).json()).preferences).toEqual({ ...document, revision: 2,
+      events: { ...document.events, approval: true } });
+    for (const attentionPush of [{}, { approval: true, unknown: false }]) expect((await patch({ attentionPush })).status).toBe(400);
+    expect((await (await app.request(path)).json()).preferences.revision).toBe(2);
   });
   it("makes legacy writes a projection preserving new options and invalidating stale new clients", async () => {
     const { app, legacy } = await fixture();

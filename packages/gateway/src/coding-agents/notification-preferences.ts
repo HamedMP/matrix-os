@@ -16,7 +16,7 @@ export const DEFAULT_CODING_AGENT_NOTIFICATION_PREFERENCES: CodingAgentNotificat
 export interface CodingAgentNotificationPreferenceStore {
   readonly preferences: NotificationPreferenceStore;
   load(principal: RequestPrincipal): Promise<CodingAgentNotificationPreferences>;
-  save(principal: RequestPrincipal, preferences: CodingAgentNotificationPreferencesUpdate): Promise<CodingAgentNotificationPreferences>;
+  save(principal: RequestPrincipal, patch: CodingAgentNotificationPreferencesUpdate, expectedRevision?: number): Promise<CodingAgentNotificationPreferences>;
   isAttentionPushEnabled(input: { ownerId: string; threadId?: string; kind: CodingAgentAttentionNotificationKind }): Promise<boolean>;
 }
 export interface CodingAgentNotificationPreferenceStoreOptions extends NotificationPreferenceStoreOptions {
@@ -31,7 +31,7 @@ export function createCodingAgentNotificationPreferenceStore(options: CodingAgen
   return {
     preferences,
     async load(principal) { return projectLegacyNotificationPreferences(await preferences.load(principal)); },
-    async save(principal, document) { return projectLegacyNotificationPreferences(await preferences.updateLegacy(principal, document)); },
+    async save(principal, document, expectedRevision) { return projectLegacyNotificationPreferences(await preferences.updateLegacy(principal, document, expectedRevision)); },
     async isAttentionPushEnabled({ ownerId, kind }) {
       const principal = options.localOwnerPrincipal?.userId === ownerId
         ? options.localOwnerPrincipal : { userId: ownerId, source: "jwt" as const };

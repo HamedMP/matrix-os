@@ -251,7 +251,7 @@ export async function updateCodingAgentNotificationPreferences(
 
   const url = buildRuntimeUrl(auth, "/api/coding-agents/notification-preferences");
   const res = await fetchFn(url.toString(), {
-    method: "PUT",
+    method: "PATCH",
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",
