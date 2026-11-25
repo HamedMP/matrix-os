@@ -3,6 +3,7 @@ import type { AuthService } from "../auth/auth-service";
 import type { LocalTerminalHost } from "../local-terminals/host";
 import { createChatElectronPreviewTransport, type MacTerminalContext } from "../chat-electron-preview/transport";
 import type { InvokeRequest, InvokeResponse } from "../../shared/ipc-contract";
+import { MAC_TERMINAL_SYSTEM_CHECKS } from "../../shared/mac-terminal-probe";
 import { MAC_TERMINAL_PROBE_INVOKE } from "../../shared/mac-terminal-probe-ipc";
 import { createMacTerminalBackgroundService } from "./background-service";
 import { createChatMacTerminalService } from "./service";
@@ -14,11 +15,16 @@ interface Options {
   window(): BrowserWindow | null;
   isTrustedSender(event: unknown): boolean;
   onBackgroundActiveChange?(active: boolean): void;
+  transport?: ReturnType<typeof createChatElectronPreviewTransport>;
+  tryBackgroundPreview?(
+    context: MacTerminalContext, grant: { targetId: string; approvedAt: number }, signal: AbortSignal,
+    beginPreview: () => boolean,
+  ): Promise<void>;
 }
 
 export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: Options) {
   const { auth, host } = options;
-  const transport = createChatElectronPreviewTransport(auth);
+  const transport = options.transport ?? createChatElectronPreviewTransport(auth);
   async function requestConsent(context: MacTerminalContext, signal: AbortSignal, prompt: {
     message: string;
     description: string[];
@@ -38,7 +44,6 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
     return answer.response === 1;
   }
 
-  const prepareTerminal = () => host.prepareChatTerminalProbe();
   const service = createChatMacTerminalService({
     ...transport,
     enabled: options.allowed,
@@ -50,7 +55,7 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
       ],
       approveLabel: "Approve Once",
     }),
-    prepareTerminal,
+    prepareTerminal: () => host.prepareChatTerminalProbe(),
     reportError(error) {
       console.warn("[chat-mac-terminal] operation failed", error instanceof Error ? error.name : "Error");
     },
@@ -62,12 +67,16 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
     approve: (context, signal) => requestConsent(context, signal, {
       message: "Allow background Mac terminal checks?",
       description: [
-        "The Main agent can run /usr/bin/uname -s up to three times in dedicated terminals on this Mac.",
+        `The Main agent can run these read-only commands up to three times in dedicated terminals on this Mac:\n${MAC_TERMINAL_SYSTEM_CHECKS.join("\n")}`,
         "Checks can run while this Chat is closed. Output returns to this Chat. This permission expires after 15 minutes.",
+        ...(options.tryBackgroundPreview ? [
+          "This also allows the Main agent to request an Electron Desktop preview. Every preview still asks for separate approval on this Mac.",
+        ] : []),
       ],
       approveLabel: "Approve for 15 minutes",
     }),
-    prepareTerminal,
+    prepareTerminal: host.prepareChatTerminalProbe,
+    tryBackgroundPreview: options.tryBackgroundPreview,
     onActiveChange: (active) => options.onBackgroundActiveChange?.(active),
     reportEvent: (event, reason) => console.info("[chat-mac-terminal-background]", event, reason ?? ""),
   });

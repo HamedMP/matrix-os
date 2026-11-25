@@ -5,17 +5,19 @@ import {
   getLatestCompletedMacTerminalRun,
   getMacTerminalProbeMarkerForRun,
   isCurrentMacTerminalProbeRun,
+  MAC_TERMINAL_SYSTEM_CHECKS,
   MAC_TERMINAL_PROBE_PREFIX,
+  type MacTerminalProbeAction,
 } from "../../../../shared/mac-terminal-probe";
 import type { InvokeResponse } from "../../../../shared/ipc-contract";
 import { invoke } from "../../lib/operator";
-import { chatElectronPreviewWorktree } from "./ChatElectronPreview";
+import { backgroundElectronPreviewDraft, chatElectronPreviewWorktree, type StageChatWorktreeDraft } from "./ChatElectronPreview";
+import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 type Preparation = InvokeResponse<"chat:mac-terminal-prepare">;
 type RunStatus = InvokeResponse<"chat:mac-terminal-run">["status"];
 type BackgroundStatus = InvokeResponse<"chat:mac-terminal-background-status">;
 type ActiveBackground = Extract<BackgroundStatus, { active: true }>;
-type Worktree = NonNullable<ReturnType<typeof chatElectronPreviewWorktree>>;
 
 const DRAFT_INTRO = "Request a read-only system check on the approved Mac terminal.";
 const PREPARE_ERROR = {
@@ -36,11 +38,13 @@ const RUN_STATUS: Record<RunStatus, string> = {
 };
 const BACKGROUND_STATUS_POLL_MS = 2_000;
 
-function makeDraft(targetId: string): string {
+function makeDraft(targetId: string, mode: PreparationMode): string {
+  const action: MacTerminalProbeAction = mode === "background" ? "system-checks" : "uname";
   return [
     DRAFT_INTRO,
-    "Do not run this command on Main or use a shell tool. Emit exactly this standalone unquoted line, without a code fence, and finish this turn so Matrix can deliver the Mac result to this Chat:",
-    MAC_TERMINAL_PROBE_PREFIX + JSON.stringify({ targetId, action: "uname" }),
+    ...(action === "system-checks" ? [`Check the kernel, architecture, and macOS version using ${MAC_TERMINAL_SYSTEM_CHECKS.join(", ")}.`] : []),
+    "Do not run these checks on Main or use a shell tool. Emit the line below exactly as written. Keep it outside any quotes or code fence. Finish the turn so Matrix can deliver the Mac result to this Chat.",
+    MAC_TERMINAL_PROBE_PREFIX + JSON.stringify({ targetId, action }),
   ].join("\n\n");
 }
 
@@ -63,8 +67,9 @@ interface ChatMacTerminalProbeProps {
   active: boolean;
   actorId: string | null;
   detail: CanonicalChatDetailResponse;
-  onDraft?: (text: string, worktree: Worktree, expiresAt: number, backgroundTargetId?: string) => boolean;
+  onDraft?: StageChatWorktreeDraft;
   onDiscardDraft?: (text: string) => void;
+  previewAvailable?: boolean;
 }
 
 type PreparationMode = "one-time" | "background";
@@ -94,17 +99,18 @@ function logFailure(error: unknown) {
   console.warn("[mac-terminal-check] request unavailable", error instanceof Error ? error.name : "UnknownError");
 }
 
-export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDiscardDraft }: ChatMacTerminalProbeProps) {
+export function useChatMacTerminalProbe({ active, actorId, detail, onDraft, onDiscardDraft, previewAvailable }: ChatMacTerminalProbeProps) {
   const { chat, activeRun, providerBinding } = detail.record;
   const root = chatElectronPreviewWorktree(detail);
   const readyToCheck = active && root !== null && !chat.collaboration && chat.lifecycle === "active"
     && chat.ownerScope.type === "personal" && chat.ownerScope.ownerId === actorId
     && providerBinding?.driverKind === "codex";
   const latestRun = getLatestCompletedMacTerminalRun(detail);
+  const terminalMarker = latestRun && getMacTerminalProbeMarkerForRun(detail, latestRun.id);
   const runId = readyToCheck && !activeRun && latestRun?.driverKind === "codex"
     && latestRun.executionRoot?.kind === "worktree" && latestRun.executionRoot.projectId === root.projectId
     && latestRun.executionRoot.worktreeId === root.worktreeId
-    && isCurrentMacTerminalProbeRun(latestRun) && getMacTerminalProbeMarkerForRun(detail, latestRun.id)
+    && isCurrentMacTerminalProbeRun(latestRun) && terminalMarker?.action === "uname"
     ? latestRun.id : null;
   const [available, setAvailable] = useState(false);
   const [preparation, setPreparation] = useState<PreparationState | null>(null);
@@ -169,7 +175,8 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
   useEffect(() => {
     const previous = previousBackground.current;
     if (backgroundStatus && previous?.scope === scope && previous.targetId !== backgroundTarget) {
-      onDiscardDraft?.(makeDraft(previous.targetId));
+      onDiscardDraft?.(makeDraft(previous.targetId, "background"));
+      onDiscardDraft?.(backgroundElectronPreviewDraft(previous.targetId));
     }
     previousBackground.current = backgroundTarget ? { scope, targetId: backgroundTarget } : null;
   }, [backgroundStatus, backgroundTarget, onDiscardDraft, scope]);
@@ -198,8 +205,9 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
       });
   }, [available, backgroundStatus?.active, chat.id, runId]);
 
-  async function prepare(mode: PreparationMode) {
-    if (!root || !stageDraft.current || changingGrant.current) return;
+  async function prepare(mode: PreparationMode, queryDraft: string) {
+    const stage = stageDraft.current;
+    if (!root || !stage || changingGrant.current) return;
     changingGrant.current = true;
     backgroundRevision.current++;
     setPreparation({ status: "preparing", mode });
@@ -216,10 +224,10 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
         setPreparation({ status: "expired" });
         return;
       }
-      const draft = makeDraft(reply.targetId);
-      const staged = "terminalId" in reply
-        ? stageDraft.current?.(draft, root, reply.expiresAt)
-        : stageDraft.current?.(draft, root, reply.expiresAt, reply.targetId);
+      const draft = makeDraft(reply.targetId, mode);
+      const staged = stageDraft.current && stage(
+        draft, root, queryDraft, reply.expiresAt, "terminalId" in reply ? undefined : reply.targetId,
+      );
       if (!staged) {
         await invoke("chat:mac-terminal-cancel", { chatId: chat.id });
         setPreparation({ status: "changed" });
@@ -240,10 +248,11 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
     }
   }
 
-  function stageAnother() {
+  function stageAnother(kind: "terminal" | "preview", queryDraft: string) {
     if (!root || !activeBackground || activeBackground.expiresAt <= Date.now() || changingGrant.current) return;
     const { targetId, expiresAt } = activeBackground;
-    stageDraft.current?.(makeDraft(targetId), root, expiresAt, targetId);
+    const draft = kind === "preview" ? backgroundElectronPreviewDraft(targetId) : makeDraft(targetId, "background");
+    stageDraft.current?.(draft, root, queryDraft, expiresAt, targetId);
   }
 
   async function stopBackground() {
@@ -263,7 +272,8 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
     }
   }
 
-  if (!available || !readyToCheck) return null;
+  const actions: ComposerMentionAction[] = [];
+  if (!available || !readyToCheck) return { actions, feedback: null };
   const preparationStatus = preparation?.status;
   const result = runResult && (!runId || runResult.runId === runId) ? runResult.status : null;
   const runLabel = result ? RUN_STATUS[result] : runId ? "Checking the approved Mac terminal…" : undefined;
@@ -272,33 +282,33 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
   const canPrepare = onDraft && !activeRun && backgroundStatus?.active === false
     && preparationStatus !== "preparing" && preparationStatus !== "ready" && preparationStatus !== "stopping"
     && (!runId || result);
-  return (
+  if (canPrepare) {
+    actions.push(
+      { label: "Request Mac terminal check", kind: "terminal", keywords: "system",
+        select: (queryDraft) => { void prepare("one-time", queryDraft); } },
+      { label: "Allow background Mac checks", kind: "terminal", keywords: "terminal system",
+        select: (queryDraft) => { void prepare("background", queryDraft); } },
+    );
+  }
+  if (onDraft && !activeRun && activeBackground?.phase === "waiting" && activeBackground.remaining > 0
+    && preparationStatus !== "stopping") {
+    actions.push({ label: "Draft another Mac check", kind: "terminal", keywords: "background terminal system",
+      select: (queryDraft) => stageAnother("terminal", queryDraft) });
+    if (previewAvailable) actions.push({
+      label: "Draft background Electron preview", kind: "preview", keywords: "mac",
+      select: (queryDraft) => stageAnother("preview", queryDraft),
+    });
+  }
+  const feedback = status || activeBackground ? (
     <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-[var(--text-secondary)]">
       {status ? <span role="status">{status}</span> : null}
-      {canPrepare ? (
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" size="sm" variant="ghost" onClick={() => { void prepare("one-time"); }}>
-            Request Mac terminal check
-          </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={() => { void prepare("background"); }}>
-            Allow background Mac checks
-          </Button>
-        </div>
-      ) : null}
       {activeBackground ? (
-        <div className="flex flex-wrap gap-2">
-          {onDraft && !activeRun && activeBackground.phase === "waiting" && activeBackground.remaining > 0
-            && preparationStatus !== "stopping" ? (
-              <Button type="button" size="sm" variant="ghost" onClick={stageAnother}>
-                Draft another Mac check
-              </Button>
-            ) : null}
-          <Button type="button" size="sm" variant="ghost" disabled={preparationStatus === "stopping"}
-            onClick={() => { void stopBackground(); }}>
-            Stop background Mac checks
-          </Button>
-        </div>
+        <Button type="button" size="sm" variant="ghost" disabled={preparationStatus === "stopping"}
+          onClick={() => { void stopBackground(); }}>
+          Stop background Mac checks
+        </Button>
       ) : null}
     </div>
-  );
+  ) : null;
+  return { actions, feedback };
 }

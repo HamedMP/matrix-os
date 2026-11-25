@@ -91,8 +91,10 @@ import { useImportedChatAssets } from "./use-imported-chat-assets";
 import { useChatArtifactActions } from "./use-chat-artifact-actions";
 import { useChatCredentialDisclosure } from "./use-chat-credential-disclosure";
 import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
-import { CHAT_ELECTRON_PREVIEW_DRAFT, ChatElectronPreview, chatElectronPreviewWorktree } from "./ChatElectronPreview";
-import { canSendBackgroundMacCheck, ChatMacTerminalProbe, isMacTerminalProbeDraft } from "./ChatMacTerminalProbe";
+import { chatElectronPreviewWorktree, isChatElectronPreviewDraft, type StageChatWorktreeDraft } from "./ChatElectronPreview";
+import { canSendBackgroundMacCheck, isMacTerminalProbeDraft } from "./ChatMacTerminalProbe";
+import { ChatWorktreeActions } from "./ChatWorktreeActions";
+import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 type ChatWorktree = NonNullable<ReturnType<typeof chatElectronPreviewWorktree>>;
 
@@ -440,17 +442,20 @@ function CanonicalChatWorkspaceContent({
   const canSteerActiveRun = activeRunRecord?.capabilitySnapshot.steering === "same_run";
   const serverQueuedTurns = controller.detail?.queuedTurns ?? [];
   const queuedTurns = optimisticQueuedTurns ?? serverQueuedTurns;
-  const composerHasInput = Boolean(
-    draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0,
-  );
-  const stageWorktreeDraft = composerHasInput || activeRun ? undefined : (
-    text: string, root: ChatWorktree, expiresAt?: number, backgroundTargetId?: string,
+  const composerHasContext = referenceTokens.length > 0 || attachments.items.length > 0;
+  const composerHasInput = composerHasContext || Boolean(draft.trim());
+  const canStageWorktreeDraft = nativeChatChecksActive && !activeRun && !editingQueuedTurn
+    && !uploadingAttachments && !composerHasContext;
+  const stageWorktreeDraft: StageChatWorktreeDraft | undefined = !canStageWorktreeDraft ? undefined : (
+    text, root, queryDraft, expiresAt, backgroundTargetId,
   ) => {
     const current = composerOwner.current;
     if (!routedComposerChatId || current.client !== client || current.draftScope !== draftScope
+      || current.draftRevision !== draftRevision || draft !== queryDraft
       || current.identity !== desktopProviderIdentityKey(useConnection.getState())
       || current.identity !== admissionIdentity || current.worktree?.projectId !== root.projectId
-      || current.worktree.worktreeId !== root.worktreeId || !seedChatDraft(routedComposerChatId, text)) return false;
+      || current.worktree.worktreeId !== root.worktreeId
+      || !seedChatDraft(routedComposerChatId, text, { text: queryDraft, revision: draftRevision })) return false;
     worktreeDraft.current = { scope: draftScope, identity: admissionIdentity, text, root, expiresAt, backgroundTargetId };
     setLocalComposerFocusRequestId(requestId => requestId + 1);
     return true;
@@ -600,6 +605,7 @@ function CanonicalChatWorkspaceContent({
       || matrixAttachments.pending
     ) return;
     const terminalRequest = isMacTerminalProbeDraft(submission.text);
+    const previewRequest = isChatElectronPreviewDraft(submission.text);
     if (terminalRequest && (attachments.items.length || referenceTokens.length)) {
       setSubmissionError("Remove attachments and references before sending a Mac terminal check.");
       return;
@@ -626,7 +632,7 @@ function CanonicalChatWorkspaceContent({
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
       if (!parts) return;
-      const worktreeRequest = terminalRequest || submission.text === CHAT_ELECTRON_PREVIEW_DRAFT;
+      const worktreeRequest = terminalRequest || previewRequest;
       const requestedRoot = worktreeRequest ? composerOwner.current.worktree : null;
       const staged = worktreeDraft.current;
       if (worktreeRequest && (!requestedRoot || staged?.text !== submission.text || staged.scope !== draftScope
@@ -637,12 +643,14 @@ function CanonicalChatWorkspaceContent({
           : "The worktree selection changed. Clear the draft and request a new Electron preview.");
         return;
       }
-      if (terminalRequest && staged?.backgroundTargetId) {
+      if (worktreeRequest && staged?.backgroundTargetId) {
         const authorized = requestedRoot && routedComposerChatId
           && await canSendBackgroundMacCheck(routedComposerChatId, requestedRoot.worktreeId, staged.backgroundTargetId);
         if (!isCurrentSubmission() || worktreeDraft.current !== staged) return;
         if (!authorized) {
-          setSubmissionError("The background Mac check approval changed. Clear the draft and start a new check.");
+          setSubmissionError(terminalRequest
+            ? "The background Mac check approval changed. Clear the draft and start a new check."
+            : "The background Mac approval changed. Clear the draft and request a new approval.");
           return;
         }
       }
@@ -856,7 +864,7 @@ function CanonicalChatWorkspaceContent({
     restoreNewDraft: () => { controller.startNewChat(); reportedChatId.current = null; onActiveChatChanged?.(null); setGlobalView("draft"); },
   });
 
-  const composer = (
+  const renderComposer = (mentionActions?: readonly ComposerMentionAction[]) => (
     <>
       <QueuedTurnsPanel
         turns={queuedTurns}
@@ -893,6 +901,7 @@ function CanonicalChatWorkspaceContent({
         referenceTokens={referenceTokens}
         onReferenceTokensChange={setReferenceTokens}
         onAgentMention={botMention.select}
+        mentionActions={mentionActions}
         onSubmit={(submission) => void (
           editingQueuedTurn || activeRun ? submitQueueAction(submission) : submit(submission)
         )}
@@ -1159,28 +1168,26 @@ function CanonicalChatWorkspaceContent({
             </div>
             </ChatContextMenu>
             <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>
-              <ChatElectronPreview
+              <ChatWorktreeActions
                 key={JSON.stringify([admissionIdentity, controller.detail.record.chat.id])}
-                active={nativeChatChecksActive}
-                actorId={actorId}
-                detail={controller.detail}
-                onDraft={stageWorktreeDraft && chatWorktree ? (text) => { stageWorktreeDraft(text, chatWorktree); } : undefined}
-              />
-              <ChatMacTerminalProbe
-                key={JSON.stringify(["mac-terminal", admissionIdentity, controller.detail.record.chat.id])}
                 active={nativeChatChecksActive}
                 actorId={actorId}
                 detail={controller.detail}
                 onDraft={stageWorktreeDraft}
                 onDiscardDraft={discardWorktreeDraft}
-              />
-              {pendingTool ? (
-                <SupervisedToolApprovalBar
-                  label={`Waiting for you · ${pendingTool.bar}`}
-                  onReview={() => document.getElementById(`tool-approval-${pendingTool.id}`)?.scrollIntoView({ block: "center" })}
-                />
-              ) : null}
-              {composer}
+              >
+                {mentionActions => (
+                  <>
+                    {pendingTool ? (
+                      <SupervisedToolApprovalBar
+                        label={`Waiting for you · ${pendingTool.bar}`}
+                        onReview={() => document.getElementById(`tool-approval-${pendingTool.id}`)?.scrollIntoView({ block: "center" })}
+                      />
+                    ) : null}
+                    {renderComposer(mentionActions)}
+                  </>
+                )}
+              </ChatWorktreeActions>
             </div>
             </BotChatPanel>
           </>
@@ -1194,7 +1201,7 @@ function CanonicalChatWorkspaceContent({
             Loading chat…
           </div>
         ) : (
-          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} />
+          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={renderComposer()} onSelect={setDraft} />
         )}
         </>}
       </SharedChatSurface>

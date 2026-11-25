@@ -1,14 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { MacTerminalContext, MacTerminalRequest } from "../chat-electron-preview/transport";
+import type { ChatTerminalProbe } from "../local-terminals/chat-terminal-probe";
 import type {
   PrepareMacTerminalCheck, PrepareMacTerminalCheckReply, RunMacTerminalCheck, RunMacTerminalCheckReply,
 } from "../../shared/mac-terminal-probe-ipc";
-
-interface ProbeTerminal {
-  id: string;
-  run(signal: AbortSignal): Promise<"Darwin">;
-  dispose(): Promise<void>;
-}
 
 interface Dependencies {
   enabled: boolean;
@@ -20,14 +15,14 @@ interface Dependencies {
     request: MacTerminalRequest, result: { terminalId: string; output: "Darwin" }, signal: AbortSignal,
   ): Promise<void>;
   approve(context: MacTerminalContext, signal: AbortSignal): Promise<boolean>;
-  prepareTerminal(): Promise<ProbeTerminal>;
+  prepareTerminal(): Promise<ChatTerminalProbe>;
   reportError?(error: unknown): void;
 }
 
 interface Grant {
   context: MacTerminalContext;
   targetId: string;
-  terminal: ProbeTerminal;
+  terminal: ChatTerminalProbe;
   expiry: number;
   state: "ready" | "checking" | "used";
   operation: AbortController;
@@ -119,6 +114,7 @@ export function createChatMacTerminalService(deps: Dependencies) {
 
       current.state = "used";
       const output = await current.terminal.run(signal);
+      if (output !== "Darwin") throw new Error("unexpected one-time Mac terminal output");
       if (grant !== current || signal.aborted || !deps.isTerminalRequestCurrent(request)
         || !deps.isTerminalContextCurrent(current.context)) return { status: "unavailable" };
       await deps.returnTerminalResult(request, { terminalId: current.terminal.id, output }, signal);

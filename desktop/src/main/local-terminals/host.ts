@@ -14,6 +14,7 @@ import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tail
 import { createMachineCore, type MachineCoreResult, type MachineCoreRunner } from "./machine-core";
 import type { WithUpdateConnection } from "./machine-update-connection";
 import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
+import type { MacTerminalProbeAction } from "../../shared/mac-terminal-probe";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
@@ -511,8 +512,8 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     },
 
     // Main-process only. Do not expose this method as renderer terminal IPC.
-    prepareChatTerminalProbe: () => prepareChatTerminalProbe({
-      cwd: options.home, ensure, isCurrent: (core) => connection === core, run: sessions.run, slots,
+    prepareChatTerminalProbe: (action: MacTerminalProbeAction = "uname") => prepareChatTerminalProbe({
+      action, cwd: options.home, ensure, isCurrent: (core) => connection === core, run: sessions.run, slots,
     }),
 
     kill: sessions.kill,
