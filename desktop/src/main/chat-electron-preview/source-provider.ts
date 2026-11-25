@@ -305,9 +305,6 @@ export function createMacVerificationSourceProvider(options: Options) {
     };
     try {
       signal.throwIfAborted();
-      const free = await statfs(workspace);
-      const requiredBytes = manifest.archives.checkout.sizeBytes + 2 * manifest.archives.checkout.unpackedBytes + 6 * 1024 ** 3;
-      if (Number(free.bavail) * Number(free.bsize) < requiredBytes) throw new MacVerificationPreparationError("insufficient-disk");
       const cacheName = `store-${sha256(bytes)}`;
       const entries = await readdir(workspace);
       if (entries.length > 64) throw supportError();
@@ -318,6 +315,9 @@ export function createMacVerificationSourceProvider(options: Options) {
         const path = join(workspace, name); const info = await lstat(path);
         if (info.isDirectory() && !info.isSymbolicLink() && info.uid === process.getuid?.()) await rm(path, { recursive: true });
       }
+      const free = await statfs(workspace);
+      const requiredBytes = manifest.archives.checkout.sizeBytes + 2 * manifest.archives.checkout.unpackedBytes + 6 * 1024 ** 3;
+      if (Number(free.bavail) * Number(free.bsize) < requiredBytes) throw new MacVerificationPreparationError("insufficient-disk");
       await mkdir(requestPath, { mode: 0o700 });
       const checkout = join(requestPath, "source");
       const sourceCopy = join(requestPath, "source.tar");

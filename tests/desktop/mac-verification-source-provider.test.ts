@@ -136,20 +136,28 @@ describe("packaged Mac Verification source preparation", () => {
     ["empty lock", ""],
     ["partial PID", '{"pid":21'],
     ["partial lock", '{"pid":2147483647,"token":'],
-  ])("recovers from %s and refuses live process records", async (_state, record) => {
+  ])("recovers disk space after %s and refuses live process records", async (_state, record) => {
     const f = await fixture();
     const workspace = join(f.profile, "mac-verification-support");
     await mkdir(workspace, { mode: 0o700 });
     const lock = join(workspace, "preparation.lock");
     await writeFile(lock, record, { mode: 0o600 });
+    const abandoned = "request-00000000-0000-4000-8000-000000000003";
+    await mkdir(join(workspace, abandoned));
+    const free = await fs.statfs(workspace);
+    const disk = vi.spyOn(fs, "statfs").mockImplementation(async () => ({
+      ...free, bavail: (await readdir(workspace)).includes(abandoned) ? 0 : Number.MAX_SAFE_INTEGER,
+    }));
     const prepare = () => f.provider.prepare(f.manifest.baseSha, f.signal);
     const attempts = await Promise.allSettled([prepare(), prepare()]);
     const winners = attempts.filter(attempt => attempt.status === "fulfilled");
-    expect(winners).toHaveLength(1);
+    expect(winners, JSON.stringify(attempts)).toHaveLength(1);
     expect(attempts.find(attempt => attempt.status === "rejected")).toMatchObject({ reason: { code: "preparation-busy" } });
     const recovered = winners[0]!.value;
     expect(await readFile(lock, "utf8")).toContain(String(process.pid));
     await recovered.release();
+    disk.mockResolvedValue({ ...free, bavail: 0 });
+    await expect(prepare()).rejects.toMatchObject({ code: "insufficient-disk" });
     const active = JSON.stringify({ pid: process.pid, token: "00000000-0000-4000-8000-000000000002", createdAt: 0 });
     for (const protectedRecord of [active, `{"pid":${process.pid},"token":`, "{}"]) {
       await writeFile(lock, protectedRecord, { mode: 0o600 });
