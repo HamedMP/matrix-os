@@ -9,9 +9,12 @@ import {
   pageRows,
   rangeOnScreen,
   scrollToReveal,
+  shownIndexes,
   spanLength,
   type ViewportInput,
 } from "../../../../home/apps/sheets/src/grid/viewport";
+import type { GridLayout } from "../../../../home/apps/sheets/src/grid/context";
+import { activeOnScreen, paneSpecs } from "../../../../home/apps/sheets/src/grid/render-model";
 
 describe("axis", () => {
   it("places uniform rows and finds them again", () => {
@@ -69,6 +72,21 @@ describe("axis", () => {
       offset += sizes[index] as number;
     }
     expect(axis.total).toBe(offset);
+  });
+
+  it("steps over a run of hidden entries at once", () => {
+    const hidden: Array<[number, number]> = [];
+    for (let index = 1; index < 999_999; index++) hidden.push([index, 0]);
+    const axis = createAxis(1_000_000, 20, hidden);
+    expect(axis.nextVisible(0)).toBe(0);
+    expect(axis.nextVisible(1)).toBe(999_999);
+    expect(axis.nextVisible(500_000)).toBe(999_999);
+    expect(axis.nextVisible(1_000_000)).toBe(1_000_000);
+    expect(createAxis(5, 20, [[4, 0]]).nextVisible(4)).toBe(5);
+    // A filter that keeps two rows of a million: the rows on screen are those two, not every row between them.
+    const viewport = computeViewport({ axes: { rows: axis, cols: createAxis(26, 80) }, frozenRows: 0, frozenCols: 0, scrollTop: 0, scrollLeft: 0, width: 800, height: 400 });
+    expect(shownIndexes(axis, viewport.rows)).toEqual([0, 999_999]);
+    expect(shownIndexes(createAxis(10, 20, [[3, 0], [4, 0]]), { start: 2, end: 6 })).toEqual([2, 5, 6]);
   });
 
   it("converts file units to pixels and back", () => {
@@ -129,6 +147,30 @@ describe("viewport", () => {
     expect(viewport.visibleCols).toEqual({ start: 3, end: 11 });
     // Overscan never reaches back into the frozen part.
     expect(computeViewport(input({ frozenRows: 2 })).rows.start).toBe(2);
+  });
+
+  it("draws only the frozen rows and columns that fit, however many are frozen", () => {
+    const viewport = computeViewport(input({ frozenRows: 99_999, frozenCols: 499 }));
+    // Navigation still sees every frozen row and column.
+    expect(viewport.frozenRows).toEqual({ start: 0, end: 99_998 });
+    expect(viewport.frozenCols).toEqual({ start: 0, end: 498 });
+    // 400px of 20px rows and 800px of 80px columns, plus the overscan.
+    expect(viewport.drawnFrozenRows).toEqual({ start: 0, end: 21 });
+    expect(viewport.drawnFrozenCols).toEqual({ start: 0, end: 11 });
+    const layout = { viewport, viewportInput: input({ frozenRows: 99_999, frozenCols: 499 }) } as unknown as GridLayout;
+    let cells = 0;
+    for (const pane of paneSpecs(layout)) cells += spanLength(pane.rows) * spanLength(pane.cols);
+    expect(cells).toBeLessThan(1_000);
+    // A few frozen rows are all drawn.
+    expect(computeViewport(input({ frozenRows: 2, frozenCols: 1 })).drawnFrozenRows).toEqual({ start: 0, end: 1 });
+    expect(computeViewport(input()).drawnFrozenRows).toEqual({ start: 0, end: -1 });
+  });
+
+  it("counts a frozen cell past the drawn part as off screen", () => {
+    const viewportInput = input({ frozenRows: 99_999, frozenCols: 1 });
+    const layout = { viewport: computeViewport(viewportInput), viewportInput } as unknown as GridLayout;
+    expect(activeOnScreen(layout, { row: 3, col: 0 })).toBe(true);
+    expect(activeOnScreen(layout, { row: 50_000, col: 0 })).toBe(false);
   });
 
   it("finds the cell under a point in each pane", () => {

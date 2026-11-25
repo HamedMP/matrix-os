@@ -37,8 +37,12 @@ export interface Viewport {
   /** Pixel size of the frozen rows and columns. */
   frozenHeight: number;
   frozenWidth: number;
+  /** Every frozen row and column, for navigation and placement. */
   frozenRows: Span;
   frozenCols: Span;
+  /** The frozen rows and columns to render: those that fit in the frozen part, with overscan. */
+  drawnFrozenRows: Span;
+  drawnFrozenCols: Span;
   /** Scrolling rows and columns to render, with overscan. */
   rows: Span;
   cols: Span;
@@ -55,12 +59,29 @@ export function spanLength(span: Span): number {
   return Math.max(0, span.end - span.start + 1);
 }
 
+/**
+ * The indexes of a span that are not hidden, in order. A filter can hide
+ * thousands of rows between two on screen; they are stepped over, not visited.
+ */
+export function shownIndexes(axis: Axis, span: Span): number[] {
+  const out: number[] = [];
+  for (let index = axis.nextVisible(span.start); index <= span.end && index < axis.count; index = axis.nextVisible(index + 1)) out.push(index);
+  return out;
+}
+
 function visibleSpan(axis: Axis, frozen: number, frozenSize: number, scroll: number, size: number): Span {
   const room = size - frozenSize;
   if (room <= 0 || frozen >= axis.count) return EMPTY;
   const first = Math.max(frozen, axis.indexAt(frozenSize + scroll));
   const last = Math.max(first, axis.indexAt(frozenSize + scroll + room - 1));
   return { start: first, end: last };
+}
+
+/** The frozen indexes that show in `frozenSize` pixels, with overscan. More frozen than fit on screen are not drawn. */
+function drawnFrozen(axis: Axis, frozen: number, frozenSize: number, overscan: number): Span {
+  if (frozen <= 0) return EMPTY;
+  const last = frozenSize <= 0 ? 0 : axis.indexAt(frozenSize - 1);
+  return { start: 0, end: Math.min(frozen - 1, last + overscan) };
 }
 
 function widen(span: Span, by: number, min: number, max: number): Span {
@@ -93,6 +114,8 @@ export function computeViewport(input: ViewportInput): Viewport {
     frozenWidth,
     frozenRows: frozenRows > 0 ? { start: 0, end: frozenRows - 1 } : EMPTY,
     frozenCols: frozenCols > 0 ? { start: 0, end: frozenCols - 1 } : EMPTY,
+    drawnFrozenRows: drawnFrozen(rows, frozenRows, frozenHeight, overscan),
+    drawnFrozenCols: drawnFrozen(cols, frozenCols, frozenWidth, overscan),
     rows: widen(visibleRows, overscan, frozenRows, rows.count - 1),
     cols: widen(visibleCols, overscan, frozenCols, cols.count - 1),
     visibleRows,

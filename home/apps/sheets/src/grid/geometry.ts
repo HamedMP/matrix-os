@@ -43,6 +43,8 @@ export interface Axis {
   sizeOf(index: number): number;
   /** The index that holds a pixel offset, clamped to the axis. A hidden (zero-size) index is never returned. */
   indexAt(offset: number): number;
+  /** The first index at or after `from` that is not hidden, or `count` when there is none. Skips a run of hidden indexes at once. */
+  nextVisible(from: number): number;
 }
 
 /**
@@ -74,6 +76,17 @@ export function createAxis(count: number, defaultSize: number, overrides: Iterab
     delta += size - defaultSize;
   }
   const total = Math.max(0, count * defaultSize + delta);
+  // For a hidden override, the override that ends its run of consecutive hidden indexes (runLast) and the one that starts it (runFirst).
+  const runLast: number[] = new Array<number>(indexes.length);
+  const runFirst: number[] = new Array<number>(indexes.length);
+  for (let k = indexes.length - 1; k >= 0; k--) {
+    const joined = k + 1 < indexes.length && sizes[k + 1] === 0 && indexes[k + 1] === (indexes[k] as number) + 1;
+    runLast[k] = joined ? (runLast[k + 1] as number) : k;
+  }
+  for (let k = 0; k < indexes.length; k++) {
+    const joined = k > 0 && sizes[k - 1] === 0 && indexes[k - 1] === (indexes[k] as number) - 1;
+    runFirst[k] = joined ? (runFirst[k - 1] as number) : k;
+  }
 
   /** Number of overrides with an index below `index`. */
   function before(index: number): number {
@@ -123,19 +136,53 @@ export function createAxis(count: number, defaultSize: number, overrides: Iterab
     return Math.min(count - 1, index + 1 + Math.floor((offset - start - size) / defaultSize));
   }
 
+  function nextVisible(from: number): number {
+    let index = Math.max(0, from);
+    while (index < count) {
+      const k = before(index);
+      if (indexes[k] === index) {
+        if ((sizes[k] as number) > 0) return index;
+        index = (indexes[runLast[k] as number] as number) + 1;
+      } else if (defaultSize > 0) {
+        return index;
+      } else {
+        // Every index without an override is hidden: the next override that has a size.
+        let next = k;
+        while (next < indexes.length && (sizes[next] as number) <= 0) next = (runLast[next] as number) + 1;
+        return next < indexes.length ? Math.min(count, indexes[next] as number) : count;
+      }
+    }
+    return count;
+  }
+
+  function previousVisible(from: number): number {
+    let index = Math.min(count - 1, from);
+    while (index >= 0) {
+      const k = before(index);
+      if (indexes[k] === index) {
+        if ((sizes[k] as number) > 0) return index;
+        index = (indexes[runFirst[k] as number] as number) - 1;
+      } else if (defaultSize > 0) {
+        return index;
+      } else {
+        let next = k - 1;
+        while (next >= 0 && (sizes[next] as number) <= 0) next = (runFirst[next] as number) - 1;
+        return next >= 0 ? (indexes[next] as number) : -1;
+      }
+    }
+    return -1;
+  }
+
   function firstVisible(from: number): number {
-    let index = from;
-    while (index < count - 1 && sizeOf(index) === 0) index++;
-    return index;
+    const index = nextVisible(from);
+    return index < count ? index : Math.max(0, count - 1);
   }
 
   function lastVisible(from: number): number {
-    let index = from;
-    while (index > 0 && sizeOf(index) === 0) index--;
-    return index;
+    return Math.max(0, previousVisible(from));
   }
 
-  return { count, defaultSize, total, offsetOf, sizeOf, indexAt };
+  return { count, defaultSize, total, offsetOf, sizeOf, indexAt, nextVisible };
 }
 
 export interface GridExtent {

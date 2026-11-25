@@ -6,12 +6,19 @@
  * hidden row is never changed or copied by accident.
  */
 
-import { MAX_ROWS, type CellRange } from "../session/engine";
+import { MAX_ROWS, type CellRange, type SheetId } from "../session/engine";
 import type { GridContext } from "./context";
 
 /** The rows the active filter hides, or null when nothing is hidden. */
 export function hiddenRows(ctx: GridContext): ReadonlySet<number> | null {
   return ctx.layout().hiddenRows;
+}
+
+/** The rows the filter of any sheet hides in this view, or null when nothing is hidden. */
+export function hiddenIn(ctx: GridContext, sheet: SheetId): ReadonlySet<number> | null {
+  if (sheet === ctx.sheet) return hiddenRows(ctx);
+  const hidden = ctx.store.view(sheet).filter?.hidden ?? null;
+  return hidden === null || hidden.length === 0 ? null : new Set(hidden);
 }
 
 /** The visible rows from `first` to `last`, in order. */

@@ -22,7 +22,7 @@ import type { GridContext } from "./context";
 import { adjustFormula } from "./fill";
 import { planMove } from "./move-cells";
 import { activeRange, isSingleCell, rangeCols, rangeRows } from "./selection";
-import { contiguous, hiddenRows, visibleRowsFrom, visibleRowsIn } from "./visible-rows";
+import { contiguous, hiddenIn, hiddenRows, visibleRowsFrom, visibleRowsIn } from "./visible-rows";
 
 export interface ClipboardPayload {
   text: string;
@@ -87,7 +87,7 @@ function clipboardCell(ctx: GridContext, sheet: SheetId, row: number, col: numbe
  */
 export function copySelection(ctx: GridContext, cut: boolean): ClipboardPayload | null {
   const sheet = ctx.sheet;
-  const range = copyRange(ctx);
+  let range = copyRange(ctx);
   if (rangeRows(range) * rangeCols(range) > MAX_ACTION_CELLS) {
     ctx.notice(TOO_MANY);
     return null;
@@ -98,6 +98,8 @@ export function copySelection(ctx: GridContext, cut: boolean): ClipboardPayload 
     ctx.notice(CUT_FILTERED);
     return null;
   }
+  // A cut moves the visible run only: hidden rows above or below it in the selection stay where they are.
+  if (cut) range = { start: { row: rows[0] as number, col: range.start.col }, end: { row: rows[rows.length - 1] as number, col: range.end.col } };
   const texts: string[][] = [];
   const cells: ClipboardCell[][] = [];
   for (const row of rows) {
@@ -109,7 +111,7 @@ export function copySelection(ctx: GridContext, cut: boolean): ClipboardPayload 
   const text = serializeTsv(texts);
   clips.set(ctx, { text: normalize(text), sheet, range, rows, cut });
   ctx.store.set({ copy: { sheet, range, cut } });
-  return { text, html: serializeHtmlTable(cells, { row: range.start.row, col: range.start.col }) };
+  return { text, html: serializeHtmlTable(cells, { row: range.start.row, col: range.start.col }, rows) };
 }
 
 /**
@@ -229,6 +231,11 @@ function pasteMove(ctx: GridContext, clip: InternalClip): boolean {
     ctx.notice(CUT_FILTERED);
     return false;
   }
+  // A filter set since the cut may hide some of the cut rows now; they would be moved unseen.
+  if (visibleRowsIn(clip.range.start.row, clip.range.end.row, hiddenIn(ctx, clip.sheet)).length < height) {
+    ctx.notice(CUT_FILTERED);
+    return false;
+  }
   const tile: Tile = { rows, col: origin.col };
   const plan = planMove(session.workbook, clip.sheet, clip.range, { sheet, row: origin.row, col: origin.col });
   if (plan === null) {
@@ -287,7 +294,9 @@ function pasteExternal(ctx: GridContext, table: ParsedTable): boolean {
             // Copied from another Sheets window: the stored value and its type, not the display text.
             if (formula === null && value !== undefined) tx.workbook.setCell(sheet, { row, col }, value);
             else {
-              const input = formula === null || table.origin === null ? text : `=${adjustFormula(formula, row - (table.origin.row + r), col - table.origin.col)}`;
+              // Shifted from the cell it was copied from: its column, and its row (a copy leaves out rows a filter hid).
+              const from = table.origin === null ? null : { row: table.sourceRows?.[r] ?? table.origin.row + r, col: table.origin.col + c };
+              const input = formula === null || from === null ? text : `=${adjustFormula(formula, row - from.row, col - from.col)}`;
               applyInputs(tx.workbook, sheet, { row, col }, [[input]]);
             }
           });

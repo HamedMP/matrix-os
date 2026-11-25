@@ -3,7 +3,8 @@ import { columnLabel } from "../session/engine";
 import type { GridLayout } from "./context";
 import { HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX } from "./geometry";
 import { type Selection, columnFullySelected, columnTouched, rowFullySelected, rowTouched } from "./selection";
-import { type Span, columnX, rowY } from "./viewport";
+import type { Axis } from "./geometry";
+import { type Span, columnX, rowY, shownIndexes } from "./viewport";
 
 export interface GridHeadersProps {
   layout: GridLayout;
@@ -12,11 +13,9 @@ export interface GridHeadersProps {
   filtered: boolean;
 }
 
-function indexes(frozen: Span, scrolling: Span): number[] {
-  const out: number[] = [];
-  for (let index = frozen.start; index <= frozen.end; index++) out.push(index);
-  for (let index = scrolling.start; index <= scrolling.end; index++) out.push(index);
-  return out;
+/** The shown indexes of the frozen and the scrolling part; hidden ones are skipped without being visited. */
+function indexes(axis: Axis, frozen: Span, scrolling: Span): number[] {
+  return [...shownIndexes(axis, frozen), ...shownIndexes(axis, scrolling)];
 }
 
 function headerClass(base: string, selected: boolean, touched: boolean, frozen: boolean): string {
@@ -30,8 +29,8 @@ function headerClass(base: string, selected: boolean, touched: boolean, frozen: 
  */
 export const GridHeaders = memo(function GridHeaders({ layout, selection, filtered }: GridHeadersProps) {
   const { axes, viewport } = layout;
-  const columns = indexes(viewport.frozenCols, viewport.cols);
-  const rows = indexes(viewport.frozenRows, viewport.rows);
+  const columns = indexes(axes.cols, viewport.drawnFrozenCols, viewport.cols);
+  const rows = indexes(axes.rows, viewport.drawnFrozenRows, viewport.rows);
   return (
     <>
       <div role="row" aria-rowindex={1} className="sg-colheads" style={{ left: ROW_HEADER_WIDTH_PX, height: HEADER_HEIGHT_PX }}>

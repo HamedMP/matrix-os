@@ -11,7 +11,7 @@ import { CELL_PADDING_PX, type CellLook, cellLook, errorHelp, overflowWidth, tex
 import type { GridContext, GridLayout } from "./context";
 import { type CellDecoration, describeDecoration } from "./decorations";
 import { type Selection, rangesIntersect, selectionContains } from "./selection";
-import type { Span } from "./viewport";
+import { type Span, shownIndexes } from "./viewport";
 
 export type PaneId = "corner" | "top" | "left" | "main";
 
@@ -78,14 +78,15 @@ export function paneSpecs(layout: GridLayout): PaneSpec[] {
   if (nonEmpty(viewport.rows) && nonEmpty(viewport.cols)) {
     panes.push({ id: "main", rows: viewport.rows, cols: viewport.cols, x: frozenWidth, y: frozenHeight, width: mainWidth, height: mainHeight, offsetX: scrollX, offsetY: scrollY });
   }
-  if (nonEmpty(viewport.frozenRows) && nonEmpty(viewport.cols)) {
-    panes.push({ id: "top", rows: viewport.frozenRows, cols: viewport.cols, x: frozenWidth, y: 0, width: mainWidth, height: frozenHeight, offsetX: scrollX, offsetY: 0 });
+  // Frozen panes draw what fits on screen only: a freeze far down the sheet must not visit every frozen cell.
+  if (nonEmpty(viewport.drawnFrozenRows) && nonEmpty(viewport.cols)) {
+    panes.push({ id: "top", rows: viewport.drawnFrozenRows, cols: viewport.cols, x: frozenWidth, y: 0, width: mainWidth, height: frozenHeight, offsetX: scrollX, offsetY: 0 });
   }
-  if (nonEmpty(viewport.rows) && nonEmpty(viewport.frozenCols)) {
-    panes.push({ id: "left", rows: viewport.rows, cols: viewport.frozenCols, x: 0, y: frozenHeight, width: frozenWidth, height: mainHeight, offsetX: 0, offsetY: scrollY });
+  if (nonEmpty(viewport.rows) && nonEmpty(viewport.drawnFrozenCols)) {
+    panes.push({ id: "left", rows: viewport.rows, cols: viewport.drawnFrozenCols, x: 0, y: frozenHeight, width: frozenWidth, height: mainHeight, offsetX: 0, offsetY: scrollY });
   }
-  if (nonEmpty(viewport.frozenRows) && nonEmpty(viewport.frozenCols)) {
-    panes.push({ id: "corner", rows: viewport.frozenRows, cols: viewport.frozenCols, x: 0, y: 0, width: frozenWidth, height: frozenHeight, offsetX: 0, offsetY: 0 });
+  if (nonEmpty(viewport.drawnFrozenRows) && nonEmpty(viewport.drawnFrozenCols)) {
+    panes.push({ id: "corner", rows: viewport.drawnFrozenRows, cols: viewport.drawnFrozenCols, x: 0, y: 0, width: frozenWidth, height: frozenHeight, offsetX: 0, offsetY: 0 });
   }
   return panes;
 }
@@ -97,8 +98,8 @@ export function cellElementId(gridId: string, row: number, col: number): string 
 /** True when a cell is in the rendered window, so that an element with its id exists. */
 export function activeOnScreen(layout: GridLayout, cell: { row: number; col: number }): boolean {
   const { viewport } = layout;
-  const inRows = cell.row <= viewport.frozenRows.end || (cell.row >= viewport.rows.start && cell.row <= viewport.rows.end);
-  const inCols = cell.col <= viewport.frozenCols.end || (cell.col >= viewport.cols.start && cell.col <= viewport.cols.end);
+  const inRows = cell.row <= viewport.drawnFrozenRows.end || (cell.row >= viewport.rows.start && cell.row <= viewport.rows.end);
+  const inCols = cell.col <= viewport.drawnFrozenCols.end || (cell.col >= viewport.cols.start && cell.col <= viewport.cols.end);
   return inRows && inCols;
 }
 
@@ -266,9 +267,10 @@ export function buildPane(ctx: GridContext, layout: GridLayout, pane: PaneSpec, 
   const lookBehindLimit = pane.id === "main" || pane.id === "top" ? Math.max(layout.viewport.frozenCols.end + 1, firstCol - OVERFLOW_LOOKBEHIND) : firstCol;
   const horizontal: number[] = [];
   const used = info.dimensions;
-  for (let row = pane.rows.start; row <= pane.rows.end; row++) {
+  // Hidden rows and columns are stepped over: a filter may hide thousands between two shown rows.
+  const shownCols = shownIndexes(cols, pane.cols);
+  for (const row of shownIndexes(rows, pane.rows)) {
     const size = rows.sizeOf(row);
-    if (size === 0) continue;
     horizontal.push(rows.offsetOf(row) - pane.offsetY + size - 1);
     const inUsedRows = used !== null && row >= used.start.row && row <= used.end.row;
     // Text that starts left of the window and runs into it.
@@ -279,16 +281,13 @@ export function buildPane(ctx: GridContext, layout: GridLayout, pane: PaneSpec, 
         break;
       }
     }
-    for (let col = pane.cols.start; col <= pane.cols.end; col++) {
-      if (cols.sizeOf(col) === 0 || isCovered(row, col)) continue;
+    for (const col of shownCols) {
+      if (isCovered(row, col)) continue;
       add(row, col, null);
     }
   }
   const vertical: number[] = [];
-  for (let col = pane.cols.start; col <= pane.cols.end; col++) {
-    const size = cols.sizeOf(col);
-    if (size > 0) vertical.push(cols.offsetOf(col) - pane.offsetX + size - 1);
-  }
+  for (const col of shownCols) vertical.push(cols.offsetOf(col) - pane.offsetX + cols.sizeOf(col) - 1);
   const ordered = [...byRow.values()].filter((item) => item.cells.length > 0).sort((a, b) => a.row - b.row);
   for (const item of ordered) item.cells.sort((a, b) => a.col - b.col);
   return { rows: ordered, horizontal, vertical };

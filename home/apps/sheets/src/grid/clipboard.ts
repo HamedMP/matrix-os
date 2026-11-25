@@ -3,8 +3,9 @@
  *
  * Copy writes both. The HTML carries each cell's formula in a
  * `data-sheets-formula` attribute, its stored value and type in
- * `data-sheets-value` and `data-sheets-type`, and the position of the block in
- * `data-sheets-origin`, so that a paste into another Sheets window keeps
+ * `data-sheets-value` and `data-sheets-type`, the position of the block in
+ * `data-sheets-origin` and the sheet row of each table row in
+ * `data-sheets-row` (rows a filter hid are left out of a copy), so that a paste into another Sheets window keeps
  * formulas, full precision and text that looks like a number; other programs
  * see an ordinary table. Paste prefers the HTML table and falls back to the
  * text.
@@ -45,6 +46,8 @@ export interface ParsedTable {
   formulas: Array<Array<string | null>>;
   /** Where the cells were copied from, when the HTML came from Sheets. */
   origin: ClipboardOrigin | null;
+  /** The sheet row each table row was copied from, when the HTML gives it; null for a row that does not say. */
+  sourceRows?: Array<number | null>;
   /** For each cell copied from Sheets without a formula, its stored value; otherwise undefined. */
   values?: Array<Array<ClipboardValue | undefined>>;
 }
@@ -151,19 +154,23 @@ function cellStyle(cell: ClipboardCell): string {
   return parts.join(";");
 }
 
-/** Cells as an HTML table that other programs paste as a table. */
-export function serializeHtmlTable(rows: ReadonlyArray<ReadonlyArray<ClipboardCell>>, origin?: ClipboardOrigin): string {
+/**
+ * Cells as an HTML table that other programs paste as a table. `sourceRows`
+ * gives the sheet row of each table row, for a copy that left rows out.
+ */
+export function serializeHtmlTable(rows: ReadonlyArray<ReadonlyArray<ClipboardCell>>, origin?: ClipboardOrigin, sourceRows?: readonly number[]): string {
   const attr = origin === undefined ? "" : ` data-sheets-origin="${origin.row},${origin.col}"`;
   let html = `<meta charset="utf-8"><table${attr}><tbody>`;
-  for (const row of rows) {
-    html += "<tr>";
+  rows.forEach((row, index) => {
+    const source = sourceRows?.[index];
+    html += source === undefined ? "<tr>" : `<tr data-sheets-row="${source}">`;
     for (const cell of row) {
       const style = cellStyle(cell);
       const formula = typeof cell.formula === "string" ? ` data-sheets-formula="${escapeHtml(cell.formula)}"` : "";
       html += `<td${style === "" ? "" : ` style="${style}"`}${formula}${valueAttributes(cell)}>${escapeHtml(cell.text).replace(/\r?\n/g, "<br>")}</td>`;
     }
     html += "</tr>";
-  }
+  });
   return `${html}</tbody></table>`;
 }
 
@@ -230,6 +237,7 @@ export function parseHtmlTable(html: string): ParsedTable | null {
   const rows: string[][] = [];
   const formulas: Array<Array<string | null>> = [];
   const values: Array<Array<ClipboardValue | undefined>> = [];
+  const sourceRows: Array<number | null> = [];
   let typed = false;
   /** Cells taken by a row span from a row above: column -> rows left. */
   const held = new Map<number, number>();
@@ -270,6 +278,8 @@ export function parseHtmlTable(html: string): ParsedTable | null {
       }
     }
     skipHeld();
+    const source = /^\d{1,7}$/.exec(tr.getAttribute("data-sheets-row") ?? "");
+    sourceRows.push(source === null ? null : Number(source[0]));
     rows.push(row);
     formulas.push(rowFormulas);
     values.push(rowValues);
@@ -286,7 +296,9 @@ export function parseHtmlTable(html: string): ParsedTable | null {
   }
   const match = /^(\d{1,7}),(\d{1,5})$/.exec(table.getAttribute("data-sheets-origin") ?? "");
   const origin = match === null ? null : { row: Number(match[1]), col: Number(match[2]) };
-  return typed ? { rows, formulas, origin, values } : { rows, formulas, origin };
+  const parsed: ParsedTable = typed ? { rows, formulas, origin, values } : { rows, formulas, origin };
+  if (sourceRows.some((source) => source !== null)) parsed.sourceRows = sourceRows;
+  return parsed;
 }
 
 /** What a paste should write, from whichever clipboard formats are present. */

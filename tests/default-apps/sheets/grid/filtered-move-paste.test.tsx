@@ -61,6 +61,55 @@ describe("actions on a filtered range leave hidden rows alone", () => {
   });
 });
 
+describe("cut on a filtered range", () => {
+  function cutAndPaste(h: GridHarness, range: { start: { row: number; col: number }; end: { row: number; col: number } }): void {
+    act(() => h.controller.select(range));
+    let payload: ReturnType<typeof h.controller.cut> = null;
+    act(() => {
+      payload = h.controller.cut();
+    });
+    act(() => h.controller.select({ row: 0, col: 3 }));
+    act(() => {
+      h.controller.paste({ text: payload!.text, html: payload!.html });
+    });
+  }
+
+  it("moves only the visible run when hidden rows follow it in the selection", async () => {
+    const h = await filteredEast();
+    cutAndPaste(h, { start: { row: 3, col: 1 }, end: { row: 4, col: 1 } });
+    expect([value(h, 0, 3), value(h, 1, 3)]).toEqual([3, null]);
+    expect([value(h, 3, 1), value(h, 4, 1)]).toEqual([null, 4]);
+    h.unmount();
+  });
+
+  it("moves only the visible run when hidden rows come before it in the selection", async () => {
+    const h = await filteredEast();
+    cutAndPaste(h, { start: { row: 2, col: 1 }, end: { row: 3, col: 1 } });
+    expect([value(h, 0, 3), value(h, 1, 3)]).toEqual([3, null]);
+    expect([value(h, 2, 1), value(h, 3, 1)]).toEqual([2, null]);
+    h.unmount();
+  });
+
+  it("refuses the move when a filter hid cut rows before the paste", async () => {
+    const h = await renderGrid((workbook: Workbook, sheet: string) => {
+      workbook.setRange(sheet, { row: 0, col: 0 }, [["Region", "Amount"], ["East", 1], ["West", 2], ["East", 3]]);
+    });
+    act(() => h.controller.select({ start: { row: 1, col: 1 }, end: { row: 2, col: 1 } }));
+    let payload: ReturnType<typeof h.controller.cut> = null;
+    act(() => {
+      payload = h.controller.cut();
+    });
+    act(() => h.controller.filter({ range: { start: { row: 0, col: 0 }, end: { row: 3, col: 1 } }, criteria: [{ col: 0, values: ["East"] }] }));
+    act(() => h.controller.select({ row: 0, col: 3 }));
+    act(() => {
+      h.controller.paste({ text: payload!.text, html: payload!.html });
+    });
+    expect([value(h, 1, 1), value(h, 2, 1)]).toEqual([1, 2]);
+    expect([value(h, 0, 3), value(h, 1, 3)]).toEqual([null, null]);
+    h.unmount();
+  });
+});
+
 describe("cut and paste moves cells", () => {
   it("rewrites the formulas that refer to the moved cells", async () => {
     const h = await renderGrid((workbook: Workbook, sheet: string) => {
@@ -133,6 +182,55 @@ describe("pasting cells copied in another window", () => {
       target.controller.paste({ text: payload!.text, html: payload!.html });
     });
     expect([value(target, 2, 0), value(target, 2, 1), value(target, 2, 2), value(target, 2, 3)]).toEqual([3.14159265, "007", 1234567.5, true]);
+    target.unmount();
+  });
+
+  const formulaAt = (h: GridHarness, row: number, col: number) => h.session.workbook.getCell(h.sheet, { row, col }).formula;
+
+  it("moves the formula of every copied column by the distance it travelled", async () => {
+    const source = await renderGrid((workbook: Workbook, sheet: string) => {
+      workbook.setCell(sheet, { row: 0, col: 0 }, 5);
+      workbook.setFormula(sheet, { row: 0, col: 1 }, "A1*2");
+      workbook.setFormula(sheet, { row: 0, col: 2 }, "A1+B1");
+    });
+    act(() => source.controller.select({ start: { row: 0, col: 0 }, end: { row: 0, col: 2 } }));
+    let payload: ReturnType<typeof source.controller.copy> = null;
+    act(() => {
+      payload = source.controller.copy();
+    });
+    source.unmount();
+
+    const target = await renderGrid();
+    act(() => target.controller.select({ row: 0, col: 3 }));
+    act(() => {
+      target.controller.paste({ text: payload!.text, html: payload!.html });
+    });
+    expect([formulaAt(target, 0, 4), formulaAt(target, 0, 5)]).toEqual(["D1*2", "D1+E1"]);
+    expect(value(target, 0, 4)).toBe(10);
+    target.unmount();
+  });
+
+  it("moves the formula of each copied row from the row it was copied from, across rows a filter hid", async () => {
+    const source = await filteredEast();
+    act(() => {
+      source.session.mutate((workbook) => {
+        for (let row = 1; row <= 4; row++) workbook.setFormula(source.sheet, { row, col: 2 }, `B${row + 1}*10`);
+      });
+    });
+    act(() => source.controller.select({ start: { row: 1, col: 1 }, end: { row: 4, col: 2 } }));
+    let payload: ReturnType<typeof source.controller.copy> = null;
+    act(() => {
+      payload = source.controller.copy();
+    });
+    source.unmount();
+
+    const target = await renderGrid();
+    act(() => target.controller.select({ row: 0, col: 4 }));
+    act(() => {
+      target.controller.paste({ text: payload!.text, html: payload!.html });
+    });
+    expect([formulaAt(target, 0, 5), formulaAt(target, 1, 5)]).toEqual(["E1*10", "E2*10"]);
+    expect([value(target, 0, 5), value(target, 1, 5)]).toEqual([10, 30]);
     target.unmount();
   });
 });
