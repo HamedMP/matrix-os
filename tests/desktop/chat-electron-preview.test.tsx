@@ -31,9 +31,9 @@ function acceptVerificationDraft(
 ) {
   act(() => {
     const submission = draft?.beginSubmission(run.id);
-    expect(submission).toBeDefined();
-    submission?.accept(run);
-    submission?.finish();
+    if (!submission || submission === "draft-changed") throw new Error("Expected the current verification draft to submit");
+    submission.accept(run);
+    submission.finish();
   });
 }
 
