@@ -128,6 +128,20 @@ export function useChatComposerDrafts({
       setDrafts((current, nextRevision) => (current[scope]?.revision ?? 0) === revision
         ? rememberDraft(current, scope, patch, projectId, nextRevision) : current);
     }, [projectId, scope, setDrafts]),
+    /**
+     * Puts a sent draft back at its original revision after the send was not
+     * admitted, so a retry is the same request; a draft written since stays.
+     */
+    restoreIfEmpty: useCallback((revision: number, sent: Pick<ComposerDraft, "text" | "referenceTokens">) => {
+      if (!sent.text.trim() && !sent.referenceTokens.length) return;
+      setDrafts((current, nextRevision) => {
+        const existing = current[scope];
+        if (existing && (existing.text.trim() || existing.referenceTokens.length)) return current;
+        const next = rememberDraft(current, scope, sent, projectId, nextRevision);
+        next[scope] = { ...next[scope]!, revision };
+        return next;
+      });
+    }, [projectId, scope, setDrafts]),
     text: draft?.text ?? "",
     referenceTokens: draft?.referenceTokens ?? EMPTY_REFERENCE_TOKENS,
     draftProjectId: draft ? draft.projectId : projectId,
