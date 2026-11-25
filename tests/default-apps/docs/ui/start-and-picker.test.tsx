@@ -106,6 +106,29 @@ describe("Docs templates", () => {
   });
 });
 
+describe("Docs remembers the folder the owner last used", () => {
+  it("starts the browser there, on the start screen and in the Open dialog, and remembers the next folder", async () => {
+    installBridge({ "Work/Q3/plan.docx": await docxFromParagraphs(["Plan"]), "Work/notes.docx": await docxFromParagraphs(["Notes"]) });
+    const store = new Map<string, unknown>([["start_folder", { dir: "Work/Q3" }]]);
+    Object.assign((window as unknown as { MatrixOS: object }).MatrixOS, {
+      readData: async (key: string) => store.get(key) ?? null,
+      writeData: async (key: string, value: unknown) => void store.set(key, value),
+    });
+    renderApp();
+    const list = await matrixList();
+    await within(list).findByRole("button", { name: /^plan\.docx/ });
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("button", { name: "Work" }));
+    await screen.findByRole("button", { name: /^notes\.docx/ });
+    await waitFor(() => expect(store.get("start_folder")).toEqual({ dir: "Work" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Blank document/ }));
+    await findSurface();
+    fileMenu(/^Open from Matrix/);
+    const dialog = await screen.findByRole("dialog", { name: "Open a document" });
+    expect(await within(dialog).findByRole("button", { name: /^notes\.docx/ })).toBeTruthy();
+  });
+});
+
 describe("Docs open dialog", () => {
   async function openDialog() {
     fireEvent.click(await screen.findByRole("button", { name: /^Blank document/ }));

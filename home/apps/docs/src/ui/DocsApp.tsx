@@ -5,9 +5,9 @@
  */
 
 import { FileText } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { MatrixOSBridge, MatrixOSFiles } from "../../../_shared/matrix-os";
-import { AppFrame, EmptyState, FileDropZone, LocalFileError, Spinner, pickLocalFile, useToast } from "../../../_shared/office-ui";
+import { AppFrame, EmptyState, FileDropZone, LocalFileError, Spinner, createStartFolderMemory, pickLocalFile, useToast, type StartFolderMemory } from "../../../_shared/office-ui";
 import { useSessionState } from "../editor/index";
 import { MarkdownDialog, SaveAsDialog, UnsavedDialog } from "./dialogs";
 import { DocsWorkspace, type WorkspaceFileCommands } from "./DocsWorkspace";
@@ -26,6 +26,8 @@ export interface DocsAppProps {
 export function DocsApp({ bridge, author, autosave }: DocsAppProps) {
   const handles = useDocsSession(bridge, author, autosave);
   const files = bridge?.files;
+  // The folder the owner last browsed, kept in Docs' own key-value store.
+  const folderMemory = useMemo(() => createStartFolderMemory(bridge), [bridge]);
   if (files === undefined) {
     return (
       <AppFrame title="Docs" titleIcon={<FileText size={18} />}>
@@ -40,7 +42,7 @@ export function DocsApp({ bridge, author, autosave }: DocsAppProps) {
       </AppFrame>
     );
   }
-  return <DocsHome handles={handles} files={files} author={author} />;
+  return <DocsHome handles={handles} files={files} author={author} folderMemory={folderMemory} />;
 }
 
 interface SaveAsRequest {
@@ -49,7 +51,7 @@ interface SaveAsRequest {
   after?: () => void;
 }
 
-function DocsHome({ handles, files, author }: { handles: SessionHandles; files: MatrixOSFiles; author: string }) {
+function DocsHome({ handles, files, author, folderMemory }: { handles: SessionHandles; files: MatrixOSFiles; author: string; folderMemory: StartFolderMemory | undefined }) {
   const { session } = handles;
   const toast = useToast();
   const state = useSessionState(session);
@@ -122,6 +124,7 @@ function DocsHome({ handles, files, author }: { handles: SessionHandles; files: 
       ) : (
         <StartScreen
           files={files}
+          folderMemory={folderMemory}
           recents={recents.items}
           recentsLoading={recents.loading}
           onRemoveRecent={recents.remove}
@@ -140,7 +143,7 @@ function DocsHome({ handles, files, author }: { handles: SessionHandles; files: 
         onFile={(file) => void openLocalFile(file)}
         onReject={rejectLocal}
       />
-      <FilePickerDialog open={pickerTitle !== null} title={pickerTitle ?? undefined} files={files} onPick={finishPicker} onClose={() => finishPicker(null)} />
+      <FilePickerDialog open={pickerTitle !== null} title={pickerTitle ?? undefined} files={files} memory={folderMemory} onPick={finishPicker} onClose={() => finishPicker(null)} />
       <MarkdownDialog open={markdownOpen} onClose={() => setMarkdownOpen(false)} onCreate={(markdown) => void actions.newFromMarkdown(markdown)} />
       <SaveAsDialog
         open={saveAs !== null}

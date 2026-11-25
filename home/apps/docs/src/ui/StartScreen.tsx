@@ -5,7 +5,7 @@
 
 import { FileText, FileType2 } from "lucide-react";
 import type { MatrixOSFiles } from "../../../_shared/matrix-os";
-import { AppFrame, DOCX_MIME, OfficeStartScreen, type StartTemplate } from "../../../_shared/office-ui";
+import { AppFrame, DOCX_MIME, OfficeStartScreen, type StartFolderMemory, type StartTemplate } from "../../../_shared/office-ui";
 import type { RecentFile, SessionError } from "../session/index";
 import { templateArt } from "./template-art";
 import { DOCS_TEMPLATES, type DocsTemplateId } from "./templates";
@@ -28,6 +28,8 @@ const docKind = () => ({ kind: "document" as const });
 
 export interface StartScreenProps {
   files: Pick<MatrixOSFiles, "list">;
+  /** Remembers the folder the owner last browsed. */
+  folderMemory?: StartFolderMemory;
   recents: readonly RecentFile[];
   /** The recent list is still being read. */
   recentsLoading?: boolean;
@@ -42,7 +44,7 @@ export interface StartScreenProps {
   onRemoveRecent: (path: string) => Promise<void>;
 }
 
-export function StartScreen({ files, recents, recentsLoading, loading, error, onTemplate, onOpenLocal, onNewFromMarkdown, onOpenPath, onRemoveRecent }: StartScreenProps) {
+export function StartScreen({ files, folderMemory, recents, recentsLoading, loading, error, onTemplate, onOpenLocal, onNewFromMarkdown, onOpenPath, onRemoveRecent }: StartScreenProps) {
   return (
     <AppFrame title="Docs" titleIcon={<FileText size={18} />}>
       <OfficeStartScreen
@@ -77,7 +79,7 @@ export function StartScreen({ files, recents, recentsLoading, loading, error, on
           emptyHeadline: "No recent documents",
           emptyDescription: "Documents you open or save appear here, so you can pick them up again.",
         }}
-        browser={{ files, accept: BROWSE_ACCEPT, onOpen: onOpenPath, fileNoun: "Word documents" }}
+        browser={{ files, accept: BROWSE_ACCEPT, onOpen: onOpenPath, fileNoun: "Word documents", memory: folderMemory }}
         kindOf={docKind}
       />
     </AppFrame>

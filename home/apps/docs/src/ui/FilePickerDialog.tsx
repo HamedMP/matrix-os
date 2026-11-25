@@ -4,11 +4,13 @@
  */
 
 import type { MatrixOSFiles } from "../../../_shared/matrix-os";
-import { Dialog, MatrixFileBrowser } from "../../../_shared/office-ui";
+import { Dialog, MatrixFileBrowser, type StartFolderMemory } from "../../../_shared/office-ui";
 
 export interface FilePickerDialogProps {
   open: boolean;
   files: Pick<MatrixOSFiles, "list">;
+  /** Remembers the folder the owner last browsed. */
+  memory?: StartFolderMemory;
   title?: string;
   onClose: () => void;
   onPick: (path: string) => void;
@@ -17,7 +19,7 @@ export interface FilePickerDialogProps {
 const ACCEPT: readonly string[] = [".docx"];
 const docKind = () => ({ kind: "document" as const });
 
-export function FilePickerDialog({ open, files, title = "Open a document", onClose, onPick }: FilePickerDialogProps) {
+export function FilePickerDialog({ open, files, memory, title = "Open a document", onClose, onPick }: FilePickerDialogProps) {
   return (
     <Dialog
       open={open}
@@ -31,7 +33,7 @@ export function FilePickerDialog({ open, files, title = "Open a document", onClo
         </button>
       }
     >
-      {open && <MatrixFileBrowser files={files} accept={ACCEPT} appName="Docs" fileNoun="Word documents" kindOf={docKind} onOpen={onPick} />}
+      {open && <MatrixFileBrowser files={files} memory={memory} accept={ACCEPT} appName="Docs" fileNoun="Word documents" kindOf={docKind} onOpen={onPick} />}
     </Dialog>
   );
 }
