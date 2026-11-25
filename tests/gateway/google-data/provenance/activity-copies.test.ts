@@ -68,6 +68,24 @@ const activity = (id = 'activity_one', summary = 'synthetic mail summary') => ({
 const activityCopy = (id = 'activity_one') => provenance.inspect(owner.ownerId, 'derived', googleActivityEntityRef(id));
 
 describe('registered activity copies', () => {
+  it('retains active prompts and keeps accepting activity past a full window', async () => {
+    await repository.markRunRunning(owner, { chatId: key.chatId, runId: key.runId, startedAt: new Date().toISOString() });
+    await mark();
+    for (let batch = 0; batch < 5; batch++) {
+      await repository.appendRunActivities(owner, key.chatId, key.runId, Array.from({ length: 100 }, (_, index) => {
+        const n = batch * 100 + index;
+        return { ...activity(`activity_${n}`), status: n === 0 ? 'running' as const : 'completed' as const };
+      }));
+    }
+    await repository.appendRunActivities(owner, key.chatId, key.runId, [{ id: 'activity_prompt', chatId: key.chatId, runId: key.runId,
+      occurredAt: new Date().toISOString(), type: 'input.requested', requestId: 'request_choice', title: 'Choose next step' }]);
+    const rows = await repository.kysely.selectFrom('chat_run_events').select(['id']).where('run_id', '=', key.runId).execute();
+    expect(rows).toHaveLength(500); expect(rows.some(row => row.id === 'activity_0')).toBe(true);
+    expect(rows.some(row => row.id === 'activity_prompt')).toBe(true); expect(rows.some(row => row.id === 'activity_1')).toBe(false);
+    // Registry metadata remains until normal purge can prove missing content; it is not fabricated as erased.
+    expect((await activityCopy('activity_1'))?.state).toBe('active');
+  }, 60000);
+
   it('registers exact content and re-registers transitions while preserving stable row sequence', async () => {
     await mark(); const input = activity(); await repository.appendRunActivities(owner, key.chatId, key.runId, [input]);
     const before = await activityCopy(); expect(before).toMatchObject({ state: 'active', revision: 1 });

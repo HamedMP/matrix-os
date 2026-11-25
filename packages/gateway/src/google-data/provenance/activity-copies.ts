@@ -95,6 +95,20 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
           || copy.origins.some(origin => !context.googleContext.sources.some(source => originKey(origin) === originKey({
             connectionId: source.originId, profileId: source.profileId, profileRevision: source.profileRevision, purpose: source.purposeId })))) deny();
       }
+      // Keep the bounded activity window moving without dropping pending owner
+      // interactions or live tool progress. Copy metadata remains for normal
+      // purge to confirm the missing bytes; pruning is not a fabricated receipt.
+      const overflow = Math.max(0, before.length + requested.filter(id => !observed.includes(id)).length - 500);
+      if (overflow) {
+        const retired = before.filter(row => !requested.includes(row.id) && row.activity.type === 'agent.activity'
+          && ['completed', 'failed', 'cancelled'].includes(row.activity.status))
+          .sort((a, b) => a.run_seq - b.run_seq || a.id.localeCompare(b.id)).slice(0, overflow);
+        if (retired.length !== overflow) deny();
+        const deleted = await current.deleteFrom('chat_run_events').where('chat_id', '=', key.chatId).where('run_id', '=', key.runId)
+          .where('id', 'in', retired.map(row => row.id)).returning('id').execute();
+        if (deleted.length !== retired.length) deny();
+        live();
+      }
       const result = await content(current); const after = await payloads(current, key); const fresh = await inspect();
       if (after.some(row => !ids.includes(row.id) || row.redacted_hash)) deny();
       if (fresh.classification === 'google') for (const row of after) {
