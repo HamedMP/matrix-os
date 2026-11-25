@@ -55,6 +55,7 @@ import {
   isBillingSetupPath,
   isSignupBillingHandoff,
   isPlatformShellAssetNamespacePath,
+  isPlatformShellServerAction,
   readRuntimeSlotSelection,
   shouldProxyAuthShellForUnroutedUser,
   shouldProxyShellForBillingGate,
@@ -562,6 +563,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const authHeader = c.req.header('authorization');
     const cookieHeader = c.req.header('cookie');
     const path = c.req.path;
+    if (isAppDomain && !isAppDomainStaticAssetPath(path) && isPlatformShellServerAction({
+      method: c.req.method,
+      path,
+      actionId: c.req.header('next-action'),
+      deploymentId: c.req.header('x-deployment-id'),
+    })) {
+      return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
+    }
     const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
     const explicitVmRouteHasValidAppAssetToken = Boolean(
       explicitVmRoute &&
