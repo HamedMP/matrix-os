@@ -1,3 +1,4 @@
+import { FREE_MANAGED_MODEL_ID } from '@matrix-os/contracts';
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import type { PlatformDB } from '../db.js';
@@ -12,7 +13,7 @@ import { AiFundedPolicyError } from '../ai-funded-policy-errors.js';
  * funded reservation path and ledger. Own-account sources never come through here.
  */
 
-export const FREE_MANAGED_MODEL_ID = '@cf/zai-org/glm-5.3-flash';
+export { FREE_MANAGED_MODEL_ID };
 export const FREE_MONTHLY_ALLOWANCE_MICROUSD = 5_000_000;
 const ALLOWANCE_SOURCE = 'matrix-free-monthly-allowance';
 const DAILY_SPEND_LOCK_KEY = 'matrix:free-tier:daily-funded-spend';

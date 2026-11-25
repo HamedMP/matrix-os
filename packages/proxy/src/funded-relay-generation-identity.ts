@@ -1,5 +1,5 @@
 import { createHmac } from "node:crypto";
-import type { FundedAiPolicyCheckResponse } from "@matrix-os/contracts";
+import { FREE_MANAGED_MODEL_ID, type FundedAiPolicyCheckResponse } from "@matrix-os/contracts";
 import type { FundedPlatformClient } from "./funded-relay-platform-client.js";
 
 const IDENTITY_TTL_MS = 30_000;
@@ -34,14 +34,16 @@ export function createGenerationIdentityReader(options: {
   now: () => Date;
 }) {
   const cache = new Map<string, {
-    identity: VerifiedIdentity; customerBilling?: CustomerBilling; readAt: number; validUntil: number;
+    identity: VerifiedIdentity; readAt: number; validUntil: number;
   }>();
   return async function readIdentity(
     input: Parameters<FundedPlatformClient["check"]>[0],
     signal: AbortSignal,
     allowReuse: boolean,
   ): Promise<GenerationIdentity> {
-    if (!allowReuse) {
+    // This model is available on either plan. Its billing choice must reflect
+    // the current entitlement even when the credential and model are unchanged.
+    if (!allowReuse || input.modelId === FREE_MANAGED_MODEL_ID) {
       const checked = await options.platform.check(input, signal);
       return { identity: checked.identity, ...billingOf(checked.customerBilling) };
     }
@@ -51,19 +53,19 @@ export function createGenerationIdentityReader(options: {
     const at = options.now().getTime();
     const previous = cache.get(key);
     if (previous && at >= previous.readAt && at < previous.validUntil) {
-      return { identity: previous.identity, ...billingOf(previous.customerBilling), discardCachedIdentity: () => {
+      return { identity: previous.identity, discardCachedIdentity: () => {
         if (cache.get(key) === previous) cache.delete(key);
       } };
     }
     cache.delete(key);
     const { identity, customerBilling } = await options.platform.check(input, signal);
     const validUntil = Math.min(at + IDENTITY_TTL_MS, Date.parse(identity.expiresAt));
-    if (validUntil > options.now().getTime()) {
+    if (customerBilling !== "prepaid" && validUntil > options.now().getTime()) {
       if (cache.size >= MAX_CACHED_IDENTITIES) {
         const oldest = cache.keys().next();
         if (!oldest.done) cache.delete(oldest.value);
       }
-      cache.set(key, { identity, ...billingOf(customerBilling), readAt: at, validUntil });
+      cache.set(key, { identity, readAt: at, validUntil });
     }
     return { identity, ...billingOf(customerBilling) };
   };

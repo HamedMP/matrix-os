@@ -5,7 +5,8 @@ import type { FundedPlatformClient } from "../../packages/proxy/src/funded-relay
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { createAiFundedRelayRoutes } from "../../packages/platform/src/ai-funded-policy-routes.js";
 import { initializeCustomerFundedStarterPolicy } from "../../packages/platform/src/customer-funded-starter-policy.js";
-import type { PlatformDB } from "../../packages/platform/src/db.js";
+import { upsertBillingEntitlement, type PlatformDB } from "../../packages/platform/src/db.js";
+import { buildFreeEntitlement } from "../../packages/platform/src/free-tier/free-entitlement.js";
 import { FREE_MANAGED_MODEL_ID } from "../../packages/platform/src/free-tier/funded-policy.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "../platform/platform-db-test-helper.js";
 import { insertFreeMetalRuntime } from "../platform/free-funded-test-helper.js";
@@ -185,6 +186,26 @@ describe("free Matrix AI end to end through the relay and the platform", () => {
     expect(await owner.repo.getFundingSummary(owner.identity)).toMatchObject({ reservedMicrousd: 0, settledThisMonthMicrousd: 24 });
     await expect(owner.repo.authorize({ credential: owner.credential.token, requestId: "direct_postpaid", modelId: MODEL,
       maxCostMicrousd: 1_000, billingMode: "usage", billingPolicy: "postpaid" })).rejects.toMatchObject({ code: "access_disabled" });
+  });
+
+  it("uses paid zero-hold admission immediately after a free owner upgrades with the same credential", async () => {
+    const owner = await freeOwner({ dailyFundedSpendMicrousd: 100_000_000 });
+    const first = await chat(owner.app, owner.credential.token);
+    expect(first.status).toBe(200);
+    await first.text();
+    await vi.waitFor(async () => expect((await reservations(owner.identity.machineId))[0]?.status).toBe("settled"));
+
+    await upsertBillingEntitlement(db, {
+      ...buildFreeEntitlement(owner.identity.ownerId, NOW), source: "stripe", planSlug: "matrix_starter",
+      status: "active", stripeSubscriptionId: "sub_upgraded",
+    });
+    const second = await chat(owner.app, owner.credential.token);
+    expect(second.status).toBe(200);
+    await second.text();
+    const rows = await reservations(owner.identity.machineId);
+    expect(rows.map(row => JSON.parse(row.authorization_response).reservation)).toContainEqual(expect.objectContaining({
+      billingPolicy: "postpaid", reservedMicrousd: 0,
+    }));
   });
 
   it("refuses a free request over the daily funded spend ceiling before any inference", async () => {
