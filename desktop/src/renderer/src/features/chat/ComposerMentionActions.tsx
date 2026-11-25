@@ -5,6 +5,7 @@ export interface ComposerMentionAction {
   kind: "preview" | "terminal";
   keywords: string;
   consumeTrigger?: true;
+  defaultDraft?: string;
   slashCommand?: string;
   select: (queryDraft: string, remainingDraft?: string) => void;
 }

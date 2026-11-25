@@ -5,6 +5,7 @@ import type { BeginMacActivity, MacActivityHandle, MacActivityPhase } from "../m
 import { ChatElectronPreviewTransportInterruptedError, type ChatElectronPreviewBackgroundBinding,
   type ChatElectronPreviewRequest } from "./transport";
 import { previewRequestKey } from "./claims";
+import { MacVerificationPreparationError } from "./source-provider";
 
 type BackgroundPreview = ChatElectronPreviewBackgroundBinding & { pairing?: MacActionPairingLease };
 const DELIVERY_RETRY_MS = 500;
@@ -27,9 +28,10 @@ interface Dependencies {
   isCurrent(request: ChatElectronPreviewRequest): boolean;
   wasHandled(key: string): Promise<boolean>;
   claim(key: string): Promise<boolean>;
+  hasCompatibleSource?(request: ChatElectronPreviewRequest): Promise<boolean>;
   approve(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<boolean>;
   execute(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<PreviewResult>;
-  returnResult(request: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }, signal: AbortSignal): Promise<void>;
+  returnResult(request: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" | MacVerificationPreparationError["code"] }, signal: AbortSignal): Promise<void>;
   beginActivity?: BeginMacActivity;
   reportError?(error: unknown): void;
 }
@@ -46,7 +48,8 @@ function matchesApproval(approved: ChatElectronPreviewRequest, candidate: ChatEl
     && approved.worktreeId === candidate.worktreeId && approved.expiresAt === candidate.expiresAt
     && approved.baseSha === candidate.baseSha && approved.sourceSha256 === candidate.sourceSha256
     && approved.label === candidate.label && approved.operation === candidate.operation
-    && approved.requestKind === candidate.requestKind
+    && approved.requestKind === candidate.requestKind && approved.recipe === candidate.recipe
+    && approved.terminalIntentDigest === candidate.terminalIntentDigest
     && approved.backgroundTargetId === candidate.backgroundTargetId;
 }
 
@@ -70,7 +73,7 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       return !boundarySignal.aborted;
     }
 
-    async function deliver(current: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }) {
+    async function deliver(current: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" | MacVerificationPreparationError["code"] }) {
       let pairingRetryAvailable = true;
       const retryBadGateway = current.requestKind === "verification" ? () => {
         if (!pairingRetryAvailable) return false;
@@ -103,6 +106,9 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       const remaining = request.expiresAt - Date.now();
       if (remaining <= 0 || signal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
       approvalSignal = AbortSignal.any([signal, AbortSignal.timeout(remaining)]);
+      const compatible = await deps.hasCompatibleSource?.(request);
+      if (approvalSignal.aborted || !deps.isCurrent(request)) return { status: "unavailable" };
+      if (compatible === false) return { status: "incompatible" };
       activity = deps.beginActivity?.("preview", request.worktreeId);
       completion = "revoked";
       let approved: boolean;
@@ -150,7 +156,7 @@ export function createChatElectronPreviewService(deps: Dependencies) {
           return { status: "unavailable" };
         }
         deps.reportError?.(error);
-        if (!await deliver(current, { error: "build-failed" })) {
+        if (!await deliver(current, { error: error instanceof MacVerificationPreparationError ? error.code : "build-failed" })) {
           completion = "revoked";
           return { status: "unavailable" };
         }
