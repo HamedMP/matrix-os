@@ -76,15 +76,24 @@ export function FindReplaceBar({ session, editor, viewMode, docVersion, focusTok
     }
   };
 
+  // The shown results refresh after a short delay; a replacement always reads the document as it is now.
+  const liveMatches = () => {
+    const doc = session.document;
+    if (doc === null || query === "") return [];
+    return findMatches(visibleParagraphs(doc, viewMode), query, { matchCase, wholeWord }).matches;
+  };
+
   const replaceCurrent = () => {
-    const match = matches[index];
+    const live = liveMatches();
+    const match = live[Math.min(Math.max(index, 0), live.length - 1)];
     if (match !== undefined) apply(replaceOps([match], replacement));
   };
 
   const replaceAll = () => {
-    if (matches.length === 0) return;
-    const count = matches.length;
-    if (apply(replaceOps(matches, replacement))) {
+    const live = liveMatches();
+    if (live.length === 0) return;
+    const count = live.length;
+    if (apply(replaceOps(live, replacement))) {
       setCurrent(0);
       toast.show({ title: `Replaced ${count} ${count === 1 ? "match" : "matches"}`, tone: "success" });
     }

@@ -61,6 +61,30 @@ describe("Docs find and replace", () => {
     expect(surface.querySelectorAll(".doc-hl-search")).toHaveLength(0);
   });
 
+  it("replaces against the live document when Replace is clicked again before the results refresh", async () => {
+    installBridge({ "plan.docx": await docxFromParagraphs(["cat cat"]) }, { pending: "plan.docx" });
+    renderApp();
+    const surface = await findSurface();
+    fireEvent.keyDown(surface, { key: "h", ctrlKey: true });
+    const bar = await screen.findByLabelText("Find and replace", { selector: "search" });
+    fireEvent.change(within(bar).getByLabelText("Find"), { target: { value: "cat" } });
+    await waitFor(() => expect(within(bar).getByTestId("find-count").textContent).toBe("1 of 2"));
+    fireEvent.change(within(bar).getByLabelText("Replace with"), { target: { value: "elephant" } });
+    const replace = within(bar).getByRole("button", { name: "Replace" });
+    fireEvent.click(replace);
+    fireEvent.click(replace);
+    await waitFor(() => expect(surface.textContent).toBe("elephant elephant"));
+    fireEvent.click(replace);
+    expect(surface.textContent).toBe("elephant elephant");
+
+    fireEvent.change(within(bar).getByLabelText("Find"), { target: { value: "elephant" } });
+    await waitFor(() => expect(within(bar).getByTestId("find-count").textContent).toBe("1 of 2"));
+    fireEvent.change(within(bar).getByLabelText("Replace with"), { target: { value: "ox" } });
+    fireEvent.click(within(bar).getByRole("button", { name: "Replace" }));
+    fireEvent.click(within(bar).getByRole("button", { name: "Replace all" }));
+    await waitFor(() => expect(surface.textContent).toBe("ox ox"));
+  });
+
   it("matches whole words and case on request", async () => {
     installBridge({ "plan.docx": await docxFromParagraphs(["Cat cat catalog"]) }, { pending: "plan.docx" });
     renderApp();
@@ -234,6 +258,26 @@ describe("Docs ribbon and status bar", () => {
     ribbonTab("Assistant");
     fireEvent.click(screen.getByRole("button", { name: "Assistant", pressed: false }));
     expect(await screen.findByRole("group", { name: "Assistant mode" }, { timeout: 5000 })).toBeTruthy();
+  });
+
+  it("keeps the assistant conversation while its tab is hidden or the side panel is closed", async () => {
+    await openContract();
+    (window as unknown as { MatrixOS: { ai: { generate: unknown } } }).MatrixOS.ai.generate = async () => ({ text: "A short contract." });
+    ribbonTab("Assistant");
+    fireEvent.click(screen.getByRole("button", { name: "Summarise" }));
+    const side = () => screen.getByRole("complementary", { name: "Review, assistant and compare" });
+    expect(await screen.findByRole("article", { name: "Summary" }, { timeout: 5000 })).toBeTruthy();
+
+    fireEvent.click(within(side()).getByRole("tab", { name: /^Review/ }));
+    await waitFor(() => expect(screen.queryByRole("article", { name: "Summary" })).toBeNull());
+    fireEvent.click(within(side()).getByRole("tab", { name: /Assistant/ }));
+    expect(await screen.findByRole("article", { name: "Summary" }, { timeout: 5000 })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close side panel" }));
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Review, assistant and compare" })).toBeNull());
+    ribbonTab("View");
+    fireEvent.click(screen.getByRole("button", { name: "Side panel" }));
+    expect(await screen.findByRole("article", { name: "Summary" }, { timeout: 5000 })).toBeTruthy();
   });
 
   it("runs an assistant quick action from the Assistant tab", async () => {

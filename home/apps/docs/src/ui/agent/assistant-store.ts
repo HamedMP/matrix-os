@@ -3,9 +3,15 @@
  * lines, result cards and the one-by-one review cursor. It runs the
  * assistant flows of `../../agent` and resolves revisions through the
  * session. Bounded: old messages and cards are dropped.
+ *
+ * One store belongs to one open document (`documentKey`) and outlives the
+ * panel: the workspace keeps it while the owner switches tabs. A card's
+ * status is derived from the revisions still pending in the document, so it
+ * follows undo and accept or reject done in the Review panel.
  */
 
 import {
+  PARTIAL_COVERAGE_NOTE,
   QUICK_ACTIONS,
   askDocument,
   explainSelection,
@@ -25,8 +31,20 @@ import type {
   QuickActionId,
 } from "../../agent/index";
 import type { Revision, TextRange } from "../../../../_shared/office-engine/index";
-import { type CardLineage, cardRevisions, changeRevisions, lineageOf } from "./card-revisions";
-import type { DocumentSession } from "../../session/index";
+import {
+  type CardLineage,
+  type CardView,
+  type ChangeOutcome,
+  WHOLE_CARD,
+  cardRevisions,
+  changeKey,
+  changeRevisions,
+  deriveCardView,
+  lineageOf,
+  unitKeys,
+  withoutReopened,
+} from "./card-revisions";
+import type { DocumentChange, DocumentSession } from "../../session/index";
 
 export const MAX_MESSAGES = 40;
 export const MAX_CARDS = 20;
@@ -45,7 +63,7 @@ export interface StatusLine {
   state: "pending" | "running" | "done" | "error";
 }
 
-export type CardStatus = "proposed" | "accepted" | "rejected" | "mixed";
+export type { CardStatus, CardView, ChangeOutcome } from "./card-revisions";
 
 export type AssistantCard =
   | {
@@ -59,13 +77,16 @@ export type AssistantCard =
       revisionIds: string[];
       /** Owner-facing notes, e.g. how many proposals were dropped. */
       notes: string[];
-      status: CardStatus;
-      /** Revisions of this card the owner accepted or rejected here. */
-      outcomes: { accepted: number; rejected: number };
+      /**
+       * How the owner resolved each change from this card, by change key. An
+       * entry is dropped when its change is pending again (undo), so it never
+       * outlives the resolution it describes.
+       */
+      resolutions: Readonly<Record<string, ChangeOutcome>>;
       /** Finds the pieces the document split off this card's revisions; set when the card is added. */
       lineage?: CardLineage;
     }
-  | { id: string; type: "answer"; title: string; documentKey: number; segments: AnswerSegment[] };
+  | { id: string; type: "answer"; title: string; documentKey: number; segments: AnswerSegment[]; notes: string[] };
 
 export interface ReviewCursor {
   cardId: string;
@@ -81,11 +102,14 @@ export interface AssistantState {
   review: ReviewCursor | null;
 }
 
-export interface AssistantStoreOptions {
-  session: DocumentSession;
+export interface AssistantLinks {
   generate: AgentGenerate;
   /** The owner's selection in engine coordinates, or null. */
   getSelection: () => TextRange | null;
+}
+
+export interface AssistantStoreOptions extends AssistantLinks {
+  session: DocumentSession;
   log?: (message: string, error: unknown) => void;
 }
 
@@ -101,20 +125,30 @@ function droppedNote(dropped: readonly DroppedEdit[]): string[] {
   return [`${parts.join("; ")}.`];
 }
 
-/** Proposed while anything is pending; then accepted, rejected or mixed by what the owner did. */
-function cardStatus(pending: number, outcomes: { accepted: number; rejected: number }): CardStatus {
-  if (pending > 0) return "proposed";
-  if (outcomes.accepted > 0 && outcomes.rejected > 0) return "mixed";
-  return outcomes.rejected > 0 ? "rejected" : "accepted";
-}
 
 export class AssistantStore {
   private state: AssistantState = INITIAL;
   private readonly listeners = new Set<() => void>();
   private counter = 0;
   private controller: AbortController | null = null;
+  private links: AssistantLinks;
+  /** The document this store belongs to. */
+  readonly documentKey: number;
 
-  constructor(private readonly options: AssistantStoreOptions) {}
+  constructor(private readonly options: AssistantStoreOptions) {
+    this.links = { generate: options.generate, getSelection: options.getSelection };
+    this.documentKey = options.session.getState().documentKey;
+  }
+
+  /** The model and selection of the panel now showing this store. */
+  connect(links: AssistantLinks): void {
+    this.links = links;
+  }
+
+  /** The store is no longer kept: stops a running request. */
+  dispose(): void {
+    this.cancel();
+  }
 
   getState = (): AssistantState => this.state;
 
@@ -165,12 +199,12 @@ export class AssistantStore {
 
   ask(question: string): Promise<void> {
     this.say("user", question);
-    return this.run("Answer", (signal, onProgress) => askDocument(this.deps(), { question, selection: this.options.getSelection(), signal, onProgress }));
+    return this.run("Answer", (signal, onProgress) => askDocument(this.deps(), { question, selection: this.links.getSelection(), signal, onProgress }));
   }
 
   explain(): Promise<void> {
     this.say("user", "Explain the selection");
-    return this.run("Explanation", (signal, onProgress) => explainSelection(this.deps(), { selection: this.options.getSelection(), signal, onProgress }));
+    return this.run("Explanation", (signal, onProgress) => explainSelection(this.deps(), { selection: this.links.getSelection(), signal, onProgress }));
   }
 
   fixStructure(): void {
@@ -194,8 +228,7 @@ export class AssistantStore {
       comments: result.comments,
       revisionIds: result.revisionIds,
       notes,
-      status: "proposed",
-      outcomes: { accepted: 0, rejected: 0 },
+      resolutions: {},
     });
   }
 
@@ -209,11 +242,19 @@ export class AssistantStore {
   }
 
   acceptAll(cardId: string): void {
-    this.resolve(cardId, this.pending(cardId), "accept", this.pendingChanges(cardId).length);
+    this.resolve(cardId, this.pending(cardId), "accept", [...this.pendingUnits(cardId)]);
   }
 
   rejectAll(cardId: string): void {
-    this.resolve(cardId, this.pending(cardId), "reject", this.pendingChanges(cardId).length);
+    this.resolve(cardId, this.pending(cardId), "reject", [...this.pendingUnits(cardId)]);
+  }
+
+  /** What a card shows now: derived from the pending revisions, so it follows undo and Review. */
+  view(cardId: string): CardView {
+    const card = this.card(cardId);
+    const pending = this.pending(cardId).length;
+    if (card?.type !== "edit") return { status: "proposed", pending, accepted: 0, rejected: 0, elsewhere: 0 };
+    return deriveCardView(unitKeys(card), this.pendingUnits(cardId), card.resolutions, pending);
   }
 
   /** Changes of a card still pending, the unit of one-by-one review. */
@@ -256,7 +297,7 @@ export class AssistantStore {
     if (current === undefined) return this.endReview();
     const card = this.card(review.cardId);
     const listed = new Set(card?.type === "edit" ? card.changes.flatMap((change) => change.revisionIds) : []);
-    this.resolve(review.cardId, changeRevisions(this.pendingRevisions(review.cardId), current.revisionIds, current.blockId, listed), action, 1);
+    this.resolve(review.cardId, changeRevisions(this.pendingRevisions(review.cardId), current.revisionIds, current.blockId, listed), action, [changeKey(current)]);
     const left = this.pendingChanges(review.cardId);
     if (left.length === 0) return this.endReview();
     const index = Math.min(review.index, left.length - 1);
@@ -272,7 +313,37 @@ export class AssistantStore {
   }
 
   private deps() {
-    return { session: this.options.session, generate: this.options.generate, log: this.options.log };
+    return { session: this.options.session, generate: this.links.generate, log: this.options.log };
+  }
+
+  /** Keys of the card's units with revisions still pending. */
+  private pendingUnits(cardId: string): Set<string> {
+    const card = this.card(cardId);
+    if (card?.type !== "edit") return new Set();
+    if (card.changes.length === 0) return new Set(this.pendingRevisions(cardId).length > 0 ? [WHOLE_CARD] : []);
+    return new Set(this.pendingChanges(cardId).map(changeKey));
+  }
+
+  /**
+   * Call after every change to the active document (`session.onChange`),
+   * also while no panel shows the store: a request for a document that is no
+   * longer open is stopped, and a resolution whose change is pending again
+   * (undo) is forgotten, so the card's counts stay true.
+   */
+  documentChanged(change: DocumentChange): void {
+    if (change.kind === "load" || change.kind === "close" || this.options.session.getState().documentKey !== this.documentKey) {
+      this.cancel();
+      return;
+    }
+    let cards: AssistantCard[] | null = null;
+    for (const card of this.state.cards) {
+      if (card.type !== "edit") continue;
+      const kept = withoutReopened(card.resolutions, this.pendingUnits(card.id));
+      if (kept === card.resolutions) continue;
+      cards ??= [...this.state.cards];
+      cards[cards.indexOf(card)] = { ...card, resolutions: kept };
+    }
+    if (cards !== null) this.patch({ cards });
   }
 
   private pendingRevisions(cardId: string): Revision[] {
@@ -292,8 +363,8 @@ export class AssistantStore {
     return this.state.cards.find((card) => card.id === cardId);
   }
 
-  /** `changes` is how many listed changes the ids make up, for the card's tally. */
-  private resolve(cardId: string, ids: string[], action: "accept" | "reject", changes: number): void {
+  /** `units` are the keys of the changes the ids make up, for the card's record of outcomes. */
+  private resolve(cardId: string, ids: string[], action: "accept" | "reject", units: string[]): void {
     if (ids.length === 0) return;
     try {
       if (action === "accept") this.options.session.acceptRevisions(ids, { origin: "review" });
@@ -305,14 +376,15 @@ export class AssistantStore {
     }
     const card = this.card(cardId);
     if (card?.type !== "edit") return;
-    const key = action === "accept" ? "accepted" : "rejected";
-    const outcomes = { ...card.outcomes, [key]: card.outcomes[key] + Math.max(1, changes) };
-    this.replaceCard({ ...card, outcomes, status: cardStatus(this.pending(cardId).length, outcomes) });
+    const outcome: ChangeOutcome = action === "accept" ? "accepted" : "rejected";
+    const resolutions = { ...card.resolutions };
+    for (const key of units) resolutions[key] = outcome;
+    this.replaceCard({ ...card, resolutions });
   }
 
   private async runEdit(title: string, instruction: string, mode: "edit" | "comment"): Promise<void> {
     await this.run(title, (signal, onProgress) =>
-      runAssistantEdit(this.deps(), { instruction, mode, selection: this.options.getSelection(), signal, onProgress }),
+      runAssistantEdit(this.deps(), { instruction, mode, selection: this.links.getSelection(), signal, onProgress }),
     );
   }
 
@@ -344,9 +416,9 @@ export class AssistantStore {
       case "invalid_reply":
         return this.say("agent", result.message);
       case "answered":
-        return this.addCard({ id: this.nextId("card"), type: "answer", title, documentKey, segments: result.segments });
+        return this.addCard({ id: this.nextId("card"), type: "answer", title, documentKey, segments: result.segments, notes: result.partial ? [PARTIAL_COVERAGE_NOTE] : [] });
       case "no_changes":
-        return this.say("agent", ["No changes proposed.", ...droppedNote(result.dropped)].join(" "));
+        return this.say("agent", ["No changes proposed.", ...droppedNote(result.dropped), ...(result.partial ? [PARTIAL_COVERAGE_NOTE] : [])].join(" "));
       case "applied":
         return this.addCard({
           id: this.nextId("card"),
@@ -357,9 +429,8 @@ export class AssistantStore {
           changes: result.changes,
           comments: result.comments,
           revisionIds: result.revisionIds,
-          notes: droppedNote(result.dropped),
-          status: "proposed",
-          outcomes: { accepted: 0, rejected: 0 },
+          notes: [...droppedNote(result.dropped), ...(result.partial ? [PARTIAL_COVERAGE_NOTE] : [])],
+          resolutions: {},
         });
     }
   }

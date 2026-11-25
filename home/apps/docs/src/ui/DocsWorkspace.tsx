@@ -5,11 +5,13 @@
  */
 
 import { FileText } from "lucide-react";
-import { type CSSProperties, type KeyboardEvent, useCallback, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { AppFrame, DocumentTitleBar, Ribbon, useToast } from "../../../_shared/office-ui";
 import { DocumentEditor, type DocumentEditorController, type ViewMode, useEditorSnapshot } from "../editor/index";
 import type { DocumentSession, SessionState } from "../session/index";
+import type { AssistantStore } from "./agent/assistant-store";
 import { ConflictBanner, SaveErrorBanner, StatusBar, TitleBarActions } from "./DocumentChrome";
+import { DocumentSlot } from "./document-slot";
 import { type ExportFormat, buildExport, downloadFile } from "./exports";
 import { FindReplaceBar } from "./FindReplaceBar";
 import { useDocVersion } from "./hooks";
@@ -65,6 +67,16 @@ export function DocsWorkspace({ session, state, file, pickDocument }: DocsWorksp
   const findVersion = useDocVersion(session, FIND_DELAY_MS);
   const contentVersion = useDocVersion(session, 0);
   const review = useReviewController(session, editor);
+  // The Assistant's conversation outlives its tab and the side panel; it ends with the document.
+  const [assistantSlot] = useState(() => new DocumentSlot<AssistantStore>());
+  useEffect(() => {
+    // The kept store follows undo and Review while its panel is not shown.
+    const stop = session.onChange((change) => assistantSlot.current()?.documentChanged(change));
+    return () => {
+      stop();
+      assistantSlot.clear();
+    };
+  }, [session, assistantSlot]);
 
   const save = useCallback(async () => {
     const current = session.getState();
@@ -234,6 +246,7 @@ export function DocsWorkspace({ session, state, file, pickDocument }: DocsWorksp
               onClose={closePanel}
               assistantRequest={assistantRequest}
               onAssistantRequestHandled={() => setAssistantRequest(null)}
+              assistantSlot={assistantSlot}
               composeComment={composeComment}
               onComposeHandled={() => setComposeComment(false)}
             />

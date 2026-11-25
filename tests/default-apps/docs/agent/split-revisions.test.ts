@@ -25,8 +25,7 @@ describe("an assistant card after the owner typed inside its insertion", () => {
     store.rejectAll(cardId);
     expect(finalText(doc).trim()).toBe("The cat XXsat.");
     expect(doc.listRevisions().filter((revision) => revision.author !== OWNER)).toEqual([]);
-    const card = store.getState().cards.find((entry) => entry.id === cardId);
-    expect(card).toMatchObject({ status: "rejected" });
+    expect(store.view(cardId)).toMatchObject({ status: "rejected", pending: 0 });
   });
 
   it("Accept all accepts both halves, and the card stays proposed until then", async () => {

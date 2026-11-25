@@ -4,10 +4,13 @@
  * tracked changes by "Matrix Assistant" and are listed in a result card with
  * jump links, Accept all, Reject all and one-by-one review.
  *
- * Built on the office-ui `AgentPanel`; the flows are `../../agent`.
+ * Built on the office-ui `AgentPanel`; the flows are `../../agent`. The
+ * conversation lives in an `AssistantStore` per open document, kept by the
+ * workspace in `assistantSlot`, so it survives switching tabs and closing the
+ * side panel, and starts empty for another document.
  */
 
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AgentPanel, ReviewBar, aiAccessMessage, useAiAccess } from "../../../../_shared/office-ui";
 import type { AiAccess, AiAccessBridge } from "../../../../_shared/office-ui";
 import type { AgentResult } from "../../../../_shared/office-ui";
@@ -16,11 +19,12 @@ import type { AgentGenerate } from "../../agent/index";
 import type { TextRange } from "../../../../_shared/office-engine/index";
 import type { DocumentEditorController } from "../../editor/index";
 import type { DocumentSession } from "../../session/index";
+import { DocumentSlot } from "../document-slot";
 import type { AssistantRequest, AssistantRequestId } from "../panel-types";
 import { AnswerBody, EditCardBody } from "./AgentCards";
 import type { JumpTarget } from "./AgentCards";
 import { AssistantStore } from "./assistant-store";
-import type { AssistantCard, AssistantMode } from "./assistant-store";
+import type { AssistantCard, AssistantMode, CardView } from "./assistant-store";
 import "./docs-agent.css";
 
 export interface DocsAgentPanelProps {
@@ -38,6 +42,8 @@ export interface DocsAgentPanelProps {
   /** A request from the ribbon: runs once AI access is known, then `onAssistantRequestHandled` is called. */
   assistantRequest?: AssistantRequest | null;
   onAssistantRequestHandled?: () => void;
+  /** Keeps the conversation of the open document while this panel is not shown. Default: one owned by the panel. */
+  assistantSlot?: DocumentSlot<AssistantStore>;
 }
 
 const MODES: ReadonlyArray<{ id: AssistantMode; label: string; placeholder: string }> = [
@@ -89,29 +95,53 @@ function selectionOf(editor: DocumentEditorController | null): TextRange | null 
 const noSubscription = () => () => undefined;
 const noSelection = () => null;
 
-export function DocsAgentPanel({ session, editor, readOnly = false, generate, assistantRequest = null, onAssistantRequestHandled }: DocsAgentPanelProps) {
-  const { model, access, hint } = useAssistantModel(generate);
-  const editorRef = useRef(editor);
-  const modelRef = useRef(model);
-  useEffect(() => {
-    editorRef.current = editor;
-    modelRef.current = model;
-  }, [editor, model]);
-  const store = useMemo(
-    () =>
-      new AssistantStore({
-        session,
-        generate: (input) => (modelRef.current ?? rejectGenerate)(input),
-        getSelection: () => selectionOf(editorRef.current),
-        log: (message, error) => console.warn(message, error instanceof Error ? error.name : error),
-      }),
-    [session],
-  );
-  const state = useSyncExternalStore(store.subscribe, store.getState);
+function linksOf(model: AgentGenerate | null, editor: DocumentEditorController | null) {
+  return { generate: model ?? rejectGenerate, getSelection: () => selectionOf(editor) };
+}
+
+/**
+ * The Assistant store of the open document: taken from the workspace's slot
+ * (or the panel's own), so it outlives this panel, and replaced when another
+ * document is open. Also returns the open document's key.
+ */
+function useAssistantStore(
+  session: DocumentSession,
+  assistantSlot: DocumentSlot<AssistantStore> | undefined,
+  model: AgentGenerate | null,
+  editor: DocumentEditorController | null,
+): { store: AssistantStore; documentKey: number } {
+  // Without a slot from the workspace the panel keeps its own store, which lives as long as the panel.
+  const [ownSlot] = useState(() => new DocumentSlot<AssistantStore>());
+  const slot = assistantSlot ?? ownSlot;
   // Re-render when the document changes, so pending counts follow accept, reject and undo elsewhere.
-  useSyncExternalStore(session.subscribe, session.getState);
+  const { documentKey } = useSyncExternalStore(session.subscribe, session.getState);
+  const store = useMemo(
+    () => slot.get(documentKey, () => new AssistantStore({ session, ...linksOf(model, editor), log: logStore })),
+    // A kept store stays the same when the model or editor changes; they reach it through `connect` below.
+    [slot, session, documentKey, model, editor],
+  );
+  useEffect(() => store.connect(linksOf(model, editor)), [store, model, editor]);
+  useEffect(() => {
+    // A kept store hears about document changes from the workspace; the panel's own store hears here.
+    if (assistantSlot !== undefined) return undefined;
+    const stop = session.onChange((change) => store.documentChanged(change));
+    return () => {
+      stop();
+      store.cancel();
+    };
+  }, [assistantSlot, session, store]);
+  return { store, documentKey };
+}
+
+function logStore(message: string, error: unknown): void {
+  console.warn(message, error instanceof Error ? error.name : error);
+}
+
+export function DocsAgentPanel({ session, editor, readOnly = false, generate, assistantRequest = null, onAssistantRequestHandled, assistantSlot }: DocsAgentPanelProps) {
+  const { model, access, hint } = useAssistantModel(generate);
+  const { store, documentKey } = useAssistantStore(session, assistantSlot, model, editor);
+  const state = useSyncExternalStore(store.subscribe, store.getState);
   const hasSelection = useSyncExternalStore(editor?.subscribe ?? noSubscription, editor ? () => editor.getSnapshot().selection?.collapsed === false : noSelection) === true;
-  useEffect(() => () => store.cancel(), [store]);
   // Each request object runs once, also when effects run twice in development.
   const handledRequest = useRef<AssistantRequest | null>(null);
   useEffect(() => {
@@ -130,7 +160,8 @@ export function DocsAgentPanel({ session, editor, readOnly = false, generate, as
 
   const mode = MODES.find((entry) => entry.id === state.mode) ?? MODES[0]!;
   const unavailable = hint !== null;
-  const results: AgentResult[] = state.cards.map((card) => toResult(card, store, jump, readOnly, state.busy));
+  // Cards of another document would jump to unrelated paragraphs there.
+  const results: AgentResult[] = state.cards.filter((card) => card.documentKey === documentKey).map((card) => toResult(card, store, jump, readOnly, state.busy));
   const review = state.review;
   const reviewChanges = review !== null ? store.pendingChanges(review.cardId) : [];
 
@@ -199,17 +230,27 @@ function jumpTo(change: { blockId: string; range: TextRange | null } | null, jum
   if (change !== null) jump({ blockId: change.blockId, range: change.range });
 }
 
+function outcomeText(view: CardView): string {
+  const parts: string[] = [];
+  if (view.accepted > 0) parts.push(`${view.accepted} accepted`);
+  if (view.rejected > 0) parts.push(`${view.rejected} rejected`);
+  if (view.elsewhere > 0) parts.push(`${view.elsewhere} resolved in the document`);
+  return parts.join(", ");
+}
+
 function toResult(card: AssistantCard, store: AssistantStore, jump: (target: JumpTarget) => void, readOnly: boolean, busy: boolean): AgentResult {
-  if (card.type === "answer") return { id: card.id, title: card.title, status: "proposed", body: <AnswerBody segments={card.segments} onJump={jump} /> };
-  const pending = store.pending(card.id).length;
+  if (card.type === "answer") return { id: card.id, title: card.title, status: "proposed", body: <AnswerBody segments={card.segments} notes={card.notes} onJump={jump} /> };
+  const view = store.view(card.id);
+  const pending = view.pending;
   const counts = [`${card.changes.length} revision${card.changes.length === 1 ? "" : "s"}`];
   if (card.comments.length > 0) counts.push(`${card.comments.length} comment${card.comments.length === 1 ? "" : "s"}`);
-  if (card.status === "mixed") counts.push(`${card.outcomes.accepted} accepted, ${card.outcomes.rejected} rejected`);
-  else if (card.status === "proposed" && pending < card.revisionIds.length && card.revisionIds.length > 0) counts.push(`${pending} pending`);
+  if (view.status === "mixed") counts.push(outcomeText(view));
+  else if (view.status === "resolved") counts.push("Resolved in the document");
+  else if (view.status === "proposed" && pending < card.revisionIds.length && card.revisionIds.length > 0) counts.push(`${pending} pending`);
   return {
     id: card.id,
     title: card.title,
-    status: card.status === "mixed" ? "proposed" : card.status,
+    status: view.status === "accepted" || view.status === "rejected" ? view.status : "proposed",
     meta: counts.join(" · "),
     body: (
       <EditCardBody

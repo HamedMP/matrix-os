@@ -3,9 +3,11 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DocsAgentPanel } from "../../../../home/apps/docs/src/ui/agent/DocsAgentPanel";
+import type { AssistantStore } from "../../../../home/apps/docs/src/ui/agent/assistant-store";
+import { DocumentSlot } from "../../../../home/apps/docs/src/ui/document-slot";
 import type { DocumentEditorController } from "../../../../home/apps/docs/src/editor/index";
 import type { DocumentSession } from "../../../../home/apps/docs/src/session/index";
-import { contractSession, envelope, finalText, scripted } from "./helpers";
+import { contractSession, envelope, finalText, scripted, sessionWith } from "./helpers";
 
 afterEach(cleanup);
 
@@ -108,6 +110,60 @@ describe("<DocsAgentPanel>", () => {
     expect(text).toContain("36 months");
     expect(text).toContain("at least 90 days’ written notice");
     expect(screen.getByText(/1 accepted, 1 rejected/)).toBeTruthy();
+  });
+
+  it("follows undo and resolutions made outside the card", async () => {
+    const { session } = await contractSession();
+    const model = scripted(envelope([{ op: "replaceText", blockId: "b25", find: "24 months", replace: "36 months" }]));
+    renderPanel(session, model.generate);
+    fireEvent.click(screen.getByRole("button", { name: "Tighten" }));
+    await flush();
+    const card = () => screen.getByRole("article", { name: "Tighten" });
+    fireEvent.click(within(card()).getByRole("button", { name: "Accept all" }));
+    expect(within(card()).getByText("Accepted")).toBeTruthy();
+
+    // Undo brings the revisions back: the card is a proposal again.
+    act(() => void session.undo());
+    expect(within(card()).queryByText("Accepted")).toBeNull();
+    expect(within(card()).getByRole("button", { name: "Accept all" })).toBeTruthy();
+
+    // Rejected in the Review panel instead: the card no longer claims it was accepted.
+    act(() => void session.rejectRevisions("all", { origin: "review" }));
+    expect(within(card()).queryByText("Accepted")).toBeNull();
+    expect(within(card()).queryByRole("button", { name: "Accept all" })).toBeNull();
+    expect(within(card()).getByText(/Resolved in the document/)).toBeTruthy();
+  });
+
+  it("says when the assistant read only part of a long document", async () => {
+    const session = await sessionWith(["Intro", `${"The party shall perform with care. ".repeat(1_500)}End.`]);
+    const model = scripted((prompt) => (prompt.includes("# Part answers") ? "Overall summary." : "Part summary."));
+    renderPanel(session, model.generate);
+    fireEvent.click(screen.getByRole("button", { name: "Summarise" }));
+    await flush();
+    expect(within(screen.getByRole("article", { name: "Summary" })).getByText(/read only part of it/)).toBeTruthy();
+  });
+
+  it("shows only the open document's cards and keeps them while the panel is away", async () => {
+    const { session } = await contractSession({ "Documents/other.docx": (await import("./helpers")).fixture("contract.docx") });
+    const model = scripted("Invoices are due within 30 days [b38].");
+    const slot = new DocumentSlot<AssistantStore>();
+    const view = render(<DocsAgentPanel session={session} editor={null} generate={model.generate} assistantSlot={slot} />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    fireEvent.change(screen.getByLabelText("Ask the agent"), { target: { value: "When are invoices due?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to agent" }));
+    await flush();
+    expect(screen.getByRole("article", { name: "Answer" })).toBeTruthy();
+
+    // The tab is hidden and shown again: the conversation is still there.
+    view.unmount();
+    render(<DocsAgentPanel session={session} editor={null} generate={model.generate} assistantSlot={slot} />);
+    expect(screen.getByRole("article", { name: "Answer" })).toBeTruthy();
+    expect(screen.getByText("When are invoices due?")).toBeTruthy();
+
+    // Another document: its citations would point at unrelated paragraphs, so the old cards go.
+    await act(async () => void (await session.open("Documents/other.docx")));
+    expect(screen.queryByRole("article", { name: "Answer" })).toBeNull();
+    expect(screen.queryByText("When are invoices due?")).toBeNull();
   });
 
   it("answers in Ask mode with clickable citations", async () => {

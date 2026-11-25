@@ -10,6 +10,8 @@ import { GitCompareArrows, ListChecks, Sparkles, X } from "lucide-react";
 import { Component, type ComponentType, type ErrorInfo, type ReactNode, Suspense, lazy } from "react";
 import { EmptyState, Spinner, Tabs } from "../../../_shared/office-ui";
 import type { ReviewController } from "../review/index";
+import type { AssistantStore } from "./agent/assistant-store";
+import type { DocumentSlot } from "./document-slot";
 import type { AssistantRequest, DocsPanelId, DocsPanelProps } from "./panel-types";
 import { ReviewTab } from "./ReviewIntegration";
 
@@ -22,6 +24,8 @@ export interface ShellPanelProps extends DocsPanelProps {
   /** A ribbon request for the Assistant panel; it reports it handled once it ran (or cannot run). */
   assistantRequest?: AssistantRequest | null;
   onAssistantRequestHandled?: () => void;
+  /** The Assistant's conversation for the open document, kept while its tab is hidden or the panel closed. */
+  assistantSlot?: DocumentSlot<AssistantStore>;
   /** The ribbon asked for a new comment: the Review tab focuses its comment box. */
   composeComment?: boolean;
   onComposeHandled?: () => void;

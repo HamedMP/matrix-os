@@ -1,5 +1,5 @@
 /**
- * Which revisions belong to an assistant card.
+ * Which revisions belong to an assistant card, and what its status is.
  *
  * A card keeps the revision ids its edit created. The document can split a
  * revision later: when the owner types inside an assistant insertion, the
@@ -9,6 +9,7 @@
  * when the card was made and the ones another card lists by id.
  */
 
+import type { ChangeSummaryItem } from "../../agent/index";
 import type { Revision } from "../../../../_shared/office-engine/index";
 
 /** What identifies a card's revisions besides their ids. */
@@ -58,4 +59,70 @@ export function cardRevisions(revisions: readonly Revision[], ids: readonly stri
 export function changeRevisions(pending: readonly Revision[], changeIds: readonly string[], blockId: string, listed: ReadonlySet<string>): string[] {
   const own = new Set(changeIds);
   return pending.filter((revision) => own.has(revision.id) || (!listed.has(revision.id) && revision.blockIds.includes(blockId))).map((revision) => revision.id);
+}
+
+// ---------------------------------------------------------------- outcomes
+
+/** `resolved`: nothing is pending, and the changes were resolved outside the card (for example in Review). */
+export type CardStatus = "proposed" | "accepted" | "rejected" | "mixed" | "resolved";
+
+export type ChangeOutcome = "accepted" | "rejected";
+
+/** What a card shows, derived from the document as it is now. */
+export interface CardView {
+  status: CardStatus;
+  /** Revisions of the card still pending. */
+  pending: number;
+  /** Changes the owner accepted or rejected from the card that are still resolved. */
+  accepted: number;
+  rejected: number;
+  /** Changes resolved elsewhere, or whose outcome the card no longer knows after undo and redo. */
+  elsewhere: number;
+}
+
+/** The key of the one unit of a card that lists no changes but has revisions. */
+export const WHOLE_CARD = "*";
+
+/** The unit of resolution: one listed change, keyed by its revision ids. */
+export function changeKey(change: ChangeSummaryItem): string {
+  return change.revisionIds.join(",");
+}
+
+/** A card's units: its listed changes, or the whole card when it lists none. */
+export function unitKeys(card: { changes: readonly ChangeSummaryItem[]; revisionIds: readonly string[] }): string[] {
+  if (card.changes.length > 0) return card.changes.map(changeKey);
+  return card.revisionIds.length > 0 ? [WHOLE_CARD] : [];
+}
+
+/**
+ * The card's status from its units, the ones still pending (`open`), and the
+ * outcomes recorded when the owner resolved units from the card. A recorded
+ * outcome counts only while its unit stays resolved.
+ */
+export function deriveCardView(units: readonly string[], open: ReadonlySet<string>, resolutions: Readonly<Record<string, ChangeOutcome>>, pending: number): CardView {
+  let accepted = 0;
+  let rejected = 0;
+  let elsewhere = 0;
+  for (const key of units) {
+    if (open.has(key)) continue;
+    const outcome = resolutions[key];
+    if (outcome === "accepted") accepted++;
+    else if (outcome === "rejected") rejected++;
+    else elsewhere++;
+  }
+  const kinds = [accepted, rejected, elsewhere].filter((count) => count > 0).length;
+  let status: CardStatus;
+  if (open.size > 0 || kinds === 0) status = "proposed";
+  else if (kinds > 1) status = "mixed";
+  else if (accepted > 0) status = "accepted";
+  else if (rejected > 0) status = "rejected";
+  else status = "resolved";
+  return { status, pending, accepted, rejected, elsewhere };
+}
+
+/** The recorded outcomes without those whose unit is pending again; the same object when none is. */
+export function withoutReopened(resolutions: Readonly<Record<string, ChangeOutcome>>, open: ReadonlySet<string>): Readonly<Record<string, ChangeOutcome>> {
+  const entries = Object.entries(resolutions);
+  const kept = entries.filter(([key]) => !open.has(key));
+  return kept.length === entries.length ? resolutions : Object.fromEntries(kept);
 }

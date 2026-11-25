@@ -85,7 +85,18 @@ function CommentLink({ comment, onJump }: { comment: CommentSummaryItem; onJump:
   );
 }
 
-export function AnswerBody({ segments, onJump }: { segments: readonly AnswerSegment[]; onJump: (target: JumpTarget) => void }) {
+export function AnswerBody({ segments, notes = [], onJump }: { segments: readonly AnswerSegment[]; notes?: readonly string[]; onJump: (target: JumpTarget) => void }) {
+  return (
+    <>
+      <AnswerText segments={segments} onJump={onJump} />
+      {notes.map((note) => (
+        <p key={note} className="docs-agent-card__note">{note}</p>
+      ))}
+    </>
+  );
+}
+
+function AnswerText({ segments, onJump }: { segments: readonly AnswerSegment[]; onJump: (target: JumpTarget) => void }) {
   return (
     <p className="docs-agent-answer">
       {keyed(segments).map(({ key, segment }) =>
