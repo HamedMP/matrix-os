@@ -1,0 +1,204 @@
+/* Docs app styles. Shared components come from ../../_shared/office-ui; the
+   editor styles itself (editor/editor.css). Colours use the shared --app-* and
+   --identity-* tokens only, so light and dark follow the Matrix theme. */
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--app-bg); color: var(--app-fg); font-family: var(--app-font); }
+
+.docs-muted { color: var(--app-muted-fg); font-size: 12px; }
+
+.docs-inline-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--app-danger) 45%, var(--app-border));
+  border-radius: var(--app-radius, 8px);
+  background: color-mix(in srgb, var(--app-danger) 10%, var(--app-card));
+  color: var(--app-fg);
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------- start screen */
+
+/* The start screen itself comes from the office kit; these cards remain for the File backstage. */
+.docs-start__card {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius, 8px);
+  background: var(--app-card);
+  color: var(--app-fg);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.docs-start__card svg { color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); }
+.docs-start__card:hover:not(:disabled) { border-color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); }
+.docs-start__card:focus-visible, .docs-outline__item:focus-visible {
+  outline: 2px solid var(--oui-accent-ink, var(--identity-accent, var(--app-primary)));
+  outline-offset: 2px;
+}
+.docs-start__card:disabled { opacity: .6; cursor: default; }
+.docs-start__card-title { font-weight: 650; font-size: 14px; }
+.docs-outline__list { list-style: none; margin: 0; padding: 0; }
+
+/* ---------------------------------------------------------------- open dialog and forms */
+
+.docs-form { display: grid; gap: 12px; }
+
+/* ---------------------------------------------------------------- title bar, ribbon, banners, status */
+
+.docs-workspace { height: 100%; }
+.docs-title-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.docs-title-actions .oui-button { display: inline-flex; align-items: center; gap: 6px; }
+.docs-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+  font-size: 12px;
+  color: var(--app-muted-fg);
+  white-space: nowrap;
+}
+.docs-save::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.docs-save--saved { color: var(--app-success); }
+.docs-save--unsaved, .docs-save--draft { color: var(--app-warning); }
+.docs-save--saving { color: var(--app-muted-fg); }
+.docs-save--conflict, .docs-save--error { color: var(--app-danger); font-weight: 650; }
+.docs-source-badge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+
+/* File backstage panes */
+.docs-backstage { display: grid; gap: 12px; max-width: 720px; }
+.docs-backstage__heading { margin: 0; font-size: 20px; font-weight: 600; }
+.docs-backstage__cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+
+.docs-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.docs-banner--conflict, .docs-banner--error { background: color-mix(in srgb, var(--app-danger) 10%, var(--app-card)); border-bottom: 1px solid color-mix(in srgb, var(--app-danger) 35%, var(--app-border)); }
+.docs-banner__actions { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+
+.docs-find { display: grid; gap: 6px; padding: 8px 12px; background: var(--app-card); }
+.docs-find__row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.docs-find__field { flex: 0 1 280px; min-width: 160px; }
+.docs-find__field .oui-input { width: 100%; box-sizing: border-box; }
+.docs-find__count { min-width: 72px; font-size: 12px; color: var(--app-muted-fg); font-variant-numeric: tabular-nums; }
+.docs-find__close { margin-left: auto; }
+
+.docs-status { display: flex; align-items: center; gap: 16px; font-variant-numeric: tabular-nums; }
+.docs-status__tracking { color: var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); font-weight: 600; }
+
+/* ---------------------------------------------------------------- outline */
+
+.docs-pane-heading { margin: 4px 6px 8px; font-size: 12px; font-weight: 650; color: var(--app-muted-fg); text-transform: uppercase; letter-spacing: .04em; }
+.docs-outline__empty { padding: 0 6px; }
+.docs-outline__item {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  padding-block: 5px;
+  padding-inline-end: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-fg);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.3;
+}
+.docs-outline__item:hover { background: color-mix(in srgb, var(--app-fg) 6%, transparent); }
+.docs-outline__item--clause { color: var(--app-muted-fg); font-size: 12px; }
+.docs-outline__item[aria-current="location"] {
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--identity-accent, var(--app-primary))) 16%, transparent);
+  color: var(--app-fg);
+  box-shadow: inset 2px 0 0 var(--oui-accent-ink, var(--identity-accent, var(--app-primary)));
+}
+.docs-outline__label { flex: none; font-variant-numeric: tabular-nums; color: var(--app-muted-fg); }
+.docs-outline__text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+/* ---------------------------------------------------------------- document pane, references */
+
+.docs-pane { position: relative; height: 100%; min-height: 0; }
+/* The page keeps a readable width: when the side panel or a small window
+   leaves less room, the document scrolls sideways instead of wrapping its
+   text into a narrow column. */
+.docs-pane { --docs-min-page: 480px; }
+.docs-pane .doc-page { zoom: var(--docs-zoom, 1); min-width: var(--docs-min-page); }
+
+.doc-hl-terms { text-decoration: underline dotted color-mix(in srgb, var(--oui-accent-ink, var(--identity-accent, var(--app-primary))) 70%, transparent); text-underline-offset: 3px; cursor: pointer; }
+.doc-hl-xrefs { text-decoration: underline dashed var(--oui-accent-ink, var(--identity-accent, var(--app-primary))); text-underline-offset: 3px; cursor: pointer; }
+.doc-hl-xrefs.is-broken { text-decoration-color: var(--app-danger); }
+.doc-hl-jump { background: color-mix(in srgb, var(--oui-accent-ink, var(--identity-accent, var(--app-primary))) 28%, transparent); }
+
+.docs-refcard {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  margin: 0;
+  z-index: 40;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 16px));
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius, 8px);
+  background: var(--app-card);
+  color: var(--app-fg);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--app-fg) 18%, transparent);
+  font-size: 13px;
+}
+.docs-refcard p { margin: 0 0 6px; }
+.docs-refcard__kind { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--app-muted-fg); }
+.docs-refcard__title { font-weight: 650; }
+.docs-refcard__text { line-height: 1.45; }
+.docs-refcard__text--broken { color: var(--app-danger); }
+.docs-refcard__label { font-weight: 650; }
+.docs-back {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--app-fg) 16%, transparent);
+}
+
+/* ---------------------------------------------------------------- side panel */
+
+.docs-side { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.docs-side > .oui-tabs { height: 100%; }
+.docs-review-tab { display: grid; gap: 12px; }
+
+/* Narrow windows (see ui/pane-layout.ts). Up to 1080px the side panel has the
+   outline's room, so the page keeps its width. Up to 840px even that is too
+   little: the panel lies over the page instead of squeezing it. */
+@media (max-width: 840px) {
+  .docs-workspace .oui-frame__body { position: relative; }
+  .docs-workspace .oui-frame.has-right .oui-frame__body { grid-template-columns: minmax(0, 1fr); }
+  .docs-workspace .oui-frame__panel {
+    display: block; position: absolute; top: 0; right: 0; bottom: 0; z-index: 5;
+    width: min(360px, 100%); box-shadow: -8px 0 24px color-mix(in srgb, var(--app-fg) 18%, transparent);
+  }
+}
+@media (max-width: 720px) {
+  /* The outline lies over the page too; it is closed until the owner asks for it. */
+  .docs-workspace .oui-frame__rail {
+    display: block; position: absolute; top: 0; left: 0; bottom: 0; z-index: 5;
+    width: min(280px, 85%); box-shadow: 8px 0 24px color-mix(in srgb, var(--app-fg) 18%, transparent);
+  }
+  .docs-save { display: none; }
+  .docs-pane { --docs-min-page: 320px; }
+}

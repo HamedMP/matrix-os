@@ -247,7 +247,7 @@ import type { ChatRepository } from "./chat/repository.js";
 import { createForwardTunnelHub } from "./forward-ws.js";
 import type { MessagingKyselyRepository } from "./messages/repository.js";
 import { wsConnectionsActive } from "./metrics.js";
-import { createOsViewAgentTools } from "./os-view-state/agent-tools.js";
+import { createTrustedOsViewAgentTools } from "./os-view-state/trusted-agent-tools.js";
 import type { OsViewStateRepository } from "./os-view-state/repository.js";
 import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
 import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
@@ -283,6 +283,7 @@ import {
 } from "./shell/index.js";
 import { startTerminalPasteAssetCleanup } from "./shell/paste-asset-cleanup-runtime.js";
 import { initializeGatewayChannels } from "./startup/channels.js";
+import { createGatewayOfficeDocuments } from "./office/gateway-wiring.js";
 
 export {
   buildAllowedOrigins,
@@ -909,21 +910,11 @@ export async function createGateway(config: GatewayConfig) {
   }
   messagingRepository = ownerDatabaseServices?.messagingRepository ?? null;
 
-  const trustedOsViewOwnerId = process.env.MATRIX_USER_ID?.trim();
-  const osViewTools = osViewStateRepository
-    && trustedOsViewOwnerId
-    && trustedOsViewOwnerId.length <= 160
-    ? createOsViewAgentTools({
-        repository: osViewStateRepository,
-        ownerId: trustedOsViewOwnerId,
-        homePath,
-        onChanged: (state) => broadcastToOwner(trustedOsViewOwnerId, {
-          type: "os-view:changed",
-          revision: state.revision,
-          updatedAt: state.updatedAt,
-        }),
-      })
-    : undefined;
+  const osViewTools = createTrustedOsViewAgentTools({
+    repository: osViewStateRepository, ownerId: process.env.MATRIX_USER_ID, homePath, broadcastToOwner,
+  });
+  // One document service for the kernel tools and the `/api/office` routes: one per-path lock.
+  const officeDocuments = createGatewayOfficeDocuments({ homePath, projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission });
   const executionAdmissionFence = createExecutionAdmissionFence();
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
@@ -936,6 +927,7 @@ export async function createGateway(config: GatewayConfig) {
     osViewTools,
     ownerAudioTranscriber: speechRuntime.ownerAudioTranscriber,
     terminalTools: terminalAgents.kernelTools,
+    documentTools: officeDocuments.routes,
   });
 
   const { syncR2, syncPeerRegistry, syncDeps } = await initializeSyncInfrastructure(kyselyInstance);
@@ -1380,6 +1372,7 @@ export async function createGateway(config: GatewayConfig) {
   registerGatewayProjectFileRoutes(app, {
     homePath, filePreviewService, executionRoots: canonicalChatExecutionRoots,
     projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission,
+    officeDocumentRoutes: officeDocuments.routes,
   });
 
   const bridgeQueryBodyLimit = bodyLimit({ maxSize: 1_000_000 });
@@ -1392,7 +1385,7 @@ export async function createGateway(config: GatewayConfig) {
   registerBridgeDataRoutes(app, {
     homePath, queryEngine, appRegistry, kvStore, ensureAppProvisioned,
     broadcast, queryBodyLimit: bridgeQueryBodyLimit, dataBodyLimit: bridgeDataBodyLimit,
-    logUnexpectedJsonParseFailure,
+    logUnexpectedJsonParseFailure, projectPathAdmission: officeDocuments.projectPathAdmission,
   });
 
   registerAppIntegrationCapabilities(app, {
@@ -1936,7 +1929,8 @@ export async function createGateway(config: GatewayConfig) {
       slackRuntime = undefined;
       await canonicalChatOrchestrator?.close();
       canonicalChatOrchestrator = null;
-      const [nativeClose] = await Promise.allSettled([Promise.resolve().then(() => nativeClaudeChatRuntime?.close())]);
+      const [nativeClose, officeClose] = await Promise.allSettled([Promise.resolve().then(() => nativeClaudeChatRuntime?.close()), officeDocuments.close()]);
+      if (officeClose.status === "rejected") logBestEffortFailure("Office documents shutdown failed", officeClose.reason);
       nativeClaudeChatRuntime = null;
       await terminalLaunchRuntime.close();
       await botServices?.close();

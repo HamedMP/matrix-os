@@ -24,6 +24,10 @@ import { ShellFileAuthority } from "./ShellFileAuthority";
 import { FileResourceSharing } from "./FileResourceSharing";
 import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 import { endMatrixFileDrag, startMatrixFileDrag } from "@/lib/matrix-file-drag";
+import { canOpenWithDefaultApp } from "@matrix-os/contracts/office-open-with";
+import { isBinaryOfficeFile, openFileWithDefaultApp, openWithFailureMessage } from "@/lib/office-open-with";
+import { ShellNotificationPortal } from "../ShellNotificationPortal";
+import { ShellNotificationCard } from "../ShellNotificationCard";
 
 interface FileBrowserProps {
   windowId: string;
@@ -92,12 +96,34 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
   // (flat/neumorphic/macos-glass/win11) keeps the classic chrome below.
   const isXpExplorer = themeStyle === "winxp" && !mobile;
 
-  const openFile = (path: string, options?: Omit<Parameters<typeof openFileTab>[1], "authority">) => {
+  const [openWithNotice, setOpenWithNotice] = useState<string | null>(null);
+  const openInPreview = (path: string, options?: Omit<Parameters<typeof openFileTab>[1], "authority">) => {
     openFileTab(path, { ...options, authority: identity });
     const { windows, restoreAndFocusWindow, openWindow } = useWindowManager.getState();
     const preview = windows.find((window) => window.path === "__preview-window__");
     if (preview) restoreAndFocusWindow(preview.id);
     else openWindow("Preview", "__preview-window__", 0);
+  };
+  // Size from the current listing, when the file is in it; unknown otherwise.
+  const listedSize = (path: string): number | undefined => {
+    const slash = path.lastIndexOf("/");
+    if ((slash < 0 ? "" : path.slice(0, slash)) !== currentPath) return undefined;
+    const name = path.slice(slash + 1);
+    return entries.find((entry) => entry.type === "file" && entry.name === name)?.size;
+  };
+  // Files with a default app open there when the app can read them (not a
+  // protected subtree, within the app read cap); an explicit preview mode and
+  // every other file keep Preview.
+  const openFile = (path: string, options?: Omit<Parameters<typeof openFileTab>[1], "authority">) => {
+    if (options?.mode || !canOpenWithDefaultApp(path, listedSize(path))) { openInPreview(path, options); return; }
+    void openFileWithDefaultApp(path, { gatewayUrl }).then((result) => {
+      if (result.status === "opened") return;
+      if (result.status === "no-default-app") { openInPreview(path, options); return; }
+      // A binary document shown as text is unreadable, so only text tables fall back to Preview.
+      const previewed = !isBinaryOfficeFile(path);
+      if (previewed) openInPreview(path, options);
+      setOpenWithNotice(openWithFailureMessage(result.app, path, previewed));
+    });
   };
 
   // Handle project-folder and XP icon requests in the foreground Files view.
@@ -406,6 +432,14 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
         </>
       )}
       <QuickLook gatewayUrl={gatewayUrl} onOpenFile={openFile} />
+      {openWithNotice ? (
+        <ShellNotificationPortal>
+          <ShellNotificationCard className="flex items-center gap-3 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive shadow-lg backdrop-blur-md">
+            <span role="alert">{openWithNotice}</span>
+            <button type="button" className="ml-auto rounded px-2 py-1 hover:bg-destructive/10" onClick={() => setOpenWithNotice(null)}>Dismiss</button>
+          </ShellNotificationCard>
+        </ShellNotificationPortal>
+      ) : null}
       </FileDownloadProvider>
     </div>
   );

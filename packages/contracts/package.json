@@ -31,6 +31,9 @@
     "./ai-usage": "./src/ai-usage/index.ts",
     "./ai-usage/node": "./src/ai-usage/node.ts",
     "./routine-destination": "./src/routine-destination.ts",
+    "./app-files": "./src/app-files.ts",
+    "./office-open-with": "./src/office-open-with.ts",
+    "./office-documents": "./src/office-documents.ts",
     "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts"
   },
   "imports": {
@@ -145,6 +148,7 @@
     "#matrix-anthropic-connection": "./src/matrix-anthropic-connection.ts",
     "#sites": "./src/sites.ts",
     "#app-capabilities": "./src/app-capabilities.ts",
+    "#app-files": "./src/app-files.ts",
     "#remote-browser": "./src/remote-browser.ts",
     "#shared-browser": "./src/shared-browser.ts",
     "#canonical-chat-execution-controls": "./src/canonical-chat-execution-controls.ts",

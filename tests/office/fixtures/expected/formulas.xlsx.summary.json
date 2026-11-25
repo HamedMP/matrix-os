@@ -1,0 +1,206 @@
+{
+  "file": "formulas.xlsx",
+  "valid": true,
+  "errors": [],
+  "parts": 11,
+  "sheetNames": [
+    "Data",
+    "Calc"
+  ],
+  "sharedStrings": 28,
+  "definedNames": {
+    "TaxRate": "Calc!$B$6"
+  },
+  "totalCells": 64,
+  "totalFormulas": 21,
+  "sheets": [
+    {
+      "name": "Data",
+      "state": "visible",
+      "dimension": "A1:F6",
+      "cells": 36,
+      "formulaCount": 10,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [
+        {
+          "cell": "E2",
+          "formula": "C2*D2",
+          "type": "normal",
+          "ref": null,
+          "cached": "500"
+        },
+        {
+          "cell": "F2",
+          "formula": "E2*(1+Calc!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "600"
+        },
+        {
+          "cell": "E3",
+          "formula": "C3*D3",
+          "type": "normal",
+          "ref": null,
+          "cached": "206.25"
+        },
+        {
+          "cell": "F3",
+          "formula": "E3*(1+Calc!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "247.5"
+        },
+        {
+          "cell": "E4",
+          "formula": "C4*D4",
+          "type": "normal",
+          "ref": null,
+          "cached": "239.88"
+        },
+        {
+          "cell": "F4",
+          "formula": "E4*(1+Calc!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "287.856"
+        },
+        {
+          "cell": "E5",
+          "formula": "C5*D5",
+          "type": "normal",
+          "ref": null,
+          "cached": "285"
+        },
+        {
+          "cell": "F5",
+          "formula": "E5*(1+Calc!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "342"
+        },
+        {
+          "cell": "E6",
+          "formula": "C6*D6",
+          "type": "normal",
+          "ref": null,
+          "cached": "240"
+        },
+        {
+          "cell": "F6",
+          "formula": "E6*(1+Calc!$B$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "288"
+        }
+      ],
+      "mergedCells": [],
+      "frozenAt": null,
+      "columnWidths": {},
+      "valueTypes": {
+        "float": 9,
+        "int": 11,
+        "str": 16
+      },
+      "maxRow": 6,
+      "maxColumn": 6
+    },
+    {
+      "name": "Calc",
+      "state": "visible",
+      "dimension": "A1:D11",
+      "cells": 28,
+      "formulaCount": 11,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [
+        {
+          "cell": "B1",
+          "formula": "SUM(Data!D2:D6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "237"
+        },
+        {
+          "cell": "B2",
+          "formula": "AVERAGE(Data!C2:C6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "9.578"
+        },
+        {
+          "cell": "D2",
+          "formula": "Data!C2:C6*Data!D2:D6",
+          "type": "array",
+          "ref": "D2:D6",
+          "cached": "500"
+        },
+        {
+          "cell": "B3",
+          "formula": "IF(B1>100,\"Yes\",\"No\")",
+          "type": "normal",
+          "ref": null,
+          "cached": "Yes"
+        },
+        {
+          "cell": "B4",
+          "formula": "VLOOKUP(\"SKU-003\",Data!A2:C6,3,FALSE)",
+          "type": "normal",
+          "ref": null,
+          "cached": "19.99"
+        },
+        {
+          "cell": "B5",
+          "formula": "INDEX(Data!D2:D6,MATCH(\"Widget\",Data!B2:B6,0))",
+          "type": "normal",
+          "ref": null,
+          "cached": "25"
+        },
+        {
+          "cell": "B7",
+          "formula": "SUMPRODUCT(Data!C2:C6,Data!D2:D6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "1471.13"
+        },
+        {
+          "cell": "B8",
+          "formula": "B7*(1+TaxRate)",
+          "type": "normal",
+          "ref": null,
+          "cached": "1765.356"
+        },
+        {
+          "cell": "B9",
+          "formula": "B1>50",
+          "type": "normal",
+          "ref": null,
+          "cached": "1"
+        },
+        {
+          "cell": "B10",
+          "formula": "VLOOKUP(\"SKU-999\",Data!A2:C6,3,FALSE)",
+          "type": "normal",
+          "ref": null,
+          "cached": "#N/A"
+        },
+        {
+          "cell": "B11",
+          "formula": "SUM(Data!$E$2:$E$6)",
+          "type": "normal",
+          "ref": null,
+          "cached": "1471.13"
+        }
+      ],
+      "mergedCells": [],
+      "frozenAt": null,
+      "columnWidths": {},
+      "valueTypes": {
+        "bool": 1,
+        "float": 8,
+        "int": 5,
+        "str": 14
+      },
+      "maxRow": 11,
+      "maxColumn": 4
+    }
+  ]
+}

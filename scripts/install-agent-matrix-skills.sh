@@ -34,6 +34,7 @@ skills=(
   integrations
   jev-email-triage
   landing-design
+  office-documents
   personal-daily-brief
   review-animations
   shadcn

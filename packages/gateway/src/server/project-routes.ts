@@ -5,12 +5,13 @@ import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import { createCodingAgentProjectMutationService } from "../coding-agents/project-mutations.js";
 import { createCodingAgentRoutes, type CodingAgentRouteDeps } from "../coding-agents/routes.js";
 import type { LegacyProjectOperationAdmission } from "../collaboration/project-fence.js";
-import { createLegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
+import { createLegacyProjectPathAdmission, type LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
 import type { FilePreviewService } from "../file-preview-service.js";
 import { registerProjectAgentContextRoute } from "../project-agent-context-routes.js";
 import type { createProjectManager } from "../project-manager.js";
 import { requireRequestPrincipal } from "../request-principal.js";
 import { registerFileRoutes } from "./file-routes.js";
+import { registerOfficeDocumentRoutes } from "../office/routes.js";
 
 type ProjectManager = ReturnType<typeof createProjectManager>;
 
@@ -39,23 +40,36 @@ interface ProjectFileOptions {
   executionRoots: ChatExecutionRootResolver | null;
   projects: Pick<ProjectManager, "listManagedProjects">;
   projectOperationAdmission?: LegacyProjectOperationAdmission;
+  /** The document service the kernel tools use; mounted as-is so both share one per-path lock. */
+  officeDocumentRoutes?: Hono;
+}
+
+/**
+ * The write fence over the owner's managed projects, or undefined without a
+ * collaboration database. Shared by the owner file routes, the app file
+ * bridge and the document service, so all three refuse the same writes.
+ */
+export function createGatewayProjectPathAdmission(
+  options: Pick<ProjectFileOptions, "homePath" | "projects" | "projectOperationAdmission">,
+): LegacyProjectPathAdmission | undefined {
+  const { homePath, projects, projectOperationAdmission } = options;
+  if (!projectOperationAdmission) return undefined;
+  return createLegacyProjectPathAdmission({
+    homePath,
+    projectOperationAdmission,
+    listOwnerProjects: async (ownerType, ownerId) => {
+      const result = await projects.listManagedProjects({
+        visibility: "all",
+        ownerScope: { type: ownerType === "organization" ? "org" : "user", id: ownerId },
+      });
+      return result.projects.map(project => ({ id: project.id, localPath: project.localPath }));
+    },
+  });
 }
 
 export function registerGatewayProjectFileRoutes(app: Hono, options: ProjectFileOptions): void {
-  const { homePath, filePreviewService, executionRoots, projects, projectOperationAdmission } = options;
-  const projectPathAdmission = projectOperationAdmission
-    ? createLegacyProjectPathAdmission({
-        homePath,
-        projectOperationAdmission,
-        listOwnerProjects: async (ownerType, ownerId) => {
-          const result = await projects.listManagedProjects({
-            visibility: "all",
-            ownerScope: { type: ownerType === "organization" ? "org" : "user", id: ownerId },
-          });
-          return result.projects.map(project => ({ id: project.id, localPath: project.localPath }));
-        },
-      })
-    : undefined;
+  const { homePath, filePreviewService, executionRoots } = options;
+  const projectPathAdmission = createGatewayProjectPathAdmission(options);
   registerFileRoutes(app, {
     homePath,
     filePreviewService,
@@ -67,6 +81,7 @@ export function registerGatewayProjectFileRoutes(app: Hono, options: ProjectFile
     } : {}),
   });
   registerProjectAgentContextRoute(app, { executionRoots });
+  registerOfficeDocumentRoutes(app, options.officeDocumentRoutes ?? { homePath });
 }
 
 export async function registerGatewayProjectDriveRoutes(

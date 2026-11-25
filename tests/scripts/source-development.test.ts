@@ -23,6 +23,9 @@ describe("source development lifecycle", () => {
     const gateway = events.indexOf("pnpm --filter @matrix-os/gateway build");
     expect(gateway).toBeGreaterThan(native);
     expect(gateway).toBeLessThan(events.indexOf("start-services"));
+    const officeEngine = events.indexOf(`${process.execPath} scripts/sync-office-engine.mjs`);
+    expect(officeEngine).toBeGreaterThanOrEqual(0);
+    expect(officeEngine).toBeLessThan(events.indexOf("start-services"));
   });
 
   it("bounds a stalled readiness child instead of waiting for its exit", async () => {

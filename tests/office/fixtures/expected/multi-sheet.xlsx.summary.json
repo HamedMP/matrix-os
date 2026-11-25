@@ -1,0 +1,167 @@
+{
+  "file": "multi-sheet.xlsx",
+  "valid": true,
+  "errors": [],
+  "parts": 14,
+  "sheetNames": [
+    "Summary",
+    "Q1 Sales",
+    "Q2 Sales",
+    "O'Brien Notes",
+    "Hidden Lookup"
+  ],
+  "sharedStrings": 22,
+  "definedNames": {},
+  "totalCells": 50,
+  "totalFormulas": 8,
+  "sheets": [
+    {
+      "name": "Summary",
+      "state": "visible",
+      "dimension": "A1:B7",
+      "cells": 14,
+      "formulaCount": 6,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [
+        {
+          "cell": "B2",
+          "formula": "'Q1 Sales'!B6",
+          "type": "normal",
+          "ref": null,
+          "cached": "446"
+        },
+        {
+          "cell": "B3",
+          "formula": "'Q2 Sales'!B6",
+          "type": "normal",
+          "ref": null,
+          "cached": "469"
+        },
+        {
+          "cell": "B4",
+          "formula": "SUM('Q1 Sales'!B2:B5,'Q2 Sales'!B2:B5)",
+          "type": "normal",
+          "ref": null,
+          "cached": "915"
+        },
+        {
+          "cell": "B5",
+          "formula": "B3/B2-1",
+          "type": "normal",
+          "ref": null,
+          "cached": "0.05156950672645744"
+        },
+        {
+          "cell": "B6",
+          "formula": "VLOOKUP(\"E\",'Hidden Lookup'!A2:B5,2,FALSE)",
+          "type": "normal",
+          "ref": null,
+          "cached": "East"
+        },
+        {
+          "cell": "B7",
+          "formula": "'O''Brien Notes'!A1",
+          "type": "normal",
+          "ref": null,
+          "cached": "Figures checked by the regional leads."
+        }
+      ],
+      "mergedCells": [],
+      "frozenAt": null,
+      "columnWidths": {},
+      "valueTypes": {
+        "float": 1,
+        "int": 3,
+        "str": 10
+      },
+      "maxRow": 7,
+      "maxColumn": 2
+    },
+    {
+      "name": "Q1 Sales",
+      "state": "visible",
+      "dimension": "A1:B6",
+      "cells": 12,
+      "formulaCount": 1,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [
+        {
+          "cell": "B6",
+          "formula": "SUM(B2:B5)",
+          "type": "normal",
+          "ref": null,
+          "cached": "446"
+        }
+      ],
+      "mergedCells": [],
+      "frozenAt": null,
+      "columnWidths": {},
+      "valueTypes": {
+        "int": 5,
+        "str": 7
+      },
+      "maxRow": 6,
+      "maxColumn": 2
+    },
+    {
+      "name": "Q2 Sales",
+      "state": "visible",
+      "dimension": "A1:B6",
+      "cells": 12,
+      "formulaCount": 1,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [
+        {
+          "cell": "B6",
+          "formula": "SUM(B2:B5)",
+          "type": "normal",
+          "ref": null,
+          "cached": "469"
+        }
+      ],
+      "mergedCells": [],
+      "frozenAt": null,
+      "columnWidths": {},
+      "valueTypes": {
+        "int": 5,
+        "str": 7
+      },
+      "maxRow": 6,
+      "maxColumn": 2
+    },
+    {
+      "name": "O'Brien Notes",
+      "state": "visible",
+      "dimension": "A1:A2",
+      "cells": 2,
+      "formulaCount": 0,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [],
+      "mergedCells": [],
+      "frozenAt": null,
+      "columnWidths": {},
+      "valueTypes": {
+        "str": 2
+      },
+      "maxRow": 2,
+      "maxColumn": 1
+    },
+    {
+      "name": "Hidden Lookup",
+      "state": "hidden",
+      "dimension": "A1:B5",
+      "cells": 10,
+      "formulaCount": 0,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [],
+      "mergedCells": [],
+      "frozenAt": null,
+      "columnWidths": {},
+      "valueTypes": {
+        "str": 10
+      },
+      "maxRow": 5,
+      "maxColumn": 2
+    }
+  ]
+}

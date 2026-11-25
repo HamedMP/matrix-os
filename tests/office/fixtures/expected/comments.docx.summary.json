@@ -1,0 +1,55 @@
+{
+  "file": "comments.docx",
+  "valid": true,
+  "errors": [],
+  "parts": 19,
+  "document": {
+    "bodyParagraphs": 4,
+    "allParagraphs": 4,
+    "tables": 0,
+    "numberedParagraphs": 0,
+    "paragraphStyles": {
+      "Heading1": 1
+    },
+    "hyperlinks": 0,
+    "bookmarks": [],
+    "fields": [],
+    "footnoteReferences": 0,
+    "characters": 208,
+    "pythonDocx": {
+      "paragraphs": 4,
+      "tables": 0,
+      "sections": 1,
+      "headings": [
+        "Proposal for the new office"
+      ]
+    }
+  },
+  "revisions": {
+    "total": 0,
+    "byKind": {},
+    "byAuthor": {},
+    "byAuthorKind": {},
+    "paragraphMarkRevisions": 0,
+    "missingAuthor": 0,
+    "duplicateIds": []
+  },
+  "comments": {
+    "count": 3,
+    "replies": 1,
+    "authors": [
+      "Alex Morgan",
+      "Priya Shah"
+    ],
+    "referencedIds": [
+      "0",
+      "1",
+      "2"
+    ],
+    "unreferencedIds": [],
+    "danglingReferences": []
+  },
+  "footnotes": 0,
+  "headers": 0,
+  "footers": 0
+}

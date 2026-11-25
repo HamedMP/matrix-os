@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { shouldRequireApproval, type ApprovalPolicy } from "./approval.js";
 import { createAuditLogger, type AuditLogger } from "./audit.js";
+import { DOCUMENT_APPROVAL_IPC_TOOL_NAMES } from "./tools/documents.js";
 
 export interface HookInput {
   hook_event_name: string;
@@ -286,7 +287,56 @@ export const MANAGED_WRITE_ACTIONS = new Set([
   "xero_accounting_api/create_contact",
   "xero_accounting_api/update_contact",
   "zoom/create_meeting",
+  "gmail/create_html_draft",
+  "gmail/create_reply_draft",
+  "gmail/update_draft",
+  "gmail/delete_draft",
+  "gmail/send_draft",
+  "gmail/batch_modify",
+  "microsoft_outlook/update_message",
+  "microsoft_outlook/move_message",
+  "microsoft_outlook/create_html_draft",
+  "microsoft_outlook/create_reply_draft",
+  "microsoft_outlook/update_draft",
+  "microsoft_outlook/delete_draft",
+  "microsoft_outlook/send_draft",
+  "microsoft_outlook/add_attachment",
+  "microsoft_outlook_calendar/create_event_with_attendees",
+  "microsoft_outlook_calendar/update_event",
+  "microsoft_outlook_calendar/delete_event",
+  "microsoft_outlook_calendar/respond_event",
+  "google_calendar/create_event_with_attendees",
+  "google_calendar/update_event_details",
+  "google_calendar/delete_event",
+  "google_calendar/respond_event",
 ]);
+
+/**
+ * Owner approval for document tools that resolve proposals (accept or reject
+ * tracked revisions and pending cell changes). Fails closed: a denial, a
+ * timeout or a broken approval transport all block the call.
+ */
+export function createDocumentApprovalHook(
+  requestApproval: RequestApprovalFn,
+): (input: HookInput) => Promise<HookOutput> {
+  const gated = new Set<string>(DOCUMENT_APPROVAL_IPC_TOOL_NAMES);
+  return async (input) => {
+    if (!input.tool_name || !gated.has(input.tool_name)) return {};
+    try {
+      if (await requestApproval(input.tool_name, input.tool_input)) return {};
+      return {
+        hookSpecificOutput: { permissionDecision: "deny" },
+        systemMessage: `User denied approval for ${input.tool_name}. Leave the proposals for the owner to review.`,
+      };
+    } catch (error: unknown) {
+      console.warn("[hooks] Document approval failed closed:", error instanceof Error ? error.name : "UnknownError");
+      return {
+        hookSpecificOutput: { permissionDecision: "deny" },
+        systemMessage: `Approval unavailable for ${input.tool_name} -- denied. Leave the proposals for the owner to review.`,
+      };
+    }
+  };
+}
 
 interface CustomMcpProjectionFile {
   servers?: Array<{

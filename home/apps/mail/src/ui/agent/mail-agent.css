@@ -1,0 +1,160 @@
+/* Mail agent panel and bulk drafts dialog. Uses only shared --app-* tokens. */
+.mail-agent {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--app-card);
+  color: var(--app-fg);
+}
+.mail-agent__quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--app-border);
+}
+.mail-agent__panel {
+  flex: 1;
+  min-height: 0;
+}
+.mail-agent__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border-radius: var(--app-radius, 8px);
+  border: 1px solid var(--app-danger);
+  color: var(--app-danger);
+  font-size: 0.85rem;
+}
+.mail-agent__preview {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 14rem;
+  overflow: auto;
+  font-size: 0.85rem;
+  padding: 8px;
+  border-radius: var(--app-radius, 8px);
+  background: var(--app-muted);
+}
+.mail-agent__note {
+  margin: 4px 0;
+  font-size: 0.8rem;
+  color: var(--app-muted-fg);
+}
+.mail-agent__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.mail-agent__summary p {
+  margin: 0 0 6px;
+}
+.mail-agent__list-title {
+  margin: 8px 0 2px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--app-muted-fg);
+}
+.mail-agent__list ul,
+.mail-agent__triage-list,
+.mail-agent__hits {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+.mail-agent__triage-list {
+  list-style: none;
+  padding-left: 0;
+  display: grid;
+  gap: 6px;
+}
+.mail-agent__hit {
+  margin-bottom: 8px;
+}
+.mail-agent__hit-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.mail-agent__hit-open:focus-visible {
+  outline: 2px solid var(--app-primary);
+  outline-offset: 2px;
+}
+.mail-agent__hit-subject {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.mail-agent__hit-meta,
+.mail-agent__hit-reason {
+  font-size: 0.8rem;
+  color: var(--app-muted-fg);
+  overflow-wrap: anywhere;
+}
+.mail-bulk__setup {
+  display: grid;
+  gap: 12px;
+}
+.mail-bulk__note,
+.mail-bulk__counts {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--app-muted-fg);
+  margin-right: auto;
+}
+.mail-bulk__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 50vh;
+  overflow: auto;
+}
+.mail-bulk__row {
+  padding: 6px 8px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius, 8px);
+}
+.mail-bulk__row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.mail-bulk__subject {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: var(--app-muted-fg);
+}
+.mail-bulk__row-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+.mail-bulk__editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.mail-bulk__error {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--app-danger);
+}

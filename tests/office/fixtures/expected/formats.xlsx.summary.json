@@ -1,0 +1,46 @@
+{
+  "file": "formats.xlsx",
+  "valid": true,
+  "errors": [],
+  "parts": 10,
+  "sheetNames": [
+    "Formats"
+  ],
+  "sharedStrings": 36,
+  "definedNames": {},
+  "totalCells": 49,
+  "totalFormulas": 0,
+  "sheets": [
+    {
+      "name": "Formats",
+      "state": "visible",
+      "dimension": "A1:F14",
+      "cells": 49,
+      "formulaCount": 0,
+      "formulasWithoutCachedValue": 0,
+      "formulas": [],
+      "mergedCells": [
+        "E3:F5",
+        "A1:F1"
+      ],
+      "frozenAt": "B3",
+      "columnWidths": {
+        "1": 26.0,
+        "2": 18.0,
+        "3": 34.0,
+        "4": 30.0,
+        "5": 12.0,
+        "6": 12.0
+      },
+      "valueTypes": {
+        "datetime": 2,
+        "float": 5,
+        "int": 3,
+        "str": 36,
+        "time": 1
+      },
+      "maxRow": 14,
+      "maxColumn": 6
+    }
+  ]
+}

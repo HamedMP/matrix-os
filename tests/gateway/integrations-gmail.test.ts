@@ -4,6 +4,7 @@ import { createIntegrationRoutes, executeIntegrationAction, validateActionParams
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import { describeServiceHandler } from "../../packages/kernel/src/tools/integrations.js";
+import { MANAGED_WRITE_ACTIONS } from "../../packages/kernel/src/hooks.js";
 
 function client() {
   return { proxyGet: vi.fn(), proxyPost: vi.fn(), runAction: vi.fn(), listAccounts: vi.fn(), getAppInfo: vi.fn().mockResolvedValue(null) };
@@ -212,7 +213,14 @@ describe("Gmail connector foundation", () => {
     expect(raw).not.toMatch(/[+/=]/);
   });
 
-  it("does not expose delete, trash, or bulk actions", () => {
-    expect(Object.keys(getService("gmail")!.actions).join(" ")).not.toMatch(/delete|trash|batch|bulk/);
+  it("never deletes mail permanently and gates triage writes behind approval", () => {
+    const actions = getService("gmail")!.actions;
+    const names = Object.keys(actions);
+    expect(names.join(" ")).not.toMatch(/delete_message|delete_thread|batch_delete|empty_trash|permanent/);
+    expect(names.filter((name) => /delete|batch|bulk|trash/.test(name)).sort()).toEqual(["batch_modify", "delete_draft"]);
+    for (const name of ["batch_modify", "delete_draft"]) {
+      expect(actions[name]!.risk).toBe("write");
+      expect(MANAGED_WRITE_ACTIONS.has(`gmail/${name}`)).toBe(true);
+    }
   });
 });

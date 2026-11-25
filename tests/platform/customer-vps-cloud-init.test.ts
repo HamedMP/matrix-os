@@ -79,9 +79,19 @@ describe('platform/customer-vps-cloud-init', () => {
       '',
       '',
     ].join('\n');
+    // The app file location (document saves above the general body limit) is added the same way, above it.
+    const files = [
+      '  # matrix-app-file-upload-limit-v1',
+      '  location = /api/bridge/files {',
+      '    client_max_body_size 15m;',
+      '    proxy_pass http://127.0.0.1:4000;',
+      '  }',
+      '',
+      '',
+    ].join('\n');
     const publishing = '  # matrix-sites-publish-timeout-v1\n';
     const prepared = upgrade(nginx ?? '');
-    expect(prepared).toBe((nginx ?? '').replace(publishing, speech + publishing));
+    expect(prepared).toBe((nginx ?? '').replace(publishing, files + speech + publishing));
     expect(upgrade(prepared)).toBe(prepared);
   });
 

@@ -89,6 +89,9 @@ export default defineConfig({
       "@matrix-os/contracts/preview-pair-launch": path.resolve(__dirname, "packages/contracts/src/preview-pair-launch.ts"),
       "@matrix-os/contracts/preview-pair-control": path.resolve(__dirname, "packages/contracts/src/preview-pair-control.ts"),
       "@matrix-os/contracts/preview-pair": path.resolve(__dirname, "packages/contracts/src/preview-pair.ts"),
+      "@matrix-os/contracts/app-files": path.resolve(__dirname, "packages/contracts/src/app-files.ts"),
+      "@matrix-os/contracts/office-open-with": path.resolve(__dirname, "packages/contracts/src/office-open-with.ts"),
+      "@matrix-os/contracts/office-documents": path.resolve(__dirname, "packages/contracts/src/office-documents.ts"),
       "@matrix-os/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),
       "@matrix-os/observability/postgres": path.resolve(__dirname, "packages/observability/src/postgres.ts"),
       "@matrix-os/observability/client": path.resolve(
@@ -130,6 +133,8 @@ export default defineConfig({
     // Tests must never send CLI telemetry. CI lanes (e.g. Linux qualification) may export PostHog
     // tokens with no network, and a failed capture would add stray lines to spawned CLI stderr.
     env: { MATRIX_NO_TELEMETRY: "1" },
+    // Generates home/apps/_shared/office-engine (git-ignored) for the office app suites.
+    globalSetup: ["tests/helpers/office-engine-global-setup.ts"],
     globals: true,
     server: {
       deps: { inline: ["@testing-library/jest-dom"] },

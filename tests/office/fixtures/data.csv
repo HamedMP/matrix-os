@@ -1,0 +1,10 @@
+id,name,email,signup_date,plan,amount,notes
+1,Ana Lima,ana@example.com,2026-01-04,pro,49.00,
+2,Ben Carter,ben@example.com,2026-01-09,free,0,"Asked about ""team"" pricing"
+3,Chloé Martin,chloe@example.com,2026-02-11,pro,49.00,"Paris, France"
+4,Dev Patel,dev@example.com,2026-02-28,team,199.50,"Multi-line
+note"
+5,李华,li@example.com,2026-03-03,pro,49.00,Unicode name
+6,Eve Adams,,2026-03-15,free,,Missing email and amount
+7,Frank O'Neil,frank@example.com,2026-04-01,team,"1,250.00",Amount with thousands separator
+8,Grace Ho,grace@example.com,2026-04-20,pro,-10.00,Refund

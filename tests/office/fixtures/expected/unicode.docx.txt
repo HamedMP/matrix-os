@@ -1,0 +1,12 @@
+Unicode, whitespace and right-to-left text
+שלום עולם, זהו מסמך לדוגמה.
+مرحبا بالعالم، هذا مستند تجريبي.
+Launch 🚀 done ✅, developer 👩‍💻, flag 🇪🇺.
+Price: 10 000 EUR (non-breaking spaces).
+Name	Value	Notes
+First line
+second line after a soft break
+  two leading spaces and two trailing   spaced double  inner  spaces
+Matrix split across runs; café vs café; 文档; <&> "quotes"
+well‑known and softhyphen
+Ends with a trailing tab	

@@ -1,4 +1,5 @@
 import {
+  AppWindow,
   ArrowLeft,
   Download,
   MoreHorizontal,
@@ -24,6 +25,7 @@ import { FileGlyph, kindForEntry } from "./file-kind";
 import { formatEntrySize, formatModified } from "./format";
 import { MonacoReadOnlyEditor } from "../editor/MonacoReadOnlyEditor";
 import { DesktopFilePreviewContent, DesktopFilePreviewViewport } from "./DesktopFilePreviewContent";
+import { openWithLabel } from "./office-open-with";
 
 const MarkdownContent = lazy(async () => {
   const module = await import("../editor/MarkdownPreview");
@@ -388,18 +390,21 @@ export function PreviewPane({
   selection,
   onClose,
   onEdit,
+  onOpenWith,
   onDownload,
   downloadPending = false,
 }: {
   selection: PreviewSelection;
   onClose?: () => void;
   onEdit?: (path: string) => void;
+  onOpenWith?: (path: string) => void;
   onDownload?: (path: string, size?: number) => void;
   downloadPending?: boolean;
 }) {
   const [history, setHistory] = useState<PreviewSelection[]>([selection]);
   const activeSelection = history.at(-1) ?? selection;
   const { entry, path } = activeSelection;
+  const openWith = onOpenWith && entry.type === "file" && !isManagedBrowserPath(path) ? openWithLabel(path, entry.sizeBytes) : null;
 
   const metadata = isManagedBrowserPath(path)
     ? "Managed · Read only"
@@ -432,7 +437,7 @@ export function PreviewPane({
           {metadata ? <p className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{metadata}</p> : null}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1">
-        {entry.type === "file" && (onDownload || (onEdit && !isManagedBrowserPath(path))) ? (
+        {entry.type === "file" && (onDownload || openWith || (onEdit && !isManagedBrowserPath(path))) ? (
           <DropdownMenu.Root key={path}>
             <DropdownMenu.Trigger asChild>
               <button type="button" aria-label="File actions" title="File actions" className="flex size-8 shrink-0 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]">
@@ -449,6 +454,11 @@ export function PreviewPane({
                 {onEdit && !isManagedBrowserPath(path) ? (
                   <DropdownMenu.Item onSelect={() => onEdit(path)} className="flex cursor-default items-center gap-2 rounded-md px-3 py-2 text-sm text-[var(--text-primary)] outline-none data-[highlighted]:bg-[var(--bg-hover)]">
                     <FilePenLine size={14} aria-hidden /> Open in Editor
+                  </DropdownMenu.Item>
+                ) : null}
+                {openWith && onOpenWith ? (
+                  <DropdownMenu.Item onSelect={() => onOpenWith(path)} className="flex cursor-default items-center gap-2 rounded-md px-3 py-2 text-sm text-[var(--text-primary)] outline-none data-[highlighted]:bg-[var(--bg-hover)]">
+                    <AppWindow size={14} aria-hidden /> {openWith}
                   </DropdownMenu.Item>
                 ) : null}
               </DropdownMenu.Content>
