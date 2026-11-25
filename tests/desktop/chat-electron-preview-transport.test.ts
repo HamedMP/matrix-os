@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalChatMessage } from "@matrix-os/contracts";
 import { createChatElectronPreviewTransport } from "@desktop/main/chat-electron-preview/transport";
+import { createChatMacTerminalService } from "@desktop/main/chat-mac-terminal/service";
 import type { AuthStatus } from "@desktop/main/auth/auth-service";
 
 const chatId = "chat_original";
@@ -75,14 +76,19 @@ function mockTransport(parts?: CanonicalChatMessage["parts"]) {
   let uploadedBytes = png;
   let busyReads = 0;
   let nextTurnConflict: string | undefined;
+  let storeResult = false;
+  let savedReceipt: { message: unknown; turn: unknown; run: unknown } | undefined;
+  let returnedRunChatId = chatId;
   const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
     if (url.pathname === "/api/chats/" + chatId) {
+      const current = savedReceipt ? { ...detail, messages: [...detail.messages, savedReceipt.message],
+        runs: [...detail.runs, savedReceipt.run], turns: [...detail.turns, savedReceipt.turn] } : detail;
       if (busyReads > 0) {
         busyReads--;
-        return Response.json({ ...detail, record: { ...detail.record, activeRun } });
+        return Response.json({ ...current, record: { ...current.record, activeRun } });
       }
-      return Response.json(detail);
+      return Response.json(current);
     }
     if (url.pathname === "/api/projects/matrix-os") return Response.json({ project: { id: projectId, slug: "matrix-os" } });
     if (url.pathname === "/api/projects/matrix-os/worktrees") return Response.json({ worktrees: inventory });
@@ -110,15 +116,17 @@ function mockTransport(parts?: CanonicalChatMessage["parts"]) {
       }
       const returnTurnId = "cturn_return";
       const returnedMessageId = "msg_return";
-      return Response.json({
+      const receipt = {
         record: detail.record,
         message: { id: returnedMessageId, chatId, role: "user", state: "committed", seq: 2,
           parts: request.parts, turnId: returnTurnId, createdAt: timestamp },
         turn: { id: returnTurnId, chatId, clientRequestId: request.clientRequestId, inputMessageId: returnedMessageId,
           baseMessageSeq: 1, status: "accepted", createdAt: timestamp, updatedAt: timestamp },
-        run: { ...detail.runs[0], id: "run_return", turnId: returnTurnId, selection: request.selection },
+        run: { ...detail.runs[0], id: "run_return", chatId: returnedRunChatId, turnId: returnTurnId, selection: request.selection },
         admission: "accepted",
-      }, { status: 202 });
+      };
+      if (storeResult) savedReceipt = receipt;
+      return Response.json(receipt, { status: 202 });
     }
     throw new Error("Unexpected request " + url.pathname);
   });
@@ -129,6 +137,8 @@ function mockTransport(parts?: CanonicalChatMessage["parts"]) {
     service: createChatElectronPreviewTransport(auth, { fetchFn, now: () => now }),
     changeSession: () => { authStatus = { ...authStatus, authGeneration: 5 }; },
     existingUpload: (bytes: Buffer) => { uploadStatus = 409; uploadedBytes = bytes; },
+    storeResult: () => { storeResult = true; },
+    misrouteResult: () => { returnedRunChatId = "chat_wrong"; },
   };
 }
 
@@ -319,5 +329,183 @@ describe("authenticated Chat Electron preview transport", () => {
     existingUpload(Buffer.from("different"));
     await expect(service.returnResult(request, { png, testSummary: "10 tests passed" })).rejects.toThrow();
     expect(resultWrites(fetchFn).some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+});
+
+describe("authenticated Chat Mac terminal probe transport", () => {
+  const targetId = "d5739cf6-cb60-4b79-99a1-d95c23949a5c";
+  const terminalMarker = 'MATRIX_MAC_TERMINAL_V1 {"targetId":"' + targetId + '","action":"uname"}';
+  const ref = { chatId, runId };
+
+  function terminalFixture() {
+    const mock = mockTransport();
+    mock.detail.messages[0]!.parts[0]!.text = terminalMarker;
+    return mock;
+  }
+
+  it("binds the selected latest Chat worktree and returns the fixed result to exactly that Chat", async () => {
+    const { service, fetchFn } = terminalFixture();
+    const context = await service.readTerminalContext({ chatId, worktreeId });
+    expect(context).toMatchObject({ chatId, projectId, worktreeId, scopeKey: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect(service.isTerminalContextCurrent(context!)).toBe(true);
+    const request = await service.readTerminalRequest(ref);
+    expect(request).toMatchObject({
+      ...context, runId, targetId, action: "uname", expiresAt: now + 4 * 60_000,
+    });
+    expect(service.isTerminalRequestCurrent(request!)).toBe(true);
+    expect(JSON.stringify(request)).not.toContain("test-auth");
+    expect(service.isTerminalRequestCurrent({ ...request! })).toBe(false);
+
+    await service.returnTerminalResult(request!, { terminalId: targetId, output: "Darwin" });
+    const writes = resultWrites(fetchFn);
+    expect(writes).toHaveLength(1);
+    const [url, init] = writes[0]!;
+    expect(new URL(String(url)).pathname).toBe("/api/chats/" + chatId + "/turns");
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer test-auth");
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      clientRequestId: expect.stringMatching(/^req_mac_terminal_[a-f0-9]{64}$/), baseRevision: 5,
+      executionRoot, selection, interactionMode: "default", permissionMode: "supervised",
+      parts: [{ type: "text", text: expect.stringContaining("Darwin") }],
+    });
+    expect(fetchFn.mock.calls.some(([input]) => new URL(String(input)).pathname === "/api/terminal/run")).toBe(false);
+  });
+
+  it.each([
+    ["foreign owner", (detail: ReturnType<typeof fixture>) => { detail.record.chat.ownerScope.ownerId = "other"; }],
+    ["user marker", (detail: ReturnType<typeof fixture>) => { detail.messages[0]!.role = "user"; }],
+    ["unrelated turn", (detail: ReturnType<typeof fixture>) => { detail.messages[0]!.turnId = "cturn_other"; }],
+    ["code fence", (detail: ReturnType<typeof fixture>) => { detail.messages[0]!.parts[0]!.text = "\`\`\`\n" + terminalMarker + "\n\`\`\`"; }],
+    ["extra command arguments", (detail: ReturnType<typeof fixture>) => { detail.messages[0]!.parts[0]!.text = terminalMarker.replace("}", ',"args":["-a"]}'); }],
+    ["multiple requests", (detail: ReturnType<typeof fixture>) => { detail.messages[0]!.parts[0]!.text += "\n" + terminalMarker; }],
+    ["expired completion", (detail: ReturnType<typeof fixture>) => { detail.runs[0]!.completedAt = new Date(now - 5 * 60_000).toISOString(); }],
+    ["future completion", (detail: ReturnType<typeof fixture>) => { detail.runs[0]!.completedAt = new Date(now + 1).toISOString(); }],
+    ["superseded run", (detail: ReturnType<typeof fixture>) => {
+      detail.runs.push({ ...detail.runs[0]!, id: "run_newer", completedAt: new Date(now - 1).toISOString() });
+    }],
+  ] as const)("rejects a %s", async (_name, change) => {
+    const { service, detail, fetchFn } = terminalFixture();
+    change(detail);
+    await expect(service.readTerminalRequest(ref)).resolves.toBeNull();
+    expect(resultWrites(fetchFn)).toEqual([]);
+  });
+
+  it("reads a terminal request spanning the 4,000-character recovery boundary", async () => {
+    const output = ["a".repeat(3_985), terminalMarker].join("\n");
+    const { service } = mockTransport([
+      { type: "text", text: output.slice(0, 4_000) },
+      { type: "text", text: output.slice(4_000) },
+    ]);
+
+    await expect(service.readTerminalRequest(ref)).resolves.toMatchObject({
+      ...ref, worktreeId, targetId, action: "uname",
+    });
+  });
+
+  const splitFenceOutput = ["a".repeat(3_998), "~~~", terminalMarker, "~~~"].join("\n");
+  const splitDuplicateOutput = ["a".repeat(3_985), terminalMarker, terminalMarker].join("\n");
+  it.each([
+    ["an opener split inside a code fence", [
+      { type: "text", text: splitFenceOutput.slice(0, 4_000) },
+      { type: "text", text: splitFenceOutput.slice(4_000) },
+    ]],
+    ["a non-text part interrupting the marker", [
+      { type: "text", text: terminalMarker.slice(0, 14) },
+      { type: "status", tone: "info", label: "Worktree checked" },
+      { type: "text", text: terminalMarker.slice(14) },
+    ]],
+    ["a duplicate request split across text parts", [
+      { type: "text", text: splitDuplicateOutput.slice(0, 4_000) },
+      { type: "text", text: splitDuplicateOutput.slice(4_000) },
+    ]],
+  ] satisfies [string, CanonicalChatMessage["parts"]][])("rejects %s", async (_reason, parts) => {
+    const { service, fetchFn } = mockTransport(parts);
+
+    await expect(service.readTerminalRequest(ref)).resolves.toBeNull();
+    expect(fetchFn.mock.calls).toHaveLength(1);
+  });
+
+  it("does not post the one-time terminal output when its grant is canceled before Chat admission", async () => {
+    const { detail, service: transport, fetchFn } = terminalFixture();
+    const finalRead = Promise.withResolvers<void>();
+    const resumeRead = Promise.withResolvers<void>();
+    const reply = fetchFn.getMockImplementation()!;
+    let terminalRan = false;
+    fetchFn.mockImplementation(async (input, init) => {
+      if (terminalRan && new URL(String(input)).pathname === `/api/chats/${chatId}`) {
+        finalRead.resolve();
+        await resumeRead.promise;
+      }
+      return reply(input, init);
+    });
+    const terminal = {
+      id: targetId,
+      async run(): Promise<"Darwin"> {
+        terminalRan = true;
+        return "Darwin";
+      },
+      dispose: vi.fn().mockResolvedValue(undefined),
+    };
+    const service = createChatMacTerminalService({
+      ...transport,
+      enabled: true,
+      approve: async () => true,
+      prepareTerminal: async () => terminal,
+    });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const grant = await service.prepare({ chatId, worktreeId });
+      if (grant.status !== "ready") throw new Error(`expected a ready terminal, got ${grant.status}`);
+      detail.messages[0]!.parts[0]!.text = terminalMarker.replace(targetId, grant.targetId);
+
+      const running = service.run(ref);
+      await Promise.race([finalRead.promise, running.then(result => {
+        throw new Error(`expected an in-flight Chat read, got ${result.status}`);
+      })]);
+      expect(await service.cancel(chatId)).toBe(true);
+      resumeRead.resolve();
+
+      const result = await running;
+      expect(resultWrites(fetchFn)).toEqual([]);
+      expect(result).toEqual({ status: "unavailable" });
+      expect(terminal.dispose).toHaveBeenCalledTimes(1);
+    } finally {
+      resumeRead.resolve();
+      await service.cancelAll();
+      clock.mockRestore();
+    }
+  });
+
+  it("uses the same canonical result turn on retries", async () => {
+    const { service, storeResult, fetchFn } = terminalFixture();
+    storeResult();
+    const request = (await service.readTerminalRequest(ref))!;
+    const result = { terminalId: targetId, output: "Darwin" as const };
+
+    await service.returnTerminalResult(request, result);
+    await service.returnTerminalResult(request, result);
+
+    expect(resultWrites(fetchFn)).toHaveLength(1);
+  });
+
+  it("rejects a return receipt for a run belonging to another Chat", async () => {
+    const { service, misrouteResult } = terminalFixture();
+    const request = (await service.readTerminalRequest(ref))!;
+    misrouteResult();
+
+    await expect(service.returnTerminalResult(request, { terminalId: targetId, output: "Darwin" }))
+      .rejects.toThrow("Mac terminal result receipt mismatch");
+  });
+
+  it("rejects a mismatched worktree and a replaced session without returning a result", async () => {
+    const { service, changeSession, fetchFn } = terminalFixture();
+    await expect(service.readTerminalContext({ chatId, worktreeId: "wt_abcdef012346" })).resolves.toBeNull();
+    const context = (await service.readTerminalContext({ chatId, worktreeId }))!;
+    const request = (await service.readTerminalRequest(ref))!;
+    changeSession();
+
+    expect(service.isTerminalContextCurrent(context)).toBe(false);
+    expect(service.isTerminalRequestCurrent(request)).toBe(false);
+    await expect(service.returnTerminalResult(request, { terminalId: targetId, output: "Darwin" })).rejects.toThrow();
+    expect(resultWrites(fetchFn)).toEqual([]);
   });
 });

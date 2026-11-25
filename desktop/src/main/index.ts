@@ -71,6 +71,7 @@ import {createUsageSyncService} from "./usage-sync/service";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { registerChatElectronPreview } from "./chat-electron-preview/register";
+import { registerChatMacTerminal } from "./chat-mac-terminal/register";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
 import { installShortcuts } from "./shortcuts/install-shortcuts";
@@ -381,6 +382,7 @@ if (!gotLock) {
 
       let invalidateAppCapabilities: (() => void) | undefined;
       let cancelChatElectronPreview: (() => void) | undefined;
+      let cancelChatMacTerminal: (() => Promise<void>) | undefined;
       const auth = new AuthService({
         ...(previewContext ? { previewContext } : {}),
         authRedirectUri: channelIdentity.authRedirectUri,
@@ -392,6 +394,7 @@ if (!gotLock) {
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
           cancelChatElectronPreview?.();
+          void cancelChatMacTerminal?.();
           invalidateAppCapabilities?.();
           nativeAppChatNavigation?.cancelAll();
           navigationCache?.observe(status);
@@ -735,6 +738,15 @@ if (!gotLock) {
       });
       localTerminals = localTerminalHost;
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender);
+      cancelChatMacTerminal = registerChatMacTerminal(ipcMain, {
+        auth,
+        host: localTerminalHost,
+        allowed: process.platform === "darwin" && !app.isPackaged && !previewContext
+          && process.env.MATRIX_MAC_TERMINAL_CHECK === "1",
+        window: () => mainWindow,
+        isTrustedSender: (event) => senderRole(windowSenders, event) === "main",
+      });
+      app.once("before-quit", () => { void cancelChatMacTerminal?.(); });
       // Both trusted windows host terminals, so both may read copied files.
       registerTerminalClipboardIpc(ipcMain, {
         clipboard,
@@ -779,6 +791,7 @@ if (!gotLock) {
         },
         onRuntimeChanged: (slot) => {
           cancelChatElectronPreview?.();
+          void cancelChatMacTerminal?.();
           navigationCache?.observe(auth.getStatus());
           chatgptPlan?.cancelAll();
           chatgptPlan?.resume();
