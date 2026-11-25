@@ -24,7 +24,11 @@ export function canMoveFileToTrash(path: string): boolean {
     && path !== "data/app-gallery-staging" && !path.startsWith("data/app-gallery-staging/");
 }
 
-export function useFileTrash(enabled: boolean, onFilesChanged: (movedPath?: string) => void) {
+export function useFileTrash(
+  enabled: boolean,
+  onFilesChanged: (movedPath?: string) => void,
+  onConfirmMove?: (path: string) => void,
+) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -92,7 +96,12 @@ export function useFileTrash(enabled: boolean, onFilesChanged: (movedPath?: stri
   });
 
   const confirmMove = () => {
-    if (!target) return;
+    if (!target || !isCurrent() || operation.current) return;
+    if (onConfirmMove) {
+      setTarget(null);
+      onConfirmMove(target.path);
+      return;
+    }
     void run(async (signal, current) => {
       let movedPath: string | undefined;
       try {

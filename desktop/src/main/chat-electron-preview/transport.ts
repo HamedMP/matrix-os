@@ -8,6 +8,7 @@ import {
   type CanonicalChatDetailResponse, type CanonicalChatRun, type CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
 import {
+  CHAT_ELECTRON_PREVIEW_RECEIPT_PREFIX,
   CHAT_ELECTRON_PREVIEW_BASE_LABEL, CHAT_ELECTRON_PREVIEW_MAX_AGE_MS, CHAT_ELECTRON_PREVIEW_SOURCE,
   ChatElectronPreviewMarkerSchema, getChatElectronPreviewMarkerForRun,
   isCurrentChatElectronPreviewRun, type ChatElectronPreviewMarker,
@@ -600,7 +601,7 @@ export function createChatElectronPreviewTransport(
           || marked.marker.label !== preview.label || marked.marker.operation !== preview.operation
           || marked.marker.backgroundTargetId !== preview.backgroundTargetId))) throw new Error("Preview Chat or source changed");
         const turn = CanonicalCreateChatTurnRequestSchema.parse({
-          clientRequestId: `req_electron_preview_${key}`, baseRevision: detail.record.chat.revision,
+          clientRequestId: `${CHAT_ELECTRON_PREVIEW_RECEIPT_PREFIX}${key}`, baseRevision: detail.record.chat.revision,
           parts, executionRoot, selection: { instanceId: run.selection.instanceId, model: run.selection.model },
           interactionMode: "default", permissionMode: "supervised",
         });
@@ -663,7 +664,7 @@ export function createChatElectronPreviewTransport(
         });
         if (response.ok) {
           const receipt = CanonicalChatTurnAdmissionResponseSchema.parse(await readJson(response));
-          signal.throwIfAborted();
+          // Stop cancels further work, but a complete authenticated receipt still records delivery.
           if (!sameAuthority(authority, currentAuthority()) || receipt.record.chat.id !== preview.chatId
             || receipt.turn.clientRequestId !== turn.clientRequestId
             || !hasReturned({ record: receipt.record, messages: [receipt.message], runs: [receipt.run],

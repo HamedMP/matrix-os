@@ -762,6 +762,7 @@ if (!gotLock) {
         auth,
         transport: chatDeviceTransport,
         acquireActionPairing,
+        acquireFullAccessPairing: desktopPairing?.acquireFullAccessPairing,
         beginActivity: macActivity?.begin,
         window: () => mainWindow ?? terminalWindowController.current(),
         isTrustedSender: (event) => !macActivityQuit?.isFenced() && senderRole(windowSenders, event) === "main",
@@ -976,8 +977,15 @@ if (!gotLock) {
         });
         mainWindow = createWindow(fitWindowBoundsToWorkArea(requestedBounds, display.workArea));
         // A reloaded or crashed renderer must take held org links again before they are sent.
+        const releaseRenderer = () => {
+          sharedAppDeepLinks.rendererReset();
+          chatElectronPreview.clearFullAccessSelection();
+        };
         mainWindow.webContents.on("did-start-loading", () => sharedAppDeepLinks.rendererReset());
-        mainWindow.webContents.on("render-process-gone", () => sharedAppDeepLinks.rendererReset());
+        mainWindow.webContents.on("did-start-navigation", (details) => {
+          if (details.isMainFrame && !details.isSameDocument) chatElectronPreview.clearFullAccessSelection();
+        });
+        mainWindow.webContents.on("render-process-gone", releaseRenderer);
         mainWindow.on("resize", persistBounds);
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
@@ -986,7 +994,7 @@ if (!gotLock) {
           codingAgentThreadEvents.closeAll();
           nativeAppChatNavigation?.cancelAll();
           mainWindow = null;
-          sharedAppDeepLinks.rendererReset();
+          releaseRenderer();
         });
       };
 
