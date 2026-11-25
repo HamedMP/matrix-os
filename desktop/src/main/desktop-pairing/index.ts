@@ -100,6 +100,11 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
     await show("This Mac is paired.", signal);
   }
 
+  function cancel() {
+    active?.abort();
+    actions.revokeAll();
+  }
+
   return {
     async open() {
       if (active) return;
@@ -122,9 +127,10 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
       }
     },
     acquireActionPairing,
-    cancel() {
-      active?.abort();
-      actions.revokeAll();
+    cancel,
+    dispose() {
+      keys.dispose();
+      cancel();
     },
   };
 }

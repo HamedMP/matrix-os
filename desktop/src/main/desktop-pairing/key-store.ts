@@ -6,6 +6,9 @@ import { z } from "zod/v4";
 import type { SafeStorageLike } from "../auth/credential-store";
 
 const MAX_KEY_BYTES = 4096;
+const TEMP_SWEEP_INTERVAL_MS = 60_000;
+const TEMP_WRITE_GRACE_MS = 60 * 60_000;
+const MAX_TEMP_SWEEP_ENTRIES = 256;
 const TEMP_FILE = /^device-[a-f0-9]{64}\.bin\.[a-f0-9-]{36}\.tmp$/;
 const SavedKey = z.strictObject({
   scope: z.string().regex(/^[a-f0-9]{64}$/),
@@ -27,7 +30,16 @@ function identifyPairingKey(privateKey: KeyObject) {
 
 export function createPairingKeyStore(userData: string, safeStorage: PairingSafeStorage) {
   const directory = join(userData, "desktop-pairing");
-  let lastSweep = 0;
+  let lastSweep = -Infinity;
+  let sweeping = false;
+  let disposed = false;
+  let activeWrites = 0;
+  const timer = setInterval(() => {
+    void sweepTempFiles().catch((error: unknown) => {
+      console.warn("[desktop-pairing] key cleanup failed", error instanceof Error ? "filesystem error" : "unexpected error");
+    });
+  }, TEMP_SWEEP_INTERVAL_MS);
+  timer.unref();
 
   function checkEncryption() {
     if (!safeStorage.isEncryptionAvailable() || safeStorage.getSelectedStorageBackend?.() === "basic_text") {
@@ -44,29 +56,39 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
     try {
       const info = await lstat(directory);
       if (!info.isDirectory() || (info.mode & 0o077) !== 0) throw new Error("Invalid pairing directory");
-      return true;
+      return info;
     } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
     }
   }
 
   async function sweepTempFiles() {
     const now = Date.now();
-    if (now - lastSweep < 60_000) return;
+    if (disposed || sweeping || activeWrites > 0 || now - lastSweep < TEMP_SWEEP_INTERVAL_MS) return;
     lastSweep = now;
-    const entries = await opendir(directory);
-    let visited = 0;
-    for await (const entry of entries) {
-      if (++visited > 256) break;
-      if (!entry.isFile() || !TEMP_FILE.test(entry.name)) continue;
-      const path = join(directory, entry.name);
-      try {
-        const info = await lstat(path);
-        if (info.isFile() && now - info.mtimeMs > 60 * 60_000) await rm(path, { force: true });
-      } catch (error: unknown) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    sweeping = true;
+    try {
+      const parent = await inspectDirectory();
+      if (!parent) return;
+      const entries = await opendir(directory);
+      let visited = 0;
+      for await (const entry of entries) {
+        if (++visited > MAX_TEMP_SWEEP_ENTRIES || disposed || activeWrites > 0) break;
+        if (!entry.isFile() || !TEMP_FILE.test(entry.name)) continue;
+        const path = join(directory, entry.name);
+        try {
+          const info = await lstat(path);
+          if (!info.isFile() || now - info.mtimeMs <= TEMP_WRITE_GRACE_MS) continue;
+          const current = await inspectDirectory();
+          if (current?.dev !== parent.dev || current.ino !== parent.ino || disposed || activeWrites > 0) break;
+          await rm(path, { force: true });
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
       }
+    } finally {
+      sweeping = false;
     }
   }
 
@@ -118,30 +140,42 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
     const encrypted = safeStorage.encryptString(JSON.stringify(saved));
     if (encrypted.length > MAX_KEY_BYTES) throw new Error("Invalid encrypted key size");
     const temporary = `${path}.${randomUUID()}.tmp`;
-    const handle = await open(temporary, "wx", 0o600);
+    activeWrites++;
     try {
+      const handle = await open(temporary, "wx", 0o600);
       try {
-        await handle.writeFile(encrypted);
-        await handle.sync();
+        try {
+          await handle.writeFile(encrypted);
+          await handle.sync();
+        } finally {
+          await handle.close();
+        }
+        signal.throwIfAborted();
+        // Publish complete bytes atomically. Another process cannot replace our
+        // key and invalidate a challenge that we just signed.
+        try {
+          await link(temporary, path);
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          const winner = await load(scope);
+          if (winner) return winner;
+          throw error;
+        }
+        return identifyPairingKey(privateKey);
       } finally {
-        await handle.close();
+        await rm(temporary, { force: true });
       }
-      signal.throwIfAborted();
-      // Publish complete bytes atomically. Another process cannot replace our
-      // key and invalidate a challenge that we just signed.
-      try {
-        await link(temporary, path);
-      } catch (error: unknown) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const winner = await load(scope);
-        if (winner) return winner;
-        throw error;
-      }
-      return identifyPairingKey(privateKey);
     } finally {
-      await rm(temporary, { force: true });
+      activeWrites--;
     }
   }
 
-  return { load, loadOrCreate };
+  return {
+    load,
+    loadOrCreate,
+    dispose() {
+      disposed = true;
+      clearInterval(timer);
+    },
+  };
 }

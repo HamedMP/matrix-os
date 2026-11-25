@@ -164,6 +164,7 @@ let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null
 let navigationCacheDrained = false;
 let drainingNavigationCache = false;
 let cancelDesktopPairing: (() => void) | undefined;
+let disposeDesktopPairing: (() => void) | undefined;
 let macActivityQuit: ReturnType<typeof createMacActivityQuit> | undefined;
 let planDiagnostics: ReturnType<typeof createPlanDiagnosticStore> | null = null;
 let planDiagnosticsDrained = false;
@@ -429,6 +430,7 @@ if (!gotLock) {
         ? createDesktopPairing({ auth, safeStorage, userData, window: () => mainWindow })
         : null;
       cancelDesktopPairing = desktopPairing?.cancel;
+      disposeDesktopPairing = desktopPairing?.dispose;
       navigationCache = createNavigationCache({ dir: userData, getStatus: () => auth.getStatus() });
       registerNavigationCacheIpc(ipcMain, navigationCache, rawEvent => {
         const event = rawEvent as IpcMainInvokeEvent;
@@ -1107,6 +1109,7 @@ if (!gotLock) {
   });
 
   app.on("will-quit", () => {
+    disposeDesktopPairing?.();
     macActivityQuit?.finish();
     if (updateCheckTimer) {
       clearInterval(updateCheckTimer);

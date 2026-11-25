@@ -1,5 +1,5 @@
-import { createHash, createPublicKey, randomBytes, verify } from "node:crypto";
-import { lstat, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash, createPublicKey, randomBytes, randomUUID, verify } from "node:crypto";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi, afterEach } from "vitest";
@@ -13,6 +13,13 @@ const machineId = "2fef49db-4468-47b1-a35e-c70d149a7aaf";
 const origin = "https://matrix.test";
 const ownerId = "user_owner";
 const dirs: string[] = [];
+const pairings: ReturnType<typeof createDesktopPairing>[] = [];
+
+function createPairing(options: Parameters<typeof createDesktopPairing>[0]) {
+  const pairing = createDesktopPairing(options);
+  pairings.push(pairing);
+  return pairing;
+}
 
 const safeStorage = {
   isEncryptionAvailable: () => true,
@@ -23,6 +30,7 @@ const safeStorage = {
 afterEach(async () => {
   vi.clearAllMocks();
   prompt.mockReset();
+  for (const pairing of pairings.splice(0)) pairing.dispose();
   await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
 });
 
@@ -95,7 +103,7 @@ async function setup() {
   });
 
   const deps = { auth, safeStorage, window: () => null, userData, fetchFn };
-  const create = () => createDesktopPairing(deps);
+  const create = () => createPairing(deps);
   const enroll = async () => {
     const pairing = create();
     prompt.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 });
@@ -107,6 +115,56 @@ async function setup() {
   };
   return { authStatus, deps, state, fetchFn, create, userData, enroll };
 }
+
+it("sweeps stale key files while idle, preserves links and grace, and stops on disposal", async () => {
+  const { create, userData } = await setup();
+  const directory = join(userData, "desktop-pairing");
+  const keyName = `device-${"a".repeat(64)}.bin`;
+  const temporaryName = () => `${keyName}.${randomUUID()}.tmp`;
+  const now = Date.now();
+  const old = new Date(now - 2 * 60 * 60_000);
+  const recent = new Date(now - 58 * 60_000 - 30_000);
+  const staleName = temporaryName();
+  const recentName = temporaryName();
+  const linkName = temporaryName();
+  const linkTarget = join(userData, "symlink-target");
+  await mkdir(directory, { mode: 0o700 });
+  await writeFile(linkTarget, "keep");
+  await symlink(linkTarget, join(directory, linkName));
+  async function writeKeyFile(name: string, date: Date) {
+    const path = join(directory, name);
+    await writeFile(path, "encrypted", { mode: 0o600 });
+    await utimes(path, date, date);
+  }
+  await writeKeyFile(keyName, old);
+  await writeKeyFile(staleName, old);
+  await writeKeyFile(recentName, recent);
+
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+  const pairing = create();
+  try {
+    pairing.cancel();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(async () => expect(await readdir(directory)).not.toContain(staleName));
+    expect(await readdir(directory)).toContain(recentName);
+    expect(await readdir(directory)).toContain(keyName);
+    expect((await lstat(join(directory, linkName))).isSymbolicLink()).toBe(true);
+    expect(await readFile(linkTarget, "utf8")).toBe("keep");
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.waitFor(async () => expect(await readdir(directory)).not.toContain(recentName));
+
+    pairing.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    await writeKeyFile(staleName, old);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(await readdir(directory)).toContain(staleName);
+  } finally {
+    pairing.dispose();
+    vi.useRealTimers();
+  }
+});
 
 it("persists pair identity across a client restart and disconnects only after explicit consent", async () => {
   const { create, state, fetchFn, userData } = await setup();
@@ -235,7 +293,7 @@ it("cannot send the Matrix credential outside the selected primary HTTPS origin"
   const insecureAuth = { ...deps.auth, getGatewayOrigin: () => "http://matrix.test" };
   const otherSlotAuth = { ...deps.auth, getStatus: () => ({ ...deps.auth.getStatus(), runtimeSlot: "preview" }) };
   prompt.mockResolvedValue({ response: 0 });
-  for (const auth of [mismatchedAuth, insecureAuth, otherSlotAuth]) await createDesktopPairing({ ...deps, auth }).open();
+  for (const auth of [mismatchedAuth, insecureAuth, otherSlotAuth]) await createPairing({ ...deps, auth }).open();
   expect(fetchFn).not.toHaveBeenCalled();
   expect(prompt).toHaveBeenCalledTimes(3);
 });
