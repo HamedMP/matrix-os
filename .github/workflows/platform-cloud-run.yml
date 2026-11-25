@@ -932,7 +932,7 @@ jobs:
             --substitutions "_IMAGE=$image,_CACHE_IMAGE=$cache_image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$next_public_clerk_publishable_key,_NEXT_PUBLIC_POSTHOG_KEY=$next_public_posthog_key,_NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$next_public_posthog_project_token,_NEXT_PUBLIC_POSTHOG_HOST=$POSTHOG_PUBLIC_HOST,_NEXT_PUBLIC_POSTHOG_API_HOST=$POSTHOG_PUBLIC_API_HOST,_NEXT_PUBLIC_MATRIX_APP_URL=$MATRIX_APP_URL,_MATRIX_BUILD_SHA=$GITHUB_SHA" \
             --async \
             --format 'value(metadata.build.id)' \
-            --timeout=1200s)
+            --timeout=1800s)
           if [ -z "$build_id" ]; then
             build_id=$(gcloud builds list \
               --project "$GCP_PROJECT_ID" \
@@ -956,15 +956,31 @@ jobs:
             echo "- cache_image: \`${cache_image}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          report_cloud_build_timings() {
+            {
+              echo
+              echo '#### Cloud Build phase timings'
+              echo '```yaml'
+              if ! timeout 30s gcloud builds describe "$build_id" \
+                --project "$GCP_PROJECT_ID" \
+                --region "$GCP_REGION" \
+                --format='yaml(startTime,finishTime,timing,steps.timing,results.images)'; then
+                echo 'Could not read Cloud Build phase timings.'
+              fi
+              echo '```'
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+
           print_cloud_build_diagnostics() {
             echo "::group::Cloud Build diagnostics ($build_id)"
-            if ! gcloud builds describe "$build_id" \
+            if ! timeout 30s gcloud builds describe "$build_id" \
               --project "$GCP_PROJECT_ID" \
               --region "$GCP_REGION" \
               --format='yaml(status,statusDetail,failureInfo,logUrl)'; then
               echo "Could not read Cloud Build failure metadata." >&2
             fi
-            if ! gcloud builds log "$build_id" \
+            report_cloud_build_timings
+            if ! timeout 60s gcloud builds log "$build_id" \
               --project "$GCP_PROJECT_ID" \
               --region "$GCP_REGION"; then
               echo "Could not read Cloud Build logs; use the build URL above." >&2
@@ -972,11 +988,21 @@ jobs:
             echo "::endgroup::"
           }
 
-          for attempt in $(seq 1 240); do
-            status=$(gcloud builds describe "$build_id" \
+          poll_deadline=$((SECONDS + 35 * 60))
+          status=''
+          while (( (remaining = poll_deadline - SECONDS) > 0 )); do
+            status=$(timeout "${remaining}s" gcloud builds describe "$build_id" \
               --project "$GCP_PROJECT_ID" \
               --region "$GCP_REGION" \
-              --format 'value(status)')
+              --format 'value(status)') || {
+              poll_exit=$?
+              if [ "$poll_exit" -eq 124 ]; then
+                break
+              fi
+              echo "Could not read Cloud Build status for $build_id (exit $poll_exit)." >&2
+              print_cloud_build_diagnostics
+              exit 1
+            }
             case "$status" in
               SUCCESS)
                 break
@@ -987,21 +1013,27 @@ jobs:
                 exit 1
                 ;;
             esac
-            sleep 5
+            remaining=$((poll_deadline - SECONDS))
+            if (( remaining > 0 )); then
+              sleep "$((remaining < 5 ? remaining : 5))"
+            fi
           done
           if [ "$status" != "SUCCESS" ]; then
             echo "Timed out waiting for Cloud Build $build_id" >&2
             print_cloud_build_diagnostics
             exit 1
           fi
+          report_cloud_build_timings
           digest="$(gcloud artifacts docker images describe "$image" \
             --project "$GCP_PROJECT_ID" \
             --format='value(image_summary.digest)')"
-          if [ -z "$digest" ]; then
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "Could not resolve the immutable platform image digest." >&2
             exit 1
           fi
-          echo "IMAGE_DIGEST=${image%:*}@${digest}" >> "$GITHUB_ENV"
+          image_digest="${image%:*}@${digest}"
+          echo "IMAGE_DIGEST=$image_digest" >> "$GITHUB_ENV"
+          echo "- image_digest: \`${image_digest}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Recheck default-serving source before candidate startup
         run: node scripts/ci/platform-source-compatibility.mjs

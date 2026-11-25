@@ -3,7 +3,11 @@ import React from 'react';
 import {cleanup, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {afterEach, expect, it, vi} from 'vitest';
 import {ChatContextMenu} from '../../packages/ui/src/chat/ChatContextMenu.js';
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  // Let Radix restore focus before Vitest clears the jsdom globals.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
 it('opens the same supported actions from ellipsis and separates destructive actions', async()=>{
   const rename=vi.fn(), remove=vi.fn();
   render(<ChatContextMenu chatId="chat_row" dropdownTrigger={<button>Actions</button>} items={[{label:'Rename',onSelect:rename},{label:'Delete',danger:true,onSelect:remove}]}><button>Chat row</button></ChatContextMenu>);
