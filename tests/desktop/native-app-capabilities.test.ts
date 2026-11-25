@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { APP_CAPABILITY_CHANNEL, APP_AI_ROUTES_CHANNEL } from "@matrix-os/contracts";
+import { APP_CAPABILITY_CHANNEL, APP_AI_ROUTES_CHANNEL, APP_CAPABILITY_ERROR_KEY } from "@matrix-os/contracts";
 import { NativeAppBridge } from "@desktop/main/embeds/native-app-bridge";
 import { createNativeAppCapabilityRequester, createNativeAppAiRoutesRequester } from "@desktop/main/embeds/native-app-capabilities";
 
@@ -78,6 +78,23 @@ describe("native app capability HTTP transport", () => {
     const request=createNativeAppCapabilityRequester({getGatewayOrigin:()=>"https://gateway.test",getToken:()=>"synthetic",fetchFn:async()=>Response.json(body)});
     await expect(request("brain",{kind:"integrations.call",service:"gmail",action:"get_attachment",params:{}})).resolves.toEqual(body);
     await expect(request("brain",{kind:"integrations.list"})).rejects.toThrow("App integrations are unavailable");
+  });
+  it.each([400, 403, 404, 409, 429])("resolves a gateway %i to a safe failure reply that keeps only the status", async (status) => {
+    const fetchFn = vi.fn(async () => Response.json({ error: "upstream secret for tenant-42" }, { status }));
+    const request = createNativeAppCapabilityRequester({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "secret", fetchFn });
+    const reply = await request("brain", { kind: "integrations.call", service: "google_calendar", action: "list_calendars", params: {} });
+    expect(reply).toEqual({ [APP_CAPABILITY_ERROR_KEY]: status });
+    expect(JSON.stringify(reply)).not.toContain("tenant");
+  });
+  it.each([401, 500, 502, 503])("keeps a gateway %i a plain redacted failure", async (status) => {
+    const fetchFn = vi.fn(async () => Response.json({ error: "upstream secret" }, { status }));
+    const request = createNativeAppCapabilityRequester({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "secret", fetchFn });
+    await expect(request("brain", { kind: "integrations.list" })).rejects.toThrow(/^App integrations are unavailable$/);
+  });
+  it("delivers a failure reply across IPC so the app client throws its status", async () => {
+    const f = fixture();
+    f.capabilityRequest.mockResolvedValue({ [APP_CAPABILITY_ERROR_KEY]: 409 } as never);
+    await expect(f.handlers.get(APP_CAPABILITY_CHANNEL)!(f.event, { kind: "integrations.list" })).resolves.toEqual({ [APP_CAPABILITY_ERROR_KEY]: 409 });
   });
   it("fails closed before fetching for malformed inputs, identities and missing authentication", async () => {
     const fetchFn = vi.fn();

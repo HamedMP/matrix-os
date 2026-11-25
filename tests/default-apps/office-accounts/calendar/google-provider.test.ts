@@ -10,6 +10,7 @@ import {
   type EventDraft,
 } from "../../../../home/apps/_shared/office-accounts/types/calendar";
 import { FakeBridge, statusError } from "./fake-bridge";
+import { appCapabilityFailureReply, createAppCapabilityClient } from "../../../../packages/contracts/src/app-capabilities";
 import {
   GOOGLE_ALL_DAY_TRIP,
   GOOGLE_CALENDAR_LIST_PAGE_1,
@@ -346,6 +347,25 @@ describe("Google calendar adapter: errors", () => {
     expect(error).toBeInstanceOf(ProviderError);
     expect(error).toMatchObject({ code });
     expect((error as Error).message).not.toContain("tenant");
+  });
+
+  it.each([
+    [404, "not_connected"],
+    [409, "multiple_accounts"],
+    [429, "rate_limited"],
+    [403, "not_supported"],
+  ] as const)("maps a %i failure reply through the real app capability client to %s", async (status, code) => {
+    const real = createGoogleCalendarProvider({
+      account: ACCOUNT, label: "Work", bridge: createAppCapabilityClient(async () => appCapabilityFailureReply(status)),
+    });
+    await expect(real.listCalendars()).rejects.toMatchObject({ name: "ProviderError", code });
+  });
+
+  it("maps an unreachable host through the real app capability client to failed", async () => {
+    const real = createGoogleCalendarProvider({
+      account: ACCOUNT, label: "Work", bridge: createAppCapabilityClient(async () => { throw new Error("offline"); }),
+    });
+    await expect(real.listCalendars()).rejects.toMatchObject({ code: "failed" });
   });
 
   it("treats a plain bridge failure and a malformed reply as failed", async () => {

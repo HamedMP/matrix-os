@@ -22,7 +22,7 @@ import {
   createNativeAppGatewayFetch,
 } from "../shared/native-app-gateway";
 
-import { APP_CAPABILITY_CHANNEL, createNativeAppCapabilityClient } from "../shared/native-app-capabilities";
+import { APP_CAPABILITY_CHANNEL, createNativeAppCapabilityClient, settleAppCapabilityClient } from "../shared/native-app-capabilities";
 import { APP_FILES_CHANNEL, NATIVE_APP_OPEN_REQUEST_CHANNEL, createNativeAppFilesBridge, watchOpenRequestSignals } from "../shared/native-app-files";
 import { NATIVE_APP_COLLABORATION_CHANNEL, NATIVE_COLLABORATION_ERROR_KEY, NativeAppCollaborationError, createNativeAppCollaboration } from "../shared/native-app-collaboration";
 import { CollaborationSafeErrorCodeSchema } from "@matrix-os/contracts";
@@ -65,10 +65,15 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
       args: [participant],
     }),
   );
+  const capabilityClient = createNativeAppCapabilityClient((input) => ipcRenderer.invoke(APP_CAPABILITY_CHANNEL, input));
+  const ownerIntegrations = process.argv.includes(NATIVE_APP_INTEGRATIONS_BRIDGE_ARG);
+  const { integrations: settledIntegrations, ...settledCapabilities } = settleAppCapabilityClient(capabilityClient);
   contextBridge.exposeInMainWorld("__matrixNativeBridge", Object.freeze({
     db: database,
     collaboration,
-    ...createNativeAppCapabilityClient((input) => ipcRenderer.invoke(APP_CAPABILITY_CHANNEL, input)),
+    ...capabilityClient,
+    // Results, not errors: the page world rethrows them with their safe status.
+    capabilityResults: Object.freeze({ ...settledCapabilities, ...(ownerIntegrations ? {} : { integrations: settledIntegrations }) }),
     openApp: createNativeAppOpenClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHANNEL, request)),
     openChat: createNativeAppOpenChatClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHAT_CHANNEL, request)),
     generate: createAppGenerateClient((context) => ipcRenderer.invoke(APP_GENERATE_CHANNEL, context)),
@@ -84,7 +89,7 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
       gatewayFetch: createNativeAppGatewayFetch((request) => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)),
     } : {}),
     ...(process.argv.includes(NATIVE_APP_BROWSER_BRIDGE_ARG) ? { browserSetup: true } : {}),
-    ...(process.argv.includes(NATIVE_APP_INTEGRATIONS_BRIDGE_ARG) ? {
+    ...(ownerIntegrations ? {
       integrations: createNativeAppIntegrations((request) => ipcRenderer.invoke(NATIVE_APP_GATEWAY_CHANNEL, request)),
     } : {}),
   }));
@@ -93,7 +98,20 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
   contextBridge.executeInMainWorld({
     func: (participant) => {
       type FileResult = { ok: boolean; value?: unknown; code?: string; message?: string };
-      const native = (window as unknown as { __matrixNativeBridge: { collaboration: Record<string, unknown>; files: Record<string, (...args: unknown[]) => Promise<FileResult>> } }).__matrixNativeBridge;
+      type CapabilityResult = { ok: boolean; value?: unknown; status?: number; invalid?: boolean };
+      const { capabilityResults, ...native } = (window as unknown as { __matrixNativeBridge: {
+        collaboration: Record<string, unknown>; files: Record<string, (...args: unknown[]) => Promise<FileResult>>;
+        capabilityResults: Record<string, (...args: unknown[]) => Promise<CapabilityResult>>;
+      } }).__matrixNativeBridge;
+      // The same for integration calls: a safe gateway status reaches the app as `error.status`.
+      const settleCapability = (result: CapabilityResult) => {
+        if (result?.ok) return result.value;
+        const error = new Error(result?.invalid ? "Invalid app capability request" : "App integrations are unavailable");
+        error.name = "AppCapabilityRequestError";
+        throw typeof result?.status === "number" ? Object.assign(error, { status: result.status }) : error;
+      };
+      const capabilityCalls = Object.fromEntries(Object.keys(capabilityResults).map((method) =>
+        [method, (...args: unknown[]) => capabilityResults[method]!(...args).then(settleCapability)]));
       // contextBridge drops an error's name and code, so the preload returns a
       // result and the page world throws the BridgeFileError shape from it.
       const settle = (result: FileResult) => {
@@ -105,7 +123,7 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
       const files = Object.freeze({ ...native.files, ...Object.fromEntries(["list", "stat", "read", "write", "mkdir"].map((method) =>
         [method, (...args: unknown[]) => native.files[method]!(...args).then(settle)])) });
       Object.defineProperty(window, "MatrixOS", {
-        value: Object.freeze({ ...native, files, collaboration: { ...native.collaboration, participant } }),
+        value: Object.freeze({ ...native, ...capabilityCalls, files, collaboration: { ...native.collaboration, participant } }),
         configurable: false, writable: false,
       });
     },
