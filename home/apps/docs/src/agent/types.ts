@@ -106,8 +106,10 @@ export type EditRunResult =
       dropped: DroppedEdit[];
       relocated: RelocatedEdit[];
       chunks: number;
+      /** True when the assistant read only part of the document (see `ContextPlan.truncated`). */
+      partial: boolean;
     }
-  | { status: "no_changes"; summary: string | null; dropped: DroppedEdit[]; relocated: RelocatedEdit[]; chunks: number }
+  | { status: "no_changes"; summary: string | null; dropped: DroppedEdit[]; relocated: RelocatedEdit[]; chunks: number; partial: boolean }
   /** An answer could not be read even after the retry. Nothing was applied. */
   | { status: "invalid_reply"; chunk: number; message: string }
   | { status: "cancelled" }
@@ -125,7 +127,8 @@ export type AssistantFailure =
 export type AnswerSegment = { type: "text"; text: string } | { type: "citation"; blockId: BlockId; number: number };
 
 export type AnswerResult =
-  | { status: "answered"; text: string; segments: AnswerSegment[]; citedBlockIds: BlockId[] }
+  /** `partial`: the answer is based on only part of the document (see `ContextPlan.truncated`). */
+  | { status: "answered"; text: string; segments: AnswerSegment[]; citedBlockIds: BlockId[]; partial: boolean }
   | { status: "cancelled" }
   | { status: "failed"; reason: AssistantFailure; message: string };
 

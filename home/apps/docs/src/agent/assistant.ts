@@ -31,6 +31,8 @@ interface Collected {
   edit: AgentDocxEdit;
   chunk: number;
   index: number;
+  /** Blocks of the part this edit came from: the only blocks it may land in. */
+  scope: ReadonlySet<BlockId>;
 }
 
 /** Blocks a selection touches, in document order. */
@@ -104,7 +106,7 @@ export async function runAssistantEdit(deps: AssistantDeps, request: EditRequest
     const outcome = await runContext(deps, context, base, token, request.signal, progress);
     if (outcome.status !== "ok") return outcome.result;
     for (let i = 0; i < outcome.validation.edits.length; i++) {
-      collected.push({ edit: outcome.validation.edits[i] as AgentDocxEdit, chunk: context.part, index: outcome.validation.indexes[i] as number });
+      collected.push({ edit: outcome.validation.edits[i] as AgentDocxEdit, chunk: context.part, index: outcome.validation.indexes[i] as number, scope: context.blockIds });
     }
     chunkDropped.push(...outcome.validation.dropped);
     if (outcome.summary !== null) summaries.push(outcome.summary);
@@ -117,7 +119,7 @@ export async function runAssistantEdit(deps: AssistantDeps, request: EditRequest
     doc: live,
     text: readDocument(live),
     edits: collected.map((entry) => entry.edit),
-    scope: new Set(collected.map((entry) => entry.edit.blockId)),
+    scope: (position) => (collected[position] as Collected).scope,
     mode,
     chunk: 0,
   });
@@ -132,7 +134,7 @@ export async function runAssistantEdit(deps: AssistantDeps, request: EditRequest
 
   if (final.edits.length === 0) {
     progress({ phase: "done", chunk: chunks, chunks, message: "No changes proposed" });
-    return { status: "no_changes", summary, dropped, relocated, chunks };
+    return { status: "no_changes", summary, dropped, relocated, chunks, partial: plan.truncated };
   }
 
   progress({ phase: "applying", chunk: chunks, chunks, message: "Adding the proposed changes" });
@@ -156,6 +158,7 @@ export async function runAssistantEdit(deps: AssistantDeps, request: EditRequest
     dropped,
     relocated,
     chunks,
+    partial: plan.truncated,
   };
 }
 

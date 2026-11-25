@@ -83,6 +83,22 @@ describe("docs assistant: prompts", () => {
     expect(progress.at(-1)?.phase).toBe("done");
   });
 
+  it("says when a document has more parts than one request reads, or a paragraph was cut", async () => {
+    const whole = await sessionWith(longParagraphs(40, 12));
+    expect(await runAssistantEdit({ session: whole, generate: scripted(envelope([])).generate }, { instruction: "Proofread.", scope: "document" })).toMatchObject({ status: "no_changes", partial: false });
+
+    const tooMany = await sessionWith(longParagraphs(40, 12));
+    const model = scripted(envelope([]));
+    const result = await runAssistantEdit({ session: tooMany, generate: model.generate, promptBudget: 8_000 }, { instruction: "Proofread.", scope: "document" });
+    expect(model.prompts).toHaveLength(40);
+    expect(result).toMatchObject({ status: "no_changes", partial: true });
+
+    const longParagraph = await sessionWith(["Intro", `${"The party shall perform with care. ".repeat(1_500)}End of the long clause.`]);
+    const cut = scripted(envelope([]));
+    expect(await runAssistantEdit({ session: longParagraph, generate: cut.generate }, { instruction: "Proofread.", scope: "document" })).toMatchObject({ status: "no_changes", partial: true });
+    expect(cut.prompts.join("\n")).not.toContain("End of the long clause.");
+  });
+
   it("parts start at a clause heading when they can", async () => {
     const session = await sessionWith(longParagraphs(40, 12));
     const model = scripted(envelope([]));

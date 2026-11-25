@@ -6,9 +6,10 @@
  * - An edit must name a block the agent was shown (comment-only review also
  *   allows only comments).
  * - Quoted text must still be in that block. When it is not, it is searched
- *   for in the same clause: exactly, then ignoring typography and case, then
- *   fuzzily. A match rewrites the edit to the exact text at the new place; no
- *   match drops the edit and reports it.
+ *   for in the shown blocks of the same clause: exactly, then ignoring
+ *   typography and case, then fuzzily. A match rewrites the edit to the exact
+ *   text at the new place; no match drops the edit and reports it. An edit is
+ *   never moved to a block the agent was not shown.
  * - What is left goes through the engine's `toDocxOps`, which refuses what
  *   cannot be applied (ambiguous quotes, overlapping edits, …).
  */
@@ -24,8 +25,11 @@ export interface ValidationInput {
   doc: DocxDocument;
   text: DocumentText;
   edits: readonly AgentDocxEdit[];
-  /** Blocks the agent was shown. */
-  scope: ReadonlySet<BlockId>;
+  /**
+   * Blocks the agent was shown: one set for every edit, or the set for the
+   * edit at each index when edits from several prompt parts are checked together.
+   */
+  scope: ReadonlySet<BlockId> | ((index: number) => ReadonlySet<BlockId>);
   mode: "edit" | "comment";
   /** 1-based part of the document, for reports. */
   chunk: number;
@@ -47,11 +51,13 @@ interface Located {
   how: RelocatedEdit["how"] | "same";
 }
 
-/** Blocks of the clause of `blockId`, nearest first, `blockId` itself first. */
-function candidates(text: DocumentText, blockId: BlockId): DescribedBlock[] {
+/** Shown blocks of the clause of `blockId`, nearest first, `blockId` itself first. */
+function candidates(text: DocumentText, blockId: BlockId, scope: ReadonlySet<BlockId>): DescribedBlock[] {
   const origin = text.byId.get(blockId);
   if (origin === undefined) return [];
-  return clauseOf(text, origin).sort((a, b) => Math.abs(a.order - origin.order) - Math.abs(b.order - origin.order));
+  return clauseOf(text, origin)
+    .filter((block) => scope.has(block.id))
+    .sort((a, b) => Math.abs(a.order - origin.order) - Math.abs(b.order - origin.order));
 }
 
 function occurrenceOf(haystack: string, needle: string, start: number): number | undefined {
@@ -62,10 +68,10 @@ function occurrenceOf(haystack: string, needle: string, start: number): number |
 }
 
 /** Where quoted text is now. Null when it cannot be found in the clause. */
-function locateQuote(doc: DocxDocument, text: DocumentText, blockId: BlockId, find: string, occurrence: number | undefined): Located | null {
+function locateQuote(doc: DocxDocument, text: DocumentText, scope: ReadonlySet<BlockId>, blockId: BlockId, find: string, occurrence: number | undefined): Located | null {
   const own = blockText(doc, blockId);
   if (own !== null && own.includes(find)) return { blockId, find, occurrence, how: "same" };
-  const pool = candidates(text, blockId)
+  const pool = candidates(text, blockId, scope)
     .map((block) => ({ id: block.id, text: blockText(doc, block.id) }))
     .filter((entry): entry is { id: BlockId; text: string } => entry.text !== null);
 
@@ -95,12 +101,12 @@ function startsWithOf(paragraph: string): string {
 }
 
 /** Where the paragraph a `deleteParagraph` names is now. */
-function locateParagraph(doc: DocxDocument, text: DocumentText, edit: AgentDeleteParagraphEdit): Located | null {
+function locateParagraph(doc: DocxDocument, text: DocumentText, scope: ReadonlySet<BlockId>, edit: AgentDeleteParagraphEdit): Located | null {
   const own = blockText(doc, edit.blockId);
   if (own !== null && startsWithOf(own) === edit.startsWith) return { blockId: edit.blockId, find: edit.startsWith, occurrence: undefined, how: "same" };
   const wanted = normalise(edit.startsWith).text.trim();
   if (wanted === "") return null;
-  for (const block of candidates(text, edit.blockId)) {
+  for (const block of candidates(text, edit.blockId, scope)) {
     const paragraph = blockText(doc, block.id);
     if (paragraph === null || paragraph === "") continue;
     if (normalise(paragraph).text.trim().startsWith(wanted)) {
@@ -111,7 +117,8 @@ function locateParagraph(doc: DocxDocument, text: DocumentText, edit: AgentDelet
 }
 
 export function validateEdits(input: ValidationInput): ValidationResult {
-  const { doc, text, scope, chunk } = input;
+  const { doc, text, chunk } = input;
+  const scopeOf = typeof input.scope === "function" ? input.scope : () => input.scope as ReadonlySet<BlockId>;
   const kept: AgentDocxEdit[] = [];
   const indexes: number[] = [];
   const dropped: DroppedEdit[] = [];
@@ -121,6 +128,7 @@ export function validateEdits(input: ValidationInput): ValidationResult {
 
   input.edits.forEach((edit, index) => {
     const at = `edits[${index}]`;
+    const scope = scopeOf(index);
     if (input.mode === "comment" && edit.op !== "comment") {
       drop(index, edit, "not_allowed", `${at}: only "comment" edits are allowed in this review; no text may change`);
       return;
@@ -136,7 +144,7 @@ export function validateEdits(input: ValidationInput): ValidationResult {
     let next: AgentDocxEdit = edit;
     let located: Located | null = null;
     if (edit.op === "replaceText" || (edit.op === "comment" && edit.find !== "")) {
-      located = locateQuote(doc, text, edit.blockId, edit.find, edit.occurrence);
+      located = locateQuote(doc, text, scope, edit.blockId, edit.find, edit.occurrence);
       if (located === null) {
         drop(index, edit, "stale_reference", `${at}: the quoted "find" text is not in block ${edit.blockId} or its clause; quote the paragraph exactly`);
         return;
@@ -144,12 +152,16 @@ export function validateEdits(input: ValidationInput): ValidationResult {
       const { occurrence: _old, ...rest } = edit;
       next = { ...rest, blockId: located.blockId, find: located.find, ...(located.occurrence !== undefined ? { occurrence: located.occurrence } : {}) } as AgentDocxEdit;
     } else if (edit.op === "deleteParagraph") {
-      located = locateParagraph(doc, text, edit);
+      located = locateParagraph(doc, text, scope, edit);
       if (located === null) {
         drop(index, edit, "stale_reference", `${at}: "startsWith" is not the start of block ${edit.blockId}; quote its first ${STARTS_WITH_LENGTH} characters exactly`);
         return;
       }
       next = { ...edit, blockId: located.blockId, startsWith: located.find };
+    }
+    if (located !== null && !scope.has(located.blockId)) {
+      drop(index, edit, "out_of_scope", `${at}: the quoted text is in block ${located.blockId}, which was not shown to you`);
+      return;
     }
     if (located !== null && located.how !== "same") {
       relocated.push({ chunk, index, fromBlockId: edit.blockId, toBlockId: located.blockId, how: located.how });

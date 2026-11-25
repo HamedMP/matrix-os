@@ -129,7 +129,7 @@ async function answer(
   }
   progress({ phase: "done", chunk: plan.contexts.length, chunks: plan.contexts.length, message: "Answered" });
   const { segments, citedBlockIds } = parseCitations(final, shown);
-  return { status: "answered", text: final, segments, citedBlockIds };
+  return { status: "answered", text: final, segments, citedBlockIds, partial: plan.truncated };
 }
 
 function promptFor(kind: AnswerPromptKind, question: string, selected: string | null, context: PromptContext): string {

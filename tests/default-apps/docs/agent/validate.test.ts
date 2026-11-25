@@ -71,6 +71,46 @@ describe("docs assistant: edit validation", () => {
     expect(result.edits).toEqual([]);
   });
 
+  it("never relocates an edit to a paragraph of the clause the agent was not shown", async () => {
+    const { run } = await contract();
+    // "4% a year" is only in 5.3 (b39); the agent was shown 5.2 (b38) alone.
+    const scope = new Set(["b38"]);
+    const result = run(
+      [
+        { op: "replaceText", blockId: "b38", find: "4% a year", replace: "3% a year" },
+        { op: "comment", blockId: "b38", find: "4% a year", text: "Too high?" },
+        { op: "deleteParagraph", blockId: "b38", startsWith: "5.3" },
+      ],
+      { scope },
+    );
+    expect(result.edits).toEqual([]);
+    expect(result.relocated).toEqual([]);
+    expect(result.dropped.map((entry) => [entry.index, entry.code])).toEqual([
+      [0, "stale_reference"],
+      [1, "stale_reference"],
+      [2, "stale_reference"],
+    ]);
+  });
+
+  it("checks each edit against the blocks of its own part", async () => {
+    const { doc } = await contract();
+    const text = readDocument(doc);
+    const scopes = [new Set(["b38"]), new Set(["b39"])];
+    const result = validateEdits({
+      doc,
+      text,
+      edits: [
+        { op: "replaceText", blockId: "b38", find: "4% a year", replace: "3% a year" },
+        { op: "replaceText", blockId: "b39", find: "4% a year", replace: "3% a year" },
+      ],
+      scope: (index) => scopes[index] as Set<string>,
+      mode: "edit",
+      chunk: 0,
+    });
+    expect(result.indexes).toEqual([1]);
+    expect(result.dropped.map((entry) => [entry.index, entry.code])).toEqual([[0, "stale_reference"]]);
+  });
+
   it("allows only comments in comment-only review", async () => {
     const { run } = await contract();
     const result = run(

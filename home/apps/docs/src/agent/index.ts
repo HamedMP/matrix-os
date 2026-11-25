@@ -27,7 +27,7 @@
  * - Numbering and cross-reference fixes are deterministic (no model).
  */
 
-export { ASSISTANT_AUTHOR, MAX_INSTRUCTION_CHARS, MAX_PROMPT_CHARS, MESSAGES } from "./constants";
+export { ASSISTANT_AUTHOR, MAX_INSTRUCTION_CHARS, MAX_PROMPT_CHARS, MESSAGES, PARTIAL_COVERAGE_NOTE } from "./constants";
 export { runAssistantEdit, selectionBlocks } from "./assistant";
 export { askDocument, explainSelection, parseCitations, summariseDocument } from "./ask";
 export type { AskRequest } from "./ask";

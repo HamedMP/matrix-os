@@ -54,6 +54,15 @@ describe("docs assistant: answers with citations", () => {
     expect(result).toMatchObject({ status: "answered", text: "Overall: obligations with ten-day deadlines [b2].", citedBlockIds: ["b2"] });
   });
 
+  it("says when an answer or summary covers only part of a long document", async () => {
+    const short = await contractSession();
+    expect(await askDocument({ session: short.session, generate: scripted("The parties [b2].").generate }, { question: "Who are the parties?" })).toMatchObject({ status: "answered", partial: false });
+    const session = await sessionWith(longParagraphs(100, 12));
+    const model = scripted((prompt) => (prompt.includes("# Part answers") ? "Overall summary." : "Part summary."));
+    const result = await summariseDocument({ session, generate: model.generate, promptBudget: 6_000 });
+    expect(result).toMatchObject({ status: "answered", partial: true });
+  });
+
   it("reports a model failure generically", async () => {
     const { session } = await contractSession();
     const model = scripted(new Error("raw provider error"));

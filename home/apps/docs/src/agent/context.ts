@@ -34,7 +34,11 @@ export interface PromptContext {
 
 export interface ContextPlan {
   contexts: PromptContext[];
-  /** True when the document had more parts than one request processes. */
+  /**
+   * True when some of the text to work through is not in any prompt: the
+   * document had more parts than one request processes, or a paragraph too
+   * long for one part was cut. Results then cover only part of the document.
+   */
   truncated: boolean;
 }
 
@@ -135,6 +139,7 @@ function partContexts(text: DocumentText, blocks: DescribedBlock[], room: number
   let current: DescribedBlock[] = [];
   let currentLines: string[] = [];
   let used = 0;
+  let cut = false;
   const close = () => {
     if (current.length === 0) return;
     groups.push(current);
@@ -145,6 +150,7 @@ function partContexts(text: DocumentText, blocks: DescribedBlock[], room: number
   };
   for (const block of blocks) {
     const line = fitLine(block.line, lineRoom - 1);
+    if (line !== block.line) cut = true;
     const cost = line.length + 1;
     const startsClause = block.headingLevel > 0 && used >= lineRoom * 0.5;
     if (used + cost > lineRoom || startsClause) close();
@@ -154,7 +160,7 @@ function partContexts(text: DocumentText, blocks: DescribedBlock[], room: number
   }
   close();
 
-  const truncated = groups.length > MAX_CHUNKS;
+  const truncated = cut || groups.length > MAX_CHUNKS;
   const count = Math.min(groups.length, MAX_CHUNKS);
   const contexts: PromptContext[] = [];
   for (let i = 0; i < count; i++) {

@@ -28,6 +28,9 @@ export const MAX_SELECTION_CHARS = 6_000;
 /** Preview length of changed text in summaries. */
 export const PREVIEW_CHARS = 120;
 
+/** Shown with a result when the document was too long to read whole in one request. */
+export const PARTIAL_COVERAGE_NOTE = "This document is too long for one request, so the assistant read only part of it. The result does not cover the whole document.";
+
 /** Generic messages for the owner. Detail is logged, never shown. */
 export const MESSAGES = {
   no_document: "Open a document first.",
