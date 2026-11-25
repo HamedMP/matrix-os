@@ -119,6 +119,25 @@ describe('app-wide pilot identity admission', () => {
     const disabled = app({ ...env, MATRIX_PILOT_ACCESS_ENABLED: 'false' });
     expect((await disabled.request('/api/me', { headers: { authorization: `Bearer ${await syncToken('user_outside')}` } })).status).toBe(200);
   });
+  it('applies the cohort check to every bearer spelling the journey verifier accepts', async () => {
+    const outside = await syncToken('user_outside');
+    const a = app();
+    for (const authorization of [`bearer ${outside}`, `BEARER ${outside}`, `Bearer  ${outside}`, `Bearer ${outside} `, `bearer\t${outside}`]) {
+      for (const [method, path] of [['GET', '/api/journey'], ['POST', '/api/journey/retry-provision']]) {
+        const response = await a.request(path, { method, headers: { host: 'app.matrix-os.com', authorization, 'content-type': 'application/json' }, ...(method === 'POST' ? { body: '{}' } : {}) });
+        expect(response.status, `${method} ${path} ${JSON.stringify(authorization.slice(0, 8))}`).toBe(403);
+        expect(response.headers.get('cache-control')).toBe('no-store');
+      }
+    }
+    for (const authorization of ['Bearer', 'bearer   ', `Bearer ${outside} trailing`]) {
+      const response = await a.request('/api/journey', { headers: { host: 'app.matrix-os.com', authorization } });
+      expect(response.status, JSON.stringify(authorization.slice(0, 10))).toBe(401);
+      expect(await response.json()).toEqual({ error: 'Access unavailable' });
+    }
+    const member = await a.request('/api/journey', { headers: { host: 'app.matrix-os.com', authorization: `bearer  ${await syncToken('user_pilotA')}` } });
+    expect(member.status).not.toBe(401);
+    expect(member.status).not.toBe(403);
+  });
   it('refuses startup with enabled empty or malformed policy', () => {
     expect(() => app({ ...env, MATRIX_PILOT_ALLOWED_CLERK_IDS: '' })).toThrow('Pilot access configuration unavailable');
   });
