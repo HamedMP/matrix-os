@@ -101,6 +101,11 @@ const overrides = (extra: HostdOverrides = {}): HostdOverrides => ({
   ...extra,
 });
 
+const mainOverrides = (extra: HostdOverrides = {}) => ({
+  ...overrides(extra),
+  directories: { stateDir: config.stateDir, runDir: config.runDir },
+});
+
 interface Reply {
   status: number;
   body: string;
@@ -353,23 +358,21 @@ describe("hostd main", () => {
       HOSTD_API_HOST: "127.0.0.1",
       HOSTD_API_PORT: String(port(taken)),
       HOSTD_INGRESS_HOST: "127.0.0.1",
-      HOSTD_STATE_DIR: config.stateDir,
-      HOSTD_RUN_DIR: config.runDir,
     };
     const handlers = new Map<string, () => void>();
     const exits: number[] = [];
     const proc = { once: (signal: string, fn: () => void) => handlers.set(signal, fn), exit: (code: number) => exits.push(code) };
-    await expect(main({ ...env, HOSTD_API_TOKEN: undefined }, proc, overrides())).rejects.toMatchObject({
+    await expect(main({ ...env, HOSTD_API_TOKEN: undefined }, proc, mainOverrides())).rejects.toMatchObject({
       keys: ["HOSTD_API_TOKEN"],
     });
     // The API port is taken: startup fails and installs no handlers.
-    await expect(main({ ...env, HOSTD_INGRESS_PORT: await free() }, proc, overrides())).rejects.toMatchObject({
+    await expect(main({ ...env, HOSTD_INGRESS_PORT: await free() }, proc, mainOverrides())).rejects.toMatchObject({
       code: "EADDRINUSE",
     });
     expect(handlers.size).toBe(0);
     await new Promise((r) => taken.close(r));
 
-    const started = await main({ ...env, HOSTD_API_PORT: await free(), HOSTD_INGRESS_PORT: await free() }, proc, overrides());
+    const started = await main({ ...env, HOSTD_API_PORT: await free(), HOSTD_INGRESS_PORT: await free() }, proc, mainOverrides());
     hostd = started;
     expect([...handlers.keys()].sort()).toEqual(["SIGINT", "SIGTERM"]);
     handlers.get("SIGTERM")!();
@@ -456,15 +459,13 @@ describe("hostd main (production defaults)", () => {
         HOSTD_INGRESS_TOKEN: INGRESS_TOKEN,
         HOSTD_TLS_CERT_PATH: config.tlsCertPath,
         HOSTD_TLS_KEY_PATH: config.tlsKeyPath,
-        HOSTD_STATE_DIR: config.stateDir,
-        HOSTD_RUN_DIR: config.runDir,
         HOSTD_API_HOST: "127.0.0.1",
         HOSTD_API_PORT: await free(),
         HOSTD_INGRESS_HOST: "127.0.0.1",
         HOSTD_INGRESS_PORT: await free(),
       },
       { once: (s: string, fn: () => void) => handlers.set(s, fn), exit: (code: number) => exits.push(code) },
-      overrides({ log: (_event, fields) => logs.push(fields) }),
+      mainOverrides({ log: (_event, fields) => logs.push(fields) }),
     );
     const realClose = hostd.close;
     hostd.close = () => Promise.reject("plain");
@@ -484,8 +485,6 @@ describe("hostd main (production defaults)", () => {
       HOSTD_INGRESS_TOKEN: INGRESS_TOKEN,
       HOSTD_TLS_CERT_PATH: config.tlsCertPath,
       HOSTD_TLS_KEY_PATH: config.tlsKeyPath,
-      HOSTD_STATE_DIR: config.stateDir,
-      HOSTD_RUN_DIR: config.runDir,
       HOSTD_API_HOST: "127.0.0.1",
       HOSTD_API_PORT: await free(),
       HOSTD_INGRESS_HOST: "127.0.0.1",
@@ -494,7 +493,7 @@ describe("hostd main (production defaults)", () => {
     hostd = await main(
       env,
       { once: (signal: string, fn: () => void) => handlers.set(signal, fn), exit: (code: number) => exits.push(code) },
-      overrides({ log: (event) => logs.push(event) }),
+      mainOverrides({ log: (event) => logs.push(event) }),
     );
     const realClose = hostd.close;
     hostd.close = () => Promise.reject(new Error("drain broke"));

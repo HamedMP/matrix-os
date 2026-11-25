@@ -241,10 +241,14 @@ export interface MainProcess {
   exit(code: number): void;
 }
 
+interface MainOverrides extends HostdOverrides {
+  directories?: Pick<HostdConfig, "stateDir" | "runDir">;
+}
+
 // Entry point: config from the environment, then drain on SIGTERM/SIGINT.
-export async function main(env: Record<string, string | undefined>, proc: MainProcess, overrides: HostdOverrides = {}): Promise<Hostd> {
+export async function main(env: Record<string, string | undefined>, proc: MainProcess, overrides: MainOverrides = {}): Promise<Hostd> {
   const log = overrides.log ?? defaultLog;
-  const hostd = await startHostd(loadConfig(env), overrides);
+  const hostd = await startHostd({ ...loadConfig(env), ...overrides.directories }, overrides);
   const stop = () => {
     hostd.close().then(
       () => proc.exit(0),

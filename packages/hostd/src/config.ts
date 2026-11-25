@@ -47,8 +47,9 @@ const Env = z.object({
   HOSTD_API_PORT: port.default(8443),
   HOSTD_INGRESS_HOST: host.default("0.0.0.0"),
   HOSTD_INGRESS_PORT: port.default(443),
-  HOSTD_STATE_DIR: absolutePath.default("/var/lib/matrix-hostd"),
-  HOSTD_RUN_DIR: absolutePath.default("/run/matrix-vm"),
+  // The VM systemd templates fix EnvironmentFile and RuntimeDirectory to these paths.
+  HOSTD_STATE_DIR: z.literal("/var/lib/matrix-hostd").default("/var/lib/matrix-hostd"),
+  HOSTD_RUN_DIR: z.literal("/run/matrix-vm").default("/run/matrix-vm"),
   HOSTD_POOL_MAX_DATA_PERCENT: percent.default(85),
   HOSTD_POOL_MAX_METADATA_PERCENT: percent.default(80),
   HOSTD_POOL_QUERY_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(5_000),
