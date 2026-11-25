@@ -55,7 +55,7 @@ share repository, so apps that aren't collaborative can't be shared at all.
   Read-only sharing therefore adds a **read-only bridge shim** for read-only shares:
   - `db.find` / `db.findOne` / `db.count` map to the existing `collaboration.query` read actions
     against the owner's declared Postgres tables.
-  - `readData(key)` reads the owner's app KV through a new bounded, read-only owner route.
+  - `readData(key)` reads the owner's app KV through a new bounded, read-only owner route (see below).
   - `db` writes, `writeData`, `proxyFetch`, `generate` and other side-effecting calls reject with
     "This app is view-only. Ask the owner to make it collaborative."
 - Server-side, every mutation is refused through the authority's role choice (a read-only binding
@@ -89,6 +89,23 @@ share repository, so apps that aren't collaborative can't be shared at all.
 - Disclosure: the share flow already states that existing app records become visible to every
   current member (2689 FR-014). Read-only sharing widens the set of apps whose owner data can be
   disclosed, so **security and product review by the ENG-29 owner is recommended**.
+
+### Shared `readData` route
+
+`GET /api/collaboration/scopes/:scopeId/apps/:appId/data?key=<key>` on the owner's gateway,
+reached through the platform relay with the member's direct session.
+
+- **Inputs**: `scopeId` is a UUID and `appId` an app slug (existing schemas). `key` is the only
+  query parameter (exact-query check), 1–256 characters. It is normalized like the owner's own
+  bridge (characters outside `A-Za-z0-9_-` are removed); an empty result is rejected as invalid.
+- **Authorization**: `read` on the scope (current membership + active share), then, in one
+  transaction, the live scope and an exact-build binding for this app. Legacy shares without a
+  binding, stopped shares and other apps return not found. The KV namespace is the shared app's
+  own identity, never a client-supplied app name.
+- **Limits**: a stored value larger than 1 MiB returns a generic unavailable error; the response is
+  `{ value: string | null }`, `Cache-Control: private, no-store`. The KV read is a local owner
+  Postgres call (no external fetch); the relay's 10-second request timeout and 2 MiB response cap
+  bound the round trip. Errors use the existing generic collaboration error mapping.
 
 ## Failure modes
 
