@@ -10,6 +10,7 @@ import {
   readHostAvailableMiB,
   type MemoryControllerDeps,
 } from "../../packages/hostd/src/memory-controller.js";
+import { LifecycleError } from "../../packages/hostd/src/vm-lifecycle.js";
 import type { VmRecord, VmState, VmTier } from "../../packages/hostd/src/vm-store.js";
 
 const MiB = 1024 * 1024;
@@ -256,11 +257,25 @@ describe("memory controller loop", () => {
     ], { hostAvailableMiB: async () => 33000, concurrency: 1 });
     const resize = h.deps.resize;
     h.deps.resize = async (id, ...args) => {
-      if (id === "vm_a") throw new Error("VM unavailable");
+      if (id === "vm_a") throw new LifecycleError("conflict", "VM is suspending");
       return resize(id, ...args);
     };
     await createMemoryController(h.deps).tick();
     expect(h.resizes).toEqual([{ id: "vm_b", bytes: 3072 * MiB }]);
+  });
+
+  it("keeps headroom reserved when a grow may have reached the hypervisor", async () => {
+    const h = harness([
+      { record: record("vm_a"), actualMiB: 2048, stats: PRESSURED },
+      { record: record("vm_b"), actualMiB: 2048, stats: PRESSURED },
+    ], { hostAvailableMiB: async () => 33000, concurrency: 1 });
+    const resize = h.deps.resize;
+    h.deps.resize = async (id, ...args) => {
+      await resize(id, ...args);
+      if (id === "vm_a") throw new DOMException("Hypervisor reply timed out", "TimeoutError");
+    };
+    await createMemoryController(h.deps).tick();
+    expect(h.resizes).toEqual([{ id: "vm_a", bytes: 3072 * MiB }]);
   });
 
   it("rechecks the tier after sampling the guest, so a paid upgrade prevents a shrink", async () => {

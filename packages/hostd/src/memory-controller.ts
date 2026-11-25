@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { ChClient } from "./ch-client.js";
 import type { GuestClient } from "./guest-client.js";
 import type { VmRecord, VmStore, VmTier } from "./vm-store.js";
-import type { AutomaticResize } from "./vm-lifecycle.js";
+import { LifecycleError, type AutomaticResize } from "./vm-lifecycle.js";
 
 // Memory controller: every interval, samples each running VM (guest agent
 // stats plus Cloud Hypervisor's actual memory size) and hotplugs or unplugs
@@ -142,10 +142,13 @@ export function createMemoryController(deps: MemoryControllerDeps): MemoryContro
       if (decision.action === "grow") reservedMiB = decision.targetMiB - actualMiB;
       budget.mib -= reservedMiB;
       await deps.resize(record.id, decision.targetMiB, { tier, maxMiB, action: decision.action });
-      reservedMiB = 0;
       log("memory.resized", { id: record.id, action: decision.action, fromMiB: actualMiB, toMiB: decision.targetMiB });
     } catch (error: unknown) {
-      budget.mib += reservedMiB;
+      // A transport or close error can arrive after the hypervisor applied the grow.
+      // Only the lifecycle's pre-resize refusals confirm that no memory was spent.
+      if (error instanceof LifecycleError && (
+        error.code === "conflict" || error.code === "invalid" || error.code === "not_found" || error.code === "busy"
+      )) budget.mib += reservedMiB;
       log("memory.sample_failed", { id: record.id, ...errorFields(error) });
     } finally {
       if (ch !== undefined) {
