@@ -19,6 +19,7 @@ import {
   runAssistantEdit,
   summariseDocument,
 } from "../../agent/index";
+import { addListener } from "../../listeners";
 import type {
   AgentGenerate,
   AgentProgress,
@@ -149,17 +150,15 @@ export class AssistantStore {
     this.links = links;
   }
 
-  /** The store is no longer kept: stops a running request. */
+  /** The store is no longer kept: stops a running request and drops its listeners. */
   dispose(): void {
     this.cancel();
+    this.listeners.clear();
   }
 
   getState = (): AssistantState => this.state;
 
-  subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  };
+  subscribe = (listener: () => void): (() => void) => addListener(this.listeners, listener, "assistant");
 
   setMode(mode: AssistantMode): void {
     this.patch({ mode });

@@ -10,6 +10,7 @@
 
 import type { RevisionId, RevisionKind } from "../../../_shared/office-engine/index";
 import { ModelIndex } from "../editor/model-index";
+import { addListener } from "../listeners";
 import type { DocumentEditorController } from "../editor/types";
 import type { DocumentChange, DocumentSession } from "../session/index";
 import { type CommentThread, buildThreads, filterThreads } from "./comment-threads";
@@ -128,10 +129,7 @@ export class ReviewController {
 
   getSnapshot = (): ReviewSnapshot => this.snapshot;
 
-  subscribe = (listener: () => void): (() => void) => {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  };
+  subscribe = (listener: () => void): (() => void) => addListener(this.listeners, listener, "review");
 
   /** Connects the editor whose highlights and scrolling follow the review; null disconnects it. */
   attachEditor(editor: ReviewEditor | null): void {

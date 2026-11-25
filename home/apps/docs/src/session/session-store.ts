@@ -3,9 +3,8 @@
  * the two listener lists (state changes, content changes).
  */
 
+import { addListener } from "../listeners";
 import type { DocumentChange, SessionState } from "./types";
-
-const MAX_LISTENERS = 64;
 
 export const EMPTY_STATE: SessionState = Object.freeze({
   status: "empty",
@@ -44,19 +43,11 @@ export class SessionStore {
   }
 
   subscribe(listener: () => void): () => void {
-    if (this.stateListeners.size >= MAX_LISTENERS) throw new Error("too many session listeners");
-    this.stateListeners.add(listener);
-    return () => {
-      this.stateListeners.delete(listener);
-    };
+    return addListener(this.stateListeners, listener, "session");
   }
 
   onChange(listener: (change: DocumentChange) => void): () => void {
-    if (this.changeListeners.size >= MAX_LISTENERS) throw new Error("too many session listeners");
-    this.changeListeners.add(listener);
-    return () => {
-      this.changeListeners.delete(listener);
-    };
+    return addListener(this.changeListeners, listener, "session");
   }
 
   /** Publishes a new state object when a field really changes. */

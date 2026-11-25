@@ -3,10 +3,9 @@
  * lists for snapshot changes and selection changes.
  */
 
+import { addListener } from "../listeners";
 import { sameSelection } from "./selection";
 import type { EditorSelection, EditorSnapshot } from "./types";
-
-const MAX_LISTENERS = 64;
 
 export class EditorStore {
   private current: EditorSnapshot;
@@ -22,20 +21,10 @@ export class EditorStore {
 
   getSnapshot = (): EditorSnapshot => this.current;
 
-  subscribe = (listener: () => void): (() => void) => {
-    if (this.listeners.size >= MAX_LISTENERS) throw new Error("too many editor listeners");
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  };
+  subscribe = (listener: () => void): (() => void) => addListener(this.listeners, listener, "editor");
 
   onSelectionChange(listener: (selection: EditorSelection | null) => void): () => void {
-    if (this.selectionListeners.size >= MAX_LISTENERS) throw new Error("too many editor listeners");
-    this.selectionListeners.add(listener);
-    return () => {
-      this.selectionListeners.delete(listener);
-    };
+    return addListener(this.selectionListeners, listener, "editor");
   }
 
   /** Publishes a new snapshot when something in it changed. */
