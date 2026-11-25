@@ -629,6 +629,7 @@ function CanonicalChatWorkspaceContent({
       && composerOwner.current.draftRevision === draftRevision
       && useConnection.getState().providerCatalogGeneration === providerCatalogGeneration;
     const submittedAttachmentIds = attachments.items.map((item) => item.localId);
+    let finishVerification: (() => void) | undefined;
     setUploadingAttachments(true);
     try {
       const parts = await resolveSubmissionParts(submission, isCurrentSubmission);
@@ -636,10 +637,15 @@ function CanonicalChatWorkspaceContent({
       const worktreeRequest = terminalRequest || previewRequest;
       const requestedRoot = worktreeRequest || verification ? composerOwner.current.worktree : null;
       const staged = worktreeDraft.current;
-      if (verification && (worktreeRequest || submission.projectSkill || permissionResources.length || !verification.isCurrent()
-        || requestedRoot?.projectId !== verification.worktree.projectId || requestedRoot.worktreeId !== verification.worktree.worktreeId)) {
-        setSubmissionError("The Mac verification selection changed. Select Mac Verification again.");
-        return;
+      if (verification) {
+        if (!worktreeRequest && !submission.projectSkill && !permissionResources.length
+          && requestedRoot?.projectId === verification.worktree.projectId && requestedRoot.worktreeId === verification.worktree.worktreeId) {
+          finishVerification = verification.beginSubmission();
+        }
+        if (!finishVerification) {
+          setSubmissionError("The Mac verification selection changed. Select Mac Verification again.");
+          return;
+        }
       }
       if (worktreeRequest && (!requestedRoot || staged?.text !== submission.text || staged.scope !== draftScope
         || staged.identity !== owner.identity || staged.root.projectId !== requestedRoot.projectId
@@ -707,6 +713,7 @@ function CanonicalChatWorkspaceContent({
       console.warn("[chat] Submission unavailable", error instanceof Error ? error.name : "UnknownError");
       if (isCurrentOwner()) setSubmissionError(error instanceof ChatAdmissionUnconfirmed ? CHAT_ADMISSION_UNCONFIRMED : chatSendFailureMessage("submission_failed"));
     } finally {
+      finishVerification?.();
       if (sequence === submissionSequence.current) setUploadingAttachments(false);
     }
   };
@@ -1178,6 +1185,7 @@ function CanonicalChatWorkspaceContent({
               <ChatWorktreeActions
                 key={JSON.stringify([admissionIdentity, controller.detail.record.chat.id])}
                 active={nativeChatChecksActive}
+                editingQueuedTurn={Boolean(editingQueuedTurn)}
                 actorId={actorId}
                 detail={controller.detail}
                 onDraft={stageWorktreeDraft}

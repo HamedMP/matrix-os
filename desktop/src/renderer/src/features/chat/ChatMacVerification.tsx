@@ -16,7 +16,7 @@ type Intent = { scope: Selection; runId: string } & (
 
 export type MacVerificationDraft = {
   worktree: Worktree;
-  isCurrent: () => boolean;
+  beginSubmission: () => (() => void) | undefined;
   accept: (run: CanonicalChatRun) => void;
 };
 
@@ -31,7 +31,11 @@ const STATUS: Record<Attempt["status"], string> = {
   "already-handled": "This Mac verification was already handled.",
 };
 
-export function useMacVerification({ candidate, busy }: { candidate: Candidate | null; busy: boolean }) {
+export function useMacVerification({ candidate, busy, editingQueuedTurn }: {
+  candidate: Candidate | null;
+  busy: boolean;
+  editingQueuedTurn: boolean;
+}) {
   const key = candidate
     ? JSON.stringify([candidate.chatId, candidate.worktree.projectId, candidate.worktree.worktreeId])
     : null;
@@ -40,7 +44,11 @@ export function useMacVerification({ candidate, busy }: { candidate: Candidate |
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [intent, setIntent] = useState<Intent | null>(null);
   const pendingIntent = useRef<Intent | null>(null);
+  const submittingIntent = useRef<Intent | null>(null);
   const latestRun = useRef<string | null>(null);
+  const latestDraftRun = useRef<string | null>(null);
+  const currentRunId = candidate?.run.id;
+  const draftRunId = busy || editingQueuedTurn ? null : currentRunId ?? null;
   useLayoutEffect(() => {
     selection.current = key ? { key } : null;
     setIntent(null);
@@ -48,11 +56,20 @@ export function useMacVerification({ candidate, busy }: { candidate: Candidate |
     return () => {
       selection.current = null;
       pendingIntent.current = null;
+      submittingIntent.current = null;
     };
   }, [key]);
   useLayoutEffect(() => {
-    latestRun.current = candidate?.run.id ?? null;
-  }, [candidate?.run.id]);
+    latestRun.current = currentRunId ?? null;
+    latestDraftRun.current = draftRunId;
+    const pending = pendingIntent.current;
+    // Stream updates can arrive before the admission response for a submitted draft.
+    if (pending?.state === "draft" && pending !== submittingIntent.current && pending.runId !== draftRunId) {
+      pendingIntent.current = null;
+      // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- Revoke the stored choice and its stale callbacks before the composer can submit to the queue.
+      setIntent(null);
+    }
+  }, [currentRunId, draftRunId]);
 
   const status = attempt?.scope === key ? attempt?.status : undefined;
   const sameRun = attempt?.runId === candidate?.run.id;
@@ -60,9 +77,6 @@ export function useMacVerification({ candidate, busy }: { candidate: Candidate |
     && (!sameRun || !status || status === "busy" || status === "unavailable")
     && isCurrentChatElectronPreviewRun(candidate.run));
   const currentIntent = intent && intent.scope === selection.current && intent.scope.key === key ? intent : null;
-  const isCurrentDraft = () => Boolean(currentIntent && currentIntent.state === "draft"
-    && pendingIntent.current === currentIntent && selection.current === currentIntent.scope
-    && latestRun.current === currentIntent.runId);
 
   async function request() {
     const current = selection.current;
@@ -106,16 +120,25 @@ export function useMacVerification({ candidate, busy }: { candidate: Candidate |
     }
     void request();
   });
-  const currentRunId = candidate?.run.id;
   useEffect(() => {
     completeIntent();
   }, [busy, canStart, currentIntent, currentRunId]);
 
   const draft: MacVerificationDraft | undefined = candidate && currentIntent?.state === "draft" ? {
       worktree: candidate.worktree,
-      isCurrent: isCurrentDraft,
+      beginSubmission: () => {
+        if (pendingIntent.current !== currentIntent || submittingIntent.current
+          || selection.current !== currentIntent.scope || latestDraftRun.current !== currentIntent.runId) return;
+        submittingIntent.current = currentIntent;
+        return () => {
+          if (submittingIntent.current !== currentIntent) return;
+          submittingIntent.current = null;
+          if (pendingIntent.current === currentIntent && latestDraftRun.current !== currentIntent.runId) stage(null);
+        };
+      },
       accept: (run) => {
-        if (pendingIntent.current !== currentIntent || selection.current !== currentIntent.scope) return;
+        if (submittingIntent.current !== currentIntent || pendingIntent.current !== currentIntent
+          || selection.current !== currentIntent.scope) return;
         if (run.chatId !== candidate.chatId || run.id === currentIntent.runId || run.driverKind !== "codex"
           || run.executionRoot?.kind !== "worktree" || run.executionRoot.projectId !== candidate.worktree.projectId
           || run.executionRoot.worktreeId !== candidate.worktree.worktreeId) {
@@ -126,7 +149,7 @@ export function useMacVerification({ candidate, busy }: { candidate: Candidate |
         stage({ scope: currentIntent.scope, runId: run.id, previousRunId: currentIntent.runId, state: "waiting" });
       },
     } : undefined;
-  const action: ComposerMentionAction | undefined = candidate && canStart && !currentIntent ? {
+  const action: ComposerMentionAction | undefined = candidate && canStart && !editingQueuedTurn && !currentIntent ? {
     label: "Mac Verification",
     kind: "preview",
     keywords: "mac verification verify worktree test screenshot",
@@ -134,7 +157,7 @@ export function useMacVerification({ candidate, busy }: { candidate: Candidate |
     slashCommand: "mac-verification",
     select: (_query, remaining) => {
       const current = selection.current;
-      if (!current || current.key !== key || latestRun.current !== candidate.run.id || pendingIntent.current) return;
+      if (!current || current.key !== key || latestDraftRun.current !== candidate.run.id || pendingIntent.current) return;
       if (remaining?.trim()) {
         stage({ scope: current, runId: candidate.run.id, state: "draft" });
         return;
