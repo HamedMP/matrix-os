@@ -87,13 +87,15 @@ export async function createEng85AgentRoutes({ fixture, ownerId, homePath, draft
 }
 
 /** Exercise the client, real Chat Run/event, preview, explicit save/retry and owner readback before passing the actual binding to Slack. */
-export async function createEng85AgentThroughSetup(input: RouteFixture) {
+export async function createEng85AgentThroughSetup(input: RouteFixture & { withoutIntegrations?: boolean }) {
   const question = "Which source should the support educator use?";
   const suggestedReplies = ["Use approved Slack", "Use this Chat only"];
+  const recipe = input.withoutIntegrations ? { ...approvedRecipe, integrations: [] } : approvedRecipe;
+  const creationPatch = { ...supportPatch, recipe };
   const routes = await createEng85AgentRoutes({ ...input,
     ask: snapshot => snapshot.intent === "open" ? { question, suggestedReplies } : undefined, draftPatch: (snapshot, prompt) => {
     if (prompt.includes("unapproved account")) return { recipe: { ...approvedRecipe, integrations: [{ service: "slack", accountLabel: "Other owner" }] } };
-    return snapshot.draft.name ? { instructions: editedInstructions } : supportPatch;
+    return snapshot.draft.name ? { instructions: editedInstructions } : creationPatch;
   } });
   try {
     const createOutcomes: string[] = [];
@@ -130,7 +132,7 @@ export async function createEng85AgentThroughSetup(input: RouteFixture) {
             expect(conversation.state().question).toMatchObject({ question, suggestedReplies });
           }, { timeout: 5000 });
           expect((await client.list()).agents).toHaveLength(0);
-          expect(await conversation.replyToQuestion(suggestedReplies[0], snapshot, selection)).toBe(true);
+          expect(await conversation.replyToQuestion(suggestedReplies[input.withoutIntegrations ? 1 : 0], snapshot, selection)).toBe(true);
         } else {
           expect(await conversation.send(prompt, snapshot, selection)).toBe(true);
         }
@@ -146,7 +148,7 @@ export async function createEng85AgentThroughSetup(input: RouteFixture) {
     await preview("session_denied", "Choose the unapproved account.", "failed");
     expect(draft.recipe).toBeUndefined();
     await preview("session_cancel", "Prepare a private English summary from approved Slack support conversations.");
-    expect(draft).toMatchObject(supportPatch);
+    expect(draft).toMatchObject(creationPatch);
     expect((await client.list()).agents).toHaveLength(0);
     // The owner dismisses the preview. The next editor starts with an empty draft.
     draft = { name: "", description: "", instructions: "", requestId: "req_reopened_agent", selection };
@@ -155,7 +157,7 @@ export async function createEng85AgentThroughSetup(input: RouteFixture) {
     await expect(saveAgentDraft(client, retained, draft, "new")).rejects.toThrow();
     const reopened = (await client.list()).agents;
     expect(reopened).toHaveLength(1);
-    expect(reopened[0]).toMatchObject(supportPatch);
+    expect(reopened[0]).toMatchObject(creationPatch);
     const { saved } = await saveAgentDraft(client, retained, draft, "new");
     expect(createOutcomes).toEqual(["created", "replayed"]);
     expect(saved.id).toBe(reopened[0]!.id);
@@ -167,7 +169,7 @@ export async function createEng85AgentThroughSetup(input: RouteFixture) {
     expect((await client.list()).agents[0]?.instructions).toBe(supportPatch.instructions);
     await saveAgentDraft(client, { current: null }, draft, saved);
     expect((await client.list()).agents).toEqual([expect.objectContaining({
-      id: saved.id, revision: saved.revision + 1, instructions: editedInstructions, recipe: approvedRecipe,
+      id: saved.id, revision: saved.revision + 1, instructions: editedInstructions, recipe,
     })]);
     expect((await client.bots!.authority(saved.id)).grants).toEqual([]);
     return { ...routes, ownerId: input.ownerId, agentId: saved.id, chatId };

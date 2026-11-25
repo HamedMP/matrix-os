@@ -43,10 +43,18 @@ export function createSlackRuleTools(options: {
                 throw new BotBrokerActionError("not_granted");
             const target: SlackRuleTarget = { ownerId: binding.ownerId, botId: binding.botId, chatId: binding.chatId, runtimeId: options.runtimeId };
             const needsEnrollment = ["create", "update", "resume"].includes(args.operation);
-            const enrolled = needsEnrollment ? await options.context.enrollment({ ...target, signal }) : undefined;
+            let enrolled = needsEnrollment ? await options.context.enrollment({ ...target, signal }) : undefined;
+            if (args.operation === "list") {
+                try {
+                    enrolled = await options.context.enrollment({ ...target, signal });
+                } catch (error: unknown) {
+                    if (!signal.aborted) console.warn("[slack-rules] source discovery unavailable", error instanceof Error ? error.name : "UnknownError");
+                }
+            }
             if (needsEnrollment && !enrolled)
                 throw new BotBrokerActionError("not_granted");
             const sourceId = enrolled ? enrolledSlackSourceId(enrolled) : undefined;
+            const enrolledLabel = enrolled?.channel.name ? `#${enrolled.channel.name}` : enrolled?.channel.id;
             if (args.operation === "create" && args.sourceId !== sourceId)
                 throw new BotBrokerActionError("not_granted");
             let committed=false;
@@ -58,7 +66,7 @@ export function createSlackRuleTools(options: {
                         throw new BotBrokerActionError("denied");
                     const rules = await repository.list(target, tx);
                     if (args.operation === "list")
-                        return result({ rules });
+                        return result({ rules, ...(sourceId && enrolledLabel && !signal.aborted ? { enrolledSource: { sourceId, label: enrolledLabel } } : {}) });
                     const existing = args.operation !== "create" ? rules.find(rule => rule.ruleId === args.ruleId) : undefined;
                     if (args.operation === "get")
                         return existing ? result({ rule: existing }) : result({ found: false });
@@ -67,7 +75,7 @@ export function createSlackRuleTools(options: {
                     const imported = await createBotCheckpointsRepository(tx).listForRun({ ownerId: binding.ownerId, runId: binding.runId }, tx);
                     if (imported.some(item => ["integration.call", "artifact.read", "jev.inbox", "mcp.call", "browser.action", "agent.task"].includes(String(item.action.capability))))
                         return result({ saved: false, clarification: "This run already consumed imported content. Repeat the complete standing rule instruction in a fresh message in this private Matrix Chat. No rule was changed." });
-                    const label = enrolled ? (enrolled.channel.name ? `#${enrolled.channel.name}` : enrolled.channel.id) : existing?.label;
+                    const label = enrolledLabel ?? existing?.label;
                     const definition = args.operation === "create" || args.operation === "update" ? args.definition : undefined;
                     if (!permitsSlackRuleInstruction(origin.text, args.operation, definition, definition ? label : undefined))
                         return clarification();
