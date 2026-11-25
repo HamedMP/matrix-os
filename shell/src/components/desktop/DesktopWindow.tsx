@@ -14,6 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ActivityMonitorApp } from "@/components/system-activity/ActivityMonitorApp";
+import { MessageBoardApp } from "@/components/message-board/MessageBoardApp";
 import { AppViewer } from "@/components/AppViewer";
 import { publishingAppSlugFromPath } from "@/components/app-viewer-helpers";
 import { AppSiteButton } from "@/components/app-sites/AppSiteButton";
@@ -284,6 +285,8 @@ export function DesktopWindow({
           </div>
         ) : win.path === "__activity-monitor__" ? (
           <ActivityMonitorApp />
+        ) : win.path === "__message-board__" ? (
+          <MessageBoardApp />
         ) : (
           <AppViewer path={win.path} active={focusedWindowId === win.id && !win.minimized}
             sharedAppTarget={win.sharedAppTarget} onOpenApp={onAppOpen} visible={!isHidden && !isMinimizing} />

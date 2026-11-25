@@ -46,7 +46,8 @@
     "./routine-destination": "./src/routine-destination/index.ts",
     "./routine-action": "./src/routine-action/index.ts",
     "./terminal-launch": "./src/terminal/agent-launch.ts",
-    "./routine-origin": "./src/chat/routine-origin.ts"
+    "./routine-origin": "./src/chat/routine-origin.ts",
+    "./message-board": "./src/message-board/index.ts"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.3.0",

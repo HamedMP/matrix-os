@@ -8,6 +8,7 @@ import {
   OS_VIEW_CREATE_APP_APPEARANCE,
   OS_VIEW_DESTINATION_PATHS,
   OS_VIEW_FIXED_APP_APPEARANCES,
+  osViewBundledIconUrlForPath,
   OS_VIEW_LABELS,
   isOsViewDestinationPath,
   canonicalOsViewCatalogPath,
@@ -169,6 +170,11 @@ describe("shared OS-view contract", () => {
       iconSource: "app",
       background: "var(--surface-purple-emphasis, #8B6BB1)",
     });
+    expect(osViewFixedAppAppearanceForPath("__message-board__"))
+      .toBe(OS_VIEW_FIXED_APP_APPEARANCES["message-board"]);
+    expect(OS_VIEW_FIXED_APP_APPEARANCES["message-board"].iconSource).toBe("fixed");
+    // No bundled artwork exists yet, so renderers draw the fixed glyph instead of requesting a missing PNG.
+    expect(osViewBundledIconUrlForPath("__message-board__")).toBeUndefined();
     expect(osViewFixedAppAppearanceForPath("apps/custom/index.html")).toBeUndefined();
   });
 

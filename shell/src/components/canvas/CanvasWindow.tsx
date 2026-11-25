@@ -13,6 +13,7 @@ import { FileBrowser } from "../file-browser/FileBrowser";
 import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { ChatApp } from "../ChatApp";
 import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
+import { MessageBoardApp } from "../message-board/MessageBoardApp";
 import { AppSiteButton } from "../app-sites/AppSiteButton";
 import { publishingAppSlugFromPath } from "../app-viewer-helpers";
 import { useChatContext } from "@/stores/chat-context";
@@ -567,6 +568,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
         </div>
       ) : win.path === "__activity-monitor__" ? (
         <ActivityMonitorApp />
+      ) : win.path === "__message-board__" ? (
+        <MessageBoardApp />
       ) : deferAppContent ? (
         <div
           className="h-full w-full flex items-center justify-center bg-card"
