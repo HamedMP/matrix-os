@@ -222,46 +222,65 @@ describe("authenticated Chat Electron preview transport", () => {
     expect(posted.parts[0].text).toContain(`Worktree base commit ${baseSha} and source SHA-256 ${sha256(verificationSource)}.`);
   });
 
-  it.each([true, false])("recovers a lost receipt response without rerunning the preview (accepted=%s)", async accepted => {
-    const { service: transport, fetchFn, storeResult, existingUpload } = verificationFixture();
+  it.each([
+    { fault: "connection reset", accepted: false, status: "returned", posts: 2 },
+    { fault: "connection reset", accepted: true, status: "returned", posts: 1 },
+    { fault: "transient 502", accepted: false, status: "returned", posts: 2 },
+    { fault: "transient 502", accepted: true, status: "returned", posts: 1 },
+    { fault: "persistent 502", accepted: false, status: "failed", posts: 2 },
+    { fault: "HTTP 403", accepted: false, status: "failed", posts: 1 },
+    { fault: "legacy 502", accepted: false, status: "failed", posts: 1 },
+  ])("handles $fault during receipt delivery without rerunning the preview (accepted=$accepted)", async ({ fault, accepted, status, posts }) => {
+    const legacy = fault === "legacy 502";
+    const { service: transport, fetchFn, storeResult, existingUpload } = legacy ? mockTransport() : verificationFixture();
     const fetch = fetchFn.getMockImplementation()!;
     storeResult();
-    let dropped = false;
+    let attempts = 0;
+    let acceptedReceipts = 0;
     fetchFn.mockImplementation(async (input, options) => {
-      if (!dropped && new URL(String(input)).pathname === "/api/chats/" + chatId + "/turns") {
-        dropped = true;
+      if (new URL(String(input)).pathname !== "/api/chats/" + chatId + "/turns") return fetch(input, options);
+      attempts++;
+      if (attempts === 1 || fault === "persistent 502") {
         // The first image already reached storage, regardless of the turn outcome.
         existingUpload(png);
         if (accepted) {
           const response = await fetch(input, options);
           expect(response.status).toBe(202);
+          acceptedReceipts++;
           await response.body?.cancel();
         }
-        throw new TypeError("Connection reset before receiving the receipt");
+        if (fault === "connection reset") throw new TypeError("Connection reset before receiving the receipt");
+        return new Response("Receipt unavailable", { status: fault === "HTTP 403" ? 403 : 502 });
       }
+      acceptedReceipts++;
       return fetch(input, options);
     });
     const execute = vi.fn(async () => ({ png, testSummary: "10 tests passed" }));
     const check = vi.fn(async () => true);
+    const approve = vi.fn(async () => true);
+    const claim = vi.fn(async () => true);
     const service = createChatElectronPreviewService({
       ...transport,
       enabled: true,
       acquireActionPairing: async () => ({ check, close: vi.fn() }),
-      approve: async () => true,
+      approve,
       wasHandled: async () => false,
-      claim: async () => true,
+      claim,
       execute,
     });
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);
     try {
-      await expect(service.run(verificationTarget)).resolves.toEqual({ status: "returned" });
+      await expect(service.run(legacy ? { chatId, runId } : verificationTarget)).resolves.toEqual({ status });
     } finally {
       clock.mockRestore();
     }
     expect(execute).toHaveBeenCalledOnce();
+    expect(approve).toHaveBeenCalledOnce();
+    expect(claim).toHaveBeenCalledOnce();
+    expect(acceptedReceipts).toBe(status === "returned" ? 1 : 0);
     const writes = resultWrites(fetchFn);
-    expect(writes.map(([, options]) => options?.method)).toEqual(accepted ? ["PUT", "POST"] : ["PUT", "POST", "PUT", "POST"]);
-    if (!accepted) {
+    expect(writes.map(([, options]) => options?.method)).toEqual(posts === 1 ? ["PUT", "POST"] : ["PUT", "POST", "PUT", "POST"]);
+    if (posts === 2) {
       expect(String(writes[2]?.[0])).toBe(String(writes[0]?.[0]));
       expect(JSON.parse(String(writes[3]?.[1]?.body)).clientRequestId)
         .toBe(JSON.parse(String(writes[1]?.[1]?.body)).clientRequestId);

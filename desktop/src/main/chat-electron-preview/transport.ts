@@ -659,6 +659,9 @@ export function createChatElectronPreviewTransport(
         const conflict = await readAdmissionConflict(response);
         const refreshed = await prepareTurn();
         if (!refreshed) return;
+        if (isVerification && response.status === 502) {
+          throw new ChatElectronPreviewTransportInterruptedError(new Error("Bad Gateway posting preview receipt"));
+        }
         // A concurrent Chat turn can win between the idle check and admission.
         // Keep the same receipt identity and reuse the single uploaded PNG.
         if (conflict !== "chat_busy" && (conflict !== "chat_conflict" || refreshed.turn.baseRevision === turn.baseRevision)) {
