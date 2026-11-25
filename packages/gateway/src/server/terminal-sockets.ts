@@ -5,6 +5,7 @@
 import type { Kysely } from "kysely";
 import type { HerdrAdapter } from "../herdr/adapter.js";
 import { readDesktopLinkConfig, registerDesktopLinkRoutes } from "../desktop-link/routes.js";
+import { createDesktopLinkRegistry, type DesktopLinkRegistry } from "../desktop-link/registry.js";
 import { registerDesktopLinkTerminalSocket } from "../desktop-link/terminal-routes.js";
 import type { DesktopPairingDatabase } from "../desktop-pairing/database.js";
 import { registerHerdrSessionRoutes } from "../herdr/register.js";
@@ -20,12 +21,16 @@ export function registerTerminalSockets(options: Omit<TerminalTabSocketOptions, 
   /** Owner Postgres with 2698's desktop pairing; the desktop link answers 503 without it. */
   ownerDatabase?: Kysely<DesktopPairingDatabase> | null;
   env?: NodeJS.ProcessEnv;
+  /** Built at startup (createDesktopLinkRegistryFromEnv), so terminal verbs and the kernel see linked desktops too. */
+  desktopLinks?: DesktopLinkRegistry | null;
 }) {
   const { app, upgradeWebSocket, getPrincipal, terminalRuntimeOwnerIds, terminalLiveOwnership, terminalAgents } = options;
   registerTerminalWebSocketRoutes({ ...options, terminalInputActivity: terminalAgents.inputActivity });
   registerTerminalEventWebSocket({ app, upgradeWebSocket, hub: terminalAgents.events, getPrincipal, terminalOwnerIds: terminalRuntimeOwnerIds });
   const desktopLinks = registerDesktopLinkRoutes({
     app, upgradeWebSocket, ownerDatabase: options.ownerDatabase ?? null, config: readDesktopLinkConfig(options.env ?? process.env),
+    ...(options.desktopLinks ? { registry: options.desktopLinks } : {}),
+    verbs: terminalAgents.verbs, waiter: terminalAgents.waiter,
   });
   const desktopViewers = desktopLinks ? registerDesktopLinkTerminalSocket({
     app, upgradeWebSocket, registry: desktopLinks, getPrincipal, terminalOwnerIds: terminalRuntimeOwnerIds,
@@ -42,9 +47,15 @@ export function registerTerminalSockets(options: Omit<TerminalTabSocketOptions, 
     drain(): void {
       herdrViewers.drain();
       desktopViewers?.drain();
-      desktopLinks?.drain().catch((error: unknown) => {
+      // The startup registry too, when the routes could not take it (no owner database).
+      (desktopLinks ?? options.desktopLinks ?? null)?.drain().catch((error: unknown) => {
         console.warn("[desktop-link] shutdown failed:", error instanceof Error ? error.name : "UnknownError");
       });
     },
   };
+}
+
+/** The linked-desktop registry, when the Desktop link is on for this computer (spec 2716). */
+export function createDesktopLinkRegistryFromEnv(env: NodeJS.ProcessEnv = process.env): DesktopLinkRegistry | null {
+  return readDesktopLinkConfig(env) ? createDesktopLinkRegistry() : null;
 }

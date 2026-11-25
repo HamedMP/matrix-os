@@ -18,7 +18,7 @@ import { verifyDeviceProof } from "../desktop-pairing/proof.js";
 import { getOptionalRequestPrincipal, hasVerifiedRuntimeBearer, isLocalTerminalAgent, SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
 import { createDesktopLink, type DesktopLink } from "./link.js";
 import { createDesktopLinkRegistry, type DesktopLinkRegistry } from "./registry.js";
-import { addDesktopLinkTerminalRoutes } from "./terminal-routes.js";
+import { addDesktopLinkTerminalRoutes, type DesktopTerminalVerbs, type DesktopTerminalWaiter } from "./terminal-routes.js";
 
 export const DESKTOP_LINK_API_PREFIX = "/api/desktop-link";
 const ADMISSION_TIMEOUT_MS = 10_000;
@@ -104,6 +104,9 @@ export interface RegisterDesktopLinkOptions {
   now?: () => number;
   registry?: DesktopLinkRegistry;
   log?: (message: string) => void;
+  /** Terminal verbs and waits (2692), for keys, interrupt and wait on desktop terminals. */
+  verbs?: DesktopTerminalVerbs;
+  waiter?: DesktopTerminalWaiter;
 }
 
 /**
@@ -172,7 +175,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
     }));
   });
 
-  addDesktopLinkTerminalRoutes(api, registry, { now, log });
+  addDesktopLinkTerminalRoutes(api, registry, { now, log, ...(options.verbs ? { verbs: options.verbs } : {}), ...(options.waiter ? { waiter: options.waiter } : {}) });
   // Hono copies a sub-app's routes when it is mounted, so mount after defining them.
   app.route(DESKTOP_LINK_API_PREFIX, api);
 

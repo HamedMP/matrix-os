@@ -10,7 +10,10 @@ import { codedError, commonArgs, writeError } from "./shell.js";
 
 // Starting, reading or typing into a desktop terminal may wait for the owner's approval there (spec 2716, D2).
 const TIMEOUT_MS = DESKTOP_LINK_CLIENT_TIMEOUT_MS;
-const SAFE_CODES = new Set(["desktop_offline", "busy", "denied", "not_found", "invalid_request", "forbidden"]);
+// A wait returns within 90 s (a check-in); the request allows for that and the round trip.
+const WAIT_TIMEOUT_MS = 100_000;
+const WAIT_MAX_MS = 90_000;
+const SAFE_CODES = new Set(["desktop_offline", "busy", "denied", "not_found", "invalid_request", "forbidden", "blocked", "finished"]);
 const AGENTS = new Set(["claude", "codex", "opencode", "pi"]);
 const TERMINAL_ID = /^t[0-9]{1,6}[a-z]{0,2}$/;
 
@@ -19,7 +22,7 @@ interface Machine { deviceId: string; name: string; state: string }
 export function createMachineClient(options: { gatewayUrl: string; token: string; fetch?: typeof fetch }) {
   const fetchImpl = options.fetch ?? fetch;
   const base = options.gatewayUrl.replace(/\/+$/, "");
-  async function request(path: string, init: { method?: string; body?: unknown } = {}): Promise<Record<string, unknown>> {
+  async function request(path: string, init: { method?: string; body?: unknown } = {}, timeoutMs = TIMEOUT_MS): Promise<Record<string, unknown>> {
     let response: Response;
     try {
       response = await fetchImpl(`${base}/api/desktop-link${path}`, {
@@ -27,7 +30,7 @@ export function createMachineClient(options: { gatewayUrl: string; token: string
         headers: { Authorization: `Bearer ${options.token}`, ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}) },
         ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
         redirect: "error",
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error: unknown) {
       const timedOut = error instanceof DOMException && (error.name === "AbortError" || error.name === "TimeoutError");
@@ -69,6 +72,10 @@ export function createMachineClient(options: { gatewayUrl: string; token: string
     read: (deviceId: string, id: string, lines: number) => request(`${terminals(deviceId)}/${id}/screen?lines=${lines}`),
     input: (deviceId: string, id: string, data: string) => request(`${terminals(deviceId)}/${id}/input`, { method: "POST", body: { data } }),
     kill: (deviceId: string, id: string) => request(`${terminals(deviceId)}/${id}`, { method: "DELETE" }),
+    keys: (deviceId: string, id: string, keys: string[]) => request(`${terminals(deviceId)}/${id}/keys`, { method: "POST", body: { keys } }),
+    interrupt: (deviceId: string, id: string) => request(`${terminals(deviceId)}/${id}/interrupt`, { method: "POST", body: {} }),
+    wait: (deviceId: string, id: string, body: { output?: string; timeoutMs?: number }) =>
+      request(`${terminals(deviceId)}/${id}/wait`, { method: "POST", body }, WAIT_TIMEOUT_MS),
   };
 }
 
@@ -174,11 +181,63 @@ const machineKill = command({ name: "kill", description: "End a terminal on a li
   return { data: { machine: machine.name, id, ended: true }, text: `Ended ${id} on ${machine.name}.` };
 });
 
+const machineKeys = command({ name: "keys", description: "Press named keys in a terminal: enter, esc, tab, up, ctrl+c, …" }, {
+  ...terminalArgs,
+}, async ({ args, client }) => {
+  const keys = positionals(args).slice(2);
+  if (keys.length === 0 || keys.length > 64 || keys.some((key) => key.length > 16)) throw codedError("Name 1 to 64 keys, like: enter ctrl+c");
+  const machine = await client.resolve(String(args.machine));
+  const id = terminalArg(args.terminal);
+  const result = await client.keys(machine.deviceId, id, keys);
+  return { data: { machine: machine.name, id, ...result }, text: `Pressed ${keys.join(" ")} in ${id} on ${machine.name}.` };
+});
+
+const machineInterrupt = command({ name: "interrupt", description: "Stop a terminal's current turn: Esc for an agent, otherwise Ctrl+C" }, terminalArgs, async ({ args, client }) => {
+  const machine = await client.resolve(String(args.machine));
+  const id = terminalArg(args.terminal);
+  const result = await client.interrupt(machine.deviceId, id);
+  return { data: { machine: machine.name, id, ...result }, text: `Interrupted ${id} on ${machine.name}.` };
+});
+
+const machineWait = command({ name: "wait", description: "Wait until a terminal stops working, exits or prints --output (a check-in after at most 90 s)" }, {
+  ...terminalArgs,
+  output: { type: "string", required: false },
+  timeout: { type: "string", required: false, description: "Seconds, at most 90" },
+}, async ({ args, client }) => {
+  const seconds = args.timeout === undefined ? undefined : Number(args.timeout);
+  if (seconds !== undefined && (!Number.isFinite(seconds) || seconds < 0 || seconds * 1000 > WAIT_MAX_MS)) throw codedError("--timeout must be 0 to 90 seconds");
+  const machine = await client.resolve(String(args.machine));
+  const id = terminalArg(args.terminal);
+  const result = await client.wait(machine.deviceId, id, {
+    ...(typeof args.output === "string" ? { output: args.output } : {}),
+    ...(seconds !== undefined ? { timeoutMs: Math.round(seconds * 1000) } : {}),
+  });
+  return { data: { machine: machine.name, id, ...result }, text: `${id} on ${machine.name}: ${String(result.reason ?? "done")}` };
+});
+
+const machineOpen = command({ name: "open", description: "Open a web page in the desktop's default browser" }, {
+  ...machineArg,
+  url: { type: "positional", required: true },
+}, async ({ args, client }) => {
+  let url: URL;
+  try { url = new URL(String(args.url)); } catch (error: unknown) {
+    if (error instanceof TypeError) throw codedError("Give a full http or https address");
+    throw error;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw codedError("Give a full http or https address");
+  const machine = await client.resolve(String(args.machine));
+  const payload = await client.run(machine.deviceId, { argv: ["/usr/bin/open", url.toString()], name: "open" });
+  return { data: { machine: machine.name, id: payload.id, url: url.toString() }, text: `Opened ${url.toString()} on ${machine.name}.` };
+});
+
 export const shellMachineCommand = defineCommand({
   meta: { name: "machine", description: "Terminals on the desktops linked to this computer" },
   args: commonArgs,
-  subCommands: { ls: machineList, list: machineList, terminals: machineTerminals, run: machineRun, read: machineRead, send: machineSend, kill: machineKill },
+  subCommands: {
+    ls: machineList, list: machineList, terminals: machineTerminals, run: machineRun, read: machineRead, send: machineSend,
+    keys: machineKeys, interrupt: machineInterrupt, wait: machineWait, open: machineOpen, kill: machineKill,
+  },
   run: ({ rawArgs }) => {
-    if (!rawArgs?.length) console.log("Usage: matrix shell machine ls|terminals|run|read|send|kill <desktop> [terminal]");
+    if (!rawArgs?.length) console.log("Usage: matrix shell machine ls|terminals|run|read|send|keys|interrupt|wait|open|kill <desktop> [terminal]");
   },
 });
