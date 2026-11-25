@@ -61,7 +61,7 @@ export function isConnectablePhase(phase: JourneyPhase): boolean {
 }
 
 export const PROVISIONING_STAGE_LABEL: Record<string, string> = {
-  creating_server: "Creating your server",
+  creating_server: "Creating your Matrix computer",
   booting: "Booting your computer",
   registering: "Connecting your computer",
   finalizing: "Finishing setup",

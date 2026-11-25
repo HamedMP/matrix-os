@@ -255,6 +255,38 @@ describe("BootSequence", () => {
     expect(JSON.parse(String(provision?.init?.body))).toEqual({ developerTools: [] });
   });
 
+  it("calls a free owner's computer a computer, not a VPS, on the web install step", async () => {
+    mockJourney({
+      phase: "install_choices_required",
+      detail: "Set up your free Matrix computer.",
+      nextAction: { kind: "start_provision" },
+    });
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+
+    fireEvent.click(await screen.findByRole("radio", { name: "TikTok" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("button", { name: "Set up" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Build VPS" })).toBeNull();
+    expect(screen.getByText("Choose command-line agents to preinstall on this computer.")).toBeTruthy();
+    expect(screen.getByText(/after your computer is ready\.$/)).toBeTruthy();
+    expect(screen.queryByText(/VPS/)).toBeNull();
+  });
+
+  it("keeps the paid VPS wording on the web install step", async () => {
+    mockJourney({
+      phase: "install_choices_required",
+      detail: "Choose default installs before building your Matrix computer.",
+      nextAction: { kind: "choose_default_installs" },
+    });
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+
+    await answerAcquisitionSource();
+    expect(screen.getByText("Choose command-line agents to preinstall on this VPS.")).toBeTruthy();
+    expect(screen.getByText(/after the VPS is ready\.$/)).toBeTruthy();
+  });
+
   it("stops automatic app-session retries on a permanent client error", async () => {
     let appSessionAttempts = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -343,6 +375,8 @@ describe("BootSequence", () => {
       ),
     );
     expect(await screen.findByText("Building your Matrix computer")).toBeTruthy();
+    expect(screen.getByText("Creating your Matrix computer")).toBeTruthy();
+    expect(screen.queryByText("Creating your server")).toBeNull();
     expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/auth/app-session")).toBe(false);
     expect(onboardingNavigation.navigate).not.toHaveBeenCalled();
     expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 8_000)).toBe(false);

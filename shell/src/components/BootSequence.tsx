@@ -39,7 +39,7 @@ function isRetryableAppSessionStatus(status: number): boolean {
 }
 
 const STAGE_LABEL: Record<string, string> = {
-  creating_server: "Creating your server",
+  creating_server: "Creating your Matrix computer",
   booting: "Booting your computer",
   registering: "Connecting your computer",
   finalizing: "Finishing setup",
@@ -506,6 +506,7 @@ function BootSequenceInner({
             loading: working,
             error: installError,
             collectAcquisitionSource: true,
+            freePlan: state.nextAction.kind === "start_provision",
             onBuild: (tools) => {
               void startProvision(tools);
             },

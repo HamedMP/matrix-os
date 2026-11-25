@@ -46,6 +46,13 @@ describe("JourneyGate", () => {
     expect(getByText("Booting your computer")).toBeTruthy();
   });
 
+  it("calls the first build stage creating the Matrix computer", () => {
+    const { getByText } = render(
+      <JourneyGate result={ok({ phase: "provisioning", detail: "Building…", progress: { stage: "creating_server", startedAt: "x" } })} onRetry={noop} onOpenUrl={noop} />,
+    );
+    expect(getByText("Creating your Matrix computer")).toBeTruthy();
+  });
+
   it("lets a free-plan owner start building their computer without plans", () => {
     const onRetry = jest.fn();
     const { getByText, getByTestId, queryByTestId } = render(

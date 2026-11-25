@@ -33,6 +33,26 @@ const acquisitionSourceOptions = [
 
 type AcquisitionSource = typeof acquisitionSourceOptions[number]["id"];
 
+/**
+ * What the install step calls the machine being built. Paid computers are
+ * VPSes; free computers are VMs on Matrix metal hosts, so they are just "your
+ * computer" (spec 2691).
+ */
+const INSTALL_TARGET_COPY = {
+  vps: {
+    selectorDetail: "Choose command-line agents to preinstall on this VPS.",
+    footer: "You can install or sign into agents anytime from the terminal’s + menu after the VPS is ready.",
+    buildLabel: "Build VPS",
+  },
+  computer: {
+    selectorDetail: "Choose command-line agents to preinstall on this computer.",
+    footer: "You can install or sign into agents anytime from the terminal’s + menu after your computer is ready.",
+    buildLabel: "Set up",
+  },
+} as const;
+
+type InstallTarget = keyof typeof INSTALL_TARGET_COPY;
+
 function isTextEntryTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
@@ -189,12 +209,14 @@ export function DeveloperToolsSelector({
   onClear,
   variant = "default",
   singleChoice = false,
+  target = "vps",
 }: {
   selectedTools: DeveloperToolId[];
   onToggle: (tool: DeveloperToolId) => void;
   onClear?: () => void;
   variant?: "default" | "billing";
   singleChoice?: boolean;
+  target?: InstallTarget;
 }) {
   // The selector is bounded to the four supported developer tools.
   const selectedToolIds = new Set(selectedTools);
@@ -202,7 +224,7 @@ export function DeveloperToolsSelector({
   const radioGroupName = useId();
   const detail = singleChoice
     ? "Preinstall one coding agent, or choose None."
-    : "Choose command-line agents to preinstall on this VPS.";
+    : INSTALL_TARGET_COPY[target].selectorDetail;
 
   return (
     <section className="@container max-w-3xl rounded-2xl border border-border/70 bg-background/55 p-3 sm:p-4">
@@ -341,12 +363,17 @@ export function DefaultInstallsStep({
   loading = false,
   error = null,
   collectAcquisitionSource = false,
+  freePlan = false,
 }: {
   onBuild: (tools: DeveloperToolId[]) => void;
   loading?: boolean;
   error?: string | null;
   collectAcquisitionSource?: boolean;
+  /** The owner is building their free metal computer, not a paid VPS. */
+  freePlan?: boolean;
 }) {
+  const target: InstallTarget = freePlan ? "computer" : "vps";
+  const copy = INSTALL_TARGET_COPY[target];
   const [step, setStep] = useState<"acquisition" | "installs">(
     collectAcquisitionSource ? "acquisition" : "installs",
   );
@@ -396,7 +423,7 @@ export function DefaultInstallsStep({
         </p>
       </header>
 
-      <DeveloperToolsSelector selectedTools={selectedTools} onToggle={toggleTool} />
+      <DeveloperToolsSelector selectedTools={selectedTools} onToggle={toggleTool} target={target} />
 
       {error ? (
         <p className="rounded-xl border border-ember/25 bg-ember/10 px-3 py-2 text-sm text-deep" role="alert">
@@ -406,11 +433,11 @@ export function DefaultInstallsStep({
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-forest/55">
-          You can install or sign into agents anytime from the terminal’s + menu after the VPS is ready.
+          {copy.footer}
         </p>
         <button
           type="button"
-          aria-label="Build VPS"
+          aria-label={copy.buildLabel}
           onClick={buildWithSelectedTools}
           disabled={loading}
           aria-busy={loading}
@@ -421,7 +448,7 @@ export function DefaultInstallsStep({
           ) : (
             <ServerIcon className="size-4" aria-hidden="true" />
           )}
-          <span>Build VPS</span>
+          <span>{copy.buildLabel}</span>
           <kbd className="rounded-md border border-white/15 bg-white/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-white/75">
             Enter ↵
           </kbd>
