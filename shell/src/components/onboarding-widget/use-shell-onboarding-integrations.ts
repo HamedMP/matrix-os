@@ -258,7 +258,7 @@ export function useShellOnboardingIntegrations(
               // A provider can close consent before its callback receipt arrives.
               // Keep checking this exact attempt briefly, then release Connecting.
               if (popup.closed) {
-                receiptPopupClosedAt ??= Date.now();
+                if (receiptPopupClosedAt === null) receiptPopupClosedAt = Date.now();
                 if (Date.now() - receiptPopupClosedAt >= CLOSED_RECEIPT_GRACE_MS) settle(false);
               }
               return;
