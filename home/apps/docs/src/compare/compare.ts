@@ -39,7 +39,8 @@ export interface KindCount {
 export type CompareFailure = "no_document" | "not_found" | "too_large" | "unreadable" | "unavailable" | "blocked" | "document_changed";
 
 export type CompareFlowResult =
-  | { status: "compared"; name: string; summary: CompareSummary; answer: SubstantiveAnswer; counts: KindCount[] }
+  /** `documentKey`: the session key of the comparison document the flow opened. */
+  | { status: "compared"; name: string; documentKey: number; summary: CompareSummary; answer: SubstantiveAnswer; counts: KindCount[] }
   | { status: "failed"; reason: CompareFailure; message: string };
 
 const FAILURE_MESSAGES: Record<CompareFailure, string> = {
@@ -164,7 +165,7 @@ export async function compareWithBytes(deps: CompareDeps, bytes: Uint8Array, oth
     return fail("unavailable");
   }
   if (opened.status !== "opened") return fail(opened.status === "blocked" ? "blocked" : "unavailable");
-  return { status: "compared", name, summary: result.summary, answer: answerSubstantive(result.summary), counts: kindCounts(result.summary) };
+  return { status: "compared", name, documentKey: session.getState().documentKey, summary: result.summary, answer: answerSubstantive(result.summary), counts: kindCounts(result.summary) };
 }
 
 /** Working name of the comparison document, e.g. `contract compared with contract-v2.docx`. */

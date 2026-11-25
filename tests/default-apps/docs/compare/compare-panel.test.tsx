@@ -4,6 +4,7 @@ import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ComparePanel } from "../../../../home/apps/docs/src/ui/compare/ComparePanel";
 import type { DocumentEditorController } from "../../../../home/apps/docs/src/editor/index";
+import { createDocx } from "../../../../home/apps/_shared/office-engine/index";
 import { contractSession, fixture } from "../agent/helpers";
 
 afterEach(cleanup);
@@ -46,6 +47,30 @@ describe("<ComparePanel>", () => {
     expect(editor.scrollTo).toHaveBeenCalledTimes(1);
   });
 
+  it("hides a finished comparison once its document is no longer the one open", async () => {
+    const { session } = await contractSession();
+    const editor = fakeEditor();
+    render(<ComparePanel session={session} editor={editor as unknown as DocumentEditorController} />);
+    const file = new File([fixture("contract-v2.docx")], "contract-v2.docx");
+    fireEvent.change(screen.getByLabelText("Word document to compare with"), { target: { files: [file] } });
+    await until(() => screen.queryByRole("article") !== null);
+
+    // Another document opens in the same workspace: the answer and its jump links belong to the comparison.
+    await act(async () => {
+      // The comparison is unsaved, so the owner leaves it without saving.
+      expect(await session.adopt(createDocx({ paragraphs: ["Unrelated"] }), { name: "Other", dirty: false, discardChanges: true })).toMatchObject({ status: "opened" });
+    });
+    expect(screen.queryByRole("article")).toBeNull();
+    expect(screen.getByRole("button", { name: "From this device…" })).toBeTruthy();
+
+    // With no document open, the empty state shows instead of the old answer.
+    await act(async () => {
+      await session.close({ discardChanges: true });
+    });
+    expect(screen.queryByRole("article")).toBeNull();
+    expect(screen.getByText("Nothing to compare yet")).toBeTruthy();
+  });
+
   it("does nothing when the picker is cancelled", async () => {
     const { session, files } = await contractSession();
     const doc = session.requireDocument();
@@ -74,6 +99,11 @@ describe("<ComparePanel>", () => {
     expect(screen.getByRole("alert").textContent).toContain("That file is not a Word document this app can read.");
     fireEvent.change(screen.getByLabelText("Word document to compare with"), { target: { files: [new File(["hello"], "notes.txt")] } });
     await until(() => (screen.getByRole("alert").textContent ?? "").includes("Choose a Word document"));
+    // The note was about the document open then; another one opening clears it.
+    await act(async () => {
+      await session.adopt(createDocx({ paragraphs: ["Unrelated"] }), { name: "Other", dirty: false, discardChanges: true });
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
     warn.mockRestore();
   });
 });

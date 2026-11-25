@@ -31,7 +31,7 @@ export interface ComparePanelProps {
   files?: Pick<MatrixOSFiles, "read">;
 }
 
-type PanelState = { status: "idle" } | { status: "working" } | { status: "done"; result: Extract<CompareFlowResult, { status: "compared" }> } | { status: "error"; message: string };
+type PanelState = { status: "idle" } | { status: "working" } | { status: "done"; result: Extract<CompareFlowResult, { status: "compared" }> } | { status: "error"; message: string; documentKey: number };
 
 const DOCX = /\.docx$/i;
 
@@ -43,15 +43,19 @@ function bridgeFiles(): Pick<MatrixOSFiles, "read"> | undefined {
 export function ComparePanel({ session, editor, pickDocument, files, setViewMode }: ComparePanelProps) {
   const [state, setState] = useState<PanelState>({ status: "idle" });
   // Re-render when a document is opened or closed elsewhere.
-  useSyncExternalStore(session.subscribe, session.getState);
+  const { documentKey: openKey } = useSyncExternalStore(session.subscribe, session.getState);
   const input = useRef<HTMLInputElement>(null);
   const log = (message: string, error: unknown) => console.warn(message, error);
   const hasDocument = session.document !== null;
   const working = state.status === "working";
+  // The answer and its jump links describe the comparison document; once another one is open they no longer apply.
+  const result = state.status === "done" && state.result.documentKey === openKey && hasDocument ? state.result : null;
+  // So is a failure note: it stays with the document it was about.
+  const error = state.status === "error" && state.documentKey === openKey ? state.message : null;
 
   const finish = (result: CompareFlowResult) => {
     if (result.status === "failed") {
-      setState({ status: "error", message: result.message });
+      setState({ status: "error", message: result.message, documentKey: session.getState().documentKey });
       return;
     }
     if (setViewMode !== undefined) setViewMode("markup");
@@ -65,7 +69,7 @@ export function ComparePanel({ session, editor, pickDocument, files, setViewMode
       finish(await work());
     } catch (error) {
       log("docs compare: the comparison failed", error instanceof Error ? error.name : error);
-      setState({ status: "error", message: "The comparison could not be made. Try again." });
+      setState({ status: "error", message: "The comparison could not be made. Try again.", documentKey: session.getState().documentKey });
     }
   };
 
@@ -82,7 +86,7 @@ export function ComparePanel({ session, editor, pickDocument, files, setViewMode
   const compareFile = async (file: File | undefined) => {
     if (file === undefined) return;
     if (!DOCX.test(file.name)) {
-      setState({ status: "error", message: "Choose a Word document (.docx)." });
+      setState({ status: "error", message: "Choose a Word document (.docx).", documentKey: session.getState().documentKey });
       return;
     }
     const documentKey = session.getState().documentKey;
@@ -94,7 +98,7 @@ export function ComparePanel({ session, editor, pickDocument, files, setViewMode
     if (!working && hasDocument) void compareFile(event.dataTransfer.files[0]);
   };
 
-  if (!hasDocument && state.status !== "done") {
+  if (!hasDocument) {
     return <EmptyState headline="Nothing to compare yet" description="Open a document, then compare it with another version." />;
   }
 
@@ -130,12 +134,12 @@ export function ComparePanel({ session, editor, pickDocument, files, setViewMode
         <p className="docs-compare__hint">You can also drop a .docx file here.</p>
       </section>
       {working && <Spinner label="Comparing the documents" />}
-      {state.status === "error" && (
+      {error !== null && (
         <p role="alert" className="docs-compare__error">
-          <Badge tone="danger">Could not compare</Badge> {state.message}
+          <Badge tone="danger">Could not compare</Badge> {error}
         </p>
       )}
-      {state.status === "done" && <CompareSummaryCard result={state.result} onJump={(blockId) => editor?.scrollTo(blockId)} />}
+      {result !== null && <CompareSummaryCard result={result} onJump={(blockId) => editor?.scrollTo(blockId)} />}
     </div>
   );
 }
