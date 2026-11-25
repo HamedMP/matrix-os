@@ -19,6 +19,18 @@ export interface BoardCaller {
   actor: BoardActor;
   /** Narrowed permissions for agent sessions; absent means everything the owner has. */
   can?: readonly ("read" | "post" | "react" | "label" | "manage")[];
+  /** The user whose grants apply; absent (or the owner) means the owner's full access. */
+  principal?: string;
+  /** Set for writes by sessions a watcher started: loops stop at depth 3. */
+  origin?: { watcher: string; depth: number };
+}
+
+type AccessPermission = "read" | "post" | "react" | "label";
+
+/** Channel grants (spec 2700 section 8), attached once the grant store exists. */
+export interface BoardAccess {
+  require(executor: Kysely<MessageBoardDatabase> | BoardTrx, caller: BoardCaller, boardId: string, channel: string, permission: AccessPermission): Promise<void>;
+  readable(executor: Kysely<MessageBoardDatabase> | BoardTrx, caller: BoardCaller, boardId: string, channels: readonly string[]): Promise<string[] | null>;
 }
 
 export interface MessageBoardLimits {
@@ -57,6 +69,7 @@ export class MessageBoardService {
   private readonly onEvents?: MessageBoardServiceOptions["onEvents"];
   private readonly rateLimiter: WriteRateLimiter;
   private readonly tasks?: TaskExtension;
+  private access?: BoardAccess;
 
   constructor(db: Kysely<MessageBoardDatabase>, options: MessageBoardServiceOptions = {}) {
     this.db = db;
@@ -69,6 +82,27 @@ export class MessageBoardService {
 
   clock(): Date {
     return this.now();
+  }
+
+  setAccess(access: BoardAccess): void {
+    this.access = access;
+  }
+
+  /** Grants check for one channel; the owner and the owner's agents always pass. */
+  async requireAccess(executor: Kysely<MessageBoardDatabase> | BoardTrx, caller: BoardCaller, boardId: string, channel: string, permission: AccessPermission): Promise<void> {
+    await this.access?.require(executor, caller, boardId, channel, permission);
+  }
+
+  /**
+   * Readable channels for this caller, or null when nothing is restricted.
+   * Inside a write, pass its transaction: a second pool connection taken while
+   * holding the board lock can starve the pool under concurrent writes.
+   */
+  async readableChannels(caller: BoardCaller, boardId: string, executor: Kysely<MessageBoardDatabase> | BoardTrx = this.db): Promise<string[] | null> {
+    if (!this.access) return null;
+    const channels = await executor.selectFrom("board_channels").select("path").where("board_id", "=", boardId)
+      .limit(this.limits.channelsPerBoard).execute();
+    return this.access.readable(executor, caller, boardId, channels.map((row) => row.path));
   }
 
   /* ---------------- boards ---------------- */
@@ -113,8 +147,11 @@ export class MessageBoardService {
 
   async listChannels(caller: BoardCaller, boardName?: string): Promise<BoardChannel[]> {
     const board = await this.resolveBoard(caller.ownerId, boardName);
-    const channels = await this.db.selectFrom("board_channels").select("path")
+    const all = await this.db.selectFrom("board_channels").select("path")
       .where("board_id", "=", board.id).orderBy("path").limit(this.limits.channelsPerBoard).execute();
+    const readable = this.access ? await this.access.readable(this.db, caller, board.id, all.map((row) => row.path)) : null;
+    // Private channels never appear for callers who cannot read them.
+    const channels = readable ? all.filter((row) => readable.includes(row.path)) : all;
     const stats = await this.db.selectFrom("board_messages as m")
       .leftJoin("board_reads as r", (join) => join.onRef("r.root_id", "=", "m.id").on("r.actor", "=", caller.actor.id))
       .select((eb) => [
@@ -156,6 +193,8 @@ export class MessageBoardService {
       .where("m.board_id", "=", board.id).where("m.root_id", "is", null)
       .where((eb) => eb.or([eb("m.deleted_at", "is", null), eb("m.reply_count", ">", 0)]));
     builder = builder.where(scopeCondition(query.channel ?? "*"));
+    const readable = await this.readableChannels(caller, board.id);
+    if (readable) builder = readable.length ? builder.where("m.channel", "in", readable) : builder.where(sql<boolean>`false`);
     if (query.by) builder = builder.where("m.author", "=", query.by);
     if (query.label) {
       const filter = parseBoardLabelFilter(query.label);
@@ -211,6 +250,7 @@ export class MessageBoardService {
     const root = await this.db.selectFrom("board_messages").selectAll().where("id", "=", rootId).where("board_id", "=", board.id).executeTakeFirst();
     if (!root) boardFail("not_found");
     if (root.root_id) return this.getThread(caller, boardName, root.root_id);
+    await this.requireAccess(this.db, caller, board.id, root.channel, "read");
     const replies = await this.db.selectFrom("board_messages").selectAll().where("root_id", "=", root.id)
       .orderBy("seq").limit(this.limits.repliesPerThread + 1).execute();
     const tx = this.db as unknown as BoardTrx;
@@ -229,6 +269,8 @@ export class MessageBoardService {
     // Tombstones stay in thread views (replies keep their place) but never fill message lists.
     let builder = this.db.selectFrom("board_messages as m").selectAll("m").where("m.board_id", "=", board.id).where("m.deleted_at", "is", null);
     if (query.channel) builder = builder.where(scopeCondition(query.channel));
+    const readable = await this.readableChannels(caller, board.id);
+    if (readable) builder = readable.length ? builder.where("m.channel", "in", readable) : builder.where(sql<boolean>`false`);
     if (query.re) builder = builder.where("m.root_id", "=", query.re);
     if (query.by) builder = builder.where("m.author", "=", query.by);
     if (query.mentions) builder = builder.where(sql<boolean>`m.mentions @> ${JSON.stringify([query.mentions])}::jsonb`);
@@ -254,9 +296,10 @@ export class MessageBoardService {
 
   async markRead(caller: BoardCaller, boardName: string | undefined, rootId: string): Promise<void> {
     const board = await this.resolveBoard(caller.ownerId, boardName);
-    const root = await this.db.selectFrom("board_messages").select(["id", "root_id"]).where("id", "=", rootId)
+    const root = await this.db.selectFrom("board_messages").select(["id", "root_id", "channel"]).where("id", "=", rootId)
       .where("board_id", "=", board.id).executeTakeFirst();
     if (!root || root.root_id) boardFail("not_found");
+    await this.requireAccess(this.db, caller, board.id, root.channel, "read");
     await this.db.insertInto("board_reads")
       .values({ owner_id: caller.ownerId, board_id: board.id, actor: caller.actor.id, root_id: rootId, read_at: this.now() })
       .onConflict((oc) => oc.columns(["board_id", "actor", "root_id"]).doUpdateSet({ read_at: this.now() }))
@@ -294,9 +337,11 @@ export class MessageBoardService {
     }
   }
 
-  async createChannel(caller: BoardCaller, boardName: string | undefined, path: string): Promise<void> {
+  /** `alsoInTransaction` runs in the same write, e.g. the grants that make a channel private. */
+  async createChannel(caller: BoardCaller, boardName: string | undefined, path: string, alsoInTransaction?: (ctx: WriteContext) => Promise<void>): Promise<void> {
     await this.write(caller, boardName, async (ctx) => {
       if (!(await ensureChannel(ctx, path, this.limits.channelsPerBoard))) boardFail("channel_exists");
+      await alsoInTransaction?.(ctx);
     });
   }
 
@@ -308,6 +353,7 @@ export class MessageBoardService {
   async postInTransaction(ctx: WriteContext, input: PostMessageRequest): Promise<BoardMessage> {
     if (Object.keys(input.labels ?? {}).some(isReservedBoardLabelKey)) boardFail("reserved_label");
     const { caller } = ctx;
+    await this.requireAccess(ctx.trx, caller, ctx.board.id, input.channel, "post");
     {
       const { trx, board, now } = ctx;
       if (input.idempotencyKey) {
@@ -345,9 +391,11 @@ export class MessageBoardService {
         mentions: JSON.stringify(extractMentions(input.text)), revision: 1, idempotency_key: input.idempotencyKey ?? null,
         reply_count: 0, last_activity_at: now, last_actor: caller.actor.id, created_at: now,
       }).returningAll().executeTakeFirstOrThrow();
-      if (input.labels && Object.keys(input.labels).length > 0) {
+      // Server-set provenance for writes by watcher-started sessions; it is how watchers stop loops.
+      const labels = { ...input.labels, ...(caller.origin ? { "matrix.watcher": caller.origin.watcher, "matrix.depth": String(caller.origin.depth) } : {}) };
+      if (Object.keys(labels).length > 0) {
         await trx.insertInto("board_labels")
-          .values(Object.entries(input.labels).map(([key, value]) => ({ owner_id: caller.ownerId, message_id: id, key, value }))).execute();
+          .values(Object.entries(labels).map(([key, value]) => ({ owner_id: caller.ownerId, message_id: id, key, value }))).execute();
       }
       if (rootId) {
         await trx.updateTable("board_messages")
@@ -362,6 +410,7 @@ export class MessageBoardService {
   async edit(caller: BoardCaller, boardName: string | undefined, messageId: string, input: { text: string; ifRevision?: number }): Promise<BoardMessage> {
     return this.write(caller, boardName, async (ctx) => {
       const target = await lockOwnMessage(ctx, messageId);
+      await this.requireAccess(ctx.trx, caller, ctx.board.id, target.channel, "post");
       const expected = input.ifRevision ?? target.revision;
       const updated = await ctx.trx.updateTable("board_messages")
         .set({ text: input.text, mentions: JSON.stringify(extractMentions(input.text)), revision: expected + 1, edited_at: ctx.now })
@@ -376,6 +425,7 @@ export class MessageBoardService {
   async remove(caller: BoardCaller, boardName: string | undefined, messageId: string, input: { ifRevision?: number }): Promise<void> {
     await this.write(caller, boardName, async (ctx) => {
       const target = await lockOwnMessage(ctx, messageId);
+      await this.requireAccess(ctx.trx, caller, ctx.board.id, target.channel, "post");
       const expected = input.ifRevision ?? target.revision;
       const updated = await ctx.trx.updateTable("board_messages")
         .set({ deleted_at: ctx.now, revision: expected + 1 })
@@ -390,6 +440,7 @@ export class MessageBoardService {
     await this.write(caller, boardName, async (ctx) => {
       const target = await findMessage(ctx, messageId);
       if (target.deleted_at) boardFail("message_deleted");
+      await this.requireAccess(ctx.trx, caller, ctx.board.id, target.channel, "react");
       const changed = input.on
         ? await ctx.trx.insertInto("board_reactions")
           .values({ owner_id: caller.ownerId, message_id: messageId, actor: caller.actor.id, emoji: input.emoji, created_at: ctx.now })
@@ -410,6 +461,7 @@ export class MessageBoardService {
     await this.write(caller, boardName, async (ctx) => {
       const target = await findMessage(ctx, messageId, true);
       if (target.deleted_at) boardFail("message_deleted");
+      await this.requireAccess(ctx.trx, caller, ctx.board.id, target.channel, "label");
       await applyLabelPatch(ctx, target, patch, this.limits.labelsPerMessage);
       ctx.emit({
         type: "labels.changed", actor: caller.actor, channel: target.channel, messageId, threadId: target.root_id ?? messageId,

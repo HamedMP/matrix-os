@@ -157,7 +157,7 @@ export const BOARD_EVENT_TYPES = [
   "task.created", "task.ready", "task.claimed", "task.renewed", "task.released", "task.completed", "task.failed",
   "task.blocked", "task.unblocked", "task.canceled", "task.reopened", "task.assigned",
   "task.needs_changed", "task.expired",
-  "watcher.changed", "schedule.changed",
+  "watcher.changed", "schedule.changed", "grant.changed",
 ] as const;
 export type BoardEventType = (typeof BOARD_EVENT_TYPES)[number];
 
@@ -194,7 +194,11 @@ export type MessageBoardErrorBody = z.infer<typeof MessageBoardErrorBodySchema>;
 export const BoardQuerySchema = z.object({ board: BoardNameSchema.optional() });
 
 export const CreateBoardRequestSchema = z.object({ name: BoardNameSchema }).strict();
-export const CreateChannelRequestSchema = z.object({ path: ChannelPathSchema }).strict();
+export const CreateChannelRequestSchema = z.object({
+  path: ChannelPathSchema,
+  /** Readable only by its creator: a grant for the creator and a closing grant for everyone else. */
+  private: z.boolean().optional(),
+}).strict();
 
 export const PostMessageRequestSchema = z.object({
   channel: ChannelPathSchema,
