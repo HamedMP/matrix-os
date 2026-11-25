@@ -197,7 +197,7 @@ describe("machine update on one verified SSH connection", () => {
   it.each(["direct", "jump host"] as const)("runs the pinned Herdr updater on the verified %s route", async (kind) => {
     // Required for this explicit integration lane: no silently skipped proof.
     const binary = process.env.MATRIX_DESKTOP_HC_PATH;
-    if (!binary) throw new Error("MATRIX_DESKTOP_HC_PATH must name the pinned Herdr 0.1.19 binary");
+    if (!binary) throw new Error("MATRIX_DESKTOP_HC_PATH must name the pinned herdr-core binary");
     const { env, home, route: fixtureRoute } = await fixture();
     const withJump = kind === "jump host";
     const jump = withJump ? ["-J", "jump"] : [];

@@ -10,7 +10,7 @@ import {
 export const LOCAL_TERMINAL_LIST_MAX = HC_TERMINAL_LIST_MAX;
 export const LOCAL_TERMINAL_ID_PATTERN = HC_TERMINAL_ID_PATTERN;
 
-export const LOCAL_TERMINAL_VERSION = "0.1.19";
+export const LOCAL_TERMINAL_VERSION = "0.1.22";
 
 /** Compares herdr-core versions (`x.y.z`); null when either cannot be read. */
 export function compareCoreVersions(left: string, right: string): number | null {

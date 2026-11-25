@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -21,11 +21,12 @@ const output = process.env.MATRIX_TERMINAL_WINDOW_EVIDENCE_DIR ?? join(tmpdir(),
 
 // Local terminals need the pinned herdr-core binary. CI provides it and sets
 // MATRIX_DESKTOP_HC_REQUIRED=1; elsewhere the local tests run when it is installed.
+const pinnedHc = (JSON.parse(readFileSync(join(root, "desktop/herdr-core.json"), "utf8")) as { version: string }).version;
 const hcPath = [process.env.MATRIX_DESKTOP_HC_PATH, join(homedir(), ".local/bin/hc")].find((candidate) => {
-  try { return !!candidate && execFileSync(candidate, ["--version"], { encoding: "utf8", timeout: 3_000 }).trim().endsWith("0.1.19"); }
+  try { return !!candidate && execFileSync(candidate, ["--version"], { encoding: "utf8", timeout: 3_000 }).trim().endsWith(pinnedHc); }
   catch { return false; }
 });
-if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !hcPath) throw new Error("herdr-core 0.1.19 is required for this lane");
+if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !hcPath) throw new Error(`herdr-core ${pinnedHc} is required for this lane`);
 const localIt = hcPath ? it : it.skip;
 
 suite("Electron Desktop Terminal window", () => {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, statSync, symlinkSync, mkdirSync, chmodSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, mkdirSync, chmodSync, realpathSync } from "node:fs";
 import { connect } from "node:net";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -686,6 +686,16 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
     await until(() => (outputs.get(attachId) ?? "").includes("STILL_2"));
     host.resize(attachId, { cols: 120, rows: 40 });
     host.detach(attachId);
+  }, 30_000);
+
+  it("writes a pasted file beside the terminal in one put and refuses one over the cap", async () => {
+    // The app sends a whole file in one terminal.put; cores from 0.1.22 also take
+    // puts in pieces, so the single call must still land the exact bytes.
+    const bytes = Buffer.from(Array.from({ length: 300_000 }, (_, index) => index % 251));
+    const path = await host.put(terminalId, "paste.bin", bytes.toString("base64"));
+    expect(readFileSync(path)).toEqual(bytes);
+    const over = Buffer.alloc(8 * 1024 * 1024 + 1).toString("base64");
+    await expect(host.put(terminalId, "big.bin", over)).rejects.toThrow();
   }, 30_000);
 
   it("refuses a core of another version without creating terminals", async () => {
