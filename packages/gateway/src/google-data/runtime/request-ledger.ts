@@ -74,7 +74,7 @@ export function createGoogleRequestLedger<DB>(db: Kysely<DB>, options: { now?: (
           const at = clock(), policyExpiry = Date.parse(envelope.policyExpiresAt);
           if (!Number.isFinite(policyExpiry) || envelope.issuedAt > at + CLOCK_SKEW_MS || envelope.expiresAt <= at
             || envelope.expiresAt <= envelope.issuedAt || envelope.expiresAt - envelope.issuedAt > LIFETIME_MS
-            || envelope.expiresAt > policyExpiry) throw new GoogleRequestLedgerError();
+            || envelope.expiresAt > policyExpiry || envelope.expiresAt > Date.parse(envelope.collectionExpiresAt)) throw new GoogleRequestLedgerError();
           return at;
         };
         await locked(async tx => {

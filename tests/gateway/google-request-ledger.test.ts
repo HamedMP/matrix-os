@@ -9,9 +9,9 @@ const machineToken = 'synthetic-ledger-machine-key-only';
 const request = { method: 'POST', path: '/read-call', body: '{"service":"gmail","action":"get_message"}' };
 const claim = { ownerId: 'owner-one', runId: 'run_one', runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1',
   profileId: '11111111-1111-4111-8111-111111111111', profileRevision: 1, consentId: '22222222-2222-4222-8222-222222222222', consentRevision: 1,
-  googleAccountId: '33333333-3333-4333-8333-333333333333', purposeId: 'gmail-assistance', routeDigest: 'b'.repeat(64), policyExpiresAt: new Date(initial + 60000).toISOString() };
+  googleAccountId: '33333333-3333-4333-8333-333333333333', collectionExpiresAt: new Date(initial + 60000).toISOString(), purposeId: 'gmail-assistance', routeDigest: 'b'.repeat(64), policyExpiresAt: new Date(initial + 60000).toISOString() };
 function verified(overrides: Record<string, unknown> = {}, at = initial): GoogleProcessingEnvelope {
-  const value = { ...claim, policyExpiresAt: new Date(at + 60000).toISOString(), ...overrides };
+  const value = { ...claim, collectionExpiresAt: new Date(at + 60000).toISOString(), policyExpiresAt: new Date(at + 60000).toISOString(), ...overrides };
   const token = signGoogleProcessingEnvelope(value, { ...request, machineToken, now: at });
   return verifyGoogleProcessingEnvelope(token, { ...request, machineToken, ownerId: value.ownerId, now: at });
 }
@@ -47,7 +47,7 @@ describe('durable verified Google request consumption', () => {
     const envelope = verified();
     for (const changed of [{ approved: true }, { method: 'GET' }, { path: '/other' }, { requestId: 'not-a-uuid' },
       { issuedAt: initial + 5001 }, { issuedAt: initial + 1000, expiresAt: initial + 500 }, { expiresAt: initial }, { expiresAt: envelope.issuedAt + 30001 },
-      { policyExpiresAt: new Date(initial + 1).toISOString() }, { ownerId: '../owner' }]) {
+      { policyExpiresAt: new Date(initial + 1).toISOString() }, { collectionExpiresAt: new Date(initial + 1).toISOString() }, { ownerId: '../owner' }]) {
       await expect(ledger.consume({ ...envelope, ...changed })).rejects.toMatchObject({ code: 'unavailable' });
     }
     await expect(ledger.consume(signGoogleProcessingEnvelope(claim, { ...request, machineToken, now: initial }))).rejects.toMatchObject({ code: 'unavailable' });

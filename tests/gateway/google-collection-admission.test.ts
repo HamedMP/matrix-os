@@ -27,7 +27,7 @@ async function fixture(options: { consentKinds?: string[]; models?: string[] } =
   const claim: GoogleProcessingClaim = { ownerId: stamp.ownerId, googleAccountId: accountId, runId: 'run_synthetic',
     runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1', profileId: profile.id, profileRevision: stamp.profileRevision,
     consentId: stamp.consentId, consentRevision: stamp.consentRevision, purposeId: stamp.purposeId,
-    routeDigest: stamp.routeDigest, policyExpiresAt: stamp.expiresAt };
+    routeDigest: stamp.routeDigest, policyExpiresAt: stamp.expiresAt, collectionExpiresAt: stamp.expiresAt };
   const consume = vi.fn(async value => { await ledger.consume(value); });
   const ownsGmailAccount = vi.fn(async (owner: string, account: string) => active && owner === claim.ownerId && account === accountId);
   const deps: GoogleCollectionAdmissionDependencies = { repository: db.repository, authority, ledger: { consume },

@@ -18,7 +18,7 @@ describe('platform-owned Google policy composition', () => {
       profileId: '123e4567-e89b-42d3-a456-426614174001', profileRevision: 1,
       consentId: '123e4567-e89b-42d3-a456-426614174002', consentRevision: 1,
       googleAccountId: '123e4567-e89b-42d3-a456-426614174000', purposeId: 'mail-assistance',
-      routeDigest: 'a'.repeat(64), policyExpiresAt: new Date(Date.now() + 3600_000).toISOString() };
+      routeDigest: 'a'.repeat(64), collectionExpiresAt: new Date(Date.now() + 3600000).toISOString(), policyExpiresAt: new Date(Date.now() + 3600_000).toISOString() };
     const envelope = verifyGoogleProcessingEnvelope(signGoogleProcessingEnvelope(claim, signedRequest), { ...signedRequest, ownerId: claim.ownerId });
     await db.googleData!.requestLedger.consume(envelope);
     await expect(db.googleData!.requestLedger.consume(envelope)).rejects.toMatchObject({ code: 'replay' });
