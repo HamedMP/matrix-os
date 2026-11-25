@@ -22,6 +22,8 @@ export const REMAINING_POSTGRES_FILES = [
   'tests/gateway/chat-order-title.test.ts',
   'tests/gateway/google-data/provenance/contexts.test.ts',
   'tests/gateway/google-data/provenance/store.test.ts',
+  'tests/gateway/google-runtime-authority-pins.test.ts',
+  'tests/gateway/google-runtime-authority.test.ts',
   'tests/gateway/jev-inbox-batch-postgres.test.ts',
   'tests/gateway/jev-repository-postgres.test.ts',
   'tests/gateway/sites-bootstrap-postgres.test.ts',
