@@ -220,24 +220,51 @@ describe("open requests in the injected bridge", () => {
   afterEach(() => vi.useRealTimers());
   const request = (nonce: string, requestedAt = new Date().toISOString()) => ({ path: "Documents/a.docx", requestedAt, nonce });
 
-  it("reads the pending request once and clears the key", async () => {
+  it("reads the pending request once and records its nonce as handled", async () => {
     const bridge = mountBridge("docs", () => ({ status: 200, body: {} }));
     const pending = request("nonce-0001");
     bridge.kv.set("open-request", encodeBridgeStoredValue(pending));
     await expect(bridge.files.openRequest()).resolves.toEqual(pending);
-    expect(bridge.kv.get("open-request")).toBe(encodeBridgeStoredValue(null));
+    await vi.waitFor(() => expect(bridge.kv.get("open-request-ack")).toBe(encodeBridgeStoredValue("nonce-0001")));
     await expect(bridge.files.openRequest()).resolves.toBeNull();
+    // A reload mounts a fresh bridge over the same store: the handled request stays closed.
+    const reloaded = mountBridge("docs", () => ({ status: 200, body: {} }));
+    for (const [key, value] of bridge.kv) reloaded.kv.set(key, value);
+    await expect(reloaded.files.openRequest()).resolves.toBeNull();
   });
 
-  it("drops stale and malformed requests but still clears them", async () => {
+  it("never writes the request key, so a request Files stores during a read is not lost", async () => {
+    const bridge = mountBridge("docs", () => ({ status: 200, body: {} }));
+    const first = request("nonce-0007");
+    const second = { ...request("nonce-0008"), path: "Documents/b.docx" };
+    bridge.kv.set("open-request", encodeBridgeStoredValue(first));
+    const get = bridge.kv.get.bind(bridge.kv);
+    let raced = false;
+    // Files stores the next request right after the store served the first one.
+    bridge.kv.get = (key: string) => {
+      const value = get(key);
+      if (key === "open-request" && !raced) {
+        raced = true;
+        bridge.kv.set("open-request", encodeBridgeStoredValue(second));
+      }
+      return value;
+    };
+    await expect(bridge.files.openRequest()).resolves.toEqual(first);
+    await vi.waitFor(() => expect(bridge.kv.get("open-request-ack")).toBe(encodeBridgeStoredValue("nonce-0007")));
+    expect(bridge.frames.filter((frame) => frame.type === "os:write-data").map((frame) => frame.payload.key)).toEqual(["open-request-ack"]);
+    await expect(bridge.files.openRequest()).resolves.toEqual(second);
+  });
+
+  it("drops stale and malformed requests without acknowledging them", async () => {
     const bridge = mountBridge("docs", () => ({ status: 200, body: {} }));
     bridge.kv.set("open-request", encodeBridgeStoredValue(request("nonce-0002", new Date(Date.now() - 11 * 60_000).toISOString())));
     await expect(bridge.files.openRequest()).resolves.toBeNull();
-    expect(bridge.kv.get("open-request")).toBe(encodeBridgeStoredValue(null));
     bridge.kv.set("open-request", encodeBridgeStoredValue({ ...request("nonce-0003"), extra: true }));
     await expect(bridge.files.openRequest()).resolves.toBeNull();
     bridge.kv.set("open-request", encodeBridgeStoredValue({ ...request("nonce-0004"), path: "../a.docx" }));
     await expect(bridge.files.openRequest()).resolves.toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(bridge.frames.filter((frame) => frame.type === "os:write-data")).toEqual([]);
   });
 
   it("delivers a request that arrives while running, once per nonce, for this app only", async () => {

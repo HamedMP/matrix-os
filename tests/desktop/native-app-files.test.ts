@@ -7,7 +7,7 @@ import {
   appFileVersion,
   encodeAppFileBase64,
 } from "../../packages/contracts/src/app-files";
-import { OPEN_REQUEST_KV_KEY } from "../../packages/contracts/src/office-open-with";
+import { OPEN_REQUEST_ACK_KV_KEY, OPEN_REQUEST_KV_KEY } from "../../packages/contracts/src/office-open-with";
 import { NativeAppBridge } from "../../desktop/src/main/embeds/native-app-bridge";
 import { createNativeAppFilesRequester } from "../../desktop/src/main/embeds/native-app-files";
 import {
@@ -103,14 +103,18 @@ describe("main process identity binding", () => {
     expect(f.filesRequest.files).toHaveBeenCalledTimes(8);
   });
 
-  it("reads and clears only the open request key of the bound app", async () => {
+  it("reads the open request and acknowledges a nonce only for the bound app", async () => {
     const f = bridgeFixture();
     await expect(f.openRequest(f.event, { action: "read" })).resolves.toEqual({ value: null });
-    await f.openRequest(f.event, { action: "clear" });
+    await f.openRequest(f.event, { action: "read-ack" });
+    await f.openRequest(f.event, { action: "ack", nonce: "nonce-1234" });
     expect(f.filesRequest.openRequest).toHaveBeenNthCalledWith(1, "docs", { action: "read" }, expect.any(AbortSignal));
-    expect(f.filesRequest.openRequest).toHaveBeenNthCalledWith(2, "docs", { action: "clear" }, expect.any(AbortSignal));
-    await expect(f.openRequest(f.event, { action: "write", key: "other", value: "x" })).rejects.toThrow("Open requests are unavailable");
-    expect(f.filesRequest.openRequest).toHaveBeenCalledTimes(2);
+    expect(f.filesRequest.openRequest).toHaveBeenNthCalledWith(2, "docs", { action: "read-ack" }, expect.any(AbortSignal));
+    expect(f.filesRequest.openRequest).toHaveBeenNthCalledWith(3, "docs", { action: "ack", nonce: "nonce-1234" }, expect.any(AbortSignal));
+    for (const refused of [{ action: "write", key: "other", value: "x" }, { action: "clear" }, { action: "ack", nonce: "bad nonce" }, { action: "ack" }]) {
+      await expect(f.openRequest(f.event, refused)).rejects.toThrow("Open requests are unavailable");
+    }
+    expect(f.filesRequest.openRequest).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -165,16 +169,21 @@ describe("main process gateway transport", () => {
     await expect(statRequester.files("docs", { kind: "files.stat", path: "x" })).resolves.toEqual(appFileErrorBody("unavailable"));
   });
 
-  it("reads and clears the open request through the key-value route", async () => {
+  it("reads the request and writes only the acknowledgement key through the key-value route", async () => {
     const request = { path: "Documents/plan.docx", requestedAt: "2026-11-23T10:00:00.000Z", nonce: "nonce-1234" };
-    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => JSON.parse(String(init.body)).action === "read"
-      ? Response.json({ value: encodeNativeAppStoredValue(request) }) : Response.json({ ok: true }));
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      if (body.action !== "read") return Response.json({ ok: true });
+      return Response.json({ value: encodeNativeAppStoredValue(body.key === OPEN_REQUEST_KV_KEY ? request : "nonce-0000") });
+    });
     const requester = createNativeAppFilesRequester(options(fetchFn as never));
     await expect(requester.openRequest("docs", { action: "read" })).resolves.toEqual({ value: request });
-    await expect(requester.openRequest("docs", { action: "clear" })).resolves.toEqual({ ok: true });
+    await expect(requester.openRequest("docs", { action: "read-ack" })).resolves.toEqual({ value: "nonce-0000" });
+    await expect(requester.openRequest("docs", { action: "ack", nonce: "nonce-1234" })).resolves.toEqual({ ok: true });
     expect(fetchFn.mock.calls.map(([url, init]) => [url, JSON.parse(String(init.body))])).toEqual([
       ["https://gateway.test/api/bridge/data", { action: "read", app: "docs", key: OPEN_REQUEST_KV_KEY }],
-      ["https://gateway.test/api/bridge/data", { action: "write", app: "docs", key: OPEN_REQUEST_KV_KEY, value: encodeNativeAppStoredValue(null) }],
+      ["https://gateway.test/api/bridge/data", { action: "read", app: "docs", key: OPEN_REQUEST_ACK_KV_KEY }],
+      ["https://gateway.test/api/bridge/data", { action: "write", app: "docs", key: OPEN_REQUEST_ACK_KV_KEY, value: encodeNativeAppStoredValue("nonce-1234") }],
     ]);
   });
 });
@@ -191,10 +200,11 @@ describe("stored value envelope", () => {
 describe("preload files bridge", () => {
   function preloadFixture(reply: unknown) {
     const invokeFiles = vi.fn(async () => reply);
-    const store: { value: unknown } = { value: null };
-    const invokeOpenRequest = vi.fn(async (request: { action: string }) => {
+    const store: { value: unknown; ack: unknown } = { value: null, ack: null };
+    const invokeOpenRequest = vi.fn(async (request: { action: string; nonce?: string }) => {
       if (request.action === "read") return { value: store.value };
-      store.value = null;
+      if (request.action === "read-ack") return { value: store.ack };
+      store.ack = request.nonce;
       return { ok: true };
     });
     let trigger: (() => void) | null = null;
@@ -212,14 +222,17 @@ describe("preload files bridge", () => {
     expect(conflict.invokeFiles).toHaveBeenCalledTimes(1);
   });
 
-  it("delivers an open request once, clears it, and drops stale requests", async () => {
+  it("delivers an open request once, acknowledges it without clearing it, and drops stale requests", async () => {
     const f = preloadFixture(null);
     const request = { path: "Documents/plan.docx", requestedAt: new Date().toISOString(), nonce: "nonce-abcdef" };
     f.store.value = request;
     await expect(f.files.openRequest()).resolves.toEqual(request);
-    await vi.waitFor(() => expect(f.store.value).toBeNull());
-    f.store.value = request;
+    await vi.waitFor(() => expect(f.store.ack).toBe("nonce-abcdef"));
+    expect(f.store.value).toEqual(request);
     await expect(f.files.openRequest()).resolves.toBeNull();
+    // A reload builds a new bridge over the same store: the handled request stays closed.
+    const reloaded = createNativeAppFilesBridge({ invokeFiles: f.invokeFiles, invokeOpenRequest: f.invokeOpenRequest, watchOpenRequests: () => () => undefined });
+    await expect(reloaded.openRequest()).resolves.toBeNull();
     f.store.value = { ...request, nonce: "nonce-stale1", requestedAt: new Date(Date.now() - 11 * 60_000).toISOString() };
     await expect(f.files.openRequest()).resolves.toBeNull();
   });

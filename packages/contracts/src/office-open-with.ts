@@ -8,7 +8,9 @@ import { APP_FILE_MAX_BYTES, AppFilePathSchema, isAppReachableFilePath } from "#
  * Files writes an `OpenRequest` to the target app's key-value store under
  * `OPEN_REQUEST_KV_KEY`, then launches or focuses the app. The app reads the
  * request on load (`MatrixOS.files.openRequest()`) and on later changes
- * (`MatrixOS.files.onOpenRequest(cb)`).
+ * (`MatrixOS.files.onOpenRequest(cb)`), and records the nonce it handled under
+ * `OPEN_REQUEST_ACK_KV_KEY`. Files is the only writer of the request key, so
+ * a request written while the app reads an earlier one is never erased.
  */
 export const OFFICE_APP_SLUGS = ["docs", "sheets"] as const;
 export type OfficeAppSlug = (typeof OFFICE_APP_SLUGS)[number];
@@ -51,6 +53,8 @@ export function officeMimeTypeForFile(name: string): string | null {
 
 /** Key in the target app's key-value store. The store keeps only `[a-zA-Z0-9_-]`. */
 export const OPEN_REQUEST_KV_KEY = "open-request";
+/** Key in the same store where the app records the nonce of the last request it handled. Only the app writes it. */
+export const OPEN_REQUEST_ACK_KV_KEY = "open-request-ack";
 /** A request older than this is dropped. It covers a first launch that builds the app. */
 export const OPEN_REQUEST_TTL_MS = 10 * 60_000;
 /** Tolerated clock difference for a request stamped in the future. */
@@ -112,14 +116,25 @@ function errorName(error: unknown): string {
 
 /**
  * Reference behaviour of `MatrixOS.files.openRequest` and `onOpenRequest`.
- * A request is delivered at most once per inbox, by nonce, and the stored
- * value is cleared after it is read, so reopening the app later does not
- * reopen the file. Stale and malformed values are cleared without delivery.
+ * A request is delivered at most once per inbox, by nonce. The app never
+ * writes the request key: it consumes a request by storing its nonce under
+ * `OPEN_REQUEST_ACK_KV_KEY`, so reopening the app later does not reopen the
+ * file, and a newer request Files stores meanwhile stays in place. Stale and
+ * malformed values are ignored; Files replaces them with its next request.
  */
 export function createOpenRequestInbox(host: OpenRequestHost) {
   const seen: string[] = [];
   const listeners: Array<(request: OpenRequest) => void> = [];
   let unsubscribe: (() => void) | null = null;
+
+  async function handledNonce(): Promise<unknown> {
+    try { return await host.readData(OPEN_REQUEST_ACK_KV_KEY); }
+    catch (error) {
+      // Delivering again after a reload is safer than losing the request.
+      console.warn("[open-request] acknowledgement unavailable", errorName(error));
+      return null;
+    }
+  }
 
   async function openRequest(): Promise<OpenRequest | null> {
     let stored: unknown;
@@ -130,14 +145,14 @@ export function createOpenRequestInbox(host: OpenRequestHost) {
     }
     if (stored === null || stored === undefined) return null;
     const request = parseOpenRequest(stored, host.now ? host.now() : Date.now());
-    const fresh = request !== null && !seen.includes(request.nonce);
-    if (fresh) {
-      seen.push(request.nonce);
-      if (seen.length > SEEN_NONCES) seen.shift();
-    }
-    // Consume the value. A failed clear is safe: the nonce is remembered and the request expires.
-    void host.writeData(OPEN_REQUEST_KV_KEY, null).catch((error: unknown) => console.warn("[open-request] clear unavailable", errorName(error)));
-    return fresh ? request : null;
+    if (!request || seen.includes(request.nonce)) return null;
+    // Remember the nonce before awaiting, so concurrent reads deliver it once.
+    seen.push(request.nonce);
+    if (seen.length > SEEN_NONCES) seen.shift();
+    if (await handledNonce() === request.nonce) return null;
+    // A failed acknowledgement is safe: the nonce is remembered and the request expires.
+    void host.writeData(OPEN_REQUEST_ACK_KV_KEY, request.nonce).catch((error: unknown) => console.warn("[open-request] acknowledgement failed", errorName(error)));
+    return request;
   }
 
   function onChange(key: string, app: string): void {

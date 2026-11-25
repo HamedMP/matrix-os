@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { APP_FILE_MAX_BYTES } from "../../packages/contracts/src/app-files";
 import {
   OFFICE_FILE_TYPES,
+  OPEN_REQUEST_ACK_KV_KEY,
   OPEN_REQUEST_KV_KEY,
   OPEN_REQUEST_MAX_LISTENERS,
   OPEN_REQUEST_TTL_MS,
@@ -95,9 +96,11 @@ describe("default app for a file", () => {
 });
 
 describe("open request", () => {
-  it("uses one key that the key-value bridge keeps intact", () => {
+  it("uses keys that the key-value bridge keeps intact", () => {
     expect(OPEN_REQUEST_KV_KEY).toBe("open-request");
+    expect(OPEN_REQUEST_ACK_KV_KEY).toBe("open-request-ack");
     expect(OPEN_REQUEST_KV_KEY.replace(/[^a-zA-Z0-9_-]/g, "")).toBe(OPEN_REQUEST_KV_KEY);
+    expect(OPEN_REQUEST_ACK_KV_KEY.replace(/[^a-zA-Z0-9_-]/g, "")).toBe(OPEN_REQUEST_ACK_KV_KEY);
   });
 
   it("accepts a well-formed request and nothing else", () => {
@@ -162,15 +165,33 @@ describe("open request", () => {
 });
 
 describe("open request inbox", () => {
-  it("delivers a pending request once on load and then clears it", async () => {
+  it("delivers a pending request once on load and records it as handled", async () => {
     const { host, values } = createHost();
     values.set(OPEN_REQUEST_KV_KEY, request());
     const inbox = createOpenRequestInbox(host);
     expect(await inbox.openRequest()).toEqual(request());
     await settle();
-    expect(host.writeData).toHaveBeenCalledWith(OPEN_REQUEST_KV_KEY, null);
-    expect(values.get(OPEN_REQUEST_KV_KEY)).toBeNull();
+    expect(host.writeData).toHaveBeenCalledWith(OPEN_REQUEST_ACK_KV_KEY, NONCE);
     expect(await inbox.openRequest()).toBeNull();
+    // A reload starts a new inbox: the handled request is not opened again.
+    expect(await createOpenRequestInbox(host).openRequest()).toBeNull();
+  });
+
+  it("never writes the request key, so a request Files stores during a read is not lost", async () => {
+    const { host, values } = createHost();
+    const second = request({ path: "Documents/second.docx", nonce: "second-nonce-0001" });
+    values.set(OPEN_REQUEST_KV_KEY, request());
+    // Files stores the next request right after the store served the first one.
+    host.readData.mockImplementationOnce(async (key: string) => {
+      const value = values.get(key) ?? null;
+      values.set(OPEN_REQUEST_KV_KEY, second);
+      return value;
+    });
+    const inbox = createOpenRequestInbox(host);
+    expect(await inbox.openRequest()).toEqual(request());
+    await settle();
+    expect(host.writeData.mock.calls.map(([key]) => key)).not.toContain(OPEN_REQUEST_KV_KEY);
+    expect(await inbox.openRequest()).toEqual(second);
   });
 
   it("resolves null when nothing is pending", async () => {
@@ -180,7 +201,7 @@ describe("open request inbox", () => {
     expect(host.writeData).not.toHaveBeenCalled();
   });
 
-  it("never delivers the same nonce twice, even when the clear fails", async () => {
+  it("never delivers the same nonce twice, even when the acknowledgement fails", async () => {
     const { host, values } = createHost();
     host.writeData.mockRejectedValue(new Error("store offline"));
     values.set(OPEN_REQUEST_KV_KEY, request());
@@ -194,19 +215,32 @@ describe("open request inbox", () => {
     warn.mockRestore();
   });
 
-  it("drops stale and malformed requests instead of opening them", async () => {
+  it("still delivers when the acknowledgement cannot be read", async () => {
+    const { host, values } = createHost();
+    values.set(OPEN_REQUEST_KV_KEY, request());
+    host.readData.mockImplementation(async (key: string) => {
+      if (key === OPEN_REQUEST_ACK_KV_KEY) throw new Error("token=secret");
+      return values.get(key) ?? null;
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(await createOpenRequestInbox(host).openRequest()).toEqual(request());
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("secret");
+    warn.mockRestore();
+  });
+
+  it("drops stale and malformed requests without opening or acknowledging them", async () => {
     const stale = createHost();
     stale.values.set(OPEN_REQUEST_KV_KEY, request());
     stale.advance(OPEN_REQUEST_TTL_MS + 1);
     expect(await createOpenRequestInbox(stale.host).openRequest()).toBeNull();
     await settle();
-    expect(stale.values.get(OPEN_REQUEST_KV_KEY)).toBeNull();
+    expect(stale.host.writeData).not.toHaveBeenCalled();
 
     const malformed = createHost();
     malformed.values.set(OPEN_REQUEST_KV_KEY, { path: "../system/soul.md", requestedAt: "now", nonce: NONCE });
     expect(await createOpenRequestInbox(malformed.host).openRequest()).toBeNull();
     await settle();
-    expect(malformed.values.get(OPEN_REQUEST_KV_KEY)).toBeNull();
+    expect(malformed.host.writeData).not.toHaveBeenCalled();
   });
 
   it("resolves null when the store cannot be read", async () => {
@@ -227,8 +261,8 @@ describe("open request inbox", () => {
     const second = request({ path: "Documents/second.docx", nonce: "second-nonce-0001" });
     await env.handOff(second);
     expect(received).toEqual([request(), second]);
-    // Clearing the consumed request raises a change event of its own; it must not loop or re-deliver.
-    expect(env.host.writeData).toHaveBeenCalledTimes(2);
+    // Each acknowledgement raises a change event of its own; it must not loop or re-deliver.
+    expect(env.host.writeData.mock.calls).toEqual([[OPEN_REQUEST_ACK_KV_KEY, NONCE], [OPEN_REQUEST_ACK_KV_KEY, "second-nonce-0001"]]);
     off();
     await env.handOff(request({ nonce: "third-nonce-00001" }));
     expect(received).toHaveLength(2);

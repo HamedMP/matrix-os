@@ -17,7 +17,7 @@ import {
   type AppFileKind,
 } from "@matrix-os/contracts/app-files";
 import { AppIdentitySchema, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
-import { OPEN_REQUEST_KV_KEY } from "@matrix-os/contracts/office-open-with";
+import { OPEN_REQUEST_ACK_KV_KEY, OPEN_REQUEST_KV_KEY } from "@matrix-os/contracts/office-open-with";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { z } from "zod/v4";
 import {
@@ -48,7 +48,7 @@ const KvReadReplySchema = z.object({ value: z.unknown() });
 export interface NativeAppFilesRequester {
   /** Resolves with the reply body or an `appFileErrorBody`; never rejects. */
   files(app: string, input: AppFileInput, signal?: AbortSignal): Promise<unknown>;
-  /** Reads or clears the open request of `app`. Rejects with a generic error. */
+  /** Reads the open request of `app`, or reads or writes its acknowledgement. Rejects with a generic error. */
   openRequest(app: string, action: NativeAppOpenRequestAction, signal?: AbortSignal): Promise<unknown>;
 }
 
@@ -116,10 +116,12 @@ export function createNativeAppFilesRequester(options: NativeAppRequesterOptions
     async openRequest(app, rawAction, senderSignal) {
       try {
         const identity = AppIdentitySchema.parse(app);
-        const { action } = NativeAppOpenRequestActionSchema.parse(rawAction);
-        const body = JSON.stringify(action === "read"
-          ? { action: "read", app: identity, key: OPEN_REQUEST_KV_KEY }
-          : { action: "write", app: identity, key: OPEN_REQUEST_KV_KEY, value: encodeNativeAppStoredValue(null) });
+        const request = NativeAppOpenRequestActionSchema.parse(rawAction);
+        const { action } = request;
+        // Only Files writes the request key; the app records what it handled under the acknowledgement key.
+        const body = JSON.stringify(action === "ack"
+          ? { action: "write", app: identity, key: OPEN_REQUEST_ACK_KV_KEY, value: encodeNativeAppStoredValue(request.nonce) }
+          : { action: "read", app: identity, key: action === "read" ? OPEN_REQUEST_KV_KEY : OPEN_REQUEST_ACK_KV_KEY });
         if (Buffer.byteLength(body) > MAX_APP_KV_REQUEST_BYTES) throw new Error("Request too large");
         return await withDeadline(OPEN_REQUEST_TIMEOUT_MS, senderSignal, async (signal) => {
           const response = await postJson(options, "/api/bridge/data", body, signal);
@@ -128,7 +130,7 @@ export function createNativeAppFilesRequester(options: NativeAppRequesterOptions
             throw new Error("Request failed");
           }
           const reply = await readBoundedResponse(response, signal, MAX_APP_BRIDGE_REPLY_BYTES);
-          if (action === "clear") return { ok: true };
+          if (action === "ack") return { ok: true };
           return { value: decodeNativeAppStoredValue(KvReadReplySchema.parse(reply).value) ?? null };
         });
       } catch (error: unknown) {

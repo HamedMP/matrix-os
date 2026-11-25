@@ -8,17 +8,22 @@ import {
   type AppFileInput,
   type AppFileWriteOptions,
 } from "@matrix-os/contracts/app-files";
-import { OPEN_REQUEST_KV_KEY, createOpenRequestInbox, type OpenRequest } from "@matrix-os/contracts/office-open-with";
+import { OPEN_REQUEST_ACK_KV_KEY, OPEN_REQUEST_KV_KEY, OpenRequestSchema, createOpenRequestInbox, type OpenRequest } from "@matrix-os/contracts/office-open-with";
 
 /**
  * Electron Desktop half of `MatrixOS.files`. File operations go to the main
  * process on `APP_FILES_CHANNEL`; the main process binds the app identity and
  * posts to the gateway file route. Open requests go on their own channel,
- * which can read and clear only the `open-request` key of the bound app.
+ * which can read the `open-request` key of the bound app and read or write
+ * only its `open-request-ack` key; it never writes the request itself.
  */
 export { APP_FILES_CHANNEL };
 export const NATIVE_APP_OPEN_REQUEST_CHANNEL = "native-app:open-request";
-export const NativeAppOpenRequestActionSchema = z.strictObject({ action: z.enum(["read", "clear"]) });
+export const NativeAppOpenRequestActionSchema = z.discriminatedUnion("action", [
+  z.strictObject({ action: z.literal("read") }),
+  z.strictObject({ action: z.literal("read-ack") }),
+  z.strictObject({ action: z.literal("ack"), nonce: OpenRequestSchema.shape.nonce }),
+]);
 export type NativeAppOpenRequestAction = z.infer<typeof NativeAppOpenRequestActionSchema>;
 const OpenRequestReadReplySchema = z.strictObject({ value: z.unknown() });
 
@@ -72,13 +77,14 @@ export function createNativeAppFilesBridge(deps: NativeAppFilesBridgeDependencie
   const client = createAppFilesClient(deps.invokeFiles);
   const inbox = createOpenRequestInbox({
     async readData(key) {
-      if (key !== OPEN_REQUEST_KV_KEY) throw new Error("Open requests are unavailable");
-      return OpenRequestReadReplySchema.parse(await deps.invokeOpenRequest({ action: "read" })).value;
+      if (key !== OPEN_REQUEST_KV_KEY && key !== OPEN_REQUEST_ACK_KV_KEY) throw new Error("Open requests are unavailable");
+      const action = key === OPEN_REQUEST_KV_KEY ? "read" : "read-ack";
+      return OpenRequestReadReplySchema.parse(await deps.invokeOpenRequest({ action })).value;
     },
     async writeData(key, value) {
-      // The inbox only ever clears the request after reading it.
-      if (key !== OPEN_REQUEST_KV_KEY || value !== null) throw new Error("Open requests are unavailable");
-      await deps.invokeOpenRequest({ action: "clear" });
+      // The inbox only ever records the nonce it handled.
+      if (key !== OPEN_REQUEST_ACK_KV_KEY || typeof value !== "string") throw new Error("Open requests are unavailable");
+      await deps.invokeOpenRequest({ action: "ack", nonce: value });
     },
     onDataChange(listener) {
       return deps.watchOpenRequests(() => listener(OPEN_REQUEST_KV_KEY, ""));

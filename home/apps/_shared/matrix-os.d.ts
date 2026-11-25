@@ -138,8 +138,9 @@ export interface MatrixOSFiles {
   mkdir(path: string): Promise<{ path: string }>;
   /**
    * The file this app was launched to open, or null. A request is returned
-   * once and then cleared, so call it one time on load. It resolves null, and
-   * never rejects, when nothing is pending or the request is stale.
+   * once and then recorded as handled, so a reload does not reopen it; call
+   * it one time on load. It resolves null, and never rejects, when nothing is
+   * pending or the request is stale.
    */
   openRequest(): Promise<OpenRequest | null>;
   /** Calls back for each request that arrives while the app is running. Returns an unsubscribe function. */

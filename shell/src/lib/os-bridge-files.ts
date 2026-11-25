@@ -8,6 +8,7 @@ import {
   APP_FILE_TIMEOUT_MS,
 } from "@matrix-os/contracts/app-files";
 import {
+  OPEN_REQUEST_ACK_KV_KEY,
   OPEN_REQUEST_KV_KEY,
   OPEN_REQUEST_MAX_FUTURE_SKEW_MS,
   OPEN_REQUEST_MAX_LISTENERS,
@@ -34,6 +35,7 @@ export function buildFilesBridgeSource(): string {
       var fileStatus = ${JSON.stringify(APP_FILE_ERROR_STATUS)};
       var maxFileBytes = ${APP_FILE_MAX_BYTES};
       var openRequestKey = ${JSON.stringify(OPEN_REQUEST_KV_KEY)};
+      var openRequestAckKey = ${JSON.stringify(OPEN_REQUEST_ACK_KV_KEY)};
       var seenOpenRequests = [];
       var openRequestListeners = [];
       var openRequestChange = null;
@@ -96,7 +98,9 @@ export function buildFilesBridgeSource(): string {
 
       function invalid() { return Promise.reject(fileError("invalid_request")); }
 
-      // Open requests: read once, deliver each nonce once, then clear the key.
+      // Open requests: deliver each nonce once and record it under the
+      // acknowledgement key. The request key is never written here, so a newer
+      // request Files stores during a read stays in place.
       function parseOpenRequest(value) {
         if (!value || typeof value !== "object" || Array.isArray(value)) return null;
         var keys = Object.keys(value);
@@ -108,24 +112,36 @@ export function buildFilesBridgeSource(): string {
         return { path: value.path, requestedAt: value.requestedAt, nonce: value.nonce };
       }
 
+      function warnOpenRequest(what, err) {
+        console.warn("[MatrixOS bridge] open request " + what, err instanceof Error ? err.name : "UnknownError");
+      }
+
+      function readKey(key) {
+        try { return Promise.resolve(window.MatrixOS.readData(key)); } catch (err) { return Promise.reject(err); }
+      }
+
       function readOpenRequest() {
-        var stored;
-        try { stored = window.MatrixOS.readData(openRequestKey); } catch (err) { stored = Promise.reject(err); }
-        return Promise.resolve(stored).then(function(value) {
+        return readKey(openRequestKey).then(function(value) {
           if (value === null || value === undefined) return null;
           var parsed = parseOpenRequest(value);
-          var fresh = parsed !== null && seenOpenRequests.indexOf(parsed.nonce) < 0;
-          if (fresh) {
-            seenOpenRequests.push(parsed.nonce);
-            if (seenOpenRequests.length > ${SEEN_OPEN_REQUESTS}) seenOpenRequests.shift();
-          }
-          // A failed clear is safe: the nonce is remembered and the request expires.
-          Promise.resolve().then(function() { return window.MatrixOS.writeData(openRequestKey, null); }).catch(function(err) {
-            console.warn("[MatrixOS bridge] open request clear unavailable", err instanceof Error ? err.name : "UnknownError");
+          if (parsed === null || seenOpenRequests.indexOf(parsed.nonce) >= 0) return null;
+          // Remember the nonce before waiting, so concurrent reads deliver it once.
+          seenOpenRequests.push(parsed.nonce);
+          if (seenOpenRequests.length > ${SEEN_OPEN_REQUESTS}) seenOpenRequests.shift();
+          return readKey(openRequestAckKey).then(null, function(err) {
+            // Delivering again after a reload is safer than losing the request.
+            warnOpenRequest("acknowledgement unavailable", err);
+            return null;
+          }).then(function(handled) {
+            if (handled === parsed.nonce) return null;
+            // A failed acknowledgement is safe: the nonce is remembered and the request expires.
+            Promise.resolve().then(function() { return window.MatrixOS.writeData(openRequestAckKey, parsed.nonce); }).catch(function(err) {
+              warnOpenRequest("acknowledgement failed", err);
+            });
+            return parsed;
           });
-          return fresh ? parsed : null;
         }, function(err) {
-          console.warn("[MatrixOS bridge] open request read unavailable", err instanceof Error ? err.name : "UnknownError");
+          warnOpenRequest("read unavailable", err);
           return null;
         });
       }
