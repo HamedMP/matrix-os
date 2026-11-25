@@ -84,8 +84,10 @@ remove_offline_runners() {
 # Deregisters the runner and stops its container if it is still waiting for a job. Returns 0 when
 # recycled, 2 when the runner took a job (leave it alone) and 1 on API failure (try again later).
 # Deregistering first means GitHub can no longer hand the runner a job while it is being stopped.
+# The recycle is recorded in $3 before the stop: the slot stops waiting for the watcher as soon as
+# the container exits, and an unrecorded recycle would back off as a failure.
 recycle_if_idle() {
-  local runner=$1 container=$2 state id
+  local runner=$1 container=$2 marker=$3 state id
   refresh_token || return 1
   state=$(gh_api GET "/repos/$REPOSITORY/actions/runners?per_page=100" \
     | jq -er --arg name "$runner" '[.runners[] | select(.name == $name)][0] // {} | if .busy then "busy" elif .id then "idle \(.id)" else "absent" end') \
@@ -96,21 +98,21 @@ recycle_if_idle() {
   esac
   id=${state#idle }
   gh_api DELETE "/repos/$REPOSITORY/actions/runners/$id" >/dev/null || return 1
+  echo recycled > "$marker"
   docker stop -t 10 "$container" >/dev/null 2>&1 || true
 }
 
 # Runs beside one container: after IDLE_RECYCLE_SECONDS, recycles its runner unless it took a job.
-# Writes "recycled" to $4 so the slot does not treat the stopped container as a failure.
+# Passes $4 on so a recycle is recorded and the slot does not treat it as a failure.
 watch_idle() {
   local runner=$1 container=$2 pid=$3 marker=$4 waited=0 result sleeper=""
   # Stopped by the slot once the container exits; take the pending sleep down with it.
   trap '[ -z "$sleeper" ] || kill "$sleeper" 2>/dev/null; exit 0' TERM
   while kill -0 "$pid" 2>/dev/null; do
     if (( waited >= IDLE_RECYCLE_SECONDS )); then
-      recycle_if_idle "$runner" "$container" && result=0 || result=$?
+      recycle_if_idle "$runner" "$container" "$marker" && result=0 || result=$?
       case "$result" in
-        0) echo recycled > "$marker"; return 0 ;;
-        2) return 0 ;;
+        0 | 2) return 0 ;;
       esac
     fi
     sleep "$RECYCLE_POLL_SECONDS" &

@@ -32,7 +32,7 @@ function sandbox() {
     "docker",
     `echo "docker $*" >> "${dir}/calls"
 case "$1" in
-  stop) touch "${dir}/stopped" ;;
+  stop) [ -z "\${FAKE_MARKER:-}" ] || echo "marker at stop: $(cat "$FAKE_MARKER")" >> "${dir}/calls"; touch "${dir}/stopped" ;;
   run)
     for _ in $(seq 1 $((\${FAKE_DOCKER_BLOCK:-0} * 10))); do [ -e "${dir}/stopped" ] && exit 143; sleep 0.1; done
     exit "\${FAKE_DOCKER_STATUS:-0}" ;;
@@ -210,6 +210,18 @@ describe("runner pool", () => {
       expect(log.indexOf("docker stop")).toBeGreaterThan(deregister);
       expect(log).toContain("docker stop -t 10 matrix-ci-slot-1");
       expect(log).not.toMatch(/actions\/runners\/42\b/);
+    });
+
+    // The slot stops waiting for the watcher as soon as the container exits, so the recycle must be
+    // recorded before the stop, or a planned restart is treated as a failure and backs off.
+    it("records the recycle before stopping the container", () => {
+      const { run, calls, fake } = sandbox();
+      fixedClock(fake);
+      const marker = join(dirs[dirs.length - 1], "marker");
+      writeFileSync(marker, "");
+      const result = run(`recycle_if_idle matrix-ci-host-1-1700000000 matrix-ci-slot-1 "${marker}"`, { FAKE_RUNNERS: runners(false), FAKE_MARKER: marker });
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls()).toContain("marker at stop: recycled");
     });
 
     it("leaves a runner that took a job alone", () => {
