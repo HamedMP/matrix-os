@@ -1,5 +1,6 @@
 import type { CanonicalChatDetailResponse, CanonicalChatRun } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { consecutiveText } from "./chat-electron-preview";
 
 export const MAC_TERMINAL_PROBE_PREFIX = "MATRIX_MAC_TERMINAL_V1 ";
 export const MAC_TERMINAL_PROBE_MAX_AGE_MS = 5 * 60 * 1_000;
@@ -40,11 +41,10 @@ export function getMacTerminalProbeMarkerForRun(
     if (message.role !== "assistant" || message.state !== "committed" || message.chatId !== chatId
       || message.runId !== runId || message.turnId !== run.turnId) continue;
     let fence: string | undefined;
-    for (const part of message.parts) {
-      if (part.type !== "text") continue;
-      if (part.text.length > 128 * 1024) return null;
+    for (const text of consecutiveText(message.parts)) {
+      if (text.length > 128 * 1024) return null;
 
-      for (const line of part.text.split(/\r?\n/)) {
+      for (const line of text.split(/\r?\n/)) {
         const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
         if (delimiter && !fence) {
           fence = delimiter[1];

@@ -52,7 +52,7 @@ export function isCurrentChatElectronPreviewRun(run: CanonicalChatRun, now = Dat
     && age >= 0 && age < CHAT_ELECTRON_PREVIEW_MAX_AGE_MS;
 }
 
-function* consecutiveText(parts: CanonicalChatMessage["parts"]) {
+export function* consecutiveText(parts: CanonicalChatMessage["parts"]) {
   let text = "";
   for (const part of parts) {
     if (part.type === "text") {

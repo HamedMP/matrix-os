@@ -389,6 +389,41 @@ describe("authenticated Chat Mac terminal probe transport", () => {
     expect(resultWrites(fetchFn)).toEqual([]);
   });
 
+  it("reads a terminal request spanning the 4,000-character recovery boundary", async () => {
+    const output = ["a".repeat(3_985), terminalMarker].join("\n");
+    const { service } = mockTransport([
+      { type: "text", text: output.slice(0, 4_000) },
+      { type: "text", text: output.slice(4_000) },
+    ]);
+
+    await expect(service.readTerminalRequest(ref)).resolves.toMatchObject({
+      ...ref, worktreeId, targetId, action: "uname",
+    });
+  });
+
+  const splitFenceOutput = ["a".repeat(3_998), "~~~", terminalMarker, "~~~"].join("\n");
+  const splitDuplicateOutput = ["a".repeat(3_985), terminalMarker, terminalMarker].join("\n");
+  it.each([
+    ["an opener split inside a code fence", [
+      { type: "text", text: splitFenceOutput.slice(0, 4_000) },
+      { type: "text", text: splitFenceOutput.slice(4_000) },
+    ]],
+    ["a non-text part interrupting the marker", [
+      { type: "text", text: terminalMarker.slice(0, 14) },
+      { type: "status", tone: "info", label: "Worktree checked" },
+      { type: "text", text: terminalMarker.slice(14) },
+    ]],
+    ["a duplicate request split across text parts", [
+      { type: "text", text: splitDuplicateOutput.slice(0, 4_000) },
+      { type: "text", text: splitDuplicateOutput.slice(4_000) },
+    ]],
+  ] satisfies [string, CanonicalChatMessage["parts"]][])("rejects %s", async (_reason, parts) => {
+    const { service, fetchFn } = mockTransport(parts);
+
+    await expect(service.readTerminalRequest(ref)).resolves.toBeNull();
+    expect(fetchFn.mock.calls).toHaveLength(1);
+  });
+
   it("does not post the one-time terminal output when its grant is canceled before Chat admission", async () => {
     const { detail, service: transport, fetchFn } = terminalFixture();
     const finalRead = Promise.withResolvers<void>();
