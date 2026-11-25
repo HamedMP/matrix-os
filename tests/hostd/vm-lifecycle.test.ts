@@ -393,17 +393,20 @@ describe("VM lifecycle", () => {
     await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
   });
 
-  it("resume with a mismatched expectedGeneration rejects conflict inside the queue and does not resume", async () => {
+  it("rejects a stale generation before the response deadline behind an in-progress suspend", async () => {
     const vm = await createRunning();
     trimGate = deferred();
     const suspending = lifecycle.suspend(vm.id);
-    await Promise.resolve();
-    // Queued behind the suspend: the fence is checked when it runs, not now.
-    const resuming = lifecycle.resume(vm.id, 2000, { expectedGeneration: 2 });
-    trimGate.resolve();
-    await suspending;
-    await expect(resuming).rejects.toMatchObject({ code: "conflict" });
-    expect(execCalls.some((c) => c[1] === "start")).toBe(false);
+    await expect.poll(() => count("trim")).toBe(1);
+    const resuming = lifecycle.resume(vm.id, 100, { expectedGeneration: vm.generation + 1 });
+    try {
+      await expect(Promise.race([resuming, delay(250, "late")])).rejects.toMatchObject({ code: "conflict" });
+    } finally {
+      trimGate.resolve();
+      await Promise.allSettled([suspending, resuming]);
+      await lifecycle.idle();
+    }
+    expect(has("systemctl start")).toBe(false);
     await expect(store.get(vm.id)).resolves.toMatchObject({ state: "suspended" });
   });
 

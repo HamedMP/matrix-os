@@ -927,18 +927,26 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       const budget = Math.max(0, budgetMs);
       const deadline = clock.now() + budget;
       const probes = new AbortController();
-      const waking = enqueue(id, fencedKind("resume", fence), async () => wake(await loadFenced(id, fence)));
-      const response = waking.then(
-        (record) => waitHealthy(record, deadline, probes.signal),
+      // Check the caller's record without waiting behind a suspend. The
+      // queued operation still rechecks it before doing any work.
+      let recordVerified = false;
+      const verification = loadFenced(id, fence).then(() => { recordVerified = true; });
+      const waking = enqueue(id, fencedKind("resume", fence), async () => {
+        await verification;
+        return wake(await loadFenced(id, fence));
+      });
+      const response = Promise.all([verification, waking]).then(
+        ([, record]) => waitHealthy(record, deadline, probes.signal),
         (error: unknown) => {
           if (probes.signal.aborted) log("vm_wake_after_deadline_failed", { id, ...errorFields(error) });
           throw error;
         },
       );
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const starting = new Promise<ResumeResult>((resolve) => {
+      const starting = new Promise<ResumeResult>((resolve, reject) => {
         timer = setTimeout(() => {
-          resolve("starting");
+          if (recordVerified) resolve("starting");
+          else reject(new LifecycleError("busy", "could not verify the VM before the wake deadline"));
           probes.abort();
         }, budget);
       });
