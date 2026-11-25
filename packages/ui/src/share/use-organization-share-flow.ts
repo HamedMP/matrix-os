@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import type { CollaborativeAppShare } from "@matrix-os/contracts";
+import type { CollaborativeAppReadiness, CollaborativeAppShare } from "@matrix-os/contracts";
 import type { CollaborativeHandoff } from "./use-collaborative-handoff";
 
 /** The subset of `useCollaborativeAppSharing` the flow drives (spec 2689 readiness = single source of truth). */
 export interface OrganizationSharing {
   share: CollaborativeAppShare | null;
   shareKnown: boolean;
+  /** The current build's readiness, when loaded. */
+  readiness: CollaborativeAppReadiness | null;
   state: "idle" | "loading" | "checking" | "blocked" | "ready" | "stale" | "failed";
   /** The current build is collaborative (readiness `ready`), so members can edit. */
   collaborative: boolean;
@@ -19,7 +21,8 @@ export interface OrganizationSharing {
 
 export type OrganizationShareStep = "idle" | "checking" | "running" | "applying" | "done";
 
-interface Pending { organizationId: string; reason: "owner" | "completion" }
+/** `refresh`: an already-shared app's completion only refreshes readiness, for exactly that request. */
+interface Pending { organizationId: string; reason: "owner" | "completion" | "refresh"; requestId?: string }
 
 const NOT_READY_AFTER_CHAT = "Claude finished, but the app isn’t collaborative yet. Open the chat to keep going.";
 const CHECK_FAILED = "Couldn’t check this app right now. Try again.";
@@ -60,9 +63,12 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     }
     if (record.state !== "completed") return;
     if (shared) {
-      // Already shared: refresh readiness so the collaborative tick follows the rebuilt app.
+      // Already shared: refresh readiness so the collaborative tick follows the rebuilt app. The
+      // record is retired only after a completed check, and only while it is still this request.
       handledCompletion.current = record.requestId;
-      void sharing.recheck({ organizationId: record.organizationId }).then(() => handoff.markApplied());
+      attempt.current += 1;
+      setPending({ organizationId: record.organizationId, reason: "refresh", requestId: record.requestId });
+      void sharing.recheck({ organizationId: record.organizationId });
       return;
     }
     if (!sharing.shareKnown) {
@@ -79,12 +85,24 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     attempt.current += 1;
     setPending({ organizationId: record.organizationId, reason: "completion" });
     void sharing.recheck({ organizationId: record.organizationId });
-  }, [record, shared, sharing, handoff]);
+  }, [record, shared, sharing]);
 
   // Apply a share only when the recheck we asked for settles as a completed check.
   // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- synchronizes with the async readiness hook; the share must follow its server result.
   useEffect(() => {
     if (!pending || sharing.state === "checking" || sharing.state === "loading" || creating.current) return;
+    if (pending.reason === "refresh") {
+      setPending(null);
+      if (sharing.state !== "ready" && sharing.state !== "blocked") {
+        // The completion stays saved, so the next load retries it.
+        setNotice(CHECK_FAILED);
+        return;
+      }
+      // A newer "Start in Chats" request must never be overwritten by this older completion.
+      const current = handoff.record;
+      if (current && current.requestId === pending.requestId && current.state === "completed") void handoff.markApplied();
+      return;
+    }
     const shareable = pending.reason === "owner"
       ? sharing.state === "ready" || sharing.state === "blocked"
       : sharing.state === "ready";
@@ -121,6 +139,8 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     step,
     shared,
     collaborative: sharing.collaborative,
+    /** Confirmed view-only: the share is bound to the current build's blocked readiness. Unknown readiness is not view-only. */
+    viewOnly: shared && sharing.readiness?.status === "blocked" && sharing.readiness.readinessId === sharing.share?.readinessId,
     notice: notice ?? sharing.actionMessage,
     runningOrganizationId: running ? record!.organizationId : null,
     share(organizationId: string) {

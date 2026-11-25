@@ -109,7 +109,7 @@ export function OrganizationTab({ organizations, selectedId, onSelect, flow, org
   const settingUp = flow.step === "running" || flow.step === "applying";
   const canShare = !flow.shared && flow.step !== "applying";
   const trailing = flow.shared
-    ? <SharedControls name={name} orgLink={orgLink} busy={busy} viewOnly={!flow.collaborative} onStop={() => void flow.stop()} />
+    ? <SharedControls name={name} orgLink={orgLink} busy={busy} viewOnly={flow.viewOnly} onStop={() => void flow.stop()} />
     : canShare ? <ShareButton variant="primary" size="sm" aria-label={`Share with ${name}`} disabled={busy || flow.step === "checking"} onClick={() => flow.share(selected.organizationId)}>
       {flow.step === "checking" ? <Spinner /> : null}Share
     </ShareButton> : null;
@@ -124,8 +124,9 @@ export function OrganizationTab({ organizations, selectedId, onSelect, flow, org
 function suggestionText(flow: OrganizationShareFlow, collaborative: boolean, settingUp: boolean): string {
   if (collaborative) return "Everyone can view and edit the same data.";
   if (settingUp) return "Setting up…";
+  if (flow.viewOnly) return "Teammates can view but not edit. Claude can set up shared editing in a new chat.";
   return flow.shared
-    ? "Teammates can view but not edit. Claude can set up shared editing in a new chat."
+    ? "Claude can set up shared editing in a new chat."
     : "Teammates can view it once shared. Claude can set up shared editing in a new chat.";
 }
 
