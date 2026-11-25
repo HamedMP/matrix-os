@@ -95,7 +95,8 @@ export function transitionProjectSetup(current: ProjectSetupDraft, action: Proje
     case "review_file": {
       if (draft.step !== "review") throw new ProjectSetupError("invalid");
       const file = draft.proposals.find(item => item.path === action.path);
-      if (!file || file.status === "saved" || file.status === "already_present" || (action.path !== "AGENTS.md" && !action.path.endsWith("/SKILL.md"))) throw new ProjectSetupError("invalid");
+      if (!file || ["saved", "already_present", "symlink_skipped"].includes(file.status)
+        || (action.path !== "AGENTS.md" && !action.path.endsWith("/SKILL.md"))) throw new ProjectSetupError("invalid");
       if (action.path.endsWith("/SKILL.md")) {
         const skill = projectSetupSkill(action.content);
         if (skill.path !== action.path) { file.path = skill.path; delete file.expectedHash; }

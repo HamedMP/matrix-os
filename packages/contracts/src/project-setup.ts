@@ -12,7 +12,7 @@ const revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 export const ProjectSetupFileSchema = z.object({
   path: ProjectAgentConfigFileSchema,
   content: markdown.or(z.literal("")),
-  status: z.enum(["pending", "saved", "already_present", "conflict", "failed"]),
+  status: z.enum(["pending", "saved", "already_present", "conflict", "failed", "symlink_skipped"]),
   expectedHash: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
 }).strict().refine(file => file.content.length > 0
   || (["AGENTS.md", "CLAUDE.md"].includes(file.path) && file.status === "already_present"), {

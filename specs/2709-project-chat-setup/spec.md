@@ -142,6 +142,8 @@ The focused setup API below supplies the durable draft extension missing from ex
 
 Boundary checks include owner/project admission after archive/delete, root movement or replacement, symlink and nonregular file rejection, allowlisted relative paths, actual byte limits, malformed frontmatter, and body limits on mutations. Reads and requests are bounded and cancellable. Revalidate late results before applying them. Long-lived draft caches and connection polling require a cap, expiry or eviction, and cleanup on navigation and shutdown.
 
+If a proposed destination is a symbolic link, Review marks it as preserved without following it. Save can apply the remaining valid proposals and leaves the link untouched.
+
 Imported Markdown is untrusted content. Render it through the existing safe Markdown path. Keep credentials out of logs and public documentation, allowlist client error text, and preserve private/no-store file reads. Tests must cover a stale model response proposing a different project or unsafe destination.
 
 ## Verification and measurable outcomes
