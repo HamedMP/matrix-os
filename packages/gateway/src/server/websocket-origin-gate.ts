@@ -77,6 +77,34 @@ export function createWebSocketOriginGate(policy: WebSocketOriginPolicy): Middle
   };
 }
 
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * The same ambient bearer reaches ordinary HTTP routes, and CORS only hides a
+ * cross-site response: a form post or no-cors fetch from another site still
+ * runs a mutation (e.g. a terminal command) as the owner. So an unsafe method
+ * must come from an allowed browser Origin. Browsers send Origin on every
+ * non-GET/HEAD request; one without Origin is a non-browser client (CLI,
+ * Electron main, machines), unless the browser marked it cross-site or
+ * same-site through Sec-Fetch-Site. Safe methods stay with CORS, and OPTIONS
+ * preflights reach the CORS middleware.
+ */
+export function createHttpMutationOriginGate(policy: WebSocketOriginPolicy): MiddlewareHandler {
+  return async (c, next) => {
+    if (!policy.enforce || SAFE_METHODS.has(c.req.method.toUpperCase())) return next();
+    const origin = c.req.header("origin");
+    if (origin === undefined) {
+      const site = c.req.header("sec-fetch-site")?.toLowerCase();
+      if (site !== "cross-site" && site !== "same-site") return next();
+    } else if (policy.isAllowed(origin)) {
+      return next();
+    }
+    // The Origin value is attacker-chosen; it is not logged.
+    console.warn("[gateway] Refused a state-changing request from an untrusted browser origin");
+    return c.json({ error: "Forbidden" }, 403);
+  };
+}
+
 /** Every upgrade, not only /ws: the ingress also adds credentials on /api and others (e.g. a canvas socket). */
 export function registerWebSocketOriginGate(app: Hono, policy: WebSocketOriginPolicy): void {
   app.use("*", createWebSocketOriginGate(policy));
@@ -84,8 +112,9 @@ export function registerWebSocketOriginGate(app: Hono, policy: WebSocketOriginPo
 
 /**
  * The gateway's browser-origin policies, first in the middleware chain: the
- * WebSocket Origin gate (before CORS and auth, so a refused upgrade never
- * reaches either), then CORS for the same allowed origins. `devNullOrigin`
+ * WebSocket Origin gate and the HTTP mutation Origin gate (before CORS and
+ * auth, so a refused request never reaches either), then CORS for the same
+ * allowed origins. `devNullOrigin`
  * reflects the sandboxed app iframe's "null" origin for local development only.
  */
 export function registerBrowserOriginPolicies(app: Hono, options: {
@@ -93,7 +122,9 @@ export function registerBrowserOriginPolicies(app: Hono, options: {
   allowedOrigins: { resolve(origin: string | undefined): string | undefined };
   devNullOrigin: boolean;
 }): void {
-  registerWebSocketOriginGate(app, resolveWebSocketOriginPolicy(options.env, options.allowedOrigins));
+  const policy = resolveWebSocketOriginPolicy(options.env, options.allowedOrigins);
+  registerWebSocketOriginGate(app, policy);
+  app.use("*", createHttpMutationOriginGate(policy));
   app.use("*", cors({
     origin: (origin) => (options.devNullOrigin && origin === "null" ? "null" : options.allowedOrigins.resolve(origin)),
   }));
