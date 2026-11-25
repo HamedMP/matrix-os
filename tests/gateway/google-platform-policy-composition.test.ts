@@ -16,6 +16,8 @@ describe('machine policy composition', () => {
     const profile = profileInput({ credentialKind: 'byo', credentialGeneration: generation,
       endpoint: 'https://api.example.invalid/v1/messages', harnessId: GOOGLE_POLICY_HARNESS_ID['anthropic-messages'], harnessRevision: 'reviewed-build-1' });
     profile.binding.recipientChain[0]!.endpoint = profile.binding.endpoint;
+    profile.evidence.reviewedAt = new Date(Date.now() - 1000).toISOString();
+    profile.evidence.expiresAt = new Date(Date.now() + 86400_000).toISOString();
     await db.googleData!.repository.reviewProfile(profile, 0);
     const routes = createIntegrationRoutes({ db, pipedream: { getAppInfo: vi.fn(async () => undefined) } as never, webhookSecret: 'synthetic', resolveUserId: async () => owner.id });
     const body = JSON.stringify({ binding: { runId: 'run_policy', runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1', accessSourceId: 'owner_anthropic_key' },
