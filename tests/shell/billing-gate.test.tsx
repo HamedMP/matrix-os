@@ -203,14 +203,30 @@ describe("BillingGate", () => {
     });
     vi.resetModules();
 
+    // Next handles the thrown redirect in an error boundary outside this component.
+    class RedirectBoundary extends React.Component<React.PropsWithChildren> {
+      state = { redirected: false };
+      static getDerivedStateFromError(error: Error) {
+        if (error.message !== "NEXT_REDIRECT") throw error;
+        return { redirected: true };
+      }
+      render() {
+        return this.state.redirected ? null : this.props.children;
+      }
+    }
+    const caught = vi.fn();
     const { BillingGate } = await loadBillingGate();
     render(
-      <BillingGate platformSessionActive>
-        <div>Matrix workspace</div>
-      </BillingGate>,
+      <RedirectBoundary>
+        <BillingGate platformSessionActive>
+          <div>Matrix workspace</div>
+        </BillingGate>
+      </RedirectBoundary>,
+      { onCaughtError: caught },
     );
 
     await waitFor(() => expect(navigationState.redirect).toHaveBeenCalledWith("/", "replace"));
+    expect(caught).toHaveBeenCalledWith(expect.objectContaining({ message: "NEXT_REDIRECT" }), expect.anything());
     expect(screen.queryByTestId("add-computer-onboarding")).toBeNull();
     expect(addComputerRender).not.toHaveBeenCalled();
   });
