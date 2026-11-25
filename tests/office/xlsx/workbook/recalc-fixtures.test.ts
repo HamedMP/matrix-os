@@ -100,6 +100,41 @@ describe("formulas the engine cannot calculate", () => {
     expect(at(workbook, "S", "D3")).toMatchObject({ value: 5, formula: "A3 B3:B4" });
   });
 
+  it("keeps the stored value of a formula whose defined names call an unknown function", async () => {
+    const workbook = await openXlsx(
+      await buildXlsx({
+        sheets: [
+          {
+            name: "S",
+            rows:
+              `<row r="1">${num("A1", 2)}${fx("B1", "CustomTotal", 99)}${fx("C1", "Wrapped+1", 100)}${fx("D1", "Local*2", 8)}${fx("E1", "Plain*2", 4)}</row>`,
+          },
+        ],
+        definedNames:
+          '<definedName name="CustomTotal">_xlfn.UNSUPPORTED(S!$A$1)</definedName>' +
+          '<definedName name="Wrapped">CustomTotal</definedName>' +
+          '<definedName name="Local" localSheetId="0">_xlfn.OTHERFN(S!$A$1)</definedName>' +
+          '<definedName name="Plain">S!$A$1</definedName>',
+      }),
+    );
+    const id = sheetId(workbook, "S");
+    expect(at(workbook, "S", "B1")).toMatchObject({ value: 99, formulaUnsupported: true });
+    expect(at(workbook, "S", "C1")).toMatchObject({ value: 100, formulaUnsupported: true });
+    expect(at(workbook, "S", "D1")).toMatchObject({ value: 8, formulaUnsupported: true });
+    expect(at(workbook, "S", "E1").formulaUnsupported).toBe(false);
+    workbook.setCell(id, parseA1("A1"), 5);
+    workbook.recalc();
+    expect(valueAt(workbook, "S", "B1")).toBe(99);
+    expect(valueAt(workbook, "S", "C1")).toBe(100);
+    expect(valueAt(workbook, "S", "D1")).toBe(8);
+    expect(valueAt(workbook, "S", "E1")).toBe(10);
+    // Redefining the name to something the engine calculates lets the formula calculate again.
+    workbook.setDefinedName({ name: "CustomTotal", refersTo: "S!$A$1*3", scope: null });
+    workbook.recalc();
+    expect(at(workbook, "S", "B1")).toMatchObject({ value: 15, formulaUnsupported: false });
+    expect(valueAt(workbook, "S", "C1")).toBe(16);
+  });
+
   it("shows #NAME? for a new formula with an unknown function", async () => {
     const workbook = await openXlsx(await source());
     const id = sheetId(workbook, "S");

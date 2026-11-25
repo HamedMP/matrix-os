@@ -55,8 +55,8 @@ export function freePartName(state: WorkbookState, stem: string, numbered: boole
   }
 }
 
-/** Adds text to the shared string table, creating the part the first time. */
-export function addSharedString(state: WorkbookState, text: string): number {
+/** Adds text to the shared string table, creating the part the first time. Null when the table is full (see `SharedStrings.add`). */
+export function addSharedString(state: WorkbookState, text: string): number | null {
   return state.strings.add(text, (): XmlDocument => {
     const name = freePartName(state, "sharedStrings", false);
     const doc = parseXml(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<sst xmlns="${NS_MAIN}" count="0" uniqueCount="0"/>`);

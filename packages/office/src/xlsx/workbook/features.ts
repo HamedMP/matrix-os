@@ -4,7 +4,8 @@
  *
  * Deleting rows shrinks or removes the ranges of conditional formats, data
  * validations, links, the auto filter and tables, drops notes, cuts array
- * formulas and loses the attributes of the rows; inserting the rows again
+ * formulas, loses the attributes of the rows and what the cells held besides
+ * their content (rich text, cell metadata); inserting the rows again
  * does not bring any of that back. The change journal takes this state
  * before a proposed deletion and restores it when the deletion is rejected.
  * The state comes back from a saved file, so everything in it is checked
@@ -17,6 +18,7 @@ import { OfficeError, isOfficeError } from "../../errors.js";
 import { cloneNode, escapeXmlAttr, getAttr, parseXml, remove, serializeXml, setAttr } from "../../xml/index.js";
 import { formatA1Range, tryParseA1Range } from "./a1.js";
 import { invalidateArrayRanges } from "./arrays.js";
+import { applyCellMarkup, cellMarkup } from "./cell-markup.js";
 import { ensureRow, findCell } from "./cells.js";
 import { rewriteFeatureFormulasIn } from "./feature-formulas.js";
 import { type ColumnRun, DIRTY_CONTENT, type SheetModel, type WorkbookState } from "./model.js";
@@ -45,6 +47,12 @@ export interface SheetFeatureState {
   rows: Array<{ index: number; hidden: boolean; attrs: AttrList }>;
   /** The column runs of the sheet before columns were deleted; null when rows were. */
   columns: Array<{ min: number; max: number; width: number | null; hidden: boolean; other: AttrList }> | null;
+  /**
+   * Deleted cells whose element holds more than value, formula and style
+   * (rich text, cell metadata, extensions), as `<c>` markup; see `./cell-markup.ts`.
+   * Absent in a state saved before cells were kept.
+   */
+  cells?: Array<{ row: number; col: number; markup: string }>;
 }
 
 /** The worksheet children that are kept as markup. */
@@ -72,7 +80,7 @@ function tooMuch(): OfficeError {
  * `limit_exceeded` when it is too large to keep; nothing has changed then.
  */
 export function captureSheetFeatures(
-  _state: WorkbookState,
+  state: WorkbookState,
   sheet: SheetModel,
   axis: "row" | "col",
   index: number,
@@ -87,8 +95,20 @@ export function captureSheetFeatures(
   if (size > MAX_FEATURE_TEXT) throw tooMuch();
   const arrays: SheetFeatureState["arrays"] = [];
   const rows: SheetFeatureState["rows"] = [];
+  const cells: NonNullable<SheetFeatureState["cells"]> = [];
+  const end = index + count;
   for (const row of sheet.rows.values()) {
+    const rowInBand = axis === "row" && row.index >= index && row.index < end;
     for (const [col, cell] of row.cells) {
+      if (rowInBand || (axis === "col" && col >= index && col < end)) {
+        const markup = cellMarkup(state.strings, cell);
+        if (markup !== null) {
+          const text = serializeXml(markup);
+          size += text.length;
+          if (size > MAX_FEATURE_TEXT || cells.length >= MAX_FEATURE_ITEMS) throw tooMuch();
+          cells.push({ row: row.index, col, markup: text });
+        }
+      }
       if (cell.extra === null) continue;
       if (arrays.length >= MAX_FEATURE_ITEMS) throw tooMuch();
       arrays.push({
@@ -98,7 +118,7 @@ export function captureSheetFeatures(
         ref: cell.extra.ref === null ? null : formatA1Range(cell.extra.ref),
       });
     }
-    if (axis !== "row" || row.index < index || row.index >= index + count) continue;
+    if (!rowInBand) continue;
     const attrs: AttrList = [];
     for (const attr of row.el?.attrs ?? []) if (!ROW_MODEL_ATTRS.has(attr.name)) attrs.push([attr.name, attr.value]);
     for (const [name, value] of row.attrs ?? []) attrs.push([name, value]);
@@ -106,12 +126,11 @@ export function captureSheetFeatures(
   }
   const tables = tableRefs(sheet);
   const columns = axis === "col" ? sheet.columns.map((run) => ({ ...run, other: run.other.map(([name, value]): [string, string] => [name, value]) })) : null;
-  if (elements.length === 0 && notes.length === 0 && arrays.length === 0 && rows.length === 0 && tables.length === 0 && (columns === null || columns.length === 0)) {
-    return null;
-  }
+  const empty = elements.length === 0 && notes.length === 0 && arrays.length === 0 && rows.length === 0 && tables.length === 0 && cells.length === 0;
+  if (empty && (columns === null || columns.length === 0)) return null;
   const ns: AttrList = [];
   for (const attr of root.attrs) if (attr.name === "xmlns" || attr.name.startsWith("xmlns:")) ns.push([attr.name, attr.value]);
-  return { ns, elements, tables, notes, arrays, rows, columns };
+  return { ns, elements, tables, notes, arrays, rows, columns, cells };
 }
 
 /** Reads the kept markup again, in the namespace context it was taken from. Elements of other kinds are left out. */
@@ -122,10 +141,23 @@ function parseElements(features: SheetFeatureState): XmlElement[] {
   return featureElements(wrapper);
 }
 
+/** The kept markup of each deleted cell, read again; markup that is not one `<c>` element gives null. */
+function parseCells(features: SheetFeatureState): Array<XmlElement | null> {
+  const cells = features.cells ?? [];
+  if (cells.length === 0) return [];
+  const declarations = features.ns.map(([name, value]) => ` ${name}="${escapeXmlAttr(value)}"`).join("");
+  return cells.map((cell) => {
+    const children = parseXml(`<worksheet${declarations}>${cell.markup}</worksheet>`).root.children;
+    const only = children.length === 1 ? children[0] : undefined;
+    return only !== undefined && only.kind === "element" && localOf(only.name) === "c" ? only : null;
+  });
+}
+
 /** True when the markup of a state can be read; a state from a damaged file may not be. */
 export function readableSheetFeatures(features: SheetFeatureState): boolean {
   try {
     parseElements(features);
+    parseCells(features);
     for (const note of features.notes) parseXml(note.text);
     return true;
   } catch (error) {
@@ -179,6 +211,13 @@ export function restoreSheetFeatures(state: WorkbookState, sheet: SheetModel, fe
       row.attrs = saved.attrs.map(([name, value]) => [name, value] as const);
     }
   }
+  const markups = parseCells(features);
+  (features.cells ?? []).forEach((saved, at) => {
+    const markup = markups[at] ?? null;
+    const cell = findCell(sheet, saved.row, saved.col);
+    const row = sheet.rows.get(saved.row);
+    if (markup !== null && cell !== undefined && row !== undefined) applyCellMarkup(cell, row, cloneNode(markup));
+  });
   if (features.columns !== null) {
     const runs: ColumnRun[] = features.columns.map((run) => ({ ...run, other: run.other.map(([name, value]) => [name, value] as const) }));
     sheet.columns = runs;

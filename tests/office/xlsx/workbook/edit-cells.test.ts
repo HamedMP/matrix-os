@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { openXlsx, parseA1 } from "../../../../packages/office/src/xlsx/index.js";
-import { at, codeOf, err, loadFixture, sheetId, storedRecords, valueAt } from "./helpers.js";
+import { DEFAULT_XML_LIMITS, parseXml } from "../../../../packages/office/src/xml/index.js";
+import { SharedStrings } from "../../../../packages/office/src/xlsx/workbook/shared-strings.js";
+import { at, buildXlsx, codeOf, err, loadFixture, sheetId, storedRecords, valueAt } from "./helpers.js";
 
 describe("setting values", () => {
   it("replaces values of every type and keeps the cell style", async () => {
@@ -111,6 +113,44 @@ describe("setting values", () => {
     expect(codeOf(() => workbook.getRange(id, { start: { row: 0, col: 0 }, end: { row: 1048575, col: 16383 } }))).toBe("limit_exceeded");
     expect(valueAt(workbook, "Basics", "A1")).toBe("Label");
     for (const part of workbook.package.listParts()) expect(part.modified).toBe(false);
+  });
+});
+
+describe("the shared string table", () => {
+  it("stops growing at the limits a reader accepts and reuses what it holds", () => {
+    const doc = parseXml('<sst xmlns="m" uniqueCount="1"><si><t>kept</t></si></sst>');
+    const strings = new SharedStrings(doc, 60, { maxNodes: 9, maxBytes: 10_000 });
+    const ensure = () => doc;
+    expect(strings.add("one", ensure)).toBe(1);
+    // A third entry would take the part to 10 nodes.
+    expect(strings.add("two", ensure)).toBeNull();
+    expect(strings.add("kept", ensure)).toBe(0);
+    expect(strings.add("one", ensure)).toBe(1);
+    expect(strings.count).toBe(2);
+    const bytes = new SharedStrings(parseXml('<sst xmlns="m"/>'), 20, { maxNodes: 1000, maxBytes: 100 });
+    expect(bytes.add("short", ensure)).toBe(0);
+    expect(bytes.add("x".repeat(60), ensure)).toBeNull();
+    expect(bytes.count).toBe(1);
+  });
+
+  it("writes text inline once the table is full, and the saved workbook opens again", async () => {
+    // One entry padded to just under the node limit of the XML reader.
+    const padding = "<a/>".repeat(DEFAULT_XML_LIMITS.maxNodes - 8);
+    const workbook = await openXlsx(
+      await buildXlsx({
+        sheets: [{ name: "S", rows: '<row r="1"><c r="A1" t="s"><v>0</v></c></row>' }],
+        sharedStrings: `<si><t>first</t>${padding}</si>`,
+      }),
+    );
+    const id = sheetId(workbook, "S");
+    workbook.setRange(id, parseA1("B1"), [["alpha", "beta", "gamma", "first"]]);
+    const saved = await workbook.save();
+    const reopened = await openXlsx(saved);
+    expect(["A1", "B1", "C1", "D1", "E1"].map((cell) => valueAt(reopened, "S", cell))).toEqual(["first", "alpha", "beta", "gamma", "first"]);
+    const sheet = (await reopened.package.getPartText("/xl/worksheets/sheet1.xml")) as string;
+    // At most one new entry fits; the rich first entry is not reused for plain text.
+    expect((sheet.match(/t="inlineStr"/g) ?? []).length).toBeGreaterThanOrEqual(3);
+    expect(sheet).toContain('<c r="A1" t="s"><v>0</v></c>');
   });
 });
 

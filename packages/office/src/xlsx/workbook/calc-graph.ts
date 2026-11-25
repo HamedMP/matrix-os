@@ -6,7 +6,7 @@
 
 import type { FormulaAst, FunctionRegistry } from "../../api/formula.js";
 import type { CellRange } from "../../api/xlsx.js";
-import type { CellRec, SheetModel, WorkbookState } from "./model.js";
+import type { CellRec, NameRec, SheetModel, WorkbookState } from "./model.js";
 import { lookupName } from "./names.js";
 import { parseCached } from "./state.js";
 
@@ -142,17 +142,6 @@ function pushChildren(node: FormulaAst, stack: FormulaAst[]): void {
   }
 }
 
-/** True when some function call of the formula satisfies `test`. */
-function someCall(ast: FormulaAst, test: (name: string) => boolean): boolean {
-  const stack: FormulaAst[] = [ast];
-  while (stack.length > 0) {
-    const node = stack.pop() as FormulaAst;
-    if (node.type === "call" && test(node.name)) return true;
-    pushChildren(node, stack);
-  }
-  return false;
-}
-
 /** The rectangle of a cell or range written in the formula (in parentheses or not), or null for anything else. */
 function writtenRect(state: WorkbookState, node: FormulaAst, sheet: SheetModel): Dep | null {
   let inner = node;
@@ -218,8 +207,16 @@ function addTraits(state: WorkbookState, ast: FormulaAst, sheet: SheetModel, fun
   }
 }
 
-/** Whether a parsed formula calls a function the registry lacks. Entries go away with their trees. */
-const unknownCalls = new WeakMap<FormulaAst, boolean>();
+/** What a parsed formula calls and names, for {@link callsUnknownFunction}. */
+interface CallSummary {
+  /** True when the formula itself calls a function the registry lacks. */
+  unknown: boolean;
+  /** The defined names the formula uses. */
+  names: Array<Extract<FormulaAst, { type: "name" }>>;
+}
+
+/** Call summaries of parsed formulas. Entries go away with their trees. */
+const callSummaries = new WeakMap<FormulaAst, CallSummary>();
 
 /** The function registry of the workbook, created on first use. Null without a formula engine. */
 export function functionsOf(state: WorkbookState): FunctionRegistry | null {
@@ -227,19 +224,50 @@ export function functionsOf(state: WorkbookState): FunctionRegistry | null {
   return state.functions;
 }
 
-/**
- * True when the formula calls a function the engine does not have. Such a
- * formula would calculate to `#NAME?`; the workbook keeps the value stored
- * with it instead.
- */
-export function callsUnknownFunction(state: WorkbookState, ast: FormulaAst): boolean {
-  let unknown = unknownCalls.get(ast);
-  if (unknown === undefined) {
-    const functions = functionsOf(state);
-    unknown = functions !== null && someCall(ast, (name) => !functions.has(name));
-    unknownCalls.set(ast, unknown);
+function callSummary(ast: FormulaAst, functions: FunctionRegistry): CallSummary {
+  let summary = callSummaries.get(ast);
+  if (summary === undefined) {
+    const names: CallSummary["names"] = [];
+    let unknown = false;
+    const stack: FormulaAst[] = [ast];
+    while (stack.length > 0) {
+      const node = stack.pop() as FormulaAst;
+      if (node.type === "call" && !functions.has(node.name)) unknown = true;
+      else if (node.type === "name") names.push(node);
+      pushChildren(node, stack);
+    }
+    summary = { unknown, names };
+    callSummaries.set(ast, summary);
   }
-  return unknown;
+  return summary;
+}
+
+/**
+ * True when the formula, or a defined name it uses (followed to any depth),
+ * calls a function the engine does not have. Such a formula would calculate
+ * to `#NAME?`; the workbook keeps the value stored with it instead. Names
+ * are looked up on every call, so redefining one takes effect at once.
+ */
+export function callsUnknownFunction(state: WorkbookState, ast: FormulaAst, sheet: SheetModel | null): boolean {
+  const functions = functionsOf(state);
+  if (functions === null) return false;
+  // Each name is followed once, so the walk ends; the set holds at most every name of the workbook.
+  const seen = new Set<NameRec>();
+  const pending: Array<{ ast: FormulaAst; sheet: SheetModel | null }> = [{ ast, sheet }];
+  while (pending.length > 0) {
+    const next = pending.pop() as { ast: FormulaAst; sheet: SheetModel | null };
+    const summary = callSummary(next.ast, functions);
+    if (summary.unknown) return true;
+    for (const node of summary.names) {
+      const scope = node.sheet === null ? next.sheet : (state.sheetsByKey.get(node.sheet.toLowerCase()) ?? null);
+      const name = lookupName(state, node.name, scope);
+      if (name === null || seen.has(name)) continue;
+      seen.add(name);
+      const inner = parseCached(state, name.refersTo);
+      if (inner !== null) pending.push({ ast: inner, sheet: name.scope ?? next.sheet });
+    }
+  }
+  return false;
 }
 
 /** True for a reference, in parentheses or not, whose cells a position function does not read. */
@@ -319,7 +347,7 @@ export function buildGraph(state: WorkbookState): CalcGraph {
         const ast = parseCached(state, cell.formula);
         if (ast === null) continue;
         // A formula with a function the engine lacks keeps its stored value; a new one shows #NAME? once.
-        if (cell.value !== null && callsUnknownFunction(state, ast)) continue;
+        if (cell.value !== null && callsUnknownFunction(state, ast, sheet)) continue;
         const deps: Dep[] = [];
         collectDeps(state, ast, sheet, 0, deps);
         const traits: Traits = { volatile: false, dynamic: false, clock: false };

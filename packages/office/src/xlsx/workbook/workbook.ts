@@ -68,7 +68,7 @@ function requireCount(value: number, limit: number, what: string): void {
 /** Writes every pending model change into the package parts. */
 export function syncParts(state: WorkbookState): void {
   const pkg = state.pkg;
-  const strings = (text: string): number => addSharedString(state, text);
+  const strings = (text: string): number | null => addSharedString(state, text);
   // Cells may have come or gone when a sheet is written, or when the list of sheets changed.
   let cellsChanged = state.workbookPart.dirty;
   for (const sheet of state.sheets) {

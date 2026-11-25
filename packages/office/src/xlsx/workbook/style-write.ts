@@ -43,7 +43,13 @@ const LINE_STYLES = new Set(["none", "thin", "medium", "thick", "dashed", "dotte
 const EDGES = ["top", "right", "bottom", "left"] as const;
 
 /** Most cell formats a workbook may hold. */
-const MAX_CELL_FORMATS = 64_000;
+export const MAX_CELL_FORMATS = 64_000;
+/**
+ * Most fonts, fills, borders or custom number formats a style write leaves
+ * in the workbook. Each cell format names one of each, so more could never
+ * be used; a table read from a file may already hold more and keeps them.
+ */
+export const MAX_STYLE_RECORDS = MAX_CELL_FORMATS;
 const PATCH_CACHE_LIMIT = 4096;
 
 interface WriteState {
@@ -146,16 +152,39 @@ function listElement(table: StyleTable, local: string): XmlElement {
 
 /** Appends a record to its list unless an identical one exists; returns its index. */
 function intern(table: StyleTable, local: string, records: XmlElement[], keys: Map<string, number>, record: XmlElement): number {
+  const planned = plan(table, local, records, keys, record, Number.POSITIVE_INFINITY, local);
+  planned.append?.();
+  return planned.id;
+}
+
+/** A record's index, and the step that appends it (null when an identical record is in the list already). */
+interface Planned {
+  id: number;
+  append: (() => void) | null;
+}
+
+/**
+ * Finds a record in its list, or plans its append. Nothing changes until
+ * `append` runs, so a write that fails a later limit leaves the tables as
+ * they were. Throws `limit_exceeded` when the list already holds `max`.
+ */
+function plan(table: StyleTable, local: string, records: XmlElement[], keys: Map<string, number>, record: XmlElement, max: number, what: string): Planned {
   const key = serializeXml(record);
   const found = keys.get(key);
-  if (found !== undefined) return found;
-  const list = listElement(table, local);
-  appendChild(list, record);
-  records.push(record);
-  setAttr(list, "count", String(records.length));
-  keys.set(key, records.length - 1);
-  table.dirty = true;
-  return records.length - 1;
+  if (found !== undefined) return { id: found, append: null };
+  if (records.length >= max) throw new OfficeError("limit_exceeded", `too many ${what}`, { details: { max } });
+  const id = records.length;
+  return {
+    id,
+    append: () => {
+      const list = listElement(table, local);
+      appendChild(list, record);
+      records.push(record);
+      setAttr(list, "count", String(records.length));
+      keys.set(key, id);
+      table.dirty = true;
+    },
+  };
 }
 
 function setValueChild(parent: XmlElement, local: string, value: string | null, order: readonly string[]): void {
@@ -197,7 +226,7 @@ function sortChildren(element: XmlElement, order: readonly string[]): void {
   setChildren(element, sorted.map((entry) => entry.node));
 }
 
-function patchFont(table: StyleTable, state: WriteState, baseId: number, patch: NonNullable<CellStylePatch["font"]>): number {
+function patchFont(table: StyleTable, state: WriteState, baseId: number, patch: NonNullable<CellStylePatch["font"]>): Planned {
   const base = table.fonts[baseId];
   const font = base === undefined ? createElement(qualify(table.doc.root, "font")) : cloneNode(base);
   const before = serializeXml(font);
@@ -225,12 +254,12 @@ function patchFont(table: StyleTable, state: WriteState, baseId: number, patch: 
   }
   // A patch that changes nothing keeps the font it started from, whatever its order.
   if (serializeXml(font) !== before) sortChildren(font, FONT_ORDER);
-  return intern(table, "fonts", table.fonts, state.fonts, font);
+  return plan(table, "fonts", table.fonts, state.fonts, font, MAX_STYLE_RECORDS, "fonts");
 }
 
-function patchFill(table: StyleTable, state: WriteState, color: string | null): number {
+function patchFill(table: StyleTable, state: WriteState, color: string | null): Planned {
   const root = table.doc.root;
-  // Indexes 0 and 1 are reserved for the empty and the grey pattern.
+  // Indexes 0 and 1 are reserved for the empty and the grey pattern. At most these two are added before the limits are checked.
   while (table.fills.length < 2) {
     const pattern = createElement(qualify(root, "patternFill"), { patternType: table.fills.length === 0 ? "none" : "gray125" });
     const filler = createElement(qualify(root, "fill"), undefined, [pattern]);
@@ -241,15 +270,16 @@ function patchFill(table: StyleTable, state: WriteState, color: string | null): 
     state.fills.set(serializeXml(filler), table.fills.length - 1);
     table.dirty = true;
   }
-  if (color === null) return 0;
+  if (color === null) return { id: 0, append: null };
   const pattern = createElement(qualify(root, "patternFill"), { patternType: "solid" }, [
     createElement(qualify(root, "fgColor"), { rgb: toArgb(color) }),
     createElement(qualify(root, "bgColor"), { indexed: "64" }),
   ]);
-  return intern(table, "fills", table.fills, state.fills, createElement(qualify(root, "fill"), undefined, [pattern]));
+  const fill = createElement(qualify(root, "fill"), undefined, [pattern]);
+  return plan(table, "fills", table.fills, state.fills, fill, MAX_STYLE_RECORDS, "fills");
 }
 
-function patchBorder(table: StyleTable, state: WriteState, baseId: number, patch: NonNullable<CellStylePatch["border"]>): number {
+function patchBorder(table: StyleTable, state: WriteState, baseId: number, patch: NonNullable<CellStylePatch["border"]>): Planned {
   const root = table.doc.root;
   const base = table.borders[baseId];
   const border =
@@ -271,24 +301,31 @@ function patchBorder(table: StyleTable, state: WriteState, baseId: number, patch
     if (existing !== null) replaceNode(existing, element);
     else insertInOrder(border, element, BORDER_ORDER);
   }
-  return intern(table, "borders", table.borders, state.borders, border);
+  return plan(table, "borders", table.borders, state.borders, border, MAX_STYLE_RECORDS, "borders");
 }
 
-function numberFormatId(table: StyleTable, code: string): number {
+function numberFormatId(table: StyleTable, code: string): Planned {
   const builtin = builtinFormatId(code);
-  if (builtin !== null) return builtin;
+  if (builtin !== null) return { id: builtin, append: null };
   let highest = FIRST_CUSTOM_FORMAT_ID - 1;
   for (const [id, existing] of table.numFmts) {
-    if (existing === code) return id;
+    if (existing === code) return { id, append: null };
     if (id > highest) highest = id;
   }
+  if (table.numFmts.size >= MAX_STYLE_RECORDS) {
+    throw new OfficeError("limit_exceeded", "too many number formats", { details: { max: MAX_STYLE_RECORDS } });
+  }
   const id = highest + 1;
-  const list = listElement(table, "numFmts");
-  appendChild(list, createElement(qualify(table.doc.root, "numFmt"), { numFmtId: String(id), formatCode: code }));
-  table.numFmts.set(id, code);
-  setAttr(list, "count", String(table.numFmts.size));
-  table.dirty = true;
-  return id;
+  return {
+    id,
+    append: () => {
+      const list = listElement(table, "numFmts");
+      appendChild(list, createElement(qualify(table.doc.root, "numFmt"), { numFmtId: String(id), formatCode: code }));
+      table.numFmts.set(id, code);
+      setAttr(list, "count", String(table.numFmts.size));
+      table.dirty = true;
+    },
+  };
 }
 
 function patchAlignment(xf: XmlElement, patch: NonNullable<CellStylePatch["alignment"]>): boolean {
@@ -336,9 +373,12 @@ export function applyStylePatch(table: StyleTable, baseId: StyleId, patch: CellS
   }
   const baseXf = table.xfs[base] as XmlElement;
   const xf = cloneNode(baseXf);
-  const change = (attr: string, apply: string, id: number): void => {
-    if (id === intOf(baseXf, attr)) return;
-    setAttr(xf, attr, String(id));
+  // Every record is planned first and appended only once all limits hold, so a refused write adds nothing.
+  const appends: Array<() => void> = [];
+  const change = (attr: string, apply: string, planned: Planned): void => {
+    if (planned.append !== null) appends.push(planned.append);
+    if (planned.id === intOf(baseXf, attr)) return;
+    setAttr(xf, attr, String(planned.id));
     setAttr(xf, apply, "1");
   };
   if (patch.font !== undefined && Object.keys(patch.font).length > 0) {
@@ -350,10 +390,10 @@ export function applyStylePatch(table: StyleTable, baseId: StyleId, patch: CellS
   }
   if (patch.numberFormat !== undefined) change("numFmtId", "applyNumberFormat", numberFormatId(table, patch.numberFormat));
   if (patch.alignment !== undefined && patchAlignment(xf, patch.alignment)) setAttr(xf, "applyAlignment", "1");
-  if (table.xfs.length >= MAX_CELL_FORMATS && !state.xfs.has(serializeXml(xf))) {
-    throw new OfficeError("limit_exceeded", "too many cell formats");
-  }
-  const id = intern(table, "cellXfs", table.xfs, state.xfs, xf);
+  const cellFormat = plan(table, "cellXfs", table.xfs, state.xfs, xf, MAX_CELL_FORMATS, "cell formats");
+  for (const append of appends) append();
+  cellFormat.append?.();
+  const id = cellFormat.id;
   if (state.patches.size >= PATCH_CACHE_LIMIT) state.patches.clear();
   state.patches.set(cacheKey, id);
   return id;

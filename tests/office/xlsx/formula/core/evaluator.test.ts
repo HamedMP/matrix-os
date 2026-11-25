@@ -180,6 +180,21 @@ describe("arrays", () => {
     expect(value("SUM((A1:A3>1)*B1:B3)")).toBe(50);
   });
 
+  it("broadcasts a reference over its full bounds, reading cells after its stored values as blank", () => {
+    // Sheet1 is used up to row 4 and column D: A3:A6 stores two rows, B4:B6 and D1:F1 store one cell.
+    expect((run("A3:A6+{1;2;3;4}") as FormulaArray).values).toEqual([[4], [2], [3], [4]]);
+    expect((run("B4:B6+{1;2;3}") as FormulaArray).values).toEqual([[err("#DIV/0!")], [2], [3]]);
+    expect((run('D1:F1&"x"') as FormulaArray).values).toEqual([["TRUEx", "x", "x"]]);
+    expect(value("SUM(A3:A6+{1;2;3;4})")).toBe(13);
+    expect((run("DOUBLE(B4:B6)") as FormulaArray).values).toEqual([[err("#DIV/0!")], [0], [0]]);
+    expect((run("IFERROR(B4:B6,9)") as FormulaArray).values).toEqual([[9], [null], [null]]);
+    expect((run('IF(D1:F1="TRUE",1,2)') as FormulaArray).values).toEqual([[1, 2, 2]]);
+    // A whole column covers the used rows of its sheet.
+    expect((run("A:A+{1;2;3;4;5}") as FormulaArray).values).toEqual([[2], [4], [6], [4], [5]]);
+    expect((run("A:A*2") as FormulaArray).rows).toBe(4);
+    expect((run("A2:A1048576*2") as FormulaArray).rows).toBe(3);
+  });
+
   it("propagates errors element by element", () => {
     expect((run("B1:B4+1") as FormulaArray).values).toEqual([[11], [21], [31], [err("#DIV/0!")]]);
     expect((run("{1,2}+{1,2,3}") as FormulaArray).values).toEqual([[2, 4, err("#N/A")]]);

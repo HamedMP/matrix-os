@@ -18,6 +18,7 @@ import {
   JOURNAL_FORMAT_VERSION,
   type JournalData,
   type JournalEntry,
+  MAX_CELL_MARKUP,
   MAX_DATE_TEXT,
   MAX_JOURNAL_TEXT,
   MAX_KEPT_MERGES,
@@ -153,7 +154,9 @@ function entry(value: unknown): JournalEntry {
   const base = { id: id(o.id, "c"), proposalId: id(o.proposalId, "p"), seq: int(o.seq, 1, MAX_COUNTER), sheet: sheetId(o.sheet) };
   const kind = o.kind;
   if (kind === "cell") {
-    return { ...base, kind, row: int(o.row, 0, MAX_ROWS - 1), col: int(o.col, 0, MAX_COLS - 1), old: raw(o.old), next: raw(o.new) };
+    // A journal written before cell changes kept markup has no such field.
+    const oldMarkup = o.oldMarkup === undefined ? null : text(o.oldMarkup, MAX_CELL_MARKUP, 1);
+    return { ...base, kind, row: int(o.row, 0, MAX_ROWS - 1), col: int(o.col, 0, MAX_COLS - 1), old: raw(o.old), next: raw(o.new), oldMarkup };
   }
   if (kind === "addSheet") return { ...base, kind, name: text(o.name, 31, 1) };
   if (kind === "renameSheet") return { ...base, kind, oldName: text(o.oldName, 31, 1), newName: text(o.newName, 31, 1) };

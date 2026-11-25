@@ -140,7 +140,11 @@ describe("workbook internals", () => {
     const data = sheetId(workbook, "Data");
     const calc = sheetId(workbook, "Calc");
     const seen: CellMutation[] = [];
-    const stop = internals.onCellMutation((mutation) => seen.push(mutation));
+    const markups: Array<string | null> = [];
+    const stop = internals.onCellMutation(({ beforeMarkup, ...mutation }) => {
+      if (beforeMarkup !== undefined) markups.push(beforeMarkup());
+      seen.push(mutation);
+    });
     workbook.setCell(data, parseA1("D2"), 50);
     workbook.setCell(data, parseA1("D2"), 50);
     workbook.setFormula(data, parseA1("G1"), "=D2*2");
@@ -160,6 +164,8 @@ describe("workbook internals", () => {
       { sheet: data, row: 5, col: 1, reason: "edit", before: { value: "Sprocket", formula: null, styleId: 0 }, after: { value: null, formula: null, styleId: 0 } },
       { sheet: data, row: 1, col: 2, reason: "edit", before: { value: 12.5, formula: null, styleId: 0 }, after: { value: 12.5, formula: null, styleId: bold } },
     ]);
+    // An edit of a cell that existed says what its element held besides its content: nothing, for these plain cells.
+    expect(markups).toEqual([null, null, null, null]);
     // Formula text rewritten by a structural edit elsewhere is reported as a rewrite.
     seen.length = 0;
     workbook.insertRows(calc, 0, 1);

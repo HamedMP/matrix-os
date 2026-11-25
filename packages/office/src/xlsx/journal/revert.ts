@@ -153,7 +153,7 @@ function revert(ctx: JournalContext, entry: JournalEntry, restored: SheetCellRef
   switch (entry.kind) {
     case "cell":
       ctx.store.remove(entry);
-      ctx.internals.writeRawCell(entry.sheet, { row: entry.row, col: entry.col }, entry.old);
+      ctx.internals.writeRawCell(entry.sheet, { row: entry.row, col: entry.col }, entry.old, entry.oldMarkup);
       restored.push({ sheet: entry.sheet, row: entry.row, col: entry.col });
       return true;
     case "renameSheet":

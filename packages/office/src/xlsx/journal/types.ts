@@ -28,6 +28,8 @@ export const MAX_REWRITES = 200_000;
 export const MAX_KEPT_MERGES = 100_000;
 /** Defined names a structural change keeps; a proposed one in a workbook with more throws `limit_exceeded` before anything changes. */
 export const MAX_KEPT_NAMES = 10_000;
+/** Characters of the markup one cell change keeps; a proposed edit of a cell with more throws `limit_exceeded` and is undone. */
+export const MAX_CELL_MARKUP = 4 * 1024 * 1024;
 /** Characters of a journal part that are read; a longer part is ignored. */
 export const MAX_JOURNAL_TEXT = 64 * 1024 * 1024;
 /** Characters of a proposal author or label. */
@@ -109,6 +111,11 @@ export interface CellEntry extends EntryBase {
   col: number;
   old: RawCell;
   next: RawCell;
+  /**
+   * What the cell's element held besides `old` (rich text, cell metadata),
+   * as self-contained `<c>` markup, to put back with it; null when nothing.
+   */
+  oldMarkup: string | null;
 }
 
 /** A formula rewritten by a structural edit: position after the edit. */

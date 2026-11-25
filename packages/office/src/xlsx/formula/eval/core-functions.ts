@@ -17,7 +17,6 @@ import {
   collectNumbers,
   isArray,
   isError,
-  mapValue,
   toBoolean,
   toScalar,
 } from "../coerce.js";
@@ -48,17 +47,31 @@ function ifFunction(args: readonly FormulaAst[], context: FunctionContext): Form
   return test ? context.evaluate(args[1] as FormulaAst) : otherwise();
 }
 
-function ifError(args: readonly FormulaAst[], context: FunctionContext): FormulaValue {
+/**
+ * IFERROR and IFNA: the value, with each cell that `replace` picks taken
+ * from the same position of the fallback. The fallback is evaluated only
+ * when something needs replacing; a scalar or single-cell fallback is used
+ * at every position, a larger array is matched position by position.
+ */
+export function replaceErrors(
+  args: readonly FormulaAst[],
+  context: FunctionContext,
+  replace: (cell: FormulaScalar) => boolean,
+): FormulaValue {
   const value = context.evaluate(args[0] as FormulaAst);
   if (isArray(value) && cellCount(value) > 1) {
-    let fallback: FormulaScalar | undefined;
-    return mapValue(value, (cell) => {
-      if (!isError(cell)) return cell;
-      fallback ??= toScalar(context.evaluate(args[1] as FormulaAst));
-      return fallback;
+    if (!value.values.some((row) => row.some(replace))) return value;
+    const fallback = context.evaluate(args[1] as FormulaAst);
+    return broadcast([value, fallback], (s) => {
+      const cell = s[0] as FormulaScalar;
+      return replace(cell) ? (s[1] as FormulaScalar) : cell;
     });
   }
-  return isError(toScalar(value)) ? context.evaluate(args[1] as FormulaAst) : value;
+  return replace(toScalar(value)) ? context.evaluate(args[1] as FormulaAst) : value;
+}
+
+function ifError(args: readonly FormulaAst[], context: FunctionContext): FormulaValue {
+  return replaceErrors(args, context, isError);
 }
 
 /**

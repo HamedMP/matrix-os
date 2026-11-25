@@ -179,3 +179,50 @@ describe("rejecting a proposed deletion puts the sheet back", () => {
     expect(after.features).not.toContain("Limits!");
   });
 });
+
+describe("rejecting a proposed deletion keeps what the cells carried", () => {
+  const RICH = '<c r="A2" t="inlineStr" cm="1"><is><r><rPr><b/></rPr><t>Bold</t></r><r><t xml:space="preserve"> text</t></r></is></c>';
+  async function richBook(): Promise<Uint8Array> {
+    return buildXlsx({
+      sheets: [
+        {
+          name: "S",
+          rows:
+            '<row r="1"><c r="A1"><v>1</v></c></row>' +
+            `<row r="2">${RICH}<c r="B2" t="s" vm="1"><v>0</v></c><c r="C2" ph="1"><v>5</v></c><c r="D2" t="s"><v>1</v></c></row>` +
+            '<row r="3"><c r="A3"><v>3</v></c></row>',
+        },
+      ],
+      sharedStrings: "<si><r><rPr><i/></rPr><t>Ital</t></r><r><t>ic</t></r></si><si><t>plain</t></si>",
+    });
+  }
+  const row2 = async (bytes: Uint8Array): Promise<string> =>
+    /<row r="2".*?<\/row>/.exec(await (await openXlsx(bytes)).package.getPartText("/xl/worksheets/sheet1.xml"))?.[0] ?? "";
+  const expectRestored = (row: string): void => {
+    expect(row).toContain(RICH);
+    expect(row).toContain('<c r="B2" t="inlineStr" vm="1"><is><r><rPr><i/></rPr><t>Ital</t></r><r><t>ic</t></r></is></c>');
+    expect(row).toContain('<c r="C2" ph="1"><v>5</v></c>');
+    expect(row).toContain('<c r="D2" t="s"><v>1</v></c>');
+  };
+
+  it("rich text, cell metadata and phonetic flags of deleted rows", async () => {
+    const workbook = await openXlsx(await richBook());
+    workbook.beginProposal(AGENT);
+    workbook.deleteRows(sheetId(workbook, "S"), 1, 1);
+    workbook.endProposal();
+    expect(workbook.rejectChanges("all").stale).toEqual([]);
+    expect(at(workbook, "S", "A2").value).toBe("Bold text");
+    expect(at(workbook, "S", "B2").value).toBe("Italic");
+    expectRestored(await row2(await workbook.save()));
+  });
+
+  it("rich text of deleted columns, and in a later session from the saved file", async () => {
+    const first = await openXlsx(await richBook());
+    first.beginProposal(AGENT);
+    first.deleteColumns(sheetId(first, "S"), 0, 3);
+    first.endProposal();
+    const second = await openXlsx(await first.save());
+    expect(second.rejectChanges("all").stale).toEqual([]);
+    expectRestored(await row2(await second.save()));
+  });
+});

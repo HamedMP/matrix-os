@@ -33,7 +33,14 @@ export function entryJson(entry: JournalEntry): Record<string, unknown> {
   const base = { kind: entry.kind, id: entry.id, proposalId: entry.proposalId, seq: entry.seq, sheet: entry.sheet };
   switch (entry.kind) {
     case "cell":
-      return { ...base, row: entry.row, col: entry.col, old: rawJson(entry.old), new: rawJson(entry.next) };
+      return {
+        ...base,
+        row: entry.row,
+        col: entry.col,
+        old: rawJson(entry.old),
+        new: rawJson(entry.next),
+        ...(entry.oldMarkup === null ? {} : { oldMarkup: entry.oldMarkup }),
+      };
     case "addSheet":
       return { ...base, name: entry.name };
     case "renameSheet":

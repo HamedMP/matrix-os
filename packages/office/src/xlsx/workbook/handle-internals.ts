@@ -6,7 +6,8 @@ import type { XmlDocument } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import { partNamesEqual } from "../../opc/index.js";
 import { requireAddress } from "./a1.js";
-import { checkValue, readRaw, writeCell } from "./cells.js";
+import { applyCellMarkup, parseCellMarkup } from "./cell-markup.js";
+import { checkValue, findCell, readRaw, writeCell } from "./cells.js";
 import { captureSheetFeatures, readableSheetFeatures, restoreSheetFeatures, rewriteSheetFeatures } from "./features.js";
 import type { CellMutationListener, RawCell, WorkbookInternals, WorkbookJournal } from "./internals.js";
 import type { SheetModel, WorkbookState } from "./model.js";
@@ -35,11 +36,16 @@ export function makeInternals(workbook: Workbook, state: WorkbookState): Workboo
       requireAddress(address);
       return readRaw(model, address.row, address.col);
     },
-    writeRawCell(sheet, address, cell): void {
+    writeRawCell(sheet, address, cell, markup = null): void {
       const model = sheetOf(state, sheet);
       requireAddress(address);
       const next: RawCell = { value: checkValue(cell.value), formula: cell.formula, styleId: state.styles.clamp(cell.styleId) };
       writeCell(state, model, address.row, address.col, next, null);
+      if (markup === null) return;
+      const rec = findCell(model, address.row, address.col);
+      const row = model.rows.get(address.row);
+      const element = rec === undefined ? null : parseCellMarkup(markup, attachSheet(model).doc.root);
+      if (element !== null && rec !== undefined && row !== undefined) applyCellMarkup(rec, row, element);
     },
     onCellMutation(listener: CellMutationListener): () => void {
       if (typeof listener !== "function") throw new OfficeError("invalid_argument", "a listener is a function");

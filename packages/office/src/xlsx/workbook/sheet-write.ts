@@ -11,6 +11,7 @@ import type { XmlChildNode, XmlElement } from "../../api/xml.js";
 import { createElement, getAttr, prependChild, remove, removeAttr, setAttr } from "../../xml/index.js";
 import { columnLabel, formatA1, formatA1Range } from "./a1.js";
 import { type AttachedSheet, CLEAN, type CellRec, DIRTY_CONTENT, DIRTY_EDIT, DIRTY_STYLE, type RowRec, type SheetModel } from "./model.js";
+import { stringItemText } from "./shared-strings.js";
 import { attachSheet, firstSheetView } from "./sheet-read.js";
 import { encodeCellText, insertInOrder, isNamed, kid, kids, needsSpacePreserve, qualify, setChildren } from "./xml-util.js";
 
@@ -56,8 +57,8 @@ export const WORKSHEET_ORDER = [
 ];
 const SHEET_VIEW_ORDER = ["pane", "selection", "pivotSelection", "extLst"];
 
-/** Adds text to the shared string table and returns its index. */
-export type StringSink = (text: string) => number;
+/** Adds text to the shared string table and returns its index, or null when the table is full and the text goes inline. */
+export type StringSink = (text: string) => number | null;
 
 /** The smallest rectangle that holds every cell with a value, a formula or a format. Cached on the sheet. */
 export function sheetDimensions(sheet: SheetModel): CellRange | null {
@@ -101,11 +102,13 @@ const CELL_MODEL_CHILDREN = ["f", "v", "is"];
 /**
  * A new `<c>` element for the cell. What the model does not hold of the
  * `previous` element (phonetic flag, metadata indexes, extensions, attributes
- * of other software) is carried over, except the metadata of content that an
- * edit replaced.
+ * of other software, inline rich text of the same text) is carried over,
+ * except the metadata and rich text of content that an edit replaced. Text
+ * goes to the shared string table, or inline once the table is full.
  */
 function buildCell(reference: XmlElement, cell: CellRec, row: number, col: number, strings: StringSink, previous: XmlElement | null): XmlElement {
   const attrs: Array<[string, string]> = [["r", columnLabel(col) + String(row + 1)]];
+  const edited = (cell.dirty & DIRTY_EDIT) !== 0;
   if (cell.styleId !== 0) attrs.push(["s", String(cell.styleId)]);
   const children: XmlElement[] = [];
   const value = cell.value;
@@ -122,8 +125,23 @@ function buildCell(reference: XmlElement, cell: CellRec, row: number, col: numbe
       attrs.push(["t", "str"]);
       children.push(valueElement(reference, encodeCellText(value)));
     } else {
-      attrs.push(["t", "s"]);
-      children.push(valueElement(reference, String(strings(value))));
+      // Inline rich text that still spells the text, such as the content a rejected deletion put back, stays as it is.
+      const rich = previous === null || edited ? null : kid(previous, "is");
+      if (rich !== null && stringItemText(rich) === value) {
+        attrs.push(["t", "inlineStr"]);
+        children.push(rich);
+      } else {
+        const index = strings(value);
+        if (index === null) {
+          const encoded = encodeCellText(value);
+          const text = createElement(qualify(reference, "t"), needsSpacePreserve(encoded) ? { "xml:space": "preserve" } : undefined, [encoded]);
+          attrs.push(["t", "inlineStr"]);
+          children.push(createElement(qualify(reference, "is"), undefined, [text]));
+        } else {
+          attrs.push(["t", "s"]);
+          children.push(valueElement(reference, String(index)));
+        }
+      }
     }
   } else if (typeof value === "boolean") {
     attrs.push(["t", "b"]);
@@ -133,7 +151,6 @@ function buildCell(reference: XmlElement, cell: CellRec, row: number, col: numbe
     children.push(valueElement(reference, value.code));
   }
   if (previous !== null) {
-    const edited = (cell.dirty & DIRTY_EDIT) !== 0;
     for (const attr of previous.attrs) {
       if (CELL_MODEL_ATTRS.has(attr.name) || (edited && CELL_CONTENT_ATTRS.has(attr.name))) continue;
       attrs.push([attr.name, attr.value]);

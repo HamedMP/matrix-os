@@ -72,6 +72,7 @@ function onEdit(ctx: JournalContext, mutation: CellMutation): void {
     return;
   }
   if (sameRaw(mutation.before, mutation.after)) return;
+  const oldMarkup = mutation.beforeMarkup?.() ?? null;
   const added: CellEntry = {
     kind: "cell",
     ...store.nextIds(),
@@ -81,6 +82,7 @@ function onEdit(ctx: JournalContext, mutation: CellMutation): void {
     col: mutation.col,
     old: copyRaw(mutation.before),
     next: copyRaw(mutation.after),
+    oldMarkup,
   };
   try {
     store.requireRoom();
@@ -90,7 +92,7 @@ function onEdit(ctx: JournalContext, mutation: CellMutation): void {
     // The edit cannot be recorded, so it must not stay applied.
     ctx.suppress++;
     try {
-      ctx.internals.writeRawCell(mutation.sheet, { row: mutation.row, col: mutation.col }, mutation.before);
+      ctx.internals.writeRawCell(mutation.sheet, { row: mutation.row, col: mutation.col }, mutation.before, oldMarkup);
     } finally {
       ctx.suppress--;
     }

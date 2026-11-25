@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseA1Range } from "../../../../packages/office/src/xlsx/index.js";
-import { AGENT, OWNER, a1, changes, codeOf, err, resolved, smallBook, valueAt } from "./helpers.js";
+import type { Workbook } from "../../../../packages/office/src/api/xlsx.js";
+import { openXlsx, parseA1Range } from "../../../../packages/office/src/xlsx/index.js";
+import { buildXlsx } from "../workbook/helpers.js";
+import { AGENT, OWNER, a1, changes, codeOf, err, resolved, sheetId, smallBook, valueAt } from "./helpers.js";
 
 describe("recording proposed cell edits", () => {
   it("applies the edit at once and records old and new content", () => {
@@ -207,5 +209,54 @@ describe("accepting and rejecting cell changes", () => {
     workbook.recalc();
     resolved(workbook.rejectChanges("all"));
     expect(valueAt(workbook, "Data", "A4")).toBe(6);
+  });
+});
+
+describe("rejecting an edit of a cell with rich text", () => {
+  const RICH = '<c r="A1" t="inlineStr" cm="1"><is><r><rPr><b/></rPr><t>Bold</t></r><r><t xml:space="preserve"> text</t></r></is></c>';
+  const book = () =>
+    buildXlsx({
+      sheets: [{ name: "S", rows: `<row r="1">${RICH}<c r="B1" t="s" vm="2"><v>0</v></c><c r="C1" ph="1"><v>4</v></c></row>` }],
+      sharedStrings: "<si><r><rPr><i/></rPr><t>Ital</t></r><r><t>ic</t></r></si>",
+    });
+  const row1 = async (workbook: Workbook): Promise<string> =>
+    /<row r="1".*?<\/row>/.exec(await (await openXlsx(await workbook.save())).package.getPartText("/xl/worksheets/sheet1.xml"))?.[0] ?? "";
+  const expectRestored = (row: string): void => {
+    expect(row).toContain(RICH);
+    expect(row).toContain('<c r="B1" t="inlineStr" vm="2"><is><r><rPr><i/></rPr><t>Ital</t></r><r><t>ic</t></r></is></c>');
+    expect(row).toContain('<c r="C1" ph="1"><v>4</v></c>');
+  };
+
+  it("puts back its runs and metadata, also after the edit was saved", async () => {
+    const workbook = await openXlsx(await book());
+    const id = sheetId(workbook, "S");
+    workbook.beginProposal(AGENT);
+    workbook.setCell(id, a1("A1"), "plain");
+    workbook.clearRange(id, parseA1Range("B1:C1"));
+    workbook.endProposal();
+    const during = await row1(workbook);
+    expect(during).not.toContain("cm=");
+    expect(during).not.toContain("<b/>");
+    expect(workbook.rejectChanges("all").stale).toEqual([]);
+    expect(valueAt(workbook, "S", "A1")).toBe("Bold text");
+    expectRestored(await row1(workbook));
+
+    const first = await openXlsx(await book());
+    first.beginProposal(AGENT);
+    first.setCell(sheetId(first, "S"), a1("A1"), "plain");
+    first.setCell(sheetId(first, "S"), a1("B1"), "other");
+    first.setCell(sheetId(first, "S"), a1("C1"), 5);
+    first.endProposal();
+    const second = await openXlsx(await first.save());
+    expect(second.rejectChanges("all").stale).toEqual([]);
+    expectRestored(await row1(second));
+  });
+
+  it("keeps an edit made outside a proposal plain", async () => {
+    const workbook = await openXlsx(await book());
+    workbook.setCell(sheetId(workbook, "S"), a1("A1"), "Other");
+    const row = await row1(workbook);
+    expect(row).not.toContain("cm=");
+    expect(row).toContain('<c r="A1" t="s">');
   });
 });

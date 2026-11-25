@@ -58,6 +58,14 @@ export function features(value: unknown): SheetFeatureState | null {
       if (typeof r.hidden !== "boolean") fail();
       return { index: int(r.index, 0, MAX_ROWS - 1), hidden: r.hidden, attrs: attrs(r.attrs) };
     }),
+    // A journal saved before deleted cells kept their markup has no such field.
+    cells:
+      o.cells === undefined
+        ? []
+        : list(o.cells, MAX_FEATURE_ITEMS).map((item) => {
+            const c = obj(item);
+            return { row: int(c.row, 0, MAX_ROWS - 1), col: int(c.col, 0, MAX_COLS - 1), markup: markup(c.markup) };
+          }),
     columns:
       o.columns === null
         ? null

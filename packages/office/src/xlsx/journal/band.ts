@@ -30,7 +30,12 @@ function areaSize(area: CellRange): number {
   return (area.end.row - area.start.row + 1) * (area.end.col - area.start.col + 1);
 }
 
-/** Content of the band before it is deleted. Throws `limit_exceeded` above {@link MAX_SNAPSHOT_CELLS}. */
+/**
+ * Content of the band before it is deleted. Throws `limit_exceeded` above
+ * {@link MAX_SNAPSHOT_CELLS}. What the cells' elements hold besides value,
+ * formula and style (rich text, cell metadata) is kept with the sheet
+ * features (`captureSheetFeatures`) and put back after these cells.
+ */
 export function captureBand(ctx: JournalContext, info: SheetInfo, axis: Axis, index: number, count: number): BandSnapshot {
   const cells: BandSnapshot["cells"] = [];
   const area = bandArea(info, axis, index, count);

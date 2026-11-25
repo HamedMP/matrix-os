@@ -138,6 +138,22 @@ describe("array behaviour", () => {
   it("replaces only #N/A in an array with IFNA", () => {
     expect(run("IFNA(E1:E3,0)")).toMatchObject({ kind: "array", values: [[2], [0], [6]] });
   });
+  it("takes each #N/A's replacement from the matching position of an array fallback", () => {
+    expect(run("IFNA({1,#N/A},{10,20})")).toMatchObject({ kind: "array", values: [[1, 20]] });
+    expect(run("IFNA({#N/A,#N/A,#DIV/0!},{10,20,30})")).toMatchObject({
+      kind: "array",
+      values: [[10, 20, { kind: "error", code: "#DIV/0!" }]],
+    });
+  });
+  it("matches SWITCH element by element when the expression or a value is an array", () => {
+    expect(run('SWITCH({1,2,3},1,"a",2,"b","c")')).toMatchObject({ kind: "array", values: [["a", "b", "c"]] });
+    expect(run('SWITCH({1,3},1,"a",2,"b")')).toMatchObject({
+      kind: "array",
+      values: [["a", { kind: "error", code: "#N/A" }]],
+    });
+    expect(run('SWITCH(2,{1,2},"hit","miss")')).toMatchObject({ kind: "array", values: [["miss", "hit"]] });
+    expect(run('SWITCH({1,2},1,{"x","y"},"z")')).toMatchObject({ kind: "array", values: [["x", "z"]] });
+  });
 });
 
 describe("registerA", () => {

@@ -40,6 +40,7 @@ import type {
   FormulaValue,
   RangeBounds,
 } from "../../api/formula.js";
+import { MAX_COL, MAX_ROW } from "./parser/ast.js";
 
 /** Builds an error value. `message` is for logs and tooltips only. */
 export function makeError(code: FormulaErrorCode, message?: string): FormulaError {
@@ -388,9 +389,32 @@ export function collectNumbers(
 /** The most cells {@link broadcast} builds unless the caller gives another bound. */
 export const MAX_BROADCAST_CELLS = 1_000_000;
 
-/** Number of cells of a value: 1 for a scalar. */
+/** Rows and columns an array covers: for a reference its full bounds, also past its stored values. */
+export function extentOf(value: FormulaArray): { rows: number; cols: number } {
+  const ref = value.ref;
+  if (ref === null) return { rows: value.rows, cols: value.cols };
+  return { rows: ref.endRow - ref.startRow + 1, cols: ref.endCol - ref.startCol + 1 };
+}
+
+/** Number of cells of a value: 1 for a scalar, the full bounds for a reference. */
 export function cellCount(value: FormulaValue): number {
-  return isArray(value) ? value.rows * value.cols : 1;
+  if (!isArray(value)) return 1;
+  const { rows, cols } = extentOf(value);
+  return rows * cols;
+}
+
+/**
+ * Rows and columns a value adds to a broadcast result: a reference its bounds, except that one
+ * running to the last row (a whole column, `A5:A1048576`) or column adds only the used part.
+ */
+function broadcastExtent(value: FormulaArray): { rows: number; cols: number } {
+  const ref = value.ref;
+  const extent = extentOf(value);
+  if (ref === null) return extent;
+  return {
+    rows: ref.endRow === MAX_ROW ? value.rows : extent.rows,
+    cols: ref.endCol === MAX_COL ? value.cols : extent.cols,
+  };
 }
 
 /**
@@ -403,20 +427,23 @@ export function broadcastShape(values: readonly FormulaValue[]): { rows: number;
   let cols = 1;
   let any = false;
   for (const value of values) {
-    if (!isArray(value) || value.rows * value.cols <= 1) continue;
+    if (!isArray(value) || cellCount(value) <= 1) continue;
     any = true;
-    if (value.rows > rows) rows = value.rows;
-    if (value.cols > cols) cols = value.cols;
+    const extent = broadcastExtent(value);
+    if (extent.rows > rows) rows = extent.rows;
+    if (extent.cols > cols) cols = extent.cols;
   }
   return any ? { rows, cols } : null;
 }
 
 function elementAt(value: FormulaValue, row: number, col: number): FormulaScalar {
   if (!isArray(value)) return value;
-  if (value.rows === 0 || value.cols === 0) return null;
-  const r = value.rows === 1 ? 0 : row;
-  const c = value.cols === 1 ? 0 : col;
-  if (r >= value.rows || c >= value.cols) return ERR.NA;
+  const extent = extentOf(value);
+  if (extent.rows === 0 || extent.cols === 0) return null;
+  const r = extent.rows === 1 ? 0 : row;
+  const c = extent.cols === 1 ? 0 : col;
+  if (r >= extent.rows || c >= extent.cols) return ERR.NA;
+  if (r >= value.rows || c >= value.cols) return null; // inside a reference, after its stored values
   return (value.values[r] as FormulaScalar[])[c] as FormulaScalar;
 }
 
@@ -428,7 +455,9 @@ function elementAt(value: FormulaValue, row: number, col: number): FormulaScalar
  * Otherwise the result is a computed array as tall and as wide as the
  * largest value: a single row is repeated down, a single column is repeated
  * across, a single cell everywhere, and a position outside a smaller array
- * reads `#N/A`. An array without cells reads as one blank.
+ * reads `#N/A`. A reference has the size of its bounds and reads blank
+ * where its stored values end; one that runs to the last row or column of
+ * the sheet counts only the used part of it. An array without cells reads as one blank.
  *
  * `fn` receives one scalar per value. The list it receives is reused
  * between calls: read it, do not keep it. Errors are not filtered out, so

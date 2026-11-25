@@ -49,6 +49,12 @@ export interface CellMutation extends SheetCellRef {
   reason: "edit" | "rewrite";
   before: RawCell;
   after: RawCell;
+  /**
+   * For an edit: what the cell's element held besides `before` (rich text,
+   * cell metadata, extensions) as self-contained `<c>` markup, or null when
+   * nothing. Read it while the listener runs; the element changes after that.
+   */
+  beforeMarkup?: () => string | null;
 }
 
 export type CellMutationListener = (mutation: CellMutation) => void;
@@ -98,8 +104,11 @@ export interface WorkbookInternals {
    * Replaces value, formula and style of a cell without calling the mutation
    * listeners. Cells that depend on it become out of date, as after an edit.
    * A formula is not validated; the value is kept as its cached result.
+   * `markup` (from {@link CellMutation.beforeMarkup}) gives the cell back
+   * what its element held besides that content; markup that cannot be read
+   * is ignored.
    */
-  writeRawCell(sheet: SheetId, address: CellAddress, cell: RawCell): void;
+  writeRawCell(sheet: SheetId, address: CellAddress, cell: RawCell, markup?: string | null): void;
   /**
    * Registers a listener that runs after every cell edit, once per cell whose
    * value, formula or style changed. Returns the function that removes it.

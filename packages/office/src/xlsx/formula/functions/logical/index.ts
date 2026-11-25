@@ -12,10 +12,14 @@
  * - SWITCH(expression, value1, result1, ..., [default]): the result of the
  *   first value equal to the expression (text compares without regard to
  *   case, a number never equals text); otherwise the default, or `#N/A`.
+ *   An array expression or value is matched element by element.
+ * - IFERROR and IFNA take each replacement from the matching position of an
+ *   array fallback.
  */
 
 import type { FormulaAst, FormulaScalar, FormulaValue, FunctionContext, FunctionRegistry } from "../../../../api/formula.js";
-import { ERR, cellCount, isArray, isError, mapValue, toBoolean, toScalar, valuesEqual } from "../../coerce.js";
+import { ERR, broadcast, cellCount, isArray, isError, toBoolean, toScalar, valuesEqual } from "../../coerce.js";
+import { replaceErrors } from "../../eval/core-functions.js";
 import { registerFunction, registerLazyFunction } from "../../registry.js";
 
 function ifs(args: readonly FormulaValue[]): FormulaValue {
@@ -29,17 +33,7 @@ function ifs(args: readonly FormulaValue[]): FormulaValue {
 }
 
 function ifNa(args: readonly FormulaAst[], context: FunctionContext): FormulaValue {
-  const value = context.evaluate(args[0] as FormulaAst);
-  const isNa = (cell: FormulaScalar): boolean => isError(cell) && cell.code === "#N/A";
-  if (isArray(value) && cellCount(value) > 1) {
-    let fallback: FormulaScalar | undefined;
-    return mapValue(value, (cell) => {
-      if (!isNa(cell)) return cell;
-      fallback ??= toScalar(context.evaluate(args[1] as FormulaAst));
-      return fallback;
-    });
-  }
-  return isNa(toScalar(value)) ? context.evaluate(args[1] as FormulaAst) : value;
+  return replaceErrors(args, context, (cell) => isError(cell) && cell.code === "#N/A");
 }
 
 function xor(args: readonly FormulaValue[]): FormulaValue {
@@ -65,12 +59,35 @@ function xor(args: readonly FormulaValue[]): FormulaValue {
   return seen ? trues % 2 === 1 : ERR.VALUE;
 }
 
+/** SWITCH on scalars: the subject first, then the value and result pairs and an optional default. */
+function switchScalars(s: readonly FormulaScalar[]): FormulaScalar {
+  const subject = s[0] as FormulaScalar;
+  if (isError(subject)) return subject;
+  const pairs = Math.floor((s.length - 1) / 2);
+  for (let i = 0; i < pairs; i += 1) {
+    const candidate = s[1 + i * 2] as FormulaScalar;
+    if (isError(candidate)) return candidate;
+    if (valuesEqual(subject, candidate)) return s[2 + i * 2] as FormulaScalar;
+  }
+  return (s.length - 1) % 2 === 1 ? (s[s.length - 1] as FormulaScalar) : ERR.NA;
+}
+
+/** SWITCH element by element, once the expression or a value to match is an array: every argument is evaluated. */
+function switchArrays(subject: FormulaValue, args: readonly FormulaAst[], context: FunctionContext): FormulaValue {
+  const values = [subject, ...args.slice(1).map((node) => context.evaluate(node))];
+  return broadcast(values, switchScalars);
+}
+
 function switchFunction(args: readonly FormulaAst[], context: FunctionContext): FormulaValue {
-  const subject = toScalar(context.evaluate(args[0] as FormulaAst));
+  const evaluated = context.evaluate(args[0] as FormulaAst);
+  if (isArray(evaluated) && cellCount(evaluated) > 1) return switchArrays(evaluated, args, context);
+  const subject = toScalar(evaluated);
   if (isError(subject)) return subject;
   const pairs = Math.floor((args.length - 1) / 2);
   for (let i = 0; i < pairs; i += 1) {
-    const candidate = toScalar(context.evaluate(args[1 + i * 2] as FormulaAst));
+    const value = context.evaluate(args[1 + i * 2] as FormulaAst);
+    if (isArray(value) && cellCount(value) > 1) return switchArrays(evaluated, args, context);
+    const candidate = toScalar(value);
     if (isError(candidate)) return candidate;
     if (valuesEqual(subject, candidate)) return context.evaluate(args[2 + i * 2] as FormulaAst);
   }

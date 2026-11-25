@@ -87,6 +87,14 @@ describe("core functions", () => {
     expect(value("SUM(IF(A1:A3>1,B1:B3,0))")).toBe(50);
   });
 
+  it("takes each error's replacement from the matching position of an array fallback", () => {
+    expect((run("IFERROR({1,#N/A},{10,20})") as FormulaArray).values).toEqual([[1, 20]]);
+    expect((run("IFERROR({#N/A;2;#DIV/0!},{10;20;30})") as FormulaArray).values).toEqual([[10], [2], [30]]);
+    expect((run("IFERROR(B1:B4,{1;2;3;4})") as FormulaArray).values).toEqual([[10], [20], [30], [4]]);
+    expect((run("IFERROR({1,#N/A},5)") as FormulaArray).values).toEqual([[1, 5]]);
+    expect(value("SUM(IFERROR({1,#N/A},{10,20}))")).toBe(21);
+  });
+
   it("keeps a reference returned by IF a reference", () => {
     expect(run("IF(TRUE,A1:A3,0)")).toMatchObject({ rows: 3, ref: { sheet: "Sheet1", endRow: 2 } });
     expect(value("SUM(IF(TRUE,A1:A3,0))")).toBe(6);

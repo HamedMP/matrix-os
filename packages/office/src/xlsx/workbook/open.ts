@@ -11,7 +11,7 @@ import type { FormulaDeps, SheetModel, WorkbookState } from "./model.js";
 import { readNames } from "./names.js";
 import { MAX_NOTE_PARTS, notePartNames, readNotes } from "./notes.js";
 import { type ReadContext, readSheet } from "./sheet-read.js";
-import { SharedStrings } from "./shared-strings.js";
+import { SharedStrings, utf8Bytes } from "./shared-strings.js";
 import { readTables, tablePartNames } from "./tables.js";
 import { CONTENT_TYPE_STYLES, CONTENT_TYPE_WORKBOOK, CONTENT_TYPE_WORKSHEET, REL_STYLES, REL_WORKSHEET } from "./state.js";
 import { StyleTable } from "./styles.js";
@@ -79,7 +79,8 @@ export function buildState(pkg: OpcPackage, sources: Sources, deps: WorkbookDeps
   const date1904 = properties !== null && boolAttr(getAttr(properties, "date1904"), false);
   const source = sources.workbookPart;
   const stringsPartName = relatedPart(pkg, source, "sharedStrings");
-  const strings = new SharedStrings(parsePart(sources, stringsPartName));
+  const stringsText = stringsPartName === null ? undefined : sources.texts.get(partNameKey(stringsPartName));
+  const strings = new SharedStrings(parsePart(sources, stringsPartName), stringsText === undefined ? 0 : utf8Bytes(stringsText));
   const themeColors = readThemeColors(parsePart(sources, relatedPart(pkg, source, "theme")));
   const stylesPartName = relatedPart(pkg, source, "styles");
   const stylesDoc = parsePart(sources, stylesPartName) ?? parseXml(DEFAULT_STYLES);

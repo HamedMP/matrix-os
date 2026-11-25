@@ -4,6 +4,7 @@ import type { Cell, CellRange, CellStylePatch, CellValue } from "../../api/xlsx.
 import { OfficeError } from "../../errors.js";
 import { formatValue } from "../format/index.js";
 import { arrayRangeAt, invalidateArrayRanges } from "./arrays.js";
+import { cellMarkupText } from "./cell-markup.js";
 import { arrayFormulaRange, callsUnknownFunction } from "./calc-graph.js";
 import type { CellMutation, RawCell } from "./internals.js";
 import {
@@ -25,6 +26,7 @@ import {
   parseCached,
   sameValue,
 } from "./state.js";
+import { attachSheet } from "./sheet-read.js";
 import { renameTableColumn } from "./tables.js";
 import { applyStylePatch } from "./style-write.js";
 
@@ -71,6 +73,19 @@ export function ensureRow(sheet: SheetModel, index: number): RowRec {
   return row;
 }
 
+/**
+ * The markup of a cell as it is before an edit, read on demand while the
+ * listeners run. The element and flags are taken now: the edit changes the
+ * flags and may drop the cell, while the element stays until the sheet is
+ * written. A sheet held only as text is parsed first so that the cell has
+ * its element.
+ */
+function markupBefore(state: WorkbookState, sheet: SheetModel, cell: CellRec): () => string | null {
+  if (typeof cell.el === "number") attachSheet(sheet);
+  const source = { el: cell.el, dirty: cell.dirty, value: cell.value, formula: cell.formula };
+  return () => (source.el === null ? null : cellMarkupText(state.strings, attachSheet(sheet).doc.root, source));
+}
+
 function markEdited(state: WorkbookState, sheet: SheetModel, row: number, col: number): void {
   let edited = state.calc.edited.get(sheet);
   if (edited === undefined) {
@@ -102,6 +117,7 @@ export function writeCell(
   const contentChanged = formulaChanged || !sameValue(before.value, next.value);
   const styleChanged = before.styleId !== next.styleId;
   if (!contentChanged && !styleChanged) return false;
+  const beforeMarkup = reason === "edit" && state.listeners.length > 0 && cell !== undefined ? markupBefore(state, sheet, cell) : undefined;
   // The cell holds an array formula: whatever happens to it, the ranges of the sheet are looked up again.
   if (cell !== undefined && cell.extra !== null) invalidateArrayRanges(sheet);
   const wasCounted = before.value !== null || before.formula !== null;
@@ -165,17 +181,18 @@ export function writeCell(
       reason,
       before: { value: copyValue(before.value), formula: before.formula, styleId: before.styleId },
       after: { value: copyValue(next.value), formula: next.formula, styleId: next.styleId },
+      ...(beforeMarkup === undefined ? {} : { beforeMarkup }),
     });
   }
   return true;
 }
 
 /** True when the engine keeps the stored value of the formula instead of calculating it. */
-export function isUnsupportedFormula(state: WorkbookState, cell: CellRec, row: number, col: number): boolean {
+export function isUnsupportedFormula(state: WorkbookState, sheet: SheetModel, cell: CellRec, row: number, col: number): boolean {
   if (cell.formula === null) return false;
   if (cell.extra !== null && arrayFormulaRange(cell, row, col) === null) return true;
   const ast = parseCached(state, cell.formula);
-  return ast === null || callsUnknownFunction(state, ast);
+  return ast === null || callsUnknownFunction(state, ast, sheet);
 }
 
 export function cellView(state: WorkbookState, sheet: SheetModel, row: number, col: number): Cell {
@@ -193,7 +210,7 @@ export function cellView(state: WorkbookState, sheet: SheetModel, row: number, c
     styleId,
     display:
       cell.value === null ? "" : formatValue(cell.value, state.styles.numberFormat(styleId), { date1904: state.date1904 }),
-    formulaUnsupported: isUnsupportedFormula(state, cell, row, col),
+    formulaUnsupported: isUnsupportedFormula(state, sheet, cell, row, col),
     arrayRange,
     pendingChangeId,
   };

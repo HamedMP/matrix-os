@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createXlsx, openXlsx, parseA1, parseA1Range } from "../../../../packages/office/src/xlsx/index.js";
-import { at, codeOf, loadFixture, sheetId, storedRecords, valueAt } from "./helpers.js";
+import { MAX_CELL_FORMATS, MAX_STYLE_RECORDS } from "../../../../packages/office/src/xlsx/workbook/style-write.js";
+import { at, buildXlsx, codeOf, loadFixture, num, sheetId, storedRecords, valueAt } from "./helpers.js";
 
 describe("setStyle", () => {
   it("adds the fewest records that describe the new style and keeps existing ids", async () => {
@@ -128,6 +129,51 @@ describe("setStyle", () => {
     expect(codeOf(() => workbook.setStyle(id, range, { numberFormat: "" }))).toBe("invalid_argument");
     expect(codeOf(() => workbook.setStyle(id, parseA1Range("A:XFD"), { font: { bold: true } }))).toBe("limit_exceeded");
     expect(workbook.getSheet(id).dimensions).toBeNull();
+  });
+
+  describe("record limits", () => {
+    const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    const records = (xml: string, tag: string) => (xml.match(new RegExp(`<${tag}[ >/]`, "g")) ?? []).length;
+    const styles = (parts: { numFmts?: string; fonts: string; xfs: string }) =>
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="${MAIN}">${parts.numFmts ?? ""}` +
+      `<fonts count="0">${parts.fonts}</fonts>` +
+      '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
+      '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+      `<cellXfs count="0">${parts.xfs}</cellXfs></styleSheet>`;
+    const open = async (styleXml: string) => {
+      const workbook = await openXlsx(
+        await buildXlsx({ sheets: [{ name: "S", rows: `<row r="1">${num("A1", 1)}</row>` }], styles: styleXml }),
+      );
+      return { workbook, id: sheetId(workbook, "S") };
+    };
+    const xf = '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>';
+
+    it("refuses a new cell format at the limit without adding its font, fill, border or number format", async () => {
+      const { workbook, id } = await open(styles({ fonts: "<font><sz val=\"11\"/></font>", xfs: xf.repeat(MAX_CELL_FORMATS) }));
+      const patch = { font: { bold: true }, fill: { color: "#ff0000" }, border: { top: { style: "thin", color: null } }, numberFormat: "0.000" } as const;
+      expect(codeOf(() => workbook.setStyle(id, parseA1Range("A1"), patch))).toBe("limit_exceeded");
+      expect(at(workbook, "S", "A1").styleId).toBe(0);
+      const saved = await openXlsx(await workbook.save());
+      const xml = (await saved.package.getPartText("/xl/styles.xml")) as string;
+      expect(xml).not.toContain("<numFmts");
+      expect([records(xml, "font"), records(xml, "fill"), records(xml, "border"), records(xml, "xf")]).toEqual([1, 2, 1, MAX_CELL_FORMATS]);
+      // A patch that lands on an existing format still works.
+      workbook.setStyle(id, parseA1Range("A1"), { font: { bold: false } });
+      expect(at(workbook, "S", "A1").styleId).toBe(0);
+    });
+
+    it("refuses a new font, fill, border or number format past the record limit, before adding a cell format", async () => {
+      const fonts = Array.from({ length: MAX_STYLE_RECORDS }, (_, i) => `<font><name val="F${i}"/></font>`).join("");
+      const numFmts = `<numFmts count="${MAX_STYLE_RECORDS}">${Array.from({ length: MAX_STYLE_RECORDS }, (_, i) => `<numFmt numFmtId="${164 + i}" formatCode="0.${"0".repeat(1 + (i % 9))}&quot;u${i}&quot;"/>`).join("")}</numFmts>`;
+      const { workbook, id } = await open(styles({ numFmts, fonts, xfs: xf }));
+      expect(codeOf(() => workbook.setStyle(id, parseA1Range("A1"), { font: { bold: true }, fill: { color: "#00ff00" } }))).toBe("limit_exceeded");
+      expect(codeOf(() => workbook.setStyle(id, parseA1Range("A1"), { numberFormat: "0.0000000000" }))).toBe("limit_exceeded");
+      const xml = (await (await openXlsx(await workbook.save())).package.getPartText("/xl/styles.xml")) as string;
+      expect([records(xml, "font"), records(xml, "fill"), records(xml, "numFmt"), records(xml, "xf")]).toEqual([MAX_STYLE_RECORDS, 2, MAX_STYLE_RECORDS, 1]);
+      // Records that exist already can still be combined into a new cell format.
+      workbook.setStyle(id, parseA1Range("A1"), { numberFormat: '0.0"u0"' });
+      expect(at(workbook, "S", "A1").styleId).toBe(1);
+    });
   });
 });
 
