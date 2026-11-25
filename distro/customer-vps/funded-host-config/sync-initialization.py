@@ -48,10 +48,13 @@ def sync_initialization_baseline(repair, anchor, value, uid, gid):
     require(not any(SYNC_KEY.encode() in line for line in data.splitlines() if not line.lstrip().startswith(b'#')))
     if EPOCH_KEY in values:
         require(values[EPOCH_KEY] == str(identity['runtimeTokenEpoch']))
+    # Sync-only enrollment is a production flow (fixed app origin): a preview
+    # host, or one holding the preview pair, is deferred unchanged. The relay
+    # check reuses reconcile.py's reviewed pair (concatenated before this file).
     require(values.get('PLATFORM_INTERNAL_URL') in ('https://app.matrix-os.com', 'https://api.matrix-os.com'))
     relay = values.get('MATRIX_FUNDED_AI_RELAY_URL', '')
-    require(not relay or re.fullmatch(r'https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app', relay))
-    require(values.get('MATRIX_FUNDED_AI_PLATFORM_URL', '') in ('', 'https://app.matrix-os.com'))
+    require(not relay or reviewed_funded_pair(PRODUCTION_FUNDED_PLATFORM, relay))
+    require(values.get('MATRIX_FUNDED_AI_PLATFORM_URL', '') in ('', PRODUCTION_FUNDED_PLATFORM))
     return data, info
 
 

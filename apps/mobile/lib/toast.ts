@@ -2,14 +2,21 @@ import { useSyncExternalStore } from "react";
 
 import { successHaptic, warningHaptic } from "@/lib/haptics";
 
-export type ToastTone = "success" | "error";
+/** `progress` is for something still happening, such as a computer waking. */
+export type ToastTone = "success" | "error" | "progress";
 
-/** A short note at the top of the screen that goes away by itself. */
+/** A short note at the top of the screen that goes away by itself, unless it is persistent. */
 export interface Toast {
   /** Names this toast, so a timer started for it cannot hide a later one. */
   id: number;
   message: string;
   tone: ToastTone;
+  /** Stays until dismissed with `dismissToast`, or replaced by a later toast. */
+  persistent: boolean;
+}
+
+export interface ShowToastOptions {
+  persistent?: boolean;
 }
 
 /** How long a toast stays, fading in and out included. */
@@ -26,7 +33,7 @@ let listeners: readonly (() => void)[] = [];
 
 function publish(next: Toast | null) {
   if (expiry) clearTimeout(expiry);
-  expiry = next ? setTimeout(() => dismissToast(next.id), TOAST_DURATION_MS) : null;
+  expiry = next && !next.persistent ? setTimeout(() => dismissToast(next.id), TOAST_DURATION_MS) : null;
   current = next;
   for (const listener of listeners) listener();
 }
@@ -44,14 +51,16 @@ const currentToast = () => current;
 
 /**
  * Shows `message` in the toast host mounted at the root of the app, with the
- * haptic that matches its tone. Without a host, nothing is shown or played.
+ * haptic that matches its tone (none for `progress`). Without a host, nothing
+ * is shown or played. Returns the toast's id, or null when nothing was shown.
  */
-export function showToast(message: string, tone: ToastTone = "success"): void {
-  if (listeners.length === 0) return;
+export function showToast(message: string, tone: ToastTone = "success", options: ShowToastOptions = {}): number | null {
+  if (listeners.length === 0) return null;
   lastId += 1;
-  publish({ id: lastId, message, tone });
+  publish({ id: lastId, message, tone, persistent: options.persistent === true });
   if (tone === "success") successHaptic();
-  else warningHaptic();
+  else if (tone === "error") warningHaptic();
+  return lastId;
 }
 
 /** Hides the toast named `id`, unless a later one has replaced it. */

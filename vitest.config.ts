@@ -80,6 +80,8 @@ export default defineConfig({
       "@matrix-os/contracts/ai-usage": path.resolve(__dirname, "packages/contracts/src/ai-usage/index.ts"),
       "@matrix-os/contracts/local-chat-import": path.resolve(__dirname, "packages/contracts/src/local-chat-import/index.ts"),
       "@matrix-os/contracts/routine-destination": path.resolve(__dirname, "packages/contracts/src/routine-destination.ts"),
+      "@matrix-os/contracts/runtime-lifecycle": path.resolve(__dirname, "packages/contracts/src/runtime-lifecycle.ts"),
+      "@matrix-os/contracts/runtime-wake": path.resolve(__dirname, "packages/contracts/src/runtime-wake.ts"),
       "@matrix-os/contracts/routine-cli": path.resolve(__dirname, "packages/contracts/src/routine-cli.ts"),
       "@matrix-os/contracts/bots": path.resolve(__dirname, "packages/contracts/src/bots/index.ts"),
       "@matrix-os/contracts/keyboard-shortcuts": path.resolve(__dirname, "packages/contracts/src/keyboard-shortcuts.ts"),
@@ -160,6 +162,7 @@ export default defineConfig({
         "packages/kernel/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
         "packages/gateway/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
         "packages/platform/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+        "packages/hostd/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
         "desktop/src/renderer/src/**/*.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
       ],
       exclude: [

@@ -10,7 +10,7 @@ const load = () => import(pathToFileURL(join(root, 'scripts/typecheck.mjs')).hre
 const configs = [
   'packages/observability/tsconfig.json', 'packages/integrations-mcp/tsconfig.json',
   'packages/gateway/tsconfig.json', 'packages/platform/tsconfig.typecheck.json',
-  'packages/proxy/tsconfig.json', 'packages/edge-router/tsconfig.json',
+  'packages/proxy/tsconfig.json', 'packages/hostd/tsconfig.json', 'packages/edge-router/tsconfig.json',
   'packages/pr-evidence-worker/tsconfig.json',
   'desktop/tsconfig.json', 'desktop/tsconfig.node.json',
 ];
@@ -35,8 +35,8 @@ describe('native standalone typecheck', () => {
     const { runTypechecks } = await load();
     const argsByProject: string[][] = [];
     runTypechecks({ root, nativeEntry: '/compiler/bin/tsc', run: (_binary: string, args: string[]) => { argsByProject.push(args); return { status: 0 }; } });
-    expect(argsByProject.slice(0, 5).map(args => args.slice(args.indexOf('--types'), args.indexOf('--types') + 2))).toEqual(Array(5).fill(['--types', '*']));
-    expect(argsByProject.slice(5).every(args => !args.includes('--types'))).toBe(true);
+    expect(argsByProject.slice(0, 6).map(args => args.slice(args.indexOf('--types'), args.indexOf('--types') + 2))).toEqual(Array(6).fill(['--types', '*']));
+    expect(argsByProject.slice(6).every(args => !args.includes('--types'))).toBe(true);
     expect(argsByProject.every(args => args.includes('--noUncheckedSideEffectImports') && args[args.indexOf('--noUncheckedSideEffectImports') + 1] === 'false')).toBe(true);
     expect(JSON.parse(readFileSync(join(root, 'desktop/tsconfig.json'), 'utf8')).compilerOptions.types).toEqual([]);
     expect(JSON.parse(readFileSync(join(root, 'packages/edge-router/tsconfig.json'), 'utf8')).compilerOptions.types).toEqual(['@cloudflare/workers-types']);

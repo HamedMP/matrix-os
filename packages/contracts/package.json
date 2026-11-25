@@ -31,6 +31,8 @@
     "./ai-usage": "./src/ai-usage/index.ts",
     "./ai-usage/node": "./src/ai-usage/node.ts",
     "./routine-destination": "./src/routine-destination.ts",
+    "./runtime-lifecycle": "./src/runtime-lifecycle.ts",
+    "./runtime-wake": "./src/runtime-wake.ts",
     "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts"
   },
   "imports": {
@@ -158,7 +160,8 @@
     "#routine-chat-origin": "./src/routine-chat-origin.ts",
     "#routine-chat-receipt": "./src/routine-chat-receipt.ts",
     "#routine-origin-proof": "./src/routine-origin-proof.ts",
-    "#runtime-substrate": "./src/runtime-substrate.ts"
+    "#runtime-substrate": "./src/runtime-substrate.ts",
+    "#hostd-api": "./src/hostd-api.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

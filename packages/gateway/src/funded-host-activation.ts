@@ -6,6 +6,7 @@ import {
   FundedHostActivationRequestSchema,
   FundedHostActivationResponseSchema,
   fundedHostActivationRevisionInput,
+  fundedPlatformOriginMatchesGuest,
   type FundedHostActivationRequest,
   type FundedHostActivationResponse,
 } from "@matrix-os/contracts";
@@ -133,6 +134,11 @@ export function createPlatformFundedAiHostConfigRoutes(options: {
     if (identity.handle !== env.MATRIX_HANDLE || identity.machineId !== env.MATRIX_MACHINE_ID
       || identity.ownerId !== env.MATRIX_CLERK_USER_ID || identity.runtimeSlot !== env.MATRIX_RUNTIME_SLOT
       || (env.MATRIX_RUNTIME_TOKEN_EPOCH !== undefined && String(identity.runtimeTokenEpoch) !== env.MATRIX_RUNTIME_TOKEN_EPOCH)) {
+      return c.json({ error: "Invalid request" }, 400);
+    }
+    // Only the guest's own platform may configure it: a reviewed pair from
+    // another environment (a preview proof sent to a production guest) is refused.
+    if (!fundedPlatformOriginMatchesGuest(configuration.platformOrigin, env.PLATFORM_INTERNAL_URL)) {
       return c.json({ error: "Invalid request" }, 400);
     }
     if (applying || !options.isIdle()) return c.json({ error: "Computer is busy" }, 409);

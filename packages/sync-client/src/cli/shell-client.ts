@@ -12,6 +12,14 @@ import {
   type RichPasteUploadClient,
 } from "./rich-paste.js";
 import { ShellServerFrameSchema } from "./shell-server-frame-schema.js";
+import {
+  createRuntimeWakeRetryPolicy,
+  RUNTIME_WAKE_ERROR_CODES,
+  RuntimeWakeError,
+  type RuntimeWakeRetryPolicy,
+} from "@matrix-os/contracts/runtime-wake";
+import { ignoreAbandonedSocketError, readUpgradeRefusalWake } from "./upgrade-refusal.js";
+import { fetchWithWakeRetry } from "../lib/runtime-wake-fetch.js";
 
 export interface ShellClientOptions {
   gatewayUrl: string;
@@ -56,11 +64,14 @@ export interface ShellRunResult {
   durationMs: number;
 }
 
+/** `unexpected-response` is what the `ws` package emits when an upgrade is answered without a 101. */
+type AttachWebSocketEvent = "open" | "message" | "close" | "error" | "unexpected-response";
+
 interface AttachWebSocket {
   send(data: string): void;
   close(): void;
-  on(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void): AttachWebSocket;
-  off?(event: "open" | "message" | "close" | "error", listener: (...args: unknown[]) => void): AttachWebSocket;
+  on(event: AttachWebSocketEvent, listener: (...args: unknown[]) => void): AttachWebSocket;
+  off?(event: AttachWebSocketEvent, listener: (...args: unknown[]) => void): AttachWebSocket;
 }
 
 export interface ShellAttachOptions {
@@ -520,12 +531,11 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
 
     let res: Response;
     try {
-      res = await fetchImpl(`${base}${path}`, {
-        ...init,
-        headers,
-        signal: AbortSignal.timeout(requestTimeoutMs),
-      });
+      res = await fetchWithWakeRetry(fetchImpl, `${base}${path}`, { ...init, headers }, requestTimeoutMs);
     } catch (err: unknown) {
+      if (err instanceof RuntimeWakeError) {
+        throw Object.assign(new Error("Request failed"), { code: err.code });
+      }
       throw Object.assign(new Error("Request failed"), {
         code: err instanceof DOMException && (err.name === "AbortError" || err.name === "TimeoutError")
           ? "request_timeout"
@@ -739,7 +749,10 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           onMessage: (chunk: unknown) => void;
           onClose: () => void;
           onError: (err: unknown) => void;
+          onUnexpectedResponse: (req: unknown, res: unknown) => void;
         } | null = null;
+        // One wake budget per run of refused upgrades; reset once a socket attaches.
+        let wakePolicy: RuntimeWakeRetryPolicy | null = null;
         let socketOpen = false;
         let everAttached = false;
         let rawModeEnabled = false;
@@ -933,6 +946,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             currentSocketListeners.ws.off?.("message", currentSocketListeners.onMessage);
             currentSocketListeners.ws.off?.("close", currentSocketListeners.onClose);
             currentSocketListeners.ws.off?.("error", currentSocketListeners.onError);
+            currentSocketListeners.ws.off?.("unexpected-response", currentSocketListeners.onUnexpectedResponse);
           }
           currentSocketListeners = null;
           currentWs = null;
@@ -984,11 +998,44 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
             onError: (err: unknown) => {
               if (isCurrentSocket()) onError(err);
             },
+            onUnexpectedResponse: (req: unknown, res: unknown) => {
+              if (isCurrentSocket()) void onUpgradeRefused(req, res);
+            },
+          };
+          // A refused upgrade (e.g. 503 while the computer wakes) is retried
+          // within the shared wake budget instead of failing the attach.
+          const onUpgradeRefused = async (req: unknown, res: unknown) => {
+            clearTimeout(attachTimeout);
+            // The abandoned socket may still report a handshake error; never let it go unhandled.
+            ws.on("error", ignoreAbandonedSocketError);
+            const wake = await readUpgradeRefusalWake(req, res);
+            if (!isCurrentSocket()) return;
+            cleanupSocket();
+            if (wake) {
+              wakePolicy ??= createRuntimeWakeRetryPolicy({ idempotent: true });
+              const delay = wakePolicy.nextDelayMs(wake);
+              if (delay !== null) {
+                reconnectTimer = setTimeout(() => {
+                  reconnectTimer = undefined;
+                  connect();
+                }, delay);
+                reconnectTimer.unref?.();
+                return;
+              }
+            }
+            if (everAttached) {
+              scheduleReconnect();
+              return;
+            }
+            settle(() => reject(Object.assign(new Error("Request failed"), {
+              code: wake ? RUNTIME_WAKE_ERROR_CODES[wake.kind] : "attach_failed",
+            })));
           };
           ws.on("open", currentSocketListeners.onOpen);
           ws.on("message", currentSocketListeners.onMessage);
           ws.on("close", currentSocketListeners.onClose);
           ws.on("error", currentSocketListeners.onError);
+          ws.on("unexpected-response", currentSocketListeners.onUnexpectedResponse);
         };
         const scheduleReconnect = () => {
           if (settled) {
@@ -1305,6 +1352,7 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
           if (msg.type === "attached") {
             everAttached = true;
             reconnectAttempt = 0;
+            wakePolicy = null;
             markOpen();
             startHeartbeat();
             if (reconnecting) {

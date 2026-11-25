@@ -12,6 +12,7 @@ import {
   parseBillingOverrideRecord,
   type BillingEntitlement,
 } from './billing.js';
+import { entitlementForSlot } from './free-tier/free-entitlement.js';
 
 export async function resolveEffectiveBillingEntitlementForSlot(
   db: PlatformDB,
@@ -25,7 +26,7 @@ export async function resolveEffectiveBillingEntitlementForSlot(
   let stripeEntitlement = parseBillingEntitlementRecord(state.entitlement);
   if (runtimeSlot && !override) {
     const subscription = await getBillingSubscription(db, clerkUserId, runtimeSlot, now.toISOString());
-    stripeEntitlement = subscription
+    stripeEntitlement = entitlementForSlot(stripeEntitlement, runtimeSlot, subscription
       ? deriveStripeEntitlement({
         clerkUserId: subscription.clerkUserId,
         stripeCustomerId: subscription.stripeCustomerId,
@@ -38,7 +39,7 @@ export async function resolveEffectiveBillingEntitlementForSlot(
         runtimeCatalog: loadRuntimeCatalog(env),
         now,
       })
-      : null;
+      : null, now);
   }
   return computeEffectiveEntitlement({
     stripeEntitlement,

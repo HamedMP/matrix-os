@@ -126,6 +126,7 @@ OTA payloads.
 | `codeql.yml` | CodeQL code scanning (TypeScript and workflow definitions) | Weekly (Sunday 03:17 UTC), manual | No; findings land in Security → Code scanning |
 | `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on every non-draft PR head and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
+| `preview-host-bundle.yml` | Branch host bundle registered with the preview platform for staging tests | Manual (`ref`, optional `version`, `channel` none/dev); pushes to `e2e/**` with defaults | No; never targets production |
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
 | `ai-relay-cloud-run.yml` | Dedicated Matrix-funded AI relay deployment | Manual preview deployment | Required before funded AI can be enabled in a preview platform |
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release plus standalone binaries | Manual CLI release | Required for CLI publishing |

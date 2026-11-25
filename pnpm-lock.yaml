@@ -885,6 +885,31 @@ importers:
         specifier: ^4.49.1
         version: 4.95.0(@cloudflare/workers-types@4.20260530.1)(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
+  packages/hostd:
+    dependencies:
+      '@hono/node-server':
+        specifier: ^1.19.15
+        version: 1.19.17(hono@4.13.13)
+      hono:
+        specifier: ^4.12.25
+        version: 4.13.13
+      undici:
+        specifier: 7.30.1
+        version: 7.30.1
+      zod:
+        specifier: ^4.6.6
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: ^25.2.3
+        version: 25.5.0
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   packages/integrations-mcp:
     dependencies:
       '@matrix-os/contracts':
@@ -4092,12 +4117,6 @@ packages:
     resolution: {integrity: sha512-rc1hOQtjIWGxcxpb9aHAfLpIctjEnsDehj0DAiVfBlmT84uvR0uUtN2hEi/ecvWVjXUGf5qPF4qEgiLOx1YIMQ==}
     engines: {node: '>=6'}
     hasBin: true
-
-  '@hono/node-server@1.19.15':
-    resolution: {integrity: sha512-Za2ai6TLdKjUvnur+eenO6nuYYipVAEhyCAdaV8IRvmU9kK8crOZUSYvIXn72E4f8fJqyAbpcJuTsYYmZp9Deg==}
-    engines: {node: '>=18.14.1'}
-    peerDependencies:
-      hono: ^4
 
   '@hono/node-server@1.19.17':
     resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
@@ -20012,10 +20031,6 @@ snapshots:
       protobufjs: 7.6.5
       yargs: 17.7.2
 
-  '@hono/node-server@1.19.15(hono@4.13.13)':
-    dependencies:
-      hono: 4.13.13
-
   '@hono/node-server@1.19.17(hono@4.13.13)':
     dependencies:
       hono: 4.13.13
@@ -20857,7 +20872,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.0(zod@3.25.76)':
     dependencies:
-      '@hono/node-server': 1.19.15(hono@4.13.13)
+      '@hono/node-server': 1.19.17(hono@4.13.13)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5
@@ -20879,7 +20894,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.0(zod@4.6.7)':
     dependencies:
-      '@hono/node-server': 1.19.15(hono@4.13.13)
+      '@hono/node-server': 1.19.17(hono@4.13.13)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5
@@ -20901,7 +20916,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.32.1(zod@4.6.7)':
     dependencies:
-      '@hono/node-server': 1.19.15(hono@4.13.13)
+      '@hono/node-server': 1.19.17(hono@4.13.13)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5

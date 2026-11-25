@@ -1,12 +1,19 @@
 import { MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
 import { sql } from 'kysely';
 import type { PlatformDB } from './db.js';
+import { FREE_MANAGED_MODEL_ID } from './free-tier/funded-policy.js';
+import { freeMetalMachine } from './free-tier/free-runtime.js';
 
 /** Ordinary models are shared customer entitlement. Specialized routes such as
  * Jev and funded-native Opus retain their explicit per-runtime authorization. */
 export function ordinaryCustomerModelIds(globalModels: readonly string[]): string[] {
   return ['anthropic/claude-sonnet-5', ...MANAGED_WORKERS_AI_MODEL_IDS]
     .filter(model => globalModels.includes(model));
+}
+
+/** Free metal runtimes get the managed default model only (spec 2691 D2, ENG-520 P7). */
+export function freeRuntimeModelIds(globalModels: readonly string[]): string[] {
+  return [FREE_MANAGED_MODEL_ID].filter(model => globalModels.includes(model));
 }
 
 /** Run inside the global-policy transaction: a failed alignment must roll back
@@ -27,6 +34,8 @@ export async function alignCustomerOrdinaryModels(
       and machine.clerk_user_id = runtime.owner_id and machine.runtime_slot = runtime.runtime_slot
     where machine.provisioning_class = 'customer' and machine.activation_state = 'authorized'
       and machine.deleted_at is null
+      -- A free metal runtime keeps only the managed default model (ENG-520 P7).
+      and not ${freeMetalMachine('machine.machine_id')}
     for update of runtime
   ), invalid as (
     select machine_id from policies

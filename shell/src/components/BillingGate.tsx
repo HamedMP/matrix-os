@@ -3,11 +3,12 @@
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
-import { usePathname, useSearchParams } from "next/navigation";
+import { RedirectType, redirect, usePathname, useSearchParams } from "next/navigation";
 import { AlertCircleIcon, Loader2Icon } from "@/lib/hugeicons";
 import {
   getMatrixBillingSuccessRedirectUrl,
 } from "@/lib/billing";
+import { useJourney } from "@/hooks/useJourney";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -271,7 +272,7 @@ function BillingGateRoute({
   if (isAddComputerHandoff) {
     // Adding computers is an account feature; self-hosted documents have no ClerkProvider.
     // react-doctor-disable-next-line react-doctor/no-hydration-branch-on-browser-global -- both sides read the same MATRIX_SELF_HOSTED flag: the server from its env, the client from the data-matrix-self-hosted attribute the root layout renders from that env
-    return isSelfHostedRuntime() ? <SelfHostedUnavailable feature="Adding a computer" /> : <AddComputerOnboarding />;
+    return isSelfHostedRuntime() ? <SelfHostedUnavailable feature="Adding a computer" /> : <AddComputerHandoff />;
   }
   if (platformSessionActive) {
     return <>{children}</>;
@@ -284,6 +285,22 @@ function BillingGateRoute({
       {children}
     </BillingGateInner>
   );
+}
+
+/**
+ * The add-computer flow names and builds another computer. An owner whose
+ * first build failed has no computer to add to: send them to the onboarding
+ * root, where the journey shows provisioning_failed and its retry. If the
+ * journey is unavailable, the add-computer flow still renders.
+ */
+function AddComputerHandoff() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const { state, status } = useJourney();
+  // Signed-out owners get the add-computer flow's own sign-in redirect.
+  if (isLoaded && !isSignedIn) return <AddComputerOnboarding />;
+  if (status === "ready" && state?.phase === "provisioning_failed") redirect("/", RedirectType.replace);
+  if (!isLoaded || status === "loading") return <BillingStatusLoading />;
+  return <AddComputerOnboarding />;
 }
 
 function BillingGateInner({
