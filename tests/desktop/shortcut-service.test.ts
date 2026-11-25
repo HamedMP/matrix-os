@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShortcutOverrides } from "@matrix-os/contracts/keyboard-shortcuts";
-import { createShortcutService, RECORDING_GUARD_MS } from "@desktop/main/shortcuts/shortcut-service";
+import { createShortcutService, RECORDING_GUARD_MS, sanitizeOverrides } from "@desktop/main/shortcuts/shortcut-service";
 
 function fakeStore(initial: unknown = null) {
   const saved: ShortcutOverrides[] = [];
@@ -313,5 +313,16 @@ describe("shortcut service", () => {
     vi.advanceTimersByTime(RECORDING_GUARD_MS);
 
     expect(target.setIgnoreMenuShortcuts).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ENG-521: a key set on a Terminal window command may also be a main-window key; keeping one
+// must not drop the other when stored overrides are cleaned.
+describe("sanitizeOverrides scopes", () => {
+  it("keeps a key on one action per scope", () => {
+    const kept = sanitizeOverrides({ version: 1, overrides: {
+      "nav.palette": ["F7"], "terminal-window.split-right": ["F7"], "terminal-window.split-down": ["F7"],
+    } }, "mac");
+    expect(kept.overrides).toEqual({ "nav.palette": ["F7"], "terminal-window.split-right": ["F7"] });
   });
 });

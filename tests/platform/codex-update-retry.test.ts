@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { CODEX_VERIFIED_VERSION } from '../../packages/contracts/src/index.js';
 
 describe('managed Codex update recovery', () => {
-  it.each([[CODEX_VERIFIED_VERSION, true, false], ['0.163.0', true, false], ['0.163.0', false, false], ['0.163.0', true, true]] as const)('recovers %s without reinstall: recorded=%s custom global=%s', async (installedVersion, recorded, customGlobal) => {
+  it.each([[CODEX_VERIFIED_VERSION, true, false], ['0.172.0', true, false], ['0.172.0', false, false], ['0.172.0', true, true]] as const)('recovers %s without reinstall: recorded=%s custom global=%s', async (installedVersion, recorded, customGlobal) => {
     const root = await mkdtemp(join(tmpdir(), 'codex-update-retry-'));
     try {
       const opt = join(root, 'opt/matrix');
@@ -32,7 +32,7 @@ describe('managed Codex update recovery', () => {
       await writeFile(finalizers, '');
       await mkdir(join(app, 'skills/matrix'), { recursive: true });
       await writeFile(join(app, 'scripts/sync-matrix-agent-skills.sh'), '#!/bin/sh\nprintf "skills\\n" >> "$TEST_CODEX_FINALIZERS"\n', { mode: 0o755 });
-      await writeFile(codex, '#!/bin/sh\nprintf "codex-cli 0.156.1\\n"\n', { mode: 0o755 });
+      await writeFile(codex, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
       await writeFile(join(state, 'installed-tools'), recorded ? 'codex\n' : '');
       if (customGlobal) await writeFile(join(root, 'usr/local/bin/codex'), 'owner command\n', { mode: 0o755 });
       await writeFile(attempts, '');

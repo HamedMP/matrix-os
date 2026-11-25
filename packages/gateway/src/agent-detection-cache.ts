@@ -76,15 +76,19 @@ export function createDetectionCache<T>(options: {
  * Cheap identity for the probed executables. An absolute path is stat'ed so an
  * upgrade in place changes it. PATH-resolved commands have no stable file here.
  */
-export async function executableFingerprint(commands: readonly string[]): Promise<string | null> {
+export async function executableFingerprint(commands: readonly string[], optionalCommands: readonly string[] = []): Promise<string | null> {
   const parts: string[] = [];
-  for (const command of commands) {
+  for (const command of [...commands, ...optionalCommands]) {
     if (!isAbsolute(command)) { parts.push(`command:${command}`); continue; }
     try {
       const info = await stat(command);
       parts.push(`${command}:${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`);
     } catch (error: unknown) {
       if (!(error instanceof Error && "code" in error)) throw error;
+      if (error.code === "ENOENT" && optionalCommands.includes(command)) {
+        parts.push(`${command}:absent`);
+        continue;
+      }
       // Missing or unreadable: never serve a stale scan for it.
       return null;
     }

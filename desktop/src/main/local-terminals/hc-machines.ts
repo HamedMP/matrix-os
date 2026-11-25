@@ -6,7 +6,7 @@
 // options of its own; a `via` line comes only from ssh-command.ts.
 import { z } from "zod/v4";
 import {
-  LOCAL_MACHINE_NAME_PATTERN, LOCAL_MACHINES_MAX, LocalMachineStateSchema,
+  LOCAL_MACHINE_NAME_PATTERN, LOCAL_MACHINES_MAX, LocalMachineStateSchema, MachineCoreIdSchema,
   type LocalMachine, type LocalMachineAddFailure,
 } from "../../shared/local-terminals";
 import { HcCallError, type HcConnection } from "./hc-client";
@@ -22,6 +22,8 @@ const MachineSchema = z.object({
   target: z.string().max(1_024),
   state: z.string().max(32).optional().catch(undefined),
   temporary: z.boolean().optional().catch(false),
+  version: z.string().max(32).regex(/^[0-9A-Za-z.+-]*$/).optional().catch(undefined),
+  id: MachineCoreIdSchema.optional().catch(undefined),
 });
 
 function machineFrom(raw: unknown, fallbackState: LocalMachine["state"] = "connecting"): LocalMachine | null {
@@ -34,6 +36,8 @@ function machineFrom(raw: unknown, fallbackState: LocalMachine["state"] = "conne
     target: parsed.data.target.replace(UNSAFE, "").slice(0, 255),
     state: state.success ? state.data : fallbackState,
     temporary: parsed.data.temporary === true,
+    ...(parsed.data.version ? { version: parsed.data.version } : {}),
+    ...(parsed.data.id ? { coreId: parsed.data.id } : {}),
   };
 }
 

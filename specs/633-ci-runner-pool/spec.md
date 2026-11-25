@@ -35,8 +35,9 @@ single point of failure.
    the service stops the heartbeat.
 3. **Routing.** The `changes` job sends the four unit shards, Pattern Scan and
    both E2E lanes to `matrix-ci` when the run is a `main` push, merge-queue run
-   or same-repository PR, the heartbeat is under three minutes old and at least
-   four slots are idle. The seven jobs may queue within the four slots; no slot
+   or same-repository PR, the heartbeat was under three minutes old when the
+   run attempt started (GitHub resolves `vars` then, and the `changes` job may
+   queue for a hosted runner long after) and at least four slots are idle. The seven jobs may queue within the four slots; no slot
    runs two jobs concurrently. Otherwise unit/pattern jobs use `ubuntu-latest`
    and E2E uses `ubuntu-24.04`. Manual dispatches stay hosted because an
    exact-source refresh can check out a fork PR. Other lanes always stay hosted.

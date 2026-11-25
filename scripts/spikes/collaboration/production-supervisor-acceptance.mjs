@@ -19,10 +19,10 @@ const SUPERVISOR_START_TIMEOUT_MS = 30_000;
 // The gateway is executing this command, so its own restart must fire after
 // the signed response has been returned and the workflow's remote cleanup ran.
 const GATEWAY_REATTACH_DELAY_SECONDS = 45;
-const EXPECTED_PROFILE_DIGEST = "87a77417077059255deb56b73ee0c9881a2087f7c872e32c1c572d203fc4e52f";
+const EXPECTED_PROFILE_DIGEST = "a12c383c31f1e2dcfc76a676bc7caade0d2166d122575f81e4775210a7d4e722";
 const EXPECTED_PROFILE_ID = "scope-runtime-chat-v1";
 const EXPECTED_HARNESS_VERSION = "2.1.301";
-const EXPECTED_CODEX_VERSION = "0.162.1";
+const EXPECTED_CODEX_VERSION = "0.171.0";
 const EXPECTED_BOT_PROFILE_ID = "scope-runtime-bot-v1";
 // Pi profile version 2 pins a renewable 900000ms supervisor lease, an infinite
 // busy-unit lifetime and BindsTo/After the watchdog-protected supervisor.

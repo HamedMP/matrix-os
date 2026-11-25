@@ -25,6 +25,7 @@ import { useSidebarPrefs } from "./use-sidebar-prefs";
 import { filterRows, spacesInOrder, type SidebarFilter } from "./TerminalWindowSidebar";
 import { inOrder } from "./SidebarSpaces";
 import { useTerminalMachines } from "./use-terminal-machines";
+import { useTerminalWindowKeys } from "./use-terminal-window-keys";
 import {
   computerMachineId, localMachine, localRowKey, sshMachineId, terminalRowTarget, useTerminalStatus, type LocalTerminalFactsState,
 } from "./use-terminal-status";
@@ -55,6 +56,8 @@ export function useTerminalWindow() {
   // Each Cmd+F belongs to the terminal it was pressed on.
   const [find, setFind] = useState<{ request: number; key: string | null }>({ request: 0, key: null });
   const [pickerOpen, setPickerOpen] = useState(false);
+  // The overview of every terminal in the active space, in place of the panes.
+  const [overviewOpen, setOverviewOpen] = useState(false);
   const [renaming, setRenaming] = useState<{ key: string; name: string } | null>(null);
   const [closing, setClosing] = useState<{ key: string; name: string } | null>(null);
   // The last computer action that did not take effect, shown until the next one.
@@ -96,14 +99,15 @@ export function useTerminalWindow() {
   const { markSeen } = status;
 
   // Done since the person last looked: looking at it now counts, in this window and theirs elsewhere.
+  // The overview hides the selected terminal, so it is not looked at until the overview gives way.
   useEffect(() => {
-    if (!selectedRow || selectedRow.status !== "done" || selectedRow.seen) return;
+    if (overviewOpen || !selectedRow || selectedRow.status !== "done" || selectedRow.seen) return;
     if (document.visibilityState !== "visible" || !document.hasFocus()) return;
     markSeen(selectedRow.key);
-  }, [markSeen, selectedRow]);
+  }, [markSeen, overviewOpen, selectedRow]);
   useEffect(() => onEvent("window:focus-changed", ({ focused }) => {
-    if (focused && selectedRow?.status === "done" && !selectedRow.seen) markSeen(selectedRow.key);
-  }), [markSeen, selectedRow]);
+    if (focused && !overviewOpen && selectedRow?.status === "done" && !selectedRow.seen) markSeen(selectedRow.key);
+  }), [markSeen, overviewOpen, selectedRow]);
 
   const openLocal = useCallback((id: string, title?: string) => {
     localChoice.current += 1;
@@ -360,13 +364,17 @@ export function useTerminalWindow() {
 
   const run = useCallback((command: TerminalWindowCommand) => {
     switch (command.command) {
+      // Actions on a pane show the panes: the overview gives way so the result is in view.
       case "split-right": case "split-down": case "close-pane": case "zoom-pane":
+        setOverviewOpen(false);
         panes.run({ command: command.command });
         return;
       case "focus-pane": case "swap-pane":
+        setOverviewOpen(false);
         panes.run({ command: command.command, direction: command.direction });
         return;
       case "new-terminal": {
+        setOverviewOpen(false);
         // Cmd+T / Cmd+N start the terminal in the active space: in a project, beside one of its terminals
         // (same workspace and folder); on a machine, on that machine.
         const space = sidebar.prefs.filter;
@@ -386,7 +394,8 @@ export function useTerminalWindow() {
         return;
       }
       case "close-terminal":
-        // Cmd+W closes the focused pane, ending its terminal.
+        // Cmd+W closes the focused pane, ending its terminal; the pane comes into view first.
+        setOverviewOpen(false);
         if (selectedKey) requestClose(selectedKey);
         return;
       case "space": {
@@ -399,19 +408,24 @@ export function useTerminalWindow() {
       case "select": {
         // Cmd+1…9: that tab of the active space, in tab-bar order.
         const tab = shownTabs[command.index - 1];
-        if (tab) select(tab.key);
+        if (tab) { setOverviewOpen(false); select(tab.key); }
         return;
       }
-      case "next": step(1); return;
-      case "previous": step(-1); return;
-      case "next-tab": stepTab(1); return;
-      case "previous-tab": stepTab(-1); return;
+      case "next": setOverviewOpen(false); step(1); return;
+      case "previous": setOverviewOpen(false); step(-1); return;
+      case "next-tab": setOverviewOpen(false); stepTab(1); return;
+      case "previous-tab": setOverviewOpen(false); stepTab(-1); return;
       case "rename":
         if (selectedRow) setRenaming({ key: selectedRow.key, name: selectedRow.name });
         return;
       case "toggle-sidebar": sidebar.toggleRail(); return;
       case "picker": setPickerOpen(true); return;
-      case "find": setFind((current) => ({ request: current.request + 1, key: selectedKey })); return;
+      case "overview": setOverviewOpen((open) => !open); return;
+      case "find":
+        // Find searches the focused terminal, which the overview covers.
+        setOverviewOpen(false);
+        setFind((current) => ({ request: current.request + 1, key: selectedKey }));
+        return;
     }
   }, [chooseSpace, createCloud, createInSpace, createLocal, panes, requestClose, select, selectedKey, selectedRow, shownTabs, sidebar, spaces, step, stepTab, visibleRows]);
   // One listener for the window's life that runs the handler of the last commit: a shortcut pressed
@@ -420,15 +434,30 @@ export function useTerminalWindow() {
   useLayoutEffect(() => { latestRun.current = run; }, [run]);
   useEffect(() => onEvent("terminal-window:command", (command) => latestRun.current(command)), []);
 
+  // What the person opens or starts themselves is shown: the overview gives way to it.
+  const show = useCallback((key: string) => { setOverviewOpen(false); select(key); }, [select]);
+  const showInTab = useCallback((key: string) => { setOverviewOpen(false); openInTab(key); }, [openInTab]);
+  const startLocal = useCallback((launch?: Parameters<typeof createLocal>[0]) => { setOverviewOpen(false); createLocal(launch); }, [createLocal]);
+  const startCloud = useCallback((slot: string) => { setOverviewOpen(false); createCloud(slot); }, [createCloud]);
+
+  const reservedKeys = useTerminalWindowKeys();
+
   return {
+    reservedKeys,
     machines, ready, cloud, local, here, sidebar, status, now, computerNotice, panes, ssh, openSshLogin, openMachineLogin, sshLoginFailed,
     localTerminal, endedLocal, selectedKey, selectedRow, order: order as TerminalSidebarEntry[],
     /** The find request for this terminal: only the one it was made on sees it. */
     findRequestFor: (key: string | null) => (key && find.key === key ? find.request : 0),
     picker: { open: pickerOpen, close: () => setPickerOpen(false) },
     renaming, setRenaming, closing, setClosing,
-    select, createLocal, createCloud, rename, close, requestClose, openInTab, paneButton,
+    select: show, createLocal: startLocal, createCloud: startCloud, rename, close, requestClose, openInTab: showInTab, paneButton,
     tabs: shownTabs, closeTab, chooseSpace,
+    overview: {
+      open: overviewOpen,
+      toggle: () => setOverviewOpen((open) => !open),
+      /** A card's click: show that terminal and leave the overview. */
+      openTerminal: show,
+    },
     /** The bar's +: a new terminal on the machine on screen. */
     newTerminal: () => run({ command: "new-terminal" }),
     dismissEndedLocal: () => { localChoice.current += 1; setLocalOpen(null); },

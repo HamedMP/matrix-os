@@ -12,6 +12,21 @@ metadata and channel pointers; R2 holds the bytes. Pipeline:
 /system-bundles/releases`). Background: `docs/dev/releases.md`. The platform
 service is a separate lane: `release-platform`.
 
+## Where to run it
+
+Run every command from the root of a Matrix OS checkout. The `git` and `gh`
+commands act on the current repository, and the scripts this skill calls live
+in it. Check before anything else, and stop if either line fails:
+
+```bash
+test "$(gh repo view --json nameWithOwner -q .nameWithOwner)" = "HamedMP/matrix-os"
+test -f .github/workflows/host-bundle-release.yml
+```
+
+If the skill was started elsewhere (for example through the `matrix-dev`
+plugin in another repository), ask where the Matrix OS checkout is and `cd`
+there first.
+
 ## Rules
 
 - Release only a `main` commit whose CI is green. Never dispatch a canary or

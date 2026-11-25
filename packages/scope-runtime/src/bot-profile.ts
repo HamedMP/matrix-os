@@ -20,6 +20,7 @@ import {
   SDK_DIRECTORY_TOKEN,
   WORKER_FILE_TOKEN,
 } from "./profile.js";
+import { SCOPE_RUNTIME_CODEX_EXECUTABLE } from "./worker-common.js";
 
 export const SCOPE_RUNTIME_BOT_PROFILE_ID = "scope-runtime-bot-v1";
 export const SCOPE_RUNTIME_BOT_PROFILE_VERSION = 2;
@@ -37,6 +38,7 @@ const CHAT_ONLY_MOUNTS: readonly string[] = [
   `BindReadOnlyPaths=${SDK_DIRECTORY_TOKEN}:/opt/matrix/scope-sdk/sdk`,
   `BindReadOnlyPaths=${NATIVE_DIRECTORY_TOKEN}:/opt/matrix/scope-sdk/native`,
   `BindReadOnlyPaths=${WORKER_FILE_TOKEN}:/opt/matrix/scope-runtime/worker.mjs`,
+  `BindReadOnlyPaths=-${SCOPE_RUNTIME_CODEX_EXECUTABLE}`,
 ];
 
 function deriveBotProperties(): readonly string[] {

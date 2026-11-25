@@ -5,7 +5,13 @@ import { normalizeTerminalShortcut, terminalBindings, type TerminalKeyboardPrefe
 // No DOM, React or Node imports.
 
 export type ShortcutPlatform = "mac" | "other";
-export type ShortcutGroup = "apps" | "navigation" | "tabs" | "chat" | "terminal";
+export type ShortcutGroup = "apps" | "navigation" | "tabs" | "chat" | "terminal" | "terminal-window";
+/**
+ * Where an action's keys apply. The Terminal window's actions run only while
+ * that window has focus, so they may share keys with main-window actions; a
+ * key is unique within its scope.
+ */
+export type ShortcutScope = "main" | "terminal-window";
 
 export const SHORTCUT_ACTION_IDS = [
   "app.next", "app.previous", "app.launcher", "app.close", "app.minimize", "app.reopen",
@@ -17,6 +23,13 @@ export const SHORTCUT_ACTION_IDS = [
   "tabs.new-context", "tabs.new", "tabs.close",
   "chat.new-thread", "chat.open",
   "terminal.focus", "terminal.window",
+  // The Terminal window's own commands (spec 2706).
+  "terminal-window.new", "terminal-window.close-pane", "terminal-window.hide-pane", "terminal-window.close-window",
+  "terminal-window.rename", "terminal-window.find", "terminal-window.picker", "terminal-window.overview",
+  "terminal-window.next", "terminal-window.previous", "terminal-window.next-tab", "terminal-window.previous-tab",
+  "terminal-window.split-right", "terminal-window.split-down", "terminal-window.zoom-pane", "terminal-window.toggle-sidebar",
+  "terminal-window.focus-left", "terminal-window.focus-right", "terminal-window.focus-up", "terminal-window.focus-down",
+  "terminal-window.swap-left", "terminal-window.swap-right", "terminal-window.swap-up", "terminal-window.swap-down",
 ] as const;
 
 export type ShortcutActionId = (typeof SHORTCUT_ACTION_IDS)[number];
@@ -56,6 +69,82 @@ function mod(rest: string): [readonly string[], readonly string[]] {
   return [[`Cmd+${rest}`], [`Ctrl+${rest}`]];
 }
 
+// The Terminal window's keys are Herdr's macOS ones. Elsewhere Ctrl alone stays
+// with the shell (Ctrl+W, Ctrl+D), so Cmd becomes Ctrl+Shift, and Cmd+Shift
+// becomes Ctrl+Alt+Shift.
+function herdr(...keys: string[]): [readonly string[], readonly string[]] {
+  const other = (key: string) => key.startsWith("Cmd+Shift+") ? `Ctrl+Alt+Shift+${key.slice(10)}`
+    : key.startsWith("Cmd+Alt+") ? `Ctrl+Alt+${key.slice(8)}`
+    : key.startsWith("Cmd+") ? `Ctrl+Shift+${key.slice(4)}`
+    : key;
+  return [keys, keys.map(other)];
+}
+
+const TERMINAL_WINDOW_DIRECTIONS = ["Left", "Right", "Up", "Down"] as const;
+
+const TERMINAL_WINDOW_ACTIONS: readonly ShortcutActionDefinition[] = [
+  action("terminal-window.new", "terminal-window", "New terminal", "Start a terminal in the active space.", ...herdr("Cmd+N", "Cmd+T")),
+  action("terminal-window.close-pane", "terminal-window", "Close pane", "Close the focused pane and end its terminal.", ...herdr("Cmd+W")),
+  action("terminal-window.hide-pane", "terminal-window", "Hide pane", "Take the focused pane off screen; its terminal keeps running.", ...herdr("Cmd+Shift+W")),
+  action("terminal-window.close-window", "terminal-window", "Close Terminal window", "Close the Terminal window.", ...herdr("Cmd+Alt+W")),
+  action("terminal-window.rename", "terminal-window", "Rename terminal", "Rename the focused terminal.", ["F2"], ["F2"]),
+  action("terminal-window.find", "terminal-window", "Find in terminal", "Search the focused terminal's output.", ...herdr("Cmd+F")),
+  action("terminal-window.picker", "terminal-window", "Go to terminal", "Find a terminal by name.", ...herdr("Cmd+P", "Cmd+Shift+P")),
+  action("terminal-window.overview", "terminal-window", "Overview", "Show every terminal in the active space.", ...herdr("Cmd+Shift+O")),
+  action("terminal-window.next", "terminal-window", "Next terminal", "Move to the next terminal in the list.", ...herdr("Cmd+]")),
+  action("terminal-window.previous", "terminal-window", "Previous terminal", "Move to the previous terminal in the list.", ...herdr("Cmd+[")),
+  action("terminal-window.next-tab", "terminal-window", "Next tab", "Move to the next tab in the active space.", ["Ctrl+Tab"], ["Ctrl+Tab"]),
+  action("terminal-window.previous-tab", "terminal-window", "Previous tab", "Move to the previous tab in the active space.", ["Ctrl+Shift+Tab"], ["Ctrl+Shift+Tab"]),
+  action("terminal-window.split-right", "terminal-window", "Split right", "Open a terminal beside the focused pane.", ...herdr("Cmd+D")),
+  action("terminal-window.split-down", "terminal-window", "Split down", "Open a terminal below the focused pane.", ...herdr("Cmd+Shift+D")),
+  action("terminal-window.zoom-pane", "terminal-window", "Zoom pane", "Make the focused pane fill the tab, or restore it.", ...herdr("Cmd+Shift+Enter")),
+  action("terminal-window.toggle-sidebar", "terminal-window", "Toggle sidebar", "Show or hide the Terminal window's sidebar.", ...herdr("Cmd+B")),
+  ...TERMINAL_WINDOW_DIRECTIONS.map((direction) => action(
+    `terminal-window.focus-${direction.toLowerCase()}` as ShortcutActionId, "terminal-window",
+    `Focus pane ${direction.toLowerCase()}`, `Move focus to the pane ${direction === "Up" ? "above" : direction === "Down" ? "below" : `on the ${direction.toLowerCase()}`}.`,
+    ...herdr(`Cmd+Alt+${direction}`),
+  )),
+  ...TERMINAL_WINDOW_DIRECTIONS.map((direction) => action(
+    `terminal-window.swap-${direction.toLowerCase()}` as ShortcutActionId, "terminal-window",
+    `Swap pane ${direction.toLowerCase()}`, `Swap the focused pane with the one ${direction === "Up" ? "above" : direction === "Down" ? "below" : `on the ${direction.toLowerCase()}`}.`,
+    [`Cmd+Alt+Shift+${direction}`], [`Ctrl+Alt+Shift+${direction}`],
+  )),
+];
+
+/** The actions the main window runs; the Terminal window's run only there. */
+export type MainShortcutActionId = Exclude<ShortcutActionId, `terminal-window.${string}`>;
+
+/** The scope an action's keys apply in. */
+export function shortcutScope(id: ShortcutActionId): ShortcutScope {
+  return id.startsWith("terminal-window.") ? "terminal-window" : "main";
+}
+
+export function isMainShortcutAction(id: ShortcutActionId): id is MainShortcutActionId {
+  return shortcutScope(id) === "main";
+}
+
+/**
+ * The Terminal window's fixed keys, not editable: Cmd+1…9 select a terminal of
+ * the space (Ctrl+Shift+1…9 elsewhere), Ctrl+0…9 switch space (0 is All).
+ */
+export function terminalWindowFixedKeys(platform: ShortcutPlatform): { select: string[]; space: string[] } {
+  return {
+    select: Array.from({ length: 9 }, (_, offset) => `${platform === "mac" ? "Cmd" : "Ctrl+Shift"}+${offset + 1}`),
+    space: Array.from({ length: 10 }, (_, digit) => `Ctrl+${digit}`),
+  };
+}
+
+/** What holds a binding as a fixed key in this action's scope, as a label, or null. */
+export function fixedKeyOwner(id: ShortcutActionId, binding: string, platform: ShortcutPlatform): string | null {
+  if (shortcutScope(id) !== "terminal-window") return null;
+  const fixed = terminalWindowFixedKeys(platform);
+  const select = fixed.select.indexOf(binding);
+  if (select >= 0) return `Select terminal ${select + 1}`;
+  const space = fixed.space.indexOf(binding);
+  if (space === 0) return "All spaces";
+  return space > 0 ? `Switch to space ${space}` : null;
+}
+
 const SWITCH_ACTIONS = ([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) =>
   action(`app.switch-${n}`, "apps", `Switch to app ${n}`, `Go to app ${n} in the taskbar.`, ...mod(String(n))),
 );
@@ -86,6 +175,7 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionDefinition[] = [
   action("chat.open", "chat", "Open Chat", "Open or focus the chat with Matrix.", ...mod("Shift+O")),
   action("terminal.focus", "terminal", "Terminal", "Open or focus the Terminal.", ["Cmd+Alt+T"], ["Ctrl+Alt+T"]),
   action("terminal.window", "terminal", "Terminal window", "Open the Terminal in its own window.", ["Cmd+Alt+Shift+T"], ["Ctrl+Alt+Shift+T"]),
+  ...TERMINAL_WINDOW_ACTIONS,
 ];
 
 const ACTION_ID_SET: ReadonlySet<string> = new Set(SHORTCUT_ACTION_IDS);
@@ -353,6 +443,7 @@ function storedOverrides(overrides: ShortcutOverrides | null): Record<string, st
 export function resolveShortcuts(overrides: ShortcutOverrides | null, platform: ShortcutPlatform): EffectiveShortcuts {
   const stored = storedOverrides(overrides);
   const effective = {} as EffectiveShortcuts;
+  // A key is claimed once per scope (scopedKey), so the Terminal window may reuse main-window keys.
   const claimed = new Set<string>();
   for (const { id } of SHORTCUT_ACTIONS) {
     const list = Object.hasOwn(stored, id) ? stored[id] : undefined;
@@ -360,25 +451,31 @@ export function resolveShortcuts(overrides: ShortcutOverrides | null, platform: 
     effective[id] = [];
     for (const binding of list) {
       if (effective[id].length >= MAX_BINDINGS_PER_ACTION) break;
-      if (claimed.has(binding) || !isValidBinding(binding, platform)) continue;
-      claimed.add(binding);
+      if (claimed.has(scopedKey(id, binding)) || !isValidBinding(binding, platform)) continue;
+      claimed.add(scopedKey(id, binding));
       effective[id].push(binding);
     }
   }
   for (const { id, defaults } of SHORTCUT_ACTIONS) {
     if (effective[id] !== undefined) continue;
-    effective[id] = defaults[platform].filter((binding) => !claimed.has(binding));
+    effective[id] = defaults[platform].filter((binding) => !claimed.has(scopedKey(id, binding)));
   }
   return effective;
 }
 
+function scopedKey(id: ShortcutActionId, binding: string): string {
+  return `${shortcutScope(id)} ${binding}`;
+}
+
+/** The other action in the same scope that holds this binding, if any. */
 export function findConflict(
   effective: EffectiveShortcuts,
   binding: string,
   except: ShortcutActionId,
 ): ShortcutActionId | null {
+  const scope = shortcutScope(except);
   for (const id of SHORTCUT_ACTION_IDS) {
-    if (id !== except && effective[id]?.includes(binding)) return id;
+    if (id !== except && shortcutScope(id) === scope && effective[id]?.includes(binding)) return id;
   }
   return null;
 }
@@ -390,8 +487,8 @@ export function validateOverrides(overrides: ShortcutOverrides, platform: Shortc
   for (const [id, list] of Object.entries(parsed.data.overrides)) {
     if (!isActionId(id) || list.length > MAX_BINDINGS_PER_ACTION) return false;
     for (const binding of list) {
-      if (seen.has(binding) || !isValidBinding(binding, platform)) return false;
-      seen.add(binding);
+      if (seen.has(scopedKey(id, binding)) || !isValidBinding(binding, platform)) return false;
+      seen.add(scopedKey(id, binding));
     }
   }
   return true;
@@ -411,7 +508,7 @@ export function addBinding(
   binding: string,
   platform: ShortcutPlatform,
 ): ShortcutOverrides {
-  if (!isValidBinding(binding, platform)) return overrides;
+  if (!isValidBinding(binding, platform) || fixedKeyOwner(id, binding, platform) !== null) return overrides;
   const effective = resolveShortcuts(overrides, platform);
   const current = effective[id];
   if (current.includes(binding) || current.length >= MAX_BINDINGS_PER_ACTION) return overrides;

@@ -24,6 +24,7 @@ function setup(authorized = true) {
     watch: vi.fn(async () => [{ id: "t1", title: "zsh", status: "done", statusAt: 1, turn: 2, seenTurn: null, finished: false }]),
     unwatch: vi.fn(),
     seen: vi.fn(async () => undefined),
+    read: vi.fn(async () => "$ npm test\n  12 passing"),
     remove: vi.fn(async () => undefined),
     machines: vi.fn(async () => [{ name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false }]),
     addMachine: vi.fn(async (): Promise<unknown> => ({ ok: true, machine: { name: "vps", target: "can@10.0.0.7", state: "connected", temporary: false } })),
@@ -32,6 +33,8 @@ function setup(authorized = true) {
     sshLogin: vi.fn(async (): Promise<string | null> => "t4"),
     tailscalePeers: vi.fn(async () => ({ status: "ready", peers: [] })),
     machineLogin: vi.fn(async (): Promise<string | null> => "t6"),
+    installMachine: vi.fn(async () => ({ ok: true })),
+    updateMachine: vi.fn(async (): Promise<unknown> => ({ ok: true })),
   };
   const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
   const authorize = vi.fn(() => authorized);
@@ -56,10 +59,12 @@ describe("local terminal IPC", () => {
       "local-terminal:detach": { attachId: 1 },
       "local-terminal:rename": { id: "t1", name: "review" },
       "local-terminal:put": { id: "t1", name: "shot.png", dataBase64: "aGk=" },
-      "local-terminal:watch": {}, "local-terminal:seen": { id: "t1" }, "local-terminal:remove": { id: "t1" },
+      "local-terminal:watch": {}, "local-terminal:seen": { id: "t1" }, "local-terminal:read": { id: "t1" }, "local-terminal:remove": { id: "t1" },
       "local-terminal:machines": {}, "local-terminal:machine-add": { target: "vps" }, "local-terminal:machine-remove": { name: "vps" },
       "local-terminal:machine-connect": { name: "vps" }, "local-terminal:ssh-login": { target: "vps", cols: 80, rows: 24 },
       "local-terminal:tailscale-peers": {}, "local-terminal:machine-login": { name: "vps", cols: 80, rows: 24 },
+      "local-terminal:machine-install": { target: "vps", name: "vps" },
+      "local-terminal:machine-update": { name: "vps", target: "me@vps" },
     };
     for (const channel of LOCAL_TERMINAL_INVOKE_CHANNELS) {
       await expect(invoke(channel, valid[channel]), channel).rejects.toThrow("invalid request");
@@ -109,6 +114,21 @@ describe("local terminal IPC", () => {
     expect(await invoke("local-terminal:ssh-login", { target: "can@10.0.0.7", cols: 80, rows: 24 })).toEqual({ status: "ready", id: "t4" });
     expect(host.sshLogin).toHaveBeenCalledWith("can@10.0.0.7", { cols: 80, rows: 24 }, undefined);
     await expect(invoke("local-terminal:ssh-login", { target: "-oProxyCommand=sh", cols: 80, rows: 24 })).rejects.toThrow("invalid request");
+  });
+
+  // Spec 2706 layer 8.
+  it("installs and updates a machine's core with validated fields only", async () => {
+    const { host, invoke } = setup();
+    expect(await invoke("local-terminal:machine-install", { target: "me@box", name: "box", ssh: { port: 2222 } })).toEqual({ ok: true });
+    expect(host.installMachine).toHaveBeenCalledWith({ target: "me@box", name: "box", ssh: { port: 2222 } });
+    await expect(invoke("local-terminal:machine-install", { target: "me@box", name: "box", via: "sh -c x" })).rejects.toThrow("invalid request");
+    await expect(invoke("local-terminal:machine-update", { name: "-x", target: "me@box" })).rejects.toThrow("invalid request");
+    // The update names the machine it was picked as: without its target it is refused.
+    await expect(invoke("local-terminal:machine-update", { name: "box" })).rejects.toThrow("invalid request");
+    expect(await invoke("local-terminal:machine-update", { name: "box", target: "me@box" })).toEqual({ ok: true });
+    expect(host.updateMachine).toHaveBeenCalledWith({ name: "box", target: "me@box" });
+    host.updateMachine.mockRejectedValueOnce(new Error("down"));
+    expect(await invoke("local-terminal:machine-update", { name: "box", target: "me@box" })).toEqual({ ok: false, reason: "unavailable" });
   });
 
   it("removes a finished terminal, and reports a refusal as not done", async () => {
@@ -195,6 +215,16 @@ describe("local terminal IPC", () => {
     host.input.mockReturnValueOnce(false);
     await expect(invoke("local-terminal:input", { attachId: 9, data: "ls" })).resolves.toEqual({ ok: false });
     await expect(invoke("local-terminal:attach", { id: "t1", cols: 80, rows: 24 })).resolves.toEqual({ ok: true, attachId: 5 });
+  });
+
+  // Spec 2706: the overview previews a terminal's screen; a failure is a fixed outcome, never the reason.
+  it("reads a terminal's screen for the overview, and reports a failure without its reason", async () => {
+    const { host, invoke } = setup();
+    expect(await invoke("local-terminal:read", { id: "vps/t4" })).toEqual({ ok: true, text: "$ npm test\n  12 passing" });
+    expect(host.read).toHaveBeenCalledWith("vps/t4");
+    await expect(invoke("local-terminal:read", { id: "../t4" })).rejects.toThrow("invalid request");
+    host.read.mockRejectedValueOnce(new Error("/Users/neo/secret refused"));
+    expect(await invoke("local-terminal:read", { id: "t1" })).toEqual({ ok: false });
   });
 
   // Fault detected: the renderer can launch an arbitrary program, escape home, or

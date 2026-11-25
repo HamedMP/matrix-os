@@ -10,6 +10,21 @@ Deploys the platform control plane to Cloud Run with
 different lane: use `release-matrix-stable`. Background: `docs/dev/releases.md`
 and `docs/platform/dev/deployment.md`.
 
+## Where to run it
+
+Run every command from the root of a Matrix OS checkout. The `git` and `gh`
+commands act on the current repository, and the scripts this skill calls live
+in it. Check before anything else, and stop if either line fails:
+
+```bash
+test "$(gh repo view --json nameWithOwner -q .nameWithOwner)" = "HamedMP/matrix-os"
+test -f .github/workflows/platform-cloud-run.yml
+```
+
+If the skill was started elsewhere (for example through the `matrix-dev`
+plugin in another repository), ask where the Matrix OS checkout is and `cd`
+there first.
+
 ## Rules
 
 - Deploy only reviewed, merged code. Production deploys only from `main`.

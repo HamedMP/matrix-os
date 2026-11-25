@@ -46,7 +46,7 @@ describe("Matrix Core MCP harness parity launch configs", () => {
     ["discovery", "read-only", "--tool-surface=custom-mcp-discovery"],
   ] as const)("gives Codex the scoped %s server through -c mcp_servers overrides", (scope, mode, surface) => {
     const launch = buildAgentLaunch({ agent: "codex", cwd: "/safe/project", runtimeHome: "/safe/home", prompt: "hello",
-      sandbox: { enabled: true, mode }, providerEventPath: "/safe/home/system/events.jsonl", matrixCoreMcp: { scope, token: TOKEN } });
+      sandbox: { enabled: true, mode }, providerEventPath: "/safe/home/system/events.jsonl", matrixCoreMcp: { scope, token: TOKEN } }, "0.162.1");
     expect(codexOverrides(launch.args)).toEqual([
       `mcp_servers.matrix-integrations.command="${LAUNCHER}"`,
       `mcp_servers.matrix-integrations.args=["--require-scoped-capability","${surface}","--harness=codex"]`,

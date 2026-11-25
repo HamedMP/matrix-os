@@ -63,10 +63,25 @@ export function useSshMachines() {
     return outcome;
   }, [refresh]);
 
+  // Machines whose core is being installed or updated, and the last that failed (spec 2706 layer 8).
+  const [coreBusy, setCoreBusy] = useState<string[]>([]);
+  const [coreFailed, setCoreFailed] = useState<string[]>([]);
+  const [coreChanged, setCoreChanged] = useState<string[]>([]);
+  // Machines whose core the app cannot update (a Windows target), from their last attempt.
+  const [coreUnsupported, setCoreUnsupported] = useState<string[]>([]);
+
   const remove = useCallback(async (name: string): Promise<boolean> => {
     let removed = false;
     try {
       removed = (await invoke("local-terminal:machine-remove", { name })).ok;
+      // A failure belongs to the machine it happened on, not to the next one that takes its name.
+      if (removed) {
+        // Every note about its core belongs to that machine, not to the next one that takes its name.
+        const forget = (current: string[]) => current.filter((entry) => entry !== name);
+        setCoreFailed(forget);
+        setCoreChanged(forget);
+        setCoreUnsupported(forget);
+      }
     } catch (error: unknown) {
       console.warn("[terminal-window] remove machine failed:", error instanceof Error ? error.name : "UnknownError");
     }
@@ -115,5 +130,37 @@ export function useSshMachines() {
     }
   }, []);
 
-  return { state, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers };
+  const coreJob = useCallback(async (name: string, job: () => Promise<{ ok: boolean; reason?: string }>): Promise<boolean> => {
+    setCoreBusy((current) => [...current.filter((entry) => entry !== name), name]);
+    let ok = false;
+    let changed = false;
+    let unsupported = false;
+    try {
+      const result = await job();
+      ok = result.ok;
+      changed = result.reason === "changed";
+      unsupported = result.reason === "unsupported";
+    } catch (error: unknown) {
+      console.warn("[terminal-window] machine core failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+    setCoreBusy((current) => current.filter((entry) => entry !== name));
+    // Each machine keeps its own failure until its own job succeeds.
+    setCoreFailed((current) => (ok ? current.filter((entry) => entry !== name) : [...current.filter((entry) => entry !== name), name]));
+    // The name now belongs to another machine than the one picked: nothing ran, and the list shows the new one.
+    setCoreChanged((current) => (changed ? [...current.filter((entry) => entry !== name), name] : current.filter((entry) => entry !== name)));
+    setCoreUnsupported((current) => (unsupported ? [...current.filter((entry) => entry !== name), name] : current.filter((entry) => entry !== name)));
+    await refresh();
+    return ok;
+  }, [refresh]);
+  /** Adds a machine with no core (or an old one), installing the app's core there. */
+  const install = useCallback((target: string, name: string, ssh?: SshOptions) => coreJob(name,
+    () => invoke("local-terminal:machine-install", { target, name, ...(ssh ? { ssh } : {}) })), [coreJob]);
+  /** Brings a machine's core to the app's version; its terminals keep running. */
+  /** Bound to the machine as listed (name and target), so a name reused meanwhile is refused. */
+  const update = useCallback((machine: LocalMachine) => coreJob(machine.name, () => invoke("local-terminal:machine-update", {
+    name: machine.name, target: machine.target,
+    ...(machine.coreId ? { coreId: machine.coreId } : {}), ...(machine.ssh ? { ssh: machine.ssh } : {}),
+  })), [coreJob]);
+
+  return { state, refresh, add, remove, connect, sshLogin, machineLogin, tailscalePeers, install, update, coreBusy, coreFailed, coreChanged, coreUnsupported };
 }

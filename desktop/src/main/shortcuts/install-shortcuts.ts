@@ -8,7 +8,7 @@ import type { LocalStore } from "../persistence/local-store";
 import { SHORTCUT_EVENTS, type ShortcutSnapshot } from "../../shared/shortcuts-ipc";
 import { createShortcutInputMatcher, type ShortcutInput } from "./input-matcher";
 import { isShortcutActionAvailable } from "./shortcut-availability";
-import { terminalWindowBindings } from "../platform/terminal-menu-items";
+import { terminalWindowKeys } from "../../shared/terminal-window";
 import { createShortcutService, toShortcutPlatform, type RecordingTarget, type ShortcutService } from "./shortcut-service";
 
 // Windows plus embedded app views; past this, new ones go without shortcuts.
@@ -128,7 +128,16 @@ export async function installShortcuts(deps: {
     contents.on("did-start-navigation", onNavigation);
   };
 
-  const terminalKeys = terminalWindowBindings(deps.platform === "darwin");
+  // Rebuilt only when the effective bindings change.
+  let terminalKeysFor: object | null = null;
+  let terminalKeys: ReadonlySet<string> = new Set();
+  const isTerminalWindowKey = (binding: string): boolean => {
+    if (terminalKeysFor !== effective) {
+      terminalKeys = terminalWindowKeys(effective, deps.platform === "darwin");
+      terminalKeysFor = effective;
+    }
+    return terminalKeys.has(binding);
+  };
   // Covers the main window, the Terminal window and every embedded app view.
   const matcher = createShortcutInputMatcher({
     effective: () => effective,
@@ -137,7 +146,7 @@ export async function installShortcuts(deps: {
     isAvailable: (id) => isShortcutActionAvailable(id, deps.platform),
     // The Terminal window keeps the keys of its own menu (spec 2706), as a Terminal keeps its profile's.
     isClaimed: (source, binding) => service.isTerminalClaimed(source, binding)
-      || (deps.terminalWindow()?.webContents === source && terminalKeys.has(binding)),
+      || (deps.terminalWindow()?.webContents === source && isTerminalWindowKey(binding)),
     run: deps.run,
   });
   const watchContents: ContentsCreatedListener = (_event, contents) => {

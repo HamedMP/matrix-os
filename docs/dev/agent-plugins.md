@@ -30,35 +30,22 @@ Start a new Codex session afterwards. To pick up a newer pstack, run `codex plug
 
 ## matrix-dev
 
-`matrix-dev` packages this repository's own workflow skills: `worktree-pr-monitor`, `monitor-stack-reviews`, `unblock-tickets`, `daily-update`, `release-notes`, and `wrap-up`. It lives in `dev/matrix-dev/` and is listed in the `matrix-os-dev` marketplace in `dev/`, which is separate from the customer marketplace at the repository root.
+`matrix-dev` packages this repository's own workflow skills: `worktree-pr-monitor`, `monitor-stack-reviews`, `unblock-tickets`, `daily-update`, `release-notes`, `release-matrix-stable`, `release-platform`, and `wrap-up`. It lives in `dev/matrix-dev/` and is listed in the `matrix-os-dev` marketplace in `dev/`, which is separate from the customer marketplace at the repository root.
 
 Inside a Matrix OS checkout you do not need the plugin: the same skills load from `.claude/skills/` (Claude Code) and `.agents/skills/` (Codex), for example `/wrap-up`. Install the plugin to use them from other repositories or to keep one self-updating copy. Plugin skills are namespaced, for example `/matrix-dev:wrap-up`. If the plugin is installed and you work in this checkout, both forms are listed; the unprefixed one is the checkout's own copy.
 
 ### Claude Code
 
-`.claude/settings.json` registers the `matrix-os-dev` marketplace with auto-update on, so in a trusted Matrix OS checkout one command installs the plugin for your user:
+Add the marketplace and install the plugin for your user:
 
 ```sh
+claude plugin marketplace add https://raw.githubusercontent.com/HamedMP/matrix-os/main/dev/.claude-plugin/marketplace.json
 claude plugin install matrix-dev@matrix-os-dev --scope user
 ```
 
-Claude Code's `marketplace add` command cannot point at a marketplace in a subdirectory. To install from outside this repository, add the marketplace to `~/.claude/settings.json` first, then run the install command above:
+`.claude/settings.json` declares the same marketplace with auto-update on, so in a trusted Matrix OS checkout an interactive `claude` session registers it for you and only the install command is needed. A marketplace you add by hand does not auto-update until you turn that on for it under `/plugin` > Marketplaces.
 
-```json
-{
-  "extraKnownMarketplaces": {
-    "matrix-os-dev": {
-      "source": {
-        "source": "github",
-        "repo": "HamedMP/matrix-os",
-        "path": "dev/.claude-plugin/marketplace.json",
-        "sparsePaths": ["dev"]
-      },
-      "autoUpdate": true
-    }
-  }
-}
-```
+The marketplace is fetched as one file and lists the plugin as the `dev/matrix-dev` folder of this repository. Keep both that way: Claude Code 2.1.331 could not install from, or update, a marketplace file addressed by a subdirectory path on a repository source.
 
 The plugin declares no version, so it tracks commits on `main`. With auto-update on, Claude Code refreshes it shortly after a session starts. To update now:
 

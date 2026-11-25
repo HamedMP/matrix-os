@@ -9,7 +9,9 @@ import {
   bindingFromKeyEvent,
   characterBindingFromKeyEvent,
   findConflict,
+  fixedKeyOwner,
   formatBinding,
+  shortcutScope,
   heldModifiers,
   isOverridden,
   removeBinding,
@@ -199,9 +201,37 @@ describe("resolveShortcuts", () => {
     }
   });
 
-  it.each(PLATFORMS)("has no binding on two actions by default on %s", (platform) => {
-    const all = Object.values(resolveShortcuts(null, platform)).flat();
-    expect(new Set(all).size).toBe(all.length);
+  it.each(PLATFORMS)("has no binding on two actions of one scope by default on %s", (platform) => {
+    const effective = resolveShortcuts(null, platform);
+    for (const scope of ["main", "terminal-window"] as const) {
+      const all = SHORTCUT_ACTION_IDS.filter((id) => shortcutScope(id) === scope).flatMap((id) => effective[id]);
+      expect(new Set(all).size, scope).toBe(all.length);
+    }
+  });
+
+  // Spec 2706: the Terminal window's commands are registry actions that apply only in that window,
+  // so they keep Herdr's keys even where the main window uses the same ones.
+  it("keeps the Terminal window's keys in a scope of their own", () => {
+    const effective = resolveShortcuts(null, "mac");
+    expect(effective["terminal-window.close-pane"]).toEqual(["Cmd+W"]);
+    expect(effective["tabs.close"]).toEqual(["Cmd+W"]);
+    expect(effective["terminal-window.next-tab"]).toEqual(["Ctrl+Tab"]);
+    expect(effective["app.next"]).toEqual(["Ctrl+Tab"]);
+    expect(effective["terminal-window.overview"]).toEqual(["Cmd+Shift+O"]);
+    expect(findConflict(effective, "Cmd+W", "terminal-window.split-right")).toBe("terminal-window.close-pane");
+    expect(findConflict(effective, "Cmd+W", "nav.palette")).toBe("tabs.close");
+    // Moving a key within the Terminal window takes it off that window's action only.
+    const moved = resolveShortcuts(addBinding(EMPTY_SHORTCUT_OVERRIDES, "terminal-window.split-right", "Cmd+W", "mac"), "mac");
+    expect(moved["terminal-window.split-right"]).toEqual(["Cmd+D", "Cmd+W"]);
+    expect(moved["terminal-window.close-pane"]).toEqual([]);
+    expect(moved["tabs.close"]).toEqual(["Cmd+W"]);
+    // Its fixed digits are never bound to an action; main-window actions may still use them.
+    expect(fixedKeyOwner("terminal-window.split-right", "Cmd+3", "mac")).toBe("Select terminal 3");
+    expect(fixedKeyOwner("terminal-window.split-right", "Ctrl+4", "other")).toBe("Switch to space 4");
+    expect(fixedKeyOwner("app.close", "Cmd+3", "mac")).toBeNull();
+    expect(addBinding(EMPTY_SHORTCUT_OVERRIDES, "terminal-window.split-right", "Cmd+3", "mac")).toBe(EMPTY_SHORTCUT_OVERRIDES);
+    // Elsewhere Ctrl alone stays with the shell.
+    expect(resolveShortcuts(null, "other")["terminal-window.split-right"]).toEqual(["Ctrl+Shift+D"]);
   });
 
   it("uses an override list, including an empty list for unbound", () => {

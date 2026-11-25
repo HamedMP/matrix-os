@@ -37,42 +37,18 @@ Links: <spec or PR, when available>
 
 ## Project Work Tracking and Review
 
-**Goal:** Make project work easy to track and review. These rules apply to every
-project chat, model, harness, and delegated agent. Read this root `AGENTS.md` at
-the start of project work and after compaction; `CLAUDE.md` points to the same
-file so the rules have one source of truth.
+These rules apply to every project chat, model, harness, and delegated agent. Read
+this root `AGENTS.md` at the start of project work and after compaction; `CLAUDE.md`
+is a symlink to it, so the rules have one source of truth.
 
-- **Use requester-assigned ENG tickets.** Follow the Linear Ticket Check above
-  to verify and reuse the task or stack ticket before implementation, PR
-  creation, and merge. Keep it in the requested project. Split independent
-  deliverables only when that helps planning; a stack may share one ticket.
-- **Link substantial changes to specs.** Keep the spec or plan in `specs/` and
-  link it from the ENG ticket and PR. Keep tickets brief: goal, essential
-  actions, completion check, and links; detailed context belongs in the spec.
-- **Suggest stakeholder approval.** Recommend review of substantial scope or
-  behavior changes by the affected product, design, engineering, or integration
-  owners. Record the recommendation and any existing approval in the ticket or
-  PR; a recommendation is not an additional approval gate when the requester
-  has already authorized the work or merge.
-- **Require live visual evidence for every affected surface.** Follow the
-  Live visual evidence gate below, including its runtime, screenshot,
-  recording, parity, and surface requirements. One surface cannot stand in for
-  another, and `N/A` needs architectural rationale and reviewer approval.
-- **Put the evidence in both the PR and Slack `#tech`.** Include the actual
-  captures or accessible capture links in the PR, post the same evidence with
-  the ENG ticket and PR links in the tech channel, and link its Slack permalink
-  back to the PR. State the exact commit/build, scenario, and any test bypass or
-  fixture limitations; redact credentials and private customer content.
-- **Keep evidence out of the repo.** Attach screenshots and recordings to the
-  PR body or a PR comment; never commit them. `docs/pr-evidence/` is a legacy
-  archive and takes no new files. Attach captures with
-  `scripts/pr-evidence upload <pr> <files...>` (guide: `docs/dev/pr-evidence.md`).
-  When an agent cannot upload, it keeps the
-  captures outside the repo and gives the developer their paths to attach.
-- **Do not claim visual qualification without evidence.** Mockups, automated
-  test results, or another surface's capture do not prove the affected running
-  surface. Missing runtime/device access is an explicit blocker to review and
-  merge readiness; continue unaffected work and obtain the missing evidence.
+- **Tickets**: follow the Linear Ticket Check above. Keep the ticket in the
+  requested project; split independent deliverables only when that helps planning.
+- **Specs and stakeholder review**: follow Spec Quality Gates below. Record the
+  recommendation and any existing approval in the ticket or PR; a recommendation
+  is not an additional approval gate when the requester has already authorized
+  the work or merge.
+- **Visual evidence**: follow the Live visual evidence gate under Code Review
+  Pipeline for every affected surface.
 
 ## Tech Stack
 
@@ -80,7 +56,7 @@ file so the rules have one source of truth.
 - **AI**: Claude Agent SDK V1 `query()` + `resume`, Opus 5
 - **Frontend**: Next.js 16 (`proxy.ts` replaces middleware, Turbopack, React Compiler, `cacheComponents`), React 19
 - **Backend**: Hono (HTTP/WS gateway + channel adapters)
-- **Database**: PostgreSQL via Kysely for platform, kernel durable state, social, app, and user data. Do not add alternative embedded databases or ORMs for new persistence.
+- **Database**: PostgreSQL via Kysely for platform, kernel durable state, social, app, and user data.
 - **Validation**: Zod 4 (`zod/v4` import)
 - **Testing**: Vitest, `@vitest/coverage-v8`
 - **Package Manager**: pnpm (install), bun (run scripts) -- NEVER npm for installs or scripts; release automation may invoke the npm CLI only for npm OIDC trusted publication
@@ -143,13 +119,13 @@ Exceptions go on or above the line (file-level for `large-file`): `// pattern-al
 - **Server-side fetches of user-controlled URLs must block SSRF**. Parse the URL, resolve DNS, and reject loopback, link-local, private, multicast, documentation, and internal ranges before calling `fetch()`.
 - **Server-side fetches of user-controlled URLs must reject redirects** unless each redirected URL is revalidated. Use `redirect: "error"` for preview/health checks to avoid redirect-based SSRF.
 - **DNS preflight is not DNS pinning**. If user-controlled server-side fetch remains hostname-based after validation, document the residual DNS-rebinding risk or use a dispatcher/agent that pins the resolved address.
-- **Never expose provider names or raw error messages to clients**. Log the real error server-side, return a generic message. This includes Postgres errors, Twilio/ElevenLabs/OpenAI errors, and filesystem paths.
+- **Never expose provider names or raw error messages to clients**. Log the real error server-side, return a generic message. This includes Postgres errors, Twilio/ElevenLabs/OpenAI errors, filesystem paths, and Zod `.issues`.
 
 ### Input Validation
 
 - **Use Hono `bodyLimit` middleware** on every mutating endpoint. Never check Content-Length after the body is already buffered.
 - **DELETE is a mutating endpoint**. It still needs `bodyLimit`, even when the route normally ignores request bodies.
-- **Validate and sanitize all user-supplied values** before using in file paths, SQL identifiers, or API URLs. Use `resolveWithinHome` for paths, `SAFE_SLUG` regex for identifiers.
+- **Validate and sanitize all user-supplied values** before using in file paths, SQL identifiers, or API URLs. Never `path.join()` unvalidated external input: use `resolveWithinHome` (gateway home paths) or `resolveWithinPrefix` (sync paths), and the `SAFE_SLUG` regex for identifiers.
 - **Validate URL path params and query params at the route boundary** with Zod schemas before calling services. This includes IDs embedded in paths (`nodeId`, `canvasId`), scope filters, cursors, limits, and search strings.
 - **Action endpoints need per-action payload schemas**. Use a Zod discriminated union keyed by `type`; do not accept a generic record and cast `action.payload as ...` in the service.
 - **No wildcard CORS** (`Access-Control-Allow-Origin: *`). Use explicit origin allowlist.
@@ -168,7 +144,7 @@ Exceptions go on or above the line (file-level for `large-file`): `// pattern-al
 ### Error Handling
 
 - **No bare `catch { return null }`**. Every catch must check error type -- DB connection failures and timeouts are not "not found."
-- **No `catch { }` (empty catch)**. At minimum, log the error.
+- **No `catch { }` (empty catch) or `.catch(() => {})`**. At minimum, log the error.
 - **Async store workflows must catch create/open/load failures at the orchestration boundary**. If a multi-step UI action creates data then opens/reloads it, set an error on any failed step and refresh summaries/cache when safe.
 - **Misconfiguration is not not-found**. Missing server dependencies such as `homePath`, registries, provider config, or database handles should return a generic 5xx/503-style error, not a 404 that looks like user data is missing.
 - **Do not throw raw `Response` objects from service/route helpers**. Use typed errors and one mapper so auth, validation, and server misconfiguration cannot masquerade as missing resources.
@@ -259,7 +235,7 @@ bun run docker:shell      # shell into container as matrixos user
 bun run docker:build      # full rebuild (no cache)
 ```
 
-**IMPORTANT**: Production Matrix OS is VPS-native per user. Do not use Docker Compose, image rebuilds, or rolling container restarts as the customer runtime deployment path.
+**IMPORTANT**: Production Matrix OS is VPS-native: one VPS per user with host systemd services. Do not use Docker Compose, image rebuilds, or rolling container restarts as the customer runtime deployment path.
 **IMPORTANT**: Always run `pnpm install` from the repo root after adding/removing dependencies to update `pnpm-lock.yaml`. Vercel deployments fail on stale lockfiles.
 **Native mobile shell**: Expo Go is not a supported runtime. Use the Expo dev client: rebuild/install with `pnpm --filter matrix-os-mobile exec expo run:ios --device <device-udid-or-name>` after native/plugin changes, then run Metro with `pnpm --filter matrix-os-mobile exec expo start --dev-client --host lan --clear`. Full prerequisites, Clerk redirect setup, and terminal validation live in `docs/dev/mobile-shell.md`.
 **`pnpm.packageExtensions` belongs in the root `package.json`, never `pnpm-workspace.yaml`**: with `enableGlobalVirtualStore` the workspace file's `packageExtensions:` block is silently ignored, so entries there never reach the installed tree. Packages link from outside the repo and cannot resolve dependencies they do not declare, which is why `eas build` (`expo config --json`), the Metro dev server, and the mobile Jest suite each need explicit edges. Read the "Workspace Gotchas" section of `docs/dev/mobile-shell.md` before debugging any of those three as if they were product bugs.
@@ -340,7 +316,6 @@ Production customer runtime ships as VPS-native host bundles. R2 stores immutabl
 - **Cloudflare overrides `Cache-Control`**: use `CDN-Cache-Control` header to control Cloudflare independently
 - **PostHog client traffic must stay first-party**: shell should send analytics through the same-origin `/relay` rewrite, not `/ingest`, `neo.matrix-os.com`, or direct `*.posthog.com` client hosts. Keep legacy `/ingest` rewrites only for already-shipped cached bundles.
 - **Shell replay kill switch is runtime-sensitive**: `POSTHOG_DISABLE_REPLAY=1` plus a `matrix-shell` restart disables shell replay without a rebuild; `NEXT_PUBLIC_POSTHOG_DISABLE_REPLAY` is build-time only. Keep `ph-no-capture` on terminal, chat, and file-browser surfaces, and do not enable shell console-log recording.
-- **Production is VPS-native only**: user-facing Matrix OS runs on one VPS per user with host systemd services. Do not use Docker image rebuilds, `docker compose`, or rolling container restarts as the production rollout path for customer runtime.
 - **No per-handle subdomains**: users reach their runtime through session-based routing on `app.matrix-os.com` (Clerk JWT -> customer VPS) or explicit `app.matrix-os.com/vm/<handle>` paths. `<handle>.matrix-os.com` URLs are not supported -- never generate, route, or assume them (`neo.matrix-os.com` is the PostHog proxy Worker, not a user). See `docs/dev/vps-deployment.md`.
 - **Pre-VPS billing/auth/settings shell changes need platform/app-shell deployment**: before a user has an active VPS, routes like `/auth/device`, `/sign-in`, `/sign-up`, `/runtime`, and the billing-locked Settings/Billing UI are served by the platform-owned `app.matrix-os.com` shell surface, not by a customer VPS host bundle. When changing `shell/` or `packages/platform/` code that affects CLI device signup, Clerk auth, runtime selection, checkout, billing plan/region selection, provisioning, or account/sign-out controls visible before VPS creation, merge the PR and redeploy the platform/app-shell service that serves `app.matrix-os.com`; then verify the no-VPS flow directly. If the agent is not running on the Godfather/control VPS or lacks platform deploy credentials, it must tell the user to run that platform/app-shell deployment there and explain that a host-bundle publish will not update this pre-VPS screen. Do not stop after publishing a host bundle unless the user already has a provisioned Matrix computer.
 - **Pre-VPS auth fallback assets must be platform-self-contained**: signed-out or no-VPS auth pages render before any customer runtime or shell asset route exists. Keep default-install cards, agent logos, and similar auth-fallback visuals inline or platform-served; do not depend on customer VPS or shell asset URLs there.
@@ -385,7 +360,7 @@ Full guide: `docs/dev/review-pipeline.md`. Use three structured passes, not line
 
 ### Pre-PR Checklist (mandatory)
 
-Verify the task or shared stack ticket and include its ID and URL in the PR body before opening the PR. Stacked PRs must also name/link their stack; no separate ticket is required per layer. See **Linear Ticket Check** above.
+Put the verified ticket in the PR body before opening the PR (see **Linear Ticket Check** above).
 
 ```bash
 bun run typecheck           # tsc --noEmit for all packages
@@ -409,19 +384,19 @@ https://github.com/millionco/react-doctor. CI runs this on the project dirs of c
 
 **Agent CLI matrix changes need cross-surface sync**: if you add, remove, or rename a supported coding agent, keep `packages/platform/src/developer-tools.ts`, `shell/src/components/terminal/terminal-agent-options.ts`, `shell/src/components/terminal/TerminalApp.tsx`, `distro/customer-vps/host-bin/matrix-install-tool-pack`, `tests/platform/agent-install-matrix.ts`, `.github/workflows/agent-install-smoke.yml`, and the user docs aligned. The scheduled smoke path currently exercises `npm,pnpm,bun,yarn`.
 
-**Live visual evidence (mandatory for frontend-facing changes)**: every PR that changes user-visible UI, visual styling, layout, frontend copy, app surfaces, or screenshots must include **screenshots and a short screen recording** of the changed state/journey from the live platform running that PR's current changes. Use a deployed PR preview or reviewed test/staging runtime; never deploy unreviewed changes to production just to collect evidence. Put the preview link, evidence, tested commit/version, and exact surface names in the PR body. Mockups, stale captures, or local-only captures do not satisfy this gate.
+**Live visual evidence (mandatory for frontend-facing changes)**: every PR that changes user-visible UI, visual styling, layout, frontend copy, app surfaces, or screenshots must include **screenshots and a short screen recording** of the changed state/journey from the live platform running that PR's current changes. Use a deployed PR preview or reviewed test/staging runtime; never deploy unreviewed changes to production just to collect evidence. Put the preview link, evidence, tested commit/version, scenario, exact surface names, and any test bypass or fixture limitations in the PR body; redact credentials and private customer content. Mockups, automated test results, stale or local-only captures, and another surface's capture do not satisfy this gate.
 
-- Capture every affected surface separately: **Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile**. When a change touches both Web Desktop and Electron Desktop, include evidence from both; apply the same rule to Web Mobile and Native Mobile. A feature affecting all five needs screenshots and recordings from all five. Use the surface matrix above; any `N/A` needs an architectural rationale and reviewer approval.
+- Capture every affected surface separately: **Web Canvas, Web Desktop, Electron Desktop, Web Mobile, and Native Mobile**. When a change touches both Web Desktop and Electron Desktop, include evidence from both; apply the same rule to Web Mobile and Native Mobile. A feature affecting all five needs screenshots and recordings from all five. Use the surface matrix in UX Guide above.
 - Compare equivalent states and actions across surfaces. Aim for the same visuals and user journey across Web Desktop/Electron Desktop and Web Mobile/Native Mobile, with only justified platform adaptations. Resolve unintended differences before review-readiness.
-- Share one concise message in the Slack **tech channel** with the Linear ticket, PR/preview links, and screenshots/recordings labeled by surface. Link its Slack permalink back to the PR. Verify the channel identity; if Slack access or the destination is unclear, ask the developer to identify the channel or post the prepared message. Missing live evidence or the Slack update must be reported as a review-readiness blocker.
-- Attach captures with `scripts/pr-evidence upload <pr> <files...>` (guide: `docs/dev/pr-evidence.md`), or link the Slack upload. Do not commit them under `docs/pr-evidence/` or anywhere else in the repo: git keeps every image in history for every clone, and a squash-merged PR still lands them on `main`.
-- If a required surface or live preview cannot be accessed, ask the developer to run it or provide the missing evidence. Local/browser tooling may help prepare validation, but the required live captures must be attached before treating the PR as review-ready.
+- Share one concise message in the Slack **tech channel** (`#tech`) with the Linear ticket, PR/preview links, and screenshots/recordings labeled by surface. Link its Slack permalink back to the PR. Verify the channel identity; if Slack access or the destination is unclear, ask the developer to identify the channel or post the prepared message. Missing live evidence or the Slack update must be reported as a review-readiness blocker.
+- Attach captures with `scripts/pr-evidence upload <pr> <files...>` (guide: `docs/dev/pr-evidence.md`), or link the Slack upload. Do not commit them anywhere in the repo: git keeps every image in history for every clone, and a squash-merged PR still lands them on `main`. `docs/pr-evidence/` is a legacy archive and takes no new files. An agent that cannot upload keeps the captures outside the repo and gives the developer their paths to attach.
+- If a required surface or live preview cannot be accessed, ask the developer to run it or provide the missing evidence. Local/browser tooling may help prepare validation, but the required live captures must be attached before treating the PR as review-ready. Missing runtime/device access is an explicit blocker to review and merge readiness; continue unaffected work meanwhile.
 
 **Mobile shell gates**: if a PR touches `apps/mobile/` or shared terminal/mobile shell behavior, follow `docs/dev/mobile-shell.md`. Minimum local gates: `pnpm --dir apps/mobile exec jest --runInBand`, `pnpm --dir apps/mobile exec tsc --noEmit`, the relevant `bun run test` shell/gateway suites listed in that doc, and real-device validation before treating the change as review-ready.
 
 ### Three Review Passes
 
-1. **Mechanical CLAUDE.md sweep**: Run `bun run check:patterns` and fix all violations. The scanner checks: bare catch, fetch without signal, sync file I/O, unbounded Map/Set. Warnings (bodyLimit, path ops, external headers) require manual verification.
+1. **Mechanical CLAUDE.md sweep**: Run `bun run check:patterns` and fix all violations (see the rule → enforcer table under Mandatory Code Patterns). Warnings (bodyLimit, Map/Set caps, path ops, external headers) require manual verification.
 
 2. **Trust-boundary sweep**: For each changed file, classify it (route handler, filesystem, database, WS/IPC) and apply the matching checklist from `docs/dev/review-pipeline.md`. Trace external input from entry to use.
 
@@ -485,7 +460,7 @@ Do not request review while still pushing commits. Either declare a review commi
 
 ### Stacked-PR Merge Safety (NON-NEGOTIABLE)
 
-**Use GitHub native stacks end to end.** Follow `docs/dev/stacked-prs.md`; use the official `gh stack` extension for stack membership, rebasing, publication and merge. Each layer references the shared Linear ticket and native stack; separate tickets per layer are unnecessary.
+Stack tooling and ticket rules are in **PR Size Limits** and **Linear Ticket Check** above.
 
 Learned from the 2026-07-13 merge cascade (PRs #932/#934/#935/#926/#933/#941/#945/#948:
 a raw `gh pr merge` loop merged children into parent branches instead of `main`, and
@@ -515,7 +490,7 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
 ### Hard Rules (never violate)
 
 - **All changes ship via PR from a manual `git worktree`** -- no direct commits to `main`, no exceptions. Create the worktree with `git worktree add -b <kebab-branch> ../<dir-name> origin/main` and do all work there. Applies to code AND docs.
-- **Standalone PRs require a verified task ticket; stacked PRs may share the stack ticket** -- link the relevant ticket before creation, merge, or auto-merge, and include the stack name/link for each layer. Never require a new ticket solely because it is another PR in the same stack. See **Linear Ticket Check** above.
+- **Every PR links a verified Linear ticket** before creation, merge, or auto-merge. See **Linear Ticket Check** above.
 - **Keep native PR stacks bounded** -- plan for about 5-6 PRs per stack; 10 is the hard maximum, including setup, docs, and rollout layers. Count before planning or adding layers. Consolidate closely related work within per-PR size limits or use sequential follow-on stacks after the previous stack merges. See `docs/dev/stacked-prs.md`.
 - **No PR merge until Greptile reports 5/5** on the current head, or on an earlier head that `node scripts/review/review-carryover.mjs check <pr>` accepts (exit 0) -- every finding must be fixed in the diff or explicitly deferred in the PR body with a linked follow-up issue. A review carries over only when the head is exactly the reviewed change replayed onto its new base: base merges, stack restacks, retargets after a parent lands, and message-only amends keep it; new PR work, conflict resolutions, moved edits, base edits next to the PR's lines, and retargets that pull parent commits into the PR need a fresh review (exit 1). Exit 3 means the check could not decide (GitHub, git, or tool failure): fix it and rerun instead of requesting a review. The Review Receipt workflow records each reviewed commit's base when Greptile reviews, so carry-over works across force-pushed restacks; `check` recomputes everything from git and fails closed on anything it cannot resolve. See `docs/dev/review-pipeline.md`.
 - **Merge approval is risk-tiered.** A trusted `5/5` (current head or accepted by the carry-over check) with Greptile's own `APPROVED` review on that same reviewed commit (Low/Medium risk) satisfies the required approval; restacks keep it without a fresh review. A `5/5` without Greptile's approval is High/Critical risk: report "needs human approval" and wait for a repository writer to approve. Agents never self-approve, never use admin bypass to skip approval, and never treat a merge request as approval of a High/Critical PR. Risk definitions and settings: `docs/dev/review-pipeline.md#risk-tiered-merge-approval`.
@@ -533,14 +508,7 @@ four PRs became unrecoverable-closed, requiring reland PRs). Preserve these merg
   Row 2 is the one that traps people: a stale answer is a **completed** answer, not a review still in flight, and the two call for opposite actions. A readiness check has to separate *not yet* from *done, about something else* -- they look identical to any check that only asks whether the answer matches what you expected.
 
   The 15-minute line is a heuristic, not proof: a slow review and a dropped one look the same from outside, so retrying may start a second review for the same head. That is deliberate. A duplicate costs one redundant review that overwrites the same summary comment; never retrying can block a PR permanently. Prefer the recoverable failure. Observed turnaround is about three minutes.
-- No bare `catch {}` or `.catch(() => {})` -- every catch must check error type and log
-- No `fetch()` without `signal: AbortSignal.timeout()` -- 10s APIs, 30s downloads
-- No `writeFileSync`/`appendFileSync` in request handlers -- use `fs/promises`
-- No unbounded `Map`/`Set` without size cap and eviction
-- No `path.join()` on unvalidated external input -- use `resolveWithinPrefix`
-- No raw error messages or Zod `.issues` in client responses
-- No PR larger than 3000 additions or 50 files without splitting
-- **Run `npx react-doctor@latest` before committing any React (`.tsx`/`.jsx`) change** and resolve its findings — CI enforces this on PRs touching React files (https://github.com/millionco/react-doctor)
+- **Mandatory Code Patterns** and **PR Size Limits** above are hard rules too, as is the react-doctor audit in the Pre-PR Checklist.
 
 ### Shell App Data Contract (default apps under `home/apps/**`)
 
@@ -552,7 +520,7 @@ Apps run inside a **sandboxed `srcdoc` iframe with `origin: null`** and CSP `con
 
 ## Deferred Work (TODO)
 
-- **Hidden shell Settings sections (paid-beta scope)**: the **Agent, Channels, Skills, Security, Cron, and Plugins** Settings pages are hidden from the shell Settings nav via `HIDDEN_SECTION_IDS` in `shell/src/components/Settings.tsx`. Only **Appearance, Integrations, Billing, System** are exposed for now. The section components and their render branches are intentionally left intact — re-enable a page by removing its id from `HIDDEN_SECTION_IDS`. **TODO before unhiding**: finish/redesign each surface (content, copy, empty states, error handling) and add coverage. Track per-section follow-ups in the backlog.
+- **Hidden shell Settings sections (paid-beta scope)**: the **Channels, Skills, Security, Cron, and Plugins** Settings pages are hidden from the shell Settings nav via `HIDDEN_SECTION_IDS` in `shell/src/components/Settings.tsx`. Self-hosted runtimes separately hide Billing and Organization (`showBillingSection={false}`). The section components and their render branches are intentionally left intact — re-enable a page by removing its id from `HIDDEN_SECTION_IDS`. **TODO before unhiding**: finish/redesign each surface (content, copy, empty states, error handling) and add coverage. Track per-section follow-ups in the backlog.
 
 ## Reference Docs
 
@@ -573,7 +541,6 @@ Read these on demand, not every session:
 - `docs/dev/releases.md` -- when tagging a release or managing versions
 - `specs/quality-gates.md` -- when writing a new spec or reviewing a PR
 - `specs/ux-guide.md` -- when working on shell/frontend UI
-- `.specify/memory/constitution.md` -- re-read at the start of every session and after compaction (10 core principles, source of truth for non-negotiable rules)
 
 ## Swarm / Multi-Agent Rules
 
@@ -581,45 +548,6 @@ Read these on demand, not every session:
 - **Agents MUST commit progress** after each phase/feature
 - **NEVER call TeamDelete** -- team files are cheap, lost work is expensive
 - Sub-agents spawned for parallel exploration share the parent's worktree; they must commit before exiting.
-
-## Active Technologies
-- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono, Zod 4 via `zod/v4`, Kysely/Postgres for user app/workspace data, existing terminal stack (`node-pty`, `@xterm/xterm`), `@tldraw/tldraw` for the shell canvas renderer (071-tldraw-workspace-canvas)
-- User-owned Postgres workspace tables for canonical canvas documents and references; filesystem export/backup integration under `~/system/` or project export bundles where required by recovery flows (071-tldraw-workspace-canvas)
-- TypeScript 5.5+ strict, ES modules, Node.js 24+ + Hono gateway, Hono WebSocket support, node-pty, zod/v4, citty, ws, Node child_process/fs/promises/path/crypto APIs, zellij 0.44.1 pinned in Docker images (068-zellij-cli)
-- Files under the owner-controlled Matrix home (`~/system/shell-sessions.json`, `~/system/layouts/*.kdl`) plus local CLI files under `~/.matrixos/profiles.json` and `~/.matrixos/profiles/<name>/` (068-zellij-cli)
-- TypeScript 5.5+ strict, ES modules, Node.js 24+ + Hono gateway, Hono WebSocket support, Zod 4 via `zod/v4`, existing `jose` JWT validation, Vitest (072-request-principal)
-- No new persistence; request principal is request-scoped. Existing consumers continue to use owner-controlled PostgreSQL/Kysely and sync R2/object storage through existing repositories. (072-request-principal)
-- TypeScript strict, ES modules, Node.js 24+ for gateway; React 19, React Native 0.83, Expo Router 55 for mobile shell + Hono gateway, Zod 4 via `zod/v4`, existing terminal stack (`node-pty`, `@xterm/xterm` on web), Expo Router, React Native WebView, Clerk Expo, AsyncStorage/SecureStore (075-mobile-shell)
-- Owner-controlled Matrix home files for shell/terminal session metadata (`~/system/terminal-sessions.json`, terminal layout files) plus existing owner Postgres where current workspace/app data already lives. No new embedded database or ORM. (075-mobile-shell)
-- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 + Hono gateway routes, Zod 4 via `zod/v4`, Kysely/Postgres, Matrix homeserver appservice support, self-hosted Telegram and WhatsApp bridge runtimes, existing Matrix OS shell/app bridge, Hermes/Claude Agent SDK V1 `query()` path (077-matrix-messaging-bridge)
-- Owner-local Postgres on the customer VPS for Matrix OS permission/audit data; separate homeserver database; separate Telegram bridge database; separate WhatsApp bridge database; owner-local media/cache paths covered by backup/restore policy (077-matrix-messaging-bridge)
-- TypeScript 5.5+ strict, ES modules, Node.js 24+, React 19, Next.js 16 shell/platform, Hono gateway + Hono, Zod 4 via `zod/v4`, Kysely/Postgres, existing onboarding WebSocket, existing Symphony routes, existing integrations registry/Pipedream proxy, existing terminal stack, lucide-react, Playwright/Vitest, always-on Hermes with Claude/Codex augmentation, Finna-inspired admin/control surface patterns (082-paid-beta-readiness)
-- Owner-controlled Postgres/Kysely for readiness, integration capability, agent action, admin/control activity, company context, and audit data; owner home files for inspectable onboarding completion/profile/config exports under `~/system/`; no new embedded database or ORM (082-paid-beta-readiness)
-- TypeScript 5.9+, strict mode, ES modules; runtime target Node.js 24+ + Existing sync-client CLI, gateway shell routes, Hono, Zod 4, native Fetch/FormData/Blob, existing `ws` attach transport (106-terminal-rich-paste)
-- Owner-controlled filesystem under Matrix home for paste assets; no new database persistence (106-terminal-rich-paste)
-- TypeScript 5.5+ strict ES modules on Node.js 24+; POSIX shell/cloud-init for host sanitation and activation; GitHub Actions YAML + Hono, Kysely, PostgreSQL, Zod 4 via `zod/v4`, native `fetch`, Vitest, existing host-bundle and customer-VPS services, Hetzner Cloud API v1 (109-golden-vps-snapshots)
-- Platform PostgreSQL via Kysely for authoritative lifecycle, jobs, leases, evidence, and exact-resource cleanup; Hetzner snapshot storage for disk images; R2 remains the immutable host-bundle object store (109-golden-vps-snapshots)
-- TypeScript 5.9 strict ES modules; React 19; Node.js 24+ build/runtime tooling + `@xterm/xterm` 6.0.0, Electron 41, Next.js 16 shell, existing Matrix terminal link/context-menu helpers, `@matrix-os/contracts` (118-fix-terminal-clipboard)
-- N/A; selection, context-menu snapshots, and clipboard operation state are transient and must not be persisted (118-fix-terminal-clipboard)
-- Node.js 24+, TypeScript 5.5+ strict, ES modules + Claude Agent SDK V1 `query()`/`resume`, Hono, Zod 4 (`zod/v4`), Kysely, PostgreSQL, Next.js 16, React 19, Cloudflare AI Gateway, OpenRouter OAuth/API (118-ai-gateway-provider-auth)
-- owner configuration/secret files for provider credentials; owner Postgres only if provider account orchestration needs durable multi-instance state; platform PostgreSQL/Kysely for later entitlements, reservations, and content-free usage records (118-ai-gateway-provider-auth)
-- TypeScript 5.9 strict, ES modules; Node.js 24 production target (published CLI remains compatible with Node.js 20+) + `@modelcontextprotocol/sdk` 1.29, Zod 4, citty, native Fetch/AbortSignal, existing Matrix CLI shell/file/profile clients (120-remote-computer-mcp)
-- No new storage; reads existing owner-scoped Matrix CLI profile/auth files and Matrix computer data (120-remote-computer-mcp)
-- TypeScript 5.9 strict ES modules on Node.js 24 + `@earendil-works/pi-agent-core`/`pi-ai` 1.0.0 pinned exactly (bot runtime inside a no-network scope-runtime bot profile), Hono, Zod 4, Kysely/Postgres, scope-runtime loopback inference bridge (536-conversational-bots)
-- Owner Postgres bot tables via versioned `bot_schema_migrations`; bot definition files via `agent-store.ts`; bot workspaces under `~/bots/<botId>/`; platform `ai_funded_priority_claims` and credential `request_class` (536-conversational-bots)
-- TypeScript 5.9 strict on Node 24; Bash/Python 3 for existing Spec Kit helpers; native workflow YAML. + Existing Hono, Zod 4, Kysely, pg, jose, Electron 41, official GitHub Actions and `github/gh-stack`; no new persistence engine or credential store. (codex/eng-418-preview-pair-foundation)
-- Platform Postgres for pair/generation/fixture leases; owner Postgres remains collaboration authority; credential-free local context/profile files use the existing Electron stores. (codex/eng-418-preview-pair-foundation)
-- TypeScript 5.5+ strict ES modules on Node.js 24+ + Hono gateway/WS, Next.js 16, React 19, Electron `WebContentsView`, Kysely, Zod 4 (`zod/v4`), existing Matrix direct-session/relay/event infrastructure (2689-collaborative-app-sharing)
-- Owner-controlled PostgreSQL through Kysely for app records and collaboration state; owner filesystem/build cache for immutable qualified app assets; platform PostgreSQL for metadata/routing only (2689-collaborative-app-sharing)
-
-- TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation) (056-terminal-upgrade)
-- Files — `~/system/terminal-sessions.json` (session metadata), `~/system/terminal-layout.json` (layout with sessionId) (056-terminal-upgrade)
-
-## Recent Changes
-
-- 106-terminal-rich-paste: Planned attached CLI rich paste for local image paths and observable clipboard image pastes, with owner-scoped gateway paste assets and safe prompt rewriting.
-- 077-matrix-messaging-bridge: Planned owner-controlled Matrix messaging bridge for Telegram and WhatsApp first, with homeserver/appservice spike gates, per-room Hermes permissions, and separate owner-local bridge/homeserver/permission storage.
-- 056-terminal-upgrade: Added TypeScript 5.5+ strict, ES modules + node-pty (backend), @xterm/xterm + addon-webgl + addon-search + addon-serialize + addon-fit (frontend), Hono WebSocket (gateway), Zod 4 (validation)
 
 ## Agent skills
 
@@ -652,14 +580,14 @@ matrix shell connect --project main --tab <tab-id-or-unique-name>
 ### Workflow skills and the matrix-dev plugin
 
 - Each workflow skill has one canonical copy in `.agents/skills/<name>/`, read by Codex directly and by Claude Code through a `.claude/skills/<name>` link. Do not add a second copy under `.claude/commands/`.
-- The `matrix-dev` plugin in `dev/matrix-dev/` ships `worktree-pr-monitor`, `monitor-stack-reviews`, `unblock-tickets`, `daily-update`, `release-notes`, and `wrap-up` to engineers, with auto-update. Its `skills/` folder is generated: after editing a canonical skill run `node scripts/dev/sync-matrix-dev-plugin.mjs` and commit both. Install steps: `docs/dev/agent-plugins.md`.
+- The `matrix-dev` plugin in `dev/matrix-dev/` ships `worktree-pr-monitor`, `monitor-stack-reviews`, `unblock-tickets`, `daily-update`, `release-notes`, `release-matrix-stable`, `release-platform`, and `wrap-up` to engineers, with auto-update. Its `skills/` folder is generated: after editing a canonical skill run `node scripts/dev/sync-matrix-dev-plugin.mjs` and commit both. Install steps: `docs/dev/agent-plugins.md`.
 - To take one change from a worktree to a merge-ready PR, use the `worktree-pr-monitor` skill; after the merge, `wrap-up`.
 
 ### Stack review monitor
 
 - For existing GitHub native stacks, use the `monitor-stack-reviews` skill (`.agents/skills/monitor-stack-reviews/`): `/monitor-stack-reviews <pr-or-range-or-branch>` in Claude Code.
-- That command owns the review gate for stack fixes: current-head Greptile `5/5` (or an earlier-head `5/5` that `node scripts/review/review-carryover.mjs check <pr>` accepts), no unresolved human/Codex review blockers, the PR marked ready for review only after that review state, then CI monitoring.
-- Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, stale Greptile reviews that neither match the current head SHA nor pass the carry-over check, as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
+- That command owns the review gate for stack fixes: the Greptile `5/5` gate from Hard Rules, no unresolved human/Codex review blockers, the PR marked ready for review only after that review state, then CI monitoring.
+- Treat missing `gh stack`/`gh` auth, running outside the intended manual worktree, and stale Greptile reviews that fail that gate as blockers. Do not fall back to ad-hoc branch surgery or manual label churn.
 
 ### Unblock tickets
 

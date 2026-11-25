@@ -9,7 +9,7 @@ export const restorationId = (n: number) => `10000000-0000-4000-8000-${String(n)
 /** Real runner/native child lifecycle and 0.162.1 schema boundary. Private admission/model/MCP/metadata are named fixtures, not Matrix authority or native-account acceptance. */
 export async function startRestorationRunner(home: string, name: string, options: { prompt: string; providerThreadId?: string }) {
   const historyFile = join(home, "native-history.json"), records = join(home, name + "-native.jsonl"), fixture = join(home, name + "-fixture.json"), executable = join(home, name + "-native.mjs"), eventPath = join(home, name + "-events.jsonl");
-  await writeFile(fixture, JSON.stringify({ historyFile, records, intent: { args: ["list"] }, turns: 99 }));
+  await writeFile(fixture, JSON.stringify({ schemaVersion: "0162", historyFile, records, intent: { args: ["list"] }, turns: 99 }));
   await writeFile(executable, `#!${process.execPath}\nif (process.argv.includes('--version')) console.log('codex 0.162.1'); else { process.env.TEST_ROUTINE_NATIVE_FILE=${JSON.stringify(fixture)}; await import(${JSON.stringify(pathToFileURL(resolve("tests/fixtures/codex-routine-process.mjs")).href)}); }\n`);
   await chmod(executable, 0o700); await writeFile(eventPath, "");
   const config = Buffer.from(JSON.stringify({ ...options, routinePrivate: true, approvalPolicy: "never", sandbox: "workspace-write", writableRoots: [home] })).toString("base64");
