@@ -100,9 +100,16 @@ export { RecentFileList, type RecentEntry, type RecentFileListProps } from "./Re
 export { MatrixFileBrowser, type BrowserFiles, type MatrixFileBrowserProps } from "./MatrixFileBrowser";
 export { OfficeStartScreen, type OfficeStartScreenProps, type StartAction, type StartTemplate } from "./OfficeStartScreen";
 export {
+  DEFAULT_START_DIR,
   MAX_BROWSER_ROWS,
+  START_FOLDER_KEY,
+  SYSTEM_ROOT_DIRS,
   breadcrumbTrail,
   browsableEntries,
+  createStartFolderMemory,
+  hiddenSystemCount,
+  normalizeStartDir,
+  startDirCandidates,
   exactTime,
   extensionOf,
   filterEntries,
@@ -112,5 +119,7 @@ export {
   sortEntries,
   type Crumb,
   type StartFileEntry,
+  type StartFolderBridge,
+  type StartFolderMemory,
   type StartSort,
 } from "./start-model";

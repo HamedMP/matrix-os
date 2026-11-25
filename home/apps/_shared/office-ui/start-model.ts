@@ -12,8 +12,34 @@ export interface StartFileEntry {
 
 export type StartSort = "name" | "modified";
 
-/** Top-level folders the files bridge never lets an app read. */
+/** Top-level folders the files bridge never lets an app read (the gateway's `isProtectedHomeSubpath`). */
 const PROTECTED_ROOT_DIRS: ReadonlySet<string> = new Set(["system", "agents"]);
+
+/**
+ * Top-level folders that hold Matrix's own state, not the owner's work: every
+ * folder the home template ships except `projects`, plus the gateway's
+ * `temporary` scratch folder. The Files app lists the main ones as its fixed
+ * system places. Hidden at the top of the home unless the owner asks; the ones
+ * the files bridge can read stay reachable that way.
+ */
+export const SYSTEM_ROOT_DIRS: ReadonlySet<string> = new Set([
+  "agents",
+  "app-templates",
+  "apps",
+  "data",
+  "modules",
+  "plugins",
+  "sessions",
+  "system",
+  "templates",
+  "temporary",
+  "themes",
+  "tools",
+]);
+
+/** Where browsing starts when no folder is remembered. */
+export const DEFAULT_START_DIR = "documents";
+const MAX_DIR_LENGTH = 1024;
 
 /** Most rows the browser draws at once; a search narrows the rest. */
 export const MAX_BROWSER_ROWS = 200;
@@ -26,19 +52,104 @@ export function extensionOf(name: string): string {
   return at <= 0 ? "" : name.slice(at).toLowerCase();
 }
 
+function isReadableSystemDir(dir: string, entry: StartFileEntry): boolean {
+  return dir === "" && entry.kind === "dir" && SYSTEM_ROOT_DIRS.has(entry.name) && !PROTECTED_ROOT_DIRS.has(entry.name);
+}
+
 /**
  * Folders the app may open and files with an accepted extension. Hidden
  * entries, lock files ("~$report.docx") and protected top-level folders are
- * left out.
+ * always left out; Matrix system folders at the top of the home are left out
+ * unless `showSystem` is set.
  */
-export function browsableEntries(dir: string, entries: readonly StartFileEntry[], accept: readonly string[]): StartFileEntry[] {
+export function browsableEntries(dir: string, entries: readonly StartFileEntry[], accept: readonly string[], options: { showSystem?: boolean } = {}): StartFileEntry[] {
   const extensions = new Set(accept.filter((entry) => entry.startsWith(".")).map((entry) => entry.toLowerCase()));
   return entries.filter((entry) => {
     if (entry.name.startsWith(".") || entry.name === "") return false;
-    if (entry.kind === "dir") return !(dir === "" && PROTECTED_ROOT_DIRS.has(entry.name));
+    if (entry.kind === "dir") {
+      if (dir !== "") return true;
+      if (PROTECTED_ROOT_DIRS.has(entry.name)) return false;
+      return options.showSystem === true || !SYSTEM_ROOT_DIRS.has(entry.name);
+    }
     if (entry.name.startsWith("~$")) return false;
     return extensions.size === 0 || extensions.has(extensionOf(entry.name));
   });
+}
+
+/** How many system folders `browsableEntries` hides in this folder until the owner asks for them. */
+export function hiddenSystemCount(dir: string, entries: readonly StartFileEntry[]): number {
+  return entries.filter((entry) => isReadableSystemDir(dir, entry)).length;
+}
+
+/**
+ * A remembered folder as a home-relative path ("" is the home), or null when
+ * the value is not one: absolute, with empty, dot or `..` segments, hidden, or
+ * inside a protected folder.
+ */
+export function normalizeStartDir(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > MAX_DIR_LENGTH) return null;
+  const dir = value.endsWith("/") ? value.slice(0, -1) : value;
+  if (dir === "") return value === "" ? "" : null;
+  if (dir.includes("\\")) return null;
+  const segments = dir.split("/");
+  if (segments.some((segment) => segment === "" || segment.startsWith("."))) return null;
+  return PROTECTED_ROOT_DIRS.has(segments[0] ?? "") ? null : dir;
+}
+
+/** Folders to try in order when the browser opens: the remembered one, `documents`, the home. */
+export function startDirCandidates(remembered: string | null): string[] {
+  const candidates = remembered === null ? [DEFAULT_START_DIR, ""] : remembered === "" ? [""] : [remembered, DEFAULT_START_DIR, ""];
+  return [...new Set(candidates)];
+}
+
+/** Where an app keeps the folder its owner last browsed. */
+export interface StartFolderMemory {
+  /** The remembered folder, or null when there is none. Never rejects. */
+  read(): Promise<string | null>;
+  /** Never rejects. */
+  write(dir: string): Promise<void>;
+}
+
+/** The part of the `MatrixOS` bridge the memory uses; Electron Desktop has neither member yet. */
+export interface StartFolderBridge {
+  readData?: (key: string) => Promise<unknown>;
+  writeData?: (key: string, value: unknown) => Promise<void>;
+}
+
+export const START_FOLDER_KEY = "start_folder";
+
+/**
+ * Remembers the folder in the app's private key-value store, so each app
+ * keeps its own. Undefined when the bridge has no store. The folder is a
+ * convenience: a failed read or write is logged and ignored.
+ */
+export function createStartFolderMemory(
+  bridge: StartFolderBridge | null | undefined,
+  log: (message: string, error: unknown) => void = (message, error) => console.warn(message, error instanceof Error ? error.name : typeof error),
+): StartFolderMemory | undefined {
+  const readData = bridge?.readData?.bind(bridge);
+  const writeData = bridge?.writeData?.bind(bridge);
+  if (readData === undefined || writeData === undefined) return undefined;
+  return {
+    async read() {
+      try {
+        const stored = await readData(START_FOLDER_KEY);
+        return typeof stored === "object" && stored !== null && "dir" in stored ? normalizeStartDir(stored.dir) : null;
+      } catch (error: unknown) {
+        log("the last used folder could not be read", error);
+        return null;
+      }
+    },
+    async write(dir) {
+      const normal = normalizeStartDir(dir);
+      if (normal === null) return;
+      try {
+        await writeData(START_FOLDER_KEY, { dir: normal });
+      } catch (error: unknown) {
+        log("the last used folder could not be remembered", error);
+      }
+    },
+  };
 }
 
 function time(iso: string): number {

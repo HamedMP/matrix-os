@@ -5,7 +5,7 @@ import { cx } from "./internal";
 import { describeAccept, MAX_LOCAL_FILE_BYTES } from "./local-files";
 import { MatrixFileBrowser, type BrowserFiles } from "./MatrixFileBrowser";
 import { RecentFileList, type RecentEntry } from "./RecentFileList";
-import type { StartFileEntry } from "./start-model";
+import type { StartFileEntry, StartFolderMemory } from "./start-model";
 
 export interface StartTemplate {
   id: string;
@@ -64,6 +64,8 @@ export interface OfficeStartScreenProps {
     onOpen: (path: string) => void;
     /** "Word documents" */
     fileNoun: string;
+    /** Remembers the folder the owner last used; see `MatrixFileBrowser`. */
+    memory?: StartFolderMemory;
   };
   /** The typed page for a file path (recent entries and listed files). */
   kindOf: (name: string) => { kind: FileThumbKind; tag?: string };
@@ -190,6 +192,7 @@ export function OfficeStartScreen({ appName, artwork, notice, status, busy, crea
                 onOpen={browser.onOpen}
                 appName={appName}
                 fileNoun={browser.fileNoun}
+                memory={browser.memory}
                 kindOf={kindOfEntry}
                 disabled={busy}
                 searchRef={searchRef}

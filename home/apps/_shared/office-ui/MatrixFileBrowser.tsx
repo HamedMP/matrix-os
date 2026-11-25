@@ -11,11 +11,14 @@ import {
   browsableEntries,
   exactTime,
   filterEntries,
+  hiddenSystemCount,
   parentDir,
   relativeTime,
   sortEntries,
+  startDirCandidates,
   type Crumb,
   type StartFileEntry,
+  type StartFolderMemory,
   type StartSort,
 } from "./start-model";
 
@@ -34,8 +37,14 @@ export interface MatrixFileBrowserProps {
   /** What the files are called, for empty folders ("Word documents"). */
   fileNoun: string;
   kindOf: (entry: StartFileEntry) => { kind: FileThumbKind; tag?: string };
-  /** Where browsing starts (default the home root). */
+  /** Where browsing starts (default the home root). Ignored when `memory` is given. */
   initialDir?: string;
+  /**
+   * Remembers the folder the owner last used. Browsing then starts there,
+   * else in `documents`, else at the home root, and each folder the owner
+   * goes to is remembered.
+   */
+  memory?: StartFolderMemory;
   disabled?: boolean;
   /** Receives the search field, so a call to action can focus it. */
   searchRef?: RefObject<HTMLInputElement | null>;
@@ -47,6 +56,12 @@ type Listing =
   | { status: "loading"; dir: string }
   | { status: "ready"; dir: string; entries: StartFileEntry[]; truncated: boolean }
   | { status: "error"; dir: string; message: string };
+
+/** A folder that is gone or closed to the app, as opposed to one that failed to list this time. */
+function isUnusableFolder(error: unknown): boolean {
+  const code = errorCode(error);
+  return code === "not_found" || code === "forbidden";
+}
 
 function errorCode(error: unknown): unknown {
   return typeof error === "object" && error !== null && "code" in error ? (error as { code: unknown }).code : null;
@@ -70,38 +85,80 @@ const SORT_OPTIONS = [
  * Clicking a folder enters it, clicking a file opens it. Up/Down move between
  * rows; Backspace goes up a folder.
  */
-export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, kindOf, initialDir = "", disabled, searchRef, now, className }: MatrixFileBrowserProps) {
-  const [dir, setDir] = useState(initialDir);
+export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, kindOf, initialDir = "", memory, disabled, searchRef, now, className }: MatrixFileBrowserProps) {
+  // Null until the remembered folder has been read.
+  const [dir, setDir] = useState<string | null>(memory ? null : initialDir);
   const [attempt, setAttempt] = useState(0);
   const [listing, setListing] = useState<Listing>({ status: "loading", dir: initialDir });
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<StartSort>("name");
+  const [showSystem, setShowSystem] = useState(false);
   const listRef = useRef<HTMLUListElement>(null);
   const focusAfterLoad = useRef(false);
+  // Folders still to try while the browser looks for its starting folder.
+  const fallbacks = useRef<string[]>([]);
+  // The folder the owner chose to go to, remembered once it lists.
+  const chosen = useRef<string | null>(null);
   // A string key, so an inline `accept` array does not list the folder again on every render.
   const acceptKey = accept.join(",");
 
   useEffect(() => {
+    if (!memory || dir !== null) return;
+    let live = true;
+    void memory.read().then((remembered) => {
+      if (!live) return;
+      const [first = "", ...rest] = startDirCandidates(remembered);
+      fallbacks.current = rest;
+      setListing({ status: "loading", dir: first });
+      setDir(first);
+    });
+    return () => {
+      live = false;
+    };
+  }, [memory, dir]);
+
+  useEffect(() => {
+    if (dir === null) return;
     let live = true;
     files.list(dir).then(
       (result) => {
-        if (live) setListing({ status: "ready", dir, entries: browsableEntries(dir, result.entries, acceptKey.split(",")), truncated: result.truncated });
+        if (!live) return;
+        fallbacks.current = [];
+        if (chosen.current === dir) {
+          chosen.current = null;
+          void memory?.write(dir);
+        }
+        setListing({ status: "ready", dir, entries: result.entries, truncated: result.truncated });
       },
       (error: unknown) => {
+        if (!live) return;
+        const next = isUnusableFolder(error) ? fallbacks.current.shift() : undefined;
+        if (next !== undefined) {
+          setListing({ status: "loading", dir: next });
+          setDir(next);
+          return;
+        }
+        chosen.current = null;
         console.warn(`[${appName.toLowerCase()}] could not list a folder`, errorCode(error) ?? (error instanceof Error ? error.name : typeof error));
-        if (live) setListing({ status: "error", dir, message: listingMessage(error, appName) });
+        setListing({ status: "error", dir, message: listingMessage(error, appName) });
       },
     );
     return () => {
       live = false;
     };
-  }, [files, dir, attempt, appName, acceptKey]);
+  }, [files, dir, attempt, appName, memory]);
 
+  const visible = useMemo(() => {
+    if (listing.status !== "ready") return { entries: [] as StartFileEntry[], system: 0 };
+    return {
+      entries: browsableEntries(listing.dir, listing.entries, acceptKey.split(","), { showSystem }),
+      system: hiddenSystemCount(listing.dir, listing.entries),
+    };
+  }, [listing, acceptKey, showSystem]);
   const shown = useMemo(() => {
-    if (listing.status !== "ready") return { rows: [] as StartFileEntry[], total: 0 };
-    const matches = sortEntries(filterEntries(listing.entries, query), sort);
+    const matches = sortEntries(filterEntries(visible.entries, query), sort);
     return { rows: matches.slice(0, MAX_BROWSER_ROWS), total: matches.length };
-  }, [listing, query, sort]);
+  }, [visible, query, sort]);
   const roving = useRovingRows(shown.rows.map((entry) => entry.path));
 
   useEffect(() => {
@@ -113,17 +170,20 @@ export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, ki
 
   const goTo = (path: string, moveFocus: boolean) => {
     focusAfterLoad.current = moveFocus;
+    fallbacks.current = [];
+    chosen.current = path;
     setQuery("");
     setListing({ status: "loading", dir: path });
     setDir(path);
   };
   const retry = () => {
+    if (dir === null) return;
     setListing({ status: "loading", dir });
     setAttempt((value) => value + 1);
   };
 
   const onListKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
-    if (event.key === "Backspace" && dir !== "") {
+    if (event.key === "Backspace" && dir !== null && dir !== "") {
       event.preventDefault();
       goTo(parentDir(dir), true);
       return;
@@ -131,7 +191,7 @@ export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, ki
     roving.onKeyDown(event);
   };
 
-  const crumbs = breadcrumbTrail(dir);
+  const crumbs = breadcrumbTrail(dir ?? "");
   const loading = listing.status === "loading";
   const clock = now ?? Date.now();
   return (
@@ -155,11 +215,12 @@ export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, ki
       <div className="oui-browser__body" aria-busy={loading || undefined}>
         <BrowserStatus
           listing={listing}
+          entries={visible.entries.length}
           matches={shown.total}
           query={query}
           fileNoun={fileNoun}
           onRetry={retry}
-          onUp={dir === "" ? null : () => goTo(parentDir(dir), true)}
+          onUp={dir === null || dir === "" ? null : () => goTo(parentDir(dir), true)}
           onClearQuery={() => setQuery("")}
         />
         {shown.rows.length > 0 && (
@@ -201,6 +262,14 @@ export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, ki
       {listing.status === "ready" && (shown.total > shown.rows.length || listing.truncated) && (
         <p className="oui-browser__note">
           {shown.total > shown.rows.length ? `Showing ${shown.rows.length} of ${shown.total}. Filter to find the rest.` : "This folder holds more items than can be listed. Filter by name or open a subfolder."}
+        </p>
+      )}
+      {visible.system > 0 && (
+        <p className="oui-browser__note oui-browser__system">
+          <span>{showSystem ? "Matrix system folders are shown." : "Matrix system folders are hidden."}</span>
+          <button type="button" className="oui-browser__system-toggle" aria-pressed={showSystem} onClick={() => setShowSystem((value) => !value)}>
+            {showSystem ? "Hide system folders" : "Show system folders"}
+          </button>
         </p>
       )}
     </div>
@@ -274,6 +343,8 @@ function SearchField({ inputRef, query, onQuery, onEnterList }: SearchFieldProps
 
 interface BrowserStatusProps {
   listing: Listing;
+  /** Entries the folder shows before the filter. */
+  entries: number;
   /** Entries that match the filter. */
   matches: number;
   query: string;
@@ -285,7 +356,7 @@ interface BrowserStatusProps {
 }
 
 /** Loading, failure, empty folder and no-match states; nothing once rows are shown. */
-function BrowserStatus({ listing, matches, query, fileNoun, onRetry, onUp, onClearQuery }: BrowserStatusProps) {
+function BrowserStatus({ listing, entries, matches, query, fileNoun, onRetry, onUp, onClearQuery }: BrowserStatusProps) {
   if (listing.status === "loading") {
     return (
       <div className="oui-browser__loading" role="status">
@@ -309,7 +380,7 @@ function BrowserStatus({ listing, matches, query, fileNoun, onRetry, onUp, onCle
       </div>
     );
   }
-  if (listing.entries.length === 0) {
+  if (entries === 0) {
     return (
       <div className="oui-browser__notice">
         <p>No folders or {fileNoun} here.</p>
