@@ -77,7 +77,7 @@ describe("notification preference production composition", () => {
       await vi.waitFor(() => expect(reader).toHaveResolvedWith(false));
       expect(send).not.toHaveBeenCalled();
       const legacySave = await app.request("/api/coding-agents/notification-preferences", {
-        method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ attentionPush: { approval: true, input: true, failed: true, completed: true } }),
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ attentionPush: { completed: true } }),
       });
       expect(legacySave.status).toBe(200);
       const latest = await app.request("/api/notifications/preferences");

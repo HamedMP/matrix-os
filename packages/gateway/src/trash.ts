@@ -112,10 +112,11 @@ export async function fileDelete(
   requestedPath: string,
 ): Promise<{ ok: boolean; trashPath?: string; error?: string; status?: number }> {
   const lexicalPath = resolveWithinHome(homePath, requestedPath);
-  if (!lexicalPath || isDeniedFileApiMutationPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
+  if (!lexicalPath) return { ok: false, error: "Invalid path" };
   if (isProtectedHomeSubpath(homePath, lexicalPath)) {
     return { ok: false, error: "Protected path cannot be deleted", status: 403 };
   }
+  if (isDeniedFileApiMutationPath(homePath, requestedPath)) return { ok: false, error: "Invalid path" };
 
   const trashDir = join(homePath, ".trash");
   try {

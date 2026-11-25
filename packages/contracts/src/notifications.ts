@@ -44,7 +44,13 @@ export const CodingAgentNotificationPreferencesSchema = z.object({
   }).strict(),
 }).strict();
 
-export const CodingAgentNotificationPreferencesUpdateSchema = CodingAgentNotificationPreferencesSchema;
+/** Intentional field patch; omitted switches must retain their current values. */
+export const CodingAgentNotificationPreferencesUpdateSchema = z.object({
+  attentionPush: z.object({
+    approval: z.boolean().optional(), input: z.boolean().optional(),
+    failed: z.boolean().optional(), completed: z.boolean().optional(),
+  }).strict().refine(patch => Object.values(patch).some(value => value !== undefined), "At least one switch is required"),
+}).strict();
 
 export type CodingAgentAttentionNotificationKind =
   z.infer<typeof CodingAgentAttentionNotificationKindSchema>;

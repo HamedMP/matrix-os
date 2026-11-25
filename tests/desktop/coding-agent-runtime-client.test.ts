@@ -239,7 +239,7 @@ describe("coding agent desktop runtime client", () => {
       signal: expect.any(Object),
     }));
     expect(fetchFn).toHaveBeenNthCalledWith(2, "https://runtime.test/api/coding-agents/notification-preferences", expect.objectContaining({
-      method: "PUT",
+      method: "PATCH",
       headers: expect.objectContaining({ Authorization: "Bearer desktop-token" }),
       body: JSON.stringify({ attentionPush: { approval: true, input: true, failed: true, completed: true } }),
       signal: expect.any(Object),
@@ -255,7 +255,7 @@ describe("coding agent desktop runtime client", () => {
     }), { status: 200 }));
 
     await expect(fetchCodingAgentNotificationPreferences(auth(), fetchFn)).rejects.toThrow("notification settings unavailable");
-    await expect(updateCodingAgentNotificationPreferences(auth(), { attentionPush: { failed: true } } as never, fetchFn)).rejects.toThrow("notification settings unavailable");
+    await expect(updateCodingAgentNotificationPreferences(auth(), { attentionPush: {} }, fetchFn)).rejects.toThrow("notification settings unavailable");
   });
 
   it("fetches thread snapshots with bearer auth and validates safe output", async () => {

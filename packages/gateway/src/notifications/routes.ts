@@ -2,7 +2,7 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod/v4";
-import { NotificationPreferencesSchema, SafeClientErrorSchema, CodingAgentNotificationPreferencesUpdateSchema } from "@matrix-os/contracts";
+import { NotificationPreferencesSchema, SafeClientErrorSchema, CodingAgentNotificationPreferencesSchema, CodingAgentNotificationPreferencesUpdateSchema } from "@matrix-os/contracts";
 import {
   isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal,
   type PrincipalRuntimeConfig, type RequestPrincipal,
@@ -11,6 +11,7 @@ import { logCodingAgentWarning } from "../coding-agents/diagnostics.js";
 import type { CodingAgentNotificationPreferenceStore } from "../coding-agents/notification-preferences.js";
 import {
   NotificationPreferencesAccessError, NotificationPreferencesConflictError,
+  projectLegacyNotificationPreferences,
   type NotificationPreferenceStore,
 } from "./preferences-store.js";
 
@@ -73,13 +74,27 @@ export function createLegacyNotificationPreferenceRoutes(options: RouteOptions &
     await next();
   });
   app.get("/notification-preferences", async c => {
-    try { return c.json({ preferences: await options.store.load(principalFor(c)) }); }
+    try {
+      const document = await options.store.preferences.load(principalFor(c));
+      c.header("ETag", `"${document.revision}"`);
+      c.header("Cache-Control", "private, no-store");
+      return c.json({ preferences: projectLegacyNotificationPreferences(document) });
+    }
     catch (error: unknown) { return failure(c, error); }
   });
   app.put("/notification-preferences", bodyLimit({ maxSize: 4 * 1024, onError: c => c.json(tooLarge(), 413) }), async c => {
     try {
-      const document = CodingAgentNotificationPreferencesUpdateSchema.parse(await c.req.json());
-      return c.json({ preferences: await options.store.save(principalFor(c), document) });
+      const document = CodingAgentNotificationPreferencesSchema.parse(await c.req.json());
+      const match = /^"(0|[1-9][0-9]{0,15})"$/.exec(c.req.header("if-match") ?? "");
+      const revision = match ? Number(match[1]) : NaN;
+      if (!Number.isSafeInteger(revision)) throw new NotificationPreferencesConflictError();
+      return c.json({ preferences: await options.store.save(principalFor(c), document, revision) });
+    } catch (error: unknown) { return failure(c, error); }
+  });
+  app.patch("/notification-preferences", bodyLimit({ maxSize: 4 * 1024, onError: c => c.json(tooLarge(), 413) }), async c => {
+    try {
+      const patch = CodingAgentNotificationPreferencesUpdateSchema.parse(await c.req.json());
+      return c.json({ preferences: await options.store.save(principalFor(c), patch) });
     } catch (error: unknown) { return failure(c, error); }
   });
   return app;

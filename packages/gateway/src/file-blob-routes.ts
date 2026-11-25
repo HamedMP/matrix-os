@@ -10,6 +10,7 @@ import { getMimeType } from "./file-utils.js";
 import {
   resolveExistingFileApiPath,
   resolveWritableFileApiPath,
+  isDeniedFileApiMutationPath,
 } from "./path-security.js";
 import { createFileDownloadStream, parseByteRange, type FileDownloadStreamOptions } from "./file-download-stream.js";
 import { isDirectChatAttachmentPath } from "./chat/attachment-cleanup.js";
@@ -183,7 +184,7 @@ export function createFileBlobRoutes(deps: FileBlobRouteDeps): Hono {
       }
     }
 
-    if (!resolved) return invalidPath(c);
+    if (!resolved || isDeniedFileApiMutationPath(deps.homePath, destinationPath)) return invalidPath(c);
     const uploadPath = resolved;
     const operation = async (): Promise<Response> => {
       let mode = parsed.secret ? 0o600 : 0o644;
