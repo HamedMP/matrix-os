@@ -57,8 +57,9 @@ if command -v pg_dump >/dev/null 2>&1; then
       --data-only \
       --column-inserts \
       --table=messaging_accounts \
-      --table=messaging_setup_sessions \
       --table=messaging_conversations \
+      --table=messaging_messages \
+      --table=messaging_bridge_sync_state \
       --table=messaging_conversation_mappings \
       --table=messaging_permissions \
       --table=messaging_audit_events \
