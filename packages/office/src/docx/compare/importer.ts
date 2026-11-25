@@ -363,6 +363,21 @@ export class Importer {
     return copy;
   }
 
+  /**
+   * Where a `w:hyperlink` points, in a form that compares across the result
+   * (`side: "target"`) and the revised document (`side: "source"`): the
+   * relationship target rather than its id, the anchor and the location. Null
+   * outside a link.
+   */
+  linkDestination(link: XmlElement | null, side: "target" | "source", partName: PartName): string | null {
+    if (link === null) return null;
+    const relationshipId = attr(link, "r:id");
+    const index = side === "target" ? this.target : this.source;
+    const relationship = relationshipId === null ? null : index.package.getRelationship(partName, relationshipId);
+    const address = relationship === null ? "" : `${relationship.targetMode}:${relationship.target}`;
+    return [address, attr(link, "w:anchor") ?? "", attr(link, "w:docLocation") ?? ""].join("\n");
+  }
+
   /** True when the run uses a character style the result does not define. */
   hasForeignRunStyle(run: XmlElement | null): boolean {
     const rPr = run === null ? null : firstChild(run, "w:rPr");

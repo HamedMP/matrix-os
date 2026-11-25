@@ -59,6 +59,78 @@ describe("content carried over from the revised document", () => {
     await expectResolves(document, original, revised);
   });
 
+  it("tracks a hyperlink whose destination changed under the same text as a replacement", async () => {
+    const original = await buildDocx({ body: p(r("Read the ") + link("rIdTerms", "published terms") + r(" first.")), links: { rIdTerms: "https://example.com/terms" } });
+    const revised = await buildDocx({ body: p(r("Read the ") + link("rIdTerms", "published terms") + r(" first.")), links: { rIdTerms: "https://example.com/terms-v2" } });
+    const result = await compareDocxDetailed(original, revised, OPTIONS);
+    expect(result.summary.identical).toBe(false);
+    const document = await reopen(result.document);
+    expect(describeRevisions(document)).toEqual([
+      ["delete", "text", "published terms"],
+      ["insert", "text", "published terms"],
+    ]);
+    const linked = runsOf(document, 0).filter((run) => run.hyperlink !== null);
+    expect(linked.map((run) => [run.revision?.kind, run.hyperlink?.href])).toEqual([
+      ["delete", "https://example.com/terms"],
+      ["insert", "https://example.com/terms-v2"],
+    ]);
+    await expectResolves(document, original, revised);
+  });
+
+  it("tracks a link added to, removed from or re-anchored on unchanged text", async () => {
+    const links = { rIdTerms: "https://example.com/terms" };
+    const plain = await buildDocx({ body: p(r("Read the published terms first.")), links });
+    const linkedText = await buildDocx({ body: p(r("Read the ") + link("rIdTerms", "published terms") + r(" first.")), links });
+    const added = await reopen(await compareDocx(plain, linkedText, OPTIONS));
+    expect(describeRevisions(added)).toEqual([
+      ["delete", "text", "published terms"],
+      ["insert", "text", "published terms"],
+    ]);
+    expect(runsOf(added, 0).find((run) => run.revision?.kind === "insert")?.hyperlink?.href).toBe("https://example.com/terms");
+    await expectResolves(added, plain, linkedText);
+
+    const removed = await reopen(await compareDocx(linkedText, plain, OPTIONS));
+    expect(describeRevisions(removed)).toEqual([
+      ["delete", "text", "published terms"],
+      ["insert", "text", "published terms"],
+    ]);
+    expect(runsOf(removed, 0).filter((run) => run.hyperlink !== null).map((run) => run.revision?.kind)).toEqual(["delete"]);
+    await expectResolves(removed, linkedText, plain);
+
+    const anchored = (name: string): Promise<Uint8Array> =>
+      buildDocx({ body: p(r("See ") + `<w:hyperlink w:anchor="${name}">${r("clause 8")}</w:hyperlink>` + r(" for the cap.")) });
+    const reanchored = await reopen(await compareDocx(await anchored("_Ref1"), await anchored("_Ref2"), OPTIONS));
+    expect(runsOf(reanchored, 0).filter((run) => run.hyperlink !== null).map((run) => [run.revision?.kind, run.hyperlink?.anchor])).toEqual([
+      ["delete", "_Ref1"],
+      ["insert", "_Ref2"],
+    ]);
+  });
+
+  it("cuts the old link in two, never nesting links, when only part of it points elsewhere", async () => {
+    const links = { rIdA: "https://example.com/terms", rIdB: "https://example.com/other" };
+    const original = await buildDocx({ body: p(r("Read the ") + link("rIdA", "published terms") + r(" first.")), links });
+    const revised = await buildDocx({ body: p(r("Read the ") + link("rIdB", "published") + link("rIdA", " terms") + r(" first.")), links });
+    const document = await reopen(await compareDocx(original, revised, OPTIONS));
+    expect(describeRevisions(document)).toEqual([
+      ["delete", "text", "published"],
+      ["insert", "text", "published"],
+    ]);
+    const xml = await document.package.getPartText("/word/document.xml");
+    expect(xml).not.toMatch(/<w:hyperlink [^>]*>(?:(?!<\/w:hyperlink>).)*<w:hyperlink /s);
+    expect(runsOf(document, 0).filter((run) => run.hyperlink !== null).map((run) => [run.text, run.revision?.kind ?? null, run.hyperlink?.href])).toEqual([
+      ["published", "delete", "https://example.com/terms"],
+      ["published", "insert", "https://example.com/other"],
+      [" terms", null, "https://example.com/terms"],
+    ]);
+    await expectResolves(document, original, revised);
+  });
+
+  it("keeps an unchanged link as it is when its relationship id differs", async () => {
+    const original = await buildDocx({ body: p(r("Read the ") + link("rIdA", "published terms") + r(" first.")), links: { rIdA: "https://example.com/terms" } });
+    const revised = await buildDocx({ body: p(r("Read the ") + link("rIdB", "published terms") + r(" first.")), links: { rIdB: "https://example.com/terms" } });
+    expect((await compareDocxDetailed(original, revised, OPTIONS)).summary.identical).toBe(true);
+  });
+
   it("copies an image of an inserted paragraph into the result", async () => {
     const original = await buildDocx({ body: p(r("Opening words stay the same.")) + p(r("Closing words stay the same.")) });
     const revised = await buildDocx({

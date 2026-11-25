@@ -15,7 +15,7 @@ import { applyParagraphFormat, applyRunFormat, canonicalParagraphProperties, can
 import type { ImportContext, Importer } from "./importer.js";
 import { addMoveRange, setParagraphMark, wrapParagraphContent, wrapRange } from "./markup.js";
 import type { MoveLink, ParagraphEntry } from "./plan.js";
-import { type Para, insertAtPoint, pointAt, scanOf, splitParagraphInto } from "./runs.js";
+import { type Para, type Point, insertAtPoint, liftPoint, pointAt, scanOf, splitParagraphInto } from "./runs.js";
 import type { BuildCounters, ParaNode, Stamp } from "./types.js";
 
 export interface BuildContext {
@@ -89,10 +89,45 @@ function comparePropertiesOfParagraph(element: XmlElement, revised: ParaNode, co
   applyParagraphFormat(element, properties, context.stamp);
 }
 
+/** A stretch of unchanged text that needs a revision: formatting that changed, or a link that changed under it. */
+interface EqualTextEdit {
+  readonly kind: "format" | "link";
+  readonly start: number;
+  end: number;
+  /** Offset of `start` in the revised paragraph. */
+  readonly revisedStart: number;
+  /** The revised run properties of a `format` edit. */
+  readonly properties: XmlElement | null;
+}
+
+/** True when a point lies inside a `w:hyperlink` of the paragraph. */
+function insideHyperlink(point: Point, paragraph: XmlElement): boolean {
+  for (let scope: XmlElement["parent"] = point.parent; scope !== null && scope.kind === "element" && scope !== paragraph; scope = scope.parent) {
+    if (scope.name === "w:hyperlink") return true;
+  }
+  return false;
+}
+
 /**
- * Unchanged text: records the notes both versions refer to and the run
+ * Unchanged text under a link that points elsewhere (or a link that came or
+ * went): the old text is deleted and the revised text, inside its own link,
+ * is inserted after it.
+ */
+function replaceLinkedText(target: Para, edit: EqualTextEdit, revised: Para, context: BuildContext, scope: ImportContext): void {
+  const length = edit.end - edit.start;
+  const nodes = context.importer.inline(revised, edit.revisedStart, edit.revisedStart + length, "ins", scope);
+  let point = pointAt(target, edit.end, context.stamp);
+  // A link never holds another: a point in the middle of the old link cuts it in two.
+  if (insideHyperlink(point, target.element)) point = liftPoint(target.element, point, context.stamp);
+  insertAtPoint(point, nodes);
+  wrapRange(target, edit.start, edit.end, "del", context.stamp);
+}
+
+/**
+ * Unchanged text: records the notes both versions refer to, the run
  * formatting that differs between `[start, end)` of `target` and the same
- * text at `revisedStart` of `revised`.
+ * text at `revisedStart` of `revised`, and the stretches whose link points
+ * somewhere else.
  */
 function compareEqualText(
   target: Para,
@@ -101,10 +136,16 @@ function compareEqualText(
   revised: Para,
   revisedStart: number,
   context: BuildContext,
+  scope: ImportContext,
 ): void {
   const scanA = scanOf(target);
   const scanB = scanOf(revised);
-  const changes: Array<{ start: number; end: number; properties: XmlElement | null }> = [];
+  const edits: EqualTextEdit[] = [];
+  const record = (kind: EqualTextEdit["kind"], from: number, to: number, properties: XmlElement | null): void => {
+    const last = edits[edits.length - 1];
+    if (last !== undefined && last.kind === kind && last.end === from && last.properties === properties) last.end = to;
+    else edits.push({ kind, start: from, end: to, revisedStart: from - start + revisedStart, properties });
+  };
   let positionB = atomIndexAt(scanB, revisedStart);
   let exhausted = false;
   for (let positionA = atomIndexAt(scanA, start); positionA < scanA.atoms.length && !exhausted; positionA++) {
@@ -125,7 +166,16 @@ function compareEqualText(
         exhausted = true;
         break;
       }
-      if (atomA.kind === "object" && NOTE_REFERENCES.has(atomA.node.name) && atomB.node.name === atomA.node.name) {
+      const noteReference = atomA.kind === "object" && NOTE_REFERENCES.has(atomA.node.name);
+      // A note reference stays where it is: its note is compared on its own, whatever link is around it.
+      const linkA = noteReference ? null : context.importer.linkDestination(atomA.context.hyperlink, "target", scope.targetPart);
+      const linkB = noteReference ? null : context.importer.linkDestination(atomB.context.hyperlink, "source", scope.sourcePart);
+      if (linkA !== linkB) {
+        record("link", at, next, null);
+        at = next;
+        continue;
+      }
+      if (noteReference && atomB.node.name === atomA.node.name) {
         const kind = atomA.node.name === "w:footnoteReference" ? "footnote" : "endnote";
         const key = `${kind}:${attr(atomA.node, "w:id") ?? ""}`;
         const other = attr(atomB.node, "w:id");
@@ -134,18 +184,15 @@ function compareEqualText(
       const comparable = atomA.run !== null && atomB.run !== null && atomA.run.name === "w:r" && !context.importer.hasForeignRunStyle(atomB.run);
       if (context.compareFormatting && comparable && atomA.run !== null) {
         const properties = context.importer.runProperties(atomB.run);
-        if (canonicalRunProperties(firstChild(atomA.run, "w:rPr")) !== canonicalRunProperties(properties)) {
-          const last = changes[changes.length - 1];
-          if (last !== undefined && last.end === at && last.properties === properties) last.end = next;
-          else changes.push({ start: at, end: next, properties });
-        }
+        if (canonicalRunProperties(firstChild(atomA.run, "w:rPr")) !== canonicalRunProperties(properties)) record("format", at, next, properties);
       }
       at = next;
     }
   }
-  for (let position = changes.length - 1; position >= 0; position--) {
-    const change = changes[position] as { start: number; end: number; properties: XmlElement | null };
-    applyRunFormat(target, change.start, change.end, change.properties, context.stamp);
+  for (let position = edits.length - 1; position >= 0; position--) {
+    const edit = edits[position] as EqualTextEdit;
+    if (edit.kind === "link") replaceLinkedText(target, edit, revised, context, scope);
+    else applyRunFormat(target, edit.start, edit.end, edit.properties, context.stamp);
   }
 }
 
@@ -185,7 +232,7 @@ export function mergeParagraphs(entry: ParagraphEntry, context: BuildContext, sc
       for (let at = Math.min(left.length, right.length) - 1; at >= 0; at--) {
         const mine = left[at] as Piece;
         const other = right[at] as Piece;
-        compareEqualText(targets[mine.index] as Para, mine.start, mine.end, paraOf(b[other.index] as ParaNode), other.start, context);
+        compareEqualText(targets[mine.index] as Para, mine.start, mine.end, paraOf(b[other.index] as ParaNode), other.start, context, scope);
       }
     } else if (op.type === "delete" || op.type === "moveFrom") {
       const pieces = piecesOf(a, aStarts, op.aStart, op.aEnd);
