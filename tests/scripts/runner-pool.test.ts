@@ -25,8 +25,19 @@ function sandbox() {
     chmodSync(join(bin, name), 0o755);
   };
   fake("hostname", "echo host");
-  fake("timeout", 'shift 2; exec "$@"');
-  fake("docker", `echo "docker $*" >> "${dir}/calls"; [ "$1" != run ] || exit "\${FAKE_DOCKER_STATUS:-0}"`);
+  fake("timeout", `echo "timeout $1 $2" >> "${dir}/calls"; shift 2; exec "$@"`);
+  // A blocking \`docker run\` stands in for a runner waiting for a job: it ends when \`docker stop\`
+  // stops it or after FAKE_DOCKER_BLOCK seconds.
+  fake(
+    "docker",
+    `echo "docker $*" >> "${dir}/calls"
+case "$1" in
+  stop) touch "${dir}/stopped" ;;
+  run)
+    for _ in $(seq 1 $((\${FAKE_DOCKER_BLOCK:-0} * 10))); do [ -e "${dir}/stopped" ] && exit 143; sleep 0.1; done
+    exit "\${FAKE_DOCKER_STATUS:-0}" ;;
+esac`,
+  );
   fake(
     "curl",
     `args="$*"; body=""; [[ "$args" == *"@-"* ]] && body=$(cat)
@@ -35,7 +46,7 @@ echo "curl $args $body" >> "${dir}/calls"
 case "$args" in
   *access_tokens*) echo '{"token":"installation-token"}' ;;
   *generate-jitconfig*) echo '{"encoded_jit_config":"jit-config"}' ;;
-  *"runners?per_page"*) echo '{"runners":[{"id":5,"name":"matrix-ci-host-1-9","status":"offline"},{"id":6,"name":"matrix-ci-host-2-9","status":"offline"},{"id":7,"name":"matrix-ci-host-1-8","status":"online"},{"id":8,"name":"matrix-ci-host-3-8","status":"online","busy":true},{"id":9,"name":"matrix-ci-other-1-8","status":"online"}]}' ;;
+  *"runners?per_page"*) [ -z "\${FAKE_RUNNERS:-}" ] || { echo "$FAKE_RUNNERS"; exit 0; }; echo '{"runners":[{"id":5,"name":"matrix-ci-host-1-9","status":"offline"},{"id":6,"name":"matrix-ci-host-2-9","status":"offline"},{"id":7,"name":"matrix-ci-host-1-8","status":"online"},{"id":8,"name":"matrix-ci-host-3-8","status":"online","busy":true},{"id":9,"name":"matrix-ci-other-1-8","status":"online"}]}' ;;
   *) echo '{}' ;;
 esac`,
   );
@@ -53,7 +64,7 @@ esac`,
       },
     });
   const calls = () => readFileSync(join(dir, "calls"), "utf8");
-  return { key, run, calls };
+  return { key, run, calls, fake };
 }
 
 describe("runner pool", () => {
@@ -171,6 +182,44 @@ describe("runner pool", () => {
     // The CI host builds with Docker's legacy builder, which rejects BuildKit-only flags.
     expect(dockerfile).not.toMatch(/--chmod=|--mount=|^# syntax=/m);
     expect(dockerfile).toContain("ENV ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/matrix-ci/job-started.sh");
+  });
+
+  // An idle runner's container used to count toward the job timeout, so a slot that waited two
+  // hours for work was killed a minute into its first job.
+  describe("idle recycling", () => {
+    const recycle = { IDLE_RECYCLE_SECONDS: "1", RECYCLE_POLL_SECONDS: "1", FAKE_DOCKER_BLOCK: "8" };
+    const runners = (busy: boolean) =>
+      JSON.stringify({ runners: [{ id: 41, name: "matrix-ci-host-1-1700000000", status: "online", busy }, { id: 42, name: "matrix-ci-host-2-1700000000", status: "online", busy: false }] });
+    const fixedClock = (fake: (name: string, body: string) => void) =>
+      fake("date", '[ "$1" = +%s ] && echo 1700000000 || exec /bin/date "$@"');
+
+    it("gives a job the full timeout after the longest possible idle wait", () => {
+      const { run, calls } = sandbox();
+      expect(run("run_one_job 1", { IDLE_RECYCLE_SECONDS: "1800", JOB_TIMEOUT_SECONDS: "7200" }).status).toBe(0);
+      expect(calls()).toContain("timeout --kill-after=60 9000");
+    });
+
+    it("deregisters an idle runner before stopping it, without backing off", () => {
+      const { run, calls, fake } = sandbox();
+      fixedClock(fake);
+      const result = run("run_one_job 1", { ...recycle, FAKE_RUNNERS: runners(false) });
+      expect(result.status, result.stderr).toBe(0);
+      const log = calls();
+      const deregister = log.indexOf("DELETE -H Authorization: Bearer installation-token -H Accept: application/vnd.github+json -H X-GitHub-Api-Version: 2022-11-28 https://api.github.com/repos/HamedMP/matrix-os/actions/runners/41");
+      expect(deregister).toBeGreaterThan(-1);
+      expect(log.indexOf("docker stop")).toBeGreaterThan(deregister);
+      expect(log).toContain("docker stop -t 10 matrix-ci-slot-1");
+      expect(log).not.toMatch(/actions\/runners\/42\b/);
+    });
+
+    it("leaves a runner that took a job alone", () => {
+      const { run, calls, fake } = sandbox();
+      fixedClock(fake);
+      const result = run("run_one_job 1", { ...recycle, FAKE_DOCKER_BLOCK: "3", FAKE_RUNNERS: runners(true) });
+      expect(result.status, result.stderr).toBe(0);
+      expect(calls()).not.toMatch(/DELETE .*actions\/runners\/41\b/);
+      expect(calls()).not.toContain("docker stop");
+    });
   });
 
   it("reports API and Docker failures so the slot backs off", () => {
