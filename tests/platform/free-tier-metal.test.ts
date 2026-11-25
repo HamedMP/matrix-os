@@ -153,6 +153,7 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
   function routesFor(options: {
     env?: NodeJS.ProcessEnv;
     config?: FreeTierConfig;
+    stripeEnabled?: boolean;
     resolveEntitlement?: (db: PlatformDB, clerkUserId: string) => Promise<BillingEntitlement | null>;
   } = {}) {
     const config = options.config ?? loadConfiguredFreeTier(options.env ?? ENABLED_ENV, () => {});
@@ -173,7 +174,7 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
       jsonCustomerVpsError: (c, err) => err instanceof CustomerVpsError && err.status === 402
         ? c.json({ error: 'Billing upgrade required', code: 'billing_required' }, 402)
         : c.json({ error: 'Provisioning failed', code: 'provisioning_failed' }, 503),
-      stripeBillingEntitlementsEnabled: () => true,
+      stripeBillingEntitlementsEnabled: () => options.stripeEnabled ?? true,
       resolveEffectiveBillingEntitlement: options.resolveEntitlement
         ?? ((routeDb, clerkUserId, now, runtimeSlot) => resolveEffectiveBillingEntitlement(routeDb, clerkUserId, now, runtimeSlot, {})),
       selectProvisionIdentityForClerkUser: async (_db, userId) => ({ handle: userId.replace('user_', ''), displayName: 'Owner' }),
@@ -198,9 +199,9 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
       .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null).execute();
   }
 
-  it('an invited user without billing provisions a free metal runtime', async () => {
+  it.each([true, false])('an invited user without billing provisions a free metal runtime (Stripe: %s)', async (stripeEnabled) => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
-    const { routes, provision, ensureProvisionedPlatformUser } = routesFor();
+    const { routes, provision, ensureProvisionedPlatformUser } = routesFor({ stripeEnabled });
 
     const response = await request(routes);
 
@@ -248,8 +249,8 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect((await metalRows())[0]).toMatchObject({ attempt: 3, status: 'failed' });
   });
 
-  it('an uninvited user gets 402 billing_required as today', async () => {
-    const { routes, provision } = routesFor();
+  it.each([true, false])('an uninvited user cannot create a runtime (Stripe: %s)', async (stripeEnabled) => {
+    const { routes, provision } = routesFor({ stripeEnabled });
 
     const response = await request(routes);
 
@@ -259,6 +260,14 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(await getBillingEntitlement(db, OWNER)).toBeUndefined();
     expect(hostd.capacity).not.toHaveBeenCalled();
     expect(provision).not.toHaveBeenCalled();
+  });
+
+  it('preserves legacy VPS provisioning when both Stripe and the free tier are disabled', async () => {
+    const { routes, provision } = routesFor({ env: {}, stripeEnabled: false });
+
+    expect((await request(routes)).status).toBe(202);
+    expect(provision).toHaveBeenCalledTimes(1);
+    expect(hostd.createVm).not.toHaveBeenCalled();
   });
 
   it('a second provision returns the existing runtime (idempotent through the unique index)', async () => {

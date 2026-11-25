@@ -226,7 +226,9 @@ export function createAppSessionRoutes(opts: {
     }
 
     try {
-      if (opts.stripeBillingEntitlementsEnabled(opts.appEnv)) {
+      // Free enrollment uses the same entitlement and admission checks even
+      // when the deployment does not have Stripe configured.
+      if (opts.stripeBillingEntitlementsEnabled(opts.appEnv) || opts.freeRuntimeProvisioner) {
         const now = new Date();
         const entitlement = await opts.resolveEffectiveBillingEntitlement(
           opts.db,
