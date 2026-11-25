@@ -1,11 +1,13 @@
 /**
  * Find and replace over the visible text of the body. Matches never cross a
- * paragraph; replacements are engine `replaceRange` operations, so they are
- * undoable and follow the Track changes toggle.
+ * paragraph; replacements are engine operations, so they are undoable and
+ * follow the Track changes toggle. A match can run over text the view hides
+ * (a pending deletion in the final view): only its visible stretches are
+ * replaced, so the hidden change stays for review.
  */
 
 import type { DocxOp, TextRange } from "../../../_shared/office-engine/index";
-import { type ParagraphText, rangeOf } from "./text-index";
+import { type ParagraphText, rangeOf, visiblePieces } from "./text-index";
 
 /** Most matches found; the rest are reported as `truncated`. */
 export const MAX_MATCHES = 1_000;
@@ -20,7 +22,10 @@ export interface FindOptions {
 export interface FindMatch {
   /** `find:<n>`, also the highlight id. */
   id: string;
+  /** From the first matched character to the last, hidden text between them included. */
   range: TextRange;
+  /** The visible stretches of the match, in order; one unless hidden text lies inside it. */
+  pieces: TextRange[];
   /** The matched text as shown. */
   text: string;
 }
@@ -56,13 +61,22 @@ export function findMatches(paragraphs: readonly ParagraphText[], query: string,
       }
       if (options.wholeWord === true && (isWordChar(paragraph.text[from - 1]) || isWordChar(paragraph.text[to]))) continue;
       if (matches.length === limit) return { matches, truncated: true };
-      matches.push({ id: `find:${matches.length}`, range: rangeOf(paragraph, from, to), text: found[0] });
+      matches.push({ id: `find:${matches.length}`, range: rangeOf(paragraph, from, to), pieces: visiblePieces(paragraph, from, to), text: found[0] });
     }
   }
   return { matches, truncated: false };
 }
 
-/** `replaceRange` operations for the matches, last first, so earlier positions stay valid. */
+/**
+ * Operations for the matches, last first, so earlier positions stay valid. The
+ * replacement takes the first visible stretch of a match; later stretches are
+ * deleted, and hidden text between them is left alone.
+ */
 export function replaceOps(matches: readonly FindMatch[], replacement: string): DocxOp[] {
-  return [...matches].reverse().map((match) => ({ type: "replaceRange", range: match.range, text: replacement }));
+  return [...matches].reverse().flatMap((match): DocxOp[] => {
+    const [first, ...rest] = match.pieces.length > 0 ? match.pieces : [match.range];
+    if (first === undefined) return [];
+    const deletes: DocxOp[] = rest.reverse().map((range) => ({ type: "deleteRange", range }));
+    return [...deletes, { type: "replaceRange", range: first, text: replacement }];
+  });
 }

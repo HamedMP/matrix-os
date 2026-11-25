@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { type Mounted, at, beforeInput, bodyParagraphs, bodyTables, caret, caretOf, cellParagraphs, domCaret, finalText, keydown, mount, paragraph, select, type } from "./helpers";
+import { createDocx } from "../../../../home/apps/_shared/office-engine/index";
+import { DATE, type Mounted, OTHER, at, beforeInput, bodyParagraphs, bodyTables, caret, caretOf, cellParagraphs, domCaret, finalText, keydown, mount, originalText, paragraph, select, type } from "./helpers";
 
 let m: Mounted;
 afterEach(() => m?.unmount());
@@ -13,6 +14,44 @@ async function open(paragraphs: string[] = ["Hello world", "Second paragraph", "
 function shownText(blockId: string): string {
   return m.editor.getBlockElement(blockId)?.textContent ?? "";
 }
+
+/** Two paragraphs, each with a pending deletion by another author: "brave " and "hidden ". */
+async function openWithHiddenDeletions(): Promise<string[]> {
+  const doc = createDocx({ paragraphs: ["Hello brave world", "Second hidden part", "Third"] });
+  const [a, b] = bodyParagraphs(doc).map((block) => block.id);
+  doc.applyOps(
+    [
+      { type: "deleteRange", range: { start: at(b!, 7), end: at(b!, 14) } },
+      { type: "deleteRange", range: { start: at(a!, 6), end: at(a!, 12) } },
+    ],
+    { track: true, author: OTHER, date: DATE },
+  );
+  m = await mount({ doc }, { viewMode: "final" });
+  return [a!, b!];
+}
+
+describe("input with tracking off in the final view: hidden pending deletions survive", () => {
+  it("deletes a selection across paragraphs without removing the deletions it hides", async () => {
+    const [a, b] = await openWithHiddenDeletions();
+    expect(finalText(m)).toBe("Hello world\nSecond part\nThird\n");
+    // "Hel|lo world" to "Second pa|rt", as shown.
+    select(m, at(a!, 3), at(b!, 16));
+    beforeInput(m, "deleteContentBackward");
+    expect(finalText(m)).toBe("Helrt\nThird\n");
+    // Both pending deletions are still there to accept or reject.
+    expect(originalText(m)).toBe("Helbrave hidden rt\nThird\n");
+    expect(m.doc.listRevisions().every((revision) => revision.kind === "delete")).toBe(true);
+  });
+
+  it("types over a selection across paragraphs without removing the deletions it hides", async () => {
+    const [a, b] = await openWithHiddenDeletions();
+    select(m, at(a!, 3), at(b!, 16));
+    type(m, "p");
+    expect(finalText(m)).toBe("Helprt\nThird\n");
+    expect(originalText(m)).toContain("brave ");
+    expect(originalText(m)).toContain("hidden ");
+  });
+});
 
 describe("input with tracking off: every beforeinput becomes engine operations", () => {
   it("insertText inserts at the caret, cancels the browser's own edit and leaves no revision", async () => {

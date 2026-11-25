@@ -62,6 +62,47 @@ function rangesOf(host: CommandHost, start: TextPosition, end: TextPosition): Te
   return host.index().engineRanges({ start, end }, (id) => host.paragraph(id)?.text.length ?? 0);
 }
 
+function pieceOp(blockId: BlockId, piece: { start: number; end: number }): DeleteRangeOp {
+  return { type: "deleteRange", range: { start: { blockId, offset: piece.start }, end: { blockId, offset: piece.end } } };
+}
+
+/**
+ * Deletions for one engine range of sibling paragraphs, in document order.
+ * When the view hides nothing in its paragraphs it is one deletion. Otherwise
+ * each paragraph loses only its visible stretches, and neighbours are joined
+ * by deleting just the paragraph mark between them, so hidden text (and a mark
+ * the view already drops) stays for review. A table between two siblings is
+ * selected whole and goes with the join, as it does in a single deletion.
+ */
+function visibleDeletes(host: CommandHost, range: TextRange): DeleteRangeOp[] {
+  const mode = host.mode();
+  const index = host.index();
+  const container = index.entry(range.start.blockId)?.containerKey;
+  const entries = index.between(range.start.blockId, range.end.blockId).filter((entry) => entry.containerKey === container);
+  const ops: DeleteRangeOp[] = [];
+  let hidden = false;
+  entries.forEach((entry, at) => {
+    const block = host.paragraph(entry.id);
+    if (block === null) {
+      hidden = true;
+      return;
+    }
+    const from = entry.id === range.start.blockId ? range.start.offset : 0;
+    const to = entry.id === range.end.blockId ? range.end.offset : block.text.length;
+    const pieces = clipToVisible(block, mode, from, to);
+    if (pieces.length > 1 || (pieces.length === 1 && (pieces[0]?.start !== from || pieces[0]?.end !== to)) || (pieces.length === 0 && from < to)) hidden = true;
+    for (const piece of pieces) ops.push(pieceOp(block.id, piece));
+    const next = entries[at + 1];
+    if (next === undefined) return;
+    if (markRemoved(block, mode)) {
+      hidden = true;
+      return;
+    }
+    ops.push({ type: "deleteRange", range: { start: { blockId: block.id, offset: block.text.length }, end: { blockId: next.id, offset: 0 } } });
+  });
+  return hidden ? ops : [{ type: "deleteRange", range }];
+}
+
 /** Deletions for a selection, ordered from the end of the document so each leaves the earlier ones valid. */
 function deleteOps(host: CommandHost, start: TextPosition, end: TextPosition): DeleteRangeOp[] {
   if (start.blockId === end.blockId) {
@@ -69,14 +110,11 @@ function deleteOps(host: CommandHost, start: TextPosition, end: TextPosition): D
     if (block === null) return [];
     return clipToVisible(block, host.mode(), start.offset, end.offset)
       .reverse()
-      .map((piece) => ({
-        type: "deleteRange",
-        range: { start: { blockId: block.id, offset: piece.start }, end: { blockId: block.id, offset: piece.end } },
-      }));
+      .map((piece) => pieceOp(block.id, piece));
   }
   return rangesOf(host, start, end)
-    .reverse()
-    .map((range) => ({ type: "deleteRange", range }));
+    .flatMap((range) => visibleDeletes(host, range))
+    .reverse();
 }
 
 /** Typing shares an undo step per word: white space starts a new one. */

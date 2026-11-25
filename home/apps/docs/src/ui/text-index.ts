@@ -49,6 +49,19 @@ export function visibleParagraphs(doc: DocxDocument, view: DocxTextView): Paragr
   return out;
 }
 
+/** The markup ranges of visible characters `[from, to)`, one per stretch without hidden text inside. */
+export function visiblePieces(paragraph: ParagraphText, from: number, to: number): TextRange[] {
+  const pieces: TextRange[] = [];
+  let start = from;
+  for (let at = from + 1; at <= to; at++) {
+    const previous = paragraph.offsets[at - 1];
+    if (at < to && previous !== undefined && paragraph.offsets[at] === previous + 1) continue;
+    if (start < at) pieces.push(rangeOf(paragraph, start, at));
+    start = at;
+  }
+  return pieces;
+}
+
 /** The markup range of visible characters `[from, to)` of one paragraph. */
 export function rangeOf(paragraph: ParagraphText, from: number, to: number): TextRange {
   const start = paragraph.offsets[from] ?? 0;

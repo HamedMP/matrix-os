@@ -70,6 +70,20 @@ describe("find model", () => {
     expect(gamma[0]!.range.end.offset).toBe(16);
   });
 
+  it("replaces a match that spans hidden text without removing the hidden text", () => {
+    const doc = createDocx({ paragraphs: ["alpha beta gamma", "beta"] });
+    const [block] = paragraphs(doc);
+    doc.applyOps(
+      [{ type: "deleteRange", range: { start: { blockId: block!.id, offset: 6 }, end: { blockId: block!.id, offset: 11 } } }],
+      { track: true, author: "Sam Lindqvist", date: DATE },
+    );
+    const matches = findMatches(visibleParagraphs(doc, "final"), "alpha gamma").matches;
+    doc.applyOps(replaceOps(matches, "delta"), { track: false, author: OWNER, date: DATE });
+    expect(doc.getPlainText({ view: "final" })).toBe("delta\nbeta\n");
+    expect(doc.getPlainText({ view: "original" })).toBe("deltabeta \nbeta\n");
+    expect(doc.listRevisions().map((revision) => revision.kind)).toEqual(["delete"]);
+  });
+
   it("builds replacement operations from the end of the document backwards", () => {
     const doc = createDocx({ paragraphs: ["one two one", "one"] });
     const matches = findMatches(visibleParagraphs(doc, "markup"), "one").matches;
