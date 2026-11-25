@@ -189,6 +189,17 @@ describe('onboarding journey on the free plan', () => {
     return app.request('/api/journey/retry-provision', { method: 'POST', body: '{}' });
   }
 
+  it('requires admission for an uninvited owner when Stripe is disabled', async () => {
+    const { app, provision } = journeyApp({ stripeEnabled: false });
+
+    expect(await journey(app)).toMatchObject({ phase: 'plan_required' });
+    const result = await retry(app);
+    expect(result.status).toBe(402);
+    expect(await result.json()).toMatchObject({ error: 'billing_required' });
+    expect(provision).not.toHaveBeenCalled();
+    expect(createVm).not.toHaveBeenCalled();
+  });
+
   it.each([true, false])('an invited free owner reaches provisioning when Stripe enabled is %s', async (stripeEnabled) => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
     const { app, provision } = journeyApp({ stripeEnabled });

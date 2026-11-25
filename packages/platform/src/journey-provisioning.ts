@@ -92,16 +92,13 @@ export function createJourneyProvisioner(
   }
 
   return async function provisionRuntimeForJourney(clerkUserId: string, runtimeSlot: string): Promise<void> {
-    if (deps.stripeBillingEntitlementsEnabled(appEnv)) {
+    if (deps.stripeBillingEntitlementsEnabled(appEnv) || deps.freeRuntimeProvisioner) {
       const checkedAt = new Date();
       const entitlement = await deps.resolveEffectiveBillingEntitlement(db, clerkUserId, checkedAt, runtimeSlot, appEnv);
       if (!getRuntimeAccessDecision(entitlement, checkedAt).runtimeProxyAllowed) {
         if (await provisionFree(clerkUserId, runtimeSlot)) return;
         throw billingRequired();
       }
-    } else if (await deps.freeRuntimeProvisioner?.isEligible(clerkUserId, runtimeSlot)) {
-      if (await provisionFree(clerkUserId, runtimeSlot)) return;
-      throw billingRequired();
     }
     if (!deps.customerVpsService) {
       throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
