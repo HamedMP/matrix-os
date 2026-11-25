@@ -96,14 +96,16 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
       const run = await current.selectFrom('chat_runs').select('id').where('id', '=', key.runId).where('chat_id', '=', key.chatId).forUpdate().executeTakeFirst();
       if (!run || JSON.stringify(await discover()) !== JSON.stringify(observed)) deny();
       const before = await payloads(current, key); const context = await inspect();
-      const proofs = await activityReceiptProofs<ChatDatabase>(current, key.owner.ownerId, key.chatId, before
-        .filter(row => !copies.has(googleActivityEntityRef(row.id))).map(row => ({ ref: googleActivityEntityRef(row.id), hash: row.hash })));
+      // Proof is needed only to adopt ordinary activity at first taint; an untainted chat re-issues receipts below.
+      const proofs = context.classification !== 'google' ? new Map<string, string>() : await activityReceiptProofs<ChatDatabase>(current,
+        key.owner.ownerId, key.chatId, before.filter(row => !copies.has(googleActivityEntityRef(row.id))).map(row => ({ ref: googleActivityEntityRef(row.id), hash: row.hash })));
       live();
       for (const row of before) {
         live();
         if (row.redacted_hash) deny();
         const copy = copies.get(googleActivityEntityRef(row.id));
         if (!copy) {
+          if (context.classification !== 'google') continue;
           const proof = proofs.get(googleActivityEntityRef(row.id));
           if (!proof || Date.parse(proof) <= now().getTime()) deny();
           ordinaryProofDeadline = Math.min(ordinaryProofDeadline ?? Infinity, Date.parse(proof)); live();

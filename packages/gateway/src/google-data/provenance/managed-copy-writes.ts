@@ -99,7 +99,9 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
       const previous = await lockedSession<OwnerBotDatabase>(tx, key);
       const context = await inspect();
       if (copy) match(copy, context, previous, now());
-      else if (previous) {
+      else if (previous && context.classification === 'google') {
+        // Proof is needed only to adopt an ordinary cache at first taint. An untainted (ordinary) chat holds
+        // ordinary content by construction; its missing/expired receipt is re-issued below, on load too.
         const proof = await matchingOrdinaryCopyReceipt(tx, receiptKey, hash(previous));
         if (!proof) deny();
         captureDeadline(proof); live();
@@ -125,7 +127,7 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
         await retireOrdinaryCopyReceipt(tx, receiptKey);
         check(signal);
         await inspect();
-      } else if (mode === 'save' && current.classification === 'ordinary') {
+      } else if (current.classification === 'ordinary' && (mode === 'save' || previous)) {
         const saved = await lockedSession<OwnerBotDatabase>(tx, key);
         if (!saved) deny();
         await recordOrdinaryCopyReceipt(tx, receiptKey, hash(saved));

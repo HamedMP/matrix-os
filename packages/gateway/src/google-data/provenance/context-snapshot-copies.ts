@@ -109,7 +109,8 @@ export function createGoogleContextSnapshotAdapter(db: Kysely<ChatDatabase>, opt
         const row = await load(current, key); live(); const copy = copies.get(ref(key));
         if (row?.redacted_hash || row?.collaboration_scope_id) deny();
         if (copy && (context.classification !== 'google' || copy.state !== 'active' || copy.contentHash !== row?.hash)) deny();
-        if (!copy && row?.hash) {
+        // Proof is needed only to adopt an ordinary snapshot at first taint; an untainted chat re-issues it below.
+        if (!copy && row?.hash && context.classification === 'google') {
           const proof = await matchingOrdinaryCopyReceipt(current, { ownerId: owner.ownerId, chatId, kind: 'derived', entityRef: ref(key) }, row.hash);
           if (!proof) deny(); ordinaryProofDeadline = Math.min(ordinaryProofDeadline ?? Infinity, Date.parse(proof)); live();
         }

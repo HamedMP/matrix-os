@@ -195,6 +195,24 @@ describe('registered activity copies', () => {
     await expect(repository.appendRunActivities(owner, 'chat_legacy', 'run_legacy', [{ ...activity('activity_legacy'), chatId: 'chat_legacy', runId: 'run_legacy' }])).rejects.toThrow();
     expect((await sql`SELECT id FROM chat_run_events`.execute(repository.kysely)).rows).toEqual([]);
   });
+  it('re-issues an expired or missing ordinary activity receipt while the chat is untainted', async () => {
+    const live = sql<{ live: boolean }>`SELECT expires_at>clock_timestamp()+interval '29 days' AS live FROM google_ordinary_copy_receipts`;
+    const input = activity();
+    await repository.appendRunActivities(owner, key.chatId, key.runId, [input]);
+    await sql`UPDATE google_ordinary_copy_receipts SET expires_at=clock_timestamp()-interval '1 second'`.execute(repository.kysely);
+    await repository.appendRunActivities(owner, key.chatId, key.runId, [{ ...input, status: 'completed' }]);
+    expect((await live.execute(repository.kysely)).rows).toEqual([{ live: true }]);
+    await sql`DELETE FROM google_ordinary_copy_receipts`.execute(repository.kysely);
+    await repository.appendRunActivities(owner, key.chatId, key.runId, [activity('activity_two')]);
+    expect((await live.execute(repository.kysely)).rows).toEqual([{ live: true }, { live: true }]);
+  });
+  it('still refuses an unreceipted activity once its chat is Google-tainted', async () => {
+    const input = activity(); await repository.appendRunActivities(owner, key.chatId, key.runId, [input]);
+    await sql`DELETE FROM google_ordinary_copy_receipts`.execute(repository.kysely);
+    await mark();
+    await expect(repository.appendRunActivities(owner, key.chatId, key.runId, [{ ...input, status: 'completed' }])).rejects.toThrow();
+    expect(await activityCopy()).toBeNull();
+  });
   it('refuses an ordinary activity modified outside the receipt-bearing writer', async () => {
     const input = activity(); await repository.appendRunActivities(owner, key.chatId, key.runId, [input]);
     await sql`UPDATE chat_run_events SET event=jsonb_set(event,'{summary}','"unproven modification"') WHERE id=${input.id}`.execute(repository.kysely);

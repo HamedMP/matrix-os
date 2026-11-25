@@ -122,7 +122,9 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
         live();
         const copy = copies.get(id);
         if (copy) match(copy, context, before, now().getTime());
-        else if (before) {
+        else if (before && context.classification === 'google') {
+          // Proof is needed only to adopt ordinary content at first taint. An untainted (ordinary) chat holds
+          // ordinary content by construction; its missing/expired receipt is re-issued after the write.
           const proof = await matchingOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId,
             kind: 'derived', entityRef: canonicalMessageEntityRef(id) }, before);
           if (!proof || Date.parse(proof) <= now().getTime()) deny();

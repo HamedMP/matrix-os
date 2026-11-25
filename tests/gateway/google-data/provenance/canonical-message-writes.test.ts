@@ -77,10 +77,22 @@ describe('canonical assistant delta copy writer foundation', () => {
     await expect(repository.appendAssistantDelta(owner, delta(' Must not append'))).rejects.toThrow();
     expect(await copy()).toBeNull();
   });
-  it('never certifies a preexisting ordinary copy written through an uninstalled path', async () => {
+  it('never certifies a preexisting uninstalled-path copy once its chat is Google-tainted', async () => {
     await new ChatRepository(repository.kysely).appendAssistantDelta(owner, delta('Unproven old content'));
+    await mark();
     await expect(repository.appendAssistantDelta(owner, delta(' Must not certify'))).rejects.toThrow();
     expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
+    expect(await copy()).toBeNull();
+  });
+  it('re-issues an expired or missing ordinary message receipt while the chat is untainted', async () => {
+    const live = sql<{ live: boolean }>`SELECT expires_at>clock_timestamp()+interval '29 days' AS live FROM google_ordinary_copy_receipts`;
+    await repository.appendAssistantDelta(owner, delta('Ordinary'));
+    await sql`UPDATE google_ordinary_copy_receipts SET expires_at=clock_timestamp()-interval '1 second'`.execute(repository.kysely);
+    await repository.appendAssistantDelta(owner, delta(' resumed'));
+    expect((await live.execute(repository.kysely)).rows).toEqual([{ live: true }]);
+    await sql`DELETE FROM google_ordinary_copy_receipts`.execute(repository.kysely);
+    await repository.finishRun(owner, { chatId: key.chatId, runId: key.runId, outcome: 'completed', completedAt: new Date().toISOString() });
+    expect((await live.execute(repository.kysely)).rows).toEqual([{ live: true }]);
   });
   it('rolls the ordinary proof back with its actual content transaction', async () => {
     await expect(repository.withTransaction(async tx => {
@@ -97,10 +109,11 @@ describe('canonical assistant delta copy writer foundation', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       await repository.appendAssistantDelta(owner, delta('Ordinary content still persists'));
+      await repository.appendAssistantDelta(owner, delta(' and keeps streaming'));
     } finally { warn.mockRestore(); }
     expect((await sql`SELECT count(*)::int AS n FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([{ n: 100000 }]);
     expect((await repository.kysely.selectFrom('chat_messages').select('parts').where('id', '=', key.messageId).executeTakeFirstOrThrow()).parts)
-      .toEqual([{ type: 'text', text: 'Ordinary content still persists' }]);
+      .toEqual([{ type: 'text', text: 'Ordinary content still persists and keeps streaming' }]);
     // The unreceipted copy is simply unprovable: a later first Gmail collection fails closed for it.
     await mark();
     await expect(repository.appendAssistantDelta(owner, delta(' Gmail summary'))).rejects.toThrow();

@@ -96,10 +96,23 @@ describe('durable run and queue context snapshot copies', () => {
     if (mode==='modified') await sql`UPDATE chat_queued_turns SET context_snapshot=jsonb_set(context_snapshot,'{chats,0,text}','"unproven"')`.execute(repository.kysely);
     await mark(); await expect(enqueue()).rejects.toThrow(); expect(await inspectQueue()).toBeNull();
   });
-  it('never certifies an ordinary snapshot persisted through an uninstalled writer', async () => {
+  it('never certifies an uninstalled-writer snapshot once its chat is Google-tainted', async () => {
     await enqueue(new ChatRepository(repository.kysely));
+    await mark();
     await expect(enqueue()).rejects.toThrow();
     expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
+  });
+  it('re-issues an expired or missing ordinary queue receipt while the chat is untainted', async () => {
+    const live = sql<{ live: boolean }>`SELECT expires_at>clock_timestamp()+interval '29 days' AS live FROM google_ordinary_copy_receipts
+      WHERE entity_ref=${queueContextEntityRef('qturn_one')}`;
+    await enqueue();
+    await sql`UPDATE google_ordinary_copy_receipts SET expires_at=clock_timestamp()-interval '1 second'`.execute(repository.kysely);
+    await enqueue();
+    expect((await live.execute(repository.kysely)).rows).toEqual([{ live: true }]);
+    await sql`DELETE FROM google_ordinary_copy_receipts`.execute(repository.kysely);
+    await enqueue();
+    expect((await live.execute(repository.kysely)).rows).toEqual([{ live: true }]);
+    expect(await inspectQueue()).toBeNull();
   });
   it('registers fresh admission and retry contexts with original source retention', async () => {
     const admitted = await admitContext(); expect(await inspectRun('run_two')).toMatchObject({ revision: 1, state: 'active' });
