@@ -9,12 +9,26 @@ afterEach(cleanup);
 const NOW = Date.parse("2026-11-25T15:00:00Z");
 const kindOf = () => ({ kind: "document" as const });
 
-/** A home made of paths; `list` answers one folder at a time, folders first. */
-function fakeFiles(paths: string[], options: { fail?: Set<string>; forbid?: Set<string>; missing?: Set<string> } = {}) {
+/**
+ * A home made of paths; `list` answers one folder at a time, folders first.
+ * `listLimit` cuts each listing short and marks it truncated, like a folder
+ * larger than the gateway lists.
+ */
+function fakeFiles(paths: string[], options: { fail?: Set<string>; forbid?: Set<string>; missing?: Set<string>; listLimit?: number } = {}) {
   const calls: string[] = [];
+  const stats: string[] = [];
   return {
     calls,
-    async list(dir: string) {
+    stats,
+    async stat(path: string) {
+      stats.push(path);
+      if (options.forbid?.has(path)) throw Object.assign(new Error("no"), { name: "BridgeFileError", code: "forbidden" });
+      if (options.fail?.has(path)) throw Object.assign(new Error("down"), { name: "BridgeFileError", code: "unavailable" });
+      if (paths.includes(path)) return { path, size: 1, modifiedAt: "2026-11-24T10:00:00Z", version: "v1" };
+      if (paths.some((item) => item.startsWith(`${path}/`))) throw Object.assign(new Error("dir"), { name: "BridgeFileError", code: "invalid_request" });
+      throw Object.assign(new Error("gone"), { name: "BridgeFileError", code: "not_found" });
+    },
+    async list(dir: string, listOptions: { limit?: number } = {}) {
       calls.push(dir);
       if (options.missing?.has(dir)) throw Object.assign(new Error("gone"), { name: "BridgeFileError", code: "not_found" });
       if (options.forbid?.has(dir)) throw Object.assign(new Error("no"), { name: "BridgeFileError", code: "forbidden" });
@@ -27,7 +41,10 @@ function fakeFiles(paths: string[], options: { fail?: Set<string>; forbid?: Set<
         if (!name) continue;
         children.set(name, { name, path: `${prefix}${name}`, kind: rest.length > 0 ? "dir" : "file", size: 1, modifiedAt: "2026-11-24T10:00:00Z" });
       }
-      return { entries: [...children.values()], truncated: false };
+      if (children.size === 0 && dir !== "" && !paths.some((path) => path.startsWith(prefix))) throw Object.assign(new Error("gone"), { name: "BridgeFileError", code: "not_found" });
+      const all = [...children.values()];
+      const limit = Math.min(listOptions.limit ?? Infinity, options.listLimit ?? Infinity);
+      return { entries: all.slice(0, limit), truncated: all.length > limit };
     },
   };
 }
@@ -226,6 +243,72 @@ describe("MatrixFileBrowser", () => {
     render(<MatrixFileBrowser files={fakeFiles(many)} accept={[".docx"]} onOpen={vi.fn()} appName="Docs" fileNoun="Word documents" kindOf={kindOf} />);
     expect(await screen.findByText("Showing 200 of 230. Filter to find the rest.")).toBeTruthy();
     expect(within(screen.getByRole("list", { name: "Folders and files" })).getAllByRole("button")).toHaveLength(200);
+  });
+
+  describe("in a folder too large to list", () => {
+    // The listing stops after the first two entries, so archive/ and zeta.docx are never listed.
+    const big = ["big/alpha.docx", "big/beta.docx", "big/archive/old.docx", "big/zeta.docx"];
+
+    async function renderBig(files = fakeFiles(big, { listLimit: 2 }), onOpen = vi.fn()) {
+      render(<MatrixFileBrowser files={files} initialDir="big" accept={[".docx"]} onOpen={onOpen} appName="Docs" fileNoun="Word documents" kindOf={kindOf} />);
+      await screen.findByRole("button", { name: /^alpha\.docx/ });
+      return { files, onOpen, search: screen.getByRole("searchbox", { name: "Filter this folder by name" }) };
+    }
+
+    it("opens a file that was left out of the listing by its typed name", async () => {
+      const { files, onOpen, search } = await renderBig();
+      expect(screen.getByText(/more items than can be listed/).textContent).toMatch(/full name/);
+      fireEvent.change(search, { target: { value: "zeta.docx" } });
+      expect(screen.getByText("Nothing listed here matches “zeta.docx”.")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Open “zeta.docx”" }));
+      await waitFor(() => expect(onOpen).toHaveBeenCalledWith("big/zeta.docx"));
+      expect(files.stats).toEqual(["big/zeta.docx"]);
+    });
+
+    it("adds the accepted extension, and opens a left-out folder, from Enter in the search", async () => {
+      const { files, onOpen, search } = await renderBig();
+      fireEvent.change(search, { target: { value: "zeta" } });
+      fireEvent.keyDown(search, { key: "Enter" });
+      await waitFor(() => expect(onOpen).toHaveBeenCalledWith("big/zeta.docx"));
+      fireEvent.change(search, { target: { value: "archive" } });
+      fireEvent.keyDown(search, { key: "Enter" });
+      await screen.findByRole("button", { name: /^old\.docx/ });
+      expect(files.stats).toEqual(["big/zeta.docx", "big/archive.docx"]);
+      expect(files.calls.at(-1)).toBe("big/archive");
+      expect(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("button", { name: "archive" }).getAttribute("aria-current")).toBe("location");
+    });
+
+    it("says plainly when the typed name is not there or cannot be opened", async () => {
+      const files = fakeFiles([...big, "big/locked.docx"], { listLimit: 2, forbid: new Set(["big/locked.docx"]) });
+      const { onOpen, search } = await renderBig(files);
+      fireEvent.change(search, { target: { value: "nope" } });
+      fireEvent.click(screen.getByRole("button", { name: "Open “nope”" }));
+      expect((await screen.findByText("Nothing named “nope” in this folder.")).getAttribute("role")).toBe("status");
+      fireEvent.change(search, { target: { value: "locked.docx" } });
+      expect(screen.queryByText(/Nothing named/)).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Open “locked.docx”" }));
+      expect(await screen.findByText("Docs is not allowed to open “locked.docx”.")).toBeTruthy();
+      expect(onOpen).not.toHaveBeenCalled();
+    });
+
+    it("hands a typed file name straight to the app when the files bridge cannot describe files", async () => {
+      const full = fakeFiles(big, { listLimit: 2 });
+      const listOnly = { list: full.list, calls: full.calls };
+      const onOpen = vi.fn();
+      render(<MatrixFileBrowser files={listOnly} initialDir="big" accept={[".docx"]} onOpen={onOpen} appName="Docs" fileNoun="Word documents" kindOf={kindOf} />);
+      await screen.findByRole("button", { name: /^alpha\.docx/ });
+      fireEvent.change(screen.getByRole("searchbox"), { target: { value: "zeta.docx" } });
+      fireEvent.click(screen.getByRole("button", { name: "Open “zeta.docx”" }));
+      await waitFor(() => expect(onOpen).toHaveBeenCalledWith("big/zeta.docx"));
+    });
+
+    it("offers no typed-name open when the whole folder was listed", async () => {
+      render(<MatrixFileBrowser files={fakeFiles(big)} initialDir="big" accept={[".docx"]} onOpen={vi.fn()} appName="Docs" fileNoun="Word documents" kindOf={kindOf} />);
+      await screen.findByRole("button", { name: /^zeta\.docx/ });
+      fireEvent.change(screen.getByRole("searchbox"), { target: { value: "nothing" } });
+      expect(screen.queryByRole("button", { name: /^Open “/ })).toBeNull();
+      expect(screen.getByText("Nothing in this folder matches “nothing”.")).toBeTruthy();
+    });
   });
 });
 

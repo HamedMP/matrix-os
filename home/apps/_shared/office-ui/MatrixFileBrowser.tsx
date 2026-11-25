@@ -21,10 +21,13 @@ import {
   type StartFolderMemory,
   type StartSort,
 } from "./start-model";
+import { errorCode, useTypedOpen, type TypedOpenState } from "./typed-open";
 
 /** The part of `MatrixOS.files` the browser uses. */
 export interface BrowserFiles {
   list(dir: string, options?: { limit?: number }): Promise<{ entries: StartFileEntry[]; truncated: boolean }>;
+  /** Lets the browser check a typed file name before opening it, in a folder too large to list. */
+  stat?(path: string): Promise<unknown>;
 }
 
 export interface MatrixFileBrowserProps {
@@ -63,10 +66,6 @@ function isUnusableFolder(error: unknown): boolean {
   return code === "not_found" || code === "forbidden";
 }
 
-function errorCode(error: unknown): unknown {
-  return typeof error === "object" && error !== null && "code" in error ? (error as { code: unknown }).code : null;
-}
-
 function listingMessage(error: unknown, appName: string): string {
   const code = errorCode(error);
   if (code === "forbidden") return `${appName} is not allowed to look in this folder.`;
@@ -83,7 +82,8 @@ const SORT_OPTIONS = [
  * The owner's Matrix home, one folder at a time: breadcrumbs, a name filter
  * for the folder, sorting, and only the folders and file types the app opens.
  * Clicking a folder enters it, clicking a file opens it. Up/Down move between
- * rows; Backspace goes up a folder.
+ * rows; Backspace goes up a folder. When a folder holds more than one listing
+ * returns, the owner can open a left-out file or folder by typing its full name.
  */
 export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, kindOf, initialDir = "", memory, disabled, searchRef, now, className }: MatrixFileBrowserProps) {
   // Null until the remembered folder has been read.
@@ -160,6 +160,16 @@ export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, ki
     return { rows: matches.slice(0, MAX_BROWSER_ROWS), total: matches.length };
   }, [visible, query, sort]);
   const roving = useRovingRows(shown.rows.map((entry) => entry.path));
+  const typed = useTypedOpen({
+    files,
+    listing,
+    query,
+    acceptKey,
+    disabled,
+    appName,
+    onFile: onOpen,
+    onFolder: (path) => goTo(path, true),
+  });
 
   // A layout effect, so focus lands in the same commit that draws the rows.
   useLayoutEffect(() => {
@@ -169,11 +179,15 @@ export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, ki
     }
   }, [listing]);
 
+  const changeQuery = (next: string) => {
+    typed.reset();
+    setQuery(next);
+  };
   const goTo = (path: string, moveFocus: boolean) => {
     focusAfterLoad.current = moveFocus;
     fallbacks.current = [];
     chosen.current = path;
-    setQuery("");
+    changeQuery("");
     setListing({ status: "loading", dir: path });
     setDir(path);
   };
@@ -203,7 +217,8 @@ export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, ki
           <SearchField
             inputRef={searchRef}
             query={query}
-            onQuery={setQuery}
+            onQuery={changeQuery}
+            onSubmit={typed.open}
             onEnterList={() => {
               const first = listRef.current?.querySelector<HTMLElement>(`[${ROW_ATTRIBUTE}]`);
               first?.focus();
@@ -219,10 +234,11 @@ export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, ki
           entries={visible.entries.length}
           matches={shown.total}
           query={query}
+          truncated={typed.truncated}
           fileNoun={fileNoun}
           onRetry={retry}
           onUp={dir === null || dir === "" ? null : () => goTo(parentDir(dir), true)}
-          onClearQuery={() => setQuery("")}
+          onClearQuery={() => changeQuery("")}
         />
         {shown.rows.length > 0 && (
           <ul ref={listRef} className="oui-browser__list" aria-label="Folders and files" onKeyDown={onListKeyDown}>
@@ -260,11 +276,8 @@ export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, ki
           </ul>
         )}
       </div>
-      {listing.status === "ready" && (shown.total > shown.rows.length || listing.truncated) && (
-        <p className="oui-browser__note">
-          {shown.total > shown.rows.length ? `Showing ${shown.rows.length} of ${shown.total}. Filter to find the rest.` : "This folder holds more items than can be listed. Filter by name or open a subfolder."}
-        </p>
-      )}
+      {listing.status === "ready" && shown.total > shown.rows.length && <p className="oui-browser__note">{`Showing ${shown.rows.length} of ${shown.total}. Filter to find the rest.`}</p>}
+      <TypedOpenNote typed={typed} disabled={disabled} />
       {visible.system > 0 && (
         <p className="oui-browser__note oui-browser__system">
           <span>{showSystem ? "Matrix system folders are shown." : "Matrix system folders are hidden."}</span>
@@ -273,6 +286,22 @@ export function MatrixFileBrowser({ files, accept, onOpen, appName, fileNoun, ki
           </button>
         </p>
       )}
+    </div>
+  );
+}
+
+/** Says the listing left entries out and offers to open the typed name. */
+function TypedOpenNote({ typed, disabled }: { typed: TypedOpenState; disabled: boolean | undefined }) {
+  if (!typed.truncated) return null;
+  return (
+    <div className="oui-browser__note oui-browser__typed">
+      <p>This folder holds more items than can be listed. Type the full name of a file or folder to open it.</p>
+      {typed.target && typed.open && (
+        <button type="button" className="oui-button" disabled={disabled || typed.busy} onClick={typed.open}>
+          Open “{typed.target.name}”
+        </button>
+      )}
+      <span role="status">{typed.message}</span>
     </div>
   );
 }
@@ -311,12 +340,17 @@ interface SearchFieldProps {
   onQuery: (query: string) => void;
   /** Moves focus to the first row; false when there is none. */
   onEnterList: () => boolean;
+  /** Runs on Enter, when the query names something to open. */
+  onSubmit?: () => void;
 }
 
-function SearchField({ inputRef, query, onQuery, onEnterList }: SearchFieldProps) {
+function SearchField({ inputRef, query, onQuery, onEnterList, onSubmit }: SearchFieldProps) {
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" && onEnterList()) event.preventDefault();
-    else if (event.key === "Escape" && query !== "") {
+    else if (event.key === "Enter" && onSubmit) {
+      event.preventDefault();
+      onSubmit();
+    } else if (event.key === "Escape" && query !== "") {
       event.preventDefault();
       onQuery("");
     }
@@ -349,6 +383,8 @@ interface BrowserStatusProps {
   /** Entries that match the filter. */
   matches: number;
   query: string;
+  /** The listing left entries out, so a miss here is not a miss in the folder. */
+  truncated: boolean;
   fileNoun: string;
   onRetry: () => void;
   /** Goes to the parent folder; null at the home root. */
@@ -357,7 +393,7 @@ interface BrowserStatusProps {
 }
 
 /** Loading, failure, empty folder and no-match states; nothing once rows are shown. */
-function BrowserStatus({ listing, entries, matches, query, fileNoun, onRetry, onUp, onClearQuery }: BrowserStatusProps) {
+function BrowserStatus({ listing, entries, matches, query, truncated, fileNoun, onRetry, onUp, onClearQuery }: BrowserStatusProps) {
   if (listing.status === "loading") {
     return (
       <div className="oui-browser__loading" role="status">
@@ -396,7 +432,7 @@ function BrowserStatus({ listing, entries, matches, query, fileNoun, onRetry, on
   if (matches > 0) return null;
   return (
     <div className="oui-browser__notice" role="status">
-      <p>Nothing in this folder matches “{query.trim()}”.</p>
+      <p>{truncated ? `Nothing listed here matches “${query.trim()}”.` : `Nothing in this folder matches “${query.trim()}”.`}</p>
       <button type="button" className="oui-button" onClick={onClearQuery}>
         Clear filter
       </button>

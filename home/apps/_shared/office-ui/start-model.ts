@@ -76,6 +76,35 @@ export function browsableEntries(dir: string, entries: readonly StartFileEntry[]
   });
 }
 
+/** Longest file or folder name the files bridge accepts. */
+const MAX_NAME_LENGTH = 255;
+
+/** What a name typed in a folder too large to list could open. */
+export interface TypedTarget {
+  name: string;
+  /** Files to try in order: the name itself when it has an accepted extension, else the name with each one. */
+  files: string[];
+  /** The folder to try when no file is there; null when the name has an accepted extension. */
+  folder: string | null;
+}
+
+/**
+ * Paths a typed name could mean in `dir`, so an owner can open an entry the
+ * listing left out. Null unless the text is one plain name the browser would
+ * show: no slashes, not hidden, not a lock file, not a protected top-level folder.
+ */
+export function typedTarget(dir: string, query: string, accept: readonly string[]): TypedTarget | null {
+  const name = query.trim();
+  if (name === "" || name.length > MAX_NAME_LENGTH || /[/\\\0]/.test(name)) return null;
+  if (name.startsWith(".") || name.startsWith("~$")) return null;
+  if (dir === "" && PROTECTED_ROOT_DIRS.has(name)) return null;
+  const at = (child: string) => (dir === "" ? child : `${dir}/${child}`);
+  const extensions = [...new Set(accept.filter((entry) => entry.startsWith(".")).map((entry) => entry.toLowerCase()))];
+  if (extensions.length === 0) return { name, files: [at(name)], folder: at(name) };
+  if (extensions.includes(extensionOf(name))) return { name, files: [at(name)], folder: null };
+  return { name, files: extensions.map((extension) => at(`${name}${extension}`)), folder: at(name) };
+}
+
 /** How many system folders `browsableEntries` hides in this folder until the owner asks for them. */
 export function hiddenSystemCount(dir: string, entries: readonly StartFileEntry[]): number {
   return entries.filter((entry) => isReadableSystemDir(dir, entry)).length;

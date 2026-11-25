@@ -13,8 +13,30 @@ import {
   folderLabel,
   relativeTime,
   sortEntries,
+  typedTarget,
   type StartFileEntry,
 } from "../../../home/apps/_shared/office-ui/start-model";
+
+describe("typedTarget", () => {
+  it("opens a typed name with an accepted extension as that file only", () => {
+    expect(typedTarget("work", "  Q3 Plan.DOCX ", [".docx"])).toEqual({ name: "Q3 Plan.DOCX", files: ["work/Q3 Plan.DOCX"], folder: null });
+    expect(typedTarget("", "top.docx", [".docx"])).toEqual({ name: "top.docx", files: ["top.docx"], folder: null });
+  });
+
+  it("tries each accepted extension, then a folder, for a name without one", () => {
+    expect(typedTarget("work", "budget", [".xlsx", ".csv"])).toEqual({ name: "budget", files: ["work/budget.xlsx", "work/budget.csv"], folder: "work/budget" });
+    expect(typedTarget("work", "notes.md", [".docx"])).toEqual({ name: "notes.md", files: ["work/notes.md.docx"], folder: "work/notes.md" });
+  });
+
+  it("refuses text that is not one plain, visible name", () => {
+    for (const query of ["", "   ", "a/b.docx", "a\\b.docx", ".", "..", ".hidden.docx", "~$lock.docx", "bad\0.docx", "x".repeat(256)]) {
+      expect(typedTarget("work", query, [".docx"])).toBeNull();
+    }
+    expect(typedTarget("", "system", [".docx"])).toBeNull();
+    expect(typedTarget("", "agents", [".docx"])).toBeNull();
+    expect(typedTarget("projects", "system", [".docx"])?.folder).toBe("projects/system");
+  });
+});
 
 function entry(path: string, kind: "file" | "dir" = "file", modifiedAt = "2026-11-20T09:00:00.000Z"): StartFileEntry {
   return { name: path.split("/").pop() ?? path, path, kind, size: 0, modifiedAt };
