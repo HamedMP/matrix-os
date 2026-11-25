@@ -125,16 +125,43 @@ describe("approved background Mac terminal checks", () => {
     expect(deps.onActiveChange.mock.calls).toEqual([[true], [false]]);
   });
 
-  it("recovers a transient discovery failure within the same grant", async () => {
+  it("reports one diagnostic per discovery failure episode and recovers within the same grant", async () => {
     const { deps, first, service, approve, request } = fixture();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { targetId } = await approve();
     const next = request(targetId, "run_1");
-    deps.readBackgroundTerminalRequest.mockRejectedValueOnce(new Error("offline")).mockResolvedValue(next);
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(deps.approve).toHaveBeenCalledOnce();
-    expect(first.run).toHaveBeenCalledOnce();
-    expect(deps.returnTerminalResult).toHaveBeenCalledOnce();
-    await service.stop();
+    deps.readBackgroundTerminalRequest
+      .mockRejectedValueOnce(new Error("private connection details"))
+      .mockRejectedValueOnce(new Error("still offline"))
+      .mockResolvedValueOnce(next)
+      .mockRejectedValueOnce(new Error("offline again"));
+
+    try {
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(deps.readBackgroundTerminalRequest).toHaveBeenCalledTimes(2);
+      expect(deps.reportEvent.mock.calls).toEqual([["approved"], ["failed", "transport-failed"]]);
+      expect(warning).toHaveBeenCalledExactlyOnceWith("[chat-mac-terminal-background]", "transport-failed", "Error");
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(deps.approve).toHaveBeenCalledOnce();
+      expect(first.run).toHaveBeenCalledOnce();
+      expect(deps.returnTerminalResult).toHaveBeenCalledExactlyOnceWith(next, { terminalId: "t1", output: "Darwin" }, expect.any(AbortSignal));
+      expect(service.status(ref)).toMatchObject({ active: true, targetId, remaining: 2, phase: "waiting" });
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(deps.reportEvent.mock.calls).toEqual([
+        ["approved"], ["failed", "transport-failed"], ["dispatched"], ["returned"], ["failed", "transport-failed"],
+      ]);
+      expect(warning.mock.calls).toEqual([
+        ["[chat-mac-terminal-background]", "transport-failed", "Error"],
+        ["[chat-mac-terminal-background]", "transport-failed", "Error"],
+      ]);
+      expect(first.run).toHaveBeenCalledOnce();
+      expect(deps.returnTerminalResult).toHaveBeenCalledOnce();
+    } finally {
+      warning.mockRestore();
+      await service.stop();
+    }
   });
 
   it("retries only the identical result after ambiguous delivery", async () => {
@@ -150,7 +177,7 @@ describe("approved background Mac terminal checks", () => {
     expect(deps.returnTerminalResult.mock.calls[0]?.slice(0, 2)).toEqual(deps.returnTerminalResult.mock.calls[1]?.slice(0, 2));
     expect(first.run).toHaveBeenCalledOnce();
     expect(deps.prepareTerminal).toHaveBeenCalledOnce();
-    expect(deps.reportEvent.mock.calls.map(([event]) => event)).toEqual(["approved", "dispatched", "returned"]);
+    expect(deps.reportEvent.mock.calls).toEqual([["approved"], ["dispatched"], ["failed", "transport-failed"], ["returned"]]);
     await service.stop();
   });
 

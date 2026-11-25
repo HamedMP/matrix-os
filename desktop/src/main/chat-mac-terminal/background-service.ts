@@ -38,6 +38,7 @@ interface Grant {
   operation: AbortController;
   used: Set<string>;
   phase: "waiting" | "running" | "returning";
+  transportFailureReported: boolean;
   expiryTimer: ReturnType<typeof setTimeout>;
   pollTimer?: ReturnType<typeof setTimeout>;
   displayTimer?: ReturnType<typeof setTimeout>;
@@ -209,7 +210,9 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
   function schedule(grant: Grant, delay: number) {
     grant.pollTimer = setTimeout(() => {
       let next = POLL_MS;
-      const task = tick(grant).catch(async (error: unknown) => {
+      const task = tick(grant).then(() => {
+        grant.transportFailureReported = false;
+      }).catch(async (error: unknown) => {
         if (!isLive(grant)) return;
         if (!(error instanceof Error)) {
           deps.reportEvent("failed", "transport-failed");
@@ -218,6 +221,10 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
         }
         // Discovery or delivery can recover on reconnection. The active grant
         // retains the same pending result, with time and memory bounded above.
+        if (!grant.transportFailureReported) {
+          grant.transportFailureReported = true;
+          reportFailure("transport-failed", error);
+        }
         next = RETRY_MS;
       }).finally(() => {
         if (inFlight === task) inFlight = null;
@@ -250,7 +257,7 @@ export function createMacTerminalBackgroundService(deps: Dependencies) {
       const approvedAt = Date.now();
       const grant: Grant = {
         context, approvedAt, expiresAt: approvedAt + GRANT_MS, operation, targetId: randomUUID(),
-        used: new Set(), phase: "waiting",
+        used: new Set(), phase: "waiting", transportFailureReported: false,
         expiryTimer: setTimeout(() => { void revoke(grant, "expired"); }, GRANT_MS),
       };
       grant.expiryTimer.unref();
