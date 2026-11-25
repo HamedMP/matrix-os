@@ -1135,10 +1135,8 @@ export async function createGateway(config: GatewayConfig) {
   // Cron service -- scheduled tasks from ~/system/cron.json
   const cronStore = createCronStore(join(homePath, "system", "cron.json"));
   const cronService: CronService = createCronService({
-    store: cronStore,
+    store: cronStore, catchUpAfter: channelsReady,
     onTrigger: createCronChannelTrigger({ channelManager, logBestEffortFailure }),
-    // A missed reminder sent before Telegram finishes starting would be dropped as delivered.
-    catchUpAfter: channelsReady,
   });
   cronService.start();
 
