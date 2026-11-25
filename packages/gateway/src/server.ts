@@ -1126,7 +1126,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const configPath = join(homePath, "system/config.json");
-  const { channelManager, pushAdapter, closeChannels } = initializeGatewayChannels({
+  const { channelManager, pushAdapter, closeChannels, ready: channelsReady } = initializeGatewayChannels({
     homePath, configPath, dispatcher, conversations, codingAgentThreadStore,
     codingAgentNotificationPreferenceStore, finalizeWithSummary, logBestEffortFailure, channelStt: speechRuntime.channelStt,
     pushTokens: ownerDatabaseServices?.pushTokens ?? null, notificationServices: ownerDatabaseServices,
@@ -1137,6 +1137,8 @@ export async function createGateway(config: GatewayConfig) {
   const cronService: CronService = createCronService({
     store: cronStore,
     onTrigger: createCronChannelTrigger({ channelManager, logBestEffortFailure }),
+    // A missed reminder sent before Telegram finishes starting would be dropped as delivered.
+    catchUpAfter: channelsReady,
   });
   cronService.start();
 

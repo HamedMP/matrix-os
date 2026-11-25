@@ -59,6 +59,37 @@ describe("cron catch-up of missed runs", () => {
     expect(onTrigger).toHaveBeenCalledTimes(1);
   });
 
+  it("waits for the channels to start before running startup catch-up", async () => {
+    vi.setSystemTime(new Date("2026-11-21T12:30:00.000Z"));
+    createCronStore(storePath).save([makeJob({ lastRunAt: "2026-11-21T11:00:00.010Z" })]);
+    store = createCronStore(storePath);
+    let channelsStarted: () => void = () => undefined;
+    const channelsReady = new Promise<void>((resolve) => { channelsStarted = resolve; });
+    service = createCronService({ store, onTrigger, catchUpAfter: channelsReady });
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onTrigger).not.toHaveBeenCalled();
+    expect(service.nextRunAt()).not.toBeNull();
+    channelsStarted();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onTrigger).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops a deferred startup catch-up when the service stopped before the channels started", async () => {
+    vi.setSystemTime(new Date("2026-11-21T12:30:00.000Z"));
+    createCronStore(storePath).save([makeJob({ lastRunAt: "2026-11-21T11:00:00.010Z" })]);
+    store = createCronStore(storePath);
+    let channelsStarted: () => void = () => undefined;
+    const channelsReady = new Promise<void>((resolve) => { channelsStarted = resolve; });
+    service = createCronService({ store, onTrigger, catchUpAfter: channelsReady });
+    service.start();
+    service.stop();
+    service.start();
+    channelsStarted();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onTrigger).toHaveBeenCalledTimes(1);
+  });
+
   it("does not catch up a cron job that already ran for the previous occurrence", () => {
     vi.setSystemTime(new Date("2026-11-21T12:30:00.000Z"));
     startWith([makeJob({ lastRunAt: "2026-11-21T12:00:00.010Z" })]);

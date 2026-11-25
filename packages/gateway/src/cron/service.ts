@@ -5,6 +5,11 @@ import type { CronStore } from "./store.js";
 export interface CronServiceConfig {
   store: CronStore;
   onTrigger: (job: CronJob) => void;
+  /**
+   * Startup catch-up runs wait for this to settle (for example channel adapters starting), so a
+   * missed reminder is not sent into a channel that cannot deliver it yet. Scheduling is not delayed.
+   */
+  catchUpAfter?: Promise<unknown>;
 }
 
 export interface CronService {
@@ -56,6 +61,16 @@ function epochMs(value: Date | string | null | undefined): number | null {
 
 export function createCronService(config: CronServiceConfig): CronService {
   const { store, onTrigger } = config;
+  let catchUpGateOpen = config.catchUpAfter === undefined;
+  const catchUpGate = config.catchUpAfter?.then(
+    () => { catchUpGateOpen = true; },
+    (err: unknown) => {
+      catchUpGateOpen = true;
+      console.warn("[cron] catch-up gate failed; running catch-up anyway:", err instanceof Error ? err.name : "UnknownError");
+    },
+  );
+  // Incremented on every start/stop so a deferred catch-up from an earlier start never runs.
+  let generation = 0;
   // Both maps hold one entry per scheduled job in the store; clearJob removes them on removal/stop.
   const timers = new Map<string, TimerEntry>();
   const cronTasks = new Map<string, CronEntry>();
@@ -212,11 +227,26 @@ export function createCronService(config: CronServiceConfig): CronService {
     start() {
       if (started) return;
       started = true;
+      generation += 1;
+      const startGeneration = generation;
       const now = Date.now();
+      const missed: CronJob[] = [];
       for (const job of store.list()) {
         scheduleJob(job);
         // At most one catch-up run per job, however many occurrences were missed.
-        if (missedSinceLastRun(job, now)) runJob(job);
+        if (missedSinceLastRun(job, now)) missed.push(job);
+      }
+      if (catchUpGateOpen || !catchUpGate) {
+        for (const job of missed) runJob(job);
+      } else {
+        void catchUpGate.then(() => {
+          if (generation !== startGeneration) return;
+          // Re-read: a job removed or already run since start must not run again.
+          const nowAfter = Date.now();
+          for (const job of store.list()) {
+            if (missed.some((m) => m.id === job.id) && missedSinceLastRun(job, nowAfter)) runJob(job);
+          }
+        });
       }
       lastCheckWall = Date.now();
       lastCheckMono = performance.now();
@@ -226,6 +256,7 @@ export function createCronService(config: CronServiceConfig): CronService {
 
     stop() {
       started = false;
+      generation += 1;
       if (catchUpCheck !== null) {
         clearInterval(catchUpCheck);
         catchUpCheck = null;
