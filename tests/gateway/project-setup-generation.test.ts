@@ -284,7 +284,7 @@ describe("admitted project setup generation", () => {
       expect(storeRequest).not.toContain(accepted);
     } finally { await orchestrator.close(); }
   });
-  it("admits a Japanese correction on a full accepted draft and preserves its reviewed Markdown", async () => {
+  it("admits and retries a Japanese correction on a full accepted draft without losing reviewed Markdown", async () => {
     const selection = { instanceId: "pi_default", model: "gpt-5.6-sol" };
     const available = catalog();
     available.instances[0]!.driverKind = "matrix_pi";
@@ -303,9 +303,14 @@ describe("admitted project setup generation", () => {
     const review = { guidance: "# 作業方針\n" + "確認項目".repeat(1500),
       skill: { name: "review-release", description: "公開手順", instructions: "確認手順".repeat(1250) } };
     const start = vi.fn(async function* (_input: CanonicalProviderRunInput) {
+      if (start.mock.calls.length === 3) {
+        yield { type: "run.completed" as const, outcome: "failed" as const };
+        return;
+      }
       const output = [
         { reply: "何を確認しますか？", focus: "guidance", suggestions: [], answers },
         { reply: "保存する内容を確認してください。", focus: "review", suggestions: [], review },
+        undefined,
         { reply: "公開前に確認します。", focus: "review", suggestions: [], review: {} },
       ][start.mock.calls.length - 1];
       const encoded = JSON.stringify(output);
@@ -348,12 +353,18 @@ describe("admitted project setup generation", () => {
       expect(full.draft?.proposals.at(-1)?.content).toContain(review.skill.instructions);
       const corrected = await update(full.draft!, "correct_full", { type: "interview_answer", text: correction, selection });
       expect(corrected.draft?.generation?.status).toBe("running");
-      const reviewed = await sync(corrected.draft!, "review_corrected");
+      const failed = await sync(corrected.draft!, "correction_failed");
+      expect(failed.draft?.generation?.status).toBe("failed");
+      expect(failed.draft?.proposals).toEqual(full.draft?.proposals);
+      const retried = await update(failed.draft!, "retry_full", { type: "interview_retry", selection });
+      expect(retried.draft?.generation?.status).toBe("running");
+      const reviewed = await sync(retried.draft!, "review_corrected");
       expect(reviewed.draft?.generation?.status).toBe("completed");
       expect(reviewed.draft?.answers).toEqual(answers);
       expect(reviewed.draft?.proposals).toEqual(full.draft?.proposals);
-      expect(start).toHaveBeenCalledTimes(3);
+      expect(start).toHaveBeenCalledTimes(4);
       const prompt = start.mock.calls.at(-1)![0].prompt;
+      expect(prompt).toBe(start.mock.calls[2]![0].prompt);
       expect(Buffer.byteLength(prompt, "utf8")).toBeLessThanOrEqual(58 * 1024);
       const modelInput = JSON.parse(prompt.split("\n").at(-1)!);
       expect(modelInput.transcript.at(-1)).toEqual({ role: "user", text: correction });
