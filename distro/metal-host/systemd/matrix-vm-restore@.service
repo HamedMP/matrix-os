@@ -22,20 +22,13 @@ StandardOutput=journal
 LogNamespace=matrix-vm
 LogRateLimitIntervalSec=30s
 LogRateLimitBurst=500
-ExecStartPre=+-/usr/sbin/ip link delete ${TAP}
-ExecStartPre=+/usr/sbin/ip tuntap add dev ${TAP} mode tap user ${VM_USER} group ${VM_USER}
-# The tap is up before the VMM opens it: Cloud Hypervisor then needs no
-# CAP_NET_ADMIN (on a down tap it fails enabling it with EPERM).
-ExecStartPre=+/usr/sbin/ip link set dev ${TAP} master ${BRIDGE} up
-ExecStartPre=+/usr/sbin/bridge link set dev ${TAP} isolated on
-# Free-tier egress limit: police everything the VM sends at 50 Mbit/s.
-ExecStartPre=+/usr/sbin/tc qdisc add dev ${TAP} handle ffff: ingress
-ExecStartPre=+/usr/sbin/tc filter add dev ${TAP} parent ffff: protocol all prio 1 matchall action police rate 50mbit burst 512k conform-exceed drop
+# Set the per-tap source filters and host neighbor before exposing the guest.
+ExecStartPre=+/usr/local/libexec/matrix-vm-network start ${TAP} ${BRIDGE} ${VM_USER} ${MAC} ${PRIVATE_IPV4}
 ExecStartPre=+/usr/bin/chown ${VM_USER}:${VM_USER} ${DISK}
 ExecStart=/usr/local/bin/cloud-hypervisor \
   --api-socket path=${API_SOCKET} \
   --restore source_url=file://${SNAPSHOT_DIR},memory_restore_mode=ondemand
-ExecStopPost=+-/usr/sbin/ip link delete ${TAP}
+ExecStopPost=+-/usr/local/libexec/matrix-vm-network stop ${TAP} ${BRIDGE} ${VM_USER} ${MAC} ${PRIVATE_IPV4}
 Restart=no
 KillMode=mixed
 TimeoutStopSec=30

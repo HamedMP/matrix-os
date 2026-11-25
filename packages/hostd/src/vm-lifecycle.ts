@@ -376,6 +376,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       SEED: join(cfg.vmsDir, id, "seed.img"),
       TAP: `mxtap${address - IP_FIRST}`,
       MAC: record.mac,
+      PRIVATE_IPV4: record.privateIPv4,
       BRIDGE: cfg.bridge,
       SNAPSHOT_DIR: snapshotDir(id),
       VM_USER: cfg.vmUser,
@@ -590,16 +591,17 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     }
   }
 
-  async function writeUnitMemory(record: VmRecord, maxMiB: number): Promise<void> {
+  async function writeUnitRuntime(record: VmRecord, maxMiB: number): Promise<void> {
     const envPath = join(cfg.vmsDir, record.id, "unit.env");
     const env = await readFile(envPath, "utf8");
-    const updated = env.replace(/^HOTPLUG_MIB=\d+$/m, `HOTPLUG_MIB=${maxMiB - record.bootMiB}`);
+    const memory = env.replace(/^HOTPLUG_MIB=\d+$/m, `HOTPLUG_MIB=${maxMiB - record.bootMiB}`);
+    const updated = /^PRIVATE_IPV4=/m.test(memory) ? memory : `${memory}PRIVATE_IPV4=${record.privateIPv4}\n`;
     if (updated !== env) await writeFileAtomic(envPath, updated, 0o644);
   }
 
   async function coldBoot(record: VmRecord): Promise<VmRecord> {
     await stopUnits(record.id);
-    await writeUnitMemory(record, record.maxMiB);
+    await writeUnitRuntime(record, record.maxMiB);
     await dropSnapshot(record.id);
     await sh(["systemctl", "start", vmUnit(record.id)]);
     // The record carries the version of the VMM now running, which labels its next snapshot.
@@ -609,6 +611,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
   }
 
   async function restore(record: VmRecord): Promise<void> {
+    await writeUnitRuntime(record, record.maxMiB);
     await sh(["systemctl", "start", restoreUnit(record.id)]);
     await withCh(record.id, async (client) => {
       const deadline = clock.now() + cfg.restoreTimeoutMs;
@@ -855,7 +858,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
       if (holdsMemory && maxMiB > previousReserve) {
         checkMemory(await store.list(), id, maxMiB, "busy");
       }
-      await writeUnitMemory(record, maxMiB);
+      await writeUnitRuntime(record, maxMiB);
       return save(record, { tier, maxMiB, memoryReservationMiB: reserved });
     });
   }

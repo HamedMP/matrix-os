@@ -200,6 +200,7 @@ describe("VM lifecycle", () => {
     expect(env).toContain("HOTPLUG_MIB=6144\n");
     expect(env).toContain("MAC=52:54:00:78:00:0a\n");
     expect(env).toContain("BRIDGE=brmx\n");
+    expect(env).toContain("PRIVATE_IPV4=10.78.0.10\n");
     expect(env).not.toContain("SERIAL_PATH=");
     expect(env).not.toContain("machine-1");
     expect(execCalls.at(-1)).toEqual(["systemctl", "start", `matrix-vm@${vm.id}.service`]);
@@ -260,6 +261,16 @@ describe("VM lifecycle", () => {
     expect(count("ch:pause")).toBe(0);
     expect(execCalls).toEqual([]);
     await expect(store.get(vm.id)).resolves.toMatchObject({ state: "running" });
+  });
+
+  it("prepares the same bound network before cold boot and restore", async () => {
+    for (const name of ["matrix-vm@.service", "matrix-vm-restore@.service"]) {
+      const unit = await readFile(join(UNIT_DIR, name), "utf8");
+      const prepare = 'ExecStartPre=+/usr/local/libexec/matrix-vm-network start ${TAP} ${BRIDGE} ${VM_USER} ${MAC} ${PRIVATE_IPV4}';
+      expect(unit).toContain(prepare);
+      expect(unit.indexOf(prepare)).toBeLessThan(unit.indexOf("ExecStart=/usr/local/bin/cloud-hypervisor"));
+      expect(unit).toContain('ExecStopPost=+-/usr/local/libexec/matrix-vm-network stop ${TAP} ${BRIDGE} ${VM_USER} ${MAC} ${PRIVATE_IPV4}');
+    }
   });
 
   it("routes tenant serial logs to a rate-limited journal for boots and restores", async () => {
