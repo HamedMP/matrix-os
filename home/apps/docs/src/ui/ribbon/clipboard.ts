@@ -10,6 +10,7 @@
  * other apps needs the keyboard shortcut.
  */
 
+import type { TextPosition } from "../../../../_shared/office-engine/index";
 import { type DocumentEditorController, parsePlainText } from "../../editor/index";
 
 /** `own`: kept or pasted inside this document only. `blocked`: nothing could be pasted. */
@@ -36,7 +37,14 @@ function defaultEnv(): ClipboardEnv {
   };
 }
 
-/** Copies the selection, and with `cut` deletes it. */
+const samePosition = (a: TextPosition, b: TextPosition) => a.blockId === b.blockId && a.offset === b.offset;
+
+/**
+ * Copies the selection, and with `cut` deletes it. A cut that has to wait for
+ * the async clipboard deletes only when, once the write settled, the same
+ * document is open, unchanged, with the same selection; otherwise the text
+ * stays where it is and the cut acts as a copy.
+ */
 export async function copySelection(editor: DocumentEditorController, cut: boolean, env: ClipboardEnv = defaultEnv()): Promise<ClipboardOutcome> {
   const selection = editor.getSelection();
   if (selection === null || selection.collapsed) return "nothing";
@@ -48,17 +56,29 @@ export async function copySelection(editor: DocumentEditorController, cut: boole
   } catch (error) {
     console.warn("docs: the browser copy command failed", error instanceof Error ? error.name : error);
   }
+  const { session } = editor;
+  const documentKey = session.getState().documentKey;
+  let edited = false;
+  const stopWatching = cut ? session.onChange(() => { edited = true; }) : () => undefined;
   let outcome: ClipboardOutcome = "own";
-  if (env.clipboard != null) {
-    try {
-      await env.clipboard.writeText(editor.getSelectedText());
-      outcome = "done";
-    } catch (error) {
-      console.warn("docs: the clipboard refused the copy", error instanceof Error ? error.name : error);
+  try {
+    if (env.clipboard != null) {
+      try {
+        await env.clipboard.writeText(editor.getSelectedText());
+        outcome = "done";
+      } catch (error) {
+        console.warn("docs: the clipboard refused the copy", error instanceof Error ? error.name : error);
+      }
     }
+  } finally {
+    stopWatching();
   }
-  // The text is on the clipboard or kept for this document: a cut may now delete it.
-  if (cut) editor.deleteSelection();
+  if (!cut) return outcome;
+  // The text is on the clipboard or kept for this document: the cut may now delete it, if it is still the one selected.
+  const now = editor.getSelection();
+  const unchanged = !edited && session.getState().documentKey === documentKey && now !== null && samePosition(now.anchor, selection.anchor) && samePosition(now.focus, selection.focus);
+  if (unchanged) editor.deleteSelection();
+  else console.warn("docs: the document or selection changed while cutting; the text was copied and left in place");
   return outcome;
 }
 
@@ -72,9 +92,12 @@ async function readClipboard(env: ClipboardEnv): Promise<string | null> {
   }
 }
 
-/** Inserts the clipboard text at the selection, or else the text last copied or cut in this document. */
+/** Inserts the clipboard text at the selection, or else the text last copied or cut in this document. Nothing when another document opened meanwhile. */
 export async function pasteText(editor: DocumentEditorController, env: ClipboardEnv = defaultEnv()): Promise<ClipboardOutcome> {
+  const documentKey = editor.session.getState().documentKey;
   const system = await readClipboard(env);
+  // Another document opened while the clipboard was read: the paste was meant for the one before.
+  if (editor.session.getState().documentKey !== documentKey) return "nothing";
   const text = system ?? ownCopies.get(editor) ?? null;
   if (text === null) return "blocked";
   if (text === "") return "nothing";

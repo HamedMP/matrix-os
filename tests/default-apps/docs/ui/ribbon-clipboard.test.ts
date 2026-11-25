@@ -10,13 +10,15 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DocumentEditorController, PasteContent } from "../../../../home/apps/docs/src/editor/index";
 import { copySelection, noteCopied, pasteText } from "../../../../home/apps/docs/src/ui/ribbon/clipboard";
-import { bodyParagraphs, caret, caretOf, mount } from "../editor/helpers";
+import { createDocx } from "../../../../home/apps/_shared/office-engine/index";
+import { at as position, bodyParagraphs, caret, caretOf, mount, select } from "../editor/helpers";
 
 const at = (offset: number) => ({ blockId: "b1", offset });
 
 function fakeEditor(collapsed = false) {
   const inserted: string[] = [];
   const editor = {
+    session: { getState: () => ({ documentKey: 1 }), onChange: () => () => undefined },
     getSelection: () => ({ anchor: at(0), focus: at(5), start: at(0), end: at(5), collapsed, backward: false }),
     setSelection: vi.fn(() => true),
     getSelectedText: () => "Hello",
@@ -96,6 +98,87 @@ describe("ribbon clipboard", () => {
     expect(await pasteText(editor, { clipboard: { readText: async () => Promise.reject(new Error("denied")), writeText: vi.fn() } })).toBe("blocked");
     expect(await pasteText(editor, { clipboard: null })).toBe("blocked");
     warn.mockRestore();
+  });
+
+  /** A clipboard whose write waits until the test lets it finish. */
+  function slowClipboard() {
+    let finish = () => undefined as void;
+    const writeText = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    return { clipboard: { writeText, readText: vi.fn() }, finish: () => finish() };
+  }
+
+  it("keeps the text the owner selected while a ribbon Cut waited for the clipboard", async () => {
+    const m = await mount({ paragraphs: ["Hello world"] });
+    try {
+      const [id] = bodyParagraphs(m.doc).map((block) => block.id);
+      select(m, position(id!, 0), position(id!, 5));
+      const slow = slowClipboard();
+      const cutting = copySelection(m.editor, true, { execCommand: () => false, clipboard: slow.clipboard });
+      // The owner selects "world" before the clipboard answers: the cut must not delete it.
+      select(m, position(id!, 6), position(id!, 11));
+      slow.finish();
+      await cutting;
+      expect(slow.clipboard.writeText).toHaveBeenCalledWith("Hello");
+      expect(bodyParagraphs(m.doc).map((block) => block.text)).toEqual(["Hello world"]);
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("keeps the document unchanged when it was edited while a ribbon Cut waited", async () => {
+    const m = await mount({ paragraphs: ["Hello world"] });
+    try {
+      const [id] = bodyParagraphs(m.doc).map((block) => block.id);
+      select(m, position(id!, 6), position(id!, 11));
+      const slow = slowClipboard();
+      const cutting = copySelection(m.editor, true, { execCommand: () => false, clipboard: slow.clipboard });
+      // An edit before the selection shifts what the old offsets point at.
+      m.session.apply([{ type: "insertText", at: position(id!, 0), text: "Oh " }]);
+      m.editor.setSelection({ anchor: position(id!, 6), focus: position(id!, 11) });
+      slow.finish();
+      await cutting;
+      expect(bodyParagraphs(m.doc).map((block) => block.text)).toEqual(["Oh Hello world"]);
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("leaves another document alone when it opened while a ribbon Cut waited", async () => {
+    const m = await mount({ paragraphs: ["Hello world"] });
+    try {
+      const [id] = bodyParagraphs(m.doc).map((block) => block.id);
+      select(m, position(id!, 0), position(id!, 5));
+      const slow = slowClipboard();
+      const cutting = copySelection(m.editor, true, { execCommand: () => false, clipboard: slow.clipboard });
+      const other = createDocx({ paragraphs: ["Other text"] });
+      await m.session.adopt(other, { name: "Other", dirty: false });
+      const [otherId] = bodyParagraphs(other).map((block) => block.id);
+      m.editor.setSelection({ anchor: position(otherId!, 0), focus: position(otherId!, 5) });
+      slow.finish();
+      await cutting;
+      expect(bodyParagraphs(other).map((block) => block.text)).toEqual(["Other text"]);
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("does not paste into another document that opened while the clipboard was read", async () => {
+    const m = await mount({ paragraphs: ["Hello world"] });
+    try {
+      const [id] = bodyParagraphs(m.doc).map((block) => block.id);
+      m.editor.focus();
+      caret(m, id!, 5);
+      let answer = (_text: string) => undefined as void;
+      const clipboard = { readText: vi.fn(() => new Promise<string>((resolve) => { answer = resolve; })), writeText: vi.fn() };
+      const pasting = pasteText(m.editor, { clipboard });
+      const other = createDocx({ paragraphs: ["Other text"] });
+      await m.session.adopt(other, { name: "Other", dirty: false });
+      answer("Pasted");
+      expect(await pasting).toBe("nothing");
+      expect(bodyParagraphs(other).map((block) => block.text)).toEqual(["Other text"]);
+    } finally {
+      m.unmount();
+    }
   });
 
   it("pastes several lines into the live document: each line lands after the one before, as Ctrl+V does", async () => {
