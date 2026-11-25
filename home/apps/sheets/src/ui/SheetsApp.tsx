@@ -6,7 +6,7 @@
  */
 import { Table } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { AppFrame, FileDropZone, Spinner, downloadBytes, useAiAccess } from "../../../_shared/office-ui";
+import { AppFrame, FileDropZone, Spinner, createStartFolderMemory, downloadBytes, useAiAccess } from "../../../_shared/office-ui";
 import type { OpenRequest } from "../../../_shared/matrix-os";
 import { bridgeSheetsAi } from "../agent";
 import { SessionHost, createRecentFiles, fileName, type SessionDeps } from "../session";
@@ -65,6 +65,8 @@ export function SheetsApp({ bridge, sessionDeps, host: givenHost, download = dow
   const host = useMemo(() => givenHost ?? new SessionHost({ files: bridge.files, db: bridge.db ?? null, log: logFailure, ...sessionDeps }), [givenHost, bridge, sessionDeps]);
   const recents = useMemo(() => createRecentFiles(bridge.db ?? null, { log: logFailure }), [bridge]);
   const tabLooks = useMemo(() => new TabLookStore(bridge, logFailure), [bridge]);
+  // The folder the owner last browsed, kept in Sheets' own key-value store.
+  const folderMemory = useMemo(() => createStartFolderMemory(bridge, logFailure), [bridge]);
   const ai = useMemo(() => bridgeSheetsAi({ MatrixOS: bridge }), [bridge]);
   // The host answers only apps the owner allowed: ask before offering the assistant.
   const aiAccess = useAiAccess(bridge, undefined, logFailure);
@@ -108,6 +110,7 @@ export function SheetsApp({ bridge, sessionDeps, host: givenHost, download = dow
       <FilePicker
         open={pickerOpen}
         files={bridge.files}
+        memory={folderMemory}
         onCancel={() => setPickerOpen(false)}
         onPick={(path) => {
           setPickerOpen(false);
@@ -158,6 +161,7 @@ export function SheetsApp({ bridge, sessionDeps, host: givenHost, download = dow
         <StartScreen
           recents={recents}
           files={bridge.files}
+          folderMemory={folderMemory}
           opening={hostState.opening}
           onTemplate={(template) => void run({ kind: "new", template })}
           onOpenLocal={openFromComputer}

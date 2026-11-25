@@ -5,7 +5,7 @@
  */
 import { ClipboardPaste } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { OfficeStartScreen, extensionOf, type StartTemplate } from "../../../_shared/office-ui";
+import { OfficeStartScreen, extensionOf, type StartFolderMemory, type StartTemplate } from "../../../_shared/office-ui";
 import type { RecentFile, RecentFiles } from "../session";
 import type { SheetsBridge } from "./bridge";
 import { LOCAL_ACCEPT } from "./document-flow";
@@ -31,6 +31,8 @@ export function sheetKind(name: string): { kind: "workbook" | "table"; tag?: str
 export interface StartScreenProps {
   recents: RecentFiles;
   files: SheetsBridge["files"];
+  /** Remembers the folder the owner last browsed. */
+  folderMemory?: StartFolderMemory;
   /** Path being opened, shown as busy. */
   opening: string | null;
   onTemplate: (id: SheetsTemplateId) => void;
@@ -40,7 +42,7 @@ export interface StartScreenProps {
   onOpenPath: (path: string) => void;
 }
 
-export function StartScreen({ recents, files, opening, onTemplate, onOpenLocal, onImport, onOpenPath }: StartScreenProps) {
+export function StartScreen({ recents, files, folderMemory, opening, onTemplate, onOpenLocal, onImport, onOpenPath }: StartScreenProps) {
   const [list, setList] = useState<RecentFile[] | null>(null);
 
   useEffect(() => {
@@ -89,7 +91,7 @@ export function StartScreen({ recents, files, opening, onTemplate, onOpenLocal, 
         emptyHeadline: "No recent workbooks",
         emptyDescription: "Workbooks you open or save appear here, so you can pick them up again.",
       }}
-      browser={{ files, accept: LOCAL_ACCEPT, onOpen: onOpenPath, fileNoun: "spreadsheets" }}
+      browser={{ files, accept: LOCAL_ACCEPT, onOpen: onOpenPath, fileNoun: "spreadsheets", memory: folderMemory }}
       kindOf={sheetKind}
     />
   );

@@ -26,6 +26,30 @@ describe("Sheets start screen", () => {
     expect(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("button", { name: "Reports" }).getAttribute("aria-current")).toBe("location");
   });
 
+  it("starts the Matrix browser in the folder last used, and remembers the next one", async () => {
+    const app = await renderApp(async (bridge) => {
+      bridge.fileStore.put("Work/Q3/plan.xlsx", await workbookBytes());
+      bridge.fileStore.put("Work/budget.xlsx", await workbookBytes());
+      await bridge.writeData("start_folder", { dir: "Work/Q3" });
+    });
+    await flush();
+    const list = screen.getByRole("list", { name: "Folders and files" });
+    expect(within(list).getAllByRole("button").map((button) => button.querySelector(".oui-browser__name")?.textContent)).toEqual(["plan.xlsx"]);
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Folder path" })).getByRole("button", { name: "Work" }));
+    await flush();
+    expect(await app.bridge.readData("start_folder")).toEqual({ dir: "Work" });
+  });
+
+  it("starts in documents when no folder is remembered", async () => {
+    await renderApp(async (bridge) => {
+      bridge.fileStore.put("documents/q1.xlsx", await workbookBytes());
+      bridge.fileStore.put("elsewhere.xlsx", await workbookBytes());
+    });
+    await flush();
+    const list = screen.getByRole("list", { name: "Folders and files" });
+    expect(within(list).getAllByRole("button").map((button) => button.querySelector(".oui-browser__name")?.textContent)).toEqual(["q1.xlsx"]);
+  });
+
   it("removes a workbook from the recent list", async () => {
     const app = await renderApp(async (bridge) => {
       await bridge.db.insert("recent_files", { path: "Q3.xlsx", name: "Q3.xlsx", opened_at: "2026-11-01T10:00:00Z" });

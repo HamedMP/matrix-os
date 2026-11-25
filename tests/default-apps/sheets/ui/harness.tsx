@@ -7,7 +7,7 @@ import { SessionHost } from "../../../../home/apps/sheets/src/session";
 import type { SheetSession } from "../../../../home/apps/sheets/src/session/session";
 import type { SheetsBridge } from "../../../../home/apps/sheets/src/ui/bridge";
 import { SheetsApp } from "../../../../home/apps/sheets/src/ui/SheetsApp";
-import { FakeDb, FakeFiles, FakeTimers, settle } from "../session/fakes";
+import { FakeDb, FakeFiles, FakeTimers, bridgeError, settle } from "../session/fakes";
 
 type OpenRequest = { path: string; requestedAt: string; nonce: string };
 
@@ -36,6 +36,8 @@ export class FakeBridge implements SheetsBridge {
           const slash = rest.indexOf("/");
           names.set(slash < 0 ? rest : rest.slice(0, slash), slash < 0 ? "file" : "dir");
         }
+        // As the gateway answers for a folder that does not exist.
+        if (dir !== "" && names.size === 0) throw bridgeError("not_found");
         const entries = [...names.entries()]
           .map(([name, kind]) => ({ name, kind, path: `${prefix}${name}`, size: 0, modifiedAt: new Date(0).toISOString() }))
           .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1));

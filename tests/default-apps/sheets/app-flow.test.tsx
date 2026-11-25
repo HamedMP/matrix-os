@@ -55,6 +55,8 @@ class FakeMatrixOS {
         const slash = rest.indexOf("/");
         names.set(slash < 0 ? rest : rest.slice(0, slash), slash < 0 ? "file" : "dir");
       }
+      // As the gateway answers for a folder that does not exist.
+      if (dir !== "" && names.size === 0) throw Object.assign(new Error("not found"), { name: "BridgeFileError", code: "not_found" });
       const entries = [...names].map(([name, kind]) => ({ name, kind, path: `${prefix}${name}`, size: 0, modifiedAt: "2026-11-20T09:00:00.000Z" }));
       return { entries, truncated: false };
     },

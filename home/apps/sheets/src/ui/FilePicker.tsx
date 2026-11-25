@@ -1,5 +1,5 @@
 /** Browses the home folder for .xlsx, .csv and .tsv files, with the office kit's Matrix file browser. */
-import { Dialog, MatrixFileBrowser } from "../../../_shared/office-ui";
+import { Dialog, MatrixFileBrowser, type StartFolderMemory } from "../../../_shared/office-ui";
 import type { SheetsBridge } from "./bridge";
 import { LOCAL_ACCEPT } from "./document-flow";
 import { sheetKind } from "./StartScreen";
@@ -7,13 +7,15 @@ import { sheetKind } from "./StartScreen";
 export interface FilePickerProps {
   open: boolean;
   files: SheetsBridge["files"];
+  /** Remembers the folder the owner last browsed. */
+  memory?: StartFolderMemory;
   onCancel: () => void;
   onPick: (path: string) => void;
 }
 
 const kindOf = (entry: { name: string }) => sheetKind(entry.name);
 
-export function FilePicker({ open, files, onCancel, onPick }: FilePickerProps) {
+export function FilePicker({ open, files, memory, onCancel, onPick }: FilePickerProps) {
   return (
     <Dialog
       open={open}
@@ -27,7 +29,7 @@ export function FilePicker({ open, files, onCancel, onPick }: FilePickerProps) {
         </button>
       }
     >
-      {open && <MatrixFileBrowser files={files} accept={LOCAL_ACCEPT} appName="Sheets" fileNoun="spreadsheets" kindOf={kindOf} onOpen={onPick} />}
+      {open && <MatrixFileBrowser files={files} memory={memory} accept={LOCAL_ACCEPT} appName="Sheets" fileNoun="spreadsheets" kindOf={kindOf} onOpen={onPick} />}
     </Dialog>
   );
 }
