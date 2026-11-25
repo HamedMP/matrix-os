@@ -529,6 +529,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     const pendingToken = {};
     const sendDraftSession = draftSessionRef.current;
+    const sourceIsSelected = () => activeChatIdRef.current === sourceChatId
+      && (sourceChatId !== undefined || draftSessionRef.current === sendDraftSession);
     const showPending = (turn: Omit<PendingCanonicalTurn, "createdAt">) => {
       // A draft send whose New Chat session has ended no longer shows.
       if (sourceChatId === undefined && draftSessionRef.current !== sendDraftSession) return;
@@ -631,8 +633,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           return isCurrent();
         }
         const submittedDraft = composerDraftSequence.current;
-        const opensThisDraft = () => sourceChatId === undefined && activeChatIdRef.current === undefined
-          && draftSessionRef.current === sendDraftSession && composerDraftSequence.current === submittedDraft;
+        const canSelectAdmittedChat = () => sourceIsSelected() && composerDraftSequence.current === submittedDraft;
         showPending({ requestId: input.clientRequestId, chatId: record.chat.id, parts });
         const admitted: CanonicalChatClientAdmission = await admitShellChatTurn({ tracker: admissions, identity: navigationIdentity, client, record, input,
           seed: input.clientRequestId, current: () => detailRef.current, isCurrent,
@@ -640,10 +641,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           onPrepared: id => { latestAdmissionId.current = id; },
           onAccepted: () => {
             mentionRequests.accepted(requestScope, input.clientRequestId);
-            options.onAccepted?.(opensThisDraft() ? record.chat.id : undefined);
+            options.onAccepted?.(sourceChatId === undefined && canSelectAdmittedChat() ? record.chat.id : undefined);
           },
           onConfirmed: id => {
-            if (isCurrent() && latestAdmissionId.current === id && activeChatIdRef.current === sourceChatId && composerDraftSequence.current === submittedDraft) {
+            if (isCurrent() && latestAdmissionId.current === id && canSelectAdmittedChat()) {
               setSafeError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
               activeChatIdRef.current = record.chat.id; setActiveChatId(record.chat.id);
             }
@@ -654,7 +655,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         mentionRequests.accepted(requestScope, admitted.turn.clientRequestId);
         // Confirmation may already have opened a new Chat; it still takes the
         // admitted detail so the transcript needs no extra read.
-        if (activeChatIdRef.current === sourceChatId || activeChatIdRef.current === record.chat.id) {
+        if (canSelectAdmittedChat() || activeChatIdRef.current === record.chat.id) {
           activeChatIdRef.current = record.chat.id;
           setActiveChatId(record.chat.id);
           const current = detailRef.current?.record.chat.id === record.chat.id ? detailRef.current : null;
@@ -675,7 +676,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         // have passed while it was unselected.
         if (eventSource.connectionState() !== "open") {
           await loadList();
-          await loadDetail(record.chat.id);
+          if (activeChatIdRef.current === record.chat.id) await loadDetail(record.chat.id);
         } else if (sourceChatId === undefined && !admitted.recoveredDetail && activeChatIdRef.current === record.chat.id) {
           await loadDetail(record.chat.id);
         }
@@ -689,7 +690,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         if (!isCurrent()) return false;
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
         if (!turnAdmitted && !definitelyUnadmitted) options.onAdmissionUnconfirmed?.();
-        if (activeChatIdRef.current === sourceChatId) setSafeError(error instanceof ChatAdmissionUnconfirmed
+        if (sourceIsSelected()) setSafeError(error instanceof ChatAdmissionUnconfirmed
           ? CHAT_ADMISSION_UNCONFIRMED : canonicalShellChatFailureMessage(error));
         return turnAdmitted;
       }

@@ -1,6 +1,8 @@
 import { randomUUID } from "@matrix-os/ui/random-uuid";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { CanonicalChatResourceReference } from "@matrix-os/contracts";
+import { ATTACHMENT_COUNT_LIMIT } from "@/components/ai-elements/attachments-utils";
+import type { AttachmentFile } from "@/components/ai-elements/attachments";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 
 export type PreparedChatSubmission = Omit<ChatSubmitOptions, "onAccepted" | "onShown" | "onAdmissionUnconfirmed">;
@@ -22,33 +24,59 @@ export type FailedChatSend = {
   permissionMode: string;
 };
 
-type Draft = { text: string; resources: CanonicalChatResourceReference[]; requestId: string; permissionIdentity: string };
+type Draft = {
+  text: string;
+  resources: CanonicalChatResourceReference[];
+  attachments: readonly AttachmentFile[];
+  requestId: string;
+  permissionIdentity: string;
+};
 type DraftEntry = Draft & { failure?: { binding: string; send: FailedChatSend } };
-const emptyDraft: Draft = { text: "", resources: [], requestId: "", permissionIdentity: "" };
-const hasContent = (draft?: Draft) => Boolean(draft && (draft.text.trim() || draft.resources.length));
+const emptyDraft: Draft = { text: "", resources: [], attachments: [], requestId: "", permissionIdentity: "" };
+const hasContent = (draft?: Draft) => Boolean(draft && (draft.text.trim() || draft.resources.length || draft.attachments.length));
+
+function saveDraft(drafts: Record<string, DraftEntry>, scope: string, draft: DraftEntry) {
+  const next = { ...drafts };
+  delete next[scope];
+  next[scope] = draft;
+  // Insertion order is the last edit order; evict the oldest edited Chat.
+  for (const key of Object.keys(next).slice(0, -100)) delete next[key];
+  return next;
+}
+
 export function useChatComposerDraft(scope: string, identity: unknown, retryBinding = scope) {
   const [store, setStore] = useState<{ identity: unknown; drafts: Record<string, DraftEntry> }>({ identity, drafts: {} });
   if (store.identity !== identity) setStore({ identity, drafts: {} });
   const storeRef = useRef(store);
   useLayoutEffect(() => { storeRef.current = store; }, [store]);
   const { failure, ...draft }: DraftEntry = store.identity === identity ? store.drafts[scope] ?? emptyDraft : emptyDraft;
-  const newerDraft = (saved: DraftEntry | undefined, sent: Draft) => saved?.requestId !== sent.requestId && hasContent(saved);
+  const newerDraft = (saved: DraftEntry | undefined, sent: Draft) =>
+    hasContent(saved) && (saved?.requestId !== sent.requestId || saved.attachments !== sent.attachments);
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- Stable draft writers are effect dependencies in ChatInput, including non-compiler tests and development.
   const update = useCallback((patch: Partial<Pick<Draft, "text" | "resources">>, replace = false) => {
     const requestId = `req_${randomUUID().replaceAll("-", "")}`;
     setStore((current) => {
-    if (current.identity !== identity) return current;
-    const drafts = { ...current.drafts };
-    const next = { ...(drafts[scope] ?? emptyDraft), ...patch, requestId, ...(replace ? { permissionIdentity: requestId } : {}) };
-    delete drafts[scope];
-    drafts[scope] = next;
-    // Insertion order is the last edit order; evict the oldest edited Chat.
-    for (const key of Object.keys(drafts).slice(0, -100)) delete drafts[key];
-    return { identity, drafts };
+      if (current.identity !== identity) return current;
+      const next = { ...(current.drafts[scope] ?? emptyDraft), ...patch, requestId, ...(replace ? { permissionIdentity: requestId } : {}) };
+      return { identity, drafts: saveDraft(current.drafts, scope, next) };
     });
   }, [identity, scope]);
+  const updateAttachments = (apply: (attachments: readonly AttachmentFile[]) => readonly AttachmentFile[]) => setStore(current => {
+    if (current.identity !== identity) return current;
+    const saved = current.drafts[scope] ?? emptyDraft;
+    const attachments = apply(saved.attachments);
+    if (attachments === saved.attachments) return current;
+    return { identity, drafts: saveDraft(current.drafts, scope, { ...saved, attachments }) };
+  });
   return {
     ...draft,
+    addAttachments: (files: readonly File[]) => {
+      if (!files.length || files.length > ATTACHMENT_COUNT_LIMIT) return;
+      const additions = files.map(file => ({ file, id: crypto.randomUUID() }));
+      updateAttachments(current => current.length + additions.length <= ATTACHMENT_COUNT_LIMIT ? [...current, ...additions] : current);
+    },
+    removeAttachment: (id: string) => updateAttachments(current =>
+      current.some(attachment => attachment.id === id) ? current.filter(attachment => attachment.id !== id) : current),
     failedSend: failure?.binding === retryBinding ? failure.send : undefined,
     seedChatDraft: (target: string, text: string) => {
       const saved = storeRef.current.identity === identity ? storeRef.current.drafts[target] : undefined;
@@ -58,9 +86,8 @@ export function useChatComposerDraft(scope: string, identity: unknown, retryBind
         const existing = current.drafts[target];
         if (hasContent(existing)) return current;
         const requestId = `req_${randomUUID().replaceAll("-", "")}`;
-        const drafts = { ...current.drafts, [target]: { ...emptyDraft, ...existing, text, requestId, permissionIdentity: requestId } };
-        for (const key of Object.keys(drafts).slice(0, -100)) delete drafts[key];
-        return { identity, drafts };
+        const next = { ...emptyDraft, ...existing, text, requestId, permissionIdentity: requestId };
+        return { identity, drafts: saveDraft(current.drafts, target, next) };
       });
       return true;
     },
@@ -95,28 +122,29 @@ export function useChatComposerDraft(scope: string, identity: unknown, retryBind
       const existing = current.drafts[scope];
       const separate = keepForRetry || newerDraft(existing, sent);
       if (!separate && !hasContent(sent)) return current;
-      const drafts = { ...current.drafts };
-      delete drafts[scope];
-      drafts[scope] = separate
+      const next = separate
         ? { ...(existing ?? emptyDraft), failure: { binding: retryBinding, send } }
         : { ...existing, ...sent };
-      for (const key of Object.keys(drafts).slice(0, -100)) delete drafts[key];
-      return { identity, drafts };
+      return { identity, drafts: saveDraft(current.drafts, scope, next) };
     }),
-    clear: ({ retainIdentity = false }: { retainIdentity?: boolean } = {}) => setStore((current) => {
-      if (current.identity !== identity || current.drafts[scope]?.requestId !== draft.requestId) return current;
-      const drafts = { ...current.drafts };
-      const failure = drafts[scope]?.failure;
-      if (retainIdentity) {
-        // The pending send still owns this draft's project skill selection.
-        drafts[scope] = { ...emptyDraft, requestId: draft.requestId, permissionIdentity: draft.permissionIdentity, failure };
-      } else if (failure) {
-        drafts[scope] = { ...emptyDraft, failure };
-      } else {
-        delete drafts[scope];
-      }
-      return { identity, drafts };
-    }),
+    clear: ({ retainIdentity = false, sentAttachmentIds = [] }: {
+      retainIdentity?: boolean; sentAttachmentIds?: readonly string[];
+    } = {}) => {
+      const submitted = new Set(sentAttachmentIds);
+      setStore((current) => {
+        const saved = current.drafts[scope];
+        if (current.identity !== identity || saved?.requestId !== draft.requestId) return current;
+        const drafts = { ...current.drafts };
+        const attachments = saved.attachments.filter(attachment => !submitted.has(attachment.id));
+        if (retainIdentity || saved.failure || attachments.length) {
+          drafts[scope] = { ...emptyDraft, attachments, failure: saved.failure,
+            ...(retainIdentity ? { requestId: draft.requestId, permissionIdentity: draft.permissionIdentity } : {}) };
+        } else {
+          delete drafts[scope];
+        }
+        return { identity, drafts };
+      });
+    },
   };
 }
 export type ChatComposerDraft = ReturnType<typeof useChatComposerDraft>;

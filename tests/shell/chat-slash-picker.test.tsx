@@ -1,12 +1,12 @@
 import { shellChatAttachmentPolicy } from "../../shell/src/components/chat/attachment-policy.js";
 // @vitest-environment jsdom
-import React,{useState} from "react";
+import React,{useLayoutEffect} from "react";
 import {act,cleanup,fireEvent,render,screen,waitFor} from "@testing-library/react";
 import {afterEach,expect,it,vi} from "vitest";
 import type { ProjectChatSlashScope } from "@matrix-os/ui";
 import {ChatInput} from "../../shell/src/components/chat/ChatInput.js";
 import type {CanonicalProviderInstanceDescriptor} from "@matrix-os/contracts";
-import {useChatComposerDraft,type ChatComposerDraft} from "../../shell/src/components/chat/useChatComposerDraft.js";
+import {useChatComposerDraft} from "../../shell/src/components/chat/useChatComposerDraft.js";
 import {createCanonicalProviderCatalogFixture} from "../contracts/fixtures/canonical-chat.js";
 vi.mock("../../shell/src/components/chat/ChatMentionPicker.js",()=>({ChatMentionPicker:()=>null}));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -15,15 +15,16 @@ const instance:CanonicalProviderInstanceDescriptor={...createCanonicalProviderCa
  {id:"research",displayName:"Research",description:"Research sources",invocation:"/research"},
 ]};
 const capture={isSupported:()=>false,start:vi.fn()};
-function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/",attachmentPolicy,projectSlash,isCurrentAuthority,busy=false}: {
+function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/",attachmentPolicy,projectSlash,isCurrentAuthority,busy=false,bot=false}: {
  selected?:CanonicalProviderInstanceDescriptor;scope?:string;loading?:boolean;submit?:(text:string)=>void;initial?:string;attachmentPolicy?:(files:readonly File[])=>string|null;
- projectSlash?:ProjectChatSlashScope;isCurrentAuthority?:()=>boolean;busy?:boolean;
+ projectSlash?:ProjectChatSlashScope;isCurrentAuthority?:()=>boolean;busy?:boolean;bot?:boolean;
 }) {
- const [text,setText]=useState(initial);
- const composer={text,setText,resources:[],setResources:vi.fn(),setDraft:vi.fn(),clear:vi.fn(),requestId:"req_web_slash"} as unknown as ChatComposerDraft;
- return <ChatInput composer={composer} scope={scope} permissionMode="supervised" connected busy={busy} attachmentsEnabled
+ const composer=useChatComposerDraft(scope,"owner");
+ const {setText}=composer;
+ useLayoutEffect(()=>{setText(initial);},[setText,initial]);
+ return <ChatInput composer={composer} scope={scope} permissionMode={bot ? "default" : "supervised"} connected busy={busy} attachmentsEnabled={!bot}
   activeRunId={busy ? "run_web_slash" : undefined} onAbortCurrent={busy ? () => undefined : undefined}
-  onSubmit={submit} attachmentPolicy={attachmentPolicy} slashInstance={selected} slashCatalogLoading={loading} projectSlash={projectSlash} isCurrentAuthority={isCurrentAuthority} speechCaptureAdapter={capture}/>;
+  onSubmit={submit} attachmentPolicy={attachmentPolicy} slashInstance={bot ? undefined : selected} slashCatalogLoading={loading} projectSlash={projectSlash} isCurrentAuthority={isCurrentAuthority} speechCaptureAdapter={capture}/>;
 }
 it("uses only selected runtime descriptors and inserts the selected Skill without submitting",()=>{
  const submit=vi.fn();render(<Harness submit={submit}/>);
@@ -56,8 +57,7 @@ it("does not borrow previous runtime or ordinary provider Skills for a Bot Chat"
  view.rerender(<Harness selected={empty}/>);expect(screen.queryByRole("option")).toBeNull();
  expect(screen.getByRole("status").textContent).toBe("No skills or commands are available for this model.");
  // The Bot Chat host supplies no ordinary-provider descriptor.
- view.rerender(<ChatInput composer={{text:"/",setText:vi.fn(),resources:[],setResources:vi.fn(),requestId:"req_bot"} as unknown as ChatComposerDraft}
- scope="bot" permissionMode="default" connected busy={false} attachmentsEnabled={false} onSubmit={vi.fn()} speechCaptureAdapter={capture}/>);
+ view.rerender(<Harness key="bot" scope="bot" bot />);
  expect(screen.queryByRole("option")).toBeNull();expect(screen.getByRole("status").textContent).toBe("Skills and commands are unavailable in this Chat.");
 });
 it("clears dismissed status on a new Chat scope and avoids stale options while loading",()=>{

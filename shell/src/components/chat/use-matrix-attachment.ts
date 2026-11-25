@@ -2,8 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { FileResourceRefSchema, MAX_AGENT_ATTACHMENT_BYTES } from "@matrix-os/contracts";
 import { filePreviewContentUrl } from "@matrix-os/ui";
 import { readBoundedFileBlob } from "@/lib/read-bounded-file-blob";
-
-export const ATTACHMENT_COUNT_LIMIT = 8;
+import { ATTACHMENT_COUNT_LIMIT } from "@/components/ai-elements/attachments-utils";
 
 export function useMatrixAttachment({
   authority,

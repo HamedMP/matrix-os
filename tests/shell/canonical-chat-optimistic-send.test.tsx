@@ -48,7 +48,7 @@ function fixtureServer({ createGate, uploadGate, admitGate, createFails, firstCr
   const record = { chat };
   const existing = { record, messages: snapshot.messages, turns: snapshot.turns, runs: snapshot.runs, activities: [] };
   let admitted: typeof existing | null = null;
-  const reads = { list: 0, detail: 0 };
+  const reads = { list: 0, detail: 0, admission: 0 };
   const createRequestIds: string[] = [];
   const uploadedPaths: string[] = [];
   stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
@@ -69,6 +69,7 @@ function fixtureServer({ createGate, uploadGate, admitGate, createFails, firstCr
       return Response.json({ chat: { ...chat, revision: 0, messageCount: 0 } });
     }
     if (url.includes("/turns?") && init?.method === "POST") {
+      reads.admission += 1;
       await admitGate;
       const body = JSON.parse(init.body as string);
       const base = admitted ?? (url.includes(chat.id) ? existing : { ...existing, messages: [], turns: [], runs: [] });
@@ -355,8 +356,9 @@ function ChatScreen({ draft = false }: { draft?: boolean }) {
   const state = useCanonicalChatState(draft ? { initialDraft: "draft" } : {});
   return <>
     <output data-testid="selected-chat">{state.sessionId}</output>
+    <output data-testid="send-busy">{String(state.busy)}</output>
     <ChatApp messages={state.messages} sessionId={state.sessionId} busy={state.busy} connected
-      composerIdentity={state.composerIdentity} conversations={state.conversations} onNewChat={state.createChat}
+      composerIdentity={state.composerIdentity} conversations={state.conversations} onNewChat={state.newChat}
       onSwitchConversation={state.switchConversation} onSubmit={state.submitMessage}
       providerSelection={state.providerSelection} />
   </>;
@@ -368,10 +370,10 @@ function setupChatScreen() {
   localStorage.clear();
 }
 
-it("carries a follow-up draft into the Chat when its first send succeeds", async () => {
+it.each([false, true])("carries follow-up attachments into the Chat when its first send succeeds (typed=%s)", async typed => {
   setupChatScreen();
   const admission = gate();
-  const { chat } = fixtureServer({ admitGate: admission.opened, streamOpen: true });
+  const { chat, reads, uploadedPaths } = fixtureServer({ admitGate: admission.opened, streamOpen: true });
   render(<ChatScreen draft />);
   const initialEditor = await screen.findByPlaceholderText("How can I help you today?");
   fireEvent.change(initialEditor, { target: { value: "First admitted message" } });
@@ -380,12 +382,50 @@ it("carries a follow-up draft into the Chat when its first send succeeds", async
   const pendingEditor = screen.getByPlaceholderText("Reply to chat…");
   expect(pendingEditor).not.toBe(initialEditor);
   expect(composerValue()).toBe("");
-  fireEvent.change(pendingEditor, { target: { value: "Follow-up while sending" } });
+  await waitFor(() => expect(reads.admission).toBe(1));
+  if (typed) fireEvent.change(pendingEditor, { target: { value: "Follow-up while sending" } });
+  fireEvent.change(screen.getByLabelText("Attach files", { selector: "input" }), {
+    target: { files: [new File(["notes"], "follow-up-notes.txt", { type: "text/plain" })] },
+  });
+  await screen.findByRole("button", { name: "Remove follow-up-notes.txt" });
   admission.release();
 
   await waitFor(() => expect(screen.getByTestId("selected-chat").textContent).toBe(chat.id));
-  expect(composerValue()).toBe("Follow-up while sending");
+  expect(composerValue()).toBe(typed ? "Follow-up while sending" : "");
+  expect(screen.getByRole("button", { name: "Remove follow-up-notes.txt" })).toBeTruthy();
   expect(screen.queryByText("Follow-up while sending", { exact: true, selector: "span" })).toBeNull();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(uploadedPaths).toEqual([expect.stringContaining("follow-up-notes.txt")]));
+});
+
+it.each(["create", "admission"] as const)("keeps an independent New Chat selected when the older %s completes", async stage => {
+  setupChatScreen();
+  const prior = gate();
+  const { reads, createRequestIds } = fixtureServer({
+    createGate: stage === "create" ? prior.opened : undefined,
+    admitGate: stage === "admission" ? prior.opened : undefined,
+    streamOpen: true,
+  });
+  render(<ChatScreen draft />);
+  const editor = await screen.findByPlaceholderText("How can I help you today?");
+  fireEvent.change(editor, { target: { value: "Original message" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  try {
+    await screen.findByText("Original message", { exact: true, selector: "span" });
+    await waitFor(() => expect(stage === "create" ? createRequestIds.length : reads.admission).toBe(1));
+    fireEvent.click(screen.getAllByTitle("New chat")[0]!);
+    await waitFor(() => expect(screen.queryByText("Original message", { exact: true, selector: "span" })).toBeNull());
+    fireEvent.change(screen.getByRole("textbox", { name: "Message chat" }), { target: { value: "Independent new draft" } });
+    prior.release();
+
+    await waitFor(() => expect(screen.getByTestId("send-busy").textContent).toBe("false"));
+    expect(reads.admission).toBe(1);
+    expect(screen.getByTestId("selected-chat").textContent).toBe("");
+    expect((screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement).value).toBe("Independent new draft");
+  } finally {
+    prior.release();
+  }
 });
 
 it.each([false, true])("replays an unconfirmed admission after a model change (newer draft=%s)", async (typed) => {
