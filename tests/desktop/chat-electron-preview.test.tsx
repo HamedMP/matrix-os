@@ -344,7 +344,7 @@ describe("Mac Verification", () => {
     await waitFor(() => expect(hook.result.current.verificationAction).toBeDefined());
     act(() => hook.result.current.verificationAction?.select("/mac-verification", ""));
     const run = { ...detail.runs[0]!, id: "run_fresh_mac_check" };
-    act(() => hook.result.current.verificationDraft?.accept(run));
+    acceptVerificationDraft(hook.result.current.verificationDraft, run);
     hook.rerender({ ...initialProps, detail: { ...detail, runs: [...detail.runs, run] }, permissionMode: "full_access" });
     await waitFor(() => expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(true));
     const viewId = (invoke.mock.calls.find(([channel]) => channel === "chat:mac-verification-selection")?.[1] as { viewId: string }).viewId;
@@ -364,7 +364,7 @@ describe("Mac Verification", () => {
     await waitFor(() => expect(hook.result.current.verificationAction).toBeDefined());
     act(() => hook.result.current.verificationAction?.select("/mac-verification", ""));
     const run = { ...detail.runs[0]!, id: "run_declined_mac_check" };
-    act(() => hook.result.current.verificationDraft?.accept(run));
+    acceptVerificationDraft(hook.result.current.verificationDraft, run);
     hook.rerender({ ...initialProps, detail: { ...detail, runs: [...detail.runs, run] }, permissionMode: "full_access" });
     await waitFor(() => expect(hook.result.current.verificationFeedback?.props.children[0].props.children).toContain("Check Mac Pairing"));
     expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
