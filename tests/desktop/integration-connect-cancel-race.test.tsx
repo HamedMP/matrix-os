@@ -22,6 +22,7 @@ it("allows a new connect after canceling a pending request without reopening sta
   const post = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
   const api = {
     baseUrl: "https://app.matrix-os.com", post,
+    forRuntime() { return this; },
     get: vi.fn(async (path: string) => path.endsWith("/available")
       ? [{ id: "github", name: "GitHub", category: "developer", actions: {} }]
       : path.endsWith("/connection-options") ? { methods: ["pipedream"], defaultMethod: "pipedream" } : []),

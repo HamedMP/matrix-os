@@ -357,12 +357,9 @@ describe("desktop integrations settings section", () => {
   });
 
   it("shows a generic offline message with a retry that reloads", async () => {
-    let failures = 0;
+    let offline = true;
     const api = makeApi({
-      getError: () => {
-        failures += 1;
-        return failures <= 2 ? new AppError("offline") : null;
-      },
+      getError: () => offline ? new AppError("offline") : null,
     });
     useConnection.setState({ api: api as never });
     render(<IntegrationsSettingsSection />);
@@ -371,6 +368,7 @@ describe("desktop integrations settings section", () => {
       expect(screen.getByText("Can't reach Matrix OS. Check your connection.")).not.toBeNull(),
     );
 
+    offline = false;
     fireEvent.click(screen.getByRole("button", { name: "Retry", exact: true }));
     await waitFor(() => expect(screen.getByText("Gmail")).not.toBeNull());
   });

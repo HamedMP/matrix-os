@@ -20,7 +20,7 @@ it.each([
 ] as const)("completes same-ID Gmail reauthorization via %s after %s recovery", async (mode, recovery) => {
   const before = recovery === "status" ? { ...account, status: "expired" } : account;
   const after = recovery === "timestamp" ? { ...account, connected_at: "2026-10-08T10:00:00.000Z" } : account;
-  const api = {
+  const api = { forRuntime() { return this; },
     get: vi.fn(async (path: string) => path.endsWith("/available") ? [{ id: "gmail", name: "Gmail", category: "google", actions: {} }]
       : path.endsWith("/connection-options") ? { methods: ["matrix", "pipedream"], defaultMethod: "matrix" } : [before]),
     post: vi.fn(async (path: string) => path.endsWith("/connect") ? { url: "https://app.matrix-os.com/auth/gmail?state=opaque", service: "gmail" }
@@ -43,7 +43,7 @@ it.each(['pending', 'expired', 'unavailable'])('never substitutes account availa
     : path.includes('/attempts/') ? receiptState === 'unavailable' ? { error: 'unavailable' } : { status: receiptState } : [account]);
   const post = vi.fn(async (path: string) => path.endsWith('/connect') ? { url: 'https://pipedream.com/connect', service: 'gmail', attemptId }
     : { synced: 1, services: [{ ...account, connected_at: '2099-01-01' }] });
-  const api = { get, post } as unknown as ApiClient;
+  const api = { forRuntime() { return this; }, get, post } as unknown as ApiClient;
   useConnection.setState({ status: 'signed-in', handle: 'operator', api: api as never });
   render(<IntegrationsSettingsSection pollIntervals={[60_000]} />);
   fireEvent.click(await screen.findByTestId('integration-connect-gmail'));
@@ -54,7 +54,7 @@ it.each(['pending', 'expired', 'unavailable'])('never substitutes account availa
 });
 it('completes the exact receipt account even when its active metadata is unchanged', async () => {
   const attemptId = '123e4567-e89b-42d3-a456-426614174000';
-  const api = {
+  const api = { forRuntime() { return this; },
     get: vi.fn(async (path: string) => path.endsWith('/available') ? [{ id: 'gmail', name: 'Gmail', category: 'google' }]
       : path.endsWith('/connection-options') ? { methods: ['pipedream'], defaultMethod: 'pipedream' }
       : path.includes('/attempts/') ? { status: 'succeeded', accountId: account.id } : [account]),
@@ -71,7 +71,7 @@ it('keeps a terminal poll success when an older manual check fails later', async
   let failManual!: (error: Error) => void;
   const manual = new Promise<unknown>((_resolve, reject) => { failManual = reject; });
   let receipts = 0;
-  const api = {
+  const api = { forRuntime() { return this; },
     get: vi.fn(async (path: string) => path.endsWith('/available') ? [{ id: 'gmail', name: 'Gmail', category: 'google' }]
       : path.endsWith('/connection-options') ? { methods: ['pipedream'], defaultMethod: 'pipedream' }
       : path.includes('/attempts/') ? ++receipts === 1 ? manual : { status: 'succeeded', accountId: account.id } : [account]),
@@ -93,11 +93,11 @@ it('keeps terminal failure when an older receipt inventory refresh resolves late
   const manual = new Promise<unknown>((_resolve, reject) => { failManual = reject; });
   const inventory = new Promise(resolve => { finishInventory = resolve; });
   let receipts = 0; let inventories = 0;
-  const api = {
+  const api = { forRuntime() { return this; },
     get: vi.fn(async (path: string) => path.endsWith('/available') ? [{ id: 'gmail', name: 'Gmail', category: 'google' }]
       : path.endsWith('/connection-options') ? { methods: ['pipedream'], defaultMethod: 'pipedream' }
       : path.includes('/attempts/') ? ++receipts === 1 ? manual : { status: 'succeeded', accountId: account.id }
-      : ++inventories === 1 ? [account] : inventory),
+      : path === '/api/integrations' ? ++inventories === 1 ? [account] : inventory : []),
     post: vi.fn(async () => ({ url: 'https://pipedream.com/connect', service: 'gmail', attemptId })),
   } as unknown as ApiClient;
   useConnection.setState({ status: 'signed-in', handle: 'operator', api: api as never });
