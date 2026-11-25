@@ -81,9 +81,7 @@ function localFailure(stage: string, stderr: Buffer, outcome: {
   spawnErrorCode: string | null;
 }) {
   const diagnostic = { stage, ...outcome, stderrTail: diagnosticStderr(stderr), logWriteError: undefined as string | undefined };
-  // Native operator diagnostics only. The renderer/Chat receives the fixed
-  // error message and service-owned failure enum, never this output. A broken
-  // parent stdio pipe must not crash the Electron main process (EPIPE).
+  // Keep diagnostics in native logs and tolerate EPIPE in the Electron main process.
   try { writeSync(2, `[mac-verification] local stage failed ${JSON.stringify(diagnostic)}\n`); }
   catch (error: unknown) {
     if (!(error instanceof Error && "code" in error && (error.code === "EPIPE" || error.code === "EBADF"))) {
@@ -175,8 +173,7 @@ function git(args: readonly string[], cwd: string, signal: AbortSignal, timeout 
 }
 
 async function readBoundedFile(path: string, maximum: number, description: string) {
-  // Callers own the directory. Checking the full resolved path also rejects
-  // a committed symlink in any ancestor, before the staged source is read.
+  // The caller owns the directory; require the resolved path to reject ancestor symlinks.
   const info = await lstat(path);
   if (!info.isFile() || info.size < 1 || info.size > maximum || await realpath(path) !== path) {
     throw new Error(`Invalid ${description}`);
@@ -202,8 +199,7 @@ async function testAndBuild(source: string, temp: string, signal: AbortSignal, r
   const options = { env, signal, cwd: source, timeout: 180_000 };
   const node = toolchain?.node ?? "node";
   const pnpm = toolchain ? { program: node, prefix: [toolchain.pnpm] } : { program: "corepack", prefix: ["pnpm"] };
-  // The signed source lockfile fixes the dependency graph. Install into an
-  // owned cache after consent, excluding unrelated mobile importers and hooks.
+  // Install from the signed lockfile after consent into an owned cache, excluding mobile importers and hooks.
   const budget = new AbortController();
   const installSignal = AbortSignal.any([signal, budget.signal]);
   let monitor: ReturnType<typeof setTimeout> | undefined;
@@ -232,8 +228,7 @@ async function testAndBuild(source: string, temp: string, signal: AbortSignal, r
   } finally {
     clearTimeout(monitor); budget.abort(); await checking;
     if (toolchain) {
-      // pnpm records the active checkout here. It is administrative metadata,
-      // not dependency bytes, and must not retain a deleted request path.
+      // Remove pnpm's checkout registration before deleting the request path.
       await clearVerificationStoreProjects(toolchain.store);
     }
   }

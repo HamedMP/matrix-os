@@ -30,7 +30,7 @@ function acceptVerificationDraft(
   run: CanonicalChatDetailResponse["runs"][number],
 ) {
   act(() => {
-    const submission = draft?.beginSubmission(run.id);
+    const submission = draft?.beginSubmission(run.id, "Verify the current worktree changes on my Mac.", false);
     if (!submission || submission === "draft-changed") throw new Error("Expected the current verification draft to submit");
     submission.accept(run);
     submission.finish();
@@ -168,10 +168,10 @@ describe("Electron Chat preview", () => {
 });
 
 describe("Mac Verification", () => {
-  function terminalBridge(reply: () => { status: string } | Promise<{ status: string }>, digest = "d".repeat(64)) {
+  function terminalBridge(reply: () => { status: string } | Promise<{ status: string }>, digest: string | null = "d".repeat(64), accepted = true) {
     const invoke = vi.fn(async (channel: string, _payload?: unknown) => {
-      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: true };
-      if (channel === "chat:mac-verification-selection") return { accepted: true };
+      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true, terminalRequests: Boolean(digest) };
+      if (channel === "chat:mac-verification-selection") return { accepted };
       if (channel === "chat:mac-verification-terminal-intent") return { digest };
       return reply();
     });
@@ -294,9 +294,7 @@ describe("Mac Verification", () => {
   }
 
   it("stages a fresh agent workflow instead of verifying a historical run", async () => {
-    const invoke = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
-      ? { available: false, verificationAvailable: true } : { status: "returned" });
-    vi.stubGlobal("operator", { invoke });
+    const invoke = terminalBridge(() => ({ status: "returned" }), null);
     const hook = renderHook(useChatElectronPreview, { initialProps: { ...initialProps, detail: verificationDetail() } });
     await waitFor(() => expect(hook.result.current.verificationAction).toBeDefined());
     act(() => hook.result.current.verificationAction?.select("/mac-verification", ""));
@@ -304,13 +302,8 @@ describe("Mac Verification", () => {
     expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
   });
 
-  it("binds a fresh workflow to Full Access and releases its view on downgrade", async () => {
-    const invoke = vi.fn(async (channel: string) => {
-      if (channel === "chat:electron-preview-available") return { available: false, verificationAvailable: true };
-      if (channel === "chat:mac-verification-selection") return { accepted: true };
-      return { status: "returned" };
-    });
-    vi.stubGlobal("operator", { invoke });
+  it.each([true, false])("requires native Full Access selection for the completed workflow (accepted: %s)", async accepted => {
+    const invoke = terminalBridge(() => ({ status: "returned" }), null, accepted);
     const detail = verificationDetail();
     const hook = renderHook(useChatElectronPreview, { initialProps: { ...initialProps, detail, permissionMode: "full_access" } });
     await waitFor(() => expect(hook.result.current.verificationAction).toBeDefined());
@@ -318,6 +311,11 @@ describe("Mac Verification", () => {
     const run = { ...detail.runs[0]!, id: "run_fresh_mac_check" };
     acceptVerificationDraft(hook.result.current.verificationDraft, run);
     hook.rerender({ ...initialProps, detail: { ...detail, runs: [...detail.runs, run] }, permissionMode: "full_access" });
+    if (!accepted) {
+      await waitFor(() => expect(hook.result.current.verificationFeedback?.props.children[0].props.children).toContain("Check Mac Pairing"));
+      expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
+      return;
+    }
     await waitFor(() => expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(true));
     const viewId = (invoke.mock.calls.find(([channel]) => channel === "chat:mac-verification-selection")?.[1] as { viewId: string }).viewId;
     expect(invoke).toHaveBeenCalledWith("chat:electron-preview-run", {
@@ -327,25 +325,8 @@ describe("Mac Verification", () => {
     expect(invoke).toHaveBeenLastCalledWith("chat:mac-verification-selection", { viewId, scope: null });
   });
 
-  it("does not send a completed workflow after native Full Access selection is declined", async () => {
-    const invoke = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
-      ? { available: false, verificationAvailable: true } : { accepted: false });
-    vi.stubGlobal("operator", { invoke });
-    const detail = verificationDetail();
-    const hook = renderHook(useChatElectronPreview, { initialProps: { ...initialProps, detail, permissionMode: "full_access" } });
-    await waitFor(() => expect(hook.result.current.verificationAction).toBeDefined());
-    act(() => hook.result.current.verificationAction?.select("/mac-verification", ""));
-    const run = { ...detail.runs[0]!, id: "run_declined_mac_check" };
-    acceptVerificationDraft(hook.result.current.verificationDraft, run);
-    hook.rerender({ ...initialProps, detail: { ...detail, runs: [...detail.runs, run] }, permissionMode: "full_access" });
-    await waitFor(() => expect(hook.result.current.verificationFeedback?.props.children[0].props.children).toContain("Check Mac Pairing"));
-    expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
-  });
-
   it("cancels an edit's waiting Mac verification when the owner changes permission mode", async () => {
-    const invoke = vi.fn(async (channel: string) => channel === "chat:electron-preview-available"
-      ? { available: false, verificationAvailable: true } : { accepted: true });
-    vi.stubGlobal("operator", { invoke });
+    const invoke = terminalBridge(() => ({ status: "returned" }), null);
     const detail = verificationDetail();
     const hook = renderHook(useChatElectronPreview, {
       initialProps: { ...initialProps, detail, permissionMode: "full_access" },

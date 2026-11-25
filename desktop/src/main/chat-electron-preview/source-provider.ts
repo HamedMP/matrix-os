@@ -132,8 +132,7 @@ export async function clearVerificationStoreProjects(store: string) {
   });
   if (!projectInfo) return;
   if (!projectInfo.isDirectory() || projectInfo.isSymbolicLink() || projectInfo.uid !== process.getuid?.() || projectInfo.mode & 0o022) throw supportError();
-  // Remove only pnpm's direct checkout-registration links; never walk a link
-  // or recursively delete an unexpected directory in a retained cache.
+  // Unlink only pnpm registrations without traversing or deleting cache directories.
   const entries = await readdir(projects, { withFileTypes: true }).catch((error: unknown) => {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
     throw error;
@@ -142,8 +141,7 @@ export async function clearVerificationStoreProjects(store: string) {
   await Promise.all(entries.map(entry => rm(join(projects, entry.name))));
 }
 
-// Copy into an exclusive owner-private file while hashing. Only the verified
-// private copy reaches tar, so a changed app resource cannot race extraction.
+// Tar receives only the exclusively created private copy verified during hashing.
 async function copyVerifiedArchive(source: string, destination: string, expected: z.infer<typeof Archive>, signal: AbortSignal) {
   const input = await open(source, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
   try {
@@ -175,8 +173,7 @@ async function copyVerifiedArchive(source: string, destination: string, expected
 }
 async function extractArchive(archive: string, destination: string, expected: z.infer<typeof Archive>, signal: AbortSignal, allowSymlinks: boolean) {
   await mkdir(destination, { mode: 0o700 });
-  // This tar is built from validated files by the signed Matrix build and its
-  // digest was verified before this call. No URL/path from Chat reaches it.
+  // The signed build creates this validated archive; extraction follows digest verification.
   const extracted = await run("/usr/bin/tar", ["-xf", archive, "-C", destination,
     "--no-same-owner", "--no-same-permissions", "--no-acls", "--no-xattrs"], {
     signal, timeout: 180_000, maxBuffer: 64 * 1024, env: { ...environment(), COPYFILE_DISABLE: "1" },
@@ -186,10 +183,8 @@ async function extractArchive(archive: string, destination: string, expected: z.
   if (actual.unpackedBytes !== expected.unpackedBytes || actual.fileCount !== expected.fileCount) throw supportError();
 }
 
-// Electron selects userData and acquires its single-instance lock before
-// registering this provider; the preview service admits one action at a time.
-// This file lock fences provider reuse and recovers crash leftovers inside that
-// lifecycle. It is not a replacement for the native process singleton.
+// Electron locks userData before provider registration, and the service admits one action.
+// The profile file lock fences provider reuse and crash recovery within that singleton.
 const lockAcquisitions = new Set<string>();
 const busy = () => new MacVerificationPreparationError("preparation-busy");
 async function profileLock(path: string) {
@@ -226,8 +221,7 @@ async function acquireProfileLock(path: string) {
     pid = z.strictObject({ pid: z.number().int().positive(), token: z.uuid(), createdAt: z.number().int().nonnegative() })
       .parse(JSON.parse(record)).pid;
   } catch (error: unknown) {
-    // A crash can leave a prefix of the JSON write. The native singleton and
-    // serialized acquisition rule out a writer when the PID was never completed.
+    // An interrupted PID write is recoverable under the native singleton and acquisition guard.
     const partial = /^\{"pid":([1-9]\d{0,9})(,.*)?$/.exec(record);
     if (!(error instanceof SyntaxError) || !(partial || '{"pid":'.startsWith(record))) {
       console.warn("[mac-verification] source lock unavailable", error instanceof Error ? error.name : "Error");
@@ -253,8 +247,6 @@ async function acquireProfileLock(path: string) {
   }
 }
 
-/** A signed desktop supplies all executable inputs. Chat supplies only the
- * admitted Git base; it cannot select a local path, tool, clone URL or script. */
 export function createMacVerificationSourceProvider(options: Options) {
   const kit = join(options.resourcesPath, "mac-verification-support");
   const expectedManifestSha256 = options.expectedManifestSha256 ?? (typeof __MAC_VERIFICATION_SUPPORT_SHA256__ === "undefined"
@@ -311,8 +303,7 @@ export function createMacVerificationSourceProvider(options: Options) {
       const cacheName = `store-${sha256(bytes)}`;
       const entries = await readdir(workspace);
       if (entries.length > 64) throw supportError();
-      // The exclusive profile lock proves these are not live in this profile.
-      // Never follow links or clean unknown/user-named directories.
+      // Holding the profile lock, sweep only recognized, owned directories without following links.
       for (const name of entries) {
         if (!(/^(?:request-|\.store-)[a-f0-9-]{36}$/.test(name) || (/^store-[a-f0-9]{64}$/.test(name) && name !== cacheName))) continue;
         const path = join(workspace, name); const info = await lstat(path);
@@ -335,8 +326,7 @@ export function createMacVerificationSourceProvider(options: Options) {
       if (alternatives || sha256(await boundedFile(join(checkout, "pnpm-lock.yaml"), 4 * 1024 * 1024)) !== manifest.lockfileSha256
         || await command("/usr/bin/git", ["--no-optional-locks", "-c", "core.fsmonitor=false", "rev-parse", "--verify", "HEAD^{commit}"], checkout, signal) !== baseSha) throw supportError();
       const cachedStore = join(workspace, cacheName);
-      // Dependencies are fetched only by the consented executor into this
-      // owner-private mutable cache, never carried in the signed app.
+      // Only the consented executor fetches dependencies into this private cache.
       await ownedDirectory(cachedStore);
       signal.throwIfAborted();
       if (await identity(pinnedPaths) !== sourceIdentity) throw supportError();

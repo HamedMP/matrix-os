@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// Build-time only. A signed Mac client carries its exact source and fixed tools.
-// Runtime dependencies install from the frozen lockfile into a private cache.
+// Build the signed client's source/tool kit; frozen dependencies install in a private runtime cache.
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
@@ -106,8 +105,7 @@ export async function readPnpmEntry({ args = process.argv, env = process.env } =
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   let freshElectron;
   try {
-    // pnpm/action-setup may place a self-update wrapper on PATH. A lifecycle
-    // supplies the actual package entry; never infer its layout from `which`.
+    // Use the lifecycle entry because PATH can point to pnpm's self-update wrapper.
     const pnpmEntry = await readPnpmEntry();
     const packageRoot = await realpath(join(ROOT, "desktop/node_modules/electron"));
     if (process.argv.includes("--refresh-electron")) freshElectron = await installFreshMacVerificationElectron({ packageRoot });

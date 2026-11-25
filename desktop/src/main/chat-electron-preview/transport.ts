@@ -375,10 +375,12 @@ export function createChatElectronPreviewTransport(
     return { cwd, baseSha, edited, bytes };
   }
 
-  async function readVerificationManifest(authority: RuntimeAuthority, worktreeId: string, recipe: MacVerificationRecipe, signal?: AbortSignal) {
+  async function readVerificationManifest(
+    authority: RuntimeAuthority, worktreeId: string, recipe: MacVerificationRecipe, signal?: AbortSignal, requireEdit = false,
+  ) {
     const sourcePath = MAC_VERIFICATION_SOURCE_BY_RECIPE[recipe];
     const source = await readPreviewSource(authority, worktreeId, true, sourcePath, { signal });
-    if (!source) return null;
+    if (!source || (requireEdit && !source.edited)) return null;
     const { cwd, baseSha, bytes, edited } = source;
     const committed = await readGit(authority, cwd, ["show", `${baseSha}:${sourcePath}`], { signal });
     if (committed === null) return null;
@@ -581,10 +583,12 @@ export function createChatElectronPreviewTransport(
       return queued?.digest ?? null;
     },
 
-    async read(ref: ChatElectronPreviewTarget, background?: ChatElectronPreviewBackgroundBinding, signal = background?.signal): Promise<ChatElectronPreviewRequest | null> {
-      if (!ChatElectronPreviewTarget.safeParse(ref).success) return null;
+    async read(target: ChatElectronPreviewTarget, background?: ChatElectronPreviewBackgroundBinding, signal = background?.signal): Promise<ChatElectronPreviewRequest | null> {
+      if (!ChatElectronPreviewTarget.safeParse(target).success) return null;
+      const { recipeSelection, ...ref } = target;
       const isVerification = ref.requestKind === "verification";
-      if ((isVerification && background) || (ref.terminalIntentDigest && !isVerification)) return null;
+      if ((isVerification && background) || (!isVerification && (ref.terminalIntentDigest || recipeSelection))
+        || (ref.terminalIntentDigest && recipeSelection)) return null;
       const authority = background ? backgroundAuthority(background) : currentAuthority();
       if (!authority) return null;
       const detail = await readDetail(authority, ref.chatId, { signal });
@@ -601,13 +605,12 @@ export function createChatElectronPreviewTransport(
       const queued = ref.terminalIntentDigest ? await readTerminalIntent(authority, ref, { signal }) : null;
       if (ref.terminalIntentDigest && (queued?.digest !== ref.terminalIntentDigest
         || queued.intent.projectId !== candidate.root.projectId || queued.intent.worktreeId !== candidate.root.worktreeId)) return null;
-      let recipe = queued?.intent.recipe;
+      let recipe = queued?.intent.recipe ?? (recipeSelection === "changed-only" ? undefined : recipeSelection);
       let source = marked ? marked.marker
-        : await readVerificationManifest(authority, candidate.root.worktreeId, recipe ?? "sign-in", signal);
-      // The trusted status/read path admits at most one bounded source edit.
-      // Files changes must select Files, never return an unrelated sign-in image.
+        : await readVerificationManifest(authority, candidate.root.worktreeId, recipe ?? "sign-in", signal, recipeSelection === "changed-only");
+      // Only a validated Files edit can select Files automatically.
       if (!source && isVerification && !recipe) {
-        source = await readVerificationManifest(authority, candidate.root.worktreeId, "files-trash", signal);
+        source = await readVerificationManifest(authority, candidate.root.worktreeId, "files-trash", signal, true);
         if (source) recipe = "files-trash";
       }
       if (!source || (queued && (source.baseSha !== queued.intent.baseSha || source.sourceSha256 !== queued.intent.sourceSha256))) return null;
@@ -753,8 +756,7 @@ export function createChatElectronPreviewTransport(
         const conflict = await readAdmissionConflict(response);
         const retryableConflict = conflict === "chat_busy" || conflict === "chat_conflict";
         const retryReconciliation = isInterruptedDelivery(response, isVerification) || (isVerification && retryableConflict);
-        // Reconcile an already-accepted receipt, but retain a permanent POST failure
-        // if the reconciliation read is itself interrupted.
+        // Reconcile accepted receipts without swallowing a permanent POST failure.
         const refreshed = await prepareTurn(retryReconciliation).catch((error: unknown) => {
           if (isVerification && !retryReconciliation && error instanceof ChatElectronPreviewTransportInterruptedError) {
             throw new Error("Preview result could not be posted", { cause: error });
@@ -762,8 +764,7 @@ export function createChatElectronPreviewTransport(
           throw error;
         });
         if (!refreshed) return;
-        // A concurrent Chat turn can win between the idle check and admission.
-        // Keep the same receipt identity and reuse the single uploaded PNG.
+        // After a Chat admission race, reuse the receipt identity and uploaded PNG.
         if (!retryableConflict || (conflict === "chat_conflict" && refreshed.turn.baseRevision === turn.baseRevision)) {
           throw deliveryError(response, "Preview result could not be posted");
         }

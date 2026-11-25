@@ -205,9 +205,17 @@ describe("authenticated Chat Electron preview transport", () => {
     const filesPath = MAC_VERIFICATION_SOURCE_BY_RECIPE["files-trash"];
     const base = 'const item = { label: "Move to Trash", onSelect };\n';
     const updated = base.replace("Move to Trash", "Send to Trash");
+    mock.setGit(originHead, "");
+    mock.setSource(verificationBase);
+    await expect(mock.service.read(verificationTarget)).resolves.toMatchObject({ sourceSha256: sha256(verificationBase) });
+    await expect(mock.service.read({ ...verificationTarget, recipeSelection: "changed-only" })).resolves.toBeNull();
+    mock.setSource(base, base, filesPath);
+    await expect(mock.service.read({ ...verificationTarget, recipeSelection: "files-trash" })).resolves.toMatchObject({
+      recipe: "files-trash", sourceSha256: sha256(base),
+    });
     mock.setSource(updated, base, filesPath);
     mock.setGit(originHead, ` M ${filesPath}\0`);
-    expect(await mock.service.read(verificationTarget)).toMatchObject({
+    expect(await mock.service.read({ ...verificationTarget, recipeSelection: "changed-only" })).toMatchObject({
       recipe: "files-trash", label: "Send to Trash", sourceSha256: sha256(updated),
     });
     const intent = { version: 1, chatId, runId, projectId, worktreeId, recipe: "files-trash",
@@ -215,6 +223,7 @@ describe("authenticated Chat Electron preview transport", () => {
     mock.setTerminalIntent(intent);
     const terminalIntentDigest = await mock.service.probeTerminalIntent({ chatId, runId });
     expect(terminalIntentDigest).toBe(sha256(JSON.stringify(intent)));
+    await expect(mock.service.read({ ...verificationTarget, terminalIntentDigest: terminalIntentDigest!, recipeSelection: "sign-in" })).resolves.toBeNull();
     const request = await mock.service.read({ ...verificationTarget, terminalIntentDigest: terminalIntentDigest! });
     expect(request).toMatchObject({ recipe: "files-trash", label: "Send to Trash", worktreeId, terminalIntentDigest });
     mock.fetchFn.mockImplementationOnce(mock.fetchFn.getMockImplementation()!).mockResolvedValueOnce(new Response(null, { status: 502 }));

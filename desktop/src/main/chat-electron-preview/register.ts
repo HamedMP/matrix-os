@@ -110,9 +110,7 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
     },
     async execute(request, signal) {
       if (isAutomatic(request) && sourceProvider) {
-        // Service calls execute only after local consent, an active pairing
-        // lease and a second canonical source read. Preparing source must not
-        // create files before those authority checks.
+        // The service checks local consent, an active lease and source again before preparation.
         const source = await sourceProvider.prepare(request.baseSha, signal);
         try {
           signal.throwIfAborted();

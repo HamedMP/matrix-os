@@ -104,8 +104,7 @@ export async function verifyFilesInElectron({ root, electronPath, profile, png, 
       args: [
         "--disable-background-networking",
         "--no-proxy-server",
-        // Playwright uses the Chromium test keychain for synthetic credentials.
-        // This launch never opens or writes the user's macOS keychain.
+        // Synthetic credentials use only Chromium's test keychain.
         "--use-mock-keychain",
         "--host-resolver-rules=MAP * ~NOTFOUND,EXCLUDE 127.0.0.1",
         join(root, "desktop/out/main/index.js"),
@@ -136,8 +135,7 @@ export async function verifyFilesInElectron({ root, electronPath, profile, png, 
 
     try {
       await dismissGettingStartedOnInteraction(page);
-      // Complete synthetic auth through the real Electron IPC without opening
-      // the user's browser or requiring (or collecting) an actual credential.
+      // Complete synthetic auth through Electron IPC without opening the owner's browser.
       await page.evaluate(() => window.operator.invoke("auth:start-device-flow", { intent: "sign-in" }));
       await page.waitForFunction(async () => {
         const result = await window.operator.invoke("auth:poll", {});
@@ -167,8 +165,7 @@ export async function verifyFilesInElectron({ root, electronPath, profile, png, 
       const undo = page.getByRole("button", { name: "Undo", exact: true });
       await undo.waitFor();
       await target.waitFor({ state: "detached" });
-      // Deletion refreshes the whole list. Detachment can mean the transient
-      // loading state, so await the surviving row before checking its contents.
+      // Wait for the sibling row because deletion temporarily detaches the entire list.
       await adjacent.waitFor({ state: "visible" });
       assert(await adjacent.isVisible(), "The neighboring file should remain visible");
       await assert.rejects(lstat(join(ownerHome, disposable)), { code: "ENOENT" });

@@ -728,7 +728,7 @@ function CanonicalChatWorkspaceContent({
             setSubmissionError(`${MATCHING_MAC_BUILD} Choose Cancel verification to send without this check.`);
             return;
           }
-          const prepared = verification.beginSubmission(draftKey);
+          const prepared = verification.beginSubmission(draftKey, submission.text.trim(), Boolean(pendingReply));
           if (prepared === "draft-changed") {
             setSubmissionError("Choose Cancel verification before sending the edited message.");
             return;
