@@ -65,9 +65,9 @@ export async function legacyChatNavigation(records: readonly CanonicalChatRecord
         // binding cannot withhold unrelated, successfully classified rows.
         continue;
       }
-      const { id, title, titleVersion, activityAt, lifecycle, attention, revision, messageCount, userState, createdAt, updatedAt } = record.chat;
+      const { id, title, titleVersion, activityAt, lifecycle, archivedAt, attention, revision, messageCount, userState, createdAt, updatedAt } = record.chat;
       const readState = record.readState ?? { version: 0, unread: record.latestSuccessfulCompletion?.unacknowledged ?? false, markedUnread: false, latestIncomingSeq: 0, readThroughSeq: 0 };
-      items.push(CanonicalChatNavigationItemSchema.parse({ chat: { id, title, titleVersion, activityAt, lifecycle, attention, revision, messageCount, userState, createdAt, updatedAt },
+      items.push(CanonicalChatNavigationItemSchema.parse({ chat: { id, title, titleVersion, activityAt, lifecycle, archivedAt, attention, revision, messageCount, userState, createdAt, updatedAt },
         importSource: record.importSource, projectId: record.projectId, providerBinding: record.providerBinding ? { driverKind: record.providerBinding.driverKind } : undefined, activeRun: record.activeRun,
         latestSuccessfulCompletion: record.latestSuccessfulCompletion, readState, classification: agentId ? { kind: "bot", agentId } : { kind: "ordinary" },
         // Old servers do not expose a reliable membership projection: keep legacy cache memory-only.

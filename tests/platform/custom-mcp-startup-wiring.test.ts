@@ -26,7 +26,9 @@ describe("Custom MCP platform startup wiring", () => {
     expect(source).not.toContain("!oauthClientId || !oauthRedirectUri");
     expect(source).not.toContain("Custom MCP requires MCP_OAUTH_CLIENT_ID");
     expect(source).toContain("clientId: oauthClientId");
-    expect(source).toContain("createGranolaPresetBroker({ broker, oauth: oauthManager })");
+    // Preset brokers get the org-policy-governed broker (spec 2691), never the raw one.
+    expect(source).toContain("createGranolaPresetBroker({ broker: governedBroker, oauth: oauthManager })");
+    expect(source).toContain("createManagedOAuthPresetBroker({ broker: governedBroker, oauth: oauthManager })");
   });
 
   it("registers the built approval route with the Platform-owned store and proof verifier", async () => {
@@ -34,5 +36,14 @@ describe("Custom MCP platform startup wiring", () => {
     expect(source).toContain("../../gateway/dist/integrations/custom-mcp/approval-routes.js");
     expect(source).toMatch(/createCustomMcpApprovalRoutes\(createInternalCustomMcpApprovalRouteOptions\(\{[\s\S]*db: customDb,[\s\S]*broker,[\s\S]*platformSecret,[\s\S]*resolveUserId: resolveCustomMcpUserId/);
     expect(source).toContain("internalCustomMcpApprovalRoutes,");
+  });
+
+  // Fault: Matrix-owned apps are parsed but never reach the OAuth manager or one route set.
+  it("hands the startup-parsed Matrix OAuth apps to the OAuth manager and both route sets", async () => {
+    const source = await readFile("packages/platform/src/platform-startup.ts", "utf8");
+    expect(source).toContain("../../gateway/dist/integrations/custom-mcp/catalog-presets.js");
+    expect(source.match(/RegisteredMcpOAuthClients\.fromEnv\(process\.env\)/g)).toHaveLength(1);
+    expect(source).toContain("registeredClients: registeredMcpOAuthClients");
+    expect(source.match(/catalog: registeredMcpOAuthClients/g)).toHaveLength(2);
   });
 });

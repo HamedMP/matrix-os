@@ -4,11 +4,15 @@
 import { AppError, classifyHttpStatus, classifyTransportError, safeErrorDetail } from "../../../shared/app-error";
 import { chatFundingVersionUrl } from "@matrix-os/contracts";
 import { isRoutineOriginPath, botCreationFailureReason, type BotCreationFailureReason } from "@matrix-os/ui";
+import { DESKTOP_REQUEST_SESSION_HEADER, desktopRequestSessionKey, type DesktopRequestSession } from "../../../shared/request-session";
 
 const API_TIMEOUT_MS = 10_000;
 
 export function buildGatewayUrl(baseUrl: string, path: string, runtimeSlot: string): string {
   const base = baseUrl.replace(/\/$/, "");
+  // Owner approval decisions for external MCP writes exist only on the platform
+  // session route (spec 2691), never on a VPS, so no computer selector applies.
+  if (/^\/api\/mcp-servers\/core\/external-approvals(?:\/[0-9a-f-]{36})?$/.test(path)) return `${base}${path}`;
   // The platform serves /api/mcp-servers itself, so a runtime query cannot
   // select the isolated broker for a PR Preview computer. Target its VPS route.
   if (/^pr-[1-9][0-9]{0,8}$/.test(runtimeSlot)
@@ -26,6 +30,8 @@ export interface ApiClientOptions {
   baseUrl: string;
   getRuntimeSlot: () => string;
   fetchFn?: FetchFn;
+  /** Immutable account/credential generation and runtime for private follow-up requests. */
+  session?: DesktopRequestSession;
   // Invoked once when the gateway rejects the request with 401 (token expired
   // or revoked), so the app can drop the stale session and prompt re-auth.
   onUnauthorized?: () => void;
@@ -75,11 +81,14 @@ export interface ApiClient {
   putText<T>(path: string, body: string, options?: JsonRequestOptions): Promise<T>;
   /** Returns a client whose requests remain bound to one runtime slot. */
   forRuntime(runtimeSlot: string): ApiClient;
+  /** The trusted core cancels this client's requests after an account/runtime switch. */
+  forSession(session: DesktopRequestSession): ApiClient;
   baseUrl: string;
 }
 
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const fetchFn: FetchFn = options.fetchFn ?? ((input, init) => fetch(input, init));
+  const sessionScope = options.session ? { ...options.session } : undefined;
 
   function signalWithTimeout(signal: AbortSignal | null | undefined, timeoutMs: number): AbortSignal {
     const timeout = AbortSignal.timeout(timeoutMs);
@@ -92,7 +101,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     requestOptions?: RequestTimeoutOptions,
   ): Promise<Response> {
     const negotiateChatResponse = /^\/api\/chats(?:[/?]|$)/.test(path) && !isRoutineOriginPath(path);
-    const url = buildGatewayUrl(options.baseUrl, negotiateChatResponse ? chatFundingVersionUrl(path) : path, options.getRuntimeSlot());
+    const url = buildGatewayUrl(options.baseUrl, negotiateChatResponse ? chatFundingVersionUrl(path) : path, sessionScope?.runtimeSlot ?? options.getRuntimeSlot());
     const callerSignals = [init.signal, requestOptions?.signal].filter(
       (signal): signal is AbortSignal => signal !== null && signal !== undefined,
     );
@@ -105,8 +114,11 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     try {
       response = await fetchFn(url, {
         ...init,
-        ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
-          headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
+        ...(sessionScope ? { redirect: "error" as const } : {}),
+        ...(/^\/api\/chats(?:[/?]|$)/.test(path) || sessionScope ? {
+          headers: { ...Object.fromEntries(new Headers(init.headers)),
+            ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? { "X-Matrix-Chat-Metadata": "1" } : {}),
+            ...(sessionScope ? { [DESKTOP_REQUEST_SESSION_HEADER]: desktopRequestSessionKey(sessionScope) } : {}) },
         } : {}),
         signal: signalWithTimeout(callerSignal, requestOptions?.timeoutMs ?? API_TIMEOUT_MS),
       });
@@ -128,7 +140,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         const body = (await response.clone().json()) as { error?: unknown; code?: unknown };
         const botPath = /^\/api\/chat-agents(?:[/?]|$)/.test(path);
         const err = body.error ?? (botPath ? body : undefined);
-        detail = safeErrorDetail(typeof err === "object" && err ? (err as { code?: unknown }).code : err);
+        // Some routes pair a human `error` string with a top-level safe `code` slug.
+        detail = safeErrorDetail(typeof err === "object" && err ? (err as { code?: unknown }).code : err) ?? safeErrorDetail(body.code);
         if (botPath) reason = botCreationFailureReason(body);
       } catch (error: unknown) {
         console.warn("[api] Error response metadata unavailable:", error instanceof Error ? error.name : "UnknownError");
@@ -224,7 +237,9 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     forRuntime: (runtimeSlot) => createApiClient({
       ...options,
       getRuntimeSlot: () => runtimeSlot,
+      session: sessionScope ? { ...sessionScope, runtimeSlot } : undefined,
     }),
+    forSession: (session) => createApiClient({ ...options, session }),
     get: (path, requestOptions) => request(path, { method: "GET", ...(requestOptions?.cache ? { cache: requestOptions.cache } : {}) }, requestOptions),
     getText: (path, boundedOptions) => requestText(path, { method: "GET", ...(boundedOptions?.headers ? { headers: boundedOptions.headers } : {}) }, boundedOptions),
     getBlob: (path, boundedOptions) => requestBlob(path, { method: "GET", ...(boundedOptions?.headers ? { headers: boundedOptions.headers } : {}) }, boundedOptions),

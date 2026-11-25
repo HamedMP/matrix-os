@@ -25,6 +25,11 @@ export interface TerminalDimensions {
 export interface AttachManagerOptions {
   createSocket: (sessionName: string, events: ShellSocketEvents, chatId?: string) => SocketControl;
   bufferCacheCap?: number;
+  /**
+   * Saved screens shared with other managers (the Terminal window's panes), so
+   * a screen outlives the pane that saved it. Not cleared when this manager is disposed.
+   */
+  sharedBuffers?: Map<string, string>;
 }
 
 export interface ActiveAttachment {
@@ -48,7 +53,8 @@ function errorText(err: unknown): string {
 export class AttachManager {
   private readonly createSocket: AttachManagerOptions["createSocket"];
   private readonly bufferCacheCap: number;
-  private readonly buffers = new Map<string, string>();
+  private readonly buffers: Map<string, string>;
+  private readonly ownsBuffers: boolean;
   private active: ActiveSocket | null = null;
   private generation = 0;
   private disposed = false;
@@ -56,6 +62,8 @@ export class AttachManager {
   constructor(options: AttachManagerOptions) {
     this.createSocket = options.createSocket;
     this.bufferCacheCap = Math.max(1, Math.floor(options.bufferCacheCap ?? DEFAULT_BUFFER_CACHE_CAP));
+    this.buffers = options.sharedBuffers ?? new Map<string, string>();
+    this.ownsBuffers = options.sharedBuffers === undefined;
   }
 
   get activeSessionName(): string | null {
@@ -164,7 +172,7 @@ export class AttachManager {
   dispose(): void {
     if (this.disposed) return;
     this.detachActive();
-    this.buffers.clear();
+    if (this.ownsBuffers) this.buffers.clear();
     this.disposed = true;
   }
 

@@ -11,9 +11,21 @@ import { spawnIsolatedProviderProcess } from "../coding-agents/provider-process-
 import { ProviderWorkflowError, type ProviderWorkflowAdapter } from "./provider-workflows.js";
 import { createProviderKeyVerifier } from "./provider-workflow-key.js";
 
+/**
+ * The Pi release Matrix installs. 1.0.x no longer installs cleanly: its `^1.0.x`
+ * Earendil sub-packages resolve to 1.6.0, which drop exports 1.0.x imports.
+ * 1.6.0 was checked against PI_SETTINGS_AUTH_WORKER: the read-only probe reports
+ * openai/anthropic/openrouter api-key login, `ModelRuntime.login(provider, type,
+ * { signal, prompt, notify })` matches pi-ai's AuthInteraction, and openai-codex
+ * still offers a `device_code` select option and notifies `userCode` and
+ * `verificationUri`. App AI and Pi routines keep their own audited pins.
+ */
+export const PI_VERIFIED_VERSION = "1.6.0";
+
 /** Public API verified against @earendil-works/pi-coding-agent 0.99.2
- * (005af57d88ee23b33778f343a9595b32e67ff788) and 1.0.0
- * (a13d35a742c6ef8462812a28fbe1d8c8b7431c32). Discard credential return values. */
+ * (005af57d88ee23b33778f343a9595b32e67ff788), 1.0.0
+ * (a13d35a742c6ef8462812a28fbe1d8c8b7431c32) and 1.6.0 (see PI_VERIFIED_VERSION).
+ * Discard credential return values. */
 export const PI_SETTINGS_AUTH_WORKER = `
 const [entry,mode] = process.argv.slice(1);
 const send = record => process.stdout.write(JSON.stringify(record)+"\\n");
@@ -65,7 +77,7 @@ export async function discoverPiSettingsAuth(options: { homePath: string; runtim
   const root = join(prefix, "lib/node_modules/@earendil-works/pi-coding-agent");
   const cli = join(prefix, "bin/pi"); const metadata = join(root, "package.json");
   const info = await lstat(metadata); if (!info.isFile() || info.isSymbolicLink() || info.size > 16384) throw new ProviderWorkflowError("unavailable");
-  const pkg = z.object({ name: z.literal("@earendil-works/pi-coding-agent"), version: z.enum(["0.99.2", "1.0.0"]) }).parse(JSON.parse(await readFile(metadata, "utf8")));
+  const pkg = z.object({ name: z.literal("@earendil-works/pi-coding-agent"), version: z.enum(["0.99.2", "1.0.0", PI_VERIFIED_VERSION]) }).parse(JSON.parse(await readFile(metadata, "utf8")));
   if (await realpath(cli) !== await realpath(join(root, "dist/bundle/cli.js"))) throw new ProviderWorkflowError("unavailable");
   const env: Record<string, string> = { HOME: resolve(options.homePath), MATRIX_HOME: resolve(options.homePath) };
   for (const key of ["PATH", "MATRIX_NODE_PREFIX", "LANG", "LC_ALL"]) if (options.env[key]) env[key] = options.env[key]!;

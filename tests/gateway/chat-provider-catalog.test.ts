@@ -22,6 +22,8 @@ import {
   validateChatProviderSelection,
 } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createChatProviderRoutes } from "../../packages/gateway/src/chat/provider-routes.js";
+import { normalizeCodexModelCatalog } from "../../packages/gateway/src/chat/codex-model-catalog.js";
+import { createCanonicalComposerSelection } from "../../packages/ui/src/canonical-composer-selection.js";
 import { createNativeCodingModelCatalogSource } from "../../packages/gateway/src/chat/native-coding-model-catalog.js";
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
@@ -239,6 +241,46 @@ function configuredHarness(
 }
 
 describe("canonical Chat Provider catalog", () => {
+  it("projects Standard into a fresh Codex composer and only admits explicit model-supported speeds", async () => {
+    const model = {
+      id: "gpt-6.1-sol", model: "gpt-6.1-sol", displayName: "GPT-6.1 Sol",
+      hidden: false, isDefault: true, defaultReasoningEffort: "low", defaultServiceTier: null,
+      supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Low reasoning" }],
+      serviceTiers: [{ id: "priority", name: "Fast", description: "Higher speed" }],
+    };
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry(),
+      agentRuntimeSource: runtimeSource(),
+      codingModelCatalogSource: async () => normalizeCodexModelCatalog({
+        data: [model, { ...model, id: "gpt-5.6-sol", model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol",
+          isDefault: false, serviceTiers: [] }],
+        nextCursor: null,
+      }),
+    });
+    const catalog = await service.getCatalog(principal);
+    const composer = createCanonicalComposerSelection(catalog, "codex_default");
+    expect(composer).toMatchObject({
+      model: model.id,
+      options: [{ id: "effort", value: "low" }, { id: "codex_speed", value: "standard" }],
+    });
+
+    const legacy = {
+      instanceId: "codex_default", model: model.id,
+      options: [{ id: "effort", value: "low" }, { id: "service_tier", value: "priority" }],
+    };
+    expect(validateChatProviderSelection({ catalog, selection: legacy })).toMatchObject({
+      ok: true, selection: { options: [{ id: "effort", value: "low" }] },
+    });
+    expect(legacy.options).toContainEqual({ id: "service_tier", value: "priority" });
+    const fast = { ...legacy, options: [{ id: "codex_speed", value: "priority" }] };
+    expect(validateChatProviderSelection({ catalog: await service.getCatalog(principal, fast), selection: fast }))
+      .toMatchObject({ ok: true, selection: fast });
+    const unsupported = { ...fast, model: "gpt-5.6-sol" };
+    expect(validateChatProviderSelection({
+      catalog: await service.getCatalog(principal, unsupported), selection: unsupported,
+    })).toMatchObject({ ok: false, error: { code: "capability_mismatch" } });
+  });
+
   it("does not present an expired managed credit verdict as current", async () => {
     const now = new Date("2026-08-30T10:00:00.000Z");
     const settings = await harnessSettings([configuredHarness("pi", true)]).getSnapshot();
@@ -336,6 +378,25 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
     expect(catalog.instances.find((instance) => instance.id === "opencode_default"))
       .toMatchObject({ availability: "unavailable", unavailabilityReason: "runtime_not_runnable" });
+  });
+
+  it("advertises the Matrix Core MCP broker for Codex, OpenCode, and Hermes, not for Pi", async () => {
+    // Spec 2691: every native harness launch now carries the scoped Core server.
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([
+        codingProvider(),
+        codingProvider({ id: "opencode", displayName: "OpenCode", kind: "opencode", supportedModes: ["default"], defaultModel: undefined, setupActions: [] }),
+        codingProvider({ id: "pi", displayName: "Pi", kind: "pi", supportedModes: ["default"], defaultModel: undefined, setupActions: [] }),
+      ]),
+      agentRuntimeSource: runtimeSource(),
+      harnessSettingsSource: harnessSettings([configuredHarness("hermes", true), configuredHarness("opencode", true), configuredHarness("pi", true), configuredHarness("codex", true)]),
+    });
+    const catalog = await service.getCatalog(principal);
+    const tools = (id: string) => catalog.instances.find(instance => instance.id === id)?.supports.tools;
+    expect(tools("codex_default")).toEqual(["custom_mcp"]);
+    expect(tools("opencode_default")).toEqual(["custom_mcp"]);
+    expect(tools("hermes_default")).toEqual(["custom_mcp"]);
+    expect(tools("pi_default")).toEqual([]);
   });
 
   it.each([

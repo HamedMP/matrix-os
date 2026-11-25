@@ -1,0 +1,16 @@
+#!/bin/bash
+set -euo pipefail
+
+terminal_codex="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}/bin/codex"
+release_codex="${0%/*}/matrix-codex"
+
+# Protect the supported pre-upgrade Terminal install for rollback. A later
+# Terminal update is still admitted by the gateway's provider contracts.
+if [ -x "$terminal_codex" ]; then
+  if [ ! -x "$release_codex" ] \
+    || ! version="$(timeout --kill-after=1 2 "$terminal_codex" --version 2>/dev/null)" \
+    || [ "$version" != "codex-cli 0.162.1" ]; then
+    exec "$terminal_codex" "$@"
+  fi
+fi
+exec "$release_codex" "$@"

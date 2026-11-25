@@ -1,5 +1,7 @@
 import { sql } from 'kysely';
 import type { PlatformMigrationExecutor } from '../database/migration-types.js';
+/** Bump with every schema change: the runner skips a scope whose generation is already recorded. */
+export const SITES_SCHEMA_REVISION = { generation: 4, fingerprint: 'public-app-sites-public-data-opt-in-v4' } as const;
 export async function migrateSites(db: PlatformMigrationExecutor): Promise<void> {
     await sql `CREATE TABLE IF NOT EXISTS public_sites (
   id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, machine_id TEXT NOT NULL, app_slug TEXT NOT NULL,
@@ -32,6 +34,9 @@ export async function migrateSites(db: PlatformMigrationExecutor): Promise<void>
     // Generation 2 installed this named check through ADD COLUMN. Replacing it
     // explicitly is required for existing publications; IF NOT EXISTS alone
     // would leave the old two-mode constraint in place.
+    // 2694: links published before visitor data keep NULL, so they never start serving app data
+    // until the owner publishes them again.
+    await sql `ALTER TABLE public_sites ADD COLUMN IF NOT EXISTS public_data_enabled_at TEXT`.execute(db);
     await sql `ALTER TABLE public_sites DROP CONSTRAINT IF EXISTS public_sites_access_mode_check`.execute(db);
     await sql `ALTER TABLE public_sites ADD CONSTRAINT public_sites_access_mode_check
       CHECK (access_mode IN ('public','private_link','private_email'))`.execute(db);

@@ -25,7 +25,7 @@ const catalog: ScopeRuntimeProfileCatalog = {
     identity: { mode: "dynamic", uidMin: 61_184, uidMax: 65_519 },
     sandbox: { policyVersion: SCOPE_RUNTIME_SANDBOX_POLICY_VERSION, policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST },
     supportedAdapters: {
-      "claude-code": { harnessVersions: ["2.1.240"], workloads: ["chat_ai"] },
+      "claude-code": { harnessVersions: ["2.1.301"], workloads: ["chat_ai"] },
     },
   },
 };
@@ -102,7 +102,7 @@ function capabilityResponse(requestId = REQUEST_ID): ScopeRuntimeResponse {
         tasksMax: 256,
         storageMaxBytes: 10_737_418_240,
       },
-      adapters: [{ adapterId: "claude-code", harnessVersion: "2.1.240", workloads: ["chat_ai"] }],
+      adapters: [{ adapterId: "claude-code", harnessVersion: "2.1.301", workloads: ["chat_ai"] }],
       sandbox: { policyVersion: SCOPE_RUNTIME_SANDBOX_POLICY_VERSION, policyDigest: SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST, workloads: ["chat_ai"] },
     },
   };
@@ -118,7 +118,7 @@ describe("scope runtime protocol", () => {
       profileId: "scope-runtime-chat-v1",
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
     })).toEqual(expect.objectContaining({ scopeHandle: SCOPE_HANDLE }));
 
     for (const injected of [
@@ -136,7 +136,7 @@ describe("scope runtime protocol", () => {
         profileId: "scope-runtime-chat-v1",
         workload: "chat_ai",
         adapterId: "claude-code",
-        harnessVersion: "2.1.240",
+        harnessVersion: "2.1.301",
         ...injected,
       }).success).toBe(false);
     }
@@ -184,7 +184,7 @@ describe("scope runtime client", () => {
       executionGeneration: "1",
       supportedAdapters: [{
         adapterId: "claude-code",
-        harnessVersion: "2.1.240",
+        harnessVersion: "2.1.301",
         workloads: ["chat_ai"],
       }],
     });
@@ -224,7 +224,7 @@ describe("scope runtime client", () => {
       scopeHandle: SCOPE_HANDLE,
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
     })).rejects.toBeInstanceOf(ScopeRuntimeClientError);
     await client.close();
   });
@@ -244,7 +244,7 @@ describe("scope runtime client", () => {
       scopeHandle: SCOPE_HANDLE,
       workload: "terminal",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
     })).rejects.toBeInstanceOf(ScopeRuntimeClientError);
     await client.close();
   });
@@ -306,7 +306,7 @@ describe("scope runtime client", () => {
       scopeHandle: SCOPE_HANDLE,
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
       sandbox: sharedSandbox,
     })).resolves.toEqual({
       runtimeHandle: RUNTIME_HANDLE,
@@ -383,14 +383,14 @@ describe("scope runtime client", () => {
       scopeHandle: SCOPE_HANDLE,
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
       sandbox: sharedSandbox,
     }).catch((error: unknown) => error));
     await expect(client.createRuntime({
       scopeHandle: SCOPE_HANDLE,
       workload: "chat_ai",
       adapterId: "claude-code",
-      harnessVersion: "2.1.240",
+      harnessVersion: "2.1.301",
       sandbox: sharedSandbox,
     })).rejects.toMatchObject({ code: "client_capacity" });
 

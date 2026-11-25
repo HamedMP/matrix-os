@@ -68,6 +68,7 @@ const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
   "integration.describe": "read",
   "mcp.inventory": "read",
   "mcp.describe": "read",
+  "mcp.search": "read",
   "mcp.call": "write",
   "memory.search": "read",
   "memory.propose": "write",

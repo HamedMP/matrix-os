@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { HOSTED_LABEL, POOL_LABEL, selectPoolRunner } from "../../scripts/ci/select-runner.mjs";
+import { HOSTED_LABEL, POOL_LABEL, heartbeatReadAt, selectPoolRunner } from "../../scripts/ci/select-runner.mjs";
 
 const now = 1_800_000_000;
 const fresh = (idle: number, age = 30) => `${now - age} ${idle}`;
@@ -38,6 +38,41 @@ describe("source runner selection", () => {
     expect(select(overrides)).toBe(HOSTED_LABEL);
   });
 
+  // GitHub resolves `vars` when the run attempt starts, so the heartbeat's age is
+  // measured from then. A changes job that queued 20 minutes for a hosted runner
+  // still saw a fresh heartbeat; judging it by the selector's clock sent every
+  // busy-hour run hosted while the pool sat idle.
+  it("judges heartbeat age at the run attempt start, not after the changes job queued", async () => {
+    const attemptStart = now - 1_200;
+    const calls: string[] = [];
+    const fetchAttempt = async (url: string, init: RequestInit) => {
+      calls.push(url);
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(new Headers(init.headers).get("authorization")).toBe("Bearer token");
+      return new Response(JSON.stringify({ run_started_at: new Date(attemptStart * 1000).toISOString() }));
+    };
+    const readAt = await heartbeatReadAt({
+      now, token: "token", apiUrl: "https://api.github.com", repository: "HamedMP/matrix-os", runId: "42", runAttempt: "2", fetchImpl: fetchAttempt,
+    });
+    expect(calls).toEqual(["https://api.github.com/repos/HamedMP/matrix-os/actions/runs/42/attempts/2"]);
+    expect(readAt).toBe(attemptStart);
+    expect(select({ heartbeat: `${attemptStart - 30} 4`, now: readAt })).toBe(POOL_LABEL);
+    expect(select({ heartbeat: `${attemptStart - 30} 4` })).toBe(HOSTED_LABEL);
+  });
+
+  it.each([
+    ["no token", { token: "" }, async () => new Response("{}")],
+    ["an API error", {}, async () => new Response("{}", { status: 500 })],
+    ["a network failure", {}, async () => { throw new TypeError("fetch failed"); }],
+    ["an unparseable start time", {}, async () => new Response(JSON.stringify({ run_started_at: "soon" }))],
+    ["a start time after now", {}, async () => new Response(JSON.stringify({ run_started_at: new Date((now + 120) * 1000).toISOString() }))],
+  ])("falls back to the selector clock on %s", async (_, overrides, fetchImpl) => {
+    const readAt = await heartbeatReadAt({
+      now, token: "token", apiUrl: "https://api.github.com", repository: "HamedMP/matrix-os", runId: "42", runAttempt: "1", fetchImpl, ...overrides,
+    });
+    expect(readAt).toBe(now);
+  });
+
   it("routes unit, pattern and browser jobs through the same trusted-source decision", () => {
     const workflow = parse(readFileSync(resolve(import.meta.dirname, "../../.github/workflows/ci.yml"), "utf8"));
     const routed = Object.entries(workflow.jobs as Record<string, { "runs-on": string }>)
@@ -58,6 +93,8 @@ describe("source runner selection", () => {
     const test = workflow.jobs.unit.steps.find((s: { run?: string }) => s.run?.includes("bun run test -- --shard="));
     expect(test.env.MATRIX_TEST_WORKERS).toBe("${{ runner.environment == 'self-hosted' && '4' || '2' }}");
     expect(step.env.POOL_HEARTBEAT).toBe("${{ vars.MATRIX_CI_POOL_HEARTBEAT }}");
+    expect(step.env.GITHUB_TOKEN).toBe("${{ github.token }}");
+    expect(workflow.permissions.actions).toBe("read");
   });
 });
 

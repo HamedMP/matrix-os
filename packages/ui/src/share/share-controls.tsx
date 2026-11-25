@@ -5,7 +5,7 @@
  * in packages/ui so Web and Electron render one implementation; the shell copies
  * depend on the `@/` alias, which Electron cannot resolve.
  */
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
 import * as CollapsiblePrimitive from "@radix-ui/react-collapsible";
 import { cn } from "./share-cn";
@@ -42,7 +42,7 @@ export function ShareTabsList({ className, ...props }: ComponentProps<typeof Tab
   return <TabsPrimitive.List data-slot="tabs-list" className={cn("flex gap-0.5 rounded-[11px] bg-[var(--share-muted)] p-[3px]", className)} {...props} />;
 }
 export function ShareTabsTrigger({ className, ...props }: ComponentProps<typeof TabsPrimitive.Trigger>) {
-  return <TabsPrimitive.Trigger data-slot="tabs-trigger" className={cn("flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-1.5 text-[13px] font-medium whitespace-nowrap [&_svg]:shrink-0 text-[var(--share-muted-fg)] data-[state=active]:bg-[var(--share-bg)] data-[state=active]:text-[var(--share-fg)] data-[state=active]:shadow-[0_1px_2px_rgba(24,24,27,0.10),0_0_0_1px_rgba(24,24,27,0.05)]", className)} {...props} />;
+  return <TabsPrimitive.Trigger data-slot="tabs-trigger" className={cn("flex h-9 min-w-0 flex-auto items-center justify-center gap-1.5 rounded-lg px-1.5 text-[13px] font-medium whitespace-nowrap [&_svg]:shrink-0 text-[var(--share-muted-fg)] data-[state=active]:bg-[var(--share-bg)] data-[state=active]:text-[var(--share-fg)] data-[state=active]:shadow-[0_1px_2px_rgba(24,24,27,0.10),0_0_0_1px_rgba(24,24,27,0.05)]", className)} {...props} />;
 }
 export const ShareTabsContent = TabsPrimitive.Content;
 
@@ -54,8 +54,19 @@ export function OnDot({ label = "on" }: { label?: string }) {
   return <span role="img" aria-label={label} className="size-1.5 shrink-0 rounded-full bg-[var(--share-success)]" />;
 }
 
+/** Small status pill. `success` uses the share success tokens (not packages/ui Badge, which follows host theming). */
+export function ShareBadge({ tone = "muted", children }: { tone?: "success" | "muted"; children: ReactNode }) {
+  return <span data-slot="share-badge" className={cn("inline-flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-xs font-medium [&_svg]:size-3 [&_svg]:shrink-0",
+    tone === "success" ? "bg-[var(--share-success-bg)] text-[var(--share-success-fg)]" : "bg-[var(--share-muted)] text-[var(--share-muted-fg)]")}>{children}</span>;
+}
+
 export function Spinner({ className }: { className?: string }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" className={cn("size-3.5 matrix-share-spin", className)}><circle cx="12" cy="12" r="8" strokeOpacity="0.25" /><path d="M20 12a8 8 0 0 0-8-8" /></svg>;
+}
+
+/** Spinner with a screen-reader label, for waits that used to be sentences. */
+export function BusyStatus({ label, className }: { label: string; className?: string }) {
+  return <span role="status" aria-label={label} className={cn("inline-flex items-center text-[var(--share-subtle-fg)]", className)}><Spinner /><span className="sr-only">{label}</span></span>;
 }
 
 export function InlineError({ children }: { children: string }) {

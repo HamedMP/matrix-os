@@ -44,7 +44,8 @@
 
 /* Touch screens (Web Mobile) get 44px targets; desktop pointers keep the compact Figma toolbar. */
 @media (pointer: coarse) {
-  .matrix-chat-composer [data-slot="prompt-input-toolbar"] button {
+  .matrix-chat-composer [data-slot="prompt-input-toolbar"] button,
+  .matrix-chat-composer .project-skill-chip-remove {
     min-width: 44px;
     min-height: 44px;
   }

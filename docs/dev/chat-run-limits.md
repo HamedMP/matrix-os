@@ -3,6 +3,25 @@
 Tracks [ENG-344](https://linear.app/matrix-os/issue/ENG-344/investigate-unified-matrix-agent-runtime-approval-output-and-upload).
 Implementation contract: [633-agent-waiting-policy](../../specs/633-agent-waiting-policy/spec.md).
 
+## Concurrent Chat runs
+
+Each gateway orchestrator admits up to 64 active Chat runs in total, with no
+separate per-owner quota. One personal owner can use the full allowance; runs
+belonging to other ownership scopes count toward the same total. The 65th
+ordinary admission is rejected with a retryable busy response, rather than
+being routed to another gateway. Saved Chats and idle sessions do not consume
+orchestrator run slots. Direct sends, retries, scheduled runs and personal/shared
+queue dispatches reserve from the same allowance before admission or queue setup
+can yield. Preparing work counts toward 64; registration transfers its reservation
+to the active run. Failed admission, empty queue claims and failed preparation
+release the reservation. A direct send rejected before admission creates no run.
+
+The background agent supervisor also defaults to 64 live jobs, so its former
+32-job default does not impose a lower ceiling on Codex execution. Physical
+background jobs, including retained idle runners, have a separate lifecycle
+from active Chat runs. Existing execution fences, runtime resource limits,
+authorization and provider restrictions still apply.
+
 ## Busy turns and idle sessions
 
 An ordinary busy turn has no Matrix-imposed aggregate execution deadline. Silence during an active turn does not make its session idle. Session reclamation starts only after active work ends. This follows T3 Code’s separation of busy turns and session idleness; see its [session manager](https://github.com/pingdotgg/t3code/blob/b5a0696a989a171530cc3c0ff831a99f51ce6f09/apps/server/src/orchestration-v2/ProviderSessionManager.ts).

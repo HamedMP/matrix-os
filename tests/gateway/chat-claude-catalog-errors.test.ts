@@ -16,7 +16,10 @@ describe("Claude metadata failure classification", () => {
     const source = createClaudeModelCatalogSource({ discover });
     const first = await source(provider, principal);
     source.invalidate(principal);
-    await expect(source(provider, principal)).resolves.toStrictEqual(first);
+    const stale = await source(provider, principal);
+    expect(stale?.models).toEqual(first?.models);
+    expect(first?.executionModels).toEqual({ "claude-fable-5": "claude-fable-5" });
+    expect(stale?.executionModels).toBeUndefined();
     expect(warn).toHaveBeenCalledWith("[chat-providers] Claude model discovery unavailable", { category: "discovery_failed" });
     expect(JSON.stringify(warn.mock.calls)).not.toContain("private upstream");
   });

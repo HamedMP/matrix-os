@@ -1,4 +1,5 @@
 import { readCollaborationNativeAccounts, qualifyNativeCodexCollaborationRoute, qualifyNativeClaudeCollaborationRoute } from "./collaboration-native-accounts.js";
+import { timeChatSendStage } from "../chat/send-timing.js";
 import { markCodexCatalogObservation, observeCodexNativeAccount } from "./codex-native-observation.js";
 import { createCodexNativeConnectionRecovery } from "./codex-native-connection-recovery.js";
 import { readManagedCreditObservation } from "./provider-managed-credit-observation.js";
@@ -9,7 +10,9 @@ import { assertClaudeKeyConnectionSelection } from "./claude-key-connection-comp
 import { readVerifiedClaudeNativeSignedOut, type ClaudeNativeSignedOut } from "./claude-native-signed-out.js";
 import type { ClaudeNativeAccountMetadata, ClaudeNativeAccountMetadataReader } from "./claude-native-account-metadata.js";
 import { renewProviderSettingsNativeObservation } from "./provider-settings-native-renewal.js";
-import { nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
+import { nativeAccountLegacyPrincipalFingerprint, nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
+import { readCodexConsentAlias, savedCodexConsentMatches, type CodexConsentAlias } from "../coding-agents/codex-consent-alias.mjs";
+import { upgradeCodexConsentAlias } from "./codex-consent-upgrade.js";
 import type { CodexNativeAccountMetadata, CodexNativeAccountMetadataReader, CodexNativeObservationState } from "./codex-native-account-metadata.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
 import { savedCollaborationRoute } from "./collaboration-provider-route.js";
@@ -139,12 +142,15 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #readRuntimeRecovery: (refresh: boolean) => Promise<void>;
   #writeTail: Promise<void> = Promise.resolve();
   #mutationGeneration = 0;
-  readonly #recoverCodexNativeConnection = createCodexNativeConnectionRecovery(input => this.completeCodexNativeLogin(input));
+  readonly #homePath: string;
+  readonly #recoverCodexNativeConnection = createCodexNativeConnectionRecovery(input => this.completeCodexNativeLogin(input),
+    input => this.recordCodexConsentAlias(input));
 
   constructor(options: ProviderSettingsStoreOptions) {
     if (!options.homePath) throw new Error("Provider settings home path is required");
     if (!options.providerSnapshotReader) throw new Error("Canonical provider snapshot reader is required");
     const homePath = resolve(options.homePath);
+    this.#homePath = homePath;
     this.configurationPath = join(homePath, CONFIG_PATH);
     const privateRoot = resolve(options.privateRootPath
       ?? join(dirname(homePath), PRIVATE_DIRECTORY, basename(homePath)));
@@ -228,7 +234,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             ? [harness.harness]
             : []))],
       });
-      return await projectProviderSettings({
+      return await this.#projectSettings({
         canonical,
         config,
         claudeNativeAccountMetadata,
@@ -375,24 +381,28 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       const canRetainCodex: boolean = attempt === 1 && repairedPrincipal !== null
         && config.harnesses.some(row => row.harness === "codex" && row.enabled
           && row.accessSourceId === "owner_openai_profile" && row.selectedAccountId === "owner_codex"
-          && row.nativeAccountGeneration === repairedPrincipal && row.nativeAccountConsentRevision !== undefined);
-      let metadata: CodexNativeAccountMetadata | null = canRetainCodex ? await verifyNativeAccountMetadata(retryMetadata) : null;
+          && row.nativeAccountConsentRevision !== undefined);
+      const retainedAlias: CodexConsentAlias | null = canRetainCodex ? await this.#codexConsentAlias() : null;
+      let metadata: CodexNativeAccountMetadata | null = canRetainCodex && config.harnesses.some(row => row.harness === "codex"
+        && savedCodexConsentMatches(row.nativeAccountGeneration, repairedPrincipal, retainedAlias,
+          retryMetadata ? nativeAccountLegacyPrincipalFingerprint(retryMetadata) : null)) ? await verifyNativeAccountMetadata(retryMetadata) as CodexNativeAccountMetadata | null : null;
       let hermesMetadata: CodexNativeAccountMetadata | null = null;
       let nativeObservationState: CodexNativeObservationState | undefined;
       if (options.includeNativeAccountMetadata && attempt === 0) {
-        const installed = (id: string) => captured.canonical.drivers.some(driver => driver.id === id && driver.installState === "installed");
+        const installed = (id: "codex" | "hermes" | "claude_code") => (!options.nativeAccountHarnesses || options.nativeAccountHarnesses.includes(id))
+          && captured.canonical.drivers.some(driver => driver.id === id && driver.installState === "installed");
         const [codex, hermes, claude] = await Promise.all([
-          installed("codex") ? observeCodexNativeAccount(this.#nativeAccountMetadata, options.includeNativeAccountUsage !== false) : undefined,
+          installed("codex") ? timeChatSendStage("codex_identity_observe", () => observeCodexNativeAccount(this.#nativeAccountMetadata, options.includeNativeAccountUsage !== false)) : undefined,
           installed("hermes") ? this.#hermesAccountMetadata?.() : undefined,
-          installed("claude_code") ? this.#claudeAccountMetadata?.(options.includeNativeAccountUsage !== false) : undefined,
+          installed("claude_code") && this.#claudeAccountMetadata ? timeChatSendStage("claude_identity", () => this.#claudeAccountMetadata!(options.includeNativeAccountUsage !== false)) : undefined,
         ]);
         nativeObservationState = codex?.state;
         // Null/cooldown is already unavailable; do not run another full probe.
         if (codex?.metadata || hermes || claude) {
           captured = await read();
           [metadata, hermesMetadata, claudeMetadata] = await Promise.all([
-            verifyNativeAccountMetadata(codex?.metadata), verifyNativeAccountMetadata(hermes),
-            verifyNativeAccountMetadata(claude) as Promise<ClaudeNativeAccountMetadata | null>,
+            timeChatSendStage("codex_identity_verify", () => verifyNativeAccountMetadata(codex?.metadata)), verifyNativeAccountMetadata(hermes),
+            timeChatSendStage("claude_identity", () => verifyNativeAccountMetadata(claude)) as Promise<ClaudeNativeAccountMetadata | null>,
           ]);
           if (codex?.metadata && !metadata) nativeObservationState = this.#nativeAccountMetadata?.identityFailureState?.(codex.metadata) ?? "unavailable";
           retryMetadata = metadata;
@@ -403,8 +413,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       }
       retryMetadata = metadata;
       if (options.includeNativeAccountMetadata && attempt === 0 && !claudeMetadata
+        && (!options.nativeAccountHarnesses || options.nativeAccountHarnesses.includes("claude_code"))
         && captured.canonical.drivers.some(driver => driver.id === "claude_code" && driver.installState === "installed")) {
-        claudeSignedOut = await readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut);
+        claudeSignedOut = await timeChatSendStage("claude_identity", () => readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut));
       }
       options.signal?.throwIfAborted();
       // Optional funding/account metadata must not turn profile expiry into logout.
@@ -426,7 +437,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       if (accepted) {
         if (options.recoverNativeConnection && options.includeNativeAccountMetadata) {
           try {
-            const recovered = await this.#recoverCodexNativeConnection(config, metadata);
+            const recovered = await this.#recoverCodexNativeConnection(config, metadata, await this.#codexConsentAlias());
             if (recovered) {
               // Completion reads identity without quota and projects only its own
               // account. Reverify the requested enrichment before rebuilding the
@@ -496,7 +507,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           // Owner-paid native readiness is independent of Matrix funding and
           // generic catalogs. This hot admission path must honor suppressed
           // funded probes and project only canonical inventory + saved consent.
-          projected = await projectProviderSettings({
+          projected = await this.#projectSettings({
             canonical,
             config,
             claudeNativeAccountMetadata: claudeMetadata,
@@ -676,6 +687,48 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     return this.#mutate({ ...request, type: "select_access_source", accessSourceId: "owner_openai_profile", enableHarness: true }, false, true, verifyNativeAccount);
   }
 
+  /** The only projection entry point: Settings and Chat must apply the same saved
+   * consent, including the same-account upgrade alias (ENG-523). */
+  async #projectSettings(input: Omit<Parameters<typeof projectProviderSettings>[0], "codexConsentAlias">): Promise<ProviderSettingsSnapshot> {
+    return await projectProviderSettings({ ...input,
+      codexConsentAlias: input.codexNativeAccountMetadata ? await this.#codexConsentAlias() : null });
+  }
+
+  async #codexConsentAlias(): Promise<CodexConsentAlias | null> {
+    return readCodexConsentAlias(this.#homePath);
+  }
+
+  /**
+   * Server-only same-account upgrade of consent saved under the legacy
+   * token-bound generation (ENG-523). Records an alias instead of rewriting the
+   * saved row, so its configuration fingerprint, session bindings and live
+   * native runners keep their identity. A different account never qualifies.
+   */
+  async recordCodexConsentAlias(input: { harnessInstanceId: string; expectedRevision: number; verifyNativeAccount: NativeAccountCompletionProof }): Promise<{ snapshot: ProviderSettingsSnapshot }> {
+    return await this.#serialize(async () => {
+      this.#mutationGeneration += 1;
+      const canonical = await this.#canonical();
+      const enrichment = await readProviderSettingsEnrichment({ canonical, fundingSummary: this.#fundingSummary,
+        genericModelCatalog: this.#genericModelCatalog, refresh: false, catalogFailureHarnesses: ["pi", "opencode"] });
+      const config = await this.#configuration(canonical, enrichment);
+      if (config.revision !== input.expectedRevision) throw new ProviderSettingsStoreError("revision_conflict", 409, { latestRevision: config.revision });
+      const rows = config.harnesses.filter(row => row.harness === "codex");
+      const row = rows.length === 1 && rows[0]!.id === input.harnessInstanceId ? rows[0]! : undefined;
+      if (!row?.nativeAccountGeneration || row.nativeAccountConsentRevision === undefined) throw new ProviderSettingsStoreError("invalid_route", 400);
+      const metadata = await verifyNativeAccountMetadata(await this.#nativeAccountMetadata?.({ purpose: "native_completion" }));
+      if (!metadata || metadata.authMethod !== "terminal" || !await input.verifyNativeAccount(metadata)) throw new ProviderSettingsStoreError("invalid_route", 400);
+      let alias: CodexConsentAlias | null;
+      try {
+        alias = await upgradeCodexConsentAlias(this.#homePath, row.nativeAccountGeneration, metadata);
+      } catch (error) {
+        console.warn("[provider-settings] Codex consent alias unavailable:", error instanceof Error ? error.name : "UnknownError");
+        throw new ProviderSettingsStoreError("configuration_unavailable", 503);
+      }
+      if (!alias) throw new ProviderSettingsStoreError("invalid_route", 400);
+      return { snapshot: await this.#project(canonical, config, false, enrichment, metadata) };
+    });
+  }
+
   async completeClaudeNativeLogin(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse> {
     return this.#mutate({ ...input, type: "select_access_source", accessSourceId: "owner_claude_profile", enableHarness: true }, true);
   }
@@ -723,7 +776,10 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         || (mutation.type === "logout_account" || mutation.type === "remove_account") && mutation.accountId === "owner_codex";
       let releaseRevocation: (() => Promise<void>) | undefined;
       const prepareRevocation = async () => {
-        if (revokesCodex) releaseRevocation = await this.#prepareNativeCodexRevocation?.();
+        if (!revokesCodex) return;
+        // Revocation drops the reused admission identity; logout/remove drop it again after the CLI change.
+        this.#nativeAccountMetadata?.invalidateIdentity?.();
+        releaseRevocation = await this.#prepareNativeCodexRevocation?.();
       };
       try {
       this.#assertSupported(claudeNativeCompletion || codexNativeCompletion || claudeKeyCompletion ? "set_harness_enabled" : mutation.type, config, canonical);
@@ -842,7 +898,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             idempotencyKey: mutation.idempotencyKey,
           }), "lifecycle_unavailable");
           await this.#deleteSecret(mutation.accountId);
-          if (mutation.accountId === "owner_codex") codexMetadata = null;
+          if (mutation.accountId === "owner_codex") { this.#nativeAccountMetadata?.invalidateIdentity?.(); codexMetadata = null; }
           if (nativeClaudeLifecycle) { this.#claudeAccountMetadata?.invalidate?.(); claudeMetadata = null; claudeSignedOut = null; }
           canonical = await this.#canonical({ refresh: true });
           if (nativeClaudeLifecycle) {
@@ -875,7 +931,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             idempotencyKey: mutation.idempotencyKey,
           }), "lifecycle_unavailable");
           await this.#deleteSecret(mutation.accountId);
-          if (mutation.accountId === "owner_codex") codexMetadata = null;
+          if (mutation.accountId === "owner_codex") { this.#nativeAccountMetadata?.invalidateIdentity?.(); codexMetadata = null; }
           config.accountProfiles = config.accountProfiles.filter((profile) => profile.id !== mutation.accountId);
           if (nativeClaudeLifecycle) { this.#claudeAccountMetadata?.invalidate?.(); claudeMetadata = null; claudeSignedOut = null; }
           canonical = await this.#canonical({ refresh: true });

@@ -114,3 +114,22 @@ it.each(["desktop", "canvas"] as const)("preserves window launches from a floati
   expect(useDesktopSurfaces.getState().workspaceView).toBe("desktop");
   expect(useDesktopSurfaces.getState().surfaces[chatId]?.mode).toBe("window");
 });
+
+it.each(["project_destination", undefined])("loads historical image bytes from the original project after moving to %s", async (destination) => {
+  const getBlob = vi.fn(async (_url: string) => new Blob(["original image"], { type: "image/png" }));
+  const api = { forRuntime: () => ({ getBlob }) } as unknown as ApiClient;
+  const original = { id: "project_original", slug: "original-project", name: "Original", kind: "folder" as const };
+  const destinationProject = { id: "project_destination", slug: "destination-project", name: "Destination", kind: "folder" as const };
+  const root = { kind: "worktree" as const, projectId: original.id, worktreeId: "original_branch" };
+  const detail = makeDetail("completed");
+  detail.record.projectId = destination;
+  detail.runs = detail.runs.map(run => ({ ...run, executionRoot: root }));
+  const { result } = renderHook(() => useChatArtifactActions(api, detail, [original, destinationProject]));
+  const blob = await result.current.loadFileImage("reports/chart.png", root);
+  expect(blob.type).toBe("image/png");
+  expect(getBlob).toHaveBeenCalledOnce();
+  const url = getBlob.mock.calls[0]?.[0];
+  expect(url).toContain("projectId=original-project");
+  expect(url).toContain("worktreeId=original_branch");
+  expect(url).not.toContain("destination-project");
+});

@@ -200,6 +200,15 @@ const webhookRateLimiter = createRateLimiter({
   lockoutMs: 30_000,
 });
 
+// Public-site visitor data (2694) arrives from the platform, so every visitor shares
+// the platform's source address. Give it its own bounded pre-signature budget instead
+// of the webhook quota; the route still enforces its per-site limit after verification.
+const siteDataSignatureRateLimiter = createRateLimiter({
+  maxAttempts: 6_000,
+  windowMs: 60_000,
+  lockoutMs: 30_000,
+});
+
 // The preview-only acceptance transport uploads two bounded probe assets in
 // signed chunks before running two lifecycle commands. It therefore needs a
 // short valid burst larger than the generic failed-auth ceiling, and must not
@@ -271,10 +280,12 @@ export function authMiddleware(
       return nextWithReady(c, next);
     }
 
-    // Public site submission is authenticated by its narrowly scoped HMAC verifier.
-    if (c.req.method === "POST" && /^\/api\/internal\/sites\/[a-f0-9-]{36}\/submit$/.test(normalizedPath)
-      && c.req.header("x-matrix-site-signature") && c.req.header("x-matrix-site-timestamp")) {
-      if (!webhookRateLimiter.check(getTrustedProxyClientIp(c))) return tooManyRequests(c);
+    // Public site submission and visitor data are authenticated by their narrowly scoped HMAC verifier.
+    const siteSignaturePath = c.req.method === "POST"
+      ? /^\/api\/internal\/sites\/[a-f0-9-]{36}\/(submit|data)$/.exec(normalizedPath) : null;
+    if (siteSignaturePath && c.req.header("x-matrix-site-signature") && c.req.header("x-matrix-site-timestamp")) {
+      const limiter = siteSignaturePath[1] === "data" ? siteDataSignatureRateLimiter : webhookRateLimiter;
+      if (!limiter.check(getTrustedProxyClientIp(c))) return tooManyRequests(c);
       return nextWithReady(c, next);
     }
 

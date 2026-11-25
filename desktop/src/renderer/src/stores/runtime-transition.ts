@@ -24,6 +24,7 @@ import { clearDesktopQueryCache } from "../lib/query-client";
 import { useDesktopSurfaces } from "./desktop-surfaces";
 import { resetDesktopIconsRuntime } from "./desktop-icons";
 import { useCreateAppRequest } from "./create-app-request";
+import { useClosedApps } from "./closed-apps";
 
 interface RuntimeChangeOptions {
   disposeRuntimeAttachments?: () => void;
@@ -61,6 +62,8 @@ export function reconcileDesktopRuntimeChange(options: RuntimeChangeOptions = {}
     terminalSessionRequestSequence: 0,
   });
   useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+  // Closed-app history names the previous computer's projects and chats.
+  useClosedApps.setState({ entries: [] });
   resetDesktopIconsRuntime();
   useCreateAppRequest.setState({ request: null });
   // The Hermes index, transcript, and kernel session follow the selected

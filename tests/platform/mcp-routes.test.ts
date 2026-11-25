@@ -59,6 +59,39 @@ describe('hosted Streamable HTTP MCP', () => {
     }
   });
 
+  it('advertises and challenges with the configured required scopes', async () => {
+    const { app } = setup({ scopes: ['matrix:computer', 'offline_access'] });
+    const metadata = await (await app.request('/.well-known/oauth-protected-resource/mcp')).json();
+    expect(metadata).toMatchObject({ resource: resourceUrl, authorization_servers: [issuer],
+      scopes_supported: ['matrix:computer', 'offline_access'], bearer_methods_supported: ['header'] });
+    const anonymous = await post(app, rpc('tools/list'), { authorization: '' });
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.headers.get('www-authenticate')).toBe(
+      `Bearer resource_metadata="https://api.matrix-os.com/.well-known/oauth-protected-resource/mcp", scope="matrix:computer offline_access"`);
+    const readOnly = await post(app, rpc('tools/list'), { authorization: 'Bearer read-only' });
+    expect(readOnly.status).toBe(403);
+    expect(readOnly.headers.get('www-authenticate')).toContain('error="insufficient_scope"');
+    expect(readOnly.headers.get('www-authenticate')).toContain('scope="matrix:computer offline_access"');
+  });
+
+  it.each(['GET', 'DELETE', 'POST'])('challenges unauthenticated %s before method handling', async method => {
+    const { app, verify } = setup();
+    const res = await app.request(resourceUrl, { method });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('www-authenticate')).toBe(
+      `Bearer resource_metadata="https://api.matrix-os.com/.well-known/oauth-protected-resource/mcp", scope="matrix:computer"`);
+    const metadata = await (await app.request('/.well-known/oauth-protected-resource/mcp')).json();
+    expect(res.headers.get('www-authenticate')).toContain(`scope="${metadata.scopes_supported.join(' ')}"`);
+    expect(verify).not.toHaveBeenCalled();
+  });
+
+  it('returns 405 for authenticated GET only after auth succeeds', async () => {
+    const { app } = setup();
+    expect((await app.request(resourceUrl, { method: 'GET', headers: { authorization: 'Bearer invalid' } })).status).toBe(401);
+    const res = await app.request(resourceUrl, { method: 'GET', headers: { authorization: 'Bearer alice' } });
+    expect(res.status).toBe(405);
+  });
+
   it('requires bearer auth and never accepts session cookies', async () => {
     const { app, context } = setup();
     const res = await post(app, rpc('tools/list'), { authorization: '', cookie: '__session=alice' });

@@ -76,7 +76,6 @@ function files(initial: unknown = null) {
 
 const site: ShareSiteClient = {
   get: vi.fn(async () => null), deploy: vi.fn(), update: vi.fn(), unpublish: vi.fn(), getConfig: vi.fn(),
-  accessLinks: vi.fn(), createAccessLink: vi.fn(), revokeAccessLink: vi.fn(),
   slugAvailability: vi.fn(async () => ({ status: "available" as const, suggestions: [] })),
 };
 
@@ -101,34 +100,45 @@ afterEach(() => { cleanup(); vi.useRealTimers(); });
 describe("Organization tab", () => {
   it("is hidden when the owner belongs to no organization", async () => {
     render(<Host organizations={[]} api={collaboration([])} fileApi={files()} />);
-    await screen.findByRole("tab", { name: /Private/ });
+    await screen.findByRole("tab", { name: /Public/ });
     expect(screen.queryByRole("tab", { name: /Organization/ })).toBeNull();
   });
 
-  it("shows a static org with one membership and a picker with several", async () => {
+  it("shows a static org card with one membership and a picker with several, with Share beside it", async () => {
     const { unmount } = render(<Host organizations={[finna]} api={collaboration([])} fileApi={files()} />);
     await openOrganizationTab();
-    expect(screen.getByLabelText("Share in Finna")).toBeTruthy();
+    const card = screen.getByRole("group", { name: "Share in Finna" });
     expect(screen.queryByRole("combobox")).toBeNull();
-    expect(screen.getByText("24 members")).toBeTruthy();
+    expect(within(card).getByText("24 members")).toBeTruthy();
+    // The org name appears once; the Share button carries it in its accessible name.
+    expect(screen.getAllByText("Finna")).toHaveLength(1);
+    const shareButton = within(card).getByRole("button", { name: "Share with Finna" });
+    expect(shareButton.textContent).toBe("Share");
     unmount();
     render(<Host organizations={[finna, northwind]} api={collaboration([])} fileApi={files()} />);
     await openOrganizationTab();
-    expect(screen.getByRole("combobox", { name: "Share in Finna, change organization" })).toBeTruthy();
+    const trigger = screen.getByRole("combobox", { name: "Share in Finna, change organization" });
+    // The Share button is a sibling of the Select trigger, never nested inside it.
+    expect(within(trigger).queryByRole("button")).toBeNull();
+    expect(trigger.contains(screen.getByRole("button", { name: "Share with Finna" }))).toBe(false);
   });
 
-  it("shares immediately when readiness passes, then stops sharing", async () => {
+  it("shares immediately when readiness passes, then stops sharing in one click", async () => {
     const api = collaboration(["ready"]);
     render(<Host organizations={[finna]} api={api} fileApi={files()} />);
     await openOrganizationTab();
-    expect(screen.getByText("Members open and use the live app from their launcher.")).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
-    expect(await screen.findByText("Finna link")).toBeTruthy();
-    expect(screen.getByText("Shared — it’s in every Finna member’s launcher.")).toBeTruthy();
+    const copy = await screen.findByRole("button", { name: "Copy Finna link" });
+    const card = screen.getByRole("group", { name: "Share in Finna" });
+    expect(within(card).getByText("Shared")).toBeTruthy();
+    expect(card.contains(copy)).toBe(true);
+    expect(screen.queryByText("Finna link")).toBeNull();
     expect(screen.getByTestId("trigger").textContent).toBe("Shared");
     expect(within(screen.getByRole("tab", { name: /Organization/ })).getByRole("img", { name: "on" })).toBeTruthy();
     expect(api.post).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share/preflight", expect.objectContaining({ organizationId: ORG }));
-    fireEvent.click(screen.getByRole("button", { name: "Stop sharing with Finna" }));
+    const stop = screen.getByRole("button", { name: "Stop sharing with Finna" });
+    expect(stop.getAttribute("title")).toBe("Stop sharing with Finna");
+    fireEvent.click(stop);
     await waitFor(() => expect(api.delete).toHaveBeenCalled());
     expect(await screen.findByRole("button", { name: "Share with Finna" })).toBeTruthy();
   });
@@ -138,9 +148,9 @@ describe("Organization tab", () => {
     await openOrganizationTab();
     expect(screen.getByRole("combobox", { name: "Share in Finna, change organization" })).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
-    await screen.findByText("Finna link");
+    await screen.findByRole("button", { name: "Copy Finna link" });
     expect(screen.queryByRole("combobox")).toBeNull();
-    expect(screen.getByLabelText("Share in Finna")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Share in Finna" })).toBeTruthy();
   });
 
   it("asks for the two-step collaborative flow when readiness is blocked and never shares", async () => {
@@ -148,9 +158,11 @@ describe("Organization tab", () => {
     render(<Host organizations={[finna]} api={api} fileApi={files()} />);
     await openOrganizationTab();
     fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
-    expect(await screen.findByRole("list", { name: "Two steps to share" })).toBeTruthy();
-    expect(screen.getByText("This app saves data, so sharing takes two quick steps.")).toBeTruthy();
-    expect(screen.getByText("Turns on by itself when step 1 is done.")).toBeTruthy();
+    const steps = await screen.findByRole("list", { name: "Two steps to share" });
+    expect(within(steps).getByText("Make it collaborative")).toBeTruthy();
+    expect(within(steps).getByText("Claude sets it up in a new chat.")).toBeTruthy();
+    expect(within(steps).getByText("Share")).toBeTruthy();
+    expect(screen.queryByText("Turns on by itself when step 1 is done.")).toBeNull();
     expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything());
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await screen.findByRole("button", { name: "Share with Finna" })).toBeTruthy();
@@ -172,14 +184,14 @@ describe("Organization tab", () => {
     expect(prompt).toContain("/matrix-collaborative-app-builder @Sales CRM");
     expect(prompt).toContain("Finna members will use this app together.");
     expect(prompt).toContain(`organization ${ORG}, request ${record.requestId as string}`);
-    expect(await screen.findByText("Claude is setting it up in a new chat.")).toBeTruthy();
+    expect(await screen.findByText("Setting up…")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Open chat/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Cancel sharing" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
 
     fileApi.skillWrites({ state: "completed" });
     await vi.advanceTimersByTimeAsync(HANDOFF_POLL_MS + 10);
     expect(await screen.findByText("Collaborative and shared")).toBeTruthy();
-    expect(screen.getByText("Everyone at Finna sees the same, live data.")).toBeTruthy();
+    expect(screen.queryByText("Everyone at Finna sees the same, live data.")).toBeNull();
     const checks = api.post.mock.calls.filter(([path]) => path.endsWith("/readiness/check"));
     expect(checks).toHaveLength(2);
     expect(fileApi.current()).toMatchObject({ state: "applied" });
@@ -193,12 +205,12 @@ describe("Organization tab", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fireEvent.click(await screen.findByRole("button", { name: /Start in Chats/ }));
-    await screen.findByText("Claude is setting it up in a new chat.");
+    await screen.findByText("Setting up…");
     fileApi.skillWrites({ state: "completed" });
     await vi.advanceTimersByTimeAsync(HANDOFF_POLL_MS + 10);
     expect(await screen.findByText("Claude finished, but the app isn’t ready to share yet. Open the chat to keep going.")).toBeTruthy();
     expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything());
-    expect(screen.queryByText("Finna link")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy Finna link" })).toBeNull();
   });
 
   it("does not re-share from an applied record after the owner stopped sharing", async () => {
@@ -223,7 +235,7 @@ describe("Organization tab review fixes", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Share with Finna" }));
     vi.useFakeTimers({ shouldAdvanceTime: true });
     fireEvent.click(await screen.findByRole("button", { name: /Start in Chats/ }));
-    await screen.findByText("Claude is setting it up in a new chat.");
+    await screen.findByText("Setting up…");
     fileApi.skillWrites({ state: "completed" });
     await vi.advanceTimersByTimeAsync(HANDOFF_POLL_MS + 10);
     await screen.findByText("Collaborative and shared");
@@ -236,7 +248,7 @@ describe("Organization tab review fixes", () => {
     const api = collaboration(["ready"], { preflightGate: new Promise((resolve) => { release = resolve; }) });
     render(<Host organizations={[finna]} api={api} fileApi={files(completedRecord)} />);
     await openOrganizationTab();
-    fireEvent.click(await screen.findByRole("button", { name: "Cancel sharing" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     release();
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share/preflight", expect.anything()));
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -250,7 +262,7 @@ describe("Organization tab review fixes", () => {
     render(<Host organizations={[finna]} api={api} fileApi={files(completedRecord)} />);
     await openOrganizationTab();
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything()));
-    fireEvent.click(await screen.findByRole("button", { name: "Cancel sharing" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     release();
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.objectContaining({ expectedShareRevision: expect.any(String) })));
     expect(screen.queryByText("Collaborative and shared")).toBeNull();

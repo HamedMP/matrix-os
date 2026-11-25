@@ -1,5 +1,5 @@
 "use client";
-import { SignIn, useAuth } from "@clerk/nextjs";
+import { SignIn } from "@clerk/nextjs";
 import { useSearchParams } from "next/navigation";
 import { useMemo } from "react";
 import { RoutineActionConfirmation, createRoutineActionBrowserClient } from "@matrix-os/ui";
@@ -7,9 +7,10 @@ import { BotInteractionIdSchema, CanonicalChatIdSchema, RoutineActionIdSchema, R
 import { RoutineOriginCompletion } from "./RoutineOriginCompletion";
 import { AuthLayout } from "./AuthLayout";
 import { getGatewayUrl } from "@/lib/gateway";
+import { useShellAuthIdentity } from "@/lib/shell-auth-identity";
 /** Login/GET/mount performs reads only. Only an explicit card button submits the exact stored challenge. */
 export function RoutineActionCompletion() {
-  const params = useSearchParams(), { isLoaded, isSignedIn, getToken, userId, sessionId } = useAuth();
+  const params = useSearchParams(), { isLoaded, getToken, userId, sessionId } = useShellAuthIdentity(), isSignedIn = userId !== null;
   const parsed = RoutineActionIdSchema.safeParse(params.get("challenge"));
   const valid = parsed.success && params.getAll("challenge").length === 1 && params.getAll("runtime").length <= 1
     && (!params.has("runtime") || /^[A-Za-z0-9_-]{1,32}$/.test(params.get("runtime")!)) && [...params.keys()].every(key => key === "challenge" || key === "runtime");

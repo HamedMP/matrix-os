@@ -35,6 +35,7 @@ export async function probeKeeperReadiness(options: {
   homePath: string;
   env: NodeJS.ProcessEnv;
   runCommand: UserSystemdCommandRunner;
+  timeoutMs?: number;
 }): Promise<boolean | null> {
   const { descriptor, homePath, runCommand } = options;
   // The capability header is part of the immutable, content-addressed keeper bytes.
@@ -44,7 +45,7 @@ export async function probeKeeperReadiness(options: {
   if (!keeper?.split("\n").includes(CAPABILITY)) return null;
   const { stdout } = await runCommand("systemctl", ["--user", "show",
     `matrix-zellij@${descriptor.runtimeId}.service`, "--property=ActiveState", "--property=InvocationID"],
-  { cwd: homePath, env: options.env, timeoutMs: 2_000 });
+  { cwd: homePath, env: options.env, timeoutMs: options.timeoutMs ?? 2_000 });
   const invocationId = /^InvocationID=([0-9a-f]{32})$/m.exec(stdout)?.[1];
   if (!/^ActiveState=active$/m.test(stdout) || !invocationId) return false;
   const raw = await readBounded(join(homePath, "system", "terminal-runtimes", `${descriptor.runtimeId}.ready.json`), 1_025);

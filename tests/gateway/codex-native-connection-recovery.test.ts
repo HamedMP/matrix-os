@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { createCodexNativeConnectionRecovery, codexNativeConnectionNeedsRecovery } from "../../packages/gateway/src/ai-providers/codex-native-connection-recovery.js";
-import { bindNativeAccountMetadata, nativeAccountPrincipalFingerprint } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
+import { bindNativeAccountMetadata, nativeAccountLegacyPrincipalFingerprint, nativeAccountPrincipalFingerprint } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { ProviderSettingsConfigurationSchema } from "../../packages/gateway/src/ai-providers/provider-settings-persistence.js";
 import { ProviderSettingsStoreError } from "../../packages/gateway/src/ai-providers/provider-settings-errors.js";
 
@@ -74,3 +74,32 @@ it.each([new ProviderSettingsStoreError('revision_conflict', 409), new Error('pr
     } finally { warn.mockRestore(); }
   },
 );
+
+// ENG-523: consent saved before stable generations named the exact token bytes.
+// The same still-current credential upgrades; any other saved principal does not.
+it('records a same-account alias for legacy token-bound consent instead of rewriting the saved row', async () => {
+  const { config, snapshot } = fixture();
+  const metadata = bindNativeAccountMetadata({ accountLabel: "owner@example.invalid", authMethod: "terminal",
+    checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 30000).toISOString() }, async () => true,
+  "private-legacy-proof", { generation: "private-stable-generation" });
+  const row = config.harnesses[0]!;
+  const legacy = nativeAccountLegacyPrincipalFingerprint(metadata)!;
+  row.nativeAccountGeneration = legacy;
+  row.nativeAccountConsentRevision = 1;
+  expect(codexNativeConnectionNeedsRecovery(config, metadata)).toBe(true);
+  const complete = vi.fn(async (_input: unknown) => ({ snapshot }));
+  const recordAlias = vi.fn(async (_input: { verifyNativeAccount(value: typeof metadata): Promise<boolean> }) => ({ snapshot }));
+  expect(await createCodexNativeConnectionRecovery(complete, recordAlias)(config, metadata)).toBe(snapshot);
+  expect(complete).not.toHaveBeenCalled();
+  await expect(recordAlias.mock.calls[0]![0].verifyNativeAccount(metadata)).resolves.toBe(true);
+  expect(row.nativeAccountGeneration).toBe(legacy);
+
+  const alias = { version: 1 as const, saved: legacy, durable: nativeAccountPrincipalFingerprint(metadata)! };
+  expect(codexNativeConnectionNeedsRecovery(config, metadata, alias)).toBe(false);
+  row.nativeAccountGeneration = nativeAccountPrincipalFingerprint(metadata)!;
+  expect(codexNativeConnectionNeedsRecovery(config, metadata)).toBe(false);
+  row.nativeAccountGeneration = "b".repeat(64);
+  expect(codexNativeConnectionNeedsRecovery(config, metadata)).toBe(false);
+  expect(await createCodexNativeConnectionRecovery(complete, recordAlias)(config, metadata)).toBeNull();
+  expect(recordAlias).toHaveBeenCalledTimes(1);
+});

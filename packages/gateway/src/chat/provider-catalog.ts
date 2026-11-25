@@ -1,7 +1,9 @@
 import { codexCatalogObservation } from "../ai-providers/codex-native-observation.js";
+import { timeChatSendStage } from "./send-timing.js";
 import { chatCatalogDiscoveryScope, CHAT_SYSTEM_DRIVERS as SYSTEM_DRIVERS, CHAT_CODING_DRIVERS as CODING_DRIVERS } from "./catalog-discovery-scope.js";
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
+import { createNativeExecutionModelResolver } from "./native-execution-model.js";
 import {
   botImageTotalMaximumForSelection, botAttachmentInputError, type BotAttachmentMetadata,
   CanonicalChatModelSelectionSchema,
@@ -41,6 +43,7 @@ import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
 import { managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
+import { CODEX_CHAT_SPEED_OPTION, CODEX_CHAT_STANDARD_SPEED, CODEX_SERVICE_TIER_OPTION } from "./codex-chat-speed.js";
 import { fundedSelectionError } from "./funded-chat-error.js";
 
 const ADAPTER_VERSION = "1.0.0";
@@ -66,7 +69,7 @@ const CODING_SETUP: Record<CodingDriverKind, {
   },
   pi: {
     command: "pi",
-    installPackage: "@earendil-works/pi-coding-agent@latest",
+    installPackage: "@earendil-works/pi-coding-agent@1.6.0",
     installFlags: "--ignore-scripts",
   },
 };
@@ -78,6 +81,10 @@ export interface CodingModelCatalogProjection {
   models: Array<Omit<CanonicalModelDescriptor, "availability">>;
   options: CanonicalProviderOptionDescriptor[];
   defaultModel: string;
+  /** Trusted native inventory only. Omitted from every client catalog/last-seen fallback. */
+  executionModels?: Record<string, string>;
+  /** Server-side support from model/list. Never included in client model descriptors. */
+  codexSpeedTiersByModel?: readonly { modelId: string; tiers: readonly string[] }[];
 }
 
 export interface ChatProviderCatalogReadOptions {
@@ -85,6 +92,7 @@ export interface ChatProviderCatalogReadOptions {
 }
 
 export interface ChatProviderCatalogService {
+  resolveExecutionModel?(principal: RequestPrincipal, selection: CanonicalChatModelSelection): Promise<string | null>;
   getCatalog(principal: RequestPrincipal, selection?: CanonicalChatModelSelection, readOptions?: ChatProviderCatalogReadOptions): Promise<CanonicalProviderCatalog>;
   refresh(principal: RequestPrincipal, readOptions?: ChatProviderCatalogReadOptions): Promise<CanonicalProviderCatalog>;
 }
@@ -139,7 +147,9 @@ function codingSupports(
     attachments: driverKind === "pi" || driverKind === "opencode"
       ? ["file", "structured_ref"]
       : ["file", "image", "structured_ref"],
-    tools: driverKind === "claude_code" ? ["integrations", "custom_mcp"] : [],
+    // Spec 2691: Codex and OpenCode launches carry the scoped Matrix Core MCP server.
+    tools: driverKind === "claude_code" ? ["integrations", "custom_mcp"]
+      : driverKind === "codex" || driverKind === "opencode" ? ["custom_mcp"] : [],
     approvals: isCodex || driverKind === "claude_code",
     userInput: true,
     worktrees: "optional",
@@ -208,6 +218,7 @@ function codingInstance(
   provider: AgentProviderSummary,
   skills: CanonicalChatSkillDescriptor[],
   projectedCatalog?: CodingModelCatalogProjection | null,
+  selectedModel?: string,
 ): InstanceDraft | null {
   const driverKind = codingDriverKind(provider);
   if (driverKind === null) return null;
@@ -222,6 +233,10 @@ function codingInstance(
     ?? codingModels(provider);
   const defaultModel = projectedCatalog?.defaultModel;
   const visibleModels = availability === "available" ? models : [];
+  const options = projectedCatalog?.options ?? codingOptions(provider);
+  const modelSpeedTiers = driverKind === "codex" && selectedModel
+    ? projectedCatalog?.codexSpeedTiersByModel?.find((model) => model.modelId === selectedModel)?.tiers ?? []
+    : undefined;
   const terminalSetupActions = provider.setupActions.filter((action) => (
     action.kind === "foreground_terminal"
   ));
@@ -233,9 +248,11 @@ function codingInstance(
     availability,
     workspaceRequirement: "project_optional",
     models: visibleModels,
-    options: availability === "available"
-      ? projectedCatalog?.options ?? codingOptions(provider)
-      : [],
+    options: availability !== "available" ? [] : options.map((option) => (
+      modelSpeedTiers && option.id === CODEX_CHAT_SPEED_OPTION
+        ? { ...option, values: option.values?.filter(({ value }) => value === CODEX_CHAT_STANDARD_SPEED || modelSpeedTiers.includes(value)) }
+        : option
+    )),
     skills,
     commands: [],
     setupActions: terminalSetupActions.length > 0 || availability === "available"
@@ -314,7 +331,8 @@ function systemSupports(driverKind: CanonicalProviderDriverKind): CanonicalProvi
     cancellation: true,
     steering: driverKind === "hermes" || driverKind === "openclaw" ? "same_run" : "none",
     attachments: ["file", "image", "structured_ref"],
-    tools: [],
+    // Hermes reaches the Matrix Core MCP broker through its registered stdio server.
+    tools: driverKind === "hermes" ? ["custom_mcp"] : [],
     approvals: false,
     userInput: driverKind === "hermes",
     worktrees: "none",
@@ -537,7 +555,7 @@ export function createChatProviderCatalogService(options: {
     // it before observing runtime/Settings authority; never retimestamp a
     // receipt or project it against an earlier clock to extend admission.
     const [codingResult] = await Promise.allSettled([
-      scope.readCoding ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
+      scope.readCoding ? timeChatSendStage("catalog_coding_inventory", () => options.codingProviders.listProviders(principal)) : Promise.resolve([]),
     ]);
     if (codingResult.status === "rejected") {
       console.warn("[chat-providers] Coding Provider inventory unavailable");
@@ -560,7 +578,7 @@ export function createChatProviderCatalogService(options: {
           console.warn("[chat-providers] Coding model catalog unavailable");
         }
       }
-      return codingInstance(provider, skills, projectedCatalog);
+      return codingInstance(provider, skills, projectedCatalog, selection?.model);
     }));
     for (const instance of projectedInstances) {
       if (instance === null) continue;
@@ -584,14 +602,16 @@ export function createChatProviderCatalogService(options: {
     const [runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
       scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
       scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
-      options.harnessSettingsSource?.getSnapshot({
+      timeChatSendStage("catalog_settings_snapshot", async () => options.harnessSettingsSource?.getSnapshot({
         ...(selection || observationScope ? scope.snapshotOptions : {}),
         ...(nativeCodexIdentityRequired ? {
           includeNativeAccountMetadata: true,
           includeNativeAccountUsage: false,
+          // A Codex send needs no Claude/Hermes identity probes.
+          ...(selection && scope.coding.length === 1 && scope.systems.length === 0 ? { nativeAccountHarnesses: ["codex"] as const } : {}),
           ...(options.canRecoverNativeConnection?.(principal) === true ? { recoverNativeConnection: true } : {}),
         } : {}),
-      }) ?? Promise.resolve(undefined),
+      })),
       systemRuntimeReads,
     ]);
     if (runtimeResult.status === "rejected") {
@@ -698,6 +718,7 @@ export function createChatProviderCatalogService(options: {
     return parsed.data;
   }
   const service: ChatProviderCatalogService = {
+    resolveExecutionModel: createNativeExecutionModelResolver(options),
     async refresh(principal, readOptions) {
       if (!options.observationScope?.(principal)) {
         options.invalidateCodingModelCatalog?.(principal);
@@ -752,6 +773,8 @@ function optionsMatch(
   instance: CanonicalProviderInstanceDescriptor,
 ): boolean {
   return (selection.options ?? []).every((selected) => {
+    if (instance.driverKind === "codex" && selected.id === CODEX_CHAT_SPEED_OPTION
+      && selected.value === CODEX_CHAT_STANDARD_SPEED) return true;
     const option = instance.options.find((candidate) => candidate.id === selected.id);
     if (option === undefined) return false;
     if (option.kind === "boolean") return typeof selected.value === "boolean";
@@ -825,9 +848,12 @@ export function validateChatProviderSelection(input: {
   if (["matrix_pi", "matrix_bot"].includes(instance.driverKind) && input.requirements?.attachments?.includes("image") && !model.supportsVision) {
     return selectionError("capability_mismatch", "The selected model does not support images.");
   }
-  if (!optionsMatch(selection.data, instance)
+  const effectiveSelection = instance.driverKind === "codex" && selection.data.options?.some(({ id }) => id === CODEX_SERVICE_TIER_OPTION)
+    ? { ...selection.data, options: selection.data.options.filter(({ id }) => id !== CODEX_SERVICE_TIER_OPTION) }
+    : selection.data;
+  if (!optionsMatch(effectiveSelection, instance)
     || !supportsRequirements(instance.supports, input.requirements ?? {})) {
     return selectionError("capability_mismatch", "The selected Provider does not support this request.");
   }
-  return { ok: true, instance, selection: selection.data };
+  return { ok: true, instance, selection: effectiveSelection };
 }

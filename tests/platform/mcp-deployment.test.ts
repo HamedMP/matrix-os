@@ -5,7 +5,7 @@ describe('hosted MCP deployment contract', () => {
   it('keeps optional MCP settings in every deployment with comma-safe origins', () => {
     const workflow = readFileSync('.github/workflows/platform-cloud-run.yml', 'utf8');
     for (const key of ['MATRIX_MCP_ENABLED', 'MATRIX_MCP_RESOURCE_URL', 'MATRIX_MCP_OAUTH_ISSUER',
-      'MATRIX_MCP_OAUTH_JWKS_URL', 'MATRIX_MCP_ALLOWED_ORIGINS']) {
+      'MATRIX_MCP_OAUTH_JWKS_URL', 'MATRIX_MCP_ALLOWED_ORIGINS', 'MATRIX_MCP_REQUIRED_SCOPES']) {
       expect(workflow).toContain(key + ': ${{ vars.' + key);
       expect(workflow).toContain(key + '=${' + key + '}');
     }

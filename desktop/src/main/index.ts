@@ -72,7 +72,8 @@ import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
-import { installAppMenu } from "./platform/menu";
+import { installShortcuts } from "./shortcuts/install-shortcuts";
+import { installAppMenu, runShortcut } from "./platform/menu";
 import { registerWindowsProtocolClients } from "./platform/protocol-registration";
 import { installMainRendererMediaPermissions } from "./media-permissions";
 import {
@@ -144,9 +145,12 @@ const bindPreviewStartupAcknowledgement = createPreviewStartupAcknowledgement(pr
 
 let mainWindow: BrowserWindow | null = null;
 let terminalWindows: ReturnType<typeof createTerminalWindowController<BrowserWindow>> | null = null;
+// Swaps in the Terminal window's shortcuts while it has focus (spec 2706).
+let terminalMenu: ReturnType<typeof installAppMenu> | null = null;
 const terminalWindowEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
 let computerCredentials: { clear(): void } | null = null;
 let localTerminals: LocalTerminalHost | null = null;
+let shortcutWiring: Awaited<ReturnType<typeof installShortcuts>> | null = null;
 let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
@@ -176,13 +180,15 @@ function isMatrixOsDeepLink(value: string): boolean {
   return isDesktopDeepLink(value, channelIdentity);
 }
 
-function focusMainWindow(): void {
+function focusMainWindow(to?: "settings"): void {
   // Never fall back to "any window": the Terminal window is not the main one.
   const win = mainWindow;
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+  // The same route as the application menu's Settings… item (the nav.settings shortcut action).
+  if (to === "settings") sendEvent("shortcut:action", { id: "nav.settings" });
 }
 
 // Org-link hand-off (spec 2693): `matrixos://shared-app/<scopeId>`; other links only focus.
@@ -359,6 +365,9 @@ if (!gotLock) {
 
       const userData = app.getPath("userData");
       const store = createLocalStore({ dir: userData });
+      const shortcuts = await installShortcuts({ app, store, platform: process.platform, run: runShortcut,
+        mainWindow: () => mainWindow, terminalWindow: () => terminalWindows?.current() ?? null });
+      shortcutWiring = shortcuts;
       const credentialStore = createCredentialStore({ dir: userData, safeStorage });
 
       const platformHost = previewContext?.apiOrigin ?? process.env.OPERATOR_GATEWAY_URL ?? DEFAULT_PLATFORM_HOST;
@@ -442,6 +451,7 @@ if (!gotLock) {
         () => auth.getToken(),
         () => auth.getGatewayOrigin(),
         rendererOrigin,
+        () => { const status = auth.getStatus(); return status.signedIn ? status : null; },
       );
       // The renderer is a different origin than the gateway (file:// in prod,
       // localhost in dev), so allow its cross-origin fetches to the gateway.
@@ -662,11 +672,18 @@ if (!gotLock) {
             trustedUrl: terminalRendererUrl,
             onLoadError: (error) => logMainError("failed to load Terminal window", error),
           });
-          win.on("focus", () => sendTerminalWindowEvent("window:focus-changed", { focused: true }));
-          win.on("blur", () => sendTerminalWindowEvent("window:focus-changed", { focused: false }));
+          win.on("focus", () => {
+            terminalMenu?.terminalWindowFocused(true);
+            sendTerminalWindowEvent("window:focus-changed", { focused: true });
+          });
+          win.on("blur", () => {
+            terminalMenu?.terminalWindowFocused(false);
+            sendTerminalWindowEvent("window:focus-changed", { focused: false });
+          });
+          win.on("closed", () => terminalMenu?.terminalWindowFocused(false));
           // A window that closes, reloads or crashes cannot detach for itself;
           // without this its local terminal attachments would stay held.
-          const releaseLocalTerminals = () => localTerminals?.detachAll();
+          const releaseLocalTerminals = () => { localTerminals?.detachAll(); localTerminals?.unwatch(); };
           win.on("closed", releaseLocalTerminals);
           win.webContents.on("did-start-loading", releaseLocalTerminals);
           win.webContents.on("render-process-gone", releaseLocalTerminals);
@@ -701,6 +718,7 @@ if (!gotLock) {
       }, {
         output: (attachId, data) => sendTerminalWindowEvent("local-terminal:output", { attachId, data }),
         closed: (attachId) => sendTerminalWindowEvent("local-terminal:closed", { attachId }),
+        facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }),
       });
       localTerminals = localTerminalHost;
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender);
@@ -730,6 +748,7 @@ if (!gotLock) {
         cancelOrganizationDriveTransfer: () => { driveTransfers.cancelAll(); return { ok: true }; },
         auth,
         store,
+        shortcuts: shortcuts.service,
         embeds,
         openExternal: openExternalHttpUrl,
         setBadgeCount: (count) => {
@@ -890,10 +909,11 @@ if (!gotLock) {
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
       });
-      installAppMenu({
+      terminalMenu = installAppMenu({
+        sendTerminalCommand: (command) => sendTerminalWindowEvent("terminal-window:command", command),
         mainWindow: () => mainWindow,
         terminalWindow: () => terminalWindowController.current(),
-        thirdPartyNoticesPath: localRuntime.noticesPath,
+        thirdPartyNoticesPath: localRuntime.noticesPath, shortcuts: shortcuts.service,
         focusMain: focusMainWindow,
         restoreMain: () => {
           void reopenMainWindow?.().catch((error: unknown) => logMainError("window restore failed", error));
@@ -982,6 +1002,8 @@ if (!gotLock) {
     closeCodingAgentThreadEvents = null;
     terminalWindows?.dispose();
     terminalWindows = null;
+    shortcutWiring?.dispose();
+    shortcutWiring = null;
     computerCredentials?.clear();
     computerCredentials = null;
     // Detach only: the local core and its terminals outlive the app.

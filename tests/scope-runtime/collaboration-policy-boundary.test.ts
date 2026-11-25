@@ -101,6 +101,18 @@ describe("sandbox manifest", () => {
 });
 
 describe("sandbox systemd policy", () => {
+  it("permits only the internal loopback bridge in broker-only private namespaces", () => {
+    const broker = buildSandboxSystemdProperties(
+      ScopeRuntimeSandboxManifestSchema.parse(manifest({ network: "broker_only" })),
+      { worktreeHostPath: "/home/matrix/home/projects/launch-site" },
+    );
+    expect(broker).toContain("PrivateNetwork=yes");
+    expect(broker).toContain("IPAddressDeny=any");
+    expect(broker).toContain("IPAddressAllow=localhost");
+    const offline = buildSandboxSystemdProperties(ScopeRuntimeSandboxManifestSchema.parse(manifest()),
+      { worktreeHostPath: "/home/matrix/home/projects/launch-site" });
+    expect(offline.some(property => property.startsWith("IPAddressAllow="))).toBe(false);
+  });
   it("binds only the worktree, denies every network and never widens the fixed profile", () => {
     const properties = buildSandboxSystemdProperties(
       ScopeRuntimeSandboxManifestSchema.parse(manifest()),
@@ -129,7 +141,7 @@ describe("sandbox systemd policy", () => {
   });
 
   it("pins the policy digest to the property template and forbidden environment", () => {
-    expect(SCOPE_RUNTIME_SANDBOX_POLICY_VERSION).toBe(1);
+    expect(SCOPE_RUNTIME_SANDBOX_POLICY_VERSION).toBe(2);
     expect(SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST).toMatch(/^[a-f0-9]{64}$/);
     expect(FORBIDDEN_SANDBOX_ENVIRONMENT).toEqual(expect.arrayContaining([
       "GH_TOKEN", "GITHUB_TOKEN", "GIT_ASKPASS", "SSH_AUTH_SOCK", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",

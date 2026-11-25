@@ -2,11 +2,13 @@ import { createHostedMatrixMcpServer, type McpProfileContext } from '@finnaai/ma
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { McpAuthError, type McpPrincipal } from './mcp-auth.js';
+import { DEFAULT_MCP_REQUIRED_SCOPES, McpAuthError, type McpPrincipal } from './mcp-auth.js';
 
 export interface McpRoutesOptions {
   resourceUrl: string;
   issuer: string;
+  /** Scopes the verifier requires; advertised in discovery and auth challenges. */
+  scopes?: readonly string[];
   verify: (token: string) => Promise<McpPrincipal>;
   context: (principal: McpPrincipal) => McpProfileContext;
   fetch?: typeof fetch;
@@ -14,12 +16,16 @@ export interface McpRoutesOptions {
   requestTimeoutMs?: number;
   maxConcurrent?: number;
   requestsPerMinute?: number;
+  /** Adds tools to the per-request server (spec 2691 Matrix Core tools); runs after auth and admission. */
+  extendServer?: (server: ReturnType<typeof createHostedMatrixMcpServer>, principal: McpPrincipal, signal: AbortSignal) => Promise<void>;
 }
 
 export function createMcpRoutes(options: McpRoutesOptions): Hono {
   const app = new Hono();
   const metadataUrl = new URL('/.well-known/oauth-protected-resource/mcp', options.resourceUrl).toString();
   const allowedOrigins = options.allowedOrigins ?? [];
+  const scopes = [...(options.scopes ?? DEFAULT_MCP_REQUIRED_SCOPES)];
+  const challengeScope = scopes.join(' ');
   const fetchImpl = options.fetch ?? fetch;
   // Per-process admission budgets; edge fleet-wide throttling is an additional layer.
   const maxConcurrent = options.maxConcurrent ?? 32;
@@ -49,7 +55,7 @@ export function createMcpRoutes(options: McpRoutesOptions): Hono {
       if (origin) c.header('Access-Control-Allow-Origin', origin);
       c.header('Cache-Control', 'public, max-age=300');
       return c.json({ resource: options.resourceUrl, authorization_servers: [options.issuer],
-        scopes_supported: ['matrix:computer'], bearer_methods_supported: ['header'],
+        scopes_supported: scopes, bearer_methods_supported: ['header'],
         resource_name: 'Matrix remote computers' });
     });
   }
@@ -72,7 +78,7 @@ export function createMcpRoutes(options: McpRoutesOptions): Hono {
     const authorization = c.req.header('authorization');
     const token = authorization?.match(/^Bearer ([^\s]{1,16384})$/i)?.[1];
     if (!token) {
-      c.header('WWW-Authenticate', `Bearer resource_metadata="${metadataUrl}"`);
+      c.header('WWW-Authenticate', `Bearer resource_metadata="${metadataUrl}", scope="${challengeScope}"`);
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
@@ -133,6 +139,8 @@ export function createMcpRoutes(options: McpRoutesOptions): Hono {
       const scopedFetch: typeof fetch = (input, init) => fetchImpl(input, { ...init,
         signal: AbortSignal.any([AbortSignal.timeout(50_000), controller.signal, ...(init?.signal ? [init.signal] : [])]) });
       server = createHostedMatrixMcpServer({ context: options.context(principal), fetch: scopedFetch, maxCommandTimeoutMs: 45_000 });
+      if (options.extendServer) await options.extendServer(server, principal, controller.signal);
+      controller.signal.throwIfAborted();
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       await server.connect(transport);
       controller.signal.throwIfAborted();
@@ -143,7 +151,7 @@ export function createMcpRoutes(options: McpRoutesOptions): Hono {
       return await Promise.race([perform(), aborted]);
     } catch (error: unknown) {
       if (error instanceof McpAuthError) {
-        c.header('WWW-Authenticate', `Bearer error="${error.code}", resource_metadata="${metadataUrl}", scope="matrix:computer"`);
+        c.header('WWW-Authenticate', `Bearer error="${error.code}", resource_metadata="${metadataUrl}", scope="${challengeScope}"`);
         return c.json({ error: error.status === 403 ? 'Insufficient scope' : 'Unauthorized' }, error.status);
       }
       if (error instanceof Error && error.name === 'BodyLimitError') return c.json({ error: 'Request too large' }, 413);

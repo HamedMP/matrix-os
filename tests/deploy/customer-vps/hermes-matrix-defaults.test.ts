@@ -38,6 +38,7 @@ describe("Matrix-managed Hermes defaults", () => {
         mcp_servers: {
           "matrix-integrations": {
             command: "/opt/matrix/bin/matrix-integrations-mcp",
+            args: ["--harness=hermes"],
           },
         },
         skills: {
@@ -74,6 +75,7 @@ describe("Matrix-managed Hermes defaults", () => {
       expect((await readConfig(hermesHome)).mcp_servers).toEqual({
         "matrix-integrations": {
           command: "/opt/matrix/bin/matrix-integrations-mcp",
+          args: ["--harness=hermes"],
         },
       });
     } finally {

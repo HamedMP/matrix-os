@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { PlatformDB } from './db.js';
-import { createMcpTokenVerifier } from './mcp-auth.js';
+import { createMcpTokenVerifier, parseMcpRequiredScopes } from './mcp-auth.js';
 import { createMcpRoutes } from './mcp-routes.js';
 import { createMcpRuntimeContext } from './mcp-runtime-context.js';
+import { registerExternalCoreMcpTools, type ExternalCoreMcp } from './mcp-core-tools.js';
 
 function secureUrl(raw: string, path?: string): URL {
   const url = new URL(raw);
@@ -16,7 +17,9 @@ function secureUrl(raw: string, path?: string): URL {
 }
 
 /** Keep hosted auth/composition out of the platform entrypoint and CLI profile loader. */
-export function createPlatformMcpRoutes(options: { db: PlatformDB; env: NodeJS.ProcessEnv }): Hono {
+export function createPlatformMcpRoutes(options: { db: PlatformDB; env: NodeJS.ProcessEnv;
+  /** Matrix Core MCP (spec 2691): absent when Custom MCP is disabled; the computer tools still work. */
+  coreMcp?: () => ExternalCoreMcp | undefined }): Hono {
   const unavailable = () => {
     const app = new Hono();
     app.use('/mcp', bodyLimit({ maxSize: 2 * 1024 * 1024 }));
@@ -38,9 +41,16 @@ export function createPlatformMcpRoutes(options: { db: PlatformDB; env: NodeJS.P
     const rawOrigins = env.MATRIX_MCP_ALLOWED_ORIGINS?.split(',').map(value => value.trim()).filter(Boolean) ?? [];
     if (rawOrigins.length > 20) throw new Error('Too many MCP origins');
     const allowedOrigins = rawOrigins.map(value => secureUrl(value, '/').origin);
-    const verify = createMcpTokenVerifier({ resourceUrl, issuer, jwksUrl });
-    return createMcpRoutes({ resourceUrl, issuer, allowedOrigins, verify,
-      context: principal => createMcpRuntimeContext({ db: options.db, principal, gatewayOrigin, jwtSecret, env }) });
+    const scopes = parseMcpRequiredScopes(env.MATRIX_MCP_REQUIRED_SCOPES);
+    const verify = createMcpTokenVerifier({ resourceUrl, issuer, jwksUrl, requiredScopes: scopes });
+    return createMcpRoutes({ resourceUrl, issuer, scopes, allowedOrigins, verify,
+      context: principal => createMcpRuntimeContext({ db: options.db, principal, gatewayOrigin, jwtSecret, env }),
+      extendServer: async (server, principal, signal) => {
+        const coreMcp = options.coreMcp?.();
+        if (!coreMcp) return;
+        registerExternalCoreMcpTools(server, { core: coreMcp.core, principal, signal,
+          userId: await coreMcp.resolveUserId(principal.userId) });
+      } });
   } catch (error: unknown) {
     console.error('[mcp] configuration unavailable', error instanceof Error ? error.name : 'UnknownError');
     return unavailable();

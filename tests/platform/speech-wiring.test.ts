@@ -108,4 +108,23 @@ describe("platform speech startup wiring", () => {
     expect(await db.executor.selectFrom("ai_funded_runtime_balances").selectAll().execute()).toEqual([]);
     await service.shutdown();
   });
+
+  it("raises the Chat dictation limit without changing what audio imports accept or reserve", async () => {
+    // Channel and kernel imports use the owner-audio policy; they must keep
+    // their limits until that change is reviewed separately (spec 120, FR-005).
+    const config = loadPlatformSpeechConfig({
+      NODE_ENV: "development",
+      PLATFORM_SPEECH_ENABLED: "true",
+      PLATFORM_SPEECH_PROVIDER: "fixture",
+      PLATFORM_SPEECH_FIXTURE_TRANSCRIPT: "Deterministic local transcript",
+      PLATFORM_SPEECH_POLICY_REVISION: "local-fixture-1",
+      PLATFORM_SPEECH_SECRET: "s".repeat(32),
+    });
+    const service = createConfiguredPlatformSpeechService({ db, config });
+    expect(service.capabilities().fileTranscription).toMatchObject({
+      dictation: { enabled: true, maxBytes: 20 * 1024 * 1024, maxDurationMs: 600_000 },
+      ownerAudio: { enabled: true, maxBytes: 10 * 1024 * 1024, maxDurationMs: 120_000 },
+    });
+    await service.shutdown();
+  });
 });

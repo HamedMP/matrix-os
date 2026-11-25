@@ -6,13 +6,15 @@ import { parse } from "yaml";
 const ci = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
 const changes = ci.jobs.changes;
 const step = () => changes.steps.find((candidate: { id?: string }) => candidate.id === "superseded");
+const eventBase = "c".repeat(40);
+const liveBase = "d".repeat(40);
 
-async function runStep(eventHead: string, live: () => Promise<{ data: { head: { sha: string } } }>) {
+async function runStep(eventHead: string, live: () => Promise<{ data: { head: { sha: string }; base: { sha: string } } }>) {
   const outputs: Record<string, string> = {};
   const notices: string[] = [];
   const warnings: string[] = [];
   const github = { rest: { pulls: { get: live } } };
-  const context = { repo: { owner: "HamedMP", repo: "matrix-os" }, payload: { pull_request: { number: 2499, head: { sha: eventHead } } } };
+  const context = { repo: { owner: "HamedMP", repo: "matrix-os" }, payload: { pull_request: { number: 2499, head: { sha: eventHead }, base: { ref: "main", sha: eventBase } } } };
   const core = { setOutput: (key: string, value: string) => { outputs[key] = String(value); }, notice: (m: string) => notices.push(m), warning: (m: string) => warnings.push(m) };
   const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
   await new AsyncFunction("github", "context", "core", "require", step().with.script)(github, context, core, createRequire(import.meta.url));
@@ -27,19 +29,22 @@ describe("superseded PR head short-circuit", () => {
   });
 
   it("marks a run stale when the PR head moved past the event head", async () => {
-    const result = await runStep("a".repeat(40), async () => ({ data: { head: { sha: "b".repeat(40) } } }));
+    const result = await runStep("a".repeat(40), async () => ({ data: { head: { sha: "b".repeat(40) }, base: { sha: liveBase } } }));
     expect(result.outputs.stale).toBe("true");
+    expect(result.outputs.review_base_sha).toBe(liveBase);
     expect(result.notices.join()).toContain("superseded");
   });
 
   it("keeps the current head running", async () => {
-    const result = await runStep("a".repeat(40), async () => ({ data: { head: { sha: "a".repeat(40) } } }));
+    const result = await runStep("a".repeat(40), async () => ({ data: { head: { sha: "a".repeat(40) }, base: { sha: liveBase } } }));
     expect(result.outputs.stale).toBe("false");
+    expect(result.outputs.review_base_sha).toBe(liveBase);
   });
 
   it("never blocks CI when the PR lookup fails", async () => {
     const result = await runStep("a".repeat(40), async () => { throw new Error("API rate limit exceeded"); });
     expect(result.outputs.stale).toBe("false");
+    expect(result.outputs.review_base_sha).toBe(eventBase);
     expect(result.warnings.join()).toContain("Superseded-head check unavailable");
   });
 
