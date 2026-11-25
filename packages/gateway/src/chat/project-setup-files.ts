@@ -17,8 +17,10 @@ async function readProposal(workspace: ProjectSetupWorkspace, path: string): Pro
 
 function skippedSymlink(draft: ProjectSetupDraft, file: ProjectSetupFile): ProjectSetupFile {
   // Previously displayed root content may be empty or independent Claude guidance.
-  const needsFallback = file.path === "CLAUDE.md" || (file.path === "AGENTS.md" && file.content === "");
-  const proposal = needsFallback ? projectSetupRootFile(draft, file.path) : file;
+  const path = file.path;
+  const proposal = path === "CLAUDE.md" || (path === "AGENTS.md" && file.content === "")
+    ? projectSetupRootFile(draft, path)
+    : file;
   return { ...proposal, status: "symlink_skipped", expectedHash: undefined };
 }
 
