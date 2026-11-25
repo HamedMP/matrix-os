@@ -554,7 +554,7 @@ Startup order:
 2. Resolve the transport. A6 uses `expo-direct`, which wraps the existing push channel. From C4, `MATRIX_NOTIFICATIONS_TRANSPORT=relay` with `PLATFORM_INTERNAL_URL` set selects the relay. An unresolved transport fails startup rather than failing at call time.
 3. Create `NotificationRouter({ db, preferences, presence, transport, clock, logger })`. Before B1, `presence` is a null registry that always reports "unknown". Record `startedAt` for the 30 s grace.
 4. In `createGatewayChatEventStream` (`chat/gateway-event-stream.ts`), pass `onCommittedEvent: composeSinks(createChatFailureRecorder(options), router.onChatEvent)`. `ChatOutboxDelivery` allows one sink, so compose the functions rather than register a second sink. `composeSinks` calls each sink in its own try/catch and logs failures, so a router error never breaks telemetry or chat delivery. The router sink is synchronous and only enqueues.
-5. From A9, register `router.onThreadEvent` with the thread store's `registerEventSink`. Before A9, and whenever the kill switch is on (router off), register the legacy attention bridge instead; while the router is on, the bridge skips threads bound to a canonical run. This branch is removed in A10.
+5. From A9, register `router.onThreadEvent` with the thread store's `registerEventSink`. Before A9, and whenever the kill switch is on (router off), register the legacy attention bridge instead; while the router is on, the bridge skips approval/input events for threads bound to a canonical run. Completion and failure pushes keep using the bridge until the router handles those kinds. This branch is removed in A10.
 6. Mount routes as each release adds them. Start the scheduler (2 s tick), the reconciler (once at startup, then every 30 s) and the hourly retention sweep.
 
 Shutdown:
@@ -598,6 +598,7 @@ Shutdown:
 | Crash between commit and enqueue | Approvals and questions: the reconciler finds the pending request at startup, or within 30 s, and inserts its event; the dedupe key keeps it to one push. Replies and failures: accepted loss, so that one event does not notify. |
 | Router queue full (> 1,000 pending) | The newest reply and failure events are dropped, with a counter and a log. An approval or question evicts the oldest queued reply. If no queued reply is left to evict, it is written straight to `notification_events` as `open` with the generic copy for its kind (as with `showPreview: false`) and `ON CONFLICT (owner_id, dedupe_key) DO NOTHING`, instead of being queued. The scheduler's per-tick pickup then runs the ladder for it. Memory stays capped at 1,000 items, and no approval or question is dropped. |
 | Concurrent resolve and push | Conditional updates. A push for a resolved row is skipped, and a resolve after a push triggers `dismiss`. |
+| Question answer still in flight at the grace deadline (A6) | Keep the same owner/request journal row open and defer to the next scheduler tick without consuming a transport attempt. A failed delivery can reopen the request and push once; a terminal input outcome or finished run resolves it without a push. |
 | Two gateway processes overlap during a restart | `FOR UPDATE SKIP LOCKED` plus conditional updates |
 | Interim false push (Track A) | The owner is at their desk in another app and does not read within the wait. Accepted until B2. Owners can raise `replyDelaySeconds` or turn replies off. |
 | Mobile read marking fails (A7) | The read cursor does not advance, so a reply may still push. The failure is logged and retried on the next view. |
@@ -662,6 +663,8 @@ No temp files are created. Every timer is cleared on every exit path and on shut
 - **A6 and A8 integration test:** start the real wiring (event stream with composed sinks, router, scheduler, fake transport) against a test owner database.
   - Commit `approval.requested`: one transport call after 15 s.
   - Commit `approval.resolved` first: no call.
+  - Tick while a question answer is submitted but still in flight: no call and the same event stays open across router restart. Fail delivery and reopen the request: one call. Answer, cancel, expire, or finish the run instead: no call and the event resolves.
+  - Canonical Codex, Pi, and OpenCode threads: the bridge suppresses approval/input duplicates but retains enabled completion/failure pushes and honors disabled terminal preferences.
   - Kill the scheduler between claim and send: the reclaim produces exactly one call.
   - Commit an approval and kill the gateway before the router enqueues it: after restart the reconciler inserts it, and the transport is called once.
   - Throw inside the router: failure telemetry still records `run.failed`.

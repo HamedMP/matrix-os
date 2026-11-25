@@ -185,14 +185,37 @@ describe("canonical attention delivery", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("retains an enqueued question after a failed answer delivery reopens the same request", async () => {
+  it("retains a question when the scheduler runs during answer submission before delivery fails and reopens it", async () => {
     const ids = await request("question"); await router.flush();
     await repository.appendRunActivities(owner, ids.chatId, ids.runId, [{ ...ids, id: "activity_reopen_submission", type: "input.submitted",
       requestId: "input_attention", clientRequestId: "req_answer", occurredAt: new Date(now + 1000).toISOString() }]);
-    expect(await repository.reopenInputSubmission(owner, { ...ids, requestId: "input_attention", submissionId: "activity_reopen_submission" })).toBe(true);
     now += 15_000; await router.tick();
+    expect(send).not.toHaveBeenCalled();
+    expect(await db.selectFrom("notification_events").select(["state", "push_attempts"]).execute()).toEqual([{ state: "open", push_attempts: 0 }]);
+    expect(await db.selectFrom("notification_attempts").selectAll().execute()).toEqual([]);
+    // Keep the deferral durable across router restart, then use Chat's real retry producer.
+    await router.close();
+    router = createNotificationRouter({ db, ownerId: owner.ownerId, preferences, transport: { send }, now: () => now });
+    expect(await repository.reopenInputSubmission(owner, { ...ids, requestId: "input_attention", submissionId: "activity_reopen_submission" })).toBe(true);
+    await router.flush(); await router.reconcile();
+    now += 2000; await router.tick(); await router.tick();
     expect(send).toHaveBeenCalledTimes(1);
     expect(await db.selectFrom("notification_events").select("id").execute()).toHaveLength(1);
+  });
+
+  it.each(["answered", "cancelled", "expired", "finished"] as const)("resolves a deferred in-flight question only after a terminal outcome: %s", async outcome => {
+    const ids = await request("question"); await router.flush();
+    await repository.appendRunActivities(owner, ids.chatId, ids.runId, [{ ...ids, id: "activity_terminal_submission", type: "input.submitted",
+      requestId: "input_attention", clientRequestId: "req_answer", occurredAt: new Date(now + 1000).toISOString() }]);
+    now += 15_000; await router.tick();
+    expect(await db.selectFrom("notification_events").select(["state", "push_attempts"]).execute()).toEqual([{ state: "open", push_attempts: 0 }]);
+    if (outcome === "finished") await repository.finishRun(owner, { ...ids, outcome: "completed", completedAt: new Date(now).toISOString() });
+    else await repository.appendRunActivities(owner, ids.chatId, ids.runId, [{ ...ids, id: "activity_terminal_resolution", type: "input.resolved",
+      requestId: "input_attention", reason: outcome, occurredAt: new Date(now).toISOString() }]);
+    now += 2000; await router.tick(); await router.reconcile(); await router.tick();
+    expect(send).not.toHaveBeenCalled();
+    expect(await db.selectFrom("notification_events").select("state").execute()).toEqual([{ state: "resolved" }]);
+    expect(await db.selectFrom("notification_attempts").selectAll().execute()).toEqual([]);
   });
 
   it("withholds command arguments in approval previews even when preview is enabled", async () => {
@@ -238,7 +261,7 @@ describe("canonical attention delivery", () => {
     const runtime = createNotificationPreferenceRuntime({ homePath, env: process.env, reviewStore: createReviewStore({ homePath }) });
     const threads = createCodingAgentThreadStore({ homePath, providers: [{ providerId: "codex", startThread({ thread, nextEventId }) {
       return [AgentThreadEventSchema.parse({ type: "approval.requested", eventId: nextEventId(), threadId: thread.id,
-        occurredAt: new Date(now).toISOString(), approval: { approvalId: "approval_attention", threadId: thread.id,
+        occurredAt: new Date(now).toISOString(), approval: { approvalId: "appr_attention", threadId: thread.id,
           title: "Private approval", safeDescription: "Review the request", risk: "low", actionKind: "command",
           allowedDecisions: ["approve", "decline"], correlationId: "corr_attention" } })];
     } }] });
@@ -258,8 +281,9 @@ describe("canonical attention delivery", () => {
     const legacySend = vi.spyOn(channels.channelManager, "send").mockResolvedValue(undefined);
     try {
       const ids = await request();
-      await threads.createThread({ userId: owner.ownerId, source: "configured-container" }, { providerId: "codex", prompt: "Review",
+      const created = await threads.createThread({ userId: owner.ownerId, source: "configured-container" }, { providerId: "codex", prompt: "Review",
         clientRequestId: `req_${ids.runId.slice(4)}` });
+      expect(created.snapshot.thread.status).toBe("waiting_for_approval");
       await router.flush(); now += 15_000; await router.tick();
       expect(legacySend).not.toHaveBeenCalled();
       expect(fetchSpy).toHaveBeenCalledTimes(1);

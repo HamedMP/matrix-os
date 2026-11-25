@@ -7,20 +7,23 @@ import { ROUTINE_DIRECT_CHAT_ID_PATTERN } from "../bots/routine-direct-chat-iden
 export interface AttentionRequest {
   ref: string; chatId: string; runId: string | null; kind: "approval" | "question";
   source: "canonical_chat" | "bot"; dedupeKey: string; createdAt: Date; expiresAt: Date;
-  preview?: string;
+  preview?: string; answerInFlight?: boolean;
 }
-type RequestRow = { ref: string; chat_id: string; run_id: string | null; event: unknown; created_at: Date; expires_at?: Date; kind?: string };
+type RequestRow = { ref: string; chat_id: string; run_id: string | null; event: unknown; created_at: Date; expires_at?: Date; kind?: string; answer_in_flight?: boolean };
 
 /** Reads the same durable requests/outcomes as Needs you, never transcript/replay buffers. */
 export function createAttentionRequestSource(db: Kysely<NotificationDatabase>, ownerId: string) {
-  type ListOptions = { chatId?: string; runId?: string; ref?: string; refs?: readonly string[]; key?: string; missingOnly?: boolean; limit?: number; source?: string };
+  type ListOptions = { chatId?: string; runId?: string; ref?: string; refs?: readonly string[]; key?: string; missingOnly?: boolean; limit?: number; source?: string; includeSubmitting?: boolean };
   async function listIn(db: Transaction<NotificationDatabase>, now: number, options: ListOptions): Promise<AttentionRequest[]> {
     const cutoff = sql`(SELECT applied_at FROM notification_schema_migrations WHERE version=2)`;
     const missing = (key: ReturnType<typeof sql>) => options.missingOnly
       ? sql`AND NOT EXISTS (SELECT 1 FROM notification_events n WHERE n.owner_id=${ownerId} AND n.dedupe_key=${key})` : sql``;
     const canonicalKey = sql`r.run_id || ':' || CASE WHEN r.event->>'type'='approval.requested' THEN 'approval' ELSE 'question' END || ':' || COALESCE(r.event->>'approvalId',r.event->>'requestId')`;
     const canonical = options.source === "bot" ? [] : (await sql<RequestRow>`
-      SELECT r.id AS ref,r.chat_id,r.run_id,r.event,r.occurred_at AS created_at
+      SELECT r.id AS ref,r.chat_id,r.run_id,r.event,r.occurred_at AS created_at,
+        EXISTS (SELECT 1 FROM chat_run_events submitted WHERE submitted.run_id=r.run_id
+          AND submitted.event->>'type'='input.submitted' AND submitted.event->>'requestId'=r.event->>'requestId'
+          AND submitted.run_seq>r.run_seq) AS answer_in_flight
       FROM chat_run_events r JOIN chat_runs run ON run.id=r.run_id JOIN chats c ON c.id=r.chat_id
       WHERE c.owner_type='personal' AND c.owner_id=${ownerId} AND c.lifecycle='active'
         AND c.id !~ ${ROUTINE_DIRECT_CHAT_ID_PATTERN.source}
@@ -37,9 +40,12 @@ export function createAttentionRequestSource(db: Kysely<NotificationDatabase>, o
         AND NOT EXISTS (SELECT 1 FROM chat_approval_outcomes o WHERE o.run_id=r.run_id AND o.approval_id=r.event->>'approvalId')
         AND NOT EXISTS (SELECT 1 FROM chat_run_events resolved WHERE resolved.run_id=r.run_id AND (
           (resolved.event->>'type'='approval.resolved' AND resolved.event->>'approvalId'=r.event->>'approvalId') OR
-          (resolved.event->>'type'='input.resolved' AND resolved.event->>'requestId'=r.event->>'requestId') OR
-          (resolved.event->>'type'='input.submitted' AND resolved.event->>'requestId'=r.event->>'requestId'
-            AND resolved.run_seq>r.run_seq)))
+          (resolved.event->>'type'='input.resolved' AND resolved.event->>'requestId'=r.event->>'requestId')
+          ${options.includeSubmitting ? sql`` : sql`OR (resolved.event->>'type'='input.submitted' AND resolved.event->>'requestId'=r.event->>'requestId'
+            AND resolved.run_seq>r.run_seq)`}))
+        ${options.includeSubmitting ? sql`AND NOT EXISTS (SELECT 1 FROM chat_run_events newer WHERE newer.run_id=r.run_id
+          AND newer.event->>'type'='input.requested' AND newer.event->>'requestId'=r.event->>'requestId'
+          AND newer.run_seq>r.run_seq)` : sql``}
         ${missing(canonicalKey)} ORDER BY r.occurred_at,r.id LIMIT ${options.limit ?? 50}
     `.execute(db)).rows;
     const requests: AttentionRequest[] = [];
@@ -57,7 +63,7 @@ export function createAttentionRequestSource(db: Kysely<NotificationDatabase>, o
       const expiresAt = new Date(expiry ?? createdAt.getTime() + 24 * 60 * 60_000);
       if (expiresAt.getTime() <= now) continue;
       requests.push({ ref: row.ref, chatId: row.chat_id, runId: row.run_id, source: "canonical_chat", kind,
-        dedupeKey: `${row.run_id}:${kind}:${requestId}`, createdAt, expiresAt, preview: activity.title });
+        dedupeKey: `${row.run_id}:${kind}:${requestId}`, createdAt, expiresAt, preview: activity.title, answerInFlight: row.answer_in_flight });
     }
     // Bot tables are bootstrapped later than Chats and are optional on older owner databases.
     const hasBots = options.source !== "canonical_chat" && (await sql<{ present: boolean }>`SELECT to_regclass('bot_interactions') IS NOT NULL AS present`.execute(db)).rows[0]?.present;
@@ -85,6 +91,6 @@ export function createAttentionRequestSource(db: Kysely<NotificationDatabase>, o
   }
   return { list, async pending(event: Pick<NotificationEventsTable, "source" | "source_ref" | "dedupe_key" | "run_id">, now: number) {
     return (await list(now, { ...(event.source === "canonical_chat" ? { key: event.dedupe_key, ...(event.run_id ? { runId: event.run_id } : {}) } : { ref: event.source_ref }),
-      source: event.source, limit: 1 })).find(request => request.dedupeKey === event.dedupe_key);
+      source: event.source, limit: 1, includeSubmitting: true })).find(request => request.dedupeKey === event.dedupe_key);
   } };
 }
