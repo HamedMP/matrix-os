@@ -128,7 +128,7 @@ export interface TerminalRuntimeOptions {
   viewerTtlMs?: number;
   /** Base backoff for retrying a workspace whose startup restore failed (default 30 s, capped at 10 min). */
   restoreRetryBaseMs?: number;
-  /** Time budget for one startup restore or background retry (default 10 s). */
+  /** Time budget for one workspace reconciliation (default 10 s). */
   restoreRetryBudgetMs?: number;
   sweepIntervalMs?: number;
   observerCloseTimeoutMs?: number;
@@ -263,7 +263,7 @@ export class TerminalRuntime {
     for (const workspace of await this.listWorkspaces()) {
       if (workspace.status === "stopped") continue;
       try {
-        await this.reconcileWorkspace(workspace.id, this.restoreBudgetMs);
+        await this.reconcileWorkspace(workspace.id);
       } catch (error) {
         if (this.shuttingDown || !isSessionScopedRestoreFailure(error)) throw error;
         this.restoreRetries.fail(workspace.id, error);
@@ -434,20 +434,21 @@ export class TerminalRuntime {
     });
   }
 
-  private reconcileWorkspace(workspaceId: string, budgetMs?: number): Promise<void> {
-    return this.runWorkspaceMutation(() => this.reconcileWorkspaceNow(workspaceId, {
-      deadline: budgetMs === undefined ? undefined : Date.now() + budgetMs,
-    }));
+  private reconcileWorkspace(workspaceId: string, { missingObserverOnly = false } = {}): Promise<void> {
+    return this.runWorkspaceMutation(async () => {
+      if (missingObserverOnly && (this.shuttingDown || this.observers.get(workspaceId)?.size !== 0)) return;
+      await this.reconcileWorkspaceNow(workspaceId, Date.now() + this.restoreBudgetMs);
+    });
   }
 
   /**
    * Pass the restore deadline down to session commands and check it between
    * tabs so an unresponsive session does not monopolize the workspace queue.
    */
-  private async reconcileWorkspaceNow(workspaceId: string, options: ZellijOperationOptions = {}): Promise<void> {
-    const bounded = options.deadline === undefined ? [] as const : [{ deadline: options.deadline }] as const;
+  private async reconcileWorkspaceNow(workspaceId: string, deadline: number): Promise<void> {
+    const options = { deadline };
     const checkDeadline = () => {
-      if (options.deadline !== undefined && Date.now() >= options.deadline) {
+      if (Date.now() >= deadline) {
         throw new WorkspaceRestoreTimeoutError();
       }
     };
@@ -462,7 +463,7 @@ export class TerminalRuntime {
       ? this.reserveObserverSlot(workspaceId)
       : () => undefined;
     try {
-      await sessionScoped(() => this.zellij.ensureSession(workspace.zellijSessionName, workspace.canonicalSize, ...bounded));
+      await sessionScoped(() => this.zellij.ensureSession(workspace.zellijSessionName, workspace.canonicalSize, options));
       const restorableTabs = Object.values(workspace.tabs)
         .filter((tab) => tab.status !== "exited" && tab.status !== "failed")
         .sort((left, right) => left.order - right.order);
@@ -470,7 +471,7 @@ export class TerminalRuntime {
         ? await sessionScoped(() => this.zellij.findTabsByInternalName!(
             workspace.zellijSessionName,
             restorableTabs.map((tab) => tab.zellijTabName),
-            ...bounded,
+            options,
           ))
         : undefined;
       for (const tab of restorableTabs) {
@@ -479,7 +480,7 @@ export class TerminalRuntime {
         if (tab.nativeHost?.stopRequested) continue;
         const nativeHost = tab.nativeHost;
         if (nativeHost && (!this.nativeHosts
-          || (await sessionScoped(() => this.nativeHosts!.inspect(nativeHost, ...bounded))).status !== "running")) {
+          || (await sessionScoped(() => this.nativeHosts!.inspect(nativeHost, options))).status !== "running")) {
           // An answer that arrived past the deadline is not proof the host ended.
           checkDeadline();
           await this.store.markTabExited({ workspaceId, tabId: tab.id });
@@ -488,7 +489,7 @@ export class TerminalRuntime {
         let ids: { tabId: number; paneId: string; launchedAt?: Date; exitRecorded?: boolean } | undefined = recoveredTabs
           ? recoveredTabs[tab.zellijTabName]
           : this.zellij.findTabByInternalName
-            ? await sessionScoped(() => this.zellij.findTabByInternalName!(workspace.zellijSessionName, tab.zellijTabName, ...bounded))
+            ? await sessionScoped(() => this.zellij.findTabByInternalName!(workspace.zellijSessionName, tab.zellijTabName, options))
             : undefined;
         if (tab.status === "starting" && tab.startupCommand === undefined) {
           // Records without startup intent predate stable client-supplied tab
@@ -505,7 +506,7 @@ export class TerminalRuntime {
           ids = {
             ...await sessionScoped(() => this.zellij.createTab(workspace.zellijSessionName, {
               internalName: tab.zellijTabName, cwd: tab.cwd, command,
-            }, ...bounded)),
+            }, options)),
             launchedAt,
           };
         }
@@ -521,7 +522,7 @@ export class TerminalRuntime {
               internalName: tab.zellijTabName,
               cwd: tab.cwd,
               ...(launch.command ? { command: launch.command } : {}),
-            }, ...bounded)),
+            }, options)),
             launchedAt,
             exitRecorded: launch.exitRecorded,
           };
@@ -1179,11 +1180,11 @@ export class TerminalRuntime {
           const status = (await this.store.getRuntimeWorkspace(id))?.status;
           return status !== undefined && status !== "stopped";
         },
-        reconcile: (id) => this.reconcileWorkspace(id, this.restoreBudgetMs),
+        reconcile: (id) => this.reconcileWorkspace(id),
         shuttingDown: () => this.shuttingDown,
       });
       if (this.shuttingDown) return;
-      await this.runWorkspaceMutation(() => this.restoreMissingObservers());
+      await this.restoreMissingObservers();
     })();
     void operation.then(
       () => { this.observerRetryQueued = false; },
@@ -1194,13 +1195,12 @@ export class TerminalRuntime {
     );
   }
 
-  /** Runs on the workspace mutation chain. */
   private async restoreMissingObservers(): Promise<void> {
-    for (const [workspaceId, observer] of this.observers) {
+    for (const [workspaceId, observer] of [...this.observers]) {
       if (this.shuttingDown) return;
       if (observer.size > 0) continue;
       try {
-        await this.reconcileWorkspaceNow(workspaceId);
+        await this.reconcileWorkspace(workspaceId, { missingObserverOnly: true });
       } catch (error) {
         console.error(
           "[terminal-runtime] failed to restore workspace observer",

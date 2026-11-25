@@ -3,7 +3,7 @@ import { TerminalRuntimeError, TerminalRuntimeStorageError, ZellijOutputError } 
 const DEFAULT_BASE_MS = 30_000;
 const MAX_DELAY_MS = 10 * 60_000;
 const DEFAULT_MAX_ENTRIES = 1_024;
-/** Time budget for one startup or background workspace restore. */
+/** Time budget for one workspace reconciliation. */
 export const DEFAULT_RESTORE_BUDGET_MS = 10_000;
 
 export class WorkspaceRestoreTimeoutError extends TerminalRuntimeError {

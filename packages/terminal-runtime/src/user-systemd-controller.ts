@@ -1,7 +1,8 @@
 import { validateTerminalClosureIfPresent } from "./generation-closure.mjs";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { link, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, link, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -491,6 +492,7 @@ export function createUserSystemdTerminalRuntime(options: {
       if (!stats.isDirectory() || stats.isSymbolicLink() || !pathIsWithin(homeReal, descriptorReal)) {
         throw new TerminalRuntimeStorageError(undefined, "Invalid terminal runtime request");
       }
+      await access(descriptorRoot, constants.R_OK | constants.X_OK);
     } catch (err: unknown) {
       if (err instanceof TerminalRuntimeStorageError) throw err;
       throw new TerminalRuntimeStorageError(err);
@@ -557,29 +559,24 @@ export function createUserSystemdTerminalRuntime(options: {
     if (!parsed.success) throw new InvalidTerminalRuntimeRequestError();
     await ensureDescriptorRoot();
     const path = join(descriptorRoot, `${parsed.data}.json`);
-    let stats;
     try {
-      stats = await lstat(path);
+      const stats = await lstat(path);
+      if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 64 * 1024) {
+        throw new InvalidTerminalRuntimeRequestError();
+      }
+      const descriptor = DescriptorSchema.safeParse(JSON.parse(await readFile(path, "utf8")));
+      if (!descriptor.success || descriptor.data.runtimeId !== parsed.data) {
+        throw new InvalidTerminalRuntimeRequestError();
+      }
+      return descriptor.data;
     } catch (err: unknown) {
       if (isErrnoCode(err, "ENOENT")) return null;
-      throw new TerminalRuntimeStorageError(err);
-    }
-    if (!stats.isFile() || stats.isSymbolicLink() || stats.size > 64 * 1024) {
-      throw new InvalidTerminalRuntimeRequestError();
-    }
-    let rawDescriptor: unknown;
-    try {
-      rawDescriptor = JSON.parse(await readFile(path, "utf8"));
-    } catch (err: unknown) {
-      if (isErrnoCode(err, "ENOENT")) return null;
+      if (err instanceof InvalidTerminalRuntimeRequestError) throw err;
       if (err instanceof SyntaxError) throw new InvalidTerminalRuntimeRequestError();
-      throw new TerminalRuntimeStorageError(err);
+      // Recheck the shared root in case it changed during the descriptor read.
+      await ensureDescriptorRoot();
+      throw new TerminalRuntimeUnavailableError(err);
     }
-    const descriptor = DescriptorSchema.safeParse(rawDescriptor);
-    if (!descriptor.success || descriptor.data.runtimeId !== parsed.data) {
-      throw new InvalidTerminalRuntimeRequestError();
-    }
-    return descriptor.data;
   }
 
   async function listDescriptors(): Promise<UserSystemdTerminalDescriptor[]> {
