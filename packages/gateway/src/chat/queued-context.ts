@@ -3,7 +3,7 @@ import { ChatRunContextSchema, isChatAgentDriver, type ChatRunContext, type Cano
 import { ChatConflictError } from "./errors.js";
 import type { Kysely, Transaction } from "kysely";
 import type { ChatDatabase } from "./database.js";
-import { parseJson, toMessage } from "./records.js";
+import { parseJson, toMessage, visibleChatMessagePredicate } from "./records.js";
 import { chatContextRequestHash } from "./agent-context.js";
 
 /** The browser selected one creation payload. A queue edit or steer cannot reuse that decision. */
@@ -23,7 +23,7 @@ export async function queuedRunContext(
 ): Promise<ChatRunContext | undefined> {
   if (!privateChat || queued.selection.instanceId === "matrix_bot_default" || !messageCount) return queued.context;
   const rows = await db.selectFrom("chat_messages").selectAll()
-    .where("chat_id", "=", queued.chatId).orderBy("seq", "desc").limit(SESSION_HISTORY_MESSAGE_LIMIT + 1).execute();
+    .where("chat_id", "=", queued.chatId).where(visibleChatMessagePredicate()).orderBy("seq", "desc").limit(SESSION_HISTORY_MESSAGE_LIMIT + 1).execute();
   return withChatSessionHistory({
     chatId: queued.chatId, title, throughSeq: messageCount,
     requestHash: queued.context?.requestHash ?? chatContextRequestHash({ ...queued, baseRevision: 0 }),

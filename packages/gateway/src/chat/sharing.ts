@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import { z } from "zod/v4";
 import type { ChatDatabase } from "./database.js";
-import type { ChatOwner } from "./records.js";
+import { type ChatOwner, visibleChatMessagePredicate } from "./records.js";
 import { redactAssistantParts, redactSharedAssistantText } from "./safe-activity-projection.js";
 import { hasCompanyDriveMaterial } from "./drive-sharing-guard.js";
 
@@ -38,7 +38,7 @@ async function readSnapshot(trx: Kysely<ChatDatabase>, chatId: string, title: st
   if (await hasCompanyDriveMaterial(trx, chatId)) throw new ChatSharingError("conflict");
   const rows = await trx.selectFrom("chat_messages").select(["role", "parts"])
     .where("chat_id", "=", chatId).where("state", "=", "committed").where("role", "in", ["user", "assistant"])
-    .orderBy("seq").limit(201).execute();
+    .where(visibleChatMessagePredicate()).orderBy("seq").limit(201).execute();
   if (rows.length > 200) throw new ChatSharingError("limit");
   const messages = rows.flatMap((row) => {
     const parts = z.array(z.unknown()).max(200).parse(row.parts);

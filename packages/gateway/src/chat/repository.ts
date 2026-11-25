@@ -72,6 +72,7 @@ import {
   toOutbox,
   toRun,
   toTurn,
+  visibleChatMessagePredicate,
   type ChatExport,
   type ChatLegacyImportRecord,
   type ChatMigrationRecord,
@@ -1096,7 +1097,8 @@ export class ChatRepository {
       const throughSeq = record.chat.chat.messageCount;
       const rows = await trx.selectFrom("chat_messages").selectAll()
         .where("chat_id", "=", chatId).where("seq", "<=", throughSeq).where("state", "=", "committed")
-        .where("role", "in", ["user", "assistant"]).orderBy("seq", "desc").limit(SESSION_HISTORY_MESSAGE_LIMIT).execute();
+        .where("role", "in", ["user", "assistant"]).where(visibleChatMessagePredicate())
+        .orderBy("seq", "desc").limit(SESSION_HISTORY_MESSAGE_LIMIT).execute();
       return { ...record, history: { chatId, throughSeq, messages: rows.reverse().map(toMessage) } };
     });
   }

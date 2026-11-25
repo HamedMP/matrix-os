@@ -2,6 +2,7 @@ import { link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
+import { ProjectSetupStartRequestSchema } from "@matrix-os/contracts";
 import { openProjectSetupWorkspace } from "../../packages/gateway/src/chat/project-setup-workspace.js";
 import { registerCustomMcpGatewayRoutes } from "../../packages/gateway/src/integrations/custom-mcp/gateway-routes.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +13,7 @@ import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat
 import { appendProjectSetupTranscript } from "../../packages/gateway/src/chat/project-setup-transcript.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { SideChatRepository } from "../../packages/gateway/src/chat/side-chat-repository.js";
+import { bootstrapChatSharing, ChatSharing } from "../../packages/gateway/src/chat/sharing.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry, type CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { applyProjectSetupInterview, beginProjectSetupInterview, initialProjectSetup, projectSetupInterviewPrompt, transitionProjectSetupInterview } from "../../packages/gateway/src/chat/project-setup-state.js";
@@ -22,6 +24,23 @@ import { jsonb } from "../../packages/gateway/src/chat/records.js";
 
 const selection = { instanceId: "codex_default", model: "gpt-5.6-sol" };
 const executionRootFingerprint = "a".repeat(64);
+
+it("starts the interview with the selected model and keeps context and provenance server-owned", () => {
+  const body = {
+    mode: "interview",
+    clientRequestId: "req_setup",
+    currentSelection: { instanceId: "claude_fixture", model: "haiku" },
+  };
+  expect(ProjectSetupStartRequestSchema.parse(body)).toEqual(body);
+  for (const injected of [
+    { answer: "Legacy input" },
+    { ownerId: "another_owner" },
+    { projectId: "another_project" },
+    { projectSetupDraft: { mode: "interview", revision: 0 } },
+  ]) {
+    expect(ProjectSetupStartRequestSchema.safeParse({ ...body, ...injected }).success).toBe(false);
+  }
+});
 
 it("rejects image embeds in Agent-generated setup replies and file proposals", () => {
   const context = { project: { name: "Operations" }, skills: [], instructionFiles: [], mcpServices: [] };
@@ -457,7 +476,7 @@ describe("admitted project setup generation", () => {
       initialProjectSetup("chat_setup", "project_a", "Portfolio", "msg_question"), selection, "req_generate", executionRootFingerprint);
     expect(generation.status).toBe("unavailable"); expect(admitTurn).not.toHaveBeenCalled();
   });
-  it("keeps interview wire text out of the visible Chat and Side Chat context", async () => {
+  it("keeps interview wire text out of visible Chat history, shares, queues, and Claude recovery", async () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const chatId = snapshot.chat.id;
     await repository.create(owner, { id: chatId, title: "Release notes", clientRequestId: "req_setup_preview_test" });
@@ -478,6 +497,13 @@ describe("admitted project setup generation", () => {
     expect.soft(admitted?.chat.lastMessagePreview).toBe(ownerText);
     expect.soft(admitted?.providerBinding).toBeUndefined();
 
+    const followup = "Draft notes from the changelog.";
+    const claude = { instanceId: "claude_fixture", model: "haiku" };
+    await repository.enqueueQueuedTurn(owner, {
+      chatId, baseRevision: admitted!.chat.revision, queuedTurnId: "qturn_setup_followup", clientRequestId: "req_setup_followup",
+      parts: [{ type: "text", text: followup }], driverKind: "claude_code", selection: claude,
+      interactionMode: "default", permissionMode: "supervised", capabilitySnapshot: run.capabilitySnapshot, createdAt: run.createdAt,
+    });
     const delta = '{"reply":"internalsetuppayload"}';
     await repository.appendAssistantDelta(owner, {
       chatId, runId: run.id, messageId: "msg_interview_raw", delta, createdAt: run.createdAt,
@@ -520,6 +546,38 @@ describe("admitted project setup generation", () => {
     expect(prompt).toContain(`user: ${ownerText}`);
     expect(prompt).toContain("assistant: Who reviews the changelog?");
     expect(prompt).not.toMatch(/internalsetup(?:instruction|payload)/);
+
+    await bootstrapChatSharing(repository.kysely);
+    const sharing = new ChatSharing(repository.kysely);
+    const expectedShare = [
+      { role: "user", text: ownerText },
+      { role: "assistant", text: "Who reviews the changelog?" },
+    ];
+    const sharePreview = await sharing.preview(owner, chatId);
+    expect.soft(sharePreview.messages).toEqual(expectedShare);
+    const published = await sharing.create(owner, chatId, sharePreview.revision, sharePreview.fingerprint);
+    expect.soft((await sharing.read(published.token))?.messages).toEqual(expectedShare);
+
+    const claimed = await repository.claimNextQueuedTurn(owner, {
+      chatId, turnId: "cturn_setup_followup", runId: "run_setup_followup", messageId: "msg_setup_followup", claimedAt: run.createdAt,
+    });
+    expect(claimed?.run.context?.history).toMatchObject({
+      text: `User: ${ownerText}\n\nAssistant: Who reviews the changelog?`,
+      truncated: false,
+    });
+
+    const runId = claimed!.run.id;
+    const sessionId = "ordinary_claude_checkpoint";
+    const reply = "I can draft release notes from the changelog.";
+    await repository.appendAssistantDelta(owner, { chatId, runId, messageId: "msg_claude_followup", delta: reply, createdAt: run.createdAt });
+    await repository.updateAdapterState(owner, { chatId, runId, driverKind: "claude_code", instanceId: claude.instanceId,
+      schemaVersion: 1, state: { sessionId } });
+    await repository.finishRun(owner, { chatId, runId, completedAt: run.createdAt, outcome: "completed" });
+    const recovered = await repository.getClaudeNativeRecoveryCheckpoint(owner, chatId, { sourceRunId: runId, sessionId }, { includeHistory: true });
+    expect(recovered?.run).toMatchObject({ id: runId, driverKind: "claude_code", status: "completed" });
+    expect(recovered?.history?.messages.map(message => message.parts[0])).toEqual(
+      [ownerText, "Who reviews the changelog?", followup, reply].map(text => ({ type: "text", text })),
+    );
   });
 });
 

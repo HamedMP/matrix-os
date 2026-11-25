@@ -1,5 +1,5 @@
 import { ChatRunContextSchema, type CanonicalChatMessage, type ChatRunContext } from "@matrix-os/contracts";
-import { chatContextMessages, ChatAgentContextError, transcript } from "./agent-context.js";
+import { ChatAgentContextError, transcript } from "./agent-context.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import { MATRIX_BOT_INSTANCE_ID } from "../bots/selection.js";
@@ -46,7 +46,7 @@ export async function prepareChatSessionContext(input: {
   }
   return withChatSessionHistory({
     chatId: input.chatId, title: detail.record.chat.title, throughSeq: input.throughSeq,
-    requestHash: input.requestHash, messages: chatContextMessages(detail.messages, detail.runs),
+    requestHash: input.requestHash, messages: detail.messages,
     truncated: detail.nextBeforeSeq !== undefined, ...(context ? { context } : {}),
   });
 }
