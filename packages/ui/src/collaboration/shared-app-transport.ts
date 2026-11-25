@@ -165,7 +165,8 @@ export function createSharedAppTransport(input: {
   };
 
   const readData = async (key: string): Promise<string | null> => {
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(key)) throw new SharedAppTransportError("unavailable", false);
+    // The owner's gateway normalizes the key exactly like the owner's own bridge.
+    if (key.length < 1 || key.length > 256) throw new SharedAppTransportError("unavailable", false);
     try {
       return CollaborativeAppDataReadResponseSchema.parse(await input.direct.request(
         target.scopeId, "GET", `${base}/data?key=${encodeURIComponent(key)}`,

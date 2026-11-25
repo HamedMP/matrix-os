@@ -31,7 +31,11 @@ const BridgeMessageSchema = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("matrix:shared-app:read-data"),
     requestId: z.string().min(8).max(128),
-    action: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    action: z.string().min(1).max(256),
+  }),
+  // ENG-579: the read-only bridge refused a write locally; show the view-only notice.
+  z.strictObject({
+    type: z.literal("matrix:shared-app:view-only"),
   }),
 ]);
 const BRIDGE_READY_TIMEOUT_MS = 10_000;
@@ -61,7 +65,13 @@ export function SharedAppViewer({ target, transport }: {
 
   const applyFailure = useCallback((error: unknown) => {
     const code = error instanceof SharedAppTransportError ? error.code : "unavailable";
-    if (code === "read_only") return setViewOnlyNotice(true);
+    if (code === "read_only") {
+      // A refused write (or refused retry) is final: clear any pending recovery and keep the app open.
+      pendingMutationRecovery.current = false;
+      setState(documentReady.current ? "ready" : "launching");
+      setViewOnlyNotice(true);
+      return;
+    }
     if (code === "uncertain") pendingMutationRecovery.current = true;
     if (code === "conflict" || code === "access_ended") pendingMutationRecovery.current = false;
     setState(pendingMutationRecovery.current ? "uncertain" : code);
@@ -148,6 +158,10 @@ export function SharedAppViewer({ target, transport }: {
       const parsed = BridgeMessageSchema.safeParse(event.data);
       if (!parsed.success) return;
       const request = parsed.data;
+      if (request.type === "matrix:shared-app:view-only") {
+        setViewOnlyNotice(true);
+        return;
+      }
       if (request.type === "matrix:shared-app:ready") {
         documentReady.current = true;
         setState(pendingMutationRecovery.current ? "uncertain" : "ready");
@@ -216,7 +230,7 @@ export function SharedAppViewer({ target, transport }: {
   </div>;
 }
 
-type BridgeRequest = Exclude<z.infer<typeof BridgeMessageSchema>, { type: "matrix:shared-app:ready" }>;
+type BridgeRequest = Exclude<z.infer<typeof BridgeMessageSchema>, { type: "matrix:shared-app:ready" | "matrix:shared-app:view-only" }>;
 
 function bridgeWork(
   transport: SharedAppTransport,

@@ -604,13 +604,34 @@ async function guardedFetch(fetchImpl: typeof fetch, url: string, init: RequestI
   }
 }
 
-/** Reads a home's small 403 body once; only the exact `read_only` code is distinguished. */
+const MAX_REFUSAL_BODY_BYTES = 512;
+
+/**
+ * Reads at most 512 bytes of a home's 403 body (the caller throws on 403 either way, so the body is
+ * consumed here, never cloned); only the exact `read_only` code is distinguished.
+ */
 async function isReadOnlyRefusal(response: Response): Promise<boolean> {
-  if (!response.headers.get("content-type")?.startsWith("application/json")) return false;
+  const declared = Number(response.headers.get("content-length") ?? 0);
+  if (!response.body || !response.headers.get("content-type")?.startsWith("application/json")
+    || !Number.isFinite(declared) || declared > MAX_REFUSAL_BODY_BYTES) {
+    await response.body?.cancel();
+    return false;
+  }
+  const reader = response.body.getReader();
+  const bytes = new Uint8Array(MAX_REFUSAL_BODY_BYTES);
+  let size = 0;
   try {
-    const text = await response.clone().text();
-    if (text.length > 512) return false;
-    const body = JSON.parse(text) as unknown;
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      if (size + next.value.byteLength > MAX_REFUSAL_BODY_BYTES) {
+        await reader.cancel();
+        return false;
+      }
+      bytes.set(next.value, size);
+      size += next.value.byteLength;
+    }
+    const body = JSON.parse(new TextDecoder().decode(bytes.subarray(0, size))) as unknown;
     return typeof body === "object" && body !== null && (body as { code?: unknown }).code === "read_only";
   } catch (error: unknown) {
     if (!(error instanceof SyntaxError)) {

@@ -31,7 +31,7 @@ interface ReadOnlyBridge {
   };
   readData?(key: string): Promise<unknown>;
   writeData?(key: string, value: unknown): Promise<unknown>;
-  collaboration: { mutate(action: unknown, revision: string): Promise<unknown> };
+  collaboration: { mutate(action: unknown, revision: string): Promise<unknown>; retryMutation(): Promise<unknown> };
 }
 const disposers: Array<() => void> = [];
 afterEach(() => { for (const dispose of disposers.splice(0)) dispose(); cleanup(); vi.restoreAllMocks(); });
@@ -44,6 +44,7 @@ async function setup(readOnly: boolean) {
   })) };
   const direct = {
     request: vi.fn(async (_scope: string, method: string, path: string, body?: { action?: { action?: string } }) => {
+      if (method === "GET" && path === `${base}/data?key=clock.zones`) return { value: null };
       if (method === "GET" && path === `${base}/data?key=settings`) {
         return { value: `${APP_BRIDGE_STORED_VALUE_PREFIX}${JSON.stringify({ value: { theme: "dark" } })}` };
       }
@@ -93,13 +94,32 @@ it("reads and unwraps the owner's key-value data", async () => {
   await act(async () => { await expect(bridge.readData!("settings")).resolves.toEqual({ theme: "dark" }); });
 });
 
-it("refuses db and key-value writes locally without contacting the owner", async () => {
+it("refuses db and key-value writes locally without contacting the owner, and shows the notice", async () => {
   const { bridge, direct } = await setup(true);
   await act(async () => {
     await expect(bridge.db!.insert("items", { id: "x" })).rejects.toThrow("view-only");
     await expect(bridge.writeData!("settings", {})).rejects.toThrow("view-only");
   });
   expect(direct.request).not.toHaveBeenCalled();
+  expect(screen.getByRole("status").textContent).toContain("This app is view-only");
+});
+
+it("passes keys through for the owner to normalize like its own bridge", async () => {
+  const { bridge, direct } = await setup(true);
+  await act(async () => { await expect(bridge.readData!("clock.zones")).resolves.toBeNull(); });
+  expect(direct.request).toHaveBeenCalledWith(scopeId, "GET", `${base}/data?key=clock.zones`);
+});
+
+it("clears an unconfirmed write when its retry is refused as view-only", async () => {
+  const { bridge, direct } = await setup(true);
+  direct.request.mockRejectedValueOnce(new CollaborationDirectError("unavailable"));
+  await act(async () => { await expect(bridge.collaboration.mutate({ action: "insert", table: "items", data: { id: "x" } }, "0")).rejects.toThrow(); });
+  expect(screen.getByText("Change not confirmed")).toBeTruthy();
+  direct.request.mockRejectedValueOnce(new CollaborationDirectError("read_only", "This app is view-only"));
+  await act(async () => { await expect(bridge.collaboration.retryMutation()).rejects.toThrow("view-only"); });
+  expect(screen.queryByText("Change not confirmed")).toBeNull();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("status").textContent).toContain("This app is view-only");
 });
 
 it("keeps the app open with an inline notice when the owner refuses a write as view-only", async () => {
