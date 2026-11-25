@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 # Matrix OS standalone server installer.
 # Public copy is served from https://matrix-os.com/install-server.sh.
+# pattern-allow large-file: single-file curl|bash installer (expires 2026-12-31, approved-by hamed)
 
 DEFAULT_CHANNEL="${MATRIX_CHANNEL:-dev}"
 DEFAULT_BUNDLE_BASE="https://app.matrix-os.com/system-bundles/${DEFAULT_CHANNEL}"
