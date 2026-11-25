@@ -357,6 +357,109 @@ describe("authenticated Chat Electron preview transport", () => {
     }
   });
 
+  it.each([
+    { endpoint: "Chat detail", outcome: "returned", reads: 1 },
+    { endpoint: "worktree inventory", outcome: "returned", reads: 1 },
+    { endpoint: "Git HEAD", outcome: "returned", reads: 1 },
+    { endpoint: "Git status", outcome: "returned", reads: 1 },
+    { endpoint: "source file", outcome: "returned", reads: 1 },
+    { endpoint: "receipt reconciliation", outcome: "returned", reads: 1, postStatus: 502 },
+    { endpoint: "receipt reconciliation", outcome: "returned", reads: 1, postStatus: 409 },
+    { endpoint: "receipt reconciliation", outcome: "failed", reads: 1, postStatus: 403 },
+    { endpoint: "receipt reconciliation", outcome: "failed", reads: 1, postStatus: 403, networkReset: true },
+    { endpoint: "Chat detail", outcome: "failed", reads: 2, persistent: true },
+    { endpoint: "Chat detail", outcome: "failed", reads: 1, readStatus: 403 },
+    { endpoint: "Chat detail", outcome: "failed", reads: 1, legacy: true },
+    { endpoint: "Chat detail", outcome: "unavailable", reads: 1, revoke: true },
+    { endpoint: "Chat detail", outcome: "unavailable", reads: 1, stop: true },
+  ])("handles $endpoint revalidation during verification delivery ($outcome)", async (
+    { endpoint, outcome, reads, persistent, readStatus = 502, postStatus, networkReset, legacy, revoke, stop },
+  ) => {
+    const { service: transport, fetchFn, existingUpload, storeResult } = legacy ? mockTransport() : verificationFixture();
+    const fetch = fetchFn.getMockImplementation()!;
+    const chatPath = "/api/chats/" + chatId;
+    const approve = vi.fn(async () => true);
+    const claim = vi.fn(async (_key: string) => true);
+    const execute = vi.fn(async () => previewResult);
+    let failedReads = 0;
+    let posted = false;
+    const check = vi.fn(async () => !revoke || failedReads === 0);
+    const service = createChatElectronPreviewService({
+      ...transport, enabled: true, approve, claim, execute, wasHandled: async () => false,
+      acquireActionPairing: async () => ({ check, close: vi.fn() }),
+    });
+    storeResult();
+
+    fetchFn.mockImplementation(async (input, options) => {
+      const pathname = new URL(String(input)).pathname;
+      if (pathname === chatPath + "/turns" && !posted) {
+        posted = true;
+        if (postStatus === 502) {
+          const accepted = await fetch(input, options);
+          expect(accepted.status).toBe(202);
+          await accepted.body?.cancel();
+        }
+        if (postStatus) {
+          existingUpload(png);
+          if (postStatus === 409) {
+            return Response.json({ error: { code: "chat_busy", safeMessage: "Chat busy.", retryable: true } }, { status: 409 });
+          }
+          return new Response("Receipt unavailable", { status: postStatus });
+        }
+      }
+      if (!execute.mock.calls.length || (failedReads && !persistent)) return fetch(input, options);
+      const matchesEndpoint = endpoint === "Chat detail" && pathname === chatPath
+        || endpoint === "worktree inventory" && pathname === "/api/projects/matrix-os/worktrees"
+        || endpoint === "Git HEAD" && pathname === "/api/terminal/run" && JSON.parse(String(options?.body)).command.includes("rev-parse")
+        || endpoint === "Git status" && pathname === "/api/terminal/run" && JSON.parse(String(options?.body)).command.includes("status")
+        || endpoint === "source file" && pathname === "/api/coding-agents/files/read"
+        || endpoint === "receipt reconciliation" && pathname === chatPath && posted;
+      if (!matchesEndpoint) return fetch(input, options);
+      failedReads++;
+      if (stop) void service.cancel("stopped");
+      if (networkReset) throw new TypeError("Connection reset during reconciliation");
+      return new Response("Revalidation unavailable", { status: readStatus });
+    });
+
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      await expect(service.run(legacy ? { chatId, runId } : verificationTarget)).resolves.toEqual({ status: outcome });
+    } finally {
+      clock.mockRestore();
+    }
+    expect(failedReads).toBe(reads);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(approve).toHaveBeenCalledOnce();
+    expect(claim).toHaveBeenCalledOnce();
+    const writes = resultWrites(fetchFn);
+    const methods = writes.map(([, options]) => options?.method);
+    if (postStatus === 409) {
+      expect(methods).toEqual(["PUT", "POST", "PUT", "POST"]);
+    } else {
+      expect(methods).toEqual(postStatus || outcome === "returned" ? ["PUT", "POST"] : []);
+    }
+    for (const [, options] of writes.filter(([, options]) => options?.method === "POST")) {
+      expect(JSON.parse(String(options?.body))).toMatchObject({
+        clientRequestId: `req_electron_preview_${claim.mock.calls[0]![0]}`,
+      });
+    }
+  });
+
+  it("keeps an HTTP 502 during verification discovery unavailable before approval", async () => {
+    const { service: transport, fetchFn } = verificationFixture();
+    fetchFn.mockResolvedValueOnce(new Response("Chat unavailable", { status: 502 }));
+    const approve = vi.fn(async () => true);
+    const execute = vi.fn(async () => previewResult);
+    const service = createChatElectronPreviewService({
+      ...transport, enabled: true, approve, execute, claim: async () => true, wasHandled: async () => false,
+    });
+
+    await expect(service.run(verificationTarget)).resolves.toEqual({ status: "unavailable" });
+    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(approve).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("verifies a clean worktree with an unchanged supported source", async () => {
     const { service, setGit, setSource } = verificationFixture();
     setGit(originHead, "");

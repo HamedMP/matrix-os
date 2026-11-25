@@ -111,6 +111,11 @@ function throwFetchError(error: unknown): never {
 }
 
 type Auth = Pick<AuthService, "getStatus" | "getToken" | "getGatewayOrigin">;
+type ReadOptions = { signal?: AbortSignal; retryBadGateway?: boolean };
+
+function isInterruptedDelivery(response: Response, retryBadGateway?: boolean) {
+  return retryBadGateway === true && response.status === 502;
+}
 interface RuntimeAuthority {
   token: string;
   origin: string;
@@ -256,35 +261,39 @@ export function createChatElectronPreviewTransport(
     return response;
   }
 
-  async function requestJson(authority: RuntimeAuthority, path: string, maximum?: number, init?: RequestInit) {
-    const response = await request(authority, path, init);
+  async function requestJson(authority: RuntimeAuthority, path: string, maximum?: number, init: RequestInit & ReadOptions = {}) {
+    const { retryBadGateway, ...requestInit } = init;
+    const response = await request(authority, path, requestInit);
     if (!response.ok) {
       await response.body?.cancel();
+      if (isInterruptedDelivery(response, retryBadGateway)) {
+        throw new ChatElectronPreviewTransportInterruptedError(new Error("Preview delivery revalidation returned 502"));
+      }
       return null;
     }
     const data = await readJson(response, maximum);
-    init?.signal?.throwIfAborted();
+    requestInit.signal?.throwIfAborted();
     if (!sameAuthority(authority, currentAuthority())) throw new Error("Preview session changed");
     return data;
   }
 
-  async function readDetail(authority: RuntimeAuthority, chatId: string, signal?: AbortSignal) {
+  async function readDetail(authority: RuntimeAuthority, chatId: string, options: ReadOptions) {
     const path = chatMessageVersionUrl(`/api/chats/${chatId}?limit=50`);
-    const parsed = CanonicalChatDetailResponseSchema.safeParse(await requestJson(authority, path, undefined, { signal }));
+    const parsed = CanonicalChatDetailResponseSchema.safeParse(await requestJson(authority, path, undefined, options));
     return parsed.success ? parsed.data : null;
   }
 
-  async function readGit(authority: RuntimeAuthority, cwd: string, args: readonly string[], signal?: AbortSignal) {
+  async function readGit(authority: RuntimeAuthority, cwd: string, args: readonly string[], options: ReadOptions) {
     const result = GitReply.safeParse(await requestJson(authority, "/api/terminal/run", 128 * 1024, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ command: [...GIT_PREFIX, ...args], cwd, timeoutMs: GIT_TIMEOUT_MS }), signal,
+      ...options, method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: [...GIT_PREFIX, ...args], cwd, timeoutMs: GIT_TIMEOUT_MS }),
     }));
     return result.success ? result.data.stdout : null;
   }
 
-  async function readWorktreeCheckout(authority: RuntimeAuthority, worktreeId: string, signal?: AbortSignal) {
+  async function readWorktreeCheckout(authority: RuntimeAuthority, worktreeId: string, options: ReadOptions) {
     const cwd = `worktrees/${PROJECT_SLUG}/${worktreeId}`;
-    const inventory = WorktreeReply.safeParse(await requestJson(authority, `/api/projects/${PROJECT_SLUG}/worktrees`, 1024 * 1024, { signal }));
+    const inventory = WorktreeReply.safeParse(await requestJson(authority, `/api/projects/${PROJECT_SLUG}/worktrees`, 1024 * 1024, options));
     if (!inventory.success) return null;
     const matches = inventory.data.worktrees.filter(entry => entry.id === worktreeId);
     const checkout = matches[0]?.path;
@@ -297,18 +306,18 @@ export function createChatElectronPreviewTransport(
   // Registry and Git identity must agree before using a Chat worktree. Command
   // arguments are fixed here. Chat contributes only the validated worktree ID.
   async function readPreviewSource(
-    authority: RuntimeAuthority, worktreeId: string, verification: boolean, signal?: AbortSignal,
+    authority: RuntimeAuthority, worktreeId: string, verification: boolean, options: ReadOptions,
   ) {
-    const registered = await readWorktreeCheckout(authority, worktreeId, signal);
+    const registered = await readWorktreeCheckout(authority, worktreeId, options);
     if (!registered) return null;
     const { cwd, checkout } = registered;
-    const head = await readGit(authority, cwd, ["rev-parse", "--show-toplevel", "HEAD"], signal);
+    const head = await readGit(authority, cwd, ["rev-parse", "--show-toplevel", "HEAD"], options);
     const baseSha = head?.split("\n")[1];
     if (baseSha === undefined || !ChatElectronPreviewMarkerSchema.shape.baseSha.safeParse(baseSha).success
       || head !== `${checkout}\n${baseSha}\n`) return null;
     const status = await readGit(authority, cwd, [
       "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--ignore-submodules=none",
-    ], signal);
+    ], options);
     if (status === null || (status && !status.endsWith("\0"))) return null;
     const entries = status ? status.slice(0, -1).split("\0") : [];
     const edits = verification ? entries : entries.filter(entry => !OLD_PILOT_ARTIFACT.test(entry));
@@ -317,7 +326,7 @@ export function createChatElectronPreviewTransport(
 
     const query = new URLSearchParams({ projectId: PROJECT_SLUG, worktreeId, path: CHAT_ELECTRON_PREVIEW_SOURCE });
     const parsed = FileReadResponseSchema.safeParse(await requestJson(
-      authority, `/api/coding-agents/files/read?${query}`, MAX_SOURCE_REPLY_BYTES, { signal },
+      authority, `/api/coding-agents/files/read?${query}`, MAX_SOURCE_REPLY_BYTES, options,
     ));
     if (!parsed.success || parsed.data.truncated || parsed.data.metadata.path !== CHAT_ELECTRON_PREVIEW_SOURCE) return null;
     const bytes = Buffer.from(parsed.data.content);
@@ -326,18 +335,18 @@ export function createChatElectronPreviewTransport(
   }
 
   async function readVerificationManifest(authority: RuntimeAuthority, worktreeId: string, signal?: AbortSignal) {
-    const source = await readPreviewSource(authority, worktreeId, true, signal);
+    const source = await readPreviewSource(authority, worktreeId, true, { signal });
     if (!source) return null;
     const { cwd, baseSha, bytes, edited } = source;
-    const committed = await readGit(authority, cwd, ["show", `${baseSha}:${CHAT_ELECTRON_PREVIEW_SOURCE}`], signal);
+    const committed = await readGit(authority, cwd, ["show", `${baseSha}:${CHAT_ELECTRON_PREVIEW_SOURCE}`], { signal });
     const label = committed === null ? null : deriveVerificationLabel(Buffer.from(committed), bytes);
     if (!label || edited !== (label !== CHAT_ELECTRON_PREVIEW_BASE_LABEL)) return null;
     return { baseSha, label, sourceSha256: sha256(bytes) };
   }
 
-  async function verifySource(authority: RuntimeAuthority, preview: ChatElectronPreviewRequest, signal?: AbortSignal) {
+  async function verifySource(authority: RuntimeAuthority, preview: ChatElectronPreviewRequest, options: ReadOptions) {
     const verification = preview.requestKind === "verification";
-    const source = await readPreviewSource(authority, preview.worktreeId, verification, signal);
+    const source = await readPreviewSource(authority, preview.worktreeId, verification, options);
     return source !== null && source.baseSha === preview.baseSha && sha256(source.bytes) === preview.sourceSha256
       && (!verification || source.edited === (preview.label !== CHAT_ELECTRON_PREVIEW_BASE_LABEL));
   }
@@ -345,7 +354,7 @@ export function createChatElectronPreviewTransport(
   async function verifyTerminalWorktree(authority: RuntimeAuthority, projectId: string, worktreeId: string, signal?: AbortSignal) {
     const project = ProjectReply.safeParse(await requestJson(authority, `/api/projects/${PROJECT_SLUG}`, 64 * 1024, { signal }));
     return project.success && project.data.project.id === projectId
-      && (await readWorktreeCheckout(authority, worktreeId, signal)) !== null;
+      && (await readWorktreeCheckout(authority, worktreeId, { signal })) !== null;
   }
 
   function terminalContext(authority: RuntimeAuthority, chatId: string, projectId: string, worktreeId: string) {
@@ -368,7 +377,7 @@ export function createChatElectronPreviewTransport(
     expected: { runId: string } | { context: MacTerminalContext; grant: MacTerminalGrant },
     signal?: AbortSignal,
   ): Promise<MacTerminalRequest | null> {
-    const detail = await readDetail(authority, chatId, signal);
+    const detail = await readDetail(authority, chatId, { signal });
     if (!detail || detail.record.activeRun) return null;
     const latest = getLatestCompletedMacTerminalRun(detail);
     if (!latest || ("runId" in expected && latest.id !== expected.runId)) return null;
@@ -411,7 +420,7 @@ export function createChatElectronPreviewTransport(
       if (!TerminalContextRef.safeParse(ref).success) return null;
       const authority = currentAuthority();
       if (!authority) return null;
-      const detail = await readDetail(authority, ref.chatId, signal);
+      const detail = await readDetail(authority, ref.chatId, { signal });
       if (!detail || detail.record.activeRun) return null;
       const latest = getLatestCompletedMacTerminalRun(detail);
       const candidate = latest && getPersonalWorktreeRun(detail, authority.ownerId, { chatId: ref.chatId, runId: latest.id });
@@ -443,7 +452,7 @@ export function createChatElectronPreviewTransport(
       const binding = { context, grant, signal };
       const authority = backgroundAuthority(binding);
       if (!authority) return null;
-      const detail = await readDetail(authority, context.chatId, signal);
+      const detail = await readDetail(authority, context.chatId, { signal });
       const candidate = detail && getBackgroundPreview(detail, authority, binding);
       return candidate ? { chatId: context.chatId, runId: candidate.run.id } : null;
     },
@@ -461,7 +470,7 @@ export function createChatElectronPreviewTransport(
       const key = sha256(JSON.stringify([terminal.scopeKey, terminal.chatId, terminal.runId]));
 
       async function prepareTurn(binding: RuntimeAuthority) {
-        const detail = await readDetail(binding, terminal.chatId, signal);
+        const detail = await readDetail(binding, terminal.chatId, { signal });
         if (!detail) throw new Error("Mac terminal Chat could not be read");
         const candidate = getPersonalWorktreeRun(detail, binding.ownerId, terminal);
         const marker = getMacTerminalProbeMarkerForRun(detail, terminal.runId);
@@ -512,7 +521,7 @@ export function createChatElectronPreviewTransport(
       if (isVerification && background) return null;
       const authority = background ? backgroundAuthority(background) : currentAuthority();
       if (!authority) return null;
-      const detail = await readDetail(authority, ref.chatId, signal);
+      const detail = await readDetail(authority, ref.chatId, { signal });
       if (!detail) return null;
       const marked = isVerification ? null : (background
         ? getBackgroundPreview(detail, authority, background)
@@ -533,7 +542,7 @@ export function createChatElectronPreviewTransport(
         backgroundTargetId: marked?.marker.backgroundTargetId,
         expiresAt: Date.parse(candidate.run.completedAt!) + CHAT_ELECTRON_PREVIEW_MAX_AGE_MS,
       });
-      if ((!isVerification && !(await verifySource(authority, preview, signal))) || preview.expiresAt <= now()) return null;
+      if ((!isVerification && !(await verifySource(authority, preview, { signal }))) || preview.expiresAt <= now()) return null;
       bindings.set(preview, { authority, run: candidate.run });
       return preview;
     },
@@ -578,11 +587,11 @@ export function createChatElectronPreviewTransport(
 
       function deliveryError(response: Response, message: string) {
         const error = new Error(message);
-        return isVerification && response.status === 502 ? new ChatElectronPreviewTransportInterruptedError(error) : error;
+        return isInterruptedDelivery(response, isVerification) ? new ChatElectronPreviewTransportInterruptedError(error) : error;
       }
 
-      async function prepareTurn() {
-        const detail = await readDetail(authority, preview.chatId, signal);
+      async function prepareTurn(retryBadGateway = isVerification) {
+        const detail = await readDetail(authority, preview.chatId, { signal, retryBadGateway });
         if (!detail) throw new Error("Preview Chat or source changed");
         const marked = isVerification ? null : getPrivateRun(detail, authority.ownerId, preview);
         const candidate = isVerification ? getPreviewCapableRun(detail, authority.ownerId, preview) : marked;
@@ -609,9 +618,10 @@ export function createChatElectronPreviewTransport(
         return candidate?.turn ?? null;
       }
 
+      const deliveryReads = { signal, retryBadGateway: isVerification };
       const initial = await waitForIdleTurn();
       if (!initial) return;
-      if ((isVerification || ownerReference) && !(await verifySource(authority, preview, signal))) throw new Error("Preview source changed");
+      if ((isVerification || ownerReference) && !(await verifySource(authority, preview, deliveryReads))) throw new Error("Preview source changed");
       if (ownerReference && "png" in result) {
         const path = `/api/files/blob?${new URLSearchParams({ path: ownerReference })}`;
         const uploaded = await request(authority, path, {
@@ -642,7 +652,7 @@ export function createChatElectronPreviewTransport(
       let turn = await waitForIdleTurn();
       while (turn) {
         if ((isVerification || ownerReference) && turn.baseRevision !== verifiedRevision) {
-          if (!(await verifySource(authority, preview, signal))) throw new Error("Preview source changed");
+          if (!(await verifySource(authority, preview, deliveryReads))) throw new Error("Preview source changed");
           verifiedRevision = turn.baseRevision;
           turn = await waitForIdleTurn();
           continue;
@@ -662,11 +672,20 @@ export function createChatElectronPreviewTransport(
         }
 
         const conflict = await readAdmissionConflict(response);
-        const refreshed = await prepareTurn();
+        const retryableConflict = conflict === "chat_busy" || conflict === "chat_conflict";
+        const retryReconciliation = isInterruptedDelivery(response, isVerification) || (isVerification && retryableConflict);
+        // Reconcile an already-accepted receipt, but retain a permanent POST failure
+        // if the reconciliation read is itself interrupted.
+        const refreshed = await prepareTurn(retryReconciliation).catch((error: unknown) => {
+          if (isVerification && !retryReconciliation && error instanceof ChatElectronPreviewTransportInterruptedError) {
+            throw new Error("Preview result could not be posted", { cause: error });
+          }
+          throw error;
+        });
         if (!refreshed) return;
         // A concurrent Chat turn can win between the idle check and admission.
         // Keep the same receipt identity and reuse the single uploaded PNG.
-        if (conflict !== "chat_busy" && (conflict !== "chat_conflict" || refreshed.turn.baseRevision === turn.baseRevision)) {
+        if (!retryableConflict || (conflict === "chat_conflict" && refreshed.turn.baseRevision === turn.baseRevision)) {
           throw deliveryError(response, "Preview result could not be posted");
         }
         verifiedRevision = undefined;
