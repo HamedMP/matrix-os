@@ -19,6 +19,7 @@ import {
   IDLE_SLEEP_AFTER_MS,
   LIFECYCLE_ALERT_AFTER_MS,
   METAL_SLEEP_INTERVAL_MS,
+  METAL_WAKE_INTERVAL_MS,
   SCHEDULED_WAKE_LEAD_MS,
   SLEEP_PASS_BUDGET_MS,
   SLEEP_RECHECK_AFTER_MS,
@@ -996,6 +997,24 @@ describe('metal sleeper worker', () => {
     try {
       await vi.advanceTimersByTimeAsync(METAL_SLEEP_INTERVAL_MS);
       expect(sleep).toHaveBeenCalledTimes(1);
+      expect(wake).toHaveBeenCalledTimes(1 + METAL_SLEEP_INTERVAL_MS / METAL_WAKE_INTERVAL_MS);
+    } finally {
+      worker.stop();
+      await worker.drain();
+    }
+  });
+
+  it('starts the next scheduled wake scan promptly after a saturated pass', async () => {
+    vi.useFakeTimers();
+    const wake = vi.fn(async () => {});
+    wake.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 32_000));
+    });
+    const worker = startMetalSleeperWorker({ sleeper: { tick: vi.fn(async () => {}) }, scheduledWake: { tick: wake } });
+    try {
+      await vi.advanceTimersByTimeAsync(32_000);
+      expect(wake).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(wake).toHaveBeenCalledTimes(2);
     } finally {
       worker.stop();

@@ -2,7 +2,7 @@
 
 Free metal VMs (spec 2691, ENG-520) depend on three platform background passes:
 
-- **Sleeper**: suspends idle VMs (`MATRIX_FREE_TIER_SLEEP_ENABLED`).
+- **Sleeper**: checks for idle VMs every minute and scans for scheduled wakes independently every five seconds (`MATRIX_FREE_TIER_SLEEP_ENABLED`).
 - **Reaper** (`reconcileStale`): fails builds whose guest never registered and queues their teardown.
 - **Drainer**: destroys queued VM teardowns on the hosts.
 
@@ -27,7 +27,8 @@ They run only in a process with background workers enabled. Cloud Run web replic
 Each metal pass runs only while its transaction holds a Postgres advisory lock (`substrates/metal-singleton.ts`):
 
 - `METAL_MAINTENANCE_LOCK_KEY` covers the reaper and drainer;
-- `METAL_SLEEPER_LOCK_KEY` covers the sleeper.
+- `METAL_SLEEPER_LOCK_KEY` covers idle sleep.
+- `METAL_SCHEDULED_WAKE_LOCK_KEY` covers scheduled wakes.
 
 A second worker instance, for example during a deploy overlap, skips the pass instead of running it twice. The lock is transaction-scoped, so a crashed worker releases it. The passes' own writes are guarded statements on other connections.
 

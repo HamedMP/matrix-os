@@ -171,7 +171,7 @@ describe('metal runtime composition', () => {
     const platformSecret = 'p'.repeat(40);
     const sleepEnv = { ...metalEnv, MATRIX_FREE_TIER_SLEEP_ENABLED: '1' };
 
-    it('starts only when MATRIX_FREE_TIER_SLEEP_ENABLED is set, and stop clears its timer too', async () => {
+    it('starts only when MATRIX_FREE_TIER_SLEEP_ENABLED is set, and stop clears both sleep and wake timers', async () => {
       vi.useFakeTimers();
       try {
         const off = createConfiguredMetalRuntime({
@@ -183,7 +183,7 @@ describe('metal runtime composition', () => {
         const on = createConfiguredMetalRuntime({
           db, env: sleepEnv, customerVps, backgroundWorkersEnabled: true, substrates, platformSecret, log: () => {},
         });
-        expect(vi.getTimerCount()).toBe(2);
+        expect(vi.getTimerCount()).toBe(3);
         on?.stop();
         expect(vi.getTimerCount()).toBe(0);
         await on?.shutdown();

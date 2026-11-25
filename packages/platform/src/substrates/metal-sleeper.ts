@@ -31,6 +31,7 @@ import type { LifecycleRead } from './metal-lifecycle-reader.js';
  */
 
 export const METAL_SLEEP_INTERVAL_MS = 60_000;
+export const METAL_WAKE_INTERVAL_MS = 5_000;
 export const IDLE_SLEEP_AFTER_MS = 60 * 60_000;
 export const IDLE_GUARD_AFTER_MS = 6 * 60 * 60_000;
 /**
@@ -39,9 +40,8 @@ export const IDLE_GUARD_AFTER_MS = 6 * 60 * 60_000;
  */
 export const WAKE_PASS_BUDGET_MS = 30_000;
 /**
- * A saved wake falls up to one scan interval before the scan that sees it, may
- * wait out the wake pass budget behind earlier batches, and then takes up to one
- * wake timeout to resume. The lead (2 min) covers all three before the job is due.
+ * Leave time for several bounded wake batches and the short gaps between scans
+ * before the job is due.
  */
 export const SCHEDULED_WAKE_LEAD_MS = 2 * 60_000;
 /**
@@ -592,17 +592,18 @@ export function startMetalSleeperWorker(input: {
 
   const sleep = lane(input.sleeper.tick, input.singleton);
   const wake = input.scheduledWake && lane(input.scheduledWake.tick, input.scheduledWake.singleton);
-  const tick = (): void => {
-    wake?.tick();
-    sleep.tick();
-  };
-
-  tick();
-  const interval = setInterval(tick, input.intervalMs ?? METAL_SLEEP_INTERVAL_MS);
+  wake?.tick();
+  sleep.tick();
+  const interval = setInterval(sleep.tick, input.intervalMs ?? METAL_SLEEP_INTERVAL_MS);
   interval.unref?.();
+  // A wake pass may exhaust its budget after fetching some of the due rows.
+  // Check again promptly so the remaining rows have time to resume.
+  const wakeInterval = wake && setInterval(wake.tick, input.intervalMs ?? METAL_WAKE_INTERVAL_MS);
+  wakeInterval?.unref?.();
   return {
     stop() {
       clearInterval(interval);
+      if (wakeInterval) clearInterval(wakeInterval);
       controller.abort();
     },
     async drain() {
