@@ -30,7 +30,7 @@ beforeAll(async () => {
 });
 afterAll(async () => browser?.close());
 
-it("aligns pinned/unpinned Projects while Chat titles reclaim the icon origin and actions stay contained", async () => {
+it("indents pinned/unpinned Projects one Figma step past Chat titles and keeps actions contained", async () => {
   const page = await browser.newPage({ viewport: {width:600,height:700} });
   const project = (pinned: boolean) => {
     const name = pinned ? "Pinned project with a long title" : "Ordinary project with a long title";
@@ -62,7 +62,8 @@ it("aligns pinned/unpinned Projects while Chat titles reclaim the icon origin an
       expect(chat.labelX).toBe(chat.left + 9);
       expect(result).toHaveLength(2);
       for (const row of result) {
-        expect(row.iconX).toBe(chat.labelX);
+        // Figma 7.2: project rows sit 14px under Projects (icon at 24px vs 10px for chat titles).
+        expect(row.iconX).toBe(chat.labelX + 14);
         expect(row.labelX).toBe(result[0]!.labelX);
         expect(row.disclosureRight).toBeLessThanOrEqual(row.right - 8);
       }
@@ -147,7 +148,8 @@ it("uses full quiet Chat title width and reserves visible hover/focus/menu actio
       await page.locator("nav").evaluate((nav, value) => { nav.style.width = `${value}px`; }, width);
       const normalTitle = await page.locator('.work-rail-chat').first().locator('.matrix-chat-title-viewport').boundingBox();
       const childTitle = await page.locator('.work-rail-chat[data-placement="project"] .matrix-chat-title-viewport').boundingBox();
-      expect(childTitle!.x - normalTitle!.x).toBe(14);
+      // Figma 7.2: nested chat titles align with the project name at 48px (normal titles start at 10px).
+      expect(childTitle!.x - normalTitle!.x).toBe(38);
       // SSR has no effects: apply actual DOM measurements here to isolate product CSS.
       // The unit test covers the shared component's ResizeObserver and rename measurement.
       await page.locator(".matrix-chat-title-viewport").evaluateAll(viewports => viewports.forEach(viewport => {
