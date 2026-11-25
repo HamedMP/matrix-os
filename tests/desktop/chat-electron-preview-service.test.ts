@@ -34,7 +34,7 @@ describe("one-time Electron Desktop preview", () => {
     expect(await service.run(identity)).toEqual({ status: "returned" });
     expect(deps.approve).toHaveBeenCalledTimes(1);
     expect(deps.execute).toHaveBeenCalledWith(request, expect.any(AbortSignal));
-    expect(deps.returnResult).toHaveBeenCalledWith(request, preview);
+    expect(deps.returnResult).toHaveBeenCalledWith(request, preview, expect.any(AbortSignal));
     expect(await service.run(identity)).toEqual({ status: "already-handled" });
     expect(deps.execute).toHaveBeenCalledTimes(1);
     expect(deps.returnResult).toHaveBeenCalledTimes(1);
@@ -91,7 +91,7 @@ describe("one-time Electron Desktop preview", () => {
     const { deps, service } = setup();
     deps.execute.mockRejectedValue(new Error("test/build failed"));
     expect(await service.run(identity)).toEqual({ status: "failed" });
-    expect(deps.returnResult).toHaveBeenCalledWith(request, { error: "build-failed" });
+    expect(deps.returnResult).toHaveBeenCalledWith(request, { error: "build-failed" }, expect.any(AbortSignal));
     expect(await service.run(identity)).toEqual({ status: "already-handled" });
   });
 });

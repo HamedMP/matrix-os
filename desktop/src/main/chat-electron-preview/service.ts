@@ -15,7 +15,7 @@ interface Dependencies {
   claim(key: string): Promise<boolean>;
   approve(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<boolean>;
   execute(request: ChatElectronPreviewRequest, signal: AbortSignal): Promise<PreviewResult>;
-  returnResult(request: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }): Promise<void>;
+  returnResult(request: ChatElectronPreviewRequest, result: PreviewResult | { error: "build-failed" }, signal: AbortSignal): Promise<void>;
   reportError?(error: unknown): void;
 }
 
@@ -61,11 +61,11 @@ export function createChatElectronPreviewService(deps: Dependencies) {
       } catch (error: unknown) {
         if (signal.aborted || !deps.isCurrent(current)) return { status: "unavailable" };
         deps.reportError?.(error);
-        await deps.returnResult(current, { error: "build-failed" });
+        await deps.returnResult(current, { error: "build-failed" }, signal);
         return { status: "failed" };
       }
       if (signal.aborted || !deps.isCurrent(current)) return { status: "unavailable" };
-      await deps.returnResult(current, result);
+      await deps.returnResult(current, result, signal);
       return { status: "returned" };
     } catch (error: unknown) {
       if (signal.aborted) return { status: "unavailable" };

@@ -58,6 +58,8 @@ function fixture(parts: CanonicalChatMessage["parts"] = [{ type: "text", text: m
 }
 
 const png = Buffer.from("89504e470d0a1a0a010203", "hex");
+const previewResult = { png, testSummary: "10 tests passed" };
+const activeRun = { runId: "run_concurrent", turnId: "cturn_concurrent", status: "running" };
 function mockTransport(parts?: CanonicalChatMessage["parts"]) {
   let authStatus: AuthStatus = { signedIn: true, userId: ownerId, handle: "owner", runtimeSlot: "primary", platformHost: origin, authGeneration: 4 };
   const auth = { getStatus: () => authStatus, getToken: () => authStatus.signedIn ? "test-auth" : null, getGatewayOrigin: () => origin };
@@ -71,9 +73,17 @@ function mockTransport(parts?: CanonicalChatMessage["parts"]) {
   let gitStatus = matchingStatus;
   let uploadStatus = 200;
   let uploadedBytes = png;
+  let busyReads = 0;
+  let nextTurnConflict: string | undefined;
   const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
-    if (url.pathname === "/api/chats/" + chatId) return Response.json(detail);
+    if (url.pathname === "/api/chats/" + chatId) {
+      if (busyReads > 0) {
+        busyReads--;
+        return Response.json({ ...detail, record: { ...detail.record, activeRun } });
+      }
+      return Response.json(detail);
+    }
     if (url.pathname === "/api/projects/matrix-os") return Response.json({ project: { id: projectId, slug: "matrix-os" } });
     if (url.pathname === "/api/projects/matrix-os/worktrees") return Response.json({ worktrees: inventory });
     if (url.pathname === "/api/terminal/run") {
@@ -92,6 +102,12 @@ function mockTransport(parts?: CanonicalChatMessage["parts"]) {
     }
     if (url.pathname === "/api/chats/" + chatId + "/turns") {
       const request = JSON.parse(String(init?.body));
+      if (nextTurnConflict) {
+        const code = nextTurnConflict;
+        nextTurnConflict = undefined;
+        if (code === "chat_conflict") detail.record.chat.revision++;
+        return Response.json({ error: { code, safeMessage: "Chat changed.", retryable: true } }, { status: 409 });
+      }
       const returnTurnId = "cturn_return";
       const returnedMessageId = "msg_return";
       return Response.json({
@@ -108,6 +124,8 @@ function mockTransport(parts?: CanonicalChatMessage["parts"]) {
   });
   return { detail, source, inventory, fetchFn,
     setGit: (head: string, status: string) => { gitHead = head; gitStatus = status; },
+    setBusyReads: (count: number) => { busyReads = count; },
+    rejectNextTurn: (code: string) => { nextTurnConflict = code; },
     service: createChatElectronPreviewTransport(auth, { fetchFn, now: () => now }),
     changeSession: () => { authStatus = { ...authStatus, authGeneration: 5 }; },
     existingUpload: (bytes: Buffer) => { uploadStatus = 409; uploadedBytes = bytes; },
@@ -230,6 +248,60 @@ describe("authenticated Chat Electron preview transport", () => {
         { type: "attachment_reference", ownerReference: path, mimeType: "image/png", sizeBytes: png.length },
       ],
     });
+  });
+
+  it("delivers one screenshot when the original Chat becomes free after a concurrent run", async () => {
+    const { service, fetchFn, setBusyReads } = mockTransport();
+    const request = (await service.read({ chatId, runId }))!;
+    setBusyReads(1);
+
+    await expect(service.returnResult(request, previewResult)).resolves.toBeUndefined();
+    expect(resultWrites(fetchFn).map(([, init]) => init?.method)).toEqual(["PUT", "POST"]);
+  });
+
+  it.each(["chat_busy", "chat_conflict"])("preserves the upload and request identity after admission reports %s", async code => {
+    const { service, fetchFn, rejectNextTurn } = mockTransport();
+    const request = (await service.read({ chatId, runId }))!;
+    rejectNextTurn(code);
+
+    await expect(service.returnResult(request, previewResult)).resolves.toBeUndefined();
+    const [upload, first, retried] = resultWrites(fetchFn);
+    expect(resultWrites(fetchFn).map(([, init]) => init?.method)).toEqual(["PUT", "POST", "POST"]);
+    const firstBody = JSON.parse(String(first?.[1]?.body));
+    const retriedBody = JSON.parse(String(retried?.[1]?.body));
+    expect(retriedBody).toEqual({
+      ...firstBody,
+      baseRevision: code === "chat_conflict" ? 6 : 5,
+    });
+    expect(retriedBody.parts[1]).toMatchObject({
+      ownerReference: new URL(String(upload?.[0])).searchParams.get("path"),
+    });
+  });
+
+  it("cancels a pending return without uploading or posting after revocation", async () => {
+    const { service, fetchFn, setBusyReads } = mockTransport();
+    const request = (await service.read({ chatId, runId }))!;
+    setBusyReads(1);
+    const controller = new AbortController();
+    const revoked = new Error("Preview revoked");
+    const returning = service.returnResult(request, previewResult, controller.signal).catch((error: unknown) => error);
+
+    await vi.waitFor(() => expect(fetchFn.mock.calls).toHaveLength(7));
+    controller.abort(revoked);
+
+    const error = await returning;
+    expect(error instanceof Error ? error.cause ?? error : error).toBe(revoked);
+    expect(resultWrites(fetchFn)).toHaveLength(0);
+    expect(fetchFn.mock.calls).toHaveLength(7);
+  });
+
+  it("does not retry unrelated admission conflicts", async () => {
+    const { service, fetchFn, rejectNextTurn } = mockTransport();
+    const request = (await service.read({ chatId, runId }))!;
+    rejectNextTurn("provider_instance_locked");
+
+    await expect(service.returnResult(request, previewResult)).rejects.toThrow("Preview result could not be posted");
+    expect(resultWrites(fetchFn).map(([, init]) => init?.method)).toEqual(["PUT", "POST"]);
   });
 
   it("reports an approved build failure to the original Chat without an attachment", async () => {

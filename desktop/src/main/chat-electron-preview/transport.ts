@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
 import {
   CanonicalChatDetailResponseSchema, CanonicalChatIdSchema, CanonicalChatRunIdSchema,
-  CanonicalChatTurnAdmissionResponseSchema, CanonicalCreateChatTurnRequestSchema,
+  CanonicalChatSafeErrorSchema, CanonicalChatTurnAdmissionResponseSchema, CanonicalCreateChatTurnRequestSchema,
   FileReadResponseSchema, WorktreeIdSchema, chatMessageVersionUrl,
   type CanonicalChatDetailResponse, type CanonicalChatRun, type CanonicalCreateChatTurnRequest,
 } from "@matrix-os/contracts";
@@ -18,6 +19,8 @@ const MAX_PNG_BYTES = 2 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from("89504e470d0a1a0a", "hex");
 const PROJECT_SLUG = "matrix-os";
 const TIMEOUT_MS = 15_000;
+const DELIVERY_TIMEOUT_MS = 2 * 60_000;
+const DELIVERY_RETRY_MS = 1_000;
 const GIT_TIMEOUT_MS = 5_000;
 const GIT_PREFIX = ["/usr/bin/git", "--no-optional-locks", "-c", "core.fsmonitor=false", "--no-pager"];
 const OLD_PILOT_ARTIFACT = /^\?\? \.eng495-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\/(?:source\.tsx|request\.json|test\.log)$/;
@@ -30,6 +33,7 @@ const GitReply = z.object({
   signal: z.null(), timedOut: z.literal(false), truncated: z.literal(false),
 });
 const UploadReply = z.strictObject({ ok: z.literal(true), path: z.string(), size: z.number().int() });
+const AdmissionError = z.object({ error: CanonicalChatSafeErrorSchema });
 const RequestRef = z.strictObject({ chatId: CanonicalChatIdSchema, runId: CanonicalChatRunIdSchema });
 const Result = z.union([
   z.strictObject({
@@ -107,6 +111,15 @@ async function readJson(response: Response, maximum = MAX_CHAT_REPLY_BYTES): Pro
   return JSON.parse((await boundedBytes(response, maximum)).toString("utf8"));
 }
 
+async function readAdmissionConflict(response: Response) {
+  if (response.status !== 409 || !response.headers.get("content-type")?.startsWith("application/json")) {
+    await response.body?.cancel();
+    return undefined;
+  }
+  const parsed = AdmissionError.safeParse(await readJson(response, 8192));
+  return parsed.success ? parsed.data.error.code : undefined;
+}
+
 function getPrivateRun(detail: CanonicalChatDetailResponse, ownerId: string, ref: z.infer<typeof RequestRef>) {
   const { chat, projectId } = detail.record;
   if (chat.id !== ref.chatId || chat.ownerScope.type !== "personal" || chat.ownerScope.ownerId !== ownerId
@@ -164,14 +177,16 @@ export function createChatElectronPreviewTransport(
   }
 
   async function request(authority: RuntimeAuthority, path: string, init: RequestInit = {}) {
+    init.signal?.throwIfAborted();
     if (!sameAuthority(authority, currentAuthority())) throw new Error("Preview session changed");
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${authority.token}`);
-    const response = await fetchFn(new URL(path, authority.origin), {
-      ...init, headers, redirect: "error", signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    if (!sameAuthority(authority, currentAuthority())) {
+    const timeout = AbortSignal.timeout(TIMEOUT_MS);
+    const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+    const response = await fetchFn(new URL(path, authority.origin), { ...init, headers, redirect: "error", signal });
+    if (signal.aborted || !sameAuthority(authority, currentAuthority())) {
       await response.body?.cancel();
+      signal.throwIfAborted();
       throw new Error("Preview session changed");
     }
     return response;
@@ -184,29 +199,30 @@ export function createChatElectronPreviewTransport(
       return null;
     }
     const data = await readJson(response, maximum);
+    init?.signal?.throwIfAborted();
     if (!sameAuthority(authority, currentAuthority())) throw new Error("Preview session changed");
     return data;
   }
 
-  async function readDetail(authority: RuntimeAuthority, chatId: string) {
+  async function readDetail(authority: RuntimeAuthority, chatId: string, signal?: AbortSignal) {
     const path = chatMessageVersionUrl(`/api/chats/${chatId}?limit=50`);
-    const parsed = CanonicalChatDetailResponseSchema.safeParse(await requestJson(authority, path));
+    const parsed = CanonicalChatDetailResponseSchema.safeParse(await requestJson(authority, path, undefined, { signal }));
     return parsed.success ? parsed.data : null;
   }
 
-  async function readGit(authority: RuntimeAuthority, cwd: string, args: readonly string[]) {
+  async function readGit(authority: RuntimeAuthority, cwd: string, args: readonly string[], signal?: AbortSignal) {
     const result = GitReply.safeParse(await requestJson(authority, "/api/terminal/run", 128 * 1024, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ command: [...GIT_PREFIX, ...args], cwd, timeoutMs: GIT_TIMEOUT_MS }),
+      body: JSON.stringify({ command: [...GIT_PREFIX, ...args], cwd, timeoutMs: GIT_TIMEOUT_MS }), signal,
     }));
     return result.success ? result.data.stdout : null;
   }
 
   // Registry and Git identity must agree before using a Chat worktree. Command
   // arguments are fixed here. Chat contributes only the validated worktree ID.
-  async function verifySource(authority: RuntimeAuthority, preview: ChatElectronPreviewRequest) {
+  async function verifySource(authority: RuntimeAuthority, preview: ChatElectronPreviewRequest, signal?: AbortSignal) {
     const cwd = `worktrees/${PROJECT_SLUG}/${preview.worktreeId}`;
-    const inventory = WorktreeReply.safeParse(await requestJson(authority, `/api/projects/${PROJECT_SLUG}/worktrees`, 1024 * 1024));
+    const inventory = WorktreeReply.safeParse(await requestJson(authority, `/api/projects/${PROJECT_SLUG}/worktrees`, 1024 * 1024, { signal }));
     if (!inventory.success) return false;
     const matches = inventory.data.worktrees.filter(entry => entry.id === preview.worktreeId);
     const checkout = matches[0]?.path;
@@ -214,17 +230,17 @@ export function createChatElectronPreviewTransport(
       || !/^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/.test(checkout)
       || checkout.split("/").some(segment => segment === "." || segment === "..")) return false;
 
-    const head = await readGit(authority, cwd, ["rev-parse", "--show-toplevel", "HEAD"]);
+    const head = await readGit(authority, cwd, ["rev-parse", "--show-toplevel", "HEAD"], signal);
     if (head !== `${checkout}\n${preview.baseSha}\n`) return false;
     const status = await readGit(authority, cwd, [
       "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames", "--ignore-submodules=none",
-    ]);
+    ], signal);
     if (!status?.endsWith("\0")) return false;
     const edits = status.slice(0, -1).split("\0").filter(entry => !OLD_PILOT_ARTIFACT.test(entry));
     if (edits.length !== 1 || edits[0] !== ` M ${CHAT_ELECTRON_PREVIEW_SOURCE}`) return false;
 
     const query = new URLSearchParams({ projectId: PROJECT_SLUG, worktreeId: preview.worktreeId, path: CHAT_ELECTRON_PREVIEW_SOURCE });
-    const parsed = FileReadResponseSchema.safeParse(await requestJson(authority, `/api/coding-agents/files/read?${query}`, MAX_SOURCE_REPLY_BYTES));
+    const parsed = FileReadResponseSchema.safeParse(await requestJson(authority, `/api/coding-agents/files/read?${query}`, MAX_SOURCE_REPLY_BYTES, { signal }));
     return parsed.success && matchingBytes(preview, parsed.data);
   }
 
@@ -254,7 +270,11 @@ export function createChatElectronPreviewTransport(
       return !!binding && sameAuthority(binding.authority, currentAuthority());
     },
 
-    async returnResult(preview: ChatElectronPreviewRequest, resultInput: ChatElectronPreviewResult): Promise<void> {
+    async returnResult(
+      preview: ChatElectronPreviewRequest, resultInput: ChatElectronPreviewResult, operationSignal?: AbortSignal,
+    ): Promise<void> {
+      const timeout = AbortSignal.timeout(DELIVERY_TIMEOUT_MS);
+      const signal = operationSignal ? AbortSignal.any([operationSignal, timeout]) : timeout;
       const binding = bindings.get(preview);
       if (!binding || !sameAuthority(binding.authority, currentAuthority())) throw new Error("Preview session changed");
       const { authority, run } = binding;
@@ -272,7 +292,7 @@ export function createChatElectronPreviewTransport(
       }
 
       async function prepareTurn() {
-        const detail = await readDetail(authority, preview.chatId);
+        const detail = await readDetail(authority, preview.chatId, signal);
         const candidate = detail && getPrivateRun(detail, authority.ownerId, preview);
         if (!detail || !candidate || candidate.root.projectId !== preview.projectId || candidate.root.worktreeId !== preview.worktreeId
           || candidate.marker.baseSha !== preview.baseSha || candidate.marker.sourceSha256 !== preview.sourceSha256
@@ -282,22 +302,29 @@ export function createChatElectronPreviewTransport(
           parts, executionRoot, selection: { instanceId: run.selection.instanceId, model: run.selection.model },
           interactionMode: "default", permissionMode: "supervised",
         });
-        if (hasReturned(detail, turn)) return null;
-        if (detail.record.activeRun) throw new Error("Original Chat is busy");
-        return turn;
+        return hasReturned(detail, turn) ? null : { turn, busy: Boolean(detail.record.activeRun) };
       }
 
-      const initial = await prepareTurn();
+      async function waitForIdleTurn() {
+        let candidate = await prepareTurn();
+        while (candidate?.busy) {
+          await delay(DELIVERY_RETRY_MS, undefined, { signal });
+          candidate = await prepareTurn();
+        }
+        return candidate?.turn ?? null;
+      }
+
+      const initial = await waitForIdleTurn();
       if (!initial) return;
       if (ownerReference && "png" in result) {
-        if (!(await verifySource(authority, preview))) throw new Error("Preview source changed");
+        if (!(await verifySource(authority, preview, signal))) throw new Error("Preview source changed");
         const path = `/api/files/blob?${new URLSearchParams({ path: ownerReference })}`;
         const uploaded = await request(authority, path, {
-          method: "PUT", headers: { "content-type": "application/octet-stream" }, body: new Uint8Array(result.png),
+          method: "PUT", headers: { "content-type": "application/octet-stream" }, body: new Uint8Array(result.png), signal,
         });
         if (uploaded.status === 409) {
           await uploaded.body?.cancel();
-          const existing = await request(authority, path);
+          const existing = await request(authority, path, { signal });
           if (!existing.ok) {
             await existing.body?.cancel();
             throw new Error("Existing preview image could not be read");
@@ -316,21 +343,41 @@ export function createChatElectronPreviewTransport(
       }
 
       const path = chatMessageVersionUrl(`/api/chats/${preview.chatId}/turns`);
-      const turn = await prepareTurn();
-      if (!turn) return;
-      const response = await request(authority, path, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(turn),
-      });
-      if (!response.ok) {
-        await response.body?.cancel();
-        if (!(await prepareTurn())) return;
-        throw new Error("Preview result could not be posted");
+      let verifiedRevision: number | undefined = initial.baseRevision;
+      let turn = await waitForIdleTurn();
+      while (turn) {
+        if (ownerReference && turn.baseRevision !== verifiedRevision) {
+          if (!(await verifySource(authority, preview, signal))) throw new Error("Preview source changed");
+          verifiedRevision = turn.baseRevision;
+          turn = await waitForIdleTurn();
+          continue;
+        }
+
+        const response = await request(authority, path, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(turn), signal,
+        });
+        if (response.ok) {
+          const receipt = CanonicalChatTurnAdmissionResponseSchema.parse(await readJson(response));
+          signal.throwIfAborted();
+          if (!sameAuthority(authority, currentAuthority()) || receipt.record.chat.id !== preview.chatId
+            || receipt.turn.clientRequestId !== turn.clientRequestId
+            || !hasReturned({ record: receipt.record, messages: [receipt.message], runs: [receipt.run],
+              turns: [receipt.turn], activities: [] }, turn)) throw new Error("Preview result receipt mismatch");
+          return;
+        }
+
+        const conflict = await readAdmissionConflict(response);
+        const refreshed = await prepareTurn();
+        if (!refreshed) return;
+        // A concurrent Chat turn can win between the idle check and admission.
+        // Keep the same receipt identity and reuse the single uploaded PNG.
+        if (conflict !== "chat_busy" && (conflict !== "chat_conflict" || refreshed.turn.baseRevision === turn.baseRevision)) {
+          throw new Error("Preview result could not be posted");
+        }
+        verifiedRevision = undefined;
+        await delay(DELIVERY_RETRY_MS, undefined, { signal });
+        turn = await waitForIdleTurn();
       }
-      const receipt = CanonicalChatTurnAdmissionResponseSchema.parse(await readJson(response));
-      if (!sameAuthority(authority, currentAuthority()) || receipt.record.chat.id !== preview.chatId
-        || receipt.turn.clientRequestId !== turn.clientRequestId
-        || !hasReturned({ record: receipt.record, messages: [receipt.message], runs: [receipt.run],
-          turns: [receipt.turn], activities: [] }, turn)) throw new Error("Preview result receipt mismatch");
     },
   };
 }
