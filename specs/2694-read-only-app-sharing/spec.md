@@ -2,7 +2,7 @@
 
 **Ticket**: [ENG-579](https://linear.app/matrix-os/issue/ENG-579/share-apps-with-an-organization-without-making-them-collaborative) (related: ENG-29, ENG-490)
 **Created**: 2026-11-25
-**Status**: Draft for review
+**Status**: Implemented in the ENG-579 stack; review recommended
 **Builds on**: [2689 collaborative app sharing](../2689-collaborative-app-sharing/spec.md), [2693 share popover redesign](../2693-share-popover-redesign/spec.md)
 
 ## Goal
@@ -34,17 +34,20 @@ share repository, so apps that aren't collaborative can't be shared at all.
    runs the existing readiness check for the exact current build, then shares if the result is
    `ready` or `blocked`. `failed` (the check itself errored) shows "Couldn't check this app right
    now. Try again." and does not share.
-2. Below the organization card, a persistent **Make it collaborative** suggestion row is shown:
-   - Not collaborative: title "Make it collaborative", text "Teammates can view this app. Make it
-     collaborative so everyone can edit the same data.", button **Start in Chats** (opens the
-     existing builder-skill handoff). While the handoff runs: "Setting up…" and **Open chat**.
-   - Collaborative (readiness `ready` for the current build): a green check replaces the step
-     number, title "Collaborative", text "Everyone can view and edit the same data." No button.
+2. Below the organization card, a persistent **Make it collaborative** suggestion is shown:
+   - Not collaborative: "Make it collaborative" with **Start in Chats** (the existing builder-skill
+     handoff). Its text says teammates can view (but not edit) the app. While the handoff runs:
+     "Setting up…", **Open chat** and **Cancel**.
+   - Collaborative (readiness `ready` for the current build): a green check, title
+     "Collaborative", text "Everyone can view and edit the same data." No button.
    The tick is derived from readiness, so it survives reloads and appears on every device.
-3. The builder skill's completion event no longer creates a share by itself. It refreshes readiness
-   (and therefore the tick) and, if the owner had started the handoff from an unshared app, shares
-   it as before. Cancel still retires the handoff without sharing.
-4. When an app is shared read-only, the shared card's badge reads **Shared · View only**.
+3. The builder skill's completion event rechecks readiness. If the app isn't shared yet and the
+   result is `ready`, it shares as before ("Collaborative and shared"); if it is still `blocked`,
+   it shows "Claude finished, but the app isn't collaborative yet." If the app is already shared,
+   it only refreshes readiness (and the tick). Cancel still retires the handoff without sharing.
+4. A view-only share's badge reads **Shared · View only**.
+5. The older Web app-viewer share strip and dialog follow the same rule and explain view-only
+   access for a `blocked` build.
 
 ### Recipient
 
