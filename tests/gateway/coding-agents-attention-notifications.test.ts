@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -251,6 +251,48 @@ describe("coding agent attention notifications", () => {
     }));
 
     subscription.dispose();
+  });
+
+  it.each(["codex", "pi", "opencode"] as const)("keeps canonical %s completion/failure pushes while suppressing approval/input duplicates", async providerId => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-a6-canonical-terminal-"));
+    try {
+      for (const [factory, kind, body] of [
+        [approvalProvider, "approval", "Agent needs approval."],
+        [inputProvider, "input", "Agent needs input."],
+        [completedProvider, "completed", "Agent run completed."],
+        [failedProvider, "failed", "Agent run needs attention."],
+      ] as const) {
+        const send = vi.fn<(reply: ChannelReply) => Promise<void>>().mockResolvedValue(undefined);
+        const isAttentionPushEnabled = vi.fn().mockResolvedValue(true);
+        const threads = createCodingAgentThreadStore({ homePath, now: () => now, providers: [{ ...factory(), providerId }] });
+        const subscription = registerCodingAgentAttentionNotifications({ threads, send,
+          isCanonicalThread: async () => true, preferences: { isAttentionPushEnabled } });
+        try {
+          const created = await threads.createThread(principal, { providerId, prompt: "Run the task.", clientRequestId: `req_${providerId}_${kind}` });
+          // Drain the async ownership/preference checks, including the suppressed path.
+          await new Promise<void>(resolve => setImmediate(resolve));
+          if (kind === "approval" || kind === "input") expect(send).not.toHaveBeenCalled();
+          else {
+            expect(isAttentionPushEnabled).toHaveBeenCalledWith({ ownerId: principal.userId, threadId: created.snapshot.thread.id, kind });
+            expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ ownerId: principal.userId, text: body,
+              metadata: { category: "agent", threadId: created.snapshot.thread.id } }));
+          }
+        } finally { subscription.dispose(); await threads.shutdownTurns(); }
+      }
+    } finally { await rm(homePath, { recursive: true, force: true }); }
+  });
+
+  it.each([completedProvider, failedProvider])("keeps disabled canonical terminal notifications disabled", async factory => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-a6-canonical-disabled-"));
+    const threads = createCodingAgentThreadStore({ homePath, now: () => now, providers: [factory()] });
+    const send = vi.fn<(reply: ChannelReply) => Promise<void>>().mockResolvedValue(undefined);
+    const subscription = registerCodingAgentAttentionNotifications({ threads, send,
+      isCanonicalThread: async () => true, preferences: { isAttentionPushEnabled: async () => false } });
+    try {
+      await threads.createThread(principal, { providerId: "codex", prompt: "Run the task.", clientRequestId: "req_terminal_disabled" });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(send).not.toHaveBeenCalled();
+    } finally { subscription.dispose(); await threads.shutdownTurns(); await rm(homePath, { recursive: true, force: true }); }
   });
 
   it("deduplicates repeated attention notifications for the same owner thread and kind within the notification window", async () => {

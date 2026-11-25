@@ -69,6 +69,8 @@ export function createNotificationRouter(options: NotificationRouterOptions) {
       }
       const pending = await source.pending(event, now());
       if (!pending) { await repository.finish(event, "resolved", now()); return; }
+      // A submitted answer may still fail delivery and reopen this same request.
+      if (pending.answerInFlight) { await repository.defer(event, now() + 2000); return; }
       if (!enabled() || !await repository.stillClaimed(event)) return;
       await options.transport.send(attentionPush(event, pending, preferences));
       if (storageOpen) await repository.finish(event, "pushed", now());

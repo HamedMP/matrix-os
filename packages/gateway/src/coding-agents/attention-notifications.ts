@@ -25,7 +25,7 @@ export interface CodingAgentAttentionNotificationPreferences {
 }
 
 export interface CodingAgentAttentionNotificationsOptions {
-  /** While A6 is enabled, canonical-bound threads notify through the chat sink only. */
+  /** A6 owns canonical approval/input pushes; terminal notifications stay on this bridge. */
   isCanonicalThread?: (ownerId: string, threadId: string) => Promise<boolean>;
   threads: CodingAgentThreadStore;
   send: (reply: ChannelReply) => Promise<void>;
@@ -128,7 +128,7 @@ export function registerCodingAgentAttentionNotifications(options: CodingAgentAt
 
     if (options.isCanonicalThread) {
       void options.isCanonicalThread(ownerId, threadId).then(async canonical => {
-        if (canonical) return;
+        if (canonical && (kind === "approval" || kind === "input")) return;
         if (options.preferences && !await options.preferences.isAttentionPushEnabled({ ownerId, threadId, kind })) return;
         sendIfEligible();
       }).catch((err: unknown) => logCodingAgentWarning("canonical notification ownership check failed", err));
