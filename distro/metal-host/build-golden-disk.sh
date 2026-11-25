@@ -135,7 +135,7 @@ fi
 log "building $golden from $bundle_url ($bundle_sha256)"
 
 # --- disk -------------------------------------------------------------------
-lvcreate --quiet --thin --virtualsize "$DISK_SIZE" --name "$building" "$VG/$POOL" >/dev/null
+/usr/local/libexec/matrix-hostd-thin create "$VG" "$POOL" 95 90 "$building" "$DISK_SIZE"
 qemu-img convert -q -f qcow2 -O raw -n "$BASE_IMAGE" "/dev/$VG/$building"
 # Only while the builder runs; lvrename later recreates the node as root:disk.
 chown "$VM_USER:$VM_USER" "$(readlink -f "/dev/$VG/$building")"
@@ -240,7 +240,7 @@ fi
 log "builder sanitized the disk and powered off after $((SECONDS - started))s"
 
 # --- validation clone ---------------------------------------------------------
-lvcreate --quiet --snapshot --setactivationskip n --activate y --name "$validate" "$VG/$building" >/dev/null
+/usr/local/libexec/matrix-hostd-thin clone "$VG" "$POOL" 95 90 "$validate" "$DISK_SIZE" "$building"
 chown "$VM_USER:$VM_USER" "$(readlink -f "/dev/$VG/$validate")"
 cat >"$work/validate.user-data" <<'EOF'
 #cloud-config

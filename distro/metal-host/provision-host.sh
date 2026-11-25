@@ -115,6 +115,14 @@ if [ -z "$wan" ]; then
 fi
 if ! [[ "$wan" =~ ^[A-Za-z0-9_.-]{1,15}$ ]] || ! ip link show "$wan" >/dev/null 2>&1; then die "cannot use WAN interface '$wan'"; fi
 
+# Old live VM units have neither per-tap identity rules nor bounded logs.
+# Drain those units before changing the host network on an existing pilot.
+policy_marker="$STATE_DIR/tenant-network-v1"
+if [ ! -e "$policy_marker" ]; then
+  live_guests="$(systemctl list-units --state=active,activating --no-legend --plain 'matrix-vm@*.service' 'matrix-vm-restore@*.service')"
+  [ -z "$live_guests" ] || die "drain the existing Matrix VM units before enabling tenant isolation"
+fi
+
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
 
@@ -169,7 +177,7 @@ write_file() {
 
 # --- packages -----------------------------------------------------------------
 missing_packages=()
-for pkg in mdadm gdisk parted cloud-image-utils qemu-utils lvm2 thin-provisioning-tools python3-yaml openssl e2fsprogs iproute2 nftables curl xz-utils; do
+for pkg in mdadm gdisk parted cloud-image-utils qemu-utils lvm2 thin-provisioning-tools python3-yaml openssl e2fsprogs iproute2 kmod nftables curl xz-utils; do
   # shellcheck disable=SC2016 # ${Status} is dpkg-query's format, not shell.
   has 'install ok installed' dpkg-query -W -f='${Status}' "$pkg" || missing_packages+=("$pkg")
 done
@@ -178,6 +186,16 @@ if [ "${#missing_packages[@]}" -gt 0 ]; then
   DEBIAN_FRONTEND=noninteractive timeout 900 apt-get update -qq
   DEBIAN_FRONTEND=noninteractive timeout 900 apt-get install -y -qq "${missing_packages[@]}"
 fi
+
+# The tap must fail closed if the running kernel lacks its packet filters.
+for vm_filter in cls_flower act_gact act_police; do
+  if ! modprobe "$vm_filter"; then
+    DEBIAN_FRONTEND=noninteractive timeout 900 apt-get install -y -qq "linux-modules-extra-$(uname -r)"
+    modprobe "$vm_filter" || die "running kernel lacks $vm_filter"
+  fi
+done
+install_file "$SCRIPT_DIR/matrix-vm-network" /usr/local/libexec/matrix-vm-network 0755 >/dev/null
+install_file "$SCRIPT_DIR/matrix-hostd-thin" /usr/local/libexec/matrix-hostd-thin 0755 >/dev/null
 
 # --- VMM user -----------------------------------------------------------------
 if ! id "$VM_USER" >/dev/null 2>&1; then
@@ -251,9 +269,11 @@ fi
 
 install -d -m 0755 "$STATE_DIR"
 if ! lvs "$VG/$SNAPSHOT_LV" >/dev/null 2>&1; then
-  lvcreate --thin --virtualsize "$snapshots_size" --name "$SNAPSHOT_LV" "$VG/$POOL"
+  /usr/local/libexec/matrix-hostd-thin create "$VG" "$POOL" 85 80 "$SNAPSHOT_LV" "$snapshots_size"
   log "created $VG/$SNAPSHOT_LV ($snapshots_size)"
 fi
+/usr/local/libexec/matrix-hostd-thin check "$VG" "$POOL" 95 95 ||
+  die "existing thin allocations exceed the physical pool budget; add storage or retire unused volumes"
 if [ "$(blkid -o value -s TYPE "/dev/$VG/$SNAPSHOT_LV" 2>/dev/null || true)" != ext4 ]; then
   mkfs.ext4 -q -L hostd-snapshots -E lazy_itable_init=1,nodiscard "/dev/$VG/$SNAPSHOT_LV"
 fi
@@ -365,12 +385,16 @@ bash "$SCRIPT_DIR/matrix-hostd-nft" render --template "$SCRIPT_DIR/nftables.conf
   --wan "$wan" --ingress-port "$ingress_port" --api-port "$api_port" >"$work/nftables.nft"
 bash "$SCRIPT_DIR/matrix-hostd-nft" check "$work/nftables.nft" --wan "$wan"
 nft -c -f "$work/nftables.nft"
+bash "$SCRIPT_DIR/matrix-hostd-nft" render --template "$SCRIPT_DIR/nftables-tenant.conf" \
+  --wan "$wan" --ingress-port "$ingress_port" --api-port "$api_port" >"$work/tenant.nft"
+nft -c -f "$work/tenant.nft"
 log "firewall dry run: ruleset parses and accepts SSH on $wan"
 # Installed only here, just before the decision to arm. A run that dies after
 # this point still cannot load them: outside an open window the unit loads only
 # rules matching the confirmed fingerprint, and the retry sees the difference.
 install_file "$SCRIPT_DIR/matrix-hostd-nft" /usr/local/libexec/matrix-hostd-nft 0755 >/dev/null
 install_file "$SCRIPT_DIR/nftables.conf" /usr/local/share/matrix-hostd/nftables.conf 0644 >/dev/null
+install_file "$SCRIPT_DIR/nftables-tenant.conf" /usr/local/share/matrix-hostd/nftables-tenant.conf 0644 >/dev/null
 install -d -m 0755 "$ETC_DIR"
 write_file "$ETC_DIR/nft.env" 0644 >/dev/null <<EOF
 WAN=$wan
@@ -426,17 +450,23 @@ set_env HOSTD_STATE_DIR "$STATE_DIR"
 set_env HOSTD_RUN_DIR /run/matrix-vm
 
 install -d -m 0750 -o root -g "$VM_USER" "$STATE_DIR/vms"
-# Serial logs: written by the VMM (matrix-vm), removed by hostd on destroy.
+journal_changed="$(install_file "$SCRIPT_DIR/journald-matrix-vm.conf" /etc/systemd/journald@matrix-vm.conf.d/60-limits.conf 0644)"
+if [ -n "$journal_changed" ] && systemctl is-active --quiet systemd-journald@matrix-vm.service; then
+  systemctl restart systemd-journald@matrix-vm.service
+fi
 install -d -m 0750 -o "$VM_USER" -g "$VM_USER" /var/log/matrix-vm
 install -d -m 0700 "$STATE_DIR/golden"
 
 # --- units -------------------------------------------------------------------------
 units_changed=""
-for unit in matrix-vm@.service matrix-vm-restore@.service matrix-hostd.service matrix-hostd-nft.service; do
+for unit in matrix-vm@.service matrix-vm-restore@.service matrix-hostd.service matrix-hostd-nft.service matrix-hostd-tenant-nft.service; do
   units_changed+="$(install_file "$SCRIPT_DIR/systemd/$unit" "/etc/systemd/system/$unit" 0644)"
 done
 systemctl daemon-reload
-# The firewall unit is enabled only by `--confirm-firewall`.
+# Install mandatory isolation before touching the revertible public firewall.
+systemctl enable --quiet matrix-hostd-tenant-nft.service
+systemctl reload-or-restart matrix-hostd-tenant-nft.service
+# The public firewall unit is enabled only by `--confirm-firewall`.
 systemctl enable --quiet matrix-hostd.service
 if [ -n "$nft_changed$units_changed" ] || ! systemctl is-active --quiet matrix-hostd-nft.service; then
   # Dead-man switch: unenabled, marker written, undone in 10 minutes unless
@@ -455,6 +485,7 @@ for _ in $(seq 1 50); do
 done
 has LISTEN ss -ltn "sport = :$api_port" || die "hostd is not listening on $api_port (journalctl -u matrix-hostd)"
 
+install -m 0644 /dev/null "$policy_marker"
 log "host $host_name ready: hostd API :$api_port, ingress :$ingress_port, bridge $BRIDGE, Cloud Hypervisor $CH_VERSION"
 if [ "$firewall_pending" = 1 ]; then
   log "firewall changed: open a NEW SSH session and run 'sudo $0 --confirm-firewall' within 10 minutes, or it is reverted"

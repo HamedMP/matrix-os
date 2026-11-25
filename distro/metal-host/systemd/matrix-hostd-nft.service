@@ -1,8 +1,6 @@
-# Loads hostd's nftables tables (matrix_hostd, matrix_hostd_nat), the host
-# firewall of a metal host, from /etc/matrix-hostd/nft.env after checking the
-# ruleset accepts SSH on the public interface. It never flushes the ruleset. A host-wide
-# nftables reload that does flush (nftables.service) is followed by a reload
-# of this unit, which puts hostd's tables back. provision-host.sh starts it
+# Loads the public management firewall (matrix_hostd) after checking SSH.
+# A host-wide nftables reload is followed by a reload of this unit.
+# provision-host.sh starts it
 # through `matrix-hostd-nft arm` (unenabled, with a revert timer); only
 # `matrix-hostd-nft confirm` enables it.
 [Unit]

@@ -85,7 +85,11 @@ export async function reconcileVms(deps: ReconcileDeps): Promise<void> {
     const { id } = record;
     if (await unitsActive(id)) {
       if (await unpause(id)) return { state: "running" };
-      return record.state === "creating" ? failed(record) : { state: "stopped", snapshot: null };
+      return record.state === "creating" ? failed(record) : {
+        state: "stopped",
+        snapshot: null,
+        memoryReservationMiB: record.memoryReservationMiB ?? record.maxMiB,
+      };
     }
     const takenAt = await snapshotTakenAt(id);
     if (takenAt !== null && takenAt >= Date.parse(record.updatedAt)) {

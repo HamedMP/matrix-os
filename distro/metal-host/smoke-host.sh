@@ -141,7 +141,7 @@ pass "disk $lv is a thin clone of golden-$golden owned by matrix-vm"
 wait_state running 60
 begin=$SECONDS
 until [ "$(curl -ks --max-time 3 -o /dev/null -w '%{http_code}' "https://$vm_ip/health")" = 200 ]; do
-  [ $((SECONDS - begin)) -lt "$BOOT_TIMEOUT_S" ] || die "gateway not healthy after ${BOOT_TIMEOUT_S}s (see /var/log/matrix-vm/$vm_id.serial)"
+  [ $((SECONDS - begin)) -lt "$BOOT_TIMEOUT_S" ] || die "gateway not healthy after ${BOOT_TIMEOUT_S}s (see journalctl --namespace=matrix-vm -u matrix-vm@$vm_id.service)"
   sleep 3
 done
 pass "gateway healthy $((SECONDS - begin))s after create"

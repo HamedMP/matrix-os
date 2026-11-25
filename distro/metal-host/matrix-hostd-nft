@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Loads hostd's nftables tables (see nftables.conf), the host firewall of a
-# metal host, without touching any other table. Before loading it checks the
-# rendered ruleset still accepts SSH on the public interface, so a template
-# or parameter mistake cannot lock the host out.
+# Loads the public management firewall and mandatory tenant rules into
+# separate tables. The management rules are checked for public SSH access.
 #
 #   matrix-hostd-nft render --template T --wan IF --ingress-port N --api-port N
 #   matrix-hostd-nft check FILE --wan IF   # exit 0 only if SSH on IF is accepted
 #   matrix-hostd-nft apply                 # uses /etc/matrix-hostd/nft.env
-#   matrix-hostd-nft remove
+#   matrix-hostd-nft apply-tenant          # independent of the public firewall
+#   matrix-hostd-nft remove                # removes the public management table
 #   matrix-hostd-nft arm                   # load a changed firewall, unconfirmed
 #   matrix-hostd-nft guard                 # ExecStartPre: refuse a stale unconfirmed load
 #   matrix-hostd-nft confirm               # keep it: enable the unit, cancel the revert
@@ -31,6 +30,8 @@ set -euo pipefail
 
 readonly ENV_FILE="${MATRIX_HOSTD_NFT_ENV:-/etc/matrix-hostd/nft.env}"
 readonly TEMPLATE="${MATRIX_HOSTD_NFT_TEMPLATE:-/usr/local/share/matrix-hostd/nftables.conf}"
+readonly TENANT_TEMPLATE="${MATRIX_HOSTD_TENANT_NFT_TEMPLATE:-/usr/local/share/matrix-hostd/nftables-tenant.conf}"
+readonly TENANT_RENDERED="${MATRIX_HOSTD_TENANT_NFT_RENDERED:-/etc/matrix-hostd/nftables-tenant.nft}"
 readonly RENDERED="${MATRIX_HOSTD_NFT_RENDERED:-/etc/matrix-hostd/nftables.nft}"
 # sha256 of the last confirmed rendered ruleset plus this helper.
 readonly CONFIRMED="${MATRIX_HOSTD_FIREWALL_CONFIRMED:-/var/lib/matrix-hostd/firewall-confirmed.sha256}"
@@ -143,8 +144,9 @@ confirm() {
   local current loaded=""
   current="$(fingerprint)"
   if [ -f "$LOADED" ]; then loaded="$(head -c 64 "$LOADED")"; fi
-  [ -n "$loaded" ] && [ "$current" = "$loaded" ] ||
+  if [ -z "$loaded" ] || [ "$current" != "$loaded" ]; then
     die "the rules on disk are not the ones loaded (an interrupted provisioning run?); the firewall is NOT confirmed and the revert stays armed; re-run provision-host.sh and confirm"
+  fi
   systemctl stop "$REVERT.timer"
   # The timer could have fired between the checks and the stop.
   systemctl is-active --quiet "$UNIT" || die "the revert fired while confirming; re-run provision-host.sh"
@@ -202,14 +204,21 @@ case "$cmd" in
     fingerprint_file "$RENDERED" >"$LOADED.tmp"
     mv -f "$LOADED.tmp" "$LOADED"
     ;;
+  apply-tenant)
+    load_env
+    umask 022
+    render "$TENANT_TEMPLATE" "$WAN" "$INGRESS_PORT" "$API_PORT" >"$TENANT_RENDERED.tmp"
+    nft -c -f "$TENANT_RENDERED.tmp"
+    mv -f "$TENANT_RENDERED.tmp" "$TENANT_RENDERED"
+    nft -f "$TENANT_RENDERED"
+    ;;
   guard) guard ;;
   arm) arm ;;
   confirm) confirm ;;
   changed) changed ;;
   remove)
     if nft list table inet matrix_hostd >/dev/null 2>&1; then nft delete table inet matrix_hostd; fi
-    if nft list table ip matrix_hostd_nat >/dev/null 2>&1; then nft delete table ip matrix_hostd_nat; fi
     rm -f "$LOADED"
     ;;
-  *) die "usage: matrix-hostd-nft render|check|apply|remove|arm|guard|confirm|changed" ;;
+  *) die "usage: matrix-hostd-nft render|check|apply|apply-tenant|remove|arm|guard|confirm|changed" ;;
 esac

@@ -222,6 +222,13 @@ describe("startup reconciliation", () => {
     ]);
   });
 
+  it("keeps a live reservation when systemd returns a query error", async () => {
+    await store.put(record("running", { memoryReservationMiB: 8192 }));
+    const badBus: Exec = async () => ({ code: 1, stdout: "", stderr: "bus unavailable" });
+    await reconcileVms({ store, exec: badBus, ch: () => ch(), snapshotsDir, log: () => undefined });
+    await expect(store.get(ID)).resolves.toMatchObject({ state: "running", memoryReservationMiB: 8192 });
+  });
+
   it("leaves a running record alone when its unit is active or systemd cannot be queried", async () => {
     await store.put(record("running"));
     active.add(`matrix-vm@${ID}.service`);

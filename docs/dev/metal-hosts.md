@@ -29,8 +29,13 @@ unprivileged `matrix-vm` user. It gets `/dev/kvm` through
 the `kvm` group, `/dev/userfaultfd` (ondemand restore) and its own disks
 through a udev rule; `vm.unprivileged_userfaultfd` stays 0. Taps are created
 and brought up by root `ExecStartPre` lines, so the VMM needs no
-`CAP_NET_ADMIN`. Each tap is policed to 50 Mbit/s and the firewall drops VM
-SMTP (port 25) and any VM traffic to private ranges or the host.
+`CAP_NET_ADMIN`. Each tap binds the guest's assigned MAC and IPv4, filters ARP, and is
+policed to 50 Mbit/s. Ingress checks the permanent host-side binding
+before forwarding. The tenant firewall drops guest SMTP, private-range
+traffic, and new connections to the host. Drain any running pilot
+`matrix-vm@` and `matrix-vm-restore@` units before upgrading a host from
+the legacy tap setup. Old snapshots without a recorded memory
+reservation cold boot from the same disk.
 
 ## Provision
 
@@ -45,18 +50,31 @@ bun run --cwd packages/hostd build:guest-agent
 sudo distro/metal-host/provision-host.sh --host-name <fqdn> [--ingress-port 443] [--data-disks /dev/nvme0n1,/dev/nvme1n1]
 ```
 
-VM disks are thin clones that grow to the requested size, so the pool is
-overcommitted. hostd refuses a new VM with `503 {"error":"capacity"}` while
-the pool's Data% is above `HOSTD_POOL_MAX_DATA_PERCENT` (default 85) or its
-Metadata% is above `HOSTD_POOL_MAX_METADATA_PERCENT` (default 80), or when it
-cannot read them within `HOSTD_POOL_QUERY_TIMEOUT_MS` (default 5000). The read
+The host reserves the full virtual size of every VM disk, golden clone,
+and snapshot filesystem against physical thin-pool data space. It also
+checks the metadata estimate for those allocations. Guest create, golden
+build, and snapshot filesystem creation share one allocation lock. The
+golden builder can use a portion of the space reserved by the default
+guest admission thresholds. Hostd
+returns retryable capacity if the reservation cannot fit or if LVM data
+or metadata usage exceeds the configured admission thresholds. For an
+existing overcommitted pilot, provision additional storage or retire
+unused volumes before admitting more guests. The helper does not shrink
+or delete existing disks.
+
+The read
 is a plain `lvs -o data_percent,metadata_percent vmvg/pool`: `--readonly` skips
 the device-mapper status query and prints blank percentages (LVM 2.03.16),
 which would refuse every create. `GET /v1/capacity`
 reports both as `thinPool`, which is `null` when unreadable or slower than the
 endpoint's 2 s probe bound, so placement can prefer hosts with room.
 
-The firewall (`nftables.conf`) owns the host: input default deny except
+Boots and restores reserve the VM ceiling plus 256 MiB for the VMM,
+leaving 32 GiB for the host. An idle VM releases its active reservation
+only after the VMM has stopped. A wake refused for capacity keeps its
+disk and snapshot for a later attempt.
+
+The management firewall (`nftables.conf`) controls public access: input default deny except
 established traffic, SSH on the public interface (key-only sshd, never
 removed), anything on `tailscale0`, Headscale (443/tcp, 3478/udp), Tailscale
 direct (41641/udp), the ingress and API ports. Forwarding: `brmx` to the
@@ -75,8 +93,9 @@ window opened, and the transient `matrix-hostd-nft-revert.timer` stops and
 disables the unit after 10 minutes. The unit's `ExecStartPre` (`guard`)
 refuses to load once that marker is older than 10 minutes, so a reboot (which
 loses the transient timer) or any later start fails open instead of bringing
-back an unconfirmed firewall. hostd only orders itself after the firewall; it
-never pulls it in. Open a **new** SSH session and run
+back an unconfirmed management firewall. The independent
+`matrix-hostd-tenant-nft.service` keeps guest isolation and NAT in place
+through rollback. Hostd and both VM units require that tenant service. Open a **new** SSH session and run
 `sudo distro/metal-host/provision-host.sh --confirm-firewall` to keep the
 change: it cancels the timer, removes the marker and enables the unit. It
 exits non-zero if the revert already happened; then re-run provisioning. Confirmation records a
@@ -118,7 +137,7 @@ sudo distro/metal-host/smoke-host.sh [--golden <version>] [--cycles 2]
 ```
 
 It uses only the hostd API and ingress: creates a free VM (boot 2048 MiB,
-max 8192 MiB, 20 GiB) from the golden disk, waits for gateway health, checks
+max 8192 MiB, 40 GiB) from the golden disk, waits for gateway health, checks
 the ingress routes `host: <handle>.matrix-os.com` (no port, as the platform
 sends it; rejects requests without `x-matrix-host-auth`), runs suspend/resume cycles (sparse snapshot on the
 snapshot LV, `runtime_asleep` while asleep, resume to gateway health under
@@ -133,8 +152,8 @@ checking no LV, record, snapshot, tap or active unit is left.
   up without hostd's firewall. Either way SSH returns; re-run
   provision-host.sh, fix the cause and confirm. From a path that still
   reaches the host you can also run `systemctl disable --now
-  matrix-hostd-nft.service` (its stop removes hostd's tables).
+  matrix-hostd-nft.service` (its stop removes the public management table).
 - hostd will not start: `journalctl -u matrix-hostd`. Startup errors name the
   bad config keys, never values.
-- A VM failed: `GET /v1/vms/<id>` shows `failed`/`failedDuring`; the serial
-  log is `/var/log/matrix-vm/<id>.serial`.
+- A VM failed: `GET /v1/vms/<id>` shows `failed` and `failedDuring`.
+  Read serial output with `journalctl --namespace=matrix-vm -u matrix-vm@<id>.service -u matrix-vm-restore@<id>.service`.

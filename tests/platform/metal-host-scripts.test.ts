@@ -16,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 const run = promisify(execFile);
 const DIR = "distro/metal-host";
 const SCRIPTS = [
+  `${DIR}/matrix-vm-network`,
   `${DIR}/provision-host.sh`,
   `${DIR}/build-golden-disk.sh`,
   `${DIR}/smoke-host.sh`,
@@ -44,10 +45,10 @@ async function allFiles(dir: string): Promise<string[]> {
   return out;
 }
 
-async function renderNft(): Promise<string> {
+async function renderNft(template = "nftables.conf"): Promise<string> {
   const { stdout } = await run("bash", [
     `${DIR}/matrix-hostd-nft`, "render",
-    "--template", `${DIR}/nftables.conf`,
+    "--template", `${DIR}/${template}`,
     "--wan", "eno1",
     "--ingress-port", "9443",
     "--api-port", "8443",
@@ -164,7 +165,7 @@ describe("metal host scripts", () => {
     }
     const rules = await renderNft();
     const tables = [...rules.matchAll(/^table\s+(\S+)\s+(\S+)/gm)].map((m) => `${m[1]} ${m[2]}`);
-    expect(new Set(tables)).toEqual(new Set(["inet matrix_hostd", "ip matrix_hostd_nat"]));
+    expect(new Set(tables)).toEqual(new Set(["inet matrix_hostd"]));
     expect(rules).not.toContain("@");
     const input = chain(rules, "input");
     expect(input[0]).toBe("type filter hook input priority 0; policy drop;");
@@ -185,10 +186,16 @@ describe("metal host scripts", () => {
     }
     const forward = chain(rules, "forward");
     expect(forward[0]).toBe("type filter hook forward priority 0; policy drop;");
-    expect(forward).toContain('iifname "brmx" tcp dport 25 drop');
-    expect(forward.indexOf('iifname "brmx" tcp dport 25 drop')).toBeLessThan(forward.indexOf('iifname "brmx" accept'));
     expect(forward).toContain('iifname "tailscale0" oifname "brmx" accept');
-    expect(rules).toMatch(/ip saddr 10\.78\.0\.0\/22 oifname "eno1" masquerade/);
+
+    const tenant = await renderNft("nftables-tenant.conf");
+    const tenantForward = chain(tenant, "forward");
+    expect(tenantForward[0]).toBe("type filter hook forward priority -10; policy accept;");
+    expect(tenantForward).toContain('iifname "brmx" tcp dport 25 drop');
+    expect(tenantForward).toContain('iifname "brmx" oifname != "eno1" drop');
+    expect(tenantForward.at(-1)).toBe('oifname "brmx" drop');
+    expect(chain(tenant, "input").at(-1)).toBe('iifname "brmx" drop');
+    expect(tenant).toMatch(/ip saddr 10\.78\.0\.0\/22 oifname "eno1" masquerade/);
   });
 
   it("keeps new outbound traffic of VM networks on other bridges working", async () => {
@@ -202,13 +209,49 @@ describe("metal host scripts", () => {
   });
 
   it("shapes each VM tap to 50 Mbit/s and keeps the VMM unprivileged", async () => {
+    const tap = await readFile(`${DIR}/matrix-vm-network`, "utf8");
+    expect(tap).toMatch(/action police rate 50mbit/);
+    expect(tap).toMatch(/protocol all .*action drop/);
     for (const unit of ["matrix-vm@.service", "matrix-vm-restore@.service"]) {
       const text = await readFile(`${DIR}/systemd/${unit}`, "utf8");
-      expect(text, unit).toMatch(/tc filter add dev \$\{TAP\} parent ffff: .*police rate 50mbit/);
+      expect(text, unit).toContain("ExecStartPre=+/usr/local/libexec/matrix-vm-network start");
       expect(text, unit).toMatch(/^User=matrix-vm$/m);
       expect(text, unit).not.toMatch(/AmbientCapabilities/);
       expect(text, unit).toMatch(/RequiresMountsFor=\/var\/lib\/matrix-hostd\/snapshots/);
     }
+  });
+
+  it("reserves physical thin-pool space for the full size of admitted volumes", async () => {
+    const bin = join(work, "thin-bin");
+    const log = join(work, "thin-commands");
+    await run("mkdir", ["-p", bin]);
+    await writeFile(join(bin, "lvs"), '#!/bin/bash\nprintf "%s\\n" "$FAKE_LVS"\n', { mode: 0o755 });
+    await writeFile(join(bin, "thin_metadata_size"), '#!/bin/bash\nprintf "1048576\\n"\n', { mode: 0o755 });
+    for (const tool of ["lvcreate", "lvextend"]) {
+      await writeFile(join(bin, tool), `#!/bin/bash\n echo "${tool} $*" >>"$FAKE_THIN_LOG"\n`, { mode: 0o755 });
+    }
+    const GiB = 1024 ** 3;
+    const vols = [
+      { lv_name: "pool", lv_size: 100 * GiB, segtype: "thin-pool", data_percent: "12.5", metadata_percent: "1.00",
+        chunk_size: 65_536, lv_metadata_size: 2 * GiB },
+      { lv_name: "golden-v1", lv_size: 20 * GiB, pool_lv: "pool", segtype: "thin" },
+      { lv_name: "hostd-snapshots", lv_size: 40 * GiB, pool_lv: "pool", segtype: "thin" },
+    ];
+    const env = {
+      ...process.env,
+      PATH: bin + delimiter + process.env.PATH,
+      MATRIX_HOSTD_THIN_LOCK: join(work, "thin.lock"),
+      FAKE_THIN_LOG: log,
+      FAKE_LVS: JSON.stringify({ report: [{ lv: vols }] }),
+    };
+    const allocate = (size: string) => run("python3", ["-I", `${DIR}/matrix-hostd-thin`,
+      "clone", "vmvg", "pool", "85", "80", "mx-vm_test", size, "golden-v1",
+    ], { env });
+
+    await expect(allocate("40G")).rejects.toMatchObject({ code: 75 });
+    expect(existsSync(log)).toBe(false);
+    await expect(allocate("25G")).resolves.toBeDefined();
+    expect(await readFile(log, "utf8")).toContain("lvextend --size 25G vmvg/mx-vm_test");
   });
 
   it("installs lvm2 before provisioning touches storage", async () => {
@@ -449,6 +492,21 @@ printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
     expect(result.code, result.out).toBe(0);
   };
 
+  it("preserves loaded tenant rules when the management firewall reverts", async () => {
+    const tenant = join(state, "tenant.nft");
+    env.MATRIX_HOSTD_TENANT_NFT_TEMPLATE = join(process.cwd(), DIR, "nftables-tenant.conf");
+    env.MATRIX_HOSTD_TENANT_NFT_RENDERED = tenant;
+
+    const applied = await nft("apply-tenant");
+    expect(applied.code, applied.out).toBe(0);
+    expect(await readFile(tenant, "utf8")).toContain("table inet matrix_hostd_tenant");
+    expect(await readFile(tenant, "utf8")).toContain("table ip matrix_hostd_nat");
+    expect((await nft("remove")).code).toBe(0);
+    expect((await log()).split("\n").filter((line) => line.includes("nft delete table"))).toEqual([
+      "nft delete table inet matrix_hostd",
+    ]);
+  });
+
   it("arm starts the firewall unenabled, with a marker and a revert timer", async () => {
     await writeFile(join(state, `enabled-${FW}`), "");
     const result = await nft("arm");
@@ -567,6 +625,14 @@ printf 'systemd-run %s\\n' "$*" >>"$FAKE_STATE/log"
     await confirmed();
     await writeFile(join(state, "nft.env"), "WAN=eno1\nINGRESS_PORT=443\nAPI_PORT=8443\n");
     expect((await nft("changed")).code).toBe(0);
+  });
+
+  it("requires tenant rules for the hostd and both VM units", async () => {
+    for (const name of ["matrix-hostd.service", "matrix-vm@.service", "matrix-vm-restore@.service"]) {
+      const unit = await readFile(`${DIR}/systemd/${name}`, "utf8");
+      expect(unit).toMatch(/^BindsTo=.*matrix-hostd-tenant-nft\.service/m);
+      expect(unit).toMatch(/^After=.*matrix-hostd-tenant-nft\.service/m);
+    }
   });
 
   it("wires the units so only a confirmed firewall survives reboot or hostd restarts", async () => {

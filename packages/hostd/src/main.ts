@@ -144,6 +144,7 @@ export async function startHostd(config: HostdConfig, overrides: HostdOverrides 
     trim: (id, signal) => guest(id).trim(signal),
     log,
     config: {
+      thinAllocatorPath: "/usr/local/libexec/matrix-hostd-thin",
       poolMaxDataPercent: config.poolMaxDataPercent,
       poolMaxMetadataPercent: config.poolMaxMetadataPercent,
       poolQueryTimeoutMs: config.poolQueryTimeoutMs,

@@ -243,6 +243,18 @@ describe("hostd main", () => {
     await expect(hostd.store.get(id)).resolves.toMatchObject({ state: "running" });
   });
 
+  it("returns retryable capacity and drops the record if disk reservation is refused", async () => {
+    hostd = await startHostd(config, overrides({
+      exec: async (argv, options) => argv[0] === "/usr/local/libexec/matrix-hostd-thin"
+        ? { code: 75, stdout: "", stderr: "capacity" }
+        : exec(argv, options),
+    }));
+    expect(await apiCall("POST", "/v1/vms", createBody)).toMatchObject({
+      status: 503, body: '{"error":"capacity"}',
+    });
+    expect(await hostd.store.list()).toEqual([]);
+  });
+
   it("applies the configured thin pool thresholds: create answers 503 capacity past them", async () => {
     hostd = await startHostd({ ...config, poolMaxDataPercent: 9 }, overrides());
     const refused = await apiCall("POST", "/v1/vms", createBody);

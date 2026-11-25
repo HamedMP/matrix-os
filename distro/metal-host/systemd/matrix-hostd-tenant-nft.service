@@ -1,0 +1,16 @@
+[Unit]
+Description=Matrix tenant network isolation
+Wants=network-pre.target
+After=nftables.service network-pre.target
+ReloadPropagatedFrom=nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/matrix-hostd-nft apply-tenant
+ExecReload=/usr/local/libexec/matrix-hostd-nft apply-tenant
+# Keep the last loaded isolation rules in place when stopped. The dependent
+# hostd and VM units also stop if this service becomes inactive.
+
+[Install]
+WantedBy=multi-user.target
