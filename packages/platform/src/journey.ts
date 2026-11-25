@@ -1,4 +1,5 @@
 import { neverRegistered } from './substrates/metal-registration-window.js';
+import { takesOnDemandPath } from './substrates/substrate-wake.js';
 import { randomUUID } from 'node:crypto';
 import {
   appendJourneyEvent,
@@ -200,6 +201,25 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
     };
   }
 
+  // The authenticated runtime route wakes a provisioned metal VM. Let clients
+  // reach that route instead of polling a journey response that cannot wake it.
+  if (liveMachine.status === 'running'
+    || (liveMachine.substrate === 'metal' && liveMachine.metalVmId && takesOnDemandPath(liveMachine))) {
+    if (!firstRun) {
+      return {
+        phase: 'first_run',
+        detail: 'Finish setting up your Matrix computer.',
+        nextAction: { kind: 'begin_first_run' },
+      };
+    }
+    return {
+      phase: 'ready',
+      detail: 'Your Matrix computer is ready.',
+      nextAction: { kind: 'open_shell', url: shellUrl(appOrigin) },
+      ...(inputs.readiness ? { readiness: inputs.readiness } : {}),
+    };
+  }
+
   switch (liveMachine.status) {
     case 'provisioning':
     case 'recovering':
@@ -234,20 +254,6 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
         failure: { retryable, attempt: liveMachine.attempt },
       };
     }
-    case 'running':
-      if (!firstRun) {
-        return {
-          phase: 'first_run',
-          detail: 'Finish setting up your Matrix computer.',
-          nextAction: { kind: 'begin_first_run' },
-        };
-      }
-      return {
-        phase: 'ready',
-        detail: 'Your Matrix computer is ready.',
-        nextAction: { kind: 'open_shell', url: shellUrl(appOrigin) },
-        ...(inputs.readiness ? { readiness: inputs.readiness } : {}),
-      };
     default:
       // Unknown/terminal status (e.g. deleted shouldn't appear here): treat as start.
       return {

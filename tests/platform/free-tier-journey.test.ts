@@ -1,3 +1,4 @@
+import { isConnectablePhase } from '../../apps/mobile/lib/journey.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HostdCapacityResponse, HostdCreateVmRequest } from '@matrix-os/contracts';
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
@@ -79,6 +80,17 @@ describe('journey phase for the free plan', () => {
     const checkoutAttempt = { status: 'paid', createdAt: '2026-01-01T00:00:00.000Z' } as NonNullable<Parameters<typeof deriveJourneyPhase>[0]['checkoutAttempt']>;
     expect(deriveJourneyPhase({ ...base, checkoutAttempt, entitlement: null, liveMachine: null, freePlanEligible: true }).nextAction)
       .toEqual({ kind: 'start_provision' });
+  });
+
+  it.each(['suspended', 'suspending', 'resuming', 'stopped'])('hands Native Mobile an on-demand metal runtime in %s state', (status) => {
+    const liveMachine = { ...metalMachine(status), metalVmId: 'vm_0123456789abcdef01234567' };
+    const entitlement = buildFreeEntitlement(OWNER, NOW);
+    const state = deriveJourneyPhase({ ...base, liveMachine, entitlement });
+    expect(state).toMatchObject({ phase: 'first_run', nextAction: { kind: 'begin_first_run' } });
+    expect(isConnectablePhase(state.phase)).toBe(true);
+
+    const vps = { ...liveMachine, status: 'suspended', substrate: 'vps' } as const;
+    expect(deriveJourneyPhase({ ...base, liveMachine: vps, entitlement: paidEntitlement() }).phase).toBe('provisioning');
   });
 
   it('follows a free owner through their metal runtime and never through a VPS', () => {
