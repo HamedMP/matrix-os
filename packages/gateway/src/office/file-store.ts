@@ -3,12 +3,11 @@ import { constants } from "node:fs";
 import { link, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { appFileVersion } from "@matrix-os/contracts/app-files";
-import { hasSymlinkComponent, lstatOrNull } from "../app-files/paths.js";
+import { AppFileError } from "../app-files/errors.js";
+import { hasSymlinkComponent, lstatOrNull, resolveExistingAppFilePath, resolveWritableAppFilePath } from "../app-files/paths.js";
 import { unguardedProjectWrite, type ProjectWriteGuard } from "../app-files/project-write-fence.js";
 import { withOwnerFileMutation } from "../owner-file-mutations.js";
-import {
-  isDeniedFileApiPath, isProtectedHomeSubpath, resolveExistingFileApiPath, resolveWithinHome, resolveWritableFileApiPath,
-} from "../path-security.js";
+import { isDeniedFileApiPath, isProtectedHomeSubpath, resolveWithinHome } from "../path-security.js";
 import { OfficeDocumentError, errnoCode } from "./errors.js";
 
 /** Prefix of the temporary file a save publishes from, in the target's directory. */
@@ -36,11 +35,11 @@ export interface CommittedOfficeFile {
   size: number;
 }
 
-function callPathHelper(helper: () => string | null): string | null {
-  try { return helper(); }
+/** Runs an async App Files resolver and answers its refusal in the document service's codes. */
+async function resolvePath(resolver: () => Promise<string>): Promise<string> {
+  try { return await resolver(); }
   catch (error: unknown) {
-    // The File API helpers use sync fs; a racing delete surfaces here.
-    if (errnoCode(error) === "ENOENT") return null;
+    if (error instanceof AppFileError) throw new OfficeDocumentError(error.code, error.reason ?? error.code);
     throw error;
   }
 }
@@ -56,7 +55,8 @@ async function removeTemp(path: string): Promise<void> {
  * Owner files for the document service. Paths are home-relative and already
  * syntax-checked by the contract schemas. Protected subtrees (dot
  * directories, `system`, `agents`) are forbidden, denied subtrees answer as
- * missing, and any symlink on the way is refused.
+ * missing, and any symlink on the way is refused. Every filesystem check is
+ * async, so a slow disk never blocks other gateway requests.
  */
 export class OfficeFileStore {
   constructor(private readonly options: OfficeFileStoreOptions) {}
@@ -67,27 +67,23 @@ export class OfficeFileStore {
     if (!info || !info.isDirectory()) throw new OfficeDocumentError("unavailable", "home path missing");
   }
 
-  private async guard(path: string): Promise<void> {
+  /** Syntax-only checks; the async resolvers then walk the path for symlinks and the real home. */
+  private guard(path: string): void {
     const { homePath } = this.options;
     const resolved = resolveWithinHome(homePath, path);
     if (!resolved) throw new OfficeDocumentError("invalid_request", "outside home");
     if (isProtectedHomeSubpath(homePath, resolved)) throw new OfficeDocumentError("forbidden", "protected path");
     if (isDeniedFileApiPath(homePath, path)) throw new OfficeDocumentError("not_found", "denied path");
-    if (await hasSymlinkComponent(homePath, path)) throw new OfficeDocumentError("forbidden", "symlink");
   }
 
   async resolveExisting(path: string): Promise<string> {
-    await this.guard(path);
-    const resolved = callPathHelper(() => resolveExistingFileApiPath(this.options.homePath, path));
-    if (!resolved) throw new OfficeDocumentError("not_found");
-    return resolved;
+    this.guard(path);
+    return resolvePath(() => resolveExistingAppFilePath(this.options.homePath, path));
   }
 
   async resolveWritable(path: string): Promise<string> {
-    await this.guard(path);
-    const resolved = callPathHelper(() => resolveWritableFileApiPath(this.options.homePath, path));
-    if (!resolved) throw new OfficeDocumentError("forbidden", "unwritable path");
-    return resolved;
+    this.guard(path);
+    return resolvePath(() => resolveWritableAppFilePath(this.options.homePath, path));
   }
 
   /** Reads a whole regular file of at most `maxFileBytes`, with the version of exactly those bytes. */
