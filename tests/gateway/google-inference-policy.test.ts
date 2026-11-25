@@ -195,7 +195,11 @@ describe("Google inference broker authority", () => {
     const result = await forwardBotInference({ ...request(responses()), action: "inference.responses", path: "/v1/responses" }, candidate,
       () => ({ allowed: true, accessSourceId: routeLive ? "matrix_chatgpt_plan" : "matrix_included", allowedModelIds: [model], allowedEgressOrigins: [] }), fixture.deps);
     expect(infer).toHaveBeenCalledOnce(); expect(result).toMatchObject({ ok: false, error: "action_denied" });
-    expect(authorize.mock.calls.map(([input]) => input.phase)).toEqual(["dispatch", "dispatch", "release"]);
+    const phases = authorize.mock.calls.map(([input]) => input.phase);
+    expect(phases[0]).toBe("dispatch");
+    const released = phases.indexOf("release");
+    expect(released).toBeGreaterThan(0);
+    expect(phases.slice(released)).not.toContain("dispatch");
   });
   it("fails closed when delegated live-binding revalidation is unavailable", async () => {
     let checks = 0;

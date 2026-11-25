@@ -217,6 +217,7 @@ export async function forwardBotInference(
   if (authorization.accessSourceId === "matrix_chatgpt_plan") {
     if (!deps.chatgptPlan) return failure(request.requestId, "provider_unavailable");
     const authority = deps.chatgptPlan;
+    let delegatedDispatched = false;
     const planPolicy = async (phase: "dispatch" | "release") => await waitForInferenceAuthority(() =>
       authorizeGoogleInference(deps.googleData, { phase, binding, identity: null, signal: lifecycle }), lifecycle) ?? { allowed: false as const };
     const planLive = async () => {
@@ -236,18 +237,22 @@ export async function forwardBotInference(
       ...authority,
       infer: async (candidate, body, signal) => {
         if (deps.googleData && (!(await planPolicy("dispatch")).allowed || !await planLive())) throw new GoogleInferencePolicyError();
-        return authority.infer(candidate, body, signal);
+        const result = await authority.infer(candidate, body, signal);
+        delegatedDispatched = true;
+        return result;
       },
       ...(authority.inferStream ? { inferStream: async (candidate: PiRuntimeBinding, body: string, signal: AbortSignal) => {
         if (deps.googleData && (!(await planPolicy("dispatch")).allowed || !await planLive())) throw new GoogleInferencePolicyError();
-        return authority.inferStream!(candidate, body, signal);
+        const result = await authority.inferStream!(candidate, body, signal);
+        delegatedDispatched = true;
+        return result;
       } } : {}),
       revalidate: async (candidate, signal) => await waitForInferenceAuthority(async () =>
         (!deps.revalidateBinding || await deps.revalidateBinding(candidate))
           && !signal.aborted && await authority.revalidate(candidate, signal), signal) === true,
     }, signal: lifecycle,
       stillAuthorized: async () => { const current = await readAuthorization(); return !lifecycle.aborted && current?.allowed === true && current.accessSourceId === "matrix_chatgpt_plan" && current.allowedModelIds.includes(modelId)
-        && (!deps.googleData || (await planPolicy("release")).allowed && await planLive()); } });
+        && (!deps.googleData || (await planPolicy(delegatedDispatched ? "release" : "dispatch")).allowed && await planLive()); } });
     if (deps.googleData && (!(await planPolicy("release")).allowed || !await planLive())) return failure(request.requestId, "action_denied");
     return result;
   }
