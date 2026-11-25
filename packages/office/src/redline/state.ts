@@ -26,7 +26,32 @@ import {
 /** Most items a saved state may hold. */
 const MAX_ITEMS = 1_000_000;
 const CHANGE_ID = /^c[1-9][0-9]{0,8}$/;
+/** Highest change number {@link CHANGE_ID} allows. */
+const MAX_CHANGE_NUMBER = 999_999_999;
+/** Highest block number a saved block id (at most 8 base-36 digits) holds. */
+const MAX_BLOCK_NUMBER = 36 ** 8 - 1;
 const KINDS: ReadonlySet<string> = new Set<RedlineChangeKind>(["insert", "delete", "moveFrom", "moveTo"]);
+
+/**
+ * Throws `limit_exceeded` when `data` holds more than {@link loadState}
+ * accepts: more items or changes, more text, or ids past what a saved state
+ * can name. Creating or editing a document calls it before the result is
+ * kept, so every document can be saved and loaded again.
+ */
+export function checkStateLimits(data: DocData): void {
+  const exceeded = (what: string): never => {
+    throw new OfficeError("limit_exceeded", `the redline would hold too many ${what}`, { details: { limit: what } });
+  };
+  if (data.items.length > MAX_ITEMS) exceeded("items");
+  if (data.changes.length > MAX_ITEMS) exceeded("changes");
+  if (data.nextChange - 1 > MAX_CHANGE_NUMBER) exceeded("change ids");
+  if (data.nextBlock - 1 > MAX_BLOCK_NUMBER) exceeded("block ids");
+  let length = 0;
+  for (const item of data.items) {
+    length += item.t.length;
+    if (length > 2 * MAX_REDLINE_LENGTH) exceeded("characters");
+  }
+}
 
 export function saveState(data: DocData): RedlineState {
   return {

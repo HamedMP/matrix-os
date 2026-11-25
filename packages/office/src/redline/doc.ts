@@ -19,7 +19,7 @@ import { renderBlocks } from "./html-render.js";
 import { applyEdit, checkEditOptions, type EditOptions } from "./merge.js";
 import { MAX_REDLINE_LENGTH, plainText, type ChangeRecord, type DocData, type SideItem } from "./model.js";
 import { resolveChanges } from "./resolve.js";
-import { loadState, saveState } from "./state.js";
+import { checkStateLimits, loadState, saveState } from "./state.js";
 import { viewBlocks, viewText } from "./views.js";
 
 /** Who made an edit and when. */
@@ -115,6 +115,8 @@ class Tracked implements TrackedRedline {
     const draft = loadState(saveState(this.data));
     draft.nextBlock = ids.next;
     applyEdit(draft, next, options);
+    // A draft its own loader would refuse is not kept.
+    checkStateLimits(draft);
     Object.assign(this.data, draft);
   }
 
@@ -143,6 +145,7 @@ export function createRedline(original: string, revised: string, options: Redlin
     accepted: false,
   };
   applyEdit(data, after, { author: options.author, date: options.date, detectMoves: options.detectMoves });
+  checkStateLimits(data);
   return new Tracked(data);
 }
 

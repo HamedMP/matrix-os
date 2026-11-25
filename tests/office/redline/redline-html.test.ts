@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isOfficeError } from "../../../packages/office/src/errors.js";
 import {
   applyUserEdit,
   createRedline,
@@ -301,6 +302,30 @@ describe("applyUserEdit (html)", () => {
       expect(doc.toHtml("final"), `seed ${seed}`).toBe(sanitiseHtml(current));
     }
   });
+
+  it("refuses a document with more items than a saved state may hold, and keeps the draft", () => {
+    const tooMany = "<br>".repeat(1_000_001);
+    let code: string | null = null;
+    try {
+      createRedline("", tooMany, ANN);
+    } catch (error) {
+      code = isOfficeError(error) ? error.code : "other";
+    }
+    expect(code).toBe("limit_exceeded");
+    const doc = createRedline("<p>Dear Ann,</p>", "<p>Dear Ann,</p>", ANN);
+    const before = serialiseRedline(doc);
+    code = null;
+    try {
+      applyUserEdit(doc, tooMany, BOB);
+    } catch (error) {
+      code = isOfficeError(error) ? error.code : "other";
+    }
+    expect(code).toBe("limit_exceeded");
+    expect(serialiseRedline(doc)).toBe(before);
+    // Just under the bound, the document saves and loads again.
+    const fits = createRedline("", "<br>".repeat(999_990), ANN);
+    expect(deserialiseRedline(serialiseRedline(fits)).toHtml("final")).toBe(fits.toHtml("final"));
+  }, 60_000);
 });
 
 const SENTENCES = [
