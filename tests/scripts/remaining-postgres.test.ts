@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { remainingPostgresInventory, runRemainingPostgres } from "../../scripts/ci/remaining-postgres.mjs";
+import { gmailPostgresFiles } from "../../scripts/ci/gmail-postgres.mjs";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -34,6 +35,18 @@ function executor(root: string, change: (report: ReturnType<typeof passingReport
 }
 
 describe("remaining real PostgreSQL qualification", () => {
+  it("accounts for the actual Gmail runner only when its command is enabled", () => {
+    const { root, write } = fixture();
+    for (const file of gmailPostgresFiles(process.cwd())) write(file, "process.env.MATRIX_TEST_POSTGRES_URL;");
+    const assign = (command: string, condition = "true") => write(".github/workflows/ci.yml",
+      `jobs:\n  funded-postgres:\n    steps:\n      - run: pnpm exec vitest run ${funded}\n      - if: ${condition}\n        run: ${command}\n`);
+    for (const [command, condition] of [["echo node scripts/ci/gmail-postgres.mjs", "true"], ["node scripts/ci/gmail-postgres.mjs", "false"]]) {
+      assign(command!, condition);
+      expect(() => remainingPostgresInventory(root, [remaining])).toThrow(/unassigned/i);
+    }
+    assign("node scripts/ci/gmail-postgres.mjs");
+    expect(() => remainingPostgresInventory(root, [remaining])).not.toThrow();
+  });
   it("assigns every required suite without duplicating existing hosted lanes", () => {
     const { root } = fixture();
     const inventory = remainingPostgresInventory(root, [remaining]);

@@ -46,7 +46,7 @@ function deferred() {
 
 // This scope protects trusted, finite normal query-builder reads. It does not
 // qualify arbitrary callbacks, precompiled executeQuery, plugin removal or streams.
-describe('model history finite database read scope', () => {
+describe.runIf(Boolean(process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL))('model history finite database read scope', () => {
   it('drains siblings after Promise.all rejects before rolling back an aborted transaction', async () => {
     const reader = createGoogleModelHistoryReader({ repository, isGuardedAdapter: () => false });
     let siblings: Promise<unknown>[] = [];

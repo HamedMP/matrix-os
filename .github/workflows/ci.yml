@@ -652,23 +652,8 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism
 
-      - name: Prepare the Gmail collection PostgreSQL fixture
-        run: |
-          node --input-type=module <<'NODE'
-          import pg from 'pg';
-          const url = new URL(process.env.MATRIX_TEST_POSTGRES_URL);
-          if (url.hostname !== '127.0.0.1' || url.pathname !== '/matrix_test') throw Error('Disposable PostgreSQL configuration required');
-          const client = new pg.Client({ connectionString: url.href, connectionTimeoutMillis: 2000, statement_timeout: 5000, query_timeout: 7000 });
-          try { await client.connect(); await client.query('CREATE DATABASE matrix_ci_platform_fixture_admin'); }
-          finally { await client.end(); }
-          NODE
-
-      - name: Gmail collection PostgreSQL lifetime
-        env:
-          MATRIX_PLATFORM_FIXTURE_POSTGRES_URL: postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_ci_platform_fixture_admin
-        run: |
-          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          pnpm exec vitest run tests/gateway/google-broker-collection-startup.test.ts --maxWorkers=1 --no-file-parallelism
+      - name: Gmail processing and qualified inference PostgreSQL races
+        run: node scripts/ci/gmail-postgres.mjs
 
       - name: Verify metal background pass singleton on PostgreSQL
         run: |

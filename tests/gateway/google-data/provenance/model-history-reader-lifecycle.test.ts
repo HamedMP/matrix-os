@@ -38,7 +38,7 @@ beforeEach(async () => {
     retentionDeadline: new Date(clock.getTime() + 60_000).toISOString() });
 });
 
-describe('model history reader transaction lifetime', () => {
+describe.runIf(Boolean(process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL))('model history reader transaction lifetime', () => {
   it.each(['abort', 'retention-expiry'] as const)('withholds content after %s during the COMMIT-return window', async change => {
     const committed = deferred();
     const release = deferred();
