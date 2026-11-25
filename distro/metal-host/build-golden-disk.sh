@@ -173,7 +173,7 @@ python3 -I "$SCRIPT_DIR/render-user-data.py" builder \
   --template "$REPO_ROOT/distro/customer-vps/golden-snapshot-builder-cloud-init.yaml" \
   --guest-dir "$SCRIPT_DIR/guest" \
   --guest-agent "$GUEST_AGENT" \
-  --var "callbackToken=$(cat "$work/callback-token")" \
+  --callback-token-file "$work/callback-token" \
   --var "callbackUrl=http://$CALLBACK_ADDR:$CALLBACK_PORT/callback" \
   --var "callbackEventId=$(uuid)" \
   --var "builderBootEventId=$(uuid)" \

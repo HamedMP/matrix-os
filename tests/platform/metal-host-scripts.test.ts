@@ -67,11 +67,15 @@ function chain(rules: string, name: string): string[] {
 describe("metal host scripts", () => {
   let work: string;
   let agent: string;
+  let tokenFile: string;
+  const callbackToken = "b".repeat(64);
   const AGENT_SOURCE = "// stand-in guest agent bundle\nexport {};\n";
   beforeAll(async () => {
     work = await mkdtemp(join(tmpdir(), "metal-host-scripts-"));
     agent = join(work, "agent.mjs");
     await writeFile(agent, AGENT_SOURCE);
+    tokenFile = join(work, "callback-token");
+    await writeFile(tokenFile, callbackToken + "\n", { mode: 0o600 });
   });
   afterAll(async () => {
     await rm(work, { recursive: true, force: true });
@@ -364,13 +368,16 @@ describe("metal host scripts", () => {
   });
 
   it("renders the unchanged golden builder cloud-init plus the S7 guest settings", async () => {
+    const build = await readFile(`${DIR}/build-golden-disk.sh`, "utf8");
+    expect(build).toContain('--callback-token-file "$work/callback-token"');
+    expect(build).not.toContain('--var "callbackToken=');
     const out = join(work, "builder.mime");
     await run("python3", [
       "-I", `${DIR}/render-user-data.py`, "builder",
       "--template", "distro/customer-vps/golden-snapshot-builder-cloud-init.yaml",
       "--guest-dir", `${DIR}/guest`,
       "--guest-agent", agent,
-      "--var", `callbackToken=${"t".repeat(64)}`,
+      "--callback-token-file", tokenFile,
       "--var", "callbackUrl=http://10.78.0.1:9480/callback",
       "--var", "callbackEventId=evt-1",
       "--var", "builderBootEventId=evt-2",
@@ -392,6 +399,7 @@ describe("metal host scripts", () => {
     const template = await readFile("distro/customer-vps/golden-snapshot-builder-cloud-init.yaml", "utf8");
     // The builder flow itself is unchanged: every template line survives rendering.
     const rendered = stdout.split("=== text/x-shellscript")[0]!;
+    expect(rendered).toContain(callbackToken);
     for (const line of template.split("\n").filter((l) => l.trim() && !l.includes("{{"))) {
       expect(rendered).toContain(line);
     }
@@ -428,6 +436,7 @@ describe("metal host scripts", () => {
         "--template", "distro/customer-vps/golden-snapshot-builder-cloud-init.yaml",
         "--guest-dir", `${DIR}/guest`,
         "--guest-agent", agent,
+        "--callback-token-file", tokenFile,
         "--out", join(work, "missing.mime"),
       ]),
     ).rejects.toMatchObject({ stderr: expect.stringContaining("unrendered placeholders") });

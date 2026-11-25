@@ -14,7 +14,7 @@ random secrets, the image source is the golden snapshot (fast path), and
 reach the object store restore gate (as in the S7 spike).
 
 Usage:
-  render-user-data.py builder --template T --guest-dir D --guest-agent A --var k=v... --out O
+  render-user-data.py builder --template T --guest-dir D --guest-agent A --callback-token-file F --var k=v... --out O
   render-user-data.py smoke --template T --var k=v... [--ssh-key FILE] --out O
 """
 import argparse
@@ -84,8 +84,16 @@ def write_out(path, data):
 
 
 def render_builder(args):
+    values = parse_vars(args.var)
+    if "callbackToken" in values:
+        fail("use --callback-token-file for the builder callback token")
+    with open(args.callback_token_file) as handle:
+        token = handle.read(66).removesuffix("\n")
+    if not re.fullmatch(r"[0-9a-f]{64}", token):
+        fail("invalid builder callback token")
+    values["callbackToken"] = token
     with open(args.template) as handle:
-        cloud_config = fill(handle.read(), parse_vars(args.var))
+        cloud_config = fill(handle.read(), values)
     with open(os.path.join(args.guest_dir, "metal-guest-setup.sh")) as handle:
         script = handle.read()
     for marker, name in GUEST_FILES.items():
@@ -172,6 +180,7 @@ def main():
     builder.add_argument("--template", required=True)
     builder.add_argument("--guest-dir", required=True)
     builder.add_argument("--guest-agent", required=True)
+    builder.add_argument("--callback-token-file", required=True)
     builder.add_argument("--var", action="append")
     builder.add_argument("--out", required=True)
     smoke = sub.add_parser("smoke")
