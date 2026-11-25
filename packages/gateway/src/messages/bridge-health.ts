@@ -31,7 +31,7 @@ export function createMessagingBridgeHealthService(repository: MessagingReposito
   return {
     async getHealth(scope) {
       const accounts = await repository.listAccounts(scope);
-      const networks: MessagingNetworkHealth[] = (["telegram", "whatsapp"] as const).map((network) => {
+      const networks: MessagingNetworkHealth[] = (["telegram", "whatsapp", "linkedin"] as const).map((network) => {
         const networkAccounts = accounts.filter((account) => account.networkSlug === network);
         const accountsHealthy = networkAccounts.filter((account) => account.status === "connected").length;
         const accountsNeedingRelink = networkAccounts.filter((account) => account.status === "error" || account.status === "disconnected").length;

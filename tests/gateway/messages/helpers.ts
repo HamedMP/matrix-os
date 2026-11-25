@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { vi } from "vitest";
 import { createMessagingRoutes } from "../../../packages/gateway/src/messages/routes.js";
-import type { MessagingRepository } from "../../../packages/gateway/src/messages/repository.js";
+import type { MessagingKyselyRepository, MessagingRepository } from "../../../packages/gateway/src/messages/repository.js";
+import { MessagingBridgeStore } from "../../../packages/gateway/src/messages/bridge-store.js";
 import type { MessagingRouteDeps } from "../../../packages/gateway/src/messages/routes.js";
 
 export const ownerId = "user_a";
 export const accountId = "acct_0123456789abcdef0123456789abcdef";
-export const setupId = "setup_0123456789abcdef0123456789abcdef";
 export const conversationId = "conv_0123456789abcdef0123456789abcdef";
 export const mappingId = "map_0123456789abcdef0123456789abcdef";
 export const now = "2026-05-13T00:00:00.000Z";
@@ -31,34 +31,6 @@ export function createRepositoryMock(overrides: Partial<MessagingRepository> = {
     ]),
     listAccounts: vi.fn().mockResolvedValue([]),
     getAccount: vi.fn().mockResolvedValue(null),
-    createSetupSession: vi.fn().mockResolvedValue({
-      id: setupId,
-      ownerId,
-      networkSlug: "whatsapp",
-      status: "pending",
-      qrCode: "matrixos-whatsapp:setup",
-      expiresAt: "2026-05-13T00:10:00.000Z",
-      createdAt: now,
-      updatedAt: now,
-    }),
-    completeSetupSession: vi.fn().mockResolvedValue({
-      id: accountId,
-      ownerId,
-      networkSlug: "whatsapp",
-      externalAccountId: "wa_1",
-      displayName: "Personal WhatsApp",
-      status: "connected",
-      createdAt: now,
-      updatedAt: now,
-    }),
-    disconnectAccount: vi.fn().mockResolvedValue({
-      id: accountId,
-      ownerId,
-      networkSlug: "whatsapp",
-      status: "disconnected",
-      createdAt: now,
-      updatedAt: now,
-    }),
     listConversations: vi.fn().mockResolvedValue({ items: [], nextCursor: undefined }),
     getMappingByExternalThread: vi.fn().mockResolvedValue(null),
     upsertConversation: vi.fn(),
@@ -113,4 +85,20 @@ export function createMessagingTestApp(
     ...overrides,
   }));
   return app;
+}
+
+/** Records a connected account through the production bridge link path (replaces the 077 stub setup). */
+export async function linkTestAccount(
+  repository: MessagingKyselyRepository,
+  input: { ownerId: string; loginId: string; displayName?: string; network?: "whatsapp" | "telegram" | "linkedin" },
+): Promise<{ id: string }> {
+  const store = new MessagingBridgeStore(repository.kysely as never);
+  await store.bootstrap();
+  const { accountId } = await store.recordLinkedAccount({
+    ownerId: input.ownerId,
+    network: input.network ?? "whatsapp",
+    loginId: input.loginId,
+    ...(input.displayName ? { displayName: input.displayName } : {}),
+  });
+  return { id: accountId };
 }

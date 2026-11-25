@@ -1,14 +1,12 @@
-import type { MessagingBridgeAccountProvider } from "./repository.js";
-import type { MessagingNetwork, MessagingNetworkSlug } from "./schemas.js";
-import { createSetupExpiresAt } from "./setup-sessions.js";
+import type { MessagingNetwork } from "./schemas.js";
 
 export const MESSAGING_NETWORKS: MessagingNetwork[] = [
   {
     slug: "telegram",
     displayName: "Telegram",
-    setupKind: "api_credentials",
+    setupKind: "code",
     enabled: true,
-    requiresExternalCredentials: true,
+    requiresExternalCredentials: false,
   },
   {
     slug: "whatsapp",
@@ -17,28 +15,11 @@ export const MESSAGING_NETWORKS: MessagingNetwork[] = [
     enabled: true,
     requiresExternalCredentials: false,
   },
-];
-
-const defaultProvider: MessagingBridgeAccountProvider = {
-  async beginSetup(input) {
-    const expiresAt = createSetupExpiresAt();
-    if (input.networkSlug === "whatsapp") {
-      return {
-        qrCode: `matrixos-whatsapp:${input.setupId}`,
-        expiresAt,
-      };
-    }
-    return {
-      setupUrl: `matrixos://messages/setup/telegram/${input.setupId}`,
-      expiresAt,
-    };
+  {
+    slug: "linkedin",
+    displayName: "LinkedIn",
+    setupKind: "api_credentials",
+    enabled: true,
+    requiresExternalCredentials: true,
   },
-  async disconnect() {},
-};
-
-export function getMessagingBridgeAccountProvider(
-  providers: Partial<Record<MessagingNetworkSlug, MessagingBridgeAccountProvider>>,
-  networkSlug: MessagingNetworkSlug,
-): MessagingBridgeAccountProvider {
-  return providers[networkSlug] ?? defaultProvider;
-}
+];

@@ -1,3 +1,4 @@
+import type { MessagingBridgeChangedEvent } from "@matrix-os/contracts/messaging-bridge";
 import type { SpawnFn } from "../dispatcher.js";
 
 export interface GatewayConfig {
@@ -47,6 +48,7 @@ export type ServerMessage =
   | { type: "os:sync-report"; payload: { added: string[]; updated: string[]; skipped: string[] } }
   | { type: "data:change"; app: string; key: string }
   | { type: "os-view:changed"; revision: number; updatedAt: string }
+  | MessagingBridgeChangedEvent
   | { type: "integration:connected"; service: string; accountLabel: string }
   | { type: "integration:disconnected"; service: string; id: string }
   | { type: "integration:expired"; service: string; id: string; accountLabel: string }
