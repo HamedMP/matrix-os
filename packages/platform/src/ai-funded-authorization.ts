@@ -238,11 +238,17 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         holdMicrousd = Math.min(holdMicrousd, credit, budget);
       }
       if (holdMicrousd > sourceAvailability.availableMicrousd) throw new AiFundedPolicyError("insufficient_credit");
-      if (free) await admitFreeDailySpend(trx.executor, deps.freeFunding, request.maxCostMicrousd, checked);
+      const reservedAt = free
+        ? await admitFreeDailySpend(trx.executor, deps.freeFunding, request.maxCostMicrousd, deps.now)
+        : checked;
+      // Retry if the free spend lock wait crossed the funding window.
+      // Paid reservations use the window returned by the balance update.
+      if (free && utcMonthStart(reservedAt) !== periodStart) throw new AiFundedPolicyError("busy");
+      const reservedAtIso = reservedAt.toISOString();
       const reserved = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         reserved_microusd: sql<number>`reserved_microusd + ${holdMicrousd}`,
         month_reserved_microusd: sql<number>`month_reserved_microusd + ${holdMicrousd}`,
-        updated_at: checkedAt,
+        updated_at: reservedAtIso,
       }).where("machine_id", "=", identity.machineId)
         .where(sql<boolean>`reserved_microusd <= ${Number.MAX_SAFE_INTEGER - holdMicrousd}`)
         .where(sql<boolean>`credit_balance_microusd - reserved_microusd - funding_shortfall_microusd >= ${holdMicrousd}`)
@@ -271,7 +277,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       const fundingSources = sourceAvailability.allocate(holdMicrousd);
 
       const reservationId = FundedReferenceSchema.parse(deps.reservationIdFactory());
-      const expiresAt = new Date(checked.getTime() + deps.reservationTtlMs).toISOString();
+      const expiresAt = new Date(reservedAt.getTime() + deps.reservationTtlMs).toISOString();
       const response = FundedAiAuthorizationResponseSchema.parse({
         contractVersion: 1,
         authorized: true,
@@ -291,7 +297,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
           checkedAt,
           staleAfter: new Date(checked.getTime() + deps.policyFreshnessMs).toISOString(),
         },
-        funding: fundingSummary(reserved, monthlyBudget, checkedAt),
+        funding: fundingSummary(reserved, monthlyBudget, reservedAtIso),
         reservation: {
           reservationId,
           requestId: request.requestId,
@@ -336,7 +342,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         period_start: periodStart,
         status: "reserved",
         free_funded: free,
-        created_at: checkedAt,
+        created_at: reservedAtIso,
         started_at: null,
         expires_at: expiresAt,
         settled_at: null,
@@ -348,7 +354,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
             reservation_id: reservationId,
             grant_entry_id: allocation.grantEntryId,
             amount_microusd: allocation.amountMicrousd,
-            created_at: checkedAt,
+            created_at: reservedAtIso,
           })),
         ).execute();
       }

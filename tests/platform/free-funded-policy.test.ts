@@ -361,6 +361,50 @@ describe.skipIf(!freeTierPostgresUrl)('free funded policy races against real Pos
     expect(read.status).toBe('fulfilled');
   });
 
+  it.each([
+    { before: '2026-11-20T23:59:59.900Z', after: '2026-11-21T00:00:00.100Z', monthChanges: false },
+    { before: '2026-11-30T23:59:59.900Z', after: '2026-12-01T00:00:00.100Z', monthChanges: true },
+  ])('accounts for authorization after waiting across midnight ($after)', async ({ before, after, monthChanges }) => {
+    const [a, b] = scoped.pools as [PlatformDB, PlatformDB];
+    const clock = { now: new Date(before) };
+    const free = harness(b, USD, clock);
+    const first = await free.credential(await addRuntime(a, 200, 'free', NOV));
+    const second = await free.credential(await addRuntime(a, 201, 'free', NOV));
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    let gotLock!: (pid: number) => void;
+    const locked = new Promise<number>((resolve) => { gotLock = resolve; });
+    const blocker = a.transaction(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended('matrix:free-tier:daily-funded-spend', 0))`.execute(trx.executor);
+      const { rows } = await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx.executor);
+      gotLock(rows[0]!.pid);
+      await hold;
+    });
+    const pid = await locked;
+    const authorization = Promise.allSettled([free.authorize(first, USD)]);
+    try {
+      await vi.waitFor(async () => {
+        const { rows } = await sql`SELECT pid FROM pg_locks WHERE NOT granted AND ${pid} = ANY(pg_blocking_pids(pid))`.execute(a.executor);
+        expect(rows.length).toBeGreaterThan(0);
+      }, { timeout: 3000 });
+      clock.now = new Date(after);
+    } finally {
+      release();
+      await blocker;
+    }
+    const [result] = await authorization;
+    if (monthChanges) {
+      expect(result).toMatchObject({ status: 'rejected', reason: { code: 'busy' } });
+      await expect(free.authorize(first, USD)).resolves.toMatchObject({ reservation: { periodStart: '2026-12-01T00:00:00.000Z' } });
+    } else {
+      expect(result.status).toBe('fulfilled');
+    }
+    const reservation = await a.executor.selectFrom('ai_funded_usage_reservations').select('created_at')
+      .where('machine_id', '=', 'free-200').executeTakeFirstOrThrow();
+    expect(reservation.created_at).toBe(after);
+    await expect(free.authorize(second, USD)).rejects.toThrow(refusal('busy'));
+  });
+
   it('admits free owners racing at the daily ceiling only up to the ceiling', async () => {
     const [a, b] = scoped.pools as [PlatformDB, PlatformDB];
     const clock = { now: NOV };

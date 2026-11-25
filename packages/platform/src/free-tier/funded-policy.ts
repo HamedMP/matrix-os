@@ -119,12 +119,15 @@ export async function readDailyFundedSpend(executor: Executor, now: Date): Promi
  * is unavailable, not busy.
  */
 export async function admitFreeDailySpend(
-  executor: Executor, config: FreeFundingConfig, maxCostMicrousd: number, now: Date,
-): Promise<void> {
+  executor: Executor, config: FreeFundingConfig, maxCostMicrousd: number, now: () => Date,
+): Promise<Date> {
   const ceiling = config.dailyFundedSpendMicrousd;
   if (ceiling === undefined) throw new AiFundedPolicyError('unavailable');
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${DAILY_SPEND_LOCK_KEY}, 0))`.execute(executor);
-  if (await readDailyFundedSpend(executor, now) + maxCostMicrousd > ceiling) {
-    throw new AiFundedPolicyError('busy', undefined, nextUtcDay(now));
+  // Sample under the spend lock and use this same timestamp for the reservation row.
+  const admittedAt = now();
+  if (await readDailyFundedSpend(executor, admittedAt) + maxCostMicrousd > ceiling) {
+    throw new AiFundedPolicyError('busy', undefined, nextUtcDay(admittedAt));
   }
+  return admittedAt;
 }
