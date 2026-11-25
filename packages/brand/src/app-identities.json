@@ -181,6 +181,13 @@
     "wash": "#fcebe7",
     "glow": "#f4d3ce"
   },
+  "calendar": {
+    "name": "Brick",
+    "accent": "#a8413a",
+    "darkAccent": "#ffaca2",
+    "wash": "#fbeae7",
+    "glow": "#f2cfc9"
+  },
   "docs": {
     "name": "Indigo",
     "accent": "#4652a8",

@@ -16,8 +16,14 @@ export const MAX_APP_DATABASE_REQUEST_BYTES = 1_000_000;
 export const MAX_APP_KV_REQUEST_BYTES = 1_000_000;
 /** Envelope prefix for typed `readData`/`writeData` values; owner and public-site bridges share stored rows. */
 export const APP_BRIDGE_STORED_VALUE_PREFIX = "__matrix_os_value_v1__:";
+/** Month views exceed the default; an oversized reply fails whole. */
+const LARGE_INTEGRATION_REPLY_BYTES: Readonly<Record<string, number>> = Object.freeze({
+  "google_calendar/list_events": 1024 * 1024,
+});
 export function appIntegrationReplyBytes(service: string, action: string): number {
   if (service === "gmail" && action === "get_attachment") return 1536 * 1024;
+  const large = LARGE_INTEGRATION_REPLY_BYTES[`${service}/${action}`];
+  if (large !== undefined) return large;
   //512KiB source text may require six JSON bytes per escaped ASCII character.
   if (service === "google_drive" && action === "read_file") return 3 * 1024 * 1024 + 32 * 1024;
   return MAX_APP_BRIDGE_REPLY_BYTES;

@@ -42,7 +42,7 @@ describe("distinct bundled app artwork", () => {
     expect(data[3]).toBeLessThan(12);
   });
 
-  it.each(["chess", "clock", "expense-tracker", "app-gallery", "minesweeper", "pomodoro-timer", "resource-manager", "snake", "solitaire", "task-manager", "tetris", "weather", "calculator", "2048", "backgammon", "game-center", "todo", "docs", "sheets"])(
+  it.each(["chess", "clock", "expense-tracker", "app-gallery", "minesweeper", "pomodoro-timer", "resource-manager", "snake", "solitaire", "task-manager", "tetris", "weather", "calculator", "2048", "backgammon", "game-center", "todo", "calendar", "docs", "sheets"])(
     "renders %s with a transparent, independent silhouette",
     async (stem) => {
       const png = await readFile(`home/system/icons/v3-${stem}.png`);
