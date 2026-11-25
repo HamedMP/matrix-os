@@ -67,7 +67,10 @@ export async function ensureSpeechMonthlyAllowance(
     throw new SpeechAllowanceError();
   }
 
-  await trx.insertInto("speech_runtime_allowances").values({
+  // Stored month starts are canonical UTC ISO strings. Keep the committed
+  // allowance when a reconciliation or request arrives with an older clock.
+  const keepCurrentPeriod = sql<boolean>`speech_runtime_allowances.period_start COLLATE "C" >= excluded.period_start`;
+  const allowance = await trx.insertInto("speech_runtime_allowances").values({
     machine_id: identity.machineId,
     owner_id: identity.ownerId,
     runtime_slot: identity.runtimeSlot,
@@ -84,26 +87,24 @@ export async function ensureSpeechMonthlyAllowance(
     runtime_slot: identity.runtimeSlot,
     enabled: true,
     monthly_budget_microusd: sql<number>`CASE
-      WHEN speech_runtime_allowances.period_start = ${periodStart}
-      THEN speech_runtime_allowances.monthly_budget_microusd ELSE ${config.monthlyBudgetMicrousd} END`,
+      WHEN ${keepCurrentPeriod}
+      THEN speech_runtime_allowances.monthly_budget_microusd ELSE excluded.monthly_budget_microusd END`,
     monthly_promotional_credit_microusd: sql<number>`CASE
-      WHEN speech_runtime_allowances.period_start = ${periodStart}
+      WHEN ${keepCurrentPeriod}
       THEN speech_runtime_allowances.monthly_promotional_credit_microusd
-      ELSE ${config.monthlyPromotionalCreditMicrousd} END`,
+      ELSE excluded.monthly_promotional_credit_microusd END`,
     period_start: sql<string>`CASE
-      WHEN speech_runtime_allowances.period_start = ${periodStart}
-      THEN speech_runtime_allowances.period_start ELSE ${periodStart} END`,
+      WHEN ${keepCurrentPeriod}
+      THEN speech_runtime_allowances.period_start ELSE excluded.period_start END`,
     period_spent_microusd: sql<number>`CASE
-      WHEN speech_runtime_allowances.period_start = ${periodStart}
+      WHEN ${keepCurrentPeriod}
       THEN speech_runtime_allowances.period_spent_microusd ELSE 0 END`,
     period_reserved_microusd: sql<number>`CASE
-      WHEN speech_runtime_allowances.period_start = ${periodStart}
+      WHEN ${keepCurrentPeriod}
       THEN speech_runtime_allowances.period_reserved_microusd ELSE 0 END`,
     updated_at: checkedAt,
-  })).execute();
+  })).returningAll().executeTakeFirstOrThrow();
 
-  const allowance = await trx.selectFrom("speech_runtime_allowances").selectAll()
-    .where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
   if (allowance.owner_id !== identity.ownerId || allowance.runtime_slot !== identity.runtimeSlot
     || allowance.enabled !== true) {
     throw new SpeechAllowanceError();
@@ -135,7 +136,7 @@ export async function ensureSpeechMonthlyAllowance(
   }
   await reconcileExpiredPromotionalCredit(trx, identity, checkedAt);
 
-  if (monthlyPromotionalCreditMicrousd > 0) {
+  if (monthlyPromotionalCreditMicrousd > 0 && allowance.period_start === periodStart) {
     const entryId = grantEntryId(identity.machineId, periodKey);
     const sourceReference = `platform-speech-monthly:${periodKey}`;
     const inserted = await trx.insertInto("ai_funded_credit_ledger").values({

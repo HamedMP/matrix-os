@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
+import { reconcileSpeechMonthlyAllowances } from "../../packages/platform/src/speech/allowance.js";
 import { createAiFundedSpeechFundingPort } from "../../packages/platform/src/speech/funding.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./funded-policy-db-test-helper.js";
 
@@ -153,5 +154,55 @@ describe("funded AI monthly budget window at a month change", () => {
     await db.transaction((trx) => speech.settle(trx.executor, reservation.reservationId, { mode: "exact", actualCostMicrousd: 40 }));
 
     expect(await balance()).toEqual({ period: SEPTEMBER, spent: 140, monthReserved: 0, reserved: 0 });
+  });
+
+  const monthlyAllowance = { monthlyBudgetMicrousd: 1_000, monthlyPromotionalCreditMicrousd: 100 };
+
+  function paidSpeech() {
+    return createAiFundedSpeechFundingPort({ allowedSources: ["promotional", "addon"], credentialHashSecret: "s".repeat(32),
+      reservationIdFactory: () => "speech_paid_month_window", now: () => new Date(clock), monthlyAllowance });
+  }
+
+  function reconcileSpeechAllowance(at: string) {
+    return reconcileSpeechMonthlyAllowances({ db, ...monthlyAllowance, now: () => new Date(at) });
+  }
+
+  it("a stale allowance reconciliation leaves a paid speech request settleable and frees the owner's AI slot", async () => {
+    const speech = paidSpeech();
+    clock = new Date(AFTER_MIDNIGHT);
+    const { reservationId } = await db.transaction(trx => speech.reserve(trx.executor, { identity,
+      requestId: "paid_speech_across_reconcile", policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe", maximumCostMicrousd: 50 }));
+    await db.transaction(trx => speech.start(trx.executor, reservationId));
+
+    await expect(reconcileSpeechAllowance(BEFORE_MIDNIGHT)).resolves.toMatchObject({ reconciled: 1 });
+    await expect(reconcileSpeechAllowance(AFTER_MIDNIGHT)).resolves.toMatchObject({ reconciled: 1 });
+    clock = new Date("2026-09-01T00:00:05.000Z");
+    await expect(db.transaction(trx => speech.settle(trx.executor, reservationId, { mode: "exact", actualCostMicrousd: 40 })))
+      .resolves.toBeUndefined();
+    const allowance = await db.executor.selectFrom("speech_runtime_allowances").selectAll()
+      .where("machine_id", "=", identity.machineId).executeTakeFirstOrThrow();
+    expect(allowance.period_start).toBe(SEPTEMBER);
+    expect(Number(allowance.period_reserved_microusd)).toBe(0);
+    expect(Number(allowance.period_spent_microusd)).toBe(40);
+    await expect(repo.authorize({ credential: credential.token, requestId: "ai_after_paid_speech", modelId,
+      maxCostMicrousd: 100, billingMode: "usage", billingPolicy: "postpaid" })).resolves.toHaveProperty("reservation");
+  });
+
+  it("a stale paid speech reservation uses the committed allowance period and issues no old grant", async () => {
+    await expect(reconcileSpeechAllowance(AFTER_MIDNIGHT)).resolves.toMatchObject({ reconciled: 1 });
+    const speech = paidSpeech();
+    clock = new Date(BEFORE_MIDNIGHT);
+    const { reservationId } = await db.transaction(trx => speech.reserve(trx.executor, { identity,
+      requestId: "paid_speech_stale_clock", policyRevision: "speech-1",
+      modelId: "gpt-4o-transcribe", maximumCostMicrousd: 50 }));
+
+    const stored = await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["period_start", "authorization_response"]).where("reservation_id", "=", reservationId).executeTakeFirstOrThrow();
+    expect(stored.period_start).toBe(SEPTEMBER);
+    expect(JSON.parse(stored.authorization_response)).toMatchObject({ allowancePeriodStart: SEPTEMBER });
+    const grants = await db.executor.selectFrom("ai_funded_credit_ledger").select("source_reference")
+      .where("machine_id", "=", identity.machineId).where("kind", "=", "promotional_grant").execute();
+    expect(grants).toEqual([{ source_reference: "platform-speech-monthly:2026-09" }]);
   });
 });

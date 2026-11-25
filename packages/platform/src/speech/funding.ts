@@ -237,6 +237,7 @@ export function createAiFundedSpeechFundingPort(options: {
         allowance?.monthly_budget_microusd ?? runtime?.monthly_budget_microusd,
       );
       const reserved = reset;
+      const reservationPeriod = allowance?.period_start ?? reserved.month_period_start;
       const availability = await fundingSourceAvailability(trx, input.identity, reserved, checkedAt, sourcePolicy);
       if (Math.min(availability.availableMicrousd, exactInteger(reserved.credit_balance_microusd)
         - exactInteger(reserved.reserved_microusd) - exactInteger(reserved.funding_shortfall_microusd)) <= 0
@@ -251,7 +252,7 @@ export function createAiFundedSpeechFundingPort(options: {
           .where("owner_id", "=", input.identity.ownerId)
           .where("runtime_slot", "=", input.identity.runtimeSlot)
           .where("enabled", "=", true)
-          .where("period_start", "=", periodStart)
+          .where("period_start", "=", reservationPeriod)
           .where(sql<boolean>`${monthlyBudget} - period_spent_microusd - period_reserved_microusd >= ${input.maximumCostMicrousd}`)
           .returning("machine_id").executeTakeFirst();
         if (!speechReserved) throw new SpeechFundingError("allowance_exhausted");
@@ -268,7 +269,7 @@ export function createAiFundedSpeechFundingPort(options: {
           ...(allowance ? { fundingPolicy: "speech_monthly_v1" } : {}),
           reservation: { billingMode: "usage", billingPolicy: "postpaid", reservedMicrousd: 0, maxCostMicrousd: input.maximumCostMicrousd },
           allowanceReservedMicrousd: allowance ? input.maximumCostMicrousd : 0,
-          allowancePeriodStart: allowance ? periodStart : null,
+          allowancePeriodStart: allowance ? reservationPeriod : null,
         }),
         settlement_response: null,
         finalization_mode: null,
@@ -284,8 +285,8 @@ export function createAiFundedSpeechFundingPort(options: {
         promotional_reserved_microusd: 0,
         addon_reserved_microusd: 0,
         actual_microusd: null,
-        // General-budget speech belongs to the runtime's window, which can be newer than this clock.
-        period_start: allowance ? periodStart : reserved.month_period_start,
+        // The committed allowance or runtime window can be newer than this clock.
+        period_start: reservationPeriod,
         status: "reserved",
         created_at: checkedAt,
         started_at: null,
