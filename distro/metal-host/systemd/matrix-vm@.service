@@ -1,0 +1,52 @@
+# Cold boot of one Matrix VM (Cloud Hypervisor v54.1) managed by matrix-hostd.
+# All per-VM values come from unit.env, written by hostd at create time.
+# Lines prefixed with "+" run as root to prepare the tap and disk; the VMM
+# itself runs unprivileged as matrix-vm.
+[Unit]
+Description=Matrix VM %i
+After=network-online.target matrix-hostd-nft.service
+RequiresMountsFor=/var/lib/matrix-hostd/snapshots
+Conflicts=matrix-vm-restore@%i.service
+
+[Service]
+Type=simple
+EnvironmentFile=/var/lib/matrix-hostd/vms/%i/unit.env
+User=matrix-vm
+Group=matrix-vm
+SupplementaryGroups=kvm
+RuntimeDirectory=matrix-vm/%i
+RuntimeDirectoryMode=0700
+# Guest output is untrusted. The dedicated journal has a host-wide size
+# limit and this unit has a rate limit.
+StandardOutput=journal
+LogNamespace=matrix-vm
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=500
+# Set the per-tap source filters and host neighbor before exposing the guest.
+ExecStartPre=+/usr/local/libexec/matrix-vm-network start ${TAP} ${BRIDGE} ${VM_USER} ${MAC} ${PRIVATE_IPV4}
+ExecStartPre=+/usr/bin/chown ${VM_USER}:${VM_USER} ${DISK}
+ExecStart=/usr/local/bin/cloud-hypervisor \
+  --api-socket path=${API_SOCKET} \
+  --kernel ${KERNEL} \
+  --initramfs ${INITRAMFS} \
+  --cmdline ${KERNEL_CMDLINE} \
+  --cpus boot=${VCPUS} \
+  --memory size=${BOOT_MIB}M,hotplug_method=virtio-mem,hotplug_size=${HOTPLUG_MIB}M \
+  --balloon size=0,free_page_reporting=on,deflate_on_oom=on \
+  --disk path=${DISK},image_type=raw path=${SEED},image_type=raw,readonly=on \
+  --net tap=${TAP},mac=${MAC} \
+  --vsock cid=${VSOCK_CID},socket=${VSOCK_SOCKET} \
+  --serial tty \
+  --console off
+ExecStopPost=+-/usr/local/libexec/matrix-vm-network stop ${TAP} ${BRIDGE} ${VM_USER} ${MAC} ${PRIVATE_IPV4}
+Restart=no
+KillMode=mixed
+TimeoutStopSec=30
+CPUQuota=200%
+CPUWeight=100
+IOWeight=100
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/matrix-hostd/snapshots

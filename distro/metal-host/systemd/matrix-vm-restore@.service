@@ -1,0 +1,42 @@
+# Restore of one suspended Matrix VM from its memory snapshot. The restore is
+# ondemand (userfaultfd): pages load as the guest touches them, so the
+# snapshot stays mapped while this unit runs. hostd resumes the restored
+# (paused) VM through the API socket once it answers.
+[Unit]
+Description=Matrix VM %i (restore)
+After=network-online.target matrix-hostd-nft.service
+RequiresMountsFor=/var/lib/matrix-hostd/snapshots
+Conflicts=matrix-vm@%i.service
+
+[Service]
+Type=simple
+EnvironmentFile=/var/lib/matrix-hostd/vms/%i/unit.env
+User=matrix-vm
+Group=matrix-vm
+SupplementaryGroups=kvm
+RuntimeDirectory=matrix-vm/%i
+RuntimeDirectoryMode=0700
+# Guest output is untrusted. The dedicated journal has a host-wide size
+# limit and this unit has a rate limit.
+StandardOutput=journal
+LogNamespace=matrix-vm
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=500
+# Set the per-tap source filters and host neighbor before exposing the guest.
+ExecStartPre=+/usr/local/libexec/matrix-vm-network start ${TAP} ${BRIDGE} ${VM_USER} ${MAC} ${PRIVATE_IPV4}
+ExecStartPre=+/usr/bin/chown ${VM_USER}:${VM_USER} ${DISK}
+ExecStart=/usr/local/bin/cloud-hypervisor \
+  --api-socket path=${API_SOCKET} \
+  --restore source_url=file://${SNAPSHOT_DIR},memory_restore_mode=ondemand
+ExecStopPost=+-/usr/local/libexec/matrix-vm-network stop ${TAP} ${BRIDGE} ${VM_USER} ${MAC} ${PRIVATE_IPV4}
+Restart=no
+KillMode=mixed
+TimeoutStopSec=30
+CPUQuota=200%
+CPUWeight=100
+IOWeight=100
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/matrix-hostd/snapshots
