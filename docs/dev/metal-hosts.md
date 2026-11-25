@@ -136,13 +136,18 @@ afterwards unless `--keep-on-failure` keeps a failed one for inspection.
 sudo distro/metal-host/smoke-host.sh [--golden <version>] [--cycles 2]
 ```
 
-It uses only the hostd API and ingress: creates a free VM (boot 2048 MiB,
-max 8192 MiB, 40 GiB) from the golden disk, waits for gateway health, checks
-the ingress routes `host: <handle>.matrix-os.com` (no port, as the platform
-sends it; rejects requests without `x-matrix-host-auth`), runs suspend/resume cycles (sparse snapshot on the
-snapshot LV, `runtime_asleep` while asleep, resume to gateway health under
-2 s from an ondemand restore run as `matrix-vm`), and destroys the VM,
-checking no LV, record, snapshot, tap or active unit is left.
+The host smoke creates a free VM (boot 2048 MiB, max 8192 MiB, 40 GiB)
+from the golden disk and checks guest gateway health. It verifies that the
+local ingress rejects unauthenticated requests and that the guest's permanent
+host network binding is installed on boot and restore and removed on sleep.
+It also checks sparse snapshots, the two-second restore target, and complete
+teardown.
+
+Use the authenticated staging platform at
+`https://app.matrix-os.com/vm/<handle>` to check owner routing and waking
+through the public entry point. The disposable host-only smoke VM does not
+register with the platform.
+
 
 ## Recovery
 

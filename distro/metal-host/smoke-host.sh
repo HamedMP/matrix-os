@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
-# Live smoke for a provisioned metal host: drives hostd only through its
-# public surfaces (API on 8443 with the bearer, ingress on the configured
-# port) and checks the host underneath. Creates one free-tier VM from the
-# golden disk, waits for the gateway, runs suspend/resume cycles (resume must
-# reach gateway health in under 2 s from an ondemand restore run as
-# matrix-vm), checks the snapshot is sparse and on the snapshot LV, checks
-# the ingress routes <handle>.matrix-os.com and answers runtime_asleep while
-# the VM sleeps, then destroys the VM and checks nothing is left behind.
+# Live smoke for a provisioned metal host. Creates a free VM over the host
+# API, verifies the guest gateway, and checks the host network binding and
+# the ingress authentication gate. Runs suspend/resume cycles, checks sparse
+# snapshots on the snapshot LV, then verifies teardown. Authenticated owner
+# routing is covered by the platform smoke on the canonical application URL.
 #
 # Usage: sudo distro/metal-host/smoke-host.sh [--golden VERSION] [--cycles N] [--keep-on-failure]
 set -euo pipefail
@@ -44,6 +41,7 @@ has() { local pattern="$1" out; shift; out="$("$@" 2>/dev/null)" || true; grep -
 env_value() { sed -n "s/^$1=//p" "$ENV_FILE"; }
 api_port="$(env_value HOSTD_API_PORT)"
 ingress_port="$(env_value HOSTD_INGRESS_PORT)"
+ingress_port="${ingress_port:-443}"
 api="https://127.0.0.1:${api_port:-8443}"
 
 if [ -z "$golden" ]; then
@@ -58,8 +56,7 @@ work="$(mktemp -d)"
 chmod 0700 "$work"
 # Tokens go to curl through 0600 header files, never on a command line.
 printf 'Authorization: Bearer %s\n' "$(env_value HOSTD_API_TOKEN)" >"$work/api-auth"
-printf 'x-matrix-host-auth: %s\n' "$(env_value HOSTD_INGRESS_TOKEN)" >"$work/ingress-auth"
-chmod 0600 "$work/api-auth" "$work/ingress-auth"
+chmod 0600 "$work/api-auth"
 
 vm_id=""
 cleanup() {
@@ -85,11 +82,11 @@ api_call() {
 }
 json_field() { python3 -I -c 'import json,sys; v=json.load(sys.stdin); print(v.get(sys.argv[1], "") if isinstance(v, dict) else "")' "$1"; }
 vm_state() { api_call GET "/v1/vms/$vm_id" | json_field state; }
-# Sends what the platform sends: `host: <handle>.matrix-os.com` with no port
-# (the ingress port is a transport detail of this host, not part of the name).
-ingress() {
-  curl -ks --max-time 20 -o "$work/ingress-body" -w '%{http_code}' -H @"$work/ingress-auth" \
-    -H "host: $handle.matrix-os.com" "https://127.0.0.1:$ingress_port$1"
+vm_ingress_binding() { ip -4 neigh show to "$vm_ip" dev "$bridge" nud permanent; }
+check_ingress_binding() {
+  local binding
+  binding="$(vm_ingress_binding)"
+  [[ "$binding" == *"lladdr $vm_mac PERMANENT"* ]] || die "host ingress binding missing for $vm_id"
 }
 wait_state() {
   local want="$1" limit="$2" begin=$SECONDS state=""
@@ -164,9 +161,12 @@ vmm_pid="$(systemctl show -p MainPID --value "matrix-vm@$vm_id.service")"
 tap="$(sed -n 's/^TAP=//p' "$STATE_DIR/vms/$vm_id/unit.env")"
 has 'rate 50Mbit' tc filter show dev "$tap" ingress || die "tap is not policed at 50 Mbit/s"
 pass "VMM pid $vmm_pid runs as matrix-vm; tap policed at 50 Mbit/s"
-[ "$(ingress /health)" = 200 ] || die "ingress did not route $handle.matrix-os.com (status $(cat "$work/ingress-body"))"
-pass "ingress :$ingress_port routes $handle.matrix-os.com to the VM"
-[ "$(curl -ks --max-time 10 -o /dev/null -w '%{http_code}' -H "host: $handle.matrix-os.com" "https://127.0.0.1:$ingress_port/health")" = 401 ] \
+bridge="$(sed -n 's/^BRIDGE=//p' "$STATE_DIR/vms/$vm_id/unit.env")"
+vm_mac="$(api_call GET "/v1/vms/$vm_id" | json_field mac)"
+[[ "$vm_mac" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]] || die "unexpected VM MAC"
+check_ingress_binding
+pass "guest has its permanent host ingress binding"
+[ "$(curl -ks --max-time 10 -o /dev/null -w '%{http_code}' "https://127.0.0.1:$ingress_port/health")" = 401 ] \
   || die "ingress accepted a request without x-matrix-host-auth"
 pass "ingress rejects requests without x-matrix-host-auth"
 
@@ -184,9 +184,9 @@ for cycle in $(seq 1 "$cycles"); do
   [ "$allocated" -lt "$apparent" ] || die "snapshot is not sparse ($allocated of $apparent bytes allocated)"
   pass "cycle $cycle: suspended; snapshot on hostd-snapshots LV, sparse: $((allocated / 1048576)) MiB on disk of $((apparent / 1048576)) MiB"
   systemctl is-active --quiet "matrix-vm@$vm_id.service" && die "VMM still running while suspended"
-  code="$(ingress /health)"
-  if [ "$code" != 503 ] || ! grep -q runtime_asleep "$work/ingress-body"; then die "ingress answered $code while asleep, not runtime_asleep"; fi
-  pass "cycle $cycle: ingress answers 503 runtime_asleep while suspended"
+  binding="$(vm_ingress_binding)"
+  [ -z "$binding" ] || die "host ingress binding still present while suspended"
+  pass "cycle $cycle: host ingress binding removed while suspended"
 
   printf '{"budgetMs":8000}' >"$work/resume.json"
   t0="$(now_ms)"
@@ -200,7 +200,7 @@ for cycle in $(seq 1 "$cycles"); do
   restore_pid="$(systemctl show -p MainPID --value "$restore_unit")"
   [ "$(ps -o user= -p "$restore_pid" | tr -d ' ')" = matrix-vm ] || die "restored VMM does not run as matrix-vm"
   [ "$(curl -ks --max-time 3 -o /dev/null -w '%{http_code}' "https://$vm_ip/health")" = 200 ] || die "gateway not healthy after resume"
-  [ "$(ingress /health)" = 200 ] || die "ingress did not route after resume"
+  check_ingress_binding
   pass "cycle $cycle: resume to gateway health in ${elapsed} ms (ondemand restore, VMM pid $restore_pid as matrix-vm)"
 done
 

@@ -148,6 +148,15 @@ describe("metal host scripts", () => {
     expect(smoke).toContain("hostd--snapshots");
   });
 
+  it("checks the local ingress without constructing a per-handle DNS name", async () => {
+    const smoke = await readFile(`${DIR}/smoke-host.sh`, "utf8");
+    expect(smoke).not.toMatch(/\$\{?handle\}?\.matrix-os\.com/);
+    expect(smoke).toContain('"https://127.0.0.1:$ingress_port/health")" = 401');
+    expect(smoke).toContain('ip -4 neigh show to "$vm_ip" dev "$bridge" nud permanent');
+    expect(smoke).toContain("check_ingress_binding");
+    expect(await readFile("docs/dev/metal-hosts.md", "utf8")).toContain("https://app.matrix-os.com/vm/<handle>");
+  });
+
   it("smoke proves the guest root filesystem grew into the 40 GiB disk", async () => {
     const smoke = await readFile(`${DIR}/smoke-host.sh`, "utf8");
     // Over the smoke's own support key, after the gateway is healthy, before suspend.
