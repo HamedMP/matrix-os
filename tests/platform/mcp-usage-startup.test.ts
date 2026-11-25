@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import * as connectedAppsModule from "../../packages/gateway/src/integrations/custom-mcp/core-connected-apps.js";
 import * as coreModule from "../../packages/gateway/src/integrations/custom-mcp/core-tools.js";
 import type { McpUsageDatabase } from "../../packages/platform/src/mcp-usage/database.js";
 import { createPlatformCoreMcp } from "../../packages/platform/src/mcp-usage/startup.js";
@@ -58,6 +59,31 @@ describe("platform Matrix Core MCP composition", () => {
     const off = await createPlatformOrgMcp({ db, connectionsAvailable: true, resolveActor: async () => null });
     await expect(off.policy.evaluate({ actorId: fixture.actorId, serverUrl: "https://mcp.linear.test/mcp", toolName: "list_issues" }))
       .resolves.toMatchObject({ allowed: false });
+  });
+
+  it("composes Connect Apps into Core over the platform Pipedream client when it is configured", async () => {
+    // Fault: the platform builds Core without the Connect Apps source, so external clients never see them.
+    await fixture.db.updatePipedreamExternalId(fixture.userId, "pd-ext");
+    const connection = await fixture.db.connectService({ userId: fixture.userId, service: "figma", pipedreamAccountId: "apn_1",
+      accountLabel: "figma", scopes: [] });
+    const proxied: string[] = [];
+    const pipedream = { proxyGet: async (input: { url: string }) => { proxied.push(input.url); return { ok: true }; } };
+    const db = new Kysely<McpUsageDatabase>({ dialect: fixture.pglite.dialect });
+    const runtime = await createPlatformCoreMcp({ db, coreModule, broker: fixture.broker, approvals: fixture.db, maintenance: false,
+      connectedApps: { module: connectedAppsModule, db: fixture.db, pipedream } });
+    const core = runtime.core as coreModule.CoreToolService;
+    const service = (await runtime.serviceSlugs(fixture.userId)).get(connection.id)!;
+    expect((await core.listServices(fixture.userId)).map(entry => entry.source).sort()).toEqual(["connect_apps", "mcp"]);
+    await core.callTool({ userId: fixture.userId, actorId: fixture.actorId, entryPoint: "stdio" },
+      { service, tool: "list_comments", arguments: { fileKey: "F1" } });
+    expect(proxied).toEqual(["https://api.figma.com/v1/files/F1/comments"]);
+    await runtime.shutdown();
+
+    const source = await readFile("packages/platform/src/platform-startup.ts", "utf8");
+    expect(source).toContain("../../gateway/dist/integrations/custom-mcp/core-connected-apps.js");
+    expect(source).toMatch(/coreConnectedAppDeps = \{ db: trustedPlatformDb, pipedream \}/);
+    expect(source).toMatch(/connectedApps: \{ module: connectedAppsModule, \.\.\.coreConnectedAppDeps \}/);
+    expect(source).toMatch(/ownerApprovals: customDb,\s*coreServiceSlugs: coreMcp\.serviceSlugs,/);
   });
 
   it("drains Core usage after the broker settles and before the feature database closes", async () => {

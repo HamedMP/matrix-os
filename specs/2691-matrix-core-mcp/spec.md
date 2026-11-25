@@ -255,6 +255,50 @@ It is capped at 40 tools per session.
   harness label comes from the launcher's `--harness=` argument
   (`claude_code`, `codex`, `opencode`, `hermes`) and is analytics only.
 
+### Connect Apps adapter (ENG-548)
+
+Apps connected in Settings -> Connect Apps (Pipedream-backed `connected_services`)
+appear in Core next to remote MCP connections, so one connection works from
+Matrix Chat and from external clients such as Claude Code.
+
+- **Inventory.** `core-connected-apps.ts` turns each active connection of a
+  `connectorKind: "pipedream"` registry service into one Core service
+  (`source: "connect_apps"`, `account: <label>`). Preset services are broker
+  servers already and are not repeated. Each account is its own service; the
+  account email never appears in a service id, name, or tool. At most 100
+  connections per owner are listed.
+- **Ids.** Broker service ids are unchanged. App ids use the same
+  `<name>-<connection hex>` rule over the merged list; an app id equal to a
+  broker id is omitted, never shadowing it.
+- **Tools and execution.** Tools are the registry actions with a JSON Schema
+  built from their params. Calls re-read the connection at dispatch, validate
+  params, and run `executeIntegrationAction` with the platform-owned Pipedream
+  client under the 30 s Core deadline. Output is wrapped as untrusted and
+  bounded by the Core byte cap; usage rows use the connection id and
+  `connect-app:<service>`. Provider errors reach clients as generic Core errors.
+- **Policy.**
+
+  | Action risk | Matrix Chat / stdio / managed Pi | External `/mcp` client |
+  | --- | --- | --- |
+  | `read` | allow | allow |
+  | `write`, `destructive` | `approval_required` (use the in-Chat integration tools) | `pending_approval`; owner decides in Matrix; one digest-bound consume |
+
+  External approvals reuse `custom_mcp_tool_approvals` with a nullable
+  `server_id` and a new `integration_connection_id` (exactly one is set). Reserve,
+  owner decision, and consume re-check under row lock that the connection is the
+  owner's active connection and the registry action is non-read.
+- **Org scope.** Org policy keys on a server host. Connect Apps have none, so
+  they are evaluated with a non-HTTP URL that no org definition governs; usage
+  is still attributed. Org governance of Connect Apps is an open decision.
+- **Failure modes.** Connect Apps store unavailable: `list_services` and
+  `search_tools` degrade to MCP servers only; describe/call fail with the generic
+  unavailable error. Disconnected account: pending and approved approvals can no
+  longer be decided or consumed. Missing Pipedream external id: generic
+  unavailable, no provider call.
+- **Deferred.** Chat receipts for Connect Apps writes through Core, and managed
+  Pi `mcp_describe`/`mcp_call` by server id for app services (managed Pi keeps
+  its native integration tools).
+
 ## Matrix Core repo (skills, hooks, scripts, brain)
 
 - A **private** repo per org (public `matrix-os` cannot hold company content).
