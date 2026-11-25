@@ -5,8 +5,8 @@ import { QualifiedFundedError } from './ai-funded-qualified-errors.js';
 
 /** Operator-only endpoint; owner/model/body fields never select this origin or credentials. */
 export function createFundedManagedRouteClient(options: { relayBaseUrl: string; controlToken: string; fetchFn?: typeof fetch; now?: () => Date }) {
-  let base: URL;
-  try { base = new URL(options.relayBaseUrl); } catch (error) { throw new QualifiedFundedError(); }
+  if (!URL.canParse(options.relayBaseUrl)) throw new QualifiedFundedError();
+  const base = new URL(options.relayBaseUrl);
   if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash
     || base.href.replace(/\/$/, '') !== options.relayBaseUrl || !/^[\x21-\x7e]{32,4096}$/.test(options.controlToken)) throw new QualifiedFundedError();
   const endpoint = new URL(MANAGED_GOOGLE_ROUTE_CONTROL_PATH, base).href; const fetchFn = options.fetchFn ?? fetch;
@@ -35,7 +35,8 @@ export function createFundedManagedRouteClient(options: { relayBaseUrl: string; 
       if (googleQualifiedRouteDigest(route.descriptor) !== route.digest || at < Date.parse(route.descriptor.evidence.reviewedAt)
         || at >= Date.parse(route.evidenceExpiresAt)) throw new QualifiedFundedError();
       return route;
-    } catch (error) {
+    } catch (error: unknown) {
+      if (!(error instanceof QualifiedFundedError)) console.warn('[qualified-route] Request unavailable', error instanceof Error ? 'Error' : 'UnknownError');
       if (reader) void reader.cancel().catch(cleanup => console.warn('[qualified-route] Cleanup:', cleanup instanceof Error ? cleanup.name : 'UnknownError'));
       throw new QualifiedFundedError();
     } finally { signal.removeEventListener('abort', abort); reader?.releaseLock(); }

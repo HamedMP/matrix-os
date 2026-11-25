@@ -37,7 +37,10 @@ export function sameQualifiedMachine(left: QualifiedMachine, right: QualifiedMac
 export function qualifiedTokenHash(token: string, secret: string): string { return createHmac('sha256', secret).update(token).digest('hex'); }
 function models(raw: string): string[] {
   try { return z.array(z.string().min(1).max(200)).max(64).parse(JSON.parse(raw)); }
-  catch (error) { throw new QualifiedFundedError(); }
+  catch (error: unknown) {
+    console.warn('[qualified-route] Model configuration unavailable', error instanceof Error ? 'Error' : 'UnknownError');
+    throw new QualifiedFundedError();
+  }
 }
 /** Machine lock must already precede runtime/global locks. Returned rows remain locked through caller commit. */
 export async function qualifiedPolicy(db: PlatformDB, identity: FundedAiIdentity, model: string, at: Date) {
