@@ -1,6 +1,6 @@
-import { useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { cx, moveFocus, useFocusTrap, useIsomorphicLayoutEffect } from "./internal";
+import { cx, moveFocus, useFocusTrap, useIsomorphicLayoutEffect, useLatest } from "./internal";
 import { tooltipFor } from "./ribbon-parts";
 import type { BackstageApi, RibbonBackstage } from "./ribbon-types";
 
@@ -12,8 +12,38 @@ export interface BackstageViewProps {
   item: string | null;
   onItemChange: (id: string) => void;
   onClose: () => void;
-  /** The panel covers the page from this element's top edge down (the ribbon), leaving the title bar visible. */
+  /**
+   * The panel covers the page from this element's top edge down (the ribbon),
+   * leaving the title bar visible. Presses inside it, where the tab that opened
+   * the panel sits, do not close the panel.
+   */
   topRef: RefObject<HTMLElement | null>;
+}
+
+/**
+ * Layers that float above the backstage: dialogs and their backdrops, popovers,
+ * menus, listboxes and toasts, including ones the backstage's own content opens.
+ * A press inside them is not a press outside the backstage.
+ */
+const ABOVE_BACKSTAGE = ".oui-backdrop, .oui-popover, [data-oui-float], .oui-toasts, [role='dialog'], [role='alertdialog'], [role='menu'], [role='listbox']";
+
+function isAboveBackstage(target: Node): boolean {
+  const el = target instanceof Element ? target : target.parentElement;
+  return Boolean(el?.closest(ABOVE_BACKSTAGE));
+}
+
+/** Closes the backstage when a press lands outside it (light dismiss), such as on the title bar. */
+function useBackstageLightDismiss(panelRef: RefObject<HTMLElement | null>, topRef: RefObject<HTMLElement | null>, onClose: () => void) {
+  const close = useLatest(onClose);
+  useEffect(() => {
+    const onDown = (event: MouseEvent) => {
+      const target = event.target instanceof Node ? event.target : null;
+      if (!target || panelRef.current?.contains(target) || topRef.current?.contains(target) || isAboveBackstage(target)) return;
+      close.current();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [close, panelRef, topRef]);
 }
 
 /** First item that has content, used when nothing is chosen yet. */
@@ -24,13 +54,14 @@ export function defaultBackstageItem(backstage: RibbonBackstage): string | null 
 
 /**
  * Full-height file panel over the document: a command list on the left and the
- * chosen item's content on the right. Escape and the back arrow close it, and
- * focus returns to the control that opened it.
+ * chosen item's content on the right. Escape, the back arrow and a press
+ * outside it (light dismiss) close it, and focus returns to the control that opened it.
  */
 export function BackstageView({ label, backstage, item, onItemChange, onClose, topRef }: BackstageViewProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [top, setTop] = useState(0);
   useFocusTrap(panelRef, true, { onEscape: onClose });
+  useBackstageLightDismiss(panelRef, topRef, onClose);
 
   useIsomorphicLayoutEffect(() => {
     const update = () => setTop(Math.max(0, topRef.current?.getBoundingClientRect().top ?? 0));

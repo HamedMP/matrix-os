@@ -139,8 +139,9 @@ Behaviour:
 - **Backstage**: a `mode: "backstage"` tab opens a full-height panel from the ribbon's
   top edge down (the title bar stays visible). Items with `render(api)` show content on
   the right; items with `onSelect(api)` run at once and close the panel unless
-  `keepOpen` is set. `api` is `{close(), select(id)}`. Escape and the back arrow close it;
-  focus returns to the File tab. Set `backstage.defaultItem` for the first pane and
+  `keepOpen` is set. `api` is `{close(), select(id)}`. Escape, the back arrow and a press
+  outside it (such as on the title bar) close it; presses inside its own dialogs, popovers,
+  menus and toasts do not. Focus returns to the File tab. Set `backstage.defaultItem` for the first pane and
   `backstage.backLabel` for the back button name ("Back to document").
 
 `fitGroups(available, fullWidths, collapsedWidths)` is the pure overflow rule.

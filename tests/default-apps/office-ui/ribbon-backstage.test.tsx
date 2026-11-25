@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Ribbon, type BackstageState, type RibbonTab } from "../../../home/apps/_shared/office-ui";
+import { Dialog, Popover, Ribbon, ToastProvider, useToast, type BackstageState, type RibbonTab } from "../../../home/apps/_shared/office-ui";
 
 afterEach(cleanup);
 
@@ -104,6 +104,71 @@ describe("Ribbon backstage", () => {
     file.focus();
     fireEvent.keyDown(file, { key: "Enter" });
     expect(screen.getByRole("dialog", { name: "File" })).toBeTruthy();
+  });
+
+  it("closes on a press outside it, such as the title bar, and returns focus to the File tab", () => {
+    render(
+      <>
+        <header><button type="button">Rename</button></header>
+        <Ribbon tabs={makeTabs(vi.fn(), vi.fn())} activeTab="home" onTabChange={vi.fn()} />
+      </>,
+    );
+    const file = openFile();
+    fireEvent.mouseDown(screen.getByRole("button", { name: "Rename" }));
+    expect(screen.queryByRole("dialog", { name: "File" })).toBeNull();
+    expect(document.activeElement).toBe(file);
+    expect(file.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("stays open for presses inside it, on the File tab, and inside its own dialogs, popovers and toasts", () => {
+    function Content() {
+      const [dialog, setDialog] = useState(false);
+      const [popover, setPopover] = useState(false);
+      const anchorRef = useRef<HTMLButtonElement>(null);
+      const toast = useToast();
+      return (
+        <>
+          <button type="button" onClick={() => setDialog(true)}>Rename file</button>
+          <button type="button" ref={anchorRef} onClick={() => setPopover(true)}>Sort</button>
+          <button type="button" onClick={() => toast.show({ title: "Copy saved", durationMs: 0 })}>Notify</button>
+          <Dialog open={dialog} onClose={() => setDialog(false)} title="Rename"><input aria-label="New name" /></Dialog>
+          <Popover open={popover} onClose={() => setPopover(false)} anchorRef={anchorRef} label="Sort options">
+            <button type="button">By name</button>
+          </Popover>
+        </>
+      );
+    }
+    const tabs: RibbonTab[] = [
+      { id: "file", label: "File", mode: "backstage", backstage: { items: [{ id: "open", label: "Open", render: () => <Content /> }] } },
+      { id: "home", label: "Home", groups: [] },
+    ];
+    render(
+      <ToastProvider>
+        <Ribbon tabs={tabs} activeTab="home" onTabChange={vi.fn()} />
+      </ToastProvider>,
+    );
+    const file = openFile();
+    const panel = () => screen.queryByRole("dialog", { name: "File" });
+
+    fireEvent.mouseDown(within(panel()!).getByRole("button", { name: "Open" }));
+    fireEvent.mouseDown(within(panel()!).getByRole("region", { name: "Open" }));
+    fireEvent.mouseDown(file);
+    expect(panel()).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Rename file" }));
+    fireEvent.mouseDown(screen.getByRole("textbox", { name: "New name" }));
+    fireEvent.mouseDown(screen.getByTestId("oui-dialog-backdrop"));
+    expect(panel()).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort" }));
+    fireEvent.mouseDown(screen.getByRole("button", { name: "By name" }));
+    expect(panel()).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Sort options" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Notify" }));
+    fireEvent.mouseDown(screen.getByText("Copy saved"));
+    expect(panel()).toBeTruthy();
   });
 
   it("can be controlled, for example to open Open from a shortcut", () => {
