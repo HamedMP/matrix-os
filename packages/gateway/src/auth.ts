@@ -22,6 +22,7 @@ import {
   MissingRequestPrincipalError,
   SAFE_PRINCIPAL_USER_ID,
   markAuthContextReady,
+  markDelegatedRunPrincipal,
   markVerifiedRuntimeBearer,
   requireRequestPrincipal,
   setPlatformVerifiedPrincipal,
@@ -437,6 +438,7 @@ export function authMiddleware(
       if (matrixMcpActor) {
         if (c.req.header("x-platform-user-id") || c.req.header("x-platform-verified")) return unauthorized(c);
         setPlatformVerifiedPrincipal(c, matrixMcpActor);
+        markDelegatedRunPrincipal(c);
         c.set(MATRIX_MCP_RUN_CONTEXT_KEY as never, matrixMcpContext ?? { actorId: matrixMcpActor });
         return nextWithReady(c, next);
       }
@@ -449,6 +451,7 @@ export function authMiddleware(
         // platform identity headers are never accepted with it.
         if (c.req.header("x-platform-user-id") || c.req.header("x-platform-verified")) return unauthorized(c);
         setPlatformVerifiedPrincipal(c, hermesActor);
+        markDelegatedRunPrincipal(c);
         return nextWithReady(c, next);
       }
     }

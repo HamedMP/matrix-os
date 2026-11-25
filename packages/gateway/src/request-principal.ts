@@ -4,6 +4,7 @@ export const JWT_CLAIMS_CONTEXT_KEY = "jwtClaims";
 export const PLATFORM_USER_ID_CONTEXT_KEY = "platformUserId";
 export const AUTH_CONTEXT_READY_CONTEXT_KEY = "authContextReady";
 export const VERIFIED_RUNTIME_BEARER_CONTEXT_KEY = "verifiedRuntimeBearer";
+export const DELEGATED_RUN_PRINCIPAL_CONTEXT_KEY = "delegatedRunPrincipal";
 export const SAFE_PRINCIPAL_USER_ID = /^[A-Za-z0-9_-]{1,256}$/;
 
 export type PrincipalSource = "jwt" | "platform-verified" | "configured-container" | "dev-default";
@@ -66,6 +67,19 @@ export function markVerifiedRuntimeBearer(c: PrincipalContextWriter): void {
 
 export function hasVerifiedRuntimeBearer(c: PrincipalContextReader): boolean {
   return typeof c.get === "function" && c.get(VERIFIED_RUNTIME_BEARER_CONTEXT_KEY as never) === true;
+}
+
+/** Only the authentication middleware may set this, for run-scoped agent bearers
+ * (Matrix MCP, Hermes) that project an owner principal without an owner session. */
+export function markDelegatedRunPrincipal(c: PrincipalContextWriter): void {
+  if (typeof c.set === "function") c.set(DELEGATED_RUN_PRINCIPAL_CONTEXT_KEY as never, true);
+}
+
+/** An owner session (platform-issued JWT or platform-verified browser proxy),
+ * never a configured-owner/dev fallback or an agent run bearer. */
+export function isInteractiveOwnerPrincipal(c: PrincipalContextReader, principal: RequestPrincipal | null): boolean {
+  return Boolean(principal && (principal.source === "jwt" || principal.source === "platform-verified")
+    && !(typeof c.get === "function" && c.get(DELEGATED_RUN_PRINCIPAL_CONTEXT_KEY as never) === true));
 }
 
 export function isAuthContextReady(c: PrincipalContextReader): boolean {
