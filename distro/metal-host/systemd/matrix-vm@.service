@@ -4,7 +4,8 @@
 # itself runs unprivileged as matrix-vm.
 [Unit]
 Description=Matrix VM %i
-After=network-online.target matrix-hostd-nft.service
+BindsTo=matrix-hostd-tenant-nft.service
+After=network-online.target matrix-hostd-tenant-nft.service matrix-hostd-nft.service
 RequiresMountsFor=/var/lib/matrix-hostd/snapshots
 Conflicts=matrix-vm-restore@%i.service
 

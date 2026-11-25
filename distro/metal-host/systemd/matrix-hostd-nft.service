@@ -1,0 +1,24 @@
+# Loads the public management firewall (matrix_hostd) after checking SSH.
+# A host-wide nftables reload is followed by a reload of this unit.
+# provision-host.sh starts it
+# through `matrix-hostd-nft arm` (unenabled, with a revert timer); only
+# `matrix-hostd-nft confirm` enables it.
+[Unit]
+Description=Matrix hostd firewall tables
+After=nftables.service network-pre.target
+Wants=network-pre.target
+PartOf=nftables.service
+ReloadPropagatedFrom=nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Refuses (fails open, logged) to load a change left unconfirmed past its
+# 10-minute window, e.g. after a reboot lost the transient revert timer.
+ExecStartPre=/usr/local/libexec/matrix-hostd-nft guard
+ExecStart=/usr/local/libexec/matrix-hostd-nft apply
+ExecReload=/usr/local/libexec/matrix-hostd-nft apply
+ExecStop=/usr/local/libexec/matrix-hostd-nft remove
+
+[Install]
+WantedBy=multi-user.target

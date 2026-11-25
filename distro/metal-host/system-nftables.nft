@@ -1,0 +1,4 @@
+# Apply host policy and the Matrix tenant rules in a single transaction so
+# replacing the host's rules cannot expose running guests.
+include "/etc/nftables.conf"
+include "/etc/matrix-hostd/nftables-tenant.nft"

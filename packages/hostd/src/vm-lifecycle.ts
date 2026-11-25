@@ -40,6 +40,7 @@ export interface LifecycleConfig {
   volumeGroup: string;
   // The LVM thin pool in volumeGroup that holds every VM disk.
   thinPool: string;
+  thinAllocatorPath?: string;
   // Create refuses (capacity) while the thin pool's data or metadata use is
   // above these percentages: a full thin pool hangs every guest writing to it.
   poolMaxDataPercent: number;
@@ -475,6 +476,28 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     return { dataPercent, metadataPercent };
   }
 
+  async function createDisk(record: VmRecord, spec: CreateVmSpec, extend: boolean): Promise<void> {
+    const name = `mx-${record.id}`;
+    if (cfg.thinAllocatorPath) {
+      const result = await exec([
+        cfg.thinAllocatorPath, "clone", cfg.volumeGroup, cfg.thinPool,
+        String(cfg.poolMaxDataPercent), String(cfg.poolMaxMetadataPercent),
+        name, `${spec.diskGiB}G`, `golden-${spec.goldenVersion}`,
+      ], { signal: AbortSignal.timeout(cfg.execTimeoutMs) });
+      if (result.code === 75) throw new LifecycleError("capacity", "thin-pool space is already reserved");
+      if (result.code !== 0) {
+        log("vm_disk_allocation_failed", { id: record.id, code: result.code, stderr: result.stderr });
+        throw new LifecycleError("failed", "VM disk allocation failed");
+      }
+      return;
+    }
+    await sh([
+      "lvcreate", "--snapshot", "--setactivationskip", "n", "--activate", "y",
+      "--name", name, goldenName(spec.goldenVersion),
+    ]);
+    if (extend) await sh(["lvextend", "--size", `${spec.diskGiB}G`, lvName(record.id)]);
+  }
+
   function create(spec: CreateVmSpec): Promise<VmRecord> {
     if (creates.size >= cfg.maxInFlight) {
       return Promise.reject(new LifecycleError("busy", "too many VM operations in flight"));
@@ -564,13 +587,7 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
     const work = enqueue(record.id, "create", async () => {
       started = true;
       try {
-        await sh([
-          "lvcreate", "--snapshot", "--setactivationskip", "n", "--activate", "y",
-          "--name", `mx-${record.id}`, goldenName(spec.goldenVersion),
-        ]);
-        // The clone has the golden's size; grow it to the requested disk before
-        // the first boot, where cloud-init growpart/resizefs grow the root fs.
-        if (extend) await sh(["lvextend", "--size", `${spec.diskGiB}G`, lvName(record.id)]);
+        await createDisk(record, spec, extend);
         // The VMM (vmGroup) must traverse the directory to open seed.img; record.json stays 0600.
         const vmDir = join(cfg.vmsDir, record.id);
         await sh(["chgrp", cfg.vmGroup, vmDir]);
@@ -580,6 +597,11 @@ export function createVmLifecycle(deps: VmLifecycleDeps): VmLifecycle {
         await sh(["systemctl", "start", vmUnit(record.id)]);
         return await save(record, { state: "running" });
       } catch (error: unknown) {
+        if (error instanceof LifecycleError && error.code === "capacity") {
+          // Capacity refusals happen under the pool lock before any LV write.
+          await store.remove(record.id);
+          throw error;
+        }
         log("vm_create_failed", { id: record.id, ...errorFields(error) });
         await save(record, { state: "failed", failedDuring: "create" });
         throw new LifecycleError("failed", "VM creation failed", { cause: error });

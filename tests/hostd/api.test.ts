@@ -243,13 +243,24 @@ describe("hostd API", () => {
     expect(bad.status).toBe(400);
   });
 
-  it("resume runs the real restore and reports running", async () => {
-    await store.put(record());
-    await mkdir(join(root, "vms", record().id), { recursive: true });
-    // Resume rewrites the unit environment that create wrote, so the fixture needs one.
-    await writeFile(join(root, "vms", record().id, "unit.env"), "HOTPLUG_MIB=0\n");
-    const res = await send(api(), "POST", `/v1/vms/${record().id}/resume`, { body: { budgetMs: 1000 }, headers: auth });
-    expect(await res.json()).toEqual({ state: "running" });
+  it.each([false, true])("resumes a provisioned VM with legacy snapshot=%s", async (legacy) => {
+    const app = api();
+    const created = await send(app, "POST", "/v1/vms", { body, headers: auth });
+    expect(created.status).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    const path = `/v1/vms/${id}`;
+    expect((await send(app, "POST", `${path}/suspend`, { headers: auth })).status).toBe(202);
+    await lifecycle.idle();
+    const suspended = (await store.get(id))!;
+    expect(suspended.state).toBe("suspended");
+    expect(suspended.snapshot).not.toBeNull();
+    if (legacy) await store.put({ ...suspended, memoryReservationMiB: undefined });
+
+    const resumed = await send(app, "POST", `${path}/resume`, { body: { budgetMs: 1000 }, headers: auth });
+    expect(await resumed.json()).toEqual({ state: "running" });
+    await expect(store.get(id)).resolves.toMatchObject({
+      id, diskGiB: suspended.diskGiB, snapshot: legacy ? null : suspended.snapshot,
+    });
   });
 
   it("GET /v1/vms/:id never includes filesystem paths", async () => {
