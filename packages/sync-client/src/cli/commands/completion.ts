@@ -20,6 +20,7 @@ const COMMANDS = [
   "upload",
   "download",
   "chats",
+  "handoff",
   "agent",
   "doctor",
   "instance",
