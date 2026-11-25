@@ -162,7 +162,10 @@ export function createGoogleCollectionClient(deps: GoogleCollectionClientDepende
         return { ownerId: binding.ownerId, googleAccountId, collectionExpiresAt, runId: binding.runId, runtimeHandle: binding.runtimeHandle,
           executionGeneration: binding.executionGeneration, profileId: stamp.profileId, profileRevision: stamp.profileRevision,
           consentId: stamp.consentId, consentRevision: stamp.consentRevision, purposeId, routeDigest: stamp.routeDigest, policyExpiresAt: stamp.expiresAt };
-      } catch (_error) { throw new GoogleCollectionClientError(); }
+      } catch (error: unknown) {
+        if (!(error instanceof GoogleCollectionClientError)) console.warn('[google-data] Collection request unavailable', error instanceof Error ? 'Error' : 'UnknownError');
+        throw new GoogleCollectionClientError();
+      }
     },
   };
 }

@@ -58,7 +58,10 @@ export function createGoogleOwnerConsentClient(transport: BotIntegrationTranspor
         if (parsed.profiles.some(p => p.googleAccountId !== account)
           || new Set(parsed.profiles.map(p => p.profileId)).size !== parsed.profiles.length) throw new GoogleOwnerConsentError();
         return parsed.profiles;
-      } catch (_error) { throw new GoogleOwnerConsentError(); }
+      } catch (error: unknown) {
+        if (!(error instanceof GoogleOwnerConsentError)) console.warn('[google-data] Owner consent unavailable', error instanceof Error ? 'Error' : 'UnknownError');
+        throw new GoogleOwnerConsentError();
+      }
     },
     async recordConsent(ownerId: string, value: GoogleOwnerConsentInput, signal?: AbortSignal) {
       try {
@@ -67,7 +70,10 @@ export function createGoogleOwnerConsentClient(transport: BotIntegrationTranspor
         const recorded = Recorded.parse(await send(ownerId, 'POST', '/gmail/processing-consents', input, signal));
         if (recorded.consentRevision !== input.expectedConsentRevision + 1) throw new GoogleOwnerConsentError();
         return recorded;
-      } catch (_error) { throw new GoogleOwnerConsentError(); }
+      } catch (error: unknown) {
+        if (!(error instanceof GoogleOwnerConsentError)) console.warn('[google-data] Owner consent unavailable', error instanceof Error ? 'Error' : 'UnknownError');
+        throw new GoogleOwnerConsentError();
+      }
     },
   };
 }

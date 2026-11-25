@@ -65,7 +65,10 @@ export function createGoogleCollectionAdmissionForPlatform(options: {
           },
         });
         return await receiver.admit({ context: c, ownerId: expected.ownerId, googleAccountId: connection.id, path, body });
-      } catch (_error) { throw new GoogleCollectionRefusedError(); }
+      } catch (error: unknown) {
+        if (!(error instanceof GoogleCollectionRefusedError)) console.warn('[google-data] Collection admission unavailable', error instanceof Error ? 'Error' : 'UnknownError');
+        throw new GoogleCollectionRefusedError();
+      }
     },
   };
 }

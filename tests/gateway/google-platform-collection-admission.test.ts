@@ -55,7 +55,10 @@ async function fixture() {
         await c.req.json(); // The producer must reuse cached exact UTF-8 bytes, not reserialize this object.
         const lease = await hook.admit(c, { ...account }, c.req.path.endsWith('/read-call') ? '/read-call' : '/call');
         await afterAdmit?.(); await lease.beforeSend(c.req.raw.signal); sent(); await lease.release(); return c.json({ ok: true });
-      } catch (_error) { return c.json({ error: 'Integration service unavailable' }, 503); }
+      } catch (error: unknown) {
+        if (!(error instanceof Error)) throw error;
+        return c.json({ error: 'Integration service unavailable' }, 503);
+      }
     }); return app;
   }
   const token = (options: { body?: string; path?: '/call' | '/read-call'; machineToken?: string; claim?: Partial<GoogleProcessingClaim> } = {}) =>
