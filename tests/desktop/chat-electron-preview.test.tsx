@@ -25,6 +25,18 @@ const selectedRun = {
   executionRoot: { kind: "worktree", projectId: project!.projectId, worktreeId: "wt_preview" } as const,
 };
 
+function acceptVerificationDraft(
+  draft: ReturnType<typeof useChatElectronPreview>["verificationDraft"],
+  run: CanonicalChatDetailResponse["runs"][number],
+) {
+  act(() => {
+    const finish = draft?.beginSubmission();
+    expect(finish).toBeTypeOf("function");
+    draft?.accept(run);
+    finish?.();
+  });
+}
+
 function detailWithPreview(message: Partial<CanonicalChatMessage> = {}): CanonicalChatDetailResponse {
   return {
     record: { chat, projectId: project?.projectId, providerBinding },
@@ -233,7 +245,8 @@ describe("Mac Verification", () => {
     await waitFor(() => expect(hook.result.current.verificationAction).toBeDefined());
     act(() => hook.result.current.verificationAction?.select("@Mac Verification change", "change"));
     const run = { ...detail.runs[0]!, id: "run_new_edit" };
-    act(() => hook.result.current.verificationDraft?.accept(run));
+    acceptVerificationDraft(hook.result.current.verificationDraft, run);
+    expect(hook.result.current.verificationFeedback?.props.children[0].props.children).toBe("Waiting for the worktree run…");
     hook.rerender({ ...initialProps, detail, permissionMode: "supervised" });
     hook.rerender({ ...initialProps, detail: { ...detail, runs: [...detail.runs, run] }, permissionMode: "supervised" });
     expect(invoke.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
