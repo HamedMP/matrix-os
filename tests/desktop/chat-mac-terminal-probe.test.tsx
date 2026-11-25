@@ -41,6 +41,10 @@ function bridge(
   prepare: () => Promise<unknown> = async () => ready(),
   run: () => Promise<unknown> = async () => ({ status: "returned" }),
   backgroundStatus: () => Promise<unknown> = async () => ({ active: false }),
+  {
+    startBackground = async (): Promise<unknown> => ({ status: "declined" }),
+    cancel = async (): Promise<unknown> => ({ ok: true }),
+  } = {},
 ) {
   const invoke = vi.fn(async (channel: string, _args: unknown) => {
     switch (channel) {
@@ -48,7 +52,8 @@ function bridge(
       case "chat:mac-terminal-prepare": return prepare();
       case "chat:mac-terminal-run": return run();
       case "chat:mac-terminal-background-status": return backgroundStatus();
-      case "chat:mac-terminal-cancel": return { ok: true };
+      case "chat:mac-terminal-background-start": return startBackground();
+      case "chat:mac-terminal-cancel": return cancel();
       default: throw new Error("Unexpected bridge request");
     }
   });
@@ -91,6 +96,33 @@ describe("Mac terminal check", () => {
     expect(screen.getByText("Mac terminal result returned to this Chat.")).toBeTruthy();
   });
 
+  it("allows and stops background checks with the shared Chat action styling", async () => {
+    const expiresAt = Date.now() + 60_000;
+    let finishStop!: (reply: { ok: true }) => void;
+    const invoke = bridge(undefined, undefined, undefined, {
+      startBackground: async () => ({ status: "ready", targetId, expiresAt, remaining: 3 }),
+      cancel: () => new Promise(resolve => { finishStop = resolve; }),
+    });
+    const onDraft = vi.fn(() => true);
+    render(<ChatMacTerminalProbe {...props} detail={{ ...detail(), messages: snapshot.messages }} onDraft={onDraft} />);
+
+    const allow = await screen.findByRole("button", { name: "Allow background Mac checks" });
+    await act(async () => { fireEvent.click(allow); });
+    expect(invoke).toHaveBeenCalledWith("chat:mac-terminal-background-start", {
+      chatId: chat.id, worktreeId: worktree.worktreeId,
+    });
+    expect(onDraft).toHaveBeenCalledExactlyOnceWith(expect.stringContaining(marker), worktree, expiresAt, targetId);
+    const stop = await screen.findByRole<HTMLButtonElement>("button", { name: "Stop background Mac checks" });
+    expect(stop.disabled).toBe(false);
+    fireEvent.click(stop);
+    expect(invoke).toHaveBeenCalledWith("chat:mac-terminal-cancel", { chatId: chat.id });
+    expect(stop.disabled).toBe(true);
+    await act(async () => { finishStop({ ok: true }); });
+    expect(screen.queryByRole("button", { name: "Stop background Mac checks" })).toBeNull();
+    expect(await screen.findByRole("button", { name: "Allow background Mac checks" })).toBeTruthy();
+    expect([allow, stop].map(button => button.classList.contains("matrix-btn-ghost"))).toEqual([true, true]);
+  });
+
   it("reopens an active background grant and stages another draft without redispatching its saved run", async () => {
     const expiresAt = Date.now() + 60_000;
     let readStatus!: (status: unknown) => void;
@@ -103,7 +135,9 @@ describe("Mac terminal check", () => {
     expect(invoke.mock.calls.some(([channel]) => channel === "chat:mac-terminal-run")).toBe(false);
     await act(async () => { readStatus({ active: true, expiresAt, targetId, remaining: 2, phase: "waiting" }); });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Draft another Mac check" }));
+    const draft = await screen.findByRole("button", { name: "Draft another Mac check" });
+    expect(draft.classList.contains("matrix-btn-ghost")).toBe(true);
+    fireEvent.click(draft);
     expect(onDraft).toHaveBeenCalledOnce();
     expect(onDraft).toHaveBeenCalledWith(expect.stringContaining(marker), worktree, expiresAt, targetId);
     expect(invoke.mock.calls.some(([channel]) => channel === "chat:mac-terminal-run"

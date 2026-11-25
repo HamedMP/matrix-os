@@ -34,7 +34,6 @@ const RUN_STATUS: Record<RunStatus, string> = {
   failed: "The Mac terminal check could not be completed.",
   "already-handled": "This Mac terminal check was already handled.",
 };
-const BUTTON_CLASS = "rounded px-2 py-1 font-medium hover:bg-[var(--bg-hover)]";
 const BACKGROUND_STATUS_POLL_MS = 2_000;
 
 function makeDraft(targetId: string): string {
@@ -281,17 +280,23 @@ export function ChatMacTerminalProbe({ active, actorId, detail, onDraft, onDisca
           <Button type="button" size="sm" variant="ghost" onClick={() => { void prepare("one-time"); }}>
             Request Mac terminal check
           </Button>
-          <button type="button" className={BUTTON_CLASS} onClick={() => { void prepare("background"); }}>Allow background Mac checks</button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => { void prepare("background"); }}>
+            Allow background Mac checks
+          </Button>
         </div>
       ) : null}
       {activeBackground ? (
         <div className="flex flex-wrap gap-2">
           {onDraft && !activeRun && activeBackground.phase === "waiting" && activeBackground.remaining > 0
             && preparationStatus !== "stopping" ? (
-              <button type="button" className={BUTTON_CLASS} onClick={stageAnother}>Draft another Mac check</button>
+              <Button type="button" size="sm" variant="ghost" onClick={stageAnother}>
+                Draft another Mac check
+              </Button>
             ) : null}
-          <button type="button" className={BUTTON_CLASS} disabled={preparationStatus === "stopping"}
-            onClick={() => { void stopBackground(); }}>Stop background Mac checks</button>
+          <Button type="button" size="sm" variant="ghost" disabled={preparationStatus === "stopping"}
+            onClick={() => { void stopBackground(); }}>
+            Stop background Mac checks
+          </Button>
         </div>
       ) : null}
     </div>
