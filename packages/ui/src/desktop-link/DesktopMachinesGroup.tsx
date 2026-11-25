@@ -18,6 +18,13 @@ const AGENTS: Array<{ id: DesktopAgent; label: string }> = [
   { id: "pi", label: "Pi" },
 ];
 
+const PLATFORM_NAMES = { darwin: "macOS", linux: "Linux", win32: "Windows" } as const;
+
+/** "macOS arm64", "Windows x64": what the desktop last reported, or nothing before it linked. */
+function systemLabel(machine: DesktopLinkMachine): string {
+  return machine.device ? `${PLATFORM_NAMES[machine.device.platform]} ${machine.device.arch}` : "";
+}
+
 function lastSeen(machine: DesktopLinkMachine, now: number): string {
   if (!machine.lastSeenAt) return "Not connected yet";
   const minutes = Math.max(0, Math.round((now - Date.parse(machine.lastSeenAt)) / 60_000));
@@ -75,7 +82,9 @@ export function DesktopMachinesGroup({ state, selectedRefKey, hideDeviceIds = []
                 style={{ background: online ? "var(--matrix-success, #22c55e)" : muted, borderRadius: 999, flexShrink: 0, height: 8, width: 8 }} />
               <span style={{ display: "flex", flex: 1, flexDirection: "column", minWidth: 0 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{machine.name}</span>
-                <span style={{ color: muted, fontSize: 11 }}>{online ? "Online" : `Offline · ${lastSeen(machine, now)}`}</span>
+                <span style={{ color: muted, fontSize: 11 }}>
+                  {[systemLabel(machine), online ? "Online" : `Offline · ${lastSeen(machine, now)}`].filter(Boolean).join(" · ")}
+                </span>
               </span>
               {confirming === confirmKey ? null : (
                 <Button variant="ghost" size="sm" aria-label={`Remove ${machine.name}`} disabled={removing} onClick={() => setConfirming(confirmKey)}>

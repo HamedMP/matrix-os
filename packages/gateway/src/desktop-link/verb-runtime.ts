@@ -5,7 +5,7 @@
 // desktop's Herdr adapter, through the desktop's guard; everything else is unchanged.
 import type { TerminalRef, TerminalWorkspace } from "@matrix-os/contracts";
 import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminals";
-import { desktopLinkDevicePrefix, desktopLinkWorkspaceId } from "@matrix-os/contracts/desktop-link";
+import { desktopLinkDevicePrefix, desktopLinkWorkspaceId, type DesktopLinkDeviceInfo } from "@matrix-os/contracts/desktop-link";
 import type { TerminalAgentStatusEntry } from "@matrix-os/terminal-runtime";
 import { TerminalAgentVerbError } from "../terminal-agent/verbs.js";
 import type { TerminalAgentPipelineRuntime } from "../herdr/verb-runtime.js";
@@ -13,7 +13,7 @@ import type { HerdrAdapter } from "../herdr/adapter.js";
 
 /** What the pipeline needs from the Desktop link: the desktops linked right now. */
 export interface DesktopTerminalSource {
-  linked(): Array<{ deviceId: string; name: string; adapter: HerdrAdapter }>;
+  linked(): Array<{ deviceId: string; name: string; device: DesktopLinkDeviceInfo; adapter: HerdrAdapter }>;
 }
 
 function warn(message: string, error: unknown): void {

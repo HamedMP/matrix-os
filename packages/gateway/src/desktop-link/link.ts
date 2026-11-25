@@ -4,7 +4,20 @@
 import { EventEmitter } from "node:events";
 import type { HcSocket } from "@matrix-os/herdr-core-client/client";
 import { HerdrTransportError } from "@matrix-os/herdr-core-client/session-host";
-import { DESKTOP_LINK_CLOSE, type DesktopLinkClientFrame, type DesktopLinkServerFrame } from "@matrix-os/contracts/desktop-link";
+import { randomBytes } from "node:crypto";
+import {
+  DESKTOP_LINK_CAPTURE_MAX_BYTES, DESKTOP_LINK_CLOSE, type DesktopLinkClientFrame, type DesktopLinkDeviceInfo, type DesktopLinkServerFrame,
+} from "@matrix-os/contracts/desktop-link";
+
+const CAPTURE_TIMEOUT_MS = 20_000;
+
+/** Why a screenshot did not come back. Codes only; the desktop's own words never travel. */
+export class DesktopCaptureError extends Error {
+  constructor(readonly code: "permission" | "unavailable" | "failed" | "too_large" | "busy" | "timeout" | "offline") {
+    super(`desktop screenshot ${code}`);
+    this.name = "DesktopCaptureError";
+  }
+}
 
 /** A link that queued more than this for the desktop is not keeping up: closed, not buffered. */
 export const DESKTOP_LINK_MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
@@ -16,7 +29,7 @@ export interface DesktopLinkTransport {
   close(code: number): void;
 }
 
-export interface DesktopLinkInfo { deviceId: string; name: string; appVersion: string; os: string }
+export interface DesktopLinkInfo { deviceId: string; name: string; appVersion: string; os: string; device: DesktopLinkDeviceInfo }
 
 export interface DesktopLink {
   readonly info: DesktopLinkInfo;
@@ -31,6 +44,8 @@ export interface DesktopLink {
   /** The WebSocket closed or is being closed: ends the stream. Idempotent. */
   closedBy(code: number): void;
   close(code: number): void;
+  /** One screenshot of the desktop's screen (JPEG). One at a time per link. */
+  capture(timeoutMs?: number): Promise<Buffer>;
 }
 
 class LinkStream extends EventEmitter implements HcSocket {
@@ -67,6 +82,20 @@ export function createDesktopLink(options: {
   let nextStream = 1;
   let stream: LinkStream | null = null;
   let closed = false;
+  // The screenshot in flight, if any: its parts so far, bounded by DESKTOP_LINK_CAPTURE_MAX_BYTES.
+  let capturing: {
+    id: string; parts: Buffer[]; bytes: number; next: number; timer: ReturnType<typeof setTimeout>;
+    resolve(image: Buffer): void; reject(error: DesktopCaptureError): void;
+  } | null = null;
+
+  function endCapture(error: DesktopCaptureError | null, image?: Buffer): void {
+    const current = capturing;
+    if (!current) return;
+    capturing = null;
+    clearTimeout(current.timer);
+    if (error) current.reject(error);
+    else current.resolve(image!);
+  }
 
   function sendFrame(frame: DesktopLinkServerFrame): void {
     if (closed) return;
@@ -111,6 +140,18 @@ export function createDesktopLink(options: {
     },
     receiveControl(frame) {
       seen = now();
+      if (frame.t === "capture-part" || frame.t === "capture-failed") {
+        if (!capturing || capturing.id !== frame.id) return;
+        if (frame.t === "capture-failed") { endCapture(new DesktopCaptureError(frame.reason)); return; }
+        if (frame.index !== capturing.next) { endCapture(new DesktopCaptureError("failed")); return; }
+        const piece = Buffer.from(frame.data, "base64");
+        capturing.bytes += piece.length;
+        if (capturing.bytes > DESKTOP_LINK_CAPTURE_MAX_BYTES) { endCapture(new DesktopCaptureError("too_large")); return; }
+        capturing.parts.push(piece);
+        capturing.next += 1;
+        if (frame.last) endCapture(null, Buffer.concat(capturing.parts));
+        return;
+      }
       if (frame.t === "ping") { sendFrame({ t: "pong" }); return; }
       if (frame.t === "opened") { if (stream?.id === frame.stream) stream.confirmed = true; return; }
       if (frame.t === "end") { if (stream?.id === frame.stream) endStream(); return; }
@@ -124,9 +165,21 @@ export function createDesktopLink(options: {
       if (stream && !stream.ended && stream.confirmed) stream.emit("data", bytes);
     },
     send: sendFrame,
+    capture(timeoutMs = CAPTURE_TIMEOUT_MS) {
+      if (closed) return Promise.reject(new DesktopCaptureError("offline"));
+      if (capturing) return Promise.reject(new DesktopCaptureError("busy"));
+      return new Promise<Buffer>((resolve, reject) => {
+        const id = randomBytes(12).toString("base64url");
+        const timer = setTimeout(() => endCapture(new DesktopCaptureError("timeout")), timeoutMs);
+        timer.unref?.();
+        capturing = { id, parts: [], bytes: 0, next: 0, timer, resolve, reject };
+        sendFrame({ t: "capture", id });
+      });
+    },
     closedBy() {
       if (closed) return;
       closed = true;
+      endCapture(new DesktopCaptureError("offline"));
       endStream(new HerdrTransportError("unavailable"));
     },
     close(code) {

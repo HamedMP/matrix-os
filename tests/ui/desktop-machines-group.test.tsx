@@ -20,8 +20,8 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const machines = {
   machineId: MACHINE,
   machines: [
-    { deviceId: MAC, name: "Hamed's MacBook Pro", revision: 2, state: "online", enrolledAt: "2026-11-24T10:00:00.000Z", lastSeenAt: "2026-11-24T10:00:00.000Z" },
-    { deviceId: OTHER, name: "Studio", revision: 1, state: "offline", enrolledAt: "2026-11-24T09:00:00.000Z", lastSeenAt: "2026-11-24T09:46:00.000Z" },
+    { deviceId: MAC, name: "Hamed's MacBook Pro", revision: 2, state: "online", enrolledAt: "2026-11-24T10:00:00.000Z", lastSeenAt: "2026-11-24T10:00:00.000Z", device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } } },
+    { deviceId: OTHER, name: "Studio", revision: 1, state: "offline", enrolledAt: "2026-11-24T09:00:00.000Z", lastSeenAt: "2026-11-24T09:46:00.000Z", device: null },
   ],
 };
 
@@ -63,7 +63,7 @@ describe("desktops group", () => {
   it("lists an online desktop's terminals and opens one by its desktop ref; an offline desktop shows when it was last seen", async () => {
     const { request, calls } = gateway();
     const { onOpen } = await mounted(request);
-    expect(screen.getByText("Online")).toBeTruthy();
+    expect(screen.getByText("macOS arm64 · Online")).toBeTruthy();
     expect(screen.getByText("Offline · Last seen 14 min ago")).toBeTruthy();
     // An offline desktop's terminals are never asked for.
     expect(calls.some((call) => call.path.includes(OTHER))).toBe(false);

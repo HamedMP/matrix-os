@@ -127,6 +127,8 @@ export function dialMac(base: string, mac: ReturnType<typeof testMac>, options: 
   /** Pipe through the real desktop-side guard with this home, as Electron does. */
   guardHome?: string;
   staleBytes?: boolean;
+  /** How the desktop answers a screenshot request: these JPEG bytes, or a refusal. */
+  screenshot?: Buffer | "permission" | "unavailable";
 }) {
   const socket = new WebSocket(`ws://${base}/ws/desktop-link`, { headers: options.headers ?? ownerHeaders() });
   const control: Array<Record<string, unknown>> = [];
@@ -158,7 +160,7 @@ export function dialMac(base: string, mac: ReturnType<typeof testMac>, options: 
       const { nonce } = DesktopLinkChallengeFrameSchema.parse(frame);
       socket.send(JSON.stringify(options.proof?.(nonce) ?? {
         t: "proof", deviceId: mac.deviceId, revision: options.revision, signature: mac.signLink(nonce, options.revision),
-        app: { version: "0.9.0", os: "macOS 26.1" },
+        app: { version: "0.9.0", os: "macOS 26.1" }, device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } },
       }));
     } else if (frame.t === "open" && options.core) {
       stream?.pipe.destroy();
@@ -173,6 +175,18 @@ export function dialMac(base: string, mac: ReturnType<typeof testMac>, options: 
         id, pipe, queue: Promise.resolve(),
         guard: options.guardHome ? createDesktopLinkGuard({ home: options.guardHome, computerName: "matrix-demo" }) : null,
       };
+    } else if (frame.t === "capture" && options.screenshot) {
+      const id = frame.id as string;
+      if (options.screenshot === "permission" || options.screenshot === "unavailable") {
+        socket.send(JSON.stringify({ t: "capture-failed", id, reason: options.screenshot }));
+        return;
+      }
+      const data = options.screenshot.toString("base64");
+      const size = 48 * 1024;
+      const parts = Math.max(1, Math.ceil(data.length / size));
+      for (let index = 0; index < parts; index += 1) {
+        socket.send(JSON.stringify({ t: "capture-part", id, index, last: index === parts - 1, data: data.slice(index * size, (index + 1) * size) }));
+      }
     } else if (frame.t === "close" && stream?.id === frame.stream) {
       const ending = stream;
       stream = null;

@@ -3,7 +3,7 @@
 // `revoked_at` set, so its revision keeps rising and an old proof never
 // verifies again.
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
-import { DESKTOP_LINK_MAX_DEVICES } from "@matrix-os/contracts/desktop-link";
+import { DESKTOP_LINK_MAX_DEVICES, DesktopLinkDeviceInfoSchema, type DesktopLinkDeviceInfo } from "@matrix-os/contracts/desktop-link";
 
 export interface DesktopLinkDatabase {
   desktop_link_devices: {
@@ -16,6 +16,8 @@ export interface DesktopLinkDatabase {
     enrolled_at: ColumnType<Date, Date, Date>;
     revoked_at: ColumnType<Date | null, Date | null, Date | null>;
     last_seen_at: ColumnType<Date | null, Date | null, Date | null>;
+    /** JSON of DesktopLinkDeviceInfo, as last reported at admission. */
+    device_info: string | null;
   };
 }
 
@@ -25,6 +27,7 @@ export interface DesktopLinkDeviceRecord {
   revision: number;
   enrolledAt: Date;
   lastSeenAt: Date | null;
+  device: DesktopLinkDeviceInfo | null;
 }
 
 export type DesktopLinkEnrolResult =
@@ -58,6 +61,7 @@ export class DesktopLinkStore {
           enrolled_at TIMESTAMPTZ NOT NULL,
           revoked_at TIMESTAMPTZ,
           last_seen_at TIMESTAMPTZ,
+          device_info TEXT CHECK (device_info IS NULL OR char_length(device_info) <= 1024),
           PRIMARY KEY (owner_id, machine_id, device_id)
         )
       `.execute(tx);
@@ -66,20 +70,31 @@ export class DesktopLinkStore {
 
   private record(row: {
     device_id: string; name: string; revision: string | number | bigint; enrolled_at: Date; last_seen_at: Date | null;
+    device_info?: string | null;
   }): DesktopLinkDeviceRecord {
+    let device: DesktopLinkDeviceInfo | null = null;
+    if (row.device_info) {
+      try {
+        const parsed = DesktopLinkDeviceInfoSchema.safeParse(JSON.parse(row.device_info));
+        device = parsed.success ? parsed.data : null;
+      } catch (error: unknown) {
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+    }
     return {
       deviceId: row.device_id,
       name: row.name,
       revision: Number(row.revision),
       enrolledAt: new Date(row.enrolled_at),
       lastSeenAt: row.last_seen_at ? new Date(row.last_seen_at) : null,
+      device,
     };
   }
 
   /** Enrolled (not removed) devices, oldest first. */
   async list(): Promise<DesktopLinkDeviceRecord[]> {
     const rows = await this.bounded((tx) => tx.selectFrom("desktop_link_devices")
-      .select(["device_id", "name", "revision", "enrolled_at", "last_seen_at"])
+      .select(["device_id", "name", "revision", "enrolled_at", "last_seen_at", "device_info"])
       .where("owner_id", "=", this.scope.ownerId)
       .where("machine_id", "=", this.scope.machineId)
       .where("revoked_at", "is", null)
@@ -128,6 +143,7 @@ export class DesktopLinkStore {
         enrolled_at: input.now,
         revoked_at: null,
         last_seen_at: null,
+        device_info: null,
       }).onConflict((conflict) => conflict.columns(["owner_id", "machine_id", "device_id"]).doUpdateSet({
         public_key: input.publicKey,
         name: input.name,
@@ -135,6 +151,7 @@ export class DesktopLinkStore {
         enrolled_at: input.now,
         revoked_at: null,
         last_seen_at: null,
+        device_info: null,
       }).where("desktop_link_devices.revoked_at", "is not", null))
         .returning(["device_id", "name", "revision", "enrolled_at", "last_seen_at"])
         .executeTakeFirst();
@@ -155,6 +172,17 @@ export class DesktopLinkStore {
       .returning("revision")
       .executeTakeFirst());
     return row ? Number(row.revision) : null;
+  }
+
+  /** What the desktop reported at admission: its OS, CPU and capabilities. */
+  async describe(deviceId: string, info: DesktopLinkDeviceInfo): Promise<void> {
+    await this.bounded((tx) => tx.updateTable("desktop_link_devices")
+      .set({ device_info: JSON.stringify(info) })
+      .where("owner_id", "=", this.scope.ownerId)
+      .where("machine_id", "=", this.scope.machineId)
+      .where("device_id", "=", deviceId)
+      .where("revoked_at", "is", null)
+      .execute());
   }
 
   /** Records that a link for this device was admitted or is still alive. */

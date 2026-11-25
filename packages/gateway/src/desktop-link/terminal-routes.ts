@@ -17,6 +17,7 @@ import type { RequestPrincipal } from "../request-principal.js";
 import type { TerminalInputActivity } from "../terminal-agent/input-activity.js";
 import type { TerminalLiveOwnership } from "../terminal-live-ownership.js";
 import type { DesktopLinkRegistry } from "./registry.js";
+import { DesktopCaptureError } from "./link.js";
 
 /**
  * Browser viewers of a desktop terminal: `?workspaceId=<the desktop's workspace>&tabId=`
@@ -212,6 +213,29 @@ export function addDesktopLinkTerminalRoutes(api: Hono, registry: DesktopLinkReg
     }
     return failed(c, error, what);
   }
+
+  /**
+   * One screenshot of the desktop's screen, as JPEG. The desktop takes it only while
+   * the person allows Screen Recording for Matrix OS there; until then this
+   * answers 409 `screen_recording_not_allowed` and the person grants it once.
+   */
+  api.post("/machines/:deviceId/screenshot", small, async (c) => {
+    const target = linked(c);
+    if (target instanceof Response) return target;
+    try {
+      const image = await registry.capture(target.deviceId);
+      return c.body(new Uint8Array(image), 200, { "Content-Type": "image/jpeg", "Cache-Control": "no-store" });
+    } catch (error: unknown) {
+      if (error instanceof DesktopCaptureError) {
+        if (error.code === "permission") return c.json({ error: "screen_recording_not_allowed" }, 409);
+        if (error.code === "unavailable") return c.json({ error: "screenshot_unavailable" }, 409);
+        if (error.code === "busy") return c.json({ error: "busy" }, 429);
+        if (error.code === "offline") return c.json({ error: "desktop_offline" }, 503);
+        return c.json({ error: "screenshot_failed" }, 502);
+      }
+      return failed(c, error, "taking a screenshot");
+    }
+  });
 
   api.post("/machines/:deviceId/terminals/:id/keys", small, async (c) => {
     if (!options.verbs) return c.json({ error: "unavailable" }, 503);

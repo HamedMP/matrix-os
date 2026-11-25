@@ -135,6 +135,7 @@ const DESKTOP_DEVICE_ID = "a5".repeat(32);
 const DESKTOP_MACHINE = {
   deviceId: DESKTOP_DEVICE_ID, name: "Studio Mac", revision: 1, state: "online",
   enrolledAt: "2026-11-25T10:00:00.000Z", lastSeenAt: "2026-11-25T10:00:00.000Z",
+  device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } },
 };
 
 function herdrList(tabIds: string[]): Response {

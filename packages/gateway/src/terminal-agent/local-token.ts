@@ -25,6 +25,7 @@ const LOCAL_ROUTES: Array<{ methods: readonly string[]; path: RegExp }> = [
   // Terminals on the owner's linked desktops (spec 2716): list, start, read, type, end.
   // Enrolling and removing a desktop stay with the owner's signed-in session.
   { methods: ["GET"], path: /^\/api\/desktop-link\/machines$/ },
+  { methods: ["POST"], path: /^\/api\/desktop-link\/machines\/[a-f0-9]{64}\/screenshot$/ },
   { methods: ["GET", "POST"], path: /^\/api\/desktop-link\/machines\/[a-f0-9]{64}\/terminals$/ },
   { methods: ["DELETE"], path: /^\/api\/desktop-link\/machines\/[a-f0-9]{64}\/terminals\/t[0-9]{1,6}[a-z]{0,2}$/ },
   { methods: ["GET"], path: /^\/api\/desktop-link\/machines\/[a-f0-9]{64}\/terminals\/t[0-9]{1,6}[a-z]{0,2}\/screen$/ },

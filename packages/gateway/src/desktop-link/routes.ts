@@ -8,7 +8,7 @@ import type { UpgradeWebSocket, WSContext } from "hono/ws";
 import type { Kysely } from "kysely";
 import { z } from "zod/v4";
 import {
-  DESKTOP_LINK_CLOSE, DESKTOP_LINK_CONTROL_MAX_BYTES, DESKTOP_LINK_PATH,
+  DESKTOP_LINK_CAPTURE_FRAME_MAX_BYTES, DESKTOP_LINK_CLOSE, DESKTOP_LINK_CONTROL_MAX_BYTES, DESKTOP_LINK_PATH,
   DesktopLinkClientFrameSchema, DesktopLinkDeviceIdSchema, DesktopLinkEnrolChallengeRequestSchema, DesktopLinkEnrolChallengeSchema,
   DesktopLinkEnrolRequestSchema, DesktopLinkEnrolmentSchema, DesktopLinkMachineListSchema, DesktopLinkProofFrameSchema,
   desktopLinkEnrolProofMessage, desktopLinkProofMessage, desktopLinkRevisionTag,
@@ -193,6 +193,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
         state: registry.online(device.deviceId) ? "online" : "offline",
         enrolledAt: device.enrolledAt.toISOString(),
         lastSeenAt: device.lastSeenAt?.toISOString() ?? null,
+        device: device.device,
       })),
     }));
   });
@@ -232,7 +233,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
       }
       const proof = DesktopLinkProofFrameSchema.safeParse(raw);
       if (!proof.success) { reject(ws, DESKTOP_LINK_CLOSE.policy); return; }
-      const { deviceId, revision, signature, app: client } = proof.data;
+      const { deviceId, revision, signature, app: client, device } = proof.data;
       const key = await devices.readKey(deviceId, revision);
       const message = desktopLinkProofMessage({ ownerId, machineId, deviceId, revision, nonce });
       if (!timer) return; // timed out while reading the key
@@ -242,7 +243,7 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
       }
       const socket = ws.raw as { bufferedAmount?: number } | undefined;
       const admitted = createDesktopLink({
-        info: { deviceId, name: key.name, appVersion: client.version, os: client.os },
+        info: { deviceId, name: key.name, appVersion: client.version, os: client.os, device },
         transport: {
           sendText: (frame) => ws.send(frame),
           sendBinary: (bytes) => ws.send(new Uint8Array(bytes.buffer as ArrayBuffer, bytes.byteOffset, bytes.byteLength)),
@@ -256,6 +257,9 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
       stop();
       link = admitted;
       admitted.send({ t: "ready" });
+      devices.describe(deviceId, device).catch((error: unknown) => {
+        log(`device info update failed: ${error instanceof Error ? error.name : "UnknownError"}`);
+      });
     }
 
     return {
@@ -283,7 +287,12 @@ export function registerDesktopLinkRoutes(options: RegisterDesktopLinkOptions): 
           return;
         }
         if (text !== null) {
-          if (Buffer.byteLength(text) > DESKTOP_LINK_CONTROL_MAX_BYTES) { link.close(DESKTOP_LINK_CLOSE.policy); return; }
+          // Only a screenshot part may exceed the control cap, and never its own cap.
+          const size = Buffer.byteLength(text);
+          if (size > DESKTOP_LINK_CAPTURE_FRAME_MAX_BYTES || (size > DESKTOP_LINK_CONTROL_MAX_BYTES && !text.startsWith('{"t":"capture-part"'))) {
+            link.close(DESKTOP_LINK_CLOSE.policy);
+            return;
+          }
           let raw: unknown;
           try { raw = JSON.parse(text); } catch (error: unknown) {
             if (!(error instanceof SyntaxError)) throw error;

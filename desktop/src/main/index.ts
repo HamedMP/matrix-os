@@ -3,7 +3,7 @@ import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack"
 import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
 import { createPreviewWindowReopener } from "./preview-pair-window";
 import { initializeDesktopPreview } from "./preview-pair-startup";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, powerMonitor, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, webContents, type IpcMainInvokeEvent } from "electron";
 import { join, dirname } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
 import { createOrganizationDriveTransferService } from "./files/organization-drive-transfer";
@@ -724,7 +724,7 @@ if (!gotLock) {
         facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }),
       });
       localTerminals = localTerminalHost;
-      desktopLink = startDesktopLink({ userData, home: homedir(), appVersion: app.getVersion(), safeStorage, localTerminals: localTerminalHost, auth, computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, quitting: (listener) => app.once("before-quit", listener), ipc: { ipcMain, authorizeSender, emit: (channel, payload) => sendTerminalWindowEvent(channel, payload as never) } });
+      desktopLink = startDesktopLink({ userData, home: homedir(), appVersion: app.getVersion(), safeStorage, localTerminals: localTerminalHost, auth, computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, electron: { desktopCapturer, screen, systemPreferences }, quitting: (listener) => app.once("before-quit", listener), ipc: { ipcMain, authorizeSender, emit: (channel, payload) => sendTerminalWindowEvent(channel, payload as never) } });
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender);
       // Both trusted windows host terminals, so both may read copied files.
       registerTerminalClipboardIpc(ipcMain, {

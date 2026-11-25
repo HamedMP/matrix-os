@@ -104,6 +104,9 @@ describe("Desktop link admission", () => {
     expect(registry?.online(mac.deviceId)).toBe(true);
     const list = DesktopLinkMachineListSchema.parse(await (await http("/api/desktop-link/machines")).json());
     expect(list.machines[0]?.state).toBe("online");
+    // What it reported about itself is kept, for tools and views to use even while it is offline.
+    await expect.poll(async () => DesktopLinkMachineListSchema.parse(await (await http("/api/desktop-link/machines")).json()).machines[0]?.device)
+      .toEqual({ platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } });
   });
 
   it("closes a link whose proof is wrong, stale, for another computer or not a proof", async () => {
@@ -116,7 +119,7 @@ describe("Desktop link admission", () => {
       dialMac(base, stranger, { revision: 1 }),
       dialMac(base, mac, { revision: 1, proof: (nonce) => ({
         t: "proof", deviceId: mac.deviceId, revision: 1, signature: mac.signLink(nonce, 1, "00000000-0000-4000-8000-000000000000"),
-        app: { version: "0.9.0", os: "macOS" },
+        app: { version: "0.9.0", os: "macOS" }, device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } },
       }) }),
     ];
     for (const attempt of attempts) {
