@@ -238,7 +238,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         holdMicrousd = Math.min(holdMicrousd, credit, budget);
       }
       if (holdMicrousd > sourceAvailability.availableMicrousd) throw new AiFundedPolicyError("insufficient_credit");
-      if (free) await admitFreeDailySpend(trx.executor, deps.freeFunding, holdMicrousd, checked);
+      if (free) await admitFreeDailySpend(trx.executor, deps.freeFunding, request.maxCostMicrousd, checked);
       const reserved = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         reserved_microusd: sql<number>`reserved_microusd + ${holdMicrousd}`,
         month_reserved_microusd: sql<number>`month_reserved_microusd + ${holdMicrousd}`,

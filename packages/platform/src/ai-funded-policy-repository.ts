@@ -231,6 +231,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
       const row = await trx.executor.updateTable("ai_funded_runtime_policies").set({
         enabled: parsed.enabled,
         allowed_model_ids: JSON.stringify(allowedModelIds),
+        uses_free_model_default: false,
         monthly_budget_microusd: parsed.monthlyBudgetMicrousd,
         expires_at: parsed.expiresAt,
         revision: parsed.expectedRevision + 1,

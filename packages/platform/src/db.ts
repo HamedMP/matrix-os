@@ -132,6 +132,7 @@ export interface AiFundedRuntimePoliciesTable {
   runtime_slot: string;
   enabled: boolean;
   allowed_model_ids: string;
+  uses_free_model_default: Generated<boolean>;
   monthly_budget_microusd: number;
   expires_at: string | null;
   next_issue_at: string;

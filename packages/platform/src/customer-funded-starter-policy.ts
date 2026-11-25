@@ -83,6 +83,7 @@ export async function initializeCustomerFundedStarterPolicy(
     const inserted = existing ? undefined : await trx.executor.insertInto('ai_funded_runtime_policies').values({
       machine_id: machineId, owner_id: machine.clerk_user_id, runtime_slot: 'primary', enabled: true,
       allowed_model_ids: JSON.stringify(models),
+      uses_free_model_default: free,
       // A free owner's month may spend the new allowance on top of any starter credit left.
       monthly_budget_microusd: free ? STARTER_MICROUSD + FREE_MONTHLY_ALLOWANCE_MICROUSD : STARTER_MICROUSD,
       expires_at: null, revision: 1, next_issue_at: '1970-01-01T00:00:00.000Z', created_at: at, updated_at: at,

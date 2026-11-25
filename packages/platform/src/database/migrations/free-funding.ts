@@ -15,6 +15,10 @@ export async function migrateFreeFunding(db: PlatformMigrationExecutor): Promise
     ADD COLUMN IF NOT EXISTS free_funded BOOLEAN NOT NULL DEFAULT false
   `.execute(db);
   await sql`
+    ALTER TABLE ai_funded_runtime_policies
+    ADD COLUMN IF NOT EXISTS uses_free_model_default BOOLEAN NOT NULL DEFAULT false
+  `.execute(db);
+  await sql`
     CREATE INDEX IF NOT EXISTS idx_ai_funded_usage_reservations_created
     ON ai_funded_usage_reservations (created_at)
   `.execute(db);

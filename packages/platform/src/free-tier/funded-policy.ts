@@ -75,9 +75,9 @@ export function nextUtcDay(now: Date): { at: string; afterSeconds: number } {
 
 /**
  * Today's funded spend of free runtimes, read from the funded reservation
- * ledger: settled work at its actual cost, active holds at their full hold,
- * expired holds at their hold because their cost is unknown, released holds
- * at nothing. A reservation counts by its `free_funded` mark, recorded at
+ * ledger: settled work at its actual cost, active and expired work at the
+ * authorized provider maximum while the actual cost is unknown, and released
+ * work at any recorded actual cost. A reservation counts by its `free_funded` mark, recorded at
  * creation, not by the owner's current plan, so an upgrade later the same day
  * never frees spending already made. The created_at index bounds the scan to
  * today's reservations.
@@ -87,7 +87,8 @@ export async function readDailyFundedSpend(executor: Executor, now: Date): Promi
     SELECT COALESCE(SUM(CASE
       WHEN r.status = 'settled' THEN COALESCE(r.actual_microusd, r.reserved_microusd)
       WHEN r.status = 'released' THEN COALESCE(r.actual_microusd, 0)
-      ELSE GREATEST(r.reserved_microusd, COALESCE(r.actual_microusd, 0))
+      ELSE GREATEST(r.reserved_microusd, COALESCE(r.actual_microusd, 0),
+        COALESCE((r.authorization_response::jsonb #>> '{reservation,maxCostMicrousd}')::bigint, 0))
     END), 0) AS spent
     FROM ai_funded_usage_reservations r
     WHERE r.created_at >= ${utcDayStart(now)} AND r.free_funded
@@ -103,12 +104,12 @@ export async function readDailyFundedSpend(executor: Executor, now: Date): Promi
  * is unavailable, not busy.
  */
 export async function admitFreeDailySpend(
-  executor: Executor, config: FreeFundingConfig, holdMicrousd: number, now: Date,
+  executor: Executor, config: FreeFundingConfig, maxCostMicrousd: number, now: Date,
 ): Promise<void> {
   const ceiling = config.dailyFundedSpendMicrousd;
   if (ceiling === undefined) throw new AiFundedPolicyError('unavailable');
   await sql`SELECT pg_advisory_xact_lock(hashtextextended(${DAILY_SPEND_LOCK_KEY}, 0))`.execute(executor);
-  if (await readDailyFundedSpend(executor, now) + holdMicrousd > ceiling) {
+  if (await readDailyFundedSpend(executor, now) + maxCostMicrousd > ceiling) {
     throw new AiFundedPolicyError('busy', undefined, nextUtcDay(now));
   }
 }

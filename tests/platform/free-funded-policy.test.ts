@@ -7,7 +7,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { AiFundedPolicyError } from '../../packages/platform/src/ai-funded-policy-errors.js';
 import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-funded-policy-repository.js';
 import { initializeCustomerFundedStarterPolicy } from '../../packages/platform/src/customer-funded-starter-policy.js';
-import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import { insertUserMachine, upsertBillingEntitlement, type PlatformDB } from '../../packages/platform/src/db.js';
+import { buildFreeEntitlement } from '../../packages/platform/src/free-tier/free-entitlement.js';
 import { FREE_MANAGED_MODEL_ID } from '../../packages/platform/src/free-tier/funded-policy.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 import { createScopedPlatformDbs, freeTierPostgresUrl, type ScopedPlatformDbs } from './free-tier-postgres-helper.js';
@@ -140,6 +141,33 @@ describe('free funded policy', () => {
     await expect(free.authorize(c, 3 * USD)).resolves.toBeDefined();
   });
 
+  it('refuses a small customer hold when its maximum provider cost exceeds the free daily ceiling', async () => {
+    const free = harness(db, 10, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: 10 })
+      .where('machine_id', '=', identity.machineId).execute();
+    const credential = await free.credential(identity);
+    await expect(free.repo.authorize({
+      credential: credential.token, requestId: 'max_exceeds_daily', modelId: FREE_MANAGED_MODEL_ID,
+      maxCostMicrousd: 24, billingMode: 'usage',
+    })).rejects.toThrow(refusal('busy'));
+  });
+
+  it('counts a pending request at its maximum provider cost across free owners', async () => {
+    const free = harness(db, 50, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: 10 })
+      .where('machine_id', '=', identity.machineId).execute();
+    const a = await free.credential(identity);
+    const b = await free.credential(await addRuntime(db, 2, 'free', NOV));
+    await expect(free.repo.authorize({
+      credential: a.token, requestId: 'max_to_reserve', modelId: FREE_MANAGED_MODEL_ID,
+      maxCostMicrousd: 40, billingMode: 'usage',
+    })).resolves.toMatchObject({ reservation: { reservedMicrousd: 10, maxCostMicrousd: 40 } });
+    await expect(free.authorize(b, 11)).rejects.toThrow(refusal('busy'));
+    await expect(free.authorize(b, 10)).resolves.toBeDefined();
+  });
+
   it('answers the relay with 503, a Retry-After until UTC midnight, and a busy body over the daily ceiling', async () => {
     const free = harness(db, USD, clock);
     const a = await free.credential(await addRuntime(db, 1, 'free', NOV));
@@ -229,6 +257,32 @@ describe('free funded policy', () => {
     const ledger = await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
       .where('owner_id', '=', 'user_customer1').execute();
     expect(ledger.map((row) => row.entry_id.split(':')[0])).toEqual(['starter-lifetime']);
+  });
+
+  it.each([false, true])('restores paid models after upgrade unless the operator restricted them (restricted: %s)', async (restricted) => {
+    const free = harness(db, USD, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    const paidModel = 'anthropic/claude-sonnet-5';
+    if (restricted) {
+      await free.repo.setRuntimePolicy({
+        identity, expectedRevision: 1, enabled: true, expiresAt: null,
+        allowedModelIds: [FREE_MANAGED_MODEL_ID], monthlyBudgetMicrousd: 42_000,
+      });
+    }
+    const credential = await free.credential(identity);
+    await expect(free.authorize(credential, 1, paidModel)).rejects.toThrow(refusal('model_not_allowed'));
+    await upsertBillingEntitlement(db, {
+      ...buildFreeEntitlement(identity.ownerId, NOV), source: 'stripe', planSlug: 'matrix_starter',
+      status: 'active', stripeSubscriptionId: 'sub_upgraded',
+    });
+    const summary = await free.repo.getRuntimeFundingSummary(identity);
+    if (restricted) {
+      expect(summary.policy.allowedModelIds).toEqual([FREE_MANAGED_MODEL_ID]);
+      await expect(free.authorize(credential, 1, paidModel)).rejects.toThrow(refusal('model_not_allowed'));
+    } else {
+      expect(summary.policy.allowedModelIds).toContain(paidModel);
+      await expect(free.authorize(credential, 1, paidModel)).resolves.toBeDefined();
+    }
   });
 
   it('funds a metal runtime whose owner holds no free entitlement as paid', async () => {
