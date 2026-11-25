@@ -178,9 +178,10 @@ export function registerChatElectronPreview(ipc: Pick<IpcMain, "handle">, option
         approvedSource = source;
         return {
           close: lease.close,
-          async check(boundarySignal?: AbortSignal) {
+          async check(boundarySignal?: AbortSignal, retryBadGateway?: () => boolean) {
             if (!isCurrent()) operation.abort("revoked");
-            if (boundarySignal?.aborted || operation.signal.aborted || !await lease.check(boundarySignal)) return false;
+            if (boundarySignal?.aborted || operation.signal.aborted
+              || !await lease.check(boundarySignal, retryBadGateway)) return false;
             const verified = await setup?.resolveActiveSource(boundarySignal ?? operation.signal);
             if (!isCurrent() || verified?.identity !== source.identity) operation.abort("revoked");
             return !operation.signal.aborted && !boundarySignal?.aborted;

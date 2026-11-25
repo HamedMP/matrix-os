@@ -2,10 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, generateKeyPairSync, randomUUID, verify } from "node:crypto";
 import type { IpcMain } from "electron";
+import { desktopPairingActionProofMessage } from "@matrix-os/contracts";
 import type { AuthService } from "@desktop/main/auth/auth-service";
 import type { ChatElectronPreviewTarget } from "@desktop/shared/chat-electron-preview-ipc";
+import { createMacActionPairing } from "@desktop/main/desktop-pairing/action";
 import type { createChatElectronPreviewTransport } from "@desktop/main/chat-electron-preview/transport";
 import { registerChatElectronPreview } from "@desktop/main/chat-electron-preview/register";
 
@@ -44,10 +46,14 @@ function previewFixture() {
   };
   const handlers = new Map();
   const ipc = { handle: (channel: string, callback: unknown) => { handlers.set(channel, callback); } } as Pick<IpcMain, "handle">;
-  const auth = { getStatus: () => ({
-    signedIn: true, runtimeSlot: "primary", platformHost: "https://app.matrix-os.com",
-    userId: "owner_1", handle: "fixture", authGeneration: 1,
-  }) } as AuthService;
+  const auth = {
+    getToken: () => "test-auth",
+    getGatewayOrigin: () => "https://app.matrix-os.com",
+    getStatus: () => ({
+      signedIn: true, runtimeSlot: "primary", platformHost: "https://app.matrix-os.com",
+      userId: "owner_1", handle: "fixture", authGeneration: 1,
+    }),
+  } as AuthService;
   return {
     ipc,
     auth,
@@ -141,6 +147,62 @@ describe("Mac Verification packaged IPC", () => {
     } finally {
       clock.mockRestore();
     }
+  });
+
+  it.each([
+    { pairingFailures: 1, status: "returned" },
+    { pairingFailures: 2, status: "unavailable" },
+  ])("returns a Full Access result only after a fresh pairing read ($pairingFailures gateway 502s)", async ({
+    pairingFailures, status,
+  }) => {
+    await withPreview(async ({ auth, openVerification, run, select, fullAccess, supervised, transport }) => {
+      const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+      const publicBytes = publicKey.export({ format: "der", type: "spki" });
+      const deviceId = createHash("sha256").update(publicBytes).digest("hex");
+      const state = { deviceId, machineId: randomUUID(), revision: 3 };
+      const nonce = Buffer.alloc(32, 7).toString("base64url");
+      let deliveryReads = 0;
+      const pairing = createMacActionPairing({
+        auth,
+        keys: { load: async () => ({ deviceId, privateKey, publicKey: publicBytes.toString("base64url") }) },
+        hasChatFullAccess: async () => true,
+        fetchFn: async (input, init) => {
+          const { pathname } = new URL(String(input));
+          if (pathname === "/api/desktop-pairing/action-challenge") {
+            return Response.json({ ...state, nonce, expiresAt: Date.now() + 60_000 });
+          }
+          if (pathname === "/api/desktop-pairing/verify-action") {
+            const body = JSON.parse(String(init?.body));
+            const proof = desktopPairingActionProofMessage({ ownerId: "owner_1", ...state, nonce });
+            expect(body.nonce).toBe(nonce);
+            expect(verify(null, Buffer.from(proof), publicKey, Buffer.from(body.signature, "base64url"))).toBe(true);
+            return Response.json(state);
+          }
+          expect(pathname).toBe("/api/desktop-pairing");
+          expect(init?.method).toBe("GET");
+          if (execute.mock.calls.length && ++deliveryReads <= pairingFailures) {
+            return new Response(null, { status: 502 });
+          }
+          return Response.json(state);
+        },
+      });
+      fullAccess.mockImplementationOnce(pairing.acquireFullAccess);
+      await openVerification?.();
+      const view = select();
+      expect(await run(verified, view)).toEqual({ status });
+      expect(deliveryReads).toBe(2);
+      expect(transport.returnResult).toHaveBeenCalledTimes(status === "returned" ? 1 : 0);
+      if (status === "returned") {
+        expect(transport.returnResult).toHaveBeenCalledWith(
+          expect.objectContaining(verified),
+          { png: Buffer.from("fixture"), testSummary: "5 passed" },
+          expect.any(AbortSignal),
+        );
+      }
+      expect(await run(verified, view)).toEqual({ status: "already-handled" });
+      expect(execute).toHaveBeenCalledOnce();
+      expect(supervised).not.toHaveBeenCalled();
+    });
   });
 
   it("requires the trusted renderer, matching Chat/worktree, and affirmative pairing consent", async () => {
