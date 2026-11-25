@@ -211,6 +211,7 @@ export function ChatInput({
     if (attachmentError) { setError(attachmentError); return; }
     const text = input.trim();
     const projectSkillProjectId = projectSkillDraft.paths.length ? projectSlash?.projectId : undefined;
+    const preserveSkillSelection = Boolean(projectSkillProjectId && composer.permissionIdentity);
     let draftCleared = false;
     const sameDraft = () => currentComposer.current.scope === scope
       && (draftCleared || currentComposer.current.composer.requestId === composer.requestId);
@@ -230,12 +231,18 @@ export function ChatInput({
     const handoff = createComposerSendHandoff({
       clear: () => {
         if (!sameDraft() || (projectSkillProjectId && !currentSkillScope())) return false;
-        draftCleared = true; composer.clear(); setSentAttachmentIds(submittedIds);
+        draftCleared = true;
+        composer.clear({ retainIdentity: preserveSkillSelection });
+        setSentAttachmentIds(submittedIds);
         return true;
       },
       restore: () => { draftCleared = false; composer.restore(submittedDraft); setSentAttachmentIds([]); },
       settle: cleared => {
-        if (cleared) { if (currentComposer.current.scope === scope) settleSubmission(); return; }
+        if (cleared) {
+          if (preserveSkillSelection) composer.clear();
+          if (currentComposer.current.scope === scope) settleSubmission();
+          return;
+        }
         if (!sameDraft() || (projectSkillProjectId && !currentSkillScope())) return;
         composer.clear(); settleSubmission();
       },

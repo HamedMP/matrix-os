@@ -57,10 +57,15 @@ export function useChatComposerDraft(scope: string, identity: unknown) {
       for (const key of Object.keys(drafts).slice(0, -100)) delete drafts[key];
       return { identity, drafts };
     }),
-    clear: () => setStore((current) => {
+    clear: ({ retainIdentity = false }: { retainIdentity?: boolean } = {}) => setStore((current) => {
       if (current.identity !== identity || current.drafts[scope]?.requestId !== draft.requestId) return current;
       const drafts = { ...current.drafts };
-      delete drafts[scope];
+      if (retainIdentity) {
+        // The pending send still owns this draft's project skill selection.
+        drafts[scope] = { ...emptyDraft, requestId: draft.requestId, permissionIdentity: draft.permissionIdentity };
+      } else {
+        delete drafts[scope];
+      }
       return { identity, drafts };
     }),
   };

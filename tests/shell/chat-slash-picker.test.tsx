@@ -6,7 +6,7 @@ import {afterEach,expect,it,vi} from "vitest";
 import type { ProjectChatSlashScope } from "@matrix-os/ui";
 import {ChatInput} from "../../shell/src/components/chat/ChatInput.js";
 import type {CanonicalProviderInstanceDescriptor} from "@matrix-os/contracts";
-import type {ChatComposerDraft} from "../../shell/src/components/chat/useChatComposerDraft.js";
+import {useChatComposerDraft,type ChatComposerDraft} from "../../shell/src/components/chat/useChatComposerDraft.js";
 import {createCanonicalProviderCatalogFixture} from "../contracts/fixtures/canonical-chat.js";
 vi.mock("../../shell/src/components/chat/ChatMentionPicker.js",()=>({ChatMentionPicker:()=>null}));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -187,6 +187,42 @@ it("selects a project skill separately from the message and only passes its rela
   fireEvent.keyDown(input, { key: "Enter" });
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
   expect(submit.mock.calls[0]?.[0]).toContain(reviewSkillPath);
+});
+
+it("keeps a seeded draft's project skill when a pending send is rejected and retried", async () => {
+  const rejectedSend = Promise.withResolvers<boolean>();
+  const submit = vi.fn<React.ComponentProps<typeof ChatInput>["onSubmit"]>()
+    .mockImplementationOnce((_text, _files, options) => {
+      options?.onShown?.();
+      return rejectedSend.promise;
+    })
+    .mockImplementationOnce(async (_text, _files, options) => {
+      options?.onShown?.();
+      return true;
+    });
+  const projectSlash = projectScope("proj_one", "review");
+  function SeededComposer() {
+    const composer = useChatComposerDraft("new:1", "test-runtime");
+    return <ChatInput composer={composer} scope="new:1" permissionMode="supervised" connected busy={false}
+      attachmentsEnabled={false} onSubmit={submit} slashInstance={instance} projectSlash={projectSlash}
+      draftRequest={{ id: 1, text: "Review this /" }} speechCaptureAdapter={capture} />;
+  }
+
+  render(<SeededComposer />);
+  fireEvent.click(await screen.findByRole("option", { name: /review/i }));
+  const editor = screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement;
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(editor.value).toBe("");
+  expect(submit.mock.calls[0]?.[0]).toContain(reviewSkillPath);
+
+  await act(async () => { rejectedSend.resolve(false); });
+  expect(editor.value).toBe("Review this ");
+  expect(screen.getByRole("button", { name: "Remove skill review" })).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
+  expect(submit.mock.calls[1]?.[0]).toContain(reviewSkillPath);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Remove skill review" })).toBeNull());
 });
 
 it("offers Queue next for a project skill alone during an active run", async () => {
