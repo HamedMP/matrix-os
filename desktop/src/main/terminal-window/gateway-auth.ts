@@ -2,7 +2,7 @@
 // The renderer never holds a credential: each gateway request names its
 // computer, and the trusted core attaches that computer's bearer or nothing.
 import { RUNTIME_SLOT_PATTERN as SLOT } from "../../shared/terminal-window";
-import { setGatewaySocketOrigin, shouldInjectAuth } from "../auth/header-injection";
+import { setGatewayRequestOrigin, shouldInjectAuth } from "../auth/header-injection";
 import type { ComputerCredential } from "./credential-broker";
 
 const VM_ROUTE = /^\/vm\/(pr-[1-9][0-9]{0,8})(?:\/|$)/;
@@ -11,7 +11,7 @@ interface AuthSession {
   webRequest: {
     onBeforeSendHeaders(
       listener: (
-        details: { id: number; url: string; requestHeaders: Record<string, string> },
+        details: { id: number; url: string; method?: string; requestHeaders: Record<string, string> },
         callback: (response: { requestHeaders?: Record<string, string>; cancel?: boolean }) => void,
       ) => void,
     ): void;
@@ -74,7 +74,7 @@ export function installTerminalWindowAuth(
       callback({ requestHeaders: headers });
       return;
     }
-    setGatewaySocketOrigin(details.url, options.getGatewayOrigin(), headers);
+    setGatewayRequestOrigin(details.url, details.method, options.getGatewayOrigin(), headers);
     void options.broker.credential(slot)
       .then((found) => {
         if (found.token !== null) {

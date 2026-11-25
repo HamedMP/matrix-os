@@ -58,7 +58,7 @@ function corsSession() {
 }
 
 type BeforeSendHeadersListener = (
-  details: { url: string; requestHeaders: Record<string, string> },
+  details: { url: string; method?: string; requestHeaders: Record<string, string> },
   callback: (response: { requestHeaders: Record<string, string> }) => void,
 ) => void;
 
@@ -74,9 +74,9 @@ function headerSession() {
   };
   return {
     session,
-    fire(url: string, requestHeaders: Record<string, string> = {}) {
+    fire(url: string, requestHeaders: Record<string, string> = {}, method = "GET") {
       const cb = vi.fn();
-      listener?.({ url, requestHeaders }, cb);
+      listener?.({ url, method, requestHeaders }, cb);
       return cb.mock.calls[0]?.[0]?.requestHeaders ?? {};
     },
   };
@@ -228,11 +228,29 @@ describe("gateway WebSocket Origin", () => {
     expect(headers).toEqual({ Origin: "http://matrix.example-tailnet.ts.net" });
   });
 
-  it("leaves fetches and other hosts' sockets with the renderer's own Origin", () => {
+  // Review P1 (Greptile, #3530 at bed14b4e4e): the gateway also refuses
+  // state-changing HTTP requests from a foreign browser Origin, so the packaged
+  // renderer's writes (Origin "null") were refused on private self-hosted computers.
+  it("sends the gateway's own origin on renderer writes to the active gateway", () => {
+    const tailnet = "https://matrix.example-tailnet.ts.net";
+    const { session, fire } = headerSession();
+    installHeaderInjection(session, () => "matrix-token", () => tailnet, "null");
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      expect(fire(`${tailnet}/api/terminal/herdr/sessions/t1`, { Origin: "null" }, method), method).toEqual({
+        Authorization: "Bearer matrix-token",
+        Origin: tailnet,
+      });
+    }
+  });
+
+  it("leaves reads and other hosts' requests with the renderer's own Origin", () => {
     const { session, fire } = headerSession();
     installHeaderInjection(session, () => null, () => GATEWAY, "null");
-    expect(fire(`${GATEWAY}/api/apps`, { Origin: "null" }).Origin).toBe("null");
+    for (const method of ["GET", "HEAD", "OPTIONS"]) {
+      expect(fire(`${GATEWAY}/api/apps`, { Origin: "null" }, method).Origin, method).toBe("null");
+    }
     expect(fire("wss://evil.example/ws", { Origin: "null" }).Origin).toBe("null");
+    expect(fire("https://evil.example/api/apps", { Origin: "null" }, "POST").Origin).toBe("null");
   });
 });
 
