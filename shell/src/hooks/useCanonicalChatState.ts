@@ -325,7 +325,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 
   const loadList=useCallback(async()=>{if (!isCurrent()) return; refreshUnread(); await navigation.store?.refresh();},[navigation.store, refreshUnread, isCurrent]);
 
-  const loadDetail = useCallback(async (chatId: string) => {
+  const loadDetail = useCallback(async (chatId: string, onFailure?: (error: unknown) => void) => {
     if (!isCurrent()) return null;
     const generation = ++detailRequestGeneration.current;
     try {
@@ -356,6 +356,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       }
       console.warn("[canonical-chat] Shell detail unavailable:", error instanceof Error ? error.name : "UnknownError");
       setDetailError({ scope: navigationIdentity, chatId, notFound: error instanceof CanonicalShellChatRequestError && error.status === 404 });
+      onFailure?.(error);
       return null;
     }
   }, [client, navigationIdentity, isCurrent]);
@@ -387,9 +388,16 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   }, [eventSource]);
 
   useEffect(() => {
-    const selectedRefresh = createCanonicalChatRefresh(async () => (
-      !activeChatId || Boolean(await loadDetail(activeChatId))
-    ));
+    const selectedRefresh = createCanonicalChatRefresh(async () => {
+      if (!activeChatId || !isCurrent() || activeChatIdRef.current !== activeChatId) return true;
+      let retry = true;
+      const snapshot = await loadDetail(activeChatId, error => {
+        if (error instanceof CanonicalShellChatRequestError && error.status >= 400 && error.status < 500) {
+          retry = error.status === 408 || error.status === 429;
+        }
+      });
+      return Boolean(snapshot) || !retry;
+    });
     const subscription = eventSource.subscribe((event) => {
       if (!isCurrent()) return;
       if (isChatMembershipEvent(event)) setChatChangeRevision((revision) => (revision + 1) % 1_000_000);
@@ -427,11 +435,14 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       }
 
     });
+    // Subscribe first. Admission may have missed events received in the draft view.
+    if (activeChatId) selectedRefresh.schedule();
+    else setDetail(null);
     return () => {
       subscription.dispose();
       selectedRefresh.dispose();
     };
-  }, [activeChatId, eventSource, loadDetail, loadList, setRecords, refreshUnread, navigation.store, isCurrent]);
+  }, [activeChatId, eventSource, loadDetail, setRecords, refreshUnread, navigation.store, isCurrent]);
 
   useEffect(() => {
     let cancelled = false;
@@ -464,16 +475,6 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [loadDetail, navigation.store]);
-
-  useEffect(() => {
-    if (!activeChatId) {
-      setDetail(null);
-      return;
-    }
-    // Read after the event subscription above starts tracking this Chat.
-    // A send's admission snapshot can predate events received in the draft view.
-    void loadDetail(activeChatId);
-  }, [activeChatId, loadDetail]);
 
   useEffect(() => {
     if (!activeChatId || !detail?.record.activeRun || eventConnectionState === "open") return;

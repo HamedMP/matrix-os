@@ -284,7 +284,7 @@ it("shows a fast first reply when the send response beats the event-driven read 
   expect(shownCount(result.current.messages, "Hello")).toBe(1);
 });
 
-it("catches up when the first reply arrives during the admission snapshot read", async () => {
+it.each([false, true])("catches up when the first reply arrives during admission (selection read fails once: %s)", async (transientFailure) => {
   vi.stubGlobal("crypto", webcrypto);
   const { snapshot } = createCanonicalChatFixture("accepted");
   const completed = createCanonicalChatFixture("completed").snapshot;
@@ -298,6 +298,7 @@ it("catches up when the first reply arrives during the admission snapshot read",
   const snapshotResponse = gate();
   let detail: CanonicalChatDetailResponse | undefined;
   let snapshotTaken = false;
+  let selectionReads = 0;
   let completeRun!: () => void;
   stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/events?")) {
@@ -339,6 +340,11 @@ it("catches up when the first reply arrives during the admission snapshot read",
       if (!snapshotTaken) {
         snapshotTaken = true;
         await snapshotResponse.opened;
+        return response;
+      }
+      selectionReads += 1;
+      if (transientFailure && selectionReads === 1) {
+        return Response.json({ error: { code: "unavailable" } }, { status: 503 });
       }
       return response;
     }
@@ -359,7 +365,10 @@ it("catches up when the first reply arrives during the admission snapshot read",
       expect(await sending).toBe(true);
     });
     expect(result.current.sessionId).toBe(chat.id);
-    await waitFor(() => expect(result.current.messages).toContainEqual(expect.objectContaining({ role: "assistant", content: "Fast reply" })));
+    await waitFor(() => expect(result.current.messages).toContainEqual(expect.objectContaining({
+      role: "assistant", content: "Fast reply",
+    })), { timeout: 4_000 });
+    expect(selectionReads).toBe(transientFailure ? 2 : 1);
     expect(shownCount(result.current.messages, "Hello")).toBe(1);
   } finally {
     snapshotResponse.release();
