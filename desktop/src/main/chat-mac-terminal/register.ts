@@ -1,9 +1,10 @@
 import { dialog, type BrowserWindow, type IpcMain } from "electron";
 import type { AuthService } from "../auth/auth-service";
 import type { LocalTerminalHost } from "../local-terminals/host";
-import { createChatElectronPreviewTransport } from "../chat-electron-preview/transport";
+import { createChatElectronPreviewTransport, type MacTerminalContext } from "../chat-electron-preview/transport";
 import type { InvokeRequest, InvokeResponse } from "../../shared/ipc-contract";
 import { MAC_TERMINAL_PROBE_INVOKE } from "../../shared/mac-terminal-probe-ipc";
+import { createMacTerminalBackgroundService } from "./background-service";
 import { createChatMacTerminalService } from "./service";
 
 interface Options {
@@ -12,37 +13,63 @@ interface Options {
   allowed: boolean;
   window(): BrowserWindow | null;
   isTrustedSender(event: unknown): boolean;
+  onBackgroundActiveChange?(active: boolean): void;
 }
 
 export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: Options) {
   const { auth, host } = options;
   const transport = createChatElectronPreviewTransport(auth);
+  async function requestConsent(context: MacTerminalContext, signal: AbortSignal, prompt: {
+    message: string;
+    description: string[];
+    approveLabel: string;
+  }) {
+    const window = options.window();
+    if (!window || window.isDestroyed()) return false;
+    const answer = await dialog.showMessageBox(window, {
+      type: "question",
+      message: prompt.message,
+      detail: [...prompt.description, `Chat ${context.chatId}`, `Worktree ${context.worktreeId}`].join("\n\n"),
+      buttons: ["Cancel", prompt.approveLabel],
+      cancelId: 0,
+      defaultId: 0,
+      signal,
+    });
+    return answer.response === 1;
+  }
+
+  const prepareTerminal = () => host.prepareChatTerminalProbe();
   const service = createChatMacTerminalService({
     ...transport,
     enabled: options.allowed,
-    async approve(context, signal) {
-      const window = options.window();
-      if (!window || window.isDestroyed()) return false;
-      const answer = await dialog.showMessageBox(window, {
-        type: "question",
-        message: "Approve one Mac terminal check?",
-        detail: [
-          "The Main agent can run /usr/bin/uname -s once in a new dedicated terminal on this Mac.",
-          "Output returns to the same Chat. This permission expires after five minutes.",
-          `Chat ${context.chatId}`,
-          `Worktree ${context.worktreeId}`,
-        ].join("\n\n"),
-        buttons: ["Cancel", "Approve Once"],
-        cancelId: 0,
-        defaultId: 0,
-        signal,
-      });
-      return answer.response === 1;
-    },
-    prepareTerminal: () => host.prepareChatTerminalProbe(),
+    approve: (context, signal) => requestConsent(context, signal, {
+      message: "Approve one Mac terminal check?",
+      description: [
+        "The Main agent can run /usr/bin/uname -s once in a new dedicated terminal on this Mac.",
+        "Output returns to the same Chat. This permission expires after five minutes.",
+      ],
+      approveLabel: "Approve Once",
+    }),
+    prepareTerminal,
     reportError(error) {
       console.warn("[chat-mac-terminal] operation failed", error instanceof Error ? error.name : "Error");
     },
+  });
+  const background = createMacTerminalBackgroundService({
+    ...transport,
+    enabled: options.allowed,
+    oneTimeBusy: service.isBusy,
+    approve: (context, signal) => requestConsent(context, signal, {
+      message: "Allow background Mac terminal checks?",
+      description: [
+        "The Main agent can run /usr/bin/uname -s up to three times in dedicated terminals on this Mac.",
+        "Checks can run while this Chat is closed. Output returns to this Chat. This permission expires after 15 minutes.",
+      ],
+      approveLabel: "Approve for 15 minutes",
+    }),
+    prepareTerminal,
+    onActiveChange: (active) => options.onBackgroundActiveChange?.(active),
+    reportEvent: (event, reason) => console.info("[chat-mac-terminal-background]", event, reason ?? ""),
   });
 
   function handle<C extends keyof typeof MAC_TERMINAL_PROBE_INVOKE>(
@@ -62,8 +89,16 @@ export function registerChatMacTerminal(ipc: Pick<IpcMain, "handle">, options: O
     const status = auth.getStatus();
     return { available: service.available && status.signedIn && status.runtimeSlot === "primary" };
   });
-  handle("chat:mac-terminal-prepare", service.prepare);
+  handle("chat:mac-terminal-prepare", (request) => background.isBusy() ? { status: "busy" } : service.prepare(request));
   handle("chat:mac-terminal-run", service.run);
-  handle("chat:mac-terminal-cancel", async ({ chatId }) => ({ ok: await service.cancel(chatId) }));
-  return service.cancelAll;
+  handle("chat:mac-terminal-background-start", background.start);
+  handle("chat:mac-terminal-background-status", background.status);
+  handle("chat:mac-terminal-cancel", async ({ chatId }) => {
+    const [single, repeated] = await Promise.all([service.cancel(chatId), background.cancel(chatId)]);
+    return { ok: single || repeated };
+  });
+  return {
+    async cancelAll() { await Promise.all([service.cancelAll(), background.stop()]); },
+    stopBackground: background.stop,
+  };
 }
