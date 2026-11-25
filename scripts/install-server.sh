@@ -1270,7 +1270,8 @@ prepare_browser_account() {
 # owner services (code-server runs as the owner with --auth none; the shell proxy
 # adds the gateway bearer) and could reach this machine's own tailnet name. An
 # owner-matched nftables table refuses its new connections to loopback and the
-# tailnet, except DNS and the browser stack's own ports (Xvnc 6901, supervisor
+# tailnet, except DNS (the systemd-resolved stub and Tailscale/Headscale's
+# MagicDNS resolver, port 53 only) and the browser stack's own ports (Xvnc 6901, supervisor
 # 8730, Chrome CDP 9222); replies on connections others opened stay allowed.
 render_browser_isolation() {
   cat <<EOF
@@ -1280,6 +1281,8 @@ table inet matrix_browser_isolation {
     meta skuid != "$1" accept
     ct state established,related accept
     ip daddr 127.0.0.53 meta l4proto { tcp, udp } th dport 53 accept
+    ip daddr 100.100.100.100 meta l4proto { tcp, udp } th dport 53 accept
+    ip6 daddr fd7a:115c:a1e0::53 meta l4proto { tcp, udp } th dport 53 accept
     ip daddr 127.0.0.1 tcp dport { 6901, 8730, 9222 } accept
     ip daddr 127.0.0.0/8 reject
     ip6 daddr ::1 reject

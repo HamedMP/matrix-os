@@ -854,6 +854,20 @@ capture_install_telemetry matrix_manual_install_started started 0`,
       expect(rules.indexOf("established")).toBeLessThan(rules.indexOf("127.0.0.0/8 reject"));
     });
 
+    // Review P1 (Greptile, #3532 at 6a02cadb14): a host that resolves through
+    // Tailscale's MagicDNS resolver sends DNS to 100.100.100.100, inside the
+    // rejected tailnet range, so Chrome could not resolve any website.
+    it("lets the browser account reach the tailnet DNS resolver on port 53 only, before the tailnet is refused", () => {
+      const rules = run(`render_browser_isolation matrix-browser`).stdout;
+      const v4 = "ip daddr 100.100.100.100 meta l4proto { tcp, udp } th dport 53 accept";
+      const v6 = "ip6 daddr fd7a:115c:a1e0::53 meta l4proto { tcp, udp } th dport 53 accept";
+      expect(rules).toContain(v4);
+      expect(rules).toContain(v6);
+      expect(rules.indexOf(v4)).toBeLessThan(rules.indexOf("ip daddr 100.64.0.0/10 reject"));
+      expect(rules.indexOf(v6)).toBeLessThan(rules.indexOf("ip6 daddr fd7a:115c:a1e0::/48 reject"));
+      expect(rules).not.toMatch(/100\.100\.100\.100(?! meta l4proto \{ tcp, udp \} th dport 53 accept)/);
+    });
+
     it("installs the table durably and refuses to start browser use when it cannot apply it", () => {
       const unit = run(`render_browser_isolation_unit`).stdout;
       expect(unit).toContain("ExecStart=/usr/sbin/nft -f /etc/matrix/browser-isolation.nft");
