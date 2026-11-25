@@ -352,7 +352,7 @@ describe("canonical send admission receipts", () => {
     } finally { cleanup(); }
   });
 
-  it.each(["observe", "retry", "cancel and retry", "leave Chat", "busy retry"] as const)(
+  it.each(["observe", "retry", "cancel and retry", "edit and send", "leave Chat", "busy retry"] as const)(
     "binds Mac Verification to the exact durable receipt after a timeout (%s)", async (action) => {
       const restoreComposerLayout = mockSharedComposerPopoverLayout();
       globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
@@ -386,6 +386,30 @@ describe("canonical send admission receipts", () => {
         await screen.findByText("Message status is unconfirmed. You can retry safely.");
         const original = vi.mocked(client.admitTurn).mock.calls[0]![1];
         expect(original.executionRoot).toEqual(worktree);
+        if (action === "edit and send") {
+          const edited = "Keep the sign-in label as it is.";
+          await setSharedComposerText(editor, edited);
+          fireEvent.click(screen.getByRole("button", { name: "Send" }));
+          await screen.findByText("Choose Cancel verification before sending the edited message.");
+          expect(client.admitTurn).toHaveBeenCalledOnce();
+          expect(editor.textContent).toBe(edited);
+
+          fireEvent.click(screen.getByRole("button", { name: "Cancel verification" }));
+          vi.mocked(client.admitTurn).mockImplementationOnce(async (_chatId, request) => {
+            const receipt = committed(request);
+            return { record: receipt.record, message: receipt.messages.at(-1)!, turn: receipt.turns.at(-1)!,
+              run: receipt.runs.at(-1)!, admission: "accepted" };
+          });
+          fireEvent.click(screen.getByRole("button", { name: "Send" }));
+          await waitFor(() => expect(editor.textContent?.trim()).toBe(""));
+          expect(screen.getByText(edited)).toBeTruthy();
+          expect(client.admitTurn).toHaveBeenCalledTimes(2);
+          const changedRequest = vi.mocked(client.admitTurn).mock.calls[1]![1];
+          expect(changedRequest.clientRequestId).not.toBe(original.clientRequestId);
+          expect(changedRequest.parts).toEqual([{ type: "text", text: edited }]);
+          expect(ipc.mock.calls.filter(([channel]) => channel === "chat:electron-preview-run")).toEqual([]);
+          return;
+        }
         if (action === "cancel and retry") fireEvent.click(screen.getByRole("button", { name: "Cancel verification" }));
         if (action === "retry" || action === "cancel and retry") {
           fireEvent.click(screen.getByRole("button", { name: "Send" }));

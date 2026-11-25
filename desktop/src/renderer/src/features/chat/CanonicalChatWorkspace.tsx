@@ -94,7 +94,7 @@ import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 import { chatElectronPreviewWorktree, isChatElectronPreviewDraft, type StageChatWorktreeDraft } from "./ChatElectronPreview";
 import { canSendBackgroundMacCheck, isMacTerminalProbeDraft } from "./ChatMacTerminalProbe";
 import { ChatWorktreeActions } from "./ChatWorktreeActions";
-import type { MacVerificationDraft } from "./ChatMacVerification";
+import type { MacVerificationDraft, MacVerificationSubmission } from "./ChatMacVerification";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
 type ChatWorktree = NonNullable<ReturnType<typeof chatElectronPreviewWorktree>>;
@@ -637,7 +637,7 @@ function CanonicalChatWorkspaceContent({
       && useConnection.getState().providerCatalogGeneration === providerCatalogGeneration;
     const submittedAttachmentIds = attachments.items.map((item) => item.localId);
     const retry = verificationRetry.current;
-    let verificationSubmission: ReturnType<MacVerificationDraft["beginSubmission"]>;
+    let verificationSubmission: MacVerificationSubmission | undefined;
     let verificationUnconfirmed = false;
     setUploadingAttachments(true);
     try {
@@ -685,7 +685,12 @@ function CanonicalChatWorkspaceContent({
       if (verification) {
         if (!worktreeRequest && !submission.projectSkill && !permissionResources.length
           && requestedRoot?.projectId === verification.worktree.projectId && requestedRoot.worktreeId === verification.worktree.worktreeId) {
-          verificationSubmission = verification.beginSubmission(draftKey);
+          const prepared = verification.beginSubmission(draftKey);
+          if (prepared === "draft-changed") {
+            setSubmissionError("Choose Cancel verification before sending the edited message.");
+            return;
+          }
+          verificationSubmission = prepared;
         }
         if (!verificationSubmission) {
           setSubmissionError("The Mac verification selection changed. Select Mac Verification again.");

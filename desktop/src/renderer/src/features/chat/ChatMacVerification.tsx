@@ -13,11 +13,11 @@ type Attempt = { scope: string; runId: string; status: "pending" | "skipped" | S
 type Intent = { scope: Selection; runId: string } & (
   { state: "draft" } | { state: "waiting"; previousRunId: string }
 );
-type Submission = { accept: (run: CanonicalChatRun) => void; finish: () => void };
+export type MacVerificationSubmission = { accept: (run: CanonicalChatRun) => void; finish: () => void };
 
 export type MacVerificationDraft = {
   worktree: Worktree;
-  beginSubmission: (draftKey: string) => Submission | undefined;
+  beginSubmission: (draftKey: string) => MacVerificationSubmission | "draft-changed" | undefined;
 };
 
 const STATUS: Record<Attempt["status"], string> = {
@@ -130,7 +130,8 @@ export function useMacVerification({ candidate, busy, editingQueuedTurn }: {
     beginSubmission: (draftKey) => {
       if (pendingIntent.current !== currentIntent || selection.current !== currentIntent.scope) return;
       const previous = submittingIntent.current;
-      if (previous ? previous.draftKey !== draftKey : latestDraftRun.current !== currentIntent.runId) return;
+      if (previous && previous.draftKey !== draftKey) return "draft-changed";
+      if (!previous && latestDraftRun.current !== currentIntent.runId) return;
       const submission = previous ?? { intent: currentIntent, draftKey };
       submittingIntent.current = submission;
       return {
