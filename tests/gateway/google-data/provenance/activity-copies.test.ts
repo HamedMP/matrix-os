@@ -160,7 +160,7 @@ describe('activity copy lifecycle bounds', () => {
   it('tracks bounded eviction and treats removed event copies as idempotently missing', async () => {
     await mark();
     for (let batch = 0; batch < 5; batch++) await repository.appendRunActivities(owner, key.chatId, key.runId,
-      Array.from({ length: 100 }, (_, index) => activity(`activity_${String(batch * 100 + index).padStart(3, '0')}`)));
+      Array.from({ length: 100 }, (_, index) => ({ ...activity(`activity_${String(batch * 100 + index).padStart(3, '0')}`), status: 'completed' as const })));
     const evicted = (await activityCopy('activity_000'))!;
     await repository.appendRunActivities(owner, key.chatId, key.runId, [{ id: 'activity_terminal', chatId: key.chatId, runId: key.runId,
       occurredAt: new Date().toISOString(), type: 'run.status', status: 'completed' }]);
