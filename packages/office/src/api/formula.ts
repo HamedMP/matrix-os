@@ -182,7 +182,10 @@ export type FormulaArg = FormulaValue;
 
 export interface FunctionContext {
   provider: CellProvider;
-  /** The cell being calculated. */
+  /**
+   * The cell being calculated. While a sheet-local defined name is
+   * evaluated, `sheet` is the name's own sheet, not the caller's.
+   */
   sheet: string;
   row: number;
   col: number;

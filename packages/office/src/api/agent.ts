@@ -335,14 +335,16 @@ export interface SheetEditPlan {
  * clears its used rows) and is rejected as `invalid_operation` when more
  * than 10 000 cells remain. An edit to a cell that an array formula fills
  * (`Cell.arrayRange`) is rejected as `invalid_operation`: a proposal cannot
- * change an array formula.
+ * change an array formula. An edit to a cell that already has a pending
+ * change is rejected as `invalid_operation` too: resolve that change first.
  */
 export type ToSheetEdits = (workbook: Workbook, edits: readonly AgentSheetEdit[]) => SheetEditPlan;
 
 /**
  * Applies resolved edits inside a new proposal, ends the proposal and
  * recalculates. Returns the proposal id and the ids of the recorded changes.
- * Throws `invalid_operation` when a proposal is already open. All or
+ * Throws `invalid_operation` when a proposal is already open, or before
+ * writing anything when an edit touches a cell with a pending change. All or
  * nothing: when an edit fails, the changes recorded so far are rejected, the
  * proposal is ended and the error is thrown again.
  */
