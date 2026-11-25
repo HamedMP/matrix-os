@@ -109,7 +109,11 @@ describe('canonical assistant delta copy writer foundation', () => {
     await repository.appendAssistantDelta(owner, delta('Fresh ordinary content'));
     await sql`DELETE FROM google_model_history_births WHERE chat_id=${key.chatId}`.execute(repository.kysely);
     expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
-    await expect(repository.appendAssistantDelta(owner, delta(' Must not revive'))).rejects.toThrow();
+    // The now-unknown, untainted chat keeps pre-pilot writes but its receipt is never revived.
+    await repository.appendAssistantDelta(owner, delta(' Must not revive'));
+    expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
+    await mark();
+    await expect(repository.appendAssistantDelta(owner, delta(' Gmail summary'))).rejects.toThrow();
   });
   it('withholds acknowledgement when ordinary proof expires during actual COMMIT return', async () => {
     await repository.appendAssistantDelta(owner, delta('Ordinary before collection'));
@@ -220,6 +224,29 @@ describe('canonical assistant delta copy writer foundation', () => {
       VALUES('10000000-0000-4000-8000-000000000099','personal',${owner.ownerId},'chat',${key.chatId},'direct','shared','runtime_test')`.execute(repository.kysely);
     await expect(repository.appendAssistantDelta(owner, delta())).rejects.toThrow();
     expect(await copy()).toBeNull();
+  });
+  it('keeps assistant output working in untainted unknown, shared and organization chats', async () => {
+    await admit(new ChatRepository(repository.kysely), 'legacy');
+    const legacy = { chatId: 'chat_legacy', runId: 'run_legacy', messageId: 'msg_assistant_legacy', createdAt: new Date().toISOString() };
+    await repository.appendAssistantDelta(owner, { ...legacy, delta: 'pre-deploy reply' });
+    await repository.finishRun(owner, { chatId: legacy.chatId, runId: legacy.runId, outcome: 'completed', completedAt: new Date().toISOString() });
+    expect((await repository.kysely.selectFrom('chat_runs').select('status').where('id', '=', legacy.runId).executeTakeFirstOrThrow()).status).toBe('completed');
+    await sql`INSERT INTO collaboration_scopes(id,owner_type,owner_id,kind,resource_id,membership_mode,lifecycle,authority_runtime_id)
+      VALUES('10000000-0000-4000-8000-000000000098','personal',${owner.ownerId},'chat',${key.chatId},'direct','shared','runtime_test')`.execute(repository.kysely);
+    await repository.appendAssistantDelta(owner, delta('shared reply'));
+    const organization = { type: 'organization' as const, ownerId: 'org_one' };
+    await admit(repository, 'org', organization);
+    await repository.appendAssistantDelta(organization, { chatId: 'chat_org', runId: 'run_org', messageId: 'msg_assistant_org', delta: 'org reply', createdAt: new Date().toISOString() });
+    expect(await provenance.inspect(owner.ownerId, 'derived', canonicalMessageEntityRef('msg_assistant_legacy'))).toBeNull();
+  });
+  it('still refuses assistant output in a Google-tainted unknown chat', async () => {
+    await admit(new ChatRepository(repository.kysely), 'legacy');
+    await contexts.mark({ ownerId: owner.ownerId, chatId: 'chat_legacy', googleAccountId: account, consentId: 'consent_one', profileId: 'managed',
+      profileRevision: 1, purposeId: 'assistant', expiresAt: future(), retentionDeadline: future() });
+    await expect(repository.appendAssistantDelta(owner, { chatId: 'chat_legacy', runId: 'run_legacy', messageId: 'msg_assistant_legacy',
+      delta: 'mail summary', createdAt: new Date().toISOString() })).rejects.toThrow();
+    await expect(repository.finishRun(owner, { chatId: 'chat_legacy', runId: 'run_legacy', outcome: 'completed', completedAt: new Date().toISOString() })).rejects.toThrow();
+    expect(await repository.kysely.selectFrom('chat_messages').select('id').where('id', '=', 'msg_assistant_legacy').executeTakeFirst()).toBeUndefined();
   });
   it('preserves normal uninstalled writes and installs no registry copy for an ordinary born chat', async () => {
     await repository.appendAssistantDelta(owner, delta('ordinary'));

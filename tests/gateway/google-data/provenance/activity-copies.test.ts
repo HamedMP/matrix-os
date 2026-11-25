@@ -175,6 +175,26 @@ describe('registered activity copies', () => {
     await repository.appendRunActivities(owner, key.chatId, key.runId, [{ ...input, status: 'completed', summary: 'Synthetic Gmail result' }]);
     expect((await activityCopy(input.id))?.state).toBe('active');
   });
+  it('keeps activity working in untainted unknown, shared and organization chats', async () => {
+    await admit(new ChatRepository(repository.kysely), 'legacy');
+    await repository.appendRunActivities(owner, 'chat_legacy', 'run_legacy', [{ ...activity('activity_legacy'), chatId: 'chat_legacy', runId: 'run_legacy' }]);
+    await sql`INSERT INTO collaboration_scopes(id,owner_type,owner_id,kind,resource_id,membership_mode,lifecycle,authority_runtime_id)
+      VALUES('10000000-0000-4000-8000-000000000097','personal',${owner.ownerId},'chat',${key.chatId},'direct','shared','runtime_test')`.execute(repository.kysely);
+    await repository.appendRunActivities(owner, key.chatId, key.runId, [activity('activity_shared')]);
+    const organization = { type: 'organization' as const, ownerId: 'org_one' };
+    await admit(repository, 'org', organization);
+    await repository.appendRunActivities(organization, 'chat_org', 'run_org', [{ ...activity('activity_org'), chatId: 'chat_org', runId: 'run_org' }]);
+    expect((await sql`SELECT id FROM chat_run_events ORDER BY id`.execute(repository.kysely)).rows.map(row => (row as { id: string }).id))
+      .toEqual(['activity_legacy', 'activity_org', 'activity_shared']);
+    expect(await activityCopy('activity_shared')).toBeNull();
+  });
+  it('still refuses activity in a Google-tainted unknown chat', async () => {
+    await admit(new ChatRepository(repository.kysely), 'legacy');
+    await contexts.mark({ ownerId: owner.ownerId, chatId: 'chat_legacy', googleAccountId: account, consentId: 'consent_one', profileId: 'managed',
+      profileRevision: 1, purposeId: 'assistant', expiresAt: future(), retentionDeadline: future() });
+    await expect(repository.appendRunActivities(owner, 'chat_legacy', 'run_legacy', [{ ...activity('activity_legacy'), chatId: 'chat_legacy', runId: 'run_legacy' }])).rejects.toThrow();
+    expect((await sql`SELECT id FROM chat_run_events`.execute(repository.kysely)).rows).toEqual([]);
+  });
   it('refuses an ordinary activity modified outside the receipt-bearing writer', async () => {
     const input = activity(); await repository.appendRunActivities(owner, key.chatId, key.runId, [input]);
     await sql`UPDATE chat_run_events SET event=jsonb_set(event,'{summary}','"unproven modification"') WHERE id=${input.id}`.execute(repository.kysely);
