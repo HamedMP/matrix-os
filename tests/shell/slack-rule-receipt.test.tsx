@@ -2,8 +2,17 @@
 import React from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
-import { CanonicalChatMessageSchema, SLACK_RULE_PILOT_LIMITS, type CanonicalChatMessage } from "@matrix-os/contracts";
+import {
+  CanonicalChatDetailResponseSchema,
+  CanonicalChatMessageSchema,
+  ChatMessageWireVersionSchema,
+  projectChatMessageResponse,
+  SLACK_RULE_PILOT_LIMITS,
+  type CanonicalChatDetailResponse,
+  type CanonicalChatMessage,
+} from "@matrix-os/contracts";
 import { CanonicalApprovalMessage } from "../../shell/src/components/chat/CanonicalApprovalMessage";
+import { createCanonicalShellChatClient } from "../../shell/src/lib/canonical-chat-client";
 import { projectCanonicalTranscript } from "../../shell/src/lib/canonical-chat-terminal-notices";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
@@ -24,8 +33,9 @@ const persistedReceipt = {
   limits: SLACK_RULE_PILOT_LIMITS,
 };
 
-function renderSystemNotice(text: string, overrides: Partial<CanonicalChatMessage> = {}) {
+function noticeDetail(text: string, overrides: Partial<CanonicalChatMessage> = {}): CanonicalChatDetailResponse {
   const { snapshot } = createCanonicalChatFixture("idle");
+  const { project: _project, ...chat } = snapshot.chat;
   const persisted = CanonicalChatMessageSchema.parse({
     id: "msg_slack_receipt",
     chatId: snapshot.chat.id,
@@ -37,16 +47,44 @@ function renderSystemNotice(text: string, overrides: Partial<CanonicalChatMessag
     createdAt: persistedReceipt.enabledAfter,
     ...overrides,
   });
-  const message = projectCanonicalTranscript({
-    record: { chat: snapshot.chat },
+  return {
+    record: { chat },
     messages: [persisted],
     turns: snapshot.turns,
     runs: snapshot.runs,
     activities: [],
-  }).find(item => item.id === persisted.id);
+  };
+}
+
+function renderNoticeDetail(detail: CanonicalChatDetailResponse) {
+  const message = projectCanonicalTranscript(detail).find(item => item.id === detail.messages[0]?.id);
   if (!message) throw new Error("The persisted notice was dropped from the transcript");
   return render(<CanonicalApprovalMessage message={message} submitting={false}/>);
 }
+
+function renderSystemNotice(text: string, overrides: Partial<CanonicalChatMessage> = {}) {
+  return renderNoticeDetail(noticeDetail(text, overrides));
+}
+
+it("renders the committed Slack receipt through the Web Chat client's negotiated detail response", async () => {
+  const text = `Slack summary rule pause committed.\n${JSON.stringify(persistedReceipt)}`;
+  const persisted = CanonicalChatDetailResponseSchema.parse(noticeDetail(text));
+  const compatibilityResponse = projectChatMessageResponse(persisted, ChatMessageWireVersionSchema.parse(undefined));
+  expect(compatibilityResponse.messages[0]).not.toHaveProperty("purpose");
+  const client = createCanonicalShellChatClient({
+    gatewayUrl: "https://gateway.example",
+    fetchFn: async input => {
+      const { searchParams } = new URL(String(input));
+      const version = ChatMessageWireVersionSchema.parse(searchParams.get("messageVersion") ?? undefined);
+      return Response.json(projectChatMessageResponse(persisted, version));
+    },
+  });
+  const detail = await client.detail(persisted.record.chat.id);
+  expect(detail.messages[0]?.purpose).toBe("system");
+  const { container } = renderNoticeDetail(detail);
+  expect(screen.getByText("Slack summary rule paused for #tech.")).toBeTruthy();
+  expect(container.textContent).not.toContain('"ruleId"');
+});
 
 it.each([
   ["create", "active", "created"], ["update", "paused", "updated"], ["pause", "paused", "paused"],
@@ -87,6 +125,17 @@ it("does not present a tool result as a committed Slack rule receipt", () => {
     role: "tool",
     parts: [{ type: "tool_result", toolCallId: "call_slack_fixture", outcome: "success", text, truncated: false }],
   });
+  expect(container.textContent).toContain(text);
+  expect(screen.queryByText("Slack summary rule paused for #tech.")).toBeNull();
+});
+
+it.each([
+  ["an attributed message", { actorId: "owner_fixture" }],
+  ["a message from another Chat", { chatId: "chat_other" }],
+  ["a non-system purpose", { purpose: "assistant" }],
+] satisfies Array<[string, Partial<CanonicalChatMessage>]>)("does not present %s as a committed Slack rule receipt", (_case, overrides) => {
+  const text = `Slack summary rule pause committed.\n${JSON.stringify(persistedReceipt)}`;
+  const { container } = renderSystemNotice(text, overrides);
   expect(container.textContent).toContain(text);
   expect(screen.queryByText("Slack summary rule paused for #tech.")).toBeNull();
 });
