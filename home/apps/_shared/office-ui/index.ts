@@ -95,3 +95,22 @@ export { FileDropZone, type FileDropZoneProps } from "./FileDropZone";
 export { cx } from "./internal";
 export { watchLeave, type LeaveGuard } from "./leave-guard";
 export { aiAccessMessage, readAiAccess, replyText, useAiAccess, type AiAccess, type AiAccessBridge } from "./ai-access";
+export { FileThumb, type FileThumbKind, type FileThumbProps } from "./FileThumb";
+export { RecentFileList, type RecentEntry, type RecentFileListProps } from "./RecentFileList";
+export { MatrixFileBrowser, type BrowserFiles, type MatrixFileBrowserProps } from "./MatrixFileBrowser";
+export { OfficeStartScreen, type OfficeStartScreenProps, type StartAction, type StartTemplate } from "./OfficeStartScreen";
+export {
+  MAX_BROWSER_ROWS,
+  breadcrumbTrail,
+  browsableEntries,
+  exactTime,
+  extensionOf,
+  filterEntries,
+  folderLabel,
+  parentDir,
+  relativeTime,
+  sortEntries,
+  type Crumb,
+  type StartFileEntry,
+  type StartSort,
+} from "./start-model";

@@ -183,6 +183,27 @@ downloadBytes("Report.docx", bytes, DOCX_MIME);
 | `fileMatchesAccept(file, accept)`, `describeAccept(accept, maxBytes?)` | Helpers ("`.csv or .xlsx, up to 10 MB`"). |
 | `FileDropZone` | `accept`, `onFile(file)`, `onReject(error)`, `maxBytes?`, `label?` ("Drop a file to open it"), `hint?`, `disabled?`. Shows a window overlay only while files from outside the page are dragged in; text, cell and image drags inside the document are untouched, and a drop another handler already took is ignored. Mount it once per app. |
 
+## Start screen
+
+`OfficeStartScreen` is the screen an office app shows with no file open. The
+side column starts something new (template pages drawn by the app, plus
+smaller actions such as "New from Markdown…") and holds the "From this
+computer" tray; the main column lists recent files and browses the owner's
+Matrix home. Mount the app's `FileDropZone` beside it: the tray tells the owner
+they can drop a file anywhere. Styles live in `start.css`, imported by
+`office-ui.css`.
+
+| Export | What it does |
+| --- | --- |
+| `OfficeStartScreen` | `appName`, `artwork` (launcher image for the empty state), `notice?`, `status?` (floating "Opening…"), `busy?`, `create: {heading, templates: StartTemplate[] ({id, label, description?, preview}), onCreate(id), more?: StartAction[]}`, `local: {accept, noun, onChoose, maxBytes?}`, `recents: {heading, items, loading?, onOpen, onRemove, opening?, emptyHeadline, emptyDescription}`, `browser: {files, accept, onOpen, fileNoun}`, `kindOf(name)`. One column under 900px, with the templates as a compact strip. |
+| `RecentFileList` | Recent files: typed page, name, folder, relative time. One tab stop; Up/Down/Home/End move, Enter opens, Delete or the row's remove button (Right arrow) forgets an entry; the entry stays until `onRemove` settles. |
+| `MatrixFileBrowser` | One folder of `files.list` at a time: breadcrumbs, a name filter for the folder, sort by name or last change, folders first. Lists only folders and accepted extensions, never hidden entries, lock files (`~$`) or the protected `system` and `agents` folders. Draws at most 200 rows and says so; a truncated listing is reported. Click a folder to enter, a file to open; Backspace goes up. Used on the start screen and inside the Open dialogs. |
+| `FileThumb` | `kind` (`document`, `workbook`, `table`, `folder`), `tag?`, `size?`. |
+| `start-model` helpers | `browsableEntries`, `sortEntries`, `filterEntries`, `breadcrumbTrail`, `folderLabel`, `relativeTime`, `exactTime`, `extensionOf`. |
+
+Template drawings use the `oui-art__*` classes (`paper`, `ink`, `accent`, `line`,
+`soft`, `wash`, `rule`, `stroke`, `warn`) so they follow the theme.
+
 ## Colour
 
 `--oui-accent` (the app's `--identity-accent`) is for filled surfaces, with
