@@ -66,11 +66,14 @@ export function ComparePanel({ session, editor, pickDocument, files }: ComparePa
     }
   };
 
+  // Each flow takes the open document's key before its first slow step, so a result for a document
+  // the owner has since left is dropped instead of replacing the one now open.
   const chooseFromFiles = async () => {
     if (pickDocument === undefined) return;
+    const documentKey = session.getState().documentKey;
     const path = await pickDocument({ title: "Compare with another version" });
     if (path === null) return;
-    await run(() => compareWithFile({ session, files: files ?? bridgeFiles(), log }, path));
+    await run(() => compareWithFile({ session, documentKey, files: files ?? bridgeFiles(), log }, path));
   };
 
   const compareFile = async (file: File | undefined) => {
@@ -79,7 +82,8 @@ export function ComparePanel({ session, editor, pickDocument, files }: ComparePa
       setState({ status: "error", message: "Choose a Word document (.docx)." });
       return;
     }
-    await run(async () => compareWithBytes({ session, log }, new Uint8Array(await file.arrayBuffer()), file.name));
+    const documentKey = session.getState().documentKey;
+    await run(async () => compareWithBytes({ session, documentKey, log }, new Uint8Array(await file.arrayBuffer()), file.name));
   };
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {

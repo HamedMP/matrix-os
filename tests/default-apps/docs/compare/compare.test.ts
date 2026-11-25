@@ -85,6 +85,36 @@ describe("docs compare", () => {
     expect(session.requireDocument()).toBe(unsaved);
   });
 
+  it("drops the result when another document opens while the other version is read", async () => {
+    const { session, files } = await contractSession({ "Documents/contract-v2.docx": fixture("contract-v2.docx"), "Documents/other.docx": fixture("contract.docx") });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const slow = { read: async (path: string) => (await gate, files.read(path)) };
+    const pending = compareWithFile({ session, files: slow, now: NOW, log: () => undefined }, "Documents/contract-v2.docx");
+    expect(await session.open("Documents/other.docx")).toMatchObject({ status: "opened" });
+    const other = session.requireDocument();
+    release();
+    expect(await pending).toEqual({ status: "failed", reason: "document_changed", message: "Another document was opened while comparing. Compare again." });
+    expect(session.requireDocument()).toBe(other);
+    expect(session.getState()).toMatchObject({ path: "Documents/other.docx", dirty: false });
+  });
+
+  it("drops the result when another document opens while the comparison runs or the device file is read", async () => {
+    const { session } = await contractSession({ "Documents/other.docx": fixture("contract.docx") });
+    // The panel reads a device file before it compares; the key it took before reading is what counts.
+    const documentKey = session.getState().documentKey;
+    await session.open("Documents/other.docx");
+    const other = session.requireDocument();
+    expect(await compareWithBytes({ session, now: NOW, documentKey }, fixture("contract-v2.docx"), "contract-v2.docx")).toMatchObject({ status: "failed", reason: "document_changed" });
+    expect(session.requireDocument()).toBe(other);
+
+    const pending = compareWithBytes({ session, now: NOW }, fixture("contract-v2.docx"), "contract-v2.docx");
+    await session.open("Documents/contract.docx");
+    const reopened = session.requireDocument();
+    expect(await pending).toMatchObject({ status: "failed", reason: "document_changed" });
+    expect(session.requireDocument()).toBe(reopened);
+  });
+
   it("names the comparison after both files", () => {
     expect(comparisonName("contract.docx", "contract-v2.docx")).toBe("contract compared with contract-v2.docx");
   });

@@ -36,7 +36,7 @@ export interface KindCount {
   count: number;
 }
 
-export type CompareFailure = "no_document" | "not_found" | "too_large" | "unreadable" | "unavailable" | "blocked";
+export type CompareFailure = "no_document" | "not_found" | "too_large" | "unreadable" | "unavailable" | "blocked" | "document_changed";
 
 export type CompareFlowResult =
   | { status: "compared"; name: string; summary: CompareSummary; answer: SubstantiveAnswer; counts: KindCount[] }
@@ -49,6 +49,7 @@ const FAILURE_MESSAGES: Record<CompareFailure, string> = {
   unreadable: "That file is not a Word document this app can read.",
   unavailable: "The comparison could not be made. Try again.",
   blocked: "Save or discard the changes to the open document before comparing.",
+  document_changed: "Another document was opened while comparing. Compare again.",
 };
 
 function fail(reason: CompareFailure): CompareFlowResult {
@@ -99,6 +100,12 @@ export function answerSubstantive(summary: CompareSummary): SubstantiveAnswer {
 
 export interface CompareDeps {
   session: DocumentSession;
+  /**
+   * The `documentKey` of the document being compared, taken before any slow
+   * step (such as reading a device file). Default: the document open when the
+   * flow starts. The result is dropped when another document is open by then.
+   */
+  documentKey?: number;
   files?: Pick<MatrixOSFiles, "read">;
   now?: () => Date;
   log?: (message: string, error: unknown) => void;
@@ -108,6 +115,7 @@ export interface CompareDeps {
 export async function compareWithFile(deps: CompareDeps, path: string): Promise<CompareFlowResult> {
   if (deps.session.document === null) return fail("no_document");
   if (deps.files === undefined) return fail("unavailable");
+  const documentKey = deps.documentKey ?? deps.session.getState().documentKey;
   let bytes: Uint8Array;
   try {
     const content = await deps.files.read(path);
@@ -117,7 +125,7 @@ export async function compareWithFile(deps: CompareDeps, path: string): Promise<
     const code = (error as { name?: string; code?: string } | null)?.name === "BridgeFileError" ? (error as { code?: string }).code : null;
     return fail(code === "not_found" ? "not_found" : code === "too_large" ? "too_large" : "unavailable");
   }
-  return compareWithBytes(deps, bytes, fileName(path));
+  return compareWithBytes({ ...deps, documentKey }, bytes, fileName(path));
 }
 
 function logDefault(message: string, detail: unknown): void {
@@ -127,6 +135,9 @@ function logDefault(message: string, detail: unknown): void {
 /** Compares the open document with another version given as bytes. */
 export async function compareWithBytes(deps: CompareDeps, bytes: Uint8Array, otherName: string): Promise<CompareFlowResult> {
   const { session } = deps;
+  const documentKey = deps.documentKey ?? session.getState().documentKey;
+  const changed = () => session.getState().documentKey !== documentKey;
+  if (changed()) return fail("document_changed");
   const original = session.document;
   if (original === null) return fail("no_document");
   if (bytes.byteLength > MAX_COMPARE_BYTES) return fail("too_large");
@@ -142,6 +153,8 @@ export async function compareWithBytes(deps: CompareDeps, bytes: Uint8Array, oth
     }
     return fail("unavailable");
   }
+  // The owner may have opened or closed a document while the engine worked.
+  if (changed()) return fail("document_changed");
   const name = comparisonName(session.getState().name, otherName);
   let opened: OpenResult;
   try {
