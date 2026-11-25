@@ -7,6 +7,8 @@ export interface OrganizationSharing {
   share: CollaborativeAppShare | null;
   shareKnown: boolean;
   state: "idle" | "loading" | "checking" | "blocked" | "ready" | "stale" | "failed";
+  /** The current build is collaborative (readiness `ready`), so members can edit. */
+  collaborative: boolean;
   actionState: "idle" | "loading" | "sharing" | "stopping" | "failed";
   actionMessage: string | null;
   recheck(input: { organizationId: string }): Promise<void>;
@@ -15,27 +17,27 @@ export interface OrganizationSharing {
   refreshShare(): Promise<unknown>;
 }
 
-export type OrganizationShareStep = "idle" | "checking" | "required" | "running" | "applying" | "done";
+export type OrganizationShareStep = "idle" | "checking" | "running" | "applying" | "done";
 
 interface Pending { organizationId: string; reason: "owner" | "completion" }
 
-const NOT_READY_AFTER_CHAT = "Claude finished, but the app isn’t ready to share yet. Open the chat to keep going.";
+const NOT_READY_AFTER_CHAT = "Claude finished, but the app isn’t collaborative yet. Open the chat to keep going.";
 const CHECK_FAILED = "Couldn’t check this app right now. Try again.";
 
 /**
- * Org sharing with the collaborative gate. A share is created only after a
- * fresh readiness result of `ready` for the chosen organization; the server
- * preflight enforces the same rule. A builder-skill completion event only
- * triggers that recheck.
+ * Org sharing (ENG-579). Share always runs a fresh readiness check for the chosen organization and
+ * shares when the check completes: `ready` gives members full use, `blocked` (the app isn't
+ * collaborative) opens it view-only. "Make it collaborative" is an optional builder-skill handoff;
+ * its completion event rechecks readiness, and shares only when the result is collaborative and the
+ * app is not shared yet. The server preflight enforces the same completed-check rule.
  */
-// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- one bounded org-share state machine (owner share, completion event, readiness settle); splitting it would duplicate the readiness-gating invariant.
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- one bounded org-share state machine (owner share, completion event, readiness settle); splitting it would duplicate the readiness invariant.
 export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
   sharing: OrganizationSharing;
   handoff: CollaborativeHandoff;
   onStartChat: (request: { organizationId: string; requestId: string }) => Promise<boolean>;
 }) {
   const [pending, setPending] = useState<Pending | null>(null);
-  const [required, setRequired] = useState(false);
   const [done, setDone] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const creating = useRef(false);
@@ -53,10 +55,16 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     if (record.state === "failed") {
       handledCompletion.current = record.requestId;
       // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- the skill reported failure through the external handoff record.
-      setRequired(true); setNotice(NOT_READY_AFTER_CHAT);
+      setNotice(NOT_READY_AFTER_CHAT);
       return;
     }
-    if (record.state !== "completed" || shared) return;
+    if (record.state !== "completed") return;
+    if (shared) {
+      // Already shared: refresh readiness so the collaborative tick follows the rebuilt app.
+      handledCompletion.current = record.requestId;
+      void sharing.recheck({ organizationId: record.organizationId }).then(() => handoff.markApplied());
+      return;
+    }
     if (!sharing.shareKnown) {
       // A failed share read must not leave a finished setup stuck: retry it once per request.
       if (shareRetried.current !== record.requestId && sharing.actionState !== "loading") {
@@ -71,13 +79,16 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     attempt.current += 1;
     setPending({ organizationId: record.organizationId, reason: "completion" });
     void sharing.recheck({ organizationId: record.organizationId });
-  }, [record, shared, sharing]);
+  }, [record, shared, sharing, handoff]);
 
-  // Apply a share only when the recheck we asked for settles as ready.
+  // Apply a share only when the recheck we asked for settles as a completed check.
   // react-doctor-disable-next-line react-doctor/no-adjust-state-on-prop-change -- synchronizes with the async readiness hook; the share must follow its server result.
   useEffect(() => {
     if (!pending || sharing.state === "checking" || sharing.state === "loading" || creating.current) return;
-    if (sharing.state === "ready") {
+    const shareable = pending.reason === "owner"
+      ? sharing.state === "ready" || sharing.state === "blocked"
+      : sharing.state === "ready";
+    if (shareable) {
       creating.current = true;
       const mine = attempt.current;
       const wanted = () => attempt.current === mine;
@@ -87,7 +98,7 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
         // request, or revokes the share it just created when cancel raced it.
         if (!created) { if (wanted()) setPending(null); return; }
         setPending(null);
-        setRequired(false); setNotice(null);
+        setNotice(null);
         if (pending.reason === "completion") {
           setDone(true);
           if (!await handoff.markApplied()) await handoff.markApplied();
@@ -96,25 +107,20 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
       return;
     }
     setPending(null);
-    if (sharing.state === "blocked" || sharing.state === "stale") {
-      setRequired(true);
-      if (pending.reason === "completion") setNotice(NOT_READY_AFTER_CHAT);
-    } else {
-      setNotice(CHECK_FAILED);
-    }
+    setNotice(pending.reason === "completion" && sharing.state === "blocked" ? NOT_READY_AFTER_CHAT : CHECK_FAILED);
   }, [pending, sharing, handoff]);
 
-  const running = record?.state === "running" && !shared;
-  const step: OrganizationShareStep = shared ? (done ? "done" : "idle")
+  const running = record?.state === "running" && !sharing.collaborative;
+  const step: OrganizationShareStep = shared && done ? "done"
     : pending?.reason === "completion" ? "applying"
-    : running ? "running"
     : pending ? "checking"
-    : required ? "required"
+    : running ? "running"
     : "idle";
 
   return {
     step,
     shared,
+    collaborative: sharing.collaborative,
     notice: notice ?? sharing.actionMessage,
     runningOrganizationId: running ? record!.organizationId : null,
     share(organizationId: string) {
@@ -132,8 +138,8 @@ export function useOrganizationShareFlow({ sharing, handoff, onStartChat }: {
     },
     async cancel() {
       attempt.current += 1;
-      setNotice(null); setRequired(false); setPending(null);
-      if (running) await handoff.cancel();
+      setNotice(null); setPending(null);
+      if (record?.state === "running") await handoff.cancel();
     },
     async stop() {
       attempt.current += 1;
