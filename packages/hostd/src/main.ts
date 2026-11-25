@@ -173,7 +173,7 @@ export async function startHostd(config: HostdConfig, overrides: HostdOverrides 
     store,
     ch,
     guest,
-    resize: (id, targetMiB) => lifecycle.resize(id, targetMiB),
+    resize: (id, targetMiB, automatic) => lifecycle.resize(id, targetMiB, automatic),
     hostAvailableMiB,
     idleSeconds,
     intervalMs: overrides.memoryIntervalMs,

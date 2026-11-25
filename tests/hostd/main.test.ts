@@ -279,9 +279,11 @@ describe("hostd main", () => {
 
   it("the memory controller resizes through the lifecycle", async () => {
     hostd = await startHostd(config, overrides());
+    const resize = vi.spyOn(hostd.lifecycle, "resize");
     await apiCall("POST", "/v1/vms", createBody);
     await hostd.memory.tick();
     expect(events).toContain("ch:resize 3072");
+    expect(resize).toHaveBeenCalledWith(expect.any(String), 3072, { tier: "free", maxMiB: 8192, action: "grow" });
   });
 
   it("reconciles transitional records before serving", async () => {
