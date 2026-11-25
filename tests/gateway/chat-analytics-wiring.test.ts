@@ -199,6 +199,31 @@ describe("ordinary Chat analytics actual inference wiring", () => {
   });
 });
 
+it('completes ordinary streamed analytics only after released output reaches authorized EOF', async () => {
+  const f = setup();
+  const result = await forwardBotInference({ ...request(), responseMode: 'stream' }, f.binding, f.allowed, f.deps);
+  if (!result.ok || typeof result.body === 'string') throw new Error('Expected a streaming response');
+  expect(f.analytics.completed).not.toHaveBeenCalled();
+  const iterator = result.body[Symbol.asyncIterator]();
+  expect((await iterator.next()).value).toContain('[DONE]');
+  expect(f.analytics.completed).not.toHaveBeenCalled();
+  expect((await iterator.next()).done).toBe(true);
+  expect(f.analytics.completed).toHaveBeenCalledOnce();
+  expect(f.analytics.cancel).not.toHaveBeenCalled();
+});
+
+it('cancels analytics when stream authorization is revoked before EOF', async () => {
+  const f = setup();
+  const result = await forwardBotInference({ ...request(), responseMode: 'stream' }, f.binding, f.allowed, f.deps);
+  if (!result.ok || typeof result.body === 'string') throw new Error('Expected a streaming response');
+  const iterator = result.body[Symbol.asyncIterator]();
+  await iterator.next();
+  f.deps.revalidateBinding = vi.fn(async () => false);
+  await expect(iterator.next()).rejects.toThrow();
+  expect(f.analytics.completed).not.toHaveBeenCalled();
+  expect(f.analytics.cancel).toHaveBeenCalledOnce();
+});
+
 it("recognizes only the exact managed Gemma response alias for measured counters", async () => {
  const { measuredInferenceTokens } = await import("../../packages/gateway/src/bots/inference-analytics.js");
  const requested = "@cf/google/gemma-4-26b-a4b-it";

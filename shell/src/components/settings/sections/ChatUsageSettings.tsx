@@ -1,6 +1,6 @@
 "use client";
 import { useAuth } from "@clerk/nextjs";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { ChatUsagePanel } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { currentAiCreditRuntimeSlot } from "@/lib/ai-credit-checkout";
@@ -12,9 +12,18 @@ function Unavailable() {
     <h2 style={{ fontSize: 16 }}>Chat usage</h2><p>Chat usage requires a signed-in Matrix account and a connected computer.</p>
   </section></div>;
 }
+const subscribeRuntime = () => () => undefined;
+const serverHosted = () => false;
+const clientHosted = () => !isSelfHostedRuntime();
+function createIdentityAuthority() {
+  let active = false;
+  return { isCurrent: () => active, activate: () => { active = true; }, revoke: () => { active = false; } };
+}
+
 export function WebChatUsageSettings() {
   // Self-hosted documents have no ClerkProvider. Their authority does not satisfy this owner-only API.
-  if (isSelfHostedRuntime()) return <Unavailable />;
+  const hosted = useSyncExternalStore(subscribeRuntime, clientHosted, serverHosted);
+  if (!hosted) return <Unavailable />;
   return <ClerkChatUsageSettings />;
 }
 function ClerkChatUsageSettings() {
@@ -24,11 +33,11 @@ function ClerkChatUsageSettings() {
 function AuthenticatedChatUsageSettings({ authIdentity }: { authIdentity: string }) {
   const gateway = getGatewayUrl(); const runtimeSlot = currentAiCreditRuntimeSlot();
   const identityKey = `${authIdentity}:${gateway}:${runtimeSlot}`;
-  const current = useRef(identityKey); current.current = identityKey;
+  const authority = useMemo(() => createIdentityAuthority(), [identityKey]);
   // Establish the new identity before the keyed panel starts its passive reads.
-  useLayoutEffect(() => { current.current = identityKey; return () => { current.current = ""; }; }, [identityKey]);
+  useLayoutEffect(() => { authority.activate(); return () => { authority.revoke(); }; }, [authority]);
   const client = useMemo(() => createWebChatUsageClient({
-    isIdentityCurrent: () => current.current === identityKey && getGatewayUrl() === gateway && currentAiCreditRuntimeSlot() === runtimeSlot,
-  }), [identityKey, gateway, runtimeSlot]);
+    isIdentityCurrent: () => authority.isCurrent() && getGatewayUrl() === gateway && currentAiCreditRuntimeSlot() === runtimeSlot,
+  }), [authority, gateway, runtimeSlot]);
   return <ChatUsagePanel client={client} identityKey={identityKey} />;
 }

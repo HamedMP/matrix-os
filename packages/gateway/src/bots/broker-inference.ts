@@ -172,6 +172,7 @@ export async function forwardBotInference(
 ): Promise<ScopeRuntimeBrokerResult> {
   const startedAt = performance.now();
   let analyticsAttempt: InferenceAnalyticsAttempt | undefined;
+  let analyticsTransferred = false;
   let modelId: string;
   let parsedBody: z.infer<typeof BotInferenceBodySchema>;
   try {
@@ -434,6 +435,7 @@ export async function forwardBotInference(
       if (!deps.googleData) return true;
       const policy = await waitForInferenceAuthority(() => authorizeGoogleInference(deps.googleData,
         { phase: "release", binding, identity, signal: responseSignal }), responseSignal);
+      if (policy?.allowed && policy.googleOrigin) { analyticsAttempt?.cancel(); analyticsAttempt = undefined; }
       return policy?.allowed === true && (!googleOrigin || policy.googleOrigin) && await liveAfterPolicy();
     };
     if (request.responseMode === 'stream') {
@@ -453,7 +455,7 @@ export async function forwardBotInference(
         return failure(request.requestId, 'action_denied');
       }
       if (accessSourceId === 'matrix_included') deps.onFundedFailure?.(binding, undefined);
-      const streamAttempt = analyticsAttempt; analyticsAttempt = undefined;
+      const streamAttempt = analyticsAttempt; analyticsTransferred = true;
       return { version: 1, requestId: request.requestId, ok: true, status: response.status,
         headers: safeResponseHeaders(response, 'inference'),
         body: observeInferenceAnalyticsStream(guardInferenceStream(boundedInferenceSseFrames(inferenceResponseText(response, responseSignal,
@@ -485,7 +487,7 @@ export async function forwardBotInference(
     return failure(request.requestId, "provider_unavailable");
   } finally {
     // Settled completions are inert; failures/aborts and denied release drop their exact snapshot.
-    analyticsAttempt?.cancel();
+    if (!analyticsTransferred) analyticsAttempt?.cancel();
   }
 }
 
