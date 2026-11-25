@@ -105,6 +105,8 @@ export interface ChatState {
 
 export interface ChatSubmitOptions {
   onAccepted?: () => void;
+  /** The pending message is visible in the transcript; the composer may let the draft go. */
+  onShown?: () => void;
   resources?: CanonicalChatResourceReference[];
   clientRequestId?: string;
   displayText?: string;

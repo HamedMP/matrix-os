@@ -437,6 +437,7 @@ function ChatAppContent({
         ...((botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources)?.length ? { resources: botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources } : {}),
         ...(mentionOptions?.clientRequestId ? { clientRequestId: mentionOptions.clientRequestId } : {}),
         ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
+        ...(mentionOptions?.onShown ? { onShown: mentionOptions.onShown } : {}),
       });
     }
     if (!providerState.selected || !providerState.selectionAvailable) return Promise.resolve(false);
@@ -453,6 +454,7 @@ function ChatAppContent({
       ...(mentionOptions?.projectSkillProjectId ? { projectSkillProjectId: mentionOptions.projectSkillProjectId } : {}),
       ...(mentionOptions?.clientRequestId ? { clientRequestId: mentionOptions.clientRequestId } : {}),
       ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
+      ...(mentionOptions?.onShown ? { onShown: mentionOptions.onShown } : {}),
       modelOptions: providerState.selected.selectedOptions,
     });
   };

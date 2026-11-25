@@ -40,7 +40,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-// The composer keeps the draft until acceptance; only the transcript counts.
+// Text in the composer is not a transcript bubble; only the transcript counts.
 const OUTSIDE_COMPOSER = "script, style, [contenteditable], [contenteditable] *";
 const createdRecord = { ...record, chat: { ...record.chat, revision: 0, messageCount: 0 } };
 
@@ -81,25 +81,43 @@ it("shows a new Chat's first message before the Chat exists, and once after admi
 
   await waitFor(() => expect(routeClient.create).toHaveBeenCalledTimes(1));
   expect(await screen.findByText("Plan the launch", { ignore: OUTSIDE_COMPOSER })).toBeTruthy();
+  // The sent text leaves the composer when its pending message shows, so it is never shown twice.
+  await waitFor(() => expect(editor.textContent).toBe(""));
 
   await act(async () => { created.resolve(createdRecord); });
-  await waitFor(() => expect(editor.textContent).toBe(""));
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" })).toBeTruthy());
   expect(screen.getAllByText("Plan the launch", { ignore: OUTSIDE_COMPOSER })).toHaveLength(1);
 });
 
-it("keeps the composer draft and drops the bubble when the new Chat cannot be created", async () => {
+it("puts the draft back and drops the bubble when the new Chat cannot be created", async () => {
   const { routeClient, created } = newChatClient();
   const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   await sendFromNewChat(routeClient, "Lost on the way");
   expect(await screen.findByText("Lost on the way", { ignore: OUTSIDE_COMPOSER })).toBeTruthy();
 
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Start a chat" }).textContent).toBe(""));
+
   await act(async () => { created.reject(new AppError("offline")); });
   expect(await screen.findByRole("alert")).toBeTruthy();
   expect(screen.queryByText("Lost on the way", { ignore: OUTSIDE_COMPOSER })).toBeNull();
-  // The composer moves between the pending transcript and the welcome screen.
-  expect(screen.getByRole("textbox", { name: "Start a chat" }).textContent).toBe("Lost on the way");
+  // The rejected send's text comes back to the composer to retry.
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Start a chat" }).textContent).toBe("Lost on the way"));
   warn.mockRestore();
+});
+
+it("empties the composer when a follow-up's pending message shows, before admission", async () => {
+  const routeClient = client();
+  const admitted = deferred<never>();
+  vi.mocked(routeClient.admitTurn).mockReturnValue(admitted.promise);
+  render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialChatId={record.chat.id}
+    initialView="conversation" active catalog={providerCatalog} />);
+  const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(editor, "One more thing");
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText("One more thing", { ignore: OUTSIDE_COMPOSER })).toBeTruthy();
+  await waitFor(() => expect(editor.textContent).toBe(""));
 });
 
 it("does not carry a pending draft send into the next New Chat", async () => {

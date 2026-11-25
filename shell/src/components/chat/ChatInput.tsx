@@ -1,6 +1,6 @@
 "use client";
 import { MAX_AGENT_ATTACHMENT_BYTES, mergeTrySuggestion, type CanonicalProviderInstanceDescriptor, type TrySuggestionDraft } from "@matrix-os/contracts";
-import { matchChatSlashToken, ProjectSkillDraftChips, useProjectSkillDraft, type ProjectChatSlashScope } from "@matrix-os/ui";
+import { createComposerSendHandoff, matchChatSlashToken, ProjectSkillDraftChips, useProjectSkillDraft, type ProjectChatSlashScope } from "@matrix-os/ui";
 import { ChatSlashPicker } from "./ChatSlashPicker";
 import { MatrixAttachmentPicker } from "./MatrixAttachmentPicker";
 import { ATTACHMENT_COUNT_LIMIT, useMatrixAttachment } from "./use-matrix-attachment";
@@ -124,7 +124,11 @@ export function ChatInput({
   const consumedDraftRequest = useRef<number | null>(null);
   // The last merged suggestion, to tell an untouched suggestion from the owner's own words.
   const mergedDraft = useRef<TrySuggestionDraft | null>(null);
-  const { attachments, addFiles, removeFile, getBase64Files } = useAttachments();
+  const { attachments: draftAttachments, addFiles, removeFile, getBase64Files } = useAttachments();
+  // Attachments of a send whose message already shows stay out of sight until it settles.
+  const [sentAttachmentIds, setSentAttachmentIds] = useState<readonly string[]>([]);
+  const sentAttachments = new Set(sentAttachmentIds);
+  const attachments = sentAttachments.size ? draftAttachments.filter(item => !sentAttachments.has(item.id)) : draftAttachments;
   const fileAuthority = usePreviewWindow(state => state.draftAuthority);
   const [matrixPickerOpen, setMatrixPickerOpen] = useState(false);
   const matrixAttachment = useMatrixAttachment({
@@ -206,33 +210,50 @@ export function ChatInput({
     if (attachmentError) { setError(attachmentError); return; }
     const text = input.trim();
     const projectSkillProjectId = projectSkillDraft.paths.length ? projectSlash?.projectId : undefined;
-    const currentSkillScope = () => projectSkillDraft.isCurrent()
-      && currentComposer.current.composer.requestId === composer.requestId
-      && (isCurrentAuthority?.() ?? true);
+    let draftCleared = false;
+    const sameDraft = () => currentComposer.current.scope === scope
+      && (draftCleared || currentComposer.current.composer.requestId === composer.requestId);
+    const currentSkillScope = () => projectSkillDraft.isCurrent() && sameDraft() && (isCurrentAuthority?.() ?? true);
     if (projectSkillProjectId && !currentSkillScope()) return;
     setSending(true);
     setError(null);
     const submittedIds = attachments.map(item => item.id);
-    let acknowledged = false;
-    const acknowledge = () => {
-      if (acknowledged || currentComposer.current.scope !== scope || currentComposer.current.composer.requestId !== composer.requestId) return;
-      if (projectSkillProjectId && !currentSkillScope()) return;
-      acknowledged = true; permission.confirm(false); composer.clear();
+    const submittedDraft = { text: composer.text, resources: composer.resources, requestId: composer.requestId, permissionIdentity: composer.permissionIdentity };
+    const settleSubmission = () => {
+      permission.confirm(false);
       projectSkillDraft.clear();
       for (const id of submittedIds) removeFile(id);
+      setSentAttachmentIds([]);
     };
+    // The draft leaves the composer when its message shows, and comes back if the send is not admitted.
+    const handoff = createComposerSendHandoff({
+      clear: () => {
+        if (!sameDraft() || (projectSkillProjectId && !currentSkillScope())) return false;
+        draftCleared = true; composer.clear(); setSentAttachmentIds(submittedIds);
+        return true;
+      },
+      restore: () => { draftCleared = false; composer.restore(submittedDraft); setSentAttachmentIds([]); },
+      settle: cleared => {
+        if (cleared) { if (currentComposer.current.scope === scope) settleSubmission(); return; }
+        if (!sameDraft() || (projectSkillProjectId && !currentSkillScope())) return;
+        composer.clear(); settleSubmission();
+      },
+    });
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower try/finally yet; the finally is required to release the submission guard on every failure.
     try {
       const files = attachments.length ? await getBase64Files() : undefined;
       if (projectSkillProjectId && !currentSkillScope()) return;
       const prompt = projectSkillDraft.prompt(text || (files?.length ? `Attached ${files.length} file(s)` : ""));
       const accepted = await onSubmit(prompt, files, {
-        resources, clientRequestId: composer.requestId || crypto.randomUUID(), permissionMode: permission.permissionMode, onAccepted: acknowledge,
+        resources, clientRequestId: composer.requestId || crypto.randomUUID(), permissionMode: permission.permissionMode,
+        onAccepted: handoff.accepted, onShown: handoff.shown,
         ...(projectSkillProjectId ? { projectSkillProjectId } : {}),
       });
-      if (accepted !== false) acknowledge();
+      if (accepted !== false) handoff.accepted(); else handoff.rejected();
     } catch (failure: unknown) {
-      if (projectSkillProjectId && !currentSkillScope()) return;
+      const current = !projectSkillProjectId || currentSkillScope();
+      handoff.rejected();
+      if (!current) return;
       console.warn("[chat] Message submission failed:", failure instanceof Error ? failure.name : "UnknownError");
       setError("Message could not be sent. Try again.");
     } finally { setSending(false); }
