@@ -65,6 +65,15 @@ describe("POST /api/office/documents/read-text", () => {
     })));
     expect(body.text).toBe("review");
   });
+
+  // Fault detected: a paragraph's own trailing line break was cut off, so the tool returned text the document does not hold.
+  it("keeps a line break that ends a paragraph", async () => {
+    const path = "docs/breaks.docx";
+    expect((await h.post("/documents/create", { path, paragraphs: ["Line one\n", "Second"] })).status).toBe(200);
+    const blockIds = DocumentDescribeReplySchema.parse(await json(await h.post("/documents/describe", { path }))).blockIds;
+    const body = DocumentReadTextReplySchema.parse(await json(await h.post("/documents/read-text", { path, blockIds })));
+    expect(body.blocks.map((block) => block.text)).toEqual(["Line one\n", "Second"]);
+  });
 });
 
 describe("POST /api/office/documents/propose-edits", () => {
@@ -114,7 +123,7 @@ describe("POST /api/office/documents/propose-edits", () => {
     expect(second.revisionIds.every((id) => all.includes(id))).toBe(true);
     expect(all.length).toBe(first.revisionIds.length + second.revisionIds.length);
 
-    const rejected = await h.post("/documents/revisions/reject", { path, ids: second.revisionIds });
+    const rejected = await h.post("/documents/revisions/reject", { path, ids: second.revisionIds, ifVersion: second.version });
     expect(rejected.status).toBe(200);
     const after = await h.docx(path);
     expect(after.listRevisions()).toHaveLength(first.revisionIds.length);
@@ -184,10 +193,42 @@ describe("revisions list, accept and reject", () => {
   it("answers an unknown revision id with stale_reference and leaves the file alone", async () => {
     const path = await h.copyFixture("tracked.docx");
     const before = await h.bytes(path);
-    const response = await h.post("/documents/revisions/accept", { path, ids: ["r-unknown"] });
+    const { version } = DocumentRevisionsListReplySchema.parse(await json(await h.post("/documents/revisions/list", { path })));
+    const response = await h.post("/documents/revisions/accept", { path, ids: ["r-unknown"], ifVersion: version });
     expect(response.status).toBe(409);
     expect(await json(response)).toMatchObject({ error: "stale_reference" });
     expect(await h.bytes(path)).toEqual(before);
+  });
+
+  // Fault detected: revision ids are numbered again each time the file opens, so ids listed before a save could
+  // accept or reject a different revision than the one the owner approved.
+  it("refuses revision ids without the version they were listed at", async () => {
+    const path = await h.copyFixture("tracked.docx");
+    const before = await h.bytes(path);
+    const listed = DocumentRevisionsListReplySchema.parse(await json(await h.post("/documents/revisions/list", { path })));
+    for (const route of ["/documents/revisions/accept", "/documents/revisions/reject"]) {
+      const response = await h.post(route, { path, ids: [listed.revisions[0]!.id] });
+      expect(response.status).toBe(400);
+      expect(await json(response)).toMatchObject({ error: "invalid_request" });
+    }
+    expect(await h.bytes(path)).toEqual(before);
+  });
+
+  it("answers ids listed before another resolve with version_conflict instead of resolving a renumbered revision", async () => {
+    const path = await h.copyFixture("tracked.docx");
+    const listed = DocumentRevisionsListReplySchema.parse(await json(await h.post("/documents/revisions/list", { path })));
+    expect(listed.revisions.length).toBeGreaterThanOrEqual(3);
+    const [first, second] = listed.revisions;
+    const accepted = DocumentResolveRevisionsReplySchema.parse(await json(await h.post("/documents/revisions/accept", {
+      path, ids: [first!.id], ifVersion: listed.version,
+    })));
+    expect(accepted.saved).toBe(true);
+    const afterFirst = await h.bytes(path);
+
+    const response = await h.post("/documents/revisions/accept", { path, ids: [second!.id], ifVersion: listed.version });
+    expect(response.status).toBe(409);
+    expect(await json(response)).toMatchObject({ error: "version_conflict" });
+    expect(await h.bytes(path)).toEqual(afterFirst);
   });
 });
 

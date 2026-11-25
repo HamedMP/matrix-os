@@ -65,7 +65,10 @@ export const OfficeAuthorSchema = z.string().trim().min(1).max(100).refine((valu
 const DocumentText = z.string().max(OFFICE_MAX_STRING).refine((value) => !CONTROL.test(value));
 const NonEmptyDocumentText = DocumentText.refine((value) => value.length > 0);
 const A1Cell = z.string().min(2).max(12).regex(/^\$?[A-Za-z]{1,3}\$?[1-9][0-9]{0,6}$/);
-export const OfficeA1RangeSchema = z.string().min(1).max(32).regex(/^(\$?[A-Za-z]{1,3}\$?[0-9]{0,7})(:\$?[A-Za-z]{0,3}\$?[0-9]{0,7})?$/);
+/** The forms the engine's `parseA1Range` reads: a cell, two cells, whole columns (`A:C`) or whole rows (`2:5`). */
+export const OfficeA1RangeSchema = z.string().min(1).max(32).regex(
+  /^(?:\$?[A-Za-z]{1,3}\$?[0-9]{1,7}(?::\$?[A-Za-z]{1,3}\$?[0-9]{1,7})?|\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}|\$?[0-9]{1,7}:\$?[0-9]{1,7})$/,
+);
 const SheetName = z.string().min(1).max(31).refine((value) => !/[:\\/?*[\]]/.test(value) && !CONTROL.test(value));
 const IdsOrAll = z.union([z.literal("all"), z.array(OfficeIdSchema).min(1).max(OFFICE_MAX_IDS)]);
 const Occurrence = z.number().int().min(1).max(10_000);
@@ -119,11 +122,16 @@ export const DocumentProposeEditsRequestSchema = z.strictObject({
   ifVersion: OfficeVersionSchema.optional(),
 });
 export const DocumentPathRequestSchema = z.strictObject({ path: OfficeDocxPathSchema });
+/**
+ * Revision ids are numbered again each time the file opens, so a list of ids
+ * only names the revisions of the version it was listed at: `ifVersion` is
+ * required with ids, and a newer file answers `version_conflict`.
+ */
 export const DocumentResolveRevisionsRequestSchema = z.strictObject({
   path: OfficeDocxPathSchema,
   ids: IdsOrAll,
   ifVersion: OfficeVersionSchema.optional(),
-});
+}).refine((value) => value.ids === "all" || value.ifVersion !== undefined, { message: "Give ifVersion with revision ids" });
 export const DocumentAddCommentRequestSchema = z.strictObject({
   path: OfficeDocxPathSchema,
   blockId: OfficeIdSchema,

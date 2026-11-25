@@ -49,7 +49,7 @@ export function describeDocument(document: DocxDocument, options: { maxChars: nu
 
 function paragraphText(document: DocxDocument, blockId: string, length: number, view: DocxTextView): string {
   const range: TextRange = { start: { blockId, offset: 0 }, end: { blockId, offset: length } };
-  return document.getPlainText({ range, view }).replace(/\n$/, "");
+  return document.getPlainText({ range, view });
 }
 
 function blockText(document: DocxDocument, block: DocxBlock, view: DocxTextView): string {

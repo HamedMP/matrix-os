@@ -79,6 +79,9 @@ describe("document tool definitions", () => {
       ["document_propose_edits", { path: "docs/a.docx", edits: [{ op: "dropTable", blockId: "b1" }] }],
       ["sheet_propose_edits", { path: "docs/a.csv", label: "x", edits: [{ op: "setCell", sheet: "Sheet1", cell: "A1", value: 1 }] }],
       ["sheet_accept_changes", { path: "docs/a.xlsx", ids: [] }],
+      // Revision ids are renumbered when the file changes: without the listed version they could name another revision.
+      ["document_accept_revisions", { path: "docs/a.docx", ids: ["rev2"] }],
+      ["document_reject_revisions", { path: "docs/a.docx", ids: ["rev2"] }],
     ];
     for (const [name, input] of bad) {
       const result = await call(name, input);

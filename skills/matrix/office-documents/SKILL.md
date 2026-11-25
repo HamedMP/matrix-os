@@ -61,6 +61,9 @@ Other document tools:
   revisions show the differences between two versions.
 - `document_create`: a new `.docx` from markdown or paragraphs. It never overwrites.
 - `document_accept_revisions` and `document_reject_revisions`: only when the owner asks.
+  With revision ids, pass `ifVersion` from the `document_list_revisions` reply that listed
+  them: ids are renumbered whenever the file changes, so list again after a
+  `version_conflict`.
 
 ## Spreadsheet Workflow
 

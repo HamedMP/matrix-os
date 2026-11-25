@@ -89,6 +89,28 @@ describe("POST /api/office/sheets/read-range", () => {
     expect(body.cells[0]![0]!.value).toEqual({ error: "#N/A" });
   });
 
+  // Fault detected: the request schema refused whole-row ranges such as `2:3` that the engine reads.
+  it("reads whole rows cut down to the used columns", async () => {
+    const path = await h.copyFixture("model.xlsx");
+    const response = await h.post("/sheets/read-range", { path, sheet: "Summary", range: "2:3" });
+    expect(response.status).toBe(200);
+    const body = SheetReadRangeReplySchema.parse(await json(response));
+    const columns = await h.post("/sheets/read-range", { path, sheet: "Summary", range: "A2:B3" });
+    const rectangle = SheetReadRangeReplySchema.parse(await json(columns));
+    expect(body.cells).toHaveLength(2);
+    expect(body.cells.map((row) => row.slice(0, 2))).toEqual(rectangle.cells);
+    expect((await h.post("/sheets/read-range", { path, sheet: "Summary", range: "$2:$2" })).status).toBe(200);
+    expect((await h.post("/sheets/describe", { path, sheet: "Summary", range: "3:3" })).status).toBe(200);
+  });
+
+  it("refuses text that is not a cell, column or row range", async () => {
+    const path = await h.copyFixture("model.xlsx");
+    for (const range of ["A", "5", "A:5", "1:B", "A1:B", "2:", ":3"]) {
+      const response = await h.post("/sheets/read-range", { path, sheet: "Summary", range });
+      expect(response.status, range).toBe(400);
+    }
+  });
+
   it("refuses a range over the cell cap", async () => {
     const path = await h.copyFixture("model.xlsx");
     const response = await h.post("/sheets/read-range", { path, sheet: "Summary", range: "A1:Z1000" });
@@ -128,6 +150,18 @@ describe("POST /api/office/sheets/propose-edits", () => {
     expect(body.rejected).toEqual([{ index: 0, code: "stale_reference" }]);
     expect(body.appliedEdits).toEqual([1]);
     expect(body.changeIds).toHaveLength(1);
+  });
+
+  it("clears whole rows as pending changes", async () => {
+    const path = await h.copyFixture("model.xlsx");
+    const response = await h.post("/sheets/propose-edits", {
+      path, author: AGENT, label: "Clear row", edits: [{ op: "clearRange", sheet: "Summary", range: "2:2" }],
+    });
+    expect(response.status).toBe(200);
+    const body = SheetProposeEditsReplySchema.parse(await json(response));
+    expect(body.changeIds.length).toBeGreaterThan(0);
+    const changes = (await h.xlsx(path)).listChanges();
+    expect(changes.every((change) => change.row === 1)).toBe(true);
   });
 
   it("refuses a csv target", async () => {
