@@ -1,5 +1,6 @@
 import { readFile, statfs } from "node:fs/promises";
 import { createServer as createHttpsServer, type Server } from "node:https";
+import { isIPv4 } from "node:net";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
@@ -7,12 +8,13 @@ import { Agent, request } from "undici";
 import { createHostApi } from "./api.js";
 import { createChClient, type ChClient } from "./ch-client.js";
 import { loadConfig, type HostdConfig } from "./config.js";
-import { createExec, type Exec } from "./exec.js";
+import { createExec, run, type Exec } from "./exec.js";
 import { createGuestClient, type GuestClient } from "./guest-client.js";
 import { createIngress, type Ingress } from "./ingress.js";
+import { hostVmMemoryBudgetMiB } from "./memory-admission.js";
 import { createMemoryController, readHostAvailableMiB, type MemoryController } from "./memory-controller.js";
 import { reconcileVms } from "./reconcile.js";
-import { createVmLifecycle, type LifecycleConfig, type VmLifecycle } from "./vm-lifecycle.js";
+import { createVmLifecycle, DEFAULT_LIFECYCLE_CONFIG, type LifecycleConfig, type VmLifecycle } from "./vm-lifecycle.js";
 import { createVmStore, type VmRecord, type VmStore } from "./vm-store.js";
 
 // Composes hostd: ONE VmStore shared by the lifecycle, the ingress, the
@@ -31,6 +33,7 @@ export interface HostdOverrides {
   guest?: (id: string) => GuestClient;
   gatewayHealth?: (ip: string, signal: AbortSignal) => Promise<boolean>;
   hostAvailableMiB?: (signal: AbortSignal) => Promise<number>;
+  memoryBudgetMiB?: () => number;
   lifecycleConfig?: Partial<LifecycleConfig>;
   ingressUpstreamPort?: number;
   memoryIntervalMs?: number;
@@ -68,6 +71,23 @@ export function createGatewayHealth(port = 443): { probe: (ip: string, signal: A
 export async function poolFreeBytes(dir: string): Promise<number> {
   const info = await statfs(dir);
   return info.bavail * info.bsize;
+}
+
+async function readVmBindings(exec: Exec, bridge: string): Promise<ReadonlyMap<string, string>> {
+  const { stdout } = await run(
+    exec, ["ip", "-j", "-4", "neigh", "show", "dev", bridge, "nud", "permanent"],
+    AbortSignal.timeout(2_000),
+  );
+  const rows: unknown = JSON.parse(stdout);
+  if (!Array.isArray(rows) || rows.length > 1024) throw new Error("invalid host network bindings");
+  const bindings = new Map<string, string>();
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const { dst, lladdr, state } = row as { dst?: unknown; lladdr?: unknown; state?: unknown };
+    if (typeof dst !== "string" || !isIPv4(dst) || typeof lladdr !== "string") continue;
+    if (Array.isArray(state) && state.includes("PERMANENT")) bindings.set(dst, lladdr.toLowerCase());
+  }
+  return bindings;
 }
 
 function closeServer(server: Server): Promise<void> {
@@ -110,6 +130,7 @@ export async function startHostd(config: HostdConfig, overrides: HostdOverrides 
     ch,
     pool,
     gatewayHealth,
+    memoryBudgetMiB: overrides.memoryBudgetMiB ?? hostVmMemoryBudgetMiB,
     trim: (id, signal) => guest(id).trim(signal),
     log,
     config: {
@@ -126,6 +147,7 @@ export async function startHostd(config: HostdConfig, overrides: HostdOverrides 
   const ingress = createIngress({
     store,
     hostAuthToken: config.ingressToken,
+    readVmBindings: () => readVmBindings(exec, overrides.lifecycleConfig?.bridge ?? DEFAULT_LIFECYCLE_CONFIG.bridge),
     tls,
     upstreamPort: overrides.ingressUpstreamPort,
     log,

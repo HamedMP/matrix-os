@@ -48,6 +48,7 @@ let t: number;
 
 const exec: Exec = async (argv) => {
   events.push(`exec:${argv.join(" ")}`);
+  if (argv[0] === "ip") return { code: 0, stdout: "[]", stderr: "" };
   if (argv[0] === "lvs" && argv.includes("data_percent,metadata_percent")) return { code: 0, stdout: "  10.00  5.00\n", stderr: "" };
   if (argv[0] === "lvs" && argv.includes("lv_size")) return { code: 0, stdout: "  21474836480\n", stderr: "" };
   if (argv[1] === "is-active") return { code: active.has(argv[2]!) ? 0 : 3, stdout: "", stderr: "" };
@@ -92,6 +93,7 @@ const overrides = (extra: HostdOverrides = {}): HostdOverrides => ({
   guest,
   gatewayHealth: async () => true,
   hostAvailableMiB: async () => 100_000,
+  memoryBudgetMiB: () => 100_000,
   lifecycleConfig: { trimSettleMs: 0, serialLogDir: join(root, "log") },
   memoryIntervalMs: 60_000,
   now: () => t,
@@ -196,6 +198,23 @@ describe("hostd main", () => {
     expect(JSON.parse(capacity.body)).toMatchObject({ memoryAvailableMiB: 100_000, runningVms: 0, suspendedVms: 0 });
     expect(JSON.parse(capacity.body).poolFreeBytes).toBeGreaterThan(0);
     expect(JSON.parse(capacity.body).thinPool).toEqual({ dataPercent: 10, metadataPercent: 5 });
+  });
+
+  it("refuses a create when host-wide memory will not fit", async () => {
+    hostd = await startHostd(config, overrides({ memoryBudgetMiB: () => 2_048 }));
+    expect(await apiCall("POST", "/v1/vms", createBody)).toMatchObject({
+      status: 503, body: '{"error":"capacity"}',
+    });
+    expect(await hostd.store.list()).toEqual([]);
+  });
+
+  it("queries permanent host neighbors before routing to a running guest", async () => {
+    hostd = await startHostd(config, overrides());
+    expect((await apiCall("POST", "/v1/vms", createBody)).status).toBe(201);
+    expect(await ingressCall("alice")).toMatchObject({
+      status: 503, body: '{"error":"runtime_unavailable"}',
+    });
+    expect(events).toContain("exec:ip -j -4 neigh show dev brmx nud permanent");
   });
 
   it("applies the configured thin pool thresholds: create answers 503 capacity past them", async () => {
