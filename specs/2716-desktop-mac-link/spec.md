@@ -24,9 +24,10 @@ Mac.
 
 ## Non-goals
 
-- Anything on the Mac other than Herdr terminals: no file browsing, GUI input,
-  screen capture, app control or ENG-495's Chat-approved checks (that stack
-  stays separate).
+- Anything on the Mac other than Herdr terminals and one-shot screenshots: no
+  file browsing, GUI input, app control or ENG-495's Chat-approved checks
+  (that stack stays separate). Screenshots need the person's macOS Screen
+  Recording permission for Matrix OS (see Chat and agents).
 - The person's own Herdr app and its herdr-core. Only the Electron app's
   private core (session `mx`, `desktop/src/main/local-terminals/host.ts`) is
   exposed.
@@ -316,6 +317,39 @@ details go to server-side logs with the device ID, never the bearer.
 - Nothing about the Mac (keys, names, terminals) is sent to the platform; the
   platform only routes the WebSocket.
 
+## Chat and agents (Hamed, 2026-11-25)
+
+A fresh agent on the computer, asked "do you see my Mac?", must find and use
+the Mac without SSH or Tailscale.
+
+- **Terminal pipeline.** Each linked Mac is one more workspace in 2692's
+  terminal pipeline (`mac-link/verb-runtime.ts`), under its Mac workspace id.
+  `terminal_list` shows it with `machine: <name>`; `terminal_read`, `_send`,
+  `_keys`, `_interrupt` and `_wait` reach it, and so do the generic
+  `/api/terminal/workspaces/:ws/tabs/:tab/*` verbs. The owner gate there
+  treats a Mac workspace like Herdr's: the owner's principal only, never
+  preview delegation, and no project admission.
+- **Kernel tools.** `mac_list`, `mac_run` (shell, agent preset or argv, such
+  as `["/usr/bin/open", url]`) and `mac_screenshot` (returns the image),
+  present only when the Mac link is on.
+- **Routes.** Besides list, start, read, input and end: `POST
+  .../terminals/:address/{keys,interrupt,wait}` (2692 verbs, `bodyLimit` 1 KiB,
+  strict schemas) and `POST /api/mac-link/machines/:deviceId/screenshot`
+  (JPEG, `no-store`). Starts are limited to 10 a minute and screenshots to 6
+  a minute per Mac, shared by routes and the kernel.
+- **Screenshots.** The gateway sends `{"t":"capture","id"}`; the Mac checks
+  Electron's Screen Recording status, runs `/usr/sbin/screencapture -x` into a
+  private temp folder, shrinks it with `/usr/bin/sips` to at most 1600 px
+  JPEG, deletes the folder, and answers with `capture-part` frames of at most
+  48 KiB of base64 each (8 MiB in all, 20 s), or `capture-failed`
+  (`permission`, `failed`, `too_large`). Without permission nothing is
+  captured and the caller gets `screen_recording_not_allowed`, which the
+  skill turns into one plain request to the person.
+- **CLI.** `matrix shell machine keys|interrupt|wait|open|screenshot`.
+- **Skill.** `skills/matrix/linked-mac` (`matrix-linked-mac`) teaches the
+  above, and that SSH, Tailscale and `hc machine add` are not the path to the
+  owner's Mac.
+
 ## Revocation
 
 | Action | Effect | Bound |
@@ -413,6 +447,10 @@ their link. No temp files.
    guard against the real pinned herdr-core.
 7. An org member or collaborator principal gets `403` on every `mac-link`
    route and cannot open `/ws/mac-link/terminal`.
+8. A fresh Claude on the test computer, asked "do you see my Mac?", runs
+   `matrix shell machine ls`, opens a page on the Mac and takes a screenshot
+   it then describes. Without Screen Recording permission it asks the person
+   to allow it once instead of retrying.
 
 ## Surface matrix (target)
 
@@ -436,7 +474,7 @@ their link. No temp files.
 - End to end: Electron `MacLinkService` against a local gateway and real core
   (layer 3), then live Mac + preview VPS (last layer).
 
-## Delivery stack (GitHub native stack, ENG-574, ≤ 6 layers)
+## Delivery stack (GitHub native stack, ENG-574, ≤ 10 layers)
 
 | # | PR | Main code |
 | --- | --- | --- |
@@ -445,7 +483,9 @@ their link. No temp files.
 | 3 | Electron: device keys, guard, `MacLinkService` (reconnect, sleep, toggle, menu, IPC) | desktop |
 | 4 | Gateway: Mac terminal routes, viewer socket, local-token access for agents, `matrix shell machine` | gateway, sync-client |
 | 5 | Surfaces: Mac-side controls (Terminal window, confirmation, app menu, IPC) and the shared Macs group on Web Desktop, Web Canvas and Electron Desktop | ui, shell, desktop |
-| 6 | Live qualification fixes, repo docs; plus a separate public documentation PR in `FinnaAI/matrix-os-site` under `content/docs/` (enable, switch off, remove) | docs, fixes, site |
+| 6 | Chat and agents: Mac terminals in the terminal pipeline, `mac_list`/`mac_run`, keys/interrupt/wait routes, CLI | gateway, kernel, sync-client |
+| 7 | Screenshots, `mac_screenshot`, the `matrix-linked-mac` skill | gateway, desktop, kernel, sync-client, skills |
+| 8 | Live qualification fixes, repo docs; plus a separate public documentation PR in `FinnaAI/matrix-os-site` under `content/docs/` (enable, switch off, remove, Screen Recording) | docs, fixes, site |
 
 Layer 2 needs `packages/herdr-core-client` (#3527). If it has not merged when
 layer 2 starts, the stack bases on it or waits; it does not copy the client.
