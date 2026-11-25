@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast, type Action } from "sonner";
 import { z } from "zod/v4";
 import type { ApiClient } from "../../lib/api";
 import { AppError, classifyTransportError } from "../../../../shared/app-error";
@@ -69,16 +69,14 @@ export function useFileTrash(
       }
 
       const undoEntry = undoEntrySchema.safeParse(reply);
-      undoToast.current = toast.success("Moved to Trash", {
-        duration: 8000,
-        action: undoEntry.success ? {
-          label: "Undo",
-          onClick: (event) => {
-            event.preventDefault();
-            void changeTrash(authority, { kind: "restore", path: change.path, ...undoEntry.data });
-          },
-        } : undefined,
-      });
+      const undoAction: Action | undefined = undoEntry.success ? {
+        label: "Undo",
+        onClick: (event) => {
+          event.preventDefault();
+          void changeTrash(authority, { kind: "restore", path: change.path, ...undoEntry.data });
+        },
+      } : undefined;
+      undoToast.current = toast.success("Moved to Trash", { duration: 8000, action: undoAction });
     } catch (error: unknown) {
       const cause = error instanceof AppError ? error.cause : error;
       if (!authority.isCurrent() || authority.signal.aborted

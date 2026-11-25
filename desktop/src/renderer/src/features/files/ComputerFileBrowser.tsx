@@ -19,7 +19,6 @@ import {
   isManagedBrowserPath,
   isProtectedFolderCreationParentPath,
   isProtectedFolderPickerPath,
-  isProtectedTrashTarget,
   sortBrowserEntries,
   type BrowserEntry,
   type BrowserSortDirection,
@@ -573,7 +572,8 @@ export default function ComputerFileBrowser({
               ? [{ label: "New folder…", onSelect: () => onRequestCreateFolder(contextDirectory?.path ?? viewCurrentPath) }]
               : []),
             ...(trashEnabled && contextTarget?.directory === viewCurrentPath && api && viewStatus === "ready" && !viewReadOnly
-              && canMoveFileToTrash(contextTarget.path) && !isProtectedTrashTarget(contextTarget.path)
+              && canMoveFileToTrash(contextTarget.path) && !contextTarget.path.includes("//")
+              && !/[\u0000-\u001f\u007f]/.test(contextTarget.path)
               ? [{
                   label: "Move to Trash",
                   danger: true,
