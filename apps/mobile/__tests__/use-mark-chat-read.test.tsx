@@ -314,6 +314,22 @@ describe("useMarkChatRead", () => {
     expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
   });
 
+  it.each(["token", "HTTP"])("acknowledges a newer reply after an older %s operation fails", async (stage) => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    let fail!: (error: Error) => void;
+    const { rerender } = renderMarkRead(detail(unread));
+    await ready();
+    const pending = new Promise<never>((_resolve, reject) => { fail = reject; });
+    if (stage === "token") mockGetToken.mockReturnValueOnce(pending);
+    else mockUpdateChatReadState.mockReturnValueOnce(pending);
+    await advance();
+    rerender({ shown: detail({ ...unread, version: 3, latestIncomingSeq: 6 }, [message(6, "assistant")]) });
+    await act(async () => fail(new Error("Unavailable")));
+    await advance();
+    expect(mockUpdateChatReadState).toHaveBeenCalledTimes(stage === "token" ? 1 : 2);
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
+  });
+
   it.each([false, true])("serializes reads across another view of the same chat (previous view unmounted: %s)", async (unmount) => {
     let finish!: (record: CanonicalChatRecord) => void;
     mockUpdateChatReadState.mockReturnValueOnce(new Promise<CanonicalChatRecord>((resolve) => { finish = resolve; }));

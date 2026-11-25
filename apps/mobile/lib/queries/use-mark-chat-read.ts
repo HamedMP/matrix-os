@@ -113,14 +113,17 @@ export function useMarkChatRead(detail: CanonicalChatDetailResponse | null, chat
     const timer = setTimeout(() => {
       inFlight.current = true;
       current.dueAt = Date.now() + 2_000;
+      let attempted = attemptKey(request);
 
       void acknowledge(async () => {
         if (!isCurrent()) return;
+        attempted = attemptKey(current.request!);
         const gateway = await session();
         if (!isCurrent()) return;
         const latest = current.request!;
         const attempt = attemptKey(latest);
         if (current.attempt === attempt) return;
+        attempted = attempt;
         current.attempt = attempt;
         if (!gateway) return;
         // A failed lookup, stale-version refusal or request failure waits for
@@ -135,7 +138,9 @@ export function useMarkChatRead(detail: CanonicalChatDetailResponse | null, chat
         );
         void queryClient.invalidateQueries({ queryKey: mobileQueryKeys.canonicalChats(userId, computerKey) });
       }).catch((error: unknown) => {
-        if (isCurrent()) current.attempt = attemptKey(current.request!);
+        // A newer candidate may have arrived while this operation failed.
+        // Only spend the key that actually reached lookup or the HTTP call.
+        if (isCurrent()) current.attempt = attempted;
         console.warn("[chat] Read state update failed:", error instanceof Error ? error.name : "UnknownError");
       }).finally(() => {
         inFlight.current = false;
