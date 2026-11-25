@@ -40,8 +40,12 @@ INSTALL_TMP_SUM=""
 INSTALL_PHASE="init"
 INSTALL_COMPLETED=0
 INSTALL_FAILURE_CAPTURED=0
+PRIVATE_CUTOVER=0
 
 cleanup_install_tmp() {
+  local status=$?
+  # A public install switching to private gets its public listener back on any failed exit.
+  ! declare -F rollback_failed_private_cutover >/dev/null || rollback_failed_private_cutover "$status"
   [ -z "$INSTALL_TMP_BUNDLE" ] || rm -f "$INSTALL_TMP_BUNDLE"
   [ -z "$INSTALL_TMP_SUM" ] || rm -f "$INSTALL_TMP_SUM"
 }
@@ -1832,7 +1836,7 @@ install_systemd_units() {
 }
 
 configure_nginx() {
-  local auth_token code_proxy_token password hash server_name htpasswd_file legacy_htpasswd_file browser_viewer
+  local auth_token code_proxy_token password hash server_name htpasswd_file legacy_htpasswd_file browser_viewer site next
   auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN)" || fail "MATRIX_AUTH_TOKEN is missing from host.env"
   code_proxy_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN)" || fail "MATRIX_CODE_PROXY_TOKEN is missing from host.env"
   server_name="$MATRIX_DOMAIN"
@@ -1863,11 +1867,12 @@ configure_nginx() {
 
   browser_viewer=off
   [ "$OPT_BROWSER" != "on" ] || browser_viewer=on
-  # A public site being replaced by a private one is kept, to restore if private access fails.
-  if [ "$PREVIOUS_ACCESS_MODE" = "public" ] && [ "$OPT_ACCESS" != "public" ] && [ -f /etc/nginx/sites-available/matrix-self-host ]; then
-    cp -f /etc/nginx/sites-available/matrix-self-host /etc/nginx/matrix-self-host.previous-site
-  fi
-  render_nginx_site "$OPT_ACCESS" "$server_name" "$htpasswd_file" "$browser_viewer" >/etc/nginx/sites-available/matrix-self-host
+  # Rendered beside the live site and swapped in with one rename; a public site
+  # being replaced was saved by begin_private_cutover and comes back on failure.
+  site=/etc/nginx/sites-available/matrix-self-host
+  next="${site}.next"
+  render_nginx_site "$OPT_ACCESS" "$server_name" "$htpasswd_file" "$browser_viewer" >"${next}" || { rm -f "${next}"; fail "could not write the nginx site"; }
+  mv -f "${next}" "${site}"
 
   rm -f /etc/nginx/sites-enabled/default
   ln -sfn /etc/nginx/sites-available/matrix-self-host /etc/nginx/sites-enabled/matrix-self-host
@@ -1955,11 +1960,42 @@ private_access_failed() {
   fail "$1"
 }
 
-# restore_previous_listener: the public site saved by configure_nginx, the public
-# mode and origin in host.env, and a gateway and shell running with them. Succeeds
-# only once a WebSocket through public nginx upgrades (HTTP 101).
+# begin_private_cutover: from here until private access is verified, a public
+# install switching to private restores its public listener on any failed exit
+# (fail, run_required, or set -e). Saves the live public site now, never an
+# older run's copy.
+begin_private_cutover() {
+  local site="${MATRIX_NGINX_SITE_FILE:-/etc/nginx/sites-available/matrix-self-host}"
+  local backup="${MATRIX_NGINX_SITE_BACKUP:-/etc/nginx/matrix-self-host.previous-site}"
+  [ "$PREVIOUS_ACCESS_MODE" = "public" ] && [ "$OPT_ACCESS" != "public" ] || return 0
+  rm -f "$backup"
+  [ ! -f "$site" ] || run_required "saving the public nginx site" cp -f "$site" "$backup"
+  PRIVATE_CUTOVER=1
+}
+
+end_private_cutover() {
+  PRIVATE_CUTOVER=0
+}
+
+# rollback_failed_private_cutover <exit status>: run by the EXIT trap.
+rollback_failed_private_cutover() {
+  [ "$1" != "0" ] && [ "$PRIVATE_CUTOVER" = "1" ] || return 0
+  warn "switching to private access failed; restoring your public listener"
+  if restore_previous_listener; then
+    ok "Kept your public listener; fix the error above, then rerun the installer."
+  else
+    warn "public access did not come back. Check: journalctl -u matrix-gateway -n 200 --no-pager; tail -120 /var/log/nginx/error.log"
+  fi
+}
+
+# restore_previous_listener: the public site saved by begin_private_cutover, the
+# public mode and origin in host.env, and a gateway and shell running with them.
+# Succeeds only once a WebSocket through public nginx upgrades (HTTP 101).
 restore_previous_listener() {
-  local site=/etc/nginx/sites-available/matrix-self-host backup=/etc/nginx/matrix-self-host.previous-site
+  local site="${MATRIX_NGINX_SITE_FILE:-/etc/nginx/sites-available/matrix-self-host}"
+  local backup="${MATRIX_NGINX_SITE_BACKUP:-/etc/nginx/matrix-self-host.previous-site}"
+  # Restoring ends the cutover, so a failure after it does not restore again.
+  PRIVATE_CUTOVER=0
   stop_matrix_tailscale_serve
   if [ -f "$backup" ]; then
     cp -f "$backup" "$site"
@@ -2242,6 +2278,7 @@ main() {
   # First: an HTTP fallback changes the tailnet address recorded for the gateway.
   [ "$OPT_ACCESS" = "public" ] || configure_tailscale_serve
   require_private_access_ready
+  begin_private_cutover
   write_env
   INSTALL_PHASE="nginx"
   [ "$OPT_ACCESS" != "public" ] || stop_matrix_tailscale_serve
@@ -2253,6 +2290,7 @@ main() {
   configure_browser
   INSTALL_PHASE="verify"
   verify_services
+  end_private_cutover
   INSTALL_PHASE="pairing"
   pair_with_primary
   INSTALL_PHASE="complete"
