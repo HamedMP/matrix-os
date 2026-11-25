@@ -27,7 +27,7 @@ describe('owner-only purge delivery lifecycle',()=>{
   let entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});let release!:()=>void;const settled=new Promise<void>(resolve=>{release=resolve;});
   const transport=vi.fn(async()=>Response.json({commands:[command]}));let signal:AbortSignal|undefined;
   const poller=createGooglePurgeDeliveryPoller({ownerId:'owner-one',transport,purgeAccount:async(_command,current)=>{signal=current;entered();await settled;return receipt;}});
-  const first=poller.runOnce().catch(()=>undefined);await started;const second=poller.runOnce().catch(()=>undefined);expect(transport).toHaveBeenCalledTimes(1);
+  const first=expect(poller.runOnce()).rejects.toMatchObject({name:'AbortError'});await started;const second=expect(poller.runOnce()).rejects.toMatchObject({name:'AbortError'});expect(transport).toHaveBeenCalledTimes(1);
   let closed=false;const closing=poller.close().then(()=>{closed=true;});await Promise.resolve();expect(signal!.aborted).toBe(true);expect(closed).toBe(false);
   release();await Promise.all([first,second,closing]);expect(transport).toHaveBeenCalledTimes(1);expect(closed).toBe(true);
  });
