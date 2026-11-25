@@ -246,6 +246,8 @@ describe("hostd API", () => {
   it("resume runs the real restore and reports running", async () => {
     await store.put(record());
     await mkdir(join(root, "vms", record().id), { recursive: true });
+    // Resume rewrites the unit environment that create wrote, so the fixture needs one.
+    await writeFile(join(root, "vms", record().id, "unit.env"), "HOTPLUG_MIB=0\n");
     const res = await send(api(), "POST", `/v1/vms/${record().id}/resume`, { body: { budgetMs: 1000 }, headers: auth });
     expect(await res.json()).toEqual({ state: "running" });
   });
