@@ -57,6 +57,34 @@ describe("push adapter with owner Postgres tokens", () => {
     expect(versions).toEqual([{ version: 1, name: "push_tokens" }, { version: 2, name: "canonical_attention" }]);
   });
 
+  it("sends canonical attention with v1 tap identity, attention channel, expiry, and active interruption by default", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(expoOk());
+    const push = adapter({ handle: "test-computer", ownerId: "owner_a" });
+    await push.registerToken("token_owner", "ios", "owner_a");
+    await push.registerToken("token_foreign", "android", "owner_b");
+    await push.sendAttention({ id: "11111111-2222-4333-8444-555555555555", ownerId: "owner_a", kind: "approval",
+      title: "Matrix OS", body: "Your agent needs approval", target: { type: "chat", chatId: "chat_attention" },
+      sound: false, timeSensitive: false, expiresAt: new Date(now + 60_000).toISOString() });
+    expect(JSON.parse(fetchSpy.mock.calls[0][1]?.body as string)).toEqual([{
+      to: "token_owner", title: "Matrix OS", body: "Your agent needs approval", sound: null,
+      data: { v: 1, notificationId: "11111111-2222-4333-8444-555555555555", handle: "test-computer", target: { type: "chat", chatId: "chat_attention" } },
+      channelId: "attention", interruptionLevel: "active", collapseId: "11111111-2222-4333-8444-555555555555", priority: "high", ttl: 60,
+    }]);
+    expect(fetchSpy.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("reports canonical transport failure for durable retry and refuses a foreign owner", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("unavailable", { status: 503 }));
+    const push = adapter({ handle: "test-computer", ownerId: "owner_a" });
+    await push.registerToken("token_owner", "android", "owner_a");
+    const notification = { id: "11111111-2222-4333-8444-555555555555", ownerId: "owner_a", kind: "question" as const,
+      title: "Matrix OS", body: "Your agent has a question", target: { type: "chat" as const, chatId: "chat_attention" },
+      sound: true, timeSensitive: true, expiresAt: new Date(now + 60_000).toISOString() };
+    await expect(push.sendAttention(notification)).rejects.toThrow("Push transport unavailable");
+    await expect(push.sendAttention({ ...notification, ownerId: "owner_b" })).rejects.toThrow("Push owner unavailable");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("creates the version table under the schema lock, so gateways starting together cannot race on it", async () => {
     const fresh = await createTestPGlite();
     const statements: string[] = [];

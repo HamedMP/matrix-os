@@ -16,14 +16,16 @@ export function createNotificationRouter(options: NotificationRouterOptions) {
   const repository = createNotificationRepository(options.db, options.ownerId);
   const now = options.now ?? Date.now;
   const enabled = () => !closed && (options.enabled?.() ?? true);
-  const queue: string[] = []; // Chat references only; capped at 1,000 and removed by the single worker.
+  type Work = { chatId: string; refs?: string[] };
+  const queue: Work[] = []; // Source references only; capped at 1,000 and removed by the single worker.
+  const spills = new Set<Promise<void>>(); // At most four direct overflow writes; removed when settled and drained on close.
   let closed = false, worker: Promise<void> | undefined, ticking: Promise<void> | undefined, reconciling: Promise<void> | undefined;
   let overflow = false;
   const timers: ReturnType<typeof setInterval>[] = []; // Exactly three, cleared on close.
   const warn = (error: unknown) => (options.logger ?? console).warn(`[notifications] Delivery unavailable: ${error instanceof Error ? error.name : "UnknownError"}`);
 
-  async function ingest(chatId?: string) {
-    for (const request of await source.list(now(), { chatId, missingOnly: true })) {
+  async function ingest(work?: Work) {
+    for (const request of await source.list(now(), { ...work, missingOnly: true })) {
       if (closed) return;
       await repository.insert(request);
     }
@@ -39,8 +41,14 @@ export function createNotificationRouter(options: NotificationRouterOptions) {
   const onChatEvent: ChatOutboxSink = ({ owner, event }) => {
     if (!enabled() || owner.type !== "personal" || owner.ownerId !== options.ownerId
       || !["run.activity", "interaction.requested"].includes(event.eventType)) return;
-    if (queue.length < 1000) queue.push(event.chatId);
-    else overflow = true; // Durable chat rows are the overflow journal; the worker/reconciler persists them.
+    const refs = Array.isArray(event.payload.activityIds)
+      ? event.payload.activityIds.filter((id): id is string => typeof id === "string" && id.length <= 160).slice(0, 100) : undefined;
+    const work = { chatId: event.chatId, ...(refs?.length ? { refs } : {}) };
+    if (queue.length < 1000) queue.push(work);
+    else if (spills.size < 4) {
+      const spill = ingest(work).catch(warn).finally(() => { spills.delete(spill); });
+      spills.add(spill);
+    } else overflow = true; // Durable source journal covers bursts beyond the four overflow writes, with no unbounded waiters.
     void flush().catch(warn);
   };
   async function deliver(event: NotificationEvent) {
@@ -87,7 +95,7 @@ export function createNotificationRouter(options: NotificationRouterOptions) {
       if (closed) return;
       closed = true; for (const timer of timers.splice(0)) clearInterval(timer); queue.length = 0;
       let timer: ReturnType<typeof setTimeout> | undefined;
-      try { await Promise.race([Promise.allSettled([worker, ticking, reconciling]), new Promise<void>(resolve => { timer = setTimeout(resolve, 2000); })]); }
+      try { await Promise.race([Promise.allSettled([worker, ticking, reconciling, ...spills]), new Promise<void>(resolve => { timer = setTimeout(resolve, 2000); })]); }
       finally { if (timer) clearTimeout(timer); }
     },
   };

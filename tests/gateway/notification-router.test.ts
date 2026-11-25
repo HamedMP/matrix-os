@@ -9,6 +9,17 @@ import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { createRealCollaborationTestDatabase } from "./collaboration-test-support.js";
 import { createNotificationRepository } from "../../packages/gateway/src/notifications/repository.js";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AgentThreadEventSchema } from "@matrix-os/contracts";
+import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
+import { createNotificationPreferenceRuntime } from "../../packages/gateway/src/notifications/runtime.js";
+import { createReviewStore } from "../../packages/gateway/src/review-store.js";
+import { createPushTokenStore } from "../../packages/gateway/src/notifications/push-tokens.js";
+import { initializeGatewayChannels } from "../../packages/gateway/src/startup/channels.js";
+import type { OwnerDatabaseServices } from "../../packages/gateway/src/startup/owner-database.js";
+import { createConversationStore } from "../../packages/gateway/src/conversations.js";
 
 describe("canonical attention delivery", () => {
   let repository: ChatRepository;
@@ -39,18 +50,18 @@ describe("canonical attention delivery", () => {
     router = createNotificationRouter({ db, ownerId: owner.ownerId, preferences, transport: { send }, now: () => now });
     stream = createGatewayChatEventStream({ repository, capture: vi.fn(), onChatEvent: router.onChatEvent });
   });
-  afterEach(async () => { stream?.shutdown(); await router?.close(); await cleanup?.(); });
+  afterEach(async () => { stream?.shutdown(); await router?.close(); await cleanup?.(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-  async function request(type: "approval" | "question" = "approval") {
+  async function request(type: "approval" | "question" = "approval", requestOwner = owner) {
     const { snapshot } = createCanonicalChatFixture("running");
     const chatId = snapshot.chat.id;
-    await repository.create(owner, { id: chatId, clientRequestId: "req_notification", title: "Private chat title" });
+    await repository.create(requestOwner, { id: chatId, clientRequestId: "req_notification", title: "Private chat title" });
     const { startedAt: _startedAt, ...run } = snapshot.runs[0]!;
-    await repository.admitTurn(owner, { chatId, baseRevision: 0, message: snapshot.messages[0]!,
+    await repository.admitTurn(requestOwner, { chatId, baseRevision: 0, message: snapshot.messages[0]!,
       turn: { ...snapshot.turns[0]!, status: "accepted" }, run: { ...run, status: "accepted" } });
     const ids = { chatId, runId: run.id };
-    await repository.markRunRunning(owner, { ...ids, startedAt: new Date(now).toISOString() });
-    await repository.appendRunActivities(owner, chatId, run.id, [{ ...ids, id: "activity_attention", occurredAt: new Date(now).toISOString(),
+    await repository.markRunRunning(requestOwner, { ...ids, startedAt: new Date(now).toISOString() });
+    await repository.appendRunActivities(requestOwner, chatId, run.id, [{ ...ids, id: "activity_attention", occurredAt: new Date(now).toISOString(),
       ...(type === "approval" ? { type: "approval.requested" as const, approvalId: "approval_attention", title: "Private approval",
         risk: "low" as const, allowedDecisions: ["approve" as const, "decline" as const] }
         : { type: "input.requested" as const, requestId: "input_attention", title: "Private question",
@@ -152,5 +163,65 @@ describe("canonical attention delivery", () => {
       expect(send).toHaveBeenCalledTimes(1);
       expect(await db.selectFrom("notification_attempts").select("outcome").execute()).toEqual([{ outcome: "sent" }]);
     } finally { await other.close(); }
+  });
+
+  it("does not enqueue or recover another owner's requests", async () => {
+    await request("approval", { type: "personal", ownerId: "owner_foreign" });
+    await router.flush(); await router.reconcile(); now += 15_000; await router.tick();
+    expect(send).not.toHaveBeenCalled();
+    expect(await db.selectFrom("notification_events").selectAll().execute()).toEqual([]);
+  });
+
+  it("does not push submitted input while its runner is still settling the answer", async () => {
+    const ids = await request("question"); await router.flush();
+    await repository.appendRunActivities(owner, ids.chatId, ids.runId, [{ ...ids, id: "activity_submitted", type: "input.submitted",
+      requestId: "input_attention", clientRequestId: "req_answer", occurredAt: new Date(now + 1000).toISOString() }]);
+    now += 15_000; await router.tick();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("wires the real channel transport and suppresses the first canonical Codex approval before its adapter binding exists", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-a6-runtime-"));
+    vi.stubEnv("MATRIX_USER_ID", owner.ownerId); vi.stubEnv("MATRIX_HANDLE", "attention-test"); vi.stubEnv("MATRIX_NOTIFICATIONS_ROUTER", "on");
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ data: [{ status: "ok" }] })));
+    const runtime = createNotificationPreferenceRuntime({ homePath, env: process.env, reviewStore: createReviewStore({ homePath }) });
+    const threads = createCodingAgentThreadStore({ homePath, providers: [{ providerId: "codex", startThread({ thread, nextEventId }) {
+      return [AgentThreadEventSchema.parse({ type: "approval.requested", eventId: nextEventId(), threadId: thread.id,
+        occurredAt: new Date(now).toISOString(), approval: { approvalId: "approval_attention", threadId: thread.id,
+          title: "Private approval", safeDescription: "Review the request", risk: "low", actionKind: "command",
+          allowedDecisions: ["approve", "decline"], correlationId: "corr_attention" } })];
+    } }] });
+    const configPath = join(homePath, "system/config.json");
+    await runtime.legacy.preferences.load({ userId: owner.ownerId, source: "configured-container" });
+    await writeFile(configPath, JSON.stringify({ channels: {} }));
+    const tokens = createPushTokenStore(db);
+    await tokens.register({ token: "test_device_token", platform: "ios", ownerId: owner.ownerId, seenAt: new Date(now), maxPerOwner: 16 });
+    const services = { kyselyInstance: db, chatRepository: repository } as unknown as OwnerDatabaseServices;
+    await router.close(); stream.shutdown();
+    const channels = initializeGatewayChannels({ homePath, configPath, codingAgentThreadStore: threads,
+      codingAgentNotificationPreferenceStore: runtime.legacy, notificationServices: services, pushTokens: tokens,
+      conversations: createConversationStore(homePath), dispatcher: { dispatch: async () => { throw new Error("unused"); } } as never,
+      finalizeWithSummary: async () => {}, logBestEffortFailure: vi.fn(), channelStt: async () => { throw new Error("unused"); } });
+    router = services.notificationRouter!;
+    stream = createGatewayChatEventStream({ repository, capture: vi.fn(), onChatEvent: input => services.notificationRouter?.onChatEvent(input) });
+    const legacySend = vi.spyOn(channels.channelManager, "send").mockResolvedValue(undefined);
+    try {
+      const ids = await request();
+      await threads.createThread({ userId: owner.ownerId, source: "configured-container" }, { providerId: "codex", prompt: "Review",
+        clientRequestId: `req_${ids.runId.slice(4)}` });
+      await router.flush(); now += 15_000; await router.tick();
+      expect(legacySend).not.toHaveBeenCalled();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(fetchSpy.mock.calls[0][1]?.body as string)[0]).toMatchObject({ channelId: "attention",
+        data: { v: 1, handle: "attention-test", target: { type: "chat", chatId: ids.chatId } }, interruptionLevel: "active" });
+      vi.stubEnv("MATRIX_NOTIFICATIONS_ROUTER", "off");
+      await threads.createThread({ userId: owner.ownerId, source: "configured-container" }, { providerId: "codex", prompt: "Review",
+        clientRequestId: "req_standalone" });
+      await vi.waitFor(() => expect(legacySend).toHaveBeenCalledTimes(1));
+    } finally {
+      await channels.closeChannels(); await channels.channelManager.stop(); await threads.shutdownTurns();
+      await rm(homePath, { recursive: true, force: true });
+    }
   });
 });

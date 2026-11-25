@@ -27,7 +27,8 @@ export function createNotificationRepository(db: Kysely<NotificationDatabase>, o
           .where("claimed_at", "<", new Date(now - 60_000)).execute();
         const due = await trx.selectFrom("notification_events").select("id")
           .where("owner_id", "=", ownerId).where("state", "=", "open").where("phone_send_after", "<=", new Date(now))
-          .orderBy("phone_send_after").orderBy("id").limit(50).forUpdate().skipLocked().execute();
+          // Claim only work that starts immediately: queued batches must not outlive the 60s lease.
+          .orderBy("phone_send_after").orderBy("id").limit(4).forUpdate().skipLocked().execute();
         if (!due.length) return [];
         return trx.updateTable("notification_events").set({ state: "sending", claimed_at: new Date(now),
           claim_token: randomUUID(), evaluated_at: new Date(now) })

@@ -1,5 +1,5 @@
 import { CanonicalChatRunActivitySchema } from "@matrix-os/contracts";
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type Transaction } from "kysely";
 import type { NotificationDatabase } from "./schema.js";
 import type { NotificationEventsTable } from "./events-schema.js";
 import { ROUTINE_DIRECT_CHAT_ID_PATTERN } from "../bots/routine-direct-chat-identity.js";
@@ -13,7 +13,8 @@ type RequestRow = { ref: string; chat_id: string; run_id: string | null; event: 
 
 /** Reads the same durable requests/outcomes as Needs you, never transcript/replay buffers. */
 export function createAttentionRequestSource(db: Kysely<NotificationDatabase>, ownerId: string) {
-  async function list(now: number, options: { chatId?: string; ref?: string; missingOnly?: boolean; limit?: number; source?: string } = {}): Promise<AttentionRequest[]> {
+  type ListOptions = { chatId?: string; ref?: string; refs?: readonly string[]; missingOnly?: boolean; limit?: number; source?: string };
+  async function listIn(db: Transaction<NotificationDatabase>, now: number, options: ListOptions): Promise<AttentionRequest[]> {
     const cutoff = sql`(SELECT applied_at FROM notification_schema_migrations WHERE version=2)`;
     const missing = (key: ReturnType<typeof sql>) => options.missingOnly
       ? sql`AND NOT EXISTS (SELECT 1 FROM notification_events n WHERE n.owner_id=${ownerId} AND n.dedupe_key=${key})` : sql``;
@@ -30,6 +31,7 @@ export function createAttentionRequestSource(db: Kysely<NotificationDatabase>, o
         AND (r.event->'browserApproval'->>'resolution') IS NULL
         ${options.chatId ? sql`AND r.chat_id=${options.chatId}` : sql``}
         ${options.ref ? sql`AND r.id=${options.ref}` : sql``}
+        ${options.refs ? sql`AND r.id IN (${sql.join(options.refs)})` : sql``}
         AND NOT EXISTS (SELECT 1 FROM chat_approval_outcomes o WHERE o.run_id=r.run_id AND o.approval_id=r.event->>'approvalId')
         AND NOT EXISTS (SELECT 1 FROM chat_run_events resolved WHERE resolved.run_id=r.run_id AND (
           (resolved.event->>'type'='approval.resolved' AND resolved.event->>'approvalId'=r.event->>'approvalId') OR
@@ -71,7 +73,13 @@ export function createAttentionRequestSource(db: Kysely<NotificationDatabase>, o
         kind: row.kind === "approval" ? "approval" : "question", dedupeKey: `interaction:${row.ref}`,
         createdAt: new Date(row.created_at), expiresAt: new Date(row.expires_at!) });
     }
-    return requests.slice(0, options.limit ?? 50);
+    return requests.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.ref.localeCompare(b.ref)).slice(0, options.limit ?? 50);
+  }
+  function list(now: number, options: ListOptions = {}): Promise<AttentionRequest[]> {
+    return db.transaction().execute(async trx => {
+      await sql`SET LOCAL statement_timeout='5s'`.execute(trx);
+      return listIn(trx, now, options);
+    });
   }
   return { list, async pending(event: Pick<NotificationEventsTable, "source" | "source_ref" | "dedupe_key">, now: number) {
     return (await list(now, { ref: event.source_ref, source: event.source, limit: 1 })).find(request => request.dedupeKey === event.dedupe_key);
