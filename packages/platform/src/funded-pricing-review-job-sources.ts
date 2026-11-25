@@ -110,7 +110,10 @@ function utcDay(month: string, day: string, year: string): string | null {
 
 /** Match published calendar-day sections and exact IDs. Advisory prose is not an effective date. */
 function retirements(text: string, catalog: Readonly<Record<string, ExpectedRates>>): Record<string, string> | null {
-  if (!/^# (?:Workers AI )?Changelog\s*$/im.test(text) && !/^---\r?\ntitle: Workers AI Changelog\r?\n/.test(text)) return null;
+  const frontMatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text)?.[1];
+  const titles = frontMatter?.match(/^title:[^\r\n]*$/gm);
+  const titledChangelog = titles?.length === 1 && titles[0] === "title: Workers AI Changelog";
+  if (!titledChangelog && !/^# (?:Workers AI )?Changelog\s*$/im.test(text)) return null;
   const result: Record<string, string> = {};
   let date: string | null = null;
   let sawModel = false;

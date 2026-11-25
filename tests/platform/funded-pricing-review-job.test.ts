@@ -109,6 +109,29 @@ describe("official funded pricing verification", () => {
     }
   });
 
+  it("renews verified rates when changelog metadata precedes the title", async () => {
+    const notice = [
+      "---",
+      "agent:",
+      '  search: "https://developers.cloudflare.com/.well-known/search?q={query}"',
+      "title: Workers AI Changelog",
+      "image: https://developers.cloudflare.com/og-changelog.png",
+      "---",
+      changelog.split("\n").slice(1).join("\n"),
+    ].join("\n");
+    const result = await readOfficialFundedPricing({
+      fetchFn: sourceFetch(pricing, notice),
+      signal: new AbortController().signal,
+      catalog: { ...catalog, [deepseek]: FUNDED_PRICING_CATALOG[deepseek] },
+    });
+    expect(result).toMatchObject({
+      [glm]: { kind: "match", retiredAt: "2026-11-20T00:00:00.000Z" },
+      [deepseek]: { kind: "match", retiredAt: null },
+      [qwen]: { kind: "match", retiredAt: null },
+      [gemma]: { kind: "inconclusive", sourceDigest: null },
+    });
+  });
+
   it("blocks confirmed rate changes but refuses duplicate or malformed evidence", async () => {
     const signal = new AbortController().signal;
     const original = { [glm]: catalog[glm] };
