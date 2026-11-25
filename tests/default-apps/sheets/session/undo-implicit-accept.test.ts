@@ -9,7 +9,7 @@ async function proposed() {
   const session = await openSheetSession({ ...h.deps, autosaveDelayMs: 60_000 }, "model.xlsx");
   const sheet = session.getState().activeSheetId;
   session.setCellInput(sheet, { row: 1, col: 1 }, "50000");
-  runProposal(session, "Lower the price", "2026-11-23T10:00:00.000Z", (workbook) => workbook.setCell(sheet, { row: 1, col: 1 }, 999));
+  runProposal(session, "Lower the price", "2026-11-23T10:00:00.000Z", [], (workbook) => workbook.setCell(sheet, { row: 1, col: 1 }, 999));
   expect(session.workbook.listChanges()).toMatchObject([{ oldValue: 50000, newValue: 999 }]);
   return { session, sheet };
 }

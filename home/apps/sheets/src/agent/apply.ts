@@ -110,6 +110,42 @@ export function writeResolved(workbook: Workbook, edit: ResolvedSheetEdit): void
   else workbook.setCell(edit.sheet, address, edit.value);
 }
 
+/** Cells a proposal is about to write: a range of one sheet. */
+export interface ProposalTarget {
+  sheet: SheetId;
+  range: CellRange;
+}
+
+/**
+ * True when a cell of the targets already has a pending change. The journal
+ * would fold a new edit of that cell into the earlier change, which keeps its
+ * own proposal: the new proposal could neither list the edit nor take it back.
+ */
+export function hasPendingCells(workbook: Workbook, targets: readonly ProposalTarget[]): boolean {
+  const pending: Array<{ sheet: SheetId; row: number; col: number }> = [];
+  const keys = new Set<string>();
+  for (const change of workbook.listChanges()) {
+    if (change.row === null || change.col === null) continue;
+    pending.push({ sheet: change.sheet, row: change.row, col: change.col });
+    keys.add(`${change.sheet}|${change.row}|${change.col}`);
+  }
+  if (pending.length === 0) return false;
+  // Each target is checked the cheaper way: its cells against the pending ones, or the pending ones against it.
+  return targets.some(({ sheet, range }) => {
+    const area = (range.end.row - range.start.row + 1) * (range.end.col - range.start.col + 1);
+    if (area > pending.length) return pending.some((cell) => cell.sheet === sheet && inside(range, cell.row, cell.col));
+    for (let row = range.start.row; row <= range.end.row; row++) {
+      for (let col = range.start.col; col <= range.end.col; col++) if (keys.has(`${sheet}|${row}|${col}`)) return true;
+    }
+    return false;
+  });
+}
+
+/** One target per resolved edit. */
+export function editTargets(edits: readonly ResolvedSheetEdit[]): ProposalTarget[] {
+  return edits.map((edit) => ({ sheet: edit.sheet, range: { start: { row: edit.row, col: edit.col }, end: { row: edit.row, col: edit.col } } }));
+}
+
 export interface ProposalRecord {
   proposalId: string;
   changeIds: string[];
@@ -117,11 +153,22 @@ export interface ProposalRecord {
 
 /**
  * Runs `write` inside a new proposal authored by the Matrix Assistant, then
- * recalculates. All or nothing: when `write` throws, every change it
- * recorded is rejected and {@link SheetsAgentError} `apply_failed` is thrown.
+ * recalculates. `targets` are the cells `write` may change: when one of them
+ * already has a pending change nothing is written and {@link SheetsAgentError}
+ * `pending_change` is thrown. All or nothing: when `write` throws, every
+ * change it recorded is rejected and {@link SheetsAgentError} `apply_failed`
+ * is thrown.
  */
-export function runProposal(session: AgentSession, label: string, date: string, write: (workbook: Workbook) => void, log?: (message: string, error: unknown) => void): ProposalRecord {
+export function runProposal(
+  session: AgentSession,
+  label: string,
+  date: string,
+  targets: readonly ProposalTarget[],
+  write: (workbook: Workbook) => void,
+  log?: (message: string, error: unknown) => void,
+): ProposalRecord {
   const options: ProposalOptions = { author: ASSISTANT_AUTHOR, date, label: oneLine(label, 200) || "Assistant changes" };
+  if (hasPendingCells(session.workbook, targets)) throw new SheetsAgentError("pending_change");
   try {
     return session.mutate((workbook) => {
       const proposalId = workbook.beginProposal(options);

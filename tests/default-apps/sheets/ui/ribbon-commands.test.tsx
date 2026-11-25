@@ -132,7 +132,7 @@ describe("Review tab", () => {
     const session = app.session();
     const sheet = session.getState().activeSheetId;
     act(() => {
-      runProposal(session, "Raise", "2026-11-23T10:00:00.000Z", (workbook) => {
+      runProposal(session, "Raise", "2026-11-23T10:00:00.000Z", [], (workbook) => {
         workbook.setCell(sheet, { row: 0, col: 0 }, 10);
         workbook.setCell(sheet, { row: 1, col: 0 }, 20);
       });

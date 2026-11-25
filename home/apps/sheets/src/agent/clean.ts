@@ -6,7 +6,7 @@
  */
 
 import { askModel } from "./ai";
-import { runProposal, validateReply, writeResolved } from "./apply";
+import { editTargets, runProposal, validateReply, writeResolved } from "./apply";
 import { type AgentContext, type ProposalOutcome, isoNow } from "./context";
 import { type CellRange, type CellValue, type ResolvedSheetEdit, type SheetId, type Workbook, agentEditInstructions, columnLabel } from "./engine";
 import { describeSheet } from "./engine";
@@ -45,7 +45,8 @@ export function columnRange(workbook: Workbook, sheet: SheetId, col: number): Ce
 /**
  * The deterministic clean-up of a column: tidies text, and when most of the
  * column is numeric, turns numbers typed as text into numbers. Formula cells
- * are left alone. Returns edits for the cells that change.
+ * and cells with a pending change are left alone. Returns edits for the cells
+ * that change.
  */
 export function normaliseColumn(workbook: Workbook, sheet: SheetId, col: number): ResolvedSheetEdit[] {
   const range = columnRange(workbook, sheet, col);
@@ -61,7 +62,8 @@ export function normaliseColumn(workbook: Workbook, sheet: SheetId, col: number)
   const numericColumn = filled > 0 && numeric / filled >= 0.6;
   const edits: ResolvedSheetEdit[] = [];
   cells.forEach((cell, index) => {
-    if (cell.formula !== null || typeof cell.value !== "string") return;
+    // A cell with a pending change keeps it: its proposal is reviewed on its own.
+    if (cell.formula !== null || typeof cell.value !== "string" || cell.pendingChangeId !== null) return;
     const tidy = tidyText(cell.value);
     const asNumber = numericColumn ? numberFromText(tidy) : null;
     const value: CellValue = asNumber ?? (tidy === "" ? null : tidy);
@@ -107,7 +109,7 @@ export async function cleanColumn(ctx: AgentContext, sheet: SheetId, col: number
   for (const edit of modelEdits) byCell.set(edit.row, edit);
   const edits = [...byCell.values()].sort((a, b) => a.row - b.row);
   if (edits.length === 0) return { status: "no_changes", summary: summary || "The column is already clean." };
-  const record = runProposal(ctx.session, label, isoNow(ctx), (wb) => {
+  const record = runProposal(ctx.session, label, isoNow(ctx), editTargets(edits), (wb) => {
     for (const edit of edits) writeResolved(wb, edit);
   }, ctx.log);
   if (record.changeIds.length === 0) return { status: "no_changes", summary: "The column is already clean." };

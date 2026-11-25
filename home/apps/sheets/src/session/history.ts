@@ -8,6 +8,9 @@
  */
 
 import type { CellChange, CellRange, DefinedName, FrozenPanes, RawCell, SheetId, Workbook, WorkbookInternals } from "./engine";
+
+/** What deleting rows or columns takes from a sheet besides cells: rules, links, notes, tables, hidden flags. */
+export type SheetFeatures = NonNullable<ReturnType<WorkbookInternals["captureSheetFeatures"]>>;
 import { acceptAgain, restoreAccepted } from "./implicit-accept";
 
 /** One cell before and after an edit. */
@@ -34,6 +37,20 @@ export interface DeletedBand {
   names: DefinedName[];
   /** Formulas the engine rewrote, at the position each cell has after the deletion. */
   rewrites: CellDelta[];
+  /** Validation rules, links, conditional formats, notes, tables and hidden flags before the deletion; null when the sheet had none. */
+  features: SheetFeatures | null;
+}
+
+/** Characters of kept feature markup that weigh as much as one cell record. */
+const FEATURE_CHARS_PER_CELL = 32;
+
+/** How much a kept feature state weighs against the history's cell budget. */
+export function featureWeight(features: SheetFeatures | null): number {
+  if (features === null) return 0;
+  let chars = 0;
+  for (const text of features.elements) chars += text.length;
+  for (const note of features.notes) chars += note.text.length;
+  return Math.ceil(chars / FEATURE_CHARS_PER_CELL) + features.arrays.length + features.rows.length + (features.columns?.length ?? 0) + features.tables.length;
 }
 
 export type HistoryStep =
@@ -59,7 +76,7 @@ export const MAX_HISTORY_CELLS = 1_000_000;
 
 function stepWeight(step: HistoryStep): number {
   if (step.kind === "cells") return step.deltas.length;
-  if (step.kind === "axis" && !step.insert) return step.band.cells.length + step.band.rewrites.length + 1;
+  if (step.kind === "axis" && !step.insert) return step.band.cells.length + step.band.rewrites.length + featureWeight(step.band.features) + 1;
   if (step.kind === "accepted") return step.changes.length;
   return 1;
 }
@@ -193,6 +210,8 @@ function restoreBand(
   }
   reconcileMerges(workbook, sheet, band.merges);
   restoreNames(workbook, band.names);
+  // Last, so that array formulas find their cells and rows their restored content.
+  if (band.features !== null && internals.readableSheetFeatures(band.features)) internals.restoreSheetFeatures(sheet, band.features);
 }
 
 /** Applies one step. `forward` is redo; otherwise undo. */

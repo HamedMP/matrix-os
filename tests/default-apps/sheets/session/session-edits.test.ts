@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { opc } from "../../../../home/apps/_shared/office-engine/index";
 import { type SessionEvent, type SheetSession, createSheetSession, openSheetSession } from "../../../../home/apps/sheets/src/session";
+import { buildXlsx } from "../../../office/xlsx/workbook/helpers";
 import { harness, sampleXlsx, settle } from "./fakes";
 
 async function open(): Promise<{ session: SheetSession; sheet: string; events: SessionEvent[] }> {
@@ -124,6 +125,37 @@ describe("sheet session editing", () => {
     expect(value(session, sheet, "A2")).toBe(2);
     session.redo();
     expect(session.cell(sheet, 0, 1).formula).toBe("SUM(A1:A5)");
+  });
+
+  it("restores the validation rules, links, conditional formats and hidden flags of deleted rows on undo", async () => {
+    const features =
+      '<conditionalFormatting sqref="A3"><cfRule type="expression" priority="1"><formula>A3&gt;1</formula></cfRule></conditionalFormatting>' +
+      '<dataValidations count="1"><dataValidation type="whole" sqref="A3"><formula1>0</formula1><formula2>9</formula2></dataValidation></dataValidations>' +
+      '<hyperlinks><hyperlink ref="A3" location="Sheet1!A1"/></hyperlinks>';
+    let rows = "";
+    for (let r = 1; r <= 5; r++) rows += `<row r="${r}"${r === 4 ? ' hidden="1"' : ""}><c r="A${r}"><v>${r}</v></c></row>`;
+    const h = harness();
+    h.files.put("Rules.xlsx", await buildXlsx({ sheets: [{ name: "Sheet1", rows, after: features }] }));
+    const session = await openSheetSession(h.deps, "Rules.xlsx");
+    const sheet = session.getState().activeSheetId;
+    const featureText = async (): Promise<string> => {
+      const pkg = await opc.openPackage(await session.workbook.save());
+      return /<conditionalFormatting.*<\/hyperlinks>/.exec(await pkg.getPartText("/xl/worksheets/sheet1.xml"))?.[0] ?? "";
+    };
+    const before = await featureText();
+    expect(before).toContain('sqref="A3"');
+
+    expect(session.deleteRows(sheet, 2, 2)).toEqual({ ok: true });
+    expect(await featureText()).not.toContain('sqref="A3"');
+
+    expect(session.undo()).toEqual({ ok: true });
+    expect([value(session, sheet, "A3"), value(session, sheet, "A4")]).toEqual([3, 4]);
+    expect(session.sheet(sheet).rows.find((row) => row.index === 3)?.hidden).toBe(true);
+    expect(await featureText()).toBe(before);
+
+    // Redo deletes them again, with what the engine does to the rules on a deletion.
+    session.redo();
+    expect(await featureText()).not.toContain('sqref="A3"');
   });
 
   it("restores deleted rows with their cells, sizes and the formulas that pointed at them", async () => {

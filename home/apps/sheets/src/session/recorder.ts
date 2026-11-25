@@ -21,6 +21,7 @@ import {
   type Workbook,
   type WorkbookInternals,
   getWorkbookInternals,
+  isOfficeError,
 } from "./engine";
 import type { Transaction } from "./edits";
 import {
@@ -30,6 +31,7 @@ import {
   History,
   type HistoryEntry,
   type HistoryStep,
+  type SheetFeatures,
   applyEntry,
   structuralSheets,
 } from "./history";
@@ -165,7 +167,22 @@ export class Recorder {
     }
   }
 
-  private captureBand(sheet: SheetId, axis: "row" | "col", index: number, count: number): Omit<DeletedBand, "rewrites"> {
+  /**
+   * The rules, links, notes, tables and hidden flags a deletion changes. A
+   * sheet with more than the engine keeps is deleted all the same, but the
+   * transaction can then no longer be undone.
+   */
+  private captureFeatures(open: OpenTransaction, sheet: SheetId, axis: "row" | "col", index: number, count: number): SheetFeatures | null {
+    try {
+      return this.internals.captureSheetFeatures(sheet, axis, index, count);
+    } catch (error: unknown) {
+      if (!isOfficeError(error, "limit_exceeded")) throw error;
+      open.overflow = true;
+      return null;
+    }
+  }
+
+  private captureBand(open: OpenTransaction, sheet: SheetId, axis: "row" | "col", index: number, count: number): Omit<DeletedBand, "rewrites"> {
     const info = this.workbook.getSheet(sheet);
     const cells: BandCell[] = [];
     const used = info.dimensions;
@@ -187,7 +204,8 @@ export class Recorder {
     } else {
       for (const col of info.columns) if (col.index >= index && col.index < index + count) sizes.push({ index: col.index, size: col.width });
     }
-    return { cells, sizes, merges: info.mergedRanges, names: this.workbook.listDefinedNames() };
+    const features = this.captureFeatures(open, sheet, axis, index, count);
+    return { cells, sizes, merges: info.mergedRanges, names: this.workbook.listDefinedNames(), features };
   }
 
   /** Inserts or deletes rows or columns inside the open transaction. */
@@ -206,7 +224,7 @@ export class Recorder {
       open.steps.push({ kind: "axis", sheet, axis, index, count, insert: true });
       return;
     }
-    const band = this.captureBand(sheet, axis, index, count);
+    const band = this.captureBand(open, sheet, axis, index, count);
     const rewrites: CellDelta[] = [];
     this.rewrites = rewrites;
     try {

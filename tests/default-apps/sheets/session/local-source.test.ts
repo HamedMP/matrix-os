@@ -88,7 +88,7 @@ describe("a workbook opened from this computer", () => {
     const h = harness();
     const session = await openLocalSheetSession(h.deps, "data.csv", encode("name,amount\nA,10\n"));
     const sheet = session.getState().activeSheetId;
-    runProposal(session, "Raise A", "2026-11-23T10:00:00.000Z", (workbook) => workbook.setCell(sheet, { row: 1, col: 1 }, 999));
+    runProposal(session, "Raise A", "2026-11-23T10:00:00.000Z", [], (workbook) => workbook.setCell(sheet, { row: 1, col: 1 }, 999));
     expect(await exportSessionFile(session)).toMatchObject({ ok: false, code: "review_pending" });
     const copy = await exportSessionFile(session, "xlsx");
     if (!copy.ok) throw new Error("export failed");

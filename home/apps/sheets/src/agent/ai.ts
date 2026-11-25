@@ -16,7 +16,7 @@ interface BridgeAi {
   generate(input: { prompt: string }): Promise<{ text: string }>;
 }
 
-export type SheetsAgentErrorCode = "unavailable" | "prompt_too_large" | "ai_failed" | "timeout" | "cancelled" | "apply_failed";
+export type SheetsAgentErrorCode = "unavailable" | "prompt_too_large" | "ai_failed" | "timeout" | "cancelled" | "apply_failed" | "pending_change";
 
 const MESSAGES: Record<SheetsAgentErrorCode, string> = {
   unavailable: "The assistant is not available here.",
@@ -25,6 +25,7 @@ const MESSAGES: Record<SheetsAgentErrorCode, string> = {
   timeout: "The assistant took too long to answer. Try again.",
   cancelled: "Stopped.",
   apply_failed: "The changes could not be proposed. Nothing was changed.",
+  pending_change: "Some of these cells already have a proposed change. Accept or reject it first, then try again.",
 };
 
 /** A failure with a sentence that is safe to show the owner. */

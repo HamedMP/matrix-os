@@ -5,7 +5,7 @@
  */
 
 import { askModel } from "./ai";
-import { type EditScope, runProposal, validateReply, writeResolved } from "./apply";
+import { type EditScope, editTargets, runProposal, validateReply, writeResolved } from "./apply";
 import { type AgentContext, type ProposalOutcome, type SheetSelection, isoNow } from "./context";
 import { type CellRange, type SheetId, type Workbook, agentEditInstructions, describeSheet, formatA1, formatA1Range } from "./engine";
 import { type PromptBlock, type PromptParts, buildPrompt, contentBudget, cleanRequest } from "./prompt";
@@ -64,7 +64,7 @@ export async function proposeWithModel(ctx: AgentContext, req: ProposeRequest): 
     if (checked.reason === "empty") return { status: "no_changes", summary: checked.messages[0] ?? "" };
     return { status: "invalid", messages: checked.messages };
   }
-  const record = runProposal(ctx.session, req.label, isoNow(ctx), (wb) => {
+  const record = runProposal(ctx.session, req.label, isoNow(ctx), editTargets(checked.edits), (wb) => {
     for (const edit of checked.edits) writeResolved(wb, edit);
   }, ctx.log);
   if (record.changeIds.length === 0) return { status: "no_changes", summary: checked.summary || "The proposed values are already in place." };

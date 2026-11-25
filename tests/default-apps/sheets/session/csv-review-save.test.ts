@@ -8,7 +8,7 @@ async function csvWithProposal(path = "data.csv", text = "name,amount\nA,10\nB,2
   h.files.put(path, encode(text));
   const session = await openSheetSession(h.deps, path);
   const sheet = session.getState().activeSheetId;
-  runProposal(session, "Raise A", "2026-11-23T10:00:00.000Z", (workbook) => workbook.setCell(sheet, { row: 1, col: 1 }, 999));
+  runProposal(session, "Raise A", "2026-11-23T10:00:00.000Z", [], (workbook) => workbook.setCell(sheet, { row: 1, col: 1 }, 999));
   expect(session.workbook.listChanges()).toHaveLength(1);
   return { h, session, sheet, path, text };
 }
@@ -44,7 +44,7 @@ describe("a CSV or TSV file with assistant changes waiting for review", () => {
     expect(h.files.text(path)).toBe("name,amount\nA,10\nB,20\n");
 
     const sheet = session.getState().activeSheetId;
-    runProposal(session, "Raise B", "2026-11-23T10:00:00.000Z", (workbook) => workbook.setCell(sheet, { row: 2, col: 1 }, 50));
+    runProposal(session, "Raise B", "2026-11-23T10:00:00.000Z", [], (workbook) => workbook.setCell(sheet, { row: 2, col: 1 }, 50));
     session.acceptChanges("all");
     h.timers.fire();
     await settle();

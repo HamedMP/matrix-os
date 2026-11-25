@@ -42,7 +42,7 @@ export function formatAsTable(ctx: AgentContext, selection: SheetSelection): Pro
   const cells = (range.end.row - range.start.row + 1) * (range.end.col - range.start.col + 1);
   if (cells > MAX_PROPOSED_CELLS) return { status: "invalid", messages: [`Select at most ${MAX_PROPOSED_CELLS} cells to format as a table.`] };
   const label = `Assistant: format ${formatA1Range(range)} as a table`;
-  const record = runProposal(ctx.session, label, isoNow(ctx), (wb) => {
+  const record = runProposal(ctx.session, label, isoNow(ctx), [{ sheet: selection.sheet, range }], (wb) => {
     const row = (r: number): CellRange => ({ start: { row: r, col: range.start.col }, end: { row: r, col: range.end.col } });
     wb.setStyle(selection.sheet, row(range.start.row), TABLE_HEADER);
     for (let r = range.start.row + 1; r <= range.end.row; r++) {
@@ -66,6 +66,7 @@ export function fixFinding(ctx: AgentContext, finding: Finding): ProposalOutcome
   const sourceName = workbook.getSheet(source.sheet).name;
   const formula = source.sheet === finding.sheet ? formatA1(source) : `${sheetRef(sourceName)}!${formatA1(source)}`;
   const label = `Assistant: link ${finding.location} to its calculation`;
-  const record = runProposal(ctx.session, label, isoNow(ctx), (wb) => wb.setFormula(finding.sheet, { row: finding.row, col: finding.col }, formula), ctx.log);
+  const at = { row: finding.row, col: finding.col };
+  const record = runProposal(ctx.session, label, isoNow(ctx), [{ sheet: finding.sheet, range: { start: at, end: at } }], (wb) => wb.setFormula(finding.sheet, at, formula), ctx.log);
   return { status: "proposed", ...record, label, summary: `${finding.location} becomes =${formula}.` };
 }

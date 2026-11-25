@@ -10,6 +10,7 @@ import {
   narrateTrace,
   normaliseColumn,
   numberFromText,
+  SheetsAgentError,
 } from "../../../../home/apps/sheets/src/agent";
 import { openModel } from "../review/fixture";
 import { FakeAi, NOW, envelope } from "./fake-ai";
@@ -67,6 +68,22 @@ describe("fixing a finding", () => {
     // After the fix the check no longer finds a mismatch.
     expect(checkWorkbook(session.workbook).filter((entry) => entry.kind === "total-mismatch")).toEqual([]);
   });
+
+  it("does not write over a cell that already has a proposed change", async () => {
+    const { session, sheets } = await openModel();
+    const finding = checkWorkbook(session.workbook).find((entry) => entry.kind === "total-mismatch")!;
+    // A colleague proposes bold for the total: its value still matches the finding but the cell now has a pending change.
+    session.mutate((workbook) => {
+      workbook.beginProposal({ author: "Alex", date: "2026-11-20T09:00:00.000Z", label: "Bold total" });
+      workbook.setStyle(finding.sheet, cell(finding.row, finding.col), { font: { bold: true } });
+      workbook.endProposal();
+    });
+    const before = session.workbook.listChanges();
+    expect(before).toHaveLength(1);
+    expect(() => fixFinding({ session, ai: null, now: NOW }, finding)).toThrow(SheetsAgentError);
+    expect(session.workbook.listChanges()).toEqual(before);
+    expect(session.cell(sheets.summary, 1, 1).formula).toBeNull();
+  });
 });
 
 describe("formatting as a table", () => {
@@ -83,6 +100,29 @@ describe("formatting as a table", () => {
     expect(outcome.changeIds).toHaveLength(18);
     session.rejectChanges(outcome.changeIds);
     expect(session.cell(sheets.assumptions, 0, 0).styleId).toBe(before);
+  });
+
+  it("refuses a range with a proposed change instead of folding its styles into that proposal", async () => {
+    const { session, sheets } = await openModel();
+    session.mutate((workbook) => {
+      workbook.beginProposal({ author: "Alex", date: "2026-11-20T09:00:00.000Z", label: "Higher growth" });
+      workbook.setCell(sheets.assumptions, { row: 2, col: 1 }, 0.05);
+      workbook.endProposal();
+    });
+    const before = session.workbook.listChanges();
+    const header = session.cell(sheets.assumptions, 0, 0).styleId;
+    const proposed = session.cell(sheets.assumptions, 2, 1).styleId;
+    let thrown: unknown = null;
+    try {
+      formatAsTable({ session, ai: null, now: NOW }, { sheet: sheets.assumptions, range: cell(0, 0) });
+    } catch (error: unknown) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(SheetsAgentError);
+    expect((thrown as SheetsAgentError).code).toBe("pending_change");
+    expect(session.workbook.listChanges()).toEqual(before);
+    expect(session.cell(sheets.assumptions, 0, 0).styleId).toBe(header);
+    expect(session.cell(sheets.assumptions, 2, 1).styleId).toBe(proposed);
   });
 });
 
@@ -114,6 +154,25 @@ describe("cleaning a column", () => {
     expect(session.cell(sheets.summary, 11, 4).value).toBe("United Kingdom");
     expect(session.cell(sheets.summary, 12, 4).value).toBe("United Kingdom");
     expect(new Set(session.workbook.listChanges().map((change) => change.proposalId)).size).toBe(1);
+  });
+
+  it("leaves a cell with a proposed change out of the clean-up and tidies the rest in a new proposal", async () => {
+    const { session, sheets } = await openModel();
+    session.mutate((workbook) => workbook.setRange(sheets.summary, { row: 10, col: 4 }, [["Amount"], [" 1,200 "], ["£50"], [7]]));
+    session.mutate((workbook) => {
+      workbook.beginProposal({ author: "Alex", date: "2026-11-20T09:00:00.000Z", label: "Retype" });
+      workbook.setCell(sheets.summary, { row: 12, col: 4 }, " 9,000 ");
+      workbook.endProposal();
+    });
+    const [earlier] = session.workbook.listChanges();
+    const outcome = await cleanColumn({ session, ai: null, now: NOW }, sheets.summary, 4);
+    expect(outcome.status).toBe("proposed");
+    if (outcome.status !== "proposed") return;
+    expect(outcome.changeIds).toHaveLength(1);
+    expect(session.cell(sheets.summary, 11, 4).value).toBe(1200);
+    // The colleague's proposal keeps its own text, still pending in its own proposal.
+    expect(session.cell(sheets.summary, 12, 4).value).toBe(" 9,000 ");
+    expect(session.workbook.listChanges().find((change) => change.id === earlier!.id)).toEqual(earlier);
   });
 
   it("applies nothing when the model writes outside the column", async () => {

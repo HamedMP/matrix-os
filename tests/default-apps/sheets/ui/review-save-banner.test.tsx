@@ -17,7 +17,7 @@ describe("the save banner for a CSV file with changes waiting for review", () =>
     h.files.put("Data/data.xlsx", encode("taken"));
     const session = await openSheetSession(h.deps, "Data/data.csv");
     const sheet = session.getState().activeSheetId;
-    runProposal(session, "Raise A", "2026-11-23T10:00:00.000Z", (workbook) => workbook.setCell(sheet, { row: 1, col: 1 }, 999));
+    runProposal(session, "Raise A", "2026-11-23T10:00:00.000Z", [], (workbook) => workbook.setCell(sheet, { row: 1, col: 1 }, 999));
     h.timers.fire();
     await settle();
     const notify = vi.fn();
