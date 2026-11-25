@@ -154,6 +154,8 @@ describe("metal host scripts", () => {
     expect(smoke).toContain('"https://127.0.0.1:$ingress_port/health")" = 401');
     expect(smoke).toContain('ip -4 neigh show to "$vm_ip" dev "$bridge" nud permanent');
     expect(smoke).toContain("check_ingress_binding");
+    expect(smoke).toContain(`sed -n 's/^MAC=//p' "$unit_env"`);
+    expect(smoke).not.toContain("json_field mac");
     expect(await readFile("docs/dev/metal-hosts.md", "utf8")).toContain("https://app.matrix-os.com/vm/<handle>");
   });
 
