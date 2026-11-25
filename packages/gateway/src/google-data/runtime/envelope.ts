@@ -11,7 +11,7 @@ const Claim = z.strictObject({
   executionGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/),
   profileId: z.uuid(), profileRevision: Revision, consentId: z.uuid(), consentRevision: Revision,
   googleAccountId: Reference, purposeId: Reference, routeDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  policyExpiresAt: z.iso.datetime(),
+  policyExpiresAt: z.iso.datetime(), collectionExpiresAt: z.iso.datetime(),
 });
 const Envelope = Claim.extend({ version: z.literal(1), requestId: z.uuid(),
   method: z.literal('POST'), path: z.enum(['/call', '/read-call']), bodyDigest: z.string().regex(/^[a-f0-9]{64}$/),
@@ -37,7 +37,7 @@ export function signGoogleProcessingEnvelope(input: GoogleProcessingClaim, reque
   const now = request.now ?? Date.now();
   const parsed = Claim.safeParse(input);
   if (!parsed.success || !validKey(request.machineToken) || !validTime(now) || Buffer.byteLength(request.body) > 65536) throw new GoogleProcessingEnvelopeError();
-  const expiresAt = Math.min(now + LIFETIME_MS, Date.parse(parsed.data.policyExpiresAt));
+  const expiresAt = Math.min(now + LIFETIME_MS, Date.parse(parsed.data.policyExpiresAt), Date.parse(parsed.data.collectionExpiresAt));
   const envelope = Envelope.safeParse({ ...parsed.data, version: 1, requestId: randomUUID(),
     method: request.method, path: request.path, bodyDigest: digest(request.body), issuedAt: now, expiresAt });
   if (!envelope.success || expiresAt <= now) throw new GoogleProcessingEnvelopeError();
@@ -72,6 +72,6 @@ export function verifyGoogleProcessingEnvelope(token: string, request: RequestBi
   if (value.ownerId !== request.ownerId || value.method !== request.method || value.path !== request.path
     || value.bodyDigest !== digest(request.body) || value.issuedAt > now + 5000 || value.expiresAt <= now
     || value.expiresAt <= value.issuedAt || value.expiresAt - value.issuedAt > LIFETIME_MS
-    || value.expiresAt > Date.parse(value.policyExpiresAt)) throw new GoogleProcessingEnvelopeError();
+    || value.expiresAt > Date.parse(value.policyExpiresAt) || value.expiresAt > Date.parse(value.collectionExpiresAt)) throw new GoogleProcessingEnvelopeError();
   return value;
 }

@@ -10,10 +10,16 @@ const claim = { ownerId: 'user_owner', runId: 'run_one', runtimeHandle: 'runtime
   profileId: '11111111-1111-4111-8111-111111111111', profileRevision: 1,
   consentId: '22222222-2222-4222-8222-222222222222', consentRevision: 1,
   googleAccountId: '33333333-3333-4333-8333-333333333333', purposeId: 'gmail_productivity',
-  routeDigest: 'b'.repeat(64), policyExpiresAt: new Date(now + 60_000).toISOString() };
+  routeDigest: 'b'.repeat(64), collectionExpiresAt: new Date(now + 60000).toISOString(), policyExpiresAt: new Date(now + 60_000).toISOString() };
 const read = (envelope: string, overrides = {}) => verifyGoogleProcessingEnvelope(envelope, { ...request, machineToken: key, ownerId: claim.ownerId, now, ...overrides });
 
 describe('server-signed Google processing envelopes', () => {
+  it('bounds request authority by the retained-context collection deadline', () => {
+    const token = signGoogleProcessingEnvelope({ ...claim, collectionExpiresAt: new Date(now + 700).toISOString() }, { ...request, machineToken: key, now });
+    expect(read(token).expiresAt).toBe(now + 700);
+    expect(() => read(token, { now: now + 700 })).toThrow();
+    expect(() => signGoogleProcessingEnvelope({ ...claim, collectionExpiresAt: new Date(now).toISOString() }, { ...request, machineToken: key, now })).toThrow();
+  });
   it('binds a short-lived exact owner/run/profile/account claim to request bytes', () => {
     const token = signGoogleProcessingEnvelope(claim, { ...request, machineToken: key, now });
     const verified = read(token);
