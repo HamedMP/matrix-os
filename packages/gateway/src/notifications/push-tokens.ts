@@ -19,6 +19,8 @@ export interface PushTokenStore {
    * keeps concurrent registrations from overshooting the cap.
    */
   register(input: Registration): Promise<void>;
+  /** Old clients cannot distinguish enable from foreground registration. Preserve explicit off. */
+  registerLegacy(input: Registration): Promise<boolean>;
   /** Refreshes delivery only while durable consent is still on. Never grants consent. */
   refresh(input: Registration): Promise<boolean>;
   /** Explicit opt-out: retain off consent, remove this owner's linked delivery tokens. */
@@ -71,6 +73,26 @@ export function createPushTokenStore(db: Kysely<NotificationDatabase>): PushToke
         await consent(trx, input.ownerId, input.identity ?? input.token, input.token, true, input.seenAt);
         await delivery(trx, input);
         await trimPushConsents(trx, input.ownerId);
+      });
+    },
+
+    async registerLegacy(input) {
+      return withOwner(input.ownerId, async (trx) => {
+        const known = await trx.selectFrom("notification_push_consents").select(["identity", "enabled"])
+          .where("owner_id", "=", input.ownerId).where((eb) => eb.or([
+            eb("identity", "=", input.identity ?? input.token), eb("delivery_token", "=", input.token),
+          ])).orderBy("enabled", "asc").executeTakeFirst();
+        if (known && !known.enabled) return false;
+        if (!known) {
+          const guard = await trx.selectFrom("notification_push_consent_owners").select("owner_id")
+            .where("owner_id", "=", input.ownerId).where("legacy_import_blocked", "=", true).executeTakeFirst();
+          if (guard) return false;
+        }
+        const identity = known?.identity ?? input.identity ?? input.token;
+        await consent(trx, input.ownerId, identity, input.token, true, input.seenAt);
+        await delivery(trx, { ...input, identity });
+        await trimPushConsents(trx, input.ownerId);
+        return true;
       });
     },
 

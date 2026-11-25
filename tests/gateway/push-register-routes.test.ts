@@ -210,6 +210,7 @@ describe("POST/DELETE /api/push/register", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const failing = {
       register: async () => { throw new Error("connection to 10.0.0.5 refused"); },
+      registerLegacy: async () => { throw new Error("connection to 10.0.0.5 refused"); },
       refresh: async () => { throw new Error("connection to 10.0.0.5 refused"); },
       remove: async () => { throw new Error("connection to 10.0.0.5 refused"); },
       status: async () => { throw new Error("connection to 10.0.0.5 refused"); },

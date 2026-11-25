@@ -115,6 +115,34 @@ describe("phone consent and expiring delivery registration", () => {
     expect(await db.selectFrom("notification_push_tokens").select("token").execute()).toEqual([]);
   });
 
+  it.each([["retained", IDENTITY], ["rotated", DELIVERY]])("rejects older automatic registration of a %s token after explicit off", async (_label, token) => {
+    expect((await register()).status).toBe(200);
+    expect(await (await refresh(DELIVERY)).json()).toEqual({ ok: true, registered: true });
+    expect((await request("/api/push/register", { token: IDENTITY }, "DELETE")).status).toBe(200);
+
+    const legacy = await request("/api/push/register", { token, platform: "ios" });
+    expect(legacy.status).toBe(409);
+    await status({ enabled: false, registered: false });
+    expect(await db.selectFrom("notification_push_tokens").select("token").execute()).toEqual([]);
+
+    // Only a deliberate new-protocol enable can replace the off decision.
+    expect((await request("/api/push/register", { token, identity: IDENTITY, platform: "ios", mode: "enable" })).status).toBe(200);
+    await status({ enabled: true, registered: true });
+    expect((await request("/api/push/register", { token, platform: "ios" })).status).toBe(200);
+  });
+
+  it("allows old-client recovery of known on consent but refuses an unknown rotation after off history", async () => {
+    expect((await register()).status).toBe(200);
+    expect(await (await refresh(DELIVERY)).json()).toEqual({ ok: true, registered: true });
+    await db.deleteFrom("notification_push_tokens").execute();
+    expect((await request("/api/push/register", { token: DELIVERY, platform: "ios" })).status).toBe(200);
+    await status({ enabled: true, registered: true });
+    expect((await request("/api/push/register", { token: IDENTITY }, "DELETE")).status).toBe(200);
+    const unknown = await request("/api/push/register", { token: "ExponentPushToken[unknown-rotation]", platform: "ios" });
+    expect(unknown.status).toBe(409);
+    await status({ enabled: false, registered: false });
+  });
+
   it.each([["stable identity", IDENTITY], ["legacy delivery token", DELIVERY]])("revokes rotated delivery using the %s", async (_label, revokeToken) => {
     expect((await register()).status).toBe(200);
     expect(await (await refresh(DELIVERY)).json()).toEqual({ ok: true, registered: true });

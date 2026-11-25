@@ -135,7 +135,7 @@ it("keeps explicit enable distinct from automatic refresh", async () => {
 
   await enablePushNotifications(primary);
 
-  expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({ token, platform: "ios", identity: token });
+  expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({ token, platform: "ios", identity: token, mode: "enable" });
 });
 
 it("does not refresh an old computer after its Expo token request completes late", async () => {

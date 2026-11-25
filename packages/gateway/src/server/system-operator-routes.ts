@@ -24,7 +24,7 @@ const PushRegisterBodySchema = z.object({
   token: z.string().trim().min(1).max(512),
   platform: z.string().trim().min(1).max(32),
   identity: z.string().trim().min(1).max(512).optional(),
-  mode: z.enum(["enable", "refresh"]).default("enable"),
+  mode: z.enum(["enable", "refresh"]).optional(),
 }).strict();
 const PushStatusBodySchema = z.object({
   token: z.string().trim().min(1).max(512),
@@ -282,7 +282,12 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
         const registered = await pushAdapter.refreshToken(parsed.data.token, parsed.data.platform, principal.userId, parsed.data.identity);
         return c.json({ ok: true, registered });
       }
-      await pushAdapter.registerToken(parsed.data.token, parsed.data.platform, principal.userId, parsed.data.identity);
+      if (parsed.data.mode === "enable") {
+        await pushAdapter.registerToken(parsed.data.token, parsed.data.platform, principal.userId, parsed.data.identity);
+      } else {
+        const registered = await pushAdapter.registerLegacyToken(parsed.data.token, parsed.data.platform, principal.userId, parsed.data.identity);
+        if (!registered) return c.json({ error: "Push registration unavailable" }, 409);
+      }
     } catch (err: unknown) {
       return pushStorageFailure(c, err);
     }

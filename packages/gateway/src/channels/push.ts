@@ -41,6 +41,7 @@ export interface PushAdapterOptions {
 
 export interface PushAdapter extends ChannelAdapter {
   registerToken(token: string, platform: string, ownerId: string, identity?: string): Promise<void>;
+  registerLegacyToken(token: string, platform: string, ownerId: string, identity?: string): Promise<boolean>;
   refreshToken(token: string, platform: string, ownerId: string, identity?: string): Promise<boolean>;
   removeToken(token: string, ownerId: string, deliveryToken?: string): Promise<void>;
   getRegistrationStatus(identity: string, ownerId: string): Promise<PushRegistrationStatus>;
@@ -200,6 +201,10 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
 
     async registerToken(token: string, platform: string, ownerId: string, identity = token) {
       await requireTokens().register({ token, identity, platform, ownerId, seenAt: new Date(now()), maxPerOwner: maxRegisteredTokens });
+    },
+
+    async registerLegacyToken(token: string, platform: string, ownerId: string, identity = token) {
+      return requireTokens().registerLegacy({ token, identity, platform, ownerId, seenAt: new Date(now()), maxPerOwner: maxRegisteredTokens });
     },
 
     async refreshToken(token: string, platform: string, ownerId: string, identity = token) {

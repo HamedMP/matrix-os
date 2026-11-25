@@ -120,6 +120,10 @@ A4 implementation notes (ENG-453, 2026-11-20):
   errors; identities never enter URLs, logs or responses. Missing support or
   storage is unavailable, never assumed off.
 - Explicit enable records consent and delivery in one owner-locked transaction.
+  It sends `mode=enable`. A request without a mode is an ambiguous older-client
+  registration: it can refresh known on consent, but cannot replace any known
+  off alias or import an unknown token after this owner's opt-out history. Such
+  attempts receive a generic 409 and need an updated client's explicit enable.
   Explicit opt-out retains an off tombstone and removes every delivery token
   linked to that phone on this computer. TTL sweep and `DeviceNotRegistered`
   remove delivery only. Foreground uses conditional `mode=refresh`, which checks
@@ -180,11 +184,12 @@ A4 implementation notes (ENG-453, 2026-11-20):
   issues. Canonical mobile lint retains five baseline errors in four unchanged
   files; broader root limitations are recorded on [PR #3520](https://github.com/HamedMP/matrix-os/pull/3520).
 - Consent lifecycle correction validation: all 301 mobile suites / 3,802 tests,
-  124 prepared gateway/auth tests, mobile typecheck and all nine root typecheck
+  127 prepared gateway/auth tests, mobile typecheck and all nine root typecheck
   projects pass. Changed-file lint has no errors (nine existing test-file
   warnings); React Doctor finds no issues. Regression red/green checks cover
   real TTL/Expo cleanup, conditional refresh after off, rotation, rollback,
-  post-v4 legacy writes and off protection after capacity eviction. Quick iOS
+  post-v4 legacy writes, off protection after capacity eviction, and old mobile
+  automatic registration versus deliberate new-protocol enable. Quick iOS
   verification awaits a newly coordinated device window; no new native capture
   or remote delivery qualification is claimed by these automated checks.
 - Historical native iOS screenshots and recordings of the `9c9ed155` runtime

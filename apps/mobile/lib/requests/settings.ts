@@ -81,7 +81,7 @@ export async function updatePushRegistration(input: {
     method: input.enabled ? "POST" : "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input.enabled
-      ? { token: input.expoPushToken, platform: input.platform, ...(input.identity ? { identity: input.identity } : {}) }
+      ? { token: input.expoPushToken, platform: input.platform, mode: "enable", ...(input.identity ? { identity: input.identity } : {}) }
       : { token: input.expoPushToken, ...(input.deliveryToken ? { deliveryToken: input.deliveryToken } : {}) }),
   });
 }
