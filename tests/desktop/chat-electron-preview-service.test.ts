@@ -11,6 +11,7 @@ const preview = { png: Buffer.from("test picture"), testSummary: "10 passed" };
 
 function setup() {
   const seen = new Set<string>();
+  const activity = { update: vi.fn(), finish: vi.fn() };
   const deps = {
     enabled: true,
     read: vi.fn().mockResolvedValue(request),
@@ -24,13 +25,14 @@ function setup() {
     approve: vi.fn().mockResolvedValue(true),
     execute: vi.fn().mockResolvedValue(preview),
     returnResult: vi.fn().mockResolvedValue(undefined),
+    beginActivity: vi.fn(() => activity),
   };
-  return { deps, service: createChatElectronPreviewService(deps) };
+  return { deps, activity, service: createChatElectronPreviewService(deps) };
 }
 
 describe("one-time Electron Desktop preview", () => {
   it("uses one explicit approval, builds the bound version and returns evidence once", async () => {
-    const { deps, service } = setup();
+    const { deps, activity, service } = setup();
     expect(await service.run(identity)).toEqual({ status: "returned" });
     expect(deps.approve).toHaveBeenCalledTimes(1);
     expect(deps.execute).toHaveBeenCalledWith(request, expect.any(AbortSignal));
@@ -38,6 +40,9 @@ describe("one-time Electron Desktop preview", () => {
     expect(await service.run(identity)).toEqual({ status: "already-handled" });
     expect(deps.execute).toHaveBeenCalledTimes(1);
     expect(deps.returnResult).toHaveBeenCalledTimes(1);
+    expect(deps.beginActivity).toHaveBeenCalledExactlyOnceWith("preview", request.worktreeId);
+    expect(activity.update.mock.calls.flat()).toEqual(["awaiting-approval", "running", "returning"]);
+    expect(activity.finish).toHaveBeenCalledExactlyOnceWith("returned");
   });
 
   it("remembers a decline and never executes or posts a result", async () => {
@@ -50,11 +55,13 @@ describe("one-time Electron Desktop preview", () => {
   });
 
   it("fails closed when the profile changes during consent", async () => {
-    const { deps, service } = setup();
+    const { deps, activity, service } = setup();
     deps.approve.mockImplementation(async () => { deps.isCurrent.mockReturnValue(false); return true; });
     expect(await service.run(identity)).toEqual({ status: "unavailable" });
     expect(deps.execute).not.toHaveBeenCalled();
     expect(deps.claim).not.toHaveBeenCalled();
+    expect(activity.update).toHaveBeenCalledExactlyOnceWith("awaiting-approval");
+    expect(activity.finish).toHaveBeenCalledExactlyOnceWith("revoked");
   });
 
   it.each([
@@ -67,7 +74,7 @@ describe("one-time Electron Desktop preview", () => {
       deps.read.mockResolvedValueOnce(request).mockResolvedValueOnce(refreshed);
       expect(await service.run(identity)).toEqual({ status: "unavailable" });
       expect(deps.approve).toHaveBeenCalledTimes(1);
-      expect(deps.read).toHaveBeenNthCalledWith(2, identity);
+      expect(deps.read).toHaveBeenNthCalledWith(2, identity, undefined, expect.any(AbortSignal));
       expect(deps.execute).not.toHaveBeenCalled();
       expect(deps.returnResult).not.toHaveBeenCalled();
       expect(await service.run(identity)).toEqual({ status: "already-handled" });
@@ -96,6 +103,37 @@ describe("one-time Electron Desktop preview", () => {
     expect(await service.run(identity)).toEqual({ status: "failed" });
     expect(deps.returnResult).toHaveBeenCalledWith(request, { error: "build-failed" }, expect.any(AbortSignal));
     expect(await service.run(identity)).toEqual({ status: "already-handled" });
+  });
+
+  it("lets the native Stop cancel a foreground result upload and retires the visible activity", async () => {
+    const { deps, activity, service } = setup();
+    let signalAtDelivery!: AbortSignal;
+    let start = () => {};
+    const returning = new Promise<void>(resolve => { start = resolve; });
+    deps.returnResult.mockImplementation((_request, _result, signal?: AbortSignal) => {
+      signalAtDelivery = signal!;
+      start();
+      if (!signal) throw new Error("expected a cancelable foreground delivery");
+      return new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+    });
+    const outcome = service.run(identity);
+    await returning;
+    await service.cancel("stopped");
+
+    expect(await outcome).toEqual({ status: "unavailable" });
+    expect(signalAtDelivery.aborted).toBe(true);
+    expect(activity.update.mock.calls.flat()).toEqual(["awaiting-approval", "running", "returning"]);
+    expect(activity.finish).toHaveBeenCalledExactlyOnceWith("stopped");
+    expect(await service.run(identity)).toEqual({ status: "already-handled" });
+  });
+
+  it("keeps the verified result outcome when Stop is concurrent with its successful receipt", async () => {
+    const { deps, activity, service } = setup();
+    deps.returnResult.mockImplementation(async () => {
+      void service.cancel("stopped");
+    });
+    expect(await service.run(identity)).toEqual({ status: "returned" });
+    expect(activity.finish).toHaveBeenCalledExactlyOnceWith("returned");
   });
 
   it("cancels a background preview and skips return if its grant stops", async () => {
