@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
+import type { CanonicalChatMessage } from "@matrix-os/contracts";
 import { createChatElectronPreviewTransport } from "@desktop/main/chat-electron-preview/transport";
 import type { AuthStatus } from "@desktop/main/auth/auth-service";
 
@@ -26,7 +27,7 @@ const sourceSha256 = sha256(fileContent);
 const marker = "MATRIX_ELECTRON_PREVIEW_V1 " + JSON.stringify({ baseSha, sourceSha256, label, mainChecksPassed: true });
 const selection = { instanceId: "codex_default", model: "gpt-6.1-sol" };
 const executionRoot = { kind: "worktree", projectId, worktreeId };
-function fixture() {
+function fixture(parts: CanonicalChatMessage["parts"] = [{ type: "text", text: marker }]) {
   return {
     record: {
       projectId,
@@ -38,7 +39,7 @@ function fixture() {
     },
     messages: [{
       id: "msg_original", role: "assistant", state: "committed", chatId,
-      seq: 1, runId, turnId, parts: [{ type: "text", text: marker }], createdAt: timestamp,
+      seq: 1, runId, turnId, parts, createdAt: timestamp,
     }],
     runs: [{
       id: runId, chatId, turnId, attempt: 1, driverKind: "codex", instanceId: selection.instanceId,
@@ -57,10 +58,10 @@ function fixture() {
 }
 
 const png = Buffer.from("89504e470d0a1a0a010203", "hex");
-function mockTransport() {
+function mockTransport(parts?: CanonicalChatMessage["parts"]) {
   let authStatus: AuthStatus = { signedIn: true, userId: ownerId, handle: "owner", runtimeSlot: "primary", platformHost: origin, authGeneration: 4 };
   const auth = { getStatus: () => authStatus, getToken: () => authStatus.signedIn ? "test-auth" : null, getGatewayOrigin: () => origin };
-  const detail = fixture();
+  const detail = fixture(parts);
   const source = {
     metadata: { path: sourcePath, kind: "file", sizeBytes: Buffer.byteLength(fileContent), etag: sourceSha256, updatedAt: timestamp },
     content: fileContent, encoding: "utf8", truncated: false, limitBytes: 65_536,
@@ -137,10 +138,34 @@ describe("authenticated Chat Electron preview transport", () => {
     expect(JSON.stringify(request)).not.toContain("test-auth");
   });
 
+  it("reads a completed request that straddles the recovered assistant text boundary", async () => {
+    const output = `${"a".repeat(3985)}\n${marker}`;
+    const { service } = mockTransport([
+      { type: "text", text: output.slice(0, 4000) },
+      { type: "text", text: output.slice(4000) },
+    ]);
+
+    await expect(service.read({ chatId, runId })).resolves.toMatchObject({ chatId, runId, worktreeId, sourceSha256, label });
+  });
+
+  it.each([
+    ["an open fence", [{ type: "text", text: "```json\n" }, { type: "text", text: marker + "\n```" }]],
+    ["a non-text boundary", [
+      { type: "text", text: marker.slice(0, 14) },
+      { type: "status", tone: "info", label: "Source checked" },
+      { type: "text", text: marker.slice(14) },
+    ]],
+  ] satisfies [string, CanonicalChatMessage["parts"]][])("rejects a marker inside %s", async (_reason, parts) => {
+    const { service, fetchFn } = mockTransport(parts);
+
+    await expect(service.read({ chatId, runId })).resolves.toBeNull();
+    expect(fetchFn.mock.calls).toHaveLength(1);
+  });
+
   it.each([
     ["wrong owner", (detail: ReturnType<typeof fixture>) => { detail.record.chat.ownerScope.ownerId = "other"; }],
     ["user-authored marker", (detail: ReturnType<typeof fixture>) => { detail.messages[0]!.role = "user"; }],
-    ["duplicate markers", (detail: ReturnType<typeof fixture>) => { detail.messages[0]!.parts.push({ type: "text", text: marker }); }],
+    ["duplicate markers", (detail: ReturnType<typeof fixture>) => { detail.messages[0]!.parts.push({ type: "text", text: `\n${marker}` }); }],
     ["wrong project", (detail: ReturnType<typeof fixture>) => { detail.record.projectId = "proj_other"; }],
     ["expired completion", (detail: ReturnType<typeof fixture>) => { detail.runs[0]!.completedAt = new Date(now - 11 * 60_000).toISOString(); }],
   ])("rejects %s before reading source or writing", async (_reason, tamper) => {

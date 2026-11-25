@@ -1,4 +1,4 @@
-import type { CanonicalChatDetailResponse, CanonicalChatRun } from "@matrix-os/contracts";
+import type { CanonicalChatDetailResponse, CanonicalChatMessage, CanonicalChatRun } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 export const CHAT_ELECTRON_PREVIEW_PREFIX = "MATRIX_ELECTRON_PREVIEW_V1 ";
@@ -52,6 +52,20 @@ export function isCurrentChatElectronPreviewRun(run: CanonicalChatRun, now = Dat
     && age >= 0 && age < CHAT_ELECTRON_PREVIEW_MAX_AGE_MS;
 }
 
+function* consecutiveText(parts: CanonicalChatMessage["parts"]) {
+  let text = "";
+  for (const part of parts) {
+    if (part.type === "text") {
+      // Recovered output can split a line at a storage boundary.
+      text += part.text;
+    } else if (text) {
+      yield text;
+      text = "";
+    }
+  }
+  if (text) yield text;
+}
+
 export function getChatElectronPreviewMarkerForRun(
   detail: CanonicalChatDetailResponse,
   runId: string,
@@ -64,9 +78,8 @@ export function getChatElectronPreviewMarkerForRun(
   for (const message of detail.messages) {
     if (message.role !== "assistant" || message.state !== "committed" || message.chatId !== chatId
       || message.runId !== runId || (message.turnId !== undefined && message.turnId !== run.turnId)) continue;
-    for (const part of message.parts) {
-      if (part.type !== "text") continue;
-      const lines = markerLines(part.text);
+    for (const text of consecutiveText(message.parts)) {
+      const lines = markerLines(text);
       if (lines.length + candidates.length > 1) return null;
       candidates.push(...lines);
     }
