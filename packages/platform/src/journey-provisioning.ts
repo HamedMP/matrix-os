@@ -99,6 +99,9 @@ export function createJourneyProvisioner(
         if (await provisionFree(clerkUserId, runtimeSlot)) return;
         throw billingRequired();
       }
+    } else if (await deps.freeRuntimeProvisioner?.isEligible(clerkUserId, runtimeSlot)) {
+      if (await provisionFree(clerkUserId, runtimeSlot)) return;
+      throw billingRequired();
     }
     if (!deps.customerVpsService) {
       throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');

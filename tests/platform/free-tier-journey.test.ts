@@ -75,6 +75,12 @@ describe('journey phase for the free plan', () => {
     expect(deriveJourneyPhase({ ...base, entitlement: null, liveMachine: null }).phase).toBe('plan_required');
   });
 
+  it('offers free setup to an eligible owner despite a historical paid checkout', () => {
+    const checkoutAttempt = { status: 'paid', createdAt: '2026-01-01T00:00:00.000Z' } as NonNullable<Parameters<typeof deriveJourneyPhase>[0]['checkoutAttempt']>;
+    expect(deriveJourneyPhase({ ...base, checkoutAttempt, entitlement: null, liveMachine: null, freePlanEligible: true }).nextAction)
+      .toEqual({ kind: 'start_provision' });
+  });
+
   it('follows a free owner through their metal runtime and never through a VPS', () => {
     const free = buildFreeEntitlement(OWNER, NOW);
     expect(deriveJourneyPhase({ ...base, entitlement: free, liveMachine: metalMachine('provisioning') }).phase).toBe('provisioning');
@@ -116,7 +122,7 @@ describe('onboarding journey on the free plan', () => {
   });
   afterEach(async () => { await destroyTestPlatformDb(db); });
 
-  function journeyApp(options: { resolveEntitlement?: () => Promise<BillingEntitlement | null> } = {}) {
+  function journeyApp(options: { resolveEntitlement?: () => Promise<BillingEntitlement | null>; stripeEnabled?: boolean } = {}) {
     const unused = async () => { throw new Error('unexpected hostd call'); };
     const client = {
       capacity, createVm, listVms: async () => [], destroy, getVm: unused,
@@ -143,7 +149,7 @@ describe('onboarding journey on the free plan', () => {
       appEnv: {},
       customerVpsService: { provision } as Partial<CustomerVpsService> as CustomerVpsService,
       freeRuntimeProvisioner: freeTier?.provisioner,
-      stripeBillingEntitlementsEnabled: () => true,
+      stripeBillingEntitlementsEnabled: () => options.stripeEnabled ?? true,
       resolveEffectiveBillingEntitlement: options.resolveEntitlement
         ?? ((routeDb, clerkUserId, now, runtimeSlot) => resolveEffectiveBillingEntitlement(routeDb, clerkUserId, now, runtimeSlot, {})),
       selectProvisionIdentityForClerkUser: async (_db, userId) => ({ handle: userId.replace('user_', ''), displayName: 'Owner' }),
@@ -171,9 +177,9 @@ describe('onboarding journey on the free plan', () => {
     return app.request('/api/journey/retry-provision', { method: 'POST', body: '{}' });
   }
 
-  it('an invited free owner reaches provisioning with no checkout', async () => {
+  it.each([true, false])('an invited free owner reaches provisioning when Stripe enabled is %s', async (stripeEnabled) => {
     await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
-    const { app, provision } = journeyApp();
+    const { app, provision } = journeyApp({ stripeEnabled });
 
     // Free owners need no install choices; clients that cannot show them (Native Mobile) start the build directly.
     expect(await journey(app)).toMatchObject({ phase: 'install_choices_required', nextAction: { kind: 'start_provision' } });

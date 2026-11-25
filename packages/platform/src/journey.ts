@@ -135,8 +135,8 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
   // A free entitlement allows only a metal runtime, so the decision names the slot's runtime.
   const access = getRuntimeAccessDecision(entitlement, now, liveMachine?.substrate);
 
-  // A settling paid checkout keeps its own flow; otherwise a free-eligible owner skips plans.
-  const freePlan = Boolean(inputs.freePlanEligible) && !checkoutAttempt
+  // Free eligibility already excludes a current paid checkout that is still settling.
+  const freePlan = Boolean(inputs.freePlanEligible)
     && (!liveMachine || liveMachine.substrate === 'metal');
 
   if (!access.runtimeProxyAllowed && !freePlan) {
