@@ -90,6 +90,32 @@ describe("canonical terminal collaboration bridge", () => {
     expect(runtime.writeInput).toHaveBeenCalledTimes(1);
   });
 
+  it("refuses a flood of writes behind a slow one and drains admitted writes for take-control (Greptile on #3675)", async () => {
+    const repository = new CollaborationRepository(fixture.db);
+    await repository.createDirectScope({ scopeId, ownerId, organizationId, kind: "terminal", resourceId: terminalId, authorityRuntimeId: runtimeId });
+    const bridge = createCanonicalTerminalCollaborationBridge({ db: fixture.db, ownerId, runtime: runtime as never });
+    const eligible = await bridge.registry.get(terminalId) as { sessionIncarnation: string; executionGeneration: number };
+    await bridge.registry.bindCollaboration(terminalId, {
+      scopeId, sessionIncarnation: eligible.sessionIncarnation, executionGeneration: eligible.executionGeneration, contributorControl: true,
+    });
+    let release!: () => void;
+    runtime.writeInput.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+    const write = (data: string) => bridge.runtime.input({ terminalId, scopeId, incarnation: eligible.sessionIncarnation, data, revalidate: async () => undefined });
+    const admitted = Array.from({ length: 64 }, () => write("x"));
+    await expect(write("x")).rejects.toThrow();
+    let drained = false;
+    const drain = bridge.runtime.drain({ terminalId }).then(() => { drained = true; });
+    await vi.waitFor(() => expect(runtime.writeInput).toHaveBeenCalledTimes(1));
+    expect(drained).toBe(false);
+    release();
+    await Promise.all(admitted);
+    await drain;
+    expect(drained).toBe(true);
+    expect(runtime.writeInput).toHaveBeenCalledTimes(64);
+    // The queue is free again once it drained.
+    await expect(write("y")).resolves.toBeUndefined();
+  });
+
   it("binds only the current owner tab and persists its exact incarnation", async () => {
     const repository = new CollaborationRepository(fixture.db);
     await repository.createDirectScope({ scopeId, ownerId, organizationId, kind: "terminal", resourceId: terminalId, authorityRuntimeId: runtimeId });

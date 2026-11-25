@@ -26,6 +26,7 @@ function setup(options: { contributorControl?: boolean } = {}) {
       contributorControl: options.contributorControl ?? true,
     })),
     setContributorControl: vi.fn(async () => undefined),
+    drainWrites: vi.fn(async () => undefined),
     ...runtime,
   };
   const authority = {
@@ -115,6 +116,15 @@ describe("team terminal shared input (spec 2710 J3-J6)", () => {
       await input.revalidate();
     });
     await expect(send("user_editor", "input_shared")).rejects.toMatchObject({ code: "input_paused" });
+    control.close();
+  });
+
+  it("returns from taking control only after admitted collaborator writes landed (Greptile on #3675)", async () => {
+    const { setMode, terminal, control } = setup();
+    await setMode("user_owner", "owner");
+    expect(terminal.drainWrites).toHaveBeenCalledWith({ terminalId });
+    await setMode("user_owner", "shared");
+    expect(terminal.drainWrites).toHaveBeenCalledTimes(1);
     control.close();
   });
 

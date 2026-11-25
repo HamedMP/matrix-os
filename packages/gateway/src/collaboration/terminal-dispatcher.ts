@@ -84,6 +84,8 @@ export interface CollaborationTerminalRuntime {
   paste(input: TerminalRuntimeAction & { data: string }): Promise<void>;
   resize(input: TerminalRuntimeAction & { cols: number; rows: number }): Promise<void>;
   stop(input: Omit<TerminalRuntimeAction, "connectionId" | "leaseEpoch" | "revalidate">): Promise<void>;
+  /** Resolves once collaborator writes already admitted to this terminal reached it. */
+  drainWrites?(input: { terminalId: string }): Promise<void>;
 }
 
 interface TerminalRuntimeAction {
@@ -252,6 +254,9 @@ export class CollaborationTerminalDispatcher {
       // A collaborator holding a legacy lease loses it at once.
       const holder = this.options.control.current(identity.scopeId, identity.terminalId, identity.incarnation);
       if (holder && holder.actorId !== identity.actorId) this.options.control.invalidateActor(identity.scopeId, holder.actorId);
+      // Every later write re-checks the mode; a write admitted just before it is waited for here, so once
+      // taking control returns, no collaborator keystroke reaches the terminal until the owner hands back.
+      await this.options.terminal.drainWrites?.({ terminalId: identity.terminalId });
     }
     return { scopeId: identity.scopeId, incarnation: identity.incarnation, inputMode: mode };
   }
