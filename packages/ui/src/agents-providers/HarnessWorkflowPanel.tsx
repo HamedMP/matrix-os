@@ -19,7 +19,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const codexDeviceOperation = codexDevice && isCodexDeviceOption(operation?.connectionOption);
   const codexTerminalOperation = codexTerminal && isCodexTerminalOption(operation?.connectionOption);
   const existingCodexOperation = harness.harness === "codex" && isCodexExistingAccountOption(operation?.connectionOption);
-  const existingCodexStartFailure = !operation && failure && existingCodexAccount && isCodexExistingAccountOption(state.selectedOption);
+  const existingCodexStartFailure = !operation && existingCodexAccount && isCodexExistingAccountOption(state.selectedOption);
   const showCodexLoginProgress = codexDeviceOperation || codexTerminalOperation || existingCodexOperation
     || !operation && (codexDevice || codexTerminal || existingCodexAccount);
   const terminalOnly = !capability.connectionOptions && capability.loginMethods.includes("terminal") && !inlineLogin;
@@ -99,12 +99,14 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
           <fieldset disabled={disabled || pending || connecting || reconciling} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>{advancedConfiguration}</fieldset>
         </details>
       ) : null}
-      {failure ? (
+      {failure && (existingCodexStartFailure ? (
         <div role="alert" className="matrix-ap-notice" data-tone="danger">
           <span>{failure}</span>
-          {existingCodexStartFailure ? refreshExistingCodexAccount : null}
+          {refreshExistingCodexAccount}
         </div>
-      ) : null}
+      ) : (
+        <p role="alert" className="matrix-ap-notice" data-tone="danger">{failure}</p>
+      ))}
       {harness.installState === "unknown" || (harness.installState === "failed" && !capability.install) ? (
         <div className="matrix-ap-install">
           <p className="matrix-ap-help">Installation status is unavailable. Check again.</p>

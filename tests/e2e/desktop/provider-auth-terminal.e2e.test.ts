@@ -97,7 +97,7 @@ async function settings() {
   if (await claude.getAttribute("aria-expanded") !== "true") await claude.click();
 }
 
-it("gives API key and browser sign-in forms room in Settings and preserves native login on disconnect", async () => {
+it("spaces Coding agents sign-in without changing Matrix AI or logging out the native account on disconnect", async () => {
   try {
     const identity = await app.evaluate(({ app: electronApp }) => electronApp.getAppPath());
     expect(identity).toBe(join(root, "desktop/out/main"));
@@ -108,7 +108,13 @@ it("gives API key and browser sign-in forms room in Settings and preserves nativ
     await terminal.waitFor({ state: "hidden" });
     await settings();
     const claudeApi = page.getByRole("article", { name: "Claude API connection" });
-    await claudeApi.getByRole("button", { name: "Connect Claude", exact: true }).click();
+    const claudeConnect = claudeApi.getByRole("button", { name: "Connect Claude", exact: true });
+    const chatgptSubscription = page.getByRole("article", { name: "ChatGPT subscription" });
+    await expect.poll(() => chatgptSubscription.evaluate(card => getComputedStyle(card).rowGap)).toBe("normal");
+    expect(await claudeApi.evaluate(card => getComputedStyle(card).rowGap)).toBe("normal");
+    const claudeActionPadding = await claudeConnect.evaluate(button => getComputedStyle(button.parentElement!).paddingTop);
+    expect(claudeActionPadding).toBe("12px");
+    await claudeConnect.click();
     const apiKey = claudeApi.getByLabel("Anthropic API key", { exact: true });
     const apiCancel = claudeApi.getByRole("button", { name: "Cancel", exact: true });
     const desktop = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
@@ -122,9 +128,9 @@ it("gives API key and browser sign-in forms room in Settings and preserves nativ
         const input = field.getBoundingClientRect();
         return { left: input.left - panel.left, right: panel.right - input.right };
       });
-      expect(inset.left).toBeGreaterThanOrEqual(12);
-      expect(inset.right).toBeGreaterThanOrEqual(12);
-      expect((await apiCancel.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+      expect(inset.left).toBeCloseTo(0);
+      expect(inset.right).toBeCloseTo(0);
+      expect(await apiCancel.evaluate(button => getComputedStyle(button).minHeight)).toBe("32px");
       await apiKey.scrollIntoViewIfNeeded();
       await page.screenshot({ path: join(output, "settings-claude-api-key-narrow.png") });
     } finally {

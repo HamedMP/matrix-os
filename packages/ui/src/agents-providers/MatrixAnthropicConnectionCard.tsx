@@ -159,19 +159,19 @@ export function MatrixAnthropicConnectionCard({ client, initialStatus, disabled,
     {!client || status?.state === "unsupported" ? <p className="matrix-ap-help">This Computer does not support the Claude API connection. Refresh or update this Computer to check again.</p> : null}
     {readOnly || status?.state === "read_only" ? <p className="matrix-ap-help">Only this Computer’s owner can manage connections.</p> : null}
     {error === client && client ? <p className="matrix-ap-help" role="alert">{ACTION_ERROR}</p> : null}
-    {keyForm && !readOnly ? <form className="matrix-ap-key-form matrix-ap-sign-in-panel" onSubmit={event => { event.preventDefault(); void act("connect"); }}>
+    {keyForm && !readOnly ? <form className="matrix-ap-key-form" onSubmit={event => { event.preventDefault(); void act("connect"); }}>
       <label className="matrix-ap-field"><span>Anthropic API key</span>
         <input type="password" autoComplete="off" spellCheck={false} maxLength={4096} value={keyForm.apiKey} disabled={blocked}
           onChange={event => setForm({ client: keyForm.client, apiKey: event.target.value })}/>
       </label>
-      <div className="matrix-ap-workflow-actions">
+      <div className="matrix-ap-workflow-actions matrix-ap-subscription-actions">
         <button type="submit" className="matrix-ap-button matrix-ap-button-primary" disabled={blocked || !status?.actions.includes("connect")
           || !MatrixAnthropicConnectSchema.safeParse({ expectedRevision: status.revision, expectedCredentialGeneration: status.credentialGeneration,
             idempotencyKey: "validation", apiKey: keyForm.apiKey }).success}>Connect Claude</button>
         <button type="button" className="matrix-ap-button" disabled={busy} onClick={() => { setForm(null); lastAttempt.current = null; }}>Cancel</button>
       </div>
     </form> : client && !readOnly && status?.state !== "read_only" ? <div className="matrix-ap-workflow-actions matrix-ap-subscription-actions">
-      {status?.actions.includes("connect") ? <button type="button" className={status.enabled ? "matrix-ap-button" : "matrix-ap-button matrix-ap-button-primary"} disabled={blocked}
+      {status?.actions.includes("connect") ? <button type="button" className="matrix-ap-button" disabled={blocked}
         onClick={() => setForm({ client, apiKey: "" })}>{status.enabled ? "Change API key" : "Connect Claude"}</button> : null}
       {status?.actions.includes("refresh") ? <button type="button" className="matrix-ap-button" disabled={blocked} onClick={() => void act("refresh")}>Check Claude connection</button> : null}
       {status?.actions.includes("disconnect") ? <button type="button" className="matrix-ap-button" disabled={blocked} onClick={() => void act("disconnect")}>Disconnect Claude</button> : null}

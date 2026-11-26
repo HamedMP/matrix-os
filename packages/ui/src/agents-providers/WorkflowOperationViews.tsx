@@ -67,7 +67,7 @@ export function WorkflowKeyForm({ state }: { state: HarnessWorkflowController })
                 Create a key in your provider dashboard. It stays on this
                 computer.
               </p>
-              {pending ? <p className="matrix-ap-help" role="status">Checking your key…</p> : null}
+              {pending ? <p role="status">Checking your key…</p> : null}
               <div className="matrix-ap-workflow-actions">
                 <button
                   type="submit"

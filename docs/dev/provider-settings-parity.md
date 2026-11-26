@@ -106,12 +106,12 @@ without launching a login process. Missing or changed proof fails in Settings.
 Only a verified ChatGPT subscription qualifies for this action. Terminal
 remains available for other callers and for a Settings sign-in that needs it.
 
-The shared sign-in panel keeps connection choices, progress, and actions in
+The Coding agents sign-in panel keeps connection choices, progress, and actions in
 separate blocks. A single choice fills the available row. At narrow widths,
 choices stack and device-code controls wrap within the panel.
 
-Apply the same spacing to subscription and API-key forms in Agents & Providers.
-Keep credential labels with their inputs and group the actions after the form.
+Coding agents API-key forms keep credential labels with their inputs and group
+the actions after the fields. Scope these layout rules to the Coding agents section.
 
 On a transient workflow capability read failure, Settings keeps the last
 confirmed capabilities for the same computer so an in-flight sign-in can
