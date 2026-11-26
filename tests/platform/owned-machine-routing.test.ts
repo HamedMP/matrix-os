@@ -39,7 +39,7 @@ function app(db: PlatformDB) {
     orchestrator: stubOrchestrator(),
     clerkAuth: createClerkAuth({ verifyToken: vi.fn().mockResolvedValue({ sub: 'user_alice' }) }),
     platformSecret: SECRET,
-    substrateRegistry: createPlatformSubstrateRegistry(db, { owned: OWNED }),
+    substrateRegistry: createPlatformSubstrateRegistry(db, {}, { owned: OWNED }),
     env: { ...process.env, MATRIX_PAID_BETA_ENTITLEMENT_STATUS: 'missing' },
   });
 }
