@@ -38,7 +38,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
 fs.appendFileSync(path.join(process.env.HOME,'requests'),r.method+'\\n');
 if(r.method==='initialize')send({id:r.id,result:{userAgent:'codex-cli/${version}'}});
 if(r.method==='config/read')send({id:r.id,result:{config:{cli_auth_credentials_store:'file'}}});
-if(r.method==='account/read')send({id:r.id,result:{account:fs.existsSync(auth)?{type:'chatgpt',email:'fixture@example.invalid',planType:'plus'}:null,requiresOpenaiAuth:true}});
+if(r.method==='account/read'){
+ const saved=fs.existsSync(auth)?JSON.parse(fs.readFileSync(auth,'utf8')):null;
+ const account=saved?.auth_mode==='apikey'?{type:'apiKey'}:saved?{type:'chatgpt',email:'fixture@example.invalid',planType:'plus'}:null;
+ send({id:r.id,result:{account,requiresOpenaiAuth:true}});
+}
 if(r.method==='account/rateLimits/read')send({id:r.id,result:{rateLimits:null,rateLimitsByLimitId:null}});
 if(r.method==='account/login/start'){
  send({id:r.id,result:{type:'chatgptDeviceCode',loginId:'11111111-1111-4111-8111-111111111111',verificationUrl:'https://auth.openai.com/codex/device',userCode:'ABCD-EFGHI'}});
@@ -48,7 +52,20 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
 });`); await chmod(executable, 0o700);
   vi.stubEnv("MATRIX_NODE_PREFIX", prefix); vi.stubEnv("CODEX_HOME", join(home, ".codex"));
   const driver = { id: "codex" as const, displayName: "Codex", installState: "installed" as const, kind: "cli" as const, health: "ready" as const, setupActions: [], capabilities: ["tools", "resume"] };
-  const service = new AiProviderService({ homePath: home, env: { OPENAI_API_KEY: "synthetic-independent-key" }, driverInventory: async () => [driver] }); closes.push(() => service.close());
+  const service = new AiProviderService({
+    homePath: home, env: { OPENAI_API_KEY: "synthetic-independent-key" }, driverInventory: async () => [driver],
+    ...(["local-only", "stale-local-observation", "native-api-key"].includes(mode) ? {
+      codexLocalObservation: async () => {
+        const checkedAt = Date.now() - (mode === "stale-local-observation" ? 6000 : 0);
+        return { accessSourceId: "owner_openai_profile", state: "present_unverified" as const,
+          checkedAt: new Date(checkedAt).toISOString(), staleAfter: new Date(checkedAt + 5000).toISOString() };
+      },
+    } : {}),
+    ...(mode === "native-api-key" ? { codexNativeKeyReadiness: async () => ({
+      state: "ready" as const, action: "none" as const, safeReason: null, checkedAt: new Date().toISOString(), staleAfter: null,
+    }) } : {}),
+  });
+  closes.push(() => service.close());
   const generic = createProviderGenericHarnessCoordinator({ homePath: home, enabledCodingHarnesses: [], runtimeController: { update: async () => { throw new Error("No funded/system route"); } }, runtimeSource: async () => { throw new Error("No funded/system route"); } });
   const realGuard = createNativeProviderProfileGuard({ homePath: home, registry: { listProfileSessions: async () => [], get: async () => { throw Object.assign(new Error("No fixture Terminal"), { code: "session_not_found" }); }, observeAgentLiveness: async () => "stopped" } });
   const rotateGeneration = async () => writeFile(join(home, ".codex/auth.json"), JSON.stringify({ auth_mode: "chatgpt", tokens: { access_token: "synthetic-replacement-same-email", refresh_token: "synthetic-replacement-refresh" } }), { mode: 0o600 });
@@ -84,6 +101,11 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
   const completionBoundary = new Promise<CompletionBoundary>(resolve => { signalCompletionBoundary = resolve; });
   const nativeCompletions = vi.fn(async (input: Parameters<NonNullable<typeof handoff.completeCodexNativeLogin>>[0]) => {
     try {
+      if (mode === "rotate-before-completion") await rotateGeneration();
+      if (mode === "off-before-completion") {
+        await store.mutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false,
+          expectedRevision: input.expectedRevision, idempotencyKey: "off-during-existing-connect" });
+      }
       const result = await handoff.completeCodexNativeLogin!(input);
       signalCompletionBoundary({ kind: "native_completion" });
       return result;
@@ -105,8 +127,110 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
   const app = new Hono();
   const lifecycle = await createNativeProviderWorkflowRuntime({ app, homePath: home, ownerId: "owner", getPrincipal: c => c.req.header("x-test-actor") === "other" ? { userId: "other" } : { userId: "owner" }, store: workflowStore, terminal: terminal as never, profileGuard: guard, inventory: async () => ({ drivers: [driver] }) }); closes.push(lifecycle.close);
   return { app, store, home, executable, terminal, harness, guard, rollback, proofReady, resumeCompletion, rotateGeneration, completionBoundary, nativeCompletions,
+    seedNativeLogin: (kind: "chatgpt" | "apikey" = "chatgpt") => writeFile(join(home, ".codex/auth.json"), JSON.stringify(kind === "chatgpt"
+      ? { auth_mode: "chatgpt", tokens: { access_token: "synthetic-existing-access", refresh_token: "synthetic-existing-refresh" } }
+      : { auth_mode: "apikey", OPENAI_API_KEY: "synthetic-existing-key" }), { mode: 0o600 }),
     setVersion: (value: string) => writeFile(join(home, 'version'), value) };
 }
+
+it.each(["success", "local-only"])("offers Codex reuse on an unqualified device-login version from %s evidence and binds only on owner action", async mode => {
+  const f = await fixture("0.172.0", mode);
+  await f.seedNativeLogin();
+  const authPath = join(f.home, ".codex/auth.json");
+  const authBefore = await readFile(authPath, "utf8");
+  const before = await f.store.getSnapshot();
+  const input = { harnessInstanceId: f.harness.id, optionId: "openai_existing_codex", idempotencyKey: "existing-owner-consent" };
+  const denied = post(input);
+  expect((await f.app.request(`${route}/start`, { ...denied, headers: { ...denied.headers, "x-test-actor": "other" } })).status).toBe(403);
+
+  const [capability] = await (await f.app.request(`${route}/capabilities`)).json();
+  expect(capability.loginMethods).toEqual(expect.arrayContaining(["existing_codex", "terminal"]));
+  expect(capability.loginMethods).not.toContain("device_code");
+  const option = { id: "openai_existing_codex", method: "existing_codex", providerId: "openai", authKind: "subscription",
+    billingKind: "subscription", executionKind: "native", availability: "available" };
+  expect(capability.connectionOptions).toContainEqual(option);
+  const legacyRoute = route.replace(/\/v2$/, "");
+  const [legacy] = await (await f.app.request(`${legacyRoute}/capabilities?connectionVersion=2`)).json();
+  expect(legacy.loginMethods).toEqual(["terminal"]);
+  const legacyStart = await f.app.request(legacyRoute, post({ harnessInstanceId: f.harness.id, kind: "login",
+    method: "existing_codex", idempotencyKey: "legacy-existing-connect" }));
+  expect(legacyStart.status).toBe(503);
+  expect((await f.store.getSnapshot()).revision).toBe(before.revision);
+  expect(f.nativeCompletions).not.toHaveBeenCalled();
+
+  const response = await f.app.request(`${route}/start`, post(input));
+  expect(response.status).toBe(200);
+  const receipt = await response.json();
+  expect(receipt).toMatchObject({ state: "succeeded", connectionOption: option, terminalSessionId: null, deviceCode: null, authorizationUrl: null });
+  expect(await (await f.app.request(`${route}/${receipt.id}`)).json()).toEqual(receipt);
+  expect(await (await f.app.request(`${route}/start`, post(input))).json()).toEqual(receipt);
+  expect(f.nativeCompletions).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    harnessInstanceId: f.harness.id, expectedRevision: before.revision, verifyNativeAccount: expect.any(Function),
+  }));
+  const connected = await f.store.getSnapshot({ includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
+  expect(connected.harnesses.find(row => row.id === f.harness.id)).toMatchObject({
+    accessSourceId: "owner_openai_profile", selectedAccountId: "owner_codex", enabled: true,
+  });
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
+  expect(await readFile(authPath, "utf8")).toBe(authBefore);
+  expect(await readFile(join(f.home, "requests"), "utf8")).not.toMatch(/account\/(login\/start|logout)/);
+}, 15000);
+
+it.each(["signed-out", "apikey"] as const)("keeps %s Codex off the explicit existing account path", async kind => {
+  const f = await fixture("0.171.0");
+  if (kind === "apikey") await f.seedNativeLogin(kind);
+  const response = await f.app.request(`${route}/capabilities`);
+  expect(response.status).toBe(200);
+  const [capability] = await response.json();
+  expect(capability.loginMethods).toEqual(expect.arrayContaining(["device_code", "terminal"]));
+  expect(capability.connectionOptions).not.toContainEqual(expect.objectContaining({ id: "openai_existing_codex" }));
+  const start = await f.app.request(`${route}/start`, post({ harnessInstanceId: f.harness.id, optionId: "openai_existing_codex", idempotencyKey: "existing-unavailable" }));
+  expect(start.status).toBe(503);
+  expect(f.nativeCompletions).not.toHaveBeenCalled();
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
+  expect(await readFile(join(f.home, "requests"), "utf8")).not.toMatch(/account\/(login\/start|logout)/);
+});
+
+it.each([
+  { mode: "rotate-before-completion", code: "invalid_route", revisionChange: 0 },
+  { mode: "off-before-completion", code: "revision_conflict", revisionChange: 1 },
+] as const)("preserves the saved source when existing Codex completion races $mode", async ({ mode, code, revisionChange }) => {
+  const f = await fixture("0.172.0", mode);
+  await f.seedNativeLogin();
+  const before = await f.store.getSnapshot();
+  const response = await f.app.request(`${route}/start`, post({ harnessInstanceId: f.harness.id, optionId: "openai_existing_codex", idempotencyKey: "existing-principal-changed" }));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ state: "failed", safeFailure: "unavailable", terminalSessionId: null, deviceCode: null, authorizationUrl: null });
+  expect(await f.completionBoundary).toMatchObject({ kind: "native_completion", error: { code } });
+  const after = await f.store.getSnapshot();
+  expect(after.revision).toBe(before.revision + revisionChange);
+  expect(after.harnesses.find(row => row.id === f.harness.id)).toMatchObject({ configuredEnabled: false, configuredAccessSourceId: "owner_openai_key" });
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
+  expect(await readFile(join(f.home, "requests"), "utf8")).not.toMatch(/account\/(login\/start|logout)/);
+}, 15000);
+
+it("offers verification from a fresh local ChatGPT observation before any private probe but fails without a principal", async () => {
+  const f = await fixture("0.172.0", "local-only");
+  const before = await f.store.getSnapshot();
+  expect(before.accessSources.find(source => source.id === "owner_openai_profile")?.localObservation?.state).toBe("present_unverified");
+  const [capability] = await (await f.app.request(`${route}/capabilities`)).json();
+  expect(capability.connectionOptions).toContainEqual(expect.objectContaining({ id: "openai_existing_codex", availability: "available" }));
+  expect(await readFile(join(f.home, "requests"), "utf8")).toBe("");
+  const response = await f.app.request(`${route}/start`, post({ harnessInstanceId: f.harness.id, optionId: "openai_existing_codex", idempotencyKey: "existing-no-principal" }));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ state: "failed", safeFailure: "unavailable", terminalSessionId: null });
+  expect(f.nativeCompletions).not.toHaveBeenCalled();
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
+  expect(await readFile(join(f.home, "requests"), "utf8")).toContain("account/read");
+  expect((await f.store.getSnapshot()).revision).toBe(before.revision);
+});
+
+it.each(["stale-local-observation", "native-api-key"] as const)("ignores the %s local hint for Codex reuse", async mode => {
+  const f = await fixture("0.172.0", mode);
+  if (mode === "native-api-key") await f.seedNativeLogin("apikey");
+  const [capability] = await (await f.app.request(`${route}/capabilities`)).json();
+  expect(capability.connectionOptions).not.toContainEqual(expect.objectContaining({ id: "openai_existing_codex" }));
+});
 
 it.each(["0.156.1", "0.162.1", "0.163.0", "0.164.0", "0.171.0"])("runs qualified %s Settings login through production HTTP composition, real native account/source commit, and natural receipt readback", async version => {
   const f = await fixture(version);

@@ -10,9 +10,11 @@ import type { ProviderWorkflowClient, ProviderWorkflowUICapability } from "../..
 
 afterEach(cleanup);
 const option = { id: "openai_terminal", providerId: "openai", authKind: "subscription", method: "terminal", billingKind: "subscription", executionKind: "native", availability: "available" } as const;
+const device = { ...option, id: "openai_device_code", method: "device_code" } as const;
+const existing = { ...option, id: "openai_existing_codex", method: "existing_codex" } as const;
 const capability: ProviderWorkflowUICapability = { harnessInstanceId: "codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["terminal"], apiKeyProviders: [], install: false, uninstall: false, logs: false, connectionOptions: [option] };
 function setup({ disabled = false, restored = false, advertised = capability, receiptOption = option, state = "running" }: { disabled?: boolean; restored?: boolean; advertised?: ProviderWorkflowUICapability; receiptOption?: ProviderWorkflowConnectionOption; state?: "running" | "succeeded" | "failed" } = {}) {
-  const operation = { id: "native-login", harnessInstanceId: "codex", kind: "login", state, expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_owner:tt_codex", deviceCode: null, authorizationUrl: null, safeFailure: state === "failed" ? "unavailable" : null, connectionOption: receiptOption } as const;
+  const operation = { id: "native-login", harnessInstanceId: "codex", kind: "login", state, expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_owner:tt_codex", deviceCode: receiptOption.method === "device_code" ? "ABCD-EFGHI" : null, authorizationUrl: receiptOption.method === "device_code" ? "https://auth.openai.com/codex/device" : null, safeFailure: state === "failed" ? "unavailable" : null, connectionOption: receiptOption } as const;
   const client = { capabilities: vi.fn(), start: vi.fn(), startConnection: vi.fn().mockResolvedValue(operation), get: vi.fn().mockResolvedValue(operation), cancel: vi.fn().mockResolvedValue({ ...operation, state: "cancelled" }), submitKey: vi.fn(), logs: vi.fn() } as unknown as ProviderWorkflowClient;
   const open = vi.fn();
   const refreshConnection = vi.fn(async () => {});
@@ -53,6 +55,24 @@ it("reopens the exact retained native Terminal without starting new authorizatio
   await waitFor(() => expect(open).toHaveBeenCalledWith("tws_owner:tt_codex"));
   expect(client.startConnection).not.toHaveBeenCalled();
 });
+it.each([option, device])("restores and cancels an already active $method login when reuse becomes available", async receiptOption => {
+  const advertised: ProviderWorkflowUICapability = { ...capability, loginMethods: ["terminal", "device_code", "existing_codex"], connectionOptions: [option, device, existing] };
+  const { client, open } = setup({ restored: true, advertised, receiptOption });
+  const cancel = await screen.findByRole("button", { name: "Cancel" });
+  expect(screen.getByRole("button", { name: /^Use existing Codex account/ })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: /Sign in with a code|Sign in with Codex CLI/ })).not.toBeInTheDocument();
+  if (receiptOption === option) {
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Continue in Terminal" })));
+    expect(open).toHaveBeenCalledExactlyOnceWith("tws_owner:tt_codex");
+  } else {
+    expect(screen.getByText("ABCD-EFGHI")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Continue in Terminal" })).not.toBeInTheDocument();
+  }
+  fireEvent.click(cancel);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument());
+  expect(client.cancel).toHaveBeenCalledExactlyOnceWith("native-login", expect.any(AbortSignal));
+  expect(client.startConnection).not.toHaveBeenCalled();
+});
 it("does not start or continue login for read-only users", async () => {
   const { client, open } = setup({ disabled: true, restored: true });
   const button = await screen.findByRole("button", { name: "Continue in Terminal" });
@@ -60,15 +80,26 @@ it("does not start or continue login for read-only users", async () => {
   expect(open).not.toHaveBeenCalled(); expect(client.startConnection).not.toHaveBeenCalled();
 });
 it.each(["browser", "device_code", "existing_codex"] as const)("filters unsupported or legacy %s options even beside a current terminal option", method => {
-  const filtered = managedConnectionCapability({ ...capability, loginMethods: [method, "terminal"], connectionOptions: [option, { ...option, id: method === "device_code" ? "legacy_device_code" : `openai_${method}`, method }] });
+  const filtered = managedConnectionCapability({ ...capability, loginMethods: [method, "terminal"], connectionOptions: [option, { ...option, id: `legacy_${method}`, method }] });
   expect(filtered.loginMethods).toEqual(["terminal"]);
   expect(filtered.connectionOptions).toEqual([option]);
 });
-it("retains the exact current native device-code option independently alongside Terminal", () => {
-  const device = { ...option, id: "openai_device_code", method: "device_code" } as const;
-  const filtered = managedConnectionCapability({ ...capability, loginMethods: ["device_code", "terminal"], connectionOptions: [device, option] });
-  expect(filtered.loginMethods).toEqual(["device_code", "terminal"]);
-  expect(filtered.connectionOptions).toEqual([device, option]);
+it("retains exact existing-account, device-code and Terminal options independently", () => {
+  const filtered = managedConnectionCapability({ ...capability, loginMethods: ["device_code", "terminal", "existing_codex"], connectionOptions: [device, option, existing] });
+  expect(filtered.loginMethods).toEqual(expect.arrayContaining(["device_code", "terminal", "existing_codex"]));
+  expect(filtered.loginMethods).toHaveLength(3);
+  expect(filtered.connectionOptions).toEqual([device, option, existing]);
+});
+it.each([
+  { loginMethods: ["terminal" as const] },
+  { installState: "missing" as const },
+  { connectionOptions: [{ ...existing, providerId: "anthropic" as const }] },
+  { connectionOptions: [{ ...existing, billingKind: "api_key" as const }] },
+  { connectionOptions: [{ ...existing, availability: "unavailable" as const, unavailableReason: "unsupported_runtime" as const }] },
+])("never offers existing-account reuse from incomplete, unrelated or unavailable capability (%j)", patch => {
+  const filtered = managedConnectionCapability({ ...capability, loginMethods: ["existing_codex"], connectionOptions: [existing], ...patch });
+  expect(filtered.loginMethods).not.toContain("existing_codex");
+  expect(filtered.connectionOptions?.some(candidate => candidate.method === "existing_codex")).toBe(false);
 });
 it.each([
   { connectionOptions: undefined },

@@ -763,3 +763,12 @@ export function isLocallyObservedNativeHarnessRoute(
   const staleAfter = Date.parse(source.localObservation.staleAfter ?? "");
   return Number.isFinite(checkedAt) && Number.isFinite(staleAfter) && checkedAt <= now.getTime() && staleAfter > now.getTime();
 }
+
+/** Discovery hint only. Connecting the account requires private native proof. */
+export function hasFreshCodexLocalSignIn(source: ProviderAccessSource | undefined, now: number): boolean {
+  const observation = source?.localObservation;
+  return source?.id === "owner_openai_profile" && source.kind === "provider_account"
+    && source.providerId === "openai" && source.fundingKind === "owner_account"
+    && source.accountId === "owner_codex" && observation?.state === "present_unverified"
+    && Date.parse(observation.checkedAt ?? "") <= now && Date.parse(observation.staleAfter ?? "") > now;
+}

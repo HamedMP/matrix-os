@@ -6,6 +6,7 @@ import type { createHermesSettingsConnection } from "./hermes-settings-auth.js";
 import type { NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
 import { nativeWorkflowConnectionOptions } from "./native-workflow-options.js";
 import { createClaudeNativeConnectCompletion } from "./claude-native-connect-completion.js";
+import { discoverExistingCodexLogin } from "./existing-codex-login.js";
 import { observeNativeCommandCompletion } from './native-command-completion.js';
 import { authenticatedNativeHarness } from "./native-workflow-account.js";
 import type { createPiSettingsConnection } from "./pi-settings-auth.js";
@@ -127,12 +128,15 @@ export async function createNativeProviderWorkflowAdapters(options: {
     const canHermesLogin = harness.harness === 'hermes' && harness.installState === 'installed' && !!options.genericWriter && typeof options.terminal.getCommandResult === 'function' && await options.hermesTerminalLogin?.available() === true;
     const canLogin = harness.installState === 'installed' && harness.loginMethods.includes('terminal') && (harness.harness === 'claude' || harness.harness === 'codex' && snapshot.access.mode === 'writable');
     const canBrowserLogin = canLogin && harness.harness === 'claude' && !!options.claudeBrowserLogin;
-    const canDeviceLogin = canLogin && harness.harness === 'codex' && !!options.store.completeCodexNativeLogin
-      && await options.codexSettingsConnection?.available() === true;
+    const [canDeviceLogin, captureExistingCodexLogin] = harness.harness === 'codex' ? await Promise.all([
+      canLogin && !!options.store.completeCodexNativeLogin && options.codexSettingsConnection?.available(),
+      discoverExistingCodexLogin(options.store, snapshot, harness.id),
+    ]) : [];
     const system = harness.harness === 'hermes' || harness.harness === 'openclaw';
     const keyAdapter = harness.installState === 'installed' ? options.verifyKeys?.[harness.harness] : undefined;
     const loginMethods: NonNullable<ProviderWorkflowStart['method']>[] = [
       ...(canBrowserLogin ? ['browser' as const] : []),
+      ...(captureExistingCodexLogin ? ['existing_codex' as const] : []),
       ...(canDeviceLogin ? ['device_code' as const] : []),
       ...(canLogin || canHermesLogin ? ['terminal' as const] : []),
     ];
@@ -172,14 +176,32 @@ export async function createNativeProviderWorkflowAdapters(options: {
           return createHermesTerminalWorkflow({ harnessInstanceId: harness.id, runtime: options.hermesTerminalLogin, terminal: options.terminal, store: options.store, writer: options.genericWriter })({request,connectionOption,publish,registerCleanup});
         }
         const codexTerminalLogin = harness.harness === 'codex' && request.kind === 'login' && request.method === 'terminal';
-        // Codex admits only the qualified official native protocol or Terminal handoff.
-        if (request.kind === 'login' && harness.harness !== 'claude' && !(harness.harness === 'codex' && (request.method === 'terminal' || request.method === 'device_code' && canDeviceLogin))) throw new ProviderWorkflowNotStartedError();
+        const codexExistingLogin = harness.harness === 'codex' && request.kind === 'login' && request.method === 'existing_codex';
+        if (request.kind === 'login' && harness.harness !== 'claude' && !(harness.harness === 'codex'
+          && (request.method === 'terminal' || request.method === 'device_code' && canDeviceLogin || codexExistingLogin))) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && request.harnessInstanceId !== harness.id) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && (!request.method || !loginMethods.includes(request.method))) throw new ProviderWorkflowNotStartedError();
         if (connectionOption && (connectionOption.availability !== "available" || connectionOption.providerId !== (harness.harness === "claude" ? "anthropic" : "openai"))) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && connectionOption && (connectionOption.authKind !== 'subscription'
           || connectionOption.billingKind !== 'subscription' || connectionOption.executionKind !== 'native'
           || connectionOption.method !== request.method)) throw new ProviderWorkflowNotStartedError();
+        if (codexExistingLogin) {
+          if (connectionOption?.id !== 'openai_existing_codex') throw new ProviderWorkflowNotStartedError();
+          const proof = await captureExistingCodexLogin?.();
+          if (!proof) throw new ProviderWorkflowNotStartedError();
+          // No child or lease can survive a failed commit. Report its receipt
+          // without handing off to a different authentication method.
+          const cancel = async () => {};
+          registerCleanup(cancel);
+          try {
+            await confirmNativeLogin(request.idempotencyKey, snapshot.revision, undefined, proof);
+          } catch (error) {
+            if (error instanceof ProviderSettingsStoreError) console.warn('[provider-workflow] Existing Codex completion failed:', error.code);
+            throw error;
+          }
+          publish({ state: 'succeeded', safeFailure: null });
+          return { cancel };
+        }
         if (request.kind === 'login' && harness.harness === 'claude') {
           // No native resource exists during adoption. Register that fact before
           // a completion can fail after committing; failure must not strand the

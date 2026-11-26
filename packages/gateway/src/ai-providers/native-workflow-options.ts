@@ -15,7 +15,7 @@ export function nativeWorkflowConnectionOptions(input: {
   })) : []), ...keys];
   if (input.harness !== "claude" && input.harness !== "codex") return keys;
   const providerId = input.harness === "codex" ? "openai" : "anthropic";
-  const methods = input.harness === "codex" ? input.methods.filter(method => method === "terminal" || method === "device_code") : input.methods;
+  const methods = input.harness === "codex" ? input.methods.filter(method => method === "terminal" || method === "device_code" || method === "existing_codex") : input.methods;
   return [...methods.map((method): ProviderWorkflowConnectionOption => ({
     id: `${providerId}_${method}`, providerId, authKind: "subscription", method,
     billingKind: "subscription", executionKind: "native", availability: "available",

@@ -10,7 +10,7 @@ import { assertClaudeKeyConnectionSelection } from "./claude-key-connection-comp
 import { readVerifiedClaudeNativeSignedOut, type ClaudeNativeSignedOut } from "./claude-native-signed-out.js";
 import type { ClaudeNativeAccountMetadata, ClaudeNativeAccountMetadataReader } from "./claude-native-account-metadata.js";
 import { renewProviderSettingsNativeObservation } from "./provider-settings-native-renewal.js";
-import { nativeAccountLegacyPrincipalFingerprint, nativeAccountPrincipalFingerprint, verifyNativeAccountMetadata, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
+import { nativeAccountLegacyPrincipalFingerprint, nativeAccountPrincipalFingerprint, sameBoundNativeAccountPrincipal, verifyNativeAccountMetadata, type NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
 import { readCodexConsentAlias, savedCodexConsentMatches, type CodexConsentAlias } from "../coding-agents/codex-consent-alias.mjs";
 import { upgradeCodexConsentAlias } from "./codex-consent-upgrade.js";
 import type { CodexNativeAccountMetadata, CodexNativeAccountMetadataReader, CodexNativeObservationState } from "./codex-native-account-metadata.js";
@@ -93,6 +93,8 @@ export interface ProviderSettingsStoreWriter {
   getSnapshot(options?: ProviderSnapshotReadOptions): Promise<ProviderSettingsSnapshot>;
   getManagedCreditObservation?(options?: { signal?: AbortSignal }): Promise<ProviderManagedCreditObservation>;
   mutate(mutation: ProviderSettingsMutation): Promise<ProviderSettingsMutationResponse>;
+  /** Server-only observation. Calling this never changes the native account or saved Settings. */
+  captureExistingCodexLoginProof?(): Promise<NativeAccountCompletionProof | null>;
   /** Server-only completion; never accepts a client-supplied source or proof. */
   completeCodexNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string; verifyNativeAccount?: NativeAccountCompletionProof }): Promise<ProviderSettingsMutationResponse>;
   completeClaudeNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse>;
@@ -680,6 +682,14 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       throw new ProviderSettingsStoreError("configuration_unavailable", 503);
     }
     return validated;
+  }
+
+  async captureExistingCodexLoginProof(): Promise<NativeAccountCompletionProof | null> {
+    const account = await verifyNativeAccountMetadata(await this.#nativeAccountMetadata?.({ includeUsage: false }));
+    if (account?.authMethod !== "terminal" || nativeAccountPrincipalFingerprint(account) === null) return null;
+    // Completion freshly observes and verifies the current principal inside
+    // mutation admission and again before the settings commit.
+    return async current => sameBoundNativeAccountPrincipal(account, current);
   }
 
   async completeCodexNativeLogin(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string; verifyNativeAccount?: NativeAccountCompletionProof }): Promise<ProviderSettingsMutationResponse> {

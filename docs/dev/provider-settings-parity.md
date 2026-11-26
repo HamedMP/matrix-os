@@ -93,6 +93,19 @@ inert once the row changes. A different account still needs an explicit
 Reconnect. A saved login that needs
 sign-in shows "Needs sign-in" with one primary Reconnect on every surface.
 
+When the selected computer reports an existing ChatGPT sign-in, Settings
+offers **Use existing Codex account**. The v2 workflow exposes the native
+OpenAI subscription option `openai_existing_codex` with method
+`existing_codex`. The explicit start request sends the harness ID, option ID,
+and idempotency key to the existing owner-scoped workflow endpoint.
+
+The Gateway can use a fresh, source-matched local observation to offer this
+action. Completion requires fresh private proof of the current ChatGPT
+principal and the expected Settings revision. Success binds the owner source
+without launching a login process. Missing or changed proof fails in Settings.
+Only a verified ChatGPT subscription qualifies for this action. Terminal
+remains available for other callers and for a Settings sign-in that needs it.
+
 Canvas, Web Desktop, and Electron must expose the same:
 
 - harnesses, accounts, access sources, models, and readiness states;

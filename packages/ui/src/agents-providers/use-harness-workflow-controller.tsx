@@ -285,14 +285,15 @@ export function useHarnessWorkflowController({
   };
   const start = (kind: "login" | "install" | "uninstall", terminal = false, option?: ProviderWorkflowConnectionOption) => {
     const startOperation = async (signal: AbortSignal) => {
+      const exactOption = option ?? (kind === "login" ? selectedOption ?? operation?.connectionOption ?? undefined : undefined);
       if (kind === "login") {
         setStartingLogin(true);
         setMethod("account");
         setOperation(null);
         setAuthorizationCode("");
         setCodeSubmitted(false);
+        if (harness.harness === "codex" && exactOption) setSelectedOption(exactOption);
       }
-      const exactOption = option ?? (kind === "login" ? selectedOption ?? operation?.connectionOption ?? undefined : undefined);
       if (kind === "login" && harness.harness !== "claude" && !(harness.harness === "codex" && isCodexNativeLoginOption(exactOption))
         && !(harness.harness === "hermes" && isHermesTerminalOption(exactOption))) throw new Error("connection unavailable");
       if (kind === "login" && capability.connectionOptions && (!exactOption || !client.startConnection

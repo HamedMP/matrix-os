@@ -98,6 +98,22 @@ describe("Get started coding agents screen", () => {
     expect(row("Codex")).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("keeps the Get Started Codex device-code option when Settings also offers reuse", async () => {
+    const device = { id: "openai_device_code", providerId: "openai", authKind: "subscription", method: "device_code",
+      billingKind: "subscription", executionKind: "native", availability: "available" } as const;
+    const existing = { ...device, id: "openai_existing_codex", method: "existing_codex" } as const;
+    const available = { ...codex, loginMethods: ["existing_codex", "device_code"] as ProviderWorkflowCapability["loginMethods"],
+      connectionOptions: [existing, device] };
+    const login = port({}, Promise.resolve([claude, available]));
+    login.workflowClient.startConnection = vi.fn();
+    render(<GetStartedAgentsStep port={login} onAgentsConnected={vi.fn()} />);
+    await waitFor(() => expect(row("Codex")).toHaveTextContent("Not connected"));
+    fireEvent.click(row("Codex"));
+    expect(await screen.findByRole("button", { name: /ChatGPT account · Sign in with a code/ })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^Use existing Codex account/ })).not.toBeInTheDocument();
+    expect(login.workflowClient.startConnection).not.toHaveBeenCalled();
+  });
+
   it("installs an agent that is not on this computer yet, right in its row, with no Terminal", async () => {
     const missing: ProviderWorkflowCapability = { ...claude, installState: "missing", install: true };
     const login = port({ snapshot: snapshot({ installState: "missing" }) }, Promise.resolve([missing, codex]));

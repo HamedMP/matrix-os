@@ -15,7 +15,7 @@ import { AddHarnessDialog } from "./AddHarnessDialog.js";
 import { GatewayPanel } from "./GatewayPanel.js";
 import { CheckedAt } from "./CheckedAt.js";
 import { YourSubscriptions } from "./YourSubscriptions.js";
-import { isCodexNativeLoginOption, managedConnectionCapability } from "./managed-connection-capability.js";
+import { isCodexExistingAccountOption, isCodexNativeLoginOption, managedConnectionCapability } from "./managed-connection-capability.js";
 import { UsageHistoryDialog } from "./UsageHistoryDialog.js";
 import { useHarnessEnablement } from "./use-harness-enablement.js";
 import { ConnectedAccountCard } from "./ConnectedAccountCard.js";
@@ -293,6 +293,7 @@ export function AgentsProvidersView({
             };
             const connected = nativeSource && (hasConfiguredConnection(harness, source) || hasStaleHermesConnection(harness, source));
             const savedNativeAccount = nativeSource && harness.harness === "codex" && selectedAccount?.authState === "authenticated" && !connected;
+            const canUseExistingCodexAccount = nativeCodexReconnect && capability?.connectionOptions?.some(isCodexExistingAccountOption);
             const catalog = snapshot.harnessCatalog?.find(item => item.harness === harness.harness);
             // Codex account actions own "Check again" in their single action row.
             const codexActionsOwnRefresh = guided && harness.harness === "codex" && nativeSource && selectedAccount?.authState === "authenticated";
@@ -301,7 +302,8 @@ export function AgentsProvidersView({
               <>
                 {workflowClient?.botConnections && harness.harness === "claude" ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={String(capabilityRefreshKey)} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
                 {savedNativeAccount ? <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} saved
-                  savedReason={harness.authState === "expired" || (source && ["auth_required", "expired"].includes(source.readiness.state)) ? "sign_in" : "off"} showRefresh={!codexActionsOwnRefresh} disabled={mutationsDisabled} onRefresh={refreshSettings} /> : null}
+                  savedReason={canUseExistingCodexAccount ? "existing_codex"
+                    : harness.authState === "expired" || (source && ["auth_required", "expired"].includes(source.readiness.state)) ? "sign_in" : "off"} showRefresh={!codexActionsOwnRefresh} disabled={mutationsDisabled} onRefresh={refreshSettings} /> : null}
                 {!guided ? <ConnectionChoices
                   snapshot={snapshot}
                   harness={harness}
