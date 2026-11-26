@@ -331,35 +331,72 @@ export function autoFitRow(ctx: GridContext, row: number): void {
   report(ctx, ctx.session.setRowHeights(ctx.sheet, sizeTargets(ctx, "row", row), null));
 }
 
-/** The block of data around a cell: grown until an empty row and column surround it. */
-export function currentRegion(ctx: GridContext, cell: CellAddress): CellRange {
+/** Most filled cells the search for a block of data indexes; a sheet holding more is too large to search. */
+export const MAX_REGION_CELLS = 1_000_000;
+
+/** Index of the first entry of a sorted list that is at least `value`. */
+function lowerBound(sorted: readonly number[], value: number): number {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if ((sorted[mid] as number) < value) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+/** True when a sorted list holds a value from `from` to `to`. */
+function anyBetween(sorted: readonly number[] | undefined, from: number, to: number): boolean {
+  if (sorted === undefined) return false;
+  const at = lowerBound(sorted, from);
+  return at < sorted.length && (sorted[at] as number) <= to;
+}
+
+/**
+ * The block of data around a cell: grown until an empty row and column
+ * surround it, or null when the sheet holds too many cells to search.
+ *
+ * The filled cells are indexed once from the cells the sheet stores, so each
+ * growth step asks the index instead of reading the edges again: a diagonal
+ * of ten thousand values would otherwise cost about a hundred million reads.
+ */
+export function currentRegion(ctx: GridContext, cell: CellAddress): CellRange | null {
   const sheet = ctx.sheet;
   const used = ctx.info().dimensions;
   let region: CellRange = { start: { ...cell }, end: { ...cell } };
   if (used === null) return region;
-  const filled = (row: number, col: number): boolean =>
-    row >= used.start.row && row <= used.end.row && col >= used.start.col && col <= used.end.col && !ctx.session.isBlank(sheet, row, col);
-  const anyInRow = (row: number, from: number, to: number): boolean => {
-    for (let col = from; col <= to; col++) if (filled(row, col)) return true;
-    return false;
-  };
-  const anyInCol = (col: number, from: number, to: number): boolean => {
-    for (let row = from; row <= to; row++) if (filled(row, col)) return true;
-    return false;
-  };
+  const byRow = new Map<number, number[]>();
+  const byCol = new Map<number, number[]>();
+  let filled = 0;
+  const complete = forEachStoredCell(getWorkbookInternals(ctx.session.workbook), sheet, used, (row, col) => {
+    if (ctx.session.isBlank(sheet, row, col)) return true;
+    if (++filled > MAX_REGION_CELLS) return false;
+    let cols = byRow.get(row);
+    if (cols === undefined) byRow.set(row, (cols = []));
+    cols.push(col);
+    let rows = byCol.get(col);
+    if (rows === undefined) byCol.set(col, (rows = []));
+    rows.push(row);
+    return true;
+  });
+  if (!complete) return null;
+  for (const list of byRow.values()) list.sort((a, b) => a - b);
+  for (const list of byCol.values()) list.sort((a, b) => a - b);
+  // Each step grows the block by one row or column, so the steps stay below the rows plus the columns of a sheet.
   for (let guard = 0; guard < 2_200_000; guard++) {
     const { start, end } = region;
-    if (anyInRow(start.row - 1, start.col - 1, end.col + 1)) region = { start: { row: start.row - 1, col: start.col }, end };
-    else if (anyInRow(end.row + 1, start.col - 1, end.col + 1)) region = { start, end: { row: end.row + 1, col: end.col } };
-    else if (anyInCol(start.col - 1, start.row - 1, end.row + 1)) region = { start: { row: start.row, col: start.col - 1 }, end };
-    else if (anyInCol(end.col + 1, start.row - 1, end.row + 1)) region = { start, end: { row: end.row, col: end.col + 1 } };
+    if (anyBetween(byRow.get(start.row - 1), start.col - 1, end.col + 1)) region = { start: { row: start.row - 1, col: start.col }, end };
+    else if (anyBetween(byRow.get(end.row + 1), start.col - 1, end.col + 1)) region = { start, end: { row: end.row + 1, col: end.col } };
+    else if (anyBetween(byCol.get(start.col - 1), start.row - 1, end.row + 1)) region = { start: { row: start.row, col: start.col - 1 }, end };
+    else if (anyBetween(byCol.get(end.col + 1), start.row - 1, end.row + 1)) region = { start, end: { row: end.row, col: end.col + 1 } };
     else break;
   }
   return region;
 }
 
-/** The range a sort or filter works on: the selected range, or the block of data around the active cell. */
-export function dataRange(ctx: GridContext): CellRange {
+/** The range a sort or filter works on: the selected range, or the block of data around the active cell. Null when that block is too large to find. */
+export function dataRange(ctx: GridContext): CellRange | null {
   const range = activeRange(ctx.selection);
   if (range.kind === "cells" && (rangeRows(range) > 1 || rangeCols(range) > 1)) return { start: range.start, end: range.end };
   if (range.kind !== "cells") return ctx.usedRanges([range])[0] ?? { start: ctx.selection.active, end: ctx.selection.active };
@@ -406,6 +443,10 @@ export function sortRange(ctx: GridContext, range: CellRange, keys: readonly Sor
 /** Sorts the data around the active cell by the active cell's column. */
 export function sortSelection(ctx: GridContext, descending: boolean): void {
   const range = dataRange(ctx);
+  if (range === null) {
+    ctx.notice(TOO_MANY);
+    return;
+  }
   const col = Math.min(range.end.col, Math.max(range.start.col, ctx.selection.active.col));
   sortRange(ctx, range, [{ col, descending }]);
 }
@@ -433,6 +474,10 @@ export function refreshFilter(ctx: GridContext): void {
 export function filterByActiveValue(ctx: GridContext): void {
   const active = ctx.selection.active;
   const range = dataRange(ctx);
+  if (range === null) {
+    ctx.notice(TOO_MANY);
+    return;
+  }
   if (range.end.row <= range.start.row) return;
   const display = ctx.session.cell(ctx.sheet, active.row, active.col).display;
   const others = (ctx.view.filter?.spec.criteria ?? []).filter((criterion) => criterion.col !== active.col);

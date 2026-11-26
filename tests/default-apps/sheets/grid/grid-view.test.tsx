@@ -283,6 +283,43 @@ describe("SheetGrid view and selection", () => {
     expect(reads).toBeLessThan(100_000);
   });
 
+  it("finds the block of data for a sort or filter from the stored cells, not by rescanning its growing edges", async () => {
+    const { session, controller, container } = await renderGrid((workbook, id) => {
+      for (let i = 0; i < 10_000; i++) workbook.setCell(id, { row: i, col: i }, i);
+    });
+    const internals = getWorkbookInternals(session.workbook);
+    const read = internals.readRawCell.bind(internals);
+    let reads = 0;
+    internals.readRawCell = (target, address) => {
+      if (++reads > 200_000) throw new Error("rescanned the edges of the growing block");
+      return read(target, address);
+    };
+    act(() => controller.sort());
+    expect(container.querySelector(".sg-notice")?.textContent).toContain("too many cells");
+    expect(reads).toBeLessThan(200_000);
+    reads = 0;
+    act(() => controller.filterByValue());
+    expect(controller.isFiltered).toBe(true);
+    expect(reads).toBeLessThan(200_000);
+  });
+
+  it("sorts the block around the active cell with the cells that touch it diagonally, and leaves data past an empty column", async () => {
+    const { session, sheet, controller, grid } = await renderGrid((workbook, id) => {
+      workbook.setRange(id, { row: 0, col: 0 }, [["Name", "Qty"], ["b", 2], ["a", 1], ["aa", null]]);
+      workbook.setCell(id, { row: 3, col: 2 }, "x");
+      workbook.setCell(id, { row: 1, col: 4 }, "keep");
+      workbook.setCell(id, { row: 1_048_575, col: 16_383 }, "far corner");
+    });
+    click(grid, 1, 0);
+    act(() => controller.sort());
+    const column = (col: number) => [1, 2, 3].map((row) => session.cell(sheet, row, col).value);
+    expect(column(0)).toEqual(["a", "aa", "b"]);
+    expect(column(1)).toEqual([1, null, 2]);
+    expect(column(2)).toEqual([null, "x", null]);
+    expect(column(4)).toEqual(["keep", null, null]);
+    expect(session.cell(sheet, 0, 0).value).toBe("Name");
+  });
+
   it("inserts, deletes, sorts and filters from the context menu", async () => {
     const { session, sheet, grid, container, controller } = await renderGrid((workbook, id) => {
       workbook.setRange(id, { row: 0, col: 0 }, [["Fruit", "Qty"], ["Pear", 3], ["Apple", 9], ["Pear", 1]]);
