@@ -52,7 +52,7 @@ interface CanonicalChatSessionContextValue {
    * account and computer it was picked on.
    */
   permissionModeOverride: string | null;
-  setPermissionModeOverride: (mode: string) => void;
+  setPermissionModeOverride: (mode: string | null) => void;
   /**
    * The Project a draft chat should be created in, if the user picked one.
    * Only meaningful before the chat exists -- an existing chat's project is
@@ -110,7 +110,7 @@ export function CanonicalChatSessionProvider({ children }: { children: ReactNode
   const [pickedMode, setPickedMode] = useState<{ scope: string; mode: string } | null>(null);
   const permissionModeOverride = pickedMode?.scope === modeScope ? pickedMode.mode : null;
   const setPermissionModeOverride = useCallback(
-    (mode: string) => setPickedMode({ scope: modeScope, mode }),
+    (mode: string | null) => setPickedMode(mode === null ? null : { scope: modeScope, mode }),
     [modeScope],
   );
 

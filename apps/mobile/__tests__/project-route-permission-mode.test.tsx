@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import * as mockRoutes from "./project-route-test-utils";
 import ProjectRoute from "../app/(drawer)/(tabs)/(chats)/projects/[projectId]";
+import { GPT, codexInstance, REASONING } from "./model-test-catalog";
 import { composerChoices } from "@/lib/remembered-composer-choice";
 
 jest.mock("@clerk/clerk-expo", () => ({
@@ -79,7 +80,7 @@ describe("the permission mode a project chat starts with", () => {
   });
 
   it("is the one last chosen on this phone", async () => {
-    act(() => composerChoices.remember("user_a:alice:primary", { permissionMode: "full_access" }));
+    act(() => composerChoices.remember("user_a:alice:primary", { selection: sonnet, permissionMode: "full_access" }));
     await mockRoutes.renderPortfolio(<ProjectRoute />);
     await waitFor(() => expect(modelPickerProps().permissionMode).toBe("full_access"));
 
@@ -101,12 +102,12 @@ describe("the permission mode a project chat starts with", () => {
       permissionMode: "auto",
     }));
     await waitFor(() => expect(shell.setPermissionModeOverride).toHaveBeenCalledWith("auto"));
-    expect(composerChoices.choice("user_a:alice:primary")).toEqual({ permissionMode: "auto" });
+    expect(composerChoices.choice("user_a:alice:primary")).toEqual({ selection: sonnet, permissionMode: "auto" });
   });
 
   it("falls back to Supervised on an engine without the chosen mode", async () => {
     requests.fetchChatProviderCatalog.mockResolvedValue(catalog);
-    act(() => composerChoices.remember("user_a:alice:primary", { permissionMode: "full_access" }));
+    act(() => composerChoices.remember("user_a:alice:primary", { selection: sonnet, permissionMode: "full_access" }));
     await mockRoutes.renderPortfolio(<ProjectRoute />);
 
     await startChat("Draft the case study");
@@ -116,4 +117,28 @@ describe("the permission mode a project chat starts with", () => {
     }));
     expect(composerChoices.choice("user_a:alice:primary")?.permissionMode).toBe("full_access");
   });
+
+  it("restores project destination choices and sends the explicit model with its effort and access", async () => {
+    const codex = codexInstance([[GPT.model, "Codex"], ["gpt-5.6-mini", "Mini"]], { options: [REASONING] });
+    codex.supports.permissionModes = ["supervised", "auto_review", "full_access"];
+    requests.fetchChatProviderCatalog.mockResolvedValue({ instances: [...fourModes.instances, codex] });
+    const high = { ...GPT, options: [{ id: "effort", value: "high" }] };
+    act(() => {
+      composerChoices.remember("user_a:alice:primary", { selection: high, permissionMode: "auto_review" });
+      composerChoices.remember("user_a:alice:primary", { selection: sonnet, permissionMode: "auto" });
+    });
+    await mockRoutes.renderPortfolio(<ProjectRoute />);
+    await waitFor(() => expect(modelPickerProps().selection).toEqual(sonnet));
+    act(() => modelPickerProps().onSelectionChange({ ...GPT, model: "gpt-5.6-mini" }));
+    await waitFor(() => expect(modelPickerProps().permissionMode).toBe("auto_review"));
+    expect(modelPickerProps().selection).toEqual({ ...high, model: "gpt-5.6-mini" });
+    act(() => modelPickerProps().onSelectionChange(sonnet));
+    expect(modelPickerProps().permissionMode).toBe("auto");
+    act(() => modelPickerProps().onSelectionChange({ ...GPT, model: "gpt-5.6-mini" }));
+    await startChat("Use the saved native settings");
+    expect(requests.admitChatTurn).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new", expect.objectContaining({
+      selection: { ...high, model: "gpt-5.6-mini" }, permissionMode: "auto_review",
+    }));
+  });
+
 });

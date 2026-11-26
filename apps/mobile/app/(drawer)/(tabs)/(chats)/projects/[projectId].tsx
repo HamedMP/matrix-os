@@ -14,6 +14,7 @@ import { useBackOr } from "@/components/projects/use-back-or";
 import { useProjectComposer } from "@/components/projects/use-project-composer";
 import { useProjectList } from "@/components/projects/use-project-list";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
+import { providerComposerPreference } from "@/lib/provider-composer-preference";
 import { newChatSelection } from "@/components/chat/new-chat-selection";
 import { chosenTurnModes } from "@/lib/canonical-chat-selection";
 import { supportedAttachmentKinds } from "@/lib/chat-attachments";
@@ -83,7 +84,7 @@ export default function ProjectRoute() {
   });
   const selection = chosenModel ?? startingSelection;
   // A new chat starts in the permission mode chosen here, else the one last chosen on this phone.
-  const turnModes = chosenTurnModes(catalog, selection, undefined, chosenPermissionMode ?? remembered.choice?.permissionMode);
+  const turnModes = chosenTurnModes(catalog, selection, undefined, chosenPermissionMode ?? remembered.forProvider(selection?.instanceId)?.permissionMode);
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
   const matrixBinding = gateway.gatewayUrl && gateway.ready && project
     ? { gatewayUrl: gateway.gatewayUrl, scope: JSON.stringify([gateway.userId, gateway.computerKey, project.id]) }
@@ -208,16 +209,21 @@ export default function ProjectRoute() {
           modelControl: (
             <ModelPicker
               catalog={catalog}
-              catalogLoading={catalogPending || catalogFetching || (chosenModel === null && choiceUnknown)}
+              catalogLoading={catalogPending || catalogFetching || !remembered.ready || (chosenModel === null && choiceUnknown)}
               selection={selection}
               onSelectionChange={(chosen) => {
-                setChosenModel(chosen);
-                remembered.remember({ selection: chosen });
+                if (!remembered.ready) return;
+                const switching = selection?.instanceId !== chosen.instanceId;
+                const preference = providerComposerPreference(catalog, selection, chosen, remembered.forProvider(chosen.instanceId), turnModes?.permissionMode);
+                setChosenModel(preference.selection);
+                if (switching) setChosenPermissionMode(preference.permissionMode ?? null);
+                remembered.remember(preference);
               }}
               permissionMode={turnModes?.permissionMode ?? null}
               onPermissionModeChange={(mode) => {
+                if (!remembered.ready) return;
                 setChosenPermissionMode(mode);
-                remembered.remember({ permissionMode: mode });
+                if (selection) remembered.remember({ selection, permissionMode: mode });
               }}
             />
           ),

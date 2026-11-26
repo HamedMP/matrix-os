@@ -307,7 +307,7 @@ describe("chat screen: new chat", () => {
     fireEvent.press(screen.getByRole("button", { name: "Model" }));
     fireEvent.press(screen.getByRole("button", { name: "Low" }));
 
-    expect(composerChoices.choice("user_a:amin:primary")).toEqual({
+    expect(composerChoices.choice("user_a:amin:primary")).toMatchObject({
       selection: { instanceId: "matrix_pi_default", model: "sonnet", options: [{ id: "effort", value: "low" }] },
     });
   });

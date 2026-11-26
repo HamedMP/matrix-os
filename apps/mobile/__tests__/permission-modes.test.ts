@@ -18,7 +18,7 @@ const matrix = (modes = ["supervised"]) => withModes(matrixInstance(), modes);
 describe("the permission modes offered for a selection", () => {
   it("are the engine's own, in its order, named as Desktop names them, with the current one marked", () => {
     expect(permissionModeChoices(catalogOf(codex()), GPT, "auto")).toEqual([
-      { value: "supervised", label: "Supervised", selected: false },
+      { value: "supervised", label: "Ask for approval", selected: false },
       { value: "auto_accept_edits", label: "Auto Accept Edits", selected: false },
       { value: "auto", label: "Auto", selected: true },
       { value: "full_access", label: "Full Access", selected: false },

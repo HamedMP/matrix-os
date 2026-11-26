@@ -70,7 +70,8 @@ describe("the composer choice remembered on this phone", () => {
 
     const restarted = createComposerChoiceStore(storage);
     await restarted.load();
-    expect(restarted.choice("user_a:alice:primary")).toEqual({ selection: CLAUDE, permissionMode: "full_access" });
+    expect(restarted.choice("user_a:alice:primary")).toEqual({ selection: CLAUDE });
+    expect(restarted.choice("user_a:alice:primary", GPT_HIGH.instanceId)).toEqual({ selection: GPT_HIGH, permissionMode: "full_access" });
   });
 
   it("drops a saved permission mode it cannot read, keeping the model saved with it", async () => {

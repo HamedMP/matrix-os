@@ -12,8 +12,8 @@ import { z } from "zod/v4";
 export interface RememberedComposerChoice {
   selection?: CanonicalChatModelSelection;
   /**
-   * The permission mode last chosen, such as "full_access". It is kept as
-   * chosen, so it comes back with an engine that runs it after one that did not.
+   * The permission mode last chosen for this selection's provider instance.
+   * A first-use instance receives its catalog default, never another's mode.
    */
   permissionMode?: string;
 }
@@ -26,10 +26,12 @@ interface ComposerChoiceStorage {
 interface Entry {
   scope: string;
   choice: RememberedComposerChoice;
+  providers?: RememberedComposerChoice[];
 }
 
 const STORAGE_KEY = "matrix_os_composer_choice_v1";
 export const MAX_REMEMBERED_COMPUTERS = 8;
+export const MAX_REMEMBERED_PROVIDERS = 20;
 
 const ScopeSchema = z.string().min(1).max(400);
 const ChoiceSchema = z.object({
@@ -37,7 +39,25 @@ const ChoiceSchema = z.object({
   // A mode that cannot be read is dropped on its own, keeping the model saved with it.
   permissionMode: z.string().min(1).max(80).optional().catch(undefined),
 });
-const EntrySchema = z.object({ scope: ScopeSchema, choice: ChoiceSchema });
+const EntrySchema = z.object({ scope: ScopeSchema, choice: ChoiceSchema,
+  providers: z.array(z.unknown()).max(MAX_REMEMBERED_PROVIDERS * 4).optional().catch(undefined),
+});
+
+/** Last occurrence wins; the legacy single choice seeds its own instance only. */
+function providerChoices(...sources: readonly RememberedComposerChoice[][]): RememberedComposerChoice[] {
+  const choices: RememberedComposerChoice[] = [];
+  for (const source of sources) for (const choice of source) {
+    if (!choice.selection) continue;
+    const previous = choices.findIndex(value => value.selection?.instanceId === choice.selection?.instanceId);
+    if (previous !== -1) choices.splice(previous, 1);
+    choices.push(choice);
+  }
+  return choices.slice(-MAX_REMEMBERED_PROVIDERS);
+}
+
+function entryProviders(entry: Entry | undefined): RememberedComposerChoice[] {
+  return entry ? providerChoices(entry.providers ?? [], [entry.choice]) : [];
+}
 const StoredSchema = z.object({ entries: z.array(z.unknown()).max(MAX_REMEMBERED_COMPUTERS * 4) });
 
 function failureName(error: unknown): string {
@@ -46,13 +66,18 @@ function failureName(error: unknown): string {
 
 /** The saved entries that can still be read as choices; one that cannot is left out, not the rest. */
 function parseEntries(raw: string | null): Entry[] {
-  if (raw === null) return [];
+  if (raw === null || raw.length > 2_000_000) return [];
   const stored = StoredSchema.safeParse(JSON.parse(raw));
   if (!stored.success) return [];
   return stored.data.entries
     .flatMap((value) => {
       const entry = EntrySchema.safeParse(value);
-      return entry.success ? [entry.data] : [];
+      if (!entry.success) return [];
+      const providers = (entry.data.providers ?? []).flatMap(value => {
+        const choice = ChoiceSchema.safeParse(value);
+        return choice.success && choice.data.selection ? [choice.data] : [];
+      });
+      return [{ ...entry.data, providers: providerChoices(providers, [entry.data.choice]) }];
     })
     .slice(-MAX_REMEMBERED_COMPUTERS);
 }
@@ -82,8 +107,12 @@ export function createComposerChoiceStore(storage: ComposerChoiceStorage = Async
       })
       .then((read) => {
         // A choice made while the storage was being read is newer than what it held.
-        entries = [...read.filter((saved) => !entries?.some((made) => made.scope === saved.scope)), ...(entries ?? [])]
-          .slice(-MAX_REMEMBERED_COMPUTERS);
+        const made = entries ?? [];
+        entries = [...read.filter(saved => !made.some(value => value.scope === saved.scope)),
+          ...made.map(value => ({ ...value, providers: providerChoices(
+            entryProviders(read.find(saved => saved.scope === value.scope)), entryProviders(value),
+          ) })),
+        ].slice(-MAX_REMEMBERED_COMPUTERS);
         notify();
       });
     return reading;
@@ -101,18 +130,24 @@ export function createComposerChoiceStore(storage: ComposerChoiceStorage = Async
   return {
     load,
     /** The choice remembered for `scope`: undefined until the storage has been read, null when there is none. */
-    choice(scope: string): RememberedComposerChoice | null | undefined {
+    choice(scope: string, instanceId?: string): RememberedComposerChoice | null | undefined {
       if (entries === null) return undefined;
-      return entries.find((entry) => entry.scope === scope)?.choice ?? null;
+      const entry = entries.find(value => value.scope === scope);
+      return instanceId === undefined ? entry?.choice ?? null
+        : entryProviders(entry).find(value => value.selection?.instanceId === instanceId) ?? null;
     },
     /** Remembers the parts of a choice given, keeping the parts not given. */
     remember(scope: string, patch: RememberedComposerChoice) {
       if (!ScopeSchema.safeParse(scope).success) return;
       const current = entries ?? [];
-      const previous = current.find((entry) => entry.scope === scope)?.choice;
+      const entry = current.find(value => value.scope === scope);
+      const previous = entry?.choice;
+      const targetId = patch.selection?.instanceId ?? previous?.selection?.instanceId;
+      const target = entryProviders(entry).find(value => value.selection?.instanceId === targetId);
+      const choice = { ...previous, permissionMode: target?.permissionMode, ...target, ...patch };
       entries = [
         ...current.filter((entry) => entry.scope !== scope),
-        { scope, choice: { ...previous, ...patch } },
+        { scope, choice, providers: providerChoices(entryProviders(entry), [choice]) },
       ].slice(-MAX_REMEMBERED_COMPUTERS);
       notify();
       // What the storage holds for other computers is kept: it is read first.
@@ -166,5 +201,8 @@ export function useRememberedComposerChoice(scope: string | null) {
   const remember = useCallback((patch: RememberedComposerChoice) => {
     if (scope !== null) composerChoices.remember(scope, patch);
   }, [scope]);
-  return { choice: choice ?? null, ready: choice !== undefined, remember };
+  return { choice: choice ?? null, ready: choice !== undefined, remember,
+    forProvider: (instanceId: string | undefined) => scope !== null && instanceId
+      ? composerChoices.choice(scope, instanceId) ?? null : null,
+  };
 }
