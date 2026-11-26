@@ -4,6 +4,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { SLACK_OAUTH_COMPLETION_PATH, SlackOAuthCallbackQuerySchema } from '@matrix-os/contracts/slack-bridge';
 import { createSlackContextRoutes } from "./context-routes.js";
+import { createSlackThreadContext, type SlackThreadContextOptions } from "./thread-context.js";
 import { createSlackLinkPage } from "./link-page.js";
 import { createSlackReplyRoutes } from "./reply-routes.js";
 import { createSlackReactionRoutes } from "./reaction-routes.js";
@@ -22,13 +23,14 @@ const CallbackQuerySchema = SlackOAuthCallbackQuerySchema;
 const ChallengeSchema = z.object({ type: z.literal("url_verification"), challenge: z.string().min(1).max(1_024), api_app_id: SlackAppIdSchema.optional() }).passthrough();
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
-export type SlackAppRouteOptions = SlackAuthorityDependencies & {
+export type SlackAppRouteOptions = SlackAuthorityDependencies & SlackThreadContextOptions & {
   config: SlackAppConfig; repository: SlackRepository; api: SlackApi; now?: () => Date;
 };
 
 export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { shutdownSlack(): Promise<void> } {
   const app = new Hono();
   const now = options.now ?? (() => new Date());
+  const threadContext = createSlackThreadContext(options);
   const publicUrl = new URL(options.config.publicBaseUrl);
   if (publicUrl.protocol !== "https:" || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash || publicUrl.pathname !== "/") throw new Error("Slack public origin unavailable");
   const callbackUrl = `${publicUrl.origin}/api/slack/oauth/callback`;
@@ -151,6 +153,12 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     const installed = await options.repository.getInstallation(appId, teamId);
     if ((!installed || installed.state !== "active") && !revocation) return fail(c, "Forbidden", 403);
     if (envelope.data.is_ext_shared_channel || event.is_ext_shared || (event.user_team && event.user_team !== teamId)) return c.json({ received: true });
+    if (threadContext.receive && installed && event.type === "message" && event.channel_type === "channel"
+      && !event.bot_id && !event.subtype && event.app_id === undefined && event.user !== installed.botUserId) {
+      const status = await threadContext.receive({ appId, teamId, eventId, userId: event.user, channelId: event.channel,
+        threadTs: event.thread_ts, ts: event.ts, text: event.text }, body, installed, signal);
+      return status === 200 ? c.json({ received: true }) : fail(c, status === 409 ? "Conflicting delivery" : "Slack unavailable", status);
+    }
     const relevant = event.type === "app_mention" || (event.type === "message" && event.channel_type === "im");
     if (event.bot_id || event.subtype || (event.user && event.user === installed?.botUserId) || (!relevant && !revocation)) return c.json({ received: true });
     if (relevant && !event.text?.trim()) return c.json({ received: true });
@@ -235,6 +243,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
   app.route("/", createSlackReplyRoutes(options));
   app.route("/", createSlackReactionRoutes(options));
   app.route("/", createSlackContextRoutes(options));
+  app.route("/", threadContext.routes);
   app.route("/", createSlackLinkPage(options));
   return Object.assign(app, { async shutdownSlack() { closed = true; await Promise.allSettled([...activeEvents]); } });
 }

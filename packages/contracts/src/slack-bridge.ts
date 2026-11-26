@@ -1,4 +1,6 @@
 import { z } from "zod/v4";
+import { ChatAgentIdSchema } from "#chat-agent-context";
+import { CanonicalChatIdSchema } from "#canonical-chat";
 
 export const SLACK_OAUTH_COMPLETION_PATH = '/slack/oauth/complete';
 export const SlackOAuthCallbackQuerySchema = z.object({
@@ -19,6 +21,36 @@ export const SlackBridgeEnvelopeSchema = z.object({
     text:z.string().min(1).max(40_000),kind:z.enum(["mention","direct_message"])}).strict(),
 }).strict();
 export type SlackBridgeEnvelope = z.infer<typeof SlackBridgeEnvelopeSchema>;
+
+const Provenance = SlackBridgeEnvelopeSchema.shape.event.pick({ appId: true, teamId: true, eventId: true, userId: true, ts: true });
+const PrivateThread = z.object({
+  ownerId: Actor, botId: ChatAgentIdSchema, chatId: CanonicalChatIdSchema,
+  runtimeId: z.string().regex(/^[A-Za-z0-9:_-]{1,160}$/),
+}).strict();
+const Digest = z.string().regex(/^[a-f0-9]{64}$/);
+export const SlackThreadContextAccessSchema = PrivateThread.extend({ grantId: Digest }).strict();
+export type SlackThreadContextAccess = z.infer<typeof SlackThreadContextAccessSchema>;
+export const SlackChannelMetadataSchema = z.object({
+  id: z.string().regex(/^C[A-Z0-9]{2,63}$/),
+  name: z.string().min(1).max(80).regex(/^[^\s\p{C}#<>&]+$/u),
+}).strict();
+export type SlackChannelMetadata = z.infer<typeof SlackChannelMetadataSchema>;
+export const SlackThreadContextAccessRequestSchema = SlackThreadContextAccessSchema.extend({
+  includeChannelMetadata: z.literal(true).optional(),
+}).strict();
+export const SlackThreadContextAccessResponseSchema = z.discriminatedUnion("allowed", [
+  z.object({ allowed: z.literal(false) }).strict(),
+  z.object({ allowed: z.literal(true), channel: SlackChannelMetadataSchema.optional() }).strict(),
+]);
+export type SlackThreadContextAccessResponse = z.infer<typeof SlackThreadContextAccessResponseSchema>;
+
+export const SlackThreadContextEnvelopeSchema = SlackThreadContextAccessSchema.extend({
+  event: Provenance.extend({
+    channelId: z.string().regex(/^C[A-Z0-9]{2,63}$/), threadTs: Timestamp, text: z.string().min(1).max(40_000),
+  }).strict().refine(event => Boolean(event.text.trim())),
+}).strict();
+export type SlackThreadContextEnvelope = z.infer<typeof SlackThreadContextEnvelopeSchema>;
+
 const AuthorizationIdentity = { ownerId: Actor, organizationId: Organization, actorId: Actor, scopeId: z.uuid() };
 export const SlackBridgePublicationSchema = z.object({ ...AuthorizationIdentity, action: z.literal("publish_reply"),
   appId: SlackBridgeEnvelopeSchema.shape.event.shape.appId, teamId: SlackBridgeEnvelopeSchema.shape.event.shape.teamId,

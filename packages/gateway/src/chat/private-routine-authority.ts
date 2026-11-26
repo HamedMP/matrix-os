@@ -1,4 +1,4 @@
-import { sql, type Expression, type Kysely, type Transaction } from "kysely";
+import { sql, type Expression, type Kysely, type QueryExecutorProvider, type Transaction } from "kysely";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
 import { ChatConflictError } from "./errors.js";
@@ -19,7 +19,7 @@ export function hasNonPrivateChatScopeSql(
   )`;
 }
 
-export async function hasNonPrivateChatScope(executor: Executor, owner: ChatOwner, chatId: string): Promise<boolean> {
+export async function hasNonPrivateChatScope(executor: QueryExecutorProvider, owner: ChatOwner, chatId: string): Promise<boolean> {
   const predicate = hasNonPrivateChatScopeSql(sql.val(owner.type), sql.val(owner.ownerId), sql.val(chatId));
   const result = await sql<{ non_private: boolean }>`SELECT ${predicate} AS non_private`.execute(executor);
   // Missing schema and database failures propagate; neither proves private authority.
