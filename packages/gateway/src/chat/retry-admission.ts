@@ -41,6 +41,10 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
     if (!context) {
       throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
     }
+    // Project Setup links the accepted run to its draft. A regular Chat retry cannot replace that link.
+    if (context.latestRun.context?.projectSetupDraft) {
+      throw new CanonicalChatOrchestrationError(safeError("run_unavailable", "Retry from project setup.", false, []), 409);
+    }
     if (context.latestRun.driverKind === "matrix_bot" && context.turn.clientRequestId.startsWith("req_routine_")) {
       throw new CanonicalChatOrchestrationError(
         safeError("run_unavailable", "Review this routine's status before requesting new work.", false, []), 409,
