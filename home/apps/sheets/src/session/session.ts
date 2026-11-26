@@ -107,6 +107,11 @@ export class SheetSession {
     return this.state;
   }
 
+  /** The version of the file this session last read or wrote, or null without a file. Changes with every save. */
+  get fileVersion(): string | null {
+    return this.saver.version;
+  }
+
   /** Calls back after every change. Returns the function that stops it. */
   subscribe(listener: SessionListener): () => void {
     return this.listeners.add(listener);

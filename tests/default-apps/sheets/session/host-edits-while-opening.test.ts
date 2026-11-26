@@ -17,6 +17,21 @@ function holdReads(files: ReturnType<typeof harness>["files"], path: string) {
   return () => release();
 }
 
+/** Lets reads of one path take their bytes, then holds the answer until `release` is called. */
+function holdAnswers(files: ReturnType<typeof harness>["files"], path: string) {
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const read = files.read.bind(files);
+  files.read = async (asked: string) => {
+    const answer = await read(asked);
+    if (asked === path) await gate;
+    return answer;
+  };
+  return () => release();
+}
+
 async function valueAt(bytes: Uint8Array, row: number, col: number): Promise<unknown> {
   const workbook = await openXlsx(bytes);
   return workbook.getCell(workbook.listSheets()[0]!.id, { row, col }).value;
@@ -65,6 +80,82 @@ describe("session host: edits made while another file loads", () => {
     expect(host.session).toBe(a.session);
     expect(a.session.getState().dirty).toBe(true);
     expect(host.getState().opening).toBeNull();
+  });
+});
+
+describe("session host: opening the document already shown", () => {
+  it("keeps the current session, with edits made while the file is read, and saves on without a conflict", async () => {
+    const h = harness();
+    h.files.put("A.xlsx", await sampleXlsx());
+    const host = new SessionHost(h.deps);
+    const a = await host.open("A.xlsx");
+    if (a.status !== "opened") throw new Error("not opened");
+    const sheet = a.session.getState().activeSheetId;
+    const release = holdAnswers(h.files, "A.xlsx");
+
+    const opening = host.open("A.xlsx");
+    await settle();
+    // The owner keeps typing while the file would be read again.
+    a.session.setCellInput(sheet, { row: 5, col: 5 }, "typed while reading");
+    release();
+    expect(await opening).toEqual({ status: "opened", session: a.session });
+
+    expect(host.session).toBe(a.session);
+    expect(host.getState().opening).toBeNull();
+    expect(a.session.cell(sheet, 5, 5).value).toBe("typed while reading");
+    a.session.setCellInput(sheet, { row: 6, col: 5 }, "next edit");
+    expect(await a.session.flush()).toMatchObject({ status: "saved" });
+    expect(await valueAt(h.files.bytes("A.xlsx"), 5, 5)).toBe("typed while reading");
+    expect(await valueAt(h.files.bytes("A.xlsx"), 6, 5)).toBe("next edit");
+  });
+
+  it("keeps the current session when the same file is asked for under another spelling of its path", async () => {
+    const h = harness();
+    h.files.put("A.xlsx", await sampleXlsx());
+    const host = new SessionHost(h.deps);
+    const a = await host.open("A.xlsx");
+    if (a.status !== "opened") throw new Error("not opened");
+    const sheet = a.session.getState().activeSheetId;
+    const release = holdAnswers(h.files, "A.xlsx");
+    // As the gateway answers: the file read under "./A.xlsx" reports its home-relative path.
+    const held = h.files.read;
+    h.files.read = async (asked: string) => held(asked === "./A.xlsx" ? "A.xlsx" : asked);
+
+    const opening = host.open("./A.xlsx");
+    await settle();
+    // The owner keeps typing, and leaving the old copy saves it after the read.
+    a.session.setCellInput(sheet, { row: 5, col: 5 }, "typed while reading");
+    release();
+    expect(await opening).toEqual({ status: "opened", session: a.session });
+
+    expect(host.session).toBe(a.session);
+    expect(a.session.cell(sheet, 5, 5).value).toBe("typed while reading");
+    a.session.setCellInput(sheet, { row: 6, col: 5 }, "next edit");
+    expect(await a.session.flush()).toMatchObject({ status: "saved" });
+    expect(await valueAt(h.files.bytes("A.xlsx"), 6, 5)).toBe("next edit");
+  });
+
+  it("reads the file again when this window saved it while a discarding reopen read it", async () => {
+    const h = harness();
+    h.files.put("A.xlsx", await sampleXlsx());
+    const host = new SessionHost(h.deps);
+    const a = await host.open("A.xlsx");
+    if (a.status !== "opened") throw new Error("not opened");
+    const sheet = a.session.getState().activeSheetId;
+    const release = holdAnswers(h.files, "A.xlsx");
+
+    const opening = host.open("A.xlsx", { discardUnsaved: true });
+    await settle();
+    // An autosave lands while the old bytes are being read.
+    a.session.setCellInput(sheet, { row: 5, col: 5 }, "saved while reading");
+    expect(await a.session.flush()).toMatchObject({ status: "saved" });
+    release();
+    const b = await opening;
+    if (b.status !== "opened") throw new Error("not opened");
+
+    expect(b.session.cell(sheet, 5, 5).value).toBe("saved while reading");
+    b.session.setCellInput(sheet, { row: 6, col: 5 }, "next edit");
+    expect(await b.session.flush()).toMatchObject({ status: "saved" });
   });
 });
 

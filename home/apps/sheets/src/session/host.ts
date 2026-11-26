@@ -8,7 +8,8 @@
  * it stays on the document and reports `unsaved`, unless the caller chose to
  * discard them. The old document stays on screen and editable while the new
  * one loads, so its edits are saved again right before it is replaced.
- * Text still in its cell editor is committed first (see `holdEditor`); when
+ * Opening the document already shown keeps it (see `open`). Text still in
+ * its cell editor is committed first (see `holdEditor`); when
  * the editor refuses it, the host stays and reports `editing`.
  */
 
@@ -126,39 +127,67 @@ export class SessionHost {
     if (previous !== null && previous !== session) previous.dispose();
   }
 
-  /** Opens a file and makes it the current document. */
+  /** Keeps the current document for an open of its own file. */
+  private keep(session: SheetSession): HostOpenResult {
+    this.set({ opening: null, error: null });
+    const path = session.getState().path;
+    if (path !== null) void session.recents.touch(path);
+    return { status: "opened", session };
+  }
+
+  /**
+   * Opens a file and makes it the current document. Opening the file already
+   * shown keeps its session: a copy read again could be older than the edits
+   * this window saves meanwhile. With `discardUnsaved` the file is read again
+   * instead, and once more when this window saved it during the read.
+   */
   async open(path: string, options: { discardUnsaved?: boolean } = {}): Promise<HostOpenResult> {
+    const discard = options.discardUnsaved === true;
     const ticket = ++this.ticket;
+    const shown = this.state.session;
+    if (!discard && shown !== null && shown.getState().path === path) return this.keep(shown);
     this.set({ opening: path, error: null });
-    const before = await this.release(options.discardUnsaved === true);
+    const before = await this.release(discard);
     if (before !== "released") return this.stopped(ticket, before);
     if (ticket !== this.ticket) return { status: "superseded" };
-    let session: SheetSession;
-    try {
-      session = await openSheetSession(this.deps, path);
-    } catch (error: unknown) {
-      if (ticket !== this.ticket) return { status: "superseded" };
-      const mapped = toSessionError(error);
-      this.set({ opening: null, error: { code: mapped.code, message: mapped.message, path } });
-      return { status: "error", code: mapped.code, message: mapped.message };
+    for (let attempt = 1; ; attempt++) {
+      const current = this.state.session;
+      const versionBefore = current?.fileVersion ?? null;
+      let session: SheetSession;
+      try {
+        session = await openSheetSession(this.deps, path);
+      } catch (error: unknown) {
+        if (ticket !== this.ticket) return { status: "superseded" };
+        const mapped = toSessionError(error);
+        this.set({ opening: null, error: { code: mapped.code, message: mapped.message, path } });
+        return { status: "error", code: mapped.code, message: mapped.message };
+      }
+      if (ticket !== this.ticket) {
+        // A newer open won while this file was loading.
+        session.dispose();
+        return { status: "superseded" };
+      }
+      // The owner may have kept editing the old document while this one loaded.
+      const after = await this.release(discard);
+      if (after !== "released") {
+        session.dispose();
+        return this.stopped(ticket, after);
+      }
+      if (ticket !== this.ticket) {
+        session.dispose();
+        return { status: "superseded" };
+      }
+      // The same file under another spelling of its path: the read names it as the current document does.
+      const same = current !== null && current === this.state.session && current.getState().path === session.getState().path;
+      if (same && (!discard || current.fileVersion !== versionBefore)) {
+        // Kept edits were saved over the copy read; discarded ones may have been autosaved during the read. Either way the copy may be older than the file.
+        session.dispose();
+        if (!discard || attempt >= MAX_RELEASE_SAVES) return this.keep(current);
+        continue;
+      }
+      this.replace(session);
+      return { status: "opened", session };
     }
-    if (ticket !== this.ticket) {
-      // A newer open won while this file was loading.
-      session.dispose();
-      return { status: "superseded" };
-    }
-    // The owner may have kept editing the old document while this one loaded.
-    const after = await this.release(options.discardUnsaved === true);
-    if (after !== "released") {
-      session.dispose();
-      return this.stopped(ticket, after);
-    }
-    if (ticket !== this.ticket) {
-      session.dispose();
-      return { status: "superseded" };
-    }
-    this.replace(session);
-    return { status: "opened", session };
   }
 
   /**
