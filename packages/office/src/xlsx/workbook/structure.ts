@@ -11,7 +11,7 @@ import { OfficeError } from "../../errors.js";
 import { getAttr, remove, setAttr, setTextContent, textContent } from "../../xml/index.js";
 import { MAX_COLS, MAX_ROWS, formatA1Range, tryParseA1Range } from "./a1.js";
 import { noteClockInputs, readsAcrossMove } from "./calc-inputs.js";
-import { readsPositionAcrossMove } from "./calc-positions.js";
+import { positionsAcrossMove } from "./calc-positions.js";
 import { checkNotesForStructure, moveNotes } from "./notes.js";
 import { type CellRec, type ColumnRun, DIRTY_CONTENT, type RowRec, type SheetModel, type WorkbookState, cellKey } from "./model.js";
 import { type StructuralOp, movePoint, moveSpan, rewriteForStructure } from "./refs-rewrite.js";
@@ -215,7 +215,8 @@ export function applyStructuralOp(state: WorkbookState, sheet: SheetModel, op: S
   // A range that loses or gains cells reads other cells than it did, and a formula that asks where a
   // reference is, or picks cells by position, may get another answer: formulas that need a time and do
   // either are noted, while the graph still has the references as they were.
-  noteClockInputs(state, (node) => readsAcrossMove(node, sheet, op) || readsPositionAcrossMove(state, node, sheet, op));
+  const readsPosition = positionsAcrossMove(state, sheet, op);
+  noteClockInputs(state, (node) => readsAcrossMove(node, sheet, op) || readsPosition(node));
   moveEdits(state, sheet, op);
   moveCells(state, sheet, op);
   // Array formulas moved with their cells, or went with deleted ones.

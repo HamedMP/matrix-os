@@ -8,14 +8,34 @@
  * itself (ROW(), COLUMN()) or picks cells by position (OFFSET, INDIRECT) can
  * get another answer. Those references are not in the cells it reads (see
  * `collectDeps`), so `calc-inputs.ts` asks here before a move.
+ *
+ * An OFFSET or INDIRECT argument that is not written out (`"A"&B1`,
+ * `B1-5`) is worked out with the engine against the workbook as it is
+ * before the move, and the address it gives is judged like a written one: its
+ * cells follow the move, so it has the same value afterwards, and whatever
+ * in it asks for a position is judged on its own by the same walk. What
+ * cannot be worked out (an error value, an array, more cells than the move's
+ * budget) is judged by the cells the last calculation read; a formula that
+ * has not been calculated since it was opened keeps its date, as it does
+ * when a cell it reads at run time is edited (`readsAny`).
  */
 
-import type { FormulaAst } from "../../api/formula.js";
-import { type CalcNode, type Dep, MAX_NAME_DEPTH, collectDeps, pushChildren } from "./calc-graph.js";
+import type { CellProvider, FormulaAst, FormulaScalar, FormulaValue, RangeBounds } from "../../api/formula.js";
+import { isOfficeError } from "../../errors.js";
+import { formatValue } from "../format/index.js";
+import { type CalcNode, type Dep, MAX_NAME_DEPTH, collectDeps, functionsOf, pushChildren } from "./calc-graph.js";
+import { makeProvider } from "./calc-provider.js";
+import { errorValue } from "./calc-values.js";
 import type { SheetModel, WorkbookState } from "./model.js";
 import { lookupName } from "./names.js";
 import { type StructuralOp, movePoint, moveSpan } from "./refs-rewrite.js";
+import { sheetDimensions } from "./sheet-write.js";
 import { parseCached } from "./state.js";
+
+/** Cells that working out computed arguments may read during one move, across every formula it judges. */
+export const MOVE_ARGUMENT_CELLS = 100_000;
+/** Longest address text INDIRECT reads, as the engine has it. */
+const MAX_REFERENCE_TEXT = 1024;
 
 /** The functions that answer with where a reference is: the axis they ask about, and whether they ask its size. */
 const POSITION_ASKS: ReadonlyMap<string, { axis: StructuralOp["axis"]; size: boolean }> = new Map([
@@ -31,14 +51,48 @@ function spanOf(dep: Dep, op: StructuralOp): Span {
   return op.axis === "row" ? { low: dep.r1, high: dep.r2 } : { low: dep.c1, high: dep.c2 };
 }
 
-/** A whole number written in the formula (`3`, `-4`), `fallback` for an absent or empty argument, or null. */
-function literalInt(ast: FormulaAst | undefined, fallback: number): number | null {
-  if (ast === undefined || ast.type === "missing") return fallback;
-  let inner: FormulaAst = ast;
-  while (inner.type === "paren") inner = inner.inner;
-  if (inner.type === "number") return Math.trunc(inner.value);
-  if (inner.type === "unary" && inner.op === "-" && inner.operand.type === "number") return -Math.trunc(inner.operand.value);
-  return null;
+/** What working out computed arguments may still read during one move. */
+interface ArgumentBudget {
+  cells: number;
+}
+
+/** Cells a read of `bounds` covers, clipped to the used part of the sheet as the provider clips it. */
+function usedArea(state: WorkbookState, bounds: RangeBounds): number {
+  const sheet = state.sheetsByKey.get(bounds.sheet.toLowerCase());
+  const used = sheet === undefined ? null : sheetDimensions(sheet);
+  if (used === null) return 0;
+  const lastRow = Math.min(bounds.endRow, used.end.row);
+  const lastCol = Math.min(bounds.endCol, used.end.col);
+  if (bounds.startRow > lastRow || bounds.startCol > lastCol) return 0;
+  return (lastRow - bounds.startRow + 1) * (lastCol - bounds.startCol + 1);
+}
+
+/** The workbook's provider, refusing reads past the budget and noting in `meter` that it did. */
+function meteredProvider(state: WorkbookState, budget: ArgumentBudget, meter: { over: boolean }): CellProvider {
+  const inner = makeProvider(state, { reads: null, overflow: false });
+  const spend = (count: number): boolean => {
+    if (meter.over || count > budget.cells) {
+      meter.over = true;
+      return false;
+    }
+    budget.cells -= count;
+    return true;
+  };
+  return {
+    getCellValue: (sheet, row, col) => (spend(1) ? inner.getCellValue(sheet, row, col) : errorValue("#NUM!")),
+    getRangeValues: (bounds) => (spend(usedArea(state, bounds)) ? inner.getRangeValues(bounds) : errorValue("#NUM!")),
+    resolveName: (name, sheet) => inner.resolveName(name, sheet),
+  };
+}
+
+/** A numeric argument as OFFSET takes it: null when empty or left out, undefined when unknown. */
+function asInt(value: FormulaScalar | undefined): number | null | undefined {
+  if (value === undefined || value === null) return value;
+  if (typeof value === "number") return Number.isFinite(value) ? Math.trunc(value) : undefined;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value !== "string" || value.trim() === "") return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.trunc(n) : undefined;
 }
 
 function contains(outer: Dep, inner: Dep): boolean {
@@ -62,7 +116,59 @@ class PositionWalk {
     private readonly node: CalcNode,
     private readonly sheet: SheetModel,
     private readonly op: StructuralOp,
+    private readonly budget: ArgumentBudget,
   ) {}
+
+  /**
+   * The value of an argument before the move: written out, or worked out with
+   * the engine. Undefined when it cannot be: an error value (a clock read
+   * without a time among them), an array of several values, or more cells
+   * than the budget leaves.
+   */
+  private argValue(ast: FormulaAst | undefined, context: SheetModel): FormulaScalar | undefined {
+    if (ast === undefined || ast.type === "missing") return null;
+    if (ast.type === "string" || ast.type === "number" || ast.type === "boolean") return ast.value;
+    const state = this.state;
+    const formula = state.formula;
+    const functions = functionsOf(state);
+    if (formula === null || functions === null) return undefined;
+    const meter = { over: false };
+    let value: FormulaValue;
+    try {
+      const date1904 = state.date1904;
+      value = formula.evaluate(ast, {
+        provider: meteredProvider(state, this.budget, meter),
+        functions,
+        sheet: context.name,
+        row: this.node.row,
+        col: this.node.col,
+        now: null,
+        date1904,
+        formatValue: (scalar, code) => formatValue(scalar, code, { date1904 }),
+      });
+    } catch (error) {
+      // As in a run: a typed failure is an answer the formula has no value for; anything else is a defect.
+      if (!isOfficeError(error)) throw error;
+      return undefined;
+    }
+    if (meter.over) return undefined;
+    if (value !== null && typeof value === "object" && value.kind === "array") {
+      if (value.rows > 1 || value.cols > 1) return undefined;
+      value = value.values[0]?.[0] ?? null;
+    }
+    return value !== null && typeof value === "object" ? undefined : value;
+  }
+
+  /** A whole-number argument of OFFSET: null when empty or left out, undefined when unknown. */
+  private intArg(ast: FormulaAst | undefined, context: SheetModel): number | null | undefined {
+    return asInt(this.argValue(ast, context));
+  }
+
+  /** Cells the formula reads from an address it does not hold: judged by the last calculation. */
+  private unknown(shift: number): void {
+    this.found.needsReads = true;
+    this.found.allowed.add(shift);
+  }
 
   /** The references in `ast` on the moved sheet, with their spans along the moved axis. */
   private refsOn(ast: FormulaAst, context: SheetModel, depth: number): Dep[] {
@@ -123,25 +229,28 @@ class PositionWalk {
     const base = args[0];
     if (base === undefined) return;
     const op = this.op;
-    const by = literalInt(op.axis === "row" ? args[1] : args[2], 0);
-    for (const dep of this.refsOn(base, context, depth)) {
+    const deps = this.refsOn(base, context, depth);
+    if (deps.length === 0) return;
+    const by = this.intArg(op.axis === "row" ? args[1] : args[2], context);
+    const givenSize = this.intArg(op.axis === "row" ? args[3] : args[4], context);
+    for (const dep of deps) {
       const span = spanOf(dep, op);
       const moved = moveSpan(span.low, span.high, op);
       if (moved === null) {
         this.found.changed = true;
         return;
       }
-      const size = literalInt(op.axis === "row" ? args[3] : args[4], span.high - span.low + 1);
-      if (by === null || size === null) {
+      if (by === undefined || givenSize === undefined) {
         // Where it lands is known only from the last calculation.
-        this.found.needsReads = true;
-        this.found.allowed.add(moved.low - span.low);
+        this.unknown(moved.low - span.low);
         continue;
       }
+      const shift = by ?? 0;
+      const size = givenSize ?? span.high - span.low + 1;
       // A height or width below one is #REF! wherever the base is.
       if (size < 1) continue;
-      const low = span.low + by;
-      const next = moved.low + by;
+      const low = span.low + shift;
+      const next = moved.low + shift;
       // Above the first row or left of the first column it is #REF!; the moved base may now land on the sheet.
       if (low < 0) {
         if (next >= 0) this.found.changed = true;
@@ -155,14 +264,17 @@ class PositionWalk {
 
   /** INDIRECT reads the cells at an address the move does not rewrite: it reads other cells when they move. */
   private indirect(args: readonly FormulaAst[], context: SheetModel): void {
-    const text = args[0];
-    const a1 = args[1];
-    if (text?.type !== "string" || (a1 !== undefined && a1.type !== "missing" && !(a1.type === "boolean" && a1.value))) {
-      this.found.needsReads = true;
-      this.found.allowed.add(0);
+    const text = this.argValue(args[0], context);
+    const a1 = this.argValue(args[1], context);
+    if (text === undefined || a1 === undefined) {
+      this.unknown(0);
       return;
     }
-    const trimmed = text.value.trim();
+    // R1C1 text, or anything but text, is #REF! before and after.
+    const isA1 = a1 === null || a1 === true || (typeof a1 === "number" && a1 !== 0) || (typeof a1 === "string" && a1.trim().toUpperCase() === "TRUE");
+    if (!isA1 || typeof text !== "string") return;
+    const trimmed = text.trim();
+    if (trimmed.length > MAX_REFERENCE_TEXT) return;
     const ast = trimmed === "" ? null : parseCached(this.state, trimmed.startsWith("=") ? trimmed.slice(1) : trimmed);
     // A name follows its cells like any reference; anything but an address is #REF! before and after.
     if (ast === null || (ast.type !== "cell" && ast.type !== "range")) return;
@@ -175,27 +287,35 @@ class PositionWalk {
 }
 
 /**
- * True when a row or column move on `sheet` changes the answer the formula
- * gets from where a reference points: ROW, COLUMN, ROWS or COLUMNS of a
- * reference the move shifts or resizes along that axis, ROW() or COLUMN() of
- * a formula the move shifts, OFFSET from a base whose target does not move
- * alike, INDIRECT of an address whose cells moved away. Cells picked at run
- * time from an address the formula does not hold are judged by the cells
- * the last calculation read; without one the formula counts as changed.
+ * Judges, for one row or column move on `sheet`, whether it changes the
+ * answer a formula gets from where a reference points: ROW, COLUMN, ROWS or
+ * COLUMNS of a reference the move shifts or resizes along that axis, ROW() or
+ * COLUMN() of a formula the move shifts, OFFSET from a base whose target does
+ * not move alike, INDIRECT of an address whose cells moved away. Computed
+ * OFFSET and INDIRECT arguments are worked out first, within
+ * {@link MOVE_ARGUMENT_CELLS} cells for the whole move. Cells picked at run
+ * time from an address that still cannot be worked out are judged by the
+ * cells the last calculation read: any of them that does not follow the move
+ * alike, or more than were kept, counts as changed. Without a last
+ * calculation the formula keeps its date (see the file comment).
  */
-export function readsPositionAcrossMove(state: WorkbookState, node: CalcNode, sheet: SheetModel, op: StructuralOp): boolean {
-  const walk = new PositionWalk(state, node, sheet, op);
-  walk.walk(node.ast, node.sheet, 0);
-  const found = walk.found;
-  if (found.changed) return true;
-  if (!found.needsReads) return false;
-  if (node.reads === null || node.readsAll) return true;
-  for (const read of node.reads) {
-    // A cell the formula names follows the move like the reference does.
-    if (read.sheet !== sheet || node.deps.some((dep) => contains(dep, read))) continue;
-    const span = spanOf(read, op);
-    const moved = moveSpan(span.low, span.high, op);
-    if (moved === null || moved.high - moved.low !== span.high - span.low || !found.allowed.has(moved.low - span.low)) return true;
-  }
-  return false;
+export function positionsAcrossMove(state: WorkbookState, sheet: SheetModel, op: StructuralOp): (node: CalcNode) => boolean {
+  const budget: ArgumentBudget = { cells: MOVE_ARGUMENT_CELLS };
+  return (node) => {
+    const walk = new PositionWalk(state, node, sheet, op, budget);
+    walk.walk(node.ast, node.sheet, 0);
+    const found = walk.found;
+    if (found.changed) return true;
+    if (!found.needsReads) return false;
+    if (node.readsAll) return true;
+    if (node.reads === null) return false;
+    for (const read of node.reads) {
+      // A cell the formula names follows the move like the reference does.
+      if (read.sheet !== sheet || node.deps.some((dep) => contains(dep, read))) continue;
+      const span = spanOf(read, op);
+      const moved = moveSpan(span.low, span.high, op);
+      if (moved === null || moved.high - moved.low !== span.high - span.low || !found.allowed.has(moved.low - span.low)) return true;
+    }
+    return false;
+  };
 }

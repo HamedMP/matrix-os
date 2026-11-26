@@ -474,11 +474,37 @@ describe("a run without a clock", () => {
       ["IF(OFFSET(S!A5,-4,0)=1,TODAY(),42)", "rows at the top", 46349],
       ['IF(INDIRECT("S!A5")=1,TODAY(),42)', "rows at the top", 42],
       ['IF(INDIRECT("S!A5")=1,TODAY(),42)', "rows below", 46349],
+      // Computed arguments are worked out before the move and judged like the written ones.
+      ['IF(INDIRECT("S!A"&5)=1,TODAY(),42)', "rows at the top", 42],
+      ['IF(INDIRECT("S!A"&5)=1,TODAY(),42)', "rows below", 46349],
+      ['IF(INDIRECT("S!A"&S!A1*5,1=1)=1,TODAY(),42)', "rows below", 46349],
+      ['IF(INDIRECT("S!A"&S!A1*5,1=1)=1,TODAY(),42)', "rows above A5", 42],
+      ["IF(OFFSET(S!A5,S!A1-5,0)=1,TODAY(),42)", "rows above A5", 42],
+      ["IF(OFFSET(S!A5,S!A1-5,0)=1,TODAY(),42)", "rows at the top", 46349],
+      ["IF(SUM(OFFSET(S!A1,0,0,2+3,1))=2,TODAY(),42)", "a row inside A1:A5", 42],
+      ["IF(SUM(OFFSET(S!A1,0,0,2+3,1))=2,TODAY(),42)", "rows below", 46349],
     ] as const)("gives %s after inserting %s the value it now has", async (formula, how, expected) => {
       const workbook = await openXlsx(await crossBook(formula));
       move(workbook, how);
       const reopened = await openXlsx(await workbook.save());
       expect(valueAt(reopened, "T", "B1")).toBe(expected);
+    });
+
+    // Fault detected: a freshly opened date formula whose INDIRECT address is computed counted as changed by any
+    // move, because it has no record yet of the cells it read, so an unrelated row insert saved it as #N/A.
+    it.each([
+      ["below the used cells", 10, "B1", 46349],
+      ["above the address it computes", 0, "B2", 42],
+    ] as const)("judges the computed INDIRECT address of a freshly opened date formula after inserting a row %s", async (_, at, cell, expected) => {
+      const source = createXlsx({ sheetNames: ["S"] });
+      const id = source.listSheets()[0]!.id;
+      source.setCell(id, parseA1("A1"), 1);
+      source.setFormula(id, parseA1("B1"), 'IF(INDIRECT("A"&1)=1,TODAY(),42)');
+      source.recalc({ now: NOW });
+      const workbook = await openXlsx(await source.save());
+      workbook.insertRows(workbook.listSheets()[0]!.id, at, 1);
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "S", cell)).toBe(expected);
     });
 
     it("keeps the date of a formula asking where a reference points when its sheet is renamed", async () => {
