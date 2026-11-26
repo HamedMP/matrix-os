@@ -131,7 +131,8 @@ function sheetCommandHandlers(ctx: SheetCommandContext): SheetCommands {
   const toClipboard = (cut: boolean): void => {
     void controller.copyToClipboard(cut).then((outcome) => {
       if (outcome === "own") notify(`${cut ? "Cut" : "Copied"} for pasting in this workbook. To paste in another app, press ${cut ? "Ctrl+X" : "Ctrl+C"}.`, "info");
-      done();
+      // An editor opened while the browser was answering keeps the caret.
+      if (!controller.isEditing) done();
     });
   };
   const withSelection = (action: (selection: NonNullable<ReturnType<typeof selectionFromGrid>>) => void) => () => {
@@ -163,7 +164,8 @@ function sheetCommandHandlers(ctx: SheetCommandContext): SheetCommands {
     paste: () => {
       void controller.pasteFromClipboard().then((outcome) => {
         if (outcome === "blocked") notify("This window may not read the clipboard. Press Ctrl+V to paste.", "warning");
-        done();
+        // A paste cancelled because the owner moved on leaves the focus where they put it.
+        if (outcome !== "cancelled") done();
       });
     },
 

@@ -6,6 +6,10 @@
  * which needs no permission. When that is refused too, the cells stay marked
  * as copied and Paste takes them from there, so cut, copy and paste keep
  * working inside the workbook.
+ *
+ * Reading the clipboard waits for the browser. A paste writes where the owner
+ * clicked: when the sheet, the selection, the workbook or the cell editor
+ * changed while the browser was answering, it writes nothing.
  */
 
 import { type ClipboardPayload, copySelection, pasteClipboard, pasteOwnCopy } from "./actions-clipboard";
@@ -14,8 +18,11 @@ import { commandClipboard, readSystemClipboard, writeSystemClipboard } from "./s
 
 /** `system`: on the clipboard. `own`: kept for pasting in this window only. `nothing`: nothing to copy. */
 export type ClickCopyOutcome = "system" | "own" | "nothing";
-/** `system`: pasted the clipboard. `own`: pasted the cells copied in this window. `blocked`: neither was possible. */
-export type ClickPasteOutcome = "system" | "own" | "blocked";
+/**
+ * `system`: pasted the clipboard. `own`: pasted the cells copied in this window.
+ * `blocked`: neither was possible. `cancelled`: the destination changed while the clipboard was read; nothing was written.
+ */
+export type ClickPasteOutcome = "system" | "own" | "blocked" | "cancelled";
 
 /** Copies or cuts the selection. */
 export async function clickCopy(ctx: GridContext, cut: boolean): Promise<ClickCopyOutcome> {
@@ -27,10 +34,28 @@ export async function clickCopy(ctx: GridContext, cut: boolean): Promise<ClickCo
 
 /** Pastes at the selection: the system clipboard, or else what was last copied or cut in this window. */
 export async function clickPaste(ctx: GridContext): Promise<ClickPasteOutcome> {
+  const unchanged = destinationCheck(ctx);
   const data = await readSystemClipboard();
+  if (!unchanged()) return "cancelled";
   if (data !== null) {
     pasteClipboard(ctx, data);
     return "system";
   }
   return pasteOwnCopy(ctx) ? "own" : "blocked";
+}
+
+/** Remembers where a paste goes; the returned check is true while that is still where it would go. */
+function destinationCheck(ctx: GridContext): () => boolean {
+  const session = ctx.session;
+  const workbook = session.workbook;
+  const mark = session.editMark();
+  const sheet = ctx.sheet;
+  const selection = ctx.selection;
+  const edit = ctx.store.getState().edit;
+  return () =>
+    session.workbook === workbook &&
+    session.editMark() === mark &&
+    ctx.sheet === sheet &&
+    ctx.selection === selection &&
+    ctx.store.getState().edit === edit;
 }
