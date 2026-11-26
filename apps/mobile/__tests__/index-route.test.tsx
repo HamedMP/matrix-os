@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { act, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen } from "@testing-library/react-native";
 
 const mockReplace = jest.fn();
 const mockFetchMobileJourney = jest.fn();
@@ -193,4 +193,27 @@ it("waits on the startup screen while it looks for a self-hosted computer, signe
 
   expect(screen.getByTestId("startup-screen")).toBeTruthy();
   await flush();
+});
+
+it("explains a free start the platform refused instead of silently reloading", async () => {
+  mockFetchMobileJourney.mockResolvedValue({
+    status: "ok",
+    journey: { phase: "install_choices_required", detail: "Set up your free Matrix computer.", nextAction: { kind: "start_provision" } },
+  });
+  const realFetch = global.fetch;
+  const fetchSpy = jest.fn(async () => new Response(JSON.stringify({ error: "provisioning_unavailable" }), { status: 503 }));
+  global.fetch = fetchSpy as unknown as typeof fetch;
+  try {
+    render(<Index />);
+    await flush();
+    fireEvent.press(screen.getByTestId("journey-start"));
+    await flush();
+    await flush();
+
+    expect(fetchSpy).toHaveBeenCalledWith("https://example.test/api/journey/retry-provision", expect.objectContaining({ method: "POST" }));
+    expect(screen.getByText("Matrix can’t start new computers right now. Try again in a few minutes.")).toBeTruthy();
+    expect(screen.getByTestId("journey-start")).toBeTruthy();
+  } finally {
+    global.fetch = realFetch;
+  }
 });
