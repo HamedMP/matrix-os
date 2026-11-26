@@ -134,7 +134,11 @@ describe('onboarding journey on the free plan', () => {
   });
   afterEach(async () => { await destroyTestPlatformDb(db); });
 
-  function journeyApp(options: { resolveEntitlement?: () => Promise<BillingEntitlement | null>; stripeEnabled?: boolean } = {}) {
+  function journeyApp(options: {
+    resolveEntitlement?: () => Promise<BillingEntitlement | null>;
+    stripeEnabled?: boolean;
+    metalUnavailable?: boolean;
+  } = {}) {
     const unused = async () => { throw new Error('unexpected hostd call'); };
     const client = {
       capacity, createVm, listVms: async () => [], destroy, getVm: unused,
@@ -152,7 +156,10 @@ describe('onboarding journey on the free plan', () => {
       tokenFactory: () => ({ token: 'registration-token', hash: hashRegistrationToken('registration-token'), expiresAt: '2026-11-21T13:00:00.000Z' }),
       postgresPasswordFactory: () => 'postgres-secret', log: () => {},
     });
-    const freeTier = createFreeTierRuntime({ db, config: { maxRuntimes: 10, inviteRequired: true }, metal, env: {} });
+    const freeTier = createFreeTierRuntime({
+      db, config: { maxRuntimes: 10, inviteRequired: true },
+      metal: options.metalUnavailable ? undefined : metal, env: {}, log: () => {},
+    });
     const provision = vi.fn<CustomerVpsService['provision']>(async () => ({
       machineId: 'vps-machine', status: 'provisioning',
     }) as unknown as Awaited<ReturnType<CustomerVpsService['provision']>>);
@@ -160,7 +167,7 @@ describe('onboarding journey on the free plan', () => {
       db,
       appEnv: {},
       customerVpsService: { provision } as Partial<CustomerVpsService> as CustomerVpsService,
-      freeRuntimeProvisioner: freeTier?.provisioner,
+      freeTier,
       stripeBillingEntitlementsEnabled: () => options.stripeEnabled ?? true,
       resolveEffectiveBillingEntitlement: options.resolveEntitlement
         ?? ((routeDb, clerkUserId, now, runtimeSlot) => resolveEffectiveBillingEntitlement(routeDb, clerkUserId, now, runtimeSlot, {})),
@@ -198,6 +205,25 @@ describe('onboarding journey on the free plan', () => {
     expect(await result.json()).toMatchObject({ error: 'billing_required' });
     expect(provision).not.toHaveBeenCalled();
     expect(createVm).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('returns unavailable when the configured free runtime provider is missing (Stripe: %s)', async (stripeEnabled) => {
+    const { app, provision } = journeyApp({ stripeEnabled, metalUnavailable: true });
+
+    const response = await retry(app);
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: 'provisioning_unavailable' });
+    expect(provision).not.toHaveBeenCalled();
+  });
+
+  it('allows an entitled customer to retry while the free provider is unavailable', async () => {
+    const resolveEntitlement = vi.fn(async () => paidEntitlement());
+    const { app, provision } = journeyApp({ stripeEnabled: false, metalUnavailable: true, resolveEntitlement });
+
+    expect((await retry(app)).status).toBe(200);
+    expect(resolveEntitlement).toHaveBeenCalledOnce();
+    expect(provision).toHaveBeenCalledOnce();
   });
 
   it.each([true, false])('an invited free owner reaches provisioning when Stripe enabled is %s', async (stripeEnabled) => {

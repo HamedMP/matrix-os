@@ -1,7 +1,7 @@
 import { METAL_PROVISION_MIN_INTERVAL_MS } from '../substrates/metal-provisioner.js';
 import type { Context } from 'hono';
 import type { PlatformDB } from '../db.js';
-import type { FreeProvisionOutcome, FreeRuntimeProvisioner } from './provision-free-runtime.js';
+import type { FreeProvisionOutcome, FreeTierRuntime } from './provision-free-runtime.js';
 
 /**
  * The free branch of `POST /api/auth/provision-runtime` (spec 2691, ENG-520;
@@ -20,7 +20,7 @@ interface ProvisionIdentity {
 export interface FreeProvisionRouteDeps {
   db: PlatformDB;
   appEnv: NodeJS.ProcessEnv;
-  provisioner?: FreeRuntimeProvisioner;
+  freeTier?: FreeTierRuntime;
   selectProvisionIdentityForClerkUser: (db: PlatformDB, userId: string, env: NodeJS.ProcessEnv) => Promise<ProvisionIdentity | null>;
   ensureProvisionedPlatformUser: (db: PlatformDB, input: {
     clerkUserId: string; handle: string; displayName?: string; email?: string; runtimeId: string;
@@ -74,13 +74,14 @@ export async function provisionFreeRuntimeForRequest(
   deps: FreeProvisionRouteDeps,
   options: { implicit?: boolean } = {},
 ): Promise<Response | null> {
-  if (!deps.provisioner) {
-    if (options.implicit) return null;
+  const provisioner = deps.freeTier?.provisioner;
+  if (!provisioner) {
+    if (options.implicit && !deps.freeTier) return null;
     return c.json({ error: 'Free plan unavailable', code: 'free_tier_unavailable' }, 503);
   }
   const identity = await deps.selectProvisionIdentityForClerkUser(deps.db, clerkUserId, deps.appEnv);
   if (!identity) return options.implicit ? null : c.json({ error: 'Handle unavailable', code: 'handle_unavailable' }, 409);
-  const outcome = await deps.provisioner.provision({ clerkUserId, handle: identity.handle });
+  const outcome = await provisioner.provision({ clerkUserId, handle: identity.handle });
   if (options.implicit && NOT_FREE.has(outcome.kind)) return null;
   if (outcome.kind === 'created' || outcome.kind === 'existing') {
     await deps.ensureProvisionedPlatformUser(deps.db, {

@@ -244,6 +244,11 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
 
 export type FreeRuntimeProvisioner = ReturnType<typeof createFreeRuntimeProvisioner>;
 
+export interface FreeTierRuntime {
+  config: FreeTierConfig;
+  provisioner?: FreeRuntimeProvisioner;
+}
+
 /** Startup composition: free signup needs the metal provisioner, else it stays unavailable (503). */
 export function createFreeTierRuntime(input: {
   db: PlatformDB;
@@ -251,7 +256,7 @@ export function createFreeTierRuntime(input: {
   metal: (Pick<MetalProvisioner, 'provision'> & Partial<Pick<MetalProvisioner, 'failExpiredProvisioning'>>) | undefined;
   env?: NodeJS.ProcessEnv;
   log?: (message: string) => void;
-}): { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner } | undefined {
+}): FreeTierRuntime | undefined {
   if (!input.config) return undefined;
   if (!input.metal) {
     (input.log ?? ((message: string) => console.warn(message)))(

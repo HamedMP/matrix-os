@@ -155,10 +155,12 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     env?: NodeJS.ProcessEnv;
     config?: FreeTierConfig;
     stripeEnabled?: boolean;
+    metalUnavailable?: boolean;
     resolveEntitlement?: (db: PlatformDB, clerkUserId: string) => Promise<BillingEntitlement | null>;
   } = {}) {
     const config = options.config ?? loadConfiguredFreeTier(options.env ?? ENABLED_ENV, () => {});
-    const freeTier = createFreeTierRuntime({ db, config, metal: metalProvisioner(), env: {}, log: () => {} });
+    const metal = options.metalUnavailable ? undefined : metalProvisioner();
+    const freeTier = createFreeTierRuntime({ db, config, metal, env: {}, log: () => {} });
     const provision = vi.fn<CustomerVpsService['provision']>(async () => ({
       machineId: 'vps-machine', status: 'provisioning',
     }) as unknown as Awaited<ReturnType<CustomerVpsService['provision']>>);
@@ -182,7 +184,7 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
       ensureProvisionedPlatformUser,
       resolveAppDomainIdentity: async () => null,
       getGatewayUrlForHandle: (handle) => `https://${handle}.invalid`,
-      freeRuntimeProvisioner: freeTier?.provisioner,
+      freeTier,
     });
     return { routes, provision, ensureProvisionedPlatformUser };
   }
@@ -261,6 +263,25 @@ describe('POST /api/auth/provision-runtime: free plan on metal', () => {
     expect(await getBillingEntitlement(db, OWNER)).toBeUndefined();
     expect(hostd.capacity).not.toHaveBeenCalled();
     expect(provision).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('returns unavailable when the configured free runtime provider is missing (Stripe: %s)', async (stripeEnabled) => {
+    const { routes, provision } = routesFor({ stripeEnabled, metalUnavailable: true });
+
+    const response = await request(routes);
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: 'free_tier_unavailable' });
+    expect(provision).not.toHaveBeenCalled();
+  });
+
+  it('allows an entitled customer to provision while the free provider is unavailable', async () => {
+    const resolveEntitlement = vi.fn(async () => paidEntitlement());
+    const { routes, provision } = routesFor({ stripeEnabled: false, metalUnavailable: true, resolveEntitlement });
+
+    expect((await request(routes)).status).toBe(202);
+    expect(resolveEntitlement).toHaveBeenCalledOnce();
+    expect(provision).toHaveBeenCalledOnce();
   });
 
   it('preserves legacy VPS provisioning when both Stripe and the free tier are disabled', async () => {
