@@ -684,7 +684,7 @@ describe("local development contracts", () => {
       supportPublicKey: localSupportKey,
     });
 
-    expect(rendered).toContain("path: /etc/systemd/system/matrix-gateway.service");
+    expect(rendered).toContain("install -o root -g root -m 0644 /opt/matrix/systemd/*.service /etc/systemd/system/");
     expect(rendered).toContain(`path: /etc/matrix/support/public-key\n    content: |\n      ${localSupportKey}\n`);
     expect(rendered).toContain("/opt/matrix/user-systemd");
     expect(readFileSync(resolve(root, "distro/customer-vps/systemd-user/matrix-zellij@.service"), "utf8"))

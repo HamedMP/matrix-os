@@ -9,6 +9,10 @@ scenario="${4:-full}"
 fixture_dir="$(mktemp -d /tmp/matrix-support-fixture.XXXXXX)"
 trap 'rm -rf -- "$fixture_dir"' EXIT
 
+# Runners that manage sudo through /etc/alternatives lose visudo once /etc is
+# replaced below, so resolve the real binary first.
+visudo_real="$(readlink -f "$(PATH="/usr/sbin:/usr/bin:/sbin:/bin" command -v visudo)")"
+
 mount -t tmpfs tmpfs /etc
 mount -t tmpfs tmpfs /var
 # A fresh /run models first boot: socket-activated sshd has not accepted a
@@ -45,6 +49,7 @@ fi
 exit 0
 EOF
 chmod 0755 "$fixture_dir/bin/useradd" "$fixture_dir/bin/usermod" "$fixture_dir/bin/sshd"
+ln -s "$visudo_real" "$fixture_dir/bin/visudo"
 export PATH="$fixture_dir/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 case "$scenario" in

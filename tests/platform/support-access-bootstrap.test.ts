@@ -17,6 +17,9 @@ const namespaceRunner = ((): string[] | null => {
   return candidates.find(([command, ...args]) => spawnSync(command!, [...args, 'mount', '-t', 'tmpfs', 'tmpfs', '/etc']).status === 0) ?? null;
 })();
 const supportsUserMountNamespace = namespaceRunner !== null;
+// The hosted Support Login Install CI job sets this so a runner that cannot
+// build the namespace fails the job instead of skipping the scenarios.
+const requireIsolatedInstall = process.env.MATRIX_REQUIRE_ISOLATED_INSTALL_TESTS === '1';
 
 function runIsolatedInstall(scenario: 'full' | 'fresh-boot' | 'privsep-symlink') {
   let result: ReturnType<typeof spawnSync<string>> | undefined;
@@ -80,6 +83,10 @@ describe('support SSH key bootstrap validation', () => {
       const reused = spawnSync('bash', [helper, '--validate-rotation', oldKey, oldKey], { encoding: 'utf8' });
       expect(reused.status).not.toBe(0);
     });
+  });
+
+  it.runIf(requireIsolatedInstall)('can build the isolated namespace where CI requires the install scenarios', () => {
+    expect(supportsUserMountNamespace, 'no user and mount namespace runner can mount the fixture tmpfs').toBe(true);
   });
 
   it.skipIf(!supportsUserMountNamespace)('installs, refuses an existing different key, and rotates inside an isolated mount namespace', () => {

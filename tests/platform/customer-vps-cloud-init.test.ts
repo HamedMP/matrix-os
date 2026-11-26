@@ -129,9 +129,10 @@ describe('platform/customer-vps-cloud-init', () => {
     };
     const template = await loadCustomerVpsCloudInitTemplate();
     const rendered = renderCloudInitTemplate(template, longInput);
-    expect(Buffer.byteLength(rendered, 'utf8')).toBeLessThanOrEqual(
-      HETZNER_USER_DATA_LIMIT - HEADROOM,
-    );
+    expect(
+      Buffer.byteLength(rendered, 'utf8'),
+      'user_data is near the Hetzner cap: ship systemd services and helpers in the host bundle (distro/customer-vps/systemd, host-bin), not cloud-init.yaml',
+    ).toBeLessThanOrEqual(HETZNER_USER_DATA_LIMIT - HEADROOM);
   });
 
   const input: CustomerHostConfig = {
@@ -413,20 +414,16 @@ exit 99
   it('starts Matrix services before optional Hermes install work', () => {
     const root = process.cwd();
     const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
-    const codeServerBlock = cloudInit.slice(
-      cloudInit.indexOf('path: /etc/systemd/system/matrix-code-server.service'),
-      cloudInit.indexOf('path: /etc/systemd/system/matrix-sync-agent.service'),
-    );
+    const hermesUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-hermes.service'), 'utf8');
+    const codeServerUnit = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code-server.service'), 'utf8');
 
-    expect(cloudInit).toContain('path: /etc/systemd/system/matrix-hermes.service');
-    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-hermes');
-    expect(cloudInit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
-    expect(cloudInit).toContain('path: /etc/systemd/system/matrix-code-server.service');
-    expect(codeServerBlock).toContain('Description=Install Matrix OS code-server runtime');
-    expect(codeServerBlock).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
-    expect(codeServerBlock).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
-    expect(codeServerBlock).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
-    expect(cloudInit).toContain('TimeoutStartSec=1800');
+    expect(hermesUnit).toContain('ExecStart=/opt/matrix/bin/matrix-install-hermes');
+    expect(hermesUnit).toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
+    expect(hermesUnit).toContain('TimeoutStartSec=1800');
+    expect(codeServerUnit).toContain('Description=Install Matrix OS code-server runtime');
+    expect(codeServerUnit).toContain('ConditionPathExists=!/opt/matrix/runtime/code-server/bin/code-server');
+    expect(codeServerUnit).toContain('ExecStart=/opt/matrix/bin/matrix-install-tool-pack code-server');
+    expect(codeServerUnit).not.toContain('ExecStartPost=-/bin/systemctl start matrix-code.service');
     expect(cloudInit).toContain(
       'systemctl enable matrix-restore.service matrix-scope-runtime.service matrix-gateway.service matrix-shell.service matrix-code-server.service matrix-code.service matrix-sync-agent.service matrix-hermes.service matrix-hermes-dashboard.service matrix-linux-tools.service matrix-developer-tools.service matrix-db-backup.timer nginx',
     );
@@ -482,8 +479,7 @@ exit 99
     expect(unit).toContain('ExecStart=/opt/matrix/bin/matrix-hermes-dashboard');
     expect(unit).toContain('Restart=on-failure');
 
-    expect(cloudInit).toContain('path: /etc/systemd/system/matrix-hermes-dashboard.service');
-    expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-hermes-dashboard');
+    expect(cloudInit).toContain('systemctl start --no-block matrix-hermes-dashboard.service');
 
     expect(buildScript).toContain('"$STAGE_DIR/bin/matrix-hermes-dashboard"');
   });
@@ -731,7 +727,7 @@ exit 99
     );
     expect(cloudInit).toContain('for cli in node npm npx claude codex opencode pi code-server uv uvx; do');
     expect(cloudInit).toContain('ln -sf "/opt/matrix/runtime/node/bin/${cli}" "/usr/local/bin/${cli}"');
-    expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-hermes');
+    expect(readFileSync(join(root, 'distro/customer-vps/systemd/matrix-hermes.service'), 'utf8')).toContain('ExecStart=/opt/matrix/bin/matrix-install-hermes');
     expect(cloudInit).toContain('/opt/matrix/bin/matrix-install-linux-tools');
     expect(cloudInit).toContain('path: /etc/systemd/system/matrix-linux-tools.service');
     expect(cloudInit).toContain('ExecStart=/opt/matrix/bin/matrix-install-linux-tools');
@@ -798,16 +794,9 @@ exit 99
 
   it('installs a customer host code-server service behind restore completion', () => {
     const root = process.cwd();
-    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
     const code = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-code'), 'utf8');
-    const codeUnitBlock = cloudInit.slice(
-      cloudInit.indexOf('path: /etc/systemd/system/matrix-code.service'),
-      cloudInit.indexOf('path: /etc/systemd/system/matrix-code-server.service'),
-    );
-    const codeServerBlock = cloudInit.slice(
-      cloudInit.indexOf('path: /etc/systemd/system/matrix-code-server.service'),
-      cloudInit.indexOf('path: /etc/systemd/system/matrix-sync-agent.service'),
-    );
+    const codeUnitBlock = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code.service'), 'utf8');
+    const codeServerBlock = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-code-server.service'), 'utf8');
 
     expect(codeUnitBlock).toContain('Description=Matrix OS customer code editor');
     expect(codeUnitBlock).toContain('After=matrix-restore.service');
@@ -948,15 +937,12 @@ exit 99
     expect(gateway).toContain('ConditionPathExists=/opt/matrix/restore-complete');
   });
 
-  it('scales gateway memory guardrails with VPS RAM in both service templates', () => {
+  it('scales gateway memory guardrails with VPS RAM in the shipped gateway unit', () => {
     const root = process.cwd();
     const gateway = readFileSync(join(root, 'distro/customer-vps/systemd/matrix-gateway.service'), 'utf8');
-    const cloudInit = readFileSync(join(root, 'distro/customer-vps/cloud-init.yaml'), 'utf8');
 
-    for (const template of [gateway, cloudInit]) {
-      expect(template).toContain('MemoryHigh=40%');
-      expect(template).toContain('MemoryMax=50%');
-    }
+    expect(gateway).toContain('MemoryHigh=40%');
+    expect(gateway).toContain('MemoryMax=50%');
   });
 
   it('only skips restore on confirmed missing R2 backup markers', () => {

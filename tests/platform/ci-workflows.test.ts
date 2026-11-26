@@ -82,6 +82,7 @@ function runCiResults(ciResultsRun: string, triggerRequested: boolean): number |
         FUNDED_POSTGRES_RESULT: 'success',
         COLLABORATION_POSTGRES_RESULT: 'success',
         FUNDED_HOST_ROOT_RESULT: 'success',
+        SUPPORT_LOGIN_INSTALL_RESULT: 'success',
         NATIVE_STDOUT_LINUX_RESULT: 'skipped',
         GITHUB_STEP_SUMMARY: summary,
         OS_VIEW_PARITY_RESULT: 'success',
@@ -346,7 +347,7 @@ describe('CI workflows', () => {
     const name = aggregate.name.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
     expect(Function('github', `return (${name});`)({ event_name: 'push', event: {} })).toBe('CI Results');
     expect(workflow).toContain('if: always()');
-    expect(aggregate.needs).toEqual(['changes', 'typecheck', 'shell-production-build', 'patterns', 'pr-size', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'native-stdout-linux', 'docs-contract', 'os-view-parity', 'e2e']);
+    expect(aggregate.needs).toEqual(['changes', 'typecheck', 'shell-production-build', 'patterns', 'pr-size', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'support-login-install', 'native-stdout-linux', 'docs-contract', 'os-view-parity', 'e2e']);
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -362,7 +363,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.os-view-parity.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$PR_SIZE_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$NATIVE_STDOUT_LINUX_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$PR_SIZE_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$SUPPORT_LOGIN_INSTALL_RESULT" "$NATIVE_STDOUT_LINUX_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
 
     const ciResultsRun = readCiResultsRun(root);
     expect(ciResultsRun).toBeDefined();
