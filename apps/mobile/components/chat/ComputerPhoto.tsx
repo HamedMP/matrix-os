@@ -10,7 +10,7 @@ import { AttachmentFileChip, type ComputerPhotoRequest } from "./MessageAttachme
  * A message's photo read from the computer, signed in as the person. Its place
  * is held while it is asked for, and it is named instead when it cannot be shown.
  */
-export function ComputerPhoto({ path, label, style }: ComputerPhotoRequest) {
+export function ComputerPhoto({ path, label, style, fit }: ComputerPhotoRequest) {
   const { preview, isPending } = useComputerFilePreview(path);
   const [failed, setFailed] = useState(false);
 
@@ -20,7 +20,7 @@ export function ComputerPhoto({ path, label, style }: ComputerPhotoRequest) {
     <Image
       accessibilityLabel={label}
       source={{ uri: preview.uri, headers: { Authorization: preview.authorization } }}
-      resizeMode="cover"
+      resizeMode={fit}
       onError={() => setFailed(true)}
       style={style}
     />

@@ -152,7 +152,7 @@ function Message({
     );
   }
   if (message.role === "assistant") {
-    return <AssistantMessage message={message} chatId={chatId} results={renderResults?.(message)} />;
+    return <AssistantMessage message={message} chatId={chatId} results={renderResults?.(message)} renderComputerPhoto={renderComputerPhoto} />;
   }
   return (
     <Text style={[styles.note, message.role === "system" && styles.noteCentred]}>{message.text}</Text>

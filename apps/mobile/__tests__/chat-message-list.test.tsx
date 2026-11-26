@@ -4,6 +4,7 @@ import * as Clipboard from "expo-clipboard";
 import { contentShape, shapes } from "@expo/ui/swift-ui/modifiers";
 
 import * as mockContextMenu from "./context-menu-test-utils";
+import type { ComputerPhotoRequest } from "../components/chat/MessageAttachments";
 import { MessageList } from "../components/chat/MessageList";
 import { messageEntering, messageEnteringReduced } from "../components/chat/message-motion";
 import { AnalyticsMask } from "../lib/analytics";
@@ -134,6 +135,30 @@ describe("MessageList", () => {
 
     expect(screen.queryByTestId("assistant-text")).toBeNull();
     expect(screen.getByText("Working…")).toBeTruthy();
+  });
+
+  it("draws a picture a reply made from the computer, whole, across the reply's width", () => {
+    const generated = {
+      id: "attachment_codex_1", label: "exec-1.png", kind: "image" as const,
+      path: "data/chat-artifacts/codex/sha256/0a1b.png",
+    };
+    const renderComputerPhoto = jest.fn(({ label, style, fit }: ComputerPhotoRequest) => (
+      <View testID={`computer-photo-${label}`} style={style} accessibilityHint={fit} />
+    ));
+    render(
+      <MessageList
+        messages={[message({ id: "msg_image", role: "assistant", text: "", attachments: [generated] })]}
+        chatId="chat_1"
+        renderComputerPhoto={renderComputerPhoto}
+      />,
+    );
+
+    expect(renderComputerPhoto).toHaveBeenCalledWith(expect.objectContaining({ path: generated.path, label: "exec-1.png" }));
+    const photo = screen.getByTestId("computer-photo-exec-1.png");
+    expect(flat(photo)).toMatchObject({ width: "100%", aspectRatio: 1 });
+    // A reply's picture is shown whole; a user's thumbnail may be cropped.
+    expect(photo.props.accessibilityHint).toBe("contain");
+    expect(flat(screen.getByTestId("message-attachments"))).toMatchObject({ maxWidth: "100%", justifyContent: "flex-start" });
   });
 
   it("writes system and tool messages in the subtle 13pt style, system ones centred", () => {

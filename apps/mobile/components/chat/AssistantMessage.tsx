@@ -8,11 +8,12 @@ import { renderChatMarkdown } from "@/lib/chat-markdown";
 import { useStreamedTextReveal } from "@/lib/streamed-text-reveal";
 
 import { chatMarkdownTheme } from "./chat-markdown-theme";
+import { MessageAttachments, type MessageAttachmentsProps } from "./MessageAttachments";
 import { StepsBlock } from "./StepsBlock";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { ReplyActions } from "./ReplyActions";
 
-export interface AssistantMessageProps {
+export interface AssistantMessageProps extends Pick<MessageAttachmentsProps, "renderComputerPhoto"> {
   message: TranscriptMessage;
   /** The chat the text's long-press menu offers to copy the ID of. */
   chatId?: string | null;
@@ -21,10 +22,11 @@ export interface AssistantMessageProps {
 }
 
 /**
- * A reply: its text across the full width, then its steps, then its results,
+ * A reply: its text across the full width, then what it made, such as a
+ * generated picture, then its steps, then its results,
  * and, once the turn it closes has finished, its actions.
  */
-export function AssistantMessage({ message, chatId, results }: AssistantMessageProps) {
+export function AssistantMessage({ message, chatId, results, renderComputerPhoto }: AssistantMessageProps) {
   const { theme } = useUnistyles();
   // While the reply streams, show it at a steady pace with each new chunk
   // fading in, rather than in the uneven bursts the network delivers.
@@ -51,6 +53,9 @@ export function AssistantMessage({ message, chatId, results }: AssistantMessageP
         >
           <Pressable accessible={false} testID="assistant-text" style={styles.text}>{markdownNodes}</Pressable>
         </ChatContextMenu>
+      ) : null}
+      {message.attachments?.length ? (
+        <MessageAttachments attachments={message.attachments} renderComputerPhoto={renderComputerPhoto} variant="reply" />
       ) : null}
       <StepsBlock message={message} />
       {results}
