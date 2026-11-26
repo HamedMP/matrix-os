@@ -1,3 +1,4 @@
+import { SLACK_THREAD_READ_ACTION } from "./slack-thread-action.js";
 import { integrationWriteActions } from "./registry-writes.js";
 import { INTEGRATION_PRESENTATION } from "@matrix-os/contracts/integration-marketplace";
 import { INTEGRATION_LOGOS } from "./registry-logos.js";
@@ -600,6 +601,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
           }),
         },
       },
+      list_replies: SLACK_THREAD_READ_ACTION,
       // search.messages requires a Slack user token (not a bot token). When
       // connected via Pipedream's Slack OAuth, the token type is determined
       // by the connect flow's scope set. If the user gets `not_allowed_token_type`,

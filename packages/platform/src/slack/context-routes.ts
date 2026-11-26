@@ -1,3 +1,4 @@
+import type { SlackEnrolledContextReader } from "./enrolled-context.js";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -5,14 +6,14 @@ import { authorizeSlackDestination } from "./destination-authority.js";
 import { decryptSlackToken } from "./security.js";
 import { ActorIdSchema, SlackTeamIdSchema, type SlackMessagePage } from "./types.js";
 import type { SlackAppRouteOptions } from "./routes.js";
-import { SlackPrivateThreadContextRequestSchema } from "@matrix-os/contracts/slack-bridge";
+import { SlackEnrolledContextRequestSchema, SlackPrivateThreadContextRequestSchema } from "@matrix-os/contracts/slack-bridge";
 import type { SlackPrivateThreadReader } from "./private-thread-context.js";
 
 const RequestSchema = z.object({ teamId: SlackTeamIdSchema, eventId: z.string().regex(/^Ev[A-Za-z0-9]{1,126}$/) }).strict();
 const CONTEXT_BYTES = 16 * 1024;
 
 /** Runtime reads this after Events API acknowledgement. No broad history, client-selected channel or pagination path exists. */
-export function createSlackContextRoutes(options: SlackAppRouteOptions, readPrivateThread?: SlackPrivateThreadReader): Hono {
+export function createSlackContextRoutes(options: SlackAppRouteOptions, readPrivateThread?: SlackPrivateThreadReader, readEnrolledContext?: SlackEnrolledContextReader): Hono {
   const app = new Hono();
   app.post("/internal/slack/context", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json({ error: "Request too large" }, 413) }), async (c) => {
     c.header("Cache-Control", "no-store");
@@ -21,6 +22,13 @@ export function createSlackContextRoutes(options: SlackAppRouteOptions, readPriv
     if (!runtime || !ActorIdSchema.safeParse(runtime.ownerId).success) return c.json({ error: "Unauthorized" }, 401);
     let request: unknown;
     try { request = await c.req.json(); } catch (error: unknown) { if (error instanceof Error && error.name === "BodyLimitError") throw error; if (!(error instanceof SyntaxError)) console.warn("[slack] context parse failed"); return c.json({ error: "Invalid request" }, 422); }
+    if (request !== null && typeof request === "object" && Object.hasOwn(request,"manual")) {
+      const parsed=SlackEnrolledContextRequestSchema.safeParse(request);
+      if(!parsed.success)return c.json({error:"Invalid request"},422);
+      if(!readEnrolledContext)return c.json({error:"Forbidden"},403);
+      const result=await readEnrolledContext(parsed.data,runtime,AbortSignal.any([c.req.raw.signal,AbortSignal.timeout(8_000)]));
+      return result?c.json(result):c.json({error:"Forbidden"},403);
+    }
     if (request !== null && typeof request === "object" && Object.hasOwn(request, "summary")) {
       const privateRequest = SlackPrivateThreadContextRequestSchema.safeParse(request);
       if (!privateRequest.success) return c.json({ error: "Invalid request" }, 422);
