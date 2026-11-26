@@ -124,7 +124,8 @@ function fillReader(ctx: GridContext): (row: number, col: number) => FillSource 
 }
 
 function applyFill(ctx: GridContext, source: CellRange, target: CellRange, direction: FillDirection, series: boolean): boolean {
-  if (rangeRows(target) * rangeCols(target) > MAX_ACTION_CELLS) {
+  // Planning reads every source cell before it writes the target: both count, checked before either is touched.
+  if (rangeRows(source) * rangeCols(source) + rangeRows(target) * rangeCols(target) > MAX_ACTION_CELLS) {
     ctx.notice(TOO_MANY);
     return false;
   }
