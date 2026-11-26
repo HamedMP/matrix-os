@@ -1,0 +1,125 @@
+{
+  "version": "0.1.30",
+  "channel": "stable",
+  "date": "2026-11-20T14:52:52Z",
+  "locale": "en",
+  "title": "Schedules stay in the conversation",
+  "shortTitle": "Schedules in Chat",
+  "summary": "Create and approve schedules from the Chat where they began, then see every result there. Desktop and mobile also make active work easier to find and control.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Schedules, right from Chat",
+      "body": "Ask for a schedule in a private Chat, approve it beside the message, and see its history and results return to that same conversation, even after a restart.",
+      "surfaces": [
+        "web-desktop",
+        "web-canvas",
+        "electron-desktop",
+        "web-mobile",
+        "native-mobile"
+      ],
+      "art": "notification",
+      "tone": "lime",
+      "prs": [
+        3121,
+        3165,
+        3166,
+        3128,
+        3167,
+        3168,
+        3169,
+        3170,
+        3171,
+        3209
+      ]
+    },
+    {
+      "tag": "Improved",
+      "title": "A calmer place to work",
+      "body": "The top bar makes more room for your work. Agent status groups and project conversation lists take you to the exact Chat, while a redesigned What's New keeps release history close.",
+      "surfaces": [
+        "web-desktop",
+        "electron-desktop"
+      ],
+      "art": "agents",
+      "tone": "teal",
+      "prs": [
+        3462,
+        3463,
+        3464,
+        3465,
+        3466
+      ]
+    },
+    {
+      "tag": "Mobile",
+      "title": "More control in every reply",
+      "body": "Choose a permission mode, reuse your last agent and model, copy code, share finished replies, and attach Matrix Files without leaving Chat.",
+      "surfaces": [
+        "native-mobile"
+      ],
+      "art": "sparkle",
+      "tone": "sand",
+      "prs": [
+        3374,
+        3375,
+        3379,
+        3378,
+        3377,
+        3488
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "fixed",
+      "text": "Desktop agent sessions stay connected while their kernel socket is still opening."
+    },
+    {
+      "kind": "fixed",
+      "text": "Managed browser failures point to the right recovery action."
+    },
+    {
+      "kind": "fixed",
+      "text": "Existing shared-site links remain available while newer link types take over."
+    },
+    {
+      "kind": "improved",
+      "text": "Organization-shared apps open faster."
+    },
+    {
+      "kind": "fixed",
+      "text": "Sign-in returns you to AI Insights."
+    },
+    {
+      "kind": "improved",
+      "text": "AI requests start faster and no longer block each other during billing checks."
+    },
+    {
+      "kind": "improved",
+      "text": "Push settings are easier to find, and notifications re-register when the app opens."
+    },
+    {
+      "kind": "fixed",
+      "text": "Downloads, Trash and Matrix file attachments work more reliably."
+    }
+  ],
+  "hidden": [
+    3517,
+    3387,
+    2932,
+    3340,
+    3339,
+    3338,
+    3337,
+    3336,
+    3335,
+    3334,
+    3333,
+    3332,
+    3233,
+    3447,
+    3446,
+    3422
+  ]
+}
