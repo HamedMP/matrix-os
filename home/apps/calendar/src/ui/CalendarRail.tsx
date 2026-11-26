@@ -4,7 +4,7 @@
  */
 import { Checkbox, Skeleton } from "../../../_shared/office-ui";
 import type { CalendarAccount, CalendarInfo } from "../../../_shared/office-accounts/types/calendar";
-import type { CalendarState } from "../model";
+import { MAX_VISIBLE_CALENDARS, type CalendarState } from "../model";
 import type { DayKey } from "../model/dates";
 import { PROVIDER_NAME, accountName } from "./account-name";
 import { calendarColorStyle } from "./colors";
@@ -18,12 +18,19 @@ export interface CalendarRailProps {
 
 const PROVIDER_LABEL: Record<CalendarAccount["provider"], string> = { google: "Google" };
 
+/** The line under a calendar's name: why it cannot be shown, else that it is read-only. */
+function calendarNote(calendar: CalendarInfo, full: boolean): string | undefined {
+  if (full && !calendar.visible) return `Up to ${MAX_VISIBLE_CALENDARS} calendars can be shown at once`;
+  return calendar.writable ? undefined : "Read-only";
+}
+
 export function CalendarRail({ state, onPickDay, onToggle }: CalendarRailProps) {
   const byAccount = state.accounts.map((account) => ({
     account,
     name: accountName(account),
     calendars: state.calendars.filter((calendar) => calendar.accountId === account.id),
   }));
+  const full = state.calendars.filter((calendar) => calendar.visible).length >= MAX_VISIBLE_CALENDARS;
   return (
     <div className="cal-rail">
       <MiniMonth
@@ -52,7 +59,8 @@ export function CalendarRail({ state, onPickDay, onToggle }: CalendarRailProps) 
                   label={calendar.name}
                   checked={calendar.visible}
                   onChange={(checked) => onToggle(calendar.id, checked)}
-                  description={calendar.writable ? undefined : "Read-only"}
+                  disabled={full && !calendar.visible}
+                  description={calendarNote(calendar, full)}
                 />
               </li>
             ))}

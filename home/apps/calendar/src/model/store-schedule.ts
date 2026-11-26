@@ -45,7 +45,7 @@ import {
 import type { CalendarPersistence } from "./preferences";
 import { mergeProposals, parseProposals, proposalsFromSlots, type Proposal, type ProposalSource } from "./proposals";
 import { MAX_SLOT_RESULTS, busyOverlays, findSlots, isSlotDuration } from "./slots";
-import { MAX_BUSY_BLOCKS, withoutAssistantProposals, type CalendarConnection, type CalendarState, type StoreContext } from "./store-state";
+import { MAX_BUSY_BLOCKS, shownRangeTruncated, withoutAssistantProposals, type CalendarConnection, type CalendarState, type StoreContext } from "./store-state";
 
 export const NO_CALENDAR_MESSAGE = "Connect a calendar you can write to first.";
 
@@ -366,7 +366,9 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
       const state = ctx.get();
       const durationMinutes = request.durationMinutes ?? state.assistant.durationMinutes;
       const maxResults = request.maxResults ?? 5;
-      if (!isSlotDuration(durationMinutes) || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_SLOT_RESULTS) {
+      // With the owner's events counted, a range missing some of them would offer times over hidden meetings.
+      const ownEventsMissing = request.includeOwnEvents !== false && shownRangeTruncated(state);
+      if (ownEventsMissing || !isSlotDuration(durationMinutes) || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > MAX_SLOT_RESULTS) {
         ctx.set((current) => (current.proposals.some((item) => item.source === "assistant")
           ? { ...current, proposals: current.proposals.filter((item) => item.source !== "assistant") }
           : current));

@@ -15,7 +15,7 @@ import {
   type CalendarInfo,
   type IsoInstant,
 } from "../../../_shared/office-accounts/types/calendar";
-import { cacheKey, eventsInRange, freshEntry, invalidate, putEntry, touchEntries, type EventCache } from "./cache";
+import { cacheKey, eventsInRange, freshEntry, invalidate, putEntry, rangeComplete, touchEntries, type EventCache } from "./cache";
 import { dayKeyAt, isDayKey, resolveTimeZone, type DayKey } from "./dates";
 import {
   DEFAULT_PREFERENCES,
@@ -30,6 +30,8 @@ import { busyNeedsReload, createScheduleActions, type ScheduleActions } from "./
 import {
   MAX_ACCOUNTS,
   MAX_CALENDARS_PER_ACCOUNT,
+  MAX_VISIBLE_CALENDARS,
+  TOO_MANY_EVENTS_MESSAGE,
   initialState,
   rangeFor,
   withDerived,
@@ -89,6 +91,37 @@ function defaultLog(action: string, error: unknown): void {
   console.warn(`[calendar] ${action} failed`, error);
 }
 
+/** True when `candidate` serves a calendar better than `current`: it can write, or else it is its account's own. */
+function betterCopy(candidate: CalendarInfo, current: CalendarInfo): boolean {
+  if (candidate.writable !== current.writable) return candidate.writable;
+  return candidate.primary && !current.primary;
+}
+
+/**
+ * One copy of each calendar. Two accounts can list the same shared calendar
+ * with different access; the whole app knows a calendar by its id, so it is
+ * read and written through one account: the one that can write, else the one
+ * that owns it, else the first. Keeps the order of first appearance.
+ */
+export function oneCopyPerCalendar(calendars: readonly CalendarInfo[]): CalendarInfo[] {
+  const result: CalendarInfo[] = [];
+  const at: Record<string, number> = {};
+  for (const calendar of calendars) {
+    const index = at[calendar.id];
+    if (index === undefined) {
+      at[calendar.id] = result.push(calendar) - 1;
+    } else if (betterCopy(calendar, result[index])) {
+      result[index] = calendar;
+    }
+  }
+  return result;
+}
+
+/** The cache keys of the visible calendars for a range. */
+function visibleKeys(state: CalendarState, start: IsoInstant, end: IsoInstant): string[] {
+  return state.calendars.filter((calendar) => calendar.visible).map((calendar) => cacheKey(calendar.id, start, end));
+}
+
 export function createCalendarStore(options: CalendarStoreOptions): CalendarStore {
   const now = options.now ?? Date.now;
   const log = options.log ?? defaultLog;
@@ -133,8 +166,14 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
       .catch((error: unknown) => log("save preferences", error));
   }
 
+  /** The owner's choice, else the provider's; at most `MAX_VISIBLE_CALENDARS` shown, the first ones listed. */
   function applyCalendarVisibility(calendars: CalendarInfo[], preferences: CalendarPreferences): CalendarInfo[] {
-    return calendars.map((calendar) => ({ ...calendar, visible: preferences.calendarVisibility[calendar.id] ?? calendar.visible }));
+    let shown = 0;
+    return calendars.map((calendar) => {
+      const visible = (preferences.calendarVisibility[calendar.id] ?? calendar.visible) && shown < MAX_VISIBLE_CALENDARS;
+      if (visible) shown += 1;
+      return { ...calendar, visible };
+    });
   }
 
   /** After the range changed: overlays follow, events and stale busy time are fetched. */
@@ -193,8 +232,12 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
   /**
    * The cache with every fulfilled result stored for the range, writes
    * confirmed meanwhile put on top; the first failure, reported, as a fixed sentence.
+   * The visible calendars' entries for the shown range and for this range are
+   * never evicted to make room.
    */
-  function storeResults(cache: EventCache, fetched: Fetched, start: IsoInstant, end: IsoInstant, action: string): { cache: EventCache; error: string | null } {
+  function storeResults(current: CalendarState, fetched: Fetched, start: IsoInstant, end: IsoInstant, action: string): { cache: EventCache; error: string | null } {
+    const cache = current.cache;
+    const keep = [...visibleKeys(current, current.range.start, current.range.end), ...visibleKeys(current, start, end)];
     const { confirmed } = fetched;
     if (confirmed === null) {
       // The reply may predate writes no longer on record; storing it could undo them.
@@ -211,7 +254,7 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
       }
       for (const calendarId of result.value.calendarIds) {
         const events = withConfirmedWrites(result.value.events.filter((event) => event.calendarId === calendarId), confirmed, calendarId, startMs, endMs);
-        nextCache = putEntry(nextCache, { calendarId, start, end, events, fetchedAt: fetched.askedAt });
+        nextCache = putEntry(nextCache, { calendarId, start, end, events, fetchedAt: fetched.askedAt }, { keep });
       }
     }
     return { cache: nextCache, error };
@@ -234,7 +277,7 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     ctx.set((current) => ({ ...current, eventsStatus: "loading", eventsError: null, proposals: withoutAssistantProposals(current.proposals) }));
     const fetched = await fetchEvents(missing, range.start, range.end);
     ctx.set((current) => {
-      const stored = storeResults(current.cache, fetched, range.start, range.end, "load events");
+      const stored = storeResults(current, fetched, range.start, range.end, "load events");
       const nextCache = reapplyPending(stored.cache, current.pending);
       if (token !== eventsToken) return { ...current, cache: nextCache };
       return { ...current, cache: nextCache, eventsStatus: stored.error ? "error" : "ready", eventsError: stored.error };
@@ -255,7 +298,7 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
       const fetched = await fetchEvents(missing, start, end);
       let error: string | null = null;
       ctx.set((current) => {
-        const stored = storeResults(current.cache, fetched, start, end, "read events");
+        const stored = storeResults(current, fetched, start, end, "read events");
         error = stored.error;
         return { ...current, cache: reapplyPending(stored.cache, current.pending) };
       });
@@ -266,6 +309,8 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     const ids = calendars.filter((calendar) => calendar.visible).map((calendar) => calendar.id);
     // Every visible calendar must have this range cached; a calendar shown or evicted meanwhile is not an answer.
     if (ids.some((id) => !cache.entries[cacheKey(id, start, end)])) throw new ProviderError("failed");
+    // An entry that could not keep every event would hide meetings from the answer.
+    if (!rangeComplete(cache, ids, start, end)) throw new ProviderError("not_supported", TOO_MANY_EVENTS_MESSAGE);
     return eventsInRange(cache, ids, start, end);
   }
 
@@ -292,7 +337,7 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     ctx.set((current) => ({
       ...current,
       accounts: connections.map((connection) => ({ ...connection.account })),
-      calendars: applyCalendarVisibility(calendars, current.preferences),
+      calendars: applyCalendarVisibility(oneCopyPerCalendar(calendars), current.preferences),
       accountsStatus: error && calendars.length === 0 ? "error" : "ready",
       accountsError: error,
     }));
@@ -376,6 +421,7 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     setCalendarVisible(calendarId, visible) {
       const calendar = state.calendars.find((item) => item.id === calendarId);
       if (!calendar || calendar.visible === visible) return;
+      if (visible && state.calendars.filter((item) => item.visible).length >= MAX_VISIBLE_CALENDARS) return;
       ctx.set((current) => {
         const preferences = withCalendarVisibility(current.preferences, calendarId, visible);
         return { ...current, preferences, calendars: applyCalendarVisibility(current.calendars, preferences) };

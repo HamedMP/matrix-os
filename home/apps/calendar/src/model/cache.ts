@@ -5,8 +5,18 @@
  */
 import { instantToMs, type CalendarEvent, type IsoInstant } from "../../../_shared/office-accounts/types/calendar";
 
+/**
+ * Room for the protected entries the store keeps (`MAX_VISIBLE_CALENDARS`
+ * for the grid's range plus as many for one read of another range) and
+ * older ranges besides.
+ */
 export const MAX_CACHE_ENTRIES = 120;
-export const MAX_EVENTS_PER_ENTRY = 2_000;
+/**
+ * At least as many events as one adapter reply can hold for one calendar
+ * (Google: 10 pages of 250). An entry that cannot keep every event of its
+ * range is marked `incomplete` and is never an answer.
+ */
+export const MAX_EVENTS_PER_ENTRY = 2_500;
 /** Entries older than this are refetched when shown again. */
 export const CACHE_TTL_MS = 5 * 60_000;
 /** All-day events sit on midnight UTC; widen their overlap test by the largest zone offset. */
@@ -22,6 +32,8 @@ export interface EventCacheEntry {
   fetchedAt: number;
   /** Set when a newer reply showed that this entry may miss an event; it is fetched again when shown. */
   stale?: true;
+  /** Set when the range held more events than an entry keeps; it is never fresh and never a complete answer. */
+  incomplete?: true;
 }
 
 export interface EventCache {
@@ -78,6 +90,7 @@ function reconcile(target: EventCacheEntry, source: EventCacheEntry, sourceCompl
   const listed = new Set(source.events.map((event) => event.id));
   let lost = false;
   let changed = false;
+  let full = false;
   const events = target.events.filter((event) => {
     if (listed.has(event.id)) {
       changed = true;
@@ -91,16 +104,19 @@ function reconcile(target: EventCacheEntry, source: EventCacheEntry, sourceCompl
     return true;
   });
   for (const event of source.events) {
-    if (events.length >= MAX_EVENTS_PER_ENTRY) break;
-    if (eventOverlaps(event, targetStart, targetEnd)) {
-      events.push(event);
-      changed = true;
+    if (!eventOverlaps(event, targetStart, targetEnd)) continue;
+    changed = true;
+    if (events.length >= MAX_EVENTS_PER_ENTRY) {
+      full = true;
+      break;
     }
+    events.push(event);
   }
   if (!changed) return target;
   const covered = sourceStart <= targetStart && sourceEnd >= targetEnd;
   const next: EventCacheEntry = { ...target, events: sortEvents(events) };
   if (lost && !covered) next.stale = true;
+  if (full || source.incomplete) next.incomplete = true;
   return next;
 }
 
@@ -109,25 +125,35 @@ function rangesOverlap(a: EventCacheEntry, b: EventCacheEntry): boolean {
     && instantToMs(a.start) < instantToMs(b.end) && instantToMs(a.end) > instantToMs(b.start);
 }
 
+export interface PutOptions {
+  limit?: number;
+  /** Keys that are not evicted, such as the entries the grid shows; the cap is enforced on the rest. */
+  keep?: readonly string[];
+}
+
 /**
  * Adds or replaces an entry, marks it most recently used and evicts the
- * oldest beyond `limit`. Overlapping entries of the same calendar are
- * reconciled so that, where two ranges overlap, the reply asked for later
- * wins: a meeting deleted or moved since an older reply does not come back
- * from it. A reply asked for before the entry already stored for the same
- * range is dropped.
+ * oldest beyond `limit`, never a key in `keep`. Overlapping entries of the
+ * same calendar are reconciled so that, where two ranges overlap, the reply
+ * asked for later wins: a meeting deleted or moved since an older reply does
+ * not come back from it. A reply asked for before the entry already stored
+ * for the same range is dropped. A reply longer than `MAX_EVENTS_PER_ENTRY`
+ * is kept in part and marked `incomplete`, never stored as a full answer.
  */
-export function putEntry(cache: EventCache, entry: EventCacheEntry, limit = MAX_CACHE_ENTRIES): EventCache {
+export function putEntry(cache: EventCache, entry: EventCacheEntry, options: PutOptions = {}): EventCache {
+  const limit = Math.max(1, options.limit ?? MAX_CACHE_ENTRIES);
   const key = entryKey(entry);
   const existing = cache.entries[key];
   if (existing && existing.fetchedAt > entry.fetchedAt) return touchEntries(cache, [key]);
-  const complete = entry.events.length <= MAX_EVENTS_PER_ENTRY;
-  let incoming: EventCacheEntry = { ...entry, events: sortEvents(entry.events.slice(0, MAX_EVENTS_PER_ENTRY)) };
+  const complete = entry.events.length <= MAX_EVENTS_PER_ENTRY && !entry.incomplete;
+  const { incomplete: _incomplete, ...rest } = entry;
+  let incoming: EventCacheEntry = { ...rest, events: sortEvents(entry.events.slice(0, MAX_EVENTS_PER_ENTRY)) };
+  if (!complete) incoming.incomplete = true;
   const overlapping = cache.order.filter((other) => other !== key && cache.entries[other] && rangesOverlap(cache.entries[other], incoming));
   // First the newer replies correct this one, then this one corrects the older replies.
   for (const other of overlapping) {
     const stored = cache.entries[other];
-    if (stored.fetchedAt > entry.fetchedAt) incoming = reconcile(incoming, stored, stored.events.length < MAX_EVENTS_PER_ENTRY);
+    if (stored.fetchedAt > entry.fetchedAt) incoming = reconcile(incoming, stored, !stored.incomplete);
   }
   const entries: Record<string, EventCacheEntry> = { ...cache.entries };
   for (const other of overlapping) {
@@ -135,10 +161,16 @@ export function putEntry(cache: EventCache, entry: EventCacheEntry, limit = MAX_
     if (stored.fetchedAt <= entry.fetchedAt) entries[other] = reconcile(stored, incoming, complete);
   }
   entries[key] = incoming;
-  const order = [...cache.order.filter((item) => item !== key), key];
-  while (order.length > Math.max(1, limit)) {
-    const evicted = order.shift();
-    if (evicted !== undefined) delete entries[evicted];
+  const keep = new Set([...(options.keep ?? []), key]);
+  let order = [...cache.order.filter((item) => item !== key), key];
+  let excess = order.length - limit;
+  if (excess > 0) {
+    order = order.filter((item) => {
+      if (excess <= 0 || keep.has(item)) return true;
+      excess -= 1;
+      delete entries[item];
+      return false;
+    });
   }
   return { entries, order };
 }
@@ -151,10 +183,18 @@ export function touchEntries(cache: EventCache, keys: readonly string[]): EventC
   return { entries: cache.entries, order: [...cache.order.filter((key) => !moved.has(key)), ...present] };
 }
 
-/** The entry when it exists, is younger than `ttlMs` and no newer reply marked it stale. */
+/** The entry when it exists, is complete, is younger than `ttlMs` and no newer reply marked it stale. */
 export function freshEntry(cache: EventCache, key: string, now: number, ttlMs = CACHE_TTL_MS): EventCacheEntry | null {
   const entry = cache.entries[key];
-  return entry && !entry.stale && now - entry.fetchedAt < ttlMs ? entry : null;
+  return entry && !entry.stale && !entry.incomplete && now - entry.fetchedAt < ttlMs ? entry : null;
+}
+
+/** True when every given calendar has a complete entry for exactly this range. */
+export function rangeComplete(cache: EventCache, calendarIds: readonly string[], start: IsoInstant, end: IsoInstant): boolean {
+  return calendarIds.every((id) => {
+    const entry = cache.entries[cacheKey(id, start, end)];
+    return entry !== undefined && !entry.incomplete;
+  });
 }
 
 /** Drops every entry, or only those of the given calendars. */
@@ -216,7 +256,14 @@ export function replaceEvent(cache: EventCache, eventId: string, next: CalendarE
     }
     changed = true;
     const events = entry.events.filter((event) => event.id !== eventId && (next === null || event.id !== next.id));
-    if (belongs && next && events.length < MAX_EVENTS_PER_ENTRY) events.push(next);
+    if (belongs && next) {
+      if (events.length >= MAX_EVENTS_PER_ENTRY) {
+        // A full entry cannot take the change in place: it is no longer an answer and is fetched again when shown.
+        entries[key] = { ...entry, events: sortEvents(events.slice(0, MAX_EVENTS_PER_ENTRY - 1).concat(next)), incomplete: true };
+        continue;
+      }
+      events.push(next);
+    }
     entries[key] = { ...entry, events: sortEvents(events) };
   }
   return changed ? { entries, order: cache.order } : cache;

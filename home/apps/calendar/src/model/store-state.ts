@@ -10,7 +10,7 @@ import type {
   CalendarProvider,
   IsoInstant,
 } from "../../../_shared/office-accounts/types/calendar";
-import { emptyCache, eventsInRange, type EventCache } from "./cache";
+import { cacheKey, emptyCache, eventsInRange, type EventCache } from "./cache";
 import { dayKeyAt, resolveTimeZone, type DayKey } from "./dates";
 import type { DraftState } from "./drafts";
 import type { CalendarPreferences } from "./preferences";
@@ -87,7 +87,15 @@ export interface CalendarState {
 
 export const MAX_ACCOUNTS = 10;
 export const MAX_CALENDARS_PER_ACCOUNT = 200;
+/**
+ * Calendars shown at once. Every shown calendar keeps its entries for the
+ * grid's range and for one other read in the cache, so twice this stays
+ * under `MAX_CACHE_ENTRIES` and neither set evicts the other.
+ */
+export const MAX_VISIBLE_CALENDARS = 50;
 export const MAX_BUSY_BLOCKS = 5_000;
+/** Shown when a range holds more events than the cache keeps for one calendar. */
+export const TOO_MANY_EVENTS_MESSAGE = "This range has too many events to show. Choose a shorter range.";
 
 export function emptyAssistant(durationMinutes: number): AssistantState {
   return {
@@ -147,11 +155,23 @@ export function withoutAssistantProposals(proposals: Proposal[]): Proposal[] {
     : proposals;
 }
 
-/** Recomputes the fields derived from the cache, calendars, range and pending writes. */
+/** True when a visible calendar's entry for the shown range could not keep every event. */
+export function shownRangeTruncated(state: CalendarState): boolean {
+  const { start, end } = state.range;
+  return state.calendars.some((calendar) => calendar.visible && state.cache.entries[cacheKey(calendar.id, start, end)]?.incomplete === true);
+}
+
+/**
+ * Recomputes the fields derived from the cache, calendars, range and pending
+ * writes. A shown range whose entry could not keep every event is never
+ * reported ready: the grid says the range could not be loaded completely.
+ */
 export function withDerived(state: CalendarState): CalendarState {
   const visibleIds = state.calendars.filter((calendar) => calendar.visible).map((calendar) => calendar.id);
+  const truncated = state.eventsStatus === "ready" && shownRangeTruncated(state);
   return {
     ...state,
+    ...(truncated ? { eventsStatus: "error" as const, eventsError: TOO_MANY_EVENTS_MESSAGE } : {}),
     events: eventsInRange(state.cache, visibleIds, state.range.start, state.range.end),
     pendingEventIds: [...new Set(state.pending.map((write) => write.eventId))],
   };

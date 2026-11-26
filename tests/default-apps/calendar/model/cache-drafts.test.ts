@@ -30,9 +30,9 @@ const BASE = { calendarId: "cal-1", timeZone: "America/New_York" };
 describe("event cache", () => {
   it("evicts the least recently used entry beyond the cap", () => {
     let cache = emptyCache();
-    for (const id of ["a", "b", "c"]) cache = putEntry(cache, { calendarId: id, ...WEEK, events: [], fetchedAt: 0 }, 3);
+    for (const id of ["a", "b", "c"]) cache = putEntry(cache, { calendarId: id, ...WEEK, events: [], fetchedAt: 0 }, { limit: 3 });
     cache = touchEntries(cache, [cacheKey("a", WEEK.start, WEEK.end)]);
-    cache = putEntry(cache, { calendarId: "d", ...WEEK, events: [], fetchedAt: 0 }, 3);
+    cache = putEntry(cache, { calendarId: "d", ...WEEK, events: [], fetchedAt: 0 }, { limit: 3 });
     expect(Object.values(cache.entries).map((entry) => entry.calendarId).sort()).toEqual(["a", "c", "d"]);
     expect(cache.order).toHaveLength(3);
   });
