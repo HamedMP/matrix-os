@@ -1,6 +1,7 @@
 import { randomUUID } from "./random-uuid.js";
 import { CanonicalCreateChatTurnRequestSchema, CanonicalChatTurnAdmissionResponseSchema, type CanonicalChatDetailResponse, type CanonicalChatRecord,
   type CanonicalChatTurnAdmissionResponse, type CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
+import type { CanonicalChatClientAdmission } from "./canonical-chat-admission-recovery.js";
 
 export const CHAT_ADMISSION_UNCONFIRMED = "Message status is unconfirmed. You can retry safely.";
 export class ChatAdmissionUnconfirmed extends Error {
@@ -27,8 +28,13 @@ export interface ChatAdmissionAttempt {
   lastRead: number;
 }
 
-/** Only an exact durable turn plus its linked user message and run proves admission. */
-function receipt(attempt: ChatAdmissionAttempt, detail: CanonicalChatDetailResponse) {
+/**
+ * Only an exact durable turn plus its linked user message and run proves
+ * admission. The confirming read's full detail travels with the receipt: it can
+ * be newer than the admission (a fast run may already have replied), and a
+ * detail rebuilt from the receipt alone would drop that transcript.
+ */
+function receipt(attempt: ChatAdmissionAttempt, detail: CanonicalChatDetailResponse): CanonicalChatClientAdmission | undefined {
   if (detail.record.chat.id !== attempt.record?.chat.id) return;
   const turn = detail.turns.find(item => item.chatId === detail.record.chat.id && item.clientRequestId === attempt.id);
   if (!turn) return;
@@ -36,7 +42,7 @@ function receipt(attempt: ChatAdmissionAttempt, detail: CanonicalChatDetailRespo
   const run = detail.runs.find(item => item.turnId === turn.id && item.attempt === 1);
   if (!message || !run) return;
   const parsed = CanonicalChatTurnAdmissionResponseSchema.safeParse({ record: detail.record, turn, message, run, admission: "already_accepted" });
-  return parsed.success ? parsed.data : undefined;
+  return parsed.success ? { ...parsed.data, recoveredDetail: detail } : undefined;
 }
 
 /** Unknown entries never expire/evict into a new request id. Explicit calls alone may POST. */

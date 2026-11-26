@@ -506,6 +506,8 @@ describe("Chat canonical provider state", () => {
         displayText: "Keep this draft",
         clientRequestId: expect.any(String),
         onAccepted: expect.any(Function),
+        onShown: expect.any(Function),
+        onAdmissionUnconfirmed: expect.any(Function),
         instanceId: "pi_default",
         model: "anthropic:claude-sonnet-5",
         interactionMode: "default",

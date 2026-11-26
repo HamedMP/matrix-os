@@ -48,9 +48,10 @@ export function ChatStarterCards({
 /**
  * New-Chat screen shared by Web and Electron Desktop: the welcome and starter
  * cards scroll above, and the composer stays in the 808px column below. Hosts
- * pass their own logo and onboarding wrapper.
+ * pass their own logo and onboarding wrapper, and may replace the area above
+ * the composer (`body`) without remounting the composer and its draft state.
  */
-export function ChatNewChatContent({ logo, layout, composer, inProject = false, wrapHero = (children) => children, onSelect }: {
+export function ChatNewChatContent({ logo, layout, composer, inProject = false, wrapHero = (children) => children, onSelect, body }: {
   logo: ReactNode;
   /** A Project's new-Chat draft; hosts and tests find its scroll area by this slot. */
   inProject?: boolean;
@@ -58,12 +59,13 @@ export function ChatNewChatContent({ logo, layout, composer, inProject = false, 
   composer: ReactNode;
   wrapHero?: (children: ReactNode) => ReactNode;
   onSelect: (prompt: string) => void;
+  body?: ReactNode;
 }) {
   return (
     // The root scrolls (not the composer column) so a composer taller than a short phone
     // screen keeps Send reachable while the slash and mention menus above the card stay unclipped.
     <div data-slot="chat-new-chat-content" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <div
+      {body ?? <div
         data-slot={inProject ? "chat-project-draft-scroll" : "chat-starter-scroll"}
         className={`flex min-h-0 flex-1 items-start justify-center overflow-y-auto ${layout === "narrow" ? "px-3 py-3" : "px-5 pt-8 pb-[53px]"}`}
         style={{ scrollbarGutter: "stable both-edges" }}
@@ -82,7 +84,7 @@ export function ChatNewChatContent({ logo, layout, composer, inProject = false, 
             <ChatStarterCards layout="two-by-two" density={layout === "narrow" ? "compact" : "regular"} onSelect={onSelect} />
           </>)}
         </div>
-      </div>
+      </div>}
       <ChatComposerColumn layout={layout}>{composer}</ChatComposerColumn>
     </div>
   );

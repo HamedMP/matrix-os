@@ -47,8 +47,8 @@ import {
   canonicalShellChatFailureMessage,
   isDefinitiveCanonicalChatRejection,
 } from "@/lib/canonical-chat-client";
-import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
-import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED, withPendingCanonicalTurn, type PendingCanonicalTurn } from "@matrix-os/ui";
+import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED, type PendingCanonicalTurn } from "@matrix-os/ui";
+import { canonicalTranscriptWithPendingSend, nextPendingCanonicalSend, optimisticCanonicalSendParts, type PendingCanonicalSend } from "./canonical-chat-pending-send";
 import { admitShellChatTurn, advanceChatRecordForRoutineReceipts } from "./canonical-chat-turn-admission";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
@@ -170,8 +170,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 } = {}): ChatState {
   const [mentionRequests] = useState(createChatMentionRequestTracker);
   const [admissions] = useState(createCanonicalChatAdmissionTracker);
-  // The message being sent, shown before admission confirms its turn.
-  const [pendingTurn, setPendingTurn] = useState<PendingCanonicalTurn | null>(null);
+  // The message being sent, shown from the moment it is sent.
+  const [pendingSend, setPendingSend] = useState<PendingCanonicalSend | null>(null);
+  // Each New Chat starts a draft session; a draft send shows only in its own.
+  const [draftSession, setDraftSession] = useState(0);
+  const draftSessionRef = useRef(0);
   const [gatewayUrl] = useState(getGatewayUrl);
   const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl }), [gatewayUrl]);
   const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
@@ -467,6 +470,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       setDetail(null);
       return;
     }
+    // A send that just opened its new Chat already holds the admitted detail.
+    if (detailRef.current?.record.chat.id === activeChatId) return;
     void loadDetail(activeChatId);
   }, [activeChatId, loadDetail]);
 
@@ -503,6 +508,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       return false;
     }
     const sourceChatId = activeChatId;
+    const currentDraftProjectId = () => {
+      const current = draftProjectRef.current;
+      return current?.identity === navigationIdentity ? current.projectId : undefined;
+    };
     const projectSkillProjectId = options.projectSkillProjectId;
     const currentProjectSkillScope = () => {
       if (!projectSkillProjectId) return true;
@@ -511,8 +520,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         const current = detailRef.current;
         return current?.record.projectId === projectSkillProjectId && canUseProjectSkillRoot(current);
       }
-      return draftProjectRef.current?.identity === navigationIdentity
-        && draftProjectRef.current.projectId === projectSkillProjectId;
+      return currentDraftProjectId() === projectSkillProjectId;
     };
     if (!currentProjectSkillScope()) {
       setSafeError("The selected project skill is unavailable in this Chat.");
@@ -522,7 +530,21 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     latestAdmissionId.current = undefined;
     setSubmitting(true);
     setSafeError(null);
-    let pendingRequestId: string | undefined;
+    const pendingToken = {};
+    const sendDraftSession = draftSessionRef.current;
+    // Picking a project changes the draft's destination within the same session.
+    const sourceIsSelected = () => activeChatIdRef.current === sourceChatId
+      && (sourceChatId !== undefined
+        || (draftSessionRef.current === sendDraftSession && currentDraftProjectId() === draftProjectId));
+    const showPending = (turn: Omit<PendingCanonicalTurn, "createdAt">) => {
+      // A draft send whose New Chat session has ended no longer shows.
+      if (sourceChatId === undefined && draftSessionRef.current !== sendDraftSession) return;
+      setPendingSend(previous => sourceChatId === undefined && draftSessionRef.current !== sendDraftSession ? previous
+        : nextPendingCanonicalSend(previous, { token: pendingToken, identity: navigationIdentity, sourceChatId, draftSession: sendDraftSession }, turn));
+      // Shown: the composer empties now, not on acceptance, so the text never shows twice.
+      options.onShown?.();
+    };
+    const optimisticParts = optimisticCanonicalSendParts(text, options.promptText, options.resources);
     const send = async () => {
       const uploadedReferences: string[] = [];
       const removeUploads = () => Promise.allSettled(uploadedReferences.map(reference => client.deleteAttachment(reference)));
@@ -549,6 +571,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             draftSendAttempt.current = { payload, clientRequestId: options.clientRequestId ?? requestId() };
           }
           draftRequestId = draftSendAttempt.current.clientRequestId;
+          showPending({ requestId: draftRequestId, chatId: "", parts: optimisticParts });
           setActiveChatId(undefined);
           record = await client.create({
             clientRequestId: `${draftRequestId}_chat`,
@@ -557,6 +580,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             ...(draftProjectId ? { projectId: draftProjectId } : {}),
           });
           if (!isCurrent() || !matchesProjectSkill(record.projectId)) return false;
+          showPending({ requestId: draftRequestId, chatId: record.chat.id, parts: optimisticParts });
+        } else {
+          showPending({ requestId: options.clientRequestId ?? requestId(), chatId: record.chat.id, parts: optimisticParts });
         }
         if ((files?.length ?? 0) > 8) throw new Error("TooManyAttachments");
         const uploadResults = await Promise.allSettled((files ?? []).map(async (file, index) => {
@@ -612,18 +638,18 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           return isCurrent();
         }
         const submittedDraft = composerDraftSequence.current;
-        pendingRequestId = input.clientRequestId;
-        setPendingTurn({ requestId: input.clientRequestId, chatId: record.chat.id, parts, createdAt: new Date().toISOString() });
+        const canSelectAdmittedChat = () => sourceIsSelected() && composerDraftSequence.current === submittedDraft;
+        showPending({ requestId: input.clientRequestId, chatId: record.chat.id, parts });
         const admitted: CanonicalChatClientAdmission = await admitShellChatTurn({ tracker: admissions, identity: navigationIdentity, client, record, input,
           seed: input.clientRequestId, current: () => detailRef.current, isCurrent,
           onRejected: () => mentionRequests.accepted(requestScope, input.clientRequestId),
           onPrepared: id => { latestAdmissionId.current = id; },
           onAccepted: () => {
             mentionRequests.accepted(requestScope, input.clientRequestId);
-            options.onAccepted?.();
+            options.onAccepted?.(sourceChatId === undefined && canSelectAdmittedChat() ? record.chat.id : undefined);
           },
           onConfirmed: id => {
-            if (isCurrent() && latestAdmissionId.current === id && activeChatIdRef.current === sourceChatId && composerDraftSequence.current === submittedDraft) {
+            if (isCurrent() && latestAdmissionId.current === id && canSelectAdmittedChat()) {
               setSafeError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
               activeChatIdRef.current = record.chat.id; setActiveChatId(record.chat.id);
             }
@@ -632,7 +658,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         turnAdmitted = true;
         if (draftSendAttempt.current?.clientRequestId === draftRequestId) draftSendAttempt.current = null;
         mentionRequests.accepted(requestScope, admitted.turn.clientRequestId);
-        if (activeChatIdRef.current === sourceChatId) {
+        // Confirmation may already have opened a new Chat; it still takes the
+        // admitted detail so the transcript needs no extra read.
+        if (canSelectAdmittedChat() || activeChatIdRef.current === record.chat.id) {
           activeChatIdRef.current = record.chat.id;
           setActiveChatId(record.chat.id);
           const current = detailRef.current?.record.chat.id === record.chat.id ? detailRef.current : null;
@@ -647,8 +675,16 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             setDetail(next);
           }
         }
-        await loadList();
-        await loadDetail(record.chat.id);
+        // A live event stream carries the list and detail changes this send
+        // causes; re-read only when it cannot. A new Chat still reads once
+        // unless admission returned its full detail: a fast run's events may
+        // have passed while it was unselected.
+        if (eventSource.connectionState() !== "open") {
+          await loadList();
+          if (activeChatIdRef.current === record.chat.id) await loadDetail(record.chat.id);
+        } else if (sourceChatId === undefined && !admitted.recoveredDetail && activeChatIdRef.current === record.chat.id) {
+          await loadDetail(record.chat.id);
+        }
         return isCurrent();
       } catch (error: unknown) {
         if (!isCurrent()) return false;
@@ -658,19 +694,22 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         }
         if (!isCurrent()) return false;
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
-        if (activeChatIdRef.current === sourceChatId) setSafeError(error instanceof ChatAdmissionUnconfirmed
+        if (!turnAdmitted && !definitelyUnadmitted) options.onAdmissionUnconfirmed?.();
+        if (sourceIsSelected()) setSafeError(error instanceof ChatAdmissionUnconfirmed
           ? CHAT_ADMISSION_UNCONFIRMED : canonicalShellChatFailureMessage(error));
         return turnAdmitted;
       }
     };
     return send().finally(() => {
       // Clear only this send's message; a newer send may already show its own.
-      if (pendingRequestId) setPendingTurn(pending => pending?.requestId === pendingRequestId ? null : pending);
+      // An accepted send's turn is in the detail by now; a rejected send's text
+      // goes back to the composer, which let it go when the message showed.
+      setPendingSend(pending => pending?.token === pendingToken ? null : pending);
       if (!isCurrent()) return;
       submittingRef.current = false;
       setSubmitting(false);
     });
-  }, [activeChatId, client, loadDetail, loadList, mentionRequests, setActiveChatId, isCurrent, authority.summaryClient, admissions, navigationIdentity, draftProjectId]);
+  }, [activeChatId, client, eventSource, loadDetail, loadList, mentionRequests, setActiveChatId, isCurrent, authority.summaryClient, admissions, navigationIdentity, draftProjectId]);
 
   const cancelQueuedTurn = useCallback(async (queuedTurnId: string) => {
     if (!isCurrent()) return false;
@@ -714,6 +753,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const newChat = useCallback(async (projectId?: string) => {
     if (!isCurrent()) return;
     draftSendAttempt.current = null;
+    draftSessionRef.current += 1;
+    setDraftSession(draftSessionRef.current);
+    setPendingSend(pending => pending?.sourceChatId === undefined ? null : pending);
     setDraftProjectId(projectId);
     activeChatIdRef.current = undefined;
     detailRef.current = null;
@@ -1076,7 +1118,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   }, [client, setRecords, isCurrent, rememberReadState]);
 
   const selectedDetail = sameAuthority && detail?.record.chat.id === activeChatId ? detail : null;
-  const messages = selectedDetail ? projectCanonicalTranscript(withPendingCanonicalTurn(selectedDetail, pendingTurn)) : [];
+  const messages = canonicalTranscriptWithPendingSend({ detail: selectedDetail, activeChatId, draftSession,
+    pending: sameAuthority && pendingSend?.identity === navigationIdentity ? pendingSend : null,
+    collaborationViewOpen: Boolean(selectedCollaborationView) });
   const selectedDetailError = detailError?.scope === navigationIdentity && detailError.chatId === activeChatId
     ? "Chat could not be loaded. Try again." : null;
   const visibleError = (sameAuthority ? safeError : null) ?? selectedDetailError ?? unreadNavigation.error ?? navigation.error;
