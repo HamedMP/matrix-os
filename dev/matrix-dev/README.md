@@ -11,6 +11,7 @@ customer-facing `plugins/matrix-os` plugin.
 | `unblock-tickets` | Answer the decisions waiting on you |
 | `daily-update` | Write a paste-ready summary of a day's work |
 | `release-notes` | Draft Desktop release notes |
+| `release-full-stable` | Coordinate release notes, platform readiness, host, fleet, Desktop, and snapshot verification |
 | `release-matrix-stable` | Cut a canary host bundle and promote it to stable |
 | `release-platform` | Deploy, verify, and roll back the platform service |
 | `wrap-up` | Close out a chat whose work has shipped |

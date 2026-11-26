@@ -115,8 +115,91 @@ describe('release skills', () => {
 
   it('retires the old release command instead of pushing to main', () => {
     const command = read('.claude/commands/release.md');
+    expect(command).toContain('release-full-stable');
     expect(command).toContain('release-platform');
     expect(command).toContain('release-matrix-stable');
     expect(command).not.toContain('git push origin main');
+  });
+
+  it('coordinates a full stable release around an approved release-modal story', () => {
+    const skill = read('.agents/skills/release-full-stable/SKILL.md');
+
+    expect(read('.claude/skills/release-full-stable/SKILL.md')).toBe(skill);
+    expect(skill.split('\n')[1]).toBe('name: release-full-stable');
+    expect(skill).toContain('release-notes/<version>.json');
+    expect(skill).toContain('release-notes');
+    expect(skill).toContain('release-matrix-stable');
+    expect(skill).toContain('release-platform');
+
+    const modal = skill.indexOf('## 2. Collaborate on the release modal');
+    const release = skill.indexOf('## 5. Release the host bundle');
+    expect(modal).toBeGreaterThan(-1);
+    expect(release).toBeGreaterThan(modal);
+    expect(skill).toContain('complete recommended draft');
+    expect(skill).toContain('recommended default');
+    expect(skill).toContain('Do not ask the user to write the copy');
+    expect(skill).toMatch(/explicit\s+approval before committing/i);
+
+    expect(skill).toContain('exact approved version');
+    expect(skill).toContain('inventory-derived denominator');
+    expect(skill).toContain('A triggered rollout is not a completed rollout');
+    expect(skill).toContain('Europe/Berlin');
+    expect(skill).toContain('Golden snapshot');
+    expect(skill).toContain('Desktop stable');
+  });
+
+  it('locks the release content before notes without blocking host lanes on the notes PR', () => {
+    const skill = read('.agents/skills/release-full-stable/SKILL.md');
+    const locking = skill.slice(
+      skill.indexOf('## 1. Establish the release range and versions'),
+      skill.indexOf('## 4. Qualify the platform lane'),
+    );
+    const desktop = skill.slice(
+      skill.indexOf('## 7. Publish and verify Desktop stable'),
+      skill.indexOf('## 8. Golden snapshot and final verification'),
+    );
+
+    expect(locking).toContain('RELEASE_CONTENT_SHA');
+    expect(locking).toMatch(/notes cover changes through that SHA only/i);
+    expect(locking).toMatch(/exclude(?:s|d)? (?:the )?release-notes PR itself/i);
+    expect(locking).toMatch(/merge (?:the )?release-notes PR ASAP/i);
+    expect(locking).toMatch(/Platform, Host, and Fleet lanes may proceed/i);
+    expect(locking).not.toContain('Do not start any release build until the approved notes PR is merged');
+    expect(desktop).toMatch(/must wait for the approved release-notes PR to merge/i);
+    expect(desktop).toContain('DESKTOP_SHA');
+    expect(skill).toMatch(/report both `RELEASE_CONTENT_SHA`\s+and `DESKTOP_SHA`/i);
+  });
+
+  it('fails the full-release platform gate closed against the actual serving source', () => {
+    const skill = read('.agents/skills/release-full-stable/SKILL.md');
+    const platform = skill.slice(
+      skill.indexOf('## 4. Qualify the platform lane'),
+      skill.indexOf('## 5. Release the host bundle'),
+    );
+
+    expect(platform).toContain('authoritative serving source SHA');
+    expect(platform).toContain('git merge-base --is-ancestor');
+    expect(platform).toMatch(/serving SHA\s+through\s+`RELEASE_CONTENT_SHA`/);
+    expect(platform).toContain('dependency ledger');
+    expect(platform).toContain('Do not mark Platform `not needed`');
+    expect(platform).not.toContain(
+      'If no platform-relevant inputs changed, record `not needed` with the serving platform SHA.',
+    );
+  });
+
+  it('binds fleet approval and dispatch to the exact approved target set', () => {
+    const skill = read('.agents/skills/release-full-stable/SKILL.md');
+    const fleet = skill.slice(
+      skill.indexOf('## 6. Roll out and verify the fleet'),
+      skill.indexOf('## 7. Publish and verify Desktop stable'),
+    );
+
+    expect(fleet).toContain('approval manifest');
+    expect(fleet).toContain('machine ID and handle');
+    expect(fleet).toContain('must exactly match the approved target set');
+    expect(fleet).toContain('{"handle":"<approved-handle>","version":"<exact-version>"}');
+    expect(fleet).toMatch(/Do\s+not use `deploy_after_publish=true`/);
+    expect(fleet).toContain('body that omits `handle`');
+    expect(fleet).toContain('Never add a newly eligible machine without new approval');
   });
 });
