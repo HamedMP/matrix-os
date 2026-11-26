@@ -159,10 +159,10 @@ describe("the session host with local documents", () => {
     expect(opened.status).toBe("opened");
     const session = host.session!;
     session.setCellInput(session.getState().activeSheetId, { row: 0, col: 0 }, "9");
-    expect(await host.close()).toBe(false);
+    expect(await host.close()).toEqual({ status: "unsaved" });
     expect(host.session).toBe(session);
     session.markDownloaded();
-    expect(await host.close()).toBe(true);
+    expect(await host.close()).toEqual({ status: "closed" });
     expect(host.session).toBeNull();
   });
 

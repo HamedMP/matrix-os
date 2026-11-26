@@ -1,11 +1,21 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { openXlsx } from "../../../../home/apps/_shared/office-engine/index";
 import { createRecentFiles } from "../../../../home/apps/sheets/src/session";
 import { encode } from "../session/fakes";
 import { flush, renderApp, renderWithWorkbook, workbookBytes } from "./harness";
 
 afterEach(cleanup);
+
+/** Types `text` into the cell editor of A1 without entering it. */
+function typeInEditor(app: Awaited<ReturnType<typeof renderWithWorkbook>>, text: string): void {
+  const grid = app.container.querySelector<HTMLElement>("[role='grid']")!;
+  act(() => grid.focus());
+  fireEvent.keyDown(grid, { key: "F2" });
+  const input = app.container.querySelector<HTMLTextAreaElement>(".sg-input--cell textarea")!;
+  fireEvent.change(input, { target: { value: text } });
+}
 
 /** jsdom's TextEncoder returns bytes of another realm, which the engine rejects as not a Uint8Array. */
 function bytesOf(text: string): Uint8Array {
@@ -32,6 +42,31 @@ describe("Sheets open requests", () => {
     await flush();
     expect(screen.getByRole("heading", { name: "Two.csv" })).toBeTruthy();
     expect(app.bridge.fileStore.writes.map((write) => write.path)).toEqual(["One.xlsx"]);
+  });
+
+  it("stores the text still in the cell editor before a requested file replaces the workbook", async () => {
+    const app = await renderWithWorkbook("One.xlsx");
+    app.bridge.fileStore.put("Two.csv", encode("a,b\n1,2\n"));
+    const one = app.session();
+    typeInEditor(app, "typed, not entered");
+    act(() => app.bridge.requestOpen("Two.csv"));
+    await flush();
+    expect(screen.getByRole("heading", { name: "Two.csv" })).toBeTruthy();
+    expect(one.isDisposed).toBe(true);
+    const saved = await openXlsx(app.bridge.fileStore.bytes("One.xlsx"));
+    expect(saved.getCell(saved.listSheets()[0]!.id, { row: 0, col: 0 }).value).toBe("typed, not entered");
+  });
+
+  it("stays on the workbook with its editor open when a requested file arrives while the editor's text is refused", async () => {
+    const app = await renderWithWorkbook("One.xlsx");
+    app.bridge.fileStore.put("Two.csv", encode("a,b\n1,2\n"));
+    typeInEditor(app, "=1+");
+    act(() => app.bridge.requestOpen("Two.csv"));
+    await flush();
+    expect(screen.getByRole("heading", { name: "One.xlsx" })).toBeTruthy();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(app.container.querySelector<HTMLTextAreaElement>(".sg-input--cell textarea")?.value).toBe("=1+");
+    expect(app.bridge.fileStore.writes).toEqual([]);
   });
 
   it("explains a file it cannot read and never writes to it", async () => {

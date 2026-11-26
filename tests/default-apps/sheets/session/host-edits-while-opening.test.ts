@@ -67,3 +67,99 @@ describe("session host: edits made while another file loads", () => {
     expect(host.getState().opening).toBeNull();
   });
 });
+
+describe("session host: text still in the cell editor", () => {
+  /** A cell editor that holds `text` until the host asks it to commit. */
+  function editor(host: SessionHost, session: import("../../../../home/apps/sheets/src/session").SheetSession) {
+    const sheet = session.getState().activeSheetId;
+    const held = { text: null as string | null, refuse: false, commits: 0 };
+    const stop = host.holdEditor(session, () => {
+      held.commits++;
+      if (held.text === null) return true;
+      if (held.refuse) return false;
+      session.setCellInput(sheet, { row: 7, col: 2 }, held.text);
+      held.text = null;
+      return true;
+    });
+    return { held, stop };
+  }
+
+  it("commits text typed while another file loads and saves it before the old document closes", async () => {
+    const h = harness();
+    h.files.put("A.xlsx", await sampleXlsx());
+    h.files.put("B.xlsx", await sampleXlsx());
+    const host = new SessionHost(h.deps);
+    const a = await host.open("A.xlsx");
+    if (a.status !== "opened") throw new Error("not opened");
+    const { held } = editor(host, a.session);
+    const release = holdReads(h.files, "B.xlsx");
+
+    const opening = host.open("B.xlsx");
+    await settle();
+    // Typed into the still-visible grid, not yet committed to the session.
+    held.text = "still in the editor";
+    release();
+    const b = await opening;
+    await settle();
+
+    expect(b.status).toBe("opened");
+    expect(await valueAt(h.files.bytes("A.xlsx"), 7, 2)).toBe("still in the editor");
+  });
+
+  it("stays on the document when the editor refuses its text, on every path that replaces it", async () => {
+    const h = harness();
+    h.files.put("A.xlsx", await sampleXlsx());
+    h.files.put("B.xlsx", await sampleXlsx());
+    const host = new SessionHost(h.deps);
+    const a = await host.open("A.xlsx");
+    if (a.status !== "opened") throw new Error("not opened");
+    const { held } = editor(host, a.session);
+    held.text = "=SUM(";
+    held.refuse = true;
+
+    expect(await host.open("B.xlsx")).toEqual({ status: "editing" });
+    expect(await host.openNew()).toEqual({ status: "editing" });
+    expect(await host.openLocal("C.xlsx", await sampleXlsx())).toEqual({ status: "editing" });
+    expect(await host.close()).toEqual({ status: "editing" });
+    expect(host.session).toBe(a.session);
+    expect(host.getState().opening).toBeNull();
+
+    // Discarding drops the editor's text with the other edits.
+    expect(await host.close({ discardUnsaved: true })).toEqual({ status: "closed" });
+    expect(host.session).toBeNull();
+  });
+
+  it("stops when the editor refuses text typed while the new file loads", async () => {
+    const h = harness();
+    h.files.put("A.xlsx", await sampleXlsx());
+    h.files.put("B.xlsx", await sampleXlsx());
+    const host = new SessionHost(h.deps);
+    const a = await host.open("A.xlsx");
+    if (a.status !== "opened") throw new Error("not opened");
+    const { held } = editor(host, a.session);
+    const release = holdReads(h.files, "B.xlsx");
+
+    const opening = host.open("B.xlsx");
+    await settle();
+    held.text = "=SUM(";
+    held.refuse = true;
+    release();
+
+    expect(await opening).toEqual({ status: "editing" });
+    expect(host.session).toBe(a.session);
+    expect(host.getState().opening).toBeNull();
+  });
+
+  it("asks only the editor of the document it is leaving", async () => {
+    const h = harness();
+    h.files.put("A.xlsx", await sampleXlsx());
+    h.files.put("B.xlsx", await sampleXlsx());
+    const host = new SessionHost(h.deps);
+    const a = await host.open("A.xlsx");
+    if (a.status !== "opened") throw new Error("not opened");
+    const first = editor(host, a.session);
+    first.stop();
+    expect(await host.open("B.xlsx")).toMatchObject({ status: "opened" });
+    expect(first.held.commits).toBe(0);
+  });
+});

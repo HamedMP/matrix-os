@@ -37,6 +37,8 @@ export interface WorkbenchFiles {
   saveAs(purpose: "save" | "copy"): void;
   /** Back to the start screen, asking first when edits cannot be saved. */
   close(): void;
+  /** Lets the shell commit the cell editor before it replaces or closes this workbook. Returns the function that stops it. */
+  holdEditor?(session: SheetSession, commit: () => boolean): () => void;
 }
 
 export interface WorkbenchProps {
@@ -62,6 +64,9 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", files
     controller.focus();
     return () => controller.dispose();
   }, [controller]);
+  // Opening another file or closing commits the text still being typed first, and stops when it is refused.
+  const { holdEditor } = files;
+  useEffect(() => holdEditor?.(session, () => controller.commitEdit()), [holdEditor, session, controller]);
   // The shell may remove the window at any moment: store the cell being typed and save as soon as it loses focus or is hidden.
   useEffect(
     () =>

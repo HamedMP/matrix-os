@@ -199,7 +199,7 @@ describe("session host", () => {
     const created = await host.openNew();
     expect(created.status).toBe("opened");
     expect(host.session?.getState().path).toBeNull();
-    expect(await host.close()).toBe(true);
+    expect(await host.close()).toEqual({ status: "closed" });
     expect(host.session).toBeNull();
   });
 });

@@ -70,7 +70,8 @@ export function useDocumentFlow(host: SessionHost, recents: RecentFiles, downloa
         // The start screen lists the document it comes back from.
         const path = host.session?.getState().path ?? null;
         if (path !== null && !discardUnsaved) await recents.touch(path);
-        if (!(await host.close({ discardUnsaved }))) setPending(action);
+        // A refused cell editor keeps its text and message on screen: nothing else to ask.
+        if ((await host.close({ discardUnsaved })).status === "unsaved") setPending(action);
         return;
       }
       const result =
@@ -83,6 +84,8 @@ export function useDocumentFlow(host: SessionHost, recents: RecentFiles, downloa
         setPending(action);
         return;
       }
+      // The cell editor refused its text and shows why; the move stops there.
+      if (result.status === "editing") return;
       if (result.status === "error") {
         if (action.kind === "open") {
           if (result.code === "not_found") void recents.remove(action.path);

@@ -64,7 +64,7 @@ export { createSheetSession, openSheetSession } from "./open";
 export { exportSessionFile, openLocalSheetSession } from "./local";
 export type { ExportedFile } from "./local";
 export { SessionHost } from "./host";
-export type { HostOpenResult, HostState } from "./host";
+export type { EditorCommit, HostCloseResult, HostOpenResult, HostState } from "./host";
 export { SheetSessionError, copyPath, fileName, formatOfPath, isValidFilePath, sessionMessage } from "./file-io";
 export { MAX_RECENT_FILES, RECENT_FILES_TABLE, createRecentFiles } from "./recents";
 export type { RecentFile, RecentFiles } from "./recents";

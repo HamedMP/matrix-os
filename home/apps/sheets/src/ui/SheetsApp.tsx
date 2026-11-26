@@ -99,8 +99,9 @@ export function SheetsApp({ bridge, sessionDeps, host: givenHost, download = dow
       importCsv: () => setImportOpen(true),
       saveAs: requestSaveAs,
       close: () => void run({ kind: "close" }),
+      holdEditor: (session, commit) => host.holdEditor(session, commit),
     }),
-    [run, openFromComputer, requestSaveAs],
+    [run, openFromComputer, requestSaveAs, host],
   );
 
   const session = hostState.session;

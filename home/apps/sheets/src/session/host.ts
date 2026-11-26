@@ -8,6 +8,8 @@
  * it stays on the document and reports `unsaved`, unless the caller chose to
  * discard them. The old document stays on screen and editable while the new
  * one loads, so its edits are saved again right before it is replaced.
+ * Text still in its cell editor is committed first (see `holdEditor`); when
+ * the editor refuses it, the host stays and reports `editing`.
  */
 
 import type { Workbook } from "./engine";
@@ -23,7 +25,16 @@ export type HostOpenResult =
   | { status: "superseded" }
   /** The current document has edits that could not be saved. Nothing was opened. */
   | { status: "unsaved" }
+  /** The current document's cell editor refused its text and still shows it. Nothing was opened. */
+  | { status: "editing" }
   | { status: "error"; code: SessionErrorCode; message: string };
+
+export type HostCloseResult = { status: "closed" } | { status: "superseded" } | { status: "unsaved" } | { status: "editing" };
+
+/** Stores the text still in a cell editor; false when the editor refused it and keeps it open. */
+export type EditorCommit = () => boolean;
+
+type Release = "released" | "unsaved" | "editing";
 
 export interface HostState {
   session: SheetSession | null;
@@ -40,6 +51,8 @@ export class SessionHost {
   private state: HostState = { session: null, opening: null, error: null };
   private ticket = 0;
   private readonly listeners = new Set<() => void>();
+  /** The cell editor showing the current document; one window shows one grid. */
+  private editor: { session: SheetSession; commit: EditorCommit } | null = null;
 
   constructor(private readonly deps: SessionDeps) {}
 
@@ -59,26 +72,52 @@ export class SessionHost {
     };
   }
 
+  /**
+   * Lets the host commit `session`'s cell editor before it leaves the
+   * document. Returns the function that stops it.
+   */
+  holdEditor(session: SheetSession, commit: EditorCommit): () => void {
+    const entry = { session, commit };
+    this.editor = entry;
+    return () => {
+      if (this.editor === entry) this.editor = null;
+    };
+  }
+
+  private commitEditor(session: SheetSession): boolean {
+    const editor = this.editor;
+    return editor === null || editor.session !== session || editor.commit();
+  }
+
   private set(next: Partial<HostState>): void {
     this.state = { ...this.state, ...next };
     for (const listener of [...this.listeners]) listener();
   }
 
   /**
-   * Saves the current document's pending edits, again when more arrived
-   * while the file was written. False when they could not all be saved.
+   * Commits the current document's editor and saves its pending edits, again
+   * when more arrived while the file was written. Runs right before the
+   * document is replaced, so nothing typed meanwhile is left out.
    */
-  private async release(discardUnsaved: boolean): Promise<boolean> {
+  private async release(discardUnsaved: boolean): Promise<Release> {
     const current = this.state.session;
-    if (current === null || discardUnsaved) return true;
+    if (current === null || discardUnsaved) return "released";
     for (let attempt = 0; attempt < MAX_RELEASE_SAVES; attempt++) {
+      if (!this.commitEditor(current)) return "editing";
       const state = current.getState();
-      if (!state.dirty) return true;
-      if (state.path === null) return false;
+      if (!state.dirty) return "released";
+      if (state.path === null) return "unsaved";
       const outcome = await current.flush();
-      if (outcome.status !== "saved" && outcome.status !== "unchanged") return false;
+      if (outcome.status !== "saved" && outcome.status !== "unchanged") return "unsaved";
     }
-    return !current.getState().dirty;
+    if (!this.commitEditor(current)) return "editing";
+    return current.getState().dirty ? "unsaved" : "released";
+  }
+
+  /** Stops a move that `release` refused, clearing the opening mark when it is still this move's. */
+  private stopped(ticket: number, released: Release): { status: "unsaved" | "editing" } {
+    if (ticket === this.ticket) this.set({ opening: null });
+    return { status: released === "editing" ? "editing" : "unsaved" };
   }
 
   private replace(session: SheetSession | null): void {
@@ -91,10 +130,8 @@ export class SessionHost {
   async open(path: string, options: { discardUnsaved?: boolean } = {}): Promise<HostOpenResult> {
     const ticket = ++this.ticket;
     this.set({ opening: path, error: null });
-    if (!(await this.release(options.discardUnsaved === true))) {
-      if (ticket === this.ticket) this.set({ opening: null });
-      return { status: "unsaved" };
-    }
+    const before = await this.release(options.discardUnsaved === true);
+    if (before !== "released") return this.stopped(ticket, before);
     if (ticket !== this.ticket) return { status: "superseded" };
     let session: SheetSession;
     try {
@@ -111,10 +148,10 @@ export class SessionHost {
       return { status: "superseded" };
     }
     // The owner may have kept editing the old document while this one loaded.
-    if (!(await this.release(options.discardUnsaved === true))) {
+    const after = await this.release(options.discardUnsaved === true);
+    if (after !== "released") {
       session.dispose();
-      if (ticket === this.ticket) this.set({ opening: null });
-      return { status: "unsaved" };
+      return this.stopped(ticket, after);
     }
     if (ticket !== this.ticket) {
       session.dispose();
@@ -130,7 +167,8 @@ export class SessionHost {
    */
   async openNew(options: { discardUnsaved?: boolean; name?: string; template?: () => Workbook | null } = {}): Promise<HostOpenResult> {
     const ticket = ++this.ticket;
-    if (!(await this.release(options.discardUnsaved === true))) return { status: "unsaved" };
+    const released = await this.release(options.discardUnsaved === true);
+    if (released !== "released") return { status: released };
     if (ticket !== this.ticket) return { status: "superseded" };
     const session = createSheetSession(this.deps, { name: options.name, workbook: options.template?.() ?? undefined });
     this.replace(session);
@@ -155,9 +193,10 @@ export class SessionHost {
       session.dispose();
       return { status: "superseded" };
     }
-    if (!(await this.release(options.discardUnsaved === true))) {
+    const released = await this.release(options.discardUnsaved === true);
+    if (released !== "released") {
       session.dispose();
-      return { status: "unsaved" };
+      return { status: released };
     }
     if (ticket !== this.ticket) {
       session.dispose();
@@ -168,11 +207,12 @@ export class SessionHost {
   }
 
   /** Closes the current document after saving its pending edits. */
-  async close(options: { discardUnsaved?: boolean } = {}): Promise<boolean> {
+  async close(options: { discardUnsaved?: boolean } = {}): Promise<HostCloseResult> {
     const ticket = ++this.ticket;
-    if (!(await this.release(options.discardUnsaved === true))) return false;
-    if (ticket !== this.ticket) return false;
+    const released = await this.release(options.discardUnsaved === true);
+    if (released !== "released") return { status: released };
+    if (ticket !== this.ticket) return { status: "superseded" };
     this.replace(null);
-    return true;
+    return { status: "closed" };
   }
 }
