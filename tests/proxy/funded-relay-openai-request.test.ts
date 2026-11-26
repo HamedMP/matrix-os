@@ -464,6 +464,9 @@ describe("Qwen 3.7 Plus Cloudflare Preview", () => {
       usage.push(new Uint8Array(await normalized.arrayBuffer()));
       expect(usage.complete()).toEqual({ mode: "exact", actualCostMicrousd: 79 });
     });
+  });
+});
+
 describe("custom funded model controls", () => {
   const custom = {
     model: "matrix-bedrock-qualified",
