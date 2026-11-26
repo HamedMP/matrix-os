@@ -257,7 +257,7 @@ import { registerConversationHistoryRoutes } from "./server/conversation-history
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
 import { createPrivateNetworkRuntime } from "./server/private-network-runtime.js";
 import { isBrowserRuntimeEnabled } from "./browser-lab/setup.js";
-import { createGatewayProjectPathAdmission, registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
+import { createGatewayAppFileProjectPathAdmission, registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
 import { registerMainWebSocketRoutes } from "./server/main-ws-routes.js";
 import { registerMessageLayoutRoutes } from "./server/message-layout-routes.js";
@@ -1352,7 +1352,7 @@ export async function createGateway(config: GatewayConfig) {
   registerBridgeDataRoutes(app, {
     homePath, queryEngine, appRegistry, kvStore, ensureAppProvisioned,
     broadcast, queryBodyLimit: bridgeQueryBodyLimit, dataBodyLimit: bridgeDataBodyLimit,
-    logUnexpectedJsonParseFailure, projectPathAdmission: createGatewayProjectPathAdmission({ homePath, projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission }),
+    logUnexpectedJsonParseFailure, projectPathAdmission: createGatewayAppFileProjectPathAdmission({ homePath, projects: codingAgentProjectManager, projectOperationAdmission: gatewayCollaboration?.projectOperationAdmission }),
   });
 
   registerAppIntegrationCapabilities(app, {

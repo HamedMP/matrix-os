@@ -101,4 +101,32 @@ describe("legacy project path admission", () => {
     expect(listOwnerProjects).toHaveBeenCalledTimes(1);
     expect(withLegacyAdmission).toHaveBeenCalledTimes(1);
   });
+
+  it("matches paths with an injected asynchronous resolver and leaves the paths it skips unfenced", async () => {
+    const order: string[] = [];
+    const resolveTarget = vi.fn(async (_home: string, path: string) => (path.startsWith("skip/") ? null : join(homePath, path)));
+    const admission = createLegacyProjectPathAdmission({
+      homePath,
+      resolveTarget,
+      listOwnerProjects: async () => [
+        { id: "proj_a", localPath: join(homePath, "projects", "outer") },
+        { id: "proj_b", localPath: join(homePath, "skip") },
+      ],
+      projectOperationAdmission: {
+        withLegacyAdmission: async (input, next) => {
+          order.push(input.projectId);
+          return next();
+        },
+      },
+    });
+
+    await expect(admission.withPaths({
+      ownerType: "personal",
+      ownerId: "user_owner",
+      paths: ["projects/outer/new/file.ts", "skip/file.ts"],
+      kind: "write",
+    }, async () => "done")).resolves.toBe("done");
+    expect(resolveTarget.mock.calls.map(([, path]) => path)).toEqual(["projects/outer/new/file.ts", "skip/file.ts"]);
+    expect(order).toEqual(["proj_a"]);
+  });
 });

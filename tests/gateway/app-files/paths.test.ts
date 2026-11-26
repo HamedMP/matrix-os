@@ -2,7 +2,11 @@ import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { encodeAppFileBase64 } from "../../../packages/contracts/src/app-files";
+import { Hono } from "hono";
+import { APP_FILES_BRIDGE_PATH, encodeAppFileBase64 } from "../../../packages/contracts/src/app-files";
+import { ProjectFenceError } from "../../../packages/gateway/src/collaboration/project-fence";
+import { registerBridgeFileRoutes } from "../../../packages/gateway/src/server/bridge-file-routes";
+import { createGatewayAppFileProjectPathAdmission } from "../../../packages/gateway/src/server/project-routes";
 import { createHarness, errorCode, type AppFileHarness } from "./helpers";
 
 /** Records synchronous path checks so a test can prove a request never blocks on them. */
@@ -126,6 +130,51 @@ describe("app file path security", () => {
     ]);
     expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200, 200, 404]);
     const home = harness.home;
+    expect(syncFsCalls.filter((call) => call.includes(home) && !call.includes(`${home}/apps`))).toEqual([]);
+  });
+
+  // Fault: with collaboration enabled the write fence matched paths with the
+  // synchronous File API resolver, so every app save and folder creation
+  // blocked the gateway on disk checks while the fence was consulted.
+  it("fences writes into collaboration projects without synchronous filesystem calls", async () => {
+    harness = await createHarness();
+    const home = harness.home;
+    await mkdir(join(home, "projects/private"), { recursive: true });
+    await mkdir(join(home, "projects/acme"), { recursive: true });
+    const entered: string[] = [];
+    const admission = createGatewayAppFileProjectPathAdmission({
+      homePath: home,
+      projects: {
+        listManagedProjects: async () => ({
+          projects: [{ id: "proj_private", localPath: "projects/private" }, { id: "proj_shared", localPath: "projects/acme" }],
+        }),
+      } as never,
+      projectOperationAdmission: {
+        async withLegacyAdmission(input, operation) {
+          if (input.projectId === "proj_shared") throw new ProjectFenceError("scope_required");
+          entered.push(input.projectId);
+          return operation();
+        },
+      },
+    });
+    const app = new Hono();
+    app.use("*", async (context, next) => {
+      context.set("authContextReady" as never, true as never);
+      context.set("platformUserId" as never, "owner" as never);
+      await next();
+    });
+    registerBridgeFileRoutes(app, { homePath: home, env: { MATRIX_USER_ID: "owner", NODE_ENV: "production" }, ...(admission ? { projectPathAdmission: admission } : {}) });
+    const post = (input: unknown) => app.request(APP_FILES_BRIDGE_PATH, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ app: "docs", input }),
+    });
+    syncFsCalls.length = 0;
+    const responses = await Promise.all([
+      post({ kind: "files.write", path: "projects/private/plan.docx", contentBase64: bytes, ifVersion: null }),
+      post({ kind: "files.mkdir", path: "projects/private/drafts" }),
+      post({ kind: "files.write", path: "projects/acme/plan.docx", contentBase64: bytes, ifVersion: null }),
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 403]);
+    expect(entered).toEqual(["proj_private", "proj_private"]);
     expect(syncFsCalls.filter((call) => call.includes(home) && !call.includes(`${home}/apps`))).toEqual([]);
   });
 

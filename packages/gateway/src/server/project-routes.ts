@@ -7,6 +7,7 @@ import { createCodingAgentProjectMutationService } from "../coding-agents/projec
 import { createCodingAgentRoutes, type CodingAgentRouteDeps } from "../coding-agents/routes.js";
 import type { LegacyProjectOperationAdmission } from "../collaboration/project-fence.js";
 import { createLegacyProjectPathAdmission, type LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
+import { appFileFenceTarget } from "../app-files/paths.js";
 import type { FilePreviewService } from "../file-preview-service.js";
 import { registerProjectAgentContextRoute } from "../project-agent-context-routes.js";
 import type { createProjectManager } from "../project-manager.js";
@@ -54,12 +55,14 @@ interface ProjectFileOptions {
  */
 export function createGatewayProjectPathAdmission(
   options: Pick<ProjectFileOptions, "homePath" | "projects" | "projectOperationAdmission">,
+  resolveTarget?: (homePath: string, path: string) => string | null,
 ): LegacyProjectPathAdmission | undefined {
   const { homePath, projects, projectOperationAdmission } = options;
   if (!projectOperationAdmission) return undefined;
   return createLegacyProjectPathAdmission({
     homePath,
     projectOperationAdmission,
+    ...(resolveTarget ? { resolveTarget } : {}),
     listOwnerProjects: async (ownerType, ownerId) => {
       const result = await projects.listManagedProjects({
         visibility: "all",
@@ -68,6 +71,17 @@ export function createGatewayProjectPathAdmission(
       return result.projects.map(project => ({ id: project.id, localPath: project.localPath }));
     },
   });
+}
+
+/**
+ * The same fence for the app file bridge. It matches paths without
+ * synchronous filesystem calls, so an app save or folder creation never
+ * blocks other gateway requests while the fence is consulted.
+ */
+export function createGatewayAppFileProjectPathAdmission(
+  options: Pick<ProjectFileOptions, "homePath" | "projects" | "projectOperationAdmission">,
+): LegacyProjectPathAdmission | undefined {
+  return createGatewayProjectPathAdmission(options, appFileFenceTarget);
 }
 
 export function registerGatewayProjectFileRoutes(app: Hono, options: ProjectFileOptions): void {

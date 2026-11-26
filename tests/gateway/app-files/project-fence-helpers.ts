@@ -1,3 +1,4 @@
+import { appFileFenceTarget } from "../../../packages/gateway/src/app-files/paths";
 import { ProjectFenceError } from "../../../packages/gateway/src/collaboration/project-fence";
 import {
   createLegacyProjectPathAdmission, type LegacyProjectPathAdmission,
@@ -25,8 +26,8 @@ export interface TestProjectAdmission {
 
 /**
  * The production path admission over an in-memory project inventory and
- * fence. Only the collaboration database is replaced; path matching, owner
- * scoping and nesting are the real code.
+ * fence, matching paths as the app file bridge does. Only the collaboration
+ * database is replaced; path matching, owner scoping and nesting are the real code.
  */
 export function createTestProjectAdmission(homePath: string, projects: readonly TestProject[]): TestProjectAdmission {
   const events: string[] = [];
@@ -37,6 +38,8 @@ export function createTestProjectAdmission(homePath: string, projects: readonly 
     failInventory: false,
     admission: createLegacyProjectPathAdmission({
       homePath,
+      // The resolver the gateway gives the app file bridge.
+      resolveTarget: appFileFenceTarget,
       listOwnerProjects: async (_ownerType, ownerId) => {
         if (state.failInventory) throw new Error("inventory offline");
         return projects.filter((project) => project.ownerId === ownerId).map(({ id, localPath }) => ({ id, localPath }));

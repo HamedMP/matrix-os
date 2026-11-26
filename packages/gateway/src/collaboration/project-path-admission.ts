@@ -43,8 +43,16 @@ export function createLegacyProjectPathAdmission(options: {
     localPath: string;
   }>>;
   projectOperationAdmission: LegacyProjectOperationAdmission;
+  /**
+   * Maps a home-relative path to the absolute location matched against
+   * project roots, or null to leave it unfenced. Defaults to the synchronous
+   * File API resolver; request routes that must not block on disk pass one
+   * that does no synchronous filesystem work.
+   */
+  resolveTarget?: (homePath: string, path: string) => string | null | Promise<string | null>;
 }): LegacyProjectPathAdmission {
   const homePath = resolve(options.homePath);
+  const resolveTarget = options.resolveTarget ?? resolveWritableFileApiPath;
 
   async function admit<T>(
     rawInput: {
@@ -87,7 +95,7 @@ export function createLegacyProjectPathAdmission(options: {
       }
       const path = PathSchema.safeParse(candidate);
       if (!path.success) throw new ProjectFenceError("invalid");
-      const target = resolveWritableFileApiPath(homePath, path.data);
+      const target = await resolveTarget(homePath, path.data);
       if (!target) continue;
       let ancestor = target;
       for (;;) {
