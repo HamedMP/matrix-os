@@ -7,7 +7,7 @@
  * file is written back in the shape it had.
  */
 
-import { type Workbook, isOfficeError, openXlsx, parseCsv, toCsv } from "./engine";
+import { type Workbook, isOfficeError, openXlsx, parseCsv, sniffDelimiter, toCsv } from "./engine";
 import type { SessionErrorCode, SheetFileFormat } from "./types";
 
 const MESSAGES: Record<SessionErrorCode, string> = {
@@ -139,25 +139,10 @@ export function defaultCsvShape(format: SheetFileFormat): CsvShape {
   return { delimiter: format === "tsv" ? "\t" : ",", bom: false, lineEnding: "\r\n", finalNewline: true };
 }
 
-const SNIFF_CHARS = 16_384;
-
-/** Picks the delimiter that splits the first lines most often, outside quotes. */
-export function sniffDelimiter(text: string): string {
-  const counts: Record<string, number> = { ",": 0, ";": 0, "\t": 0 };
-  let quoted = false;
-  const end = Math.min(text.length, SNIFF_CHARS);
-  for (let i = 0; i < end; i++) {
-    const ch = text[i] as string;
-    if (ch === '"') quoted = !quoted;
-    else if (!quoted && ch in counts) counts[ch] = (counts[ch] as number) + 1;
-  }
-  let best = ",";
-  for (const candidate of [",", ";", "\t"]) {
-    if ((counts[candidate] as number) > (counts[best] as number)) best = candidate;
-  }
-  return best;
-}
-
+/**
+ * How a delimited file was written. The delimiter is the engine's guess: the
+ * candidate that splits the first lines into the same number of fields.
+ */
 export function sniffCsvShape(bytes: Uint8Array, text: string, format: SheetFileFormat): CsvShape {
   const bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
   const firstBreak = text.indexOf("\n");

@@ -7,7 +7,7 @@ import {
   formatOfPath,
   isValidFilePath,
 } from "../../../../home/apps/sheets/src/session";
-import { sniffDelimiter } from "../../../../home/apps/sheets/src/session/file-io";
+import { loadWorkbook, sniffCsvShape } from "../../../../home/apps/sheets/src/session/file-io";
 import { FakeDb, encode, harness, sampleXlsx, settle } from "./fakes";
 
 describe("recent files", () => {
@@ -121,11 +121,21 @@ describe("path helpers", () => {
   });
 
   it("detects the delimiter outside quoted fields", () => {
-    expect(sniffDelimiter("a,b,c\n1,2,3")).toBe(",");
-    expect(sniffDelimiter("a;b;c\n1;2;3")).toBe(";");
-    expect(sniffDelimiter('"x,y,z,w";b\n1;2')).toBe(";");
-    expect(sniffDelimiter("a\tb")).toBe("\t");
-    expect(sniffDelimiter("single")).toBe(",");
+    const delimiter = (text: string) => sniffCsvShape(encode(text), text, "csv").delimiter;
+    expect(delimiter("a,b,c\n1,2,3")).toBe(",");
+    expect(delimiter("a;b;c\n1;2;3")).toBe(";");
+    expect(delimiter('"x,y,z,w";b\n1;2')).toBe(";");
+    expect(delimiter("a\tb")).toBe("\t");
+    expect(delimiter("single")).toBe(",");
+  });
+
+  it("picks the delimiter that splits every line alike, not the one seen most often", async () => {
+    const text = "name,notes\nAlice,one;two;three;four\n";
+    expect(sniffCsvShape(encode(text), text, "csv").delimiter).toBe(",");
+    const { workbook } = await loadWorkbook(encode(text), "csv");
+    const sheet = workbook.listSheets()[0]?.id as string;
+    expect(workbook.getCell(sheet, { row: 1, col: 0 }).value).toBe("Alice");
+    expect(workbook.getCell(sheet, { row: 1, col: 1 }).value).toBe("one;two;three;four");
   });
 });
 
