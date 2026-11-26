@@ -364,13 +364,16 @@ export function createAppInstanceAdapter(options: {
       const root = await standaloneRoot(current, appId.data);
       const { record } = await resolveApp(root.projectId, appId.data);
       if (root.incarnation !== record.incarnation) throw new ProjectAppAdapterError("app_unavailable");
-      await options.db.transaction().execute(async (trx) => {
+      const requireLiveShare = () => options.db.transaction().execute(async (trx) => {
         await requireLiveScope(trx, current, false);
         // Only an exact-build organization share exposes owner key-value data.
         if (!await requireCollaborativeBinding(trx, current, "share")) throw new ProjectAppAdapterError("not_found");
       });
+      await requireLiveShare();
       // Same namespace the owner's own bridge writes: the app identity without separators.
       const value = await options.kv.read(appId.data.replace(/[^A-Za-z0-9_-]/g, ""), key.data);
+      // Recheck after the read: a stop that committed while the value was in flight returns nothing.
+      await requireLiveShare();
       if (value !== null && Buffer.byteLength(value) > MAX_RESULT_BYTES) throw new ProjectAppAdapterError("unavailable");
       return { value };
     } catch (error: unknown) {

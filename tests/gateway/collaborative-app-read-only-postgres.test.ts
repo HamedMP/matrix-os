@@ -141,6 +141,20 @@ describe("read-only organization app share", () => {
     expect(kv.read).not.toHaveBeenCalled();
   });
 
+  // Fault: access was checked only before the KV read, so a stop that committed mid-read still
+  // returned owner data.
+  it("returns nothing from a key-value read whose share stopped while it was in flight", async () => {
+    const shares = new CollaborativeAppShareRepository(fixture.db, { now: () => now });
+    const binding = await shares.getActiveByCatalog({ ownerId, catalogId });
+    const member = await authority.authorize({ scopeId, actorId: memberId, action: "read" });
+    kv.read.mockImplementationOnce(async () => {
+      await shares.stopAtomic({ scopeId, ownerId, expectedScopeRevision: 1, expectedBindingRevision: binding!.revision,
+        clientRequestId: randomUUID(), payloadHash: "a".repeat(64) });
+      return "{\"theme\":\"dark\"}";
+    });
+    await expect(adapter.readData!(member, appId, "settings")).rejects.toThrow();
+  });
+
   it("keeps the owner's full use of their own app", async () => {
     const owner = await authority.authorize({ scopeId, actorId: ownerId, action: "mutate_resource" });
     await expect(adapter.mutate(owner, appId, {
