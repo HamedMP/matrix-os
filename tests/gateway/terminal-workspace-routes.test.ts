@@ -424,6 +424,40 @@ describe("terminal workspace gateway routes", () => {
     }
   });
 
+  // Fault detected: pasting an image or dropping a file into a Herdr pane hit a
+  // Matrix-only handler and failed with 404 although typing worked.
+  it("saves paste assets for a listed Herdr terminal, for the owner only", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-terminal-herdr-paste-"));
+    const herdrRef = { workspaceId: "tws_00000000000000000000006865726472", tabId: "tt_0123456789abcdef0123456789abcdef" };
+    const runtime = { listWorkspaces: vi.fn(async () => []), ensureWorkspace: vi.fn(), createTab: vi.fn(), deletionImpact: vi.fn(), deleteWorkspace: vi.fn() };
+    const listed = vi.fn(async (ref: { workspaceId: string; tabId: string }) => ref.tabId === herdrRef.tabId);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]).toString("base64");
+    const post = (app: Hono, tabId = herdrRef.tabId) => app.request(`/api/terminal/workspaces/${herdrRef.workspaceId}/tabs/${tabId}/paste-assets`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ assets: [{ name: "capture.png", mimeType: "image/png", dataBase64: png }] }),
+    });
+    try {
+      const owner = new Hono().route("/api/terminal", createTerminalWorkspaceRoutes({ runtime, homePath, ...ownerOptions, herdrTerminals: { listed } }));
+      const saved = await post(owner);
+      expect(saved.status).toBe(200);
+      const body = await saved.json() as { assets: Array<{ terminalPath: string; mimeType: string }> };
+      expect(body.assets[0]).toMatchObject({ mimeType: "image/png" });
+      await access(body.assets[0]!.terminalPath);
+      expect((await post(owner, "tt_ffffffffffffffffffffffffffffffff")).status).toBe(404);
+      // A delegated preview collaborator never reaches the owner's Herdr shells.
+      const collaborator = new Hono().route("/api/terminal", createTerminalWorkspaceRoutes({
+        runtime, homePath, herdrTerminals: { listed }, terminalOwnerIds: ["user_owner"],
+        getPrincipal: () => ({ userId: "user_collaborator", source: "jwt" as const }), getPreviewTerminalOwner: () => "user_owner",
+      }));
+      expect((await post(collaborator)).status).toBe(404);
+      // Herdr sessions off: still not found.
+      const off = new Hono().route("/api/terminal", createTerminalWorkspaceRoutes({ runtime, homePath, ...ownerOptions }));
+      expect((await post(off)).status).toBe(404);
+    } finally {
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("deletes a terminal tab by exact IDs instead of retaining an exited record", async () => {
     const deleteTab = vi.fn(async function (this: { marker: string }) {
       expect(this.marker).toBe("runtime-receiver");

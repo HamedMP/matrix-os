@@ -15,8 +15,10 @@ const select = (overrides: Partial<Parameters<typeof selectPoolRunner>[0]> = {})
   });
 
 describe("source runner selection", () => {
-  it("admits trusted source with four idle slots and allows seven jobs to queue", () => {
+  // Requiring all four slots idle let the pool take one run at a time while the hosted queue grew.
+  it("admits trusted source while any slot is idle and allows seven jobs to queue", () => {
     expect(select()).toBe(POOL_LABEL);
+    expect(select({ heartbeat: fresh(1) })).toBe(POOL_LABEL);
     expect(select({ heartbeat: fresh(6) })).toBe(POOL_LABEL);
     expect(select({ eventName: "push", headRepository: "" })).toBe(POOL_LABEL);
     expect(select({ eventName: "merge_group", headRepository: "" })).toBe(POOL_LABEL);
@@ -33,7 +35,7 @@ describe("source runner selection", () => {
     ["a heartbeat without an idle count", { heartbeat: String(now) }],
     ["a stale heartbeat", { heartbeat: fresh(4, 181) }],
     ["a heartbeat from the future", { heartbeat: fresh(4, -61) }],
-    ["too few idle slots", { heartbeat: fresh(3) }],
+    ["no idle slot", { heartbeat: fresh(0) }],
   ])("stays on hosted runners for %s", (_, overrides) => {
     expect(select(overrides)).toBe(HOSTED_LABEL);
   });

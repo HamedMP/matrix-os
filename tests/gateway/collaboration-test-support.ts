@@ -78,7 +78,7 @@ export async function createCollaborationTestDatabase(): Promise<CollaborationTe
 /** Isolated schema on a dedicated PostgreSQL server for lock/race verification. */
 export async function createRealCollaborationTestDatabase(
   connectionString = process.env.MATRIX_TEST_POSTGRES_URL,
-): Promise<CollaborationTestDatabase> {
+): Promise<CollaborationTestDatabase & { dialect: PostgresDialect }> {
   if (!connectionString) throw new Error("MATRIX_TEST_POSTGRES_URL is required");
   const parsed = new URL(connectionString);
   if (!parsed.pathname.toLowerCase().includes("test")) {
@@ -93,9 +93,10 @@ export async function createRealCollaborationTestDatabase(
     max: 8,
     options: `-c search_path=${schema} -c statement_timeout=5000 -c lock_timeout=2000`,
   });
-  const db = new Kysely<ChatDatabase & CollaborationDatabase>({ dialect: new PostgresDialect({ pool }) });
+  const dialect = new PostgresDialect({ pool });
+  const db = new Kysely<ChatDatabase & CollaborationDatabase>({ dialect });
   return {
-    db,
+    db, dialect,
     destroy: async () => {
       await db.destroy();
       await sql`DROP SCHEMA ${sql.id(schema)} CASCADE`.execute(adminDb);

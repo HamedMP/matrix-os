@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import { fakeCore } from "./fixtures/fake-herdr-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { connectHc, HcCallError, HcProtocolError, HcVersionMismatchError } from "@desktop/main/local-terminals/hc-client";
-import { encodeFrame, HC_FRAME, HcFrameDecoder, HC_MAX_PAYLOAD } from "@desktop/main/local-terminals/hc-protocol";
+import { connectHc, HcCallError, HcProtocolError, HcVersionMismatchError } from "@matrix-os/herdr-core-client/client";
+import { encodeFrame, HC_FRAME, HcFrameDecoder, HC_MAX_PAYLOAD } from "@matrix-os/herdr-core-client/protocol";
 
 describe("herdr-core frame codec", () => {
   it("round-trips frames split at arbitrary byte boundaries", () => {
@@ -10,6 +10,29 @@ describe("herdr-core frame codec", () => {
     const decoder = new HcFrameDecoder();
     const frames = [...bytes].flatMap((byte) => decoder.push(Buffer.from([byte])));
     expect(frames.map((frame) => [frame.channel, frame.kind, frame.payload.toString("utf8")])).toEqual([[0, 0, "{}"], [7, 0, "héllo"], [7, 2, ""]]);
+  });
+
+  it("assembles a frame split over many reads without joining every read", () => {
+    const payload = Buffer.alloc(256 * 1024, 0x61);
+    const bytes = Buffer.concat([encodeFrame(3, HC_FRAME.DATA, payload), encodeFrame(3, HC_FRAME.CLOSE, Buffer.alloc(0))]);
+    const decoder = new HcFrameDecoder();
+    const concat = vi.spyOn(Buffer, "concat");
+    const frames: Array<{ channel: number; kind: number; payload: Buffer }> = [];
+    for (let offset = 0; offset < bytes.length; offset += 1_000) frames.push(...decoder.push(bytes.subarray(offset, offset + 1_000)));
+    expect(concat).not.toHaveBeenCalled();
+    concat.mockRestore();
+    expect(frames.map((frame) => [frame.channel, frame.kind, frame.payload.length])).toEqual([[3, HC_FRAME.DATA, payload.length], [3, HC_FRAME.CLOSE, 0]]);
+    expect(frames[0]!.payload.equals(payload)).toBe(true);
+  });
+
+  it("hands out whole frames as views of the read, and keeps them intact as more arrives", () => {
+    const read = Buffer.concat([encodeFrame(1, HC_FRAME.DATA, Buffer.from("first")), encodeFrame(1, HC_FRAME.DATA, Buffer.from("sec"))]);
+    const decoder = new HcFrameDecoder();
+    const [first] = decoder.push(read.subarray(0, read.length - 2));
+    expect(first!.payload.buffer).toBe(read.buffer);
+    const [second] = decoder.push(read.subarray(read.length - 2));
+    decoder.push(encodeFrame(1, HC_FRAME.DATA, Buffer.from("third")));
+    expect([first!.payload.toString(), second!.payload.toString()]).toEqual(["first", "sec"]);
   });
 
   it("rejects a frame that claims more than the protocol cap", () => {

@@ -1,4 +1,5 @@
 "use client";
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { moveRailItem, orderRailItems, type RailSortMode } from "@matrix-os/ui";
 import type { RenameableConversation } from "./ChatTitleRename";
@@ -10,10 +11,10 @@ function legacyUpdatedAt(value: number) {
 
 /** Web hosts expose a transport client, not a trusted viewer/runtime storage key. */
 export function useWebChatRailOrder(items: readonly RenameableConversation[], client: unknown) {
-  const [state,setState] = useState(()=>({client,mode:"lastUpdated" as RailSortMode,ids:[] as string[],scopeKey:crypto.randomUUID()}));
+  const [state,setState] = useState(()=>({client,mode:"lastUpdated" as RailSortMode,ids:[] as string[],scopeKey:randomUUID()}));
   let current = state;
   if (state.client !== client) {
-    current = {client,mode:"lastUpdated",ids:[],scopeKey:crypto.randomUUID()};
+    current = {client,mode:"lastUpdated",ids:[],scopeKey:randomUUID()};
     setState(current);
   }
   const scopeKey = current.scopeKey;

@@ -38,7 +38,8 @@ fi
 MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
 MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
 MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
-MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$MATRIX_RUNTIME_USER}"
+# The owner's group need not share the account name (self-host: alice in staff).
+MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$(id -gn "$MATRIX_RUNTIME_USER" 2>/dev/null || true)}"
 install_timeout_seconds=1810
 action_timeout_seconds=50
 cancel_timeout_seconds=25

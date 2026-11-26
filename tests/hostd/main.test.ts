@@ -439,8 +439,10 @@ describe("hostd main (production defaults)", () => {
       state: "running",
       privateIPv4: "10.78.0.10",
       mac: "52:54:00:78:00:0a",
-      bootMiB: 2048,
-      maxMiB: 8192,
+      // Small enough that the snapshot space check (2x maxMiB free under tmpdir) passes on a
+      // CI runner whose /tmp is a 12 GB tmpfs, so suspend reaches the real snapshot client.
+      bootMiB: 512,
+      maxMiB: 1024,
       diskGiB: 20,
       chVersion: "v54.1",
       snapshot: null,

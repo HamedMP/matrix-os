@@ -17,10 +17,11 @@ import { disconnectAttachmentClient } from "./attachment-client-loss.js";
 import { openBufferedAttachment } from "./attachment-bootstrap.js";
 import { TerminalRuntimeError } from "./errors.js";
 import {
-  DEFAULT_RESTORE_RETRY_BUDGET_MS,
+  DEFAULT_RESTORE_BUDGET_MS,
   isSessionScopedRestoreFailure,
   sessionScoped,
   WorkspaceRestoreRetries,
+  WorkspaceRestoreTimeoutError,
 } from "./workspace-restore-retry.js";
 import { terminalTabIncarnation } from "./incarnation.js";
 import { TerminalCommandStateRefSchema, TerminalCommandStateSchema, type TerminalCommandState } from "./terminal-command-state.js";
@@ -110,10 +111,15 @@ export interface ZellijAttachment {
 export type ZellijObserverEvent =
   | { type: "pane-update"; paneId: string; ansi: string; viewport: string[]; scrollback: string[] }
   | { type: "pane-closed"; paneId: string };
+export interface ZellijObserverCloseOptions {
+  /** Cancel screen dumps while still delivering pane-close events already received. */
+  discardPendingSnapshots?: boolean;
+}
 export interface ZellijObserver {
   readonly closed?: boolean;
-  close(): Promise<void>;
+  close(options?: ZellijObserverCloseOptions): Promise<void>;
 }
+const DISCARD_OBSERVER_SNAPSHOTS = { discardPendingSnapshots: true };
 export interface TerminalRuntimeOptions {
   store: TerminalWorkspaceStore;
   zellij: ZellijRuntimeAdapter;
@@ -127,7 +133,7 @@ export interface TerminalRuntimeOptions {
   viewerTtlMs?: number;
   /** Base backoff for retrying a workspace whose startup restore failed (default 30 s, capped at 10 min). */
   restoreRetryBaseMs?: number;
-  /** Total time one background restore retry may hold the workspace queue (default 10 s). */
+  /** Time budget for one workspace reconciliation (default 10 s). */
   restoreRetryBudgetMs?: number;
   sweepIntervalMs?: number;
   observerCloseTimeoutMs?: number;
@@ -213,7 +219,7 @@ export class TerminalRuntime {
   private untrackedPaneClosures = 0;
   private observerRetryQueued = false;
   private readonly restoreRetries: WorkspaceRestoreRetries;
-  private readonly restoreRetryBudgetMs: number;
+  private readonly restoreBudgetMs: number;
   private shuttingDown = false;
   private acceptingObserverEvents = true;
 
@@ -233,8 +239,8 @@ export class TerminalRuntime {
     this.viewerTtlMs = options.viewerTtlMs ?? 2 * 60_000;
     this.observerCloseTimeoutMs = z.number().int().min(1).max(30_000).parse(options.observerCloseTimeoutMs ?? 5_000);
     this.restoreRetries = new WorkspaceRestoreRetries({ baseMs: options.restoreRetryBaseMs });
-    this.restoreRetryBudgetMs = z.number().int().min(1).max(60_000)
-      .parse(options.restoreRetryBudgetMs ?? DEFAULT_RESTORE_RETRY_BUDGET_MS);
+    this.restoreBudgetMs = z.number().int().min(1).max(60_000)
+      .parse(options.restoreRetryBudgetMs ?? DEFAULT_RESTORE_BUDGET_MS);
     this.sweepTimer = setInterval(() => {
       void this.sweepStaleViewers().catch((error: unknown) => {
         console.error("[terminal-runtime] stale viewer sweep failed", error instanceof Error ? error.name : "unknown_error");
@@ -433,20 +439,22 @@ export class TerminalRuntime {
     });
   }
 
-  private reconcileWorkspace(workspaceId: string): Promise<void> {
-    return this.runWorkspaceMutation(() => this.reconcileWorkspaceNow(workspaceId));
+  private reconcileWorkspace(workspaceId: string, { missingObserverOnly = false } = {}): Promise<void> {
+    return this.runWorkspaceMutation(async () => {
+      if (missingObserverOnly && (this.shuttingDown || this.observers.get(workspaceId)?.size !== 0)) return;
+      await this.reconcileWorkspaceNow(workspaceId, Date.now() + this.restoreBudgetMs);
+    });
   }
 
   /**
-   * `deadline` bounds a background restore attempt: it is passed to every
-   * Zellij call and checked between tabs, so the attempt releases the shared
-   * workspace queue within its budget even when the session stops answering.
+   * Pass the restore deadline down to session commands and check it between
+   * tabs so an unresponsive session does not monopolize the workspace queue.
    */
-  private async reconcileWorkspaceNow(workspaceId: string, options: ZellijOperationOptions = {}): Promise<void> {
-    const bounded = options.deadline === undefined ? [] as const : [{ deadline: options.deadline }] as const;
+  private async reconcileWorkspaceNow(workspaceId: string, deadline: number): Promise<void> {
+    const options = { deadline };
     const checkDeadline = () => {
-      if (options.deadline !== undefined && Date.now() >= options.deadline) {
-        throw new TerminalRuntimeError("unavailable", "Terminal restore attempt timed out");
+      if (Date.now() >= deadline) {
+        throw new WorkspaceRestoreTimeoutError();
       }
     };
     const workspace = await this.requireRuntimeWorkspace(workspaceId);
@@ -460,7 +468,7 @@ export class TerminalRuntime {
       ? this.reserveObserverSlot(workspaceId)
       : () => undefined;
     try {
-      await sessionScoped(() => this.zellij.ensureSession(workspace.zellijSessionName, workspace.canonicalSize, ...bounded));
+      await sessionScoped(() => this.zellij.ensureSession(workspace.zellijSessionName, workspace.canonicalSize, options));
       const restorableTabs = Object.values(workspace.tabs)
         .filter((tab) => tab.status !== "exited" && tab.status !== "failed")
         .sort((left, right) => left.order - right.order);
@@ -468,7 +476,7 @@ export class TerminalRuntime {
         ? await sessionScoped(() => this.zellij.findTabsByInternalName!(
             workspace.zellijSessionName,
             restorableTabs.map((tab) => tab.zellijTabName),
-            ...bounded,
+            options,
           ))
         : undefined;
       for (const tab of restorableTabs) {
@@ -477,7 +485,7 @@ export class TerminalRuntime {
         if (tab.nativeHost?.stopRequested) continue;
         const nativeHost = tab.nativeHost;
         if (nativeHost && (!this.nativeHosts
-          || (await sessionScoped(() => this.nativeHosts!.inspect(nativeHost, ...bounded))).status !== "running")) {
+          || (await sessionScoped(() => this.nativeHosts!.inspect(nativeHost, options))).status !== "running")) {
           // An answer that arrived past the deadline is not proof the host ended.
           checkDeadline();
           await this.store.markTabExited({ workspaceId, tabId: tab.id });
@@ -486,7 +494,7 @@ export class TerminalRuntime {
         let ids: { tabId: number; paneId: string; launchedAt?: Date; exitRecorded?: boolean } | undefined = recoveredTabs
           ? recoveredTabs[tab.zellijTabName]
           : this.zellij.findTabByInternalName
-            ? await sessionScoped(() => this.zellij.findTabByInternalName!(workspace.zellijSessionName, tab.zellijTabName, ...bounded))
+            ? await sessionScoped(() => this.zellij.findTabByInternalName!(workspace.zellijSessionName, tab.zellijTabName, options))
             : undefined;
         if (tab.status === "starting" && tab.startupCommand === undefined) {
           // Records without startup intent predate stable client-supplied tab
@@ -503,7 +511,7 @@ export class TerminalRuntime {
           ids = {
             ...await sessionScoped(() => this.zellij.createTab(workspace.zellijSessionName, {
               internalName: tab.zellijTabName, cwd: tab.cwd, command,
-            }, ...bounded)),
+            }, options)),
             launchedAt,
           };
         }
@@ -519,13 +527,14 @@ export class TerminalRuntime {
               internalName: tab.zellijTabName,
               cwd: tab.cwd,
               ...(launch.command ? { command: launch.command } : {}),
-            }, ...bounded)),
+            }, options)),
             launchedAt,
             exitRecorded: launch.exitRecorded,
           };
         }
         await this.store.activateTab({ workspaceId, tabId: tab.id }, ids);
       }
+      checkDeadline();
       await this.restartObserver(workspaceId);
       this.restoreRetries.clear(workspaceId);
     } finally {
@@ -747,7 +756,7 @@ export class TerminalRuntime {
         const operation = this.observerChain.then(async () => {
           const observer = this.observers.get(workspaceId);
           if (observer) {
-            await observer.close();
+            await observer.close(DISCARD_OBSERVER_SNAPSHOTS);
             if (this.observers.get(workspaceId) === observer) this.observers.delete(workspaceId);
           }
           await this.zellij.deleteSession!(workspace.zellijSessionName);
@@ -1078,14 +1087,14 @@ export class TerminalRuntime {
     }
     if (paneRefs.size === 0) {
       if (existing) {
-        await existing.close();
+        await existing.close(DISCARD_OBSERVER_SNAPSHOTS);
         if (this.observers.get(workspaceId) === existing) this.observers.delete(workspaceId);
       }
       return;
     }
     let closedForCapacity: ObserverState | undefined;
     if (existing && this.observerCount() >= this.maxObservers) {
-      await existing.close();
+      await existing.close(DISCARD_OBSERVER_SNAPSHOTS);
       if (this.observers.get(workspaceId) === existing) this.observers.delete(workspaceId);
       closedForCapacity = existing;
       existing = undefined;
@@ -1143,10 +1152,10 @@ export class TerminalRuntime {
     }
     if (existing) {
       try {
-        await existing.close();
+        await existing.close(DISCARD_OBSERVER_SNAPSHOTS);
       } catch (error) {
         try {
-          await replacement.close();
+          await replacement.close(DISCARD_OBSERVER_SNAPSHOTS);
         } catch (replacementError) {
           existing.add(replacement, subscribeObserver);
           throw new AggregateError([error, replacementError], "Terminal observer replacement cleanup failed");
@@ -1176,13 +1185,11 @@ export class TerminalRuntime {
           const status = (await this.store.getRuntimeWorkspace(id))?.status;
           return status !== undefined && status !== "stopped";
         },
-        reconcile: (id) => this.runWorkspaceMutation(() => this.reconcileWorkspaceNow(id, {
-          deadline: Date.now() + this.restoreRetryBudgetMs,
-        })),
+        reconcile: (id) => this.reconcileWorkspace(id),
         shuttingDown: () => this.shuttingDown,
       });
       if (this.shuttingDown) return;
-      await this.runWorkspaceMutation(() => this.restoreMissingObservers());
+      await this.restoreMissingObservers();
     })();
     void operation.then(
       () => { this.observerRetryQueued = false; },
@@ -1193,13 +1200,12 @@ export class TerminalRuntime {
     );
   }
 
-  /** Runs on the workspace mutation chain. */
   private async restoreMissingObservers(): Promise<void> {
-    for (const [workspaceId, observer] of this.observers) {
+    for (const [workspaceId, observer] of [...this.observers]) {
       if (this.shuttingDown) return;
       if (observer.size > 0) continue;
       try {
-        await this.reconcileWorkspaceNow(workspaceId);
+        await this.reconcileWorkspace(workspaceId, { missingObserverOnly: true });
       } catch (error) {
         console.error(
           "[terminal-runtime] failed to restore workspace observer",
@@ -1482,9 +1488,9 @@ function createObserverState(
       restoreObserver = restore;
     },
     restore: async () => createObserverState(await restoreObserver(), restoreObserver),
-    close: async () => {
+    close: async (options) => {
       const current = [...observers];
-      const results = await Promise.allSettled(current.map((observer) => observer.close()));
+      const results = await Promise.allSettled(current.map((observer) => observer.close(options)));
       for (const [index, result] of results.entries()) {
         if (result.status === "fulfilled") observers.delete(current[index]!);
       }

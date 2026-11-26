@@ -1,5 +1,5 @@
 import "../../../packages/ui/src/chat-agents/chat-agents.css";
-import React, { useState } from "react";
+import React, { useLayoutEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BotComposerControls } from "../../../packages/ui/src/chat-agents/bots/BotComposerControls";
 import { ChatSpeechQuotaStatus } from "../../../packages/ui/src/speech/ChatSpeechInputButton";
@@ -7,10 +7,12 @@ import { PromptInput } from "../../../desktop/src/renderer/src/features/chat/ele
 import { ConversationTranscript } from "../../../desktop/src/renderer/src/components/conversation/transcript";
 import type { ConversationTurnPresentation } from "../../../desktop/src/renderer/src/components/conversation/presentation";
 import { ChatInput } from "../../../shell/src/components/chat/ChatInput";
-import type { ChatComposerDraft } from "../../../shell/src/components/chat/useChatComposerDraft";
+import { useChatComposerDraft } from "../../../shell/src/components/chat/useChatComposerDraft";
 
 const name = "Synthetic attachment verification assistant with a long display name";
 const model = "GPT-6.1 Sol with a long subscription model display name";
+const initialDraft = "Unsaved fixture draft";
+const webScope = "web_fixture";
 const agent = { id: "bot_fixture01", name, revision: 1, recipeRef: { recipeId: "writer", version: "1" },
   selection: { instanceId: "matrix_chatgpt_plan", model: "gpt-6.1-sol" } };
 const client = { list: async () => ({ enabled: true, agents: [agent] }) } as never;
@@ -29,12 +31,15 @@ const speechClient = { capabilities: async () => ({ previewQuota, fileTranscript
 } } }), transcribe: async () => ({ outcome: "no_speech" }), cancel: async () => undefined } as never;
 const capture = { isSupported: () => true, start: async () => ({ stop: async () => new Blob([], { type: "audio/wav" }), cancel: async () => undefined }) };
 function Fixture() {
-  const [active, setActive] = useState(true), [value, setValue] = useState("Unsaved fixture draft");
+  const [active, setActive] = useState(true), [value, setValue] = useState(initialDraft);
   const [action, setAction] = useState("");
   const [webBot, setWebBot] = useState(true);
   const web = document.documentElement.dataset.surface === "web";
-  const composer = { text: value, setText: setValue, resources: [], setResources: () => undefined,
-    setDraft: (draft: { text?: string }) => setValue(draft.text ?? ""), clear: () => setValue(""), requestId: "req_fixture" } as unknown as ChatComposerDraft;
+  const composer = useChatComposerDraft(webScope, "fixture_owner");
+  const { setText } = composer;
+  useLayoutEffect(() => {
+    if (web) setText(initialDraft);
+  }, [setText, web]);
   const turn: ConversationTurnPresentation = {
     id: "turn_fixture", startedAt: Date.now() - 12000, endedAt: Date.now(), active,
     work: [{ kind: "activity-group", id: "activity_fixture", activities: [
@@ -49,7 +54,7 @@ function Fixture() {
     {web ? <button onClick={() => setWebBot(value => !value)}>Toggle Web bot</button> : null}
     <main id="fixture-column" style={{ width: 320 }}>
       <section id="transcript" style={{ height: 410 }}><ConversationTranscript turns={[turn]} callbacks={{ copyText: async () => undefined }}/></section>
-      {web ? <div id="composer"><ChatInput composer={composer} scope="web_fixture" permissionMode="default" connected busy={active}
+      {web ? <div id="composer"><ChatInput composer={composer} scope={webScope} permissionMode="default" connected busy={active}
         activeRunId={active ? "run_fixture" : undefined} onAbortCurrent={() => setAction("stop")} onSubmit={() => setAction("send")}
         attachmentsEnabled botContext={webBot} speechClient={speechClient} speechCaptureAdapter={capture}
         botControls={webBot ? <BotComposerControls agentId={agent.id} client={client} catalog={catalog}/> : undefined}/></div>

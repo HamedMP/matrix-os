@@ -1,4 +1,5 @@
 import { TerminalRefSchema, type TerminalRef } from "@matrix-os/contracts";
+import { isHerdrTerminalRef } from "@matrix-os/contracts/herdr-terminals";
 
 const TERMINAL_REF_SEPARATOR = ":";
 
@@ -19,6 +20,7 @@ export function isCanonicalShellSessionId(value: string): boolean {
   return parseTerminalRefKey(value) !== null;
 }
 
-export function terminalWebSocketPathForSession(_value?: string | null): "/ws/terminal/tab" {
-  return "/ws/terminal/tab";
+/** Herdr terminals (spec 2701) attach through their own socket with the same frames. */
+export function terminalWebSocketPathForSession(value?: string | null): "/ws/terminal/tab" | "/ws/terminal/herdr" {
+  return isHerdrTerminalRef(parseTerminalRefKey(value)) ? "/ws/terminal/herdr" : "/ws/terminal/tab";
 }

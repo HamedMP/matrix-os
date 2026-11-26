@@ -33,7 +33,8 @@
     "./ai-usage": "./src/ai-usage/index.ts",
     "./ai-usage/node": "./src/ai-usage/node.ts",
     "./routine-destination": "./src/routine-destination.ts",
-    "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts"
+    "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts",
+    "./herdr-terminals": "./src/herdr-terminals.ts"
   },
   "imports": {
     "#notifications": "./src/notifications.ts",

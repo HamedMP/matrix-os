@@ -6,6 +6,7 @@ import { LOCAL_TERMINAL_INVOKE_CHANNELS, type LocalCreateFailure } from "../../s
 import { describeError } from "./describe-error";
 import { HcCallError, HcProtocolError } from "./hc-client";
 import { LocalTerminalFolderError, type LocalTerminalHost } from "./host";
+import type { LocalTerminalStreams } from "./streams";
 
 /** A failed start as a bounded kind for the window; the error itself stays in this log. */
 export function localCreateFailure(error: unknown): LocalCreateFailure {
@@ -35,8 +36,9 @@ export function registerLocalTerminalIpc(
   ipcMain: IpcMainLike,
   host: LocalTerminalHost,
   authorizeSender: (event: unknown, channel: string) => boolean,
+  streams: Pick<LocalTerminalStreams, "open" | "release">,
 ): void {
-  if (typeof host?.list !== "function" || typeof authorizeSender !== "function") {
+  if (typeof host?.list !== "function" || typeof authorizeSender !== "function" || typeof streams?.open !== "function") {
     throw new Error("local terminal service unavailable");
   }
   // A failure while the host is otherwise healthy is still "unavailable".
@@ -120,17 +122,20 @@ export function registerLocalTerminalIpc(
       catch (error: unknown) { logFailure("local-terminal:put", error); return { ok: false }; }
     },
     "local-terminal:attach": async ({ id, cols, rows }) => {
-      try { return { ok: true, attachId: await host.attach(id, { cols, rows }) }; }
+      let attachId: number;
+      try { attachId = await host.attach(id, { cols, rows }); }
       catch (error: unknown) {
         // A terminal whose program has ended cannot be attached; the pane shows it ended. Not a failure.
         if (!(error instanceof HcCallError && error.kind === "finished")) logFailure("local-terminal:attach", error);
         return { ok: false };
       }
+      // The port goes out before the reply, so the window has it once it knows the id.
+      if (streams.open(attachId)) return { ok: true, attachId };
+      host.detach(attachId);
+      return { ok: false };
     },
-    "local-terminal:input": ({ attachId, data, binary }) => quiet("local-terminal:input", () => host.input(attachId, data, binary === true)),
     "local-terminal:resize": ({ attachId, cols, rows }) => quiet("local-terminal:resize", () => host.resize(attachId, { cols, rows })),
-    "local-terminal:ack": ({ attachId, count }) => quiet("local-terminal:ack", () => host.acknowledge(attachId, count)),
-    "local-terminal:detach": ({ attachId }) => quiet("local-terminal:detach", () => host.detach(attachId)),
+    "local-terminal:detach": ({ attachId }) => quiet("local-terminal:detach", () => { streams.release(attachId); host.detach(attachId); }),
     "local-terminal:watch": async () => {
       try { return { status: "ready", terminals: await host.watch() }; }
       catch (error: unknown) { logFailure("local-terminal:watch", error); return unavailable(); }

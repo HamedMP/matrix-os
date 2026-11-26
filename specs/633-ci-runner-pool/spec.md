@@ -37,7 +37,8 @@ single point of failure.
    both E2E lanes to `matrix-ci` when the run is a `main` push, merge-queue run
    or same-repository PR, the heartbeat was under three minutes old when the
    run attempt started (GitHub resolves `vars` then, and the `changes` job may
-   queue for a hosted runner long after) and at least four slots are idle. The seven jobs may queue within the four slots; no slot
+   queue for a hosted runner long after) and at least one slot is idle. A freed
+   slot takes the next queued pool job at once, so an idle slot means no pool backlog. The seven jobs may queue within the four slots; no slot
    runs two jobs concurrently. Otherwise unit/pattern jobs use `ubuntu-latest`
    and E2E uses `ubuntu-24.04`. Manual dispatches stay hosted because an
    exact-source refresh can check out a fork PR. Other lanes always stay hosted.
@@ -65,8 +66,12 @@ single point of failure.
 
 - **Timeouts.** Every GitHub API call from the host (token, JIT configuration,
   runner list and delete, heartbeat) is capped at 30 seconds. A job container
-  is killed after 2 hours (`JOB_TIMEOUT_SECONDS`), above the longest job
-  timeout in `ci.yml`.
+  is killed after its idle wait plus 2 hours (`JOB_TIMEOUT_SECONDS`), above the
+  longest job timeout in `ci.yml`. A runner still idle after 30 minutes
+  (`IDLE_RECYCLE_SECONDS`) is deregistered, then its container is stopped and
+  the slot starts a fresh one; a runner that took a job is left alone. A job
+  GitHub assigns in the second between the idle check and deregistration fails
+  and needs a re-run.
 - **API or Docker failure.** The slot backs off 30 seconds per consecutive
   failure, up to 5 minutes, and resets after one successful job.
 - **Crash or restart.** systemd restarts a failed slot or heartbeat service,

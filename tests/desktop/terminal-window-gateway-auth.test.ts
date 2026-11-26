@@ -36,7 +36,7 @@ describe("resolveRuntimeTarget", () => {
 type Sent = { requestHeaders?: Record<string, string>; cancel?: boolean };
 
 function setup(tokens: Record<string, string | "unavailable">) {
-  type BeforeSend = (details: { id: number; url: string; requestHeaders: Record<string, string> }, callback: (response: Sent) => void) => void;
+  type BeforeSend = (details: { id: number; url: string; method?: string; requestHeaders: Record<string, string> }, callback: (response: Sent) => void) => void;
   type Completed = (details: { id: number; url: string; statusCode: number }) => void;
   type Failed = (details: { id: number }) => void;
   let beforeSend!: BeforeSend;
@@ -59,9 +59,9 @@ function setup(tokens: Record<string, string | "unavailable">) {
   };
   const installed = installTerminalWindowAuth(session, { broker, getGatewayOrigin: () => GATEWAY });
   let lastId = 0;
-  const sendRaw = (url: string, requestHeaders: Record<string, string> = {}) =>
-    new Promise<Sent>((resolve) => { lastId = nextId++; beforeSend({ id: lastId, url, requestHeaders }, resolve); });
-  const send = async (url: string, requestHeaders: Record<string, string> = {}) => (await sendRaw(url, requestHeaders)).requestHeaders ?? {};
+  const sendRaw = (url: string, requestHeaders: Record<string, string> = {}, method = "GET") =>
+    new Promise<Sent>((resolve) => { lastId = nextId++; beforeSend({ id: lastId, url, method, requestHeaders }, resolve); });
+  const send = async (url: string, requestHeaders: Record<string, string> = {}, method = "GET") => (await sendRaw(url, requestHeaders, method)).requestHeaders ?? {};
   /** Sends a request and returns its id, for tests that finish requests out of order. */
   const start = async (url: string) => { await sendRaw(url); return lastId; };
   return { broker, installed, send, sendRaw, start, tokens,
@@ -74,6 +74,17 @@ describe("Terminal window gateway authentication", () => {
     const { send } = setup({ primary: "primary-token", review: "review-token" });
     expect((await send(`${GATEWAY}/api/terminal/workspaces?runtime=review`)).Authorization).toBe("Bearer review-token");
     expect((await send(`${GATEWAY}/api/terminal/workspaces`)).Authorization).toBe("Bearer primary-token");
+  });
+
+  it("names the gateway as the Origin of its terminal WebSockets, never another host's", async () => {
+    const { send } = setup({ primary: "primary-token" });
+    expect(await send("wss://app.matrix-os.com/ws/terminal/herdr?id=t1", { Origin: "null" }))
+      .toEqual({ Authorization: "Bearer primary-token", Origin: GATEWAY });
+    expect((await send(`${GATEWAY}/api/terminal/workspaces`, { Origin: "null" })).Origin).toBe("null");
+    expect((await send("wss://evil.example/ws?runtime=primary", { Origin: "null" })).Origin).toBe("null");
+    // Its writes too: the private gateway refuses a foreign Origin on state-changing requests.
+    expect((await send(`${GATEWAY}/api/terminal/workspaces`, { Origin: "null" }, "POST")).Origin).toBe(GATEWAY);
+    expect((await send("https://evil.example/api/x?runtime=primary", { Origin: "null" }, "DELETE")).Origin).toBe("null");
   });
 
   it("attaches no bearer and removes a renderer-supplied one when the target is unknown or foreign", async () => {

@@ -77,3 +77,13 @@ describe("terminal font stacks", () => {
     expect(ids).toContain("powerlevel10k-rainbow");
   });
 });
+
+describe("terminal display facts", () => {
+  it("passes on #rgb and #rrggbb colours as #rrggbb, and nothing it cannot write that way", async () => {
+    const { terminalDisplayFacts } = await import("@desktop/renderer/src/features/terminal/terminal-display-facts");
+    const terminal = { cols: 80, rows: 24, element: undefined };
+    expect(terminalDisplayFacts(terminal, { foreground: "#FFF", background: "#0a0B0c", cursor: "rgba(0,0,0,0.5)" }))
+      .toEqual({ fg: "#ffffff", bg: "#0a0b0c" });
+    expect(terminalDisplayFacts(terminal, { foreground: "white", background: "#12345" })).toEqual({});
+  });
+});

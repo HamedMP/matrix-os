@@ -23,6 +23,11 @@ describe("Terminal WebSocket protocol", () => {
     expect(terminalWebSocketPathForSession(null)).toBe("/ws/terminal/tab");
   });
 
+  it("attaches Herdr terminals through the Herdr socket", () => {
+    expect(terminalWebSocketPathForSession(`tws_00000000000000000000006865726472:tt_${"c".repeat(32)}`)).toBe("/ws/terminal/herdr");
+    expect(terminalWebSocketPathForSession(`tws_${"a".repeat(32)}:tt_${"c".repeat(32)}`)).toBe("/ws/terminal/tab");
+  });
+
   it("rejects legacy named sessions and keeps every fallback on the tab route", () => {
     const sessionId = `provider-auth-${"a".repeat(50)}`;
     expect(sessionId).toHaveLength(64);

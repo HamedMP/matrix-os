@@ -13,7 +13,7 @@ const browserRequire = createRequire(resolve(root, "packages/mcp-browser/package
 const desktopRequire = createRequire(resolve(root, "desktop/package.json"));
 const { _electron } = browserRequire("playwright") as typeof import("playwright");
 const sonnet = "claude-sonnet-5";
-const glm = "cloudflare:@cf/zai-org/glm-5.3-flash";
+const glm = "@cf/zai-org/glm-5.3";
 
 it.skipIf(process.env.MATRIX_MODEL_READINESS_ELECTRON !== "1")(
   "retains explicit Matrix AI model intent across outage, cold Electron relaunch and recovery",
@@ -57,24 +57,24 @@ it.skipIf(process.env.MATRIX_MODEL_READINESS_ELECTRON !== "1")(
         availability: "unavailable", connectionState: "unavailable", unavailabilityReason: "runtime_unavailable",
         models: [{ id: sonnet, availability: "unavailable" }, { id: glm, availability: "unavailable" }] }] } });
       await trigger().click();
-      const sonnetOption = page.getByRole("option", { name: "Claude Sonnet 5 via Matrix AI" });
-      const glmOption = page.getByRole("option", { name: "GLM 5.3 Flash via Matrix AI" });
-      expect(await sonnetOption.isEnabled()).toBe(true);
-      expect(await glmOption.isEnabled()).toBe(true);
-      expect(await sonnetOption.innerText()).toContain("unavailable");
-      expect(await glmOption.innerText()).toContain("unavailable");
+      const sonnetOption = () => page!.getByRole("option", { name: "Claude Sonnet 5 via Matrix AI" });
+      const glmOption = () => page!.getByRole("option", { name: "GLM 5.3 via Matrix AI" });
+      expect(await sonnetOption().isEnabled()).toBe(true);
+      expect(await glmOption().isEnabled()).toBe(true);
+      expect(await sonnetOption().innerText()).toContain("unavailable");
+      expect(await glmOption().innerText()).toContain("unavailable");
       await page.screenshot({ path: join(output, "01-outage-models-selectable.png"), fullPage: true });
-      await sonnetOption.click();
+      await sonnetOption().click();
       expect(await trigger().getAttribute("data-model")).toBe(sonnet);
       expect(await trigger().getAttribute("title")).toContain("Unavailable");
       expect(await page.getByRole("button", { name: "Send", exact: true }).isDisabled()).toBe(true);
       await trigger().click();
-      await glmOption.click();
+      await glmOption().click();
       expect(await trigger().getAttribute("data-model")).toBe(glm);
       expect(await trigger().getAttribute("title")).toContain("Unavailable");
       expect(await page.getByRole("button", { name: "Send", exact: true }).isDisabled()).toBe(true);
       await trigger().click();
-      expect(await glmOption.getAttribute("aria-selected")).toBe("true");
+      expect(await glmOption().getAttribute("aria-selected")).toBe("true");
       await page.screenshot({ path: join(output, "02-glm-intent-unavailable.png"), fullPage: true });
       await page.keyboard.press("Escape");
       await expect.poll(evidence).toMatchObject({ preferences: { lastComposerInstanceId: "matrix_pi_default",
@@ -95,6 +95,31 @@ it.skipIf(process.env.MATRIX_MODEL_READINESS_ELECTRON !== "1")(
       expect(await trigger().getAttribute("title")).toContain("Unavailable");
       expect(await page.getByRole("button", { name: "Send", exact: true }).isDisabled()).toBe(true);
       await page.screenshot({ path: join(output, "04-peer-healthy-glm-retained.png"), fullPage: true });
+      await trigger().click();
+      expect(await glmOption().isDisabled()).toBe(true);
+      expect(await glmOption().getAttribute("aria-selected")).toBe("true");
+      expect(await glmOption().innerText()).toContain("Model unavailable");
+      expect(await sonnetOption().isEnabled()).toBe(true);
+      const appearances = [];
+      for (const theme of ["light", "dark"] as const) {
+        await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+        await glmOption().hover();
+        const unavailable = await glmOption().evaluate(element => {
+          const { backgroundColor, opacity } = getComputedStyle(element);
+          return { backgroundColor, opacity: Number(opacity) };
+        });
+        await sonnetOption().hover();
+        const availableHover = await sonnetOption().evaluate(element => getComputedStyle(element).backgroundColor);
+        appearances.push({ theme, unavailable, availableHover });
+        await page.mouse.move(0, 0);
+        await page.locator('[data-slot="provider-model-picker"]').screenshot({ path: join(output, `06-picker-${theme}.png`) });
+      }
+      for (const { theme, unavailable, availableHover } of appearances) {
+        expect(unavailable.backgroundColor, `${theme} disabled model background`).toBe("rgba(0, 0, 0, 0)");
+        expect(unavailable.opacity, `${theme} disabled model opacity`).toBeLessThan(1);
+        expect(availableHover, `${theme} available model hover`).not.toBe("rgba(0, 0, 0, 0)");
+      }
+      await page.keyboard.press("Escape");
       await updateReadiness(glm);
       await expect.poll(() => page!.getByTestId("catalog-state").textContent()).toBe("readiness-glm");
       expect(await trigger().getAttribute("data-model")).toBe(glm);
@@ -103,7 +128,7 @@ it.skipIf(process.env.MATRIX_MODEL_READINESS_ELECTRON !== "1")(
       await page.screenshot({ path: join(output, "05-selected-glm-recovered.png"), fullPage: true });
       expect(errors).toEqual([]);
       await writeFile(join(output, "evidence.json"), JSON.stringify({ scenario: "Production Electron picker, composer hook and validated disk preferences; synthetic catalog only; no model execution", versions,
-        final: await evidence(), screenshots: ["01-outage-models-selectable.png", "02-glm-intent-unavailable.png", "03-cold-relaunch-retains-glm.png", "04-peer-healthy-glm-retained.png", "05-selected-glm-recovered.png"], pageErrors: errors }, null, 2));
+        final: await evidence(), appearances, screenshots: ["01-outage-models-selectable.png", "02-glm-intent-unavailable.png", "03-cold-relaunch-retains-glm.png", "04-peer-healthy-glm-retained.png", "05-selected-glm-recovered.png", "06-picker-light.png", "06-picker-dark.png"], pageErrors: errors }, null, 2));
     } catch (error) {
       await writeFile(join(output, "errors.json"), JSON.stringify(errors));
       await page?.screenshot({ path: join(output, "failure.png"), fullPage: true }).catch(() => undefined);

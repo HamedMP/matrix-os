@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import {
   CollaborationScopeSchema,
   CollaborationTerminalActionResultSchema,
@@ -138,7 +139,7 @@ export function SharedTerminalControls({ api, scope, actorId, layers }: {
         `/api/collaboration/scopes/${scope.id}/terminal/actions`,
         {
           ...action,
-          clientRequestId: crypto.randomUUID(),
+          clientRequestId: randomUUID(),
           incarnation: state.terminal.incarnation,
           ...(action.type === "stop" ? {} : { connectionId: state.connectionId }),
         },

@@ -32,7 +32,7 @@ This spec replaces all of that with one gateway-owned router. It is delivered as
 | A2 | Push tokens survive restarts | gateway | host bundle | none | Pushes keep working after gateway updates and restarts, and name the computer they came from |
 | A3 | One native build | `apps/mobile` | TestFlight, Play | none | Android receives pushes. Channels, background push and the Time Sensitive capability are in place for later releases. |
 | A4 | Notification preferences API | gateway, `packages/contracts` | host bundle | none | none on its own |
-| A5 | Notifications screen | `apps/mobile` | EAS Update | A4 | The owner controls kinds, phone timing, previews and Time Sensitive delivery before any new kind of push arrives |
+| A5 | Notifications screen | `apps/mobile` + gateway registration status | Host bundle (status API), then EAS Update | A4 | The owner controls kinds, phone timing, previews and Time Sensitive delivery before any new kind of push arrives |
 | A6 | Approvals and questions from every chat | gateway | host bundle | A2, A5 | Every canonical chat notifies when it needs the owner, not only Codex, Pi and OpenCode threads, and a gateway crash cannot lose the alert |
 | A7 | Reading on the phone counts as read | `apps/mobile` | EAS Update | none | Reading a chat on the phone advances the same read cursor as the computers |
 | A8 | Replies and failures, only if still unread | gateway | host bundle | A6, A7 | A push when a reply finishes, unless the owner already read it anywhere |
@@ -104,6 +104,136 @@ A4 implementation notes (ENG-453, 2026-11-20):
 - Required separate public-site docs PR (coordinator-owned, repository access currently unavailable): document the four notification kinds; default timing choices (minimum reply 10 s, away after 180 s, unread replies after 60 s); phone modes; opt-in previews and iOS Time Sensitive; owner/computer-scoped settings; reload on conflict and retry on unavailable state. State that A4 supplies the shared API and A5 supplies the mobile controls, while routing/timing enforcement arrives in A6/A8/A9 and computer controls in B4. Do not imply A4 changes current push timing.
 
 **A5 · Notifications screen** (`apps/mobile/app/settings-detail/notifications.tsx`): kinds, phone timing, previews and Time Sensitive (iOS only). It reads and writes through the gateway client with no local copy. The existing "Push notifications" switch in App settings links to it. Evidence: Native Mobile.
+
+#### A5 implementation notes (ENG-453)
+
+- Teammate P1 follow-up (2026-11-25): the phone push switch is explicitly **per
+  computer**. Show its name and use one resolved target for preferences, device
+  registration and foreground refresh. An explicit saved preview/runtime wins
+  over the platform active selection; a bare cloud URL resolves the active
+  computer once and pins its gateway path. Late account/computer responses stay
+  scoped to their original target. Other computers may continue sending.
+- Consent lifecycle correction: enabled state comes from the selected owner's
+  durable `notification_push_consents` record, separate from expiring delivery
+  rows. `POST /api/push/status` returns `{enabled, registered}`: enabled is true,
+  false for a retained opt-out, or null when consent history is unknown;
+  registered is a boolean.
+  The owner-only read has a strict private-identity body, 4 KiB limit and generic
+  errors; identities never enter URLs, logs or responses. Missing support or
+  storage is unavailable, never assumed off.
+- Explicit enable records consent and delivery in one owner-locked transaction.
+  It sends `mode=enable`. A request without a mode is an ambiguous older-client
+  registration: it can refresh known on consent, but cannot replace any known
+  off alias or import an unknown token after this owner's opt-out history. Such
+  attempts receive a generic 409 and need an updated client's explicit enable.
+  Explicit opt-out retains an off tombstone and removes every delivery token
+  linked to that phone on this computer. TTL sweep and `DeviceNotRegistered`
+  remove delivery only. Foreground uses conditional `mode=refresh`, which checks
+  on-consent under the same lock and cannot grant consent after a stale read.
+  A stable private phone identity is retained separately from the current Expo
+  delivery token, so rotation does not strand consent or leave stale fanout.
+- Additive schema migration 4 reserves versions 2/3 for A6. It seeds consent from
+  actual legacy owner delivery rows, including expired rows, without resetting
+  an existing off record. Every bootstrap also reconciles legacy rows written by
+  an older gateway after migration 4, retaining known delivery aliases. The
+  exclusive schema lock and delivery-table lock serialize reconciliation with
+  current consent changes and older delivery writers. An owner-level guard
+  survives phone eviction: after any explicit opt-out, unknown legacy rotations
+  fail closed because the old protocol cannot prove which phone they represent.
+  Known enabled identities still recover through conditional refresh; explicit
+  enable remains available. Opt-out includes a distinct cached delivery alias
+  when needed and revokes both imported aliases and the retained identity.
+  A legacy identity already removed before migration is not sufficient proof for
+  a particular computer. Remembered phone records are capped at 64 per owner;
+  capacity eviction removes linked delivery and requires a new explicit choice.
+  Ordinary cleanup
+  never evicts consent.
+- Pre-migration cleanup correction (2026-11-26): if the old gateway's sweep
+  erased delivery before migration 4, neither the remaining global phone cache
+  nor its OS permission proves consent for this computer. Preserve unknown
+  history separately from explicit off. Foreground does not request permission
+  or register an unknown phone; it offers **Review settings** once for the named
+  computer. That action is fenced against account/computer changes. The existing
+  Notifications screen explains that the choice needs confirmation and offers
+  **Enable for this computer** or **Keep off for this computer**. Only explicit
+  enable sends `mode=enable`; keeping off records the durable per-computer
+  tombstone. Known off stays silent and off. Unavailable status remains an error,
+  never an inferred recovery offer or a grant.
+- Production regressions reconstruct v1, run its delivery-only TTL cleanup
+  before the production v4 bootstrap, observe unknown without a new consent row,
+  and exercise both explicit decisions. A second computer for the same owner
+  remains off in its separate production store. Mounted mobile recovery checks
+  use real settings/foreground helpers and HTTP parsing, including late scopes.
+  Fresh iOS captures of the new review offer and choices are required; earlier
+  unchanged-UI captures do not qualify this recovery UI.
+- Migration: a missing cached Expo identity is not an opt-out. With existing OS
+  permission, recover the identity and query registration without requesting
+  permission or enrolling any computer. When recovery is unavailable, show
+  unknown with retry/permissions and an explicit enable action, never a
+  confirmed off state. Cache identity before registration writes so a failed
+  cache write cannot strand a newly registered phone.
+- Regression checks exercise disagreeing selectors, two-computer opt-out plus
+  foreground refresh, actual owner isolation and expiry in gateway/Postgres,
+  request failures and stale scopes. New native iOS captures must qualify the
+  changed binding/copy/opt-out scenarios. Captures at `5ac410b1` qualify those
+  unchanged UI states, not the later consent cleanup correction. Amin explicitly
+  waived new captures for this non-UI fix and required a quick iOS verification;
+  coordinate a short lease with A7 before touching its preserved signed-in
+  client/runtime, then restore its exact selection. Android remains paused.
+
+- App settings → Push notifications opens Notifications. The explicit device
+  switch uses the existing serialized push registration helpers and revocation
+  subscription; owner preference changes never opt a phone into push.
+- A4's strict full document stays transient in Native Mobile. Save adopts the
+  confirmed revision. Failed saves retain edits; a 409 loads the latest version
+  separately and requires **Use latest** or **Keep my changes**, followed by Save.
+  Reapplying changes preserves unrelated edits from the other surface.
+- Client/account/computer changes invalidate old requests and clear the visible
+  draft. Android omits Time Sensitive while preserving its saved value; away-after
+  and device management remain deferred to B2 and B4.
+- Product copy distinguishes today's four coding-agent kind switches from timing
+  and content choices saved for later delivery updates. A1 routing and the
+  legacy completion dedupe are unchanged; A3 foreground refresh now respects
+  the selected computer's durable consent, independently of delivery cleanup.
+- API parsing and draft logic live in focused helpers. The large GatewayClient
+  adds thin delegates only; the private retained identity uses existing
+  SecureStore and adds no native dependency.
+- Historical validation before the consent lifecycle correction: all 301 mobile suites / 3,798 tests pass
+  in-band with normal exit; five focused mobile suites / 51 tests and four
+  gateway/auth suites / 49 tests pass. Mobile and all nine root typecheck
+  projects pass. Changed-file lint has no errors; React Doctor reports no
+  issues. Canonical mobile lint retains five baseline errors in four unchanged
+  files; broader root limitations are recorded on [PR #3520](https://github.com/HamedMP/matrix-os/pull/3520).
+- Consent lifecycle correction validation: all 301 mobile suites / 3,802 tests,
+  127 prepared gateway/auth tests, mobile typecheck and all nine root typecheck
+  projects pass. Changed-file lint has no errors (nine existing test-file
+  warnings); React Doctor finds no issues. Regression red/green checks cover
+  real TTL/Expo cleanup, conditional refresh after off, rotation, rollback,
+  post-v4 legacy writes, off protection after capacity eviction, and old mobile
+  automatic registration versus deliberate new-protocol enable. Quick iOS
+  verification awaits a newly coordinated device window; no new native capture
+  or remote delivery qualification is claimed by these automated checks.
+- Historical native iOS screenshots and recordings of the `9c9ed155` runtime
+  are attached to PR #3520: navigation, load/edit/save/reopen, failed-save retention
+  and retry, and real 409 recovery using the production A4 owner-file API in a
+  disposable self-hosted fixture. Cloud push registration/delivery is not claimed.
+  Amin explicitly waived Android evidence for this PR on 2026-11-25: "skip android.
+  ios is enough". Do not build/test/capture Android or run both native platforms
+  concurrently; the original logged-in Android app/data remain untouched.
+- Design/product review of settings copy and native parity is recommended.
+  Other OS views receive no UI changes: the new gateway status API serves Native
+  Mobile registration checks only. Reviewer approval of this release-specific
+  N/A rationale remains required.
+- Public documentation remains a separate deliverable in `FinnaAI/matrix-os-site`,
+  tracked by ENG-453. Repository access remains unavailable on 2026-11-25; access
+  has been requested and paste-ready text is in the A5 handoff. That deliverable
+  is not claimed complete and does not block independent review of A5.
+
+| Starting state | Action | Completion / recovery | Authority | Surface and automated boundary |
+| --- | --- | --- | --- | --- |
+| Owner on a connected computer | Edit kinds, durations, phone mode and content; Save; reopen | Confirmed values reload; Android retains hidden Time Sensitive | A4 owner API; full revisioned document | Native Mobile iOS/Android; real screen/controller/client with mocked HTTP and native sheet host |
+| Owner has unsaved edits | Save fails or another surface wins | Draft stays visible; 409 requires explicit recovery, preserving unrelated remote edits | Server revision remains authoritative | Native Mobile; settings-screen integration |
+| Selected computer opted in, delivery expired, or consent unknown | Explicitly enable/disable, retry status, or foreground sync | Same target as preferences; automatic cleanup recovers delivery; explicit opt-out stays off; stale scope ignored | Owner Postgres consent separate from delivery plus OS permission; retained private identity is never consent | Native Mobile; production screen/sync and real SQL cleanup, migration, rotation, opt-out and conditional refresh regressions |
 
 **A6 · Approvals and questions from every chat** (new `packages/gateway/src/notifications/`)
 - Router core: the `notification_events` and `notification_attempts` tables, the bounded queue, dedupe, and the transport interface. The first transport is `expo-direct`, which wraps today's push channel.
@@ -487,6 +617,8 @@ There are no inbound webhooks. Expo receipts are polled.
 | Endpoint | Release | Caller | Auth | Validation and limits |
 | --- | --- | --- | --- | --- |
 | `POST/DELETE /api/push/register` | existing; persisted in A2; removed in C5 | Native Mobile | Owner principal | Existing Zod schema; `bodyLimit` 4 KiB (add it to DELETE if missing) |
+| `POST /api/push/status` | A5 review correction | Native Mobile settings/foreground | Verified owner principal | Read-only POST; strict retained-identity body (1–512 chars), 4 KiB limit; enabled true/false/null and registered boolean only, generic errors |
+| `POST /api/push/register` with `mode=refresh` | A5 consent correction | Native Mobile foreground | Verified runtime owner; server consent must already be on | Strict bounded identity/token/platform fields, 4 KiB limit; conditional transaction cannot grant consent |
 | `PATCH /api/chats/:chatId/read-state` | existing; used by mobile from A7 | Native Mobile | Owner principal | Existing |
 | `GET /api/notifications` | A10 | Owner clients | Owner principal | Zod query: `state` ∈ {open}, `limit` 1–100, opaque cursor ≤ 200 chars |
 | `POST /api/notifications/:id/opened` | A10 | Native Mobile cold start | Owner principal | `bodyLimit` 1 KiB, uuid param, owner-scoped update |

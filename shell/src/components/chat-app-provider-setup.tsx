@@ -271,11 +271,7 @@ export function useChatProviderState(
     ? applySavedSelection(selectedBase, effectiveSaved)
     : null;
 
-  const save = (next: SavedProviderSelection) => {
-    if (currentSelection) {
-      setBoundDraft({ bindingKey, selection: next });
-      return;
-    }
+  const savePreference = (next: SavedProviderSelection) => {
     setSavedChoice(next);
     try {
       window.localStorage.setItem(PROVIDER_SELECTION_STORAGE_KEY, JSON.stringify(next));
@@ -284,18 +280,35 @@ export function useChatProviderState(
     }
   };
 
+  const save = (next: SavedProviderSelection) => {
+    if (currentSelection) setBoundDraft({ bindingKey, selection: next });
+    else savePreference(next);
+  };
+
   const select = (choice: CanonicalProviderChoice) => {
     if (boundInstanceId && choice.instanceId !== boundInstanceId) return;
-    if ((isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)) && !choices.some(current => current.instanceId === choice.instanceId
+    const accountBound = isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice);
+    if (accountBound && !choices.some(current => current.instanceId === choice.instanceId
       && current.modelId === choice.modelId
       && canonicalChatSubscriptionSelectionMatches(catalog?.instances.find(instance => instance.id === choice.instanceId), choice.selectedOptions))) return;
     const preserveControls = selected?.instanceId === choice.instanceId;
+    const key = choiceKey(choice);
     save({
-      key: choiceKey(choice),
+      key,
       interactionMode: preserveControls ? selected.interactionMode : choice.interactionMode,
       permissionMode: preserveControls ? selected.permissionMode : choice.permissionMode,
-      options: preserveControls && !(isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)) ? selected.selectedOptions : choice.selectedOptions,
+      options: preserveControls && !accountBound ? selected.selectedOptions : choice.selectedOptions,
     });
+    if (currentSelection) {
+      // An explicit model pick also sets the next draft's model. Keep the
+      // draft's preferences independent of this Chat's execution controls.
+      const previousPreference = savedChoice.key.startsWith(`${choice.instanceId}:`) ? savedChoice : undefined;
+      savePreference({
+        ...previousPreference,
+        key,
+        options: accountBound ? choice.selectedOptions : previousPreference?.options,
+      });
+    }
   };
 
   const updateSelected = (patch: Partial<Omit<SavedProviderSelection, "key">>) => {

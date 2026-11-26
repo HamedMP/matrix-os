@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import {
   CollaborativeAppDirectoryItemSchema,
   CollaborativeAppLaunchResponseSchema,
@@ -64,7 +65,7 @@ export function startSharedAppLaunch(
   scopeId: string,
   expected: { buildId: string; shareRevision: string },
 ): SharedAppInitialLaunch {
-  const clientRequestId = crypto.randomUUID();
+  const clientRequestId = randomUUID();
   const result = Promise.resolve()
     .then(() => platform.post(`/api/collaboration/shared-apps/${encodeURIComponent(scopeId)}/launch`, {
       clientRequestId,
@@ -98,7 +99,7 @@ export function createSharedAppTransport(input: {
       if (!settled.ok) throw settled.error;
       return settled.value;
     }
-    launchRequestId ??= crypto.randomUUID();
+    launchRequestId ??= randomUUID();
     return input.platform.post(
       `/api/collaboration/shared-apps/${target.scopeId}/launch`,
       {
@@ -166,7 +167,7 @@ export function createSharedAppTransport(input: {
       if (uncertain.length + inFlight.size >= MAX_PENDING_MUTATIONS) {
         return Promise.reject(new SharedAppTransportError("unavailable", true));
       }
-      const attempt = { clientRequestId: crypto.randomUUID(), expectedRevision, action };
+      const attempt = { clientRequestId: randomUUID(), expectedRevision, action };
       return sendMutation(attempt);
     },
     async retryMutation() {

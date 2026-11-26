@@ -49,6 +49,7 @@ import { createGatewayAllowedOriginController } from "./server/browser-setup-ori
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
 import { listApps } from "./apps.js";
+import { registerBrowserOriginGates } from "./server/websocket-origin-gate.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createGatewayChatAdapters, startGatewayClaudeNativeRecovery, type GatewayNativeClaudeChatRuntime } from "./server/canonical-chat-adapters.js";
@@ -253,6 +254,7 @@ import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
+import { createPrivateNetworkRuntime } from "./server/private-network-runtime.js";
 import { isBrowserRuntimeEnabled } from "./browser-lab/setup.js";
 import { registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
@@ -266,10 +268,10 @@ import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.j
 import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation.js";
 import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
-import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
-import { registerTerminalEventWebSocket } from "./terminal-agent/events-ws.js";
+import { registerTerminalSockets } from "./server/terminal-sockets.js";
 import { createLocalTerminalAgentToken, type LocalTerminalAgentToken } from "./terminal-agent/local-token.js";
 import { createTerminalAgentServices, type TerminalAgentServices } from "./terminal-agent/services.js";
+import { createHerdrSessionsFromEnv } from "./herdr/register.js";
 import { createTerminalWorkspaceProjectAdmission } from "./shell/workspace-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
@@ -333,6 +335,8 @@ export async function createGateway(config: GatewayConfig) {
   // Assigned once collaboration is known (project fences); a startup failure before
   // then must still be able to run shutdown.
   let terminalAgentServices: TerminalAgentServices | null = null;
+  const herdrSessions = createHerdrSessionsFromEnv(process.env); // Owner's herdr-core (spec 2701); null unless MATRIX_HERDR=on.
+  let herdrViewers: ReturnType<typeof registerTerminalSockets> | null = null;
   // Lets `matrix shell …` inside this machine's terminals call the gateway (spec 2692).
   let localTerminalAgentToken: LocalTerminalAgentToken | null = null;
   const providerLoginTerminalRegistry = createProviderLoginTerminalRegistry(terminalWorkspaceRuntime);
@@ -887,8 +891,10 @@ export async function createGateway(config: GatewayConfig) {
       runtime: terminalWorkspaceRuntime,
       ...(gatewayCollaboration ? { projectOperationAdmission: gatewayCollaboration.projectOperationAdmission } : {}),
     }),
+    ...(herdrSessions ? { herdr: herdrSessions } : {}),
   });
   terminalAgentServices = terminalAgents;
+  herdrSessions?.start();
   try {
     localTerminalAgentToken = await createLocalTerminalAgentToken({ homePath });
   } catch (error) {
@@ -1250,6 +1256,10 @@ export async function createGateway(config: GatewayConfig) {
       "[gateway] MATRIX_DEV_APP_AUTH_BYPASS=1 — null-origin CORS + app-session auth relaxed for LOCAL DEV ONLY. Never enable in production.",
     );
   }
+  // Before CORS and auth, so a refused browser origin reaches neither.
+  registerBrowserOriginGates(app, { env: process.env, allowedOrigins: allowedOriginController });
+  const privateNetwork = await createPrivateNetworkRuntime({ env: process.env, homePath, db: kyselyInstance });
+  app.use("*", privateNetwork.identity); // Spec 2701: foreign Tailscale identities fail before bearer auth.
   registerGatewayAccessMiddleware(app, {
     resolveAllowedOrigin: allowedOriginController.resolve,
     devAppAuthBypass: APP_AUTH_DEV_BYPASS,
@@ -1260,6 +1270,7 @@ export async function createGateway(config: GatewayConfig) {
     },
   });
   app.route("/api/desktop-pairing", await createRuntimeDesktopPairingRoutes({ ownerDatabase: kyselyInstance }));
+  app.route("/api/system/private-network", privateNetwork.routes);
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
@@ -1340,12 +1351,7 @@ export async function createGateway(config: GatewayConfig) {
     finalizeWithSummary, logUnexpectedJsonParseFailure,
   });
 
-  app.get(
-    "/ws/forward",
-    upgradeWebSocket(() => forwardTunnelHub.createHandler()),
-  );
-
-
+  app.get("/ws/forward", upgradeWebSocket(() => forwardTunnelHub.createHandler()));
 
   registerCodingAgentThreadWebSocketRoutes({
     app, upgradeWebSocket, codingAgentThreadStream,
@@ -1700,21 +1706,14 @@ export async function createGateway(config: GatewayConfig) {
     chatBoundWorkspaceRouteDeps, systemActivityCandidates } = registerShellTerminalRoutes({
     app, homePath, terminalWorkspaceRuntime, terminalRuntimeOwnerIds, managedLaunch: terminalLaunchRuntime.admission, terminalAgentServices: terminalAgents,
     terminalWindowLayoutStore, shellPreferencesStore, chatRepository,
-    canonicalChatExecutionRoots, gatewayCollaboration,
+    canonicalChatExecutionRoots, gatewayCollaboration, herdrSessions,
   });
 
-  registerTerminalWebSocketRoutes({
-    app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
-    workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
-    terminalWorkspaceProjectAdmission, terminalInputActivity: terminalAgents.inputActivity, captureTerminalEvent,
-    getPrincipal: requireRequestPrincipal,
+  herdrViewers = registerTerminalSockets({
+    app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership, workspaceSessionRuntimeBridge,
+    terminalRuntimeOwnerIds, chatRepository, terminalWorkspaceProjectAdmission, terminalAgents, herdrSessions,
+    captureTerminalEvent, getPrincipal: requireRequestPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
-  });
-
-  registerTerminalEventWebSocket({
-    app, upgradeWebSocket, hub: terminalAgents.events,
-    getPrincipal: requireRequestPrincipal,
-    terminalOwnerIds: terminalRuntimeOwnerIds,
   });
 
   slackRuntime = await startOwnerSlack({
@@ -1868,6 +1867,7 @@ export async function createGateway(config: GatewayConfig) {
       nativeClaudeChatRuntime?.beginShutdown();
       await managedFeatureRestart.close();
       await githubDeveloperSetup.close();
+      privateNetwork.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
@@ -1934,8 +1934,10 @@ export async function createGateway(config: GatewayConfig) {
       await codingAgentWorkspaceRuntime?.close();
       codingAgentWorkspaceRuntime = null;
       workspaceSessionRuntimeBridge.close();
-      // Drain terminal event subscribers and waiters before the runtime client goes.
+      // Herdr viewers, terminal event subscribers and waiters, then herdr-core, before the runtime client goes.
+      herdrViewers?.drain();
       await terminalAgentServices?.close();
+      await herdrSessions?.close();
       await localTerminalAgentToken?.close();
       terminalLiveOwnership.close();
       await agentRuntimeServices.controller.close();

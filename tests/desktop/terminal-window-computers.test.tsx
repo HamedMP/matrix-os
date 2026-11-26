@@ -104,6 +104,8 @@ describe("Terminal window computers", () => {
 
   const requests = () => fetchMock.mock.calls.map(([url, init]) => `${(init as RequestInit | undefined)?.method ?? "GET"} ${String(url)}`);
   const sidebar = () => screen.getByRole("navigation", { name: "Terminals" });
+  // Each listing also asks that computer's gateway for its Herdr sessions (spec 2701).
+  const tabRequests = () => requests().filter((request) => request.includes("/api/terminal/workspaces"));
 
   it("streams each available computer's terminals into the status sections, with no listing requests", async () => {
     render(<TerminalWindowApp />);
@@ -491,6 +493,6 @@ describe("Terminal window computers", () => {
     expect(await screen.findByRole("button", { name: "started on my phone" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "build" })).toBeTruthy();
     expect(screen.queryByText("Loading terminals…")).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(tabRequests()).toHaveLength(2);
   });
 });

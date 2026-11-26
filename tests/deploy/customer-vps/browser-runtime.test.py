@@ -437,6 +437,27 @@ class BrowserRuntimeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.runtime.environment()
 
+    def test_self_hosted_identity_is_admitted_only_with_the_self_host_flag(self):
+        # Spec 2701: the self-host installer writes self-host-<handle> ids, never Clerk ids.
+        self_host = 'MATRIX_SELF_HOSTED=1\nMATRIX_MACHINE_ID=self-host-matrix\nMATRIX_HANDLE=matrix\nMATRIX_RUNTIME_SLOT=primary\nMATRIX_CLERK_USER_ID=self-host-matrix\nMATRIX_USER_ID=self-host-matrix\n'
+        self.env.write_text(self_host)
+        _, values = self.runtime.environment()
+        self.assertEqual(values['MATRIX_CLERK_USER_ID'], 'self-host-matrix')
+        self.assertEqual(self.runtime.nginx_site(), self.root / 'etc/nginx/sites-available/matrix-self-host')
+        for old, new in [('MATRIX_SELF_HOSTED=1\n', ''), ('MATRIX_SELF_HOSTED=1', 'MATRIX_SELF_HOSTED=true'),
+                         ('MATRIX_USER_ID=self-host-matrix', 'MATRIX_USER_ID=self-host-other'),
+                         ('MATRIX_CLERK_USER_ID=self-host-matrix', 'MATRIX_CLERK_USER_ID=user_owner'),
+                         ('MATRIX_MACHINE_ID=self-host-matrix', 'MATRIX_MACHINE_ID=self-host-../x')]:
+            self.env.write_text(self_host.replace(old, new))
+            with self.assertRaises(ValueError):
+                self.runtime.environment()
+
+    def test_managed_hosts_keep_the_managed_nginx_site(self):
+        self.assertEqual(self.runtime.nginx_site(), self.root / 'etc/nginx/sites-available/matrix')
+        self.env.write_text(self.env.read_text() + 'MATRIX_SELF_HOSTED=1\n')
+        with self.assertRaises(ValueError):
+            self.runtime.environment()  # Clerk-bound managed identity never doubles as self-host.
+
     def test_customer_local_alias_retains_existing_profile_during_reconciliation(self):
         self.runtime.prepare()
         self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
@@ -858,6 +879,130 @@ class BrowserRuntimeTest(unittest.TestCase):
         for name, content in units.items():
             if name.endswith('.service'):
                 self.assertIn('User=matrix', content)
+
+    # Review P1: the matrix account reads host.env (group) and gets root (docker);
+    # a self-host install names a dedicated account that runs every native unit.
+    def dedicated_account(self, *, groups=None, primary_gid=4242):
+        owner = type('Owner', (), {'pw_uid': os.getuid(), 'pw_gid': primary_gid, 'pw_dir': '/var/lib/matrix-browser', 'pw_name': 'matrix-browser'})()
+        table = groups if groups is not None else {'matrix': (1000, []), 'docker': (999, ['matrix', 'alice'])}
+        def getgrnam(name):
+            if name not in table:
+                raise KeyError(name)
+            gid, members = table[name]
+            return type('Group', (), {'gr_gid': gid, 'gr_mem': members, 'gr_name': name})()
+        group = type('Group', (), {'gr_name': 'matrix-browser', 'gr_gid': primary_gid, 'gr_mem': []})()
+        self.env.write_text(self.env.read_text() + 'MATRIX_BROWSER_ACCOUNT=matrix-browser\n')
+        return owner, getgrnam, group
+
+    def test_dedicated_browser_account_runs_every_native_unit_and_profile(self):
+        self.runtime.prepare()
+        self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
+        owner, getgrnam, group = self.dedicated_account()
+        units = json.loads(Path('scripts/spikes/browser-vps/runtime-services.json').read_text())
+        nginx = self.root / 'etc/nginx/sites-available/matrix'
+        nginx.parent.mkdir(parents=True)
+        self.runtime.write(nginx, 'server {\n location /apps/ {\n }\n}\n')
+        profile = self.root / 'var/lib/matrix-browser/.local/share/matrix-browser-lab/chrome'
+        def run(arguments, **kwargs):
+            if arguments[:3] == ['/usr/sbin/runuser', '-u', 'matrix-browser']:
+                Path(arguments[-1]).mkdir(parents=True, exist_ok=True)
+            return ''
+        def extract(archive, incoming):
+            (incoming / 'runtime-services.json').write_text(json.dumps(units))
+        with patch.object(self.runtime, 'preflight'), patch.object(self.runtime, 'verified_archive'), \
+             patch.object(self.runtime, 'dependencies'), patch.object(self.runtime, 'credentials'), \
+             patch.object(module.pwd, 'getpwnam', return_value=owner), patch.object(module.grp, 'getgrnam', side_effect=getgrnam), \
+             patch.object(module.grp, 'getgrgid', return_value=group), \
+             patch.object(self.runtime, 'run', side_effect=run) as runs, \
+             patch.object(self.runtime, 'extract', side_effect=extract), \
+             patch.object(self.runtime, 'activate') as activate:
+            self.runtime._reconcile()
+        self.assertTrue(profile.is_dir())
+        self.assertIn(['/usr/sbin/runuser', '-u', 'matrix-browser', '--', '/usr/bin/mkdir', '-p', str(profile)], [call.args[0] for call in runs.call_args_list])
+        files = activate.call_args.args[1]
+        for name in self.runtime.service_names:
+            self.assertIn('User=matrix-browser\nGroup=matrix-browser\n', files[name], name)
+            self.assertNotIn('User=matrix\n', files[name], name)
+            self.assertNotIn('/home/matrix', files[name], name)
+        self.assertIn('--user-data-dir=/var/lib/matrix-browser/.local/share/matrix-browser-lab/chrome', files['matrix-browser-lab-chrome.service'])
+        # The supervisor's native helpers accept that profile and open that home.
+        supervisor = files['matrix-browser-lab.service']
+        self.assertIn('Environment=MATRIX_BROWSER_CHROME_PROFILE=/var/lib/matrix-browser/.local/share/matrix-browser-lab/chrome\n', supervisor)
+        self.assertIn('Environment=MATRIX_BROWSER_HOME=/var/lib/matrix-browser\n', supervisor)
+        self.assertIn('Environment=MATRIX_BROWSER_WORKDIR=/var/lib/matrix-browser\n', supervisor)
+        self.assertIn('Environment=MATRIX_BROWSER_AGENT_SOCKET_DIR=/var/lib/matrix-browser/.cache/matrix-browser-lab-agent\n', supervisor)
+
+    def test_browser_account_with_matrix_or_docker_access_is_refused(self):
+        self.runtime.prepare()
+        self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
+        cases = [
+            ({'matrix': (1000, []), 'docker': (999, ['matrix-browser'])}, 4242),
+            ({'matrix': (1000, ['matrix-browser']), 'docker': (999, [])}, 4242),
+            ({'matrix': (1000, []), 'docker': (999, [])}, 1000),
+        ]
+        original = self.env.read_text()
+        for groups, primary in cases:
+            self.env.write_text(original)
+            owner, getgrnam, group = self.dedicated_account(groups=groups, primary_gid=primary)
+            with patch.object(self.runtime, 'preflight'), patch.object(self.runtime, 'verified_archive'), \
+                 patch.object(self.runtime, 'dependencies') as dependencies, patch.object(self.runtime, 'credentials') as credentials, \
+                 patch.object(module.pwd, 'getpwnam', return_value=owner), patch.object(module.grp, 'getgrnam', side_effect=getgrnam), \
+                 patch.object(module.grp, 'getgrgid', return_value=group), patch.object(self.runtime, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'Browser account'):
+                    self.runtime._reconcile()
+            run.assert_not_called()
+            dependencies.assert_not_called()
+            credentials.assert_not_called()
+        for name in ('root', 'Matrix-Browser', 'a' * 40, 'bad name'):
+            self.env.write_text(original + 'MATRIX_BROWSER_ACCOUNT=' + name + '\n')
+            with self.assertRaisesRegex(ValueError, 'Browser account'):
+                self.runtime.browser_account(self.runtime.environment()[1])
+
+    def test_viewer_password_is_readable_only_through_the_browser_account_group(self):
+        self.runtime.prepare()
+        owner, getgrnam, group = self.dedicated_account()
+        writes = []
+        original_write = self.runtime.write
+        def write(path, value, mode=0o644, gid=0):
+            writes.append((path, mode, gid))
+            return original_write(path, value, mode, gid)
+        def run(arguments, **kwargs):
+            Path(arguments[-1]).write_text('hashed-passwd')
+            return ''
+        with patch.object(module.pwd, 'getpwnam', return_value=owner), patch.object(module.grp, 'getgrnam', side_effect=getgrnam), \
+             patch.object(module.grp, 'getgrgid', return_value=group), \
+             patch.object(self.runtime, 'run', side_effect=run), patch.object(self.runtime, 'write', side_effect=write):
+            self.runtime.credentials()
+        by_path = {path: (mode, gid) for path, mode, gid in writes}
+        self.assertEqual(by_path[self.runtime.prefix / 'viewer.passwd'], (0o640, 4242))
+        # host.env keeps the matrix group, which the browser account is not in.
+        self.assertEqual(by_path[self.env], (0o640, self.runtime.gid))
+
+    def test_existing_viewer_password_moves_to_the_browser_account_group_unchanged(self):
+        # Review: a kept credential pair left viewer.passwd unreadable to Xvnc.
+        self.runtime.prepare()
+        owner, getgrnam, group = self.dedicated_account()
+        password_file = self.runtime.prefix / 'viewer.passwd'
+        password_file.write_bytes(b'saved-hash')
+        password_file.chmod(0o640)
+        self.env.write_text(self.env.read_text() + 'MATRIX_BROWSER_LAB_VIEWER_AUTH="Basic c2F2ZWQ="\n')
+        before = self.env.read_text()
+        with patch.object(module.pwd, 'getpwnam', return_value=owner), patch.object(module.grp, 'getgrnam', side_effect=getgrnam), \
+             patch.object(module.grp, 'getgrgid', return_value=group), patch.object(module.os, 'getuid', return_value=0), \
+             patch.object(module.os, 'fchown') as fchown, patch.object(self.runtime, 'run') as run:
+            self.runtime.credentials()
+        run.assert_not_called()
+        self.assertEqual(fchown.call_args.args[1:], (-1, 4242))
+        self.assertEqual(password_file.read_bytes(), b'saved-hash')
+        self.assertEqual(self.env.read_text(), before)
+        password_file.unlink()
+        password_file.symlink_to(self.root / 'opt/matrix/env/host.env')
+        with patch.object(module.pwd, 'getpwnam', return_value=owner), patch.object(module.grp, 'getgrnam', side_effect=getgrnam), \
+             patch.object(module.grp, 'getgrgid', return_value=group), patch.object(module.os, 'getuid', return_value=0), \
+             patch.object(module.os, 'fchown') as fchown:
+            with self.assertRaises((ValueError, OSError)):
+                self.runtime.credentials()
+        fchown.assert_not_called()
 
 
 if __name__ == '__main__':

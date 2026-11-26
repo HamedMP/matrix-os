@@ -99,6 +99,7 @@ import { createAiFundedReservationCleanupWorker } from './ai-funded-reservation-
 import { createFundedPricingReviewStore } from './funded-pricing-review-store.js';
 import { fundedPricingReviewRuntimeConfig } from './funded-pricing-review-runtime.js';
 import { startFundedPricingReviewJob } from './funded-pricing-review-job.js';
+import { readOfficialFundedPreviewPricing } from './funded-pricing-review-job-sources.js';
 import { createFundedPricingReviewLinear } from './funded-pricing-review-linear.js';
 import {
   createAiFundedOperatorRoutes,
@@ -392,6 +393,11 @@ async function startPlatformServerWithCleanup(
     PLATFORM_SECRET: platformSecret,
   });
   const previewRuntimeAccess = loadPreviewRuntimeAccessConfig({ ...process.env, PLATFORM_SECRET: platformSecret });
+  const cloudflareBinding = previewRuntimeAccess.enabled ? previewRuntimeAccess.cloudflareBinding : undefined;
+  const pricingRegistryEnabled = process.env.MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED === 'true';
+  if (cloudflareBinding && (!fundedAiConfig.enabled || !pricingRegistryEnabled)) {
+    throw new Error('Cloudflare funded Preview requires the funded control plane and pricing registry');
+  }
   let internalFundedAiRuntimeRoutes: Hono | undefined;
   let internalFundedAiRelayRoutes: Hono | undefined;
   let internalFundedAiOperatorRoutes: Hono | undefined;
@@ -407,10 +413,10 @@ async function startPlatformServerWithCleanup(
   const pricingJobConfig = fundedPricingReviewRuntimeConfig(process.env, fundedAiConfig.enabled, backgroundWorkersEnabled);
   if (fundedAiConfig.enabled) {
     const pricingStore = createFundedPricingReviewStore(db);
-    const pricingRegistryEnabled = process.env.MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED === 'true';
     if (pricingJobConfig) {
       pricingJob = startFundedPricingReviewJob({
         store: pricingStore, linear: createFundedPricingReviewLinear(pricingJobConfig.linear), mode: pricingJobConfig.mode,
+        ...(cloudflareBinding ? { readOfficial: readOfficialFundedPreviewPricing } : {}),
       });
       registerCustomMcpStartupCleanup(async () => { await pricingJob?.shutdown(); });
     }
@@ -428,6 +434,7 @@ async function startPlatformServerWithCleanup(
       relayBaseUrl: process.env.MATRIX_FUNDED_AI_RELAY_URL,
       relayControlToken: fundedAiConfig.relayControlToken,
       ...probeLimits,
+      cloudflarePreviewEnabled: cloudflareBinding !== undefined,
       ...(pricingRegistryEnabled ? { readPricingReview: async (modelId: string, signal: AbortSignal) => {
         signal.throwIfAborted();
         const review = await pricingStore.readCurrent(modelId);
@@ -443,6 +450,7 @@ async function startPlatformServerWithCleanup(
       topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
       promotionalGrant: fundedAiConfig.promotionalGrant,
       routeProbes: fundedModelProbes,
+      cloudflareBinding,
       isolatedChat: parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE),
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({

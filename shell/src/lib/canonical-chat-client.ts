@@ -1,3 +1,4 @@
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 import { isRoutineOriginPath, createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import type { CanonicalSubmitChatApprovalRequest } from "@matrix-os/contracts";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
@@ -220,7 +221,7 @@ export function createCanonicalShellChatClient(options: {
       signal: requestOptions?.signal ? AbortSignal.any([requestOptions.signal, AbortSignal.timeout(requestOptions.timeoutMs ?? REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(requestOptions?.timeoutMs ?? REQUEST_TIMEOUT_MS),
     }).then(response => jsonResponse(response, path));
   };
-  const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
+  const createId = options.createId ?? (() => randomUUID().replaceAll("-", ""));
   return {
     browserPermissions: createBrowserPermissionClient((path, method, body) => request(path, { method, ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) })),
     agents: createChatAgentClient((path, method, body, requestOptions) => {

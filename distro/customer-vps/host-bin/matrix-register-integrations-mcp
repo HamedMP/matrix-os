@@ -11,13 +11,15 @@ case "$TARGET" in
 esac
 
 MATRIX_RUNTIME_USER="${MATRIX_RUNTIME_USER:-matrix}"
+# The owner's group need not share the account name (self-host: alice in staff).
+MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$(id -gn "$MATRIX_RUNTIME_USER" 2>/dev/null || true)}"
 MATRIX_RUNTIME_HOME="${MATRIX_RUNTIME_HOME:-${MATRIX_HOME:-/home/matrix/home}}"
 MATRIX_NODE_PREFIX="${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}"
 RUNTIME_PATH="$MATRIX_RUNTIME_HOME/.local/bin:$MATRIX_NODE_PREFIX/bin:/opt/matrix/bin:/usr/local/bin:/usr/bin:/bin"
 
 run_as_runtime_user() {
   if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
-    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups "$@"
+    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_GROUP" --init-groups "$@"
     return
   fi
   if [ "$(id -un)" = "$MATRIX_RUNTIME_USER" ]; then

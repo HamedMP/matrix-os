@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   COLLABORATIVE_HANDOFF_EVENT, collaborativeHandoffPath, parseCollaborativeHandoff,
@@ -107,7 +108,7 @@ export function useCollaborativeHandoff({ appSlug, api }: { appSlug: string; api
     writeFailed,
     /** Owner chose "Start in Chats" for this organization. */
     start: (organizationId: string) => write({
-      version: 1, event: COLLABORATIVE_HANDOFF_EVENT, requestId: crypto.randomUUID(), appSlug, organizationId,
+      version: 1, event: COLLABORATIVE_HANDOFF_EVENT, requestId: randomUUID(), appSlug, organizationId,
       state: "running", updatedAt: new Date().toISOString(),
     }),
     cancel: () => transition("cancelled"),

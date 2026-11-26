@@ -3,7 +3,7 @@ import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack"
 import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
 import { createPreviewWindowReopener } from "./preview-pair-window";
 import { initializeDesktopPreview } from "./preview-pair-startup";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, MessageChannelMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
 import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { createFileDownloadService } from "./files/file-download-service";
@@ -109,6 +109,7 @@ import { createComputerCredentialBroker } from "./terminal-window/credential-bro
 import { installTerminalWindowAuth } from "./terminal-window/gateway-auth";
 import { createLocalTerminalHost, type LocalTerminalHost } from "./local-terminals/host";
 import { registerLocalTerminalIpc } from "./local-terminals/ipc";
+import { createLocalTerminalStreams, liveContents, type LocalTerminalStreams } from "./local-terminals/streams";
 import { localLoginShell, resolveLocalTerminalRuntime, startLocalTerminalCore } from "./local-terminals/runtime";
 import { LOCAL_TERMINAL_VERSION } from "../shared/local-terminals";
 import { connect as connectSocket } from "node:net";
@@ -158,6 +159,7 @@ const terminalWindowEvents = new Set<string>(TERMINAL_WINDOW_EVENT_CHANNELS);
 let computerCredentials: { clear(): void } | null = null;
 let localTerminals: LocalTerminalHost | null = null;
 let shortcutWiring: Awaited<ReturnType<typeof installShortcuts>> | null = null;
+let localTerminalStreams: LocalTerminalStreams | null = null;
 let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
@@ -707,7 +709,7 @@ if (!gotLock) {
           win.on("closed", () => terminalMenu?.terminalWindowFocused(false));
           // A window that closes, reloads or crashes cannot detach for itself;
           // without this its local terminal attachments would stay held.
-          const releaseLocalTerminals = () => { localTerminals?.detachAll(); localTerminals?.unwatch(); };
+          const releaseLocalTerminals = () => { localTerminalStreams?.releaseAll(); localTerminals?.detachAll(); localTerminals?.unwatch(); };
           win.on("closed", releaseLocalTerminals);
           win.webContents.on("did-start-loading", releaseLocalTerminals);
           win.webContents.on("render-process-gone", releaseLocalTerminals);
@@ -771,6 +773,7 @@ if (!gotLock) {
       const localRuntime = resolveLocalTerminalRuntime({
         isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, userData, home: homedir(), env: process.env,
       });
+      const streams = localTerminalStreams = createLocalTerminalStreams({ target: () => liveContents(terminalWindowController.current()), createChannel: () => new MessageChannelMain() });
       const localTerminalHost = createLocalTerminalHost({
         ...localRuntime,
         expectedVersion: LOCAL_TERMINAL_VERSION,
@@ -780,13 +783,10 @@ if (!gotLock) {
         uid: userInfo().uid,
         startCore: startLocalTerminalCore,
         openSocket: (path) => connectSocket(path),
-      }, {
-        output: (attachId, data) => sendTerminalWindowEvent("local-terminal:output", { attachId, data }),
-        closed: (attachId) => sendTerminalWindowEvent("local-terminal:closed", { attachId }),
-        facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }),
-      });
+      }, { ...streams.sink, facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }) });
+      streams.bind(localTerminalHost);
       localTerminals = localTerminalHost;
-      registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender);
+      registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender, streams);
       const macTerminalChecks = registerChatMacTerminal(ipcMain, {
         auth,
         transport: chatDeviceTransport,
@@ -1138,6 +1138,7 @@ if (!gotLock) {
     computerCredentials?.clear();
     computerCredentials = null;
     // Detach only: the local core and its terminals outlive the app.
+    localTerminalStreams?.releaseAll(); localTerminalStreams = null;
     localTerminals?.dispose();
     localTerminals = null;
   });

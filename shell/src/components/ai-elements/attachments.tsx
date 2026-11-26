@@ -2,20 +2,14 @@
 
 // Inspired by AI Elements attachments pattern, integrated with Matrix OS bridge
 import type { HTMLAttributes } from "react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { FileIcon, ImageIcon, FileTextIcon, XIcon, PaperclipIcon } from "@/lib/hugeicons";
+import { FileIcon, FileTextIcon, XIcon, PaperclipIcon } from "@/lib/hugeicons";
 import { Button } from "@/components/ui/button";
-import { fileToBase64 } from "@/components/ai-elements/attachments-utils";
 
 export interface AttachmentFile {
   file: File;
-  preview?: string;
   id: string;
-}
-
-function fileId(): string {
-  return `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function isImageFile(file: File): boolean {
@@ -36,11 +30,17 @@ function isTextFile(file: File): boolean {
 
 export type AttachmentPreviewProps = HTMLAttributes<HTMLDivElement> & {
   file: File;
-  preview?: string;
 };
 
-export function AttachmentPreview({ file, preview, className, ...props }: AttachmentPreviewProps) {
-  if (isImageFile(file) && preview) {
+export function AttachmentPreview({ file, className, ...props }: AttachmentPreviewProps) {
+  // The mounted thumbnail owns its URL. A draft can move between composers.
+  const attachImage = useCallback((image: HTMLImageElement | null) => {
+    if (!image || typeof URL.createObjectURL !== "function") return;
+    const url = URL.createObjectURL(file);
+    image.src = url;
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  if (isImageFile(file)) {
     return (
       <div
         className={cn(
@@ -51,7 +51,7 @@ export function AttachmentPreview({ file, preview, className, ...props }: Attach
       >
         {/* react-doctor-disable-next-line react-doctor/nextjs-no-img-element -- blob: object URL from URL.createObjectURL(local attachment); next/image cannot optimize ephemeral client object URLs */}
         <img
-          src={preview}
+          ref={attachImage}
           alt={file.name}
           className="size-full object-cover"
         />
@@ -93,7 +93,7 @@ export function AttachmentItem({
       )}
       {...props}
     >
-      <AttachmentPreview file={attachment.file} preview={attachment.preview} />
+      <AttachmentPreview file={attachment.file} />
       <span className="truncate text-xs text-foreground max-w-[120px]">
         {attachment.file.name}
       </span>
@@ -110,7 +110,7 @@ export function AttachmentItem({
 }
 
 export type AttachmentsProps = HTMLAttributes<HTMLDivElement> & {
-  attachments: AttachmentFile[];
+  attachments: readonly AttachmentFile[];
   onRemove: (id: string) => void;
 };
 
@@ -135,71 +135,6 @@ export function Attachments({
       ))}
     </div>
   );
-}
-
-export interface UseAttachmentsReturn {
-  attachments: AttachmentFile[];
-  addFiles: (files: FileList | File[]) => void;
-  removeFile: (id: string) => void;
-  clearAll: () => void;
-  getBase64Files: () => Promise<Array<{ name: string; type: string; data: string }>>;
-}
-
-export function useAttachments(): UseAttachmentsReturn {
-  const [attachments, setAttachments] = useState<AttachmentFile[]>([]);
-  const latest = useRef(attachments);
-  useLayoutEffect(() => { latest.current = attachments; }, [attachments]);
-  useLayoutEffect(() => () => {
-    for (const attachment of latest.current) {
-      if (attachment.preview) URL.revokeObjectURL(attachment.preview);
-    }
-  }, []);
-
-  const addFiles = (files: FileList | File[]) => {
-    const fileArray = Array.from(files);
-    const newAttachments: AttachmentFile[] = [];
-
-    for (const file of fileArray) {
-      const att: AttachmentFile = { file, id: fileId() };
-      if (isImageFile(file)) {
-        att.preview = URL.createObjectURL(file);
-      }
-      newAttachments.push(att);
-    }
-
-    setAttachments((prev) => [...prev, ...newAttachments]);
-  };
-
-  const removeFile = (id: string) => {
-    setAttachments((prev) => {
-      const att = prev.find((a) => a.id === id);
-      if (att?.preview) {
-        URL.revokeObjectURL(att.preview);
-      }
-      return prev.filter((a) => a.id !== id);
-    });
-  };
-
-  const clearAll = () => {
-    setAttachments((prev) => {
-      for (const att of prev) {
-        if (att.preview) URL.revokeObjectURL(att.preview);
-      }
-      return [];
-    });
-  };
-
-  const getBase64Files = async () => {
-    return Promise.all(
-      attachments.map(async (att) => ({
-        name: att.file.name,
-        type: att.file.type,
-        data: await fileToBase64(att.file),
-      })),
-    );
-  };
-
-  return { attachments, addFiles, removeFile, clearAll, getBase64Files };
 }
 
 export type AttachmentButtonProps = HTMLAttributes<HTMLButtonElement> & {

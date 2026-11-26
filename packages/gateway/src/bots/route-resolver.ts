@@ -12,13 +12,14 @@
  * are never selected.
  */
 import type { AiProviderSnapshotV3, BotModelRoute, CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { BotModelRouteSchema, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
+import { BotModelRouteSchema, isFundedThirdPartyPreviewModel, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import type { BotCredentialAccessSourceId } from "./credentials.js";
-import { MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
+import { FUNDED_PREVIEW_CHAT_ROUTES, MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
 
 /** Provider V3 access sources bots can use, in fallback order, and the credential each launches with. */
 const SOURCES_IN_ORDER: ReadonlyArray<{ id: string; credential: BotCredentialAccessSourceId; anthropicOnly: boolean }> = [
   { id: "matrix_cloudflare", credential: "matrix_included", anthropicOnly: false },
+  ...FUNDED_PREVIEW_CHAT_ROUTES.map(({ sourceId }) => ({ id: sourceId, credential: "matrix_included" as const, anthropicOnly: false })),
   { id: "matrix_included", credential: "matrix_included", anthropicOnly: true },
   { id: "owner_anthropic_key", credential: "owner_anthropic_key", anthropicOnly: true },
 ];
@@ -49,7 +50,7 @@ function fresh(staleAfter: string | null, now: number): boolean {
 }
 
 function routeFor(snapshot: AiProviderSnapshotV3, entry: (typeof SOURCES_IN_ORDER)[number], modelId: string | null, now: number): ResolvedBotRoute | undefined {
-  if (modelId === null) return undefined;
+  if (modelId === null || isFundedThirdPartyPreviewModel(modelId)) return undefined;
   const source = snapshot.accessSources.find((candidate) => candidate.id === entry.id);
   if (!source || source.state !== "ready" || !fresh(source.staleAfter, now) || !source.eligibleModelIds.includes(modelId)) return undefined;
   const model = snapshot.models.find((candidate) => candidate.id === modelId);
@@ -62,7 +63,8 @@ function routeFor(snapshot: AiProviderSnapshotV3, entry: (typeof SOURCES_IN_ORDE
     modelId,
     input: model.capabilities.includes("vision") ? ["text", "image"] : ["text"],
     contextWindow: anthropic ? ANTHROPIC_CONTEXT_WINDOW : OTHER_CONTEXT_WINDOW,
-    maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    maxOutputTokens: FUNDED_PREVIEW_CHAT_ROUTES.find(preview => preview.modelId === modelId)?.maxOutputTokens
+      ?? DEFAULT_MAX_OUTPUT_TOKENS,
   });
   return route.success ? { route: route.data, accessSourceId: entry.credential } : undefined;
 }

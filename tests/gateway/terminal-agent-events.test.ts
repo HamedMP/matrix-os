@@ -34,13 +34,14 @@ function harness() {
     now: () => now,
     autoStart: false,
   });
-  const subscriber = (options: { backlog?: () => number } = {}) => {
+  const subscriber = (options: { backlog?: () => number; visible?: (ref: { workspaceId: string; tabId: string }) => boolean } = {}) => {
     const frames: TerminalEventFrame[] = [];
     let closed = false;
     const handle = hub.subscribe({
       send: (frame) => { frames.push(frame); },
       close: () => { closed = true; },
       ...(options.backlog ? { backlog: options.backlog } : {}),
+      ...(options.visible ? { visible: options.visible } : {}),
     });
     return { frames, handle, isClosed: () => closed };
   };
@@ -87,6 +88,21 @@ describe("terminal event hub", () => {
     ]);
     const seqs = sub.frames.map((frame) => frame.seq);
     expect(seqs).toEqual([...seqs].sort((left, right) => left - right));
+  });
+
+  it("leaves tabs a subscriber may not see out of its snapshot and events only", async () => {
+    const h = harness();
+    const everyone = h.subscriber();
+    const limited = h.subscriber({ visible: (ref) => ref.tabId !== tabB });
+    await h.hub.tick();
+    h.setTabs([tab(tabA), tab(tabB)]);
+    h.setStatus(tabB, "blocked", "Allow?");
+    await h.hub.tick();
+    h.setTabs([tab(tabA, { name: "renamed" })]);
+    await h.hub.tick();
+    expect(JSON.stringify(limited.frames)).not.toContain(tabB);
+    expect(limited.frames.some((frame) => frame.type === "event" && frame.event.kind === "title")).toBe(true);
+    expect(JSON.stringify(everyone.frames)).toContain(tabB);
   });
 
   it("leaves Chat-bound tabs out of the stream", async () => {

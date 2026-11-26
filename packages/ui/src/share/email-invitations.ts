@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 /**
  * Shared invitation UI contract. Production hosts use the site-client adapter.
  * The bounded in-memory adapter is reserved for explicit previews and fixtures.
@@ -75,7 +76,7 @@ function abortIfNeeded(signal: AbortSignal) {
  */
 export function createInMemoryEmailInvitations(options: { now?: () => number; newId?: () => string } = {}): PreviewEmailInvitationAdapter {
   const now = options.now ?? (() => Date.now());
-  const newId = options.newId ?? (() => globalThis.crypto.randomUUID());
+  const newId = options.newId ?? (() => randomUUID());
   const apps = new Map<string, PreviewApp>();
   const entry = (appSlug: string): PreviewApp => {
     const existing = apps.get(appSlug);

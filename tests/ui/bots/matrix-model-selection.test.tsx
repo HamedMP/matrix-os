@@ -12,7 +12,7 @@ afterEach(cleanup);
 HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
 HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
 const model: CanonicalProviderChoice = { instanceId: "matrix_pi_default", driverKind: "matrix_pi", harnessLabel: "Pi",
-  connectionLabel: "Matrix AI", modelId: "cloudflare:@cf/zai-org/glm-5.3-flash", modelLabel: "GLM 5.3 Flash",
+  connectionLabel: "Matrix AI", modelId: "@cf/zai-org/glm-5.3", modelLabel: "GLM 5.3",
   interactionMode: "default", interactionModes: ["default"], permissionMode: "full_access", permissionModes: ["full_access"],
   options: [], selectedOptions: [], supportsFileAttachments: false };
 const recipe = { recipeId: "writing-bot", version: "2026-09-27.1", name: "Writing Bot", description: "Writes drafts", output: "A draft" };
@@ -47,6 +47,16 @@ it("shows an unavailable saved Matrix choice and requires deliberate reselection
   expect(change).not.toHaveBeenCalled();
   fireEvent.change(picker, { target: { value: "" } });
   expect(change).toHaveBeenCalledWith({ selection: MATRIX_BOT_SELECTION });
+});
+it("keeps a retired saved model as status without offering it in the Bot picker", () => {
+  const retired = { ...selected, model: "cloudflare:@cf/zai-org/glm-5.3-flash" };
+  const change = editor(retired);
+  expect(screen.queryByRole("option", { name: /GLM 5.3 Flash/ })).toBeNull();
+  expect(screen.queryByRole("option", { name: /glm-5.3-flash/ })).toBeNull();
+  expect(screen.getByText(/This saved bot model is unavailable/)).toHaveTextContent("GLM 5.3 Flash");
+  expect(change).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: JSON.stringify([selected.instanceId, selected.model]) } });
+  expect(change).toHaveBeenCalledWith({ selection: selected });
 });
 it("never offers owner models in a recipe bot's managed model field", () => {
   editor(MATRIX_BOT_SELECTION, [{ ...model, instanceId: "pi_owner", connectionLabel: "Personal key" }, model]);

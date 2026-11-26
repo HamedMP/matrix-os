@@ -1,5 +1,6 @@
 // Chooses where ci.yml's unit, pattern and browser jobs run (specs/633-ci-runner-pool).
-// Admit a run only with a fresh heartbeat and four idle slots; its seven jobs may queue.
+// Admit a run only with a fresh heartbeat and an idle slot; its seven jobs may queue. A freed slot
+// takes the next queued pool job at once, so an idle slot means the pool has no backlog.
 // Fork source never reaches the pool: fork PRs, and manual dispatches
 // (which can check out a fork PR's merge), always run hosted.
 // GitHub resolves `vars` when the run attempt starts, so the heartbeat's age is
@@ -10,7 +11,7 @@ import { pathToFileURL } from "node:url";
 export const POOL_LABEL = "matrix-ci";
 export const HOSTED_LABEL = "ubuntu-latest";
 export const BROWSER_HOSTED_LABEL = "ubuntu-24.04";
-const MIN_IDLE_SLOTS = 4;
+const MIN_IDLE_SLOTS = 1;
 const MAX_HEARTBEAT_AGE_SECONDS = 180;
 const MAX_CLOCK_SKEW_SECONDS = 60;
 const ATTEMPT_LOOKUP_TIMEOUT_MS = 10_000;

@@ -5,9 +5,9 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { encodeFrame, HC_FRAME } from "@desktop/main/local-terminals/hc-protocol";
+import { encodeFrame, HC_FRAME } from "@matrix-os/herdr-core-client/protocol";
 import { fakeCore } from "./fixtures/fake-herdr-core";
-import { createAttachmentSlots, DEFAULT_MAX_ATTACHMENTS } from "@desktop/main/local-terminals/hc-sessions";
+import { createAttachmentSlots, DEFAULT_MAX_ATTACHMENTS } from "@matrix-os/herdr-core-client/sessions";
 import { createLocalTerminalHost, localShellEnv, type LocalTerminalHostOptions } from "@desktop/main/local-terminals/host";
 import { localLoginShell, resolveLocalTerminalRuntime, startLocalTerminalCore } from "@desktop/main/local-terminals/runtime";
 import { LOCAL_TERMINAL_VERSION } from "@desktop/shared/local-terminals";
@@ -658,6 +658,22 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
     expect((await host.list()).find(terminal => terminal.id === terminalId)).toMatchObject({ status: "blocked", statusMessage: "approve the migration?" });
     host.input(attachId, 'matrix-status blocked "approve v2?"\r', false);
     await vi.waitFor(async () => expect((await host.list()).find(terminal => terminal.id === terminalId)?.statusMessage).toBe("approve v2?"), { timeout: 10_000 });
+    host.detach(attachId);
+  }, 30_000);
+
+  it("passes focus to a program that asked for focus reports, and answers its colour query from the display facts", async () => {
+    const attachId = await host.attach(terminalId, { cols: 100, rows: 30 });
+    host.facts(attachId, { fg: "#eeeeee", bg: "#123456", cursor: "#ff0000", cell: [9, 18] });
+    host.input(attachId, "stty -echo raw; printf '\\033[?1004h\\033]11;?\\007'; dd bs=1 count=30 2>/dev/null | od -c; stty sane\r", false);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    host.focus(attachId, true);
+    host.focus(attachId, false);
+    // The core's answer to OSC 11, then the focus reports, as the program read them.
+    await until(() => /0000036/.test(outputs.get(attachId) ?? ""));
+    // od prints each byte, with its own offset columns between them.
+    const read = (outputs.get(attachId) ?? "").split(/\s+/).filter((token) => !/^[0-7]{7}$/.test(token)).join("");
+    expect(read).toContain("]11;rgb:1212/3434/5656");
+    expect(read).toContain("033[I033[O");
     host.detach(attachId);
   }, 30_000);
 

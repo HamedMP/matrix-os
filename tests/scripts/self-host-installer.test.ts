@@ -23,7 +23,10 @@ describe("self-host server installer", () => {
     expect(script).toContain("Host bundle is reachable");
     expect(script).toContain("sha256sum \"$tmp_bundle\"");
     expect(script).toContain("[ \"$expected\" = \"$actual\" ] || fail \"bundle checksum mismatch\"");
-    expect(script).toContain("tar -xzf \"$tmp_bundle\" -C /opt/matrix");
+    // Root extraction keeps the build machine's numeric owner unless told not to, and the
+    // terminal runtime refuses files owned by anyone but root or its own account.
+    expect(script).toContain("(umask 022 && tar --no-same-owner --no-same-permissions -xzf \"$1\" -C \"$2\")");
+    expect(script).toContain('extract_bundle "$tmp_bundle" /opt/matrix');
     expect(script).toContain("MATRIX_SELF_HOSTED=1");
     expect(script).toContain("MATRIX_AUTH_TOKEN=${auth_token}");
     expect(script).toContain("MATRIX_CODE_PROXY_TOKEN=${code_token}");
@@ -32,7 +35,10 @@ describe("self-host server installer", () => {
     expect(script).toContain("MATRIX_NODE_PREFIX=/opt/matrix/runtime/node");
     expect(script).toContain("validate_config");
     expect(script).toContain("MATRIX_HOST_BUNDLE_URL must be https");
-    expect(script).toContain("MATRIX_HOME must stay under /home/matrix");
+    expect(script).toContain("MATRIX_HOME must stay under ${MATRIX_RUN_USER_HOME}");
+    expect(script).toContain("MATRIX_BIND_HOST=127.0.0.1");
+    expect(script).toContain("MATRIX_RUNTIME_USER=${MATRIX_RUN_USER}");
+    expect(script).toContain("MATRIX_SKIP_LEGACY_HOME_MIGRATION=${skip_legacy_migration}");
     expect(script).toContain("[ \"${#MATRIX_DOMAIN}\" -le 253 ]");
     expect(script).toContain("[[ \"$MATRIX_DOMAIN\" =~ ^[A-Za-z0-9]");
     expect(script).toContain("openssl rand -hex 32");
@@ -55,7 +61,7 @@ describe("self-host server installer", () => {
     expect(script).toContain("chmod -R g+rwX /opt/matrix/runtime/node");
     expect(script).toContain('find /opt/matrix/runtime/node -type d -exec chmod g+s {} +');
     expect(script).toContain("Runtime permissions ready");
-    expect(script).toContain("sudo -iu matrix");
+    expect(script).toContain("sudo -iu ${MATRIX_RUN_USER}");
   });
 
   it("reports privacy-scoped manual install telemetry with an opt-out", () => {
@@ -85,7 +91,8 @@ describe("self-host server installer", () => {
   it("protects the public surface with nginx basic auth and keeps services loopback", () => {
     const script = readFileSync(join(root, "scripts/install-server.sh"), "utf8");
 
-    expect(script).toContain("auth_basic \"Matrix OS\"");
+    // The rendered site is asserted in self-host-installer-options.test.ts.
+    expect(script).toContain('auth_basic \\"Matrix OS\\";');
     expect(script).toContain("htpasswd_file=\"/etc/nginx/matrix-self-host.htpasswd\"");
     expect(script).toContain("legacy_htpasswd_file=\"/opt/matrix/env/nginx.htpasswd\"");
     expect(script).toContain('install -m 0640 -o root -g www-data "$legacy_htpasswd_file" "$htpasswd_file"');
@@ -118,9 +125,9 @@ describe("self-host server installer", () => {
     expect(script).toContain("location /cli/");
     expect(script).toContain("auth_basic off");
     expect(script).toContain("rewrite ^/cli/?(.*)\\$ /\\$1 break");
-    expect(script).toContain("CLI gateway: ${ui_url%/}/cli");
+    expect(script).toContain("CLI gateway: ${cli_url}");
     expect(script).toContain("MATRIX_TOKEN=\\$(sudo sed -n 's/^MATRIX_AUTH_TOKEN=//p' /opt/matrix/env/host.env)");
-    expect(script).toContain("matrix shell ls --gateway ${ui_url%/}/cli --token \"\\$MATRIX_TOKEN\"");
+    expect(script).toContain("matrix shell ls --gateway ${cli_url} --token \"\\$MATRIX_TOKEN\"");
     expect(script).not.toContain("MATRIX_TOKEN=\\$(sudo awk -F=");
     expect(script).not.toContain("-p 5432:5432");
     expect(script).not.toContain("grep '^MATRIX_CODE_PROXY_TOKEN='");
@@ -134,7 +141,7 @@ describe("self-host server installer", () => {
     expect(script).toContain("apt_get_update >>\"$MATRIX_INSTALL_LOG\" 2>&1");
     expect(script).toContain("timeout 300 apt-get install -y software-properties-common");
     expect(script).toContain("timeout 60 add-apt-repository -y universe");
-    expect(script).toContain("apt-get install -y bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar zsh >>\"$MATRIX_INSTALL_LOG\" 2>&1");
+    expect(script).toContain("apt-get install -y acl bubblewrap ca-certificates curl docker.io git nftables nginx openssl postgresql-client procps socat sudo tar zsh >>\"$MATRIX_INSTALL_LOG\" 2>&1");
     expect(script).toContain("configure_bwrap_apparmor");
     expect(script).toContain("dpkg --compare-versions \"$VERSION_ID\" ge 24.04");
     expect(script).toContain(
@@ -146,7 +153,7 @@ describe("self-host server installer", () => {
     expect(script).toContain("profile bwrap /usr/bin/bwrap flags=(unconfined)");
     expect(script).toContain('run_required "reloading AppArmor for bubblewrap" systemctl reload apparmor');
     expect(script.indexOf("add-apt-repository -y universe")).toBeLessThan(
-      script.indexOf("apt-get install -y bubblewrap ca-certificates"),
+      script.indexOf("apt-get install -y acl bubblewrap ca-certificates"),
     );
     expect(script).toContain("Downloading Matrix OS");
     expect(script).toContain("--progress-bar");
@@ -180,7 +187,7 @@ describe("self-host server installer", () => {
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-code.service");
     expect(script).toContain("install -m 0644 /opt/matrix/systemd/matrix-code-server.service");
     expect(script).toContain("write_self_host_restore_service");
-    expect(script).toContain("systemctl enable docker matrix-restore matrix-terminal-runtime matrix-gateway matrix-shell matrix-code matrix-code-server");
+    expect(script).toContain("systemctl enable docker matrix-restore matrix-terminal-runtime matrix-scope-runtime matrix-gateway matrix-shell matrix-code matrix-code-server");
     expect(script).toContain("systemctl enable --now docker");
     expect(script.indexOf("restart_required_service matrix-restore")).toBeLessThan(
       script.indexOf("restart_required_service matrix-terminal-runtime"),

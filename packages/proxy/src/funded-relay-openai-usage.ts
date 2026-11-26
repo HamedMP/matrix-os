@@ -1,3 +1,4 @@
+import { GOOGLE_GEMINI_38_FLASH_MODEL_ID } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { priceActualUsageMicrousd, type FundedTokenUsage } from "./funded-relay-model.js";
 import type { FundedUsageTracker } from "./funded-relay-usage.js";
@@ -6,9 +7,9 @@ const Tokens = z.number().int().nonnegative().max(10_000_000);
 const Usage = z.object({
   prompt_tokens: Tokens, completion_tokens: Tokens, total_tokens: Tokens,
   prompt_tokens_details: z.object({ cached_tokens: Tokens.optional() }).optional(),
+  completion_tokens_details: z.unknown().optional(),
 }).superRefine((value, ctx) => {
-  if (value.total_tokens !== value.prompt_tokens + value.completion_tokens
-    || (value.prompt_tokens_details?.cached_tokens ?? 0) > value.prompt_tokens) {
+  if ((value.prompt_tokens_details?.cached_tokens ?? 0) > value.prompt_tokens) {
     ctx.addIssue({ code: "custom", message: "Inconsistent token usage" });
   }
 });
@@ -17,6 +18,35 @@ const Event = z.object({
   choices: z.array(z.object({ index: z.literal(0), finish_reason: z.string().nullable().optional() })).max(1),
   usage: Usage.nullable().optional(),
 });
+
+const GeminiCompletionDetails = z.object({ reasoning_tokens: Tokens.nullish() }).nullish();
+
+function billedOutputTokens(usage: z.infer<typeof Usage>, modelId: string): number | undefined {
+  const reportedTotal = usage.prompt_tokens + usage.completion_tokens;
+  if (modelId !== GOOGLE_GEMINI_38_FLASH_MODEL_ID) {
+    return usage.total_tokens === reportedTotal ? usage.completion_tokens : undefined;
+  }
+  // Cloudflare's Gemini wire can report thought tokens outside completion_tokens.
+  // Bill both only if total_tokens independently accounts for the exact difference.
+  // https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+  const parsedDetails = GeminiCompletionDetails.safeParse(usage.completion_tokens_details);
+  if (!parsedDetails.success) return undefined;
+  const reasoningTokens = parsedDetails.data?.reasoning_tokens ?? 0;
+  if (usage.total_tokens === reportedTotal) {
+    return reasoningTokens <= usage.completion_tokens ? usage.completion_tokens : undefined;
+  }
+  return usage.total_tokens === reportedTotal + reasoningTokens
+    ? usage.completion_tokens + reasoningTokens : undefined;
+}
+
+export function normalizeFundedGeminiUsage(value: unknown): unknown {
+  const parsed = Usage.safeParse(value);
+  if (!parsed.success) return value;
+  const outputTokens = billedOutputTokens(parsed.data, GOOGLE_GEMINI_38_FLASH_MODEL_ID);
+  // Pi and other OpenAI clients expect completion_tokens to include reasoning.
+  if (outputTokens === undefined || outputTokens === parsed.data.completion_tokens) return value;
+  return { ...(value as Record<string, unknown>), completion_tokens: outputTokens };
+}
 
 export function createFundedOpenAiUsageTracker(options: {
   contentType: string; nativeModelId: string; canonicalModelId: string;
@@ -40,9 +70,11 @@ export function createFundedOpenAiUsageTracker(options: {
     responseId = event.id;
     if (event.choices.some((choice) => choice.finish_reason != null)) sawFinish = true;
     if (event.usage) {
+      const outputTokens = billedOutputTokens(event.usage, options.nativeModelId);
+      if (outputTokens === undefined) { invalid = true; return; }
       const cached = event.usage.prompt_tokens_details?.cached_tokens ?? 0;
       const next = { inputTokens: event.usage.prompt_tokens - cached,
-        outputTokens: event.usage.completion_tokens, cacheReadTokens: cached,
+        outputTokens, cacheReadTokens: cached,
         cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 };
       // Duplicate final usage events are harmless; differing totals are not.
       if (usage !== null && JSON.stringify(usage) !== JSON.stringify(next)) invalid = true;

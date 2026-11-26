@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import {
   CanonicalProviderCatalogSchema,
@@ -169,9 +170,9 @@ function hasErrorCode(error: unknown, code: ProviderSettingsTransportErrorCode):
 }
 
 function createIdempotencyKey(): string {
-  const randomUUID = globalThis.crypto?.randomUUID;
-  if (typeof randomUUID !== "function") throw new ProviderSettingsTransportError("unavailable");
-  return randomUUID.call(globalThis.crypto);
+  // randomUUID falls back to getRandomValues over plain (tailnet) HTTP.
+  if (typeof globalThis.crypto?.getRandomValues !== "function") throw new ProviderSettingsTransportError("unavailable");
+  return randomUUID();
 }
 
 function isConnectionAttemptActive(

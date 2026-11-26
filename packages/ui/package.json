@@ -20,6 +20,7 @@
     "./terminal-agents": "./src/terminal-agents/index.ts",
     "./terminal-pane-tree": "./src/terminal-pane-tree/index.ts",
     "./terminal-status-sidebar": "./src/terminal-status-sidebar/index.ts",
+    "./herdr-sessions": "./src/herdr-sessions/index.ts",
     "./speech": "./src/speech/index.ts",
     "./styles.css": "./src/styles.css",
     "./chat-composer.css": "./src/chat/composer/chat-composer.css",
@@ -39,6 +40,7 @@
     "./ai-usage": "./src/ai-usage/AiUsagePanel.tsx",
     "./ai-usage.css": "./src/ai-usage/ai-usage.css",
     "./ai-usage-auto": "./src/ai-usage/AutomaticAiUsagePanel.tsx",
+    "./private-network": "./src/private-network/index.ts",
     "./select": "./src/Select.tsx",
     "./layering": "./src/layering.ts",
     "./ai-usage-select": "./src/ai-usage/UsageSelect.tsx",
@@ -46,7 +48,8 @@
     "./routine-destination": "./src/routine-destination/index.ts",
     "./routine-action": "./src/routine-action/index.ts",
     "./terminal-launch": "./src/terminal/agent-launch.ts",
-    "./routine-origin": "./src/chat/routine-origin.ts"
+    "./routine-origin": "./src/chat/routine-origin.ts",
+    "./random-uuid": "./src/random-uuid.ts"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.3.0",

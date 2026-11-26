@@ -8,6 +8,7 @@ import {
   enqueueExistingTerminalRef,
   enqueueExistingTerminalSession,
   hasQueuedExistingTerminalSession,
+  terminalRefDisplayName,
 } from "../../shell/src/lib/provider-terminal-session.js";
 
 const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
@@ -49,6 +50,26 @@ describe("provider terminal session handoff", () => {
     ])));
     await expect(drainExistingTerminalSessionQueue("window-a", { fetcher }))
       .resolves.toEqual([providerRef]);
+  });
+
+  it("opens a Herdr session by asking about its tab, since workspace lists never include Herdr", async () => {
+    // Found on a live VPS: Open on a Herdr attention alert showed the Terminal
+    // window but never selected the session (spec 2701).
+    const herdrRef = `tws_00000000000000000000006865726472:${OTHER_TAB_ID}`;
+    expect(enqueueExistingTerminalRef(herdrRef, "window-a")).toBe(true);
+    const fetcher = vi.fn(async (url: string) => (url.endsWith("/api/terminal/workspaces")
+      ? Response.json(workspaceResponse([tab(PROVIDER_TAB_ID, "main", "running")]))
+      : Response.json({ tab: { id: OTHER_TAB_ID, status: "running", name: "deploy agent" }, state: "live" })));
+    await expect(drainExistingTerminalSessionQueue("window-a", { fetcher: fetcher as never }))
+      .resolves.toEqual([herdrRef]);
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/terminal/workspaces/tws_00000000000000000000006865726472/tabs/${OTHER_TAB_ID}`),
+      expect.anything(),
+    );
+    expect(hasQueuedExistingTerminalSession("window-a")).toBe(false);
+    // The opened tab is titled with the session's name, not its raw reference.
+    expect(terminalRefDisplayName(herdrRef)).toBe("deploy agent");
+    expect(terminalRefDisplayName(providerRef)).toBeNull();
   });
 
   it("queues only opaque canonical session ids and targets the active terminal", () => {

@@ -13,6 +13,7 @@ import { startTerminalAgentSupervisor } from "./supervisor.js";
 import { createTerminalTemplates, type TerminalTemplates } from "./templates.js";
 import { createTerminalAgentVerbs, type TerminalAgentVerbs } from "./verbs.js";
 import { createTerminalWaiter, type TerminalWaiter } from "./wait.js";
+import { withHerdrTerminals, type HerdrTerminalSource } from "../herdr/verb-runtime.js";
 
 export interface TerminalAgentServices {
   inputActivity: TerminalInputActivity;
@@ -37,8 +38,12 @@ export function createTerminalAgentServices(options: {
   /** The terminal owner; the kernel acts as this owner and only when there is exactly one. */
   terminalOwnerIds: readonly string[];
   projectAdmission: TerminalWorkspaceProjectAdmission;
+  /** The owner's Herdr terminals (spec 2701): reachable by verbs, waits, events and attention, never by agents. */
+  herdr?: HerdrTerminalSource;
 }): TerminalAgentServices {
   const { runtime, homePath } = options;
+  // Verbs, waits and events see Herdr terminals; starting and supervising agents stays on Matrix tabs.
+  const pipelineRuntime = options.herdr ? withHerdrTerminals(runtime, options.herdr) : runtime;
   const owners = [...new Set(options.terminalOwnerIds.map((id) => id.trim()).filter(Boolean))];
   const ownerId = () => {
     if (owners.length !== 1) throw new TerminalAgentVerbError("not_found");
@@ -47,20 +52,20 @@ export function createTerminalAgentServices(options: {
   const admitWorkspace = async <T>(workspaceId: string, operation: () => Promise<T>): Promise<T> =>
     options.projectAdmission.withWorkspace(ownerId(), workspaceId, "run", operation);
   const inputActivity = createTerminalInputActivity();
-  const status = createTerminalAgentStatusSource({ runtime });
+  const status = createTerminalAgentStatusSource({ runtime: pipelineRuntime });
   const verbs = createTerminalAgentVerbs({
-    runtime,
+    runtime: pipelineRuntime,
     inputActivity,
     agentStatus: async (ref) => (await status.get(ref))?.status,
     onSent: (ref) => status.noteSent?.(ref),
   });
-  const waiter = createTerminalWaiter({ runtime, status });
+  const waiter = createTerminalWaiter({ runtime: pipelineRuntime, status });
   // When each tab was last opened, shared by every window and device (spec 2706).
   const seen = createTerminalSeenStore({ path: join(homePath, "system", "terminal-seen.json") });
   const seenLoaded = seen.load().catch((error: unknown) => {
     console.warn("[gateway] terminal seen load failed", error instanceof Error ? error.name : "unknown_error");
   });
-  const events = createTerminalEventHub({ runtime, status, seen });
+  const events = createTerminalEventHub({ runtime: pipelineRuntime, status, seen });
   const templates = createTerminalTemplates({ homePath });
   const agents = createTerminalAgents({
     runtime,
@@ -73,7 +78,7 @@ export function createTerminalAgentServices(options: {
   const supervisor = startTerminalAgentSupervisor({ agents });
   const kernelTools: TerminalAgentKernelTools = {
     async list() {
-      const [workspaces, statuses] = await Promise.all([runtime.listWorkspaces(), status.list()]);
+      const [workspaces, statuses] = await Promise.all([pipelineRuntime.listWorkspaces(), status.list()]);
       return workspaces.map((workspace) => ({
         workspaceId: workspace.id,
         ...(workspace.scope === "project" ? { projectId: workspace.projectId } : {}),

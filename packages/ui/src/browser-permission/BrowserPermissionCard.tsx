@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import { useBrowserPermissionReview, useBrowserPermissionGrants } from "./BrowserPermissionReview.js";
 import React, { useEffect, useRef, useState } from "react";
 import { createBrowserGrantUndoTracker, reconcileBrowserGrantObservation, browserPermissionChoices, browserPermissionOutcome, browserPermissionRequest, browserPermissionErrorKind,
@@ -78,7 +79,7 @@ export function BrowserPermissionCard({ approval, chatId, onDecision, client, su
       {grant?.state === "active" && !approval.browserGrant ? <span style={chatAgentMutedStyle}>Browser access is saved for this Chat</span> : null}
       {grant?.state === "active" && client ? <button type="button" className={chatAgentButtonClass} disabled={busy} onClick={() => void perform(async () => {
         const current = scope.current;
-        const attempt = undo.request(grant, () => `req_${crypto.randomUUID().replaceAll("-", "")}`);
+        const attempt = undo.request(grant, () => `req_${randomUUID().replaceAll("-", "")}`);
         let revoked: BrowserGrantView;
         try { revoked = await client.revokeGrant(grant, attempt.clientRequestId); }
         catch (failure: unknown) {

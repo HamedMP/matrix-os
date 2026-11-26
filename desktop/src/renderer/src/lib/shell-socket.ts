@@ -4,6 +4,7 @@
 // network or real clocks.
 
 import { normalizeTerminalSnapshot, TerminalScrollStateSchema, TerminalTabServerFrameSchema, type TerminalRef, type TerminalScrollState } from "@matrix-os/contracts";
+import { isHerdrTerminalRef } from "@matrix-os/contracts/herdr-terminals";
 import { parseTerminalRefKey } from "./terminal-workspaces";
 
 export const LIVE_TAIL_FROM_SEQ = 9_007_199_254_740_991;
@@ -31,7 +32,13 @@ export interface ShellSocketEvents {
    * `written`, when a source passes it, must be called once the output has
    * been drawn (or dropped), so the source can let more through.
    */
-  onOutput(data: string, seq: number, written?: () => void): void;
+  onOutput(data: string | Uint8Array, seq: number, written?: () => void): void;
+  /**
+   * The source is about to paint the whole terminal again (screen and
+   * history), as herdr-core does on every attach: whatever is shown must go,
+   * or the paint lands on top of it.
+   */
+  onRepaint?(): void;
   onCanonicalSize?(size: { cols: number; rows: number }): void;
   onNativeScroll?(state: TerminalScrollState | null): void;
   onNativeScrollSupported?(supported: boolean): void;
@@ -327,7 +334,9 @@ export class ShellSocket {
     const size = this.lastKnownDims;
     const sizingSuffix = size ? `&cols=${size.cols}&rows=${size.rows}` : "";
     const leaseSuffix = `&lease=${this.requestedOwnership}`;
-    return `${base}/ws/terminal/tab?workspaceId=${encodeURIComponent(this.terminalRef.workspaceId)}&tabId=${encodeURIComponent(this.terminalRef.tabId)}&client=electron&fromSeq=${fromSeq}${chatSuffix}${runtimeSuffix}${sizingSuffix}${leaseSuffix}&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`;
+    // Herdr terminals (spec 2701) attach through their own socket with the same frames.
+    const path = isHerdrTerminalRef(this.terminalRef) ? "/ws/terminal/herdr" : "/ws/terminal/tab";
+    return `${base}${path}?workspaceId=${encodeURIComponent(this.terminalRef.workspaceId)}&tabId=${encodeURIComponent(this.terminalRef.tabId)}&client=electron&fromSeq=${fromSeq}${chatSuffix}${runtimeSuffix}${sizingSuffix}${leaseSuffix}&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`;
   }
 
   private scheduleReconnect(): void {

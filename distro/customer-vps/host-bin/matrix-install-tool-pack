@@ -48,6 +48,8 @@ resolve_runtime_user() {
 }
 
 resolve_runtime_user
+# The owner's group need not share the account name (self-host: alice in staff).
+MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$(id -gn "$MATRIX_RUNTIME_USER" 2>/dev/null || true)}"
 
 usage() {
   cat >&2 <<'EOF'
@@ -85,7 +87,7 @@ run_as_matrix() {
   # setpriv avoids PAM account checks: sudo fails outright when the invoking
   # or target account has an expired password (Hetzner expires root's).
   if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
-    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups env \
+    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_GROUP" --init-groups env \
       HOME="$MATRIX_RUNTIME_HOME" \
       XDG_CONFIG_HOME="$MATRIX_RUNTIME_HOME/.config" \
       XDG_DATA_HOME="$MATRIX_RUNTIME_HOME/.local/share" \
@@ -303,7 +305,7 @@ install_linux_tools() {
   fi
   if [ "$(id -u)" = "0" ]; then
     if command -v setpriv >/dev/null 2>&1; then
-      setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups \
+      setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_GROUP" --init-groups \
         env HOME="$MATRIX_RUNTIME_HOME" /opt/matrix/bin/matrix-install-linux-tools
     else
       sudo -H -u "$MATRIX_RUNTIME_USER" /opt/matrix/bin/matrix-install-linux-tools

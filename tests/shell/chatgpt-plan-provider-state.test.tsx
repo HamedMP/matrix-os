@@ -7,11 +7,17 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); localStorage.clear(); });
 it("Web preserves a stale saved Chat binding until explicit selection of the current account", async () => {
  const catalog = ordinaryPlanCatalog(), old = planBinding.map(option => option.id === "accountId" ? { ...option, value: "old-account" } : option);
  vi.stubGlobal("fetch", vi.fn(async () => Response.json(catalog)));
- const hook = renderHook(() => useChatProviderState({ instanceId: planId, model: "gpt-owner", options: old }, planId));
+ const hook = renderHook(({ bound }: { bound: boolean }) => useChatProviderState(
+   bound ? { instanceId: planId, model: "gpt-owner", options: old } : undefined,
+   bound ? planId : undefined,
+ ), { initialProps: { bound: true } });
  await waitFor(() => expect(hook.result.current.loading).toBe(false));
  expect(hook.result.current.selected).toBeNull();
  expect(hook.result.current.displaySelection).toEqual({ instanceId: planId, modelId: "gpt-owner" });
  act(() => hook.result.current.select(hook.result.current.choices.find(choice => choice.instanceId === planId)!));
+ expect(hook.result.current.selected?.selectedOptions).toEqual(planBinding);
+ hook.rerender({ bound: false });
+ expect(hook.result.current.selected?.instanceId).toBe(planId);
  expect(hook.result.current.selected?.selectedOptions).toEqual(planBinding);
 });
 it("Web does not automatically select a personal plan when it is the sole executable source", async () => {

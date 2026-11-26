@@ -1,3 +1,5 @@
+import { formatAuthorizationHeader } from "@/lib/authorization";
+
 interface ResponseSchema<T> {
   parse(value: unknown): T;
 }
@@ -90,7 +92,7 @@ export async function fetchAuthenticatedResponse<T>(
   try {
     const response = await fetch(url, {
       method,
-      headers: { Authorization: `Bearer ${token}`, ...headers },
+      headers: { Authorization: formatAuthorizationHeader(token)!, ...headers },
       body,
       signal: combined?.signal ?? timeout.signal,
     });
