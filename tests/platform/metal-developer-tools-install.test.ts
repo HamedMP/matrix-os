@@ -82,12 +82,13 @@ describe('free metal developer tools on a clone', () => {
     const source = (await readFile('distro/customer-vps/host-bin/matrix-install-developer-tools', 'utf8'))
       .replaceAll('/opt/matrix', opt).replaceAll('/usr/local/bin', join(root, 'usr/local/bin'));
     await writeFile(join(opt, 'bin/matrix-install-developer-tools'), source, { mode: 0o755 });
-    // Records each requested tool and installs a CLI at the required version.
+    // Records each requested tool and installs a CLI at the installer's own pinned version.
+    const pin = (name: string) => source.match(new RegExp(`^${name}="([^"]+)"$`, 'm'))![1];
     await writeFile(join(opt, 'bin/matrix-install-tool-pack'), `#!/bin/sh
 printf '%s\\n' "$1" >> "${root}/installed-calls"
 case "$1" in
-  codex) printf '#!/bin/sh\\nprintf "codex-cli 0.162.1\\\\n"\\n' > "${prefix}/bin/codex"; chmod +x "${prefix}/bin/codex" ;;
-  claude-code) printf '#!/bin/sh\\nprintf "2.1.280\\\\n"\\n' > "${prefix}/bin/claude"; chmod +x "${prefix}/bin/claude" ;;
+  codex) printf '#!/bin/sh\\nprintf "codex-cli ${pin('CODEX_VERSION')}\\\\n"\\n' > "${prefix}/bin/codex"; chmod +x "${prefix}/bin/codex" ;;
+  claude-code) printf '#!/bin/sh\\nprintf "${pin('CLAUDE_CODE_VERSION')}\\\\n"\\n' > "${prefix}/bin/claude"; chmod +x "${prefix}/bin/claude" ;;
   *) printf '#!/bin/sh\\n' > "${prefix}/bin/$1"; chmod +x "${prefix}/bin/$1" ;;
 esac
 `, { mode: 0o755 });
