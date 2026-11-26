@@ -114,6 +114,8 @@ export type ZellijObserverEvent =
 export interface ZellijObserverCloseOptions {
   /** Cancel screen dumps while still delivering pane-close events already received. */
   discardPendingSnapshots?: boolean;
+  /** Give this held command pane's latest pending update a bounded final capture. */
+  finalPaneId?: string;
 }
 export interface ZellijObserver {
   readonly closed?: boolean;
@@ -991,7 +993,7 @@ export class TerminalRuntime {
       if (this.attachments.has(key)) await this.handleAttachmentExit(key, exitCode);
       else await this.store.markTabExited(ref, exitCode);
       // As on pane close: a workspace with no live tab left releases its observer slot.
-      await this.restartObserver(ref.workspaceId);
+      await this.restartObserver(ref.workspaceId, { discardPendingSnapshots: true, finalPaneId: expected.paneId });
       return true;
     });
   }
@@ -1065,8 +1067,11 @@ export class TerminalRuntime {
     }
   }
 
-  private async restartObserver(workspaceId: string): Promise<void> {
-    const operation = this.observerChain.then(async () => { await this.replaceObserver(workspaceId); });
+  private async restartObserver(
+    workspaceId: string,
+    closeOptions: ZellijObserverCloseOptions = DISCARD_OBSERVER_SNAPSHOTS,
+  ): Promise<void> {
+    const operation = this.observerChain.then(async () => { await this.replaceObserver(workspaceId, closeOptions); });
     this.observerChain = operation.catch((error: unknown) => {
       console.error(
         "[terminal-runtime] failed to restart workspace observer",
@@ -1076,7 +1081,7 @@ export class TerminalRuntime {
     await operation;
   }
 
-  private async replaceObserver(workspaceId: string): Promise<void> {
+  private async replaceObserver(workspaceId: string, closeOptions: ZellijObserverCloseOptions): Promise<void> {
     let existing = this.observers.get(workspaceId);
     const workspace = await this.requireRuntimeWorkspace(workspaceId);
     const paneRefs = new Map<string, TerminalRef>();
@@ -1087,14 +1092,14 @@ export class TerminalRuntime {
     }
     if (paneRefs.size === 0) {
       if (existing) {
-        await existing.close(DISCARD_OBSERVER_SNAPSHOTS);
+        await existing.close(closeOptions);
         if (this.observers.get(workspaceId) === existing) this.observers.delete(workspaceId);
       }
       return;
     }
     let closedForCapacity: ObserverState | undefined;
     if (existing && this.observerCount() >= this.maxObservers) {
-      await existing.close(DISCARD_OBSERVER_SNAPSHOTS);
+      await existing.close(closeOptions);
       if (this.observers.get(workspaceId) === existing) this.observers.delete(workspaceId);
       closedForCapacity = existing;
       existing = undefined;
@@ -1152,7 +1157,7 @@ export class TerminalRuntime {
     }
     if (existing) {
       try {
-        await existing.close(DISCARD_OBSERVER_SNAPSHOTS);
+        await existing.close(closeOptions);
       } catch (error) {
         try {
           await replacement.close(DISCARD_OBSERVER_SNAPSHOTS);
