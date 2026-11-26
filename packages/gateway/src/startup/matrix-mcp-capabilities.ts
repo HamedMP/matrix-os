@@ -3,6 +3,7 @@
  * One registry serves every harness, so Codex and OpenCode receive the same
  * run-scoped bearer Claude Code does.
  */
+import { isHerdrPreviewRuntime, privatePreviewHerdrOwner } from "../herdr/private-preview.js";
 import { createMatrixMcpCapabilityRegistry } from "../chat/matrix-mcp-launch.js";
 
 export function createGatewayMatrixMcpCapabilities(env: NodeJS.ProcessEnv) {
@@ -12,6 +13,7 @@ export function createGatewayMatrixMcpCapabilities(env: NodeJS.ProcessEnv) {
     configuredOwnerId: env.MATRIX_CLERK_USER_ID === env.MATRIX_USER_ID
       ? env.MATRIX_CLERK_USER_ID
       : undefined,
+    ...(isHerdrPreviewRuntime(env) ? { privatePreviewHerdrOwner: privatePreviewHerdrOwner(env) } : {}),
     previewRuntime: env.MATRIX_PREVIEW_RUNTIME === "true",
   });
   const issueCoreMcpRunCapability = (ownerId: string, runId: string, scope: "call" | "discovery") => {

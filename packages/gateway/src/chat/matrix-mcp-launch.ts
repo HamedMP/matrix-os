@@ -192,6 +192,7 @@ function permitted(method: string, path: string, scope: MatrixMcpRunScope, integ
 export function createMatrixMcpCapabilityRegistry(options: {
   configuredOwnerId?: string;
   previewRuntime?: boolean;
+  privatePreviewHerdrOwner?: string | null;
   now?: () => number;
 }): MatrixMcpCapabilityRegistry {
   const active = new Map<string, { actorId: string; runId: string; scope: MatrixMcpRunScope; driveContext?: boolean; integrationRead?: boolean; expiresAt: number;
@@ -260,7 +261,8 @@ export function createMatrixMcpCapabilityRegistry(options: {
         || (input.integrationRead === true && !["call", "discovery", "integration_read"].includes(input.scope))) return null;
       sweep();
       if (input.scope === "chat_herdr") {
-        if (options.previewRuntime || !input.fullAccess || input.driveContext || input.integrationRead
+        const preview = options.previewRuntime || options.privatePreviewHerdrOwner !== undefined;
+        if ((preview && options.privatePreviewHerdrOwner !== input.owner.ownerId) || !input.fullAccess || input.driveContext || input.integrationRead
           || input.owner.type !== "personal" || input.owner.ownerId !== options.configuredOwnerId
           || !SAFE_PRINCIPAL_USER_ID.test(input.owner.ownerId) || active.size >= MAX_ACTIVE) return null;
         const target = HerdrChatTargetSchema.safeParse(input.herdr);

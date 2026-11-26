@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { privatePreviewHerdrOwner } from '../../packages/gateway/src/herdr/private-preview.js';
 import {
   loadCustomerVpsCloudInitTemplate,
   renderCloudInitTemplate,
@@ -22,9 +23,9 @@ const bundleRef = {
   hostBundleUrl: 'https://app.matrix-os.com/system-bundles/v2026.09.28-pr1907-1-1-abcdef0/matrix-host-bundle.tar.gz',
 };
 
-function hostConfig(handle: string, provisioningClass?: 'customer' | 'preview' | 'private-preview') {
+function hostConfig(handle: string, provisioningClass?: 'customer' | 'preview' | 'private-preview', runtimeConfig = config) {
   return buildHostConfig(
-    config,
+    runtimeConfig,
     { clerkUserId: 'user_owner', handle, runtimeSlot: handle, developerTools: [], ...(provisioningClass ? { provisioningClass } : {}) },
     '00000000-0000-4000-8000-000000001907',
     'r'.repeat(64),
@@ -40,6 +41,23 @@ function envLines(rendered: string): string[] {
 
 describe('Private Preview host environment', () => {
   const origin = new URL(config.platformRegisterUrl).origin;
+
+  it('binds managed Herdr to the owner in production cloud-init only for the Private Preview class', async () => {
+    const template = await loadCustomerVpsCloudInitTemplate();
+    const managedConfig = { ...config, platformRegisterUrl: 'https://platform.example/vps/register' };
+    for (const provisioned of ['private-preview', 'preview', 'customer'] as const) {
+      // Use the same valid-looking handle for every class to prove it carries no authority by itself.
+      const rendered = renderCloudInitTemplate(template, hostConfig('pv-1907-3fa91c2e', provisioned, managedConfig));
+      const hostEnv: NodeJS.ProcessEnv = {};
+      const hostSection = rendered.split('  - path: /opt/matrix/env/host.env')[1]!.split('  - path:')[0]!;
+      for (const line of envLines(hostSection)) {
+        const entry = /^([A-Z0-9_]+)=(.*)$/.exec(line);
+        if (entry) hostEnv[entry[1]!] = entry[2];
+      }
+      hostEnv.MATRIX_USER_ID = hostEnv.MATRIX_CLERK_USER_ID; // matrix-gateway launcher projection
+      expect(privatePreviewHerdrOwner(hostEnv)).toBe(provisioned === 'private-preview' ? 'user_owner' : null);
+    }
+  });
 
   it.each([
     ['the built-in template', async () => DEFAULT_CLOUD_INIT_TEMPLATE],
