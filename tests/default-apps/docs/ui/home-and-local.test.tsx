@@ -169,6 +169,17 @@ describe("Docs documents from this computer", () => {
     await waitFor(async () => expect(await recentNames()).toEqual(["Budget notes.docx"]));
   });
 
+  it("opens a Word file dropped onto the page of an open document", async () => {
+    installBridge({ "Documents/plan.docx": await docxFromParagraphs(["Plan"]) }, { pending: "Documents/plan.docx" });
+    renderApp();
+    const surface = await findSurface();
+    expect(titleText()).toBe("plan.docx");
+    const file = await localFile("Dropped.docx", ["From the desktop"]);
+    fireEvent.dragEnter(surface, { dataTransfer: { types: ["Files"], files: [] } });
+    fireEvent.drop(surface, { dataTransfer: { types: ["Files"], files: [file] } });
+    await waitFor(() => expect(titleText()).toBe("Dropped.docx"));
+  });
+
   it("refuses a file that is not a Word document with a message", async () => {
     installBridge({});
     renderApp();

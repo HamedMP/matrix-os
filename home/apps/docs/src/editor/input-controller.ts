@@ -77,7 +77,8 @@ const FORMATS: Record<string, ToggleFormat> = {
 const SHORTCUT_FORMATS: Record<string, ToggleFormat> = { b: "bold", i: "italic", u: "underline" };
 
 const COMPOSITION_INPUTS: ReadonlySet<string> = new Set(["insertCompositionText", "deleteCompositionText", "insertFromComposition"]);
-const PASTE_INPUTS: ReadonlySet<string> = new Set(["insertFromPaste", "insertFromPasteAsQuotation", "insertFromDrop", "insertFromYank"]);
+// Drops are not pasted: text drops are cancelled at `drop`, and a file drop belongs to the app.
+const PASTE_INPUTS: ReadonlySet<string> = new Set(["insertFromPaste", "insertFromPasteAsQuotation", "insertFromYank"]);
 
 type TargetRange = { startContainer: Node; startOffset: number; endContainer: Node; endOffset: number; collapsed: boolean };
 
@@ -88,6 +89,11 @@ function targetSelection(event: InputEvent, target: InputTarget): EditorSelectio
   if (range === undefined || range.collapsed) return null;
   const selection = target.selectionOfRange(range);
   return selection === null || selection.collapsed ? null : selection;
+}
+
+function carriesFiles(event: DragEvent): boolean {
+  const types = event.dataTransfer?.types;
+  return types !== undefined && Array.from(types as ArrayLike<string>).includes("Files");
 }
 
 export class InputController {
@@ -113,7 +119,10 @@ export class InputController {
     on("cut", (event) => this.onCopy(event, true));
     // Dragging text would move document content behind the engine's back.
     on("dragstart", (event) => event.preventDefault());
-    on("drop", (event) => event.preventDefault());
+    // Files dragged in from outside the page go on to the app, which opens them.
+    on("drop", (event) => {
+      if (!carriesFiles(event)) event.preventDefault();
+    });
     on("click", (event) => this.onClick(event));
     on("mousedown", (event) => this.onMouseDown(event));
     on("focusin", () => this.target.focusChanged(true));

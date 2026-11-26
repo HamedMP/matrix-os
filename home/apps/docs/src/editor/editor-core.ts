@@ -188,7 +188,8 @@ export class EditorCore extends EditorBase implements DocumentEditorController, 
     // Whatever the browser wrote into the paragraph while composing is discarded.
     this.rebuild(selection);
     if (selection === null) return;
-    if (text === "" && selection.collapsed) this.place(selection.anchor, selection.focus);
+    // An empty result is a cancelled composition: the text it would have replaced stays as it was.
+    if (text === "") this.place(selection.anchor, selection.focus);
     else this.insertText(text, selection);
   }
 

@@ -106,6 +106,31 @@ describe("IME composition", () => {
     expect(domCaret(m)).toEqual(at(a!, 5));
   });
 
+  it("leaves selected text in place when a composition over it is cancelled", async () => {
+    const [a] = await open();
+    select(m, at(a!, 6), at(a!, 11));
+    composition("compositionstart", "");
+    browserWrites(a!, "x");
+    composition("compositionend", "");
+    expect(paragraph(m.doc, a!).text).toBe("Hello world");
+    expect(m.editor.getBlockElement(a!)!.textContent).toBe("Hello world");
+    expect(m.session.getState().dirty).toBe(false);
+    expect(m.editor.getSelection()).toMatchObject({ anchor: at(a!, 6), focus: at(a!, 11) });
+  });
+
+  it("leaves a word an IME took over in place when that composition is cancelled", async () => {
+    const [a] = await open();
+    caret(m, a!, 9);
+    composition("compositionstart", "");
+    const text = m.editor.getBlockElement(a!)!.querySelector("[data-s]")!.firstChild!;
+    beforeInput(m, "insertCompositionText", { data: "worlds", targetRange: { startContainer: text, startOffset: 6, endContainer: text, endOffset: 11 } });
+    text.nodeValue = "Hello worlds";
+    composition("compositionend", "");
+    expect(paragraph(m.doc, a!).text).toBe("Hello world");
+    expect(m.editor.getBlockElement(a!)!.textContent).toBe("Hello world");
+    expect(m.session.getState().dirty).toBe(false);
+  });
+
   it("holds back rendering of someone else's edit until the composition ends", async () => {
     const [a, b] = await open();
     caret(m, a!, 5);
@@ -220,6 +245,22 @@ describe("clipboard", () => {
       m.content.dispatchEvent(event);
       expect(event.defaultPrevented).toBe(true);
     }
+  });
+
+  it("lets a drop of files from outside the page through to the app, still blocking text drops", async () => {
+    await open();
+    const drop = (types: string[]): Event => {
+      const event = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: { types, getData: () => "" } });
+      m.content.dispatchEvent(event);
+      return event;
+    };
+    expect(drop(["Files"]).defaultPrevented).toBe(false);
+    expect(drop(["text/plain", "text/html"]).defaultPrevented).toBe(true);
+    // A file drop nothing else took never turns into pasted text (a file manager also sends its path).
+    caret(m, bodyParagraphs(m.doc)[0]!.id, 5);
+    expect(beforeInput(m, "insertFromDrop", { transfer: { "text/plain": "/home/owner/Budget.docx" } }).defaultPrevented).toBe(true);
+    expect(finalText(m)).toBe("Hello world\nSecond paragraph\n");
   });
 });
 
