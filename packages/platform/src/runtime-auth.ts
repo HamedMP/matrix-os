@@ -1,18 +1,12 @@
 import { createHmac } from 'node:crypto';
 import type { PlatformDB } from './db.js';
 import { buildOwnedMachineVerificationToken, buildPlatformVerificationToken, buildRuntimeAuthToken, timingSafeTokenEquals } from './platform-token.js';
-import type { RuntimeUpstream } from './substrates/types.js';
 
 type RuntimeAuthMachine = Parameters<typeof buildRuntimeAuthToken>[0];
 
 /** Proof of the verified user that the runtime gateway checks against its own bearer. */
 export function buildRuntimeUserProof(machine: RuntimeAuthMachine, userId: string, platformSecret: string): string {
   return createHmac('sha256', buildRuntimeAuthToken(machine, platformSecret)).update(userId).digest('hex');
-}
-
-/** Adds the substrate's platform-only headers. Callers strip client copies first. */
-export function applyRuntimeUpstreamHeaders(headers: Headers, upstream: RuntimeUpstream): void {
-  for (const [name, value] of Object.entries(upstream.headers ?? {})) headers.set(name, value);
 }
 
 export const OWNED_MAX_MACHINES_PER_HANDLE = 8;

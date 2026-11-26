@@ -85,3 +85,27 @@ it("reserves relay concurrency for other readers and releases it after completio
   fetcher.mockImplementation(async () => Response.json({ title: "Shared", messages: [{ role: "user", text: "Hello" }] }));
   expect((await app.request(path, {}, env("203.0.113.31"))).status).toBe(200);
 });
+
+it("fetches an owned machine's share through its tunnel with verified TLS, not the VPS pool", async () => {
+  const machine = { machineId: "m-owned", handle: "example", runtimeSlot: "owned-0123abcd", substrate: "owned",
+    status: "running", publicIPv4: null, runtimeTokenEpoch: 1 };
+  vi.mocked(getActiveUserMachineByHandle).mockResolvedValue(machine as never);
+  const fetcher = vi.fn().mockResolvedValue(Response.json({ title: "Shared", messages: [{ role: "user", text: "Hi" }] }));
+  vi.stubGlobal("fetch", fetcher);
+  const tunnelHost = "0123456789abcdef.tunnels.example.test";
+  const substrates = { resolveUpstream: () => ({ kind: "upstream", upstream: {
+    url: `https://${tunnelHost}/api/share/chats/${"a".repeat(64)}`, hostHeader: tunnelHost, tlsServerName: tunnelHost,
+    headers: { "cf-access-client-id": "id", "cf-access-client-secret": "secret" } } }) };
+  const vpsDispatcher = { pool: "customer-vps" };
+  const app = new Hono();
+  app.all("*", (c) => proxyChatShare(c, {} as never, vpsDispatcher as never, undefined, "",
+    { substrates: substrates as never, platformSecret: "s".repeat(32) }));
+  const response = await app.request("/shared/chat/example/owned-0123abcd/" + "a".repeat(64));
+  expect(response.status).toBe(200);
+  const init = fetcher.mock.calls[0]?.[1] as RequestInit & { dispatcher: unknown };
+  expect(init.dispatcher).toBeDefined();
+  expect(init.dispatcher).not.toBe(vpsDispatcher);
+  const headers = init.headers as Headers;
+  expect(headers.get("cf-access-client-id")).toBe("id");
+  expect(headers.get("x-matrix-upstream-host")).toBe(tunnelHost);
+});

@@ -1,11 +1,12 @@
 import { ShareSnapshotSchema, shareHtml } from "@matrix-os/contracts";
 import type { Context } from "hono";
-import type { Agent } from "undici";
+import type { Agent, Dispatcher } from "undici";
 import { getActiveUserMachineByHandle, type PlatformDB } from "./db.js";
 import { canRouteMachineOnPreviewHost } from "./customer-vps-preview.js";
 import { buildCustomerVpsProxyUrl, isCustomerVpsProxyMachineRoutable } from "./profile-routing.js";
 import { createBoundedRateLimiter, runtimeSelectionSourceKey } from "./request-admission.js";
 import { buildRuntimeAuthToken } from "./platform-token.js";
+import { applyUpstreamCredentials, dispatcherForUpstream } from "./substrates/upstream-transport.js";
 import type { SubstrateRegistry } from "./substrates/registry.js";
 
 const SHARE_ROUTE = /^\/shared\/chat\/([a-z0-9][a-z0-9-]{0,62})\/([A-Za-z0-9_-]{1,64})\/([a-f0-9]{64})$/;
@@ -46,14 +47,19 @@ export async function proxyChatShare(c: Context, db: PlatformDB, dispatcher: Age
     const sharePath = `/api/share/chats/${route.token}`;
     const headers: Record<string, string> = { accept: "application/json" };
     let url: string | null;
+    let requestHeaders: Record<string, string> | Headers = headers;
+    let upstreamDispatcher: Dispatcher = dispatcher;
     if (machine.substrate === "owned") {
       // Spec 2707: the snapshot comes through the tunnel; the platform still renders it.
       const resolution = owned?.substrates.resolveUpstream(machine, { path: sharePath });
       if (!owned || !resolution || resolution.kind !== "upstream") return c.text("This chat is unavailable right now", 503);
       url = resolution.upstream.url;
-      Object.assign(headers, resolution.upstream.headers, {
-        authorization: `Bearer ${buildRuntimeAuthToken(machine, owned.platformSecret)}`,
-      });
+      // Same transport as session routing: platform-only credentials and TLS verified under the tunnel name.
+      const ownedHeaders = new Headers(headers);
+      applyUpstreamCredentials(ownedHeaders, resolution.upstream);
+      ownedHeaders.set("authorization", `Bearer ${buildRuntimeAuthToken(machine, owned.platformSecret)}`);
+      requestHeaders = ownedHeaders;
+      upstreamDispatcher = dispatcherForUpstream(resolution.upstream, dispatcher);
     } else {
       if (!isCustomerVpsProxyMachineRoutable(machine)) return c.text("Shared Chat unavailable", 404);
       // Address comes from the operator-controlled machine registry, never a request URL.
@@ -61,8 +67,9 @@ export async function proxyChatShare(c: Context, db: PlatformDB, dispatcher: Age
     }
     if (!url) return c.text("Shared Chat unavailable", 404);
     const response = await fetch(url, {
-      method: "GET", headers, redirect: "error", signal: AbortSignal.timeout(10_000), dispatcher,
-    } as RequestInit & { dispatcher: Agent });
+      method: "GET", headers: requestHeaders, redirect: "error", signal: AbortSignal.timeout(10_000),
+      dispatcher: upstreamDispatcher,
+    } as RequestInit & { dispatcher: Dispatcher });
     if (!response.ok || !response.body) {
       await response.body?.cancel();
       return c.text("Shared Chat unavailable", response.status === 404 ? 404 : 503);
