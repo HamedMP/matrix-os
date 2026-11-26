@@ -3,7 +3,7 @@ import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack"
 import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
 import { createPreviewWindowReopener } from "./preview-pair-window";
 import { initializeDesktopPreview } from "./preview-pair-startup";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, MessageChannelMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, MessageChannelMain, Notification, powerMonitor, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
 import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { createFileDownloadService } from "./files/file-download-service";
@@ -18,7 +18,7 @@ import { createPlanDiagnosticStore, planDiagnosticDirectory } from "./chatgpt-pl
 import { createNavigationCache } from "./persistence/navigation-cache";
 import { registerNavigationCacheIpc } from "./ipc/navigation-cache";
 import { registerChatgptPlanIpc } from "./ipc/chatgpt-plan";
-import { AuthService } from "./auth/auth-service";
+import { AuthService, type AuthStatus } from "./auth/auth-service";
 import { createAnalyticsBeforeQuit } from "./analytics-quit";
 import { readDesktopBuildSource } from "./build-source";
 import { createGitReader, resolveDesktopDevRunSummary } from "./dev-run-label";
@@ -76,6 +76,7 @@ import { createChatElectronPreviewTransport } from "./chat-electron-preview/tran
 import { registerChatMacTerminal } from "./chat-mac-terminal/register";
 import { createDesktopPairing } from "./desktop-pairing";
 import { createMacActivity } from "./mac-activity/activity";
+import { showMacActivityDialog } from "./mac-activity/dialog";
 import { createMacActivityQuit } from "./mac-activity/quit";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
@@ -108,6 +109,7 @@ import { createTerminalBrowserWindow } from "./terminal-window/window";
 import { createComputerCredentialBroker } from "./terminal-window/credential-broker";
 import { installTerminalWindowAuth } from "./terminal-window/gateway-auth";
 import { createLocalTerminalHost, type LocalTerminalHost } from "./local-terminals/host";
+import { startDesktopLink, type DesktopLinkService } from "./desktop-link/register";
 import { registerLocalTerminalIpc } from "./local-terminals/ipc";
 import { createLocalTerminalStreams, liveContents, type LocalTerminalStreams } from "./local-terminals/streams";
 import { localLoginShell, resolveLocalTerminalRuntime, startLocalTerminalCore } from "./local-terminals/runtime";
@@ -160,6 +162,9 @@ let computerCredentials: { clear(): void } | null = null;
 let localTerminals: LocalTerminalHost | null = null;
 let shortcutWiring: Awaited<ReturnType<typeof installShortcuts>> | null = null;
 let localTerminalStreams: LocalTerminalStreams | null = null;
+let desktopLink: DesktopLinkService | null = null;
+/** What the desktop link calls the computer this device paired with (spec 2716). */
+const pairedComputerName = (status: AuthStatus): string => (status.signedIn && status.handle ? status.handle : "Matrix computer");
 let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
@@ -417,6 +422,7 @@ if (!gotLock) {
           fileDownloads?.cancelAll();
           organizationDriveTransfers?.cancelAll();
           localChatImports?.cancelAll();localUsage?.cancel();
+          desktopLink?.authChanged(status.signedIn ? { signedIn: true, userId: status.userId, handle: status.handle } : { signedIn: false });
           sendEvent("auth:changed", {
             signedIn: status.signedIn,
             ...(status.signedIn ? {
@@ -428,9 +434,8 @@ if (!gotLock) {
         },
       });
       await auth.init();
-      const desktopPairing = process.platform === "darwin"
-        ? createDesktopPairing({ auth, safeStorage, userData, window: () => mainWindow })
-        : null;
+      // 2698 pairing on every platform; it is also the desktop link's identity and switch (spec 2716).
+      const desktopPairing = createDesktopPairing({ auth, safeStorage, userData, window: () => mainWindow, onPaired: () => void desktopLink?.enable("primary", pairedComputerName(auth.getStatus())).catch((error: unknown) => logMainError("desktop link did not start", error)), onDisconnecting: () => void desktopLink?.disable("primary").catch((error: unknown) => logMainError("desktop link did not stop", error)) });
       cancelDesktopPairing = desktopPairing?.cancel;
       disposeDesktopPairing = desktopPairing?.dispose;
       navigationCache = createNavigationCache({ dir: userData, getStatus: () => auth.getStatus() });
@@ -746,7 +751,7 @@ if (!gotLock) {
         window: () => mainWindow ?? terminalWindowController.current(),
         getScope: getMacActivityScope,
         async stop() {
-          await Promise.all([chatElectronPreview.cancel("stopped"), macTerminalChecks.stopAll()]);
+          await Promise.all([chatElectronPreview.cancel("stopped"), macTerminalChecks.stopAll(), desktopLink?.disable("primary")]);
         },
       }) : null;
       refreshMacActivity = () => {
@@ -786,6 +791,8 @@ if (!gotLock) {
       }, { ...streams.sink, facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }) });
       streams.bind(localTerminalHost);
       localTerminals = localTerminalHost;
+      desktopLink = startDesktopLink({ userData, home: homedir(), appVersion: app.getVersion(), localTerminals: localTerminalHost, pairing: desktopPairing, showDialog: (request) => showMacActivityDialog(mainWindow, request), ...(macActivity ? { activity: (kind) => macActivity.begin(kind) } : {}), computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, quitting: (listener) => app.once("before-quit", listener) });
+      { const restored = auth.getStatus(); desktopLink.seedAccount(restored.signedIn ? { signedIn: true, userId: restored.userId, handle: restored.handle } : { signedIn: false }); }
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender, streams);
       const macTerminalChecks = registerChatMacTerminal(ipcMain, {
         auth,
