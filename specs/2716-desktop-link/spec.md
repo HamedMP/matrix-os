@@ -110,11 +110,20 @@ Desktop Link Full Access** on every platform; Full Access is read fresh on every
 check, so revoking takes effect on the next action.
 
 - The approval names the computer and the request ("matrix-demo wants to run a
-  command on this Mac") and shows the whole command: control, zero-width and
-  direction characters become spaces and whitespace runs collapse; a command
-  longer than 500 characters is refused, never shortened. One approval is on screen at a time; at most four wait; more are
+  command on this Mac") and shows the whole command and the folder it starts in:
+  argv quoted part by part, a shell line as written, and every character that
+  would not show as itself (newlines, escapes, zero-width, direction marks, tags,
+  separators other than a space) written out as `⟨U+XXXX⟩`. A command or folder
+  longer than 500 characters once shown is refused, never shortened, and so is a
+  start whose `argv[0]` names a herdr-core template (the core would run the
+  template's command, not the one shown) or one made while the core cannot say.
+  A terminal approval names its title and folder from the core's own record, not
+  from the computer. The computer's name is shown the same way (≤ 64 characters).
+  One approval is on screen at a time; at most four wait; more are
   refused at once. Approved terminals are remembered for the pairing revision
-  (≤ 256, oldest forgotten first); Stop, disconnect, sign-out, an account or
+  (≤ 256, oldest forgotten first) as one terminal instance, address and start
+  time, so an address the core gives a later terminal (after the core restarts)
+  is asked about again; Stop, disconnect, sign-out, an account or
   computer switch, and re-pairing forget them and close any approval on screen.
 - Deadlines nest: approval 60 s, the computer's core call or screenshot 75 s,
   clients that may trigger an approval (shell, Electron, `matrix shell machine`)
@@ -340,30 +349,48 @@ it, for VPS and owned computers alike.
 
 ### desktop-side guard (`desktop/src/main/desktop-link/guard.ts`)
 
-The desktop never trusts the computer beyond "may run terminals". Each core
-stream gets a fresh guard. herdr-core starts unframed: the client's first
-message is one newline-terminated JSON-RPC `hello`. The guard therefore reads
-that line first (at most 64 KiB, must be `{"method":"hello"}` with
-`framed: true`, nothing else is forwarded until it is), passes it to the core,
-and only then switches to `HcFrameDecoder` for the framed bytes that follow. On
-channel 0 it parses JSON-RPC and forwards only:
+The desktop never trusts the computer beyond "may run terminals", and the guard
+denies by default. Each core stream gets a fresh guard. herdr-core starts
+unframed: the client's first message is one newline-terminated JSON-RPC `hello`.
+The guard reads that line first (at most 64 KiB, only `framed`, `generation` and
+`features`, `framed: true`), sends the core a rebuilt copy, and only then
+switches to `HcFrameDecoder` for the framed bytes that follow. On channel 0 it
+accepts exactly the four calls the computer's Herdr session host makes
+(`HERDR_SESSION_METHODS`, `DESKTOP_LINK_METHODS` in contracts), each through a
+strict schema that lists every allowed parameter:
 
-| Allowed method | Extra checks |
+| Method | Allowed parameters |
 | --- | --- |
-| `hello` | only as the stream's first, unframed line, `framed: true` |
-| `terminal.list`, `terminal.get`, `terminal.read`, `terminal.wait`, `events.subscribe` | no `on`; no `terminal` address containing `/` |
-| `terminal.run` | no `on`; `cwd` resolves (realpath) inside the macOS user's home; no `env` beyond an allowlist (`TERM`, `COLORTERM`, `LANG`, `LC_*`); `argv` ≤ 64 entries, each ≤ 4 KiB; label `matrix.from` forced to the paired computer name |
-| `terminal.attach`, `terminal.send`, `terminal.keys`, `terminal.interrupt`, `terminal.kill`, `terminal.rm`, `terminal.label` | no `/` in the address; `terminal.label` may not change `matrix.from` |
-| `terminal.put`, `terminal.put_begin/_chunk/_finish/_abort` | file ≤ 16 MiB, name per herdr-core rules (pasted images) |
+| `terminal.list` | none |
+| `terminal.run` | `argv` (1-64 entries, each ≤ 4 KiB) or `line` (≤ 16 KiB), never both; `cwd`, which must resolve (realpath) inside the user's home; `name`; `size`; `env` from `TERM`, `COLORTERM`, `LANG`, `LC_*`; `no_parent: true`, `no_notify: true`, `wait: false` |
+| `terminal.attach` | `terminal` (a local address `tN`), `cols`, `rows`, `history`, `observe` |
+| `terminal.kill` | `terminal` (a local address `tN`) |
 
-Everything else is refused with a JSON-RPC `denied` error, without reaching the
-core: `machine.*` (including `machine.exec`), `file.*`, `doc.*`, `server.*`,
-unknown methods, a framed `hello` (a stream handshakes once), oversized requests (channel 0 payload
-> 256 KiB), or malformed JSON (which closes the link). Stream frames on other
-channels pass through; the core already rejects channels it did not open.
-Calls the desktop core makes back to the computer (a child reporting to a parent on
-the computer) pass the other way unchanged; the computer's core rules already
-limit them.
+A call with any other method, any other parameter (top level or nested), an
+address on another machine (`vps/t1`) or a name instead of an address is
+answered `denied` and never reaches the core: `machine.*`, `file.*`, `doc.*`,
+`server.*`, `templates.*`, `events.subscribe`, `terminal.get/read/wait/send/keys/
+interrupt/rm/label/put*`, a framed `hello`. Notifications are dropped. A call
+that reaches the core is rebuilt from what the schema parsed, nothing is spread
+from the request, and goes under a call id the guard owns (the computer's id
+goes back on the answer). A start is fixed as `keep: false`, `no_parent: true`,
+`no_notify: true`, `wait: false`, labelled `matrix.from` with the paired
+computer's name: it never becomes a shell when its program ends, and never
+reports into another terminal. At most 256 calls wait for the core per stream.
+Oversized requests (channel 0 payload > 256 KiB) or malformed JSON close the
+stream. Stream frames on other channels pass through; the core rejects channels
+it did not open.
+
+Answers are rebuilt too. The core's handshake offers only the four methods and
+drops the core's id, name and login details. A listing carries each local
+terminal's address, state, title and status, never its program, arguments,
+folder or screen, and leaves out terminals on machines the core reaches. A start
+answers with the address and state, an attach with its channel, a failure with
+its kind only. Anything else the core sends on channel 0 stays on the desktop.
+
+Before an attach or kill of a terminal it does not already cover, and before a
+start with `argv`, the guard asks the core itself (`terminal.list`,
+`templates.list`) under its own ids; those answers never reach the computer.
 
 The guard runs in Electron main, next to the core's socket, so a compromised
 or buggy gateway still cannot reach the desktop's ssh machines, files or settings
@@ -678,12 +705,10 @@ check. Follow-up stack (not ENG-574): retire 2698's terminal-check paths and
    *Rejected alternative:* only terminals the computer started (`matrix.from`
    filter in the guard). It hides local agents from the computer's agents and
    breaks parity. Left open for Nima's review comment; switching is a guard
-   filter, not a protocol change. *Exposure (review):* listing (`terminal.list`,
-   `terminal.get`, `events.subscribe`) needs no approval and returns what the core
-   reports, which can include a terminal's program, arguments and folder, not
-   only its title and status. Arguments can hold secrets. Reading the screen,
-   typing and ending still need approval. Filtering these answers down to
-   address, title and status is a follow-up.
+   filter, not a protocol change. *Exposure (review):* listing needs no approval. The
+   guard reduces it to each terminal's address, state, title and status; a title
+   is the program's own and can say anything the program sets. Reading the
+   screen, typing and ending need approval.
 3. **Full shell access.** A terminal on the desktop is the signed-in user's shell. A
    compromised computer gateway can run anything the user can. Mitigations:
    pairing (2698) is the opt-in, the owner approves each start, screenshot and
@@ -693,6 +718,11 @@ check. Follow-up stack (not ENG-574): retire 2698's terminal-check paths and
    process on the computer holding the owner's local terminal token (its agents,
    scripts and dev servers run as the same user) can start programs on the
    desktop without a prompt. The pairing dialog says so before the owner allows it.
+   *An approved program reaches the core (review):* a program the owner approved
+   runs as the desktop user, so it can open the desktop core's socket directly,
+   outside the guard, and do anything the core allows (other terminals, added
+   machines). The guard bounds what the computer asks for, not what an approved
+   program does: approving a start is approving that program.
    *Folder checks race (review):* the guard resolves symlinks before the core
    changes into the folder; a process already on the desktop could swap a link
    in between. It already runs as the same user, so this adds nothing it could
