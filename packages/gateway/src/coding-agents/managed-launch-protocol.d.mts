@@ -6,7 +6,7 @@ export type ManagedShimFrame = { type: "wrapper.end"; wrapper: string; shim: str
   | ({ type: "shim.bound" } & ManagedTuple) | ({ type: "shim.call"; callId: string; actionId: string; intent: { args: string[]; stdin?: string } } & ManagedTuple)
   | { type: "shim.cancel"; admissionId: string; actionId: string } | { type: "shim.accepted"; admissionId: string } | { type: "shim.end"; admissionId: string };
 export type ManagedHostFrame = { type: "host.ready"; wrapper: string; shim: string; digest: string }
-  | { type: "host.turn"; admissionId: string; first: boolean; clientRequestId?: string; turn?: { prompt: string; model?: string; modelOptions: Array<{id:string;value:string|boolean}>; browser?: unknown } }
+  | { type: "host.turn"; admissionId: string; first: boolean; clientRequestId?: string; turn?: { prompt: string; model?: string; modelOptions: Array<{id:string;value:string|boolean}>; browser?: unknown; matrixMcp?: import("../chat/codex-mcp-run-scope.js").CodexTerminalMcpLease | null } }
   | { type: "host.owner_wait"; admissionId: string; actionId: string; waiting: boolean }
   | { type: "host.result"; admissionId: string; actionId: string; result: string } | { type: "host.cancel"; admissionId: string } | { type: "host.disconnect" };
 export const ManagedHostFrameSchema: z.ZodType<ManagedHostFrame>;

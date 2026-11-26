@@ -68,6 +68,7 @@ export interface AgentLaunchInput {
   providerThreadId?: string;
   /** Credential-free bootstrap nonce, supplied only by internal Chat admission. */
   codexBrowserAttemptId?: string;
+  codexMatrixMcpAttemptId?: string;
   /** Internal enablement only; no source authority or proof is serialized. */
   codexRoutinePrivate?: true;
   codexExecutable?: string;
@@ -124,6 +125,7 @@ const CodexAppServerConfigSchema = z.object({
   prompt: z.string().trim().min(1).max(64 * 1024),
   providerThreadId: z.string().trim().min(1).max(512).optional(),
   browserAttemptId: z.uuid().optional(),
+  matrixMcpAttemptId: z.uuid().optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
@@ -461,6 +463,7 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
     prompt: codexPrompt(input.prompt, input.mode),
     ...(input.providerThreadId ? { providerThreadId: input.providerThreadId } : {}),
     ...(input.codexBrowserAttemptId ? { browserAttemptId: input.codexBrowserAttemptId } : {}),
+    ...(input.codexMatrixMcpAttemptId ? { matrixMcpAttemptId: input.codexMatrixMcpAttemptId } : {}),
     approvalPolicy: input.approvalPolicy === "on-failure"
       ? "on-request"
       : input.approvalPolicy ?? "never",

@@ -1,3 +1,4 @@
+import { CodexTerminalMcpLeaseSchema, CodexTerminalMcpBindSchema, CodexTerminalMcpStartSchema } from "./codex-terminal-mcp.mjs";
 import { CodexBrowserLeaseSchema, CodexBrowserBindSchema, CodexBrowserStartSchema } from "./codex-browser-bootstrap.mjs";
 import { recordChatSendStage, startChatSendStage, timeChatSendStage } from "../chat/send-timing.js";
 import { lstat } from "node:fs/promises";
@@ -48,6 +49,7 @@ const TurnFrameSchema = z.object({
   model: ProviderModelReferenceSchema.optional(),
   modelOptions: z.array(AgentModelOptionSchema).max(32),
   browser: CodexBrowserLeaseSchema.nullable().optional(),
+  matrixMcp: CodexTerminalMcpLeaseSchema.nullable().optional(),
   clientRequestId: RequestIdSchema,
 }).strict();
 const InterruptFrameSchema = z.object({
@@ -64,6 +66,7 @@ const ControlFrameSchema = z.discriminatedUnion("type", [
   CodexHibernateControlSchema,
   CodexBrowserBindSchema,
   CodexBrowserStartSchema,
+  CodexTerminalMcpBindSchema, CodexTerminalMcpStartSchema,
   TurnFrameSchema,
   SteerFrameSchema,
   InterruptFrameSchema,
@@ -87,6 +90,7 @@ const MAX_RESPONSE_BYTES = 4 * 1024;
 
 export interface CodexControlClient {
   isExecutionIdle?(input: Pick<ProviderIdleObservation, "sessionId" | "providerThreadId" | "requestId">): Promise<boolean>;
+  prepareMatrixMcp?(input: { sessionId: string; matrixMcp: z.infer<typeof CodexTerminalMcpLeaseSchema>; signal: AbortSignal }): Promise<void>;
   prepareBrowser?(input: { sessionId: string; browser: z.infer<typeof CodexBrowserLeaseSchema>; signal: AbortSignal }): Promise<void>;
   deferInput(input: { sessionId: string; inputRequestId: string; clientRequestId: string }): Promise<void>;
   hibernate?(input: { sessionId: string; providerThreadId: string; clientRequestId: string }): Promise<void>;
@@ -97,6 +101,7 @@ export interface CodexControlClient {
     model?: string;
     modelOptions: z.infer<typeof AgentModelOptionSchema>[];
     browser?: z.infer<typeof CodexBrowserLeaseSchema> | null;
+    matrixMcp?: z.infer<typeof CodexTerminalMcpLeaseSchema> | null;
   }): Promise<void>;
   interruptTurn(input: {
     sessionId: string;
@@ -141,6 +146,7 @@ export function createCodexControlClient(options: {
     sessionId: string,
     input: z.input<typeof ControlFrameSchema>,
     operationTimeoutMs = timeoutMs,
+    parentSignal?: AbortSignal,
   ): Promise<void> {
     const frame = ControlFrameSchema.parse(input);
     const path = codexProviderControlPath(homePath, sessionId);
@@ -153,7 +159,7 @@ export function createCodexControlClient(options: {
       if (Buffer.byteLength(line, "utf8") > MAX_CONTROL_FRAME_BYTES) {
         throw new Error("control_frame_limit");
       }
-      const signal = AbortSignal.timeout(operationTimeoutMs);
+      const signal = AbortSignal.any([AbortSignal.timeout(operationTimeoutMs),...(parentSignal?[parentSignal]:[])]);
       const response = await new Promise<z.infer<typeof ControlResponseSchema>>((resolve, reject) => {
         const socket = createConnection({ path });
         let responseText = "";
@@ -171,7 +177,7 @@ export function createCodexControlClient(options: {
         socket.setEncoding("utf8");
         socket.setTimeout(operationTimeoutMs, fail);
         socket.once("error", fail);
-        socket.once("connect", () => { sent = true; socket.end(line); });
+        socket.once("connect", () => { if(settled||signal.aborted){fail();return;}sent = true; socket.end(line); });
         socket.on("data", (chunk) => {
           responseText += chunk;
           if (Buffer.byteLength(responseText, "utf8") > MAX_RESPONSE_BYTES) fail();
@@ -190,6 +196,7 @@ export function createCodexControlClient(options: {
         socket.once("close", () => {
           if (!settled) fail();
         });
+        if(signal.aborted)fail();
       });
       if (!response.ok) { rejected = true; throw new Error("control_rejected"); }
     } catch (_error) {
@@ -209,6 +216,24 @@ export function createCodexControlClient(options: {
         if (!(error instanceof Error) || !["CodexControlUnavailableError", "CodexControlTransportError", "CodexControlRejectedError"].includes(error.name)) throw error;
         return false;
       }
+    },
+    async prepareMatrixMcp(input) {
+      const lease = CodexTerminalMcpLeaseSchema.parse(input.matrixMcp);
+      const deadline = Date.now() + 5_000;
+      for (;;) {
+        input.signal.throwIfAborted();
+        try {
+          await send(input.sessionId, { type: "matrix_mcp_bind", ...lease,
+            clientRequestId: `req_mcp_bind_${lease.attemptId}` }, 30_000,input.signal);
+          break;
+        } catch (error: unknown) {
+          if (!(error instanceof Error && error.name === "CodexControlUnavailableError") || Date.now() >= deadline) throw error;
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+      }
+      input.signal.throwIfAborted();
+      await send(input.sessionId, { type: "matrix_mcp_start", attemptId: lease.attemptId,
+        clientRequestId: `req_mcp_start_${lease.attemptId}` },timeoutMs,input.signal);
     },
     async prepareBrowser(input) {
       const browser = CodexBrowserLeaseSchema.parse(input.browser);
@@ -240,6 +265,7 @@ export function createCodexControlClient(options: {
         ...(input.model ? { model: input.model } : {}),
         modelOptions: input.modelOptions,
         ...(input.browser !== undefined ? { browser: input.browser } : {}),
+        ...(input.matrixMcp !== undefined ? { matrixMcp: input.matrixMcp } : {}),
         clientRequestId: `req_${input.turnId.slice("turn_".length)}`,
       });
     },

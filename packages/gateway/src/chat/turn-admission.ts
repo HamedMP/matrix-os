@@ -1,3 +1,4 @@
+import { withOwnerHerdrAdmission } from "./codex-mcp-run-scope.js";
 import { ROUTINE_DIRECT_DISPATCH, type RoutineDirectDispatch } from "./routine-direct-admission.js";
 import { routineCreationContext } from "./routine-creation-policy.js";
 import { prepareChatSessionContext } from "./session-history.js";
@@ -49,6 +50,7 @@ export interface TurnAdmissionOptions {
 
 export interface CanonicalTurnProvenance {
   [ROUTINE_DIRECT_DISPATCH]?: RoutineDirectDispatch;
+  directOwnerTurn?: true;
   routineCreationProof?: string;
   previewTurnProof?: string;
   routineFullAccessProof?: string;
@@ -362,7 +364,7 @@ async function admitTimedTurn(
         const completion = deps.startDispatch(
           owner,
           admitted.message,
-          admitted.run,
+          withOwnerHerdrAdmission(admitted.run, admitted.message, owner, provenance?.directOwnerTurn),
           adapter,
           resolvedRoot,
           resumeState,

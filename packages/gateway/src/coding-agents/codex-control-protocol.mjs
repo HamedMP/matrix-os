@@ -1,3 +1,4 @@
+import { CodexTerminalMcpBindSchema, CodexTerminalMcpStartSchema } from "./codex-terminal-mcp.mjs";
 // Plain-Node control boundary. These frames authorize native control only; none establish routine source authority.
 import { z } from "zod/v4";
 import { PendingTurnSchema } from "./codex-runner-config.mjs";
@@ -44,6 +45,7 @@ export const CodexControlSchema = z.discriminatedUnion("type", [
   CodexHibernateControlSchema,
   CodexBrowserBindSchema,
   CodexBrowserStartSchema,
+  CodexTerminalMcpBindSchema, CodexTerminalMcpStartSchema,
   TurnControlSchema,
   SteerControlSchema,
   InterruptControlSchema,
