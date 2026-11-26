@@ -549,6 +549,9 @@ importers:
       '@xterm/addon-webgl':
         specifier: ^0.19.0
         version: 0.19.0
+      '@xterm/headless':
+        specifier: 6.0.0
+        version: 6.0.0
       '@xterm/xterm':
         specifier: ^6.0.0
         version: 6.0.0
@@ -585,6 +588,9 @@ importers:
       monaco-editor:
         specifier: ^0.56.0
         version: 0.56.0
+      node-pty:
+        specifier: ^1.1.0
+        version: 1.1.0
       pdfjs-dist:
         specifier: 5.4.624
         version: 5.4.624
@@ -25580,7 +25586,7 @@ snapshots:
       react-refresh: 0.14.2
     optionalDependencies:
       '@babel/runtime': 7.29.2
-      expo: 58.0.23(794e4542f44dec5bbd1ef265eb1cc16c)
+      expo: 58.0.23(1b97d579faa71dfb1a075b0653902b84)
     transitivePeerDependencies:
       - '@babel/core'
       - supports-color

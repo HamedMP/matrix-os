@@ -20,7 +20,7 @@ import { createTerminalAgentVerbs } from "../../packages/gateway/src/terminal-ag
 import { createTerminalWaiter } from "../../packages/gateway/src/terminal-agent/wait.js";
 import { createTerminalAgentServices } from "../../packages/gateway/src/terminal-agent/services.js";
 import { createTerminalWorkspaceProjectAdmission } from "../../packages/gateway/src/shell/workspace-routes.js";
-import { shellMachineCommand } from "../../packages/sync-client/src/cli/commands/shell-machine.js";
+import { openPageArgv, shellMachineCommand } from "../../packages/sync-client/src/cli/commands/shell-machine.js";
 import { createFakeHerdrCore } from "./fixtures/fake-herdr-core-server.js";
 import { cleanup, dialMac, gateway, pair, LOCAL_TOKEN, testMac } from "./fixtures/desktop-link-harness.js";
 
@@ -143,7 +143,7 @@ describe("The gateway's terminal services with a linked desktop", () => {
     await services.kernelTools.keys(ref, ["ctrl+c"]);
     await expect.poll(() => core.terminals.get("t1")?.input.join("")).toContain("\x03");
     expect(runtime.writeInput).not.toHaveBeenCalled();
-    expect(await services.kernelTools.desktops?.()).toEqual([{ machine: "Hamed's MacBook", workspaceId: ref.workspaceId }]);
+    expect(await services.kernelTools.desktops?.()).toEqual([{ machine: "Hamed's MacBook", workspaceId: ref.workspaceId, platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } }]);
   });
 });
 
@@ -182,7 +182,7 @@ describe("The kernel's desktop tools", () => {
   it("lists the linked desktop and starts a terminal there that terminal tools then reach", async () => {
     const { registry, pipeline, core, mac } = await linkedMac();
     const tools = desktopKernelTools(registry, () => "owner_mac");
-    expect(await tools.desktops()).toEqual([{ machine: "Hamed's MacBook", workspaceId: desktopLinkWorkspaceId(mac.deviceId) }]);
+    expect(await tools.desktops()).toEqual([{ machine: "Hamed's MacBook", workspaceId: desktopLinkWorkspaceId(mac.deviceId), platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } }]);
     const started = await tools.desktopRun({ argv: ["/usr/bin/open", "https://example.com"] });
     expect(core.calls.find((call) => call.method === "terminal.run")?.params).toMatchObject({
       argv: ["/usr/bin/open", "https://example.com"], labels: { "matrix.from": "matrix-demo" },
@@ -204,8 +204,17 @@ describe("The kernel's desktop tools", () => {
   it("offers desktop_list and desktop_run only when the Desktop link is on", () => {
     const base = {} as TerminalAgentKernelTools;
     expect(terminalAgentToolDefinitions(base).map((tool) => tool.name)).not.toContain("desktop_run");
-    const withMacs = terminalAgentToolDefinitions({ ...base, desktops: vi.fn(async () => []), desktopRun: vi.fn() });
+    const withMacs = terminalAgentToolDefinitions({ ...base, desktops: vi.fn(async () => []), desktopRun: vi.fn(), desktopScreenshot: vi.fn() });
     expect(withMacs.map((tool) => tool.name)).toEqual(expect.arrayContaining(["desktop_list", "desktop_run"]));
+  });
+});
+
+describe("Opening a page on each desktop OS", () => {
+  it("uses the OS's own opener", () => {
+    expect(openPageArgv("darwin", "https://example.com")).toEqual(["/usr/bin/open", "https://example.com"]);
+    expect(openPageArgv("linux", "https://example.com")).toEqual(["xdg-open", "https://example.com"]);
+    // Fault detected (review): `cmd /c start` cut a URL at its first `&`.
+    expect(openPageArgv("win32", "https://example.com/?a=1&b=2")).toEqual(["rundll32.exe", "url.dll,FileProtocolHandler", "https://example.com/?a=1&b=2"]);
   });
 });
 

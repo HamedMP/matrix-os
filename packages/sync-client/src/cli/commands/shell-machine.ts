@@ -2,6 +2,8 @@
 // From inside one of the computer's own terminals it uses the local terminal
 // token, so an agent there can start, read and type into a terminal on the
 // desktop; elsewhere it uses the signed-in profile.
+import { writeFile } from "node:fs/promises";
+import { resolve as resolvePath } from "node:path";
 import { defineCommand } from "citty";
 import { DESKTOP_LINK_CLIENT_TIMEOUT_MS } from "@matrix-os/contracts/desktop-link";
 import { formatCliSuccess } from "../output.js";
@@ -13,11 +15,32 @@ const TIMEOUT_MS = DESKTOP_LINK_CLIENT_TIMEOUT_MS;
 // A wait returns within 90 s (a check-in); the request allows for that and the round trip.
 const WAIT_TIMEOUT_MS = 100_000;
 const WAIT_MAX_MS = 90_000;
-const SAFE_CODES = new Set(["desktop_offline", "busy", "denied", "not_found", "invalid_request", "forbidden", "blocked", "finished"]);
+const SAFE_CODES = new Set([
+  "desktop_offline", "busy", "denied", "not_found", "invalid_request", "forbidden", "blocked", "finished",
+  "screen_recording_not_allowed", "screenshot_failed", "screenshot_unavailable",
+]);
+const SCREENSHOT_TIMEOUT_MS = DESKTOP_LINK_CLIENT_TIMEOUT_MS;
+const SCREENSHOT_MAX_BYTES = 8 * 1024 * 1024;
 const AGENTS = new Set(["claude", "codex", "opencode", "pi"]);
 const TERMINAL_ID = /^t[0-9]{1,6}[a-z]{0,2}$/;
 
-interface Machine { deviceId: string; name: string; state: string }
+interface Machine {
+  deviceId: string;
+  name: string;
+  state: string;
+  device?: { platform: "darwin" | "linux" | "win32"; arch: string; capabilities: { terminals: boolean; screenshot: boolean; input: boolean } } | null;
+}
+
+const PLATFORM_NAMES = { darwin: "macOS", linux: "Linux", win32: "Windows" } as const;
+
+/** How each desktop OS opens a web page in its default browser. */
+export function openPageArgv(platform: "darwin" | "linux" | "win32", url: string): string[] {
+  if (platform === "darwin") return ["/usr/bin/open", url];
+  if (platform === "linux") return ["xdg-open", url];
+  // `start` is a cmd built-in; the empty string is its window title.
+  // Not `cmd /c start`: cmd splits a URL at `&`. The URL handler takes it whole.
+  return ["rundll32.exe", "url.dll,FileProtocolHandler", url];
+}
 
 export function createMachineClient(options: { gatewayUrl: string; token: string; fetch?: typeof fetch }) {
   const fetchImpl = options.fetch ?? fetch;
@@ -72,6 +95,31 @@ export function createMachineClient(options: { gatewayUrl: string; token: string
     read: (deviceId: string, id: string, lines: number) => request(`${terminals(deviceId)}/${id}/screen?lines=${lines}`),
     input: (deviceId: string, id: string, data: string) => request(`${terminals(deviceId)}/${id}/input`, { method: "POST", body: { data } }),
     kill: (deviceId: string, id: string) => request(`${terminals(deviceId)}/${id}`, { method: "DELETE" }),
+    async screenshot(deviceId: string): Promise<Buffer> {
+      let response: Response;
+      try {
+        response = await fetchImpl(`${base}/api/desktop-link/machines/${deviceId}/screenshot`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${options.token}`, "Content-Type": "application/json" },
+          body: "{}",
+          redirect: "error",
+          signal: AbortSignal.timeout(SCREENSHOT_TIMEOUT_MS),
+        });
+      } catch (error: unknown) {
+        const timedOut = error instanceof DOMException && (error.name === "AbortError" || error.name === "TimeoutError");
+        throw Object.assign(new Error("Request failed"), { code: timedOut ? "request_timeout" : "gateway_unreachable" });
+      }
+      if (!response.ok) {
+        let server: unknown;
+        try { server = ((await response.json()) as { error?: unknown } | null)?.error; }
+        catch (error: unknown) { if (!(error instanceof SyntaxError)) throw error; }
+        const code = typeof server === "string" && SAFE_CODES.has(server) ? server : response.status === 401 ? "auth_expired" : "request_failed";
+        throw Object.assign(new Error("Request failed"), { code });
+      }
+      const image = Buffer.from(await response.arrayBuffer());
+      if (image.length === 0 || image.length > SCREENSHOT_MAX_BYTES) throw Object.assign(new Error("Request failed"), { code: "invalid_response" });
+      return image;
+    },
     keys: (deviceId: string, id: string, keys: string[]) => request(`${terminals(deviceId)}/${id}/keys`, { method: "POST", body: { keys } }),
     interrupt: (deviceId: string, id: string) => request(`${terminals(deviceId)}/${id}/interrupt`, { method: "POST", body: {} }),
     wait: (deviceId: string, id: string, body: { output?: string; timeoutMs?: number }) =>
@@ -118,7 +166,11 @@ const machineList = command({ name: "ls", description: "List the desktops linked
   return {
     data: { machines },
     text: machines.length === 0 ? "No desktops are linked to this computer."
-      : machines.map((machine) => `${machine.name}  ${machine.state}  ${machine.deviceId.slice(0, 12)}`).join("\n"),
+      : machines.map((machine) => [
+        machine.name, machine.state,
+        machine.device ? `${PLATFORM_NAMES[machine.device.platform]} ${machine.device.arch}` : "not linked yet",
+        machine.deviceId.slice(0, 12),
+      ].join("  ")).join("\n"),
   };
 });
 
@@ -226,8 +278,21 @@ const machineOpen = command({ name: "open", description: "Open a web page in the
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") throw codedError("Give a full http or https address");
   const machine = await client.resolve(String(args.machine));
-  const payload = await client.run(machine.deviceId, { argv: ["/usr/bin/open", url.toString()], name: "open" });
+  if (!machine.device) throw codedError(`${machine.name} has not linked yet, so its system is unknown`);
+  const payload = await client.run(machine.deviceId, { argv: openPageArgv(machine.device.platform, url.toString()), name: "open" });
   return { data: { machine: machine.name, id: payload.id, url: url.toString() }, text: `Opened ${url.toString()} on ${machine.name}.` };
+});
+
+const machineScreenshot = command({ name: "screenshot", description: "Save a screenshot of the desktop's screen as a JPEG and print where" }, {
+  ...machineArg,
+  out: { type: "string", required: false, description: "File to write (default: desktop-screenshot-<time>.jpg here)" },
+}, async ({ args, client }) => {
+  const machine = await client.resolve(String(args.machine));
+  const image = await client.screenshot(machine.deviceId);
+  const path = resolvePath(typeof args.out === "string" ? args.out : `desktop-screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.jpg`);
+  // Never replaces a file that is already there.
+  await writeFile(path, image, { flag: "wx", mode: 0o600 });
+  return { data: { machine: machine.name, path, bytes: image.length }, text: path };
 });
 
 export const shellMachineCommand = defineCommand({
@@ -235,9 +300,9 @@ export const shellMachineCommand = defineCommand({
   args: commonArgs,
   subCommands: {
     ls: machineList, list: machineList, terminals: machineTerminals, run: machineRun, read: machineRead, send: machineSend,
-    keys: machineKeys, interrupt: machineInterrupt, wait: machineWait, open: machineOpen, kill: machineKill,
+    keys: machineKeys, interrupt: machineInterrupt, wait: machineWait, open: machineOpen, screenshot: machineScreenshot, kill: machineKill,
   },
   run: ({ rawArgs }) => {
-    if (!rawArgs?.length) console.log("Usage: matrix shell machine ls|terminals|run|read|send|keys|interrupt|wait|open|kill <desktop> [terminal]");
+    if (!rawArgs?.length) console.log("Usage: matrix shell machine ls|terminals|run|read|send|keys|interrupt|wait|open|screenshot|kill <desktop> [terminal]");
   },
 });

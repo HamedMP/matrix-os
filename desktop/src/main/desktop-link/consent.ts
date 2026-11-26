@@ -75,7 +75,7 @@ function posixQuoted(part: string): string {
 }
 
 /** One argument as Windows joins argv into a command line (CommandLineToArgvW rules). */
-function windowsQuoted(part: string): string {
+export function windowsQuoted(part: string): string {
   if (part !== "" && !/[\s"]/.test(part)) return part;
   let out = '"';
   let slashes = 0;

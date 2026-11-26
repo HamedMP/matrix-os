@@ -21,7 +21,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const machines = {
   machineId: MACHINE,
   machines: [
-    { deviceId: MAC, name: "Hamed's MacBook Pro", revision: 2, state: "online", lastSeenAt: "2026-11-24T10:00:00.000Z" },
+    { deviceId: MAC, name: "Hamed's MacBook Pro", revision: 2, state: "online", lastSeenAt: "2026-11-24T10:00:00.000Z", device: { platform: "darwin", arch: "arm64", capabilities: { terminals: true, screenshot: true, input: false } } },
   ],
 };
 const offline = { machineId: MACHINE, machines: [{ ...machines.machines[0]!, state: "offline", lastSeenAt: "2026-11-24T09:46:00.000Z" }] };
@@ -66,14 +66,14 @@ describe("desktops group", () => {
     const { result } = renderHook(() => useDesktopMachines({ request, intervalMs: 60_000 }));
     await waitFor(() => expect(result.current.desktops.machines).toHaveLength(1));
     render(<DesktopMachinesGroup state={result.current} now={Date.parse("2026-11-24T10:00:00.000Z")} onOpen={vi.fn()} />);
-    expect(screen.getByText("Offline · Last seen 14 min ago")).toBeTruthy();
+    expect(screen.getByText("macOS arm64 · Offline · Last seen 14 min ago")).toBeTruthy();
     expect(calls.some((call) => call.path.includes("/terminals"))).toBe(false);
   });
 
   it("lists an online desktop's terminals and opens one by its desktop ref", async () => {
     const { request } = gateway();
     const { onOpen } = await mounted(request);
-    expect(screen.getByText("Online")).toBeTruthy();
+    expect(screen.getByText("macOS arm64 · Online")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open claude on Hamed's MacBook Pro" }));
     expect(onOpen).toHaveBeenCalledWith(MAC, expect.objectContaining({ id: "t1", tabId: tab }));
     expect(desktopTerminalRefKey(MAC, { tabId: tab })).toBe(`${desktopLinkWorkspaceId(MAC)}:${tab}`);

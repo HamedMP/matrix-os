@@ -22,14 +22,20 @@ export const DESKTOP_LINK_PATH = "/ws/desktop-link";
 /** Every admission and control frame is JSON text no larger than this. */
 export const DESKTOP_LINK_CONTROL_MAX_BYTES = 4 * 1024;
 // Deadlines, each longer than the one it waits on (spec 2716, D2): the owner's
-// native approval on the desktop, then the computer's core call, then a client
-// (shell, CLI) whose request may need that approval.
+// native approval on the desktop, then the computer's core call or screenshot,
+// then a client (shell, CLI) whose request may need that approval.
 export const DESKTOP_LINK_APPROVAL_TIMEOUT_MS = 60_000;
 export const DESKTOP_LINK_CALL_TIMEOUT_MS = 75_000;
 export const DESKTOP_LINK_CLIENT_TIMEOUT_MS = 90_000;
 
 /** Desktops a computer links: 2698 pairs one desktop per computer. */
 export const DESKTOP_LINK_MAX_DEVICES = 1;
+/** A screenshot travels as text frames of at most this much base64 (plus a small envelope). */
+export const DESKTOP_LINK_CAPTURE_PART_CHARS = 48 * 1024;
+export const DESKTOP_LINK_CAPTURE_FRAME_MAX_BYTES = DESKTOP_LINK_CAPTURE_PART_CHARS + 512;
+/** The largest screenshot a desktop sends (JPEG bytes). */
+export const DESKTOP_LINK_CAPTURE_MAX_BYTES = 8 * 1024 * 1024;
+const CaptureIdSchema = z.string().regex(/^[A-Za-z0-9_-]{8,64}$/);
 
 /** Close codes. Reasons are never sent; the code is the whole answer. */
 export const DESKTOP_LINK_CLOSE = {
@@ -47,13 +53,35 @@ export const DESKTOP_LINK_CLOSE = {
 } as const;
 
 export const DesktopLinkMachineStateSchema = z.enum(["online", "offline"]);
+/** The operating system the desktop app runs on, as Node names it. */
+export const DesktopLinkPlatformSchema = z.enum(["darwin", "linux", "win32"]);
+export type DesktopLinkPlatform = z.infer<typeof DesktopLinkPlatformSchema>;
+export const DesktopLinkArchSchema = z.enum(["x64", "arm64"]);
+/**
+ * What this desktop lets its computer do. `input` (mouse and keyboard) is
+ * reserved for a later spec and is always false here.
+ */
+export const DesktopLinkCapabilitiesSchema = z.strictObject({
+  terminals: z.boolean(),
+  screenshot: z.boolean(),
+  input: z.literal(false),
+});
+export type DesktopLinkCapabilities = z.infer<typeof DesktopLinkCapabilitiesSchema>;
+export const DesktopLinkDeviceInfoSchema = z.strictObject({
+  platform: DesktopLinkPlatformSchema,
+  arch: DesktopLinkArchSchema,
+  capabilities: DesktopLinkCapabilitiesSchema,
+});
+export type DesktopLinkDeviceInfo = z.infer<typeof DesktopLinkDeviceInfoSchema>;
 export const DesktopLinkMachineSchema = z.strictObject({
   deviceId: DesktopLinkDeviceIdSchema,
   name: DesktopLinkNameSchema,
   revision: DesktopLinkRevisionSchema,
   state: DesktopLinkMachineStateSchema,
-  /** When the computer last heard from the paired desktop; null until it has linked. */
+  /** Since this computer last started; null until the desktop has linked. */
   lastSeenAt: z.string().max(64).nullable(),
+  /** As the desktop last reported it since this computer started; null until then. */
+  device: DesktopLinkDeviceInfoSchema.nullable(),
 });
 export type DesktopLinkMachine = z.infer<typeof DesktopLinkMachineSchema>;
 export const DesktopLinkMachineListSchema = z.strictObject({
@@ -70,7 +98,7 @@ export const DesktopLinkChallengeFrameSchema = z.strictObject({
 });
 export const DesktopLinkProofFrameSchema = z.strictObject({
   t: z.literal("proof"),
-  /** The desktop's own name: shown and stored for display only (D3), never used to authorize. */
+  /** The desktop's own name, shown on the computer; never stored. */
   name: DesktopLinkNameSchema,
   deviceId: DesktopLinkDeviceIdSchema,
   revision: DesktopLinkRevisionSchema,
@@ -79,6 +107,7 @@ export const DesktopLinkProofFrameSchema = z.strictObject({
     version: z.string().regex(/^[0-9A-Za-z.+-]{1,64}$/),
     os: z.string().regex(/^[0-9A-Za-z. _-]{1,64}$/),
   }),
+  device: DesktopLinkDeviceInfoSchema,
 });
 
 export const DesktopLinkStreamSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
@@ -96,6 +125,8 @@ export const DesktopLinkServerFrameSchema = z.discriminatedUnion("t", [
   /** End core stream `stream`; the desktop closes its core connection. */
   z.strictObject({ t: z.literal("close"), stream: DesktopLinkStreamSchema }),
   z.strictObject({ t: z.literal("bye"), reason: z.enum(["removed", "shutdown"]) }),
+  /** Take one screenshot of the desktop's screen now and send it back as `capture-part` frames. */
+  z.strictObject({ t: z.literal("capture"), id: CaptureIdSchema }),
 ]);
 /** Frames the desktop sends after admission. */
 export const DesktopLinkClientFrameSchema = z.discriminatedUnion("t", [
@@ -109,6 +140,17 @@ export const DesktopLinkClientFrameSchema = z.discriminatedUnion("t", [
   /** Core stream `stream` ended on the desktop (its core went away, or a refused frame). */
   z.strictObject({ t: z.literal("end"), stream: DesktopLinkStreamSchema }),
   z.strictObject({ t: z.literal("bye"), reason: z.enum(["disabled", "signed-out", "quit"]) }),
+  /** One piece of a screenshot (JPEG, base64), in order; `last` ends it. */
+  z.strictObject({
+    t: z.literal("capture-part"), id: CaptureIdSchema, index: z.number().int().min(0).max(1_000),
+    last: z.boolean(), data: z.string().max(DESKTOP_LINK_CAPTURE_PART_CHARS).regex(/^[A-Za-z0-9+/]*={0,2}$/),
+  }),
+  /**
+   * No screenshot: macOS Screen Recording is not allowed for Matrix OS yet
+   * (`permission`), the desktop cannot capture its screen at all, as on some
+   * Linux Wayland sessions (`unavailable`), or taking it failed.
+   */
+  z.strictObject({ t: z.literal("capture-failed"), id: CaptureIdSchema, reason: z.enum(["permission", "declined", "unavailable", "failed", "too_large"]) }),
 ]);
 export type DesktopLinkServerFrame = z.infer<typeof DesktopLinkServerFrameSchema>;
 export type DesktopLinkClientFrame = z.infer<typeof DesktopLinkClientFrameSchema>;

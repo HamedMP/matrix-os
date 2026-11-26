@@ -3,7 +3,7 @@ import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack"
 import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
 import { createPreviewWindowReopener } from "./preview-pair-window";
 import { initializeDesktopPreview } from "./preview-pair-startup";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, MessageChannelMain, Notification, powerMonitor, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, MessageChannelMain, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, webContents, type IpcMainInvokeEvent } from "electron";
 import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { createFileDownloadService } from "./files/file-download-service";
@@ -791,7 +791,7 @@ if (!gotLock) {
       }, { ...streams.sink, facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }) });
       streams.bind(localTerminalHost);
       localTerminals = localTerminalHost;
-      desktopLink = startDesktopLink({ userData, home: homedir(), appVersion: app.getVersion(), localTerminals: localTerminalHost, pairing: desktopPairing, showDialog: (request) => showMacActivityDialog(mainWindow, request), ...(macActivity ? { activity: (kind) => macActivity.begin(kind) } : {}), computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, quitting: (listener) => app.once("before-quit", listener), ipc: { ipcMain, authorizeSender, emit: (channel, payload) => sendTerminalWindowEvent(channel, payload as never) } });
+      desktopLink = startDesktopLink({ userData, home: homedir(), appVersion: app.getVersion(), localTerminals: localTerminalHost, pairing: desktopPairing, showDialog: (request) => showMacActivityDialog(mainWindow, request), ...(macActivity ? { activity: (kind) => macActivity.begin(kind) } : {}), computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, electron: { desktopCapturer, screen, systemPreferences }, loadWindowsPty: () => import("node-pty").then((pty) => pty.spawn as never), quitting: (listener) => app.once("before-quit", listener), ipc: { ipcMain, authorizeSender, emit: (channel, payload) => sendTerminalWindowEvent(channel, payload as never) } });
       { const restored = auth.getStatus(); desktopLink.seedAccount(restored.signedIn ? { signedIn: true, userId: restored.userId, handle: restored.handle } : { signedIn: false }); }
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender, streams);
       const macTerminalChecks = registerChatMacTerminal(ipcMain, {
