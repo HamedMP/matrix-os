@@ -1,3 +1,4 @@
+import { SLACK_SUMMARY_SYSTEM, type SlackSummaryRunAuthority } from "./slack-summary-run.js";
 import type { BotInputHistoryReader } from "./historical-input.js";
 import { createBotWorkerDrain } from "./worker-drain.js";
 import { BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
@@ -89,6 +90,7 @@ export interface BotTurnHandle {
 }
 
 interface ActiveRun {
+  readonlySummary?: true;
   ownerId: string;
   chatId: string;
   inputs?: SteerableBotInputs;
@@ -114,6 +116,7 @@ export class BotTurnError extends Error {
 
 export function createBotTaskOrchestrator(deps: {
   homePath?: string; expectedOwnerId?: string | null; inputHistory?: BotInputHistoryReader;
+  slackSummaries?: SlackSummaryRunAuthority;
   slackThreadContext?(input: { ownerId: string; botId: string; chatId: string; signal: AbortSignal }): Promise<string | undefined>;
   assertSource?(binding: import("./runtime-registry.js").PiRuntimeBinding, signal: AbortSignal): Promise<void>;
   bindings: Pick<BotBindingsRepository, "forChat">;
@@ -169,7 +172,7 @@ export function createBotTaskOrchestrator(deps: {
    * Starts the run's task: the bot's task waiting for the owner continues
    * with this message; otherwise a new task begins.
    */
-  async function begin(input: { ownerId: string; botId: string; chatId: string; runId: string; text: string; backgroundTaskId?: string }): Promise<{ task: BotTask; continued: boolean; routineProposalModel?: string }> {
+  async function begin(input: { ownerId: string; botId: string; chatId: string; runId: string; text: string; backgroundTaskId?: string; readonlySummary?: true }): Promise<{ task: BotTask; continued: boolean; routineProposalModel?: string }> {
     return deps.transact(input.ownerId, tx => beginBotTask(tx, { ...input, now: now() }, { beginRoutineProposal: deps.routineProposals?.beginWithin }));
   }
 
@@ -277,7 +280,7 @@ export function createBotTaskOrchestrator(deps: {
     return { status: "failed" };
   }
 
-  async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal; backgroundTaskId?: string }, run: ActiveRun): Promise<BotTurnResult> {
+  async function execute(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal; backgroundTaskId?: string; readonlySummary?: true }, run: ActiveRun): Promise<BotTurnResult> {
     const owner = { type: "personal" as const, ownerId: input.ownerId };
     const setup = <T>(operation: () => Promise<T>, onLateSuccess?: (value: T) => void | Promise<void>) =>
       runBotSetupStep(operation, run.setupAbort.signal, onLateSuccess);
@@ -297,6 +300,7 @@ export function createBotTaskOrchestrator(deps: {
     if (bindings.length !== 1) return { status: "failed" };
     const chatBinding = bindings[0]!;
     // Personal routines cannot borrow shared authority or mutate a group task.
+    if (input.readonlySummary && (chatBinding.kind !== "direct" || input.backgroundTaskId || !deps.slackSummaries || !await setup(() => deps.slackSummaries!.assertAuthorized(input)))) return { status: "blocked", blockedReason: "policy_denied" };
     if (input.backgroundTaskId && chatBinding.kind !== "direct") return { status: "failed" };
     let group: GroupBotRunRequest | undefined;
     if (chatBinding.kind === "group") {
@@ -332,7 +336,7 @@ export function createBotTaskOrchestrator(deps: {
     let selection: import("@matrix-os/contracts").CanonicalChatModelSelection | undefined;
     let isolatedModel: import("@matrix-os/contracts").IsolatedChatEnvelope["modelId"] | undefined;
     try {
-      isolatedModel = !group ? deps.isolatedChat?.selectCanonical?.({ ownerId: input.ownerId, chatId: input.chatId,
+      isolatedModel = !group && !input.readonlySummary ? deps.isolatedChat?.selectCanonical?.({ ownerId: input.ownerId, chatId: input.chatId,
         botId, recipeRef: agent.recipeRef }) : undefined;
       if (isolatedModel) {
         selection = recipeCoordinatorSelection(input.selection, agent.selection);
@@ -352,7 +356,7 @@ export function createBotTaskOrchestrator(deps: {
     let routineProposalModel: string | undefined;
     try {
       ({ task, continued, routineProposalModel } = await setup(
-        () => begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId, text: input.text, ...(input.backgroundTaskId ? {backgroundTaskId:input.backgroundTaskId}: {}) }),
+        () => begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId, text: input.text, ...(input.readonlySummary ? { readonlySummary: true as const } : {}), ...(input.backgroundTaskId ? {backgroundTaskId:input.backgroundTaskId}: {}) }),
         ({ task: lateTask }) => settle(lateTask, interruptedStatus()).then(() => undefined),
       ));
     } catch (error: unknown) {
@@ -414,12 +418,16 @@ export function createBotTaskOrchestrator(deps: {
       if (!(error instanceof BotRouteError)) console.warn("[bots] model route unavailable:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, "blocked", "model_unavailable");
     }
+    if (input.readonlySummary) {
+      if (resolved.route.api === "openai-responses") return settle(task, "blocked", "policy_denied");
+      resolved = { ...resolved, route: { ...resolved.route, maxOutputTokens: Math.min(2048, resolved.route.maxOutputTokens) } };
+    }
     // Shared turns cannot mount the runtime owner's personal uploads or retained input history.
     if (group && input.parts?.some(part => part.type === "attachment_reference")) {
       return { ...await settle(task, input.signal.aborted ? "cancelled" : "blocked", "policy_denied"), inputUnavailable: !input.signal.aborted };
     }
     try {
-      run.inputs = await setup(() => prepareSteerableBotInputs({ homePath: group ? undefined : deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, history: isolatedModel || group ? undefined : deps.inputHistory, historyFileRead: recipe.capabilities.includes("artifact.read"), parts: input.parts ?? [], route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal: input.signal,
+      run.inputs = await setup(() => prepareSteerableBotInputs({ homePath: group || input.readonlySummary ? undefined : deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, history: isolatedModel || group || input.readonlySummary ? undefined : deps.inputHistory, historyFileRead: recipe.capabilities.includes("artifact.read"), parts: input.parts ?? [], route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal: input.signal,
         assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } }),
       (lateInputs) => lateInputs.dispose());
     } catch (error: unknown) {
@@ -427,23 +435,23 @@ export function createBotTaskOrchestrator(deps: {
       if (!(error instanceof BotBrokerActionError)) console.warn("[bots] submitted input unavailable:", error instanceof Error ? error.name : "UnknownError");
       return { ...await settle(task, input.signal.aborted ? "cancelled" : "blocked", "policy_denied"), inputUnavailable: !input.signal.aborted };
     }
-    const capabilities = isolatedModel ? [] : recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability)
+    const capabilities = isolatedModel || input.readonlySummary ? [] : recipe.capabilities.filter((capability) => SERVED_CAPABILITIES.includes(capability)
       && (capability !== "github.developer" || !input.backgroundTaskId)
       && (!group || ["integration.inventory", "integration.call"].includes(capability)));
-    if (!isolatedModel && !group && !input.backgroundTaskId && deps.routineTools) capabilities.push("routine.propose", "routine.control");
+    if (!input.readonlySummary && !isolatedModel && !group && !input.backgroundTaskId && deps.routineTools) capabilities.push("routine.propose", "routine.control");
     if (run.inputs.fileAliases.length && !capabilities.includes("artifact.read")) return settle(task, "blocked", "policy_denied");
-    try { if (!isolatedModel && !group && !input.backgroundTaskId && await setup(async () => await deps.executorReady?.(input.ownerId, botId))) capabilities.push('agent.task'); }
+    try { if (!input.readonlySummary && !isolatedModel && !group && !input.backgroundTaskId && await setup(async () => await deps.executorReady?.(input.ownerId, botId))) capabilities.push('agent.task'); }
     catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return interrupted(error) ? settle(task, interruptedStatus()) : settle(task, 'blocked', 'policy_denied'); }
     let memory: string[];
     try {
-      memory = !group && deps.memory ? await setup(() => deps.memory!.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId })) : [];
+      memory = !input.readonlySummary && !group && deps.memory ? await setup(() => deps.memory!.admitted({ ownerId: input.ownerId, botId, chatId: input.chatId })) : [];
     } catch (error: unknown) {
       console.warn("[bots] admitted memory failed:", error instanceof Error ? error.name : "UnknownError");
       return settle(task, interrupted(error) ? interruptedStatus() : "failed");
     }
     try {
       let ownerSoul: string | undefined;
-      if (!group && recipe.identitySource === "owner_soul" && deps.personality?.runtimeOwnerId === input.ownerId) {
+      if (!input.readonlySummary && !group && recipe.identitySource === "owner_soul" && deps.personality?.runtimeOwnerId === input.ownerId) {
         if (!await setup(async () => await deps.admission.ownsDirectChat?.({ ownerId: input.ownerId, botId, chatId: input.chatId }))) {
           throw new OwnerPersonalityError("unsafe_file");
         }
@@ -451,9 +459,9 @@ export function createBotTaskOrchestrator(deps: {
       }
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, reservedSuffix: !group && deps.routineExecution ? input.backgroundTaskId ? ROUTINE_OCCURRENCE_CONTEXT_SUFFIX : deps.routineExecution.describeChatPhase ? ROUTINE_CHAT_CONTEXT_RESERVATION : undefined : undefined, audience: group ? "group" : "personal", now: new Date(now()) }),
+        systemPrompt: input.readonlySummary ? SLACK_SUMMARY_SYSTEM : buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, reservedSuffix: !group && deps.routineExecution ? input.backgroundTaskId ? ROUTINE_OCCURRENCE_CONTEXT_SUFFIX : deps.routineExecution.describeChatPhase ? ROUTINE_CHAT_CONTEXT_RESERVATION : undefined : undefined, audience: group ? "group" : "personal", now: new Date(now()) }),
         capabilities,
-        limits: isolatedModel ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
+        limits: isolatedModel || input.readonlySummary ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         turn: { kind: "prompt", text: run.inputs.prompt(input.text), ...(run.inputs.imageCount ? { imageCount: run.inputs.imageCount } : {}) },
       });
     } catch (error: unknown) {
@@ -468,6 +476,7 @@ export function createBotTaskOrchestrator(deps: {
       await setup(() => run.inputs!.revalidate());
       runtime = await setup(() => deps.admission.admit({
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
+        ...(input.readonlySummary ? { readonlySummary: true as const } : {}),
         ...(isolatedModel ? { recipeRef: agent.recipeRef } : {}),
         ...(isManagedCustomBot(agent) ? { managedDefinitionRevision: agent.revision } : {}),
         route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: input.backgroundTaskId ? "background" : "interactive",
@@ -513,7 +522,7 @@ export function createBotTaskOrchestrator(deps: {
       if (run.stopping === "lease_lost") return await settle(task, "failed");
       await setup(async () => { await deps.assertSource?.(binding, input.signal); });
       if (input.signal.aborted || run.stopping) return await settle(task, run.stopping === "lease_lost" ? "failed" : "cancelled");
-      const proposal = await deps.routineProposals?.consume(binding, run.signal);
+      const proposal = !input.readonlySummary ? await deps.routineProposals?.consume(binding, run.signal) : undefined;
       if (proposal) return proposal; // Its pending approval/task state committed atomically; never generic settle/inference.
       if (internalScheduleChat && routineProposalModel) return await settle(task, "blocked", "policy_denied");
       run.worker = createBotWorkerDrain({ graceMs: cancelGraceMs,
@@ -549,6 +558,12 @@ export function createBotTaskOrchestrator(deps: {
       const spec = run?.spec;
       if (!spec || run.stopping || run.finished || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId
         || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration) throw new BotBrokerActionError("stale_generation");
+      if (binding.readonlySummary) {
+        if (!deps.slackSummaries || !await deps.slackSummaries.assertAuthorized(binding)) throw new BotBrokerActionError("denied");
+        const reference = await deps.slackSummaries.prompt(binding, run.signal);
+        if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
+        return BotRunSpecSchema.parse({ ...spec, slackThreadReference: reference });
+      }
       if (!isManagedPiBinding(binding) && !binding.group && binding.requestClass === "background" && deps.routineExecution) {
         // Recheck at delivery, rather than caching a phase from prepareRun before queue/admission.
         await runBotSetupStep(() => deps.routineExecution!.assertOccurrencePhase(binding), run.signal);
@@ -629,11 +644,11 @@ export function createBotTaskOrchestrator(deps: {
       return result;
     },
     /** Starts one turn. Events stream until the run's outcome is known. */
-    start(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal; backgroundTaskId?: string }): BotTurnHandle {
+    start(input: { ownerId: string; chatId: string; runId: string; text: string; parts?: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[]; selection?: import("@matrix-os/contracts").CanonicalChatModelSelection; signal: AbortSignal; backgroundTaskId?: string; readonlySummary?: true }): BotTurnHandle {
       if (!input.text.trim() && !input.parts?.some(part => part.type === "attachment_reference")) throw new BotTurnError("invalid_request");
       if (active.has(input.runId) || active.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new BotTurnError("capacity_exceeded");
       const prelaunch = new AbortController();
-      const run: ActiveRun = { ownerId: input.ownerId, chatId: input.chatId, prelaunch, signal: AbortSignal.any([input.signal, prelaunch.signal]), setupAbort: prelaunch, queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };
+      const run: ActiveRun = { ...(input.readonlySummary ? { readonlySummary: true as const } : {}), ownerId: input.ownerId, chatId: input.chatId, prelaunch, signal: AbortSignal.any([input.signal, prelaunch.signal]), setupAbort: prelaunch, queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };
       active.set(input.runId, run);
       const onAbort = () => {
         void stopRuntime(run, input.runId, "cancelled").catch((error: unknown) => {
@@ -659,7 +674,7 @@ export function createBotTaskOrchestrator(deps: {
     /** Relays a person's steering message to the running worker. */
     async steer(runId: string, text: string, parts: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[] = []): Promise<boolean> {
       const run = active.get(runId);
-      if (!run?.runtime || run.finished || run.stopping || run.signal.aborted || run.spec?.isolatedTurn) return false;
+      if (!run?.runtime || run.finished || run.stopping || run.signal.aborted || run.spec?.isolatedTurn || run.readonlySummary) return false;
       const binding = deps.registry.lookupRun({ ...run.runtime, runId });
       if (!binding) return false;
       if (binding.group) {

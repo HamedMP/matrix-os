@@ -1,3 +1,4 @@
+import { assertSlackSummaryAdmission, SLACK_SUMMARY_DISPATCH } from "./slack-summary-admission.js";
 import { assertRoutineDirectAdmission, ROUTINE_DIRECT_DISPATCH } from "./routine-direct-admission.js";
 import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import { admitNativeScheduledPhase, parseNativeScheduledPhaseRequest, type NativeScheduledPhaseRequest } from "./native-scheduled-admission.js";
@@ -328,6 +329,7 @@ export class CanonicalChatOrchestrator {
     inputValue: CanonicalCreateChatTurnRequest,
     provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
   ): Promise<CanonicalChatTurnAdmissionResponse> {
+    assertSlackSummaryAdmission(principal, owner, chatId, inputValue.clientRequestId, provenance?.[SLACK_SUMMARY_DISPATCH]);
     assertRoutineDirectAdmission(principal, owner, chatId, inputValue.clientRequestId, provenance?.[ROUTINE_DIRECT_DISPATCH]);
     return admitCanonicalTurn({
       ...this.options,
@@ -382,6 +384,7 @@ export class CanonicalChatOrchestrator {
     inputValue: CanonicalQueueChatTurnRequest,
     provenance?: import("./turn-admission.js").CanonicalTurnProvenance,
   ): Promise<CanonicalChatQueueAdmissionResponse> {
+    assertSlackSummaryAdmission(principal, owner, chatId, inputValue.clientRequestId, provenance?.[SLACK_SUMMARY_DISPATCH]);
     assertRoutineDirectAdmission(principal, owner, chatId, inputValue.clientRequestId, provenance?.[ROUTINE_DIRECT_DISPATCH]);
     this.assertOpen();
     await this.assertPersonalExecutionAllowed(owner, chatId);

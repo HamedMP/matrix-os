@@ -41,6 +41,12 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
     if (!context) {
       throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
     }
+    // Retry keeps the original Turn even when the Run has a caller-selected request ID.
+    if (context.turn.clientRequestId.startsWith("req_slack_summary_")) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "This automatic summary cannot be retried.", false, []), 409,
+      );
+    }
     if (context.latestRun.driverKind === "matrix_bot" && context.turn.clientRequestId.startsWith("req_routine_")) {
       throw new CanonicalChatOrchestrationError(
         safeError("run_unavailable", "Review this routine's status before requesting new work.", false, []), 409,

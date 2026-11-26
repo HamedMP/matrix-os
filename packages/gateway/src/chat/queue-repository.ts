@@ -830,6 +830,9 @@ export class ChatQueueRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!queued) throw new ChatNotFoundError(chatId);
+      if (queued.client_request_id.startsWith("req_slack_summary_")) {
+        throw new ChatConflictError(chatId, Number(chat.revision));
+      }
       const pendingSteer = await trx.selectFrom("chat_run_steers").select("id")
         .where("queued_turn_id", "=", queuedTurnId)
         .where("status", "=", "pending")
@@ -1040,7 +1043,7 @@ export class ChatQueueRepository {
         .orderBy("position")
         .executeTakeFirst();
       if (!candidate) return null;
-      if (candidate.client_request_id.startsWith("req_routine_") && (owner.type !== "personal"
+      if ((candidate.client_request_id.startsWith("req_routine_") || candidate.client_request_id.startsWith("req_slack_summary_")) && (owner.type !== "personal"
         || chat.collaboration !== null || await hasNonPrivateChatScope(trx, owner, chatId))) {
         const revision = await cancelNonPrivateRoutineQueue(trx, { chatId, queuedTurnId: candidate.id,
           position: Number(candidate.position), baseRevision: Number(chat.revision), at: claimedAt });

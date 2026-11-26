@@ -53,6 +53,7 @@ beforeEach(async () => {
 afterEach(async () => { vi.unstubAllEnvs(); try { await destroy(); } finally { vi.resetAllMocks(); vi.restoreAllMocks(); } });
 
 function setup(options: {
+  slackSummaries?: Parameters<typeof createBotTaskOrchestrator>[0]["slackSummaries"];
   homePath?: string;
   routineTools?: boolean;
   inputHistory?: Parameters<typeof createBotTaskOrchestrator>[0]["inputHistory"];
@@ -118,6 +119,7 @@ function setup(options: {
     assertSource: options.assertSource,
     inputHistory: options.inputHistory,
     slackThreadContext: options.slackThreadContext,
+    slackSummaries: options.slackSummaries,
     bindings: createBotBindingsRepository(db),
     transact,
     interactions: options.answerWithMessage ? { answerWithMessage: options.answerWithMessage } : interactions,
@@ -1170,4 +1172,29 @@ it("refuses a group background task before authority routing, task mutation or w
   expect(context.admission.admit).not.toHaveBeenCalled();
   expect(context.commands).toEqual([]);
   expect(await db.selectFrom("bot_tasks").selectAll().orderBy("task_id").execute()).toEqual(before);
+});
+
+it("makes receipt-proved Slack summaries tool-free and excludes memory, history, personality and steering",async()=>{
+ const taskStore=createBotTasksRepository(db);
+ const waiting=await taskStore.create({ownerId:OWNER,botId:BOT,chatId:CHAT,now:AGENT.createdAt});
+ const running=await taskStore.transition({ownerId:OWNER,taskId:waiting.taskId,baseRevision:waiting.revision,to:"running",runId:"run_previous",now:AGENT.createdAt});
+ await taskStore.transition({ownerId:OWNER,taskId:waiting.taskId,baseRevision:running.revision,to:"waiting_person",now:AGENT.createdAt});
+ const history=vi.fn();const admitted=vi.fn(async()=>["PRIVATE MEMORY"]);
+ let actual:import("@matrix-os/contracts").BotRunSpec|undefined;
+ let app:ReturnType<typeof setup>;
+ app=setup({inputHistory:history as never,admitted,routineTools:true,executorReady:async()=>true,
+  slackSummaries:{assertAuthorized:async()=>true,prompt:async()=>"Untrusted source from #tech"},
+  worker:async input=>{const binding=app.registry.lookupRun({...input,runId:input.command.runId})!;actual=await app.orchestrator.runSource.loadRunSpec(binding);
+   expect(binding.capabilities).toEqual([]);expect(binding.readonlySummary).toBe(true);
+   expect(await app.orchestrator.steer(input.command.runId,"Do something else")).toBe(false);
+   return {runId:input.command.runId,status:"completed",toolActions:0,sessionRevision:1};},
+ });
+ const handle=app.orchestrator.start({ownerId:OWNER,chatId:CHAT,runId:"run_summary",text:"Summarize",signal:new AbortController().signal,readonlySummary:true});
+ expect((await handle.result).status).toBe("completed");
+ expect(actual?.capabilities).toEqual([]);expect(actual?.limits.maxInferenceCalls).toBe(1);
+ expect(actual?.route.maxOutputTokens).toBeLessThanOrEqual(2048);
+ expect(actual?.slackThreadReference).toContain("#tech");
+ expect(actual?.systemPrompt).not.toContain("PRIVATE MEMORY");expect(admitted).not.toHaveBeenCalled();expect(history).not.toHaveBeenCalled();
+ expect((await taskStore.get({ownerId:OWNER,taskId:waiting.taskId}))?.status).toBe("waiting_person");
+ expect(await db.selectFrom("bot_tasks").select("task_id").execute()).toHaveLength(2);
 });

@@ -5,20 +5,30 @@ import { authorizeSlackDestination } from "./destination-authority.js";
 import { decryptSlackToken } from "./security.js";
 import { ActorIdSchema, SlackTeamIdSchema, type SlackMessagePage } from "./types.js";
 import type { SlackAppRouteOptions } from "./routes.js";
+import { SlackPrivateThreadContextRequestSchema } from "@matrix-os/contracts/slack-bridge";
+import type { SlackPrivateThreadReader } from "./private-thread-context.js";
 
 const RequestSchema = z.object({ teamId: SlackTeamIdSchema, eventId: z.string().regex(/^Ev[A-Za-z0-9]{1,126}$/) }).strict();
 const CONTEXT_BYTES = 16 * 1024;
 
 /** Runtime reads this after Events API acknowledgement. No broad history, client-selected channel or pagination path exists. */
-export function createSlackContextRoutes(options: SlackAppRouteOptions): Hono {
+export function createSlackContextRoutes(options: SlackAppRouteOptions, readPrivateThread?: SlackPrivateThreadReader): Hono {
   const app = new Hono();
   app.post("/internal/slack/context", bodyLimit({ maxSize: 256 * 1024, onError: (c) => c.json({ error: "Request too large" }, 413) }), async (c) => {
     c.header("Cache-Control", "no-store");
-    if (!options.authenticateRuntime || !options.authorizeReply) return c.json({ error: "Slack unavailable" }, 503);
+    if (!options.authenticateRuntime) return c.json({ error: "Slack unavailable" }, 503);
     const runtime = await options.authenticateRuntime(c);
     if (!runtime || !ActorIdSchema.safeParse(runtime.ownerId).success) return c.json({ error: "Unauthorized" }, 401);
     let request: unknown;
     try { request = await c.req.json(); } catch (error: unknown) { if (error instanceof Error && error.name === "BodyLimitError") throw error; if (!(error instanceof SyntaxError)) console.warn("[slack] context parse failed"); return c.json({ error: "Invalid request" }, 422); }
+    if (request !== null && typeof request === "object" && Object.hasOwn(request, "summary")) {
+      const privateRequest = SlackPrivateThreadContextRequestSchema.safeParse(request);
+      if (!privateRequest.success) return c.json({ error: "Invalid request" }, 422);
+      if (!readPrivateThread) return c.json({ error: "Forbidden" }, 403);
+      const result = await readPrivateThread(privateRequest.data, runtime, AbortSignal.timeout(8_000));
+      return result ? c.json(result) : c.json({ error: "Forbidden" }, 403);
+    }
+    if (!options.authorizeReply) return c.json({ error: "Slack unavailable" }, 503);
     const parsed = RequestSchema.safeParse(request); if (!parsed.success) return c.json({ error: "Invalid request" }, 422);
     const key = { appId: options.config.appId, teamId: parsed.data.teamId, eventId: parsed.data.eventId };
     const authorized = await authorizeSlackDestination(options, key, runtime);

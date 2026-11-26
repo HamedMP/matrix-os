@@ -29,21 +29,28 @@ export async function revokeProjectSharedChatCredentials(
     throw new ProjectMembershipTransitionError("conflict");
   }
   // Admission/queue claim hold this same Chat lock. Do not publish a private
-  // routine's transcript while its owner-source work can still be in flight.
+  // automatic transcript while owner-source work can still be in flight.
   const activeRoutine = await trx.selectFrom("chat_runs as run")
     .innerJoin("chat_turns as turn", "turn.id", "run.turn_id").select("run.id")
     .where("run.chat_id", "=", chat.id)
     .where("run.status", "in", ["accepted", "running", "waiting_for_approval", "waiting_for_input"])
     .where(eb => eb.or([
       eb("turn.client_request_id", "like", "req\\_routine\\_%"),
+      eb("turn.client_request_id", "like", "req\\_slack\\_summary\\_%"),
       eb.exists(eb.selectFrom("chat_queued_turns as queued").select("queued.id")
         .whereRef("queued.chat_id", "=", "run.chat_id").whereRef("queued.claimed_turn_id", "=", "run.turn_id")
-        .where("queued.client_request_id", "like", "req\\_routine\\_%")),
+        .where(qb => qb.or([
+          qb("queued.client_request_id", "like", "req\\_routine\\_%"),
+          qb("queued.client_request_id", "like", "req\\_slack\\_summary\\_%"),
+        ]))),
     ])).limit(1).executeTakeFirst();
   const queuedRoutine = await trx.selectFrom("chat_queued_turns").select("id")
     .where("chat_id", "=", chat.id).where("collaboration_scope_id", "is", null)
     .where("status", "=", "queued")
-    .where("client_request_id", "like", "req\\_routine\\_%").limit(1).executeTakeFirst();
+    .where(eb => eb.or([
+      eb("client_request_id", "like", "req\\_routine\\_%"),
+      eb("client_request_id", "like", "req\\_slack\\_summary\\_%"),
+    ])).limit(1).executeTakeFirst();
   if (activeRoutine || queuedRoutine) throw new ProjectMembershipTransitionError("conflict");
   await trx.updateTable("chat_credentials").set({ revealed: false })
     .where("chat_id", "=", chat.id).where("revealed", "=", true).execute();
