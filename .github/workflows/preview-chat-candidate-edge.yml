@@ -27,7 +27,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
@@ -36,7 +36,7 @@ jobs:
           python3 scripts/ci/preview-chat-candidate-selector.py admit --event "$GITHUB_EVENT_PATH" --repository "$GITHUB_REPOSITORY" \
             --pr "$REVIEWED_PR" --sha "$REVIEWED_SHA" --ref "$REVIEWED_REF"
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -63,12 +63,12 @@ jobs:
       pull-requests: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
