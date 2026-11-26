@@ -208,6 +208,34 @@ describe("ribbon clipboard", () => {
     }
   });
 
+  it("does not paste text kept in another document that was open before", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const m = await mount({ paragraphs: ["Hello world"] });
+    try {
+      const [id] = bodyParagraphs(m.doc).map((block) => block.id);
+      select(m, position(id!, 0), position(id!, 5));
+      // The frame refuses the clipboard: the copy is kept for this document only.
+      expect(await copySelection(m.editor, false, { execCommand: () => false, clipboard: null })).toBe("own");
+      const other = createDocx({ paragraphs: ["Other text"] });
+      await m.session.adopt(other, { name: "Other", dirty: false });
+      const [otherId] = bodyParagraphs(other).map((block) => block.id);
+      m.editor.focus();
+      caret(m, otherId!, 5);
+      // Nothing was copied in this document, so the ribbon points to the keyboard instead.
+      expect(await pasteText(m.editor, { clipboard: null })).toBe("blocked");
+      expect(bodyParagraphs(other).map((block) => block.text)).toEqual(["Other text"]);
+      // A copy made in the new document is pasted as before.
+      select(m, position(otherId!, 0), position(otherId!, 5));
+      noteCopied(m.editor);
+      caret(m, otherId!, 10);
+      expect(await pasteText(m.editor, { clipboard: null })).toBe("own");
+      expect(bodyParagraphs(other).map((block) => block.text)).toEqual(["Other textOther"]);
+    } finally {
+      m.unmount();
+      warn.mockRestore();
+    }
+  });
+
   it("pastes several lines into the live document: each line lands after the one before, as Ctrl+V does", async () => {
     const m = await mount({ paragraphs: ["Hello world", "Last"] });
     try {

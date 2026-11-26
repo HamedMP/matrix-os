@@ -31,13 +31,25 @@ export function clipboardRefusedNotice(kind: "paste" | "cut"): { title: string; 
     : { title: "Copied, not cut", description: `Cut takes at most ${limit} characters, so the text can be pasted back. The text stays in the document.` };
 }
 
-/** The text last copied or cut in each open document. */
-const ownCopies = new WeakMap<DocumentEditorController, string>();
+/**
+ * The text last copied or cut per editor, with the document it was copied in.
+ * The editor stays when another document opens, so the key tells them apart.
+ */
+const ownCopies = new WeakMap<DocumentEditorController, { documentKey: number; text: string }>();
 
 /** Remembers the selected text as copied (the editor's own Ctrl+C and Ctrl+X call this). */
 export function noteCopied(editor: DocumentEditorController): void {
   const text = editor.getSelectedText();
-  if (text !== "") ownCopies.set(editor, text);
+  if (text !== "") ownCopies.set(editor, { documentKey: editor.session.getState().documentKey, text });
+}
+
+/** The text last copied or cut in the document open now; a copy from another document is dropped. */
+function ownCopy(editor: DocumentEditorController): string | null {
+  const copy = ownCopies.get(editor);
+  if (copy === undefined) return null;
+  if (copy.documentKey === editor.session.getState().documentKey) return copy.text;
+  ownCopies.delete(editor);
+  return null;
 }
 
 interface ClipboardEnv {
@@ -118,7 +130,7 @@ export async function pasteText(editor: DocumentEditorController, env: Clipboard
   const system = await readClipboard(env);
   // Another document opened while the clipboard was read: the paste was meant for the one before.
   if (editor.session.getState().documentKey !== documentKey) return "nothing";
-  const text = system ?? ownCopies.get(editor) ?? null;
+  const text = system ?? ownCopy(editor);
   if (text === null) return "blocked";
   if (text === "") return "nothing";
   editor.focus();
