@@ -13,9 +13,11 @@
 import {
   PARTIAL_COVERAGE_NOTE,
   QUICK_ACTIONS,
+  READ_ONLY_MESSAGE,
   askDocument,
   explainSelection,
   fixNumberingAndReferences,
+  readingQuickActions,
   runAssistantEdit,
   summariseDocument,
 } from "../../agent/index";
@@ -109,6 +111,8 @@ export interface AssistantLinks {
   generate: AgentGenerate;
   /** The owner's selection in engine coordinates, or null. */
   getSelection: () => TextRange | null;
+  /** True in the read-only (Original) view: requests that would change the document are refused. */
+  readOnly?: boolean;
 }
 
 export interface AssistantStoreOptions extends AssistantLinks {
@@ -128,7 +132,6 @@ function droppedNote(dropped: readonly DroppedEdit[]): string[] {
   return [`${parts.join("; ")}.`];
 }
 
-
 export class AssistantStore {
   private state: AssistantState = INITIAL;
   private readonly listeners = new Set<() => void>();
@@ -141,7 +144,7 @@ export class AssistantStore {
   private seen: readonly Revision[] = [];
 
   constructor(private readonly options: AssistantStoreOptions) {
-    this.links = { generate: options.generate, getSelection: options.getSelection };
+    this.links = { generate: options.generate, getSelection: options.getSelection, readOnly: options.readOnly };
     this.documentKey = options.session.getState().documentKey;
   }
 
@@ -164,9 +167,9 @@ export class AssistantStore {
     this.patch({ mode });
   }
 
-  /** The prompt box: an edit, a question or review instructions, by mode. A quick-action label runs that action. */
+  /** The prompt box: an edit, a question or review instructions, by mode. A quick-action label runs that action (reading ones only in the read-only view). */
   submit(prompt: string): Promise<void> {
-    const action = QUICK_ACTIONS.find((entry) => entry.label === prompt);
+    const action = readingQuickActions(this.links.readOnly === true).find((entry) => entry.label === prompt);
     if (action !== undefined) return this.runQuickAction(action.id);
     if (this.state.mode === "ask") return this.ask(prompt);
     if (this.state.mode === "review") return this.reviewAgainst(prompt);
@@ -176,6 +179,7 @@ export class AssistantStore {
   async runQuickAction(id: QuickActionId): Promise<void> {
     const action = QUICK_ACTIONS.find((entry) => entry.id === id);
     if (action === undefined) return;
+    if (action.kind !== "answer" && this.refuseInReadOnly()) return;
     if (action.kind === "review") {
       this.patch({ mode: "review" });
       this.say("agent", "Type or paste the instructions the draft must follow and send them. I will comment wherever the draft deviates and change no text.");
@@ -191,11 +195,13 @@ export class AssistantStore {
   }
 
   edit(instruction: string): Promise<void> {
+    if (this.refuseInReadOnly()) return Promise.resolve();
     this.say("user", instruction);
     return this.runEdit("Proposed changes", instruction, "edit");
   }
 
   reviewAgainst(instructions: string): Promise<void> {
+    if (this.refuseInReadOnly()) return Promise.resolve();
     this.say("user", instructions);
     return this.runEdit("Review comments", instructions, "comment");
   }
@@ -211,7 +217,7 @@ export class AssistantStore {
   }
 
   fixStructure(): void {
-    if (this.state.busy) return;
+    if (this.state.busy || this.refuseInReadOnly()) return;
     this.say("user", "Fix numbering and cross-references");
     const result = fixNumberingAndReferences(this.options.session, { log: this.options.log });
     if (result.status === "failed") return this.say("agent", result.message);
@@ -310,6 +316,13 @@ export class AssistantStore {
 
   // ---------------------------------------------------------------- internals
 
+  /** True (and says why) when the read-only view refuses a request that would change the document. */
+  private refuseInReadOnly(): boolean {
+    if (this.links.readOnly !== true) return false;
+    this.say("agent", READ_ONLY_MESSAGE);
+    return true;
+  }
+
   private endReview(): null {
     this.patch({ review: null });
     return null;
@@ -381,7 +394,7 @@ export class AssistantStore {
 
   /** `units` are the keys of the changes the ids make up, for the card's record of outcomes. */
   private resolve(cardId: string, ids: string[], action: "accept" | "reject", units: string[]): void {
-    if (ids.length === 0) return;
+    if (ids.length === 0 || this.refuseInReadOnly()) return;
     try {
       if (action === "accept") this.options.session.acceptRevisions(ids, { origin: "review" });
       else this.options.session.rejectRevisions(ids, { origin: "review" });

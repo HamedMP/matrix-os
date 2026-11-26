@@ -34,3 +34,11 @@ export const QUICK_ACTIONS: readonly QuickAction[] = Object.freeze([
     instruction: "",
   },
 ]);
+
+/** The quick actions that leave the document as it is, the only ones offered in the read-only (Original) view. */
+export function readingQuickActions(readOnly: boolean): readonly QuickAction[] {
+  return readOnly ? QUICK_ACTIONS.filter((action) => action.kind === "answer") : QUICK_ACTIONS;
+}
+
+/** Said when an editing request reaches the assistant in the read-only view. */
+export const READ_ONLY_MESSAGE = "The Original view is read-only, so nothing was changed. Switch to another view to edit with the assistant.";

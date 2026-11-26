@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DocsAgentPanel } from "../../../../home/apps/docs/src/ui/agent/DocsAgentPanel";
-import type { AssistantStore } from "../../../../home/apps/docs/src/ui/agent/assistant-store";
+import { AssistantStore } from "../../../../home/apps/docs/src/ui/agent/assistant-store";
 import { DocumentSlot } from "../../../../home/apps/docs/src/ui/document-slot";
 import type { DocumentEditorController } from "../../../../home/apps/docs/src/editor/index";
 import type { DocumentSession } from "../../../../home/apps/docs/src/session/index";
@@ -223,5 +223,64 @@ describe("<DocsAgentPanel>", () => {
     render(<DocsAgentPanel session={session} editor={null} />);
     expect(screen.getByText("The assistant needs AI access, which is not available here.")).toBeTruthy();
     warn.mockRestore();
+  });
+});
+
+describe("the Assistant in the read-only Original view", () => {
+  const ANSWER = "Invoices are due within 30 days [b38].";
+
+  it("offers only reading suggestions in Ask mode and sends a typed quick-action label as a question", async () => {
+    const { session } = await contractSession();
+    const model = scripted(ANSWER);
+    render(<DocsAgentPanel session={session} editor={null} generate={model.generate} readOnly />);
+    fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+    expect(screen.getByRole("button", { name: "Summarise" })).toBeTruthy();
+    for (const label of ["Tighten", "Proofread", "Review against instructions"]) expect(screen.queryByRole("button", { name: label })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Ask the agent"), { target: { value: "Tighten" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to agent" }));
+    await flush();
+    expect(model.prompts).toHaveLength(1);
+    expect(model.prompts[0]).toContain("Answer the owner's question");
+    expect(session.requireDocument().listRevisions()).toEqual([]);
+    expect(session.requireDocument().listComments()).toEqual([]);
+  });
+
+  it("refuses every editing request at the store, also for a card proposed before the view changed", async () => {
+    const { session } = await contractSession();
+    const model = scripted((prompt) => (prompt.includes("Tighten the wording") ? envelope([{ op: "replaceText", blockId: "b25", find: "24 months", replace: "36 months" }]) : ANSWER));
+    const store = new AssistantStore({ session, generate: model.generate, getSelection: () => null });
+    await store.submit("Tighten");
+    const card = store.getState().cards[0]!;
+    const pending = session.requireDocument().listRevisions().map((revision) => revision.id);
+    expect(pending.length).toBeGreaterThan(0);
+    const comments = session.requireDocument().listComments().length;
+
+    store.connect({ generate: model.generate, getSelection: () => null, readOnly: true });
+    const asked = model.prompts.length;
+    await store.submit("Tighten");
+    await store.submit("Proofread");
+    await store.runQuickAction("tighten");
+    await store.edit("Make the term 36 months");
+    store.setMode("review");
+    await store.submit("Payment within 45 days.");
+    await store.reviewAgainst("Payment within 45 days.");
+    store.fixStructure();
+    store.acceptAll(card.id);
+    store.rejectAll(card.id);
+    expect(store.startReview(card.id)).not.toBeNull();
+    store.resolveCurrent("accept");
+    expect(model.prompts).toHaveLength(asked);
+    expect(session.requireDocument().listRevisions().map((revision) => revision.id)).toEqual(pending);
+    expect(session.requireDocument().listComments()).toHaveLength(comments);
+    expect(store.getState().messages.at(-1)?.text).toMatch(/read-only/);
+
+    // Reading still works.
+    await store.submit("Summarise");
+    store.setMode("ask");
+    await store.submit("Proofread");
+    expect(model.prompts.length).toBeGreaterThan(asked + 1);
+    expect(model.prompts.at(-1)).toContain("Answer the owner's question");
+    expect(session.requireDocument().listRevisions().map((revision) => revision.id)).toEqual(pending);
   });
 });

@@ -14,7 +14,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { AgentPanel, ReviewBar, aiAccessMessage, useAiAccess } from "../../../../_shared/office-ui";
 import type { AiAccess, AiAccessBridge } from "../../../../_shared/office-ui";
 import type { AgentResult } from "../../../../_shared/office-ui";
-import { MAX_INSTRUCTION_CHARS, QUICK_ACTIONS } from "../../agent/index";
+import { MAX_INSTRUCTION_CHARS, readingQuickActions } from "../../agent/index";
 import type { AgentGenerate } from "../../agent/index";
 import type { TextRange } from "../../../../_shared/office-engine/index";
 import type { DocumentEditorController } from "../../editor/index";
@@ -95,8 +95,8 @@ function selectionOf(editor: DocumentEditorController | null): TextRange | null 
 const noSubscription = () => () => undefined;
 const noSelection = () => null;
 
-function linksOf(model: AgentGenerate | null, editor: DocumentEditorController | null) {
-  return { generate: model ?? rejectGenerate, getSelection: () => selectionOf(editor) };
+function linksOf(model: AgentGenerate | null, editor: DocumentEditorController | null, readOnly: boolean) {
+  return { generate: model ?? rejectGenerate, getSelection: () => selectionOf(editor), readOnly };
 }
 
 /**
@@ -109,6 +109,7 @@ function useAssistantStore(
   assistantSlot: DocumentSlot<AssistantStore> | undefined,
   model: AgentGenerate | null,
   editor: DocumentEditorController | null,
+  readOnly: boolean,
 ): { store: AssistantStore; documentKey: number } {
   // Without a slot from the workspace the panel keeps its own store, which lives as long as the panel.
   const [ownSlot] = useState(() => new DocumentSlot<AssistantStore>());
@@ -116,11 +117,11 @@ function useAssistantStore(
   // Re-render when the document changes, so pending counts follow accept, reject and undo elsewhere.
   const { documentKey } = useSyncExternalStore(session.subscribe, session.getState);
   const store = useMemo(
-    () => slot.get(documentKey, () => new AssistantStore({ session, ...linksOf(model, editor), log: logStore })),
-    // A kept store stays the same when the model or editor changes; they reach it through `connect` below.
-    [slot, session, documentKey, model, editor],
+    () => slot.get(documentKey, () => new AssistantStore({ session, ...linksOf(model, editor, readOnly), log: logStore })),
+    // A kept store stays the same when the model, editor or view changes; they reach it through `connect` below.
+    [slot, session, documentKey, model, editor, readOnly],
   );
-  useEffect(() => store.connect(linksOf(model, editor)), [store, model, editor]);
+  useEffect(() => store.connect(linksOf(model, editor, readOnly)), [store, model, editor, readOnly]);
   useEffect(() => {
     // A kept store hears about document changes from the workspace; the panel's own store hears here.
     if (assistantSlot !== undefined) return undefined;
@@ -139,7 +140,7 @@ function logStore(message: string, error: unknown): void {
 
 export function DocsAgentPanel({ session, editor, readOnly = false, generate, assistantRequest = null, onAssistantRequestHandled, assistantSlot }: DocsAgentPanelProps) {
   const { model, access, hint } = useAssistantModel(generate);
-  const { store, documentKey } = useAssistantStore(session, assistantSlot, model, editor);
+  const { store, documentKey } = useAssistantStore(session, assistantSlot, model, editor, readOnly);
   const state = useSyncExternalStore(store.subscribe, store.getState);
   const hasSelection = useSyncExternalStore(editor?.subscribe ?? noSubscription, editor ? () => editor.getSnapshot().selection?.collapsed === false : noSelection) === true;
   // Each request object runs once, also when effects run twice in development.
@@ -212,7 +213,7 @@ export function DocsAgentPanel({ session, editor, readOnly = false, generate, as
         results={results}
         busy={state.busy}
         onCancel={() => store.cancel()}
-        suggestions={QUICK_ACTIONS.map((action) => action.label)}
+        suggestions={readingQuickActions(readOnly).map((action) => action.label)}
         placeholder={mode.placeholder}
         disabled={unavailable || session.document === null || (readOnly && state.mode !== "ask")}
         maxLength={MAX_INSTRUCTION_CHARS}

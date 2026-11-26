@@ -42,6 +42,6 @@ export { buildAnswerPrompt, buildEditPrompt } from "./prompt";
 export { validateEdits } from "./validate";
 export type { ValidationResult } from "./validate";
 export { CLOSE_MARKER, OPEN_MARKER, sanitizeMarkers, wrapUntrusted } from "./untrusted";
-export { QUICK_ACTIONS } from "./quick-actions";
+export { QUICK_ACTIONS, READ_ONLY_MESSAGE, readingQuickActions } from "./quick-actions";
 export type { QuickAction, QuickActionId } from "./quick-actions";
 export type * from "./types";
