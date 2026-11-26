@@ -1,3 +1,4 @@
+import { SLACK_SUMMARY_DISPATCH } from "./slack-summary-admission.js";
 import { ROUTINE_DIRECT_DISPATCH, type RoutineDirectDispatch } from "./routine-direct-admission.js";
 import { routineCreationContext } from "./routine-creation-policy.js";
 import { prepareChatSessionContext } from "./session-history.js";
@@ -48,6 +49,7 @@ export interface TurnAdmissionOptions {
 }
 
 export interface CanonicalTurnProvenance {
+  [SLACK_SUMMARY_DISPATCH]?: true;
   [ROUTINE_DIRECT_DISPATCH]?: RoutineDirectDispatch;
   routineCreationProof?: string;
   previewTurnProof?: string;

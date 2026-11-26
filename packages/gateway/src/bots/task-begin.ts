@@ -7,7 +7,7 @@ import { createBotTasksRepository, type BotTask } from "./repositories/tasks.js"
 
 /** One transaction decides whether this message continues a waiting task. */
 export async function beginBotTask(tx: BotStateTransaction, input: {
-  ownerId: string; botId: string; chatId: string; runId: string; now: string; text: string; backgroundTaskId?: string;
+  ownerId: string; botId: string; chatId: string; runId: string; now: string; text: string; backgroundTaskId?: string; readonlySummary?: true;
 }, trusted?: { beginRoutineProposal?: RoutineCliProposalRuntime["beginWithin"] }): Promise<{ task: BotTask; continued: boolean; routineProposalModel?: string }> {
   const tasks = createBotTasksRepository(tx.db);
   const admitted = await tx.db.selectFrom("chat_runs").innerJoin("chats", "chats.id", "chat_runs.chat_id")
@@ -15,6 +15,7 @@ export async function beginBotTask(tx: BotStateTransaction, input: {
     .select(["chat_runs.client_request_id", "turn.client_request_id as original_request_id"]).where("chat_runs.id", "=", input.runId)
     .where("chat_runs.chat_id", "=", input.chatId).where("chats.owner_type", "=", "personal")
     .where("chats.owner_id", "=", input.ownerId).executeTakeFirst();
+  if ((admitted?.client_request_id.startsWith("req_slack_summary_") || admitted?.original_request_id.startsWith("req_slack_summary_")) && !input.readonlySummary) throw new BotInteractionError("conflict");
   if (admitted?.client_request_id.startsWith(ROUTINE_CLI_REQUEST_PREFIX) || admitted?.original_request_id.startsWith(ROUTINE_CLI_REQUEST_PREFIX)) {
     if (input.backgroundTaskId || !trusted?.beginRoutineProposal) throw new BotInteractionError("conflict");
     return trusted.beginRoutineProposal(tx, input);
@@ -45,7 +46,7 @@ export async function beginBotTask(tx: BotStateTransaction, input: {
     }
     if ((interaction.kind === "question" && !interaction.sourceRunId)
       || (interaction.sourceRunId && waiting.runId !== interaction.sourceRunId)) throw new BotInteractionError("conflict");
-  } else {
+  } else if (!input.readonlySummary) {
     waiting = (await tasks.listOpen({ ownerId: input.ownerId, botId: input.botId, chatId: input.chatId }, tx.db))
       .find(task => task.status === "waiting_person");
   }

@@ -28,8 +28,25 @@ const PrivateThread = z.object({
   runtimeId: z.string().regex(/^[A-Za-z0-9:_-]{1,160}$/),
 }).strict();
 const Digest = z.string().regex(/^[a-f0-9]{64}$/);
+const MentionRuleIdentity = {
+  ruleId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/), version: z.number().int().positive(),
+};
+export const SlackMentionSummaryRuleSchema = z.object({
+  ...MentionRuleIdentity, grantId: Digest, enabledAfter: z.iso.datetime(),
+}).strict();
+export type SlackMentionSummaryRule = z.infer<typeof SlackMentionSummaryRuleSchema>;
+export const SlackMentionSummarySchema = z.object({ ...MentionRuleIdentity, proof: Digest }).strict();
+export type SlackMentionSummary = z.infer<typeof SlackMentionSummarySchema>;
+export const SlackMentionSummarySourceSchema = SlackMentionSummarySchema.extend({
+  eventId: Provenance.shape.eventId, threadTs: Timestamp, ts: Timestamp, userId: Provenance.shape.userId,
+}).strict();
+export type SlackMentionSummarySource = z.infer<typeof SlackMentionSummarySourceSchema>;
 export const SlackThreadContextAccessSchema = PrivateThread.extend({ grantId: Digest }).strict();
 export type SlackThreadContextAccess = z.infer<typeof SlackThreadContextAccessSchema>;
+export const SlackPrivateThreadContextRequestSchema = SlackThreadContextAccessSchema.extend({
+  summary: SlackMentionSummarySourceSchema,
+}).strict();
+export type SlackPrivateThreadContextRequest = z.infer<typeof SlackPrivateThreadContextRequestSchema>;
 export const SlackChannelMetadataSchema = z.object({
   id: z.string().regex(/^C[A-Z0-9]{2,63}$/),
   name: z.string().min(1).max(80).regex(/^[^\s\p{C}#<>&]+$/u),
@@ -37,6 +54,7 @@ export const SlackChannelMetadataSchema = z.object({
 export type SlackChannelMetadata = z.infer<typeof SlackChannelMetadataSchema>;
 export const SlackThreadContextAccessRequestSchema = SlackThreadContextAccessSchema.extend({
   includeChannelMetadata: z.literal(true).optional(),
+  summary: SlackMentionSummarySourceSchema.optional(),
 }).strict();
 export const SlackThreadContextAccessResponseSchema = z.discriminatedUnion("allowed", [
   z.object({ allowed: z.literal(false) }).strict(),
@@ -45,11 +63,22 @@ export const SlackThreadContextAccessResponseSchema = z.discriminatedUnion("allo
 export type SlackThreadContextAccessResponse = z.infer<typeof SlackThreadContextAccessResponseSchema>;
 
 export const SlackThreadContextEnvelopeSchema = SlackThreadContextAccessSchema.extend({
+  summary: SlackMentionSummarySchema.optional(),
   event: Provenance.extend({
     channelId: z.string().regex(/^C[A-Z0-9]{2,63}$/), threadTs: Timestamp, text: z.string().min(1).max(40_000),
   }).strict().refine(event => Boolean(event.text.trim())),
 }).strict();
 export type SlackThreadContextEnvelope = z.infer<typeof SlackThreadContextEnvelopeSchema>;
+export const SlackPrivateThreadContextResponseSchema = z.discriminatedUnion("available", [
+  z.object({ available: z.literal(false), untrusted: z.literal(true) }).strict(),
+  z.object({ available: z.literal(true), untrusted: z.literal(true), partial: z.boolean(),
+    recipientUserId: Provenance.shape.userId,
+    channel: SlackChannelMetadataSchema.optional(),
+    messages: z.array(z.object({ user: Provenance.shape.userId.optional(), ts: Timestamp,
+      thread_ts: Timestamp.optional(), text: z.string().max(40_000).optional() }).strict()).max(45),
+  }).strict(),
+]);
+export type SlackPrivateThreadContextResponse = z.infer<typeof SlackPrivateThreadContextResponseSchema>;
 
 const AuthorizationIdentity = { ownerId: Actor, organizationId: Organization, actorId: Actor, scopeId: z.uuid() };
 export const SlackBridgePublicationSchema = z.object({ ...AuthorizationIdentity, action: z.literal("publish_reply"),

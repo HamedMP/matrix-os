@@ -1,3 +1,4 @@
+import { createSlackMentionSummaries, type SlackMentionSummaries } from "../slack/mention-summary.js";
 import { bootstrapCollaborationDatabase } from "../collaboration/database.js";
 import { createRoutineOriginStartup, type RoutineOriginStartup } from "./routine-origin.js";
 import { createRoutineCliRuntime, type RoutineCliRuntime } from "../bots/routine-cli-runtime.js";
@@ -160,6 +161,7 @@ export interface BotServices extends RoutineOriginStartup {
   adapter?: CanonicalChatProviderAdapter<BotChatState>;
   managedAdapter?: CanonicalChatProviderAdapter;
   slackThreadContext?: PrivateSlackThreadContext;
+  slackMentionSummaries?: SlackMentionSummaries;
   close(): Promise<void>;
 }
 
@@ -411,12 +413,19 @@ export async function startBots(options: {
   let forgetRun: (runId: string) => void = () => undefined;
   const inputHistory = createBotInputHistoryReader(options.repository);
   let slackThreadContext: PrivateSlackThreadContext | undefined;
+  let slackMentionSummaries: SlackMentionSummaries | undefined;
   const platform = options.routineActionPlatform;
   if (platform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(platform.runtimeSlot) && platform.handle === platform.runtimeSlot) {
     try {
       const slackClient = createSlackOwnerClient(platform);
+      const botAvailable = async (target: {ownerId:string;botId:string;chatId:string}) => {
+        const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
+        return Boolean(bot?.recipeRef && !bot.archived);
+      };
+      slackMentionSummaries = await createSlackMentionSummaries({ db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess, readThread: slackClient.readSummaryThread, botAvailable });
       slackThreadContext = await createPrivateSlackThreadContext({
         db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess,
+        onReceive: slackMentionSummaries.receive,
         botAvailable: async target => {
           const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
           return Boolean(bot?.recipeRef && !bot.archived);
@@ -431,6 +440,7 @@ export async function startBots(options: {
     ...(chatgptPlanPeers ? { resolveRoutineProposalRoute: (ownerId: string, model: string) => chatgptPlanPeers.resolveRoutineProposal(ownerId, model) } : {}),
     inputHistory,
     slackThreadContext: slackThreadContext?.prompt,
+    slackSummaries: slackMentionSummaries,
     homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),
     personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId },
@@ -511,7 +521,9 @@ export async function startBots(options: {
       ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
       homePath: options.homePath,
       onFundedFailure: (binding, reason) => managed.recordFundedFailure(binding, reason),
+      consumeReadonlyInference: async binding => !isManagedPiBinding(binding) && Boolean(await slackMentionSummaries?.consumeInference(binding)),
       revalidateBinding: async (binding) => {
+        if (binding.readonlySummary && (isManagedPiBinding(binding) || !await slackMentionSummaries?.assertAuthorized(binding))) return false;
         if (!isManagedPiBinding(binding)) {
           try { await revalidateSource(binding); return true; }
           catch (error: unknown) { console.warn("[bots] Custom authority revalidation failed", error instanceof Error ? error.name : "UnknownError"); return false; }
@@ -528,7 +540,7 @@ export async function startBots(options: {
   forgetRun = (runId) => { githubDeveloper.closeRun(runId); actions.forgetRun(runId); };
   const unregister = registerBotBroker(host, actions);
   const adapter = createMatrixBotChatProviderAdapter({
-    orchestrator, routines, proposals: routineCli?.proposals,
+    orchestrator, routines, summaries: slackMentionSummaries, proposals: routineCli?.proposals,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
   });
   routineOriginRuntime.routineOrigin?.start();
@@ -550,8 +562,10 @@ export async function startBots(options: {
     adapter,
     managedAdapter: managed.adapter,
     slackThreadContext,
+    slackMentionSummaries,
     cancelAnthropicInference: () => registry.cancelAnthropicInference(),
     async close() {
+      await slackMentionSummaries?.close();
       await routineOriginRuntime.routineOrigin?.close();
       await routines.stop();
       chatgptPlanPeers?.close();
