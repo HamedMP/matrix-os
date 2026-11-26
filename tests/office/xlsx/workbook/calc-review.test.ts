@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import { createXlsx, openXlsx, parseA1 } from "../../../../packages/office/src/xlsx/index.js";
+import { MOVE_ARGUMENT_CELLS } from "../../../../packages/office/src/xlsx/workbook/calc-positions.js";
 import { TRACE_LIMIT } from "../../../../packages/office/src/xlsx/workbook/model.js";
 import { stateOf } from "../../../../packages/office/src/xlsx/workbook/workbook.js";
 import { buildXlsx, err, valueAt } from "./helpers.js";
@@ -483,6 +484,11 @@ describe("a run without a clock", () => {
       ["IF(OFFSET(S!A5,S!A1-5,0)=1,TODAY(),42)", "rows at the top", 46349],
       ["IF(SUM(OFFSET(S!A1,0,0,2+3,1))=2,TODAY(),42)", "a row inside A1:A5", 42],
       ["IF(SUM(OFFSET(S!A1,0,0,2+3,1))=2,TODAY(),42)", "rows below", 46349],
+      // Arguments are converted as OFFSET converts them: "-400%" is -4, and text that is no number makes it #VALUE!.
+      ['IF(OFFSET(S!A5,"-400%",0)=1,TODAY(),42)', "rows above A5", 42],
+      ['IF(OFFSET(S!A5,"-400%",0)=1,TODAY(),42)', "rows at the top", 46349],
+      ['IF(ISERROR(OFFSET(S!A5,"four",0)),TODAY(),42)', "rows above A5", 46349],
+      ["IF(ISERROR(OFFSET(S!A5,#N/A,0)),TODAY(),42)", "rows above A5", 46349],
     ] as const)("gives %s after inserting %s the value it now has", async (formula, how, expected) => {
       const workbook = await openXlsx(await crossBook(formula));
       move(workbook, how);
@@ -505,6 +511,46 @@ describe("a run without a clock", () => {
       workbook.insertRows(workbook.listSheets()[0]!.id, at, 1);
       const reopened = await openXlsx(await workbook.save());
       expect(valueAt(reopened, "S", cell)).toBe(expected);
+    });
+
+    // Fault detected: an OFFSET whose offset could not be worked out before the move (here it sums more cells than the
+    // move may read) counted as unchanged for a freshly opened formula, so it kept a date the moved formula no longer
+    // gives. Without a last calculation to judge by, such a formula is calculated again.
+    it.each([
+      ["above the base", 2, 42],
+      ["below the base", 10, err("#N/A")],
+    ] as const)("calculates again a freshly opened date formula whose OFFSET could not be worked out, after inserting rows %s", async (_, at, expected) => {
+      const source = createXlsx({ sheetNames: ["S", "T", "U"] });
+      const [s, t, u] = source.listSheets().map((info) => info.id) as [string, string, string];
+      source.setCell(s, parseA1("A1"), 1);
+      source.setCell(s, parseA1("A5"), 1);
+      source.setCell(u, parseA1("A1"), -4);
+      source.setCell(u, { row: MOVE_ARGUMENT_CELLS, col: 0 }, 0);
+      source.setFormula(t, parseA1("B1"), `IF(OFFSET(S!A5,SUM(U!A1:A${MOVE_ARGUMENT_CELLS + 1}),0)=1,TODAY(),42)`);
+      source.recalc({ now: NOW });
+      const workbook = await openXlsx(await source.save());
+      workbook.insertRows(workbook.listSheets()[0]!.id, at, 2);
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "T", "B1")).toEqual(expected);
+    });
+
+    // Fault detected: INDIRECT of a defined name taken as following the move whatever the name holds, so a date formula
+    // kept its date when the name picks its cells by position.
+    it.each([
+      ["rows above A5", 42],
+      ["rows at the top", 46349],
+    ] as const)("judges the name INDIRECT reads by what it holds after inserting %s", async (how, expected) => {
+      const source = createXlsx({ sheetNames: ["S", "T"] });
+      const [s, t] = source.listSheets().map((info) => info.id) as [string, string];
+      source.setCell(s, parseA1("A1"), 1);
+      source.setCell(s, parseA1("A5"), 1);
+      source.setDefinedName({ name: "Picked", refersTo: "OFFSET(S!$A$5,-4,0)", scope: null });
+      source.setFormula(t, parseA1("B1"), 'IF(INDIRECT("Picked")=1,TODAY(),42)');
+      source.recalc({ now: NOW });
+      const workbook = await openXlsx(await source.save());
+      move(workbook, how);
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "T", "B1")).toBe(expected);
     });
 
     it("keeps the date of a formula asking where a reference points when its sheet is renamed", async () => {
