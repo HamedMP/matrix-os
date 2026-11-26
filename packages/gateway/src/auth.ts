@@ -23,6 +23,7 @@ import {
   SAFE_PRINCIPAL_USER_ID,
   markAuthContextReady,
   markVerifiedRuntimeBearer,
+  markLocalTerminalAgent,
   requireRequestPrincipal,
   setPlatformVerifiedPrincipal,
 } from "./request-principal.js";
@@ -121,6 +122,7 @@ const WS_QUERY_TOKEN_PATHS = [
   "/ws/terminal/tab",
   "/ws/terminal/herdr",
   "/ws/terminal/events",
+  "/ws/desktop-link/terminal",
   "/ws/onboarding",
   "/ws/vocal",
 ];
@@ -425,6 +427,7 @@ export function authMiddleware(
         return unauthorized(c);
       }
       markVerifiedRuntimeBearer(c);
+      markLocalTerminalAgent(c);
       return nextWithReady(c, next);
     }
 

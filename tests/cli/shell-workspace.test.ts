@@ -42,6 +42,7 @@ describe("project-scoped shell CLI commands", () => {
       "label",
       "list",
       "ls",
+      "machine",
       "new",
       "read",
       "report",

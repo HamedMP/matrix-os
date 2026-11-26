@@ -35,3 +35,34 @@ describe("herdr-core terminal titles", () => {
     expect((await sessions.list())[0]?.title).toBe("evil");
   });
 });
+
+// Fault detected (review, ENG-574): starts run one at a time and each call's timeout began
+// only when it left the queue, so a start its caller had given up on still launched later.
+describe("herdr-core terminal starts", () => {
+  it("never sends a start that waited past its deadline, and gives the core only the time left", async () => {
+    let clock = 0;
+    const sent: Array<{ params: Record<string, unknown>; timeoutMs: number | undefined }> = [];
+    let finishFirst: () => void = () => {};
+    const core = {
+      call: (method: string, params: Record<string, unknown>, timeoutMs?: number) => {
+        if (method !== "terminal.run") throw new Error(`unexpected ${method}`);
+        sent.push({ params, timeoutMs });
+        if (sent.length === 1) return new Promise((resolve) => { finishFirst = () => resolve({ address: "t1" }); });
+        return Promise.resolve({ address: `t${sent.length}` });
+      },
+    } as unknown as HcConnection;
+    const sessions = createHcSessions({ ensure: async () => core, slots: createAttachmentSlots(), now: () => clock }, {} as Parameters<typeof createHcSessions>[1]);
+    const first = sessions.run({ name: "first" }, { deadlineMs: 75_000 });
+    const second = sessions.run({ name: "second" }, { deadlineMs: 75_000 });
+    const third = sessions.run({ name: "third" }, { deadlineMs: 100_000 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sent.map((call) => call.timeoutMs)).toEqual([75_000]);
+    clock = 80_000;
+    finishFirst();
+    expect(await first).toBe("t1");
+    await expect(second).rejects.toThrow("terminal start expired");
+    expect(await third).toBe("t2");
+    expect(sent.map((call) => call.params.name)).toEqual(["first", "third"]);
+    expect(sent[1]!.timeoutMs).toBe(20_000);
+  });
+});
