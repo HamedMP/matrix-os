@@ -126,6 +126,25 @@ export class FakeMatrixOS {
       this.emit(table);
       return { id };
     },
+    /** ON CONFLICT DO NOTHING on a unique `slot`, as the app tables declare it. */
+    bulkInsert: async (table: string, rows: Record<string, unknown>[]) => {
+      const ids: string[] = [];
+      for (const data of rows) {
+        if ((this.tables[table] ?? []).some((row) => row.slot !== undefined && row.slot === data.slot)) continue;
+        const id = `row${this.nextRow++}`;
+        (this.tables[table] ??= []).push({ ...structuredClone(data), id });
+        ids.push(id);
+      }
+      if (ids.length > 0) this.emit(table);
+      return { ids };
+    },
+    compareAndSwap: async (table: string, id: string, expectedPayload: Record<string, unknown>, data: Record<string, unknown>) => {
+      const row = this.tables[table]?.find((item) => item.id === id);
+      if (!row || JSON.stringify(row.payload) !== JSON.stringify(expectedPayload)) return { ok: false };
+      Object.assign(row, structuredClone(data));
+      this.emit(table);
+      return { ok: true };
+    },
     update: async (table: string, id: string, data: Record<string, unknown>) => {
       const row = this.tables[table]?.find((item) => item.id === id);
       if (row) Object.assign(row, structuredClone(data));

@@ -14,7 +14,10 @@ import { MAX_PROPOSALS } from "./proposals";
 
 export const PREFERENCES_TABLE = "calendar_preferences";
 export const PROPOSALS_TABLE = "calendar_proposals";
-export const PREFERENCES_ROW_NAME = "preferences";
+/** The unique `slot` of the one row that holds the preferences. */
+export const PREFERENCES_SLOT = "preferences";
+/** Attempts before a save that keeps losing to other windows is given up (and logged by the caller). */
+const MAX_WRITE_ATTEMPTS = 5;
 /** Calendars whose show or hide choice is remembered; the oldest choices are dropped first. */
 export const MAX_VISIBILITY_ENTRIES = 500;
 const MAX_CALENDAR_ID_LENGTH = 512;
@@ -131,8 +134,10 @@ export function createMemoryPersistence(initial: { preferences?: unknown; propos
 /** The subset of `window.MatrixOS.db` the persistence needs. */
 export interface PreferencesDb {
   find(table: string, options?: { where?: Record<string, unknown>; orderBy?: Record<string, "asc" | "desc">; limit?: number }): Promise<Record<string, unknown>[]>;
-  insert(table: string, data: Record<string, unknown>): Promise<{ id: string }>;
-  update(table: string, id: string, data: Record<string, unknown>): Promise<unknown>;
+  /** INSERT ... ON CONFLICT DO NOTHING: a row whose unique `slot` is taken is skipped. */
+  bulkInsert(table: string, rows: Record<string, unknown>[]): Promise<{ ids: string[] }>;
+  /** Updates the row only while its stored `payload` still equals `expectedPayload`. */
+  compareAndSwap(table: string, id: string, expectedPayload: Record<string, unknown>, data: Record<string, unknown>): Promise<{ ok: boolean }>;
   delete(table: string, id: string): Promise<unknown>;
 }
 
@@ -146,30 +151,85 @@ function parseJsonValue(value: unknown): unknown {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function same(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+type PlainField = Exclude<keyof CalendarPreferences, "version" | "calendarVisibility">;
+const PLAIN_FIELDS: readonly PlainField[] = ["view", "weekStart", "workDays", "workingHours", "agendaDays", "timeZone", "defaultDurationMinutes"];
+
 /**
- * Preferences live in one `calendar_preferences` row named `preferences`;
- * agent proposals are rows of `calendar_proposals`.
+ * `stored` with the choices `next` made since `base` put on top: a field
+ * another window changed meanwhile keeps its stored value unless this window
+ * changed it too. Visibility is merged per calendar.
+ */
+export function mergePreferences(stored: CalendarPreferences, base: CalendarPreferences, next: CalendarPreferences): CalendarPreferences {
+  let merged: CalendarPreferences = { ...stored };
+  const fields = merged as unknown as Record<PlainField, unknown>;
+  for (const field of PLAIN_FIELDS) if (!same(base[field], next[field])) fields[field] = next[field];
+  for (const [calendarId, shown] of Object.entries(next.calendarVisibility)) {
+    if (base.calendarVisibility[calendarId] !== shown) merged = withCalendarVisibility(merged, calendarId, shown);
+  }
+  return merged;
+}
+
+interface StoredPreferences {
+  id: string;
+  /** The payload exactly as read, for the compare-and-swap. */
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Preferences live in one `calendar_preferences` row whose unique `slot` is
+ * `preferences`; agent proposals are rows of `calendar_proposals`.
+ *
+ * Every save is one database statement: the row is created with `bulkInsert`
+ * (ON CONFLICT DO NOTHING on the unique slot) and changed with
+ * `compareAndSwap` against the payload that was read. When another window
+ * wrote in between, this window's changes are put onto the newer payload and
+ * tried again, so neither window's choices are lost.
  */
 export function createDbPersistence(db: PreferencesDb): CalendarPersistence {
-  let rowId: string | null = null;
-  const findRow = async () => {
-    const rows = await db.find(PREFERENCES_TABLE, { where: { name: PREFERENCES_ROW_NAME }, orderBy: { updated_at: "desc" }, limit: 1 });
-    const row = rows[0];
-    rowId = row && typeof row.id === "string" ? row.id : null;
-    return row ?? null;
-  };
+  /** What this window last read or saved: its next changes are measured against it. */
+  let base: CalendarPreferences = DEFAULT_PREFERENCES;
+
+  async function read(): Promise<StoredPreferences | null> {
+    const [row] = await db.find(PREFERENCES_TABLE, { where: { slot: PREFERENCES_SLOT }, limit: 1 });
+    if (row === undefined) return null;
+    const payload = parseJsonValue(row.payload);
+    if (typeof row.id !== "string" || !isRecord(payload)) throw new Error("the calendar preferences row cannot be read");
+    return { id: row.id, payload };
+  }
+
   return {
     async loadPreferences() {
-      const row = await findRow();
-      return row ? parseJsonValue(row.value) : null;
+      const stored = await read();
+      base = parsePreferences(stored?.payload ?? null);
+      return stored?.payload ?? null;
     },
     async savePreferences(preferences) {
-      if (rowId === null) await findRow();
-      if (rowId !== null) {
-        await db.update(PREFERENCES_TABLE, rowId, { name: PREFERENCES_ROW_NAME, value: preferences });
-        return;
+      for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt += 1) {
+        const stored = await read();
+        const current = parsePreferences(stored?.payload ?? null);
+        const merged = mergePreferences(current, base, preferences);
+        if (stored !== null && same(merged, current)) {
+          base = preferences;
+          return;
+        }
+        const payload = { ...merged } as unknown as Record<string, unknown>;
+        const written = stored === null
+          ? (await db.bulkInsert(PREFERENCES_TABLE, [{ slot: PREFERENCES_SLOT, payload }])).ids.length > 0
+          : (await db.compareAndSwap(PREFERENCES_TABLE, stored.id, stored.payload, { payload })).ok;
+        if (written) {
+          base = preferences;
+          return;
+        }
       }
-      rowId = (await db.insert(PREFERENCES_TABLE, { name: PREFERENCES_ROW_NAME, value: preferences })).id;
+      throw new Error("the calendar preferences kept changing in another window");
     },
     async loadProposals() {
       const rows = await db.find(PROPOSALS_TABLE, { orderBy: { created_at: "desc" }, limit: MAX_PROPOSALS });

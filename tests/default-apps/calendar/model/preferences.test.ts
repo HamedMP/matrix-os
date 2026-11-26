@@ -11,24 +11,45 @@ import {
 } from "../../../../home/apps/calendar/src/model/preferences";
 import { parseProposals } from "../../../../home/apps/calendar/src/model/proposals";
 
-/** A table store with the bridge's semantics: rows get an id; find filters by equality. */
-function memoryDb(): PreferencesDb & { tables: Record<string, Record<string, unknown>[]> } {
+/**
+ * A table store with the bridge's semantics: rows get an id; find filters by
+ * equality; bulkInsert skips a row whose `slot` is taken (ON CONFLICT DO
+ * NOTHING on the unique index); compareAndSwap writes only while `payload`
+ * still equals the expected one.
+ */
+function memoryDb(): PreferencesDb & {
+  tables: Record<string, Record<string, unknown>[]>;
+  insert(table: string, data: Record<string, unknown>): Promise<{ id: string }>;
+} {
   const tables: Record<string, Record<string, unknown>[]> = {};
   let counter = 0;
+  const add = (table: string, data: Record<string, unknown>) => {
+    counter += 1;
+    const id = `row-${counter}`;
+    (tables[table] ??= []).push({ ...structuredClone(data), id });
+    return id;
+  };
   return {
     tables,
     async find(table, options = {}) {
       const rows = (tables[table] ?? []).filter((row) => Object.entries(options.where ?? {}).every(([key, value]) => row[key] === value));
-      return rows.slice(0, options.limit ?? rows.length).map((row) => ({ ...row }));
+      return rows.slice(0, options.limit ?? rows.length).map((row) => structuredClone(row));
     },
     async insert(table, data) {
-      counter += 1;
-      const id = `row-${counter}`;
-      (tables[table] ??= []).push({ ...data, id });
-      return { id };
+      return { id: add(table, data) };
     },
-    async update(table, id, data) {
-      tables[table] = (tables[table] ?? []).map((row) => (row.id === id ? { ...row, ...data } : row));
+    async bulkInsert(table, rows) {
+      const ids: string[] = [];
+      for (const row of rows) {
+        if ((tables[table] ?? []).some((other) => other.slot !== undefined && other.slot === row.slot)) continue;
+        ids.push(add(table, row));
+      }
+      return { ids };
+    },
+    async compareAndSwap(table, id, expectedPayload, data) {
+      const row = (tables[table] ?? []).find((item) => item.id === id);
+      if (!row || JSON.stringify(row.payload) !== JSON.stringify(expectedPayload)) return { ok: false };
+      Object.assign(row, structuredClone(data));
       return { ok: true };
     },
     async delete(table, id) {
@@ -77,6 +98,7 @@ describe("calendar preferences", () => {
     await persistence.savePreferences(withCalendarVisibility(DEFAULT_PREFERENCES, "work", false));
     await persistence.savePreferences(withCalendarVisibility(DEFAULT_PREFERENCES, "work", true));
     expect(db.tables[PREFERENCES_TABLE]).toHaveLength(1);
+    expect(db.tables[PREFERENCES_TABLE][0].slot).toBe("preferences");
     const reopened = createDbPersistence(db);
     expect(parsePreferences(await reopened.loadPreferences()).calendarVisibility).toEqual({ work: true });
 
@@ -88,5 +110,27 @@ describe("calendar preferences", () => {
     expect(proposal).toMatchObject({ id: "agent:row-2", rowId: "row-2", calendarId: "work", timeZone: "Europe/Berlin", attendees: [{ address: "ana@example.com" }] });
     await reopened.deleteProposal("row-2");
     expect(db.tables[PROPOSALS_TABLE]).toEqual([]);
+  });
+
+  // Outcome: choices made in two Calendar windows both survive a reopen.
+  // Fault: both windows find no row and insert one each (check-then-insert), or one window's
+  // whole-snapshot save overwrites the other's change, so a saved choice appears to revert.
+  it("keeps one row and both windows' choices when two windows save their first change together", async () => {
+    const db = memoryDb();
+    const first = createDbPersistence(db);
+    const second = createDbPersistence(db);
+    const [loadedA, loadedB] = await Promise.all([first.loadPreferences(), second.loadPreferences()]);
+    const a = parsePreferences(loadedA);
+    const b = parsePreferences(loadedB);
+    await Promise.all([
+      first.savePreferences({ ...a, view: "agenda" }),
+      second.savePreferences(withCalendarVisibility(b, "work", false)),
+    ]);
+    expect(db.tables[PREFERENCES_TABLE]).toHaveLength(1);
+    // The second window changes something else; the first window's view stays.
+    await second.savePreferences({ ...withCalendarVisibility(b, "work", false), weekStart: 0 });
+
+    const reopened = parsePreferences(await createDbPersistence(db).loadPreferences());
+    expect(reopened).toMatchObject({ view: "agenda", weekStart: 0, calendarVisibility: { work: false } });
   });
 });

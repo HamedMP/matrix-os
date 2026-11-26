@@ -33,7 +33,8 @@ function currentBridge(): Partial<CalendarBridge> | null {
 }
 
 function hasDb(bridge: Partial<CalendarBridge> | null): bridge is Partial<CalendarBridge> & Pick<CalendarBridge, "db"> {
-  return Boolean(bridge?.db && typeof bridge.db.find === "function" && typeof bridge.db.insert === "function");
+  const db = bridge?.db;
+  return Boolean(db && typeof db.find === "function" && typeof db.bulkInsert === "function" && typeof db.compareAndSwap === "function");
 }
 
 /** The store and provider lookups the app runs on. Without a bridge (a plain browser tab) accounts fail with a generic message. */

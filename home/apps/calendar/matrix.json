@@ -30,11 +30,11 @@
     "tables": {
       "calendar_preferences": {
         "columns": {
-          "name": "text",
-          "value": "jsonb"
+          "slot": "text",
+          "payload": "jsonb"
         },
-        "indexes": [
-          "name"
+        "uniqueIndexes": [
+          "slot"
         ]
       },
       "calendar_proposals": {

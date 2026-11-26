@@ -18,7 +18,7 @@ const NOW = Date.parse("2026-11-23T15:00:00Z");
 let bridge: FakeMatrixOS;
 
 function seed(host: FakeMatrixOS): void {
-  host.tables.calendar_preferences.push({ id: "prefs", name: "preferences", value: { version: 1, timeZone: "America/New_York" } });
+  host.tables.calendar_preferences.push({ id: "prefs", slot: "preferences", payload: { version: 1, timeZone: "America/New_York" } });
   host.events[PRIMARY].push(
     {
       id: "standup1",
@@ -142,7 +142,7 @@ describe("Calendar app journey", () => {
     await settle();
     const agenda = screen.getByRole("region", { name: "Agenda" });
     expect(within(agenda).getByRole("button", { name: /Deal review/ })).toBeTruthy();
-    await waitFor(() => expect(bridge.tables.calendar_preferences[0].value).toMatchObject({ view: "agenda" }));
+    await waitFor(() => expect(bridge.tables.calendar_preferences[0].payload).toMatchObject({ view: "agenda" }));
     expect(bridge.tables.calendar_preferences).toHaveLength(1);
 
     fireEvent.click(toolbarButton("Week"));
