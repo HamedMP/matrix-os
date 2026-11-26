@@ -9,12 +9,14 @@
  * Nothing here throws for a calculation problem. The bounds are:
  * - `maxDepth` (default 256): nesting of defined names and function calls;
  *   beyond it the result is `#NUM!`. A name that refers to itself ends there.
- * - `maxCells` (default 2 000 000): cells read from ranges plus cells of
- *   array results in one call of {@link evaluate}; beyond it `#NUM!`.
+ * - `maxCells` (default 2 000 000): cells read from ranges (also those a
+ *   function reads itself) plus cells of array results in one call of
+ *   {@link evaluate}; beyond it `#NUM!`.
  */
 
 import type {
   CellNode,
+  CellProvider,
   EvalContext,
   FormulaAst,
   FormulaValue,
@@ -60,6 +62,8 @@ interface State {
   nodes: number;
   /** Cells read and built so far. */
   cells: number;
+  /** The provider functions read through, which counts their reads; made on first use. */
+  charged: CellProvider | null;
 }
 
 /** Where unqualified references point: the formula's sheet, or the sheet of the defined name being evaluated. */
@@ -78,6 +82,33 @@ function charge(state: State, value: FormulaValue): FormulaValue {
   return state.cells > state.maxCells ? makeError("#NUM!", TOO_LARGE) : value;
 }
 
+/**
+ * The provider handed to functions. A function that reads cells itself
+ * (SUMIF's resized sum range, OFFSET, INDIRECT) is held to `maxCells` the
+ * same way as a reference in the formula.
+ */
+function chargedProvider(state: State): CellProvider {
+  if (state.charged !== null) return state.charged;
+  const { provider } = state.options;
+  state.charged = {
+    getCellValue(sheet, row, col) {
+      state.cells += 1;
+      return state.cells > state.maxCells ? makeError("#NUM!", TOO_LARGE) : provider.getCellValue(sheet, row, col);
+    },
+    getRangeValues(bounds) {
+      if (state.cells > state.maxCells) return makeError("#NUM!", TOO_LARGE);
+      const values = provider.getRangeValues(bounds);
+      if (isError(values)) return values;
+      let cols = 0;
+      for (const row of values) if (row.length > cols) cols = row.length;
+      state.cells += values.length * cols;
+      return state.cells > state.maxCells ? makeError("#NUM!", TOO_LARGE) : values;
+    },
+    resolveName: (name, sheet) => provider.resolveName(name, sheet),
+  };
+  return state.charged;
+}
+
 function sanitize(value: FormulaValue): FormulaValue {
   if (typeof value === "number") return Number.isFinite(value) ? value : ERR.NUM;
   return value === undefined ? null : value;
@@ -87,7 +118,7 @@ function functionContext(frame: Frame): FunctionContext {
   if (frame.context !== null) return frame.context;
   const { options } = frame.state;
   frame.context = {
-    provider: options.provider,
+    provider: chargedProvider(frame.state),
     sheet: frame.sheet,
     row: options.row,
     col: options.col,
@@ -323,6 +354,7 @@ export function evaluate(ast: ExtendedAst, context: EvaluateOptions): FormulaVal
     depth: 0,
     nodes: 0,
     cells: 0,
+    charged: null,
   };
   try {
     return sanitize(evalNode(ast, { state, sheet: context.sheet, context: null }));

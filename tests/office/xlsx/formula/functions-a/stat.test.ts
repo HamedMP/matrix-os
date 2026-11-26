@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createXlsx, parseA1 } from "../../../../../packages/office/src/xlsx/index.js";
 import { mode } from "../../../../../packages/office/src/xlsx/formula/functions/stat/compute.js";
-import { check, setup, type Case } from "./setup.js";
+import { check, err, setup, type Case } from "./setup.js";
 
 const { value, run } = setup();
 
@@ -234,5 +234,16 @@ describe("array criteria", () => {
   });
   it("applies SMALL to an array of k", () => {
     expect(run("SMALL(D1:D5,{1,3})")).toMatchObject({ kind: "array", values: [[1, 3]] });
+  });
+});
+
+describe("cell limit", () => {
+  it.each([
+    // A1:A5 (5), D1 (1), and D1:D5 read again at the size of the criteria range (5).
+    ['SUMIF(A1:A5,">0",D1)', 11, 14],
+    ['AVERAGEIF(A1:A5,">0",D1)', 11, 2.8],
+  ] as const)("counts the resized sum range of %s against maxCells", (text, cells, expected) => {
+    expect(setup({ maxCells: cells }).value(text)).toBe(expected);
+    expect(setup({ maxCells: cells - 1 }).value(text)).toEqual(err("#NUM!"));
   });
 });

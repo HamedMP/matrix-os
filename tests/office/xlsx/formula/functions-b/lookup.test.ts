@@ -222,6 +222,16 @@ describe("lookup functions", () => {
     expect(provider.reads.some((read) => read.startsWith("Other"))).toBe(false);
   });
 
+  it.each([
+    // The base A1 (1), the 5 cells OFFSET reads, and its 5-cell result.
+    ["OFFSET(A1,0,0,5)", 11],
+    // The 5 cells INDIRECT reads and its 5-cell result.
+    ['INDIRECT("A1:A5")', 10],
+  ] as const)("counts the cells %s reads itself against maxCells", (text, cells) => {
+    expect(setup({ maxCells: cells }).run(text)).toMatchObject({ kind: "array", rows: 5, cols: 1 });
+    expect(setup({ maxCells: cells - 1 }).run(text)).toEqual(err("#NUM!"));
+  });
+
   it("reads each CHOOSE choice once against maxCells", () => {
     // The selector (2), each choice once (5 + 5), then the 5 by 2 result (10).
     const text = "CHOOSE({1,2},A1:A5,C1:C5)";
