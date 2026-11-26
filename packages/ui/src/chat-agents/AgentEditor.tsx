@@ -1,3 +1,4 @@
+import { AgentDraftReview } from "./AgentDraftReview.js";
 import type {BotClient} from "./bots/client.js";
 import { MatrixBotModelField } from "./bots/MatrixBotModelField.js";
 import { useId, type ReactNode } from "react";
@@ -47,9 +48,9 @@ function AgentEditorActions({ editing, pending, saveDisabled, onArchive, onBack,
   </div>;
 }
 
-export function AgentEditor({ botClient, draft, editing, pending, models, catalog, catalogLoading = false, recipeCatalog, connections, recipeLoading, recipeError, connectionError,
+export function AgentEditor({ review = false, botClient, draft, editing, pending, models, catalog, catalogLoading = false, recipeCatalog, connections, recipeLoading, recipeError, connectionError,
   change, onSave, onArchive, onBack, onSetup, onRefreshCatalog, onRetryRecipe, allowArchive = true, cancelLabel = "Back", apps, onRecover, recoveryDisabled, retainedSelection, retainedManaged, unfinishedRecovery = false }: {
-  botClient?: BotClient; apps?: ReactNode; draft: AgentDraft; editing: ChatAgent | "new"; pending: boolean; models: ReturnType<typeof deriveCanonicalProviderChoices>;
+  review?: boolean; botClient?: BotClient; apps?: ReactNode; draft: AgentDraft; editing: ChatAgent | "new"; pending: boolean; models: ReturnType<typeof deriveCanonicalProviderChoices>;
   catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
   recipeCatalog: ChatAgentRecipeCatalog | null; connections: ChatAgentIntegrationConnection[];
   recipeLoading: boolean; recipeError: string; connectionError: string;
@@ -61,13 +62,13 @@ export function AgentEditor({ botClient, draft, editing, pending, models, catalo
   const ids = useId();
   const validation = agentEditorValidation({ draft, editing, models, catalog, catalogLoading, recipeCatalog,
     managedCreation: Boolean(botClient?.createCustom), retainedSelection, retainedManaged });
-  const { errors, recipeBot, managedCustom, editableRecipe, hermesOnly, managedAgent, subscriptionNew } = validation;
+  const { errors, recipeBot, managedCustom, hermesOnly, managedAgent, subscriptionNew } = validation;
   const unsupportedRecipe = managedCustom && hermesOnly;
-  const editableRecipeCatalog = managedCustom && recipeCatalog
+  const editableRecipeCatalog = (managedCustom || recipeBot) && recipeCatalog
     ? { ...recipeCatalog, skills: recipeCatalog.skills.filter(skill => skill.id !== "matrix-jev-email-triage") }
     : recipeCatalog;
   const saveDisabled = pending || unfinishedRecovery || !validation.valid;
-  return <form className="mt-5 grid gap-4" onSubmit={(event) => { event.preventDefault(); if (!saveDisabled) void onSave(); }}>
+  const fields = <>
       <p className="text-xs" style={muted}>Name, Instructions and Model are required. A recipe also requires Expected output.</p>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-name`}>Name<input id={`${ids}-name`} aria-invalid={Boolean(errors.name)} aria-describedby={errors.name ? `${ids}-name-error` : undefined} className={input} value={draft.name} maxLength={80} required disabled={pending} onChange={(event) => change({ name: event.target.value })} /></label>
       {errors.name ? <p id={`${ids}-name-error`} className="text-xs">{errors.name}</p> : null}
@@ -80,10 +81,13 @@ export function AgentEditor({ botClient, draft, editing, pending, models, catalo
         <p className="text-xs" style={muted}>{recipeBot ? "This bot runs in its own Chat. Choose a Matrix AI model or keep Automatic computer routing." : isChatgptPlanBotRoute({instanceId: draft.selection?.instanceId ?? "", driverKind: "matrix_bot"}) ? "This bot uses its selected subscription in its own Chat. Creating it does not run it." : "Choose a Matrix AI model for this agent. Saving an agent does not run it."}</p>
       </div> : <AgentModelField id={`${ids}-model`} selected={draft.selection} pending={pending} models={models} change={change} onSetup={onSetup} hermesOnly={draft.recipe?.skills.includes("matrix-jev-email-triage") === true} />}
       {unsupportedRecipe ? <p role="alert" className="text-sm">Remove the unavailable skill before saving this bot.</p> : null}
-      {editableRecipe ? <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={editableRecipeCatalog}
+      <AgentRecipeEditor recipe={draft.recipe} hadRecipe={editing !== "new" && Boolean(editing.recipe)} catalog={editableRecipeCatalog}
         connections={connections} loading={recipeLoading} error={recipeError} connectionError={connectionError} pending={pending}
-        outputError={errors.output} onChange={(recipe) => change({ recipe })} onRetry={onRetryRecipe} /> : null}
+        outputError={errors.output} onChange={(recipe) => change({ recipe })} onRetry={onRetryRecipe} />
       {!recipeBot && !subscriptionNew && draft.selection?.instanceId !== "matrix_chatgpt_plan" ? <p className="text-xs" style={muted}>Agent requests use Full access. You choose this access when sending. Creating an Agent does not run it.</p> : null}
+  </>;
+  return <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); if (!saveDisabled) void onSave(); }}>
+      {review ? <AgentDraftReview draft={draft} catalog={recipeCatalog} models={models}>{fields}</AgentDraftReview> : fields}
       {!validation.valid && !pending ? <div role="status" className="grid gap-1 text-xs" aria-label="Requirements to save">
         {Object.entries(errors).filter(([, message]) => message !== "These skills are too large to use together. Remove a selected skill.")
           .map(([field, message]) => <p key={field}>{message}</p>)}

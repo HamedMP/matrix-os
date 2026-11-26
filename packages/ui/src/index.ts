@@ -205,6 +205,7 @@ export { createChatAgentClient, type ChatAgentClient, type ChatAgentIntegrationC
 export { ChatAgentsEntry, ChatAgentsRailSection } from "./chat-agents/ChatAgentsEntry.js";
 export { ChatSidebarAddAction } from "./chat-agents/ChatSidebarAddAction.js";
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
+export type { AgentSetupResource } from "./chat-agents/AgentSetupResources.js";
 export { BotRunMessageBody, BotUnassignedMessageBody } from "./chat-agents/bots/BotMessageBody.js";
 export {RoutineMessageMeta, RoutineOccurrenceMessage, RoutineMessageReadNotice, useRoutineMessageState} from "./chat-agents/bots/RoutineMessage.js";
 export {routineMessageTimeline, routineRequestFireId, routineOccurrenceTime, routineOccurrenceOutcome} from "./chat-agents/bots/routine-transcript.js";

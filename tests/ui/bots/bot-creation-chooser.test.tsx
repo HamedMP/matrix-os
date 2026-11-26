@@ -53,7 +53,8 @@ it("opens custom Agent creation from the host catalog without waiting on duplica
     providerCatalog={{ catalog, loading: false, error: "", refresh: vi.fn() }} />);
   await waitFor(() => expect(scratch()).toBeEnabled());
   fireEvent.click(scratch());
-  expect(screen.getByRole("dialog", { name: "New Agent" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "New Agent" })).toBeVisible();
+  expect(screen.queryByRole("dialog")).toBeNull();
   expect(client.catalog).not.toHaveBeenCalled();
 });
 
@@ -103,9 +104,9 @@ it.each(["Cancel", "Close agent settings", "Escape"])("returns an empty scratch 
   expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue("");
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Discard this" } });
   await waitFor(() => expect(screen.getByRole("button", { name: "Refresh models" })).toBeEnabled());
-  if (action === "Escape") fireEvent(screen.getByRole("dialog"), new Event("cancel", { bubbles: false, cancelable: true }));
+  if (action === "Escape") fireEvent.keyDown(screen.getByRole("region", { name: "New Agent" }), { key: "Escape" });
   else fireEvent.click(screen.getByRole("button", { name: action }));
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("region", { name: "New Agent" })).toBeNull();
   expect(screen.getByRole("searchbox")).toHaveValue("Writing");
   expect(scratch()).toHaveFocus();
   expect(client.create).not.toHaveBeenCalled(); expect(bots.createCustom).not.toHaveBeenCalled();
@@ -118,6 +119,8 @@ it("retains preset setup and its cancel path beside scratch", async () => {
   const { client, bots } = fixture();
   render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()} onOpenBotChat={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: "Use Writing Bot" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("searchbox")).toBeNull();
   expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(recipe.name);
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(scratch()).toBeVisible(); expect(bots.instantiate).not.toHaveBeenCalled();
@@ -140,15 +143,15 @@ it("keeps the scratch form open and rejects cancel and duplicate submit while cr
   expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Close agent settings" })).toBeDisabled();
-  fireEvent(screen.getByRole("dialog"), new Event("cancel", { bubbles: false, cancelable: true }));
+  fireEvent.keyDown(screen.getByRole("region", { name: "New Agent" }), { key: "Escape" });
   fireEvent.submit(screen.getByRole("textbox", { name: "Name" }).closest("form")!);
-  expect(screen.getByRole("dialog")).toBeVisible();
+  expect(screen.getByRole("region", { name: "New Agent" })).toBeVisible();
   expect(bots.createCustom).toHaveBeenCalledTimes(1);
   expect(client.create).not.toHaveBeenCalled();
   client.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, name: "Pending bot", description: "", instructions: "Write drafts",
     selection: { instanceId: "matrix_pi_default", model: "sonnet" }, recipeRef: { recipeId: "custom-coordinator", version: "1" } }] });
   await act(async () => { complete(response); });
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("region", { name: "New Agent" })).toBeNull();
   expect(screen.getByRole("heading", { name: "Your AI team" })).toBeVisible();
 });
 
@@ -213,7 +216,7 @@ it.each(["loading", "disabled", "limit", "catalog"])("preserves the custom-entry
   } else {
     expect(scratch()).toBeDisabled(); fireEvent.click(scratch());
   }
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("region", { name: "New Agent" })).toBeNull();
 });
 
 it("discards scratch navigation and draft when the client scope changes", async () => {
@@ -223,7 +226,7 @@ it("discards scratch navigation and draft when the client scope changes", async 
   fireEvent.click(scratch());
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "First owner draft" } });
   view.rerender(<ChatAgentsPanel client={second.client} onClose={vi.fn()}/>);
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("region", { name: "New Agent" })).toBeNull();
   expect(await screen.findByRole("heading", { name: "Your AI team" })).toBeVisible();
   expect(second.client.create).not.toHaveBeenCalled();
 });
@@ -270,11 +273,82 @@ it("returns focus to the heading when closing scratch during discovery without s
   const heading = screen.getByRole("heading", { name: "New agent", exact: true });
   expect(scratch()).toBeDisabled();
   expect(heading).toHaveFocus();
-  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("region", { name: "New Agent" })).toBeNull();
   const catalog = await clientFixture({ matrix: true }).catalog();
   await act(async () => resolve(catalog));
   expect(scratch()).toBeEnabled();
   expect(heading).toHaveFocus();
   expect(client.create).not.toHaveBeenCalled();
   expect(bots.createCustom).not.toHaveBeenCalled();
+});
+
+it("opens a gallery inspiration as an unsaved scratch draft without inventing resource bindings", async () => {
+  const { client, bots } = fixture(), start = vi.fn();
+  const record = { chat: { id: "chat_setup01", ownerScope: { type: "personal", ownerId: "owner" }, revision: 0 } };
+  const setupChat = { create: vi.fn(async () => record), admitTurn: vi.fn(() => new Promise(() => {})), detail: vi.fn(async () => ({ record, messages: [], activities: [], runs: [], turns: [] })), cancelRun: vi.fn() };
+  render(<ChatAgentsPanel client={{ ...client, setupChat: setupChat as never }} view="recipes" onClose={vi.fn()} onStartChat={start}/>);
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Ad Spend Watch" } });
+  const useIdea = await screen.findByRole("button", { name: "Use Ad Spend Watch" });
+  await waitFor(() => expect(useIdea).toBeEnabled());
+  fireEvent.click(useIdea);
+  expect(await screen.findByRole("region", { name: "Agent setup conversation" })).toBeVisible();
+  await waitFor(() => expect(setupChat.admitTurn).toHaveBeenCalledOnce());
+  expect(setupChat.admitTurn).toHaveBeenCalledWith("chat_setup01", expect.objectContaining({
+    botCreation: expect.objectContaining({ seed: { kind: "scratch" }, draft: expect.objectContaining({ name: "Ad Spend Watch", description: expect.any(String) }) }),
+  }));
+  expect(start).not.toHaveBeenCalled();
+  expect(bots.createCustom).not.toHaveBeenCalled();
+  expect(bots.instantiate).not.toHaveBeenCalled();
+  expect(client.create).not.toHaveBeenCalled();
+});
+
+it("uses the selected native recipe version and confirms the reviewed configuration on that same recipe", async () => {
+  const { client, bots } = fixture(), open = vi.fn();
+  const context = { ...recipe, instructions: "Write with the owner's approved research.", skills: [], capabilities: [],
+    integrations: [{ service: "gmail", effects: ["read"], required: true }], mcpServers: [] };
+  const recipeSetupContext = vi.fn(async () => context);
+  bots.instantiate.mockResolvedValue({ chatId: "chat_writing01" });
+  const record = { chat: { id: "chat_drafting1", ownerScope: { type: "personal", ownerId: "owner" }, revision: 0 } };
+  const setupChat = { create: vi.fn(async () => record), detail: vi.fn(async () => ({ record, activities: [], runs: [], messages: [], turns: [] })),
+    admitTurn: vi.fn(() => new Promise(() => {})), cancelRun: vi.fn() };
+  render(<ChatAgentsPanel client={{ ...client, bots: { ...bots, recipeSetupContext } as never, setupChat: setupChat as never }}
+    onOpenBotChat={open} onClose={vi.fn()} view="recipes" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Use Writing Bot" }));
+  const ref = { recipeId: recipe.recipeId, version: recipe.version };
+  await waitFor(() => expect(recipeSetupContext).toHaveBeenCalledWith(ref));
+  await waitFor(() => expect(setupChat.admitTurn).toHaveBeenCalledOnce());
+  expect(setupChat.admitTurn).toHaveBeenCalledWith(record.chat.id, expect.objectContaining({ botCreation: expect.objectContaining({
+    seed: { kind: "recipe", ...ref }, draft: expect.objectContaining({ name: recipe.name, instructions: context.instructions }),
+  }) }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("region", { name: "Recipe resources" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Included in this recipe" }));
+  expect(screen.getByRole("region", { name: "Recipe resources" })).toHaveTextContent("Gmail");
+  fireEvent.click(screen.getByRole("button", { name: "Add skills" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Matrix integrations" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add to configuration" }));
+  fireEvent.click(screen.getByRole("button", { name: "Review configuration" }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit configuration" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Draft concise answers." } });
+  expect(bots.instantiate).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+  await waitFor(() => expect(open).toHaveBeenCalledWith("chat_writing01"));
+  expect(bots.instantiate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ recipe: ref, name: recipe.name,
+    configuration: { description: recipe.description, instructions: "Draft concise answers.",
+      recipe: { skills: ["matrix-integrations"], integrations: [], output: context.output } } }));
+  expect(bots.createCustom).not.toHaveBeenCalled();
+});
+
+it("keeps a failed recipe context read on that template and starts no model turn", async () => {
+  const { client, bots } = fixture();
+  const setupChat = { create: vi.fn(), detail: vi.fn(), admitTurn: vi.fn(), cancelRun: vi.fn() };
+  render(<ChatAgentsPanel client={{ ...client, bots: { ...bots, recipeSetupContext: vi.fn().mockRejectedValue(new Error("offline")) } as never, setupChat }}
+    onOpenBotChat={vi.fn()} onClose={vi.fn()} view="recipes"/>);
+  fireEvent.click(await screen.findByRole("button", { name: "Use Writing Bot" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Recipe setup is unavailable");
+  expect(screen.queryByRole("region", { name: "Agent setup conversation" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(await screen.findByRole("button", { name: "Start from scratch" })).toBeVisible();
+  expect(setupChat.admitTurn).not.toHaveBeenCalled();
+  expect(bots.instantiate).not.toHaveBeenCalled();
 });

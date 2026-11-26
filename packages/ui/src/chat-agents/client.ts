@@ -29,14 +29,24 @@ const IntegrationConnectionSchema = z.object({
 const IntegrationConnectionListSchema = z.array(IntegrationConnectionSchema).max(MAX_RECIPE_CONNECTIONS);
 
 export type ChatAgentIntegrationConnection = z.infer<typeof IntegrationConnectionSchema>;
+const McpConnectionStatusSchema = z.object({
+  id: z.string().min(1).max(160),
+  name: z.string().min(1).max(160),
+  status: z.string().min(1).max(40),
+  enabled: z.boolean(),
+});
+const McpConnectionListSchema = z.array(McpConnectionStatusSchema).max(200);
+export type ChatAgentMcpServer = z.infer<typeof McpConnectionStatusSchema>;
 
 export interface ChatAgentClient {
+  setupChat?: import("./creation-conversation.js").CreationConversationClient;
   driveProjects?: ChatDriveProjectClient;
   bots?: BotClient;
   list(): Promise<ChatAgentListResponse>;
   catalog(options?: { refresh?: boolean }): Promise<CanonicalProviderCatalog>;
   recipeCatalog(): Promise<ChatAgentRecipeCatalog>;
   integrations(): Promise<ChatAgentIntegrationConnection[]>;
+  mcpServers?(): Promise<ChatAgentMcpServer[]>;
   create(input: CreateChatAgentRequest): Promise<ChatAgent>;
   update(id: string, input: UpdateChatAgentRequest): Promise<ChatAgent>;
   search(query: string, chatId?: string): Promise<ChatMentionSearchResponse>;
@@ -46,8 +56,9 @@ export interface ChatAgentClient {
 /** The surface supplies its existing authenticated, timeout-bounded transport. */
 export function createChatAgentClient(request: (
   path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown, options?: { timeoutMs?: number; signal?: AbortSignal },
-) => Promise<unknown>): ChatAgentClient {
+) => Promise<unknown>, setupChat?: ChatAgentClient["setupChat"]): ChatAgentClient {
   return {
+    setupChat,
     driveProjects: createChatDriveProjectClient(request),
     bots: createBotClient(request),
     list: async () => ChatAgentListResponseSchema.parse(await request("/api/chat-agents?includeManagedCustomRecoveries=true", "GET")),
@@ -55,6 +66,7 @@ export function createChatAgentClient(request: (
       { timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs })),
     recipeCatalog: async () => ChatAgentRecipeCatalogSchema.parse(await request("/api/chat-agents/recipe-catalog", "GET")),
     integrations: async () => IntegrationConnectionListSchema.parse(await request("/api/integrations", "GET")),
+    mcpServers: async () => McpConnectionListSchema.parse(await request("/api/mcp-servers", "GET")),
     create: async (input) => ChatAgentSchema.parse(await request("/api/chat-agents", "POST", CreateChatAgentRequestSchema.parse(input))),
     update: async (id, input) => ChatAgentSchema.parse(await request(`/api/chat-agents/${encodeURIComponent(ChatAgentIdSchema.parse(id))}`,
       "PATCH", UpdateChatAgentRequestSchema.parse(input))),

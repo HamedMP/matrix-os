@@ -34,6 +34,7 @@ import type { WorkRoute } from "../../stores/tabs";
 import { useTabs } from "../../stores/tabs";
 import { useUi } from "../../stores/ui";
 import ChatTab from "../chat/ChatTab";
+import { openAgentResourceSettings } from "../settings/open-provider-settings";
 import { ChatTitleEditor } from "../chat/ChatTitleEditor";
 import { ProjectLanding } from "../project/ProjectLanding";
 import ProjectChatsView from "../project/ProjectChatsView";
@@ -927,7 +928,7 @@ function WorkTabContent({
         >
           <BotHeaderBindingContext.Provider value={sharedScopeId ? null : reportContentBinding}>
           <BotHeaderContext.Provider value={!agentsOpen && headerAgentId ? botHeaderContainer : null}>
-          <ChatAgentsContent hostedChrome client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}
+          <ChatAgentsContent onOpenResourceSettings={openAgentResourceSettings} hostedChrome client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}
             onOpenBotChat={openBotChat} providerCatalog={agentProviderCatalog}>
             {content}
             {draftInspector}

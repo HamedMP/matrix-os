@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ScheduleBotPicker } from "./bots/ScheduleBotPicker.js";
 import { ScheduleCenter } from "./bots/ScheduleCenter.js";
 import { ChatAgentsPanel } from "./ChatAgentsEntry.js";
+import type { AgentSetupResource } from "./AgentSetupResources.js";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import type { ChatAgentClient } from "./client.js";
 import type { AgentProviderCatalogSource } from "./use-agent-provider-catalog.js";
 
-export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrome = false, providerCatalog, headerLeading, children }: {
-  hostedChrome?: boolean; client?: ChatAgentClient; scopeKey: string; onOpenBotChat?: (chatId: string) => void;
+export function ChatAgentsContent({ onOpenResourceSettings, client, scopeKey, onOpenBotChat, hostedChrome = false, providerCatalog, headerLeading, children }: {
+  onOpenResourceSettings?: (resource: AgentSetupResource) => void; hostedChrome?: boolean; client?: ChatAgentClient; scopeKey: string; onOpenBotChat?: (chatId: string) => void;
   providerCatalog?: AgentProviderCatalogSource;
   /** Host controls before the Agents title, such as Web's Chat sidebar toggle. */
   headerLeading?: ReactNode;
@@ -33,7 +34,7 @@ export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrom
     </div>
     {opened?.view === "schedules" ? <ScheduleCenter key={scopeKey} client={opened.client} headerLeading={headerLeading} onOpenBotChat={onOpenBotChat} onNewSchedule={trigger => { navigation?.open({ ...opened, view: "library" }, trigger); if (navigation) setScheduleIntent({client: opened.client, generation: navigation.getGeneration()}); }} onClose={() => close?.(true)}/> : opened?.view === "library" && scheduleIntent?.client === opened.client && scheduleIntent.generation === generation ? <ScheduleBotPicker key={scopeKey} client={opened.client} onOpen={onOpenBotChat} onDone={() => close?.()}
       onBack={trigger => navigation?.open({...opened, view: "schedules"}, trigger)} onManage={() => setScheduleIntent(null)}/> : opened ? <ChatAgentsPanel client={opened.client} view={opened.view} onStartChat={opened.onStartChat} onSetup={opened.onSetup}
-      requestedRecipeId={opened.requestedRecipeId} onRequestedRecipeResult={opened.onRequestedRecipeResult}
+      onOpenResourceSettings={onOpenResourceSettings} requestedAgentId={opened.requestedAgentId} requestedRecipeId={opened.requestedRecipeId} onRequestedRecipeResult={opened.onRequestedRecipeResult}
       providerCatalog={providerCatalog}
       hostedChrome={hostedChrome} headerLeading={headerLeading} onTitleChange={onTitleChange} onOpenBotChat={onOpenBotChat} onClose={() => close?.(true)} /> : null}
   </>;

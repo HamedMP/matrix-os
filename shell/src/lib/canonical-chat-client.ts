@@ -4,7 +4,7 @@ import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { MAX_AGENT_ATTACHMENT_BYTES, CanonicalChatNavigationResponseSchema, canonicalAssistantOutputMessages, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, filePreviewContentUrl, type ChatAgentClient } from "@matrix-os/ui";
-import { botRoutineOriginReadAccept, chatEventVersionUrl, chatFundingVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import { botRoutineOriginReadAccept, chatBotCreationVersionUrl, chatEventVersionUrl, chatFundingVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalChatQueueAdmissionResponseSchema, CanonicalChatQueueCancellationResponseSchema,
   CanonicalQueueChatTurnRequestSchema, CanonicalCancelQueuedChatTurnRequestSchema, CanonicalChatQueuedTurnIdSchema,
@@ -64,7 +64,7 @@ export interface CanonicalShellChatClient {
   openEventStream(input: { cursor?: number; signal: AbortSignal }): Promise<Response>;
   create(input: CanonicalCreateChatRequest): Promise<CanonicalChatRecord>;
   /** The newest page, or the older page `cursor` names. */
-  detail(chatId: string, cursor?: string): Promise<CanonicalChatDetailResponse>;
+  detail(chatId: string, cursor?: string, includeSetupProposals?: boolean): Promise<CanonicalChatDetailResponse>;
   updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
   updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
@@ -209,7 +209,7 @@ export function createCanonicalShellChatClient(options: {
     }).then(response => jsonResponse(response, path));
   };
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
-  return {
+  const client: CanonicalShellChatClient = {
     browserPermissions: createBrowserPermissionClient((path, method, body) => request(path, { method, ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) })),
     agents: createChatAgentClient((path, method, body, requestOptions) => {
       const accept = botRoutineOriginReadAccept(path, method);
@@ -217,6 +217,11 @@ export function createCanonicalShellChatClient(options: {
         ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
         ...(accept ? { headers: { Accept: accept } } : {}),
       }, requestOptions);
+    }, {
+      create: input => client.create(input),
+      detail: id => client.detail(id, undefined, true),
+      admitTurn: (id, input) => client.admitTurn(id, input),
+      cancelRun: (id, runId, requestId) => client.cancelRun(id, runId, requestId),
     }),
     async openEventStream({ cursor, signal }) {
       const response = await fetchFn(chatImportSourceVersionUrl(chatFundingVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl(`${options.gatewayUrl}/api/chats/events`, true))))), {
@@ -254,11 +259,12 @@ export function createCanonicalShellChatClient(options: {
         body: JSON.stringify(body),
       }));
     },
-    async detail(chatId, cursor) {
+    async detail(chatId, cursor, includeSetupProposals) {
       const id = CanonicalChatIdSchema.parse(chatId);
       const query = new URLSearchParams({ limit: "200" });
       if (cursor !== undefined) query.set("cursor", CanonicalChatApiCursorSchema.parse(cursor));
-      return CanonicalChatDetailResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?${query}`, true)));
+      const path = `/api/chats/${encodeURIComponent(id)}?${query}`;
+      return CanonicalChatDetailResponseSchema.parse(await request(chatMessageVersionUrl(includeSetupProposals ? chatBotCreationVersionUrl(path) : path, true)));
     },
     async updateReadState(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
@@ -297,8 +303,9 @@ export function createCanonicalShellChatClient(options: {
     async admitTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
       const body = CanonicalCreateChatTurnRequestSchema.parse(input);
+      const responsePath = (path: string) => chatMessageVersionUrl(body.botCreation ? chatBotCreationVersionUrl(path) : path, true);
       try {
-        return CanonicalChatTurnAdmissionResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turns`, true), {
+        return CanonicalChatTurnAdmissionResponseSchema.parse(await request(responsePath(`/api/chats/${encodeURIComponent(id)}/turns`), {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
         }));
       } catch (error: unknown) {
@@ -307,8 +314,8 @@ export function createCanonicalShellChatClient(options: {
           || error instanceof CanonicalShellChatRequestError && error.status >= 500;
         if (ambiguous) {
           const recovered = await recoverCanonicalChatAdmission(id, body,
-            requestHash => request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turn-admissions/${encodeURIComponent(body.clientRequestId)}?requestHash=${requestHash}`, true)),
-            () => request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200`, true)));
+            requestHash => request(responsePath(`/api/chats/${encodeURIComponent(id)}/turn-admissions/${encodeURIComponent(body.clientRequestId)}?requestHash=${requestHash}`)),
+            () => request(responsePath(`/api/chats/${encodeURIComponent(id)}?limit=200`)));
           if (recovered) return recovered;
         }
         throw error;
@@ -429,6 +436,7 @@ export function createCanonicalShellChatClient(options: {
       ));
     },
   };
+  return client;
 }
 
 function partText(part: CanonicalChatMessage["parts"][number]): string | null {
