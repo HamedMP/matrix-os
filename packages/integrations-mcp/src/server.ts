@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerHerdrTerminalTools, HERDR_TOOL_INSTRUCTIONS } from "./herdr-terminal.js";
 import { registerIntegrationReadTools, INTEGRATION_READ_INSTRUCTIONS } from "./integration-read.js";
 import { registerOwnerDataImportTools } from "./data-imports.js";
 import { registerChatAgentTools } from "./chat-agents.js";
@@ -26,7 +27,7 @@ export interface IntegrationsMcpServerOptions {
   toolSurface?: IntegrationsMcpToolSurface;
 }
 
-export const IntegrationsMcpToolSurfaceSchema = z.enum(["full", "custom-mcp-call", "custom-mcp-discovery", "chat-call", "chat-discovery", "preview-drive-call", "jev-inbox-preview", "custom-mcp-call-drive", "custom-mcp-discovery-drive", "chat-call-drive", "chat-discovery-drive", "custom-mcp-call-integrations", "custom-mcp-discovery-integrations", "custom-mcp-call-integrations-drive", "custom-mcp-discovery-integrations-drive"]);
+export const IntegrationsMcpToolSurfaceSchema = z.enum(["chat-herdr", "full", "custom-mcp-call", "custom-mcp-discovery", "chat-call", "chat-discovery", "preview-drive-call", "jev-inbox-preview", "custom-mcp-call-drive", "custom-mcp-discovery-drive", "chat-call-drive", "chat-discovery-drive", "custom-mcp-call-integrations", "custom-mcp-discovery-integrations", "custom-mcp-call-integrations-drive", "custom-mcp-discovery-integrations-drive"]);
 export type IntegrationsMcpToolSurface = z.infer<typeof IntegrationsMcpToolSurfaceSchema>;
 
 const serviceSchema = z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/);
@@ -50,6 +51,11 @@ export function createIntegrationsMcpServer(
 ): McpServer {
   const fetcher = options.fetcher;
   const surface = IntegrationsMcpToolSurfaceSchema.parse(options.toolSurface ?? "full");
+  if (surface === "chat-herdr") {
+    const server = new McpServer({ name: "matrix-herdr", version: "1.0.0" }, { instructions: HERDR_TOOL_INSTRUCTIONS });
+    registerHerdrTerminalTools(server, fetcher);
+    return server;
+  }
   const full = surface === "full";
   const integrationRead = surface.includes("-integrations");
   const customCall = full || surface.startsWith("custom-mcp-call");

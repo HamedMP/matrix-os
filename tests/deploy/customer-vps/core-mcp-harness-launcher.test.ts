@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 // (it starts from `env -i`), or forwards an attacker-shaped label.
 const launcherPath = "distro/customer-vps/host-bin/matrix-integrations-mcp";
 
-async function runLauncher(args: string[]) {
+async function runLauncher(args: string[], env: Record<string, string> = {}) {
   const fixtureDir = await mkdtemp(join(tmpdir(), "matrix-mcp-harness-"));
   try {
     const serverPath = join(fixtureDir, "server.cjs");
@@ -19,12 +19,19 @@ async function runLauncher(args: string[]) {
       .replace('SERVER_PATH="/opt/matrix/app/packages/integrations-mcp/dist/cli.js"', `SERVER_PATH="${serverPath}"`);
     return spawnSync("bash", ["-c", launcher, "harness-fixture", ...args], {
       encoding: "utf8", timeout: 5_000,
-      env: { PATH: process.env.PATH ?? "", MATRIX_AGENT_INTEGRATIONS_TOKEN: "a".repeat(64), MATRIX_MCP_HARNESS: "spoofed" },
+      env: { PATH: process.env.PATH ?? "", MATRIX_AGENT_INTEGRATIONS_TOKEN: "a".repeat(64), MATRIX_MCP_HARNESS: "spoofed", ...env },
     });
   } finally { await rm(fixtureDir, { recursive: true, force: true }); }
 }
 
 describe("Matrix Core MCP harness label through the stdio launcher", () => {
+  it("requires the selected-terminal grant even when the Codex run already has a Core bearer", async () => {
+    const args = ["--require-scoped-capability", "--tool-surface=chat-herdr", "--harness=codex"];
+    expect((await runLauncher(args)).status).toBe(3);
+    expect((await runLauncher(args, { MATRIX_HERDR_RUN_TOKEN: "b".repeat(64) })).status).toBe(0);
+    expect((await runLauncher(args.slice(1), { MATRIX_HERDR_RUN_TOKEN: "b".repeat(64) })).status).toBe(3);
+  });
+
   it.each(["claude_code", "codex", "opencode", "hermes"])("forwards --harness=%s as MATRIX_MCP_HARNESS only", async harness => {
     const result = await runLauncher(["--require-scoped-capability", "--tool-surface=custom-mcp-call", `--harness=${harness}`]);
     expect(result.status).toBe(0);
