@@ -7,6 +7,8 @@ import { APP_FILES_BRIDGE_PATH, encodeAppFileBase64 } from "../../../packages/co
 import { ProjectFenceError } from "../../../packages/gateway/src/collaboration/project-fence";
 import { registerBridgeFileRoutes } from "../../../packages/gateway/src/server/bridge-file-routes";
 import { createGatewayAppFileProjectPathAdmission } from "../../../packages/gateway/src/server/project-routes";
+import { listAppFiles, readAppFile } from "../../../packages/gateway/src/app-files/read-ops";
+import { mkdirAppFile, writeAppFile } from "../../../packages/gateway/src/app-files/write-ops";
 import { createHarness, errorCode, type AppFileHarness } from "./helpers";
 
 /** Records synchronous path checks so a test can prove a request never blocks on them. */
@@ -274,6 +276,69 @@ describe("app file path security", () => {
     onTestFinished(() => linked.cleanup());
     await writeFile(join(harness.home, "inside.txt"), "inside");
     expect(await code(await linked.post({ kind: "files.read", path: "inside.txt" }))).toEqual([200, "ok"]);
+  });
+
+  // Fault: with the configured home itself a link, the home root was checked
+  // with lstat, which describes the link, so listing the root and saving a
+  // file directly under it were refused instead of served.
+  it("serves the root of a home reached through a link and still refuses links inside it", async () => {
+    harness = await createHarness();
+    const outsideDir = await mkdtemp(join(tmpdir(), "app-files-outside-"));
+    onTestFinished(() => rm(outsideDir, { recursive: true, force: true }));
+    await writeFile(join(outsideDir, "secret.txt"), "outside");
+    const linkedHome = join(outsideDir, "home-link");
+    await symlink(harness.home, linkedHome);
+    const linked = await createHarness({ homePath: linkedHome, install: false });
+    onTestFinished(() => linked.cleanup());
+    await mkdir(join(harness.home, "Documents"));
+    await writeFile(join(harness.home, "report.docx"), "report");
+    await symlink(join(outsideDir, "secret.txt"), join(harness.home, "out-link.txt"));
+    await symlink(outsideDir, join(harness.home, "out-dir"));
+
+    const listed = await linked.post({ kind: "files.list", dir: "" });
+    expect(listed.status).toBe(200);
+    const names = ((await listed.json()) as { entries: Array<{ name: string }> }).entries.map((entry) => entry.name);
+    expect(names).toEqual(expect.arrayContaining(["Documents", "report.docx"]));
+    expect(names).not.toContain("out-link.txt");
+    expect(names).not.toContain("out-dir");
+
+    const stat = await linked.post({ kind: "files.stat", path: "report.docx" });
+    expect(stat.status).toBe(200);
+    const { version } = (await stat.json()) as { version: string };
+    expect(await code(await linked.post({ kind: "files.read", path: "report.docx" }))).toEqual([200, "ok"]);
+    expect(await code(await linked.post({ kind: "files.write", path: "report.docx", contentBase64: bytes, ifVersion: version }))).toEqual([200, "ok"]);
+    expect(await code(await linked.post({ kind: "files.write", path: "new.docx", contentBase64: bytes, ifVersion: null }))).toEqual([200, "ok"]);
+    expect(await code(await linked.post({ kind: "files.mkdir", path: "Drafts" }))).toEqual([200, "ok"]);
+    expect(await code(await linked.post({ kind: "files.list", dir: "Documents" }))).toEqual([200, "ok"]);
+    expect(await readFile(join(harness.home, "report.docx"), "utf8")).toBe("payload");
+    expect(await readFile(join(harness.home, "new.docx"), "utf8")).toBe("payload");
+    expect((await lstat(join(harness.home, "Drafts"))).isDirectory()).toBe(true);
+
+    expect(await code(await linked.post({ kind: "files.read", path: "out-link.txt" }))).toEqual([403, "forbidden"]);
+    expect(await code(await linked.post({ kind: "files.stat", path: "out-link.txt" }))).toEqual([403, "forbidden"]);
+    expect(await code(await linked.post({ kind: "files.list", dir: "out-dir" }))).toEqual([403, "forbidden"]);
+    expect(await code(await linked.post({ kind: "files.write", path: "out-link.txt", contentBase64: bytes, ifVersion: null }))).toEqual([403, "forbidden"]);
+    expect(await code(await linked.post({ kind: "files.write", path: "out-dir/a.txt", contentBase64: bytes, ifVersion: null }))).toEqual([403, "forbidden"]);
+    expect(await code(await linked.post({ kind: "files.mkdir", path: "out-dir/sub" }))).toEqual([403, "forbidden"]);
+    expect(await readFile(join(outsideDir, "secret.txt"), "utf8")).toBe("outside");
+    await expect(lstat(join(outsideDir, "a.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(join(outsideDir, "sub"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  // Fault: a configured home whose link leads nowhere is a misconfigured
+  // server, not a missing folder, so it must not answer not_found.
+  it("answers unavailable when the configured home cannot be resolved", async () => {
+    harness = await createHarness();
+    const outsideDir = await mkdtemp(join(tmpdir(), "app-files-outside-"));
+    onTestFinished(() => rm(outsideDir, { recursive: true, force: true }));
+    const danglingHome = join(outsideDir, "gone-home");
+    await symlink(join(outsideDir, "missing"), danglingHome);
+    const unavailable = { code: "unavailable" };
+    await expect(listAppFiles(danglingHome, "", 10)).rejects.toMatchObject(unavailable);
+    await expect(readAppFile(danglingHome, "a.docx")).rejects.toMatchObject(unavailable);
+    await expect(writeAppFile(danglingHome, { path: "a.docx", contentBase64: bytes, ifVersion: null })).rejects.toMatchObject(unavailable);
+    await expect(mkdirAppFile(danglingHome, "Drafts")).rejects.toMatchObject(unavailable);
+    await expect(lstat(join(outsideDir, "missing"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("replies not_found for missing paths and missing parents", async () => {

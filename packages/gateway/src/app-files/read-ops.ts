@@ -8,7 +8,7 @@ import {
 } from "@matrix-os/contracts/app-files";
 import { getMimeType } from "../file-utils.js";
 import { AppFileError } from "./errors.js";
-import { isListableChild, lstatOrNull, resolveExistingAppFilePath } from "./paths.js";
+import { appFileHomeLocation, isListableChild, lstatOrNull, resolveExistingAppFilePath } from "./paths.js";
 
 /** Directory entries examined per listing. Beyond this the listing is truncated. */
 export const APP_FILE_LIST_SCAN_LIMIT = 10_000;
@@ -54,7 +54,8 @@ async function describeCandidate(dirPath: string, candidate: Candidate): Promise
 }
 
 /** Bounded, symlink-free listing: directories first, then by name. */
-export async function listAppFiles(homePath: string, dir: string, limit: number): Promise<AppFileListReply> {
+export async function listAppFiles(configuredHome: string, dir: string, limit: number): Promise<AppFileListReply> {
+  const homePath = await appFileHomeLocation(configuredHome);
   const dirPath = dir === APP_FILE_HOME_DIR ? resolve(homePath) : await resolveExistingAppFilePath(homePath, dir);
   const info = await lstat(dirPath);
   if (!info.isDirectory()) throw new AppFileError("invalid_request", "not a directory");
@@ -85,8 +86,8 @@ export async function listAppFiles(homePath: string, dir: string, limit: number)
 }
 
 /** Regular files only. Reports the true size, even above the read cap. */
-export async function statAppFile(homePath: string, path: string): Promise<AppFileStatReply> {
-  const target = await resolveExistingAppFilePath(homePath, path);
+export async function statAppFile(configuredHome: string, path: string): Promise<AppFileStatReply> {
+  const target = await resolveExistingAppFilePath(await appFileHomeLocation(configuredHome), path);
   const info = await lstat(target, { bigint: true });
   if (!info.isFile()) throw new AppFileError("invalid_request", "not a file");
   return { path, size: Number(info.size), modifiedAt: modifiedAtFromMs(info.mtimeMs), version: appFileVersion(info.size, info.mtimeNs) };
@@ -97,8 +98,8 @@ export async function statAppFile(homePath: string, path: string): Promise<AppFi
  * O_NONBLOCK keeps a named pipe from holding the open until a writer appears;
  * the descriptor check then refuses it.
  */
-export async function readAppFile(homePath: string, path: string): Promise<AppFileReadReply> {
-  const target = await resolveExistingAppFilePath(homePath, path);
+export async function readAppFile(configuredHome: string, path: string): Promise<AppFileReadReply> {
+  const target = await resolveExistingAppFilePath(await appFileHomeLocation(configuredHome), path);
   const handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const before = await handle.stat({ bigint: true });

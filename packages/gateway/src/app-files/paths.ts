@@ -1,6 +1,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { BigIntStats, Stats } from "node:fs";
+import { resolveRealHomeLocation } from "../collaboration/home-location.js";
 import { isDeniedFileApiPath, isProtectedHomeSubpath, resolveWithinHome } from "../path-security.js";
 import { AppFileError, errnoCode } from "./errors.js";
 
@@ -11,6 +12,21 @@ export async function lstatOrNull(path: string, bigint = false): Promise<Stats |
   catch (error: unknown) {
     if (errnoCode(error) === "ENOENT") return null;
     throw error;
+  }
+}
+
+/**
+ * The home's real location, the base every app file operation works from. A
+ * configured home that is itself a link is followed here, once, so the root
+ * is a directory rather than the link that names it; every component below
+ * it is still walked with `lstat` and a link there is refused. A home that
+ * cannot be resolved is a misconfiguration, never a missing file.
+ */
+export async function appFileHomeLocation(homePath: string): Promise<string> {
+  try {
+    return await resolveRealHomeLocation(homePath);
+  } catch (error: unknown) {
+    throw new AppFileError("unavailable", `home location ${errnoCode(error) ?? "unresolved"}`);
   }
 }
 

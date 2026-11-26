@@ -9,7 +9,7 @@ import {
 import { withOwnerFileMutation } from "../owner-file-mutations.js";
 import { AppFileError, errnoCode } from "./errors.js";
 import { appFileIo } from "./io.js";
-import { hasSymlinkComponent, lstatOrNull, resolveWritableAppFilePath } from "./paths.js";
+import { appFileHomeLocation, hasSymlinkComponent, lstatOrNull, resolveWritableAppFilePath } from "./paths.js";
 import { unguardedProjectWrite, type ProjectWriteGuard } from "./project-write-fence.js";
 import { modifiedAtFromMs } from "./read-ops.js";
 
@@ -69,13 +69,14 @@ async function removeTemp(path: string): Promise<void> {
  * guard from before path resolution until the write settles.
  */
 export async function writeAppFile(
-  homePath: string,
+  configuredHome: string,
   request: AppFileWriteRequest,
   guard: ProjectWriteGuard = unguardedProjectWrite,
 ): Promise<AppFileWriteReply> {
   const content = Buffer.from(request.contentBase64, "base64");
   if (content.length > APP_FILE_MAX_BYTES) throw new AppFileError("too_large");
-  return withOwnerFileMutation(homePath, () => guard([request.path], async () => {
+  return withOwnerFileMutation(configuredHome, () => guard([request.path], async () => {
+    const homePath = await appFileHomeLocation(configuredHome);
     const target = await resolveWritableAppFilePath(homePath, request.path);
     const parent = await ensureParent(homePath, request.path, target, request.createParents === true);
     const current = await lstatOrNull(target, true);
@@ -124,11 +125,12 @@ export async function writeAppFile(
 
 /** Recursive and idempotent; an existing directory is success. */
 export async function mkdirAppFile(
-  homePath: string,
+  configuredHome: string,
   path: string,
   guard: ProjectWriteGuard = unguardedProjectWrite,
 ): Promise<AppFileMkdirReply> {
-  return withOwnerFileMutation(homePath, () => guard([path], async () => {
+  return withOwnerFileMutation(configuredHome, () => guard([path], async () => {
+    const homePath = await appFileHomeLocation(configuredHome);
     const target = await resolveWritableAppFilePath(homePath, path);
     const existing = await lstatOrNull(target);
     if (existing) {
