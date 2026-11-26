@@ -14,7 +14,9 @@ const INVITE_STATUS: Record<EmailInvitationSummary["state"], string> = { pending
  * Shown for email invitations, or for a legacy one-time-link site (spec 2693):
  * one-time links are retired, so that site gets one line and a way to stop
  * sharing. A live invite-only site keeps its list (read-only while the server
- * capability is off) and a way to stop sharing without going public.
+ * capability is off) and a way to stop sharing without going public. A
+ * stop-only app (Matrix default app) keeps the list, Revoke and Stop sharing,
+ * but offers no new invites or resends.
  */
 export function PrivateTab({ share, ownerInitial, appUrl, draft, setDraft }: {
   share: ShareController; ownerInitial: string; appUrl: string | null; draft: string; setDraft: (value: string) => void;
@@ -41,18 +43,19 @@ function InvitePeople({ share, ownerInitial, appUrl, draft, setDraft }: { share:
   const inputId = useId();
   const copy = useCopy();
   const available = share.emailInvitesAvailable;
+  const canInvite = share.allowNewSharing;
   const valid = isInviteEmail(draft);
   const inviting = share.operation === "invite";
   const busy = share.operation !== null;
   const submit = async () => {
-    if (!available || !valid || busy) return;
+    if (!canInvite || !available || !valid || busy) return;
     const done = await share.request({ to: "private_email", email: draft.trim() });
     // A pending mode-switch confirm keeps the draft until the owner decides.
     if (done) setDraft("");
   };
   const people = share.pageMode === "private_email" ? share.invitations : [];
   return <>
-    <div className="flex gap-2">
+    {canInvite ? <><div className="flex gap-2">
       <label htmlFor={inputId} className="sr-only">Email address</label>
       <ShareInput id={inputId} type="email" autoComplete="off" maxLength={254} className="ph-no-capture" data-ph-mask="true" placeholder="Invite by email" value={draft}
         disabled={!available || share.loading || share.loadFailed}
@@ -62,7 +65,7 @@ function InvitePeople({ share, ownerInitial, appUrl, draft, setDraft }: { share:
         {inviting ? <Spinner /> : null}Invite
       </ShareButton>
     </div>
-    {!available ? <p className="m-0 -mt-1 text-xs text-[var(--share-subtle-fg)]">Email invitations aren’t available right now.</p> : null}
+    {!available ? <p className="m-0 -mt-1 text-xs text-[var(--share-subtle-fg)]">Email invitations aren’t available right now.</p> : null}</> : null}
     {share.error?.operation === "invite" || share.error?.operation === "invite_change" ? <InlineError>{share.error.message}</InlineError> : null}
     {share.inviteOutcome ? <p role="status" className="m-0 text-xs text-[var(--share-muted-fg)]">{share.inviteOutcome === "queued" ? "Invitation queued." : "This address already has an invitation."}</p> : null}
     <ul aria-label="People with access" className="ph-no-capture m-0 flex list-none flex-col p-0" data-ph-mask="true">
@@ -77,7 +80,7 @@ function InvitePeople({ share, ownerInitial, appUrl, draft, setDraft }: { share:
           <span className="truncate text-[13px] font-medium">{person.emailAddress}</span>
           <span className="text-xs text-[var(--share-muted-fg)]">{INVITE_STATUS[person.state]}{person.state === "pending" && person.deliveryState ? ` · ${DELIVERY_STATUS[person.deliveryState]}` : ""}</span>
         </span>
-        {canResendEmailInvitation(person) ? <ShareButton variant="ghost" size="icon" aria-label={`Resend invitation to ${person.emailAddress}`} title="Resend" disabled={busy || !available} onClick={() => void share.resendInvite(person)}><RotateCw className="size-3.5" /></ShareButton> : null}
+        {canInvite && canResendEmailInvitation(person) ? <ShareButton variant="ghost" size="icon" aria-label={`Resend invitation to ${person.emailAddress}`} title="Resend" disabled={busy || !available} onClick={() => void share.resendInvite(person)}><RotateCw className="size-3.5" /></ShareButton> : null}
         {person.state === "pending" || person.state === "accepted" ? <ShareButton variant="ghost" size="icon" aria-label={`Revoke invitation for ${person.emailAddress}`} title="Revoke" disabled={busy || !available} onClick={() => void share.revokeInvite(person)}><X className="size-3.5" /></ShareButton> : null}
       </li>)}
     </ul>

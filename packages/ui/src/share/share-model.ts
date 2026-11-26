@@ -56,8 +56,23 @@ export function modeSwitchCopy(current: ActivePageMode, target: PageModeTarget, 
  * The Private tab exists for email invites, invite-only sites, and legacy
  * one-time-link sites, whose owner still needs a way to stop sharing.
  */
-export function privateTabVisible(pageMode: PageMode, emailInvitesAvailable: boolean): boolean {
-  return emailInvitesAvailable || pageMode === "private_link" || pageMode === "private_email";
+export function privateTabVisible(pageMode: PageMode, emailInvitesAvailable: boolean, allowNewSharing = true): boolean {
+  return (allowNewSharing && emailInvitesAvailable) || pageMode === "private_link" || pageMode === "private_email";
+}
+
+/** The Public tab offers Publish, so a stop-only app shows it only while it is live. */
+export function publicTabVisible(pageMode: PageMode, allowNewSharing = true): boolean {
+  return allowNewSharing || pageMode === "public";
+}
+
+/**
+ * Whether an app window shows Share. Matrix default apps never start sharing
+ * (`allowNewSharing` false) but keep Share while something is still shared, so
+ * the owner can stop it. While the state loads `pageMode` is `none` and
+ * `orgShared` false, so a default app never flashes a Share button.
+ */
+export function shareEntryVisible(allowNewSharing: boolean, pageMode: PageMode, orgShared: boolean): boolean {
+  return allowNewSharing || pageMode !== "none" || orgShared;
 }
 
 /** Opens on the tab whose sharing is on; otherwise Public. */

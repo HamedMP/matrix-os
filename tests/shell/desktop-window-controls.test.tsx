@@ -171,8 +171,9 @@ describe("web desktop window controls", () => {
     expect(publishingProps.current?.portalContainerRef?.current).toBe(frame);
   });
 
-  it("shows no Share on a Matrix default app", () => {
-    // Fault: default apps (Calculator, Notes, games) offering Share like an app the owner built.
+  it("mounts the Share host on a Matrix default app so a live link can still be unpublished", () => {
+    // Fault: dropping the Share host for default apps strands an earlier Calculator link with no Unpublish.
+    // The Share button itself decides to show only while something is shared (tests/ui/app-site-button.test.tsx).
     publishingProps.current = null;
     const win: AppWindow = {
       id: "window-calculator", title: "Calculator", path: "apps/calculator",
@@ -187,8 +188,7 @@ describe("web desktop window controls", () => {
         onToggleFullscreen={noop} />,
     );
 
-    expect(screen.queryByRole("button", { name: "Publish app" })).toBeNull();
-    expect(publishingProps.current).toBeNull();
+    expect(publishingProps.current?.appSlug).toBe("calculator");
   });
 
   it("hides portal-backed app controls throughout minimize and restores them with the window", () => {

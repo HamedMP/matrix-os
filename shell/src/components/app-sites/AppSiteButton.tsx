@@ -1,6 +1,6 @@
 "use client";
 import { useState, type RefObject } from "react";
-import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
+import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, isShareableAppSlug, shareEntryVisible, useShareController } from "@matrix-os/ui/share";
 import { SHELL_Z_INDEX } from "../../lib/shell-layering";
 import { Button } from "../ui/button";
 import { AppSiteSharePopover } from "./AppSiteSharePopover";
@@ -26,8 +26,10 @@ export function AppSiteButton({
   const [open, setOpen] = useState(false);
   const ownerIdentity = useAppSiteOwnerIdentity();
   const name = appDisplayName(appSlug, appName);
-  const share = useShareController({ appSlug, appName: name, client: webSiteClient, emailInvites });
-  const organization = useWebShareOrganization(appSlug, name);
+  // Matrix default apps can only stop sharing that already exists.
+  const allowNewSharing = isShareableAppSlug(appSlug);
+  const share = useShareController({ appSlug, appName: name, client: webSiteClient, emailInvites, allowNewSharing });
+  const organization = useWebShareOrganization(appSlug, name, allowNewSharing);
   const [resolvedPortalContainer, setResolvedPortalContainer] = useState<HTMLElement | null>(portalContainer ?? null);
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
@@ -37,6 +39,11 @@ export function AppSiteButton({
     }
     setOpen(nextOpen);
   };
+  if (!shareEntryVisible(allowNewSharing, share.pageMode, organization.shared)) {
+    // Reset so the popover does not reopen by itself if this default app is shared again.
+    if (open) setOpen(false);
+    return null;
+  }
   return (
     <AppSiteSharePopover
       open={open}

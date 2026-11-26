@@ -1,8 +1,9 @@
 /**
  * Slugs of the apps Matrix ships in the OS home template (`home/apps/**`).
  * Share (Matrix.page publishing and organization sharing) is for apps the owner
- * built, so these never show it. `tests/ui/default-app-share.test.ts` keeps this
- * list equal to the shipped manifests.
+ * built, so these never start sharing; one shared earlier keeps a stop-only Share
+ * until it is taken down. `tests/ui/default-app-share.test.ts` keeps this list
+ * equal to the shipped manifests.
  */
 export const MATRIX_DEFAULT_APP_SLUGS: ReadonlySet<string> = new Set([
   "2048",
@@ -32,7 +33,7 @@ export const MATRIX_DEFAULT_APP_SLUGS: ReadonlySet<string> = new Set([
   "winxp-minesweeper",
 ]);
 
-/** Whether an app window should offer Share: only apps the owner built. */
+/** Whether an app may start new sharing: only apps the owner built. */
 export function isShareableAppSlug(slug: string): boolean {
   return !MATRIX_DEFAULT_APP_SLUGS.has(slug);
 }

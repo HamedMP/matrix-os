@@ -8,7 +8,6 @@ import { nativeBrowserProduct } from "../../../../shared/browser-products";
 import { DesktopAppSiteButton } from "../app-sites/DesktopAppSiteButton";
 import { useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import type { CollaborativeAppDirectoryItem } from "@matrix-os/contracts";
-import { isShareableAppSlug } from "@matrix-os/ui/share";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access.
@@ -65,8 +64,8 @@ export default function EmbedHost({
   const [retryRevision, setRetryRevision] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "host-offline" | "access-ended" | "needs-recheck" | "failed">("loading");
   const [snapshotDataUrl, setSnapshotDataUrl] = useState<string | null>(null);
-  // Share is for apps the owner built; Matrix default apps never offer it.
-  const publishingChrome = useMemo(() => slug && visible && !product && isShareableAppSlug(slug) ? ({
+  // Default apps keep the Share host: the button shows only while one is still shared.
+  const publishingChrome = useMemo(() => slug && visible && !product ? ({
     rightActions: (
       <DesktopAppSiteButton
         key={`${runtimeSlot}:${authGeneration}:${slug}`}

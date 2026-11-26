@@ -39,7 +39,7 @@ export function PublicTab({ share, draft, setDraft, slugState, onPublish, onSave
   </div>;
 }
 
-/** Live app: link, status, publish the latest app version, edit details, unpublish. */
+/** Live app: link, status, publish the latest app version, edit details, unpublish. A stop-only app (Matrix default app) keeps only Unpublish. */
 function LivePublic({ share, draft, setDraft, slugState, onSaveDetails, submissions }: {
   share: ShareController; draft: PublicDraft; setDraft: (patch: Partial<PublicDraft>) => void; slugState: SlugState; onSaveDetails: () => void; submissions?: ReactNode;
 }) {
@@ -60,15 +60,15 @@ function LivePublic({ share, draft, setDraft, slugState, onSaveDetails, submissi
           {share.operation === "unpublish" ? <Spinner /> : null}Unpublish
         </ShareButton>
       </div>
-      <div className="flex items-center gap-1">
+      {share.allowNewSharing ? <div className="flex items-center gap-1">
         <ShareButton size="sm" disabled={busy} title="Publish the latest version of the app" onClick={() => void share.publishUpdate()}>
           {share.operation === "update" ? <Spinner /> : <RefreshCw aria-hidden="true" className="size-3.5" />}Update
         </ShareButton>
         <ShareButton size="icon" variant="ghost" className="size-8" aria-label="Edit details" title="Edit details" aria-expanded={editing} onClick={() => setEditing((value) => !value)}>
           <Pencil className="size-3.5" />
         </ShareButton>
-      </div>
-      {editing ? <div className="flex flex-col gap-3 border-t border-[var(--share-border)] pt-3">
+      </div> : null}
+      {editing && share.allowNewSharing ? <div className="flex flex-col gap-3 border-t border-[var(--share-border)] pt-3">
         <SlugField share={share} draft={draft} setDraft={setDraft} slugState={slugState} />
         <MetadataFields draft={{ ...draft, metaOpen: true }} setDraft={setDraft} />
         <ShareButton variant="primary" size="sm" className="self-start" disabled={busy || slugBlocksPublish(slugState)} onClick={onSaveDetails}>

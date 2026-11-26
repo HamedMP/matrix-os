@@ -96,14 +96,15 @@ describe("CanvasWindow design-system title bars", () => {
     expect(publishingProps.current?.portalContainer).toBe(container.firstElementChild);
   });
 
-  it("shows no Share on a Matrix default app", async () => {
-    // Fault: default apps (Notes, Calculator, games) offering Share like an app the owner built.
+  it("mounts the Share host on a Matrix default app so a live link can still be unpublished", async () => {
+    // Fault: dropping the Share host for default apps strands an earlier Notes link with no Unpublish.
+    // The Share button itself decides to show only while something is shared (tests/ui/app-site-button.test.tsx).
     const notes: AppWindow = { ...appWindow, id: "win-notes", title: "Notes", path: "apps/notes" };
     useWindowManager.setState({ windows: [notes], focusedWindowId: notes.id });
 
     await renderWindow(notes);
 
-    expect(screen.queryByRole("button", { name: "Publish app" })).toBeNull();
+    expect(publishingProps.current?.appSlug).toBe("notes");
   });
 
   it("does not leave an invisible publishing control clickable when canvas titles are hidden", async () => {

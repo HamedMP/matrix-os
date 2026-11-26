@@ -37,6 +37,8 @@ export interface ShareOrganizationHost {
   /** Opens Matrix Chats on a NEW chat and sends `prompt` as its first message. */
   startChat: (prompt: string) => Promise<boolean>;
   openChat: () => void;
+  /** False for Matrix default apps: an existing org share can be stopped, never started. */
+  allowNewSharing?: boolean;
   /** Absolute org link for Copy; `hints` are display-only names for the hand-off page. */
   orgLink: (share: CollaborativeAppShare, hints: { app: string; org: string }) => string | null;
 }
@@ -65,6 +67,8 @@ export function useShareOrganization(host: ShareOrganizationHost): { slot: Share
     },
   });
   if (!enabled) return { slot: null, shared: false };
+  // A stop-only app shows the Organization tab only while it is shared.
+  if (host.allowNewSharing === false && !flow.shared) return { slot: null, shared: false };
   const selected = selectOrganization(organizations, [
     flow.shared ? sharing.share?.organizationId : null, flow.runningOrganizationId, chosenId, host.preferredOrganizationId,
   ]);

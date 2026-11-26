@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React, { useMemo, useState } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EmbedHost from "../../desktop/src/renderer/src/features/embeds/EmbedHost";
 import { invoke, onEvent } from "../../desktop/src/renderer/src/lib/operator";
@@ -9,7 +9,7 @@ import { useConnection } from "../../desktop/src/renderer/src/stores/connection"
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { SurfaceChromeContext, type SurfaceChromeSpec } from "../../desktop/src/renderer/src/features/desktop-shell/SurfaceChrome";
 
-const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })), deploy: vi.fn(), slugAvailability: vi.fn(async () => ({ status: "available", suggestions: [] })) } }));
+const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async (): Promise<unknown> => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })), deploy: vi.fn(), unpublish: vi.fn(), submissions: vi.fn(async () => ({ submissions: [], nextCursor: null })), slugAvailability: vi.fn(async () => ({ status: "available", suggestions: [] })) } }));
 const SHARED_TARGET = {
   scopeId: "10000000-0000-4000-8000-000000000001",
   runtimeId: "runtime_owner",
@@ -96,11 +96,40 @@ describe("EmbedHost", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows no Share on a Matrix default app", () => {
+  it("shows no Share on a Matrix default app that is not shared", async () => {
     // Fault: default apps (Notes, Calculator, games) offering Share like an app the owner built.
+    useConnection.setState({ api: { forRuntime: () => ({ get: vi.fn(async () => null), post: vi.fn() }) } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
     render(<EmbedHostWithChrome kind="app" slug="notes" active />);
 
+    await waitFor(() => expect(publishing.client.get).toHaveBeenCalledWith("notes", expect.any(AbortSignal)));
+    await act(async () => {});
     expect(screen.queryByRole("button", { name: "Share" })).toBeNull();
+  });
+
+  it("keeps Unpublish, and only Unpublish, on a default app that is already live", async () => {
+    // Fault: hiding Share on default apps strands an earlier Notes link with no way to unpublish it.
+    const siteId = "11111111-1111-4111-8111-111111111111";
+    const live = { id: siteId, appSlug: "notes", title: "Notes", description: "", slug: null, url: `https://matrix.page/${siteId}`, revision: 2, status: "published", accessMode: "public", activeVersion: null, versions: [], config: { data: {}, forms: [] } };
+    publishing.client.get.mockResolvedValue(live);
+    publishing.client.unpublish.mockImplementation(async () => {
+      const stopped = { ...live, status: "unpublished", revision: 3 };
+      publishing.client.get.mockResolvedValue(stopped);
+      return stopped;
+    });
+    useConnection.setState({ api: { forRuntime: () => ({ get: vi.fn(async () => null), post: vi.fn() }) } as unknown as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
+    try {
+      render(<EmbedHostWithChrome kind="app" slug="notes" active />);
+      fireEvent.click(await screen.findByRole("button", { name: "Live" }));
+      const dialog = await screen.findByRole("dialog", { name: "Share app" });
+      expect(screen.queryByRole("button", { name: /Update/ })).toBeNull();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Unpublish" }));
+      await waitFor(() => expect(publishing.client.unpublish).toHaveBeenCalledWith("notes", 2, expect.any(AbortSignal)));
+      await waitFor(() => expect(screen.queryByRole("button", { name: /Live|Share/ })).toBeNull());
+      expect(publishing.client.deploy).not.toHaveBeenCalled();
+    } finally {
+      publishing.client.get.mockReset();
+      publishing.client.get.mockImplementation(async () => null);
+    }
   });
 
   it("checks, shares, and stops organization access inside the single Share popover", async () => {
