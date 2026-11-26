@@ -281,6 +281,11 @@ describe("runner pool", () => {
     expect(dockerfile).not.toMatch(/^\s+nodejs npm \\$/m);
   });
 
+  // Hosted runners ship PyYAML; tests/platform/metal-host-scripts.test.ts renders cloud-init with it.
+  it("installs the Python modules repository tests import", () => {
+    expect(dockerfile).toMatch(/^\s+.*\bpython3 python3-yaml\b/m);
+  });
+
   it("pins the runner base image by digest", () => {
     expect(dockerfile).toMatch(/^FROM ghcr\.io\/actions\/actions-runner:[0-9.]+@sha256:[a-f0-9]{64}$/m);
   });
