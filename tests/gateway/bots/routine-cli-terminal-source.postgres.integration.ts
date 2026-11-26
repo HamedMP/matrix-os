@@ -156,15 +156,21 @@ it.each(["before issue", "after issue"])("sharing the exact Terminal %s retires 
 
 it.each(["before claim", "after claim"])("actual root end %s respects canonical target independence", async phase => {
   f = await terminalFixture(); await f.launch(); const requestId = crypto.randomUUID();
+  // Canonical admission runs after the receipt commits, while the CLI child may still
+  // be exiting. Ending the root then aborts the in-flight call, which correctly answers
+  // unknown. End it only once the receipt has reached the caller.
+  let receiptReturned!: () => void;
+  const returned = new Promise<void>(done => { receiptReturned = done; });
   if (phase === "before claim") {
     const begin = f.routines.proposals.beginWithin;
-    f.routines.proposals.beginWithin = async (tx, input) => { f!.endRoot(); return begin(tx, input); };
+    f.routines.proposals.beginWithin = async (tx, input) => { await returned; f!.endRoot(); return begin(tx, input); };
   } else {
     const consume = f.routines.proposals.consume;
-    f.routines.proposals.consume = async (binding, signal) => { f!.endRoot(); return consume(binding, signal); };
+    f.routines.proposals.consume = async (binding, signal) => { await returned; f!.endRoot(); return consume(binding, signal); };
   }
-  const pending = f.port().invoke({ operation: "propose", requestId, proposal }, f.writer, new AbortController().signal);
-  expect(await pending).toMatchObject({ ok: true, data: { receipt: { requestId, disposition: "queued" } } });
+  const result = await f.port().invoke({ operation: "propose", requestId, proposal }, f.writer, new AbortController().signal);
+  receiptReturned();
+  expect(result).toMatchObject({ ok: true, data: { receipt: { requestId, disposition: "queued" } } });
   await waitForTarget(f, requestId, phase === "after claim" ? "completed" : "failed");
   expect(await f.data.db.selectFrom("bot_approvals").select("status").execute()).toEqual(phase === "after claim" ? [{ status: "pending" }] : []);
   expect(await f.data.db.selectFrom("bot_routines").selectAll().execute()).toEqual([]);
