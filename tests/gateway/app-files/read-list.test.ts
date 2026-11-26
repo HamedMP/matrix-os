@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { mkdir, open, readFile, stat, truncate, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   APP_FILE_MAX_BYTES, AppFileListReplySchema, AppFileReadReplySchema, AppFileStatReplySchema, appFileVersion, decodeAppFileBase64,
 } from "../../../packages/contracts/src/app-files";
@@ -32,6 +32,32 @@ async function releaseFifoReaders(path: string): Promise<void> {
     // ENXIO: no reader is waiting, so nothing is stuck.
     if ((error as NodeJS.ErrnoException).code !== "ENXIO") throw error;
   }
+}
+
+type DescriptorPrototype = { read: (...args: unknown[]) => Promise<unknown>; stat: () => Promise<{ dev: number; ino: number }> };
+
+/**
+ * Runs `beforeRead` once, just before the first descriptor read of `path`
+ * delegates to the real read, so another writer changes the file mid-read.
+ * Reads of other files (an app manifest, say) pass straight through.
+ */
+async function spyOnFirstDescriptorRead(path: string, beforeRead: () => Promise<void>) {
+  const target = await stat(path);
+  const probe = await open(__filename, "r");
+  const prototype = Object.getPrototypeOf(probe) as DescriptorPrototype;
+  await probe.close();
+  const realRead = prototype.read;
+  let fired = false;
+  return vi.spyOn(prototype, "read").mockImplementation(async function (this: DescriptorPrototype, ...args: unknown[]) {
+    if (!fired) {
+      const info = await this.stat();
+      if (info.dev === target.dev && info.ino === target.ino) {
+        fired = true;
+        await beforeRead();
+      }
+    }
+    return realRead.apply(this, args);
+  });
 }
 
 function withinMs<T>(work: Promise<T>, ms: number): Promise<T | "timed out"> {
@@ -130,6 +156,39 @@ describe("files.stat and files.read", () => {
     await truncate(path, APP_FILE_MAX_BYTES);
     const reply = AppFileReadReplySchema.parse(await (await harness.post({ kind: "files.read", path: "max.bin" })).json());
     expect(reply.size).toBe(APP_FILE_MAX_BYTES);
+  });
+
+  it.each([
+    ["rewritten in place with the same length", false],
+    ["rewritten in place with the same length and its modification time restored", true],
+  ])("refuses a read whose file is %s while it is read, then serves the new state", async (_case, restoreMtime) => {
+    harness = await createHarness();
+    const path = join(harness.home, "Documents/race.docx");
+    await mkdir(join(harness.home, "Documents"));
+    await writeFile(path, "old-bytes");
+    const earlier = new Date("2026-05-01T10:00:00.000Z");
+    await utimes(path, earlier, earlier);
+    let rewritten = false;
+    const readSpy = await spyOnFirstDescriptorRead(path, async () => {
+      // A coarse filesystem clock could leave the change time equal to the setup's utimes.
+      await new Promise((done) => setTimeout(done, 25));
+      const writer = await open(path, "r+");
+      try { await writer.write("new-bytes", 0); } finally { await writer.close(); }
+      if (restoreMtime) await utimes(path, earlier, earlier);
+      rewritten = true;
+    });
+    try {
+      const torn = await harness.post({ kind: "files.read", path: "Documents/race.docx" });
+      expect(rewritten).toBe(true);
+      expect(torn.status).toBe(503);
+      expect(await errorCode(torn)).toBe("unavailable");
+    } finally {
+      readSpy.mockRestore();
+    }
+    const retried = AppFileReadReplySchema.parse(await (await harness.post({ kind: "files.read", path: "Documents/race.docx" })).json());
+    const info = await stat(path, { bigint: true });
+    expect(Buffer.from(decodeAppFileBase64(retried.contentBase64)).toString()).toBe("new-bytes");
+    expect(retried.version).toBe(appFileVersion(info.size, info.mtimeNs));
   });
 
   it("refuses directories for stat and read", async () => {

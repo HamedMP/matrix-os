@@ -1,4 +1,4 @@
-import { constants } from "node:fs";
+import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, opendir } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import {
@@ -93,6 +93,10 @@ export async function statAppFile(configuredHome: string, path: string): Promise
   return { path, size: Number(info.size), modifiedAt: modifiedAtFromMs(info.mtimeMs), version: appFileVersion(info.size, info.mtimeNs) };
 }
 
+function sameContentState(before: BigIntStats, after: BigIntStats): boolean {
+  return after.size === before.size && after.mtimeNs === before.mtimeNs && after.ctimeNs === before.ctimeNs;
+}
+
 /**
  * Reads through one no-follow descriptor so the checked file is the read file.
  * O_NONBLOCK keeps a named pipe from holding the open until a writer appears;
@@ -113,8 +117,13 @@ export async function readAppFile(configuredHome: string, path: string): Promise
       total += bytesRead;
     }
     if (total > APP_FILE_MAX_BYTES) throw new AppFileError("too_large");
-    // A size change during the read means the bytes and the version disagree.
-    if (BigInt(total) !== before.size) throw new AppFileError("unavailable", "file changed during read");
+    // An in-place rewrite during the read can mix old and new bytes without
+    // changing the length; the version is only true of the bytes when the
+    // descriptor reports the same size and times after the read as before it.
+    const after = await handle.stat({ bigint: true });
+    if (BigInt(total) !== before.size || !sameContentState(before, after)) {
+      throw new AppFileError("unavailable", "file changed during read");
+    }
     const content = buffer.subarray(0, total);
     return {
       path,
