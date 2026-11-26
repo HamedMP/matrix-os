@@ -89,6 +89,7 @@ function markupBefore(state: WorkbookState, sheet: SheetModel, cell: CellRec): (
 
 function markEdited(state: WorkbookState, sheet: SheetModel, row: number, col: number): void {
   const calc = state.calc;
+  calc.edits++;
   // The next run calculates everything: the edit needs no mark of its own.
   if (calc.all) return;
   let edited = calc.edited.get(sheet);

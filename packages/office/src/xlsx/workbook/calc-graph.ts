@@ -42,6 +42,11 @@ export interface CalcNode {
   reads: Dep[] | null;
   /** The last calculation read more rectangles than are kept: any change may concern it. */
   readsAll: boolean;
+  /**
+   * The `calc.edits` of the workbook when a run without a time last kept this formula's value because
+   * its calculation reached TODAY or NOW; -1 when its last calculation finished.
+   */
+  keptAt: number;
   /** How many values the run had stored when this node was last calculated in it, before and after its own. */
   evalAt: number;
   doneAt: number;
@@ -357,6 +362,7 @@ export function buildGraph(state: WorkbookState): CalcGraph {
           ...traits,
           reads: null,
           readsAll: false,
+          keptAt: -1,
           evalAt: 0,
           doneAt: 0,
           turns: 0,

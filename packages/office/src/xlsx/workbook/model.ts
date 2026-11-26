@@ -179,6 +179,11 @@ export interface CalcState {
    * {@link TRACE_LIMIT} + 1 of them: past that `all` is set and the marks are dropped.
    */
   edited: Map<SheetModel, Set<number>>;
+  /**
+   * Counts the cell edits of the workbook. A formula a run without a time keeps notes it, so the runs that take
+   * up the same bounded calculation do not calculate it again (`calc-run.ts`).
+   */
+  edits: number;
   /** Everything must be calculated again (rows or columns moved, a sheet was removed). */
   all: boolean;
   /**

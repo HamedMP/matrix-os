@@ -10,8 +10,10 @@
 
 import { describe, expect, it } from "vitest";
 import { createXlsx, openXlsx, parseA1 } from "../../../../packages/office/src/xlsx/index.js";
+import { needsRecalc } from "../../../../packages/office/src/xlsx/workbook/calc.js";
 import { TRACE_LIMIT } from "../../../../packages/office/src/xlsx/workbook/model.js";
-import { err, valueAt } from "./helpers.js";
+import { stateOf } from "../../../../packages/office/src/xlsx/workbook/workbook.js";
+import { buildXlsx, err, fx, num, valueAt } from "./helpers.js";
 
 const NOW = "2026-11-23T10:00:00Z";
 /** Enough cells in an OFFSET argument that working the argument out on its own would be costly. */
@@ -405,6 +407,57 @@ describe("a run without a clock", () => {
       const reopened = await openXlsx(await workbook.save());
       expect([valueAt(reopened, "S", "B1"), valueAt(reopened, "S", "G1")]).toEqual([42, 46349]);
     });
+  });
+
+  // Outcome protected: a bounded calculation without a time finishes. A formula that picks its cells at run time
+  // and keeps its date is not calculated again by the runs that take up the rest of the same calculation, and is
+  // calculated again once the workbook is edited or a time is given. Fault detected: such a formula counted as never
+  // calculated after every run, so it takes the whole budget of each resumed run and the formulas after it stay
+  // pending for ever.
+  describe("in a bounded calculation, a formula that picks its cells at run time and keeps its date", () => {
+    const KEPT = 'IF(TRUE,TODAY(),INDIRECT("A1"))';
+
+    it("is not calculated again by the runs that take up the rest, until the workbook is edited or a time is given", async () => {
+      const workbook = await openXlsx(
+        await buildXlsx({ sheets: [{ name: "S", rows: `<row r="1">${num("A1", 1)}${fx("B1", KEPT, 46349)}${fx("C1", KEPT, 46349)}</row>` }] }),
+      );
+      const sheet = workbook.listSheets()[0]!.id;
+      const runs = (): boolean[] => {
+        const results: boolean[] = [];
+        for (let i = 0; i < 4 && results.at(-1) !== true; i++) results.push(workbook.recalc({ maxCells: 1 }).complete);
+        return results;
+      };
+      expect(runs()).toEqual([false, true]);
+      expect(needsRecalc(stateOf(workbook))).toBe(false);
+      // Without an edit or a time, calculating them again would keep them again: an explicit run does not.
+      expect(runs()).toEqual([true]);
+      workbook.setCell(sheet, parseA1("A1"), 2);
+      // After the edit the first formula is calculated again and takes the budget; the second follows in the next run.
+      expect(workbook.recalc({ maxCells: 1 }).complete).toBe(false);
+      expect(workbook.recalc({ maxCells: 1 }).complete).toBe(true);
+      expect(needsRecalc(stateOf(workbook))).toBe(false);
+      expect([valueAt(workbook, "S", "B1"), valueAt(workbook, "S", "C1")]).toEqual([46349, 46349]);
+      workbook.setCell(sheet, parseA1("A1"), 3);
+      expect(workbook.recalc({ maxCells: 1 }).complete).toBe(false);
+      // Given a time, a run that takes up the rest calculates again the formula the run without one kept.
+      expect(workbook.recalc({ now: "2026-12-01T10:00:00Z", maxCells: 5 }).complete).toBe(true);
+      expect([valueAt(workbook, "S", "B1"), valueAt(workbook, "S", "C1")]).toEqual([46357, 46357]);
+    });
+
+    it("lets save finish a calculation larger than one run, with nothing pending", async () => {
+      const count = 200_001;
+      const parts = [`<row r="1">${num("A1", 1)}<c r="B1"><f t="shared" ref="B1:B${count}" si="0">${KEPT}</f><v>46349</v></c></row>`];
+      for (let r = 2; r <= count; r++) parts.push(`<row r="${r}"><c r="B${r}"><f t="shared" si="0"/><v>46349</v></c></row>`);
+      parts.push(`<row r="${count + 1}"><c r="C${count + 1}"><f>A1*3</f><v>3</v></c></row>`);
+      const workbook = await openXlsx(await buildXlsx({ sheets: [{ name: "S", rows: parts.join("") }] }));
+      workbook.setCell(workbook.listSheets()[0]!.id, parseA1("A1"), 2);
+      const saved = await workbook.save();
+      expect(needsRecalc(stateOf(workbook))).toBe(false);
+      const reopened = await openXlsx(saved);
+      expect([valueAt(reopened, "S", "B1"), valueAt(reopened, "S", `B${count}`), valueAt(reopened, "S", `C${count + 1}`)]).toEqual([
+        46349, 46349, 6,
+      ]);
+    }, 120_000);
   });
 
   it("shows an error for a date formula that was never calculated", () => {

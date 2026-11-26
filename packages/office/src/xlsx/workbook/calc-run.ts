@@ -12,7 +12,10 @@
  * pending; the next run starts with those and does not redo the others.
  *
  * Without a time, a formula whose calculation reaches TODAY or NOW keeps the
- * value it has and counts as unchanged (`calc-clock.ts`).
+ * value it has and counts as unchanged (`calc-clock.ts`). Calculated again
+ * without a time, it takes the same path to the clock until something it read
+ * on the way changes, so it is not calculated again by later runs, the ones
+ * that take up a bounded calculation included, until then.
  */
 
 import type { CellProvider, FormulaScalar, FormulaValue, FunctionRegistry } from "../../api/formula.js";
@@ -91,12 +94,6 @@ export class Run {
   private readonly functions: FunctionRegistry;
   /** Without a time: the functions with TODAY and NOW stopping a calculation. */
   private readonly clockless: FunctionRegistry | null;
-  /**
-   * Formulas that pick their cells at run time whose last calculation here reached the clock. What they read
-   * until then judges them for the rest of the run; after it, as they did not read everything, they are
-   * calculated again by every run. At most one entry per node of the graph.
-   */
-  private readonly stopped = new Set<CalcNode>();
   private readonly format: (value: FormulaScalar, code: string) => string;
 
   constructor(
@@ -171,6 +168,7 @@ export class Run {
 
   /** Stores the value of a node and, for an array formula, the values of its range. */
   private put(node: CalcNode, value: CellValue, result: FormulaValue, same: boolean): void {
+    node.keptAt = -1;
     node.evalAt = this.seq;
     this.store(node.sheet, node.row, node.col, value);
     if (fillsRange(node)) {
@@ -242,7 +240,6 @@ export class Run {
       node.reads = log.reads;
       node.readsAll = log.overflow;
       log.reads = null;
-      this.stopped.delete(node);
     }
     this.put(node, value, result, false);
     return true;
@@ -259,10 +256,20 @@ export class Run {
       node.reads = log.reads;
       node.readsAll = log.overflow;
       log.reads = null;
-      this.stopped.add(node);
     }
+    node.keptAt = this.state.calc.edits;
     node.evalAt = this.seq;
     node.doneAt = this.seq;
+  }
+
+  /**
+   * True for a formula an earlier run without a time kept that this run, also without one, would keep again:
+   * only a change to a cell it read on the way to the clock makes it due. What a formula that picks its cells at
+   * run time read is not traced across edits, so any edit of the workbook since makes such a formula due.
+   */
+  private held(node: CalcNode): boolean {
+    if (node.keptAt < 0 || this.clockless === null) return false;
+    return !node.dynamic || node.keptAt === this.state.calc.edits;
   }
 
   /** True when the node, a cell its formula names or a cell of the range it fills is in `sets`. */
@@ -327,8 +334,7 @@ export class Run {
       const due =
         everything ||
         node.circular ||
-        node.dynamic ||
-        (this.forced && node.volatile) ||
+        (this.held(node) ? node.dynamic && this.isStale(node) : node.dynamic || (this.forced && node.volatile)) ||
         pending.get(node.sheet)?.has(key) === true ||
         this.namedIn(node, sink, true);
       if (!due) continue;
@@ -350,7 +356,12 @@ export class Run {
       const waiting = pending.get(node.sheet);
       const key = cellKey(node.row, node.col);
       const waited = waiting !== undefined && waiting.has(key);
-      const due = this.all || node.circular || waited || (this.forced && (node.volatile || node.dynamic)) || (node.dynamic && node.reads === null) || this.touched(node, sink);
+      const due =
+        this.all ||
+        node.circular ||
+        waited ||
+        (!this.held(node) && (node.keptAt >= 0 || (this.forced && (node.volatile || node.dynamic)) || (node.dynamic && node.reads === null))) ||
+        this.touched(node, sink);
       if (!due) continue;
       if (!this.evaluate(node)) {
         this.defer(i, this.all);
@@ -409,7 +420,6 @@ export class Run {
 
   run(): boolean {
     const complete = this.first() && (this.marks === null || this.settle());
-    for (const node of this.stopped) node.reads = null;
     if (this.marks !== null) {
       // A cell that came back to the value it had is not a change.
       let kept = 0;
