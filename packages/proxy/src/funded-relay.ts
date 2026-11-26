@@ -1,5 +1,5 @@
 import { createRelayTerminalRecorder } from "./funded-relay-terminal-outcome.js";
-import { postpaidAuthorizationMatches, postpaidExactFinalization } from "./funded-relay-postpaid.js";
+import { customerAuthorizationMatches, customerExactFinalization, postpaidAuthorizationMatches } from "./funded-relay-postpaid.js";
 import { createRelayRequestDrain, RELAY_SHUTDOWN_TIMEOUT_MS } from "./funded-relay-lifecycle.js";
 import { createFundedPricingRegistry } from "./funded-relay-pricing-registry.js";
 import { createGenerationIdentityReader, identitiesMatch } from "./funded-relay-generation-identity.js";
@@ -37,7 +37,7 @@ import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-op
 import { normalizeWorkersAiResponse } from "./funded-relay-workers-response.js";
 import {
   createFundedPlatformClient,
-  FundedControlPlaneError,
+  FundedControlPlaneError, fundedBusyResponse,
   type FundedPlatformClient,
 } from "./funded-relay-platform-client.js";
 import {
@@ -186,6 +186,7 @@ function controlPlaneError(c: Context, error: unknown): Response {
       if (error.priorityReason) response.headers.set("x-matrix-funded-reason", error.priorityReason);
       return response;
     }
+    if (error.status === 503 && error.busy) return fundedBusyResponse(error.busy);
   }
   const errorName = error instanceof Error ? error.name : "UnknownError";
   console.warn("[proxy] Funded AI control request failed", { errorName });
@@ -500,7 +501,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         modelId: model.canonicalModelId,
         maxCostMicrousd,
         billingMode: "usage",
-        billingPolicy: "postpaid",
+        ...(checked.customerBilling === "prepaid" ? {} : { billingPolicy: "postpaid" as const }), // Free runtimes prepay.
         ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
     } catch (error) {
@@ -515,7 +516,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const reservation = authorization.reservation;
     if (!identitiesMatch(identity, authorization.identity)
-      || !postpaidAuthorizationMatches(reservation, { requestId, modelId: model.canonicalModelId, maxCostMicrousd })) {
+      || !customerAuthorizationMatches(checked.customerBilling, reservation, { requestId, modelId: model.canonicalModelId, maxCostMicrousd })) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
@@ -556,7 +557,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (result.mode === "conservative") {
         if (!await terminal.unknown(terminalState) && closing) terminalComplete = false;
       } else {
-        settlementQueue.enqueue(postpaidExactFinalization(finalizationLocator, result, terminalState));
+        settlementQueue.enqueue(customerExactFinalization(checked.customerBilling, finalizationLocator, result, terminalState));
       }
     };
 

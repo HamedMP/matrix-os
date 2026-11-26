@@ -64,6 +64,7 @@ export function extractSlug(path: string): string | null {
 export function publishingAppSlugFromPath(path: string): string | null {
   if (remoteBrowserSurfaceForPath(path)) return null;
   const slug = extractSlug(path);
+  // Default apps keep the Share host: the button shows only while one is still shared.
   return slug === "browser-lab" ? null : slug;
 }
 

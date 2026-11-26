@@ -24,6 +24,41 @@ KEYS = ('MATRIX_FUNDED_AI_ENABLED', 'MATRIX_FUNDED_AI_PLATFORM_URL', 'MATRIX_FUN
 IDENTITY_KEYS = ('MATRIX_HANDLE', 'MATRIX_MACHINE_ID', 'MATRIX_CLERK_USER_ID', 'MATRIX_RUNTIME_SLOT')
 
 
+# Reviewed funded AI origin pairs (spec 2691, ENG-520); must match
+# packages/contracts/src/funded-host-activation.ts. The preview relay is valid
+# only together with a preview platform origin, never mixed with production.
+PRODUCTION_FUNDED_PLATFORM = 'https://app.matrix-os.com'
+PRODUCTION_FUNDED_RELAY = r'https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app'
+PREVIEW_FUNDED_RELAY = 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app'
+PREVIEW_FUNDED_PLATFORMS = ('https://preview.matrix-os.com', 'https://metal-preview.matrix-os.com', 'https://matrix-platform-preview-jqxkjdhtkq-ey.a.run.app')
+
+
+def reviewed_funded_pair(platform, relay):
+    if not isinstance(platform, str) or not isinstance(relay, str) or len(relay) > 256:
+        return False
+    if platform == PRODUCTION_FUNDED_PLATFORM and re.fullmatch(PRODUCTION_FUNDED_RELAY, relay):
+        return True
+    return platform in PREVIEW_FUNDED_PLATFORMS and relay == PREVIEW_FUNDED_RELAY
+
+
+GUEST_PLATFORM_KEY = 'PLATFORM_INTERNAL_URL'
+
+
+def guest_platform_matches(platform, internal):
+    """Only the guest's own platform may configure it (the contract's
+    fundedPlatformOriginMatchesGuest): a guest on a reviewed preview platform
+    takes only that origin; every other guest only the production origin."""
+    if not isinstance(platform, str) or not isinstance(internal, str):
+        return False
+    match = re.fullmatch(r'(https://[A-Za-z0-9.-]+(?::[0-9]+)?)/?', internal)
+    if not match:
+        return False
+    origin = match.group(1)
+    if origin in PREVIEW_FUNDED_PLATFORMS:
+        return platform == origin
+    return platform == PRODUCTION_FUNDED_PLATFORM
+
+
 def require(condition):
     if not condition:
         raise ValueError('Invalid or unavailable host configuration')
@@ -47,9 +82,7 @@ def validate_config(value):
             and len(identity['runtimeSlot']) <= 32 and type(identity['runtimeTokenEpoch']) is int
             and 1 <= identity['runtimeTokenEpoch'] <= 2147483647)
     require(isinstance(config, dict) and set(config) == {'enabled', 'platformOrigin', 'relayOrigin', 'runtimeToken'}
-            and config['enabled'] is True and config['platformOrigin'] == 'https://app.matrix-os.com'
-            and isinstance(config['relayOrigin'], str) and len(config['relayOrigin']) <= 256
-            and re.fullmatch(r'https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app', config['relayOrigin'])
+            and config['enabled'] is True and reviewed_funded_pair(config['platformOrigin'], config['relayOrigin'])
             and isinstance(config['runtimeToken'], str) and re.fullmatch(r'[a-f0-9]{64}', config['runtimeToken']))
     issued, expires = timestamp(value['issuedAt']), timestamp(value['expiresAt'])
     require(issued <= time.time() < expires and 0 < expires - issued <= 30)
@@ -210,7 +243,7 @@ def _apply_config(env_path, value, markers):
         values = {}
         for line in lines:
             bare = line.rstrip('\r\n')
-            for key in KEYS + IDENTITY_KEYS:
+            for key in KEYS + IDENTITY_KEYS + (GUEST_PLATFORM_KEY,):
                 if re.match(r'^\s*(?:export\s+)?' + key + r'\s*=', bare):
                     require(bare.startswith(key + '=') and key not in values)
                     values[key] = bare[len(key) + 1:]
@@ -218,6 +251,7 @@ def _apply_config(env_path, value, markers):
                 (identity['handle'], identity['machineId'], identity['ownerId'], identity['runtimeSlot']))))
         epoch = str(identity['runtimeTokenEpoch'])
         require('MATRIX_RUNTIME_TOKEN_EPOCH' not in values or values['MATRIX_RUNTIME_TOKEN_EPOCH'] == epoch)
+        require(guest_platform_matches(config['platformOrigin'], values.get(GUEST_PLATFORM_KEY)))
         require(values.get('MATRIX_FUNDED_AI_PLATFORM_URL', '') in ('', config['platformOrigin']))
         require(values.get('MATRIX_FUNDED_AI_RELAY_URL', '') in ('', config['relayOrigin']))
         replacement = {'MATRIX_FUNDED_AI_ENABLED': 'true', 'MATRIX_FUNDED_AI_PLATFORM_URL': config['platformOrigin'],

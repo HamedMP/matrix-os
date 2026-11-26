@@ -7,7 +7,7 @@ import { FundedHostActivationRequestSchema, FundedHostActivationResponseSchema }
 const now = Date.parse('2026-10-18T12:00:00.000Z');
 const token = 'upgrade-secret-independent';
 const request = { contractVersion: 1 as const, identity: { handle: 'alice', machineId: 'machine-1', ownerId: 'user_1', runtimeSlot: 'primary' as const, runtimeTokenEpoch: 1 }, configuration: { enabled: true as const, platformOrigin: 'https://app.matrix-os.com' as const, relayOrigin: 'https://matrix-ai-relay-production-jqxkjdhtkq-ey.a.run.app', runtimeToken: 'a'.repeat(64) } };
-const env = { UPGRADE_TOKEN: token, MATRIX_HANDLE: 'alice', MATRIX_MACHINE_ID: 'machine-1', MATRIX_CLERK_USER_ID: 'user_1', MATRIX_RUNTIME_SLOT: 'primary', MATRIX_FUNDED_AI_ENABLED: 'false' };
+const env = { UPGRADE_TOKEN: token, MATRIX_HANDLE: 'alice', MATRIX_MACHINE_ID: 'machine-1', MATRIX_CLERK_USER_ID: 'user_1', MATRIX_RUNTIME_SLOT: 'primary', MATRIX_FUNDED_AI_ENABLED: 'false', PLATFORM_INTERNAL_URL: 'https://app.matrix-os.com' };
 const proof = () => ({ ...request, issuedAt: new Date(now).toISOString(), expiresAt: new Date(now + 30000).toISOString() });
 const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
 function fixture(overrides: Record<string, unknown> = {}) {
@@ -64,6 +64,31 @@ describe('funded host activation gateway', () => {
       expect((await f.post()).status).toBe(400);
       expect(f.fetcher).not.toHaveBeenCalled();
     }
+  });
+  it('binds the configuration to the guest\'s own platform before contacting any platform', async () => {
+    const previewRelay = 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app';
+    const previewRequest = { ...request, configuration: { ...request.configuration,
+      platformOrigin: 'https://metal-preview.matrix-os.com', relayOrigin: previewRelay } };
+    // A production guest rejects the preview pair, even though the pair itself is reviewed.
+    for (const internal of ['https://app.matrix-os.com', 'https://api.matrix-os.com']) {
+      const f = fixture({ env: { ...env, PLATFORM_INTERNAL_URL: internal } });
+      expect((await f.post(previewRequest)).status).toBe(400);
+      expect(f.fetcher).not.toHaveBeenCalled();
+    }
+    // A preview guest rejects the production pair and another preview origin.
+    for (const body of [request, { ...previewRequest, configuration: { ...previewRequest.configuration, platformOrigin: 'https://preview.matrix-os.com' } }]) {
+      const f = fixture({ env: { ...env, PLATFORM_INTERNAL_URL: 'https://metal-preview.matrix-os.com' } });
+      expect((await f.post(body)).status).toBe(400);
+      expect(f.fetcher).not.toHaveBeenCalled();
+    }
+    // A guest without its platform URL fails closed.
+    const missing = fixture({ env: { ...env, PLATFORM_INTERNAL_URL: undefined } });
+    expect((await missing.post()).status).toBe(400);
+    // The preview guest accepts the preview pair from its own platform.
+    const previewProof = { ...previewRequest, issuedAt: new Date(now).toISOString(), expiresAt: new Date(now + 30000).toISOString() };
+    const ok = fixture({ env: { ...env, PLATFORM_INTERNAL_URL: 'https://metal-preview.matrix-os.com' },
+      fetch: vi.fn().mockImplementation(async () => Response.json(previewProof)) });
+    expect((await ok.post(previewRequest)).status).toBe(202);
   });
   it('validates exact fresh read-only platform proof before mutating absent epoch', async () => {
     const f = fixture();

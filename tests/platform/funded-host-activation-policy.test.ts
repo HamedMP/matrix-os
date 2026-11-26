@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-funded-policy-repository.js';
@@ -132,6 +132,27 @@ describe('permanent funded host activation policy', () => {
     expect(await snapshot()).toEqual(before);
     await db.executor.updateTable('ai_funded_usage_reservations').set({ charge_waiver: '{}' }).execute();
     await expect(read()).rejects.toMatchObject({ code: 'idempotency_conflict' });
+  });
+  it('fails closed once at mount, not with a ZodError per request, for a relay outside the reviewed pin', async () => {
+    const previewRelay = 'https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app';
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const app = new Hono().route('/internal/containers/:handle/ai', createFundedHostActivationRoutes({
+        db, platformSecret: secret, relayOrigin: previewRelay, now: () => new Date(at) }));
+      const path = '/internal/containers/alice/ai/activation-config';
+      for (let i = 0; i < 3; i += 1) {
+        const response = await app.request(path, { headers: { authorization: `Bearer ${token()}` } });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ error: 'Service unavailable' });
+      }
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(error.mock.calls)).not.toContain(previewRelay);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('ZodError');
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
   });
   it('mounts a strict no-store GET route and rejects arbitrary query/slot input', async () => {
     const app = new Hono().route('/internal/containers/:handle/ai', createFundedHostActivationRoutes({ db, platformSecret: secret, relayOrigin, now: () => new Date(at) }));

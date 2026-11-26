@@ -30,7 +30,7 @@ Start a new Codex session afterwards. To pick up a newer pstack, run `codex plug
 
 ## matrix-dev
 
-`matrix-dev` packages this repository's own workflow skills: `worktree-pr-monitor`, `monitor-stack-reviews`, `unblock-tickets`, `daily-update`, `release-notes`, `release-matrix-stable`, `release-platform`, and `wrap-up`. It lives in `dev/matrix-dev/` and is listed in the `matrix-os-dev` marketplace in `dev/`, which is separate from the customer marketplace at the repository root.
+`matrix-dev` packages this repository's own workflow skills: `worktree-pr-monitor`, `monitor-stack-reviews`, `unblock-tickets`, `daily-update`, `release-notes`, `release-full-stable`, `release-matrix-stable`, `release-platform`, and `wrap-up`. It lives in `dev/matrix-dev/` and is listed in the `matrix-os-dev` marketplace in `dev/`, which is separate from the customer marketplace at the repository root.
 
 Inside a Matrix OS checkout you do not need the plugin: the same skills load from `.claude/skills/` (Claude Code) and `.agents/skills/` (Codex), for example `/wrap-up`. Install the plugin to use them from other repositories or to keep one self-updating copy. Plugin skills are namespaced, for example `/matrix-dev:wrap-up`. If the plugin is installed and you work in this checkout, both forms are listed; the unprefixed one is the checkout's own copy.
 

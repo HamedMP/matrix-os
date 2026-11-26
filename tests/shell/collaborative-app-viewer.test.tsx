@@ -259,7 +259,7 @@ describe("collaborative app web viewer", () => {
     expect(iframe.srcdoc).toContain('"buildId":"' + "b".repeat(64) + '"');
   });
 
-  it("updates the owner bridge context without replacing an unfinished iframe", async () => {
+  it("updates the owner bridge context from the Web Mobile inline share without replacing an unfinished iframe", async () => {
     mocks.organization.mockReturnValue({ status: "member", organizationId: target.organizationId, organizationName: "Matrix" });
     mocks.ownerShareGet.mockResolvedValueOnce(null).mockResolvedValue(ownerShare());
     mocks.createApi.mockReturnValue({
@@ -268,7 +268,7 @@ describe("collaborative app web viewer", () => {
     });
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response("<html><head></head><body></body></html>")));
 
-    render(<AppViewer path="matrix-app:tracker" />);
+    render(<AppViewer path="matrix-app:tracker" inlineShareControls />);
     await waitFor(() => expect(mocks.shareButton).toHaveBeenCalled());
     const iframe = screen.getByTitle("matrix-app:tracker") as HTMLIFrameElement;
     await waitFor(() => expect(iframe.srcdoc).toContain("collaboration:"));

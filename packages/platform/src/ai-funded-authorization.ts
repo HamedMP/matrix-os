@@ -1,5 +1,5 @@
 import { cleanupOwnerCustomerCharges } from "./ai-funded-customer-credit-cleanup.js";
-import { withAccountDeletionFundingLock } from './account-deletion/admission.js';
+import { withAccountDeletionFundingLock, withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 /**
  * Funded AI authorization: the single owner-wide admission point before a
  * reservation. Under an owner advisory lock it checks the credential, runtime
@@ -36,6 +36,10 @@ import { evaluateFundedPriority, findConflictingActiveReservation, type FundedBi
 import { loadLockedFundingSources, reconcileExpiredPromotionalCredit } from "./ai-funded-reservation-sources.js";
 import { previewRuntimeOperationBusy } from "./preview-runtime-admission.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
+import {
+  admitFreeDailySpend, assertFreeModel, grantFreeMonthlyAllowance, type FreeAllowanceGrant, type FreeFundingConfig,
+} from "./free-tier/funded-policy.js";
+import { freeMetalMachine, isFreeMetalRuntime } from "./free-tier/free-runtime.js";
 
 type AuthorizeOutcome =
   | { kind: "authorized"; response: FundedAiAuthorizationResponse }
@@ -48,6 +52,9 @@ export interface FundedAuthorizeDependencies {
   reservationIdFactory(): string;
   reservationTtlMs: number;
   policyFreshnessMs: number;
+  /** Read once at startup; free runtimes are refused funded work without a daily ceiling. */
+  freeFunding: FreeFundingConfig;
+  grantCreditInTransaction: FreeAllowanceGrant;
 }
 
 export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
@@ -73,7 +80,12 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         || credential.audience !== FUNDED_AI_AUDIENCE || credential.scope !== FUNDED_AI_SCOPE) {
         throw new AiFundedPolicyError("unauthorized");
       }
-      await withAccountDeletionFundingLock(trx, credential.owner_id, async (_locked, admission) => {
+      // A free metal runtime (ENG-520 P7) may be granted its monthly allowance below, and the grant
+      // takes the exclusive deletion fence. Take it first here so the fence is never upgraded from
+      // shared under the billing owner lock, which could deadlock two admissions for one owner.
+      const freeBeforeLock = await isFreeMetalRuntime(trx.executor, credential.machine_id);
+      const ownerFence = freeBeforeLock ? withAccountDeletionOwnerLock : withAccountDeletionFundingLock;
+      await ownerFence(trx, credential.owner_id, async (_locked, admission) => {
         if (!admission.newWorkAllowed) throw new AiFundedPolicyError("access_disabled");
       });
       // Serialize admission across every runtime/replica for this owner. The
@@ -91,7 +103,13 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       const machine = await trx.executor.selectFrom("user_machines").select([
         "clerk_user_id", "runtime_slot", "runtime_token_epoch", "provisioning_class",
         "status", "activation_state", "deleted_at",
+        // Reread under the billing owner lock, which every entitlement write takes: the plan may have
+        // changed while admission waited for it.
+        freeMetalMachine("user_machines.machine_id").as("free_metal"),
       ]).where("machine_id", "=", credential.machine_id).forNoKeyUpdate().executeTakeFirst();
+      const free = machine?.free_metal === true;
+      // A runtime that became free needs the exclusive fence taken above; the caller retries.
+      if (free && !freeBeforeLock) throw new AiFundedPolicyError("busy");
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
       const global = await trx.executor.selectFrom("ai_funded_global_policy")
@@ -113,6 +131,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       }
       const allowedModelIds = intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids));
       if (!allowedModelIds.includes(request.modelId)) throw new AiFundedPolicyError("model_not_allowed");
+      if (free) assertFreeModel(request.modelId);
 
       const identity = {
         ownerId: credential.owner_id,
@@ -120,6 +139,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         runtimeSlot: credential.runtime_slot,
       };
       await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
+      if (free) await grantFreeMonthlyAllowance(trx, identity, checked, deps.grantCreditInTransaction);
       const balance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         ...advanceMonthWindow(utcMonthStart(checked)),
         updated_at: checkedAt,
@@ -142,6 +162,8 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       if (machine.provisioning_class !== "customer" && !isBoundedPreviewProvisioningClass(machine.provisioning_class)) {
         throw new AiFundedPolicyError("access_disabled");
       }
+      // A free runtime is never charged after the fact: it pays from a prepaid usage hold.
+      if (free && request.billingPolicy === "postpaid") throw new AiFundedPolicyError("access_disabled");
 
       const billingMode: FundedBillingMode = request.billingMode === "usage" ? "usage" : "hold";
       const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
@@ -216,10 +238,17 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         holdMicrousd = Math.min(holdMicrousd, credit, budget);
       }
       if (holdMicrousd > sourceAvailability.availableMicrousd) throw new AiFundedPolicyError("insufficient_credit");
+      const reservedAt = free
+        ? await admitFreeDailySpend(trx.executor, deps.freeFunding, request.maxCostMicrousd, deps.now)
+        : checked;
+      // Retry if the free spend lock wait crossed the funding window.
+      // Paid reservations use the window returned by the balance update.
+      if (free && utcMonthStart(reservedAt) !== periodStart) throw new AiFundedPolicyError("busy");
+      const reservedAtIso = reservedAt.toISOString();
       const reserved = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         reserved_microusd: sql<number>`reserved_microusd + ${holdMicrousd}`,
         month_reserved_microusd: sql<number>`month_reserved_microusd + ${holdMicrousd}`,
-        updated_at: checkedAt,
+        updated_at: reservedAtIso,
       }).where("machine_id", "=", identity.machineId)
         .where(sql<boolean>`reserved_microusd <= ${Number.MAX_SAFE_INTEGER - holdMicrousd}`)
         .where(sql<boolean>`credit_balance_microusd - reserved_microusd - funding_shortfall_microusd >= ${holdMicrousd}`)
@@ -248,7 +277,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       const fundingSources = sourceAvailability.allocate(holdMicrousd);
 
       const reservationId = FundedReferenceSchema.parse(deps.reservationIdFactory());
-      const expiresAt = new Date(checked.getTime() + deps.reservationTtlMs).toISOString();
+      const expiresAt = new Date(reservedAt.getTime() + deps.reservationTtlMs).toISOString();
       const response = FundedAiAuthorizationResponseSchema.parse({
         contractVersion: 1,
         authorized: true,
@@ -268,7 +297,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
           checkedAt,
           staleAfter: new Date(checked.getTime() + deps.policyFreshnessMs).toISOString(),
         },
-        funding: fundingSummary(reserved, monthlyBudget, checkedAt),
+        funding: fundingSummary(reserved, monthlyBudget, reservedAtIso),
         reservation: {
           reservationId,
           requestId: request.requestId,
@@ -312,7 +341,8 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         pricing_version: null,
         period_start: periodStart,
         status: "reserved",
-        created_at: checkedAt,
+        free_funded: free,
+        created_at: reservedAtIso,
         started_at: null,
         expires_at: expiresAt,
         settled_at: null,
@@ -324,7 +354,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
             reservation_id: reservationId,
             grant_entry_id: allocation.grantEntryId,
             amount_microusd: allocation.amountMicrousd,
-            created_at: checkedAt,
+            created_at: reservedAtIso,
           })),
         ).execute();
       }

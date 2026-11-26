@@ -22,6 +22,12 @@ const CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS = 23 * 60 * 60 * 1000;
 
 const CHECKOUT_SESSION_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
+/** Past the latest possible session expiry, with time for checkout setup and clock skew. */
+export function unattachedCheckoutExpiryCutoff(at: Date): string {
+  const recoveryWindowMs = CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS + CHECKOUT_SESSION_MAX_LIFETIME_MS + 60 * 60 * 1000;
+  return new Date(at.getTime() - recoveryWindowMs).toISOString();
+}
+
 function isExpiredLegacyCheckoutAttempt(
   attempt: BillingCheckoutAttemptRecord,
   now: string,
@@ -335,6 +341,22 @@ export async function finalizeCheckoutAttempt(
   return existing?.status === 'open'
     && existing.stripe_session_id === stripeSessionId
     && existing.checkout_url === checkoutUrl;
+}
+
+/**
+ * Called under the checkout owner lock. Lock the row before using the existing
+ * abandonment path so a concurrent session attachment either wins first or
+ * observes the abandonment and never hands out its URL.
+ */
+export async function abandonExpiredUnattachedCheckout(
+  db: PlatformDB, clerkUserId: string, runtimeSlot: string, at: Date,
+): Promise<void> {
+  const stale = await db.executor.selectFrom('billing_checkout_attempts').select('id')
+    .where('clerk_user_id', '=', clerkUserId).where('runtime_slot', '=', runtimeSlot)
+    .where('status', '=', 'creating').where('stripe_session_id', 'is', null)
+    .where('created_at', '<', unattachedCheckoutExpiryCutoff(at))
+    .forUpdate().executeTakeFirst();
+  if (stale) await abandonCreatingCheckoutAttempt(db, stale.id, at.toISOString());
 }
 
 export async function abandonCreatingCheckoutAttempt(

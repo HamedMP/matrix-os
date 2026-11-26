@@ -27,7 +27,7 @@ export async function billingBrowser(): Promise<{ browser: Browser; script: stri
       setup(builder) {
         const modules: Record<string, string> = {
           "@clerk/nextjs": "useAuth, useUser",
-          "next/navigation": "usePathname, useSearchParams, useRouter",
+          "next/navigation": "usePathname, useSearchParams, useRouter, redirect, RedirectType",
           "next/image": "Image as default",
           "next/link": "Link as default",
           "@matrix-os/ui": "useGettingStartedBlocker",

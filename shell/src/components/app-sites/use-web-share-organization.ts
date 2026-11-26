@@ -10,7 +10,7 @@ import { useShellOrganizationsFor } from "../organization/useShellOrganizations"
 import { useOwnerCollaborationParticipant } from "../../lib/owner-collaboration-participant";
 
 /** Web Desktop / Web Canvas wiring for the shared Organization tab (spec 2693 phase 2). */
-export function useWebShareOrganization(appSlug: string, appName: string) {
+export function useWebShareOrganization(appSlug: string, appName: string, allowNewSharing = true) {
   const participant = useOwnerCollaborationParticipant();
   const listing = useShellOrganizationsFor(participant?.actorId ?? null);
   const active = useCollaborationOrganization();
@@ -20,7 +20,7 @@ export function useWebShareOrganization(appSlug: string, appName: string) {
     : listing.state === "failed" ? [] : null, [listing]);
   const openChat = () => useWindowManager.getState().openWindow("Chat", "__chat__", 0);
   return useShareOrganization({
-    appSlug, appName, organizations,
+    appSlug, appName, organizations, allowNewSharing,
     preferredOrganizationId: active.status === "member" ? active.organizationId : null,
     collaborationApi: shellApi,
     fileApi: shellApi,

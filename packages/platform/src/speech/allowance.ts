@@ -5,6 +5,7 @@ import { z } from "zod/v4";
 import type { PlatformDB, PlatformDatabase } from "../db.js";
 import { iterateRunningUserMachinePages } from "../db.js";
 import { reconcileExpiredPromotionalCredit } from "../ai-funded-reservation-sources.js";
+import { isFreeMetalRuntime } from "../free-tier/free-runtime.js";
 
 const IdentitySchema = z.object({
   ownerId: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/),
@@ -66,6 +67,9 @@ export async function ensureSpeechMonthlyAllowance(
     || machine.deleted_at !== null || machine.provisioning_class !== "customer") {
     throw new SpeechAllowanceError();
   }
+  // Free metal runtimes keep the `customer` class but are funded only through the prepaid GLM
+  // lane (spec 2691 D2, ENG-520 P7): no Matrix-paid speech allowance.
+  if (await isFreeMetalRuntime(trx, identity.machineId)) throw new SpeechAllowanceError();
 
   // Stored month starts are canonical UTC ISO strings. Keep the committed
   // allowance when a reconciliation or request arrives with an older clock.
@@ -206,6 +210,11 @@ export async function reconcileSpeechMonthlyAllowances(options: {
     eligible += machines.length;
     for (const machine of machines) {
       try {
+        // Free metal runtimes get no speech allowance; skip them instead of logging a failure each pass.
+        if (await isFreeMetalRuntime(options.db.executor, machine.machineId)) {
+          eligible -= 1;
+          continue;
+        }
         await options.db.transaction((trx) => ensureSpeechMonthlyAllowance(
           trx.executor as Transaction<PlatformDatabase>, {
             ownerId: machine.clerkUserId,

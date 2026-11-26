@@ -144,10 +144,17 @@ skills-lock.json
 !.agents/skills/release-matrix-stable/
 !.agents/skills/release-matrix-stable/**
 !.claude/skills/release-matrix-stable
+!.agents/skills/release-full-stable/
+!.agents/skills/release-full-stable/**
+!.claude/skills/release-full-stable
 # Team-only macOS demo recorder; never part of the shipped skills/matrix pack
 !.agents/skills/product-demo-video/
 !.agents/skills/product-demo-video/**
 !.claude/skills/product-demo-video
+# Funded AI ledger verification: a TLA+ model check, linked for Claude Code
+!.agents/skills/verify-funded-ai-ledger/
+!.agents/skills/verify-funded-ai-ledger/**
+!.claude/skills/verify-funded-ai-ledger
 # Skills shipped in the matrix-dev plugin: symlinks to the canonical .agents/skills copies
 !.claude/skills/daily-update
 !.claude/skills/monitor-stack-reviews

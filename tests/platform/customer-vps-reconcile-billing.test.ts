@@ -1,11 +1,63 @@
 import { describe, it, expect, vi } from 'vitest';
-import { claimRunningUserMachineResize, getUserMachine, insertUserMachine, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
-import { createMockHetznerClient } from './customer-vps-fixtures.js';
+import { claimRunningUserMachineResize, enqueueBillingRuntimeAction, getUserMachine, insertUserMachine, updateUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import { dispatchBillingRuntimeActions } from '../../packages/platform/src/billing-runtime-actions.js';
+import { createHostdDispatcher } from '../../packages/platform/src/substrates/hostd-client.js';
+import { createMetalHostDirectory, createMetalSubstrate } from '../../packages/platform/src/substrates/metal-substrate.js';
+import { createMetalHostsRepository } from '../../packages/platform/src/substrates/metal-hosts-repository.js';
+import { createSubstrateRegistry } from '../../packages/platform/src/substrates/registry.js';
+import { json, startFakeHostd } from './fake-hostd-server.js';
+import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
+import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import { createTestConfig, activeEntitlement, useCustomerVpsFixture } from './customer-vps-service-test-helper.js';
 
 describe('platform/customer-vps', () => {
   let db: PlatformDB;
   const { createService } = useCustomerVpsFixture(value => { db = value!; });
+  it('dispatches failed-trial suspension and payment recovery to the metal host', async () => {
+    const machineId = '9f05824c-8d0a-4d83-9cb4-b312d43ff136';
+    const vmId = 'vm_0123456789abcdef01234567';
+    const clerkUserId = 'user_metal_trial';
+    const at = '2026-11-25T00:00:00.000Z';
+    const now = () => new Date(at);
+    const host = await startFakeHostd();
+    const dispatcher = createHostdDispatcher(host.caPem);
+    try {
+      const repository = createMetalHostsRepository(db.kysely);
+      const metalHost = await repository.upsert({ id: 'host-billing', name: 'host-billing', apiUrl: host.origin,
+        ingressHost: 'host.billing.example.test', status: 'active', memoryCapacityMib: 32768, admissionCeilingMib: 24576 });
+      await insertUserMachine(db, { machineId, clerkUserId, handle: 'metal-trial', status: 'running', imageVersion: 'v1',
+        provisionedAt: at, substrate: 'metal', generation: 3, metalHostId: metalHost.id, metalVmId: vmId, hetznerServerId: null });
+      let state = 'running';
+      host.handle((req, res) => {
+        if (req.path.endsWith('/stop')) { state = 'stopped'; return json(res, 200, { state }); }
+        if (req.path.endsWith('/resume')) { state = 'running'; return json(res, 200, { state }); }
+        json(res, 200, { id: vmId, machineId, generation: 3, handle: 'metal-trial', tier: 'free', state,
+          privateIPv4: '10.77.0.5', bootMiB: 2048, maxMiB: 8192, diskGiB: 20, chVersion: 'v48.0', snapshot: null, updatedAt: at });
+      });
+      const substrate = createMetalSubstrate({ loadMachine: id => getUserMachine(db, id),
+        hosts: createMetalHostDirectory(repository), apiToken: 'a'.repeat(40), ingressToken: 'b'.repeat(40), dispatcher });
+      const hetzner = createMockHetznerClient();
+      const service = createCustomerVpsService({ db, config: createTestConfig(), hetzner,
+        systemStore: createMockCustomerVpsSystemStore(), substrates: createSubstrateRegistry([substrate]) });
+      for (const [action, reason, status] of [
+        ['suspend', 'trial_payment_failed', 'suspended'],
+        ['resume', 'payment_recovered', 'running'],
+      ] as const) {
+        await enqueueBillingRuntimeAction(db, { clerkUserId, runtimeSlot: 'primary', stripeSubscriptionId: 'sub_metal_trial',
+          action, reason, executeAfter: at, createdAt: at });
+        await expect(dispatchBillingRuntimeActions({ db, customerVpsService: service, now })).resolves.toMatchObject({ completed: 1 });
+        await expect(getUserMachine(db, machineId)).resolves.toMatchObject({ status, deletedAt: null });
+      }
+      expect(host.requests.filter(req => req.method === 'POST').map(req => req.path)).toEqual([
+        `/v1/vms/${vmId}/stop`, `/v1/vms/${vmId}/resume`,
+      ]);
+      expect(hetzner.getServer).not.toHaveBeenCalled();
+    } finally {
+      await dispatcher.close();
+      await host.close();
+    }
+  });
+
   it('suspends a running machine with graceful-shutdown fallback and retains its data', async () => {
     await insertUserMachine(db, {
       machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff130',

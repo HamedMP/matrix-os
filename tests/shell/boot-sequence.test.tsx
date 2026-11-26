@@ -222,6 +222,107 @@ describe("BootSequence", () => {
     );
   });
 
+  it("lets a free owner in a device sign-in start their build and reach device approval", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    let started = false;
+    const deviceReturn = "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.startsWith("/api/journey")) {
+        const state: JourneyState = started
+          ? { phase: "ready", detail: "Your Matrix computer is ready.", nextAction: { kind: "open_shell" } }
+          : { phase: "install_choices_required", detail: "Set up your free Matrix computer.", nextAction: { kind: "start_provision" } };
+        return Response.json(state);
+      }
+      if (url === "/api/auth/provision-runtime") {
+        started = true;
+        return Response.json({ runtime: "metal", status: "provisioning" }, { status: 202 });
+      }
+      if (url === "/api/auth/app-session") return Response.json({ ok: true });
+      return Response.json({}, { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <BootSequence completionRedirect={deviceReturn} passivePostCheckout>
+        <div data-testid="shell">SHELL</div>
+      </BootSequence>,
+    );
+
+    // The passive device path must not wait forever: it offers the free start.
+    expect(await screen.findByText("Set up your free Matrix computer.")).toBeTruthy();
+    expect(screen.queryByText("Finishing your Matrix computer")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+    await waitFor(() => expect(requests.some(({ url }) => url === "/api/auth/provision-runtime")).toBe(true));
+    const provision = requests.find(({ url }) => url === "/api/auth/provision-runtime");
+    // The free plan names no tools: the server preinstalls its fixed set.
+    expect(JSON.parse(String(provision?.init?.body))).toEqual({});
+    // Once the build is ready, the app session carries the device return so sign-in reaches device approval.
+    await waitFor(() => expect(onboardingNavigation.navigate).toHaveBeenCalledWith(deviceReturn));
+    const session = requests.find(({ url }) => url === "/api/auth/app-session");
+    expect(JSON.parse(String(session?.init?.body))).toEqual({ redirectTo: deviceReturn });
+    expect(screen.queryByTestId("shell")).toBeNull();
+  });
+
+  it("calls a free owner's computer a computer, not a VPS, on the web install step", async () => {
+    mockJourney({
+      phase: "install_choices_required",
+      detail: "Set up your free Matrix computer.",
+      nextAction: { kind: "start_provision" },
+    });
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+
+    fireEvent.click(await screen.findByRole("radio", { name: "TikTok" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("button", { name: "Set up" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Build VPS" })).toBeNull();
+    expect(screen.getByText(/after your computer is ready\.$/)).toBeTruthy();
+    expect(screen.queryByText(/VPS/)).toBeNull();
+  });
+
+  it("shows a free owner the fixed preinstalls instead of the agent selector and starts with no tools named", async () => {
+    const fetchMock = mockJourney({
+      phase: "install_choices_required",
+      detail: "Set up your free Matrix computer.",
+      nextAction: { kind: "start_provision" },
+    });
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+
+    fireEvent.click(await screen.findByRole("radio", { name: "TikTok" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("button", { name: "Set up" });
+    expect(screen.queryByRole("list", { name: "Coding agents" })).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByText(/any combination, including none/)).toBeNull();
+    expect(screen.getByText(
+      "Claude Code and Codex come preinstalled on your free computer. You can install OpenCode or Pi later from the Terminal’s + menu.",
+    )).toBeTruthy();
+    // Number keys do not toggle a hidden selection.
+    fireEvent.keyDown(window, { key: "3" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/auth/provision-runtime")).toBe(true));
+    const provision = fetchMock.mock.calls.find(([url]) => String(url) === "/api/auth/provision-runtime");
+    expect(JSON.parse(String(provision?.[1]?.body))).toEqual({});
+  });
+
+  it("keeps the paid VPS wording on the web install step", async () => {
+    mockJourney({
+      phase: "install_choices_required",
+      detail: "Choose default installs before building your Matrix computer.",
+      nextAction: { kind: "choose_default_installs" },
+    });
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+
+    await answerAcquisitionSource();
+    expect(screen.getByText("Choose command-line agents to preinstall on this VPS.")).toBeTruthy();
+    expect(screen.getByText(/after the VPS is ready\.$/)).toBeTruthy();
+  });
+
   it("stops automatic app-session retries on a permanent client error", async () => {
     let appSessionAttempts = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -310,6 +411,8 @@ describe("BootSequence", () => {
       ),
     );
     expect(await screen.findByText("Building your Matrix computer")).toBeTruthy();
+    expect(screen.getByText("Creating your Matrix computer")).toBeTruthy();
+    expect(screen.queryByText("Creating your server")).toBeNull();
     expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/auth/app-session")).toBe(false);
     expect(onboardingNavigation.navigate).not.toHaveBeenCalled();
     expect(timeoutSpy.mock.calls.some(([, delay]) => delay === 8_000)).toBe(false);

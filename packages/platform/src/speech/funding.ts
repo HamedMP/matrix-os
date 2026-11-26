@@ -16,6 +16,7 @@ import {
   fundingSourceAvailability,
 } from "../ai-funded-reservation-sources.js";
 import { ensureSpeechMonthlyAllowance, SpeechAllowanceError } from "./allowance.js";
+import { isFreeMetalRuntime } from "../free-tier/free-runtime.js";
 import { isSpeechMonthlyAuthorization } from "./reservation-policy.js";
 import type { SpeechFundingPort } from "./service.js";
 
@@ -180,6 +181,8 @@ export function createAiFundedSpeechFundingPort(options: {
         "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
       ]).where("machine_id", "=", input.identity.machineId).forNoKeyUpdate().executeTakeFirst();
       await trx.selectFrom("ai_funded_runtime_balances").select("machine_id").where("machine_id", "=", input.identity.machineId).forUpdate().executeTakeFirst();
+      // A free metal runtime's credit funds only the prepaid GLM lane (spec 2691 D2, ENG-520 P7), never speech holds.
+      if (await isFreeMetalRuntime(trx, input.identity.machineId)) throw new SpeechFundingError("unavailable");
       const checked = now();
       const checkedAt = checked.toISOString();
       const periodStart = utcMonthStart(checked);

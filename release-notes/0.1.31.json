@@ -1,0 +1,152 @@
+{
+  "version": "0.1.31",
+  "channel": "stable",
+  "date": "2026-11-25T02:13:09Z",
+  "locale": "en",
+  "title": "One Terminal, every machine",
+  "shortTitle": "Terminal, expanded",
+  "summary": "Split Terminal into panes, add remote machines over SSH, and scan every active session from one overview. Search and archive Chats, then make Desktop shortcuts your own.",
+  "highlights": [
+    {
+      "tag": "Highlight",
+      "title": "One Terminal, every machine",
+      "body": "Split tabs into panes, add SSH machines, and keep their terminal core up to date. The sidebar groups work by status, while the Overview shows live previews of local, remote and child terminals.",
+      "surfaces": [
+        "electron-desktop"
+      ],
+      "art": "terminal",
+      "tone": "ink",
+      "prs": [
+        3540,
+        3542,
+        3543,
+        3566,
+        3567,
+        3569,
+        3570,
+        3579,
+        3586,
+        3639,
+        3646
+      ]
+    },
+    {
+      "tag": "New",
+      "title": "Find any conversation again",
+      "body": "Search your full Chat history, archive or restore conversations, and open Files, Terminal or Side chat from one inspector. Web and the desktop app keep paging and filters independent.",
+      "surfaces": [
+        "web-desktop",
+        "electron-desktop"
+      ],
+      "art": "agents",
+      "tone": "teal",
+      "prs": [
+        3318,
+        3319,
+        3320,
+        3321,
+        3454
+      ]
+    },
+    {
+      "tag": "New",
+      "title": "Shortcuts that fit your workflow",
+      "body": "Switch apps, arrange windows, and open the launcher with shortcuts you can change in Settings. Getting Started teaches the current bindings, and Terminal has its own focused set.",
+      "surfaces": [
+        "electron-desktop"
+      ],
+      "art": "sparkle",
+      "tone": "sand",
+      "prs": [
+        3574,
+        3575,
+        3576,
+        3577,
+        3581,
+        3583
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "new",
+      "text": "Connect supported tools from Settings, use them from any agent, approve external writes, and keep organization skills synced."
+    },
+    {
+      "kind": "fixed",
+      "text": "Organization members can run shared project Chats with their own agent and model, with recovery and status shown beside each request."
+    },
+    {
+      "kind": "improved",
+      "text": "The Share menu is more compact, organization links open sooner, and legacy one-time links are clearly retired."
+    },
+    {
+      "kind": "improved",
+      "text": "Shared apps show their owner's name and artwork."
+    },
+    {
+      "kind": "new",
+      "text": "Published apps can read live data for visitors while public access stays read-only."
+    },
+    {
+      "kind": "improved",
+      "text": "Sent messages appear immediately, and Codex starts faster, stays connected through token refresh, and supports current versions."
+    },
+    {
+      "kind": "fixed",
+      "text": "Next and Previous reach every open Files tab, and file previews survive moving a Chat to another project."
+    },
+    {
+      "kind": "improved",
+      "text": "Selected project skills use clearer, accessible chips in the Chat composer."
+    },
+    {
+      "kind": "improved",
+      "text": "Chat dictation now records for up to 10 minutes and shows the limit."
+    },
+    {
+      "kind": "fixed",
+      "text": "Self-hosted Chat and Files no longer require Clerk to render."
+    },
+    {
+      "kind": "new",
+      "text": "The Matrix command line installs globally on Linux and macOS, with an installer at get.matrix-os.com."
+    },
+    {
+      "kind": "fixed",
+      "text": "Web Desktop loads correctly from host bundles and private preview paths."
+    },
+    {
+      "kind": "fixed",
+      "text": "New computers with an empty home start with the expected wallpaper, apps, theme and Desktop settings."
+    },
+    {
+      "kind": "fixed",
+      "text": "Saved Desktop mode no longer blocks launch links or the automatic Chat open."
+    },
+    {
+      "kind": "fixed",
+      "text": "Pi 1.6 appears and installs correctly from Settings."
+    }
+  ],
+  "hidden": [
+    3526,
+    3665,
+    3664,
+    3697,
+    3600,
+    3453,
+    3623,
+    3601,
+    3608,
+    3637,
+    3636,
+    3626,
+    3539,
+    3551,
+    3493,
+    3411,
+    3523,
+    3492
+  ]
+}

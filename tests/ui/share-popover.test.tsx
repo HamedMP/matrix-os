@@ -3,7 +3,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SiteRecord } from "@matrix-os/contracts";
-import { SharePanel, ShareTriggerLabel, createInMemoryEmailInvitations, useShareController, type EmailInvitationAdapter, type ShareSiteClient } from "../../packages/ui/src/share/index";
+import { SharePanel, ShareTriggerLabel, createInMemoryEmailInvitations, useShareController, type EmailInvitationAdapter, type ShareController, type ShareSiteClient } from "../../packages/ui/src/share/index";
 
 // Outcome: an owner shares an app by email invite (preview) or publicly on
 // Matrix.page from one popover, and is warned before switching the single
@@ -34,16 +34,21 @@ function client(overrides: Partial<ShareSiteClient> = {}): ShareSiteClient & Rec
 }
 
 /** Mirrors the window-header host: it owns the controller and renders trigger + panel. */
-function Host({ api, emailInvites, organization }: { api: ShareSiteClient; emailInvites: EmailInvitationAdapter | null; organization: boolean }) {
-  const share = useShareController({ appSlug: "sales-crm", appName: "Sales CRM", client: api, emailInvites });
+function Host({ api, emailInvites, organization, allowNewSharing, onController }: {
+  api: ShareSiteClient; emailInvites: EmailInvitationAdapter | null; organization: boolean;
+  allowNewSharing?: boolean; onController?: (share: ShareController) => void;
+}) {
+  const share = useShareController({ appSlug: "sales-crm", appName: "Sales CRM", client: api, emailInvites, allowNewSharing });
+  onController?.(share);
   return <>
     <span data-testid="trigger"><ShareTriggerLabel pageMode={share.pageMode} orgShared={false} /></span>
     <SharePanel share={share} appSlug="sales-crm" appName="Sales CRM" client={api} ownerInitial="N" onClose={vi.fn()}
       organization={organization ? { shared: false, content: <p>Org content</p> } : null} />
   </>;
 }
-function renderPanel(api: ShareSiteClient, options: { emailInvites?: EmailInvitationAdapter | null; organization?: boolean } = {}) {
-  render(<Host api={api} emailInvites={options.emailInvites ?? null} organization={options.organization ?? false} />);
+function renderPanel(api: ShareSiteClient, options: { emailInvites?: EmailInvitationAdapter | null; organization?: boolean; allowNewSharing?: boolean; onController?: (share: ShareController) => void } = {}) {
+  render(<Host api={api} emailInvites={options.emailInvites ?? null} organization={options.organization ?? false}
+    allowNewSharing={options.allowNewSharing} onController={options.onController} />);
 }
 const inPanel = () => within(screen.getByRole("region", { name: "Share app" }));
 const publishButton = () => screen.getByRole("button", { name: /^Publish$/ });
@@ -366,5 +371,63 @@ describe("review fixes: owner controls and stale state", () => {
     fireEvent.click(screen.getByRole("button", { name: "Update" }));
     expect(await screen.findByText("This changed somewhere else. Refresh and try again.")).toBeTruthy();
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+  });
+});
+
+// Outcome: Matrix default apps (Calculator, Notes, games) never start sharing, yet an
+// owner who shared one earlier can still stop it. Faults detected: a stop-only app
+// offering new invites, resends, publish or detail edits, and a stray request
+// (stale button, script) creating a new publication for a default app.
+describe("Stop-only sharing for default apps", () => {
+  it("keeps Revoke on an invite-only default app but offers no new invites or resends", async () => {
+    const emailInvites = createInMemoryEmailInvitations();
+    const signal = new AbortController().signal;
+    await emailInvites.activate("sales-crm", signal);
+    await emailInvites.invite("sales-crm", { emailAddresses: ["sara@finna.ai"], baseRevision: 1 }, signal);
+    const api = client();
+    renderPanel(api, { emailInvites, allowNewSharing: false });
+    await loaded();
+    expect(await screen.findByText("sara@finna.ai")).toBeTruthy();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Private"]);
+    expect(screen.queryByLabelText("Email address")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Resend invitation/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Revoke invitation for sara@finna.ai" }));
+    await waitFor(() => expect(screen.queryByText("sara@finna.ai")).toBeNull());
+  });
+
+  it("keeps Stop sharing privately on a published invite-only default app", async () => {
+    const api = client({ get: vi.fn(async () => ({ ...base, accessMode: "private_email" as SiteRecord["accessMode"] })) });
+    renderPanel(api, { allowNewSharing: false });
+    await loaded();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Private"]);
+    expect(screen.queryByLabelText("Email address")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stop sharing privately" }));
+    await waitFor(() => expect(api.unpublish).toHaveBeenCalledWith("sales-crm", 3, expect.any(AbortSignal)));
+  });
+
+  it("refuses to publish, update or edit details when new sharing is not allowed", async () => {
+    let controller: ShareController | null = null;
+    const api = client({ get: vi.fn(async () => base) });
+    renderPanel(api, { allowNewSharing: false, onController: (share) => { controller = share; } });
+    await loaded();
+    expect(screen.queryByRole("button", { name: "Update" })).toBeNull();
+    const metadata = { title: "Sales CRM", description: "", slug: "crm" };
+    expect(await controller!.request({ to: "private_email", email: "sara@finna.ai" })).toBe(false);
+    expect(await controller!.publishUpdate()).toBe(false);
+    expect(await controller!.saveDetails(metadata)).toBe(false);
+    expect(api.deploy).not.toHaveBeenCalled();
+    expect(api.update).not.toHaveBeenCalled();
+  });
+
+  it("shows no Publish form on a default app that is not published", async () => {
+    let controller: ShareController | null = null;
+    const api = client();
+    renderPanel(api, { allowNewSharing: false, onController: (share) => { controller = share; } });
+    await loaded();
+    expect(screen.queryByRole("button", { name: /^Publish$/ })).toBeNull();
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(await controller!.request({ to: "public", metadata: { title: "Sales CRM", description: "", slug: null } })).toBe(false);
+    expect(api.deploy).not.toHaveBeenCalled();
   });
 });

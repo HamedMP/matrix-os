@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 
-export const SubstrateKindSchema = z.enum(["vps", "container"]);
+export const SubstrateKindSchema = z.enum(["vps", "container", "metal"]);
 export type SubstrateKind = z.infer<typeof SubstrateKindSchema>;
 
 export const RuntimeStateSchema = z.enum([

@@ -19,6 +19,7 @@ export const pluginSkillsDir = join(repoRoot, "dev/matrix-dev/skills");
 export const MATRIX_DEV_SKILLS = [
   "daily-update",
   "monitor-stack-reviews",
+  "release-full-stable",
   "release-matrix-stable",
   "release-notes",
   "release-platform",

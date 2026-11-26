@@ -26,7 +26,6 @@ import {
   type PlatformDB,
   getContainer,
   getContainerByClerkId,
-  getActiveUserMachineByClerkId,
   getActiveUserMachineByHandle,
   getRunningUserMachineByClerkId,
   getRunningUserMachineByHandle,
@@ -58,9 +57,6 @@ import { CustomerVpsError } from './customer-vps-errors.js';
 import {
   buildCustomerVpsProxyUrl,
 } from './profile-routing.js';
-import {
-  getRuntimeAccessDecision,
-} from './billing.js';
 import { getRuntimeEntitlementDecision, getRuntimeEntitlementDecisionForUser, resolveEffectiveBillingEntitlement, stripeBillingEntitlementsEnabled } from './runtime-entitlement.js';
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
 import { createAccountDeletionBillingWebhookGuard } from './account-deletion/billing-webhook-guard.js';
@@ -71,6 +67,7 @@ import { createRedditConversionsClient } from './reddit-conversions.js';
 import { createPrebillingProvisioningCoordinator } from './prebilling-provisioning.js';
 import { loadPrebillingProvisioningConfig } from './prebilling-provisioning-config.js';
 import { createJourneyRoutes, createJourneyUserResolver } from './journey-routes.js';
+import { createJourneyProvisioner } from './journey-provisioning.js';
 import {
   sanitizeProxyResponseHeaders,
 } from './proxy-headers.js';
@@ -95,6 +92,9 @@ import { createGoldenSnapshotRoutes } from './golden-snapshot-routes.js';
 import type { GoldenSnapshotService } from './golden-snapshot-service.js';
 import type { GoldenSnapshotRuntimeConfig } from './golden-snapshot-schema.js';
 import { createLegacyContainerRoutes } from './legacy-container-routes.js';
+import type { FreeTierConfig } from './free-tier/config.js';
+import type { FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
+import { registerFreeTierOperatorRoutes } from './free-tier/invites.js';
 import { createAppSessionRoutes } from './app-session-routes.js';
 import { createComputerRoutes } from './computer-routes.js';
 import { createPlatformMcpRoutes } from './mcp-registration.js';
@@ -141,6 +141,7 @@ import { createSessionRoutingMiddleware } from './session-routing-middleware.js'
 import { runtimeProxyBodyLimitBytes } from './runtime-proxy-fetch.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
+import { proxyLegacyRouteToSubstrate } from './substrates/legacy-proxy-route.js';
 import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
@@ -304,6 +305,7 @@ export function createApp(deps: {
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   substrateRegistry?: SubstrateRegistry;
+  freeTier?: { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner };
   env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
@@ -559,6 +561,7 @@ export function createApp(deps: {
     ensureProvisionedPlatformUser,
     resolveAppDomainIdentity,
     getGatewayUrlForHandle,
+    freeRuntimeProvisioner: deps.freeTier?.provisioner,
   }));
 
   const billingStripe=createAccountDeletionGuardedStripeClient(db, appEnv.STRIPE_SECRET_KEY
@@ -580,6 +583,7 @@ export function createApp(deps: {
     resolveClerkUserId: resolveBillingClerkUserId,
     captureEvent: captureFunnelEvent,
     redditConversions: createRedditConversionsClient({ env: appEnv }),
+    resolveFreePlanEligibility: deps.freeTier?.provisioner?.isEligible,
     prebilling,
     fundedAiRepository: deps.fundedAiRepository,
     fundedModelProbes: deps.fundedModelProbes,
@@ -588,46 +592,17 @@ export function createApp(deps: {
   // Onboarding journey (spec 092): one server-owned signup-to-ready state every
   // surface renders from. Triggers provisioning through the same building blocks
   // as /api/auth/provision-runtime so billing and identity checks stay identical.
-  async function provisionRuntimeForJourney(clerkUserId: string, runtimeSlot: string): Promise<void> {
-    if (!deps.customerVpsService) {
-      throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
-    }
-    if (stripeBillingEntitlementsEnabled(appEnv)) {
-      const checkedAt = new Date();
-      const entitlement = await resolveEffectiveBillingEntitlement(db, clerkUserId, checkedAt, runtimeSlot, appEnv);
-      if (!getRuntimeAccessDecision(entitlement, checkedAt).runtimeProxyAllowed) {
-        throw new CustomerVpsError(402, 'billing_required', 'Billing upgrade required');
-      }
-    }
-    const identity = await selectProvisionIdentityForClerkUser(db, clerkUserId, appEnv);
-    if (!identity) {
-      throw new CustomerVpsError(409, 'invalid_state', 'Handle unavailable');
-    }
-    const existingMachine = await getActiveUserMachineByClerkId(db, clerkUserId, runtimeSlot);
-    const provisioned = await deps.customerVpsService.provision({
-      handle: identity.handle,
-      clerkUserId,
-      runtimeSlot,
-      ...(existingMachine?.status === 'failed' ? { developerTools: existingMachine.developerTools } : {}),
-    });
-    await ensureProvisionedPlatformUser(db, {
-      clerkUserId,
-      handle: identity.handle,
-      displayName: identity.displayName,
-      email: identity.email,
-      runtimeId: `vps:${provisioned.machineId}`,
-    });
-    if (matrixProvisioner) {
-      try {
-        await matrixProvisioner.provisionUser(identity.handle);
-      } catch (matrixErr: unknown) {
-        console.error(
-          `[matrix] Failed to provision Matrix accounts for ${identity.handle}:`,
-          matrixErr instanceof Error ? matrixErr.message : String(matrixErr),
-        );
-      }
-    }
-  }
+  const provisionRuntimeForJourney = createJourneyProvisioner({
+    db,
+    appEnv,
+    customerVpsService: deps.customerVpsService,
+    freeRuntimeProvisioner: deps.freeTier?.provisioner,
+    matrixProvisioner,
+    stripeBillingEntitlementsEnabled,
+    resolveEffectiveBillingEntitlement,
+    selectProvisionIdentityForClerkUser,
+    ensureProvisionedPlatformUser,
+  });
 
   const privatePreviewAccess = createPrivatePreviewAccess({
     env: appEnv,
@@ -644,7 +619,9 @@ export function createApp(deps: {
   app.route('/', createJourneyRoutes({
     db,
     resolveUserId: resolveJourneyUser,
-    provisionRuntime: deps.customerVpsService ? provisionRuntimeForJourney : undefined,
+    provisionRuntime: provisionRuntimeForJourney,
+    resolveFreePlanEligibility: deps.freeTier?.provisioner?.isEligible,
+    reconcileStaleRuntime: deps.freeTier?.provisioner?.reconcileStaleRuntime,
     resumePrebillingPreparation: prebilling
       ? (input) => prebilling.resumePreparation(input)
       : undefined,
@@ -712,6 +689,7 @@ export function createApp(deps: {
   if (deps.internalFundedAiOperatorRoutes) {
     app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
   }
+  registerFreeTierOperatorRoutes(app, { db, platformSecret, config: deps.freeTier?.config });
 
   registerSiteRoutesIfConfigured(app, { db, platformSecret, storage: deps.sitesObjectStore,
     edgeSecret: appEnv.SITES_EDGE_SECRET, edgePreviousSecret: appEnv.SITES_EDGE_SECRET_PREVIOUS,
@@ -732,6 +710,7 @@ export function createApp(deps: {
   const speechUploadBodyLimit = bodyLimit({
     maxSize: runtimeProxyBodyLimitBytes('POST', '/api/speech/transcriptions', PROXY_BODY_LIMIT),
   });
+  const substrates = deps.substrateRegistry ?? createPlatformSubstrateRegistry(db, appEnv);
   app.use('*', (c, next) => (
     runtimeProxyBodyLimitBytes(c.req.method, c.req.path, PROXY_BODY_LIMIT) > PROXY_BODY_LIMIT
       ? speechUploadBodyLimit(c, next)
@@ -757,7 +736,7 @@ export function createApp(deps: {
     getRuntimeEntitlementDecisionForUser,
     getGatewayUrlForHandle,
     logRouteError: logPlatformRouteError,
-    substrates: deps.substrateRegistry ?? createPlatformSubstrateRegistry(db),
+    substrates,
   }));
 
   const integrationDeletionGuard=createAccountDeletionMutationGuard({db,env:appEnv,resolveOwner:c=>c.get('platformUserId') as string|undefined});
@@ -943,6 +922,11 @@ export function createApp(deps: {
     const path = c.req.path.replace(`/proxy/${handle}`, '') || '/';
     const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
     const runningMachine = await getRunningUserMachineByHandle(db, handle);
+    // Platform-secret callers are not the owner, so they reach an on-demand runtime only while it is routable.
+    if (runningMachine && runningMachine.substrate !== 'vps') {
+      return proxyLegacyRouteToSubstrate(c, { db, substrates, machine: runningMachine, path, queryString: qs,
+        vpsDispatcher: customerVpsProxyDispatcher, logRouteError: logPlatformRouteError });
+    }
     if (runningMachine) {
       const targetUrl = buildCustomerVpsProxyUrl(runningMachine, path, qs);
       if (!targetUrl) {

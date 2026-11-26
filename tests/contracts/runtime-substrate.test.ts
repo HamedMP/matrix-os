@@ -19,7 +19,7 @@ function allCapabilities(state: string): Record<string, { state: string }> {
 
 describe("runtime substrate contract", () => {
   it("names exactly the vps and container substrates", () => {
-    expect(SubstrateKindSchema.options).toEqual(["vps", "container"]);
+    expect(SubstrateKindSchema.options).toEqual(["vps", "container", "metal"]);
     expect(SubstrateKindSchema.safeParse("hetzner").success).toBe(false);
   });
 

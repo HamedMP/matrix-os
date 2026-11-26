@@ -46,6 +46,79 @@ describe("JourneyGate", () => {
     expect(getByText("Booting your computer")).toBeTruthy();
   });
 
+  it("calls the first build stage creating the Matrix computer", () => {
+    const { getByText } = render(
+      <JourneyGate result={ok({ phase: "provisioning", detail: "Building…", progress: { stage: "creating_server", startedAt: "x" } })} onRetry={noop} onOpenUrl={noop} />,
+    );
+    expect(getByText("Creating your Matrix computer")).toBeTruthy();
+  });
+
+  it("lets a free-plan owner start building their computer without plans", () => {
+    const onRetry = jest.fn();
+    const { getByText, getByTestId, queryByTestId } = render(
+      <JourneyGate
+        result={ok({ phase: "install_choices_required", detail: "Set up your free Matrix computer.", nextAction: { kind: "start_provision" } })}
+        onRetry={onRetry}
+        onOpenUrl={noop}
+      />,
+    );
+    expect(getByText("Set up your Matrix computer")).toBeTruthy();
+    expect(getByText("Set up your free Matrix computer.")).toBeTruthy();
+    expect(queryByTestId("journey-open-plans")).toBeNull();
+    fireEvent.press(getByTestId("journey-start"));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("tells a free-plan owner which coding agents come preinstalled, as the web install step does", () => {
+    const { getByText } = render(
+      <JourneyGate
+        result={ok({ phase: "install_choices_required", detail: "Set up your free Matrix computer.", nextAction: { kind: "start_provision" } })}
+        onRetry={noop}
+        onOpenUrl={noop}
+      />,
+    );
+    expect(getByText(
+      "Claude Code and Codex come preinstalled on your free computer. You can install OpenCode or Pi later from the Terminal’s + menu.",
+    )).toBeTruthy();
+  });
+
+  it("shows why a free start failed and lets the owner try again", () => {
+    const onRetry = jest.fn();
+    const { getByText, getByTestId } = render(
+      <JourneyGate
+        result={ok({ phase: "install_choices_required", detail: "Set up your free Matrix computer.", nextAction: { kind: "start_provision" } })}
+        onRetry={onRetry}
+        onOpenUrl={noop}
+        setupError="Matrix can’t start new computers right now. Try again in a few minutes."
+      />,
+    );
+    expect(getByText("Matrix can’t start new computers right now. Try again in a few minutes.")).toBeTruthy();
+    fireEvent.press(getByTestId("journey-start"));
+    expect(onRetry).toHaveBeenCalled();
+    expect(getByText("Try again")).toBeTruthy();
+  });
+
+  it("shows why a retry failed on the failed-build screen", () => {
+    const { getByText, getByTestId } = render(
+      <JourneyGate
+        result={ok({ phase: "provisioning_failed", detail: "Setting up ran into a problem.", failure: { retryable: true, attempt: 1 } })}
+        onRetry={noop}
+        onOpenUrl={noop}
+        setupError="Setup was just tried. Wait a moment, then try again."
+      />,
+    );
+    expect(getByText("Setup was just tried. Wait a moment, then try again.")).toBeTruthy();
+    expect(getByTestId("journey-retry")).toBeTruthy();
+  });
+
+  it("keeps the existing hand-off screen for install choices that are not a free start", () => {
+    const { queryByTestId, getByTestId } = render(
+      <JourneyGate result={ok({ phase: "install_choices_required", nextAction: { kind: "choose_default_installs" } })} onRetry={noop} onOpenUrl={noop} />,
+    );
+    expect(queryByTestId("journey-start")).toBeNull();
+    expect(getByTestId("journey-loading")).toBeTruthy();
+  });
+
   it("offers retry on a retryable failure", () => {
     const onRetry = jest.fn();
     const { getByTestId } = render(

@@ -3,6 +3,9 @@
 Retired. This command used to push version bumps straight to `main`, which the
 PR-only rule forbids. Use the release skills instead:
 
+- Full interactive release (release modal, platform readiness, host, fleet,
+  Desktop, and golden snapshot):
+  `.agents/skills/release-full-stable/SKILL.md`
 - Platform service (Cloud Run, `platform-cloud-run.yml`):
   `.agents/skills/release-platform/SKILL.md`
 - Customer VPS host bundle, canary then stable (`host-bundle-release.yml`):

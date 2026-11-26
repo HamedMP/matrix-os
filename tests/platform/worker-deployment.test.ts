@@ -35,8 +35,8 @@ const candidate = {
   },
 };
 
-function render(source: unknown = candidate) {
-  return spawnSync(process.execPath, [renderer, "matrix-platform-worker"], {
+function render(source: unknown = candidate, extra: string[] = []) {
+  return spawnSync(process.execPath, [renderer, "matrix-platform-worker", ...extra], {
     input: JSON.stringify(source),
     encoding: "utf8",
   });
@@ -72,6 +72,44 @@ describe("platform worker deployment", () => {
     expect(container.env).toContainEqual({ name: "PLATFORM_BACKGROUND_WORKERS_ENABLED", value: "true" });
     expect(container.env).toContainEqual({ name: "ACCOUNT_DELETION_ENABLED", value: "false" });
     expect(container.env).toContainEqual(candidate.spec.containers[0].env[3]);
+  });
+
+  it("renders a worker-role service (health-only, all background workers) when asked", () => {
+    const result = render(candidate, ["--role-worker"]);
+    expect(result.status, result.stderr).toBe(0);
+    const env = JSON.parse(result.stdout).spec.template.spec.containers[0].env;
+    expect(env).toContainEqual({ name: "PLATFORM_ROLE", value: "worker" });
+    expect(env).toContainEqual({ name: "PLATFORM_BACKGROUND_WORKERS_ENABLED", value: "true" });
+    expect(env.filter((entry: { name: string }) => entry.name === "PLATFORM_ROLE")).toHaveLength(1);
+  });
+
+  it("renders a worker-role service from a preview revision without the production-only flags", () => {
+    const source = structuredClone(candidate);
+    source.spec.containers[0].env = [
+      { name: "PLATFORM_PREVIEW", value: "true" },
+      { name: "METAL_HOSTS_ENABLED", value: "1" },
+      { name: "PLATFORM_DATABASE_URL", valueFrom: { secretKeyRef: { name: "platform-database-url-staging", key: "latest" } } },
+    ] as typeof source.spec.containers[0]["env"];
+    const result = render(source, ["--role-worker", "--metal-scope"]);
+    expect(result.status, result.stderr).toBe(0);
+    const env = JSON.parse(result.stdout).spec.template.spec.containers[0].env;
+    expect(env).toContainEqual({ name: "PLATFORM_ROLE", value: "worker" });
+    expect(env).toContainEqual({ name: "PLATFORM_WORKER_SCOPE", value: "metal" });
+    expect(env).toContainEqual({ name: "METAL_HOSTS_ENABLED", value: "1" });
+    // Without --role-worker the production contract still applies.
+    expect(render(source).status).not.toBe(0);
+  });
+
+  it("relaxes the production worker contract only for a preview revision", () => {
+    const production = structuredClone(candidate);
+    production.spec.containers[0].env = production.spec.containers[0].env.filter(
+      (entry) => entry.name !== "PLATFORM_BACKGROUND_WORKERS_ENABLED",
+    );
+    const result = render(production, ["--role-worker"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("background workers disabled");
+    // The metal scope is for preview workers only.
+    expect(render(candidate, ["--role-worker", "--metal-scope"]).status).not.toBe(0);
   });
 
   it("keeps configured deletion processing active while API admission is disabled", () => {
@@ -124,6 +162,17 @@ describe("platform worker deployment", () => {
     });
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("legacy-worker,old-default-worker");
+  });
+
+  it("switches the production worker to PLATFORM_ROLE=worker only behind a variable", () => {
+    const deploy = workflow.slice(workflow.indexOf("- name: Deploy dedicated platform worker"), workflow.indexOf("- name: Verify dedicated platform worker"));
+    expect(deploy).toContain("PLATFORM_WORKER_ROLE_ENABLED: ${{ vars.PLATFORM_WORKER_ROLE_ENABLED || 'false' }}");
+    expect(deploy).toContain('if [ "$PLATFORM_WORKER_ROLE_ENABLED" = "true" ]; then');
+    expect(deploy).toContain('render-platform-worker-service.mjs "$worker_service" "${role_flag[@]}"');
+
+    const verify = workflow.slice(workflow.indexOf("- name: Verify dedicated platform worker"));
+    expect(verify).toContain('if [ "$PLATFORM_WORKER_ROLE_ENABLED" = "true" ]; then expected_role="worker"; fi');
+    expect(verify).toContain('[ "$worker_role" != "$expected_role" ]');
   });
 
   it("keeps web workers disabled and restores one worker before promotion", () => {

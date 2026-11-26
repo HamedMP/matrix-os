@@ -2,12 +2,13 @@
 
 import { Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
-import { usePathname, useSearchParams } from "next/navigation";
+import { MatrixComputerListSchema, MatrixComputerRuntimeSlotSchema } from "@matrix-os/contracts";
+import { RedirectType, redirect, usePathname, useSearchParams } from "next/navigation";
 import { AlertCircleIcon, Loader2Icon } from "@/lib/hugeicons";
 import {
   getMatrixBillingSuccessRedirectUrl,
 } from "@/lib/billing";
+import { useJourney } from "@/hooks/useJourney";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogEvent, capturePostHogLog } from "@/lib/posthog-client";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
@@ -18,6 +19,7 @@ import {
   type SignupBillingHandoffLoadingSurface,
 } from "@/lib/signup-billing-handoff";
 import { AddComputerOnboarding } from "@/components/runtime/RuntimeManager";
+import { hasSavedAddComputerDraft } from "@/components/runtime/add-computer-draft";
 import { SelfHostedUnavailable } from "@/components/auth/SelfHostedUnavailable";
 import { isSelfHostedRuntime } from "@/lib/self-host-mode";
 import { Settings } from "./Settings";
@@ -271,7 +273,7 @@ function BillingGateRoute({
   if (isAddComputerHandoff) {
     // Adding computers is an account feature; self-hosted documents have no ClerkProvider.
     // react-doctor-disable-next-line react-doctor/no-hydration-branch-on-browser-global -- both sides read the same MATRIX_SELF_HOSTED flag: the server from its env, the client from the data-matrix-self-hosted attribute the root layout renders from that env
-    return isSelfHostedRuntime() ? <SelfHostedUnavailable feature="Adding a computer" /> : <AddComputerOnboarding />;
+    return isSelfHostedRuntime() ? <SelfHostedUnavailable feature="Adding a computer" /> : <AddComputerHandoff />;
   }
   if (platformSessionActive) {
     return <>{children}</>;
@@ -284,6 +286,57 @@ function BillingGateRoute({
       {children}
     </BillingGateInner>
   );
+}
+
+type OtherComputers = "loading" | "none" | "some" | "unknown";
+
+/** Whether the owner has a computer besides the primary one; "unknown" when the inventory cannot be read. */
+function useOtherComputers(enabled: boolean): OtherComputers {
+  const [answer, setAnswer] = useState<OtherComputers>("loading");
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/auth/computers", {
+          credentials: "include", cache: "no-store", signal: AbortSignal.timeout(10_000),
+        });
+        const parsed = response.ok ? MatrixComputerListSchema.safeParse(await response.json()) : null;
+        if (cancelled) return;
+        if (!parsed?.success) {
+          setAnswer("unknown");
+          return;
+        }
+        setAnswer(parsed.data.items.some((computer) => computer.runtimeSlot !== "primary") || parsed.data.hasMore ? "some" : "none");
+      } catch (error: unknown) {
+        console.warn("[billing-gate] computer inventory unavailable", error instanceof Error ? error.name : typeof error);
+        if (!cancelled) setAnswer("unknown");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabled]);
+  return answer;
+}
+
+/**
+ * The add-computer flow names and builds another computer. An owner whose
+ * first build failed and who has no other computer and no saved add-computer
+ * flow has nothing to add to: send them to the onboarding root, where the
+ * journey shows provisioning_failed and its retry. An owner with another
+ * computer, or returning from checkout for one, keeps the flow. If the journey
+ * or the inventory is unavailable, the add-computer flow still renders.
+ */
+function AddComputerHandoff() {
+  const { isLoaded, isSignedIn } = useAuth();
+  const { state, status } = useJourney();
+  const [savedFlow] = useState(hasSavedAddComputerDraft);
+  const failedFirstBuild = status === "ready" && state?.phase === "provisioning_failed" && !savedFlow;
+  const otherComputers = useOtherComputers(Boolean(isLoaded && isSignedIn && failedFirstBuild));
+  // Signed-out owners get the add-computer flow's own sign-in redirect.
+  if (isLoaded && !isSignedIn) return <AddComputerOnboarding />;
+  if (failedFirstBuild && otherComputers === "none") redirect("/", RedirectType.replace);
+  if (!isLoaded || status === "loading" || (failedFirstBuild && otherComputers === "loading")) return <BillingStatusLoading />;
+  return <AddComputerOnboarding />;
 }
 
 function BillingGateInner({

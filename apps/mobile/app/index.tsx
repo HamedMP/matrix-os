@@ -8,7 +8,7 @@ import { HOSTED_GATEWAY_URL, getMobileJourneyGatewayUrl, getSelectedGatewayConne
 import { JourneyGate } from "@/components/JourneyGate";
 import { StartupLoading } from "@/components/StartupScreen";
 import { SignInScreen } from "@/components/auth/SignInScreen";
-import { fetchMobileJourney, isConnectablePhase, type JourneyFetchResult } from "@/lib/journey";
+import { PROVISION_START_MESSAGES, fetchMobileJourney, isConnectablePhase, requestMobileProvisionStart, type JourneyFetchResult } from "@/lib/journey";
 import { forgetJourneyConnectable, rememberJourneyConnectable, wasJourneyConnectable } from "@/lib/journey-cache";
 import { clearAllScrollback } from "@/lib/terminal-scrollback";
 import { resetAnalytics } from "@/lib/analytics";
@@ -25,6 +25,7 @@ function SignedInJourneyGate() {
   const { getToken, signOut, userId } = useAuth();
   const [result, setResult] = useState<JourneyFetchResult | null>(null);
   const [working, setWorking] = useState(false);
+  const [setupError, setSetupError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
@@ -112,19 +113,14 @@ function SignedInJourneyGate() {
 
   async function handleRetry() {
     setWorking(true);
+    setSetupError(null);
     try {
-      const token = await getToken();
-      if (token) {
-        await fetch(`${HOSTED_GATEWAY_URL.replace(/\/+$/, "")}/api/journey/retry-provision`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: "{}",
-          signal: AbortSignal.timeout(10_000),
-        });
-      }
+      // The refetch below reflects the real state; a refused start also says why.
+      setSetupError(await requestMobileProvisionStart(HOSTED_GATEWAY_URL, await getToken()));
     } catch (err: unknown) {
-      // Best-effort trigger; the refetch below reflects the real state.
+      // getToken() (Clerk token refresh) can reject.
       console.warn("[mobile] retry-provision failed", err instanceof Error ? err.name : typeof err);
+      setSetupError(PROVISION_START_MESSAGES.unreachable);
     } finally {
       setWorking(false);
       reload();
@@ -141,6 +137,7 @@ function SignedInJourneyGate() {
       <JourneyGate
         result={result}
         working={working}
+        setupError={setupError}
         onRetry={handleRetry}
         onRefresh={reload}
         onSignOut={handleSignOut}

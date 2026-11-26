@@ -1,9 +1,11 @@
+export const FREE_MANAGED_MODEL_ID = "@cf/zai-org/glm-5.3-flash";
+
 /** Exact managed Workers AI routes reviewed against the Cloudflare catalog.
  * Keep the inexpensive existing default first. Only models with verified
  * inline image support advertise vision.
  */
 export const LEGACY_MANAGED_WORKERS_AI_MODEL_IDS = [
-  "@cf/zai-org/glm-5.3-flash",
+  FREE_MANAGED_MODEL_ID,
   "@cf/deepseek-ai/deepseek-v4-flash-0731",
   "@cf/zai-org/glm-5.3",
   "@cf/moonshotai/kimi-k2.7-code",
