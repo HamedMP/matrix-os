@@ -23,7 +23,7 @@ export type { AskOptions, SheetsAi, SheetsAgentErrorCode, WorkbookQuestion } fro
 export { runProposal, validateReply, writeResolved } from "./apply";
 export type { AgentSession, EditScope, ProposalRecord, ValidationResult } from "./apply";
 export { checkWorkbook } from "./checks";
-export type { CheckOptions, Finding, FindingKind } from "./checks";
+export type { CheckOptions, CheckReport, Finding, FindingKind } from "./checks";
 export { cleanColumn, columnRange, normaliseColumn, numberFromText, tidyText } from "./clean";
 export type { AgentContext, ExplainOutcome, ProposalOutcome, SheetSelection } from "./context";
 export { buildTable, editByInstruction, proposeWithModel, sheetBlocks } from "./edit";

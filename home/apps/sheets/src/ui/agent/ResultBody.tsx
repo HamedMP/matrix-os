@@ -47,27 +47,55 @@ function Answer({ result, assistant }: { result: AnswerResult; assistant: Sheets
   );
 }
 
-function Findings({ result, assistant }: { result: FindingsResult; assistant: SheetsAssistant }) {
-  if (result.findings.length === 0) return <p className="sheets-agent__note">Every total adds up and no typed-in number sits among formulas.</p>;
+/** Sheet names listed in full before the rest are counted. */
+const MAX_SKIPPED_NAMED = 5;
+
+/** What the check could not look at. Null when it read every cell. */
+function Incomplete({ result }: { result: FindingsResult }) {
+  if (result.skipped.length === 0 && !result.capped) return null;
+  const named = result.skipped.slice(0, MAX_SKIPPED_NAMED).join(", ");
+  const more = result.skipped.length - MAX_SKIPPED_NAMED;
   return (
-    <ul className="sheets-agent__findings">
-      {result.findings.map((finding) => (
-        <li key={`${finding.kind}|${finding.location}`} className={`sheets-agent__finding is-${finding.kind}`}>
-          <span className="sheets-agent__finding-kind">{KIND_LABEL[finding.kind]}</span>
-          <span className="sheets-agent__finding-text">{finding.message}</span>
-          <span className="sheets-agent__actions">
-            <button type="button" className="oui-button oui-button--ghost" onClick={() => assistant.showFinding(finding)} aria-label={`Go to ${finding.location}`}>
-              Go to
-            </button>
-            {finding.kind === "total-mismatch" && finding.related !== undefined && (
-              <button type="button" className="oui-button oui-button--primary" onClick={() => void assistant.fix(finding)} aria-label={`Link ${finding.location} to its calculation`}>
-                Link to calculation
+    <div className="sheets-agent__note">
+      {result.skipped.length > 0 && (
+        <p>
+          Not checked, too large to read: {named}
+          {more > 0 ? ` and ${more} more` : ""}.
+        </p>
+      )}
+      {result.capped && <p>The check stopped after {result.findings.length} findings; later cells were not checked.</p>}
+    </div>
+  );
+}
+
+function Findings({ result, assistant }: { result: FindingsResult; assistant: SheetsAssistant }) {
+  if (result.findings.length === 0) {
+    // An all-clear only when every sheet was read.
+    if (result.skipped.length > 0) return <Incomplete result={result} />;
+    return <p className="sheets-agent__note">Every total adds up and no typed-in number sits among formulas.</p>;
+  }
+  return (
+    <>
+      <Incomplete result={result} />
+      <ul className="sheets-agent__findings">
+        {result.findings.map((finding) => (
+          <li key={`${finding.kind}|${finding.location}`} className={`sheets-agent__finding is-${finding.kind}`}>
+            <span className="sheets-agent__finding-kind">{KIND_LABEL[finding.kind]}</span>
+            <span className="sheets-agent__finding-text">{finding.message}</span>
+            <span className="sheets-agent__actions">
+              <button type="button" className="oui-button oui-button--ghost" onClick={() => assistant.showFinding(finding)} aria-label={`Go to ${finding.location}`}>
+                Go to
               </button>
-            )}
-          </span>
-        </li>
-      ))}
-    </ul>
+              {finding.kind === "total-mismatch" && finding.related !== undefined && (
+                <button type="button" className="oui-button oui-button--primary" onClick={() => void assistant.fix(finding)} aria-label={`Link ${finding.location} to its calculation`}>
+                  Link to calculation
+                </button>
+              )}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
 

@@ -49,6 +49,11 @@ export function columnRange(workbook: Workbook, sheet: SheetId, col: number): Ce
  * that change.
  */
 export function normaliseColumn(workbook: Workbook, sheet: SheetId, col: number): ResolvedSheetEdit[] {
+  return normalisedEdits(workbook, sheet, col, MAX_PROPOSED_CELLS);
+}
+
+/** The edits of `normaliseColumn`, at most `limit` of them. */
+function normalisedEdits(workbook: Workbook, sheet: SheetId, col: number, limit: number): ResolvedSheetEdit[] {
   const range = columnRange(workbook, sheet, col);
   if (range === null) return [];
   const cells = workbook.getRange(sheet, range).map((row) => row[0]!);
@@ -63,14 +68,14 @@ export function normaliseColumn(workbook: Workbook, sheet: SheetId, col: number)
   const edits: ResolvedSheetEdit[] = [];
   cells.forEach((cell, index) => {
     // A cell with a pending change keeps it: its proposal is reviewed on its own.
-    if (cell.formula !== null || typeof cell.value !== "string" || cell.pendingChangeId !== null) return;
+    if (edits.length >= limit || cell.formula !== null || typeof cell.value !== "string" || cell.pendingChangeId !== null) return;
     const tidy = tidyText(cell.value);
     const asNumber = numericColumn ? numberFromText(tidy) : null;
     const value: CellValue = asNumber ?? (tidy === "" ? null : tidy);
     if (value === cell.value) return;
     edits.push({ editIndex: -1, sheet, row: range.start.row + index, col, value, formula: null });
   });
-  return edits.slice(0, MAX_PROPOSED_CELLS);
+  return edits;
 }
 
 /**
@@ -105,13 +110,16 @@ export async function cleanColumn(ctx: AgentContext, sheet: SheetId, col: number
     }
   }
   const byCell = new Map<number, ResolvedSheetEdit>();
-  for (const edit of normaliseColumn(ctx.session.workbook, sheet, col)) byCell.set(edit.row, edit);
+  // One more than a proposal holds tells that the column is not finished.
+  for (const edit of normalisedEdits(ctx.session.workbook, sheet, col, MAX_PROPOSED_CELLS + 1)) byCell.set(edit.row, edit);
   for (const edit of modelEdits) byCell.set(edit.row, edit);
-  const edits = [...byCell.values()].sort((a, b) => a.row - b.row);
+  const all = [...byCell.values()].sort((a, b) => a.row - b.row);
+  const edits = all.slice(0, MAX_PROPOSED_CELLS);
+  const unfinished = all.length > MAX_PROPOSED_CELLS ? " More cells still need tidying: review these, then clean the column again." : "";
   if (edits.length === 0) return { status: "no_changes", summary: summary || "The column is already clean." };
   const record = runProposal(ctx.session, label, isoNow(ctx), editTargets(edits), (wb) => {
     for (const edit of edits) writeResolved(wb, edit);
   }, ctx.log);
   if (record.changeIds.length === 0) return { status: "no_changes", summary: "The column is already clean." };
-  return { status: "proposed", ...record, label, summary: summary || `Tidied ${record.changeIds.length} cells in column ${columnLabel(col)}.` };
+  return { status: "proposed", ...record, label, summary: `${summary || `Tidied ${record.changeIds.length} cells in column ${columnLabel(col)}.`}${unfinished}` };
 }

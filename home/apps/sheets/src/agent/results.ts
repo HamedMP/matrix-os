@@ -30,10 +30,14 @@ export interface AnswerResult extends ResultBase {
   text: string;
 }
 
-/** Findings of the integrity checks. */
+/** Findings of the integrity checks, and what the run could not look at. */
 export interface FindingsResult extends ResultBase {
   kind: "findings";
   findings: Finding[];
+  /** Names of the sheets too large to check; when there are any, the check is incomplete. */
+  skipped: string[];
+  /** True when the run stopped at the most findings it reports. */
+  capped: boolean;
 }
 
 export type AssistantResult = ProposalResult | AnswerResult | FindingsResult;

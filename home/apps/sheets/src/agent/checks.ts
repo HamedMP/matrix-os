@@ -37,6 +37,15 @@ export interface Finding {
   related?: SheetCellRef[];
 }
 
+/** What one check run found, and what it could not look at. */
+export interface CheckReport {
+  findings: Finding[];
+  /** Sheets left out because their used area is larger than the scan bound. Their cells were not checked. */
+  skipped: Array<{ sheet: SheetId; name: string }>;
+  /** True when the run stopped at the most findings it reports: cells after the last one were not checked. */
+  capped: boolean;
+}
+
 export interface CheckOptions {
   /** Sheets to check; default every sheet. */
   sheets?: readonly SheetId[];
@@ -223,22 +232,34 @@ function dateCells(workbook: Workbook): (cell: Cell) => boolean {
   };
 }
 
-/** Runs every check over the workbook. Sheets larger than the scan bound are skipped. */
-export function checkWorkbook(workbook: Workbook, options: CheckOptions = {}): Finding[] {
+/**
+ * Runs every check over the workbook. Sheets larger than the scan bound are
+ * not read; the report names them, so a run that left some out is never
+ * taken for an all-clear.
+ */
+export function checkWorkbook(workbook: Workbook, options: CheckOptions = {}): CheckReport {
   const wanted = options.sheets === undefined ? null : new Set(options.sheets);
   const isDate = dateCells(workbook);
   const all: SheetIndex[] = [];
+  const skipped: CheckReport["skipped"] = [];
   for (const sheet of workbook.listSheets()) {
     const data = readSheetCells(workbook, sheet.id, MAX_CHECK_CELLS_PER_SHEET);
     if (data !== null) all.push(new SheetIndex(data, (cell) => !isDate(cell)));
+    else if (workbook.getSheet(sheet.id).dimensions !== null && (wanted === null || wanted.has(sheet.id))) skipped.push({ sheet: sheet.id, name: sheet.name });
   }
   const index = indexTotals(all);
   const out: Finding[] = [];
-  for (const sheet of all) {
+  let capped = false;
+  scan: for (const sheet of all) {
     const data = sheet.data;
     if (wanted !== null && !wanted.has(data.sheet)) continue;
-    for (let r = 0; r < data.rows && out.length < MAX_FINDINGS; r++) {
-      for (let c = 0; c < data.cols && out.length < MAX_FINDINGS; c++) {
+    for (let r = 0; r < data.rows; r++) {
+      for (let c = 0; c < data.cols; c++) {
+        // A cell is left unchecked only past the bound: then the report says it stopped.
+        if (out.length >= MAX_FINDINGS) {
+          capped = true;
+          break scan;
+        }
         const row = data.origin.row + r;
         const col = data.origin.col + c;
         checkTypedNumber(sheet, isDate, row, col, index, out);
@@ -246,5 +267,5 @@ export function checkWorkbook(workbook: Workbook, options: CheckOptions = {}): F
       }
     }
   }
-  return out.slice(0, MAX_FINDINGS);
+  return { findings: out.slice(0, MAX_FINDINGS), skipped, capped: capped || out.length > MAX_FINDINGS };
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ASSISTANT_AUTHOR,
+  MAX_PROPOSED_CELLS,
   OPEN_MARKER,
   checkWorkbook,
   cleanColumn,
@@ -76,18 +77,18 @@ describe("explaining", () => {
 describe("fixing a finding", () => {
   it("links the planted total to the projection in a reviewable proposal", async () => {
     const { session, sheets } = await openModel();
-    const finding = checkWorkbook(session.workbook).find((entry) => entry.kind === "total-mismatch")!;
+    const finding = checkWorkbook(session.workbook).findings.find((entry) => entry.kind === "total-mismatch")!;
     const outcome = fixFinding({ session, ai: null, now: NOW }, finding);
     expect(outcome).toMatchObject({ status: "proposed", summary: "Summary!B2 becomes =Projection!N4." });
     expect(session.cell(sheets.summary, 1, 1).formula).toBe("Projection!N4");
     expect(session.workbook.listChanges()[0]!.author).toBe(ASSISTANT_AUTHOR);
     // After the fix the check no longer finds a mismatch.
-    expect(checkWorkbook(session.workbook).filter((entry) => entry.kind === "total-mismatch")).toEqual([]);
+    expect(checkWorkbook(session.workbook).findings.filter((entry) => entry.kind === "total-mismatch")).toEqual([]);
   });
 
   it("does not write over a cell that already has a proposed change", async () => {
     const { session, sheets } = await openModel();
-    const finding = checkWorkbook(session.workbook).find((entry) => entry.kind === "total-mismatch")!;
+    const finding = checkWorkbook(session.workbook).findings.find((entry) => entry.kind === "total-mismatch")!;
     // A colleague proposes bold for the total: its value still matches the finding but the cell now has a pending change.
     session.mutate((workbook) => {
       workbook.beginProposal({ author: "Alex", date: "2026-11-20T09:00:00.000Z", label: "Bold total" });
@@ -159,6 +160,19 @@ describe("cleaning a column", () => {
       [12, 50],
       [14, "n/a"],
     ]);
+  });
+
+  // Outcome: a clean-up that stops at the proposal bound says the column is not finished.
+  // Fault: it tidies the first cells only and reports the column as cleaned.
+  it("says more cells need tidying when the column has more than one proposal can change", async () => {
+    const { session, sheets } = await openModel();
+    const dirty = Array.from({ length: MAX_PROPOSED_CELLS + 5 }, (_, index) => [` item ${index} `]);
+    session.mutate((workbook) => workbook.setRange(sheets.summary, { row: 20, col: 6 }, dirty));
+    const outcome = await cleanColumn({ session, ai: null, now: NOW }, sheets.summary, 6);
+    expect(outcome.status).toBe("proposed");
+    if (outcome.status !== "proposed") return;
+    expect(outcome.changeIds).toHaveLength(MAX_PROPOSED_CELLS);
+    expect(outcome.summary).toBe(`Tidied ${MAX_PROPOSED_CELLS} cells in column G. More cells still need tidying: review these, then clean the column again.`);
   });
 
   it("merges the model's column edits with the deterministic ones in one proposal", async () => {

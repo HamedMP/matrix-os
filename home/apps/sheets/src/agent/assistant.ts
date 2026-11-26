@@ -7,7 +7,7 @@
 import type { CellDecoration } from "../grid";
 import { type SheetsAi, SheetsAgentError } from "./ai";
 import type { AgentSession } from "./apply";
-import { type Finding, checkWorkbook } from "./checks";
+import { type CheckReport, type Finding, checkWorkbook } from "./checks";
 import { cleanColumn } from "./clean";
 import type { AgentContext, ExplainOutcome, ProposalOutcome, SheetSelection } from "./context";
 import { buildTable, editByInstruction } from "./edit";
@@ -313,7 +313,8 @@ export class SheetsAssistant {
     this.addResult({ kind: "answer", id: `r${this.seq++}`, title: `${title}: ${outcome.subject}`, summary: "", subject: outcome.subject, text: outcome.text });
   }
 
-  private onFindings(findings: Finding[]): void {
+  private onFindings(report: CheckReport): void {
+    const findings = report.findings;
     const messages = (cell: SheetCellRef): string =>
       findings
         .filter((entry) => entry.sheet === cell.sheet && entry.row === cell.row && entry.col === cell.col)
@@ -322,8 +323,18 @@ export class SheetsAssistant {
     this.highlight(FINDINGS_LAYER, findings, "search", messages);
     const first = findings[0];
     if (first !== undefined) this.reveal(first);
-    const title = findings.length === 0 ? "No hard-coded values or mismatched totals found" : `${findings.length === 1 ? "1 finding" : `${findings.length} findings`}`;
-    this.addResult({ kind: "findings", id: `r${this.seq++}`, title, summary: "", findings });
+    const complete = report.skipped.length === 0 && !report.capped;
+    const count = findings.length === 1 ? "1 finding" : `${findings.length} findings`;
+    const title =
+      findings.length === 0
+        ? complete
+          ? "No hard-coded values or mismatched totals found"
+          : "Check incomplete: nothing found in the sheets checked"
+        : complete
+          ? count
+          : `Check incomplete: ${count}`;
+    const skipped = report.skipped.map((sheet) => sheet.name);
+    this.addResult({ kind: "findings", id: `r${this.seq++}`, title, summary: "", findings, skipped, capped: report.capped });
   }
 
   // ------------------------------------------------------------ state

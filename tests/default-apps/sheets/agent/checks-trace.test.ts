@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createXlsx } from "../../../../home/apps/_shared/office-engine/index";
-import { checkWorkbook, directPrecedents, traceText, traceValue } from "../../../../home/apps/sheets/src/agent";
+import { MAX_FINDINGS, checkWorkbook, directPrecedents, traceText, traceValue } from "../../../../home/apps/sheets/src/agent";
 import type { Workbook } from "../../../../home/apps/_shared/office-engine/index";
 import { openModel } from "../review/fixture";
 
@@ -32,7 +32,7 @@ function countingWorkbook(rows: number, cols: number, make: (row: number, col: n
 describe("deterministic checks", () => {
   it("finds the typed-in total revenue in the model and the projection total it disagrees with", async () => {
     const { session, sheets } = await openModel();
-    const findings = checkWorkbook(session.workbook);
+    const { findings } = checkWorkbook(session.workbook);
     const atB2 = findings.filter((finding) => finding.sheet === sheets.summary && finding.row === 1 && finding.col === 1);
     expect(atB2.map((finding) => finding.kind).sort()).toEqual(["hardcoded", "total-mismatch"]);
     const mismatch = atB2.find((finding) => finding.kind === "total-mismatch")!;
@@ -52,7 +52,7 @@ describe("deterministic checks", () => {
     workbook.setFormula(sheet, { row: 1, col: 4 }, "SUM(B2:C2)");
     workbook.setFormula(sheet, { row: 2, col: 4 }, "SUM(B3:D3)");
     workbook.recalc();
-    const findings = checkWorkbook(workbook);
+    const { findings } = checkWorkbook(workbook);
     const gap = findings.find((finding) => finding.kind === "sum-gap");
     expect(gap).toMatchObject({ location: "Sheet1!E2", row: 1, col: 4 });
     expect(gap!.message).toContain("D2");
@@ -73,7 +73,7 @@ describe("deterministic checks", () => {
       [1, 4000],
     ] as const) {
       const { workbook, reads } = countingWorkbook(rows, cols, (row, col) => ({ value: row + col + 1, formula: "1+1" }));
-      expect(checkWorkbook(workbook)).toEqual([]);
+      expect(checkWorkbook(workbook).findings).toEqual([]);
       expect(reads()).toBeLessThan(rows * cols * 40);
     }
   });
@@ -86,7 +86,7 @@ describe("deterministic checks", () => {
     workbook.setStyle(sheet, { start: { row: 6, col: 0 }, end: { row: 6, col: 0 } }, { numberFormat: "mmm yyyy" });
     workbook.setFormula(sheet, { row: 13, col: 0 }, "SUM(A5:A6)");
     workbook.recalc();
-    const gap = checkWorkbook(workbook).find((finding) => finding.kind === "sum-gap");
+    const gap = checkWorkbook(workbook).findings.find((finding) => finding.kind === "sum-gap");
     expect(gap?.message).toBe("Sheet1!A14 adds up A5:A6 but leaves out A8, A9, A10, A11, A12 and more.");
 
     const short = createXlsx();
@@ -95,18 +95,44 @@ describe("deterministic checks", () => {
     short.setFormula(only, { row: 7, col: 0 }, "SUM(A3:A4)");
     short.recalc();
     // A2 is right before the range; A5 and A7 are between the range and the total (A6 is empty).
-    expect(checkWorkbook(short).find((finding) => finding.kind === "sum-gap")?.message).toBe("Sheet1!A8 adds up A3:A4 but leaves out A5, A7, A2.");
+    expect(checkWorkbook(short).findings.find((finding) => finding.kind === "sum-gap")?.message).toBe("Sheet1!A8 adds up A3:A4 but leaves out A5, A7, A2.");
   });
 
   it("reads each cell a bounded number of times for a column of SUMs over error values", () => {
     // Every cell is a SUM of the one above that yields an error, so no SUM finds a number it left out.
     const { workbook, reads } = countingWorkbook(4000, 1, (row) => ({ value: { code: "#DIV/0!" } as never, formula: row === 0 ? "1/0" : `SUM(A${row}:A${row})` }));
-    expect(checkWorkbook(workbook)).toEqual([]);
+    expect(checkWorkbook(workbook).findings).toEqual([]);
     expect(reads()).toBeLessThan(4000 * 40);
   });
 
   it("returns nothing for an empty workbook", () => {
-    expect(checkWorkbook(createXlsx())).toEqual([]);
+    expect(checkWorkbook(createXlsx())).toEqual({ findings: [], skipped: [], capped: false });
+  });
+
+  // Outcome: a check that could not read a sheet says so. Fault: a sparse sheet whose used area is past
+  // the scan bound is left out silently and the run reads as an all-clear.
+  it("names the sheets too large to check instead of passing them", () => {
+    const workbook = createXlsx();
+    const first = workbook.listSheets()[0]!.id;
+    workbook.setCell(first, { row: 0, col: 0 }, 1);
+    workbook.setCell(first, { row: 999, col: 299 }, 2);
+    const small = workbook.addSheet("Small").id;
+    workbook.setCell(small, { row: 0, col: 0 }, 3);
+    workbook.addSheet("Empty");
+    workbook.recalc();
+    expect(checkWorkbook(workbook)).toEqual({ findings: [], skipped: [{ sheet: first, name: "Sheet1" }], capped: false });
+    expect(checkWorkbook(workbook, { sheets: [small] }).skipped).toEqual([]);
+  });
+
+  it("says when it stopped at the most findings it reports", () => {
+    // One cell in ten, never two in a line within reach of each other, is a typed-in number among formulas.
+    const make = (row: number, col: number) => ((row * 7 + col) % 10 === 0 ? { value: 5, formula: null } : { value: 5, formula: "2+3" });
+    const report = checkWorkbook(countingWorkbook(60, 60, make).workbook);
+    expect(report.findings).toHaveLength(MAX_FINDINGS);
+    expect(report.capped).toBe(true);
+    const few = checkWorkbook(countingWorkbook(10, 10, make).workbook);
+    expect(few.findings.length).toBeGreaterThan(0);
+    expect(few.capped).toBe(false);
   });
 });
 

@@ -62,6 +62,23 @@ describe("SheetsAgentPanel", () => {
     assistant.dispose();
   });
 
+  // Outcome: when Check could not read a sheet, the card says the check is incomplete and names it.
+  // Fault: the card says every total adds up although that sheet was never checked.
+  it("says the check is incomplete and names the sheets too large to check", async () => {
+    const { session, sheets, assistant } = await setup();
+    act(() => {
+      session.mutate((workbook) => workbook.setCell(sheets.summary, { row: 999, col: 299 }, 1));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Check for hard-coded values" }));
+    await settle();
+    const panel = document.body;
+    expect(panel.textContent).not.toContain("Every total adds up");
+    expect(panel.textContent).not.toContain("No hard-coded values or mismatched totals found");
+    expect(panel.textContent).toContain("Check incomplete");
+    expect(panel.textContent).toContain("Not checked, too large to read: Summary.");
+    assistant.dispose();
+  });
+
   it("sends a typed instruction through MatrixOS.ai and offers review of the proposal", async () => {
     const { session, sheets, bridge, reviewed, assistant } = await setup(envelope([{ op: "setCell", sheet: "Assumptions", cell: "B3", value: 0.05, expect: "3.0%" }], "Raises growth to 5%."));
     fireEvent.change(screen.getByLabelText("Ask the agent"), { target: { value: "Set growth to 5%" } });
