@@ -7,8 +7,16 @@ import ts from "typescript";
 import { closeAppAiCapabilities } from "../../packages/gateway/src/server/app-capabilities.js";
 import { createPiSdkAppCompletion } from "../../packages/gateway/src/app-ai/pi-sdk-completion.js";
 import { createGenericNativeWriter } from "../../packages/gateway/src/ai-providers/generic-native-writer.js";
+import { initializeGatewayChannels } from "../../packages/gateway/src/startup/channels.js";
+import { createCodingAgentNotificationPreferenceStore } from "../../packages/gateway/src/coding-agents/notification-preferences.js";
+import { createConversationStore } from "../../packages/gateway/src/conversations.js";
 
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+const channelCleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  vi.useRealTimers();
+  for (const cleanup of channelCleanups.splice(0)) await cleanup();
+  vi.restoreAllMocks();
+});
 
 async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   const calls: string[] = [];
@@ -20,6 +28,25 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   const nativeClaudeChatRuntime = service("native Claude");
   const beginNativeShutdown = vi.fn(() => { calls.push("native Claude.beginShutdown"); });
   Object.assign(nativeClaudeChatRuntime, { beginShutdown: beginNativeShutdown });
+  const homePath = await mkdtemp(join(tmpdir(), "gateway-shutdown-channels-"));
+  const channels = initializeGatewayChannels({
+    homePath, configPath: join(homePath, "system/config.json"), codingAgentThreadStore: undefined,
+    codingAgentNotificationPreferenceStore: createCodingAgentNotificationPreferenceStore({ homePath, ownerIds: [] }),
+    conversations: createConversationStore(homePath), pushTokens: null,
+    dispatcher: { dispatch: async () => { throw new Error("No inbound channels enabled"); } } as never,
+    finalizeWithSummary: async () => {}, logBestEffortFailure,
+    channelStt: async () => { throw new Error("No voice channel enabled"); },
+  });
+  channelCleanups.push(async () => {
+    await channels.closeChannels();
+    await channels.channelManager.stop();
+    await rm(homePath, { recursive: true, force: true });
+  });
+  const disposePush = channels.pushAdapter.dispose.bind(channels.pushAdapter);
+  vi.spyOn(channels.pushAdapter, "dispose").mockImplementation(() => {
+    disposePush();
+    calls.push("push.dispose");
+  });
   const dependencies = {
     appAiRuntime, closeAppAiCapabilities, logBestEffortFailure, terminalLaunchRuntime, nativeClaudeChatRuntime,
     nativeClaudeRecovery: undefined,
@@ -44,9 +71,9 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     agentRuntimeServices: { controller: service("controller") }, aiProviderService: service("providers"),
     fundedAdmission: service("funded admission"), fundedCredentialProvider: service("funded credentials"), jevRuntime: null,
     codingAgentTurnLifecycle: service("turns"), codexEventBridge: null, codingAgentThreadStream: null,
-    codingAgentAttentionNotifications: null, pushAdapter: service("push"), codingAgentSessionStopReconciler: service("reconciler"),
+    closeChannels: channels.closeChannels, codingAgentSessionStopReconciler: service("reconciler"),
     drainReconnectableAbortEntries: vi.fn(), reconnectableAbortControllers: new Map(), canvasCleanupTimer: null, canvasSubscriptionHub: null,
-    systemActivityCandidates: new Set(), channelManager: service("channels"), customMcp: service("custom MCP"),
+    systemActivityCandidates: new Set(), channelManager: channels.channelManager, customMcp: service("custom MCP"),
     processManager: service("processes"), forwardTunnelHub: service("tunnels"), watcher: service("watcher"),
     homeMirrorLifecycle: { mirror: null, startup: null }, syncR2: null,
     canonicalChatEventStream: null, chatRepository: service("Chat database"), closeCanonicalChatEventLifecycle: vi.fn(),

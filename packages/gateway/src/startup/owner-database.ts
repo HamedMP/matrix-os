@@ -72,6 +72,7 @@ export async function bootOwnerDatabaseWithFallback(
 }
 
 export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
+  notificationRouter?: ReturnType<typeof import("../notifications/router.js").createNotificationRouter>;
   appDb: AppDb | null;
   queryEngine: QueryEngine | null;
   kvStore: KvStore | null;
@@ -173,6 +174,7 @@ export async function initializeOwnerDatabaseServices(
         else failClosedReason = construction.reason;
       }
       services.chatEventStream = createGatewayChatEventStream({
+        onChatEvent: input => services.notificationRouter?.onChatEvent(input),
         projectOwnerToolOutput: options.projectOwnerToolOutput,
         repository: chatRepository,
         reconcileOwner: (owner) => options.getCanonicalChatOrchestrator()?.reconcileActiveRuns(owner) ?? Promise.resolve(),

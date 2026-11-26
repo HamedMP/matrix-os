@@ -3,6 +3,7 @@
  * adds the tables it first needs as a new version: A2 adds push tokens.
  */
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
+import { createAttentionTables, type NotificationEventsTable, type NotificationAttemptsTable } from "./events-schema.js";
 import { createPushConsentSchema, reconcileLegacyPushTokens } from "./push-consent-schema.js";
 
 export interface NotificationPushTokensTable {
@@ -35,6 +36,8 @@ interface NotificationSchemaMigrationsTable {
 }
 
 export interface NotificationDatabase {
+  notification_events: NotificationEventsTable;
+  notification_attempts: NotificationAttemptsTable;
   notification_push_tokens: NotificationPushTokensTable;
   notification_push_consents: NotificationPushConsentsTable;
   notification_push_consent_owners: NotificationPushConsentOwnersTable;
@@ -48,6 +51,7 @@ interface NotificationMigration {
 }
 
 const NOTIFICATION_MIGRATIONS: readonly NotificationMigration[] = [
+  // Keep versions ordered: the timestamp of v2 is the recovery/backlog cutoff.
   {
     version: 1,
     name: "push_tokens",
@@ -71,6 +75,11 @@ const NOTIFICATION_MIGRATIONS: readonly NotificationMigration[] = [
       `.execute(trx);
     },
   },
+  { version: 2, name: "canonical_attention", up: createAttentionTables },
+  { version: 3, name: "attention_device_receipts", async up(trx) {
+    await sql`CREATE UNIQUE INDEX notification_attempts_device_sent ON notification_attempts(event_id,device_id)
+      WHERE outcome='sent' AND device_id IS NOT NULL`.execute(trx);
+  } },
   // A6 owns versions 2/3 (attention/outbox receipts); this additive migration
   // depends only on v1 and is safe before or after those independent tables.
   {

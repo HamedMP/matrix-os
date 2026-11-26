@@ -4,6 +4,9 @@ import { createPushAdapter, PushTokenStorageUnavailableError, type PushAdapter }
 import { createPushTokenStore, type PushTokenStore } from "../../packages/gateway/src/notifications/push-tokens.js";
 import { bootstrapNotificationDatabase, type NotificationDatabase } from "../../packages/gateway/src/notifications/schema.js";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
+import { createPushDeliveryReceipts } from "../../packages/gateway/src/notifications/delivery-receipts.js";
+import { createNotificationRepository } from "../../packages/gateway/src/notifications/repository.js";
+import { createRealCollaborationTestDatabase } from "./collaboration-test-support.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
@@ -24,6 +27,7 @@ describe("push adapter with owner Postgres tokens", () => {
   let db: Kysely<NotificationDatabase>;
   let store: PushTokenStore;
   let now: number;
+  let cleanup: () => Promise<void>;
   const adapters: PushAdapter[] = [];
 
   function adapter(options: Partial<Parameters<typeof createPushAdapter>[0]> = {}): PushAdapter {
@@ -37,8 +41,15 @@ describe("push adapter with owner Postgres tokens", () => {
   }
 
   beforeEach(async () => {
-    pglite = await createTestPGlite();
-    db = new Kysely<NotificationDatabase>({ dialect: pglite.dialect });
+    if (process.env.MATRIX_TEST_POSTGRES_URL) {
+      const fixture = await createRealCollaborationTestDatabase();
+      db = fixture.db as unknown as Kysely<NotificationDatabase>;
+      cleanup = fixture.destroy;
+    } else {
+      pglite = await createTestPGlite();
+      db = new Kysely<NotificationDatabase>({ dialect: pglite.dialect });
+      cleanup = () => db.destroy();
+    }
     await bootstrapNotificationDatabase(db);
     store = createPushTokenStore(db);
     now = Date.UTC(2026, 10, 12);
@@ -48,13 +59,123 @@ describe("push adapter with owner Postgres tokens", () => {
     for (const created of adapters.splice(0)) created.dispose();
     vi.useRealTimers();
     vi.restoreAllMocks();
-    await db.destroy();
+    await cleanup();
   });
 
   it("bootstraps the token table once and records its schema version", async () => {
     expect(await bootstrapNotificationDatabase(db)).toEqual({ applied: [] });
     const versions = await db.selectFrom("notification_schema_migrations").select(["version", "name"]).execute();
-    expect(versions).toEqual([{ version: 1, name: "push_tokens" }, { version: 4, name: "push_consent" }]);
+    expect(versions).toEqual([{ version: 1, name: "push_tokens" }, { version: 2, name: "canonical_attention" }, { version: 3, name: "attention_device_receipts" }, { version: 4, name: "push_consent" }]);
+  });
+
+  it("canonical delivery honors unknown consent, durable off, and explicit re-enable", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => expoOk());
+    const push = adapter({ handle: "test-computer", ownerId: "owner_a" });
+    const identity = "phone_identity", token = "phone_delivery";
+    const notification = { id: "11111111-2222-4333-8444-555555555555", ownerId: "owner_a", kind: "question" as const,
+      title: "Matrix OS", body: "Your agent has a question", target: { type: "chat" as const, chatId: "chat_attention" },
+      sound: true, timeSensitive: false, expiresAt: new Date(now + 60_000).toISOString() };
+    expect(await push.getRegistrationStatus(identity, "owner_a")).toEqual({ enabled: null, registered: false });
+    expect(await push.refreshToken(token, "ios", "owner_a", identity)).toBe(false);
+    await push.sendAttention(notification);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await push.getRegistrationStatus(identity, "owner_a")).toEqual({ enabled: null, registered: false });
+    await push.registerToken(token, "ios", "owner_a", identity);
+    await push.sendAttention(notification);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await push.removeToken(identity, "owner_a", token);
+    expect(await push.refreshToken(token, "ios", "owner_a", identity)).toBe(false);
+    await push.sendAttention(notification);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(await push.getRegistrationStatus(identity, "owner_a")).toEqual({ enabled: false, registered: false });
+    await push.registerToken(token, "ios", "owner_a", identity);
+    await push.sendAttention(notification);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(await push.getRegistrationStatus(identity, "owner_a")).toEqual({ enabled: true, registered: true });
+    expect(sentMessages(fetchSpy, 1).map(message => message.to)).toEqual([token]);
+  });
+
+  it("adds A6 migrations to an A5 owner database without resetting retained off consent", async () => {
+    const push = adapter({ ownerId: "owner_a" });
+    await push.registerToken("delivery", "ios", "owner_a", "identity");
+    await push.removeToken("identity", "owner_a", "delivery");
+    // Reproduce A5's deployed v1/v4 schema, then apply the actual A6 bootstrap.
+    await db.transaction().execute(async trx => {
+      await trx.schema.dropTable("notification_attempts").execute();
+      await trx.schema.dropTable("notification_events").execute();
+      await trx.deleteFrom("notification_schema_migrations").where("version", "in", [2, 3]).execute();
+    });
+    expect(await bootstrapNotificationDatabase(db)).toEqual({ applied: [2, 3] });
+    expect(await bootstrapNotificationDatabase(db)).toEqual({ applied: [] });
+    expect(await push.getRegistrationStatus("identity", "owner_a")).toEqual({ enabled: false, registered: false });
+    expect(await push.refreshToken("delivery", "ios", "owner_a", "identity")).toBe(false);
+    expect(await db.selectFrom("notification_events").selectAll().execute()).toEqual([]);
+  });
+
+  it("sends canonical attention with v1 tap identity, attention channel, expiry, and active interruption by default", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(expoOk());
+    const push = adapter({ handle: "test-computer", ownerId: "owner_a" });
+    await push.registerToken("token_owner", "ios", "owner_a");
+    await push.registerToken("token_foreign", "android", "owner_b");
+    await push.sendAttention({ id: "11111111-2222-4333-8444-555555555555", ownerId: "owner_a", kind: "approval",
+      title: "Matrix OS", body: "Your agent needs approval", target: { type: "chat", chatId: "chat_attention" },
+      sound: false, timeSensitive: false, expiresAt: new Date(now + 60_000).toISOString() });
+    expect(JSON.parse(fetchSpy.mock.calls[0][1]?.body as string)).toEqual([{
+      to: "token_owner", title: "Matrix OS", body: "Your agent needs approval", sound: null,
+      data: { v: 1, notificationId: "11111111-2222-4333-8444-555555555555", handle: "test-computer", target: { type: "chat", chatId: "chat_attention" } },
+      channelId: "attention", interruptionLevel: "active", collapseId: "11111111-2222-4333-8444-555555555555", priority: "high", ttl: 60,
+    }]);
+    expect(fetchSpy.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("reports canonical transport failure for durable retry and refuses a foreign owner", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("unavailable", { status: 503 }));
+    const push = adapter({ handle: "test-computer", ownerId: "owner_a" });
+    await push.registerToken("token_owner", "android", "owner_a");
+    const notification = { id: "11111111-2222-4333-8444-555555555555", ownerId: "owner_a", kind: "question" as const,
+      title: "Matrix OS", body: "Your agent has a question", target: { type: "chat" as const, chatId: "chat_attention" },
+      sound: true, timeSensitive: true, expiresAt: new Date(now + 60_000).toISOString() };
+    await expect(push.sendAttention(notification)).rejects.toThrow("Push transport unavailable");
+    await expect(push.sendAttention({ ...notification, ownerId: "owner_b" })).rejects.toThrow("Push owner unavailable");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries only failed devices after a partial ticket response, including after adapter restart", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ status: "ok" }, { status: "error", details: { error: "MessageRateExceeded" } }] })))
+      .mockResolvedValue(expoOk());
+    await createNotificationRepository(db, "owner_a").insert({ ref: "activity_partial", chatId: "chat_attention", runId: "run_partial",
+      kind: "approval", source: "canonical_chat", dedupeKey: "run_partial:approval:one", createdAt: new Date(now), expiresAt: new Date(now + 60_000) });
+    const event = await db.selectFrom("notification_events").select("id").executeTakeFirstOrThrow();
+    const options = { handle: "test-computer", ownerId: "owner_a", attentionReceipts: createPushDeliveryReceipts(db) };
+    const push = adapter(options);
+    await push.registerToken("token_a", "android", "owner_a"); await push.registerToken("token_b", "ios", "owner_a");
+    const notification = { id: event.id, ownerId: "owner_a", kind: "approval" as const, title: "Matrix OS", body: "Your agent needs approval",
+      target: { type: "chat" as const, chatId: "chat_attention" }, sound: true, timeSensitive: false, expiresAt: new Date(now + 60_000).toISOString() };
+    await expect(push.sendAttention(notification)).rejects.toThrow("Push transport unavailable");
+    const restarted = adapter({ ...options, attentionReceipts: createPushDeliveryReceipts(db) });
+    await restarted.sendAttention(notification);
+    const second = JSON.parse(fetchSpy.mock.calls[1][1]?.body as string);
+    expect(second.map((message: { to: string }) => message.to)).toEqual(["token_a"]);
+    const receipts = await db.selectFrom("notification_attempts").select("device_id").execute();
+    expect(receipts).toHaveLength(2);
+    expect(JSON.stringify(receipts)).not.toContain("token_");
+    const receiptStore = createPushDeliveryReceipts(db);
+    expect(await receiptStore.delivered(event.id, "owner_b")).toEqual([]);
+    await expect(receiptStore.remember(event.id, "owner_b", ["a".repeat(64)])).rejects.toThrow("Notification delivery unavailable");
+    await Promise.all([receiptStore.remember(event.id, "owner_a", [receipts[0]!.device_id!]),
+      createPushDeliveryReceipts(db).remember(event.id, "owner_a", [receipts[0]!.device_id!])]);
+    expect(await db.selectFrom("notification_attempts").select("id").execute()).toHaveLength(2);
+  });
+
+  it("returns a capacity deadline when the local send window is full", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => expoOk());
+    const push = adapter({ handle: "test-computer", ownerId: "owner_a" });
+    await push.registerToken("token_owner", "ios", "owner_a");
+    for (let index = 0; index < 30; index++) await push.send({ channelId: "push", chatId: "coding-agents", text: "Agent needs approval", ownerId: "owner_a" });
+    await expect(push.sendAttention({ id: "11111111-2222-4333-8444-555555555555", ownerId: "owner_a", kind: "approval",
+      title: "Matrix OS", body: "Your agent needs approval", target: { type: "chat", chatId: "chat_attention" }, sound: true,
+      timeSensitive: false, expiresAt: new Date(now + 120_000).toISOString() })).rejects.toMatchObject({ name: "NotificationDeferredError", retryAt: now + 60_001 });
   });
 
   it("creates the version table under the schema lock, so gateways starting together cannot race on it", async () => {
@@ -65,7 +186,7 @@ describe("push adapter with owner Postgres tokens", () => {
       log: (event) => { statements.push(event.query.sql.replace(/\s+/g, " ").trim()); },
     });
     try {
-      expect(await bootstrapNotificationDatabase(logged)).toEqual({ applied: [1, 4] });
+      expect(await bootstrapNotificationDatabase(logged)).toEqual({ applied: [1, 2, 3, 4] });
     } finally {
       await logged.destroy();
     }

@@ -244,6 +244,15 @@ A4 implementation notes (ENG-453, 2026-11-20):
 - Kinds and content come from the A4 preferences.
 - Done when: an approval in a Claude chat pushes once after 15 s, an approval answered within 15 s pushes nothing, a Codex approval inside a canonical chat pushes once, and a gateway killed between the chat commit and the enqueue still pushes exactly once after restart. Evidence: Native Mobile.
 
+A6 implementation notes (ENG-453, 2026-11-25):
+- Code base: A4 `aec31707dbccad5c5ce3aece105fc872fdf07c67`; A5 is a release prerequisite, with no additional gateway code dependency. No A7/A8/A9 or presence behavior is included.
+- Owner schema v2 records the backlog cutoff. Committed activity references drive the bounded queue; the source query rechecks real approval outcomes, submitted/resolved inputs, run status, request expiry, ownership and deleted/hidden chats. Bot interactions use their durable pending state and designated responder.
+- Claims start at most four sends together, so waiting batches cannot outlive the 60-second claim lease. A claim token fences late completions. Overflow uses generic-copy durable inserts with up to four concurrent writes; the durable source journal and bounded reconciler recover any larger burst. No request body or tool argument is retained in queue memory or push data.
+- The legacy bridge checks both the saved thread binding and the accepted canonical run identity: the first coding-thread event can precede saving its binding. The kill switch leaves standalone legacy delivery available.
+- Approval push copy remains generic even with previews enabled: existing approval titles can contain tool arguments. Only question titles are eligible for opt-in previews. Additive schema v3 journals accepted device-token hashes, so partial-send retries and restarts exclude known successful recipients; local capacity deferrals do not consume provider attempts. Successful sends may commit outcomes during the bounded shutdown drain. A reopened question is looked up by stable request identity, not its original activity row.
+- Qualification uses the real committed event stream, scheduler, owner database, preferences file, channel startup and thread store; only the Expo HTTP boundary is intercepted. The same delivery/recovery assertions run on real PostgreSQL in CI. Live Native Mobile iOS/Android captures remain a separate readiness requirement; tests do not establish Expo/APNs/FCM receipt.
+- Separate public-site documentation remains coordinator-owned for the A8 rollout: explain the 15-second pending-request grace, generic default copy, opt-in previews/Time Sensitive, owner/computer scope, post-migration crash recovery, and the kill switch. Direct delivery can repeat after a mid-send crash until C4's relay dedupe. Do not document reply/failure pushes, presence, or dismissal as A6 behavior. Site repository access remains unavailable; no documentation PR is claimed complete.
+
 **A7 · Reading on the phone counts as read** (`apps/mobile/components/chat/*`)
 - When a chat is on screen with the app in the foreground, call `PATCH /api/chats/:chatId/read-state` with `{ type: "mark_read", throughSeq, baseVersion }`. Follow spec 123: advance only through committed assistant messages delivered to the view, debounce to one call per 2 s, and never override a manual unread mark during the visit.
 - Done when: reading on the phone clears the unread state shown on Electron and web. Evidence: Native Mobile plus one Electron Desktop capture of the cleared state.
@@ -670,7 +679,7 @@ Startup order:
 2. Resolve the transport. A6 uses `expo-direct`, which wraps the existing push channel. From C4, `MATRIX_NOTIFICATIONS_TRANSPORT=relay` with `PLATFORM_INTERNAL_URL` set selects the relay. An unresolved transport fails startup rather than failing at call time.
 3. Create `NotificationRouter({ db, preferences, presence, transport, clock, logger })`. Before B1, `presence` is a null registry that always reports "unknown". Record `startedAt` for the 30 s grace.
 4. In `createGatewayChatEventStream` (`chat/gateway-event-stream.ts`), pass `onCommittedEvent: composeSinks(createChatFailureRecorder(options), router.onChatEvent)`. `ChatOutboxDelivery` allows one sink, so compose the functions rather than register a second sink. `composeSinks` calls each sink in its own try/catch and logs failures, so a router error never breaks telemetry or chat delivery. The router sink is synchronous and only enqueues.
-5. From A9, register `router.onThreadEvent` with the thread store's `registerEventSink`. Before A9, and whenever the kill switch is on (router off), register the legacy attention bridge instead; while the router is on, the bridge skips threads bound to a canonical run. This branch is removed in A10.
+5. From A9, register `router.onThreadEvent` with the thread store's `registerEventSink`. Before A9, and whenever the kill switch is on (router off), register the legacy attention bridge instead; while the router is on, the bridge skips approval/input events for threads bound to a canonical run. Completion and failure pushes keep using the bridge until the router handles those kinds. This branch is removed in A10.
 6. Mount routes as each release adds them. Start the scheduler (2 s tick), the reconciler (once at startup, then every 30 s) and the hourly retention sweep.
 
 Shutdown:
@@ -714,6 +723,7 @@ Shutdown:
 | Crash between commit and enqueue | Approvals and questions: the reconciler finds the pending request at startup, or within 30 s, and inserts its event; the dedupe key keeps it to one push. Replies and failures: accepted loss, so that one event does not notify. |
 | Router queue full (> 1,000 pending) | The newest reply and failure events are dropped, with a counter and a log. An approval or question evicts the oldest queued reply. If no queued reply is left to evict, it is written straight to `notification_events` as `open` with the generic copy for its kind (as with `showPreview: false`) and `ON CONFLICT (owner_id, dedupe_key) DO NOTHING`, instead of being queued. The scheduler's per-tick pickup then runs the ladder for it. Memory stays capped at 1,000 items, and no approval or question is dropped. |
 | Concurrent resolve and push | Conditional updates. A push for a resolved row is skipped, and a resolve after a push triggers `dismiss`. |
+| Question answer still in flight at the grace deadline (A6) | Keep the same owner/request journal row open and defer to the next scheduler tick without consuming a transport attempt. A failed delivery can reopen the request and push once; a terminal input outcome or finished run resolves it without a push. |
 | Two gateway processes overlap during a restart | `FOR UPDATE SKIP LOCKED` plus conditional updates |
 | Interim false push (Track A) | The owner is at their desk in another app and does not read within the wait. Accepted until B2. Owners can raise `replyDelaySeconds` or turn replies off. |
 | Mobile read marking fails (A7) | The read cursor does not advance, so a reply may still push. The failure is logged and retried on the next view. |
@@ -778,6 +788,8 @@ No temp files are created. Every timer is cleared on every exit path and on shut
 - **A6 and A8 integration test:** start the real wiring (event stream with composed sinks, router, scheduler, fake transport) against a test owner database.
   - Commit `approval.requested`: one transport call after 15 s.
   - Commit `approval.resolved` first: no call.
+  - Tick while a question answer is submitted but still in flight: no call and the same event stays open across router restart. Fail delivery and reopen the request: one call. Answer, cancel, expire, or finish the run instead: no call and the event resolves.
+  - Canonical Codex, Pi, and OpenCode threads: the bridge suppresses approval/input duplicates but retains enabled completion/failure pushes and honors disabled terminal preferences.
   - Kill the scheduler between claim and send: the reclaim produces exactly one call.
   - Commit an approval and kill the gateway before the router enqueues it: after restart the reconciler inserts it, and the transport is called once.
   - Throw inside the router: failure telemetry still records `run.failed`.
