@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type RefObject } from "react";
 import { hasRegularDroppedFiles, regularDroppedFiles } from "../browser-views";
 
 export type PaneShortcut = "toggle-details" | "find" | "back" | "forward" | "up" | "upload";
@@ -50,4 +50,22 @@ export function useDropUpload(enabled: boolean, onFiles: (files: File[]) => void
       },
     },
   };
+}
+
+const DISMISS_IGNORE = "[data-files-entry-path],button,input,a,[role='checkbox'],[role='menu']";
+
+/** Calls `onDismiss` when a primary-button press lands on empty space inside `ref` (not an entry or control). */
+export function useEmptySpaceDismiss(ref: RefObject<HTMLElement | null>, onDismiss: () => void): void {
+  const latest = useRef(onDismiss);
+  useEffect(() => { latest.current = onDismiss; }, [onDismiss]);
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || !(event.target instanceof Element) || event.target.closest(DISMISS_IGNORE)) return;
+      latest.current();
+    };
+    element.addEventListener("pointerdown", onPointerDown);
+    return () => element.removeEventListener("pointerdown", onPointerDown);
+  }, [ref]);
 }

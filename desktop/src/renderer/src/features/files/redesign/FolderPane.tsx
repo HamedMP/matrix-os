@@ -18,7 +18,7 @@ import { countSummary, type FolderAccess } from "./file-presentation";
 import { SelectionBar } from "./SelectionBar";
 import { gridColumnCount, useEntryNavigation } from "./use-entry-navigation";
 import { useFolderListing } from "./use-folder-listing";
-import { paneShortcut, useDropUpload, type PaneShortcut } from "./pane-input";
+import { paneShortcut, useDropUpload, useEmptySpaceDismiss, type PaneShortcut } from "./pane-input";
 import { clearSelection } from "./selection-model";
 
 function joinPath(parent: string, name: string): string {
@@ -168,6 +168,12 @@ export function FolderPane({
     upload: readOnly ? null : () => fileInputRef.current?.click(),
   };
   const onPaneKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    // An entry's Escape clears the selection first (and prevents default); the next Escape closes details.
+    if (event.key === "Escape" && !event.defaultPrevented && detailsOpen) {
+      event.preventDefault();
+      onDetailsOpenChange(false);
+      return;
+    }
     const shortcut = paneShortcut(event);
     const run = shortcut ? shortcuts[shortcut] : null;
     if (!run) return;
@@ -175,6 +181,13 @@ export function FolderPane({
     run();
   };
   const drop = useDropUpload(!readOnly, (files) => enqueue(files));
+  // Light dismiss for pointer users (Escape covers the keyboard): empty space in
+  // the listing clears the selection and closes details; entries and controls do not.
+  const listingRef = useRef<HTMLDivElement | null>(null);
+  useEmptySpaceDismiss(listingRef, () => {
+    nav.setSelection(clearSelection());
+    if (detailsOpen) onDetailsOpenChange(false);
+  });
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ds-background" onKeyDown={onPaneKeyDown}>
@@ -215,7 +228,12 @@ export function FolderPane({
               <IconButton label="Close filter" size="xs" onClick={() => { setFilter(""); setFilterOpen(false); }}><Icon icon={X} size="sm" /></IconButton>
             </div>
           ) : null}
-          <div data-testid="files-redesign-listing" className="relative min-h-0 flex-1 overflow-y-auto px-6 pb-20" {...drop.handlers}>
+          <div
+            data-testid="files-redesign-listing"
+            className="relative min-h-0 flex-1 overflow-y-auto px-6 pb-20"
+            ref={listingRef}
+            {...drop.handlers}
+          >
             <FolderContent
               title={pathTitle(path)}
               status={listing.status}

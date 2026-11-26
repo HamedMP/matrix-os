@@ -306,6 +306,30 @@ describe("Files redesign workspace", () => {
     await waitFor(() => expect(listCalls()).toBeGreaterThanOrEqual(before + 2));
   });
 
+  it("closes the details panel with Escape after clearing the selection", async () => {
+    renderWorkspace();
+    const report = await screen.findByRole("option", { name: "report.pdf" });
+    fireEvent.click(report);
+    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+    await screen.findByRole("complementary", { name: "Details for report.pdf" });
+    fireEvent.keyDown(report, { key: "Escape" });
+    expect(screen.getByRole("complementary", { name: "Details" })).toBeTruthy();
+    fireEvent.keyDown(report, { key: "Escape" });
+    expect(screen.queryByRole("complementary")).toBeNull();
+  });
+
+  it("closes the details panel when clicking empty space in the listing", async () => {
+    renderWorkspace();
+    fireEvent.click(await screen.findByRole("option", { name: "report.pdf" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
+    await screen.findByRole("complementary", { name: "Details for report.pdf" });
+    fireEvent.click(screen.getByRole("option", { name: "README.md" }));
+    expect(screen.getByRole("complementary", { name: "Details for README.md" })).toBeTruthy();
+    fireEvent.pointerDown(screen.getByTestId("files-redesign-listing"), { button: 0 });
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(screen.getByText("5 items")).toBeTruthy();
+  });
+
   it("drops the previous computer's listing after a runtime switch", async () => {
     renderWorkspace();
     await screen.findByRole("option", { name: "report.pdf" });
