@@ -142,6 +142,7 @@ export default defineConfig({
     // tokens with no network, and a failed capture would add stray lines to spawned CLI stderr.
     env: { MATRIX_NO_TELEMETRY: "1" },
     globals: true,
+    setupFiles: ["tests/setup/flush-jsdom-timers.ts"],
     server: {
       deps: { inline: ["@testing-library/jest-dom"] },
     },

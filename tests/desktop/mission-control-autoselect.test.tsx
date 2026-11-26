@@ -7,6 +7,7 @@ import MissionControl from "../../desktop/src/renderer/src/features/mission-cont
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useBoard, type Project } from "../../desktop/src/renderer/src/stores/board";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 vi.mock("../../desktop/src/renderer/src/features/workspace/TaskWorkspace", () => ({
   default: () => <div data-testid="task-workspace" />,
 }));
@@ -29,6 +30,29 @@ vi.mock("../../desktop/src/renderer/src/lib/kernel-wiring", () => ({
   wireKernel: () => () => undefined,
 }));
 
+// Requests stay pending: the panels around the board must not fail and log
+// after the test ends, which Vitest reports as a teardown error.
+function pendingApi(): ApiClient {
+  const pending = () => new Promise<never>(() => undefined);
+  const api: ApiClient = {
+    get: vi.fn(pending),
+    getText: vi.fn(pending),
+    getBlob: vi.fn(pending),
+    openStream: vi.fn(pending),
+    post: vi.fn(pending),
+    postBytes: vi.fn(pending),
+    patch: vi.fn(pending),
+    put: vi.fn(pending),
+    putBytes: vi.fn(pending),
+    delete: vi.fn(pending),
+    putText: vi.fn(pending),
+    forRuntime: () => api,
+    forSession: () => api,
+    baseUrl: "https://platform.test",
+  };
+  return api;
+}
+
 describe("MissionControl initial project selection", () => {
   beforeEach(() => {
     vi.stubGlobal("operator", {
@@ -48,7 +72,7 @@ describe("MissionControl initial project selection", () => {
       handle: "operator",
       platformHost: "https://platform.test",
       runtimeSlot: "primary",
-      api: { get: vi.fn() } as never,
+      api: pendingApi(),
     });
     useUi.setState({
       view: { kind: "board" },
