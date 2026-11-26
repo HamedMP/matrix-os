@@ -81,6 +81,7 @@ export * from "#shared-app-link";
 export * from "#collaboration-direct";
 export * from "#collaboration-execution";
 export * from "#collaboration-peer";
+export * from "#collaboration-team-terminal";
 export * from "#collaboration-resources";
 export * from "#organization-billing";
 export * from "#organization-drive";

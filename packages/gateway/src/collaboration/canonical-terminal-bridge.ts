@@ -49,6 +49,41 @@ export function createCanonicalTerminalCollaborationBridge(options: {
 }) {
   const { db, ownerId, runtime } = options;
   if (!ownerId) throw new CanonicalTerminalBridgeError();
+  // Spec 2710: collaborator writes to one tab run one at a time, so every
+  // write's final access check (role, owner control) happens after the write
+  // before it reached the terminal, not while it still waited behind it.
+  const MAX_WRITE_CHAINS = 256;
+  /** Writes waiting behind a slow one, per tab: bounded so a flood is refused, not buffered. */
+  const MAX_QUEUED_WRITES = 64;
+  const MAX_QUEUED_BYTES = 256 * 1024;
+  const writes = new Map<string, { tail: Promise<void>; count: number; bytes: number }>();
+  const logged = (error: unknown) => {
+    console.warn("[canonical-terminal-bridge] collaborator write failed", error instanceof Error ? error.name : "UnknownError");
+  };
+  const serialized = (key: string, bytes: number, write: () => Promise<void>): Promise<void> => {
+    let chain = writes.get(key);
+    if (!chain) {
+      if (writes.size >= MAX_WRITE_CHAINS) throw new CanonicalTerminalBridgeError();
+      chain = { tail: Promise.resolve(), count: 0, bytes: 0 };
+      writes.set(key, chain);
+    }
+    if (chain.count + 1 > MAX_QUEUED_WRITES || chain.bytes + bytes > MAX_QUEUED_BYTES) throw new CanonicalTerminalBridgeError();
+    chain.count += 1;
+    chain.bytes += bytes;
+    const held = chain;
+    // An earlier write's failure was already reported to its own caller; it must not stop this one.
+    const next = held.tail.catch(logged).then(write);
+    held.tail = next.catch(logged).finally(() => {
+      held.count -= 1;
+      held.bytes -= bytes;
+      if (held.count === 0 && writes.get(key) === held) writes.delete(key);
+    });
+    return next;
+  };
+  /** Resolves once every collaborator write already admitted for this tab reached the terminal. */
+  const drained = async (key: string): Promise<void> => {
+    await writes.get(key)?.tail;
+  };
 
   const currentTab = async (terminalId: string) => {
     const ref = parseTerminalId(terminalId);
@@ -292,19 +327,21 @@ export function createCanonicalTerminalCollaborationBridge(options: {
     runtime: {
       input: async (input: {
         terminalId: string; scopeId: string; incarnation: string; data: string; revalidate(): Promise<void>;
-      }): Promise<void> => {
+      }): Promise<void> => serialized(input.terminalId, Buffer.byteLength(input.data), async () => {
         const current = await boundTab(input.scopeId, input.terminalId, input.incarnation);
         await input.revalidate();
         await runtime.writeInput(current.ref, input.data, current.tabIncarnation);
-      },
+      }),
       paste: async (input: {
         terminalId: string; scopeId: string; incarnation: string; data: string; revalidate(): Promise<void>;
-      }): Promise<void> => {
+      }): Promise<void> => serialized(input.terminalId, Buffer.byteLength(input.data), async () => {
         const current = await boundTab(input.scopeId, input.terminalId, input.incarnation);
         await input.revalidate();
         await runtime.writeInput(current.ref, input.data, current.tabIncarnation);
-      },
+      }),
       resize: async (): Promise<void> => { throw new CanonicalTerminalBridgeError(); },
+      /** Spec 2710: taking control returns only after collaborator writes already admitted have landed. */
+      drain: (input: { terminalId: string }): Promise<void> => drained(input.terminalId),
       stop: async (input: { terminalId: string; scopeId: string; incarnation: string }): Promise<void> => {
         const current = await boundTab(input.scopeId, input.terminalId, input.incarnation);
         await runtime.terminateTab(current.ref, current.tabIncarnation);

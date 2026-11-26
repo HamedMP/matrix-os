@@ -671,6 +671,50 @@ describe("collaboration gateway routes", () => {
     });
   });
 
+  it("shares one running terminal as a team terminal through the owner runtime route (spec 2710)", async () => {
+    const preflight = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`,
+      body: { kind: "terminal", resourceId: terminalId, organizationId: "org_matrix_team" },
+    });
+    expect(preflight.status).toBe(200);
+    const eligibility = await preflight.json() as { eligible: boolean; resourceRevision: string; confirmationToken?: string };
+    expect(eligibility.eligible).toBe(true);
+    expect(eligibility.confirmationToken).toEqual(expect.any(String));
+    const created = await signedJson({
+      actorId: collaborationActors.owner,
+      method: "POST",
+      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
+      body: {
+        kind: "terminal",
+        resourceId: terminalId,
+        organizationId: "org_matrix_team",
+        clientRequestId: request(93),
+        expectedRevision: eligibility.resourceRevision,
+        confirmationToken: eligibility.confirmationToken,
+      },
+    });
+    expect(created.status).toBe(201);
+    const scopes = await fixture.db.selectFrom("collaboration_scopes").select(["kind", "lifecycle", "resource_id"])
+      .where("resource_id", "=", terminalId).execute();
+    expect(scopes).toEqual([{ kind: "terminal", lifecycle: "shared", resource_id: terminalId }]);
+  });
+
+  it("refuses a team terminal share from a non-owner", async () => {
+    const created = await signedJson({
+      actorId: collaborationActors.editor,
+      method: "POST",
+      path: `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes`,
+      body: {
+        kind: "terminal", resourceId: terminalId, organizationId: "org_matrix_team",
+        clientRequestId: request(94), expectedRevision: "0", confirmationToken: "d".repeat(64),
+      },
+    });
+    expect(created.status).toBeGreaterThanOrEqual(400);
+    expect(await fixture.db.selectFrom("collaboration_scopes").selectAll().where("resource_id", "=", terminalId).execute()).toEqual([]);
+  });
+
   it("detects, reads, and controls an existing standalone terminal through the authority", async () => {
     await shareTerminal();
     const preflightPath = `/api/collaboration/runtimes/${collaborationIds.runtime}/scopes/preflight`;
@@ -681,9 +725,9 @@ describe("collaboration gateway routes", () => {
       body: { kind: "terminal", resourceId: terminalId, organizationId: "org_matrix_team" },
     });
     expect(preflight.status).toBe(200);
+    // Spec 2710: team terminals are the standalone exception; an existing share is returned for management.
     expect(await preflight.json()).toMatchObject({
-      eligible: false,
-      reason: "unsupported",
+      eligible: true,
       existingScopeId: collaborationIds.scope,
       existingLifecycle: "shared",
     });

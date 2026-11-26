@@ -92,6 +92,7 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
       paste(input: BoundRuntimeAction & { data: string; revalidate(): Promise<void> }): Promise<void>;
       resize(input: BoundRuntimeAction & { cols: number; rows: number; revalidate(): Promise<void> }): Promise<void>;
       stop(input: BoundRuntimeAction): Promise<void>;
+      drain?(input: { terminalId: string }): Promise<void>;
     };
     runtimeId: string;
     executionEligibility: z.infer<typeof TerminalEligibilitySchema>;
@@ -270,6 +271,11 @@ export class CollaborationTerminalAdapter implements CollaborationTerminalRuntim
       terminalId: input.terminalId, scopeId: input.scopeId, incarnation: input.incarnation,
       cols: input.cols, rows: input.rows, revalidate: input.revalidate,
     });
+  }
+
+  /** Spec 2710: waits for collaborator writes already admitted to this terminal. */
+  async drainWrites(input: { terminalId: string }): Promise<void> {
+    await this.options.runtime.drain?.(input);
   }
 
   async stop(input: Parameters<CollaborationTerminalRuntime["stop"]>[0]): Promise<void> {
