@@ -2,7 +2,8 @@ import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { z } from "zod/v4";
 import {
-  OFFICE_DOCUMENTS_BASE_PATH, OFFICE_DOCUMENT_ERROR_STATUS, OFFICE_DOCUMENT_REQUEST_MAX_BYTES, OFFICE_DOCUMENT_ROUTES as R,
+  OFFICE_DOCUMENTS_BASE_PATH, OFFICE_DOCUMENT_BUDGET_HEADER, OFFICE_DOCUMENT_ERROR_STATUS, OFFICE_DOCUMENT_MAX_BUDGET_MS,
+  OFFICE_DOCUMENT_REQUEST_MAX_BYTES, OFFICE_DOCUMENT_ROUTES as R, OfficeDocumentBudgetHeaderSchema,
   DocumentAddCommentRequestSchema, DocumentCompareRequestSchema, DocumentCreateRequestSchema, DocumentDescribeRequestSchema,
   DocumentPathRequestSchema, DocumentProposeEditsRequestSchema, DocumentReadTextRequestSchema,
   DocumentResolveRevisionsRequestSchema, SheetDescribeRequestSchema, SheetPathRequestSchema, SheetProposeEditsRequestSchema,
@@ -12,6 +13,7 @@ import {
 import { createProjectWriteGuard } from "../app-files/project-write-fence.js";
 import type { LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
 import { readPrincipalRuntimeConfig } from "../request-principal.js";
+import { OfficeDeadline } from "./deadline.js";
 import type { OfficeEngine } from "./engine-pool.js";
 import { logOfficeFailure, officeErrorCodeFor } from "./errors.js";
 import { OfficeDocumentService } from "./service.js";
@@ -60,12 +62,14 @@ function fail(c: Context, code: OfficeDocumentErrorCode): Response {
   return c.json(officeDocumentErrorBody(code), OFFICE_DOCUMENT_ERROR_STATUS[code]);
 }
 
-type Handler<S extends z.ZodType> = (service: OfficeDocumentService, input: z.output<S>) => Promise<unknown>;
+type Handler<S extends z.ZodType> = (service: OfficeDocumentService, input: z.output<S>, deadline: OfficeDeadline) => Promise<unknown>;
 
 /**
  * `/api/office/*`: the document service for agents. Mount behind the gateway
  * auth middleware. Every route is a POST with a JSON body, a body limit, a
- * strict schema, and generic client errors; details are logged.
+ * strict schema, and generic client errors; details are logged. The request's
+ * deadline starts when it arrives: the caller's budget header, at most
+ * {@link OFFICE_DOCUMENT_MAX_BUDGET_MS}, ended early if the caller disconnects.
  */
 export function createOfficeDocumentRoutes(options: OfficeDocumentRouteOptions): Hono {
   const routes = new Hono();
@@ -87,6 +91,10 @@ export function createOfficeDocumentRoutes(options: OfficeDocumentRouteOptions):
 
   function post<S extends z.ZodType>(route: string, schema: S, handler: Handler<S>): void {
     routes.post(route, limit, async (c) => {
+      const header = c.req.header(OFFICE_DOCUMENT_BUDGET_HEADER);
+      const budget = header === undefined ? null : OfficeDocumentBudgetHeaderSchema.safeParse(header);
+      if (budget && !budget.success) return fail(c, "invalid_request");
+      const deadline = OfficeDeadline.after(budget?.data ?? OFFICE_DOCUMENT_MAX_BUDGET_MS, c.req.raw.signal);
       if (!service) return fail(c, "unavailable");
       let raw: unknown;
       try { raw = JSON.parse(await c.req.text()); }
@@ -99,7 +107,7 @@ export function createOfficeDocumentRoutes(options: OfficeDocumentRouteOptions):
       if (inFlight >= maxInFlight) return fail(c, "busy");
       inFlight++;
       try {
-        return c.json(await handler(service, parsed.data) as object, 200);
+        return c.json(await handler(service, parsed.data, deadline) as object, 200);
       } catch (error: unknown) {
         const code = officeErrorCodeFor(error);
         logOfficeFailure(route, code, error);
@@ -110,21 +118,21 @@ export function createOfficeDocumentRoutes(options: OfficeDocumentRouteOptions):
     });
   }
 
-  post(R.documentDescribe, DocumentDescribeRequestSchema, (s, input) => s.describeDocument(input));
-  post(R.documentReadText, DocumentReadTextRequestSchema, (s, input) => s.readDocumentText(input));
-  post(R.documentProposeEdits, DocumentProposeEditsRequestSchema, (s, input) => s.proposeDocumentEdits(input));
-  post(R.documentRevisionsList, DocumentPathRequestSchema, (s, input) => s.listDocumentRevisions(input));
-  post(R.documentRevisionsAccept, DocumentResolveRevisionsRequestSchema, (s, input) => s.resolveDocumentRevisions(input, true));
-  post(R.documentRevisionsReject, DocumentResolveRevisionsRequestSchema, (s, input) => s.resolveDocumentRevisions(input, false));
-  post(R.documentCommentsAdd, DocumentAddCommentRequestSchema, (s, input) => s.addDocumentComment(input));
-  post(R.documentCompare, DocumentCompareRequestSchema, (s, input) => s.compareDocuments(input));
-  post(R.documentCreate, DocumentCreateRequestSchema, (s, input) => s.createDocument(input));
-  post(R.sheetDescribe, SheetDescribeRequestSchema, (s, input) => s.describeSheet(input));
-  post(R.sheetReadRange, SheetReadRangeRequestSchema, (s, input) => s.readSheetRange(input));
-  post(R.sheetProposeEdits, SheetProposeEditsRequestSchema, (s, input) => s.proposeSheetEdits(input));
-  post(R.sheetChangesList, SheetPathRequestSchema, (s, input) => s.listSheetChanges(input));
-  post(R.sheetChangesAccept, SheetResolveChangesRequestSchema, (s, input) => s.resolveSheetChanges(input, true));
-  post(R.sheetChangesReject, SheetResolveChangesRequestSchema, (s, input) => s.resolveSheetChanges(input, false));
+  post(R.documentDescribe, DocumentDescribeRequestSchema, (s, input, deadline) => s.describeDocument(input, deadline));
+  post(R.documentReadText, DocumentReadTextRequestSchema, (s, input, deadline) => s.readDocumentText(input, deadline));
+  post(R.documentProposeEdits, DocumentProposeEditsRequestSchema, (s, input, deadline) => s.proposeDocumentEdits(input, deadline));
+  post(R.documentRevisionsList, DocumentPathRequestSchema, (s, input, deadline) => s.listDocumentRevisions(input, deadline));
+  post(R.documentRevisionsAccept, DocumentResolveRevisionsRequestSchema, (s, input, deadline) => s.resolveDocumentRevisions(input, true, deadline));
+  post(R.documentRevisionsReject, DocumentResolveRevisionsRequestSchema, (s, input, deadline) => s.resolveDocumentRevisions(input, false, deadline));
+  post(R.documentCommentsAdd, DocumentAddCommentRequestSchema, (s, input, deadline) => s.addDocumentComment(input, deadline));
+  post(R.documentCompare, DocumentCompareRequestSchema, (s, input, deadline) => s.compareDocuments(input, deadline));
+  post(R.documentCreate, DocumentCreateRequestSchema, (s, input, deadline) => s.createDocument(input, deadline));
+  post(R.sheetDescribe, SheetDescribeRequestSchema, (s, input, deadline) => s.describeSheet(input, deadline));
+  post(R.sheetReadRange, SheetReadRangeRequestSchema, (s, input, deadline) => s.readSheetRange(input, deadline));
+  post(R.sheetProposeEdits, SheetProposeEditsRequestSchema, (s, input, deadline) => s.proposeSheetEdits(input, deadline));
+  post(R.sheetChangesList, SheetPathRequestSchema, (s, input, deadline) => s.listSheetChanges(input, deadline));
+  post(R.sheetChangesAccept, SheetResolveChangesRequestSchema, (s, input, deadline) => s.resolveSheetChanges(input, true, deadline));
+  post(R.sheetChangesReject, SheetResolveChangesRequestSchema, (s, input, deadline) => s.resolveSheetChanges(input, false, deadline));
   return routes;
 }
 

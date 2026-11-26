@@ -8,6 +8,7 @@ import { hasSymlinkComponent, lstatOrNull, resolveExistingAppFilePath, resolveWr
 import { unguardedProjectWrite, type ProjectWriteGuard } from "../app-files/project-write-fence.js";
 import { withOwnerFileMutation } from "../owner-file-mutations.js";
 import { isDeniedFileApiPath, isProtectedHomeSubpath, resolveWithinHome } from "../path-security.js";
+import type { OfficeDeadline } from "./deadline.js";
 import { OfficeDocumentError, errnoCode } from "./errors.js";
 
 /** Prefix of the temporary file a save publishes from, in the target's directory. */
@@ -134,14 +135,17 @@ export class OfficeFileStore {
    * mutation guard, so a newer save is never overwritten, and inside the
    * project write fence, like every owner file route. A replace re-checks the
    * target just before the rename, so a copy another process saved during the
-   * temp write is a conflict rather than overwritten.
+   * temp write is a conflict rather than overwritten. With a `deadline`, a
+   * save whose caller stopped waiting while it queued for the guards or
+   * wrote the temp file answers `busy` and publishes nothing.
    */
-  async commit(path: string, bytes: Uint8Array, expectedVersion: string | null): Promise<CommittedOfficeFile> {
+  async commit(path: string, bytes: Uint8Array, expectedVersion: string | null, deadline?: OfficeDeadline): Promise<CommittedOfficeFile> {
     if (bytes.byteLength > this.options.maxFileBytes) throw new OfficeDocumentError("too_large", "result too large");
     const target = await this.resolveWritable(path);
     if (this.options.beforeCommit) await this.options.beforeCommit(target);
     const guard = this.options.writeGuard ?? unguardedProjectWrite;
     return withOwnerFileMutation(this.options.homePath, () => guard([path], async () => {
+      deadline?.check("the save");
       const parent = await this.ensureParent(path, target);
       const current = await lstatOrNull(target, true);
       if (current && !current.isFile()) {
@@ -171,6 +175,7 @@ export class OfficeFileStore {
           await handle.close();
         }
         if (expectedVersion === null) {
+          deadline?.check("publishing the save");
           try { await link(temp, target); }
           catch (error: unknown) {
             if (errnoCode(error) === "EEXIST") throw new OfficeDocumentError("file_exists", "created concurrently");
@@ -185,6 +190,7 @@ export class OfficeFileStore {
           if (!current || !sameFile(current, await lstatOrNull(target, true))) {
             throw new OfficeDocumentError("version_conflict", "file changed during write");
           }
+          deadline?.check("publishing the save");
           await rename(temp, target);
           published = true;
         }

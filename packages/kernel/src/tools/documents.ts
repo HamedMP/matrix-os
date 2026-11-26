@@ -51,6 +51,16 @@ export interface DocumentToolOptions {
 }
 
 export const DOCUMENT_TOOL_DEADLINE_MS = 35_000;
+/**
+ * Time the tools keep for the reply after the service's own deadline. The
+ * service is given the tool deadline minus this margin (at most a fifth of
+ * it), so it gives up, and saves nothing, before the tool reports `busy`.
+ */
+export const DOCUMENT_TOOL_REPLY_MARGIN_MS = 5_000;
+/** The budget the tools send the service, in ms, for a tool deadline of `deadlineMs`. */
+export function documentServiceBudgetMs(deadlineMs: number, maxBudgetMs: number): number {
+  return Math.max(1, Math.min(maxBudgetMs, deadlineMs - Math.min(DOCUMENT_TOOL_REPLY_MARGIN_MS, Math.floor(deadlineMs / 5))));
+}
 /** Largest reply the tools read; the service's own replies stay well below it. */
 export const DOCUMENT_TOOL_MAX_REPLY_BYTES = 8 * 1024 * 1024;
 const DEFAULT_AUTHOR = "Matrix OS";
@@ -154,7 +164,7 @@ function buildSpecs(C: Contracts): readonly ToolSpec[] {
     {
       name: "sheet_list_changes", route: R.sheetChangesList, kind: "read",
       input: C.SheetPathRequestSchema, output: C.SheetChangesListReplySchema,
-      description: `List pending cell changes and proposals in a .xlsx. ${UNTRUSTED_NOTE}`,
+      description: `List pending changes and proposals in a .xlsx. Each change has a kind: cell (cell, old and new value and formula) or a structural change (insertRows, deleteRows, insertColumns, deleteColumns, addSheet, renameSheet) with the affected range, count and summary; tell the owner that full scope before they accept or reject it. ${UNTRUSTED_NOTE}`,
     },
     {
       name: "sheet_accept_changes", route: R.sheetChangesAccept, kind: "resolve",
@@ -174,7 +184,7 @@ const HINTS: Partial<Record<OfficeDocumentErrorCode, string>> = {
   version_conflict: " Describe the file again and retry with the new version.",
   stale_reference: " Describe the document again for fresh block ids.",
   file_exists: " Choose a path that does not exist yet.",
-  busy: " Retry shortly.",
+  busy: " Nothing was saved; retry shortly.",
 };
 
 class DocumentToolFailure extends Error {
@@ -209,8 +219,11 @@ async function callDocumentService(
     timer = setTimeout(() => reject(new DocumentToolFailure("busy")), deadlineMs);
   });
   try {
+    const budget = String(documentServiceBudgetMs(deadlineMs, C.OFFICE_DOCUMENT_MAX_BUDGET_MS));
     const request = Promise.resolve().then(() => tools.request(spec.route, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input.data),
+      method: "POST",
+      headers: { "content-type": "application/json", [C.OFFICE_DOCUMENT_BUDGET_HEADER]: budget },
+      body: JSON.stringify(input.data),
     }));
     const reply = await Promise.race([request, deadline]);
     const length = Number(reply.headers?.get("content-length") ?? Number.NaN);
@@ -282,10 +295,11 @@ export function gatewayDocumentTools(fetcher: GatewayFetcher = fetch, options: D
   const deadlineMs = options.deadlineMs ?? DOCUMENT_TOOL_DEADLINE_MS;
   return {
     request: async (route, init) => {
-      const { OFFICE_DOCUMENTS_BASE_PATH } = await loadContracts();
+      const { OFFICE_DOCUMENTS_BASE_PATH, OFFICE_DOCUMENT_BUDGET_HEADER } = await loadContracts();
+      const budget = init.headers[OFFICE_DOCUMENT_BUDGET_HEADER];
       return fetcher(`${process.env.GATEWAY_URL ?? "http://localhost:4000"}${OFFICE_DOCUMENTS_BASE_PATH}${route}`, {
         method: init.method,
-        headers: gatewayAuthHeaders(),
+        headers: { ...gatewayAuthHeaders(), ...(budget === undefined ? {} : { [OFFICE_DOCUMENT_BUDGET_HEADER]: budget }) },
         body: init.body,
         redirect: "error",
         signal: AbortSignal.timeout(deadlineMs),

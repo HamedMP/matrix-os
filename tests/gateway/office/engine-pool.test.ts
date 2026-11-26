@@ -101,6 +101,25 @@ describe("document engine threads", () => {
     expect((await failure(first)).code).toBe("too_large");
   }, 30_000);
 
+  // Fault detected: an operation whose caller already gave up waits out the queue and then computes anyway.
+  it("fails a queued operation once its caller's deadline passes, without starting it", async () => {
+    engine = createOfficeEngine({ runBudgetMs: 4000, queueBudgetMs: 10_000, maxWorkers: 1 });
+    const run = await heavy(engine);
+    const first = failure(run());
+    const started = performance.now();
+    const at = started + 200;
+    const waiting = engine.run("documentCreate", { paragraphs: ["x"], options: { date: "2026-11-23T10:00:00.000Z" } }, {
+      deadline: { remainingMs: () => Math.max(0, at - performance.now()) },
+    });
+    expect((await failure(waiting)).code).toBe("busy");
+    // It left at its deadline, not at the queue budget or when the thread came free.
+    expect(performance.now() - started).toBeLessThan(2_000);
+    expect((await first).code).toBe("too_large");
+    expect((await failure(engine.run("documentCreate", { paragraphs: [], options: { date: "2026-11-23T10:00:00.000Z" } }, {
+      deadline: { remainingMs: () => 0 },
+    }))).code).toBe("busy");
+  }, 30_000);
+
   it("runs operations side by side up to its thread cap", async () => {
     engine = createOfficeEngine({ runBudgetMs: 4000, maxWorkers: 2 });
     const run = await heavy(engine);

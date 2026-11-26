@@ -1,6 +1,8 @@
-import { chmod, stat } from "node:fs/promises";
+import { chmod, readdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OFFICE_DOCUMENT_BUDGET_HEADER } from "../../../packages/contracts/src/office-documents";
+import { runEngineOperation } from "../../../packages/gateway/src/office/engine-operations";
 import { OFFICE_TEMP_PREFIX } from "../../../packages/gateway/src/office/file-store";
 import { createOfficeHarness, json, type OfficeHarness } from "./helpers";
 
@@ -84,6 +86,39 @@ describe("office saves racing a writer outside the gateway", () => {
       path, author: AGENT, edits: [{ op: "replaceText", blockId: "b3", find: "three", replace: "four" }],
     });
     expect(response.status).toBe(200);
+  });
+});
+
+describe("office saves whose deadline passes while the temp file is written", () => {
+  const sleep = (ms: number) => new Promise<void>((done) => { setTimeout(done, ms); });
+  const budget = { [OFFICE_DOCUMENT_BUDGET_HEADER]: "1000" };
+
+  // Fault detected: the caller has already been told the call failed, then the save publishes anyway.
+  it("answers busy and does not publish a replace", async () => {
+    const local = await createOfficeHarness({ engine: { run: runEngineOperation, close: async () => undefined } });
+    try {
+      const path = await local.copyFixture("model.xlsx");
+      const before = await local.bytes(path);
+      race.duringTempSync = () => sleep(1_200);
+      const response = await local.postRaw("/sheets/propose-edits", JSON.stringify({
+        path, author: AGENT, label: "Edit", edits: [{ op: "setCell", sheet: "Summary", cell: "D1", value: 1 }],
+      }), budget);
+      expect(response.status).toBe(503);
+      expect(await json(response)).toMatchObject({ error: "busy" });
+      expect(await local.bytes(path)).toEqual(before);
+      expect((await readdir(join(local.home, "docs"))).filter((name) => name.startsWith(OFFICE_TEMP_PREFIX))).toEqual([]);
+    } finally { await local.cleanup(); }
+  });
+
+  it("answers busy and does not publish a new file", async () => {
+    const local = await createOfficeHarness({ engine: { run: runEngineOperation, close: async () => undefined } });
+    try {
+      race.duringTempSync = () => sleep(1_200);
+      const response = await local.postRaw("/documents/create", JSON.stringify({ path: "docs/new.docx", markdown: "# New" }), budget);
+      expect(response.status).toBe(503);
+      expect(await json(response)).toMatchObject({ error: "busy" });
+      expect(await readdir(join(local.home, "docs"))).toEqual([]);
+    } finally { await local.cleanup(); }
   });
 });
 

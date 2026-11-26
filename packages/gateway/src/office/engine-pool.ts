@@ -13,8 +13,13 @@ import type { EngineWorkerReply, EngineWorkerRequest } from "./engine-protocol.j
  * A thread that overruns is ended, which is the only way to interrupt
  * synchronous work, and the operation fails with `too_large`.
  */
+export interface OfficeEngineRunOptions {
+  /** When the caller stops waiting: an operation still queued then fails with `busy` and never starts. */
+  deadline?: { remainingMs(): number };
+}
+
 export interface OfficeEngine {
-  run<K extends EngineOperation>(operation: K, input: EngineInput<K>): Promise<EngineOutput<K>>;
+  run<K extends EngineOperation>(operation: K, input: EngineInput<K>, options?: OfficeEngineRunOptions): Promise<EngineOutput<K>>;
   /** Ends every thread and fails what is running or waiting. */
   close(): Promise<void>;
 }
@@ -49,6 +54,7 @@ interface Job {
   request: EngineWorkerRequest;
   resolve(output: unknown): void;
   reject(error: OfficeDocumentError): void;
+  deadline: OfficeEngineRunOptions["deadline"];
   /** Queue wait while waiting, then start or run budget. */
   timer: NodeJS.Timeout | null;
 }
@@ -140,9 +146,24 @@ export function createOfficeEngine(options: OfficeEngineOptions = {}): OfficeEng
     }, startBudgetMs);
   }
 
+  /** Fails the queued jobs at the head whose caller stopped waiting, so they never start. */
+  function dropExpired(): void {
+    while (queue[0]?.deadline && queue[0].deadline.remainingMs() <= 0) {
+      const job = queue.shift()!;
+      clearTimer(job);
+      job.reject(new OfficeDocumentError("busy", "deadline passed while queued"));
+    }
+  }
+
+  /** The next queued job whose caller still waits. */
+  function nextJob(): Job | undefined {
+    dropExpired();
+    return queue.shift();
+  }
+
   function release(slot: Slot): void {
     slot.job = null;
-    const next = queue.shift();
+    const next = nextJob();
     if (next) { assign(slot, next); return; }
     slot.idleTimer = setTimeout(() => retire(slot, null), idleMs);
     slot.idleTimer.unref();
@@ -192,6 +213,8 @@ export function createOfficeEngine(options: OfficeEngineOptions = {}): OfficeEng
   /** Gives waiting operations to free threads, starting threads up to the cap. */
   function pump(): void {
     while (!closed && queue.length > 0) {
+      dropExpired();
+      if (queue.length === 0) return;
       const free = slots.find((slot) => slot.job === null) ?? (slots.length < maxWorkers ? spawn() : null);
       if (!free) return;
       const job = queue.shift();
@@ -200,24 +223,28 @@ export function createOfficeEngine(options: OfficeEngineOptions = {}): OfficeEng
   }
 
   return {
-    run<K extends EngineOperation>(operation: K, input: EngineInput<K>): Promise<EngineOutput<K>> {
+    run<K extends EngineOperation>(operation: K, input: EngineInput<K>, options: OfficeEngineRunOptions = {}): Promise<EngineOutput<K>> {
       return new Promise<EngineOutput<K>>((resolve, reject) => {
         if (closed) { reject(new OfficeDocumentError("unavailable", "engine closed")); return; }
+        const { deadline } = options;
+        if (deadline && deadline.remainingMs() <= 0) { reject(new OfficeDocumentError("busy", "deadline passed before the engine run")); return; }
         if (queue.length >= maxQueued) { reject(new OfficeDocumentError("busy", "engine queue full")); return; }
         const job: Job = {
           request: { id: nextId, operation, input },
           resolve: (output) => resolve(output as EngineOutput<K>),
           reject,
+          deadline,
           timer: null,
         };
         nextId = nextId >= Number.MAX_SAFE_INTEGER ? 1 : nextId + 1;
+        // A job waits no longer than its queue budget, nor past its caller's deadline.
         job.timer = setTimeout(() => {
           const index = queue.indexOf(job);
           if (index < 0) return;
           queue.splice(index, 1);
           job.timer = null;
           reject(new OfficeDocumentError("busy", "engine queue wait exceeded"));
-        }, queueBudgetMs);
+        }, deadline ? Math.min(queueBudgetMs, deadline.remainingMs()) : queueBudgetMs);
         queue.push(job);
         try { pump(); }
         catch (error: unknown) {

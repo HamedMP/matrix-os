@@ -63,4 +63,28 @@ describe("KeyedMutex", () => {
     await holder;
     await expect(waiter).resolves.toBe("waited");
   });
+
+  // Fault detected: a caller that already gave up keeps its place and later runs (and saves) after its deadline.
+  it("drops a waiter whose deadline passes in the queue without running it, and keeps the order behind it", async () => {
+    const mutex = new KeyedMutex({ maxKeys: 2, maxWaitersPerKey: 4 });
+    const order: string[] = [];
+    const gate = deferred();
+    const holder = mutex.run("a", async () => { order.push("holder"); await gate.promise; });
+    const expired = mutex.run("a", async () => { order.push("expired"); }, { deadline: { remainingMs: () => 20 } });
+    const later = mutex.run("a", async () => { order.push("later"); });
+    await expect(expired).rejects.toBeInstanceOf(KeyedMutexBusyError);
+    expect(order).toEqual(["holder"]);
+    gate.resolve();
+    await Promise.all([holder, later]);
+    expect(order).toEqual(["holder", "later"]);
+    expect(mutex.size).toBe(0);
+  });
+
+  it("does not start an operation whose deadline has already passed", async () => {
+    const mutex = new KeyedMutex({ maxKeys: 2, maxWaitersPerKey: 4 });
+    let ran = false;
+    await expect(mutex.run("a", async () => { ran = true; }, { deadline: { remainingMs: () => 0 } })).rejects.toBeInstanceOf(KeyedMutexBusyError);
+    expect(ran).toBe(false);
+    expect(mutex.size).toBe(0);
+  });
 });

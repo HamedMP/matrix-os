@@ -74,12 +74,15 @@ Other document tools:
    `setCell` (add `expect` with the current display value to guard against drift),
    `setRange` or `clearRange`. A value starting with `=` is a formula. A `.csv` is
    read-only here: create or ask for a `.xlsx` to propose edits.
-3. `sheet_list_changes` shows each pending change with its old and new value. Use
+3. `sheet_list_changes` shows each pending change. A `cell` change has its cell and old
+   and new value; a structural change (`insertRows`, `deleteRows`, `insertColumns`,
+   `deleteColumns`, `addSheet`, `renameSheet`) has the affected `range`, `count` and a
+   `summary`. Tell the owner that full scope before they accept or reject it. Use
    `sheet_accept_changes` and `sheet_reject_changes` only when the owner asks.
 
 ## Errors
 
 Tool errors carry a code such as `invalid_request`, `not_found`, `forbidden`,
-`version_conflict` or `busy`, with a short hint. Fix the input or describe again; do not
-retry the same failing call in a loop. Paths under protected system folders are not
+`version_conflict` or `busy`, with a short hint. A `busy` call saved nothing, so one
+retry is safe. Fix the input or describe again; do not retry the same failing call in a loop. Paths under protected system folders are not
 available.

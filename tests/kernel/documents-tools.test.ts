@@ -11,6 +11,7 @@ import {
   type DocumentKernelTools,
 } from "../../packages/kernel/src/tools/documents.js";
 import { createOfficeDocumentRoutes } from "../../packages/gateway/src/office/routes.js";
+import { runEngineOperation } from "../../packages/gateway/src/office/engine-operations.js";
 
 const FIXTURES = fileURLToPath(new URL("../office/fixtures/", import.meta.url));
 type ToolResult = { isError?: boolean; content: Array<{ type: "text"; text: string }> };
@@ -106,6 +107,8 @@ describe("document tool definitions", () => {
     expect(route).toBe("/documents/propose-edits");
     expect(init.method).toBe("POST");
     expect(init.headers["content-type"]).toBe("application/json");
+    // The service gets less time than the tool waits, so it gives up (and never saves) before the tool reports busy.
+    expect(init.headers["x-matrix-office-budget-ms"]).toBe("30000");
     expect(JSON.parse(init.body)).toEqual({
       path: "docs/a.docx", author: "Matrix OS", edits: [{ op: "replaceText", blockId: "p1", find: "100", replace: "200" }],
     });
@@ -214,6 +217,41 @@ describe("document tools against the real document service", () => {
     expect(rejected.resolvedIds).toEqual(proposed.changeIds);
     const remaining = payload(await call("sheet_list_changes", { path: "docs/basic.xlsx" })) as { total: number };
     expect(remaining.total).toBe(0);
+  });
+
+  // Fault detected: a call the tool reported as busy still saves later, so the model's retry adds the proposal twice.
+  it("never saves a call it reported as busy, so a retry adds the proposal once", async () => {
+    await copyFile(join(FIXTURES, "basic.xlsx"), join(home, "docs/basic.xlsx"));
+    let stall = 800;
+    let settled!: () => void;
+    const firstSettled = new Promise<void>((done) => { settled = done; });
+    const routes = createOfficeDocumentRoutes({
+      homePath: home,
+      engine: { run: runEngineOperation, close: async () => undefined },
+      beforeCommit: async () => {
+        if (stall === 0) return;
+        await new Promise((done) => setTimeout(done, stall));
+        settled();
+      },
+    });
+    const slow = await byName(routes, { deadlineMs: 500 });
+    const sheet = (payload(await call("sheet_describe", { path: "docs/basic.xlsx" })) as { sheet: string }).sheet;
+    const edit = { path: "docs/basic.xlsx", label: "Raise A1", edits: [{ op: "setCell", sheet, cell: "A1", value: 4242 }] };
+
+    const first = await slow("sheet_propose_edits", edit);
+    expect(first.isError).toBe(true);
+    expect(first.content[0]!.text).toContain("(busy)");
+    // Let the service finish what it was doing for the abandoned call.
+    await firstSettled;
+    await new Promise((done) => setTimeout(done, 100));
+    expect((payload(await call("sheet_list_changes", { path: "docs/basic.xlsx" })) as { total: number }).total).toBe(0);
+
+    stall = 0;
+    const retried = await slow("sheet_propose_edits", edit);
+    expect(retried.isError).toBeUndefined();
+    const listed = payload(await call("sheet_list_changes", { path: "docs/basic.xlsx" })) as { total: number; proposals: unknown[] };
+    expect(listed.total).toBe(1);
+    expect(listed.proposals).toHaveLength(1);
   });
 
   // Fault detected: the agent can read protected owner paths through the document tools.

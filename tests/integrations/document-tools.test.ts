@@ -83,6 +83,8 @@ describe("document tools on the integrations MCP surface", () => {
       expect(init.redirect).toBe("error");
       expect(init.signal).toBeInstanceOf(AbortSignal);
       expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${OWNER_TOKEN}`);
+      expect((init.headers as Record<string, string>)["x-matrix-office-budget-ms"]).toBe("30000");
+      expect(Object.keys(init.headers as Record<string, string>).filter((name) => name.toLowerCase() === "content-type")).toHaveLength(1);
       expect(JSON.parse(init.body as string)).toEqual({
         path: "docs/q3.xlsx", label: "Fix total", author: "Matrix OS",
         edits: [{ op: "setCell", sheet: "Summary", cell: "B7", value: "=SUM(B2:B6)" }],
