@@ -68,31 +68,43 @@ export function autoSum(controller: SheetGridController, fn: AutoSumFunction = "
   return session.applyEdits(edits, "AutoSum");
 }
 
-function cellsOf(session: SheetSession, sheet: SheetId, range: CellRange, kind: CellDecoration["kind"], out: CellDecoration[]): void {
+/** Adds the cells of `range` that lie in the used area to `out`. False when `out` reached the limit before all of them were added. */
+function cellsOf(session: SheetSession, sheet: SheetId, range: CellRange, kind: CellDecoration["kind"], out: CellDecoration[]): boolean {
   const used = session.sheet(sheet).dimensions;
-  if (used === null) return;
+  if (used === null) return true;
   const rowEnd = Math.min(range.end.row, used.end.row);
   const colEnd = Math.min(range.end.col, used.end.col);
   for (let row = range.start.row; row <= rowEnd; row++) {
     for (let col = range.start.col; col <= colEnd; col++) {
-      if (out.length >= MAX_TRACE_CELLS) return;
+      if (out.length >= MAX_TRACE_CELLS) return false;
       out.push({ sheet, row, col, kind });
     }
   }
+  return true;
 }
 
-export type TraceResult = { ok: true; count: number } | { ok: false; message: string };
+/** `truncated` when more cells were found than are marked at once: only the first `count` are marked. */
+export type TraceResult = { ok: true; count: number; truncated: boolean } | { ok: false; message: string };
 
 /** Marks the cells the active cell's formula reads (`precedents`) or the formulas that read it (`dependents`). */
 export function traceActiveCell(controller: SheetGridController, direction: "precedents" | "dependents"): TraceResult {
   const session = controller.session;
   const { sheet, active } = controller.getSelection();
   const marks: CellDecoration[] = [];
+  let truncated = false;
   if (direction === "precedents") {
-    for (const range of session.workbook.precedents(sheet, active)) cellsOf(session, range.sheet, range, "precedent", marks);
+    for (const range of session.workbook.precedents(sheet, active)) {
+      if (!cellsOf(session, range.sheet, range, "precedent", marks)) {
+        truncated = true;
+        break;
+      }
+    }
   } else {
     for (const cell of session.workbook.dependents(sheet, active)) {
-      if (marks.length >= MAX_TRACE_CELLS) break;
+      if (marks.length >= MAX_TRACE_CELLS) {
+        truncated = true;
+        break;
+      }
       marks.push({ sheet: cell.sheet, row: cell.row, col: cell.col, kind: "dependent" });
     }
   }
@@ -101,7 +113,7 @@ export function traceActiveCell(controller: SheetGridController, direction: "pre
     return { ok: false, message: direction === "precedents" ? "The active cell has no formula that reads other cells." : "No formula reads the active cell." };
   }
   controller.decorate(TRACE_LAYER, marks);
-  return { ok: true, count: marks.length };
+  return { ok: true, count: marks.length, truncated };
 }
 
 /** Defined names a sheet can go to, for the names menu. */

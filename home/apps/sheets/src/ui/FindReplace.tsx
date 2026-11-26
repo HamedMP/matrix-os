@@ -81,6 +81,11 @@ export function FindReplace({ session, controller, selection, revision, showRepl
 
   const replaceEvery = (): void => {
     const plan = planReplaceAll(session, sheet, options, replacement);
+    // The search stopped at a limit, so matches past it are unknown: replace every match or none.
+    if (plan.truncated) {
+      onMessage("Too many cells match to replace them all at once, so nothing was replaced. Narrow the search, for example with Match case or Whole cell.", "warning");
+      return;
+    }
     if (plan.edits.length === 0) {
       onMessage(plan.skipped > 0 ? "The matching cells show formula results, which cannot be replaced." : "No cells match.", "info");
       return;

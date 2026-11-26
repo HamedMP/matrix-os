@@ -70,6 +70,19 @@ describe("Formulas tab", () => {
     expect(toastText()).toContain("has no formula that reads other cells");
   });
 
+  // Fault: a trace past the marking limit marked only the first cells and said nothing about the rest.
+  it("says when a trace marks only the first part of the cells", async () => {
+    await renderWithWorkbook("Budget.xlsx", (workbook, sheet) => {
+      workbook.setCell(sheet, { row: 11_999, col: 0 }, 1);
+      workbook.setFormula(sheet, { row: 0, col: 1 }, "SUM(A1:A12000)");
+    });
+    goTo("B1");
+    openTab("Formulas");
+    fireEvent.click(screen.getByRole("button", { name: "Trace precedents" }));
+    await flush();
+    expect(toastText()).toContain("Marked the first 10,000 cells");
+  });
+
   it("goes to a defined name and recalculates on request without marking the file edited", async () => {
     const app = await renderWithWorkbook("Budget.xlsx", (workbook, sheet) => {
       workbook.setCell(sheet, { row: 0, col: 0 }, 1);

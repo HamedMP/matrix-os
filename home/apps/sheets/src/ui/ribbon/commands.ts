@@ -80,6 +80,12 @@ export interface SheetCommandContext {
 const MIN_FONT_PT = 1;
 const MAX_FONT_PT = 409;
 
+/** What a trace that marked only the first `count` cells says. */
+function traceTruncated(direction: "precedents" | "dependents", count: number): string {
+  const shown = count.toLocaleString("en-US");
+  return direction === "precedents" ? `Marked the first ${shown} cells this formula reads; it reads more.` : `Marked the first ${shown} formulas that read this cell; more read it.`;
+}
+
 /**
  * Commands that leave the text in the cell editor alone: they open a panel or
  * a dialog, change the view, step between changes, or add to the text being
@@ -239,10 +245,12 @@ function sheetCommandHandlers(ctx: SheetCommandContext): SheetCommands {
     "trace-precedents": () => {
       const result = traceActiveCell(controller, "precedents");
       if (!result.ok) notify(result.message, "info");
+      else if (result.truncated) notify(traceTruncated("precedents", result.count), "warning");
     },
     "trace-dependents": () => {
       const result = traceActiveCell(controller, "dependents");
       if (!result.ok) notify(result.message, "info");
+      else if (result.truncated) notify(traceTruncated("dependents", result.count), "warning");
     },
     "trace-clear": () => run(() => controller.clearDecorations(TRACE_LAYER)),
     recalculate: () => {
