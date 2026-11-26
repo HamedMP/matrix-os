@@ -31,3 +31,9 @@ For each provider, compare the native CLI and full Matrix Chat on the baseline, 
 The first candidate can remove repeated tool guidance and make detailed read-only CLI examples available on demand. Keep existing tool discovery, schema, account selection, and authorization behavior. Verify App Builder, implicit and later-turn tool discovery, integration reads and approval or denial, Company Drive scope, Browser takeover, and long-session continuation. Record any unavailable live workflow alongside the results.
 
 Evaluate a lower-input Claude approval transport independently. The current bridge remains active until an alternative demonstrates lower input and preserves request identity, approvals, denials, questions, cancellation, partial streaming, scheduling, and protected recovery on supported CLI versions. Evaluate corrections to history replay only after measuring normal resume, compaction and fresh recovery separately.
+
+## Follow-up launch contract
+
+- Codex keeps the Core MCP inventory and action paths discoverable. The installed Matrix Integrations skill documents the read-only fallback with exact account and filters. The `matrix_routines` name, eager registration, arguments, and owner decision flow stay intact.
+- Claude Chat uses compact launch guidance and the existing stdio approval bridge. Protected continuation and idle recovery may use either prior gateway-owned guidance only after the full saved source fingerprint matches an exact reconstruction. Existing eligibility, Browser wiring, and tool authority still apply.
+- Compare the candidate's gross input against baseline Matrix Chat for savings and against a matched native CLI control for remaining overhead. Codex's acceptance threshold is below 3%. Record Claude's measured outcome and functional checks. Live Browser testing is outside the scope of this Private Preview run.

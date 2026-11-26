@@ -4,6 +4,7 @@ import type { CanonicalChatRun } from "@matrix-os/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
 import { legacyClaudeChatArgs } from "../../packages/gateway/src/chat/claude-legacy-launch-guidance.js";
+import { buildMatrixAgentOrientation, MATRIX_SHARED_BROWSER_LAUNCH_POINTER } from "../../packages/contracts/matrix-agent-orientation.mjs";
 import { resolveClaudeSessionSource } from "../../packages/gateway/src/chat/claude-session-source.js";
 import { bindNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
@@ -48,7 +49,7 @@ describe("Claude protected recovery launch plan", () => {
       resume: true, cancellation: true, worktrees: "optional", interactionModes: ["default"], permissionModes: ["supervised"],
     } };
 
-  it.each([false, true])("reproduces the completed Run source with Browser without opening Run capabilities (previous prompt: %s)", async legacy => {
+  it.each(["current", "eng-567", "original"] as const)("reproduces the %s completed Run source with Browser without opening Run capabilities", async version => {
     const nativeSessions = pool();
     const spawn = vi.fn(spawnFn);
     const matrixMcp = createMatrixMcpCapabilityRegistry({ configuredOwnerId: input.owner.ownerId });
@@ -71,16 +72,23 @@ describe("Claude protected recovery launch plan", () => {
       expect(original.args).toContain("--mcp-config");
       expect(issue).toHaveBeenCalledOnce();
       expect(open).toHaveBeenCalledOnce();
-      const sourceArgs = legacy ? legacyClaudeChatArgs(original.args)! : original.args;
-      const sourceFingerprint = legacy ? (await resolveClaudeSessionSource({
+      const sourceArgs = version === "original" ? legacyClaudeChatArgs(original.args)[1]! : [...original.args];
+      if (version === "eng-567") {
+        const promptIndex = sourceArgs.indexOf("--append-system-prompt") + 1;
+        sourceArgs[promptIndex] = buildMatrixAgentOrientation({ surface: "claude", customMcpScope: "call" })
+          + "\n\n" + MATRIX_SHARED_BROWSER_LAUNCH_POINTER;
+      }
+      const sourceFingerprint = (await resolveClaudeSessionSource({
         homePath: "/owner", command: original.command, cwd: original.cwd, args: sourceArgs, env: original.env, input,
-      })).fingerprint : original.sourceFingerprint;
-      if (legacy) {
+      })).fingerprint;
+      if (version !== "current") {
         expect(sourceFingerprint).not.toBe(original.sourceFingerprint);
         const guidance = sourceArgs[sourceArgs.indexOf("--append-system-prompt") + 1]!;
-        expect(createHash("sha256").update(guidance).digest("hex")).toBe(
-          "8cef40c4c2c914baea0d7959ea217dcf3e37e05099e64382c3f9db7229dda5e5",
-        );
+        expect(createHash("sha256").update(guidance).digest("hex")).toBe(version === "eng-567"
+          ? "2fd5660bb7efc88b7beeee4b9438de51fa6fea423d92c34729df9d0bd2737cdf"
+          : "8cef40c4c2c914baea0d7959ea217dcf3e37e05099e64382c3f9db7229dda5e5");
+      } else {
+        expect(sourceFingerprint).toBe(original.sourceFingerprint);
       }
       const recovery = { owner: input.owner, run, state: { sessionId }, sessionId,
         expectedSourceFingerprint: sourceFingerprint, signal: input.signal };
@@ -97,6 +105,15 @@ describe("Claude protected recovery launch plan", () => {
       expect(nativeSessions.runTurn).toHaveBeenCalledOnce();
       expect(spawn).not.toHaveBeenCalled();
 
+      if (version === "eng-567") {
+        const editedArgs = [...sourceArgs];
+        const promptIndex = editedArgs.indexOf("--append-system-prompt") + 1;
+        editedArgs[promptIndex] += " Extra instructions.";
+        const editedSource = await resolveClaudeSessionSource({
+          homePath: "/owner", command: original.command, cwd: original.cwd, args: editedArgs, env: original.env, input,
+        });
+        await expect(adapter.prepareNativeRecovery({ ...recovery, expectedSourceFingerprint: editedSource.fingerprint })).resolves.toBeNull();
+      }
       credential = "different-owner-key";
       await expect(adapter.prepareNativeRecovery(recovery)).resolves.toBeNull();
     } finally {

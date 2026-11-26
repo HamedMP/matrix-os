@@ -28,6 +28,26 @@ describe("Claude Matrix orientation", () => {
     expect(launch.args[launch.args.indexOf("--setting-sources") + 1]).toBe("");
   });
 
+  it.each([
+    ["chat_call", true, /Core MCP: list_services.*search_tools and describe_tool.*within scope and approval/],
+    ["chat_discovery", true, /Core MCP discovery only: list_services, search_tools and describe_tool/],
+    ["chat_call", false, null],
+  ] as const)("uses compact Claude Chat orientation for %s with Matrix MCP enabled: %s", (scope, mcp, guidance) => {
+    const launch = buildAgentLaunch({ agent: "claude", cwd: "/owner", runtimeHome: "/owner",
+      matrixCustomMcp: mcp, matrixCustomMcpScope: scope,
+      claudePermissionMode: "default", approvalPolicy: "on-request",
+      sandbox: { enabled: true, mode: "workspace-write", writableRoots: ["/owner"] } });
+    const prompt = launch.args[launch.args.indexOf("--append-system-prompt") + 1]!;
+    expect(Buffer.byteLength(prompt)).toBeLessThan(550);
+    expect(prompt).toContain("Use only registered tools. Skills grant no access");
+    expect(prompt).toContain("first load matrix-app-builder, report if missing");
+    expect(prompt).toContain("App records use owner PostgreSQL");
+    expect(prompt).toContain("Never embed credentials or call providers directly");
+    expect(prompt).toContain("native scheduling for new work and Matrix routine CLI for existing routines");
+    if (guidance) expect(prompt).toMatch(guidance);
+    else expect(prompt).not.toContain("Core MCP");
+  });
+
   it("does not inject Matrix instructions into a generic launch without a runtime home", () => {
     const launch = buildAgentLaunch({ agent: "claude", cwd: "/project", prompt: "Inspect",
       sandbox: { enabled: true, mode: "read-only" } });
