@@ -11,13 +11,14 @@ import {
   createMemoryPersistence,
   defaultCalendar,
   PROPOSALS_TABLE,
+  readBusyInBatches,
   type CalendarConnection,
   type CalendarStore,
 } from "../model";
 
 type CalendarBridge = Pick<MatrixOSBridge, "service" | "integrations" | "db">;
 
-/** Free-busy for people, straight from a connected provider (read only). */
+/** Free-busy for people, straight from a connected provider (read only), in batches it accepts. */
 export type FreeBusyLookup = (addresses: string[], start: IsoInstant, end: IsoInstant) => Promise<BusyBlock[]>;
 
 export interface CalendarRuntime {
@@ -52,7 +53,7 @@ export function createAppRuntime(): CalendarRuntime {
     const accountId = defaultCalendar(store.getSnapshot().calendars)?.accountId;
     const connection = connections.find((item) => item.account.id === accountId) ?? connections[0];
     if (!connection) throw new ProviderError("not_connected");
-    return connection.provider.getFreeBusy(addresses, start, end);
+    return readBusyInBatches(connection.provider, addresses, start, end);
   }
 
   return { store, getFreeBusy };

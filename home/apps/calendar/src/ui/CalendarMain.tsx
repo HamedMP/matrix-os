@@ -8,9 +8,10 @@ import type { CalendarState, CalendarStore } from "../model";
 import { AgendaView } from "./AgendaView";
 import { MonthView } from "./MonthView";
 import { TimeGrid } from "./TimeGrid";
+// The launcher artwork, bundled as a data URL: the app frame is sandboxed with a null
+// origin, and an image file requested from there shows broken.
+import appArtwork from "../../../../system/icons/v3-calendar.png?inline";
 
-/** The launcher artwork, shown where the app introduces itself. */
-const appArtwork = new URL("../../../../system/icons/v3-calendar.png", import.meta.url).href;
 
 export interface CalendarMainProps {
   store: CalendarStore;

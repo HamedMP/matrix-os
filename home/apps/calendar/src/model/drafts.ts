@@ -10,6 +10,7 @@ import {
   MAX_EVENT_ATTENDEES,
   MAX_EVENT_REMINDERS,
   MAX_REMINDER_MINUTES,
+  WEEKDAYS,
   allDayDate,
   allDayInstant,
   eventDraftIssues,
@@ -24,8 +25,9 @@ import {
   type EventReminder,
   type IsoInstant,
   type Recurrence,
+  type Weekday,
 } from "../../../_shared/office-accounts/types/calendar";
-import { MS_PER_MINUTE, addDays, compareDayKeys, dayKeyAt, instantAtWall, zonedInstant, type DayKey } from "./dates";
+import { MS_PER_MINUTE, addDays, compareDayKeys, dayKeyAt, instantAtWall, weekdayOf, zonedInstant, type DayKey } from "./dates";
 import type { Proposal } from "./proposals";
 
 export const DEFAULT_DURATION_MINUTES = 30;
@@ -164,16 +166,37 @@ export function draftFromEvent(event: CalendarEvent): EventDraft {
   };
 }
 
+/** The draft's start weekday in its own zone (UTC for an all-day draft), as an RRULE day. */
+export function startWeekday(draft: Pick<EventDraft, "start" | "allDay" | "timeZone">): Weekday {
+  const day = dayKeyAt(instantToMs(draft.start), draft.allDay ? "UTC" : draft.timeZone);
+  return WEEKDAYS[(weekdayOf(day) + 6) % 7];
+}
+
+/**
+ * After the start moved: a weekly rule that names only the old start's weekday
+ * ("Every week" on Tuesday) moves to the new start's weekday, so the series
+ * keeps repeating on the day the event is on. A rule on several days is the
+ * owner's own choice and stays.
+ */
+function followStartWeekday(previous: EventDraft, next: EventDraft): EventDraft {
+  const rule = next.recurrence;
+  if (rule?.freq !== "weekly" || rule.byDay?.length !== 1) return next;
+  const before = startWeekday(previous);
+  const after = startWeekday(next);
+  if (rule.byDay[0] !== before || before === after) return next;
+  return { ...next, recurrence: { ...rule, byDay: [after] } };
+}
+
 /** Wall-clock start and end (`YYYY-MM-DDTHH:mm`) in the draft's zone, or another zone. */
 export function setDraftTimes(draft: EventDraft, startWall: string, endWall: string, timeZone = draft.timeZone): EventDraft {
   const seconds = (wall: string) => (wall.length === 16 ? `${wall}:00` : wall);
-  return {
+  return followStartWeekday(draft, {
     ...draft,
     allDay: false,
     timeZone,
     start: instantFromWallTime(seconds(startWall), timeZone),
     end: instantFromWallTime(seconds(endWall), timeZone),
-  };
+  });
 }
 
 /** Moves the start and keeps the duration. */
@@ -182,9 +205,9 @@ export function moveDraft(draft: EventDraft, startMs: number): EventDraft {
   if (draft.allDay) {
     const days = Math.max(1, Math.round(duration / (1440 * MS_PER_MINUTE)));
     const day = new Date(startMs).toISOString().slice(0, 10);
-    return { ...draft, start: allDayInstant(day), end: allDayInstant(addDays(day, days)) };
+    return followStartWeekday(draft, { ...draft, start: allDayInstant(day), end: allDayInstant(addDays(day, days)) });
   }
-  return { ...draft, start: zonedInstant(startMs, draft.timeZone), end: zonedInstant(startMs + duration, draft.timeZone) };
+  return followStartWeekday(draft, { ...draft, start: zonedInstant(startMs, draft.timeZone), end: zonedInstant(startMs + duration, draft.timeZone) });
 }
 
 /**
@@ -200,16 +223,16 @@ export function setDraftAllDay(draft: EventDraft, allDay: boolean, timeZone: str
     const endMs = Math.max(startMs + 1, instantToMs(draft.end));
     const first = dayKeyAt(startMs, zone);
     const last = dayKeyAt(endMs - 1, zone);
-    return { ...draft, allDay: true, timeZone: "UTC", start: allDayInstant(first), end: allDayInstant(addDays(last, 1)) };
+    return followStartWeekday(draft, { ...draft, allDay: true, timeZone: "UTC", start: allDayInstant(first), end: allDayInstant(addDays(last, 1)) });
   }
   const day = allDayDate(draft.start);
-  return {
+  return followStartWeekday(draft, {
     ...draft,
     allDay: false,
     timeZone,
     start: instantAtWall(day, 9 * 60, timeZone),
     end: instantAtWall(day, 9 * 60 + DEFAULT_DURATION_MINUTES, timeZone),
-  };
+  });
 }
 
 /** Adds an attendee once (by lower-cased address). Invalid addresses and a full list leave the draft unchanged. */
@@ -294,6 +317,8 @@ export function draftChanges(original: EventDraft, next: EventDraft): EventChang
   for (const field of CHANGE_FIELDS) {
     if (!sameValue(original[field], next[field])) changes[field] = next[field];
   }
+  // A video meeting can be added to an existing event, never removed: providers keep the link.
+  if (changes.addOnlineMeeting === false) delete changes.addOnlineMeeting;
   if ("start" in changes || "end" in changes || "allDay" in changes || "timeZone" in changes) {
     changes.start = next.start;
     changes.end = next.end;

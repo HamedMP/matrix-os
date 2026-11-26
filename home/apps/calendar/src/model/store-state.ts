@@ -39,7 +39,7 @@ export interface PendingWrite {
 }
 
 export interface AssistantState {
-  /** People whose busy time is overlaid, lower-cased, at most `MAX_FREE_BUSY_ADDRESSES`. */
+  /** People whose busy time is overlaid, lower-cased, at most `MAX_EVENT_ATTENDEES`. */
   attendees: string[];
   status: LoadStatus;
   error: string | null;

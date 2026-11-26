@@ -14,6 +14,7 @@ import {
   draftChanges,
   draftForGrid,
   draftFromEvent,
+  moveDraft,
   removeDraftAttendee,
   setDraftAllDay,
   setDraftRecurrence,
@@ -156,6 +157,18 @@ describe("event drafts", () => {
     const recurring = setDraftRecurrence(draft, { freq: "daily", interval: 0 });
     expect(eventDraftIssues(recurring)).toContain("invalid_recurrence");
     expect(eventDraftIssues(setDraftRecurrence(draft, { freq: "weekly", interval: 2, byDay: ["MO", "WE"], count: 6 }))).toEqual([]);
+  });
+
+  // Outcome: "Every week" on a Tuesday draft moved to Wednesday repeats on Wednesdays.
+  // Fault: the rule keeps naming Tuesday after the start moves, so the series lands on the wrong day.
+  it("moves a rule's single weekday with the start, and leaves a rule on several days alone", () => {
+    const tuesday = setDraftRecurrence(draftForGrid("2026-11-24", 9 * 60, 10 * 60, BASE), { freq: "weekly", interval: 1, byDay: ["TU"] });
+    expect(setDraftTimes(tuesday, "2026-11-25T09:00", "2026-11-25T10:00").recurrence).toEqual({ freq: "weekly", interval: 1, byDay: ["WE"] });
+    expect(moveDraft(tuesday, Date.parse("2026-11-26T14:00:00Z")).recurrence).toEqual({ freq: "weekly", interval: 1, byDay: ["TH"] });
+    expect(setDraftAllDay(setDraftAllDay(tuesday, true, "America/New_York"), false, "America/New_York").recurrence?.byDay).toEqual(["TU"]);
+    expect(setDraftTimes(tuesday, "2026-11-24T13:00", "2026-11-24T14:00").recurrence?.byDay).toEqual(["TU"]);
+    const twoDays = setDraftRecurrence(tuesday, { freq: "weekly", interval: 1, byDay: ["TU", "TH"] });
+    expect(setDraftTimes(twoDays, "2026-11-25T09:00", "2026-11-25T10:00").recurrence?.byDay).toEqual(["TU", "TH"]);
   });
 
   it("sends only changed fields, with times together", () => {

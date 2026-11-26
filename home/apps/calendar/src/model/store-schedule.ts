@@ -8,11 +8,13 @@
  */
 import { isValidMailAddress } from "../../../_shared/office-accounts/types/addresses";
 import {
+  MAX_EVENT_ATTENDEES,
   MAX_FREE_BUSY_ADDRESSES,
   ProviderError,
   instantToMs,
   type BusyBlock,
   type CalendarInfo,
+  type CalendarProvider,
   type EventDraft,
   type EventDraftAttendee,
   type EventReminder,
@@ -57,16 +59,40 @@ export function defaultCalendar(calendars: readonly CalendarInfo[], preferredId?
     ?? null;
 }
 
-/** Lower-cased, valid, unique addresses, at most `MAX_FREE_BUSY_ADDRESSES`. */
+/** Lower-cased, valid, unique addresses, at most `MAX_EVENT_ATTENDEES` (every guest an event can have). */
 export function normalizeAttendeeAddresses(addresses: readonly string[]): string[] {
   const result = new Set<string>();
   for (const raw of addresses) {
     const address = typeof raw === "string" ? raw.trim().toLowerCase() : "";
     if (!address || !isValidMailAddress(address) || result.has(address)) continue;
     result.add(address);
-    if (result.size >= MAX_FREE_BUSY_ADDRESSES) break;
+    if (result.size >= MAX_EVENT_ATTENDEES) break;
   }
   return [...result];
+}
+
+/**
+ * Busy time for every one of `addresses` (normalized), asked in batches of
+ * `MAX_FREE_BUSY_ADDRESSES`, the most one provider call answers for. Rejects
+ * when any batch fails, so nobody is left out and taken for free. At most
+ * `MAX_BUSY_BLOCKS` blocks are kept; a person whose blocks did not fit gets
+ * one unknown block for the range instead, so they never look free either.
+ */
+export async function readBusyInBatches(
+  provider: Pick<CalendarProvider, "getFreeBusy">,
+  addresses: readonly string[],
+  start: IsoInstant,
+  end: IsoInstant,
+): Promise<BusyBlock[]> {
+  const people = normalizeAttendeeAddresses(addresses);
+  const batches: string[][] = [];
+  for (let index = 0; index < people.length; index += MAX_FREE_BUSY_ADDRESSES) batches.push(people.slice(index, index + MAX_FREE_BUSY_ADDRESSES));
+  // At most MAX_EVENT_ATTENDEES / MAX_FREE_BUSY_ADDRESSES (5) calls, asked together.
+  const blocks = (await Promise.all(batches.map((batch) => provider.getFreeBusy(batch, start, end)))).flat();
+  if (blocks.length <= MAX_BUSY_BLOCKS) return blocks;
+  const kept = blocks.slice(0, MAX_BUSY_BLOCKS - people.length);
+  const cut = new Set(blocks.slice(kept.length).map((block) => block.address.toLowerCase()));
+  return [...kept, ...[...cut].map((address): BusyBlock => ({ address, start, end, status: "unknown" }))];
 }
 
 /** The owner's own timed events in the range as busy blocks (declined and all-day events do not block). */
@@ -147,7 +173,13 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
     return { calendarId: calendar.id, timeZone: state.timeZone };
   }
 
+  /** True while a draft is being saved: it stays until the save settles, so a failed save keeps its edits. */
+  function saving(): boolean {
+    return ctx.get().draft?.status === "saving";
+  }
+
   function open(draft: EventDraft, extra: Parameters<typeof draftState>[1] = {}): boolean {
+    if (saving()) return false;
     ctx.set((state) => ({ ...state, mutationError: null, draft: draftState(draft, extra) }));
     return true;
   }
@@ -208,11 +240,11 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
       proposals: withoutAssistantProposals(current.proposals),
     }));
     try {
-      const busy = await connection.provider.getFreeBusy(attendees, start, end);
+      const busy = await readBusyInBatches(connection.provider, attendees, start, end);
       if (token !== busyToken) return;
       ctx.set((current) => recomputeOverlays({
         ...current,
-        assistant: { ...current.assistant, status: "ready", busy: busy.slice(0, MAX_BUSY_BLOCKS), busyStart: start, busyEnd: end },
+        assistant: { ...current.assistant, status: "ready", busy, busyStart: start, busyEnd: end },
       }));
     } catch (error: unknown) {
       const message = ctx.report("load free-busy", error);
@@ -288,7 +320,10 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
     setDraftAttendeeOptional(address, optional) {
       edit((draft) => setAttendeeOptional(draft, address, optional));
     },
+    // The provider can add a video meeting to an existing event but not remove one.
     setDraftOnlineMeeting(on) {
+      const current = ctx.get().draft;
+      if (!on && current?.mode === "edit" && current.original?.addOnlineMeeting) return;
       edit((draft) => setDraftOnlineMeeting(draft, on));
     },
     // An existing event's repeat rule and reminders are not read back from the
@@ -321,12 +356,10 @@ export function createScheduleActions(ctx: StoreContext, persistence: CalendarPe
     loadBusy,
 
     async readFreeBusy(addresses, start, end) {
-      const people = normalizeAttendeeAddresses(addresses);
-      if (people.length === 0) return [];
+      if (normalizeAttendeeAddresses(addresses).length === 0) return [];
       const connection = busyConnection(ctx.get());
       if (!connection) throw new ProviderError("not_connected");
-      const busy = await connection.provider.getFreeBusy(people, start, end);
-      return busy.slice(0, MAX_BUSY_BLOCKS);
+      return readBusyInBatches(connection.provider, addresses, start, end);
     },
 
     findSlots(request = {}) {

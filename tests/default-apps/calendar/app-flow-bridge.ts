@@ -75,6 +75,8 @@ export class FakeMatrixOS {
   readonly events: Record<string, GoogleEventJson[]> = { [PRIMARY]: [], [HOLIDAYS]: [] };
   /** Busy intervals per address for `free_busy`. */
   busy: Record<string, Array<{ start: string; end: string }>> = {};
+  /** Addresses Google answers with a per-calendar error for (a calendar the owner cannot see). */
+  busyHidden: string[] = [];
   /** The model's reply to `ai.generate`. */
   aiReply: (prompt: string) => string = () => "{\"intent\":\"clarify\",\"question\":\"What do you need?\"}";
   private readonly listeners: Array<{ table: string; callback: (event: { table: string }) => void }> = [];
@@ -180,7 +182,11 @@ export class FakeMatrixOS {
       case "free_busy": {
         const items = (params.items as unknown[]).map((item) => (typeof item === "string" ? item : String((item as { id?: unknown }).id)));
         const calendars: Record<string, unknown> = {};
-        for (const address of items) calendars[address] = { busy: this.busy[address] ?? [] };
+        for (const address of items) {
+          calendars[address] = this.busyHidden.includes(address)
+            ? { errors: [{ domain: "global", reason: "notFound" }], busy: [] }
+            : { busy: this.busy[address] ?? [] };
+        }
         return { kind: "calendar#freeBusy", timeMin: params.timeMin, timeMax: params.timeMax, calendars };
       }
       case "get_event": {

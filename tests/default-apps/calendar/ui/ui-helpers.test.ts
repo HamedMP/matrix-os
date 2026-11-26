@@ -13,6 +13,7 @@ import {
   segmentBox,
 } from "../../../../home/apps/calendar/src/ui/gridMath";
 import { safeColor } from "../../../../home/apps/calendar/src/ui/colors";
+import { accountName } from "../../../../home/apps/calendar/src/ui/account-name";
 import { event } from "../model/fixtures";
 
 const DRAFT = {
@@ -103,15 +104,34 @@ describe("composer presets", () => {
   });
 
   it("round-trips recurrence and reminder presets", () => {
-    expect(recurrenceForPreset("weekly", DRAFT)).toEqual({ freq: "weekly", interval: 1, byDay: ["WE"] });
-    expect(presetForRecurrence(recurrenceForPreset("weekdays", DRAFT) ?? undefined)).toBe("weekdays");
-    expect(presetForRecurrence(recurrenceForPreset("biweekly", DRAFT) ?? undefined)).toBe("biweekly");
-    expect(presetForRecurrence({ freq: "daily", interval: 1, count: 3 })).toBe("custom");
-    expect(presetForRecurrence(undefined)).toBe("none");
+    // Weekly presets repeat on the start's weekday without naming it, so a later start change cannot strand them.
+    expect(recurrenceForPreset("weekly")).toEqual({ freq: "weekly", interval: 1 });
+    expect(recurrenceForPreset("biweekly")).toEqual({ freq: "weekly", interval: 2 });
+    expect(presetForRecurrence(recurrenceForPreset("weekdays") ?? undefined, DRAFT)).toBe("weekdays");
+    expect(presetForRecurrence(recurrenceForPreset("biweekly") ?? undefined, DRAFT)).toBe("biweekly");
+    // A rule on one named weekday reads as "Every week" only on that weekday; on another day it is custom.
+    expect(presetForRecurrence({ freq: "weekly", interval: 1, byDay: ["WE"] }, DRAFT)).toBe("weekly");
+    expect(presetForRecurrence({ freq: "weekly", interval: 1, byDay: ["TU"] }, DRAFT)).toBe("custom");
+    expect(presetForRecurrence({ freq: "daily", interval: 1, count: 3 }, DRAFT)).toBe("custom");
+    expect(presetForRecurrence(undefined, DRAFT)).toBe("none");
     expect(remindersForPreset("default")).toBeNull();
     expect(remindersForPreset("none")).toEqual([]);
     expect(remindersForPreset("30")).toEqual([{ minutesBefore: 30, method: "popup" }]);
     expect(presetForReminders([{ minutesBefore: 30, method: "popup" }])).toBe("30");
     expect(presetForReminders([{ minutesBefore: 7, method: "popup" }])).toBe("custom");
+  });
+});
+
+describe("account names", () => {
+  const account = (displayName: string, address: string) => ({ id: "google:x", provider: "google" as const, displayName, address });
+
+  // Outcome: the rail names each account the way the owner knows it.
+  // Fault: the host's default label, the service slug `google_calendar`, is shown as the account's name.
+  it("shows the account's label, else its address, else the provider's name, never the service slug", () => {
+    expect(accountName(account("Work Google", "me@example.com"))).toBe("Work Google");
+    expect(accountName(account("google_calendar", "me@example.com"))).toBe("me@example.com");
+    expect(accountName(account("Google_Calendar 2", "me@example.com"))).toBe("me@example.com");
+    expect(accountName(account("google_calendar", ""))).toBe("Google Calendar");
+    expect(accountName(account("  ", ""))).toBe("Google Calendar");
   });
 });

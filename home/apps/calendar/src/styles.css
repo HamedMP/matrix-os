@@ -120,6 +120,18 @@ body { background: var(--app-bg); color: var(--app-fg); }
 .cal-event:hover { background: color-mix(in srgb, var(--event-color) 34%, var(--app-card)); z-index: 3; }
 .cal-event__title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-event__time, .cal-event__location { color: var(--app-muted-fg); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Text lines keep their height; a block too short for them shows fewer lines (DayColumn), never cut ones. */
+.cal-event > span, .cal-proposal > span { flex: none; }
+/* One row for a short block: the title, then the time only when it fits beside it; a part that wraps is
+   pushed below the block by the row gap and hidden. */
+.cal-event.is-compact, .cal-proposal.is-compact {
+  flex-direction: row; flex-wrap: wrap; align-items: baseline; align-content: flex-start; column-gap: 6px; row-gap: 48px;
+  padding-top: 1px; padding-bottom: 0;
+}
+.cal-event.is-compact > span, .cal-proposal.is-compact > span { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.cal-event.is-compact .cal-event__time, .cal-proposal.is-compact .cal-proposal__label { flex: none; }
+.cal-event.is-tiny, .cal-proposal.is-tiny { padding-top: 0; font-size: 10px; line-height: 1; }
+.cal-event.is-tiny .cal-event__time { font-size: 10px; }
 .cal-event__resize { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
 .cal-event.is-pending { opacity: .6; cursor: progress; }
 .cal-event.is-dragging { opacity: .35; }
@@ -242,6 +254,7 @@ body { background: var(--app-bg); color: var(--app-fg); }
 .cal-assistant__head h3 { margin: 0; font-size: 12px; font-weight: 650; }
 .cal-assistant__legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; }
 .cal-assistant__legend li { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.cal-assistant__unknown { color: var(--app-muted-fg); font-size: 11px; }
 .cal-assistant__slots { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .cal-assistant__none, .cal-assistant__error { margin: 0; font-size: 12px; color: var(--app-muted-fg); }
 .cal-assistant__error { color: var(--app-danger); }

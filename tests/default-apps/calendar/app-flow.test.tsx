@@ -306,6 +306,42 @@ describe("Calendar app journey", () => {
     expect(document.querySelector(".cal-marker")).toBeNull();
   });
 
+  // Outcome: a guest outside the owner's organisation shows as "availability unknown", calmly.
+  // Fault: Google's per-calendar error for a calendar the owner cannot see turns into
+  // "Something went wrong" in the scheduling assistant.
+  it("shows a guest whose calendar cannot be seen as availability unknown, not as an error", async () => {
+    bridge.busyHidden = ["bo@other.org"];
+    await mount();
+    fireEvent.click(toolbarButton("New event"));
+    await settle();
+    const field = within(composer()).getByLabelText("Guests");
+    fireEvent.change(field, { target: { value: "ana@example.com, bo@other.org" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await settle();
+
+    expect(bridge.callsTo("free_busy").at(-1)?.params.items).toEqual(["ana@example.com", "bo@other.org"]);
+    const assistant = within(composer()).getByRole("region", { name: "Scheduling assistant" });
+    expect(within(assistant).queryByRole("alert")).toBeNull();
+    expect(assistant.textContent).not.toMatch(/went wrong/i);
+    const legend = within(assistant).getByRole("list", { name: "Busy time colours" });
+    const bo = within(legend).getByText("bo@other.org").closest("li");
+    expect(bo?.textContent).toContain("Availability unknown");
+    const ana = within(legend).getByText("ana@example.com").closest("li");
+    expect(ana?.textContent).not.toContain("Availability unknown");
+    // Unknown time counts as busy, and the empty suggestion list says why.
+    expect(assistant.textContent).toContain("Guests with unknown availability count as busy.");
+  });
+
+  // Outcome: an account the host lists under its default label is named by its address.
+  // Fault: the rail heading shows the raw service slug `google_calendar`.
+  it("names an account with the host's default label by its address, not the service slug", async () => {
+    bridge.integrations = async () => [{ service: "google_calendar", account_label: "google_calendar", account_email: OWNER, status: "active" }];
+    await mount();
+    const rail = screen.getByRole("region", { name: `${OWNER} calendars` });
+    expect(within(rail).getByRole("heading", { name: new RegExp(OWNER) })).toBeTruthy();
+    expect(screen.queryByText(/google_calendar/)).toBeNull();
+  });
+
   it("shows the connect empty state when no calendar account is connected", async () => {
     bridge.integrations = async () => [];
     render(<App />);

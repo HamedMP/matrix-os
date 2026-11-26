@@ -154,6 +154,7 @@ export interface CalendarAgentDeps {
   generate(prompt: string): Promise<string>;
   /** Events of visible calendars that overlap `[start, end)`. */
   listEvents(start: IsoInstant, end: IsoInstant): Promise<CalendarEvent[]>;
+  /** Busy time of every one of `addresses`, however many (the app asks the provider in batches). */
   getFreeBusy(addresses: string[], start: IsoInstant, end: IsoInstant): Promise<BusyBlock[]>;
   /** Where real errors go; answers only ever hold fixed sentences. */
   log?(action: string, error: unknown): void;

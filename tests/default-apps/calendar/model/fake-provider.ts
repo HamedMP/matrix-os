@@ -1,4 +1,5 @@
 import {
+  MAX_FREE_BUSY_ADDRESSES,
   ProviderError,
   composeEventId,
   instantsOverlap,
@@ -117,6 +118,8 @@ export class FakeCalendarProvider implements CalendarProvider {
 
   async getFreeBusy(addresses: string[], start: string, end: string): Promise<BusyBlock[]> {
     this.calls.push({ method: "getFreeBusy", args: [addresses, start, end] });
+    // Like the real adapters: one call answers for at most MAX_FREE_BUSY_ADDRESSES people.
+    if (addresses.length > MAX_FREE_BUSY_ADDRESSES) throw new ProviderError("not_supported");
     return this.busy.filter((block) => addresses.includes(block.address) && instantsOverlap(block.start, block.end, start, end));
   }
 }

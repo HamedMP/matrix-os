@@ -7,6 +7,7 @@ import { Spinner } from "../../../_shared/office-ui";
 import { instantToMs } from "../../../_shared/office-accounts/types/calendar";
 import type { AssistantState } from "../model";
 import type { Proposal } from "../model/proposals";
+import { unknownAvailability } from "../model/slots";
 import { personColorClass } from "./colors";
 import { SLOT_LENGTH_HINT } from "./composerOptions";
 import { durationLabel, formatShortDate, formatTime } from "./format";
@@ -31,6 +32,8 @@ export function SchedulingAssistant({ assistant, proposals, timeZone, durationMi
   if (assistant.attendees.length === 0) return null;
   // Until availability and events for these guests and this range are in, a suggestion may clash with someone.
   const suggestions = searchable && ready ? proposals.filter((proposal) => proposal.source === "assistant") : [];
+  // Guests whose calendar cannot be read count as busy; they are labelled, not reported as a failure.
+  const unknown = new Set(assistant.status === "ready" ? unknownAvailability(assistant.busy) : []);
   return (
     <section className="cal-assistant" aria-label="Scheduling assistant">
       <div className="cal-assistant__head">
@@ -42,6 +45,7 @@ export function SchedulingAssistant({ assistant, proposals, timeZone, durationMi
           <li key={address} className={personColorClass(index)}>
             <span className="cal-attendee__dot" aria-hidden="true" />
             {address}
+            {unknown.has(address) && <span className="cal-assistant__unknown">Availability unknown</span>}
           </li>
         ))}
       </ul>
@@ -59,7 +63,11 @@ export function SchedulingAssistant({ assistant, proposals, timeZone, durationMi
       </div>
       {!searchable && <p className="cal-assistant__none">{SLOT_LENGTH_HINT}</p>}
       {searchable && ready && suggestions.length === 0 && (
-        <p className="cal-assistant__none">No common free time in this range. Try the next week.</p>
+        <p className="cal-assistant__none">
+          {unknown.size > 0
+            ? "No time where everyone is known to be free. Guests with unknown availability count as busy."
+            : "No common free time in this range. Try the next week."}
+        </p>
       )}
       <ul className="cal-assistant__slots">
         {suggestions.map((proposal) => {

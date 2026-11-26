@@ -1,7 +1,7 @@
 /**
  * The props the agent slot passes to `ui/agent` (`CalendarAgentPanel`, a
  * named export of `ui/agent/index.ts`). Declared here as the subset the slot
- * uses, so the app still builds when that module is absent.
+ * passes, so the app shell does not depend on the panel's own types.
  */
 import type { BusyBlock, IsoInstant } from "../../../_shared/office-accounts/types/calendar";
 import type { CalendarStore } from "../model";

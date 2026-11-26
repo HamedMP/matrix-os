@@ -3,15 +3,13 @@
  * and the mapping between a draft and the selected preset.
  */
 import {
-  WEEKDAYS,
-  instantToMs,
   type EventDraft,
   type EventDraftIssue,
   type EventReminder,
   type Recurrence,
   type Weekday,
 } from "../../../_shared/office-accounts/types/calendar";
-import { dayKeyAt, weekdayOf } from "../model/dates";
+import { startWeekday } from "../model/drafts";
 
 export const RECURRENCE_PRESETS = [
   { value: "none", label: "Does not repeat" },
@@ -26,13 +24,11 @@ export type RecurrencePreset = (typeof RECURRENCE_PRESETS)[number]["value"];
 
 const WORK_WEEK: Weekday[] = ["MO", "TU", "WE", "TH", "FR"];
 
-/** The draft's start weekday in its own zone, as an RRULE day. */
-export function startWeekday(draft: EventDraft): Weekday {
-  const day = dayKeyAt(instantToMs(draft.start), draft.allDay ? "UTC" : draft.timeZone);
-  return WEEKDAYS[(weekdayOf(day) + 6) % 7];
-}
-
-export function recurrenceForPreset(preset: RecurrencePreset, draft: EventDraft): Recurrence | null {
+/**
+ * The rule for a preset. "Every week" and "Every 2 weeks" name no weekday:
+ * they repeat on the start's weekday, wherever the start is moved later.
+ */
+export function recurrenceForPreset(preset: RecurrencePreset): Recurrence | null {
   switch (preset) {
     case "none":
       return null;
@@ -41,9 +37,9 @@ export function recurrenceForPreset(preset: RecurrencePreset, draft: EventDraft)
     case "weekdays":
       return { freq: "weekly", interval: 1, byDay: [...WORK_WEEK] };
     case "weekly":
-      return { freq: "weekly", interval: 1, byDay: [startWeekday(draft)] };
+      return { freq: "weekly", interval: 1 };
     case "biweekly":
-      return { freq: "weekly", interval: 2, byDay: [startWeekday(draft)] };
+      return { freq: "weekly", interval: 2 };
     case "monthly":
       return { freq: "monthly", interval: 1 };
     case "yearly":
@@ -51,8 +47,11 @@ export function recurrenceForPreset(preset: RecurrencePreset, draft: EventDraft)
   }
 }
 
-/** The preset a draft's recurrence matches; "custom" when it came from elsewhere. */
-export function presetForRecurrence(recurrence: Recurrence | undefined): RecurrencePreset | "custom" {
+/**
+ * The preset a draft's recurrence matches; "custom" when it came from elsewhere,
+ * including a weekly rule on one weekday other than the draft's start weekday.
+ */
+export function presetForRecurrence(recurrence: Recurrence | undefined, draft: Pick<EventDraft, "start" | "allDay" | "timeZone">): RecurrencePreset | "custom" {
   if (!recurrence) return "none";
   if (recurrence.count !== undefined || recurrence.until !== undefined) return "custom";
   const days = recurrence.byDay ?? [];
@@ -61,8 +60,9 @@ export function presetForRecurrence(recurrence: Recurrence | undefined): Recurre
   if (recurrence.freq === "yearly" && recurrence.interval === 1) return "yearly";
   if (recurrence.freq === "weekly") {
     if (recurrence.interval === 1 && days.length === 5 && WORK_WEEK.every((day) => days.includes(day))) return "weekdays";
-    if (days.length <= 1 && recurrence.interval === 1) return "weekly";
-    if (days.length <= 1 && recurrence.interval === 2) return "biweekly";
+    const onStartDay = days.length === 0 || (days.length === 1 && days[0] === startWeekday(draft));
+    if (onStartDay && recurrence.interval === 1) return "weekly";
+    if (onStartDay && recurrence.interval === 2) return "biweekly";
   }
   return "custom";
 }
@@ -134,6 +134,9 @@ export const TITLE_REQUIRED = "Add a title.";
 
 /** Under an edit draft's repeat and reminder fields, which keep the event's own settings. */
 export const REPEAT_FIXED_HINT = "Repeat and reminders of an existing event stay as they are.";
+
+/** Under the video meeting box of an existing event that has one: providers cannot remove it. */
+export const MEETING_FIXED_HINT = "The event's video meeting stays on it.";
 
 /** In the scheduling assistant when the draft's length cannot be searched for. */
 export const SLOT_LENGTH_HINT = "Set an end after the start, within 24 hours, to see suggested times.";

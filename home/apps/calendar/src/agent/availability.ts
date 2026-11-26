@@ -4,24 +4,24 @@
  */
 import { isValidMailAddress } from "../../../_shared/office-accounts/types/addresses";
 import {
-  MAX_FREE_BUSY_ADDRESSES,
+  MAX_EVENT_ATTENDEES,
   type BusyBlock,
   type CalendarEvent,
 } from "../../../_shared/office-accounts/types/calendar";
-import { findSlots } from "../model/slots";
+import { findSlots, unknownAvailability } from "../model/slots";
 import { slotRef } from "./describe";
 import type { PeopleEntry } from "./prompt";
 import type { CalendarAgentContext, CalendarAgentDeps, PeopleRef, ResolvedWindow, SlotRef } from "./types";
 
 export interface ResolvedPeople {
-  /** Lower-cased, valid, unique, without the owner; at most `MAX_FREE_BUSY_ADDRESSES`. */
+  /** Lower-cased, valid, unique, without the owner; at most `MAX_EVENT_ATTENDEES` (the app reads them in batches). */
   addresses: string[];
   /** Names that matched nobody or more than one person. Plain text. */
   unresolved: string[];
 }
 
 function addUnique(list: string[], address: string, owner: string | null): void {
-  if (address !== owner && !list.includes(address) && list.length < MAX_FREE_BUSY_ADDRESSES) list.push(address);
+  if (address !== owner && !list.includes(address) && list.length < MAX_EVENT_ATTENDEES) list.push(address);
 }
 
 /**
@@ -120,7 +120,7 @@ export async function searchAvailability(
       deps.log?.("agent: free-busy", error);
       blocks = request.addresses.map((address) => ({ address, start: request.window.start, end: request.window.end, status: "unknown" as const }));
     }
-    const unknown = [...new Set(blocks.filter((block) => block.status === "unknown").map((block) => block.address.toLowerCase()))];
+    const unknown = unknownAvailability(blocks);
     if (unknown.length > 0) notes.push(`Availability is unknown for ${unknown.join(", ")}, so their time counts as busy.`);
     busy.push(...blocks);
   }

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { event } from "../model/fixtures";
 import { baseEvents, dayColumn, eventButton, settle, setup } from "./helpers";
@@ -18,6 +18,39 @@ describe("calendar events on the grid", () => {
     expect(standup.style.width).toBe("100%");
     // 18:00 New York on Tuesday, not Wednesday in UTC.
     expect(dayColumn("2026-11-24").contains(eventButton("Dinner"))).toBe(true);
+  });
+
+  // Outcome: a 30-minute event reads as one line (title, then its start time when there is room).
+  // Fault: the block stacks title and time in two lines that do not fit, so both are cut through.
+  it("draws a short event as one line and a longer one with its time and place below the title", async () => {
+    const { store } = await setup({
+      events: [
+        ...baseEvents(),
+        event({ id: "work/quick", calendarId: "work", title: "Quick sync", start: "2026-11-25T15:00:00Z", end: "2026-11-25T15:15:00Z" }),
+        event({ id: "work/long", calendarId: "work", title: "Planning", location: "Room 4", start: "2026-11-25T17:00:00Z", end: "2026-11-25T18:30:00Z" }),
+      ],
+    });
+    const standup = eventButton("Standup");
+    expect(standup.classList.contains("is-compact")).toBe(true);
+    expect([...standup.querySelectorAll(".cal-event__title, .cal-event__time, .cal-event__location")].map((part) => part.className))
+      .toEqual(["cal-event__title", "cal-event__time"]);
+    expect(standup.querySelector(".cal-event__time")?.textContent).toMatch(/^9:00\s?AM$/);
+    expect(standup.getAttribute("aria-label")).toMatch(/9:00\s?AM – 9:30\s?AM/);
+
+    const quick = eventButton("Quick sync");
+    expect(quick.classList.contains("is-compact") && quick.classList.contains("is-tiny")).toBe(true);
+
+    const planning = eventButton("Planning");
+    expect(planning.classList.contains("is-compact")).toBe(false);
+    expect(planning.querySelector(".cal-event__time")?.textContent).toMatch(/^12:00\s?PM – 1:30\s?PM$/);
+    expect(planning.querySelector(".cal-event__location")?.textContent).toBe("Room 4");
+
+    // A 30-minute suggestion gets the same one-row layout for its label and title.
+    act(() => {
+      store.receiveProposals([{ start: "2026-11-27T15:00:00Z", end: "2026-11-27T15:30:00Z", title: "Follow-up" }]);
+    });
+    const suggestion = within(dayColumn("2026-11-27")).getByRole("button", { name: /Suggested time .*Follow-up/ });
+    expect(suggestion.classList.contains("is-compact")).toBe(true);
   });
 
   it("lays overlapping events out side by side and puts all-day events in the bar row", async () => {

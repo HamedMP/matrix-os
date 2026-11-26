@@ -62,7 +62,7 @@ export * from "./drafts";
 export * from "./cache";
 export * from "./preferences";
 export * from "./store-state";
-export { createScheduleActions, defaultCalendar, normalizeAttendeeAddresses, ownerBusy, NO_CALENDAR_MESSAGE } from "./store-schedule";
+export { createScheduleActions, defaultCalendar, normalizeAttendeeAddresses, ownerBusy, readBusyInBatches, NO_CALENDAR_MESSAGE } from "./store-schedule";
 export type { FindSlotsRequest, ScheduleActions } from "./store-schedule";
 export { NOT_FOUND_MESSAGE, READ_ONLY_MESSAGE } from "./store-writes";
 export type { WriteActions } from "./store-writes";

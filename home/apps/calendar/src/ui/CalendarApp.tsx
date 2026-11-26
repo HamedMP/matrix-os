@@ -173,7 +173,7 @@ export function CalendarApp({ store, now = Date.now, getFreeBusy }: CalendarAppP
             range={state.range}
             loading={state.eventsStatus === "loading"}
             agentOpen={agentOpen}
-            canCreate={defaultCalendar(state.calendars) !== null}
+            canCreate={defaultCalendar(state.calendars) !== null && state.draft?.status !== "saving"}
             onToday={() => store.goToToday()}
             onShift={(steps) => store.shift(steps)}
             onView={(next) => store.setView(next)}

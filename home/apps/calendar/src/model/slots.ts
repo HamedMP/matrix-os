@@ -202,6 +202,16 @@ interface PersonInterval extends Interval {
   status: BusyStatus;
 }
 
+/**
+ * Lower-cased addresses with an `unknown` block: people whose calendar cannot
+ * be read (Google answers a calendar the owner may not see with an error
+ * entry, which the adapter turns into one unknown block). Their time counts
+ * as busy; the UI names them calmly instead of reporting a failure.
+ */
+export function unknownAvailability(busy: readonly BusyBlock[]): string[] {
+  return [...new Set(busy.filter((block) => block.status === "unknown").map((block) => block.address.toLowerCase()))];
+}
+
 function mergedPerPerson(busy: readonly BusyBlock[]): PersonInterval[] {
   const groups: Record<string, PersonInterval[]> = {};
   for (const block of busy) {

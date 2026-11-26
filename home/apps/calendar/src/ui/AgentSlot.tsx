@@ -1,24 +1,14 @@
 /**
- * Slot for the calendar agent panel (`CalendarAgentPanel` from `./agent`,
- * built separately). It is loaded lazily; when the module is absent or fails
- * to load, a short notice takes its place.
+ * Slot for the calendar agent panel (`CalendarAgentPanel` from `./agent`).
+ * It is part of the app's one JavaScript file: the app frame is sandboxed with
+ * a null origin and refuses a chunk loaded later. When the panel fails to
+ * render, a short notice takes its place.
  */
-import { Component, Suspense, lazy, type ComponentType, type ReactNode } from "react";
+import { Component, type ReactNode } from "react";
 import { Bot, X } from "lucide-react";
-import { EmptyState, Spinner } from "../../../_shared/office-ui";
+import { EmptyState } from "../../../_shared/office-ui";
+import { CalendarAgentPanel } from "./agent";
 import type { AgentSlotPanelProps } from "./agentSlotTypes";
-
-type PanelModule = { CalendarAgentPanel?: ComponentType<AgentSlotPanelProps> };
-
-const modules = import.meta.glob<PanelModule>("./agent/index.ts");
-const loader = modules["./agent/index.ts"];
-const LazyPanel = loader
-  ? lazy(async () => {
-    const module = await loader();
-    if (!module.CalendarAgentPanel) throw new Error("CalendarAgentPanel export missing");
-    return { default: module.CalendarAgentPanel };
-  })
-  : null;
 
 class PanelBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -48,20 +38,14 @@ function Unavailable({ onClose }: { onClose(): void }) {
   );
 }
 
-/** True when this build includes the agent panel module. */
-export const AGENT_PANEL_AVAILABLE = LazyPanel !== null;
-
 export interface AgentSlotProps extends AgentSlotPanelProps {
   onClose(): void;
 }
 
 export function AgentSlot(props: AgentSlotProps) {
-  if (!LazyPanel) return <Unavailable onClose={props.onClose} />;
   return (
     <PanelBoundary fallback={<Unavailable onClose={props.onClose} />}>
-      <Suspense fallback={<div className="cal-agent-fallback"><Spinner label="Loading agent" /></div>}>
-        <LazyPanel {...props} />
-      </Suspense>
+      <CalendarAgentPanel {...props} />
     </PanelBoundary>
   );
 }

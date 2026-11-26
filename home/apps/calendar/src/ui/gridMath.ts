@@ -15,6 +15,25 @@ export const DRAG_THRESHOLD_PX = 4;
 /** Shortest event a resize can produce. */
 export const MIN_EVENT_MINUTES = 15;
 
+/** Blocks lower than this show one row of text: two stacked lines do not fit. */
+export const TWO_LINE_BLOCK_PX = 36;
+/** Blocks at least this high also have room for a third line (an event's location). */
+export const THREE_LINE_BLOCK_PX = 51;
+/** Blocks lower than this use a smaller line so the one row still fits. */
+export const TINY_BLOCK_PX = 18;
+
+/** How a block of this height lays out its text: one row, two lines, or three. */
+export function blockLines(heightPx: number): 1 | 2 | 3 {
+  if (heightPx < TWO_LINE_BLOCK_PX) return 1;
+  return heightPx < THREE_LINE_BLOCK_PX ? 2 : 3;
+}
+
+/** `is-compact` (one row) and `is-tiny` (one small row) for a short block; empty otherwise. */
+export function blockSizeClasses(heightPx: number): string[] {
+  if (blockLines(heightPx) > 1) return [];
+  return heightPx < TINY_BLOCK_PX ? ["is-compact", "is-tiny"] : ["is-compact"];
+}
+
 export function clampMinute(minute: number): number {
   return Math.min(MINUTES_PER_DAY, Math.max(0, minute));
 }

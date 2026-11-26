@@ -6,6 +6,7 @@ import { Checkbox, Skeleton } from "../../../_shared/office-ui";
 import type { CalendarAccount, CalendarInfo } from "../../../_shared/office-accounts/types/calendar";
 import type { CalendarState } from "../model";
 import type { DayKey } from "../model/dates";
+import { PROVIDER_NAME, accountName } from "./account-name";
 import { calendarColorStyle } from "./colors";
 import { MiniMonth } from "./MiniMonth";
 
@@ -20,6 +21,7 @@ const PROVIDER_LABEL: Record<CalendarAccount["provider"], string> = { google: "G
 export function CalendarRail({ state, onPickDay, onToggle }: CalendarRailProps) {
   const byAccount = state.accounts.map((account) => ({
     account,
+    name: accountName(account),
     calendars: state.calendars.filter((calendar) => calendar.accountId === account.id),
   }));
   return (
@@ -35,11 +37,11 @@ export function CalendarRail({ state, onPickDay, onToggle }: CalendarRailProps) 
       {state.accountsStatus === "loading" && state.accounts.length === 0 && (
         <div className="cal-rail__loading"><Skeleton lines={4} /></div>
       )}
-      {byAccount.map(({ account, calendars }) => (
-        <section key={account.id} className="cal-rail__account" aria-label={`${account.displayName} calendars`}>
+      {byAccount.map(({ account, name, calendars }) => (
+        <section key={account.id} className="cal-rail__account" aria-label={`${name} calendars`}>
           <h2 className="cal-rail__account-name">
-            <span>{account.displayName}</span>
-            <span className="cal-rail__provider">{PROVIDER_LABEL[account.provider]}</span>
+            <span>{name}</span>
+            {name !== PROVIDER_NAME[account.provider] && <span className="cal-rail__provider">{PROVIDER_LABEL[account.provider]}</span>}
           </h2>
           {calendars.length === 0 && <p className="cal-rail__none">No calendars</p>}
           <ul className="cal-rail__list">

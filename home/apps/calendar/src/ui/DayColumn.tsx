@@ -11,7 +11,7 @@ import type { ProposalSegment } from "../model/proposals";
 import type { BusyOverlay } from "../model/slots";
 import { calendarColorStyle, personColorClass } from "./colors";
 import { formatTime } from "./format";
-import { PX_PER_MINUTE, segmentBox } from "./gridMath";
+import { PX_PER_MINUTE, blockLines, blockSizeClasses, segmentBox } from "./gridMath";
 
 export interface GhostBlock {
   startMinute: number;
@@ -86,36 +86,42 @@ export function DayColumn(props: DayColumnProps) {
         );
       })}
 
-      {props.proposals.map((segment) => (
-        <button
-          key={segment.proposal.id}
-          type="button"
-          className={`cal-proposal cal-proposal--${segment.proposal.source}`}
-          style={blockStyle(segment.startMinute, segment.endMinute)}
-          data-proposal-id={segment.proposal.id}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={() => props.onProposal(segment.proposal.id)}
-          aria-label={`Suggested time ${formatTime(instantToMs(segment.proposal.start), timeZone)} to ${formatTime(instantToMs(segment.proposal.end), timeZone)}${segment.proposal.title ? `: ${segment.proposal.title}` : ""}`}
-        >
-          <span className="cal-proposal__label">{segment.proposal.source === "agent" ? "Proposed" : "Suggested"}</span>
-          {segment.proposal.title && <span className="cal-proposal__title">{segment.proposal.title}</span>}
-        </button>
-      ))}
+      {props.proposals.map((segment) => {
+        const style = blockStyle(segment.startMinute, segment.endMinute);
+        return (
+          <button
+            key={segment.proposal.id}
+            type="button"
+            className={["cal-proposal", `cal-proposal--${segment.proposal.source}`, ...blockSizeClasses(style.height)].join(" ")}
+            style={style}
+            data-proposal-id={segment.proposal.id}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => props.onProposal(segment.proposal.id)}
+            aria-label={`Suggested time ${formatTime(instantToMs(segment.proposal.start), timeZone)} to ${formatTime(instantToMs(segment.proposal.end), timeZone)}${segment.proposal.title ? `: ${segment.proposal.title}` : ""}`}
+          >
+            <span className="cal-proposal__label">{segment.proposal.source === "agent" ? "Proposed" : "Suggested"}</span>
+            {segment.proposal.title && <span className="cal-proposal__title">{segment.proposal.title}</span>}
+          </button>
+        );
+      })}
 
       {props.segments.map((segment) => {
         const box = segmentBox(segment);
         const { event } = segment;
         const calendar = calendarsById[event.calendarId];
         const pending = props.pendingIds.has(event.id);
+        const lines = blockLines(box.height);
         const classes = [
           "cal-event",
+          ...blockSizeClasses(box.height),
           pending && "is-pending",
           event.myResponse === "declined" && "is-declined",
           event.myResponse === "needsAction" && "is-unanswered",
           event.myResponse === "tentative" && "is-tentative",
           props.draggingId === event.id && "is-dragging",
         ].filter(Boolean).join(" ");
-        const when = `${formatTime(instantToMs(event.start), timeZone)} – ${formatTime(instantToMs(event.end), timeZone)}`;
+        const startText = formatTime(instantToMs(event.start), timeZone);
+        const when = `${startText} – ${formatTime(instantToMs(event.end), timeZone)}`;
         return (
           <button
             key={event.id}
@@ -130,8 +136,9 @@ export function DayColumn(props: DayColumnProps) {
             onKeyDown={(keyEvent) => props.onEventKeyDown(segment, keyEvent)}
           >
             <span className="cal-event__title">{event.title || "(No title)"}</span>
-            <span className="cal-event__time">{when}</span>
-            {event.location && <span className="cal-event__location">{event.location}</span>}
+            {/* One row: the start time follows the title and drops out when the row is full (styles.css). */}
+            <span className="cal-event__time">{lines === 1 ? startText : when}</span>
+            {event.location && lines === 3 && <span className="cal-event__location">{event.location}</span>}
             {!segment.continuesAfter && <span className="cal-event__resize" data-resize="true" aria-hidden="true" />}
           </button>
         );
