@@ -8,7 +8,7 @@ export function WorkflowKeyForm({ state }: { state: HarnessWorkflowController })
   return <>
           {method === "key" ? (
             <form
-              className="matrix-ap-key-form"
+              className="matrix-ap-key-form matrix-ap-sign-in-panel"
               onSubmit={(event) => {
                 event.preventDefault();
                 if (!apiKey.trim()) return;
@@ -67,7 +67,7 @@ export function WorkflowKeyForm({ state }: { state: HarnessWorkflowController })
                 Create a key in your provider dashboard. It stays on this
                 computer.
               </p>
-              {pending ? <p role="status">Checking your key…</p> : null}
+              {pending ? <p className="matrix-ap-help" role="status">Checking your key…</p> : null}
               <div className="matrix-ap-workflow-actions">
                 <button
                   type="submit"
@@ -109,7 +109,7 @@ export function WorkflowLoginProgress({ state }: { state: HarnessWorkflowControl
             <WorkflowLoadingSpinner /><span>Sign-in complete. Updating connection…</span>
           </p> : null}
           {startingLogin || runningLogin ? (
-            <div className="matrix-ap-device-login">
+            <div className="matrix-ap-device-login matrix-ap-sign-in-panel">
               {!existingCodexAccount ? <h3>Finish signing in to {subscriptionName}</h3> : null}
               {!startingLogin && !existingCodexAccount && operation?.deviceCode ? (
                 <div className="matrix-ap-device-code">

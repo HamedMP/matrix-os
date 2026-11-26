@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ProviderSettingsSnapshotSchema } from "@matrix-os/contracts";
 import { _electron, type ElectronApplication, type Page } from "playwright";
-import { startProviderAuthGateway } from "./fixtures/provider-auth-gateway";
+import { providerAuthSettingsSnapshot, startProviderAuthGateway } from "./fixtures/provider-auth-gateway";
 import { createProviderWorkflowClient, ProviderWorkflowClientError } from "../../../packages/ui/src/agents-providers/provider-workflow-client";
 import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
@@ -55,7 +55,17 @@ suite("Electron Desktop provider authentication Settings", () => {
 beforeAll(async () => {
   captures = createEvidenceDirectory(process.env.MATRIX_SETTINGS_EVIDENCE_DIR);
     output = captures.path;
-  gateway = await startProviderAuthGateway({ inlineClaude: true });
+  gateway = await startProviderAuthGateway({
+    inlineClaude: true,
+    settings: authenticated => ({
+      ...providerAuthSettingsSnapshot(authenticated, true),
+      matrixAnthropicConnection: {
+        connectionId: "matrix_anthropic_api", providerId: "anthropic", executionKind: "direct_pi", billingKind: "api_key",
+        revision: 0, enabled: false, credentialGeneration: null, sourceCredentialGeneration: null, state: "disconnected",
+        models: [], actions: ["connect"], checkedAt: null, staleAfter: null, supports: { rootChat: true, recipeBots: true },
+      },
+    }),
+  });
   profile = mkdtempSync(join(tmpdir(), "matrix-om255-"));
   app = await _electron.launch({ executablePath,
     args: [join(root, "desktop/out/main/index.js"), "--remote-debugging-port=9353"],
@@ -87,7 +97,7 @@ async function settings() {
   if (await claude.getAttribute("aria-expanded") !== "true") await claude.click();
 }
 
-it("keeps browser login in Settings and disconnects execution without logging out the native account", async () => {
+it("gives API key and browser sign-in forms room in Settings and preserves native login on disconnect", async () => {
   try {
     const identity = await app.evaluate(({ app: electronApp }) => electronApp.getAppPath());
     expect(identity).toBe(join(root, "desktop/out/main"));
@@ -97,6 +107,31 @@ it("keeps browser login in Settings and disconnects execution without logging ou
     await terminal.getByRole("button", { name: "Close", exact: true }).click();
     await terminal.waitFor({ state: "hidden" });
     await settings();
+    const claudeApi = page.getByRole("article", { name: "Claude API connection" });
+    await claudeApi.getByRole("button", { name: "Connect Claude", exact: true }).click();
+    const apiKey = claudeApi.getByLabel("Anthropic API key", { exact: true });
+    const apiCancel = claudeApi.getByRole("button", { name: "Cancel", exact: true });
+    const desktop = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    try {
+      await page.setViewportSize({ width: 480, height: 800 });
+      await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(480);
+      const inset = await apiKey.evaluate(field => {
+        const form = field.closest("form");
+        if (!form) throw new Error("The Anthropic API key must be inside its form");
+        const panel = form.getBoundingClientRect();
+        const input = field.getBoundingClientRect();
+        return { left: input.left - panel.left, right: panel.right - input.right };
+      });
+      expect(inset.left).toBeGreaterThanOrEqual(12);
+      expect(inset.right).toBeGreaterThanOrEqual(12);
+      expect((await apiCancel.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(44);
+      await apiKey.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: join(output, "settings-claude-api-key-narrow.png") });
+    } finally {
+      await page.setViewportSize(desktop);
+    }
+    await apiCancel.click();
+
     const accountChoice = page.getByRole("button", { name: /Claude account.*Use your Claude plan/ });
     await accountChoice.click();
     const signInHeading = page.getByRole("heading", { name: "Finish signing in to Claude", exact: true });
@@ -114,7 +149,6 @@ it("keeps browser login in Settings and disconnects execution without logging ou
     const authorizationField = page.getByLabel("Paste the sign-in code", { exact: true });
     await authorizationField.waitFor();
 
-    const desktop = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
     try {
       await page.setViewportSize({ width: 480, height: 800 });
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(480);

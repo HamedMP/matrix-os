@@ -4,6 +4,7 @@ import { Button } from "../Button.js";
 import { Dialog } from "../Dialog.js";
 import { DialogFooter } from "../DialogFooter.js";
 import { DialogTitle } from "../DialogTitle.js";
+import { mcpTokens as t } from "./mcp-settings-tokens.js";
 
 export const GITHUB_DEVELOPER_DEVICE_URL = "https://github.com/login/device";
 const POLL_INTERVAL_MS = 1_000;
@@ -140,14 +141,21 @@ function errorCategory(error: unknown): string {
   return error instanceof Error ? "Error" : typeof error;
 }
 
+const setupAction = "min-h-9 max-[520px]:min-h-11 focus-visible:ring-2 focus-visible:ring-[var(--ring,var(--accent))]";
+
 function DeviceCode({ code, openPage }: { code: string; openPage: GithubDeveloperSetupClient["openSetupPage"] }) {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return <>
-    <p className="text-sm">Copy this code, then open GitHub and enter it to authorize this computer.</p>
-    <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 p-3">
-      <code className="text-lg font-semibold tracking-wider">{code}</code>
-      <Button variant="secondary" onClick={async () => {
+    <p className="text-sm leading-relaxed" style={{ color: t.secondary }}>Copy this code, then open GitHub and enter it to authorize this computer.</p>
+    <div
+      role="group"
+      aria-label="GitHub device code"
+      className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2"
+      style={{ background: t.sunken, borderColor: t.border }}
+    >
+      <code className="min-w-0 break-all text-xl font-semibold tracking-wider">{code}</code>
+      <Button variant="secondary" className={setupAction} onClick={async () => {
         try {
           await navigator.clipboard.writeText(code);
           setCopied(true);
@@ -159,7 +167,7 @@ function DeviceCode({ code, openPage }: { code: string; openPage: GithubDevelope
       }}>{copied ? "Copied" : "Copy"}</Button>
     </div>
     {error ? <p className="text-sm" role="alert">{error}</p> : null}
-    <Button onClick={async () => {
+    <Button className={`justify-self-start ${setupAction}`} onClick={async () => {
       try {
         await openPage();
         setError(null);
@@ -168,7 +176,7 @@ function DeviceCode({ code, openPage }: { code: string; openPage: GithubDevelope
         setError("Couldn't open GitHub. Try again.");
       }
     }}>Open GitHub</Button>
-    <p className="text-sm" role="status">Waiting for GitHub authorization…</p>
+    <p className="text-sm" role="status" style={{ color: t.secondary }}>Waiting for GitHub authorization…</p>
   </>;
 }
 
@@ -189,15 +197,15 @@ export function GithubDeveloperSetupDialog({ setup, openPage, canStart }: {
   return (
     <Dialog open onClose={setup.dismiss} aria-label="Connect GitHub Developer">
       <DialogTitle>Connect GitHub Developer</DialogTitle>
-      <div className="flex flex-col items-start gap-3">
+      <div className="grid min-w-0 gap-3 rounded-xl border p-4 max-[520px]:p-3" style={{ background: t.surface, borderColor: t.border }}>
         {phase === "starting" ? <p className="text-sm" role="status">Preparing GitHub sign-in…</p> : null}
         {phase === "finishing" ? <p className="text-sm" role="status">Checking the connection…</p> : null}
         {setup.view.phase === "waiting" ? <DeviceCode key={setup.view.code} code={setup.view.code} openPage={openPage} /> : null}
         {problem ? <p className="text-sm" role="alert">{problem}</p> : null}
       </div>
-      <DialogFooter>
-        <Button variant="secondary" onClick={setup.dismiss}>{problem ? "Close" : "Cancel"}</Button>
-        {problem ? <Button onClick={() => void setup.start()} disabled={!canStart || setup.pending}>Try again</Button> : null}
+      <DialogFooter style={{ marginTop: 16, flexWrap: "wrap" }}>
+        <Button variant="secondary" className={setupAction} onClick={setup.dismiss}>{problem ? "Close" : "Cancel"}</Button>
+        {problem ? <Button className={setupAction} onClick={() => void setup.start()} disabled={!canStart || setup.pending}>Try again</Button> : null}
       </DialogFooter>
     </Dialog>
   );

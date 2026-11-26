@@ -119,8 +119,10 @@ describe("GitHub Developer card", () => {
       await waitFor(() => expect(setup).toBeEnabled());
       fireEvent.click(setup);
       const dialog = within(await screen.findByRole("dialog", { name: "Connect GitHub Developer" }));
-      expect(await dialog.findByText("ABCD-EFGH")).toBeVisible();
-      await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Copy" })); });
+      const deviceCode = await dialog.findByRole("group", { name: "GitHub device code", exact: true });
+      const codeControls = within(deviceCode);
+      expect(codeControls.getByText("ABCD-EFGH")).toBeVisible();
+      await act(async () => { fireEvent.click(codeControls.getByRole("button", { name: "Copy" })); });
       expect(writeText).toHaveBeenCalledExactlyOnceWith("ABCD-EFGH");
       await act(async () => { fireEvent.click(dialog.getByRole("button", { name: "Open GitHub" })); });
       expect(client.openSetupPage).toHaveBeenCalledTimes(1);

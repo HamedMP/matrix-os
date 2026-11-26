@@ -140,10 +140,10 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
     {errorText ? <p className="matrix-ap-help" role="alert">{errorText}</p> : null}
     {client && !readOnly ? <div className="matrix-ap-workflow-actions matrix-ap-subscription-actions">
       {connecting ? <button className="matrix-ap-button" type="button" disabled={disabled || readOnly} onClick={() => void act(signal => client.cancel(signal), "cancel")}>Cancel ChatGPT connection</button>
-        : !connected ? <button type="button" className="matrix-ap-button" disabled={blocked || !status} onClick={() => void act(signal => client.connect({ purpose: "personal_local" }, signal), "connect")}>Continue with ChatGPT</button>
+        : !connected ? <button type="button" className="matrix-ap-button matrix-ap-button-primary" disabled={blocked || !status} onClick={() => void act(signal => client.connect({ purpose: "personal_local" }, signal), "connect")}>Continue with ChatGPT</button>
         : <>
           {status.bridgeFailure === "device_conflict" && client.rebind ? <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.rebind!({ purpose: "replace_device" }, signal), "rebind")}>Use this device</button> : null}
-          {!status.grant.enabled ? <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.connect({ purpose: "personal_local" }, signal), "connect")}>Reconnect ChatGPT</button> : null}
+          {!status.grant.enabled ? <button className="matrix-ap-button matrix-ap-button-primary" type="button" disabled={blocked} onClick={() => void act(signal => client.connect({ purpose: "personal_local" }, signal), "connect")}>Reconnect ChatGPT</button> : null}
           {!status.models.length ? <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.refreshModels(signal))}>Check subscription models</button> : null}
           <button className="matrix-ap-button" type="button" disabled={blocked} onClick={() => void act(signal => client.disconnect(signal))}>Disconnect ChatGPT</button>
         </>}
