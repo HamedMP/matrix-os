@@ -306,6 +306,8 @@ export function createApp(deps: {
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   substrateRegistry?: SubstrateRegistry;
   freeTier?: { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner };
+  /** Spec 2707: owned machine enrollment, machine and owner routes. */
+  ownedMachineRoutes?: Hono;
   env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
@@ -519,6 +521,7 @@ export function createApp(deps: {
     logRouteError: logPlatformRouteError,
     getGatewayUrlForHandle,
   }));
+  if (deps.ownedMachineRoutes) app.route('/', deps.ownedMachineRoutes);
 
   const prebilling = deps.customerVpsService
     ? createPrebillingProvisioningCoordinator({
