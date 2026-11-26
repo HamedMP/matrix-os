@@ -51,6 +51,17 @@ function accelerators(template: MenuItemConstructorOptions[], platform: Platform
 }
 
 describe("createAppMenuTemplate", () => {
+  // Spec 2716: Windows and Linux pair (2698) from the File menu, which also switches the link on.
+  it("offers pairing in the File menu on Windows and Linux", () => {
+    const openMacPairing = vi.fn();
+    for (const [platform, label] of [["win32", "Pair This PC…"], ["linux", "Pair This Desktop…"]] as const) {
+      const file = createAppMenuTemplate(options({ platform, openMacPairing })).find((entry) => entry.label === "File")!.submenu as Array<{ label?: string; click?: () => void }>;
+      file.find((entry) => entry.label === label)!.click!();
+    }
+    expect(openMacPairing).toHaveBeenCalledTimes(2);
+  });
+
+
   it("opens Mac pairing directly in installed and development Matrix clients", () => {
     const openMacPairing = vi.fn();
     const send = vi.fn();

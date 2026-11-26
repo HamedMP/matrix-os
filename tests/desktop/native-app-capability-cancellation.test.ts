@@ -36,12 +36,12 @@ function authHooks(cancelChatElectronPreview?: () => void, cancelChatMacTerminal
   const refreshMacActivity = vi.fn();
   const cancelDesktopPairing = vi.fn();
   return new Function("navigationCache", "chatgptPlan", "fileDownloads", "organizationDriveTransfers", "localChatImports", "localUsage",
-    "nativeAppChatNavigation", "sendEvent", "cancelChatElectronPreview", "cancelChatMacTerminal", "refreshMacActivity", "cancelDesktopPairing", `
+    "nativeAppChatNavigation", "sendEvent", "cancelChatElectronPreview", "cancelChatMacTerminal", "refreshMacActivity", "cancelDesktopPairing", "desktopLink", `
     let invalidateAppCapabilities;
     const onAuthChanged = ${callback};
     return { nativeAppChatNavigation, refreshMacActivity, cancelDesktopPairing, onAuthChanged, bind(nativeAppBridge) { ${binding}; } };
   `)(undefined, undefined, undefined, undefined, undefined, undefined, nativeAppChatNavigation, vi.fn(),
-    cancelChatElectronPreview, cancelChatMacTerminal, refreshMacActivity, cancelDesktopPairing) as {
+    cancelChatElectronPreview, cancelChatMacTerminal, refreshMacActivity, cancelDesktopPairing, null) as {
     nativeAppChatNavigation: typeof nativeAppChatNavigation;
     refreshMacActivity: typeof refreshMacActivity;
     cancelDesktopPairing: typeof cancelDesktopPairing;

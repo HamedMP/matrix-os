@@ -2,7 +2,7 @@ import { createHash, createPublicKey, randomBytes, randomUUID, verify } from "no
 import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, it, vi, afterEach } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthStatus } from "@desktop/main/auth/auth-service";
 import { createDesktopPairing } from "@desktop/main/desktop-pairing";
 
@@ -16,7 +16,8 @@ const dirs: string[] = [];
 const pairings: ReturnType<typeof createDesktopPairing>[] = [];
 
 function createPairing(options: Parameters<typeof createDesktopPairing>[0]) {
-  const pairing = createDesktopPairing(options);
+  // These cases are the macOS dialogs; other platforms are covered below.
+  const pairing = createDesktopPairing({ platform: "darwin", ...options });
   pairings.push(pairing);
   return pairing;
 }
@@ -188,7 +189,7 @@ it("persists pair identity across a client restart and disconnects only after ex
   prompt.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 });
   await create().open();
   expect(prompt.mock.calls[0]?.[1]).toMatchObject({
-    buttons: ["Done", "Disconnect This Mac", "Allow Chat Full Access"], defaultId: 0, cancelId: 0,
+    buttons: ["Done", "Disconnect This Mac", "Allow Chat Full Access", "Allow Desktop Link Full Access"], defaultId: 0, cancelId: 0,
   });
   expect(state).toEqual({ machineId, revision: 2, deviceId: null });
   expect(fetchFn.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
@@ -568,7 +569,7 @@ it("keeps existing pairings supervised until the owner expressly allows Chat Ful
   await pairing.open();
   expect(prompt.mock.calls[0]?.[1]).toMatchObject({
     detail: expect.stringContaining("Mac Verification"),
-    buttons: ["Done", "Disconnect This Mac", "Allow Chat Full Access"],
+    buttons: ["Done", "Disconnect This Mac", "Allow Chat Full Access", "Allow Desktop Link Full Access"],
   });
   expect(state.revision).toBe(1);
   expect(fetchFn.mock.calls.every(([, init]) => init?.method === "GET")).toBe(true);
@@ -613,7 +614,7 @@ it("revokes permission and stops an active Full Access lease without disconnecti
   fetchFn.mockClear();
   prompt.mockResolvedValueOnce({ response: 2 }).mockResolvedValueOnce({ response: 0 });
   await pairing.open();
-  expect(prompt.mock.calls[0]?.[1].buttons).toEqual(["Done", "Disconnect This Mac", "Revoke Chat Full Access"]);
+  expect(prompt.mock.calls[0]?.[1].buttons).toEqual(["Done", "Disconnect This Mac", "Revoke Chat Full Access", "Allow Desktop Link Full Access"]);
   expect(operation.signal.reason).toBe("revoked");
   expect(await lease?.check()).toBe(false);
   expect(state.revision).toBe(1);
@@ -718,7 +719,86 @@ it("keeps Full Access blocked after a disk error and offers a durable revocation
   prompt.mockClear();
   prompt.mockResolvedValueOnce({ response: 2 }).mockResolvedValueOnce({ response: 0 });
   await pairing.open();
-  expect(prompt.mock.calls[0]?.[1].buttons).toEqual(["Done", "Disconnect This Mac", "Retry Chat Full Access Revocation"]);
+  expect(prompt.mock.calls[0]?.[1].buttons).toEqual(["Done", "Disconnect This Mac", "Retry Chat Full Access Revocation", "Allow Desktop Link Full Access"]);
   expect(prompt.mock.calls.at(-1)?.[1].message).toBe("Chat Full Access is revoked.");
   expect(await create().acquireFullAccessPairing(new AbortController())).toBeNull();
+});
+
+// Spec 2716: pairing is the desktop link's identity, on macOS, Windows and Linux.
+describe("pairing for the desktop link", () => {
+  it("pairs a Windows PC in its own words, without Mac Verification's Full Access choice", async () => {
+    const { deps, state } = await setup();
+    const pairing = createPairing({ ...deps, platform: "win32" });
+    prompt.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 });
+    await pairing.open();
+    expect(prompt.mock.calls[0]?.[1]).toMatchObject({ message: "Pair this PC?", buttons: ["Cancel", "Pair This PC"] });
+    expect(prompt.mock.calls.at(-1)?.[1].message).toBe("This PC is paired.");
+    expect(state.revision).toBe(1);
+    prompt.mockResolvedValueOnce({ response: 0 });
+    await pairing.open();
+    expect(prompt.mock.calls.at(-1)?.[1]).toMatchObject({ message: "This PC is paired.", buttons: ["Done", "Disconnect This PC", "Allow Desktop Link Full Access"] });
+  });
+
+  it("gives the link this device's key only while it is the paired device at the current revision", async () => {
+    const { deps, state } = await setup();
+    const pairing = createPairing({ ...deps, platform: "linux" });
+    expect(await pairing.linkIdentity(AbortSignal.timeout(5_000))).toBeNull();
+    prompt.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 });
+    await pairing.open();
+    const identity = await pairing.linkIdentity(AbortSignal.timeout(5_000));
+    expect(identity).toMatchObject({ origin, ownerId, machineId, deviceId: state.deviceId, revision: 1 });
+    expect(identity?.privateKey.asymmetricKeyType).toBe("ed25519");
+    // Paired elsewhere (another device's id at a newer revision): no identity here.
+    state.deviceId = "f".repeat(64);
+    state.revision = 3;
+    expect(await pairing.linkIdentity(AbortSignal.timeout(5_000))).toBeNull();
+  });
+
+  // Fault detected: a desktop link opened by an earlier pairing kept running
+  // through Disconnect until the revocation request came back.
+  it("tells the link as pairing commits, and before the disconnect request is sent", async () => {
+    const { deps, fetchFn } = await setup();
+    const order: string[] = [];
+    const pairing = createPairing({
+      ...deps, platform: "linux", onPaired: () => order.push("paired"), onDisconnecting: () => order.push("disconnecting"),
+    });
+    const transport = fetchFn.getMockImplementation()!;
+    fetchFn.mockImplementation(async (input, init) => {
+      order.push(`${init?.method ?? "GET"} ${new URL(input.toString()).pathname}`);
+      return transport(input, init);
+    });
+    prompt.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 });
+    await pairing.open();
+    expect(order.at(-1)).toBe("paired");
+    order.length = 0;
+    prompt.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 });
+    await pairing.open();
+    expect(order.indexOf("disconnecting")).toBeGreaterThan(-1);
+    expect(order.indexOf("disconnecting")).toBeLessThan(order.findIndex((entry) => entry.startsWith("DELETE")));
+    expect(await pairing.linkIdentity(AbortSignal.timeout(5_000))).toBeNull();
+  });
+});
+
+describe("desktop link Full Access (spec 2716, D2)", () => {
+  it("is allowed and revoked in the pairing dialog, and holds only for the pairing it was given under", async () => {
+    const { deps, state } = await setup();
+    const pairing = createPairing({ ...deps, platform: "win32" });
+    prompt.mockResolvedValueOnce({ response: 1 }).mockResolvedValueOnce({ response: 0 });
+    await pairing.open();
+    const identity = (await pairing.linkIdentity(AbortSignal.timeout(5_000)))!;
+    expect(await pairing.linkFullAccess(identity)).toBe(false);
+    // Paired dialog: Done, Disconnect, Allow Desktop Link Full Access.
+    prompt.mockResolvedValueOnce({ response: 2 }).mockResolvedValueOnce({ response: 0 });
+    await pairing.open();
+    expect(prompt.mock.calls.at(-2)?.[1].buttons).toEqual(["Done", "Disconnect This PC", "Allow Desktop Link Full Access"]);
+    expect(prompt.mock.calls.at(-1)?.[1].message).toBe("Desktop Link Full Access is allowed.");
+    expect(await pairing.linkFullAccess(identity)).toBe(true);
+    // A newer pairing revision never inherits it.
+    expect(await pairing.linkFullAccess({ ...identity, revision: identity.revision + 1 })).toBe(false);
+    prompt.mockResolvedValueOnce({ response: 2 }).mockResolvedValueOnce({ response: 0 });
+    await pairing.open();
+    expect(prompt.mock.calls.at(-2)?.[1].buttons).toContain("Revoke Desktop Link Full Access");
+    expect(await pairing.linkFullAccess(identity)).toBe(false);
+    expect(state.revision).toBe(1);
+  });
 });

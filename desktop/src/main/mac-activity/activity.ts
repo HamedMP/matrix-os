@@ -11,7 +11,8 @@ export interface MacActivityHandle {
   update(phase: MacActivityPhase): void;
   finish(phase: MacActivityPhase): void;
 }
-export type BeginMacActivity = (kind: MacActivityKind, worktreeId: string) => MacActivityHandle | undefined;
+/** `worktreeId` is required for every kind but `desktop-link` (spec 2716), which has none. */
+export type BeginMacActivity = (kind: MacActivityKind, worktreeId?: string) => MacActivityHandle | undefined;
 
 interface Options {
   userData: string;
@@ -22,7 +23,7 @@ interface Options {
 
 interface Activity {
   kind: MacActivityKind;
-  worktreeId: string;
+  worktreeId?: string;
   phase?: MacActivityPhase;
 }
 
@@ -33,6 +34,7 @@ const KIND_LABEL: Record<MacActivityKind, string> = {
   terminal: "Mac terminal check",
   "terminal-watch": "Mac terminal watch",
   "background-checks": "Background Mac checks",
+  "desktop-link": "Desktop link",
 };
 const PHASE_LABEL: Record<MacActivityPhase, string> = {
   "awaiting-approval": "Waiting for approval",
@@ -80,7 +82,7 @@ export function createMacActivity(options: Options) {
   function log(scope: string, activity: Activity, phase: MacActivityPhase) {
     if (phase !== activity.phase) {
       activity.phase = phase;
-      void history.append(scope, { kind: activity.kind, worktreeId: activity.worktreeId, phase });
+      void history.append(scope, { kind: activity.kind, phase, ...(activity.worktreeId ? { worktreeId: activity.worktreeId } : {}) });
     }
   }
 
@@ -116,7 +118,7 @@ export function createMacActivity(options: Options) {
       refresh();
       if (request.signal.aborted || scope !== current) return;
       const detail = events?.slice(-MAX_SHOWN).reverse().map(event =>
-        `${new Date(event.at).toLocaleString()} · ${KIND_LABEL[event.kind]} · ${PHASE_LABEL[event.phase]}\nWorktree ${event.worktreeId}`,
+        `${new Date(event.at).toLocaleString()} · ${KIND_LABEL[event.kind]} · ${PHASE_LABEL[event.phase]}${event.worktreeId ? `\nWorktree ${event.worktreeId}` : ""}`,
       ).join("\n\n");
       await showMacActivityDialog(options.window?.() ?? null, {
         type: "info",
@@ -188,10 +190,14 @@ export function createMacActivity(options: Options) {
   const begin: BeginMacActivity = (kind, worktreeId) => {
     refresh();
     const current = scope;
-    if (!current || closed || active.size >= MAX_ACTIVE || !MacActivityKindSchema.safeParse(kind).success
-      || !WorktreeIdSchema.safeParse(worktreeId).success) return;
+    // The desktop link has a slot of its own (one link), so other work can never leave it unshown.
+    const full = kind === "desktop-link"
+      ? [...active].some((entry) => entry.kind === "desktop-link")
+      : [...active].filter((entry) => entry.kind !== "desktop-link").length >= MAX_ACTIVE;
+    if (!current || closed || full || !MacActivityKindSchema.safeParse(kind).success
+      || (kind === "desktop-link" ? worktreeId !== undefined : !WorktreeIdSchema.safeParse(worktreeId).success)) return;
     const admittedScope = current;
-    const activity: Activity = { kind, worktreeId };
+    const activity: Activity = { kind, ...(worktreeId ? { worktreeId } : {}) };
     active.add(activity);
     function change(phase: MacActivityPhase, finish: boolean) {
       refresh();

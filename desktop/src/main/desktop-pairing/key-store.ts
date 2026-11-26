@@ -11,7 +11,7 @@ const MAX_FILE_BYTES = 4096;
 const TEMP_SWEEP_INTERVAL_MS = 60_000;
 const TEMP_WRITE_GRACE_MS = 60 * 60_000;
 const MAX_TEMP_SWEEP_ENTRIES = 256;
-const TEMP_FILE = /^(?:device|chat-full-access)-[a-f0-9]{64}\.bin\.[a-f0-9-]{36}\.tmp$/;
+const TEMP_FILE = /^(?:device|chat-full-access|desktop-link-full-access)-[a-f0-9]{64}\.bin\.[a-f0-9-]{36}\.tmp$/;
 const ScopeId = z.string().regex(/^[a-f0-9]{64}$/);
 const SavedKey = z.strictObject({
   scope: ScopeId,
@@ -21,6 +21,12 @@ const SavedChatFullAccess = DesktopPairingStateSchema.extend({
   scope: ScopeId,
   deviceId: DesktopPairingDeviceIdSchema,
   capability: z.literal("mac-verification"),
+});
+/** The owner's Full Access for the desktop link on this device (spec 2716, D2), bound to one pairing. */
+const SavedLinkFullAccess = DesktopPairingStateSchema.extend({
+  scope: ScopeId,
+  deviceId: DesktopPairingDeviceIdSchema,
+  capability: z.literal("desktop-link"),
 });
 
 export interface KeyScope { origin: string; ownerId: string }
@@ -57,7 +63,10 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
 
   function files(scope: KeyScope) {
     const id = createHash("sha256").update(JSON.stringify([scope.ownerId, scope.origin])).digest("hex");
-    return { id, keyPath: join(directory, `device-${id}.bin`), fullAccessPath: join(directory, `chat-full-access-${id}.bin`) };
+    return {
+      id, keyPath: join(directory, `device-${id}.bin`), fullAccessPath: join(directory, `chat-full-access-${id}.bin`),
+      linkFullAccessPath: join(directory, `desktop-link-full-access-${id}.bin`),
+    };
   }
 
   async function inspectDirectory() {
@@ -213,12 +222,38 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
     await rm(files(scope).fullAccessPath, { force: true });
   }
 
+  async function hasLinkFullAccess(scope: KeyScope, state: PairingState) {
+    if (!state.deviceId) return false;
+    const { id, linkFullAccessPath } = files(scope);
+    const record = await readEncryptedRecord(linkFullAccessPath);
+    if (record === null) return false;
+    const saved = SavedLinkFullAccess.parse(record);
+    return saved.scope === id && matchingPairingState(state, saved);
+  }
+
+  async function allowLinkFullAccess(scope: KeyScope, state: PairingState, signal: AbortSignal, assertCurrent: () => void) {
+    const { id, linkFullAccessPath } = files(scope);
+    const saved = SavedLinkFullAccess.parse({ ...state, scope: id, capability: "desktop-link" });
+    await publishEncryptedRecord(linkFullAccessPath, saved, signal, temporary => {
+      assertCurrent();
+      return rename(temporary, linkFullAccessPath);
+    });
+  }
+
+  async function revokeLinkFullAccess(scope: KeyScope) {
+    if (!await inspectDirectory()) return;
+    await rm(files(scope).linkFullAccessPath, { force: true });
+  }
+
   return {
     load,
     loadOrCreate,
     hasChatFullAccess,
     allowChatFullAccess,
     revokeChatFullAccess,
+    hasLinkFullAccess,
+    allowLinkFullAccess,
+    revokeLinkFullAccess,
     dispose() {
       disposed = true;
       clearInterval(timer);

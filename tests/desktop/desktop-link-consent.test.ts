@@ -4,6 +4,7 @@
 // terminals the link started are covered; Stop forgets everything.
 import { describe, expect, it, vi } from "vitest";
 import { createDesktopLinkConsent, describeRun, renderVisible, type DesktopLinkConsentRequest } from "../../desktop/src/main/desktop-link/consent";
+import { desktopLinkApproval } from "../../desktop/src/main/desktop-link/register";
 
 const terminal = (instance: string) => ({ instance, action: "open" as const, terminal: instance.split("@")[0]!, title: "Claude", program: "claude", cwd: "/home/me/app" });
 
@@ -121,6 +122,25 @@ describe("desktop link consent", () => {
     // Both expired from arrival: the second never got a dialog of its own.
     expect(ask).toHaveBeenCalledTimes(1);
     expect(Date.now() - started).toBeLessThan(400);
+  });
+
+  it("words each approval for the device it runs on, inside a phrase the computer's name cannot replace", () => {
+    expect(desktopLinkApproval("matrix-demo", { kind: "run", command: "uname", cwd: "/Users/me" }, "darwin")).toMatchObject({
+      message: "Your Matrix computer “matrix-demo” wants to run a command on this Mac",
+      detail: expect.stringMatching(/^Command:\nuname\n\nFolder: \/Users\/me\n\nIt runs as you, and the computer can then see and type into that terminal\./),
+    });
+    expect(desktopLinkApproval("matrix-demo", { kind: "screenshot" }, "win32").message)
+      .toBe("Your Matrix computer “matrix-demo” wants to take a screenshot of this PC");
+    expect(desktopLinkApproval("matrix-demo", { kind: "terminal", action: "end", terminal: "t3", title: "deploy", program: "ssh prod", cwd: "/home/me/infra" }, "linux").message)
+      .toBe("Your Matrix computer “matrix-demo” wants to end terminal t3 on this desktop");
+    expect(desktopLinkApproval("matrix-demo", { kind: "terminal", action: "open", terminal: "t3", title: "deploy", program: "ssh prod", cwd: "/home/me/infra" }, "linux")).toMatchObject({
+      message: "Your Matrix computer “matrix-demo” wants to open terminal t3 on this desktop",
+      detail: expect.stringMatching(/^Program: ssh prod\nFolder: \/home\/me\/infra\nTitle \(set by the program\): deploy\n/),
+    });
+    // The computer's name is shown as written, never as a second line.
+    expect(desktopLinkApproval("box\nApple Security", { kind: "screenshot" }, "darwin").message)
+      .toBe("Your Matrix computer “box⟨U+000A⟩Apple Security” wants to take a screenshot of this Mac");
+    expect(desktopLinkApproval("x".repeat(200), { kind: "screenshot" }, "darwin").message).toBe("Your Matrix computer wants to take a screenshot of this Mac");
   });
 
   // Fault detected (review, P1): the pause applied only when another request already
@@ -261,5 +281,28 @@ describe("desktop link consent", () => {
     const c = createDesktopLinkConsent({ ask: async () => { opened.push(Date.now()); return true; }, fullAccess: async () => false, dialogGapMs: 50, log: () => {} });
     await Promise.all([c.screenshot(), c.screenshot()]);
     expect(opened[1]! - opened[0]!).toBeGreaterThanOrEqual(45);
+  });
+});
+
+describe("desktop link in Mac Activity", () => {
+  it("shows one entry while the link is on, through reconnects, and records how it ended", async () => {
+    const { bridgeDesktopLinkActivity } = await import("../../desktop/src/main/desktop-link/register");
+    let emit: (status: { slot: string; computerName: string; state: string }) => void = () => {};
+    const service = { onStatus: (listener: typeof emit) => { emit = listener; return () => {}; } };
+    const handles: Array<{ update: ReturnType<typeof vi.fn>; finish: ReturnType<typeof vi.fn> }> = [];
+    const begin = vi.fn(() => { const handle = { update: vi.fn(), finish: vi.fn() }; handles.push(handle); return handle; });
+    bridgeDesktopLinkActivity(service as never, begin);
+    const status = (state: string) => emit({ slot: "primary", computerName: "matrix-demo", state });
+    status("connecting");
+    status("on");
+    status("offline");
+    status("on");
+    expect(begin).toHaveBeenCalledTimes(1);
+    expect(begin).toHaveBeenCalledWith("desktop-link");
+    status("removed");
+    expect(handles[0]!.finish).toHaveBeenCalledWith("revoked");
+    status("on");
+    status("off");
+    expect(handles[1]!.finish).toHaveBeenCalledWith("stopped");
   });
 });

@@ -5,16 +5,20 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 
 export const MacActivityScope = z.string().regex(/^[a-f0-9]{64}$/);
-export const MacActivityKindSchema = z.enum(["preview", "terminal", "background-checks", "terminal-watch"]);
+export const MacActivityKindSchema = z.enum(["preview", "terminal", "background-checks", "terminal-watch", "desktop-link"]);
 export const MacActivityPhaseSchema = z.enum([
   "awaiting-approval", "ready", "running", "returning", "returned", "declined", "stopped", "expired", "failed", "revoked",
 ]);
-const Entry = z.strictObject({
+const EntryFields = z.strictObject({
   kind: MacActivityKindSchema,
   phase: MacActivityPhaseSchema,
-  worktreeId: WorktreeIdSchema,
+  /** The Chat worktree; the desktop link (spec 2716) belongs to none. */
+  worktreeId: WorktreeIdSchema.optional(),
 });
-const StoredEntry = Entry.extend({ scope: MacActivityScope, at: z.number().int().nonnegative() });
+/** Every kind but the desktop link names its worktree. */
+const namesItsWorktree = (entry: { kind: string; worktreeId?: string }) => (entry.kind === "desktop-link") === (entry.worktreeId === undefined);
+const Entry = EntryFields.refine(namesItsWorktree);
+const StoredEntry = EntryFields.extend({ scope: MacActivityScope, at: z.number().int().nonnegative() }).refine(namesItsWorktree);
 const MAX_PROFILE_ROWS = 192;
 const MAX_OWNER_ROWS = 64;
 const MAX_BYTES = 64 * 1024;

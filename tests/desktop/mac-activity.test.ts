@@ -114,6 +114,32 @@ describe("Mac activity", () => {
     expect(history?.map(row => row.phase)).toEqual(["running", "returned"]);
   });
 
+  // Spec 2716: the desktop link belongs to no worktree, and nothing else may omit one.
+  it("records the desktop link without a worktree, and refuses a worktree-less entry of any other kind", async () => {
+    const userData = await directory();
+    const history = createMacActivityHistory(userData);
+    await history.append(scope, { kind: "desktop-link", phase: "running" });
+    await history.append(scope, { kind: "terminal", phase: "returned" });
+    await history.append(scope, { kind: "desktop-link", phase: "stopped", worktreeId: worktree });
+    await history.append(scope, { kind: "desktop-link", phase: "revoked" });
+    const rows = await createMacActivityHistory(userData).read(scope);
+    expect(rows?.map(({ kind, phase, worktreeId }) => ({ kind, phase, worktreeId }))).toEqual([
+      { kind: "desktop-link", phase: "running", worktreeId: undefined },
+      { kind: "desktop-link", phase: "revoked", worktreeId: undefined },
+    ]);
+  });
+
+  // Fault detected (review): with four activities running, the desktop link got no entry,
+  // so the desktop could stay linked with no indicator and no Stop.
+  it("always has room for the desktop link's one entry", async () => {
+    const userData = await directory();
+    const activity = createMacActivity({ userData, getScope: () => scope, stop: vi.fn() });
+    for (let index = 0; index < 4; index += 1) expect(activity.begin("terminal", worktree)).toBeDefined();
+    expect(activity.begin("terminal", worktree)).toBeUndefined();
+    expect(activity.begin("desktop-link")).toBeDefined();
+    expect(activity.begin("desktop-link")).toBeUndefined();
+  });
+
   it("rejects invalid scope and worktree IDs and persists no additional event data", async () => {
     const userData = await directory();
     const history = createMacActivityHistory(userData);

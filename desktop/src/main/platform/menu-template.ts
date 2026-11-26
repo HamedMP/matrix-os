@@ -224,6 +224,8 @@ export function createAppMenuTemplate({
             ...newItems,
             { type: "separator" },
             ...settingsItems,
+            // 2698 pairing, which also switches the desktop link on (spec 2716).
+            ...(openMacPairing ? [{ label: platform === "win32" ? "Pair This PC…" : "Pair This Desktop…", click: openMacPairing }] : []),
             updateItem,
             { type: "separator" },
             ...closeAppItems,
