@@ -249,6 +249,21 @@ describe("OwnedComputersPanel", () => {
     expect(screen.queryByText("Lab server")).toBeNull();
   });
 
+  it("keeps another computer's remove confirmation open when an earlier removal settles", async () => {
+    const t = transport([computer(), computer({ machineId: ID_B, name: "Home desktop" })]);
+    let settle: () => void = () => undefined;
+    t.remove.mockImplementationOnce(() => new Promise<undefined>((resolve) => { settle = () => resolve(undefined); }));
+    render(<OwnedComputersPanel scope="a" transport={t} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Lab server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove Home desktop" }));
+    expect(screen.getByRole("heading", { name: "Remove Home desktop?" })).toBeTruthy();
+    settle();
+    await waitFor(() => expect(screen.queryByText("Lab server")).toBeNull());
+    expect(screen.getByRole("heading", { name: "Remove Home desktop?" })).toBeTruthy();
+  });
+
   it("tells the surface after a successful change so its other computer lists refresh", async () => {
     const t = transport([computer()]);
     const onChanged = vi.fn();

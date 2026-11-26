@@ -165,6 +165,11 @@ function OwnedComputersContent({ transport, onChanged }: { transport: OwnedCompu
     }
   }
 
+  // A removal that settles after the owner moved on must not close another computer's confirmation.
+  function closeRemoveConfirmation(machineId: string) {
+    setRemoveTarget((current) => (current?.machineId === machineId ? null : current));
+  }
+
   async function confirmRemove() {
     const target = removeTarget;
     if (!target) return;
@@ -175,11 +180,11 @@ function OwnedComputersContent({ transport, onChanged }: { transport: OwnedCompu
       await client.remove(target.machineId);
       changed = true;
       setState((current) => (current.status === "ready" ? { status: "ready", list: withoutOwnedComputer(current.list, target.machineId) } : current));
-      setRemoveTarget(null);
+      closeRemoveConfirmation(target.machineId);
     } catch (error: unknown) {
       logFailure("remove", error);
       setFailure({ machineId: target.machineId, kind: "remove" });
-      setRemoveTarget(null);
+      closeRemoveConfirmation(target.machineId);
     } finally {
       finish(target.machineId, ticket.sequence, changed);
     }
