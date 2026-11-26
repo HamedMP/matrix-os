@@ -510,6 +510,27 @@ describe("T133: Auth token middleware", () => {
     expect(nextCalled).toBe(true);
   });
 
+  it("allows /ws/terminal/herdr with query token", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    await mw(
+      mockContext("/ws/terminal/herdr", undefined, "secret-token", "10.0.0.1"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(true);
+  });
+
+  it("rejects a query token on the Herdr list route", async () => {
+    const mw = authMiddleware("secret-token");
+    let nextCalled = false;
+    const result = await mw(
+      mockContext("/api/terminal/herdr", undefined, "secret-token", "10.0.0.1"),
+      async () => { nextCalled = true; },
+    );
+    expect(nextCalled).toBe(false);
+    expect(result?.status).toBe(401);
+  });
+
   it("requires bearer auth for /ws/forward and rejects query-token fallback", async () => {
     const mw = authMiddleware("secret-token");
     let nextCalled = false;

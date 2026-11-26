@@ -194,7 +194,11 @@ export function createHcSessions(options: {
       await core.call("terminal.kill", { terminal: id });
     },
 
-    async attach(id: string, size: { cols: number; rows: number }): Promise<number> {
+    /**
+     * `stream.history`: scrollback lines the core replays first (2,000 when omitted).
+     * `stream.observe`: watch only; the core never takes this viewer's typing or size.
+     */
+    async attach(id: string, size: { cols: number; rows: number }, stream: { history?: number; observe?: boolean } = {}): Promise<number> {
       const startedIn = releaseEpoch;
       const core = await options.ensure();
       if (releaseEpoch !== startedIn) throw new Error("terminal attachment ended");
@@ -206,7 +210,12 @@ export function createHcSessions(options: {
       const attachment: Attachment = { stream: null, unacknowledged: [] };
       attachments.set(attachId, attachment);
       try {
-        attachment.stream = await core.attach({ terminal: id, ...size }, {
+        attachment.stream = await core.attach({
+          terminal: id, ...size,
+          ...(stream.history === undefined ? {} : { history: stream.history }),
+          // Sent only when set, so a typing attach looks exactly as before.
+          ...(stream.observe ? { observe: true } : {}),
+        }, {
           onData: (chunk, consumed) => {
             const text = decoder.decode(chunk, { stream: true });
             if (text.length === 0) { consumed(); return; }

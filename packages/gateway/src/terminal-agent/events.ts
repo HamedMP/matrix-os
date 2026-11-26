@@ -67,6 +67,8 @@ export interface TerminalEventSubscriber {
   close(): void;
   /** Bytes queued on the transport; above 1 MiB the subscriber misses events and resnapshots. */
   backlog?(): number;
+  /** Whether this subscriber may see a tab; tabs it may not see never reach it. Default: every tab. */
+  visible?(ref: TerminalRef): boolean;
 }
 
 interface SubscriberState extends TerminalEventSubscriber {
@@ -249,6 +251,18 @@ export function createTerminalEventHub(options: {
   }
 
   const attentionFrame = (): TerminalEventFrame => ({ type: "attention", seq: ++seq, tabs: attention?.tabs ?? {} });
+  // Attention names tabs too: a subscriber only learns about the tabs it may see.
+  const visibleTo = (subscriber: SubscriberState, frame: TerminalEventFrame): TerminalEventFrame => {
+    const visible = subscriber.visible;
+    if (frame.type !== "attention" || !visible) return frame;
+    return {
+      ...frame,
+      tabs: Object.fromEntries(Object.entries(frame.tabs).filter(([key]) => {
+        const tab = facts?.get(key);
+        return tab !== undefined && visible(tab.ref);
+      })),
+    };
+  };
 
   function startTimers() {
     if (options.autoStart === false || pollTimer) return;
@@ -288,12 +302,14 @@ export function createTerminalEventHub(options: {
       if (subscriber.needsSnapshot || subscriber.missed) {
         subscriber.needsSnapshot = false;
         subscriber.missed = false;
-        if (!deliver(subscriber, { type: "snapshot", seq: ++seq, tabs: snapshotTabs(next) })
-          || (options.seen && !deliver(subscriber, attentionFrame()))) dead.push(subscriber);
+        const tabs = snapshotTabs(next).filter((tab) => subscriber.visible?.(tab.ref) ?? true);
+        if (!deliver(subscriber, { type: "snapshot", seq: ++seq, tabs })
+          || (options.seen && !deliver(subscriber, visibleTo(subscriber, attentionFrame())))) dead.push(subscriber);
         continue;
       }
       for (const frame of frames) {
-        if (!deliver(subscriber, frame)) {
+        if (frame.type === "event" && subscriber.visible && !subscriber.visible(frame.event.ref)) continue;
+        if (!deliver(subscriber, visibleTo(subscriber, frame))) {
           dead.push(subscriber);
           break;
         }
@@ -322,7 +338,7 @@ export function createTerminalEventHub(options: {
         close: () => { if (subscribers.delete(state) && subscribers.size === 0) stopTimers(); },
         markSeen: (ref) => {
           const key = terminalRefKey(ref);
-          if (!options.seen || !facts?.has(key)) return false;
+          if (!options.seen || !facts?.has(key) || (state.visible && !state.visible(ref))) return false;
           options.seen.mark(key, now(), done.get(key)?.finished === true);
           if (refreshAttention()) {
             const frame = attentionFrame();
@@ -331,7 +347,7 @@ export function createTerminalEventHub(options: {
               if (subscriber.needsSnapshot || subscriber.missed) continue;
               // A backed-up subscriber gets a fresh snapshot (and attention) once it drains.
               if ((subscriber.backlog?.() ?? 0) > MAX_BACKLOG_BYTES) subscriber.missed = true;
-              else if (!deliver(subscriber, frame)) dead.push(subscriber);
+              else if (!deliver(subscriber, visibleTo(subscriber, frame))) dead.push(subscriber);
             }
             dead.forEach(evict);
           }

@@ -9,6 +9,8 @@ const CALL_TIMEOUT_MS = 5_000;
 const MAX_PENDING_CALLS = 64;
 const MAX_STREAMS = 32;
 const MAX_HELLO_BYTES = 64 * 1024;
+/** Scrollback lines the core replays on attach when the caller names none. */
+const DEFAULT_ATTACH_HISTORY = 2_000;
 
 const HelloSchema = z.object({
   version: z.string().max(32),
@@ -78,7 +80,12 @@ interface PendingCall {
 export interface HcConnection {
   readonly version: string;
   call(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
-  attach(params: { terminal: string; cols: number; rows: number }, handlers: HcStreamHandlers): Promise<HcStream>;
+  /**
+   * `history` is how many scrollback lines the core replays first (default 2,000).
+   * `observe` attaches watch-only: the core never takes this viewer's typing or
+   * size, so it cannot resize the program (herdr-core `terminal.attach` param).
+   */
+  attach(params: { terminal: string; cols: number; rows: number; history?: number; observe?: boolean }, handlers: HcStreamHandlers): Promise<HcStream>;
   onDisconnect(listener: () => void): void;
   close(): void;
 }
@@ -155,7 +162,7 @@ export function connectHc(options: { open(): HcSocket; timeoutMs?: number } & Hc
         // The channel's first frames (the history replay) can share a socket
         // read with the reply, so the stream is registered as the reply is
         // read, not after this promise resumes.
-        const result = await call("terminal.attach", { ...params, history: 2_000 }, timeoutMs, (reply) => {
+        const result = await call("terminal.attach", { ...params, history: params.history ?? DEFAULT_ATTACH_HISTORY }, timeoutMs, (reply) => {
           const attached = AttachedSchema.parse(reply);
           // A channel that is still open here was reused: trust neither stream.
           if (streams.has(attached.channel)) throw new HcProtocolError();

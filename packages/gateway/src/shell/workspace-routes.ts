@@ -20,6 +20,7 @@ import {
 } from "@matrix-os/contracts";
 import type { Context } from "hono";
 import { TerminalRuntimeError } from "@matrix-os/terminal-runtime";
+import { isHerdrTerminalRef } from "@matrix-os/contracts/herdr-terminals";
 import type { RequestPrincipal } from "../request-principal.js";
 import {
   ProjectFenceError,
@@ -143,6 +144,8 @@ export function createTerminalWorkspaceProjectAdmission(options: {
       operation: () => Promise<T>,
     ): Promise<T> {
       if (!options.projectOperationAdmission) return operation();
+      // Herdr terminals (spec 2701) belong to no Matrix project; the owner gate still applies.
+      if (isHerdrTerminalRef({ workspaceId })) return operation();
       const workspace = (await options.runtime.listWorkspaces())
         .find((candidate) => candidate.id === workspaceId);
       if (!workspace) throw new TerminalRuntimeError("not_found");
