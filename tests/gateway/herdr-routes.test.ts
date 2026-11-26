@@ -84,13 +84,16 @@ const ref = (id: string) => ({ workspaceId: HERDR_TERMINAL_WORKSPACE_ID, tabId: 
 describe("GET /api/terminal/herdr", () => {
   it("lists Herdr sessions for the owner", async () => {
     const { core, http } = await gateway();
-    core.add("t1", { title: "claude", status: { state: "working" } });
+    core.add("t1", { title: "claude", status: { state: "working" }, identity: { pid: 71, created_ms: 184, cwd: process.cwd() } });
     const response = await http("/api/terminal/herdr");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       available: true, status: "ready",
       sessions: [{ id: "t1", tabId: herdrTabId("t1"), title: "claude", status: "working" }],
     });
+    const chat = await (await http("/api/terminal/herdr?view=chat-control")).json();
+    expect(chat.sessions[0]).toMatchObject({ id: "t1", revision: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    expect((await http("/api/terminal/herdr?view=other")).status).toBe(400);
   });
 
   it("hides Herdr sessions from anyone but the owner", async () => {

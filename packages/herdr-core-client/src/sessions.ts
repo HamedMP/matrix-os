@@ -21,6 +21,11 @@ const MAX_TITLE_CHARS = 256;
 // Each entry is read on its own: a terminal the core describes in a way this
 // build does not expect is skipped instead of hiding every other terminal.
 const ListedSchema = z.object({ terminals: z.array(z.unknown()).max(LOCAL_TERMINAL_LIST_MAX) });
+const ProcessIdentitySchema = z.object({
+  cwd: z.string().min(1).max(4096), pid: z.int().positive(), created_ms: z.int().nonnegative(),
+});
+export type HcListedProcess = { terminal: LocalTerminal; identity?: z.infer<typeof ProcessIdentitySchema> };
+
 const ListedTerminalSchema = z.object({
   address: z.string().regex(LOCAL_TERMINAL_ID_PATTERN),
   state: z.string().max(32),
@@ -148,33 +153,38 @@ export function createHcSessions(options: {
     return RanSchema.parse(await core.call("terminal.run", params)).address;
   }
 
+  /** Process metadata is internal. Never return it as the renderer's terminal listing. */
+  async function listProcesses(core: HcConnection): Promise<HcListedProcess[]> {
+    const listed = ListedSchema.parse(await core.call("terminal.list", {}));
+    const terminals: HcListedProcess[] = [];
+    for (const entry of listed.terminals) {
+      const terminal = ListedTerminalSchema.safeParse(entry);
+      if (!terminal.success || terminal.data.state !== "live") continue;
+      const state = LocalTerminalStatusSchema.safeParse(terminal.data.status?.state);
+      const identity = ProcessIdentitySchema.safeParse(entry);
+      terminals.push({ terminal: {
+        id: terminal.data.address,
+        // Terminals started from Herdr often carry no title of their own; its
+        // where label, then the program's name, tell them apart.
+        title: safeTerminalTitle(
+          terminal.data.labels?.[TERMINAL_TITLE_LABEL], terminal.data.title, terminal.data.name,
+          terminal.data.labels?.[WHERE_LABEL], programName(terminal.data.argv?.[0]),
+        ),
+        status: state.success ? state.data : null,
+        ...(state.success && terminal.data.status?.msg ? { statusMessage: safeStatusMessage(terminal.data.status.msg) } : {}),
+      }, ...(identity.success ? { identity: identity.data } : {}) });
+    }
+    return terminals;
+  }
+
   return {
     /** How many attachments are open. */
     attached: (): number => attachments.size,
 
-    /** Every live terminal the core reports. */
     async list(): Promise<LocalTerminal[]> {
-      const core = await options.ensure();
-      const listed = ListedSchema.parse(await core.call("terminal.list", {}));
-      const terminals: LocalTerminal[] = [];
-      for (const entry of listed.terminals) {
-        const terminal = ListedTerminalSchema.safeParse(entry);
-        if (!terminal.success || terminal.data.state !== "live") continue;
-        const state = LocalTerminalStatusSchema.safeParse(terminal.data.status?.state);
-        terminals.push({
-          id: terminal.data.address,
-          // Terminals started from Herdr often carry no title of their own; its
-          // where label, then the program's name, tell them apart.
-          title: safeTerminalTitle(
-            terminal.data.labels?.[TERMINAL_TITLE_LABEL], terminal.data.title, terminal.data.name,
-            terminal.data.labels?.[WHERE_LABEL], programName(terminal.data.argv?.[0]),
-          ),
-          status: state.success ? state.data : null,
-          ...(state.success && terminal.data.status?.msg ? { statusMessage: safeStatusMessage(terminal.data.status.msg) } : {}),
-        });
-      }
-      return terminals;
+      return (await listProcesses(await options.ensure())).map(({ terminal }) => terminal);
     },
+    listProcesses,
 
     /** Starts a terminal with these `terminal.run` params. Returns null when too many were started just now. */
     run(params: Record<string, unknown>): Promise<string | null> {

@@ -76,6 +76,7 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
   let blockedUntil = 0;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   let connectedAt = 0;
+  let generation = 0;
   // Ends a stream that is still waiting for its handshake; set only while one is.
   let abandonPending: (() => void) | null = null;
 
@@ -141,6 +142,7 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
       .then((opened) => {
         if (disposed) { opened.close(); throw shutDown(); }
         connection = opened;
+        generation += 1;
         status = "ready";
         connectedAt = now();
         opened.onDisconnect(() => {
@@ -173,6 +175,14 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
   return {
     status: (): HerdrSessionHostStatus => status,
     list: sessions.list,
+    /** Inspect through the restricted, current connection. Never rebind a process to another core. */
+    async listProcesses() {
+      const core = await ensure();
+      const terminals = await sessions.listProcesses(core);
+      if (disposed || connection !== core) throw shutDown();
+      return { terminals, generation };
+    },
+    isCurrentGeneration: (expected: number) => !disposed && connection !== null && generation === expected,
 
     /** Starts that computer's own shell in its home directory. Returns null when too many were started just now. */
     create(size: { cols: number; rows: number }): Promise<string | null> {
