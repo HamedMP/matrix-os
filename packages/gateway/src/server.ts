@@ -270,6 +270,8 @@ import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
 import { registerTerminalSockets } from "./server/terminal-sockets.js";
 import { createLocalTerminalAgentToken, type LocalTerminalAgentToken } from "./terminal-agent/local-token.js";
+import { createHerdrChatTerminalRoute } from "./chat/herdr-terminal-route.js";
+import { HERDR_CHAT_ROUTE } from "./chat/herdr-chat-target.js";
 import { createTerminalAgentServices, type TerminalAgentServices } from "./terminal-agent/services.js";
 import { createHerdrSessionsFromEnv } from "./herdr/register.js";
 import { createTerminalWorkspaceProjectAdmission } from "./shell/workspace-routes.js";
@@ -1269,6 +1271,7 @@ export async function createGateway(config: GatewayConfig) {
       localTerminalAgentToken: () => localTerminalAgentToken?.token,
     },
   });
+  app.route(HERDR_CHAT_ROUTE, createHerdrChatTerminalRoute(herdrSessions, terminalAgents.inputActivity));
   app.route("/api/desktop-pairing", await createRuntimeDesktopPairingRoutes({ ownerDatabase: kyselyInstance }));
   app.route("/api/system/private-network", privateNetwork.routes);
   app.route("/api/speech", speechRuntime.routes);

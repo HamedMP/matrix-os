@@ -2,6 +2,7 @@
 // owner's own herdr-core, reached through `herdr-core connect`. The core is
 // the owner's, not Matrix's: the adapter lists, attaches, types into and ends
 // its terminals, and does nothing else to it.
+import { randomUUID } from "node:crypto";
 import headless from "@xterm/headless";
 import type { TerminalRef, TerminalWorkspace } from "@matrix-os/contracts";
 import { SafeDisplayStringSchema } from "@matrix-os/contracts";
@@ -14,6 +15,7 @@ import { ZodError } from "zod/v4";
 import { createAttachmentSlots } from "@matrix-os/herdr-core-client/sessions";
 import { createHerdrSessionHost, type HerdrSessionHostStatus } from "@matrix-os/herdr-core-client/session-host";
 import type { TerminalAgentStatusEntry } from "@matrix-os/terminal-runtime";
+import { bindHerdrChatTerminal, herdrDirectoryIdentity, herdrProcessRevision, type ChatTerminalSelection } from "./chat-terminal.js";
 import { createHerdrRefMap, herdrTerminalRef } from "./refs.js";
 
 const { Terminal: HeadlessTerminal } = headless;
@@ -114,6 +116,7 @@ export function createHerdrAdapter(options: {
   const captureQuietMs = options.captureQuietMs ?? DEFAULT_CAPTURE_QUIET_MS;
   const captureMaxMs = options.captureMaxMs ?? DEFAULT_CAPTURE_MAX_MS;
   const refs = createHerdrRefMap();
+  const processSalt = randomUUID();
   // Bounded by the attachment slots; entries leave on detach and close.
   const viewers = new Map<number, HerdrAttachmentHandlers>();
   // Output can arrive in the same read as the attach answer, before the
@@ -193,12 +196,14 @@ export function createHerdrAdapter(options: {
     return { available: false, status, sessions: [] };
   }
 
-  async function load(): Promise<HerdrSessionList> {
+  async function load(forChatControl = false): Promise<HerdrSessionList> {
     if (closed) return unavailable("unavailable");
     try {
-      const terminals = (await host.list()).slice(0, HERDR_SESSION_LIST_MAX);
+      const { terminals, generation } = await host.listProcesses();
       const live = new Set<string>();
-      const sessions: HerdrSession[] = terminals.map((terminal) => {
+      const listed = terminals.slice(0, HERDR_SESSION_LIST_MAX);
+      const sessions: HerdrSession[] = listed.map((process) => {
+        const { terminal } = process;
         live.add(terminal.id);
         const ref = refs.remember(terminal.id);
         if (terminal.status) {
@@ -218,6 +223,18 @@ export function createHerdrAdapter(options: {
       for (const id of [...reported.keys()]) if (!live.has(id)) reported.delete(id);
       noteEnded(sessions);
       loggedFailure = null;
+      if (forChatControl) {
+        // A grant selects a specific checkout inode. Normal session polling never needs filesystem I/O.
+        const directories = new Map<string, ReturnType<typeof herdrDirectoryIdentity>>();
+        await Promise.all(listed.map(async (process, i) => {
+          if (!process.identity) return;
+          const cwd = process.identity.cwd;
+          const identity = directories.get(cwd) ?? herdrDirectoryIdentity(cwd);
+          directories.set(cwd, identity);
+          const directoryId = await identity;
+          if (directoryId) sessions[i]!.revision = herdrProcessRevision(processSalt, generation, process, directoryId);
+        }));
+      }
       return { available: true, status: "ready", sessions };
     } catch (error: unknown) {
       // A fixed kind, once per run of the same failure; the reason never reaches clients.
@@ -366,8 +383,50 @@ export function createHerdrAdapter(options: {
     }
   }
 
+  async function workspace(): Promise<TerminalWorkspace | null> {
+    const listed = await list();
+    if (!listed.available) return null;
+    const finished = [...ended.values()].filter((entry) => now() - entry.at < ENDED_TTL_MS);
+    if (listed.sessions.length === 0 && finished.length === 0) return null;
+    return {
+      id: HERDR_TERMINAL_WORKSPACE_ID,
+      scope: "main",
+      canonicalSize: DEFAULT_INPUT_SIZE,
+      status: "running",
+      revision: 0,
+      createdAt: WORKSPACE_CREATED_AT,
+      updatedAt: WORKSPACE_CREATED_AT,
+      tabs: listed.sessions.map((session, order): TerminalWorkspace["tabs"][number] => ({
+        id: session.tabId,
+        workspaceId: HERDR_TERMINAL_WORKSPACE_ID,
+        name: displayName(session.title),
+        cwd: "",
+        status: "running",
+        revision: 0,
+        order,
+        accessScope: "owner",
+        createdAt: WORKSPACE_CREATED_AT,
+        updatedAt: WORKSPACE_CREATED_AT,
+      })).concat(finished.map((entry, index): TerminalWorkspace["tabs"][number] => ({
+        id: entry.tabId,
+        workspaceId: HERDR_TERMINAL_WORKSPACE_ID,
+        name: displayName(entry.title),
+        cwd: "",
+        // herdr-core's listing gives no exit code for a terminal that is gone.
+        status: "exited",
+        exitCode: null,
+        revision: 0,
+        order: listed.sessions.length + index,
+        accessScope: "owner",
+        createdAt: WORKSPACE_CREATED_AT,
+        updatedAt: WORKSPACE_CREATED_AT,
+      }))),
+    };
+  }
+
   return {
     list,
+    listForChatControl: () => load(true),
     refresh,
 
     /** Lists on start and every 30 s, so status and attention stay current without a viewer. */
@@ -382,45 +441,20 @@ export function createHerdrAdapter(options: {
     resolve: (ref: TerminalRef): string | undefined => refs.resolve(ref),
 
     /** The Herdr terminals as one canonical workspace, or null when there are none to show. */
-    async workspace(): Promise<TerminalWorkspace | null> {
-      const listed = await list();
-      if (!listed.available) return null;
-      const finished = [...ended.values()].filter((entry) => now() - entry.at < ENDED_TTL_MS);
-      if (listed.sessions.length === 0 && finished.length === 0) return null;
-      return {
-        id: HERDR_TERMINAL_WORKSPACE_ID,
-        scope: "main",
-        canonicalSize: DEFAULT_INPUT_SIZE,
-        status: "running",
-        revision: 0,
-        createdAt: WORKSPACE_CREATED_AT,
-        updatedAt: WORKSPACE_CREATED_AT,
-        tabs: listed.sessions.map((session, order): TerminalWorkspace["tabs"][number] => ({
-          id: session.tabId,
-          workspaceId: HERDR_TERMINAL_WORKSPACE_ID,
-          name: displayName(session.title),
-          cwd: "",
-          status: "running",
-          revision: 0,
-          order,
-          accessScope: "owner",
-          createdAt: WORKSPACE_CREATED_AT,
-          updatedAt: WORKSPACE_CREATED_AT,
-        })).concat(finished.map((entry, index): TerminalWorkspace["tabs"][number] => ({
-          id: entry.tabId,
-          workspaceId: HERDR_TERMINAL_WORKSPACE_ID,
-          name: displayName(entry.title),
-          cwd: "",
-          // herdr-core's listing gives no exit code for a terminal that is gone.
-          status: "exited",
-          exitCode: null,
-          revision: 0,
-          order: listed.sessions.length + index,
-          accessScope: "owner",
-          createdAt: WORKSPACE_CREATED_AT,
-          updatedAt: WORKSPACE_CREATED_AT,
-        }))),
-      };
+    workspace,
+
+    async bindChatTerminal(ref: TerminalRef, executionRoot: string, selection: ChatTerminalSelection) {
+      const id = refs.resolve(ref);
+      if (!id) return null;
+      return bindHerdrChatTerminal({
+        salt: processSalt,
+        inspect: () => host.listProcesses(),
+        current: generation => !closed && !connectionDown && host.isCurrentGeneration(generation),
+        workspace, screen: render,
+        writer: terminalId => attach(terminalId, sizes.get(terminalId) ?? DEFAULT_INPUT_SIZE, {
+          output: (_data, consumed) => consumed(), closed: () => undefined,
+        }),
+      }, id, ref, executionRoot, selection);
     },
 
     /** Herdr's own status reports, in the terminal-agent status pipeline's shape. */

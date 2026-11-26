@@ -1,10 +1,12 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { z } from "zod/v4";
 import { HerdrSessionIdSchema, type HerdrSessionList } from "@matrix-os/contracts/herdr-terminals";
 import type { RequestPrincipal } from "../request-principal.js";
 import { terminalRuntimeOwnerAccess } from "../shell/workspace-routes.js";
 import { HerdrAdapterError, type HerdrAdapter } from "./adapter.js";
 
+const ListView = z.literal("chat-control").optional();
 const DISABLED: HerdrSessionList = { available: false, status: "unavailable", sessions: [] };
 
 /**
@@ -32,9 +34,11 @@ export function createHerdrRoutes(options: {
   }
 
   app.get("/", ownerOnly, async (c) => {
+    const view = ListView.safeParse(c.req.query("view"));
+    if (!view.success) return c.json({ error: "Invalid request" }, 400);
     if (!options.adapter) return c.json(DISABLED);
     try {
-      return c.json(await options.adapter.list());
+      return c.json(await (view.data === "chat-control" ? options.adapter.listForChatControl() : options.adapter.list()));
     } catch (error: unknown) {
       console.error("[herdr] listing failed", error instanceof Error ? error.name : "unknown_error");
       return c.json(DISABLED);

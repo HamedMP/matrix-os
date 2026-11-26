@@ -33,6 +33,8 @@ export const HerdrSessionSchema = z.strictObject({
   tabId: z.string().regex(/^tt_[0-9a-f]{32}$/),
   title: z.string().min(1).max(256).regex(SAFE_TEXT),
   status: HerdrSessionStatusSchema.nullable(),
+  /** Opaque connected-core and process incarnation used for explicit Chat selection. */
+  revision: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   statusMessage: z.string().max(200).regex(SAFE_TEXT).optional(),
 });
 export type HerdrSession = z.infer<typeof HerdrSessionSchema>;

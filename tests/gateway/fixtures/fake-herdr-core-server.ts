@@ -3,6 +3,7 @@ import type { HcSocket } from "@matrix-os/herdr-core-client/client";
 import { encodeFrame, HC_FRAME, HcFrameDecoder } from "@matrix-os/herdr-core-client/protocol";
 
 export interface FakeTerminal {
+  identity?: { pid: number; created_ms: number; cwd: string };
   title: string;
   status: { state: string; msg?: string } | null;
   /** What a viewer is painted with on attach. */
@@ -37,7 +38,7 @@ export function createFakeHerdrCore(options: { version?: string; methods?: strin
     if (call.method === "terminal.list") {
       if (listFailure) { reply(socket, call.id, { error: { code: -1, message: "x", data: { kind: listFailure } } }); return; }
       reply(socket, call.id, { result: { terminals: [...terminals.entries()].map(([address, terminal]) => ({
-        address, state: "live", title: terminal.title, status: terminal.status,
+        address, state: "live", title: terminal.title, status: terminal.status, ...terminal.identity,
       })) } });
       return;
     }
