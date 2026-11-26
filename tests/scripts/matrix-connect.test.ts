@@ -97,6 +97,14 @@ describe("matrix-connect", () => {
 
   afterEach(async () => { await rm(dir, { recursive: true, force: true }); });
 
+  it("records the enrolled platform origin so the gateway trusts browser requests it forwards", () => {
+    const merged = mergeHostEnv("SHELL_ORIGIN=https://lab.tail1234.ts.net\nMATRIX_PUBLIC_APP_URL=https://old.example.com\n", machineEnv(),
+      "https://staging.example.com");
+    expect(merged).toContain("SHELL_ORIGIN=https://lab.tail1234.ts.net\n");
+    expect(merged).toContain("MATRIX_PUBLIC_APP_URL=https://staging.example.com\n");
+    expect(merged).not.toContain("old.example.com");
+  });
+
   it("merges owned keys into host.env and keeps every other line", () => {
     const merged = mergeHostEnv("DATABASE_URL=postgres://x\nUPGRADE_TOKEN=old\nMATRIX_SELF_HOSTED=1\nMATRIX_USER_ID=self-host-lab\n", machineEnv());
     expect(merged).toContain("DATABASE_URL=postgres://x\n");

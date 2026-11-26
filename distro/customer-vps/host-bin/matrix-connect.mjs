@@ -160,8 +160,11 @@ export function parseEnvFile(text) {
  * installer's standalone self-host id, so platform-routed requests from the
  * owner reach Terminal and other owner-only routes.
  */
-export function mergeHostEnv(existing, env) {
-  const replaced = [...OWNED_MACHINE_ENV_KEYS, 'MATRIX_USER_ID'];
+export function mergeHostEnv(existing, env, platformUrl) {
+  // The gateway trusts the enrolled platform's app origin for the browser requests it
+  // forwards, next to the installer's own origin (for example the tailnet URL).
+  const platformOrigin = platformUrl ? parsePlatformUrl(platformUrl) : null;
+  const replaced = [...OWNED_MACHINE_ENV_KEYS, 'MATRIX_USER_ID', ...(platformOrigin ? ['MATRIX_PUBLIC_APP_URL'] : [])];
   const keep = existing.split('\n').filter((line) => {
     const match = /^([A-Z][A-Z0-9_]*)=/.exec(line);
     return !(match && replaced.includes(match[1]));
@@ -171,6 +174,7 @@ export function mergeHostEnv(existing, env) {
     ...keep,
     ...OWNED_MACHINE_ENV_KEYS.map((key) => `${key}=${env[key]}`),
     `MATRIX_USER_ID=${env.MATRIX_CLERK_USER_ID}`,
+    ...(platformOrigin ? [`MATRIX_PUBLIC_APP_URL=${platformOrigin}`] : []),
   ].join('\n')}\n`;
 }
 
@@ -239,7 +243,7 @@ server {
 `;
 }
 
-export async function writeMachineFiles(env, tunnelToken, p = paths()) {
+export async function writeMachineFiles(env, tunnelToken, p = paths(), platformUrl = undefined) {
   validateMachineEnv(env);
   validateTunnelToken(tunnelToken);
   const root = { uid: 0, gid: 0 };
@@ -247,7 +251,7 @@ export async function writeMachineFiles(env, tunnelToken, p = paths()) {
   await writeFileAtomic(p.tunnelToken, `${tunnelToken}\n`, { mode: 0o600, owner: root });
   const existing = (await readText(p.hostEnv)) ?? '';
   const gid = await isRoot() ? await matrixGroup() : null;
-  await writeFileAtomic(p.hostEnv, mergeHostEnv(existing, env), { mode: 0o640, owner: gid === null ? undefined : { uid: 0, gid } });
+  await writeFileAtomic(p.hostEnv, mergeHostEnv(existing, env, platformUrl), { mode: 0o640, owner: gid === null ? undefined : { uid: 0, gid } });
   // The port-80 self-host server injects the gateway bearer; keep it in step.
   await writeFileAtomic(join(p.envDir, 'gateway-auth-token.conf'),
     `proxy_set_header Authorization "Bearer ${env.MATRIX_AUTH_TOKEN}";\n`, { mode: 0o600, owner: root });
@@ -498,7 +502,7 @@ export async function enroll(argv, env = process.env) {
         warn(`platform sent an invalid answer (${errorName(err)})`);
         return EXIT.unavailable;
       }
-      await writeMachineFiles(poll.json.env, poll.json.tunnelToken, p);
+      await writeMachineFiles(poll.json.env, poll.json.tunnelToken, p, platform);
       await writeState(p, {
         platformUrl: platform,
         machineId: poll.json.env.MATRIX_MACHINE_ID,
@@ -664,7 +668,8 @@ export async function refresh(env = process.env) {
     log('Not connected to a Matrix account.');
     return EXIT.ok;
   }
-  await writeMachineFiles(machine, token, p);
+  const state = await readState(p);
+  await writeMachineFiles(machine, token, p, state.platformUrl);
   if (env.MATRIX_CONNECT_NO_ACTIVATE !== '1' && !(await activateOrExplain(p, env))) return EXIT.unavailable;
   log('Connection settings refreshed.');
   return EXIT.ok;
