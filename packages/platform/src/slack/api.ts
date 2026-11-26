@@ -21,11 +21,11 @@ export class SlackApiRateLimitError extends SlackApiError {
   }
 }
 
-export function createSlackApi(options: { clientId: string; clientSecret: string; fetchImpl?: typeof fetch; readOnlyDev?: { channelId: string } }): SlackApi {
+export function createSlackApi(options: { clientId: string; clientSecret: string; fetchImpl?: typeof fetch; readOnlyDev?: { channelId: string }; metadataChannels?: readonly string[] }): SlackApi {
   const fetchImpl = options.fetchImpl ?? fetch;
-  function readableChannel(value: string) {
+  function readableChannel(value: string, metadata = false) {
     const channelId = SlackChannelIdSchema.parse(value);
-    if (options.readOnlyDev && channelId !== options.readOnlyDev.channelId) throw new SlackApiError();
+    if (options.readOnlyDev && channelId !== options.readOnlyDev.channelId && !(metadata && options.metadataChannels?.includes(channelId))) throw new SlackApiError();
     return channelId;
   }
   async function call(method: string, params: Record<string, string | number | boolean>, token?: string, signal?: AbortSignal): Promise<unknown> {
@@ -99,7 +99,7 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
     replies: (input) => messagePage("conversations.replies", input),
     history: (input) => messagePage("conversations.history", input),
     async conversationInfo(input) {
-      const channelId = readableChannel(input.channelId);
+      const channelId = readableChannel(input.channelId, true);
       const result = z.object({ channel: z.object({ is_ext_shared: z.boolean().optional(), is_pending_ext_shared: z.boolean().optional(),
         is_member: z.boolean().optional(), pending_connected_team_ids: z.array(z.string().max(64)).max(100).optional() }).passthrough() }).passthrough()
         .parse(await call("conversations.info", { channel: channelId }, input.token, input.signal));
@@ -111,7 +111,7 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
     },
 
     async hasChannelMember(input) {
-      const channel = readableChannel(input.channelId);
+      const channel = readableChannel(input.channelId, true);
       const member = SlackUserIdSchema.parse(input.userId);
       const pageSchema = z.object({
         members: z.array(SlackUserIdSchema).max(200),

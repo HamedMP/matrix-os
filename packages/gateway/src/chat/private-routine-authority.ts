@@ -29,14 +29,20 @@ export async function hasNonPrivateChatScope(executor: QueryExecutorProvider, ow
   return result.rows[0]!.non_private;
 }
 
+/** A named recipient must have the direct Chat to itself. */
+export function hasOtherBotBindingSql(chatId: Expression<string>, expectedBotId?: Expression<string>) {
+  return sql<boolean>`EXISTS (SELECT 1 FROM bot_chat_bindings binding WHERE binding.chat_id = ${chatId}
+    AND binding.removed_at IS NULL
+    AND (binding.kind <> 'direct' ${expectedBotId ? sql`OR binding.bot_id <> ${expectedBotId}` : sql``}))`;
+}
+
 /** A source (or destination) must be an active, personal Chat with no wider audience. */
-export async function privateBotSourceChat(db: Executor, owner: ChatOwner, chatId: string) {
+export async function privateBotSourceChat(db: Executor, owner: ChatOwner, chatId: string, expectedBotId?: string) {
   if (owner.type !== "personal" || isRoutineDirectChatId(chatId)) return undefined;
   return db.selectFrom("chats").select("title")
     .where("id", "=", chatId).where("owner_type", "=", "personal").where("owner_id", "=", owner.ownerId)
     .where("lifecycle", "=", "active").where("project_id", "is", null).where("collaboration", "is", null)
-    .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM bot_chat_bindings binding
-        WHERE binding.chat_id = chats.id AND binding.kind <> 'direct' AND binding.removed_at IS NULL)`)
+    .where(eb => eb.not(hasOtherBotBindingSql(eb.ref("chats.id"), expectedBotId ? sql.val(expectedBotId) : undefined)))
     .where(eb => eb.not(hasNonPrivateChatScopeSql(eb.ref("chats.owner_type"), eb.ref("chats.owner_id"), eb.ref("chats.id"))))
     .where(eb => eb.not(eb.exists(eb.selectFrom("chat_shares").select("id")
       .whereRef("chat_shares.chat_id", "=", "chats.id").where("expires_at", ">", new Date()))))

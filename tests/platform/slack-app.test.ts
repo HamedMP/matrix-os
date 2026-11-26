@@ -749,3 +749,77 @@ describe("Slack Dev read-only callbacks", () => {
     expect(api.addReaction).not.toHaveBeenCalled();
   });
 });
+
+it("serves two approved channels from one installation without Slack writes or forwarding an event twice", async () => {
+  const receive = vi.fn(async () => {});
+  const dev = { handle: "owner-dev", machineId: "1ef8382c-18c6-4493-a754-2aac9eb4bd83", ownerId: "user_employee",
+    organizationId: org, teamId: "TPILOT", ownerSlackId: "UOLD", channelId: "COLD" };
+  await repo.saveInstallation({ appId: "A123", teamId: "T123", organizationId: org, installedBy: dev.ownerId, botUserId: "UBOT",
+    encryptedBotToken: encryptSlackToken("xoxb-secret", config.tokenEncryptionKey, "A123:T123") });
+  await linkEmployee();
+  const channels = [{ channelId: "C001", name: "summary-test", senderId: "U123" }, { channelId: "C002", name: "review-test", senderId: "U234" }];
+  api.conversationInfo.mockImplementation(async ({channelId}) => ({ canAccess: true, isExternalShared: false,
+    channelMetadata: {id: channelId, name: channels.find(c => c.channelId === channelId)?.name} }));
+  app = makeApp({ readOnlyDev: dev, agentChannels: { teamId: "T123", ownerSlackId: "U123", channels },
+    dispatchRouted: receive, authenticateRuntime: async () => ({ ownerId: dev.ownerId, runtimeId: dev.machineId }) });
+  const candidates = await app.request("/internal/slack/agent-channels", { method: "POST", body: "{}" });
+  expect(candidates.status).toBe(200);
+  expect((await candidates.json()).channels).toMatchObject(channels);
+  const send = (channel: string, user: string, eventId: string) => app.request("/webhooks/slack/events", signed(envelope({
+    type: "message", channel_type: "channel", channel, user, ts: "1234.5678", text: "A natural request",
+  }, eventId)));
+  await send("C001", "U123", "EvOne"); await send("C001", "U123", "EvOne");
+  await send("C002", "U234", "EvTwo"); await send("C002", "U123", "EvWrong"); await send("C333", "U123", "EvWrongChannel");
+  expect(receive.mock.calls).toMatchObject([[{eventId:"EvOne",channelId:"C001"},expect.anything()],[{eventId:"EvTwo",channelId:"C002"},expect.anything()]]);
+  expect(dispatch).not.toHaveBeenCalled();
+  expect(api.postMessage).not.toHaveBeenCalled(); expect(api.replies).not.toHaveBeenCalled();
+  const claim = repo.claimEvent.bind(repo);
+  vi.spyOn(repo, "claimEvent").mockImplementationOnce(async (...input) => {
+    const result = await claim(...input);
+    await repo.removeLink("A123", "T123", dev.ownerId);
+    return result;
+  });
+  await send("C001", "U123", "EvUnlinkedDuringClaim");
+  await send("C001", "U123", "EvUnlinked");
+  expect(receive).toHaveBeenCalledTimes(2);
+});
+
+it("rejects invalid discovery ceilings without turning them into wildcard channels", async () => {
+  const {loadSlackDevAgentChannels} = await import("../../packages/platform/src/slack/agent-channels.js");
+  const dev = {handle:"owner-dev",machineId:"1ef8382c-18c6-4493-a754-2aac9eb4bd83",ownerId:"user_employee",organizationId:org,
+    ownerSlackId:"U123",teamId:"T123",channelId:"CPILOT"};
+  const channel = { channelId:"C001",name:"qa",senderId:"U123" };
+  const value = { teamId:dev.teamId, ownerSlackId:dev.ownerSlackId, channels:[channel] };
+  expect(loadSlackDevAgentChannels(undefined,dev)).toBeUndefined();
+  expect(() => loadSlackDevAgentChannels(JSON.stringify(value))).toThrow();
+  for (const channels of [[{...channel,name:"tech"}],[{...channel,channelId:dev.channelId}],[channel,channel]]) {
+    expect(() => loadSlackDevAgentChannels(JSON.stringify({...value,channels}),dev)).toThrow();
+  }
+  expect(loadSlackDevAgentChannels(JSON.stringify(value),dev)).toEqual(value);
+});
+
+it("keeps #tech on its original pilot and sends only the Alert channel to route selection on the same installation", async () => {
+  const dev = {handle:"owner-dev",machineId:"1ef8382c-18c6-4493-a754-2aac9eb4bd83",ownerId:"user_employee",organizationId:org,
+    ownerSlackId:"U123",teamId:"T123",channelId:"C123"};
+  await repo.saveInstallation({appId:config.appId,teamId:dev.teamId,organizationId:org,installedBy:dev.ownerId,botUserId:"UBOT",
+    encryptedBotToken:encryptSlackToken("xoxb-fixture",config.tokenEncryptionKey,"A123:T123")});
+  await linkEmployee();
+  const installation = await repo.getInstallation(config.appId,dev.teamId);
+  const dispatchContext = vi.fn();
+  const dispatchRouted = vi.fn();
+  api.conversationInfo.mockImplementation(async ({channelId}) => ({canAccess:true,isExternalShared:false,
+    channelMetadata:{id:channelId,name:channelId === "C123" ? "tech" : "app-alerts"}}));
+  app = makeApp({readOnlyDev:dev,dispatchContext,dispatchRouted,contextGrant:{scope:"channel",appId:config.appId,ownerId:dev.ownerId,
+    runtimeId:dev.machineId,organizationId:org,teamId:dev.teamId,channelId:dev.channelId,ownerSlackId:dev.ownerSlackId,
+    installationGeneration:installation!.generation,linkCreatedAt:clock.toISOString(),botId:"bot_12345678",chatId:"chat_12345678"},
+    agentChannels:{teamId:dev.teamId,ownerSlackId:dev.ownerSlackId,channels:[{channelId:"CALERT",name:"app-alerts",senderId:"U456"}]}});
+  const send = (channel:string,eventId:string) => app.request("/webhooks/slack/events",signed(envelope({
+    type:"message",user:"U456",channel,channel_type:"channel",text:"A natural request",ts:"123.456",
+  },eventId)));
+  await send("C123","EvPilot"); await send("CALERT","EvAlert");
+  await send("C123","EvPilot"); await send("CALERT","EvAlert");
+  expect(dispatchContext).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({botId:"bot_12345678",chatId:"chat_12345678",
+    event:expect.objectContaining({channelId:"C123",eventId:"EvPilot"})}),expect.any(AbortSignal));
+  expect(dispatchRouted).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({channelId:"CALERT",eventId:"EvAlert"}),expect.any(AbortSignal));
+  expect(dispatch).not.toHaveBeenCalled(); expect(api.postMessage).not.toHaveBeenCalled(); expect(api.addReaction).not.toHaveBeenCalled();
+});

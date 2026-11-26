@@ -11,7 +11,7 @@ const SlackDevTargetSchema = z.object({
   teamId: event.shape.teamId,
   channelId: event.shape.channelId,
 }).strict();
-export type SlackDevTarget = z.infer<typeof SlackDevTargetSchema>;
+export type SlackDevTarget = z.infer<typeof SlackDevTargetSchema> & { agentRoutes?: true };
 
 /** Slack transport selection is independent from the core platform transport. */
 export interface SlackPlatformConnection {
@@ -43,7 +43,7 @@ function resolveDevSlackPlatform(env: NodeJS.ProcessEnv, configured: string): Sl
   const taggedOrigin = new RegExp(`^https://${tag}---matrix-platform-preview-[a-z0-9]+(?:-[a-z0-9]+)*\\.a\\.run\\.app/?$`);
   if (!platformUrl || !taggedOrigin.test(platformUrl) || !token || !/^[a-f0-9]{64}$/.test(token)
     || token === env.UPGRADE_TOKEN || token === env.MATRIX_PREVIEW_PLATFORM_AUTH_TOKEN) return;
-  return { platformUrl, token, handle: devTarget.handle, devTarget };
+  return { platformUrl, token, handle: devTarget.handle, devTarget: env.MATRIX_SLACK_DEV_AGENT_ROUTES === "true" ? { ...devTarget, agentRoutes: true } : devTarget };
 }
 
 export function resolveSlackPlatform(env: NodeJS.ProcessEnv): {

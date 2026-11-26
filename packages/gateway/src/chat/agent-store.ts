@@ -12,6 +12,7 @@ import {
   CreateChatAgentRequestSchema, UpdateChatAgentRequestSchema,
   type BotRecipeRef, type ChatAgent, type CreateChatAgentRequest, type UpdateChatAgentRequest, type StoredChatAgentRecipe,
 } from "@matrix-os/contracts";
+import { fenceArchivedAgentRoute } from "./archive-agent-route.js";
 import { lockChatAgentOwner } from "./agent-owner-lock.js";
 import { resolveWithinHome } from "../path-security.js";
 import type { ChatDatabase } from "./database.js";
@@ -100,11 +101,11 @@ export class ChatAgentStore {
     return current;
   }
 
-  private async withOwnerLock<T>(owner: ChatOwner, action: () => Promise<T>): Promise<T> {
+  private async withOwnerLock<T>(owner: ChatOwner, action: (trx: Transaction<ChatDatabase>) => Promise<T>): Promise<T> {
     this.ownerKey(owner);
     return this.options.db.transaction().execute(async (trx) => {
       await lockChatAgentOwner(trx, owner);
-      return action();
+      return action(trx);
     });
   }
 
@@ -315,7 +316,7 @@ export class ChatAgentStore {
     const id = ChatAgentIdSchema.parse(agentId);
     if (isRoutineDirectBotId(id)) throw new ChatAgentStoreError("agent_not_found");
     const { baseRevision, recipe, ...patch } = UpdateChatAgentRequestSchema.parse(inputValue);
-    return this.withOwnerLock(owner, async () => {
+    const update = (mayFence: boolean) => this.withOwnerLock(owner, async (trx) => {
       const directory = await this.directory([this.ownerKey(owner)]);
       const existing = directory ? await this.read(join(directory, `${id}.md`)) : null;
       if (!existing) throw new ChatAgentStoreError("agent_not_found");
@@ -328,9 +329,19 @@ export class ChatAgentStore {
         ...(recipe && { recipe: resolvedRecipe ?? recipe }),
         revision: baseRevision + 1,
         updatedAt: (this.options.now?.() ?? new Date()).toISOString() });
+      if (patch.archived && await fenceArchivedAgentRoute(trx, owner.ownerId, id, agent.updatedAt)) {
+        // The second owner lock also protects against a replacement grant between phases.
+        if (!mayFence) throw new ChatAgentStoreError("agent_conflict");
+        return null;
+      }
       await this.write(directory!, { agent, createHash: existing.createHash }, false);
       return agent;
     });
+    // Commit withdrawal before archiving the Markdown definition. An interrupted file
+    // save leaves the route withdrawn, so a pending job cannot publish to an archived Agent.
+    const result = await update(true) ?? await update(false);
+    if (!result) throw new ChatAgentStoreError("agent_conflict");
+    return result;
   }
 
   private async closeSweepDirectories(): Promise<void> {

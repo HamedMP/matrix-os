@@ -21,12 +21,12 @@ export function loadSlackAppConfig(env: Record<string, string | undefined>): Sla
 }
 
 /** The caller owns the shared database. close() drains this component only, never destroys the pool. */
-export async function createSlackApp(options: SlackAuthorityDependencies & SlackThreadContextOptions & Pick<SlackAppRouteOptions, "readOnlyDev" | "devBrowserOAuth"> & {
+export async function createSlackApp(options: SlackAuthorityDependencies & SlackThreadContextOptions & Pick<SlackAppRouteOptions, "readOnlyDev" | "devBrowserOAuth" | "agentChannels" | "dispatchRouted"> & {
   db: Kysely<SlackDatabase>; config: SlackAppConfig; api?: SlackApi; fetchImpl?: typeof fetch; now?: () => Date; startCleanup?: boolean; linkTransaction?: SlackLinkTransaction;
 }) {
   await bootstrapSlackDatabase(options.db);
   const repository = new SlackRepository(options.db, { now: options.now, linkTransaction: options.linkTransaction });
-  const api = options.api ?? createSlackApi({ clientId: options.config.clientId, clientSecret: options.config.clientSecret, fetchImpl: options.fetchImpl, readOnlyDev: options.readOnlyDev });
+  const api = options.api ?? createSlackApi({ clientId: options.config.clientId, clientSecret: options.config.clientSecret, fetchImpl: options.fetchImpl, readOnlyDev: options.readOnlyDev, metadataChannels: options.agentChannels?.channels.map(c => c.channelId) });
   const routes = createSlackAppRoutes({ ...options, repository, api });
   let closed = false;
   let sweeping: Promise<void> | undefined;

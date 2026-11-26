@@ -301,3 +301,22 @@ it.each([
     timeout.mockRestore();
   }
 });
+
+it("shows the legacy pilot in Apps only after verifying the same enrollment for its existing Agent and Chat", async () => {
+  const { createPilotChannelReader } = await import("../../packages/gateway/src/startup/slack-owner-client.js");
+  const pilot = {ownerId:"user_owner",botId:"bot_12345678",chatId:"chat_private",machineId:"3c19c852-7793-4072-a280-bba8dd4b9284",handle:"owner-dev",appId:"A123",teamId:"T123",channelId:"C123"};
+  const platform = {platformUrl:"https://example.test",token:"a".repeat(64),runtimeSlot:"dev",machineId:pilot.machineId,handle:pilot.handle,devTarget:pilot};
+  const target = {ownerId:pilot.ownerId,agentId:pilot.botId,chatId:pilot.chatId};
+  const access = {ownerId:pilot.ownerId,botId:pilot.botId,chatId:pilot.chatId,runtimeId:pilot.machineId,grantId:"f".repeat(64)};
+  const enrolled = {available:true as const,scope:"channel" as const,appId:pilot.appId,teamId:pilot.teamId,channelId:pilot.channelId,channel:{id:pilot.channelId,name:"tech"},access};
+  const discover = vi.fn().mockResolvedValue(enrolled);
+  const read = createPilotChannelReader(platform,discover);
+  expect(await read({...target,agentId:"bot_99999999"})).toBeUndefined();
+  expect(await read({...target,chatId:"chat_other"})).toBeUndefined();
+  expect(discover).not.toHaveBeenCalled();
+  expect(await read(target)).toEqual({name:"tech"});
+  discover.mockResolvedValue({...enrolled,access:{...access,chatId:"chat_foreign"}});
+  expect(await read(target)).toBeUndefined();
+  discover.mockResolvedValue({available:false});
+  expect(await read(target)).toBeUndefined();
+});

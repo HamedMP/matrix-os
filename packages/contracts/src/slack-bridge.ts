@@ -218,3 +218,17 @@ export async function verifySlackContextSource(input: {
   const parsed = SlackEnrolledEventAttestationSchema.safeParse(value);
   return parsed.success ? { valid: true, source: parsed.data } : { valid: false };
 }
+
+/** Authenticated callback attestation for an opt-in Dev lane. The gateway selects the recipient. */
+export const SlackAgentChannelSchema = z.strictObject({
+  ownerId: Actor, runtimeId: PrivateThread.shape.runtimeId, appId: Provenance.shape.appId,
+  teamId: Provenance.shape.teamId, channelId: SlackChannelMetadataSchema.shape.id,
+  name: SlackChannelMetadataSchema.shape.name.refine(name => name.toLowerCase() !== "tech"),
+  installationGeneration: z.number().int().positive(), senderId: Provenance.shape.userId, sourceId: Digest,
+});
+export type SlackAgentChannel = z.infer<typeof SlackAgentChannelSchema>;
+export const RoutedSlackEventSchema = SlackAgentChannelSchema.omit({name:true,senderId:true}).extend({
+  eventId: Provenance.shape.eventId, ts: Timestamp, threadTs: Timestamp, userId: Provenance.shape.userId,
+  text: z.string().trim().min(1).max(12_000),
+});
+export type RoutedSlackEvent = z.infer<typeof RoutedSlackEventSchema>;

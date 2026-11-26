@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Transaction } from "kysely";
+import { occupiedRouteChannel } from "../slack/agent-routes.js";
 import { lockChatAgentOwner } from "../chat/agent-owner-lock.js";
 import type { ChatDatabase } from "../chat/database.js";
 import { privateBotSourceChat } from "../chat/private-routine-authority.js";
@@ -41,7 +42,10 @@ type GrantRecord = Awaited<ReturnType<GrantRepository["list"]>>[number];
 type Binding = NonNullable<Awaited<ReturnType<typeof findPrivateResourceBinding>>>;
 
 function view(row: GrantRecord) {
-  return BotResourceGrantSchema.parse({ id: row.grant_id, kind: row.kind, label: row.label, revision: toSafeInteger(row.revision) });
+  const scope = ResourceProviderCandidateSchema.shape.scope.parse(row.scope);
+  const routeKind = scope.kind === "slack_channel" ? scope.route?.kind : undefined;
+  return BotResourceGrantSchema.parse({ id: row.grant_id, kind: row.kind, label: row.label,
+    ...(routeKind ? { routeKind } : {}), revision: toSafeInteger(row.revision) });
 }
 
 function candidateId(binding: Binding, candidate: BotResourceGrantCandidate, revision = 0) {
@@ -53,6 +57,21 @@ function candidateId(binding: Binding, candidate: BotResourceGrantCandidate, rev
 
 function currentGrant(row: GrantRecord, binding: Binding) {
   return row.revoked_at === null && isGrantForBinding(row, binding);
+}
+
+/** Candidate fingerprints include the exact repository grant selected for review. */
+async function availableCandidates(db: BotExecutor, binding: Binding, rows: GrantRecord[], input: readonly BotResourceGrantCandidate[]) {
+  const available: BotResourceGrantCandidate[] = [];
+  for (const candidate of input) {
+    const scope = candidate.scope;
+    if (scope.kind !== "slack_channel" || !scope.route) { available.push(candidate); continue; }
+    if (scope.route.ownerId !== binding.ownerId || await occupiedRouteChannel(db, binding.ownerId,
+      scope.route.appId, scope.teamId, scope.channelId, binding.agentId)) continue;
+    if (scope.route.kind === "summary") { available.push(candidate); continue; }
+    const repo = rows.find(row => row.kind === "github_repository" && currentGrant(row, binding));
+    if (repo) available.push({ ...candidate, scope: { ...scope, route: { ...scope.route, repoGrantId: repo.grant_id } } });
+  }
+  return available;
 }
 
 async function requireBinding(db: BotExecutor, ownerId: string, agentId: string): Promise<Binding> {
@@ -78,7 +97,7 @@ export function createBotResourceGrantService(deps: {
     await lockChatAgentOwner(chatTx, owner);
     if (!await deps.isActiveManagedAgent(ownerId, agentId)) throw new BotResourceGrantError("missing");
     const binding = await requireBinding(db, ownerId, agentId);
-    if (!await privateBotSourceChat(chatTx, owner, binding.chatId)) throw new BotResourceGrantError("missing");
+    if (!await privateBotSourceChat(chatTx, owner, binding.chatId, agentId)) throw new BotResourceGrantError("missing");
     return binding;
   }
   const bindingFor = (ownerId: string, agentId: string) =>
@@ -93,21 +112,23 @@ export function createBotResourceGrantService(deps: {
   return {
     async list(ownerId: string, agentId: string) {
       const binding = await bindingFor(ownerId, agentId);
-      const candidates = await discovered(binding);
+      const [discoveredCandidates, pilotChannel] = await Promise.all([discovered(binding), deps.providers.readPilotChannel?.(binding)]);
       return deps.transact(ownerId, async (tx) => {
         const current = await requireActiveBinding(tx.db, ownerId, agentId);
         if (current.chatId !== binding.chatId || current.bindingCreatedAt !== binding.bindingCreatedAt) {
           throw new BotResourceGrantError("conflict");
         }
         const rows = await createBotResourceGrantsRepository(tx.db, current).list();
+        const candidates = await availableCandidates(tx.db, current, rows, discoveredCandidates);
         const granted = rows.filter((row) => currentGrant(row, current));
         return BotResourceGrantListSchema.parse({
-          grants: granted.map(view),
+          grants: granted.map(view), ...(pilotChannel ? { pilotChannel } : {}),
           candidates: candidates.filter((candidate) => !granted.some((grant) => grant.kind === candidate.scope.kind))
             .map((candidate) => ({
               id: candidateId(current, candidate, toSafeInteger(rows.find((row) => row.kind === candidate.scope.kind)?.revision ?? 0)),
               kind: candidate.scope.kind,
               label: candidate.label,
+              ...(candidate.scope.kind === "slack_channel" && candidate.scope.route ? {routeKind: candidate.scope.route.kind} : {}),
             })),
         });
       });
@@ -116,7 +137,7 @@ export function createBotResourceGrantService(deps: {
     async grant(ownerId: string, agentId: string, id: string) {
       if (!BotResourceGrantCandidateIdSchema.safeParse(id).success) throw new BotResourceGrantError("denied");
       const binding = await bindingFor(ownerId, agentId);
-      const candidates = await discovered(binding);
+      const discoveredCandidates = await discovered(binding);
       return deps.transact(ownerId, async (tx) => {
         const current = await requireActiveBinding(tx.db, ownerId, agentId);
         if (current.chatId !== binding.chatId || current.bindingCreatedAt !== binding.bindingCreatedAt) {
@@ -124,6 +145,7 @@ export function createBotResourceGrantService(deps: {
         }
         const repository = createBotResourceGrantsRepository(tx.db, current);
         const rows = await repository.list();
+        const candidates = await availableCandidates(tx.db, current, rows, discoveredCandidates);
         for (const candidate of candidates) {
           const previous = rows.find((row) => row.kind === candidate.scope.kind);
           if (previous && currentGrant(previous, current)) {

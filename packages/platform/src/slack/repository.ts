@@ -167,6 +167,14 @@ export class SlackRepository {
     return row ? { appId, teamId, slackUserId, actorId: row.actor_id, organizationId: row.organization_id } : null;
   }
 
+  async getOwnerLinkCreation(input: { appId: string; teamId: string; ownerSlackId: string; organizationId: string; ownerId: string }) {
+    const row = await this.db.selectFrom("slack_employee_links").select("created_at")
+      .where("app_id", "=", input.appId).where("team_id", "=", input.teamId)
+      .where("slack_user_id", "=", input.ownerSlackId).where("organization_id", "=", input.organizationId)
+      .where("actor_id", "=", input.ownerId).executeTakeFirst();
+    return row ? new Date(row.created_at).toISOString() : null;
+  }
+
   async hasThreadContextLink(input: { appId: string; teamId: string; ownerSlackId: string; organizationId: string; ownerId: string; linkCreatedAt: string }): Promise<boolean> {
     const row = await this.db.selectFrom("slack_employee_links").select("created_at")
       .where("app_id", "=", input.appId).where("team_id", "=", input.teamId)

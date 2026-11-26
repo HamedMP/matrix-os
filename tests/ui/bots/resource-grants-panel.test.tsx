@@ -70,3 +70,28 @@ it("uses the Agent resource endpoints with only the candidate and revision in mu
     [path + "/" + saved.id, "DELETE", { baseRevision: saved.revision }],
   ]);
 });
+
+it("asks the owner to assign the selected trigger to this Agent and reopens the saved route", async () => {
+  const candidate = { ...channel, label:"#reviews · Review pull requests", routeKind:"review" as const };
+  const saved = { ...candidate, id:"rgr_saved", revision:1 };
+  const client = { list: vi.fn().mockResolvedValueOnce({candidates:[candidate],grants:[grant]})
+    .mockResolvedValue({candidates:[],grants:[grant,saved]}), grant: vi.fn().mockResolvedValue({grant:saved}),revoke:vi.fn() };
+  const first = render(<BotResourceGrantsPanel agentId={agentId} client={client} />);
+  fireEvent.click(await screen.findByRole("button",{name:"Assign #reviews · Review pull requests to this Agent"}));
+  expect(client.grant).toHaveBeenCalledExactlyOnceWith(agentId,candidate.id);
+  await screen.findByText("#reviews · Review pull requests · Results in this Agent’s private Chat");
+  first.unmount();
+  render(<BotResourceGrantsPanel agentId={agentId} client={client} />);
+  await screen.findByText("#reviews · Review pull requests · Results in this Agent’s private Chat");
+  expect(client.grant).toHaveBeenCalledTimes(1);
+});
+
+it("shows the original pilot assignment as read-only with the rule controlled from this Agent's private Chat", async () => {
+  const client = { list:vi.fn().mockResolvedValue({grants:[],candidates:[],pilotChannel:{name:"tech"}}),grant:vi.fn(),revoke:vi.fn() };
+  render(<BotResourceGrantsPanel agentId={agentId} client={client} />);
+  await screen.findByText("#tech · Existing summary route");
+  expect(screen.getByText("Use this Agent’s private Chat to manage its summary rule.")).toBeTruthy();
+  expect(screen.queryByText("No approved Slack channels are available.")).toBeNull();
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(client.grant).not.toHaveBeenCalled();
+});

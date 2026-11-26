@@ -162,3 +162,14 @@ describe("read-only Dev Slack API", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
+
+it("allows only membership metadata for the new read-only Agent route channels", async () => {
+  const fetchImpl = vi.fn(async () => Response.json({ ok:true, channel:{id:"CADD",name:"qa",is_member:true,is_ext_shared:false} }));
+  const api = createSlackApi({ clientId:"123.456",clientSecret:"fixture",fetchImpl,readOnlyDev:{channelId:"COLD"},metadataChannels:["CADD"] });
+  const input = { token:"fixture",channelId:"CADD",ts:"123.456" };
+  await expect(api.conversationInfo(input)).resolves.toMatchObject({canAccess:true,channelMetadata:{id:"CADD",name:"qa"}});
+  await expect(api.history(input)).rejects.toThrow(); await expect(api.replies(input)).rejects.toThrow();
+  await expect(api.postMessage({...input,text:"no write"})).rejects.toThrow();
+  await expect(api.conversationInfo({...input,channelId:"C999"})).rejects.toThrow();
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});

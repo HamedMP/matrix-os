@@ -11,6 +11,7 @@ import type { PlatformOrganizations } from "./organizations/wiring.js";
 import { createSlackApp, loadSlackAppConfig } from "./slack/wiring.js";
 import type { SlackDatabase } from "./slack/database.js";
 import { loadSlackDevThreadContextGrant, loadSlackThreadContextGrant } from "./slack/thread-context.js";
+import { loadSlackDevAgentChannels } from "./slack/agent-channels.js";
 import { loadSlackMentionSummaryRule } from "./slack/mention-summary.js";
 import { createSlackDevHomeDispatcher, loadSlackDevIngressCertificate } from "./slack-dev-home-tls.js";
 import { createSlackHomeTransport, type SlackHome } from "./slack-home-transport.js";
@@ -28,6 +29,7 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
   clerkAuth?:ClerkAuth;collaboration?:PlatformCollaborationComposition;devOrganizations?:Pick<PlatformOrganizations, "repository" | "projection">;
   customerVpsProxyDispatcher?:Agent;fetchImpl?:typeof fetch;startCleanup?:boolean}) {
   let config: ReturnType<typeof loadSlackAppConfig>;
+  let agentChannels: ReturnType<typeof loadSlackDevAgentChannels>;
   let previewHandle: string | undefined;
   let devConfig: ReturnType<typeof loadSlackDevAcceptance>;
   let devIngressCertificate: ReturnType<typeof loadSlackDevIngressCertificate> | undefined;
@@ -35,6 +37,7 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
   try {
     config = loadSlackAppConfig(options.env);
     devConfig = loadSlackDevAcceptance(options.env);
+
     if (devConfig) {
       const dev = devConfig.target;
       if (!config || !isDevCallbackOrigin(config.publicBaseUrl, dev.machineId)
@@ -51,6 +54,8 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
     return unavailable();
   }
   const dev = devConfig?.target;
+  try { agentChannels = loadSlackDevAgentChannels(options.env.SLACK_DEV_AGENT_CHANNELS, dev); }
+  catch (error) { console.warn("[slack] Dev Agent channel configuration unavailable", error instanceof Error ? error.name : "UnknownError"); }
   if (!dev) {
     try { contextGrant = loadSlackThreadContextGrant(options.env, previewHandle); }
     catch (error) { console.warn("[slack] thread context configuration unavailable", error instanceof Error ? error.name : "UnknownError"); }
@@ -86,7 +91,12 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
   const slack = await createSlackApp({db:options.db.kysely as unknown as Kysely<SlackDatabase>,config,resolveActor,fetchImpl,startCleanup:options.startCleanup,
     linkTransaction: (actorId, work) => withAccountDeletionAdmission(options.db, actorId,
       trx => work(trx.executor as unknown as Kysely<SlackDatabase>), options.env),
-    contextGrant, mentionSummaryRule, readOnlyDev: dev,
+    contextGrant, mentionSummaryRule, readOnlyDev: dev, agentChannels,
+    dispatchRouted: agentChannels && dev ? async (event, signal) => {
+      const home = await homeFor(dev.ownerId);
+      if (home.ownerId !== event.ownerId || home.runtimeId !== event.runtimeId) throw new Error("Slack destination changed");
+      await rpc(home, "agent-event", event, signal);
+    } : undefined,
     devBrowserOAuth: options.env.SLACK_DEV_CALLBACK_ONLY === "true" && options.env.SLACK_DEV_BROWSER_OAUTH === "true",
     dispatchContext: async (envelope, signal) => {
       const home = await homeFor(envelope.ownerId);

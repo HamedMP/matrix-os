@@ -57,6 +57,13 @@ afterEach(async () => {
 });
 
 describe("owner Agent resource approval", () => {
+  it("withholds grant candidates when another Bot also has a live direct binding to this Chat", async () => {
+    await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, botId: "bot_12345678abcd", chatId: CHAT, now: NOW });
+    const discovery = vi.fn(async () => [REPO]);
+    await expect(createService(discovery).list(OWNER, BOT)).rejects.toMatchObject({ code: "missing" });
+    expect(discovery).not.toHaveBeenCalled();
+  });
+
   it("persists only the selected exact resource in one private Agent and reopens from saved state", async () => {
     const discovery = vi.fn(async () => [REPO]);
     const service = createService(discovery);
@@ -201,4 +208,95 @@ describe("owner Agent resource approval", () => {
     await expect(service.list(OWNER, BOT)).resolves.toMatchObject({ grants: [] });
     await expect(service.grant(OWNER, BOT, candidates[0]!.id)).rejects.toMatchObject({ code: "denied" });
   });
+});
+
+it("routes one verified Slack installation by channel, freezes the review repo grant and rejects stale authority", async () => {
+  const { createSlackAgentRouteResolver, routedSlackPublicationCurrent } = await import("../../../packages/gateway/src/slack/agent-routes.js");
+  const { routeCandidates } = await import("../../../packages/gateway/src/bots/resource-grant-candidates.js");
+  const transact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
+  const source = { ownerId: OWNER, runtimeId: "runtime_test", appId: "A123", teamId: "T123",
+    installationGeneration: 1, senderId: "U123", sourceId: "e".repeat(64) };
+  const channels = ["summary", "reviews"].map((name, i) => ({ ...source, name, channelId: "C00" + i }));
+  const service = createBotResourceGrantService({ transact, providers: { list: async () => [REPO, ...routeCandidates(channels)] },
+    isActiveManagedAgent: async () => true, now: () => new Date(NOW) });
+  const resolver = createSlackAgentRouteResolver({ ownerId: OWNER, runtimeId: source.runtimeId, transact, isActiveManagedAgent: async () => true });
+  const first = await service.list(OWNER, BOT);
+  expect(first.candidates.map(c => c.label)).not.toContain("#reviews · Review pull requests");
+  const grant = async (bot: string, label: string) => {
+    const option = (await service.list(OWNER, bot)).candidates.find(c => c.label === label);
+    expect(option).toBeDefined();
+    return (await service.grant(OWNER, bot, option!.id)).grant;
+  };
+  await grant(BOT, "#summary · Summarize new messages");
+  expect((await service.list(OWNER, OTHER_BOT)).candidates.map(c => c.label)).not.toContain("#summary · Summarize new messages");
+  const repo = await grant(OTHER_BOT, REPO.label);
+  await grant(OTHER_BOT, "#reviews · Review pull requests");
+  const event = { ...source, channelId: "C001", eventId: "Ev100", userId: "U123", ts: "2100000000.000001", threadTs: "2100000000.000001", text: "Review this PR" };
+  const lookup = (overrides = {}) => transact(OWNER, tx => resolver.resolve({ ...event, ...overrides }, tx.db));
+  expect(await lookup({ channelId: "C000" })).toMatchObject({ kind: "summary", agentId: BOT, chatId: CHAT });
+  expect(await lookup({ channelId: "C999" })).toBeNull();
+  expect(await lookup({ userId: "U999" })).toBeNull();
+  expect(await lookup({ ts: "1000000000.000001" })).toBeNull();
+  const review = await lookup();
+  expect(review).toMatchObject({ kind: "review", agentId: OTHER_BOT, github: { grantId: repo.id } });
+  expect(await transact(OWNER, tx => routedSlackPublicationCurrent(tx.db, review!))).toBe(true);
+  await service.revoke(OWNER, OTHER_BOT, repo.id, repo.revision);
+  await grant(OTHER_BOT, REPO.label);
+  expect(await lookup()).toBeNull();
+  expect(await resolver.current(review!)).toBe(false);
+  const summary = await lookup({ channelId: "C000" });
+  await createBotBindingsRepository(db).remove({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: NOW });
+  expect(await lookup({ channelId: "C000" })).toBeNull();
+  expect(await resolver.current(summary!)).toBe(false);
+});
+
+it("serializes channel assignments across Agents and fails closed on ambiguous stored grants", async () => {
+  const { createSlackAgentRouteResolver } = await import("../../../packages/gateway/src/slack/agent-routes.js");
+  const { routeCandidates } = await import("../../../packages/gateway/src/bots/resource-grant-candidates.js");
+  const transact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
+  const source = { ownerId: OWNER, runtimeId:"runtime_test", appId:"A123", teamId:"T123", senderId:"U123", sourceId:"f".repeat(64),
+    name:"summary", channelId:"C001", installationGeneration:1 };
+  const service = createBotResourceGrantService({ transact, providers:{list:async () => routeCandidates([source])},isActiveManagedAgent:async()=>true,now:()=>new Date(NOW) });
+  const ids = [BOT,OTHER_BOT];
+  const offers = await Promise.all(ids.map(id => service.list(OWNER,id)));
+  const saved = await Promise.allSettled(ids.map((id,i) => service.grant(OWNER,id,offers[i]!.candidates[0]!.id)));
+  expect(saved.filter(result=>result.status==="fulfilled")).toHaveLength(1);
+  const records = await db.selectFrom("bot_resource_grants").selectAll().execute();
+  expect(records).toHaveLength(1);
+  const row = records[0]!;
+  const other = row.bot_id === BOT ? OTHER_BOT : BOT;
+  const chatId = other === BOT ? CHAT : "chat_other_reviewer";
+  await db.insertInto("bot_resource_grants").values({...row,scope:JSON.stringify(row.scope),bot_id:other,chat_id:chatId,grant_id:"rgr_"+"a".repeat(32)}).execute();
+  const active = vi.fn(async()=>true);
+  const resolver = createSlackAgentRouteResolver({ownerId:OWNER,runtimeId:source.runtimeId,transact,isActiveManagedAgent:active});
+  expect(await transact(OWNER,tx=>resolver.resolve({...source,userId:"U123",eventId:"Ev111",ts:"2100000000.000001",threadTs:"2100000000.000001",text:"hello"},tx.db))).toBeNull();
+  expect(active).not.toHaveBeenCalled();
+});
+
+it("withdraws a routed job's publication authority when its saved Agent is archived", async () => {
+  const { createSlackAgentRouteResolver, routedSlackPublicationCurrent } = await import("../../../packages/gateway/src/slack/agent-routes.js");
+  const { routeCandidates } = await import("../../../packages/gateway/src/bots/resource-grant-candidates.js");
+  const owner = { type:"personal" as const, ownerId:OWNER };
+  const agent = await agents.create(owner, {clientRequestId:"req_archive_route",name:"Review",description:"Review changes",
+    instructions:"Review proposed changes.",selection:{ instanceId:"hermes_default",model:"openai:gpt-5.6-sol" }});
+  const chat = "chat_archivable";
+  await insertChat(db,chat);
+  await createBotBindingsRepository(db).bindDirect({ownerId:OWNER,botId:agent.id,chatId:chat,now:NOW});
+  const source = {ownerId:OWNER,runtimeId:"runtime_test",appId:"A123",teamId:"T123",senderId:"U123",sourceId:"f".repeat(64),
+    name:"reviews",channelId:"C001",installationGeneration:1};
+  const transact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
+  const active = async () => !(await agents.get(owner,agent.id))?.archived;
+  const service = createBotResourceGrantService({transact,providers:{list:async()=>[REPO,...routeCandidates([source])]},isActiveManagedAgent:active,now:()=>new Date(NOW)});
+  async function grant(label:string) {
+    const view = await service.list(OWNER,agent.id);
+    return service.grant(OWNER,agent.id,view.candidates.find(c=>c.label === label)!.id);
+  }
+  await grant(REPO.label); await grant("#reviews · Review pull requests");
+  const resolver = createSlackAgentRouteResolver({ownerId:OWNER,runtimeId:source.runtimeId,transact,isActiveManagedAgent:active});
+  const job = await transact(OWNER,tx=>resolver.resolve({...source,userId:"U123",eventId:"Ev012",ts:"2100000000.000001",threadTs:"2100000000.000001",text:"Review"},tx.db));
+  expect(job).not.toBeNull();
+  await agents.update(owner,agent.id,{baseRevision:agent.revision,archived:true});
+  expect(await transact(OWNER,tx=>routedSlackPublicationCurrent(tx.db,job!))).toBe(false);
+  const grants = await db.selectFrom("bot_resource_grants").select(["kind","revoked_at"]).where("bot_id","=",agent.id).execute();
+  expect(grants).toContainEqual({kind:"github_repository",revoked_at:null});
 });

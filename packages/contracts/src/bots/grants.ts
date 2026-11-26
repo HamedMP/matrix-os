@@ -52,6 +52,7 @@ export const BotResourceGrantIdSchema = z.string().regex(/^rgr_[a-f0-9]{32}$/);
 export const BotResourceGrantCandidateSchema = z.strictObject({
   id: BotResourceGrantCandidateIdSchema,
   kind: BotResourceGrantKindSchema,
+  routeKind: z.enum(["summary", "review"]).optional(),
   label: canonicalSafeLabel(256, 1024),
 });
 
@@ -61,6 +62,7 @@ export const BotResourceGrantSchema = BotResourceGrantCandidateSchema.extend({
 });
 
 export const BotResourceGrantListSchema = z.strictObject({
+  pilotChannel: z.strictObject({name: z.literal("tech")}).optional(),
   candidates: z.array(BotResourceGrantCandidateSchema).max(32),
   grants: z.array(BotResourceGrantSchema).max(2),
 });
