@@ -757,7 +757,7 @@ export function createApp(deps: {
     getRuntimeEntitlementDecisionForUser,
     getGatewayUrlForHandle,
     logRouteError: logPlatformRouteError,
-    substrates: deps.substrateRegistry ?? createPlatformSubstrateRegistry(db),
+    substrates: deps.substrateRegistry ?? createPlatformSubstrateRegistry(db, appEnv),
   }));
 
   const integrationDeletionGuard=createAccountDeletionMutationGuard({db,env:appEnv,resolveOwner:c=>c.get('platformUserId') as string|undefined});
