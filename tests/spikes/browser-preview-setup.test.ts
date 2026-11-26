@@ -23,7 +23,8 @@ async function fixture(handle = privateHandle, slot = handle, ttyPayload?: strin
     .replaceAll('/run/matrix-browser-preview.lock', join(root, 'run/matrix-browser-preview.lock'))
     .replaceAll('/tmp/matrix-browser-preview.', join(root, 'matrix-browser-preview.'))
     // Exercise the real timeout dispatch, with a bounded fixture-only deadline.
-    .replaceAll('--kill-after=30 1800', ttyPayload ? '--kill-after=0.2 1' : '--kill-after=30 1800');
+    // It covers unpacking and two Python starts on a loaded CI runner.
+    .replaceAll('--kill-after=30 1800', ttyPayload ? `--kill-after=0.2 ${FIXTURE_DEADLINE_SECONDS}` : '--kill-after=30 1800');
   await writeFile(join(bin, 'matrix-install-browser-preview'), script);
   // Simulate root only inside the fixture; run the real target guard against fixture metadata.
   const guard = (await readFile('scripts/spikes/browser-vps/native-experience.py', 'utf8'))
@@ -55,6 +56,9 @@ function runInTerminal(f: Awaited<ReturnType<typeof fixture>>, observeHeartbeat 
     timeout: 10_000, maxBuffer: 64 * 1024,
   })) as { exitCode: number; output: string; heartbeatBefore?: string; heartbeatAfter?: string };
 }
+
+// The installer's deadline in TTY fixtures; the PTY helper allows 8s overall.
+const FIXTURE_DEADLINE_SECONDS = 4;
 
 const ttyOperation = `import json, sys, termios
 termios.tcsetattr(0, termios.TCSANOW, termios.tcgetattr(0))
@@ -100,11 +104,12 @@ describe('supported Browser preview setup command', () => {
   it.each(['install', 'update-experience'])('hard-kills TERM-resistant %s descendants at its deadline', async mode => {
     // Both processes ignore TERM. A lost process-group deadline (for example,
     // --foreground) leaves the independently observed heartbeat advancing.
-    // The synthetic child also self-expires within 3s if a regression leaks it.
+    // The synthetic child outlives the deadline, then self-expires within 10s
+    // if a regression leaks it.
     const child = `import pathlib, signal, sys, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 root = pathlib.Path(sys.argv[1])
-for tick in range(60):
+for tick in range(200):
     (root / 'heartbeat.next').write_text(str(tick))
     (root / 'heartbeat.next').replace(root / 'heartbeat')
     (root / 'descendant-ready').touch()
@@ -116,7 +121,7 @@ root = pathlib.Path(__file__).parent.parent
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 subprocess.Popen([sys.executable, '-I', '-c', ${JSON.stringify(child)}, str(root)],
                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-for attempt in range(50):
+for attempt in range(300):
     if (root / 'descendant-ready').exists():
         break
     time.sleep(0.01)

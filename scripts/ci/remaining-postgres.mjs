@@ -115,7 +115,7 @@ export function remainingPostgresInventory(root = process.cwd(), remainingFiles 
         const unitPatterns = [...command.matchAll(/(?:^|\s)(tests\/[a-zA-Z0-9_./*?-]+\.test\.tsx?)(?=\s|$)/g)].map(value => value[1]);
         // Integration files are excluded by the default config. Count only this
         // dedicated real-DB lane with its explicit URL mapping and worker bounds.
-        const routine = command.match(/^--config vitest\.routine-cli-integration\.config\.ts (tests\/gateway\/bots\/routine-cli-[a-z0-9*-]+\.postgres\.integration\.ts) --maxWorkers=1 --no-file-parallelism$/);
+        const routine = command.match(/^--config vitest\.routine-cli-integration\.config\.ts (tests\/gateway\/bots\/routine-cli-[a-z0-9*-]+\.postgres\.integration\.ts) --maxWorkers=[1-4]$/);
         return routine && step.env?.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL === '${{ env.MATRIX_TEST_POSTGRES_URL }}'
           ? [...unitPatterns, routine[1]] : unitPatterns;
       }));
