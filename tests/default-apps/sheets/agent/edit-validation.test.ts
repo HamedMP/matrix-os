@@ -136,9 +136,45 @@ describe("editing by instruction", () => {
       session.setCellInput(sheets.summary, { row: 1, col: 1 }, "800000");
       return envelope([{ op: "setCell", sheet: "Summary", cell: "B2", value: "=Projection!N4", expect: "725,000" }]);
     });
-    const outcome = await editByInstruction({ session, ai, now: NOW }, "Link it", { sheet: sheets.summary, range: B2 });
-    expect(outcome.status).toBe("invalid");
+    await expect(editByInstruction({ session, ai, now: NOW }, "Link it", { sheet: sheets.summary, range: B2 })).rejects.toMatchObject({ code: "stale" });
     expect(session.cell(sheets.summary, 1, 1).value).toBe(800000);
+  });
+});
+
+describe("a reply to a workbook that changed while the model was answering", () => {
+  it("does not write over a cell the owner typed into while waiting, even without an expectation", async () => {
+    const { session, sheets } = await openModel();
+    const ai = new FakeAi(() => {
+      session.setCellInput(sheets.summary, { row: 1, col: 1 }, "800000");
+      return envelope([{ op: "setCell", sheet: "Summary", cell: "B2", value: 1 }]);
+    });
+    await expect(editByInstruction({ session, ai, now: NOW }, "Set it to one", { sheet: sheets.summary, range: B2 })).rejects.toMatchObject({ code: "stale" });
+    expect(session.cell(sheets.summary, 1, 1).value).toBe(800000);
+    expect(session.workbook.listChanges()).toEqual([]);
+  });
+
+  it("does not write a range over cells the owner filled while waiting", async () => {
+    const { session, sheets } = await openModel();
+    const ai = new FakeAi(() => {
+      session.setCellInput(sheets.summary, { row: 21, col: 0 }, "mine");
+      return envelope([{ op: "setRange", sheet: "Summary", start: "A21", values: [["Region"], ["North"]] }]);
+    });
+    await expect(editByInstruction({ session, ai, now: NOW }, "Add a list of regions at A21", { sheet: sheets.summary, range: B2 })).rejects.toMatchObject({ code: "stale" });
+    expect(session.cell(sheets.summary, 21, 0).value).toBe("mine");
+    expect(session.workbook.listChanges()).toEqual([]);
+  });
+
+  it("does not apply an old reply to the workbook a reload brought in", async () => {
+    const { session, sheets } = await openModel();
+    const before = session.workbook;
+    const ai = new FakeAi(async () => {
+      expect((await session.reload()).ok).toBe(true);
+      return envelope([{ op: "setCell", sheet: "Summary", cell: "B2", value: 1 }]);
+    });
+    await expect(editByInstruction({ session, ai, now: NOW }, "Set it to one", { sheet: sheets.summary, range: B2 })).rejects.toMatchObject({ code: "stale" });
+    expect(session.workbook).not.toBe(before);
+    expect(session.cell(session.workbook.getSheetByName("Summary")!.id, 1, 1).value).toBe(725000);
+    expect(session.workbook.listChanges()).toEqual([]);
   });
 });
 

@@ -4,7 +4,7 @@
  * never changes the workbook.
  */
 
-import { askModel } from "./ai";
+import { askAboutWorkbook } from "./ai";
 import { type AgentContext, type ExplainOutcome, type SheetSelection } from "./context";
 import { type CellAddress, type SheetId, type Workbook, describeSheet, formatA1, formatA1Range } from "./engine";
 import { MAX_ANSWER_CHARS } from "./limits";
@@ -62,7 +62,7 @@ export async function explainSelection(ctx: AgentContext, selection: SheetSelect
   const label = isFormula ? "Formula and its inputs" : "Selected cells";
   const budget = Math.max(1, contentBudget(parts, [label]));
   const text = isFormula ? formulaContext(workbook, sheet, range.start, budget) : describeSheet(workbook, sheet, range, { maxChars: budget }).text;
-  const reply = await askModel(ctx.ai, buildPrompt({ ...parts, blocks: [{ label, text }] }), { signal: ctx.signal, log: ctx.log });
+  const reply = await askAboutWorkbook(ctx, buildPrompt({ ...parts, blocks: [{ label, text }] }));
   return { text: cleanAnswer(reply), subject, highlights: directPrecedents(workbook, sheet, range) };
 }
 
@@ -80,6 +80,6 @@ export async function narrateTrace(ctx: AgentContext, sheet: SheetId, address: C
   };
   const label = `Trace of ${subject}`;
   const text = traceText(trace, Math.max(1, contentBudget(parts, [label])));
-  const reply = await askModel(ctx.ai, buildPrompt({ ...parts, blocks: [{ label, text }] }), { signal: ctx.signal, log: ctx.log });
+  const reply = await askAboutWorkbook(ctx, buildPrompt({ ...parts, blocks: [{ label, text }] }));
   return { trace, subject, highlights: trace.cells, text: cleanAnswer(reply) };
 }

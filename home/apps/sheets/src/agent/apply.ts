@@ -32,6 +32,8 @@ export interface AgentSession {
   acceptChanges(ids: readonly string[] | "all"): unknown;
   rejectChanges(ids: readonly string[] | "all"): unknown;
   subscribe(listener: (event: SessionEvent) => void): () => void;
+  /** Grows with every edit: a reply is applied only when it has not moved since the prompt was built. */
+  editMark(): number;
 }
 
 /** Where an operation may write. */

@@ -48,6 +48,22 @@ describe("explaining", () => {
     expect(outcome.text).toBe("Net income comes from revenue less costs and tax.");
   });
 
+  it("drops an explanation or a narration of a workbook that changed while the model was answering", async () => {
+    const { session, sheets } = await openModel();
+    const edited = new FakeAi(() => {
+      session.setCellInput(sheets.summary, { row: 2, col: 1 }, "1");
+      return "Net margin divides net income by total revenue.";
+    });
+    await expect(explainSelection({ session, ai: edited }, { sheet: sheets.summary, range: cell(3, 1) })).rejects.toMatchObject({ code: "stale" });
+    const fresh = await openModel();
+    const reloaded = new FakeAi(async () => {
+      expect((await fresh.session.reload()).ok).toBe(true);
+      return "Net income comes from revenue less costs and tax.";
+    });
+    await expect(narrateTrace({ session: fresh.session, ai: reloaded }, fresh.sheets.summary, { row: 2, col: 1 })).rejects.toMatchObject({ code: "stale" });
+    expect(reloaded.prompts).toHaveLength(1);
+  });
+
   it("needs no model to trace a typed-in value", async () => {
     const { session, sheets } = await openModel();
     const ai = new FakeAi();
@@ -173,6 +189,18 @@ describe("cleaning a column", () => {
     // The colleague's proposal keeps its own text, still pending in its own proposal.
     expect(session.cell(sheets.summary, 12, 4).value).toBe(" 9,000 ");
     expect(session.workbook.listChanges().find((change) => change.id === earlier!.id)).toEqual(earlier);
+  });
+
+  it("applies nothing when the owner changed the column while the model was answering", async () => {
+    const { session, sheets } = await openModel();
+    session.mutate((workbook) => workbook.setRange(sheets.summary, { row: 10, col: 4 }, [["Country"], ["uk "], ["fr"]]));
+    const ai = new FakeAi(() => {
+      session.setCellInput(sheets.summary, { row: 11, col: 4 }, "Spain");
+      return envelope([{ op: "setCell", sheet: "Summary", cell: "E12", value: "United Kingdom" }]);
+    });
+    await expect(cleanColumn({ session, ai, now: NOW }, sheets.summary, 4, "Use full country names")).rejects.toMatchObject({ code: "stale" });
+    expect(session.cell(sheets.summary, 11, 4).value).toBe("Spain");
+    expect(session.workbook.listChanges()).toEqual([]);
   });
 
   it("applies nothing when the model writes outside the column", async () => {

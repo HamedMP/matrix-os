@@ -4,7 +4,7 @@
  * and records them in one reviewable proposal.
  */
 
-import { askModel } from "./ai";
+import { askAboutWorkbook } from "./ai";
 import { type EditScope, editTargets, runProposal, validateReply, writeResolved } from "./apply";
 import { type AgentContext, type ProposalOutcome, type SheetSelection, isoNow } from "./context";
 import { type CellRange, type SheetId, type Workbook, agentEditInstructions, describeSheet, formatA1, formatA1Range } from "./engine";
@@ -57,8 +57,8 @@ export async function proposeWithModel(ctx: AgentContext, req: ProposeRequest): 
   const workbook = ctx.session.workbook;
   const parts: Omit<PromptParts, "blocks"> = { task: req.task, rules: req.rules, format: agentEditInstructions("sheet"), request: req.request };
   const prompt = buildPrompt({ ...parts, blocks: sheetBlocks(workbook, req.sheet, parts, req.focus) });
-  const reply = await askModel(ctx.ai, prompt, { signal: ctx.signal, log: ctx.log });
-  // The workbook may have changed while the model was thinking: validate against it as it is now.
+  // Rejects a reply when the workbook changed while the model was thinking: it was written for the earlier content.
+  const reply = await askAboutWorkbook(ctx, prompt);
   const checked = validateReply(ctx.session.workbook, reply, req.scope);
   if (!checked.ok) {
     if (checked.reason === "empty") return { status: "no_changes", summary: checked.messages[0] ?? "" };

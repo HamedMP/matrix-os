@@ -1,7 +1,9 @@
 /**
  * The Sheets assistant: pure orchestration over `MatrixOS.ai.generate`.
  *
- * - Model calls go through `askModel` (bounded prompt, timeout, typed errors).
+ * - Model calls go through `askModel` (bounded prompt, timeout, typed errors),
+ *   by way of `askAboutWorkbook`, which drops a reply when the workbook was
+ *   edited or replaced while the model was answering.
  *   Prompts are built with `buildPrompt`: sheet text from `describeSheet`,
  *   wrapped as untrusted content, inside the 32 000-character bound.
  * - Edits come back as the engine's sheet envelope. `validateReply` parses
@@ -16,8 +18,8 @@
  * `SheetsAssistant` (./assistant) holds the conversation state for the panel.
  */
 
-export { SheetsAgentError, askModel, bridgeSheetsAi } from "./ai";
-export type { AskOptions, SheetsAi, SheetsAgentErrorCode } from "./ai";
+export { SheetsAgentError, askAboutWorkbook, askModel, bridgeSheetsAi } from "./ai";
+export type { AskOptions, SheetsAi, SheetsAgentErrorCode, WorkbookQuestion } from "./ai";
 export { runProposal, validateReply, writeResolved } from "./apply";
 export type { AgentSession, EditScope, ProposalRecord, ValidationResult } from "./apply";
 export { checkWorkbook } from "./checks";

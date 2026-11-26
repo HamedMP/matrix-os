@@ -5,6 +5,7 @@
  */
 
 import { replyText } from "../../../_shared/office-ui/ai-access";
+import type { AgentSession } from "./apply";
 import { AI_TIMEOUT_MS, MAX_PROMPT_CHARS, MAX_REPLY_CHARS } from "./limits";
 
 /** A text model. `generate` resolves the reply text. */
@@ -16,7 +17,7 @@ interface BridgeAi {
   generate(input: { prompt: string }): Promise<{ text: string }>;
 }
 
-export type SheetsAgentErrorCode = "unavailable" | "prompt_too_large" | "ai_failed" | "timeout" | "cancelled" | "apply_failed" | "pending_change";
+export type SheetsAgentErrorCode = "unavailable" | "prompt_too_large" | "ai_failed" | "timeout" | "cancelled" | "apply_failed" | "pending_change" | "stale";
 
 const MESSAGES: Record<SheetsAgentErrorCode, string> = {
   unavailable: "The assistant is not available here.",
@@ -26,6 +27,7 @@ const MESSAGES: Record<SheetsAgentErrorCode, string> = {
   cancelled: "Stopped.",
   apply_failed: "The changes could not be proposed. Nothing was changed.",
   pending_change: "Some of these cells already have a proposed change. Accept or reject it first, then try again.",
+  stale: "The workbook changed while the assistant was answering, so its answer was set aside. Ask again.",
 };
 
 /** A failure with a sentence that is safe to show the owner. */
@@ -92,4 +94,26 @@ export async function askModel(ai: SheetsAi | null, prompt: string, options: Ask
     clearTimeout(timer);
     if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
   }
+}
+
+export interface WorkbookQuestion extends AskOptions {
+  ai: SheetsAi | null;
+  session: Pick<AgentSession, "workbook" | "editMark">;
+}
+
+/**
+ * Sends a prompt built from the workbook and returns the reply only when the
+ * workbook is still the one the prompt describes: the same workbook (a reload
+ * or another file replaces it) with no edit since. The owner may keep editing
+ * while the model thinks, and a reply written for the earlier content could
+ * otherwise overwrite those edits. Rejects with {@link SheetsAgentError}
+ * `stale` when it changed.
+ */
+export async function askAboutWorkbook(question: WorkbookQuestion, prompt: string): Promise<string> {
+  const { session } = question;
+  const workbook = session.workbook;
+  const mark = session.editMark();
+  const reply = await askModel(question.ai, prompt, { signal: question.signal, timeoutMs: question.timeoutMs, log: question.log });
+  if (session.workbook !== workbook || session.editMark() !== mark) throw new SheetsAgentError("stale");
+  return reply;
 }

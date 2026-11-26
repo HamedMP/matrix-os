@@ -5,7 +5,7 @@
  * proposal.
  */
 
-import { askModel } from "./ai";
+import { askAboutWorkbook } from "./ai";
 import { editTargets, runProposal, validateReply, writeResolved } from "./apply";
 import { type AgentContext, type ProposalOutcome, isoNow } from "./context";
 import { type CellRange, type CellValue, type ResolvedSheetEdit, type SheetId, type Workbook, agentEditInstructions, columnLabel } from "./engine";
@@ -95,7 +95,8 @@ export async function cleanColumn(ctx: AgentContext, sheet: SheetId, col: number
     };
     const blockLabel = `Column ${columnLabel(col)}`;
     const description = describeSheet(workbook, sheet, range, { maxChars: Math.max(1, contentBudget(parts, [blockLabel])) });
-    const reply = await askModel(ctx.ai, buildPrompt({ ...parts, blocks: [{ label: blockLabel, text: description.text }] }), { signal: ctx.signal, log: ctx.log });
+    // Rejects a reply when the workbook changed while the model was answering.
+    const reply = await askAboutWorkbook(ctx, buildPrompt({ ...parts, blocks: [{ label: blockLabel, text: description.text }] }));
     const checked = validateReply(ctx.session.workbook, reply, { sheet, range });
     if (!checked.ok && checked.reason !== "empty") return { status: "invalid", messages: checked.messages };
     if (checked.ok) {
@@ -103,7 +104,6 @@ export async function cleanColumn(ctx: AgentContext, sheet: SheetId, col: number
       summary = checked.summary;
     }
   }
-  // Read the column as it is now: it may have changed while the model was answering.
   const byCell = new Map<number, ResolvedSheetEdit>();
   for (const edit of normaliseColumn(ctx.session.workbook, sheet, col)) byCell.set(edit.row, edit);
   for (const edit of modelEdits) byCell.set(edit.row, edit);
