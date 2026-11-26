@@ -241,7 +241,8 @@ class Runtime:
         values = {}
         for line in text.splitlines():
             if line.startswith(('MATRIX_MACHINE_ID=', 'MATRIX_HANDLE=', 'MATRIX_RUNTIME_SLOT=', 'MATRIX_CLERK_USER_ID=',
-                                'MATRIX_USER_ID=', 'MATRIX_BROWSER_LAB=', 'MATRIX_BROWSER_LAB_VIEWER_AUTH=', 'MATRIX_BROWSER_DEV_SETUP=')):
+                                'MATRIX_USER_ID=', 'MATRIX_BROWSER_LAB=', 'MATRIX_BROWSER_LAB_VIEWER_AUTH=', 'MATRIX_BROWSER_DEV_SETUP=',
+                                'MATRIX_SELF_HOSTED=', 'MATRIX_BROWSER_ACCOUNT=')):
                 key, value = line.split('=', 1)
                 if key in values:
                     raise ValueError('Duplicate Browser host configuration')
@@ -250,14 +251,81 @@ class Runtime:
         # A root-owned journal can still be rolled back after the opt-in is withdrawn.
         eligible_slot = slot == 'primary' or (slot == 'dev'
             and (recovering_activation or values.get('MATRIX_BROWSER_DEV_SETUP') == 'true'))
-        if (not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', values.get('MATRIX_MACHINE_ID', ''))
+        # Self-host (spec 2701) has no Clerk or platform machine id; the installer writes
+        # self-host-<handle> for both. The flag must be exact and the Clerk shape is then refused.
+        self_hosted = 'MATRIX_SELF_HOSTED' in values
+        machine_pattern = r'self-host-[A-Za-z0-9_-]{1,64}' if self_hosted else r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+        owner_pattern = r'self-host-[A-Za-z0-9_-]{1,64}' if self_hosted else r'user_[A-Za-z0-9]{1,128}'
+        if ((self_hosted and (values['MATRIX_SELF_HOSTED'] != '1' or slot != 'primary'))
+            or not re.fullmatch(machine_pattern, values.get('MATRIX_MACHINE_ID', ''))
             or not re.fullmatch(r'[a-z][a-z0-9-]{0,62}', values.get('MATRIX_HANDLE', ''))
             or values['MATRIX_HANDLE'].startswith(('pv-', 'pr-')) or not eligible_slot
-            or not re.fullmatch(r'user_[A-Za-z0-9]{1,128}', values.get('MATRIX_CLERK_USER_ID', ''))
+            or not re.fullmatch(owner_pattern, values.get('MATRIX_CLERK_USER_ID', ''))
             or values.get('MATRIX_USER_ID', values.get('MATRIX_CLERK_USER_ID')) != values.get('MATRIX_CLERK_USER_ID')
             or values.get('MATRIX_BROWSER_LAB', 'true') not in ('true', 'false')):
             raise ValueError('Customer Browser requires bound owner identity')
         return text, values
+
+    def browser_account(self, values):
+        """The account every native Browser unit runs as. Managed hosts keep matrix;
+        a self-host install names a dedicated account that must hold neither the
+        matrix group (host.env, postgres.env) nor the docker group (root)."""
+        name = values.get('MATRIX_BROWSER_ACCOUNT', 'matrix')
+        if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', name) or name == 'root':
+            raise ValueError('Invalid Browser account')
+        if name == 'matrix':
+            return name, None
+        owner = pwd.getpwnam(name)
+        if owner.pw_uid == 0 or not re.fullmatch(r'/[A-Za-z0-9._/-]{1,200}', owner.pw_dir) or '..' in Path(owner.pw_dir).parts:
+            raise ValueError('Unsafe Browser account')
+        for group in ('matrix', 'docker'):
+            try:
+                entry = grp.getgrnam(group)
+            except KeyError:
+                continue
+            if owner.pw_gid == entry.gr_gid or name in entry.gr_mem:
+                raise ValueError('Browser account must not hold Matrix or Docker access')
+        return name, owner
+
+    def regroup(self, path, gid):
+        """Give a root-owned 0640 file to a group, never following a link or touching contents."""
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != self.uid or info.st_nlink != 1:
+                raise ValueError('Unsafe Browser credential file')
+            if info.st_gid != gid and os.getuid() == 0:
+                os.fchown(descriptor, -1, gid)
+            if stat.S_IMODE(info.st_mode) != 0o640:
+                os.fchmod(descriptor, 0o640)
+        finally:
+            os.close(descriptor)
+
+    def account_units(self, files, name, owner, profile):
+        """Payload units name the matrix account; a dedicated account replaces it exactly."""
+        if name == 'matrix':
+            return files
+        group = grp.getgrgid(owner.pw_gid).gr_name
+        if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', group):
+            raise ValueError('Invalid Browser account group')
+        result = dict(files)
+        for unit in self.service_names:
+            content = result[unit]
+            if content.count('User=matrix\nGroup=matrix\n') != 1:
+                raise ValueError('Unexpected Browser unit account')
+            account = f'User={name}\nGroup={group}\n'
+            if unit == 'matrix-browser-lab.service':
+                # The supervisor's native helpers accept this profile and open this home.
+                home = owner.pw_dir.rstrip('/')
+                account += (f'Environment=MATRIX_BROWSER_CHROME_PROFILE={profile}\n'
+                            f'Environment=MATRIX_BROWSER_HOME={home}\nEnvironment=MATRIX_BROWSER_WORKDIR={home}\n'
+                            f'Environment=MATRIX_BROWSER_AGENT_SOCKET_DIR={home}/.cache/matrix-browser-lab-agent\n')
+            content = content.replace('User=matrix\nGroup=matrix\n', account)
+            content = content.replace('/home/matrix/.local/share/matrix-browser-lab/chrome', profile)
+            if '/home/matrix' in content:
+                raise ValueError('Unexpected Browser unit path')
+            result[unit] = content
+        return result
 
     def enable_environment(self):
         text, values = self.environment()
@@ -270,6 +338,9 @@ class Runtime:
     def credentials(self):
         text, values = self.environment()
         password_file, journal = self.prefix / 'viewer.passwd', self.prefix / 'credential-pending.json'
+        # The viewer (Xvnc) runs as the Browser account and reads the password through its group.
+        name, owner = self.browser_account(values)
+        password_gid = self.gid if name == 'matrix' else owner.pw_gid
         if journal.exists() or journal.is_symlink():
             pending = json.loads(self.read(journal, 32768))
             authorization = pending['authorization']
@@ -280,7 +351,7 @@ class Runtime:
                 raise ValueError('Browser credential changed during recovery')
             if password_file.exists() and self.read(password_file, 16384) != password_data:
                 raise ValueError('Browser password changed during recovery')
-            self.write(password_file, password_data, 0o640, self.gid)
+            self.write(password_file, password_data, 0o640, password_gid)
             lines = [line for line in text.splitlines() if not line.startswith('MATRIX_BROWSER_LAB_VIEWER_AUTH=')]
             self.write(self.env, '\n'.join(lines) + '\nMATRIX_BROWSER_LAB_VIEWER_AUTH="' + authorization + '"\n', 0o640, self.gid)
             self.unlink_durable(journal)
@@ -293,6 +364,8 @@ class Runtime:
             self.read(password_file, 16384)
             if not re.fullmatch(r'Basic [A-Za-z0-9+/]+={0,2}', values['MATRIX_BROWSER_LAB_VIEWER_AUTH']):
                 raise ValueError('Invalid Browser credential')
+            # The saved pair stays as it is; only its group follows the Browser account.
+            self.regroup(password_file, password_gid)
             return
         password = secrets.token_hex(32)
         temporary = self.prefix / ('.viewer.' + secrets.token_hex(12))
@@ -397,9 +470,15 @@ class Runtime:
 
     service_names = ('matrix-browser-lab-vnc.service', 'matrix-browser-lab-wm.service', 'matrix-browser-lab-desktop.service', 'matrix-browser-lab-panel.service', 'matrix-browser-lab-chrome.service', 'matrix-browser-lab.service')
 
+    def nginx_site(self):
+        # The self-host installer owns a separately named site; managed hosts keep theirs.
+        _, values = self.environment(recovering_activation=True)
+        return self.path('/etc/nginx/sites-available/matrix-self-host' if 'MATRIX_SELF_HOSTED' in values
+                         else '/etc/nginx/sites-available/matrix')
+
     def destination(self, name):
         if name == 'nginx':
-            return self.path('/etc/nginx/sites-available/matrix')
+            return self.nginx_site()
         if name == 'tint2rc':
             return self.prefix / name
         if name not in self.service_names:
@@ -653,20 +732,27 @@ class Runtime:
                 pass  # Explicitly repair failed native health, retaining data.
         self.preflight()
         self.verified_archive()
-        owner = pwd.getpwnam('matrix')
-        profile = self.path('/home/matrix/.local/share/matrix-browser-lab/chrome')
-        local = self.path('/home/matrix/.local')
-        owner_local = self.path('/home/matrix/home/.local')
+        account, owner = self.browser_account(self.environment()[1])
+        if account == 'matrix':
+            owner = pwd.getpwnam('matrix')
+            profile_path = '/home/matrix/.local/share/matrix-browser-lab/chrome'
+            local = self.path('/home/matrix/.local')
+            owner_local = self.path('/home/matrix/home/.local')
+        else:
+            # A dedicated account has its own private home and no compatibility alias.
+            profile_path = owner.pw_dir.rstrip('/') + '/.local/share/matrix-browser-lab/chrome'
+            local = owner_local = None
+        profile = self.path(profile_path)
         # Customer cloud-init keeps this exact compatibility alias. Preserve the
         # established Chrome path/profile; every other symlink remains refused.
         for path in (profile, *profile.parents):
-            if path.is_symlink() and (path != local or path.readlink() != owner_local
+            if path.is_symlink() and (local is None or path != local or path.readlink() != owner_local
                     or any(parent.is_symlink() for parent in (owner_local, *owner_local.parents))):
                 raise ValueError('Unsafe Browser owner profile')
         self.dependencies()
         self.credentials()
         # Owner profile is never recursively chowned, copied, removed or reset.
-        self.run(['/usr/sbin/runuser', '-u', 'matrix', '--', '/usr/bin/mkdir', '-p', str(profile)])
+        self.run(['/usr/sbin/runuser', '-u', account, '--', '/usr/bin/mkdir', '-p', str(profile)])
         if not profile.is_dir() or profile.stat().st_uid != owner.pw_uid:
             raise ValueError('Unsafe Browser owner profile')
         with tempfile.TemporaryDirectory(prefix='.payload-', dir=self.prefix) as temporary:
@@ -677,9 +763,10 @@ class Runtime:
             files = json.loads((incoming / 'runtime-services.json').read_text())
             if set(files) != {*self.service_names, 'tint2rc'} or any(not isinstance(value, str) or len(value) > 32768 for value in files.values()):
                 raise ValueError('Invalid Browser service payload')
+            files = self.account_units(files, account, owner, profile_path)
             if json.loads(self.read(self.path('/opt/matrix/release.json'))).get('version') != version or self.installed_version() != version:
                 raise ValueError('Browser release changed during reconciliation')
-            nginx = self.path('/etc/nginx/sites-available/matrix')
+            nginx = self.nginx_site()
             files['nginx'] = viewer_location(self.read(nginx).decode())
             self.activate(incoming, files)
         self.write(self.prefix / 'installed-release', version + '\n')

@@ -9,6 +9,9 @@ ConditionPathExists=/opt/matrix/bin/matrix-install-developer-tools
 Type=oneshot
 User=root
 Group=root
+# npm CLIs such as Codex start with `#!/usr/bin/env node`; the post-install
+# version check needs the bundled Node even where /usr/local/bin has no symlink.
+Environment=PATH=/opt/matrix/runtime/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=/opt/matrix/env/host.env
 ExecStart=/opt/matrix/bin/matrix-install-developer-tools --tools-only
 StateDirectory=matrix-developer-tools

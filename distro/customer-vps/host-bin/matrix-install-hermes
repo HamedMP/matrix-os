@@ -9,6 +9,8 @@ if [ -r /opt/matrix/bin/matrix-owner-env ]; then
   source /opt/matrix/bin/matrix-owner-env
   matrix_export_owner_env
 fi
+# The owner's group need not share the account name (self-host: alice in staff).
+MATRIX_RUNTIME_GROUP="${MATRIX_RUNTIME_GROUP:-$(id -gn "$MATRIX_RUNTIME_USER" 2>/dev/null || true)}"
 # An owner-requested uninstall remains authoritative across host upgrades.
 # Only the explicit host-control Install action clears this root-owned marker.
 if [ -e /var/lib/matrix-agent-runtime/disabled-hermes ] || [ -L /var/lib/matrix-agent-runtime/disabled-hermes ]; then
@@ -43,15 +45,15 @@ if ! id "$MATRIX_RUNTIME_USER" >/dev/null 2>&1; then
 fi
 
 if declare -F matrix_install_owner_dirs >/dev/null 2>&1; then
-  matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_USER"
+  matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_GROUP"
 else
-  install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_USER" -m 0755 \
+  install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_GROUP" -m 0755 \
     "$MATRIX_RUNTIME_HOME/.local" \
     "$MATRIX_RUNTIME_HOME/.local/bin" \
     "$MATRIX_RUNTIME_HOME/.cache" \
     "$MATRIX_RUNTIME_HOME/.config"
 fi
-install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_USER" -m 0700 "$HERMES_HOME"
+install -d -o "$MATRIX_RUNTIME_USER" -g "$MATRIX_RUNTIME_GROUP" -m 0700 "$HERMES_HOME"
 if declare -F matrix_migrate_legacy_dotdir >/dev/null 2>&1; then
   matrix_migrate_legacy_dotdir ".local" 0755
   matrix_migrate_legacy_dotdir ".cache" 0755
@@ -64,7 +66,7 @@ fi
 # created without SSH keys), which left first-boot installs crash-looping.
 run_installer_as_runtime_user() {
   if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
-    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups "$@"
+    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_GROUP" --init-groups "$@"
     return
   fi
   sudo -H -u "$MATRIX_RUNTIME_USER" "$@"

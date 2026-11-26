@@ -3,9 +3,25 @@ import { promisify } from 'node:util';
 import { lstat, readFile, readlink } from 'node:fs/promises';
 
 const executeFile = promisify(execFile);
-const chromeProfile = '/home/matrix/.local/share/matrix-browser-lab/chrome';
-const matrixHome = '/home/matrix/home';
-const env = ownerUid => ({ HOME: '/home/matrix', PATH: '/usr/local/bin:/usr/bin:/bin', DISPLAY: ':7', LANG: 'C.UTF-8', XDG_RUNTIME_DIR: `/run/user/${ownerUid}`, DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${ownerUid}/bus` });
+/**
+ * The Browser account's fixed paths. The matrix account (managed computers) keeps
+ * its historic paths; a dedicated account (self-host) gets them from its unit.
+ */
+export function nativePaths(source = process.env) {
+  const path = (value, fallback) => {
+    if (value === undefined) return fallback;
+    if (typeof value !== 'string' || !/^\/[A-Za-z0-9._/-]{1,240}$/.test(value) || value.split('/').includes('..')) throw new Error('Invalid Browser path');
+    return value;
+  };
+  return {
+    chromeProfile: path(source.MATRIX_BROWSER_CHROME_PROFILE, '/home/matrix/.local/share/matrix-browser-lab/chrome'),
+    accountHome: path(source.MATRIX_BROWSER_HOME, '/home/matrix'),
+    workdir: path(source.MATRIX_BROWSER_WORKDIR, '/home/matrix/home'),
+    agentSocketDirectory: path(source.MATRIX_BROWSER_AGENT_SOCKET_DIR, '/tmp/matrix-browser-lab-agent'),
+  };
+}
+const { chromeProfile, accountHome, workdir: matrixHome } = nativePaths();
+const env = ownerUid => ({ HOME: accountHome, PATH: '/usr/local/bin:/usr/bin:/bin', DISPLAY: ':7', LANG: 'C.UTF-8', XDG_RUNTIME_DIR: `/run/user/${ownerUid}`, DBUS_SESSION_BUS_ADDRESS: `unix:path=/run/user/${ownerUid}/bus` });
 const commandOptions = (signal, ownerUid) => ({ env: env(ownerUid), timeout: 3000, maxBuffer: 16_384, signal: signal ?? AbortSignal.timeout(3000) });
 const ACTIONS = ['restore-chrome', 'show-desktop', 'open-files', 'open-terminal'];
 export class InvalidBrowserControl extends Error {}
@@ -63,7 +79,7 @@ export async function launchNativeApp(file, args, options, execute = executeFile
   // A transient user service has its own cgroup and survives supervisor updates.
   // Two fixed names prevent unbounded launches; normal exit collects each unit.
   await execute('/usr/bin/systemd-run', ['--user', '--collect', '--no-block', `--unit=matrix-browser-lab-${unit}.service`, '--service-type=exec',
-    `--working-directory=${matrixHome}`, '--setenv=DISPLAY=:7', '--setenv=HOME=/home/matrix', '--setenv=LANG=C.UTF-8',
+    `--working-directory=${matrixHome}`, '--setenv=DISPLAY=:7', `--setenv=HOME=${accountHome}`, '--setenv=LANG=C.UTF-8',
     '--property=MemoryMax=512M', '--property=TasksMax=128', '--property=TimeoutStopSec=5s', '--property=NoNewPrivileges=yes', '--property=KillMode=control-group', '--', file, ...args], options);
 }
 

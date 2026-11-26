@@ -289,7 +289,7 @@ describe('customer VPS host bundle', () => {
     expect(ownerEnv).toContain('matrix_migrate_legacy_dotdir ".local" 0755 "$owner" "$group"');
     expect(ownerEnv).toContain('matrix_migrate_legacy_dotdir ".hermes" 0700 "$owner" "$group"');
     expect(hermesInstaller).toContain('source /opt/matrix/bin/matrix-owner-env');
-    expect(hermesInstaller).toContain('matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_USER"');
+    expect(hermesInstaller).toContain('matrix_install_owner_dirs "$MATRIX_RUNTIME_USER" "$MATRIX_RUNTIME_GROUP"');
     expect(hermesInstaller).toContain('matrix_migrate_legacy_dotdir ".hermes" 0700');
     expect(hermesInstaller).toContain('HOME="$MATRIX_RUNTIME_HOME"');
     expect(hermesInstaller).toContain('HERMES_HOME="$HERMES_HOME"');
@@ -399,6 +399,47 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('owner env leaves a self-hosted person\'s real home alone when legacy migration is skipped', () => {
+    const root = process.cwd();
+    const tempDir = mkdtempSync(join(tmpdir(), 'matrix-owner-env-skip-'));
+    const matrixHome = join(tempDir, 'alice', 'matrix');
+    const personalHome = join(tempDir, 'alice');
+    try {
+      mkdirSync(join(personalHome, '.config', 'herdr'), { recursive: true });
+      writeFileSync(join(personalHome, '.config', 'herdr', 'config.toml'), 'theme = "dark"\n');
+      const result = spawnSync('bash', ['-c', `
+set -euo pipefail
+source "$OWNER_ENV"
+matrix_export_owner_env
+matrix_reconcile_owner_home "$(id -un)" "$(id -gn)"
+test -d "$MATRIX_HOME/.config"
+`], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          OWNER_ENV: join(root, 'distro/customer-vps/host-bin/matrix-owner-env'),
+          MATRIX_HOME: matrixHome,
+          MATRIX_LEGACY_HOME: personalHome,
+          MATRIX_SKIP_LEGACY_HOME_MIGRATION: '1',
+        },
+      });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(lstatSync(join(personalHome, '.config')).isSymbolicLink()).toBe(false);
+      expect(existsSync(join(personalHome, '.config', 'herdr', 'config.toml'))).toBe(true);
+      expect(existsSync(join(matrixHome, '.config', 'herdr'))).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('gateway launcher hands bundled app files to the configured runtime user', () => {
+    const launcher = readFileSync(join(process.cwd(), 'distro/customer-vps/host-bin/matrix-gateway'), 'utf8');
+    expect(launcher).toContain('runtime_owner="${MATRIX_RUNTIME_USER:-matrix}"');
+    expect(launcher).toContain('chown -R "${runtime_owner}:${MATRIX_RUNTIME_GROUP:-$runtime_owner}" "$MATRIX_HOME/system/icons" "$MATRIX_HOME/apps"');
+    expect(launcher).not.toContain('chown -R matrix:matrix');
   });
 
   it('bundled home sync preserves customized default app files', () => {

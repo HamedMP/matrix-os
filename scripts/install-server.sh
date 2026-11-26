@@ -9,7 +9,27 @@ DEFAULT_BUNDLE_BASE="https://app.matrix-os.com/system-bundles/${DEFAULT_CHANNEL}
 MATRIX_HOST_BUNDLE_URL="${MATRIX_HOST_BUNDLE_URL:-${DEFAULT_BUNDLE_BASE}/matrix-host-bundle.tar.gz}"
 MATRIX_INSTALL_HANDLE="${MATRIX_INSTALL_HANDLE:-matrix}"
 MATRIX_DOMAIN="${MATRIX_DOMAIN:-_}"
-MATRIX_HOME_DIR="${MATRIX_HOME:-/home/matrix/home}"
+MATRIX_HOME_DIR="${MATRIX_HOME:-}"
+MATRIX_EXISTING_HOST_ENV="${MATRIX_EXISTING_HOST_ENV:-/opt/matrix/env/host.env}"
+MATRIX_RUN_USER=""
+MATRIX_RUN_GROUP=""
+MATRIX_RUN_USER_HOME=""
+MATRIX_HERDR_CORE_BIN=""
+MATRIX_TAILSCALE_OWNER_LOGIN=""
+MATRIX_TAILNET_URL=""
+# The account the browser desktop runs as (spec 2701): no matrix or docker group.
+MATRIX_BROWSER_ACCOUNT=matrix-browser
+# Install choices (spec 2701). Flags win over env; with no TTY the defaults apply.
+OPT_RUN_USER="${MATRIX_RUN_USER_REQUEST:-}"
+OPT_HERDR="${MATRIX_HERDR_CHOICE:-}"
+OPT_BROWSER="${MATRIX_BROWSER_CHOICE:-}"
+OPT_ACCESS="${MATRIX_ACCESS:-}"
+OPT_LOGIN_SERVER="${MATRIX_LOGIN_SERVER:-}"
+OPT_AUTHKEY_FILE="${MATRIX_TAILSCALE_AUTHKEY_FILE:-}"
+OPT_JOIN_URL="${MATRIX_JOIN_URL:-}"
+OPT_JOIN_CODE="${MATRIX_JOIN_CODE:-}"
+OPT_ACCESS_EXPLICIT=0
+BROWSER_FLAG_GIVEN=0
 MATRIX_DEVELOPER_TOOLS="${MATRIX_DEVELOPER_TOOLS:-codex claude-code opencode pi}"
 MATRIX_INSTALL_TELEMETRY_URL="${MATRIX_INSTALL_TELEMETRY_URL:-https://matrix-os.com/api/install-telemetry}"
 MATRIX_INSTALL_TELEMETRY_ID="${MATRIX_INSTALL_TELEMETRY_ID:-}"
@@ -239,12 +259,16 @@ capture_install_telemetry() {
   exit_code="${3:-0}"
   telemetry_enabled || return 0
   version="$(telemetry_value "$(installed_version 2>/dev/null || printf 'unknown')")"
-  payload="$(printf '{"event":"%s","installId":"%s","channel":"%s","version":"%s","domainMode":"%s","bundleSource":"%s","developerToolsCount":%s,"phase":"%s","status":"%s","exitCode":%s}\n' \
+  # Only the chosen options: never hostnames, accounts, logins or keys.
+  payload="$(printf '{"event":"%s","installId":"%s","channel":"%s","version":"%s","domainMode":"%s","accessMode":"%s","browser":"%s","herdr":"%s","bundleSource":"%s","developerToolsCount":%s,"phase":"%s","status":"%s","exitCode":%s}\n' \
     "$(telemetry_value "$event")" \
     "$(telemetry_value "$(telemetry_id)")" \
     "$(telemetry_value "$DEFAULT_CHANNEL")" \
     "$version" \
     "$(telemetry_value "$(domain_mode)")" \
+    "$(telemetry_value "${OPT_ACCESS:-unknown}")" \
+    "$(telemetry_value "${OPT_BROWSER:-unknown}")" \
+    "$(telemetry_value "${OPT_HERDR:-unknown}")" \
     "$(telemetry_value "$(bundle_source)")" \
     "$(developer_tool_count)" \
     "$(telemetry_value "$INSTALL_PHASE")" \
@@ -279,6 +303,890 @@ require_linux_systemd() {
   command -v systemctl >/dev/null 2>&1 || fail "systemd is required"
 }
 
+usage() {
+  cat <<'EOF'
+Usage: curl -fsSL https://matrix-os.com/install-server.sh | sudo bash -s -- [options]
+
+  --user <name>            Run Matrix as this account (default: the sudo user; never root)
+  --herdr | --no-herdr     Show existing Herdr sessions (asked only when herdr-core is found)
+  --browser | --no-browser Enable browser use (default: yes)
+  --access <mode>          tailscale (default), headscale, or public (password page, not recommended)
+  --login-server <url>     Headscale server URL (implies --access headscale)
+  --authkey-file <path>    Root-only file with a Tailscale/Headscale auth key; deleted after use
+  --join <url>             Pair with an existing Matrix computer (from Settings > System > Add a machine)
+  --join-code <code>       One-time join code shown next to --join
+  -h, --help               Show this help
+
+With no terminal attached the defaults apply and nothing waits for input.
+EOF
+}
+
+parse_args() {
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --user) [ "$#" -ge 2 ] || fail "--user needs a value"; OPT_RUN_USER="$2"; shift 2 ;;
+      --user=*) OPT_RUN_USER="${1#*=}"; shift ;;
+      --herdr) OPT_HERDR=on; shift ;;
+      --no-herdr) OPT_HERDR=off; shift ;;
+      --browser) OPT_BROWSER=on; BROWSER_FLAG_GIVEN=1; shift ;;
+      --no-browser) OPT_BROWSER=off; BROWSER_FLAG_GIVEN=1; shift ;;
+      --access) [ "$#" -ge 2 ] || fail "--access needs a value"; OPT_ACCESS="$2"; OPT_ACCESS_EXPLICIT=1; shift 2 ;;
+      --access=*) OPT_ACCESS="${1#*=}"; OPT_ACCESS_EXPLICIT=1; shift ;;
+      --login-server) [ "$#" -ge 2 ] || fail "--login-server needs a value"; OPT_LOGIN_SERVER="$2"; shift 2 ;;
+      --login-server=*) OPT_LOGIN_SERVER="${1#*=}"; shift ;;
+      --authkey-file) [ "$#" -ge 2 ] || fail "--authkey-file needs a value"; OPT_AUTHKEY_FILE="$2"; shift 2 ;;
+      --authkey-file=*) OPT_AUTHKEY_FILE="${1#*=}"; shift ;;
+      --join) [ "$#" -ge 2 ] || fail "--join needs a value"; OPT_JOIN_URL="$2"; shift 2 ;;
+      --join=*) OPT_JOIN_URL="${1#*=}"; shift ;;
+      --join-code) [ "$#" -ge 2 ] || fail "--join-code needs a value"; OPT_JOIN_CODE="$2"; shift 2 ;;
+      --join-code=*) OPT_JOIN_CODE="${1#*=}"; shift ;;
+      -h|--help) usage; exit 0 ;;
+      *) fail "unknown option: $1 (see --help)" ;;
+    esac
+  done
+  [ -z "${MATRIX_ACCESS:-}" ] || OPT_ACCESS_EXPLICIT=1
+  [ -z "${MATRIX_BROWSER_CHOICE:-}" ] || BROWSER_FLAG_GIVEN=1
+  case "$OPT_HERDR" in ""|on|off) ;; *) fail "MATRIX_HERDR_CHOICE must be on or off" ;; esac
+  case "${OPT_BROWSER:-on}" in on|off) OPT_BROWSER="${OPT_BROWSER:-on}" ;; *) fail "MATRIX_BROWSER_CHOICE must be on or off" ;; esac
+  OPT_ACCESS="${OPT_ACCESS:-tailscale}"
+  case "$OPT_ACCESS" in
+    tailscale|headscale|public) ;;
+    *) fail "--access must be tailscale, headscale or public" ;;
+  esac
+}
+
+has_tty() {
+  [ "${MATRIX_INSTALL_NONINTERACTIVE:-0}" != "1" ] || return 1
+  { : </dev/tty; } 2>/dev/null
+}
+
+# ask_yes_no <question> <default on|off>; prints on/off. Without a TTY the default wins.
+ask_yes_no() {
+  local question default answer hint
+  question="$1"
+  default="$2"
+  if ! has_tty; then
+    printf '%s\n' "$default"
+    return 0
+  fi
+  if [ "$default" = "on" ]; then hint="Y/n"; else hint="y/N"; fi
+  printf '%s [%s] ' "$question" "$hint" >/dev/tty
+  IFS= read -r answer </dev/tty || answer=""
+  case "$answer" in
+    [Yy]|[Yy][Ee][Ss]) printf 'on\n' ;;
+    [Nn]|[Nn][Oo]) printf 'off\n' ;;
+    *) printf '%s\n' "$default" ;;
+  esac
+}
+
+ask_access_mode() {
+  local answer
+  if [ "$OPT_ACCESS_EXPLICIT" = "1" ] || [ -n "$OPT_LOGIN_SERVER" ] || ! has_tty; then
+    return 0
+  fi
+  printf '%s\n' "How will you reach Matrix?" "  1) Tailscale (private network, recommended)" "  2) Headscale (your own Tailscale-compatible server)" "  3) Public address with a password page (not recommended)" >/dev/tty
+  printf 'Choose [1] ' >/dev/tty
+  IFS= read -r answer </dev/tty || answer=""
+  case "$answer" in
+    2) OPT_ACCESS=headscale
+       printf 'Headscale server URL: ' >/dev/tty
+       IFS= read -r OPT_LOGIN_SERVER </dev/tty || OPT_LOGIN_SERVER="" ;;
+    3) OPT_ACCESS=public ;;
+    *) OPT_ACCESS=tailscale ;;
+  esac
+  OPT_ACCESS_EXPLICIT=1
+}
+
+finalize_access_choice() {
+  if [ -n "$OPT_LOGIN_SERVER" ] && [ "$OPT_ACCESS_EXPLICIT" != "1" ]; then
+    OPT_ACCESS=headscale
+  fi
+  if [ "$OPT_ACCESS" = "headscale" ]; then
+    [ -n "$OPT_LOGIN_SERVER" ] || fail "--access headscale needs --login-server <https-url>"
+    [ "${#OPT_LOGIN_SERVER}" -le 2048 ] || fail "--login-server must be an https URL"
+    [[ "$OPT_LOGIN_SERVER" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$ ]] \
+      || fail "--login-server must be an https URL"
+  elif [ -n "$OPT_LOGIN_SERVER" ]; then
+    fail "--login-server is only used with --access headscale"
+  fi
+  if [ -n "$OPT_JOIN_URL" ] || [ -n "$OPT_JOIN_CODE" ]; then
+    [ "$OPT_ACCESS" != "public" ] || fail "--join needs --access tailscale or headscale"
+    [ -n "$OPT_JOIN_URL" ] && [ -n "$OPT_JOIN_CODE" ] || fail "--join and --join-code go together"
+    [[ "$OPT_JOIN_URL" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$ ]] || fail "--join must be the Matrix computer URL shown in Settings"
+    [[ "$OPT_JOIN_CODE" =~ ^mxj_[A-Za-z0-9_-]{20,64}$ ]] || fail "--join-code is not a Matrix join code"
+  fi
+}
+
+passwd_entry() {
+  # A missing account is normal here (ensure_matrix_user creates it later); getent
+  # exits 2 for it, which would otherwise end the installer under pipefail.
+  { getent passwd "$1" 2>/dev/null || true; } | head -n1
+}
+
+# Resolves MATRIX_RUN_USER, its group and home, and MATRIX_HOME_DIR (S1, spec 2701).
+resolve_run_user() {
+  local existing_user existing_home candidate entry uid home
+  existing_user=""
+  existing_home=""
+  if [ -f "$MATRIX_EXISTING_HOST_ENV" ]; then
+    existing_user="$(read_env_value "$MATRIX_EXISTING_HOST_ENV" MATRIX_RUNTIME_USER || printf 'matrix')"
+    existing_home="$(read_env_value "$MATRIX_EXISTING_HOST_ENV" MATRIX_HOME || true)"
+  fi
+
+  candidate="$OPT_RUN_USER"
+  if [ -n "$existing_user" ]; then
+    if [ -n "$candidate" ] && [ "$candidate" != "$existing_user" ]; then
+      fail "this computer already runs Matrix as ${existing_user}; re-run with --user ${existing_user} (owner data is never moved automatically)"
+    fi
+    candidate="$existing_user"
+  fi
+  if [ -z "$candidate" ]; then
+    candidate="${SUDO_USER:-}"
+  fi
+  if [ -z "$candidate" ] && has_tty; then
+    printf 'Run Matrix as which account? [matrix] ' >/dev/tty
+    IFS= read -r candidate </dev/tty || candidate=""
+  fi
+  candidate="${candidate:-matrix}"
+
+  [ "$candidate" != "root" ] || fail "Matrix must not run as root; pass --user <name> or run the installer with sudo from your own account"
+  [[ "$candidate" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || fail "--user must be a Unix account name"
+
+  entry="$(passwd_entry "$candidate")"
+  if [ -n "$entry" ]; then
+    uid="$(printf '%s' "$entry" | cut -d: -f3)"
+    [ "$uid" != "0" ] || fail "Matrix must not run as root; pass --user <name>"
+    home="$(printf '%s' "$entry" | cut -d: -f6)"
+  else
+    home="/home/${candidate}"
+  fi
+  if [ "$candidate" = "matrix" ]; then
+    # Legacy layout: the matrix account's home is its Matrix home.
+    home="/home/matrix"
+  fi
+
+  MATRIX_RUN_USER="$candidate"
+  MATRIX_RUN_USER_HOME="$home"
+  if [ -n "$entry" ]; then
+    MATRIX_RUN_GROUP="$(id -gn "$candidate" 2>/dev/null || printf '%s' "$candidate")"
+  else
+    MATRIX_RUN_GROUP="$candidate"
+  fi
+
+  if [ -z "$MATRIX_HOME_DIR" ]; then
+    if [ -n "$existing_home" ]; then
+      MATRIX_HOME_DIR="$existing_home"
+    elif [ "$candidate" = "matrix" ]; then
+      MATRIX_HOME_DIR="/home/matrix/home"
+    else
+      MATRIX_HOME_DIR="${home}/matrix"
+    fi
+  fi
+  case "$MATRIX_HOME_DIR" in
+    "$MATRIX_RUN_USER_HOME"/*) ;;
+    *) fail "MATRIX_HOME must stay under ${MATRIX_RUN_USER_HOME} for standalone installs" ;;
+  esac
+  case "$MATRIX_HOME_DIR" in
+    *..*|*[!A-Za-z0-9._/-]*) fail "MATRIX_HOME must be a plain path" ;;
+  esac
+}
+
+render_run_user_dropin() {
+  printf '# Written by install-server.sh: run Matrix as the person who installed it (spec 2701 S1).\n'
+  printf '[Service]\nUser=%s\nGroup=%s\nSupplementaryGroups=matrix docker\n' "$1" "$2"
+}
+
+render_zellij_home_dropin() {
+  printf '# Written by install-server.sh: self-host Matrix home (spec 2701 S1).\n'
+  printf '[Unit]\nConditionPathExists=\nConditionPathExists=%s/system/terminal-runtimes/%%i.json\n\n[Service]\nEnvironment=MATRIX_HOME=%s\n' "$1" "$1"
+}
+
+# The scope runtime supervisor runs root:matrix on every host (as on managed
+# VPSes). Self-host only moves its Matrix home and the read-only workload roots
+# it can see behind ProtectHome=tmpfs.
+SCOPE_RUNTIME_ROOTS=(bots agent-workspaces projects worktrees)
+
+render_scope_runtime_home_dropin() {
+  local root
+  printf '# Written by install-server.sh: self-host Matrix home (spec 2701 S1).\n'
+  printf '[Service]\nEnvironment=MATRIX_HOME=%s\n' "$1"
+  for root in "${SCOPE_RUNTIME_ROOTS[@]}"; do
+    printf 'BindReadOnlyPaths=-%s/%s\n' "$1" "$root"
+  done
+}
+
+# prepare_scope_runtime_roots <matrix home> <owner>: prepares workload roots before
+# the supervisor's read-only namespace exists. The capability-free root:matrix
+# supervisor reads them through group matrix, and the gateway later creates 0750
+# children as the owner (agent-workspaces/<owner>/<chat>), so the roots are setgid:
+# those children inherit group matrix instead of the owner's own group. An existing
+# root the owner holds gets the same group, setgid and no access for other accounts
+# on the directory itself only; its contents, other owners' roots and symlinks are
+# never touched. Nothing else reads these roots: nginx only proxies to loopback,
+# code-server and the gateway run as the owner, and scope workloads get their one
+# workspace by bind mount. The legacy
+# matrix account's primary group is already matrix, so its layout stays as it was.
+prepare_scope_runtime_roots() {
+  local root path
+  for root in "${SCOPE_RUNTIME_ROOTS[@]}"; do
+    path="$1/${root}"
+    if [ "$2" = "matrix" ]; then
+      [ -d "$path" ] || install -d -o matrix -g matrix -m 0750 "$path"
+    elif [ ! -e "$path" ] && [ ! -L "$path" ]; then
+      install -d -o "$2" -g matrix -m 2750 "$path"
+    elif [ -d "$path" ] && [ ! -L "$path" ] && [ "$(stat -c %U -- "$path")" = "$2" ]; then
+      chgrp matrix "$path"
+      chmod g+s,o-rwx "$path"
+      [ "$root" != "agent-workspaces" ] || adopt_managed_pi_workspaces "$path" "$2"
+    fi
+  done
+}
+
+# adopt_managed_pi_workspaces <agent-workspaces> <owner>: an earlier install left the
+# gateway's agent-workspaces/<owner key>/<chat id> directories in the owner's own
+# group, which the supervisor cannot traverse even under a setgid root. Moves just
+# those two gateway-managed levels (sha256 owner key, chat_ id) into setgid group
+# matrix. Chat contents, other names, other owners' directories and symlinks stay.
+adopt_managed_pi_workspaces() {
+  local key chat
+  for key in "$1"/*; do
+    [[ "${key##*/}" =~ ^[0-9a-f]{64}$ ]] && [ -d "$key" ] && [ ! -L "$key" ] || continue
+    [ "$(stat -c %U -- "$key")" = "$2" ] || continue
+    chgrp matrix "$key"
+    chmod g+s "$key"
+    for chat in "$key"/*; do
+      [[ "${chat##*/}" =~ ^chat_[A-Za-z0-9_-]{1,128}$ ]] && [ -d "$chat" ] && [ ! -L "$chat" ] || continue
+      [ "$(stat -c %U -- "$chat")" = "$2" ] || continue
+      chgrp matrix "$chat"
+      chmod g+s "$chat"
+    done
+  done
+  return 0
+}
+
+render_browser_sudoers() {
+  printf '# Written by install-server.sh: browser use lifecycle for %s only.\n' "$1"
+  printf '%s ALL=(root) NOPASSWD: /usr/bin/python3 -I /usr/local/libexec/matrix-browser-runtime.py --status\n' "$1"
+  printf '%s ALL=(root) NOPASSWD: /usr/bin/python3 -I /usr/local/libexec/matrix-browser-runtime.py --retry\n' "$1"
+}
+
+# check_authkey_file <path>: must be a regular file owned by the installing user (root) and private.
+check_authkey_file() {
+  local path meta owner mode
+  path="$1"
+  [ -f "$path" ] && [ ! -L "$path" ] || fail "--authkey-file must be a regular file"
+  meta="$(stat -c '%u %a' -- "$path" 2>/dev/null)" || fail "--authkey-file is not readable"
+  owner="${meta%% *}"
+  mode="${meta##* }"
+  [ "$owner" = "$(id -u)" ] || fail "--authkey-file must be owned by root"
+  case "$mode" in
+    400|600) ;;
+    *) fail "--authkey-file must not be readable by group or others (chmod 600)" ;;
+  esac
+}
+
+delete_authkey_file() {
+  if command -v shred >/dev/null 2>&1; then
+    shred -u -- "$1" 2>/dev/null || rm -f -- "$1"
+  else
+    rm -f -- "$1"
+  fi
+}
+
+tailscale_login_args() {
+  if [ "$OPT_ACCESS" = "headscale" ]; then
+    printf -- '--login-server=%s\n' "$OPT_LOGIN_SERVER"
+  fi
+}
+
+# The key never enters argv, logs or telemetry: tailscale reads it from the file.
+tailscale_login_with_authkey() {
+  local path status login_args
+  path="$1"
+  check_authkey_file "$path"
+  login_args="$(tailscale_login_args)"
+  status=0
+  # shellcheck disable=SC2086 -- login_args is a single validated flag or empty.
+  timeout 120 tailscale up "--auth-key=file:${path}" $login_args >>"$MATRIX_INSTALL_LOG" 2>&1 || status=$?
+  delete_authkey_file "$path"
+  return "$status"
+}
+
+nginx_identity_block() {
+  cat <<'EOF'
+  # Spec 2701: only the owner's Tailscale identity, checked by the gateway.
+  location = /_matrix_private_network_identity {
+    internal;
+    auth_request off;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000/api/system/private-network/identity;
+  }
+EOF
+}
+
+nginx_browser_viewer_block() {
+  cat <<'EOF'
+  location = /apps/browser-lab/viewer/websockify {
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 600s;
+    proxy_pass http://127.0.0.1:4000;
+  }
+
+EOF
+}
+
+# Public mode only: Basic Auth credentials a browser has cached are sent on
+# every request to this site, including a WebSocket opened by another site's
+# page, and CORS does not stop upgrades. So a browser WebSocket upgrade, on any
+# path, must come from a page on this same host (Origin host[:port] = the Host header). Requests
+# without an Origin are not browser pages. Private modes leave this to the
+# gateway, which checks the exact tailnet origin.
+nginx_public_origin_map() {
+  cat <<'EOF'
+map "$http_upgrade|$http_origin|$http_host" $matrix_ws_origin_ok {
+  default 0;
+  "~*^(?!websocket\|)" 1;
+  "~*^websocket\|\|" 1;
+  "~*^websocket\|https?://([^/|]+)\|\1$" 1;
+}
+
+EOF
+}
+
+# Private modes: only Tailscale Serve (root) reaches nginx's root-only unix socket, so
+# only it presents a tailnet identity; the loopback listener refuses one before auth.
+TAILNET_SOCKET=/run/matrix-nginx/tailnet.sock
+nginx_private_identity_map() {
+  cat <<'EOF'
+map "$remote_addr|$http_tailscale_user_login" $matrix_forged_identity {
+  default 0;
+  "~^unix:\|" 0;
+  "~\|.+$" 1;
+}
+
+EOF
+}
+
+# prepare_tailnet_socket_dir: the root-only directory holding nginx's Tailscale
+# Serve socket, recreated on every boot.
+prepare_tailnet_socket_dir() {
+  install -d -o root -g root -m 0700 /run/matrix-nginx
+  printf 'd /run/matrix-nginx 0700 root root -\n' >/etc/tmpfiles.d/matrix-nginx.conf
+}
+
+# render_nginx_site <access> <server_name> <htpasswd_file> <browser on|off>
+render_nginx_site() {
+  local access server_name htpasswd_file browser listen auth_lines exempt
+  access="$1"
+  server_name="$2"
+  htpasswd_file="$3"
+  browser="$4"
+  if [ "$access" = "public" ]; then
+    listen="listen 80 default_server;"
+    auth_lines="  auth_basic \"Matrix OS\";
+  auth_basic_user_file ${htpasswd_file};
+  if (\$matrix_ws_origin_ok = 0) { return 403; }"
+    exempt="auth_basic off;"
+  else
+    listen="listen 127.0.0.1:80 default_server;
+  listen unix:${TAILNET_SOCKET};"
+    auth_lines="  if (\$matrix_forged_identity) { return 403; }
+  auth_request /_matrix_private_network_identity;"
+    exempt="auth_request off;"
+  fi
+  if [ "$access" = "public" ]; then nginx_public_origin_map; else nginx_private_identity_map; fi
+  cat <<EOF
+server {
+  ${listen}
+  server_name ${server_name};
+
+  client_max_body_size 10m;
+${auth_lines}
+
+  proxy_set_header Host \$host;
+  proxy_set_header X-Forwarded-Host \$host;
+  proxy_set_header X-Forwarded-Proto \$scheme;
+  proxy_set_header X-Real-IP \$remote_addr;
+
+EOF
+  [ "$access" = "public" ] || nginx_identity_block
+  [ "$browser" != "on" ] || nginx_browser_viewer_block
+  cat <<EOF
+  # matrix-speech-upload-limit-v1
+  location = /api/speech/transcriptions {
+    client_max_body_size 21m;
+    proxy_read_timeout 90s;
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+
+  # matrix-sites-publish-timeout-v1
+  location ~ "^/api/apps/[a-z0-9][a-z0-9-]{0,63}/site\$" {
+    proxy_read_timeout 300s;
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+
+  location /api/ {
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+  location /files/ {
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+  location /icons/ {
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+  location /apps/ {
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+  location = /health {
+    ${exempt}
+    access_log off;
+    default_type application/json;
+    return 200 '{"ok":true}';
+  }
+  location /gateway/ {
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000/;
+  }
+
+  location /cli/ {
+    ${exempt}
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    rewrite ^/cli/?(.*)\$ /\$1 break;
+    proxy_pass http://127.0.0.1:4000;
+  }
+
+  location /ws {
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    include /opt/matrix/env/gateway-auth-token.conf;
+    proxy_pass http://127.0.0.1:4000;
+  }
+
+  location /code/ {
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    proxy_set_header Authorization "";
+    proxy_set_header X-Forwarded-Prefix /code;
+    rewrite ^/code/?(.*)\$ /\$1 break;
+    proxy_pass http://127.0.0.1:8788;
+  }
+
+  location @matrix_code_root_ws {
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    proxy_set_header Authorization "";
+    proxy_pass http://127.0.0.1:8788;
+  }
+
+  location / {
+    if (\$arg_reconnectionToken != "") {
+      return 418;
+    }
+    error_page 418 = @matrix_code_root_ws;
+    proxy_set_header Authorization "";
+    proxy_pass http://127.0.0.1:3000;
+  }
+}
+EOF
+}
+
+# run_user_login_shell: the run user's own login shell, so its PATH setup
+# (~/.zprofile, ~/.bash_profile, fish config) applies; Bash when the entry is
+# missing, not an executable absolute path, or a no-login shell.
+run_user_login_shell() {
+  local shell
+  shell="$(getent passwd "$MATRIX_RUN_USER" 2>/dev/null | cut -d: -f7 || true)"
+  case "$shell" in
+    */nologin | */false | "") printf 'bash\n' ;;
+    /*) if [ -x "$shell" ]; then printf '%s\n' "$shell"; else printf 'bash\n'; fi ;;
+    *) printf 'bash\n' ;;
+  esac
+}
+
+detect_herdr() {
+  local found shell
+  MATRIX_HERDR_CORE_BIN=""
+  shell="$(run_user_login_shell)"
+  found="$(timeout 15 runuser -u "$MATRIX_RUN_USER" -- "$shell" -lc 'command -v herdr-core' 2>/dev/null | head -n1 || true)"
+  if [[ "$found" =~ ^/[A-Za-z0-9._/+-]{1,240}$ ]] && [ -x "$found" ]; then
+    MATRIX_HERDR_CORE_BIN="$found"
+  fi
+  if [ -z "$MATRIX_HERDR_CORE_BIN" ]; then
+    if [ "$OPT_HERDR" = "on" ]; then
+      warn "herdr-core is not on ${MATRIX_RUN_USER}'s PATH; Herdr sessions stay off"
+    fi
+    OPT_HERDR=off
+    return 0
+  fi
+  if [ -z "$OPT_HERDR" ]; then
+    OPT_HERDR="$(ask_yes_no "Show your existing Herdr sessions in Matrix?" on)"
+  fi
+  ok "herdr-core found; Herdr sessions: ${OPT_HERDR}"
+}
+
+ask_install_choices() {
+  if ! browser_flag_given; then
+    OPT_BROWSER="$(ask_yes_no "Enable browser use (a private Chrome your agents can drive)?" on)"
+  fi
+  ask_access_mode
+  finalize_access_choice
+}
+
+browser_flag_given() {
+  [ "$BROWSER_FLAG_GIVEN" = "1" ]
+}
+
+node_bin() {
+  printf '%s\n' "${MATRIX_INSTALL_NODE_BIN:-/opt/matrix/runtime/node/bin/node}"
+}
+
+# Prints "<state>\t<dnsName>\t<ownerLogin>\t<tailnet>" from `tailscale status --json`.
+tailscale_status_line() {
+  timeout 15 tailscale status --json 2>/dev/null | "$(node_bin)" -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; if (input.length > 4 * 1024 * 1024) process.exit(1); });
+process.stdin.on("end", () => {
+  try {
+    const status = JSON.parse(input);
+    const self = status.Self || {};
+    const user = (status.User || {})[String(self.UserID)] || {};
+    const clean = (value) => (typeof value === "string" ? value.replace(/[^A-Za-z0-9._%+@:-]/g, "").slice(0, 254) : "");
+    process.stdout.write([clean(status.BackendState), clean(self.DNSName).replace(/\.$/, ""), clean(user.LoginName), clean((status.CurrentTailnet || {}).Name)].join("\t") + "\n");
+  } catch { process.exit(1); }
+});' 2>/dev/null || true
+}
+
+# Prints the control server this machine is signed in to (empty when tailscaled
+# keeps its default); fails when the preferences cannot be read.
+tailscale_control_url() {
+  timeout 15 tailscale debug prefs 2>/dev/null | "$(node_bin)" -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; if (input.length > 1024 * 1024) process.exit(1); });
+process.stdin.on("end", () => {
+  try {
+    const url = JSON.parse(input).ControlURL;
+    if (url !== undefined && typeof url !== "string") process.exit(1);
+    process.stdout.write((url || "").replace(/[^A-Za-z0-9._:\/-]/g, "").slice(0, 2048) + "\n");
+  } catch { process.exit(1); }
+});' 2>/dev/null
+}
+
+# normalize_control_url <url>: "tailscale" for Tailscale's own servers, else the
+# URL with a lowercase scheme/host and no trailing slash.
+normalize_control_url() {
+  local url="${1%/}" rest
+  case "${url,,}" in
+    ""|https://controlplane.tailscale.com|https://login.tailscale.com) printf 'tailscale\n'; return 0 ;;
+  esac
+  if [[ "$url" =~ ^([A-Za-z][A-Za-z0-9+.-]*://)([^/]*)(.*)$ ]]; then
+    rest="${BASH_REMATCH[3]}"
+    printf '%s%s%s\n' "${BASH_REMATCH[1],,}" "${BASH_REMATCH[2],,}" "$rest"
+  else
+    printf '%s\n' "$url"
+  fi
+}
+
+# A running connection is reused only when it is on the requested network; the
+# installer never switches networks itself, because that drops the person's
+# other devices from this machine.
+require_requested_control_server() {
+  local raw current requested switch
+  raw="$(tailscale_control_url)" \
+    || fail "this machine is on a private network, but the installer could not tell which private network (tailscale debug prefs failed). Check with: sudo tailscale debug prefs"
+  current="$(normalize_control_url "$raw")"
+  if [ "$OPT_ACCESS" = "headscale" ]; then
+    requested="$(normalize_control_url "$OPT_LOGIN_SERVER")"
+  else
+    requested=tailscale
+  fi
+  [ "$current" != "$requested" ] || return 0
+  if [ "$current" = "tailscale" ]; then
+    switch="To keep Tailscale, rerun the installer without --login-server."
+    fail "this machine is already on Tailscale, not ${OPT_LOGIN_SERVER}. Matrix does not switch networks for you. To use ${OPT_LOGIN_SERVER}, run: sudo tailscale logout, then rerun the installer. ${switch}"
+  fi
+  if [ "$requested" = "tailscale" ]; then
+    switch="To keep it, rerun the installer with --access headscale --login-server ${current}."
+  else
+    switch="To keep it, rerun the installer with --login-server ${current}."
+  fi
+  fail "this machine is already on the private network at ${current}, not $( [ "$requested" = tailscale ] && printf 'Tailscale' || printf '%s' "$OPT_LOGIN_SERVER" ). Matrix does not switch networks for you. To move it, run: sudo tailscale logout, then rerun the installer. ${switch}"
+}
+
+install_tailscale() {
+  local codename distro
+  if command -v tailscale >/dev/null 2>&1; then
+    ok "Tailscale is installed"
+    return 0
+  fi
+  [ -r /etc/os-release ] || fail "cannot detect the distribution for the Tailscale package repository"
+  # shellcheck disable=SC1091 -- host-owned OS metadata.
+  . /etc/os-release
+  distro="${ID:-}"
+  codename="${VERSION_CODENAME:-}"
+  case "$distro" in ubuntu|debian) ;; *) fail "Tailscale setup supports Ubuntu and Debian; use --access public or install Tailscale first" ;; esac
+  [[ "$codename" =~ ^[a-z]+$ ]] || fail "cannot detect the distribution codename for Tailscale"
+  log "Adding the signed Tailscale package repository"
+  install -d -m 0755 /usr/share/keyrings
+  curl --fail --silent --show-error --location --connect-timeout 10 --max-time 60 \
+    "https://pkgs.tailscale.com/stable/${distro}/${codename}.noarmor.gpg" \
+    -o /usr/share/keyrings/tailscale-archive-keyring.gpg >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    || fail "downloading the Tailscale signing key failed"
+  curl --fail --silent --show-error --location --connect-timeout 10 --max-time 60 \
+    "https://pkgs.tailscale.com/stable/${distro}/${codename}.tailscale-keyring.list" \
+    -o /etc/apt/sources.list.d/tailscale.list >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    || fail "downloading the Tailscale repository list failed"
+  grep -q 'signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg' /etc/apt/sources.list.d/tailscale.list \
+    || fail "the Tailscale repository list is not pinned to its signing key"
+  apt_get_update >>"$MATRIX_INSTALL_LOG" 2>&1 || fail "apt-get update failed after adding Tailscale"
+  timeout 300 apt-get install -y tailscale >>"$MATRIX_INSTALL_LOG" 2>&1 || fail "installing Tailscale failed"
+  ok "Tailscale installed"
+}
+
+tailscale_wait_running() {
+  local seconds line
+  seconds="$1"
+  for _ in $(seq 1 "$seconds"); do
+    line="$(tailscale_status_line)"
+    [ "${line%%$'\t'*}" != "Running" ] || return 0
+    sleep 1
+  done
+  return 1
+}
+
+print_first_login_link() {
+  local line url shown=""
+  while IFS= read -r line; do
+    [ -z "$shown" ] || continue
+    url="$(printf '%s\n' "$line" | grep -Eo 'https://[A-Za-z0-9./?=_%:-]+' | head -n1 || true)"
+    [ -n "$url" ] || continue
+    printf 'Login: %s\n' "$url"
+    shown=1
+  done
+}
+
+tailscale_login() {
+  local line wait login_args
+  line="$(tailscale_status_line)"
+  if [ "${line%%$'\t'*}" = "Running" ]; then
+    require_requested_control_server
+    ok "This machine is already on your private network"
+    return 0
+  fi
+  if [ -n "$OPT_AUTHKEY_FILE" ]; then
+    log "Joining the private network with the auth key file"
+    tailscale_login_with_authkey "$OPT_AUTHKEY_FILE" || fail "joining the private network with the auth key failed"
+    tailscale_wait_running 30 || fail "the private network did not come up after login"
+    return 0
+  fi
+  login_args="$(tailscale_login_args)"
+  if has_tty; then
+    wait="${MATRIX_TAILSCALE_LOGIN_WAIT:-900}"
+    printf '\n%s\n' "Open the link below (or scan the code) and sign in to connect this machine:" >/dev/tty
+    # shellcheck disable=SC2086 -- login_args is a single validated flag or empty.
+    timeout "$((wait + 10))" tailscale up --qr "--timeout=${wait}s" $login_args </dev/tty >/dev/tty 2>&1 || true
+  else
+    wait="${MATRIX_TAILSCALE_LOGIN_WAIT:-120}"
+    log "No terminal attached: waiting up to ${wait}s for the login below"
+    # shellcheck disable=SC2086 -- login_args is a single validated flag or empty.
+    # Print the link the moment it appears and keep reading, so tailscale is
+    # never cut off mid-login by a closed pipe.
+    timeout "$((wait + 10))" tailscale up "--timeout=${wait}s" $login_args 2>&1 | print_first_login_link || true
+  fi
+  if tailscale_wait_running 5; then
+    ok "This machine joined your private network"
+    return 0
+  fi
+  # Signing in later is not enough: serving, the tailnet address and the
+  # browser origin are recorded by the installer after login.
+  warn "Not signed in to the private network yet. Sign in with: sudo tailscale up$( [ -z "$login_args" ] || printf ' %s' "$login_args"), then rerun this installer with the same options to finish private-network setup"
+  return 0
+}
+
+record_tailscale_owner() {
+  local line state dns login
+  line="$(tailscale_status_line)"
+  IFS=$'\t' read -r state dns login _ <<<"$line"
+  [ "$state" = "Running" ] || return 0
+  if [[ "$login" =~ ^[A-Za-z0-9._%+@:-]{1,254}$ ]]; then
+    MATRIX_TAILSCALE_OWNER_LOGIN="$login"
+  fi
+  if [[ "$dns" =~ ^[A-Za-z0-9.-]{1,253}$ ]]; then
+    if [ "$OPT_ACCESS" = "headscale" ]; then
+      MATRIX_TAILNET_URL="http://${dns}"
+    else
+      MATRIX_TAILNET_URL="https://${dns}"
+    fi
+  fi
+}
+
+configure_tailscale_serve() {
+  if [ "$OPT_ACCESS" = "headscale" ]; then
+    timeout 60 tailscale serve --bg --yes --http=80 unix:${TAILNET_SOCKET} >>"$MATRIX_INSTALL_LOG" 2>&1 \
+      || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 unix:${TAILNET_SOCKET}"; return 0; }
+  else
+    if ! timeout 60 tailscale serve --bg --yes --https=443 unix:${TAILNET_SOCKET} >>"$MATRIX_INSTALL_LOG" 2>&1; then
+      # Certificates are off for this tailnet. Tailnet traffic is already
+      # encrypted end to end, so serve plain HTTP there instead of nothing.
+      timeout 60 tailscale serve --bg --yes --http=80 unix:${TAILNET_SOCKET} >>"$MATRIX_INSTALL_LOG" 2>&1 \
+        || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 unix:${TAILNET_SOCKET}"; return 0; }
+      MATRIX_TAILNET_URL="${MATRIX_TAILNET_URL/#https:/http:}"
+      warn "HTTPS certificates are off for your tailnet, so Matrix is served over tailnet-only HTTP. For an https link, enable HTTPS in the Tailscale admin console, then run: sudo tailscale serve --bg --https=443 unix:${TAILNET_SOCKET}"
+    fi
+  fi
+  ok "Matrix is served on your private network only"
+}
+
+configure_private_network() {
+  [ "$OPT_ACCESS" != "public" ] || return 0
+  section "Connecting your private network (${OPT_ACCESS})"
+  install_tailscale
+  run_required "starting tailscaled" systemctl enable --now tailscaled
+  # Lets the Matrix gateway (running as the owner) show status and start logins without root.
+  run_required "letting ${MATRIX_RUN_USER} manage Tailscale" timeout 30 tailscale set "--operator=${MATRIX_RUN_USER}"
+  tailscale_login
+  record_tailscale_owner
+}
+
+# Native units the browser lifecycle enables (matrix-browser-runtime.py service_names).
+BROWSER_NATIVE_UNITS=(matrix-browser-lab-vnc.service matrix-browser-lab-wm.service matrix-browser-lab-desktop.service matrix-browser-lab-panel.service matrix-browser-lab-chrome.service matrix-browser-lab.service)
+
+# browser_lab_value <on|off> <saved MATRIX_BROWSER_LAB>: the value write_env records.
+# Opting out writes false, which the gateway and lifecycle both honor. Opting back in
+# clears a saved false; the lifecycle writes true once Chrome passes its health check.
+browser_lab_value() {
+  if [ "$1" != "on" ]; then
+    printf 'false\n'
+  elif [ -n "$2" ] && [ "$2" != "false" ]; then
+    printf '%s\n' "$2"
+  fi
+  return 0
+}
+
+# Stops a previous browser install on --no-browser. Keeps /opt/matrix-browser-lab,
+# the Chrome profile and the viewer credentials, so opting back in resumes signed in.
+stop_browser_use() {
+  local unit_dir="${MATRIX_SYSTEMD_UNIT_DIR:-/etc/systemd/system}" unit
+  # The lifecycle goes first so it cannot restart Chrome behind the opt-out.
+  for unit in matrix-browser-runtime.service "${BROWSER_NATIVE_UNITS[@]}"; do
+    [ -e "${unit_dir}/${unit}" ] || continue
+    timeout 120 systemctl disable --now "$unit" >>"$MATRIX_INSTALL_LOG" 2>&1 \
+      || warn "could not stop ${unit}; run: sudo systemctl disable --now ${unit}"
+  done
+  return 0
+}
+
+# The browser desktop runs as a dedicated account. It is in neither the matrix
+# group (host.env and postgres.env hold MATRIX_AUTH_TOKEN and DATABASE_URL) nor
+# the docker group (root), so a compromised browser reaches no owner secret. It
+# gets its own lingering user manager (the desktop's Files/Terminal buttons need
+# its user bus) and a private home; it never gains access to the owner's home.
+# migrate_browser_profile <account> <home>: keep saved logins from a matrix-run browser.
+# Root never writes in the account's (link-swappable) home: it stages and chowns the
+# profile in a root-owned directory; the account itself moves it into place.
+migrate_browser_profile() {
+  local account="$1" home="$2" root="${MATRIX_LEGACY_BROWSER_ROOT:-/home/matrix}" user="${MATRIX_LEGACY_BROWSER_USER:-matrix}"
+  local stage="${MATRIX_BROWSER_PROFILE_STAGE:-/var/lib/matrix-browser-profile-move}" old new staged group
+  new="${home}/.local/share/matrix-browser-lab/chrome"
+  old="${root}/.local/share/matrix-browser-lab/chrome"
+  staged="${stage}/${account}/chrome"
+  [ ! -e "$new" ] && [ ! -L "$new" ] || return 0
+  group="$(id -gn "$account")"
+  # A move that stopped after staging resumes; a staged profile is never deleted.
+  if [ ! -d "$staged" ] || [ -L "$staged" ] || [ -L "${stage}/${account}" ] || [ -L "$stage" ]; then
+    [ -d "$old" ] || return 0
+    old="$(readlink -f "$old")"
+    case "$old" in
+      "$root"/*) ;;
+      *) warn "the saved browser profile is outside ${root}; starting a new one"; return 0 ;;
+    esac
+    [ "$(stat -c %U "$old")" = "$user" ] || { warn "the saved browser profile is not owned by ${user}; starting a new one"; return 0; }
+    systemctl stop matrix-browser-lab-chrome.service >>"$MATRIX_INSTALL_LOG" 2>&1 || true
+    install -d -o root -g root -m 0711 "$stage"
+    install -d -o "$account" -g "$group" -m 0700 "${stage}/${account}"
+    run_required "moving the saved browser profile" mv -T "$old" "$staged"
+  fi
+  run_required "giving the saved browser profile to the browser account" chown -R --no-dereference "${account}:${group}" "$staged"
+  run_required "preparing the browser account's profile folder" runuser -u "$account" -- mkdir -p "${home}/.local/share/matrix-browser-lab"
+  run_required "placing the saved browser profile" runuser -u "$account" -- mv -T "$staged" "$new"
+  rmdir "${stage}/${account}" "$stage" 2>>"$MATRIX_INSTALL_LOG" || warn "could not remove the empty staging folder ${stage}"
+  ok "Kept your saved browser sessions"
+}
+
+prepare_browser_account() {
+  local home="${MATRIX_BROWSER_ACCOUNT_HOME:-/var/lib/matrix-browser}" account="$MATRIX_BROWSER_ACCOUNT" group primary
+  if ! id "$account" >/dev/null 2>&1; then
+    run_required "creating the browser account" useradd --system --user-group --home-dir "$home" --shell /usr/sbin/nologin "$account"
+  fi
+  for group in $(id -nG "$account"); do
+    case "$group" in
+      matrix | docker) run_required "removing the browser account from the ${group} group" gpasswd -d "$account" "$group" ;;
+    esac
+  done
+  primary="$(id -gn "$account")"
+  case "$primary" in
+    matrix | docker) fail "the browser account ${account} has primary group ${primary}; give it its own group" ;;
+  esac
+  [ -d "$home" ] || install -d -o "$account" -g "$primary" -m 0700 "$home"
+  migrate_browser_profile "$account" "$home"
+  run_required "keeping the browser account's session" loginctl enable-linger "$account"
+  run_required "starting the browser account's session" systemctl start "user@$(id -u "$account").service"
+}
+
+configure_browser() {
+  if [ "$OPT_BROWSER" != "on" ]; then
+    rm -f /etc/sudoers.d/matrix-browser-runtime
+    stop_browser_use
+    return 0
+  fi
+  section "Setting up browser use"
+  if [ ! -f /opt/matrix/bin/matrix-browser-runtime.py ] || [ ! -f /opt/matrix/systemd/matrix-browser-runtime.service ]; then
+    warn "this Matrix bundle has no browser runtime; browser use stays off"
+    return 0
+  fi
+  install -d -o root -g root -m 0755 /usr/local/libexec
+  install -o root -g root -m 0644 /opt/matrix/bin/matrix-browser-runtime.py /usr/local/libexec/matrix-browser-runtime.py
+  install -m 0644 /opt/matrix/systemd/matrix-browser-runtime.service /etc/systemd/system/matrix-browser-runtime.service
+  render_browser_sudoers "$MATRIX_RUN_USER" >/etc/sudoers.d/.matrix-browser-runtime.tmp
+  chmod 0440 /etc/sudoers.d/.matrix-browser-runtime.tmp
+  if visudo -cf /etc/sudoers.d/.matrix-browser-runtime.tmp >>"$MATRIX_INSTALL_LOG" 2>&1; then
+    mv -f /etc/sudoers.d/.matrix-browser-runtime.tmp /etc/sudoers.d/matrix-browser-runtime
+  else
+    rm -f /etc/sudoers.d/.matrix-browser-runtime.tmp
+    warn "browser use sudoers rule failed validation; Settings cannot show browser setup status"
+  fi
+  run_required "reloading systemd" systemctl daemon-reload
+  systemctl enable matrix-browser-runtime >>"$MATRIX_INSTALL_LOG" 2>&1 || true
+  prepare_browser_account
+  log "Installing Chrome and the browser desktop (this can take several minutes)"
+  if timeout 1800 /opt/matrix/bin/matrix-install-browser >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    && timeout 60 /opt/matrix/bin/matrix-install-browser --health-check >>"$MATRIX_INSTALL_LOG" 2>&1; then
+    ok "Browser use is ready"
+  else
+    warn "browser use setup failed; Matrix OS core is still installed. It retries at boot; details: journalctl -u matrix-browser-runtime -n 100 --no-pager"
+  fi
+}
+
 validate_config() {
   case "$DEFAULT_CHANNEL" in
     ""|*[!A-Za-z0-9._-]*) fail "MATRIX_CHANNEL contains unsupported characters" ;;
@@ -291,10 +1199,6 @@ validate_config() {
     [[ "$MATRIX_DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$ ]] \
       || fail "MATRIX_DOMAIN may only be '_' or a DNS name"
   fi
-  case "$MATRIX_HOME_DIR" in
-    /home/matrix/*|/home/matrix) ;;
-    *) fail "MATRIX_HOME must stay under /home/matrix for standalone installs" ;;
-  esac
   case "$MATRIX_HOST_BUNDLE_URL" in
     https://*) ;;
     *) fail "MATRIX_HOST_BUNDLE_URL must be https" ;;
@@ -377,7 +1281,7 @@ install_packages() {
     log "Writing apt output to ${MATRIX_INSTALL_LOG}"
     apt_get_update >>"$MATRIX_INSTALL_LOG" 2>&1 || fail "apt-get update failed"
     enable_ubuntu_universe
-    apt-get install -y bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar zsh >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    apt-get install -y acl bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar zsh >>"$MATRIX_INSTALL_LOG" 2>&1 \
       || fail "apt-get install failed"
     configure_bwrap_apparmor
     ok "OS packages installed"
@@ -387,26 +1291,46 @@ install_packages() {
 }
 
 ensure_matrix_user() {
-  section "Preparing Matrix OS user"
+  local service_shell
+  section "Preparing the Matrix OS account (${MATRIX_RUN_USER})"
   if ! getent group matrix >/dev/null 2>&1; then
     run_required "creating matrix group" groupadd --system matrix
   fi
   if ! getent group docker >/dev/null 2>&1; then
     run_required "creating docker group" groupadd --system docker
   fi
+  # The matrix account runs Matrix on legacy installs; the browser desktop has its own account.
+  service_shell=/usr/sbin/nologin
+  [ "$MATRIX_RUN_USER" != "matrix" ] || service_shell=/bin/bash
   if ! id matrix >/dev/null 2>&1; then
-    run_required "creating matrix user" useradd --system --gid matrix --groups docker --home-dir /home/matrix --shell /bin/bash matrix
+    run_required "creating matrix user" useradd --system --gid matrix --groups docker --home-dir /home/matrix --shell "$service_shell" matrix
   else
     run_required "updating matrix user groups" usermod -aG docker matrix
+  fi
+  if [ "$MATRIX_RUN_USER" != "matrix" ]; then
+    if ! id "$MATRIX_RUN_USER" >/dev/null 2>&1; then
+      run_required "creating ${MATRIX_RUN_USER}" useradd --create-home --shell /bin/bash "$MATRIX_RUN_USER"
+      MATRIX_RUN_GROUP="$(id -gn "$MATRIX_RUN_USER")"
+      MATRIX_RUN_USER_HOME="$(passwd_entry "$MATRIX_RUN_USER" | cut -d: -f6)"
+    fi
+    run_required "adding ${MATRIX_RUN_USER} to the matrix and docker groups" usermod -aG matrix,docker "$MATRIX_RUN_USER"
   fi
 
   install -d -o root -g matrix -m 0770 /opt/matrix
   install -d -o root -g matrix -m 0750 /opt/matrix/env /opt/matrix/bin /opt/matrix/tls
-  install -d -o matrix -g matrix -m 0755 /home/matrix "$MATRIX_HOME_DIR" "$MATRIX_HOME_DIR/projects"
-  install -d -o matrix -g matrix -m 0755 "$MATRIX_HOME_DIR/.local" "$MATRIX_HOME_DIR/.local/bin" "$MATRIX_HOME_DIR/.local/share"
-  install -d -o matrix -g matrix -m 0755 "$MATRIX_HOME_DIR/.cache" "$MATRIX_HOME_DIR/.config"
-  run_required "setting matrix home directory" usermod -d "$MATRIX_HOME_DIR" matrix
-  ok "Matrix OS user ready"
+  install -d -o matrix -g matrix -m 0755 /home/matrix
+  install -d -o "$MATRIX_RUN_USER" -g "$MATRIX_RUN_GROUP" -m 0755 "$MATRIX_HOME_DIR"
+  # A separate owner's projects are private to them and the matrix group;
+  # prepare_scope_runtime_roots creates them 2750 before any service starts.
+  if [ "$MATRIX_RUN_USER" = "matrix" ]; then
+    install -d -o "$MATRIX_RUN_USER" -g "$MATRIX_RUN_GROUP" -m 0755 "$MATRIX_HOME_DIR/projects"
+  fi
+  install -d -o "$MATRIX_RUN_USER" -g "$MATRIX_RUN_GROUP" -m 0755 "$MATRIX_HOME_DIR/.local" "$MATRIX_HOME_DIR/.local/bin" "$MATRIX_HOME_DIR/.local/share"
+  install -d -o "$MATRIX_RUN_USER" -g "$MATRIX_RUN_GROUP" -m 0755 "$MATRIX_HOME_DIR/.cache" "$MATRIX_HOME_DIR/.config"
+  if [ "$MATRIX_RUN_USER" = "matrix" ]; then
+    run_required "setting matrix home directory" usermod -d "$MATRIX_HOME_DIR" matrix
+  fi
+  ok "Matrix OS account ready"
 }
 
 random_secret() {
@@ -423,9 +1347,23 @@ read_env_value() {
   printf '%s\n' "$value"
 }
 
+# self_host_shell_origin <access> <tailnet url> <saved SHELL_ORIGIN>: the browser
+# origin the gateway trusts. Without it a self-host gateway trusts only
+# app.matrix-os.com, so pages opened at the printed tailnet link are refused.
+self_host_shell_origin() {
+  local pattern='^https?://[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(:[0-9]{1,5})?$'
+  if [ "$1" != "public" ] && [[ "$2" =~ $pattern ]]; then
+    printf '%s\n' "$2"
+  elif [[ "$3" =~ $pattern ]]; then
+    printf '%s\n' "$3"
+  fi
+  return 0
+}
+
 write_env() {
   local auth_token code_token postgres_password funded_ai_enabled funded_ai_relay_url funded_ai_runtime_token platform_internal_url
   local platform_speech_enabled platform_speech_origin platform_speech_runtime_token
+  local browser_lab browser_viewer_auth skip_legacy_migration shell_origin
   auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret)"
   code_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret)"
   postgres_password="$(read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret | tr '/+' 'ab')"
@@ -436,6 +1374,19 @@ write_env() {
   platform_speech_enabled="$(read_env_value /opt/matrix/env/host.env MATRIX_PLATFORM_SPEECH_ENABLED || printf 'false')"
   platform_speech_origin="$(read_env_value /opt/matrix/env/host.env MATRIX_PLATFORM_SPEECH_ORIGIN || true)"
   platform_speech_runtime_token="$(read_env_value /opt/matrix/env/host.env MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN || true)"
+  # Written by the browser lifecycle; dropping them would break its credential pair.
+  browser_lab="$(read_env_value /opt/matrix/env/host.env MATRIX_BROWSER_LAB || true)"
+  browser_viewer_auth="$(read_env_value /opt/matrix/env/host.env MATRIX_BROWSER_LAB_VIEWER_AUTH || true)"
+  if [ -z "$MATRIX_TAILSCALE_OWNER_LOGIN" ]; then
+    MATRIX_TAILSCALE_OWNER_LOGIN="$(read_env_value /opt/matrix/env/host.env MATRIX_TAILSCALE_OWNER_LOGIN || true)"
+  fi
+  if [ -z "$MATRIX_TAILNET_URL" ]; then
+    MATRIX_TAILNET_URL="$(read_env_value /opt/matrix/env/host.env MATRIX_TAILNET_URL || true)"
+  fi
+  browser_lab="$(browser_lab_value "$OPT_BROWSER" "$browser_lab")"
+  shell_origin="$(self_host_shell_origin "$OPT_ACCESS" "$MATRIX_TAILNET_URL" "$(read_env_value /opt/matrix/env/host.env SHELL_ORIGIN || true)")"
+  skip_legacy_migration=0
+  [ "$MATRIX_RUN_USER" = "matrix" ] || skip_legacy_migration=1
 
   cat >/opt/matrix/env/postgres.env <<EOF
 POSTGRES_DB=matrix
@@ -471,9 +1422,36 @@ DATABASE_URL=postgresql://matrix:${postgres_password}@127.0.0.1:5432/matrix
 GATEWAY_URL=http://127.0.0.1:4000
 NEXT_PUBLIC_GATEWAY_URL=http://127.0.0.1:4000
 NEXT_PUBLIC_GATEWAY_WS=/ws
+MATRIX_BIND_HOST=127.0.0.1
+MATRIX_RUNTIME_USER=${MATRIX_RUN_USER}
+MATRIX_RUNTIME_GROUP=${MATRIX_RUN_GROUP}
+MATRIX_SKIP_LEGACY_HOME_MIGRATION=${skip_legacy_migration}
+MATRIX_ACCESS_MODE=${OPT_ACCESS}
+MATRIX_TAILSCALE_LOGIN_SERVER=${OPT_LOGIN_SERVER}
+MATRIX_TAILSCALE_OWNER_LOGIN=${MATRIX_TAILSCALE_OWNER_LOGIN}
+MATRIX_TAILNET_URL=${MATRIX_TAILNET_URL}
+MATRIX_HERDR=${OPT_HERDR:-off}
+MATRIX_HERDR_CORE_BIN=${MATRIX_HERDR_CORE_BIN}
+MATRIX_BROWSER_ACCOUNT=${MATRIX_BROWSER_ACCOUNT}
 EOF
+  if [ -n "$browser_lab" ]; then
+    printf 'MATRIX_BROWSER_LAB=%s\n' "$browser_lab" >>/opt/matrix/env/host.env
+  fi
+  if [ -n "$browser_viewer_auth" ]; then
+    printf 'MATRIX_BROWSER_LAB_VIEWER_AUTH=%s\n' "$browser_viewer_auth" >>/opt/matrix/env/host.env
+  fi
+  if [ -n "$shell_origin" ]; then
+    printf 'SHELL_ORIGIN=%s\n' "$shell_origin" >>/opt/matrix/env/host.env
+  fi
   chmod 0640 /opt/matrix/env/host.env
   chown root:matrix /opt/matrix/env/host.env
+}
+
+# As root, tar keeps the build machine's numeric owner and modes; the terminal
+# runtime and browser lifecycle trust only root-owned files that no group or other
+# account can write. A fixed umask keeps that true under a permissive sudo umask.
+extract_bundle() {
+  (umask 022 && tar --no-same-owner --no-same-permissions -xzf "$1" -C "$2")
 }
 
 install_bundle() {
@@ -505,7 +1483,7 @@ install_bundle() {
 
   ok "Host bundle checksum verified"
   section "Extracting Matrix OS"
-  tar -xzf "$tmp_bundle" -C /opt/matrix
+  extract_bundle "$tmp_bundle" /opt/matrix
   chmod 0755 /opt/matrix/bin/matrix-* /opt/matrix/bin/zellij 2>/dev/null || true
   if [ -f /opt/matrix/bin/matrix-claude-native-recovery.py ] && [ ! -L /opt/matrix/bin/matrix-claude-native-recovery.py ]; then
     install -d -o root -g root -m 0755 /usr/local/libexec/matrix-claude-native-recovery
@@ -514,6 +1492,21 @@ install_bundle() {
   cleanup_install_tmp
   INSTALL_TMP_BUNDLE=""
   INSTALL_TMP_SUM=""
+}
+
+# Managed computers write app/BUNDLE_VERSION at first boot (cloud-init); browser
+# use and Settings > Updates read it. release.json stays the root-owned record.
+write_bundle_version() {
+  local root="${1:-/opt/matrix}" owner="${2:-$MATRIX_RUN_USER}" version
+  version="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]\{1,128\}\)".*/\1/p' "$root/release.json" | head -n 1)"
+  # Builder formats: a v-tag, or `git describe --always --dirty` (bare hash, maybe
+  # -dirty). The value becomes a file's contents and a path component elsewhere,
+  # so keep it a bounded, slash-free name that cannot start a flag or a dotfile.
+  { [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]{0,127}$ ]] && [[ "$version" != *..* ]]; } \
+    || fail "the host bundle has no valid version"
+  printf '%s\n' "$version" >"$root/app/BUNDLE_VERSION"
+  chown "$owner:" "$root/app/BUNDLE_VERSION"
+  chmod 0644 "$root/app/BUNDLE_VERSION"
 }
 
 prepare_runtime_permissions() {
@@ -532,7 +1525,8 @@ prepare_runtime_permissions() {
 }
 
 write_self_host_restore_service() {
-  cat >/etc/systemd/system/matrix-restore.service <<'EOF'
+  {
+    cat <<'EOF'
 [Unit]
 Description=Matrix OS standalone database gate
 After=docker.service
@@ -540,8 +1534,9 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
-User=matrix
-Group=matrix
+EOF
+    printf 'User=%s\nGroup=%s\nSupplementaryGroups=matrix docker\n' "$MATRIX_RUN_USER" "$MATRIX_RUN_GROUP"
+    cat <<'EOF'
 EnvironmentFile=/opt/matrix/env/host.env
 EnvironmentFile=/opt/matrix/env/postgres.env
 ExecStart=/bin/bash -lc 'set -euo pipefail; if docker ps --format "{{.Names}}" | grep -qx matrix-postgres; then :; elif docker ps -a --format "{{.Names}}" | grep -qx matrix-postgres; then docker start matrix-postgres >/dev/null; else docker volume create matrix-postgres >/dev/null; docker run -d --name matrix-postgres --restart unless-stopped --env-file /opt/matrix/env/postgres.env -v matrix-postgres:/var/lib/postgresql/data -p 127.0.0.1:5432:5432 postgres:16 >/dev/null; fi; for _ in $(seq 1 60); do pg_isready --host=127.0.0.1 --username="${POSTGRES_USER:-matrix}" --dbname="${POSTGRES_DB:-matrix}" >/dev/null 2>&1 && break; sleep 2; done; pg_isready --host=127.0.0.1 --username="${POSTGRES_USER:-matrix}" --dbname="${POSTGRES_DB:-matrix}" >/dev/null 2>&1; touch /opt/matrix/restore-complete'
@@ -550,20 +1545,57 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+  } >/etc/systemd/system/matrix-restore.service
+}
+
+# Shipped units keep their managed defaults; self-host overrides only the account (spec 2701 S1).
+write_run_user_dropins() {
+  local unit dir
+  for unit in matrix-terminal-runtime matrix-gateway matrix-shell matrix-code; do
+    dir="/etc/systemd/system/${unit}.service.d"
+    if [ "$MATRIX_RUN_USER" = "matrix" ]; then
+      rm -f "${dir}/10-self-host-run-user.conf"
+      continue
+    fi
+    install -d -o root -g root -m 0755 "$dir"
+    render_run_user_dropin "$MATRIX_RUN_USER" "$MATRIX_RUN_GROUP" >"${dir}/10-self-host-run-user.conf"
+    chmod 0644 "${dir}/10-self-host-run-user.conf"
+  done
+  dir=/etc/systemd/user/matrix-zellij@.service.d
+  if [ "$MATRIX_HOME_DIR" = "/home/matrix/home" ]; then
+    rm -f "${dir}/10-self-host-home.conf"
+  else
+    install -d -o root -g root -m 0755 "$dir"
+    render_zellij_home_dropin "$MATRIX_HOME_DIR" >"${dir}/10-self-host-home.conf"
+    chmod 0644 "${dir}/10-self-host-home.conf"
+  fi
+}
+
+write_scope_runtime_dropin() {
+  local dir=/etc/systemd/system/matrix-scope-runtime.service.d
+  prepare_scope_runtime_roots "$MATRIX_HOME_DIR" "$MATRIX_RUN_USER"
+  if [ "$MATRIX_HOME_DIR" = "/home/matrix/home" ]; then
+    rm -f "${dir}/10-self-host-home.conf"
+    return 0
+  fi
+  install -d -o root -g root -m 0755 "$dir"
+  render_scope_runtime_home_dropin "$MATRIX_HOME_DIR" >"${dir}/10-self-host-home.conf"
+  chmod 0644 "${dir}/10-self-host-home.conf"
 }
 
 install_terminal_user_units() {
-  local matrix_uid
-  matrix_uid="$(id -u matrix)"
+  local run_uid
+  run_uid="$(id -u "$MATRIX_RUN_USER")"
   install -d -o root -g root -m 0755 /etc/systemd/user
   install -m 0644 /opt/matrix/user-systemd/matrix-zellij@.service /etc/systemd/user/matrix-zellij@.service
   install -m 0644 /opt/matrix/user-systemd/matrix-terminal.slice /etc/systemd/user/matrix-terminal.slice
-  run_required "enabling matrix user manager persistence" loginctl enable-linger matrix
-  run_required "starting matrix user manager" systemctl start "user@${matrix_uid}.service"
-  run_required "reloading matrix user systemd" runuser -u matrix -- env \
+  write_run_user_dropins
+  run_required "enabling ${MATRIX_RUN_USER} user manager persistence" loginctl enable-linger "$MATRIX_RUN_USER"
+  run_required "starting ${MATRIX_RUN_USER} user manager" systemctl start "user@${run_uid}.service"
+  run_required "reloading ${MATRIX_RUN_USER} user systemd" runuser -u "$MATRIX_RUN_USER" -- env \
     HOME="$MATRIX_HOME_DIR" \
-    XDG_RUNTIME_DIR="/run/user/${matrix_uid}" \
-    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${matrix_uid}/bus" \
+    XDG_RUNTIME_DIR="/run/user/${run_uid}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${run_uid}/bus" \
     systemctl --user daemon-reload
 }
 
@@ -571,6 +1603,8 @@ install_systemd_units() {
   section "Installing systemd units"
   install -m 0644 /opt/matrix/systemd/matrix-gateway.service /etc/systemd/system/matrix-gateway.service
   install -m 0644 /opt/matrix/systemd/matrix-terminal-runtime.service /etc/systemd/system/matrix-terminal-runtime.service
+  install -m 0644 /opt/matrix/systemd/matrix-scope-runtime.service /etc/systemd/system/matrix-scope-runtime.service
+  write_scope_runtime_dropin
   install -m 0644 /opt/matrix/systemd/matrix-shell.service /etc/systemd/system/matrix-shell.service
   install -m 0644 /opt/matrix/systemd/matrix-code.service /etc/systemd/system/matrix-code.service
   install -m 0644 /opt/matrix/systemd/matrix-code-server.service /etc/systemd/system/matrix-code-server.service
@@ -580,7 +1614,7 @@ install_systemd_units() {
   install_terminal_user_units
   write_self_host_restore_service
   run_required "reloading systemd" systemctl daemon-reload
-  run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-terminal-runtime matrix-gateway matrix-shell matrix-code matrix-code-server
+  run_required "enabling Matrix OS services" systemctl enable docker matrix-restore matrix-terminal-runtime matrix-scope-runtime matrix-gateway matrix-shell matrix-code matrix-code-server
   if [ -f /etc/systemd/system/matrix-developer-tools.service ] && [ -n "$MATRIX_DEVELOPER_TOOLS" ]; then
     run_required "enabling optional developer tools service" systemctl enable matrix-developer-tools
   fi
@@ -588,25 +1622,28 @@ install_systemd_units() {
 }
 
 configure_nginx() {
-  local auth_token code_proxy_token password hash server_name htpasswd_file legacy_htpasswd_file
+  local auth_token code_proxy_token password hash server_name htpasswd_file legacy_htpasswd_file browser_viewer
   auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN)" || fail "MATRIX_AUTH_TOKEN is missing from host.env"
   code_proxy_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN)" || fail "MATRIX_CODE_PROXY_TOKEN is missing from host.env"
   server_name="$MATRIX_DOMAIN"
   htpasswd_file="/etc/nginx/matrix-self-host.htpasswd"
   legacy_htpasswd_file="/opt/matrix/env/nginx.htpasswd"
 
-  if [ ! -f "$htpasswd_file" ] && [ -f "$legacy_htpasswd_file" ]; then
-    install -m 0640 -o root -g www-data "$legacy_htpasswd_file" "$htpasswd_file"
+  if [ "$OPT_ACCESS" = "public" ]; then
+    if [ ! -f "$htpasswd_file" ] && [ -f "$legacy_htpasswd_file" ]; then
+      install -m 0640 -o root -g www-data "$legacy_htpasswd_file" "$htpasswd_file"
+    fi
+    if [ ! -f "$htpasswd_file" ]; then
+      password="$(openssl rand -base64 18 | tr -d '\n')"
+      hash="$(openssl passwd -apr1 "$password")"
+      printf 'matrix:%s\n' "$hash" >"$htpasswd_file"
+      printf '%s\n' "$password" >/opt/matrix/env/initial-ui-password
+      chmod 0600 /opt/matrix/env/initial-ui-password
+    fi
+    chmod 0640 "$htpasswd_file"
+    chown root:www-data "$htpasswd_file"
   fi
-  if [ ! -f "$htpasswd_file" ]; then
-    password="$(openssl rand -base64 18 | tr -d '\n')"
-    hash="$(openssl passwd -apr1 "$password")"
-    printf 'matrix:%s\n' "$hash" >"$htpasswd_file"
-    printf '%s\n' "$password" >/opt/matrix/env/initial-ui-password
-    chmod 0600 /opt/matrix/env/initial-ui-password
-  fi
-  chmod 0640 "$htpasswd_file"
-  chown root:www-data "$htpasswd_file"
+  [ "$OPT_ACCESS" = "public" ] || prepare_tailnet_socket_dir
   printf 'proxy_set_header Authorization "Bearer %s";\n' "$auth_token" >/opt/matrix/env/gateway-auth-token.conf
   chmod 0600 /opt/matrix/env/gateway-auth-token.conf
   chown root:root /opt/matrix/env/gateway-auth-token.conf
@@ -614,111 +1651,9 @@ configure_nginx() {
   chmod 0600 /opt/matrix/env/code-proxy-token.conf
   chown root:root /opt/matrix/env/code-proxy-token.conf
 
-  cat >/etc/nginx/sites-available/matrix-self-host <<EOF
-server {
-  listen 80 default_server;
-  server_name ${server_name};
-
-  client_max_body_size 10m;
-  auth_basic "Matrix OS";
-  auth_basic_user_file ${htpasswd_file};
-
-  proxy_set_header Host \$host;
-  proxy_set_header X-Forwarded-Host \$host;
-  proxy_set_header X-Forwarded-Proto \$scheme;
-  proxy_set_header X-Real-IP \$remote_addr;
-
-  # matrix-speech-upload-limit-v1
-  location = /api/speech/transcriptions {
-    client_max_body_size 21m;
-    proxy_read_timeout 90s;
-    include /opt/matrix/env/gateway-auth-token.conf;
-    proxy_pass http://127.0.0.1:4000;
-  }
-
-  # matrix-sites-publish-timeout-v1
-  location ~ "^/api/apps/[a-z0-9][a-z0-9-]{0,63}/site\$" {
-    proxy_read_timeout 300s;
-    include /opt/matrix/env/gateway-auth-token.conf;
-    proxy_pass http://127.0.0.1:4000;
-  }
-
-  location /api/ {
-    include /opt/matrix/env/gateway-auth-token.conf;
-    proxy_pass http://127.0.0.1:4000;
-  }
-  location /files/ {
-    include /opt/matrix/env/gateway-auth-token.conf;
-    proxy_pass http://127.0.0.1:4000;
-  }
-  location /icons/ {
-    include /opt/matrix/env/gateway-auth-token.conf;
-    proxy_pass http://127.0.0.1:4000;
-  }
-  location /apps/ {
-    include /opt/matrix/env/gateway-auth-token.conf;
-    proxy_pass http://127.0.0.1:4000;
-  }
-  location = /health {
-    auth_basic off;
-    access_log off;
-    default_type application/json;
-    return 200 '{"ok":true}';
-  }
-  location /gateway/ {
-    include /opt/matrix/env/gateway-auth-token.conf;
-    proxy_pass http://127.0.0.1:4000/;
-  }
-
-  location /cli/ {
-    auth_basic off;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_read_timeout 3600s;
-    rewrite ^/cli/?(.*)\$ /\$1 break;
-    proxy_pass http://127.0.0.1:4000;
-  }
-
-  location /ws {
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_read_timeout 3600s;
-    include /opt/matrix/env/gateway-auth-token.conf;
-    proxy_pass http://127.0.0.1:4000;
-  }
-
-  location /code/ {
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_read_timeout 3600s;
-    proxy_set_header Authorization "";
-    proxy_set_header X-Forwarded-Prefix /code;
-    rewrite ^/code/?(.*)\$ /\$1 break;
-    proxy_pass http://127.0.0.1:8788;
-  }
-
-  location @matrix_code_root_ws {
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade \$http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_read_timeout 3600s;
-    proxy_set_header Authorization "";
-    proxy_pass http://127.0.0.1:8788;
-  }
-
-  location / {
-    if (\$arg_reconnectionToken != "") {
-      return 418;
-    }
-    error_page 418 = @matrix_code_root_ws;
-    proxy_set_header Authorization "";
-    proxy_pass http://127.0.0.1:3000;
-  }
-}
-EOF
+  browser_viewer=off
+  [ "$OPT_BROWSER" != "on" ] || browser_viewer=on
+  render_nginx_site "$OPT_ACCESS" "$server_name" "$htpasswd_file" "$browser_viewer" >/etc/nginx/sites-available/matrix-self-host
 
   rm -f /etc/nginx/sites-enabled/default
   ln -sfn /etc/nginx/sites-available/matrix-self-host /etc/nginx/sites-enabled/matrix-self-host
@@ -727,11 +1662,27 @@ EOF
   ok "nginx configured"
 }
 
+# The person is usually logged in while installing. Their systemd --user
+# manager (which also runs their Herdr core) keeps the groups it started with,
+# so the new matrix group cannot open /opt/matrix until it restarts, and
+# restarting it would end their Herdr terminals. ACL entries for the run user
+# take effect at once. Default entries let files written later inherit them.
+grant_run_user_access() {
+  local user="$1" root="${2:-/opt/matrix}" setfacl_bin="${MATRIX_SETFACL:-setfacl}"
+  [ "$user" != "matrix" ] || return 0
+  # A named-user ACL entry is checked before any group, so it must carry the
+  # same rights the matrix group has here (rwx), or the run user loses write.
+  run_required "granting ${user} access to ${root}" "$setfacl_bin" -m "u:${user}:rwx" "$root"
+  run_required "granting ${user} access to Matrix files" "$setfacl_bin" -R -m "u:${user}:rX" "$root/env" "$root/bin" "$root/tls"
+  run_required "granting ${user} access to new Matrix files" "$setfacl_bin" -d -m "u:${user}:rX" "$root/env" "$root/tls"
+}
+
 start_services() {
   section "Starting Matrix OS services"
   run_required "starting docker" systemctl enable --now docker
   restart_required_service matrix-restore
   restart_required_service matrix-terminal-runtime
+  restart_optional_service matrix-scope-runtime "collaboration scope runtime"
   restart_required_service matrix-gateway
   restart_required_service matrix-shell
   restart_optional_service matrix-code-server "code-server proxy"
@@ -742,6 +1693,44 @@ start_services() {
   restart_required_service nginx
 }
 
+wait_private_identity_ok() {
+  local description url login log_hint code
+  description="$1"
+  url="$2"
+  login="$3"
+  log_hint="$4"
+  for _ in $(seq 1 30); do
+    # Through the Tailscale Serve socket, the only place nginx accepts an identity.
+    code="$(curl --silent --show-error --output /dev/null --write-out "%{http_code}" --max-time 5 --unix-socket "$TAILNET_SOCKET" -H "Tailscale-User-Login: ${login}" "$url" 2>>"$MATRIX_INSTALL_LOG" || true)"
+    if [ "$code" = "200" ]; then
+      ok "${description} is reachable"
+      return 0
+    fi
+    if [ "$code" = "403" ] || [ "$code" = "500" ]; then
+      fail "${description} returned HTTP ${code}. ${log_hint}"
+    fi
+    sleep 2
+  done
+  fail "${description} did not become reachable. ${log_hint}"
+}
+
+# Private modes: the web surface must not listen on a public interface.
+verify_loopback_listeners() {
+  local line address port
+  command -v ss >/dev/null 2>&1 || { warn "ss is unavailable; could not confirm Matrix listens on loopback only"; return 0; }
+  while IFS= read -r line; do
+    address="$(printf '%s' "$line" | awk '{print $4}')"
+    port="${address##*:}"
+    address="${address%:*}"
+    case "$port" in 80|3000|4000|8788) ;; *) continue ;; esac
+    case "$address" in
+      127.0.0.1|\[::1\]|100.*|\[fd7a:115c:a1e0:*) ;;
+      *) fail "port ${port} listens on ${address}; with --access ${OPT_ACCESS} Matrix must only listen on loopback" ;;
+    esac
+  done < <(ss -H -ltn 2>/dev/null)
+  ok "Matrix listens on loopback and your private network only"
+}
+
 verify_services() {
   local password status
   section "Verifying Matrix OS"
@@ -750,6 +1739,20 @@ verify_services() {
   wait_terminal_runtime_ready
   wait_http_ok "Matrix gateway" "http://127.0.0.1:4000/health" "Check: journalctl -u matrix-gateway -n 200 --no-pager"
   wait_http_ok "Matrix shell" "http://127.0.0.1:3000/" "Check: journalctl -u matrix-shell -n 200 --no-pager"
+  if [ "$OPT_ACCESS" != "public" ]; then
+    status="$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" "http://127.0.0.1/" || true)"
+    [ "$status" = "403" ] || fail "nginx private-network identity check returned HTTP ${status}, expected 403 without an owner identity"
+    ok "nginx refuses requests without your private-network identity"
+    status="$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" -H "Tailscale-User-Login: ${MATRIX_TAILSCALE_OWNER_LOGIN:-owner@example.com}" "http://127.0.0.1/" || true)"
+    [ "$status" = "403" ] || fail "nginx accepted a private-network identity on its loopback listener (HTTP ${status}); only Tailscale Serve may present one"
+    ok "nginx accepts your private-network identity only through Tailscale Serve"
+    if [ -n "$MATRIX_TAILSCALE_OWNER_LOGIN" ]; then
+      wait_private_identity_ok "nginx shell" "http://127.0.0.1/" "$MATRIX_TAILSCALE_OWNER_LOGIN" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-shell -n 200 --no-pager"
+      wait_private_identity_ok "nginx gateway API" "http://127.0.0.1/api/identity" "$MATRIX_TAILSCALE_OWNER_LOGIN" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-gateway -n 200 --no-pager"
+    fi
+    verify_loopback_listeners
+    return 0
+  fi
   if [ -f /opt/matrix/env/initial-ui-password ]; then
     password="$(cat /opt/matrix/env/initial-ui-password)"
     wait_http_ok_auth "nginx shell" "http://127.0.0.1/" "$password" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-shell -n 200 --no-pager"
@@ -762,10 +1765,14 @@ verify_services() {
 }
 
 print_summary() {
-  local ip password_line ui_url
+  local ip password_line ui_url access_note cli_url
   ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   if [ -n "${MATRIX_PUBLIC_URL:-}" ]; then
     ui_url="$MATRIX_PUBLIC_URL"
+  elif [ "$OPT_ACCESS" != "public" ] && [ -n "$MATRIX_TAILNET_URL" ]; then
+    ui_url="$MATRIX_TAILNET_URL"
+  elif [ "$OPT_ACCESS" != "public" ]; then
+    ui_url="(finish the private-network login, then run: tailscale status)"
   elif [ "$MATRIX_DOMAIN" != "_" ]; then
     ui_url="http://${MATRIX_DOMAIN}"
   elif [ -n "$ip" ]; then
@@ -773,10 +1780,22 @@ print_summary() {
   else
     ui_url="http://<server-ip>"
   fi
-  if [ -f /opt/matrix/env/initial-ui-password ]; then
-    password_line="Password: $(cat /opt/matrix/env/initial-ui-password)"
+  cli_url="${ui_url%/}/cli"
+  if [ "$OPT_ACCESS" != "public" ]; then
+    password_line="Sign-in: your ${OPT_ACCESS} account (${MATRIX_TAILSCALE_OWNER_LOGIN:-not connected yet})"
+    access_note="Matrix is reachable only from devices on your private network signed in as you.
+nginx listens on 127.0.0.1 only. Add devices or machines from Settings > System > Private network."
   else
-    password_line="Password: existing nginx Basic Auth credentials"
+    if [ -f /opt/matrix/env/initial-ui-password ]; then
+      password_line="User: matrix
+Password: $(cat /opt/matrix/env/initial-ui-password)"
+    else
+      password_line="User: matrix
+Password: existing nginx Basic Auth credentials"
+    fi
+    access_note="${COLOR_YELLOW}${COLOR_BOLD}WARNING${COLOR_RESET} This install is reachable from the internet behind a password page
+(nginx Basic Auth). Prefer --access tailscale or --access headscale; see
+https://matrix-os.com/docs/self-host for the private-network setup."
   fi
 
   cat <<EOF
@@ -784,55 +1803,183 @@ print_summary() {
 ${COLOR_GREEN}${COLOR_BOLD}Matrix OS standalone install complete.${COLOR_RESET}
 
 Open: ${ui_url}
-User: matrix
 ${password_line}
+Runs as: ${MATRIX_RUN_USER}
+Browser use: ${OPT_BROWSER}
+Herdr sessions: ${OPT_HERDR:-off}
 
 Code editor: ${ui_url%/}/code/
-CLI gateway: ${ui_url%/}/cli
+CLI gateway: ${cli_url}
 Home: ${MATRIX_HOME_DIR}
 
 Useful commands:
   systemctl status matrix-terminal-runtime matrix-gateway matrix-shell matrix-code nginx --no-pager
   journalctl -u matrix-terminal-runtime -u matrix-gateway -u matrix-shell -u matrix-code -n 200 --no-pager
-  sudo -iu matrix
+  sudo -iu ${MATRIX_RUN_USER}
   MATRIX_TOKEN=\$(sudo sed -n 's/^MATRIX_AUTH_TOKEN=//p' /opt/matrix/env/host.env)
-  matrix shell ls --gateway ${ui_url%/}/cli --token "\$MATRIX_TOKEN"
+  matrix shell ls --gateway ${cli_url} --token "\$MATRIX_TOKEN"
 
-This preview protects the web UI with nginx Basic Auth. Put the host behind
-HTTPS, Tailscale, Cloudflare Access, or another trusted edge before long-term use.
+${access_note}
+EOF
+}
+
+# Pairs this machine with an existing Matrix computer over the private network
+# (spec 2701 "Private network and pairing"). The join code travels in the
+# environment, never in a child's argv.
+pair_with_primary() {
+  local line state dns name identity_dir result
+  [ -n "$OPT_JOIN_URL" ] || return 0
+  section "Pairing with your Matrix computer"
+  line="$(tailscale_status_line)"
+  IFS=$'\t' read -r state dns _ _ <<<"$line"
+  if [ "$state" != "Running" ] || ! [[ "$dns" =~ ^[A-Za-z0-9.-]{1,253}$ ]]; then
+    warn "this machine is not on your private network yet, so it could not pair. Sign in (sudo tailscale up), then re-run the command from Settings > System > Add a machine"
+    return 0
+  fi
+  name="${dns%%.*}"
+  identity_dir="${MATRIX_HOME_DIR}/system/machine-identity"
+  install -d -o "$MATRIX_RUN_USER" -g "$MATRIX_RUN_GROUP" -m 0700 "$identity_dir"
+  if result="$(MATRIX_JOIN_URL="${OPT_JOIN_URL%/}" MATRIX_JOIN_CODE="$OPT_JOIN_CODE" MATRIX_JOIN_IDENTITY_DIR="$identity_dir" \
+    MATRIX_JOIN_NAME="$name" MATRIX_JOIN_DNS_NAME="$dns" \
+    timeout 60 runuser -u "$MATRIX_RUN_USER" --whitelist-environment=MATRIX_JOIN_URL,MATRIX_JOIN_CODE,MATRIX_JOIN_IDENTITY_DIR,MATRIX_JOIN_NAME,MATRIX_JOIN_DNS_NAME -- \
+    "$(node_bin)" --input-type=module -e "$(pair_client_source)" 2>>"$MATRIX_INSTALL_LOG")"; then
+    ok "Paired with ${result}"
+  else
+    warn "pairing failed; the join code may have expired. Create a new one in Settings > System > Add a machine and re-run the installer with it"
+  fi
+}
+
+pair_client_source() {
+  cat <<'EOF'
+import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
+import { lookup } from "node:dns/promises";
+import { request } from "node:http";
+import { readFile, rename, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+const env = process.env;
+const parsed = new URL(env.MATRIX_JOIN_URL ?? "");
+// Plain HTTP is only for Headscale tailnets: the address must be loopback or on
+// the tailnet, and both requests connect to that checked address (no second DNS
+// answer can redirect the join code).
+let pinned = null;
+if (parsed.protocol === "http:") {
+  const { address, family } = await lookup(parsed.hostname);
+  const tailnet = /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(address) || /^fd7a:115c:a1e0:/i.test(address);
+  if (!tailnet && address !== "127.0.0.1" && address !== "::1") throw new Error("join URL is not on the private network");
+  pinned = { address, family };
+} else if (parsed.protocol !== "https:") {
+  throw new Error("join URL");
+}
+const dir = env.MATRIX_JOIN_IDENTITY_DIR ?? "";
+const keyPath = join(dir, "machine-ed25519.pem");
+let privateKey;
+try {
+  privateKey = createPrivateKey(await readFile(keyPath, "utf8"));
+} catch (error) {
+  if (error?.code !== "ENOENT") throw error;
+  const pair = generateKeyPairSync("ed25519");
+  await writeFile(keyPath, pair.privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600, flag: "wx" });
+  privateKey = pair.privateKey;
+}
+const publicKey = createPublicKey(privateKey).export({ format: "jwk" }).x;
+function postPinned(url, payload) {
+  return new Promise((resolve, reject) => {
+    const req = request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) },
+      lookup: (_host, options, callback) => (options?.all ? callback(null, [pinned]) : callback(null, pinned.address, pinned.family)),
+      timeout: 10_000,
+    }, (res) => {
+      let text = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => { text += chunk; if (text.length > 16_384) req.destroy(new Error("pairing response too large")); });
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, text }));
+    });
+    req.on("timeout", () => req.destroy(new Error("pairing timed out")));
+    req.on("error", reject);
+    req.end(payload);
+  });
+}
+async function call(path, body) {
+  const url = `${parsed.origin}/api/system/private-network/pairing/${path}`;
+  const payload = JSON.stringify(body);
+  let status, text;
+  if (pinned) {
+    // A redirect is a non-2xx status here and fails like any other.
+    ({ status, text } = await postPinned(url, payload));
+  } else {
+    const response = await fetch(url, {
+      method: "POST", headers: { "content-type": "application/json" }, body: payload,
+      redirect: "error", signal: AbortSignal.timeout(10_000),
+    });
+    status = response.status;
+    text = await response.text();
+  }
+  if (status < 200 || status >= 300) throw new Error(`pairing ${path} ${status}`);
+  if (text.length > 16_384) throw new Error("pairing response too large");
+  return JSON.parse(text);
+}
+const joinCode = env.MATRIX_JOIN_CODE ?? "";
+const name = env.MATRIX_JOIN_NAME ?? "";
+const dnsName = env.MATRIX_JOIN_DNS_NAME ?? "";
+const challenge = await call("challenge", { joinCode });
+const message = ["matrix-machine-pair-v1", challenge.primaryMachineId, challenge.ownerId, challenge.challengeId, challenge.nonce, String(challenge.revision), publicKey, name, dnsName].join("\n");
+const signature = sign(null, Buffer.from(message, "utf8"), privateKey).toString("base64url");
+const result = await call("complete", { joinCode, challengeId: challenge.challengeId, publicKey, signature, name, dnsName });
+const primary = { name: String(result.primary?.name ?? "").slice(0, 63), dnsName: String(result.primary?.dnsName ?? "").slice(0, 253), url: parsed.origin, pairedAt: new Date().toISOString() };
+const target = join(dir, "paired-primary.json");
+await writeFile(`${target}.tmp`, JSON.stringify(primary, null, 2) + "\n", { mode: 0o600 });
+await rename(`${target}.tmp`, target);
+process.stdout.write(`${primary.name || parsed.hostname}\n`);
 EOF
 }
 
 main() {
   INSTALL_PHASE="preflight"
+  parse_args "$@"
   banner
   require_root
   require_linux_systemd
   validate_config
+  resolve_run_user
+  ask_install_choices
   capture_install_telemetry "matrix_manual_install_started" "started" 0
   preflight_bundle_url
   INSTALL_PHASE="packages"
   install_packages
   INSTALL_PHASE="user"
   ensure_matrix_user
+  detect_herdr
   INSTALL_PHASE="env"
   write_env
   INSTALL_PHASE="bundle"
   install_bundle
   INSTALL_PHASE="runtime_permissions"
+  write_bundle_version /opt/matrix "$MATRIX_RUN_USER"
   prepare_runtime_permissions
   INSTALL_PHASE="systemd"
   install_systemd_units
+  INSTALL_PHASE="private_network"
+  configure_private_network
+  # First: an HTTP fallback changes the tailnet address recorded for the gateway.
+  [ "$OPT_ACCESS" = "public" ] || configure_tailscale_serve
+  write_env
   INSTALL_PHASE="nginx"
   configure_nginx
+  grant_run_user_access "$MATRIX_RUN_USER"
   INSTALL_PHASE="services"
   start_services
+  INSTALL_PHASE="browser"
+  configure_browser
   INSTALL_PHASE="verify"
   verify_services
+  INSTALL_PHASE="pairing"
+  pair_with_primary
   INSTALL_PHASE="complete"
   INSTALL_COMPLETED=1
   capture_install_telemetry "matrix_manual_install_completed" "completed" 0
   print_summary
 }
 
-main "$@"
+# Tests source the functions without running an install.
+[ "${MATRIX_INSTALL_SOURCE_ONLY:-0}" = "1" ] || main "$@"
