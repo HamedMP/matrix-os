@@ -9,6 +9,18 @@
 
 **Implementation assumption (2026-11-12)**: The requester explicitly authorized starting production code while assuming T001 will pass. T001 is still unverified and remains open; no live capability enablement, exact-URL qualification claim, or substitute auth path follows from this assumption. The user direction overrides only the T001-before-code dependency.
 
+## Allowlist mode (ENG-590, 2026-11-26)
+
+> Supersedes T001's "no primary-domain redirect" rule and T002/T028/T034 for the first release: no email is sent. See the spec amendment. Ticket: [ENG-590](https://linear.app/matrix-os/issue/ENG-590/enable-matrixpage-private-email-allowlist-without-sending-email).
+
+- [ ] T067 Red then green in `tests/platform/sites-registration*.test.ts`: capability ignores mail delivery; needs kill switch, schema, secrets, derived lifecycle webhook, `MATRIX_PAGE_EMAIL_EDGE_VERIFIED`, `MATRIX_PAGE_EMAIL_CLERK_SATELLITE_VERIFIED`; `main.ts` passes derived readiness (AL-6, readiness table).
+- [ ] T068 Red then green PostgreSQL tests: create and renew write `delivery_state='suppressed'` and no outbox row; per-owner pending cap 500; expiry window per AL-7; acceptance unchanged (AL-4, AL-7, AL-8).
+- [ ] T069 Contract + Gateway + shared client: capability carries `emailDelivery: "none"`; UI shows Private only with it; old strict schema rejects the new payload (AL-5, AL-6).
+- [ ] T070 Shared Share UI copy and actions (Add, Renew, Remove, Copy link before anyone is added, no delivery text) with tests (UI copy section).
+- [ ] T071 Gate as Clerk satellite: redirect to Matrix sign-in/up with the canonical return, satellite load options, CSP `connect-src` adds `https://clerk.matrix.page`; add `https://matrix.page` with an exact `/<uuid>` path rule to the shell satellite return allowlist (AL-1–AL-3).
+- [ ] T072 Checks: focused vitest + PostgreSQL suites, typecheck, `check:patterns`, react-doctor, `build:shell:production`; draft PR with Greptile 5/5.
+- [ ] T073 Requester: Clerk satellite + DNS, platform env, platform/app-shell redeploy, manual checklist, live evidence per surface.
+
 ## Phase 1: Setup and blocking feasibility gate
 
 **Goal**: Prove the literal product journey before production implementation. The disposable spike is the first implementation-related task. Keep its code, credentials, and captures outside this repository.
