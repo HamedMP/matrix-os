@@ -42,7 +42,7 @@ export function DesktopAppSiteButton({
   const allowNewSharing = isShareableAppSlug(appSlug);
   const share = useShareController({ appSlug, appName: name, client, emailInvites, allowNewSharing });
   const organization = useDesktopShareOrganization({ appSlug, appName: name, api: collaborationApi, buildEpoch, allowNewSharing });
-  if (!shareEntryVisible(allowNewSharing, share.pageMode, organization.shared)) {
+  if (!shareEntryVisible(allowNewSharing, share, organization.shared, open)) {
     // Closing releases the renderer overlay lease held while the popover was open.
     if (open) setOpen(false);
     return null;

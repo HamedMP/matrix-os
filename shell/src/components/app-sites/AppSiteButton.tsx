@@ -39,7 +39,7 @@ export function AppSiteButton({
     }
     setOpen(nextOpen);
   };
-  if (!shareEntryVisible(allowNewSharing, share.pageMode, organization.shared)) {
+  if (!shareEntryVisible(allowNewSharing, share, organization.shared, open)) {
     // Reset so the popover does not reopen by itself if this default app is shared again.
     if (open) setOpen(false);
     return null;

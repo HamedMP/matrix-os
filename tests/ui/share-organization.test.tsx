@@ -303,6 +303,19 @@ describe("Organization tab review fixes", () => {
     expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/readiness/check", expect.anything());
   });
 
+  it("never applies a setup that finished for a default app, so no new org share starts", async () => {
+    // Fault: a Make-collaborative setup started before default apps went stop-only finishes and
+    // creates a brand-new org share for Notes/Calculator through the automatic completion path.
+    const api = collaboration(["ready"]);
+    const fileApi = files(completedRecord);
+    render(<Host organizations={[finna]} api={api} fileApi={fileApi} allowNewSharing={false} />);
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringMatching(/\/share$/)));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/readiness/check", expect.anything());
+    expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything());
+    expect(fileApi.current()).toMatchObject({ state: "completed" });
+  });
+
   it("retries a failed share read so a finished setup still applies", async () => {
     const api = collaboration(["ready"], { shareReadFailures: 1 });
     render(<Host organizations={[finna]} api={api} fileApi={files(completedRecord)} />);

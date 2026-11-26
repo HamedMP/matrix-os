@@ -68,11 +68,13 @@ export function publicTabVisible(pageMode: PageMode, allowNewSharing = true): bo
 /**
  * Whether an app window shows Share. Matrix default apps never start sharing
  * (`allowNewSharing` false) but keep Share while something is still shared, so
- * the owner can stop it. While the state loads `pageMode` is `none` and
- * `orgShared` false, so a default app never flashes a Share button.
+ * the owner can stop it. While the first read loads `pageMode` is `none` and
+ * `orgShared` false, so a default app never flashes a Share button. A failed
+ * read keeps Share (with Retry) because the app may still be live, and an open
+ * popover stays up while that retry loads.
  */
-export function shareEntryVisible(allowNewSharing: boolean, pageMode: PageMode, orgShared: boolean): boolean {
-  return allowNewSharing || pageMode !== "none" || orgShared;
+export function shareEntryVisible(allowNewSharing: boolean, share: { pageMode: PageMode; loading: boolean; loadFailed: boolean }, orgShared: boolean, open: boolean): boolean {
+  return allowNewSharing || share.pageMode !== "none" || orgShared || share.loadFailed || (open && share.loading);
 }
 
 /** Opens on the tab whose sharing is on; otherwise Public. */

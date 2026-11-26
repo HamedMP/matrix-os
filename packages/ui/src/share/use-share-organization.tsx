@@ -55,7 +55,9 @@ export function useShareOrganization(host: ShareOrganizationHost): { slot: Share
     buildEpoch: host.buildEpoch,
     manageShare: enabled,
   });
-  const handoff = useCollaborativeHandoff({ appSlug: host.appSlug, api: enabled ? host.fileApi : null });
+  // A stop-only app never reads the Chats setup record, so a setup that finishes
+  // (even one started before the app became stop-only) cannot create a new share.
+  const handoff = useCollaborativeHandoff({ appSlug: host.appSlug, api: enabled && host.allowNewSharing !== false ? host.fileApi : null });
   const organizations = host.organizations ?? [];
   const [chosenId, setChosenId] = useState<string | null>(null);
   const flow = useOrganizationShareFlow({

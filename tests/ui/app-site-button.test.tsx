@@ -161,6 +161,23 @@ for (const [surface, Component] of [["Web", AppSiteButton], ["Electron", Desktop
       if (surface === "Electron") await waitFor(() => expect(fixture.release.mock.calls.length).toBe(fixture.acquire.mock.calls.length));
     });
 
+    it("keeps Share and Retry on a default app whose sharing state could not be read", async () => {
+      // Fault: a failed first read hides Share on a live Calculator, leaving no Retry and no Unpublish.
+      const live = siteRecord({ status: "published", forms: [], appSlug: "calculator" });
+      // Fails the first read and the re-read on open; recovers for Retry.
+      const offline = Object.assign(new Error("offline"), { status: 503 });
+      fixture.client.get.mockRejectedValueOnce(offline).mockRejectedValueOnce(offline);
+      fixture.client.get.mockResolvedValue(live as never);
+      render(<ContainedTrigger Component={Component} appSlug="calculator" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Share" }));
+      const dialog = await screen.findByRole("dialog", { name: "Share app" });
+      expect(within(dialog).queryByRole("button", { name: /^Publish$/ })).toBeNull();
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Retry" }));
+      // The popover stays open through the retry and lands on the live publication.
+      expect(await within(screen.getByRole("dialog", { name: "Share app" })).findByRole("button", { name: "Unpublish" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Live" })).toBeTruthy();
+    });
+
     it("resets the visible app identity and releases the Electron overlay on unmount", async () => {
       const view = render(<ContainedTrigger Component={Component} />);
       fireEvent.click(screen.getByRole("button", { name: "Share" }));
