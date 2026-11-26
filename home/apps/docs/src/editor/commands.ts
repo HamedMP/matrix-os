@@ -24,7 +24,7 @@ import type { DocumentSession } from "../session/index";
 import type { ModelIndex } from "./model-index";
 import { type PasteContent, cleanText } from "./paste";
 import type { ActiveFormat, EditorSelection, ToggleFormat, ViewMode } from "./types";
-import { type StepUnit, clipToVisible, markRemoved, runVisible, stepSpans, visibleBounds } from "./visibility";
+import { type StepUnit, clipToVisible, hasVisibleContent, markRemoved, runVisible, stepSpans, visibleBounds } from "./visibility";
 
 export const EDITOR_ORIGIN = "editor";
 const MAX_JOIN_DEPTH = 256;
@@ -252,18 +252,68 @@ export function deleteStep(host: CommandHost, selection: EditorSelection, direct
   return deleteAt(host, selection.start, direction, unit, 0);
 }
 
-/** Sets character formatting on the selection and keeps the selection. */
+/**
+ * The ranges to format for a selection the view hides text in: each visible
+ * stretch, joined across a paragraph mark the view shows, so hidden text and
+ * a hidden mark keep their formatting. Null when the view hides nothing in
+ * the selection, which is then formatted as the engine ranges that cover it.
+ */
+function visibleFormatRanges(host: CommandHost, start: TextPosition, end: TextPosition): TextRange[] | null {
+  const mode = host.mode();
+  const index = host.index();
+  const ranges: TextRange[] = [];
+  let hidden = false;
+  // The paragraph whose last range reaches its end, before a mark the view shows: the next stretch may continue that range.
+  let open: BlockId | null = null;
+  for (const entry of index.between(start.blockId, end.blockId)) {
+    const block = host.paragraph(entry.id);
+    if (block === null) continue;
+    const from = entry.id === start.blockId ? start.offset : 0;
+    const to = entry.id === end.blockId ? end.offset : block.text.length;
+    const pieces = clipToVisible(block, mode, from, to);
+    const whole = pieces.length === 1 && pieces[0]?.start === from && pieces[0]?.end === to;
+    if (from < to && !whole) hidden = true;
+    const previous = ranges[ranges.length - 1];
+    const joined = open !== null && previous !== undefined && index.siblingAfter(open)?.id === block.id ? previous : null;
+    if (joined !== null && block.text.length === 0) joined.end = { blockId: block.id, offset: 0 };
+    pieces.forEach((piece, at) => {
+      if (at === 0 && joined !== null && piece.start === 0) joined.end = { blockId: block.id, offset: piece.end };
+      else ranges.push({ start: { blockId: block.id, offset: piece.start }, end: { blockId: block.id, offset: piece.end } });
+    });
+    const last = ranges[ranges.length - 1];
+    const reachesEnd = last !== undefined && last.end.blockId === block.id && last.end.offset === block.text.length;
+    const markShown = !markRemoved(block, mode);
+    if (entry.id !== end.blockId && !markShown) hidden = true;
+    open = entry.id !== end.blockId && markShown && reachesEnd ? block.id : null;
+  }
+  return hidden ? ranges : null;
+}
+
+/** Sets character formatting on the selection and keeps the selection. Text the view hides keeps its formatting. */
 export function setRunFormat(host: CommandHost, selection: EditorSelection, format: Partial<RunFormat>): CommandOutcome | null {
-  const ranges = rangesOf(host, selection.start, selection.end);
+  const ranges = visibleFormatRanges(host, selection.start, selection.end) ?? rangesOf(host, selection.start, selection.end);
   if (ranges.length === 0) return null;
   const ops: DocxOp[] = ranges.reverse().map((range) => ({ type: "setRunFormat", range, format }));
   const result = host.session.apply(ops, { origin: EDITOR_ORIGIN, positions: [selection.anchor, selection.focus] });
   return { anchor: result.positions[0] ?? selection.anchor, focus: result.positions[1] ?? selection.focus };
 }
 
-/** Sets paragraph properties on every paragraph the selection touches. */
+/**
+ * Sets paragraph properties on every paragraph the selection touches that the
+ * view shows. A paragraph between its ends that the view hides entirely (a
+ * pending deletion of its text and its mark) keeps its properties.
+ */
 export function setParagraphStyle(host: CommandHost, selection: EditorSelection, style: Partial<ParagraphStylePatch>): CommandOutcome | null {
-  const entries = host.index().between(selection.start.blockId, selection.end.blockId);
+  const mode = host.mode();
+  const { start, end } = selection;
+  const entries = host
+    .index()
+    .between(start.blockId, end.blockId)
+    .filter((entry) => {
+      if (entry.id === start.blockId || entry.id === end.blockId) return true;
+      const block = host.paragraph(entry.id);
+      return block !== null && !(markRemoved(block, mode) && !hasVisibleContent(block, mode));
+    });
   if (entries.length === 0) return null;
   const ops: DocxOp[] = entries.map((entry) => ({ type: "setParagraphStyle", blockId: entry.id, style }));
   const result = host.session.apply(ops, { origin: EDITOR_ORIGIN, positions: [selection.anchor, selection.focus] });
