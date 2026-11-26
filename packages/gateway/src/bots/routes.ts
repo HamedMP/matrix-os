@@ -6,17 +6,19 @@ import {createBotRoutineRoutes} from "./routine-routes.js";
  * with allowlisted codes and generic messages, and responses are private.
  */
 import { BotChatBindingResponseSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotMemoryItemIdSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema, RecoverManagedCustomBotRequestSchema, type BotTaskSummary } from "@matrix-os/contracts";
+import { BotResourceGrantCreateResponseSchema, BotResourceGrantCreateSchema, BotResourceGrantIdSchema, BotResourceGrantListSchema, BotResourceGrantRevokeResponseSchema, BotResourceGrantRevokeSchema } from "@matrix-os/contracts";
 import { BotEntryError } from "./custom-direct-chat.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { z } from "zod/v4";
 import { bodyLimit } from "hono/body-limit";
-import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
+import { hasVerifiedRuntimeBearer, isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
 import type { BotContinuationAdmitter } from "./continuations.js";
 import { BotInstantiationError, type BotInstantiation } from "./instantiation.js";
 import { BotInteractionError, type BotInteractionService } from "./interactions.js";
 import { BotMemoryError, type BotMemoryService } from "./memory-service.js";
 import { BotGrantError, type BotGrantService } from "./grants-service.js";
+import { BotResourceGrantError, type BotResourceGrantService } from "./resource-grant-service.js";
 import { BotAuthorityError, type BotAuthority } from "./authority.js";
 import type { BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotChatLookup } from "../chat/agent-context.js";
@@ -30,9 +32,10 @@ const MAX_BODY_BYTES = 64 * 1024;
 const includeRecoverySchema = z.enum(["true", "false"]).optional();
 const includeRunIdsSchema = z.enum(["true", "false"]).optional();
 
-type ErrorCode = "invalid_request" | "not_found" | "conflict" | "expired" | "rate_limited" | "unavailable";
-const ERRORS: Record<ErrorCode, { status: 400 | 404 | 409 | 410 | 429 | 503; message: string }> = {
+type ErrorCode = "invalid_request" | "forbidden" | "not_found" | "conflict" | "expired" | "rate_limited" | "unavailable";
+const ERRORS: Record<ErrorCode, { status: 400 | 403 | 404 | 409 | 410 | 429 | 503; message: string }> = {
   invalid_request: { status: 400, message: "The request is invalid." },
+  forbidden: { status: 403, message: "This resource cannot be assigned to the Agent." },
   not_found: { status: 404, message: "Not found." },
   conflict: { status: 409, message: "This changed since you loaded it. Refresh and try again." },
   expired: { status: 410, message: "This request has expired." },
@@ -55,6 +58,7 @@ export function createBotRoutes(options: {
   interactions?: Pick<BotInteractionService, "listPending" | "resolve">;
   memory?: Pick<BotMemoryService, "forget" | "confirm">;
   grants?: Pick<BotGrantService, "revoke">;
+  resourceGrants?: BotResourceGrantService;
   authority?: Pick<BotAuthority, "view">;
   providerConnections?: BotProviderConnectionsService;
   chatgptPlanPeers?: ChatGptPlanPeers;
@@ -73,6 +77,14 @@ export function createBotRoutes(options: {
       return context.json({ code: "invalid_request", message: "The request is too large." }, 413);
     },
   });
+  const resourceGrantPath = "/api/chat-agents/:agentId/resource-grants";
+  const resourceGrantLimit = bodyLimit({
+    maxSize: 8192,
+    onError: (context) => {
+      context.header("Cache-Control", "private, no-store");
+      return context.json({ code: "invalid_request", message: "The request is too large." }, 413);
+    },
+  });
 
   routes.onError((error: unknown, context) => {
     if (isRequestPrincipalError(error)) {
@@ -81,6 +93,10 @@ export function createBotRoutes(options: {
       return context.json(mapped.body, mapped.status);
     }
     if (error instanceof SyntaxError) return errorResponse(context, "invalid_request");
+    if (error instanceof BotResourceGrantError) {
+      const responseCode = { missing: "not_found", denied: "forbidden", conflict: "conflict" } as const;
+      return errorResponse(context, responseCode[error.code]);
+    }
     if ((error instanceof BotInstantiationError || error instanceof ManagedCustomRecoveryError) && error.code === "invalid_request"
       && (error.reason === "prompt_too_large" || error.reason === "unsupported_skill")) {
       context.header("Cache-Control", "private, no-store");
@@ -260,6 +276,44 @@ export function createBotRoutes(options: {
     return context.json(view);
   });
 
+  routes.get(resourceGrantPath, async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    const principal = options.getPrincipal(context);
+    if (!hasResourceGrantPrincipal(context, principal)) return errorResponse(context, "forbidden");
+    if (!options.resourceGrants) return errorResponse(context, "unavailable");
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    if (!agentId.success) return errorResponse(context, "invalid_request");
+    const result = await options.resourceGrants.list(principal.userId, agentId.data);
+    return context.json(BotResourceGrantListSchema.parse(result));
+  });
+
+  routes.post(resourceGrantPath, resourceGrantLimit, async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    const principal = options.getPrincipal(context);
+    if (!hasResourceGrantPrincipal(context, principal)) return errorResponse(context, "forbidden");
+    if (!options.resourceGrants) return errorResponse(context, "unavailable");
+    if (!hasJsonContentType(context)) return errorResponse(context, "invalid_request");
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    const body = BotResourceGrantCreateSchema.safeParse(await context.req.json());
+    if (!agentId.success || !body.success) return errorResponse(context, "invalid_request");
+    const result = await options.resourceGrants.grant(principal.userId, agentId.data, body.data.candidateId);
+    return context.json(BotResourceGrantCreateResponseSchema.parse(result));
+  });
+
+  routes.delete(`${resourceGrantPath}/:grantId`, resourceGrantLimit, async (context) => {
+    context.header("Cache-Control", "private, no-store");
+    const principal = options.getPrincipal(context);
+    if (!hasResourceGrantPrincipal(context, principal)) return errorResponse(context, "forbidden");
+    if (!options.resourceGrants) return errorResponse(context, "unavailable");
+    if (!hasJsonContentType(context)) return errorResponse(context, "invalid_request");
+    const agentId = ChatAgentIdSchema.safeParse(context.req.param("agentId"));
+    const grantId = BotResourceGrantIdSchema.safeParse(context.req.param("grantId"));
+    const body = BotResourceGrantRevokeSchema.safeParse(await context.req.json());
+    if (!agentId.success || !grantId.success || !body.success) return errorResponse(context, "invalid_request");
+    const result = await options.resourceGrants.revoke(principal.userId, agentId.data, grantId.data, body.data.baseRevision);
+    return context.json(BotResourceGrantRevokeResponseSchema.parse(result));
+  });
+
   // DELETE is a mutation: bounded like the others, although it ignores any body.
   routes.delete("/api/chat-agents/:agentId/grants/:grantId", limit, async (context) => {
     const principal = options.getPrincipal(context);
@@ -273,4 +327,14 @@ export function createBotRoutes(options: {
   });
 
   return routes;
+}
+
+function hasResourceGrantPrincipal(context: Context, principal: RequestPrincipal): boolean {
+  // A run-scoped capability can set a principal but cannot prove an owner session.
+  return principal.source === "jwt" || (principal.source === "platform-verified" && hasVerifiedRuntimeBearer(context));
+}
+
+function hasJsonContentType(context: Context): boolean {
+  // The authenticated web proxy also handles cookie sessions. Keep simple cross-origin forms outside the mutation contract.
+  return context.req.header("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase() === "application/json";
 }

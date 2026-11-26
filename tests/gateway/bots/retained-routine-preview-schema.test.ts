@@ -23,6 +23,7 @@ const retainedBotId = `bot_routine${"a".repeat(32)}`;
 const retainedChatId = `chat_routine_${"b".repeat(32)}`;
 const retainedRoutineId = `rt_${"c".repeat(24)}`;
 const legacyMigrations = BOT_MIGRATIONS.slice(0, 15);
+const pending = BOT_MIGRATIONS.slice(18).map(({ version, name }) => ({ version, name }));
 const principal = { userId: OWNER, source: "jwt" as const };
 const ledger = (db: Kysely<OwnerBotDatabase>) => db.selectFrom("bot_schema_migrations").selectAll().orderBy("version").execute();
 
@@ -58,7 +59,10 @@ it("restores Bot startup and its owner routine-action route with dormant retaine
     await agents.bootstrap();
     const before = await ledger(db);
     await expect(bootstrapBotDatabase(db, legacyMigrations)).resolves.toEqual({ applied: [] });
-    await expect(bootstrapBotDatabase(db)).resolves.toEqual({ applied: [] });
+    await expect(bootstrapBotDatabase(db)).resolves.toEqual({ applied: pending.map(({ version }) => version) });
+    const afterUpgrade = await ledger(db);
+    expect(afterUpgrade.slice(0, before.length)).toEqual(before);
+    expect(afterUpgrade.slice(before.length)).toMatchObject(pending);
     services = await startBots({
       homePath: home, repository, agents, runtimeOwnerId: OWNER, configuredOwnerIds: [OWNER], computerId: "computer-one",
       routineActionPlatform: { platformUrl: "https://platform.example.test", handle: "computer-one", machineId: "fixture-machine", runtimeSlot: "dev", token: "fixture" },
@@ -69,7 +73,7 @@ it("restores Bot startup and its owner routine-action route with dormant retaine
     const response = await app.request("/api/routine-cli/actions");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ challenges: [] });
-    expect(await ledger(db)).toEqual(before);
+    expect(await ledger(db)).toEqual(afterUpgrade);
     expect(await db.selectFrom("bot_routine_fires").select("status").execute()).toEqual([{ status: "uncertain" }]);
     expect(await hasLiveRoutineChat(db, OWNER, retainedBotId, retainedChatId)).toBe(false);
   } finally {
@@ -85,7 +89,7 @@ it.each(["future version", "wrong shape", "partial ledger", "wrong index", "paus
   try {
     await bootstrapBotDatabase(db, legacyMigrations);
     await retainRoutinePreviewSchema(db);
-    if (fault === "future version") await db.insertInto("bot_schema_migrations").values({ version: 19, name: "unknown_future" }).execute();
+    if (fault === "future version") await db.insertInto("bot_schema_migrations").values({ version: BOT_MIGRATIONS.length + 1, name: "unknown_future" }).execute();
     if (fault === "wrong shape") await sql`ALTER TABLE bot_routines ALTER COLUMN origin_computer_id SET DEFAULT 'unverified'`.execute(db);
     if (fault === "partial ledger") await db.deleteFrom("bot_schema_migrations").where("version", "=", 17).execute();
     if (fault === "wrong index") {
@@ -112,14 +116,17 @@ it.each(["future version", "wrong shape", "partial ledger", "wrong index", "paus
     const before = await ledger(db);
     await expect(bootstrapBotDatabase(db, legacyMigrations)).rejects.toEqual(new BotSchemaError("newer_schema"));
     if (fault === "paused routine" || fault === "unsettled fire" || fault === "blocked coordinator task" || fault === "pending decision") {
-      await expect(bootstrapBotDatabase(db)).resolves.toEqual({ applied: [] });
+      await expect(bootstrapBotDatabase(db)).resolves.toEqual({ applied: pending.map(({ version }) => version) });
+      const afterUpgrade = await ledger(db);
+      expect(afterUpgrade.slice(0, before.length)).toEqual(before);
+      expect(afterUpgrade.slice(before.length)).toMatchObject(pending);
       // The installed runtime can reconcile a matching active schema, but mere stored ids
       // do not grant the hidden target authority without a live private source.
       await expect(hasLiveRoutineChat(db, OWNER, retainedBotId, retainedChatId)).resolves.toBe(false);
     } else {
       await expect(bootstrapBotDatabase(db)).rejects.toEqual(new BotSchemaError(fault === "partial ledger" ? "invalid_migrations" : "newer_schema"));
+      expect(await ledger(db)).toEqual(before);
     }
-    expect(await ledger(db)).toEqual(before);
   } finally {
     await destroy();
   }

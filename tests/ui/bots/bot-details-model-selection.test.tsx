@@ -5,6 +5,7 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
 import { MATRIX_BOT_SELECTION, type CanonicalProviderCatalog, type ChatAgent } from "@matrix-os/contracts";
 import { createChatAgentClient } from "../../../packages/ui/src/chat-agents/client.js";
+import { createBotClient } from "../../../packages/ui/src/chat-agents/bots/client.js";
 import { BotChatPanel } from "../../../packages/ui/src/chat-agents/bots/BotChatPanel.js";
 import { saved } from "../../desktop/chat-agents-fixture.js";
 import { createCanonicalProviderCatalogFixture } from "../../contracts/fixtures/canonical-chat.js";
@@ -56,6 +57,19 @@ function switchConnection(id: string) {
 function chooseModel(id: string, model: string, options?: typeof binding) {
  fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: JSON.stringify(options ? [id, model, options] : [id, model]) } });
 }
+
+it("opens saved scoped access from the existing managed Agent Details", async () => {
+ const { client } = fixture();
+ const request = vi.fn().mockResolvedValue({ candidates: [], grants: [
+  { id: "rgr_" + "a".repeat(32), kind: "github_repository", label: "demo/reviewer", revision: 1 },
+ ] });
+ client.bots!.resourceGrants = createBotClient(request).resourceGrants;
+ render(<BotChatPanel chatId="chat_details" directBotId={saved.id} client={client} catalog={catalogFixture()}/>);
+ await openDetails();
+ const scopedApps = await screen.findByRole("region", { name: "Scoped app access" });
+ expect(await within(scopedApps).findByText("demo/reviewer · Read only")).toBeVisible();
+ expect(request).toHaveBeenCalledExactlyOnceWith(`/api/chat-agents/${saved.id}/resource-grants`, "GET", undefined);
+});
 
 it("keeps the full Details connection switch local, then uses the real client to persist complete model selections at each revision", async () => {
  const x = fixture(); render(<BotChatPanel chatId="chat_details" directBotId={saved.id} client={x.client} catalog={catalogFixture()}/>);

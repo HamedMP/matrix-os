@@ -134,6 +134,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
       interactions: botServices.interactions,
       memory: botServices.memory,
       grants: botServices.grants,
+      resourceGrants: botServices.resourceGrants,
       authority: botServices.authority,
       providerConnections: botServices.providerConnections,
       chatgptPlanPeers: botServices.chatgptPlanPeers,

@@ -37,6 +37,25 @@ function api(overrides: Partial<ApiClient> = {}): ApiClient {
 }
 
 describe("canonical Chat client", () => {
+  it("sends the saved revision when revoking a scoped Agent resource", async () => {
+    const agentId = "bot_savedagent";
+    const resourceGrantId = "rgr_" + "a".repeat(32);
+    const accountGrantId = "gr_existing_account";
+    const revokedAt = "2026-11-26T06:00:00.000Z";
+    const remove = vi.fn()
+      .mockResolvedValueOnce({ grantId: resourceGrantId, revokedAt })
+      .mockResolvedValueOnce({ grantId: accountGrantId, revokedAt });
+    const bots = createCanonicalChatClient(api({ delete: remove })).agents.bots!;
+
+    await expect(bots.resourceGrants!.revoke(agentId, resourceGrantId, 3)).resolves.toEqual({ grantId: resourceGrantId, revokedAt });
+    await bots.revoke(agentId, accountGrantId);
+
+    expect(remove.mock.calls).toEqual([
+      [`/api/chat-agents/${agentId}/resource-grants/${resourceGrantId}`, { baseRevision: 3 }],
+      [`/api/chat-agents/${agentId}/grants/${accountGrantId}`],
+    ]);
+  });
+
   it("negotiates Schedule origin metadata on reads without retrying a typed transport error", async () => {
     const get = vi.fn().mockResolvedValueOnce({ items: [], pending: [], nextCursor: null })
       .mockRejectedValueOnce(new AppError("unauthorized", { httpStatus: 401 }));
