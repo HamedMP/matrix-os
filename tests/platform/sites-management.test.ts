@@ -193,19 +193,28 @@ it.each(['NaN', '-1', '1.5', '1e12', '9999999999999999'])('rejects an invalid in
 it('advertises disabled invitation readiness before publication without creating a site', async () => {
  const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
  expect((await app.request(url)).status).toBe(401);
- const response=await app.request(url,{headers:{authorization:'Bearer '+token}});
+ const response=await app.request(url,{headers:{authorization:'Bearer '+token,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION}});
  expect(response.status).toBe(200);
  expect(response.headers.get('cache-control')).toBe('no-store');
- expect(await response.json()).toEqual({privateEmailInvitations:false});
+ expect(await response.json()).toEqual({privateEmailInvitations:false,emailDelivery:'none'});
  expect(await db.executor.selectFrom('public_sites').select('id').where('app_slug','=','not-published').execute()).toEqual([]);
 });
 it('reads readiness through verified machine authority and rejects untrusted query input', async () => {
  const enabled=vi.fn(async()=>true);
  const ready=new Hono().route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,service:createSitesService({db}),emailEnabled:enabled}));
  const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
+ const current={authorization:'Bearer '+token,[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:SITE_MANAGEMENT_CONTRACT_VERSION};
  expect((await ready.request(url)).status).toBe(401);
  expect(enabled).not.toHaveBeenCalled();
- const response=await ready.request(url,{headers:{authorization:'Bearer '+token}});
- expect(await response.json()).toEqual({privateEmailInvitations:true});
- expect((await ready.request(url+'&enabled=true',{headers:{authorization:'Bearer '+token}})).status).toBe(400);
+ const response=await ready.request(url,{headers:current});
+ expect(await response.json()).toEqual({privateEmailInvitations:true,emailDelivery:'none'});
+ expect((await ready.request(url+'&enabled=true',{headers:current})).status).toBe(400);
+});
+it('keeps allowlist readiness off for gateways that cannot show allowlist copy', async () => {
+ const ready=new Hono().route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,service:createSitesService({db}),emailEnabled:async()=>true}));
+ const url='/internal/containers/launch/sites/not-published/email-invitation-capabilities?runtimeSlot=primary';
+ for(const version of [undefined,'2','3']){
+  const response=await ready.request(url,{headers:{authorization:'Bearer '+token,...(version?{[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]:version}:{})}});
+  expect(await response.json(),version).toEqual({privateEmailInvitations:false});
+ }
 });

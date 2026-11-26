@@ -9,7 +9,7 @@
 
 ## Amendment: allowlist mode, no email delivery (ENG-590, 2026-11-26)
 
-**Ticket**: [ENG-590](https://linear.app/matrix-os/issue/ENG-590/enable-matrixpage-private-email-allowlist-without-sending-email) (related: ENG-29, ENG-584). **Status**: proposed, awaiting requester approval.
+**Ticket**: [ENG-590](https://linear.app/matrix-os/issue/ENG-590/enable-matrixpage-private-email-allowlist-without-sending-email) (related: ENG-29, ENG-584). **Status**: approved by the requester on 2026-11-26, including the Clerk satellite redirect and the 30-day window. Stakeholder review by the ENG-29 owner is suggested.
 
 **Requester decision (2026-11-26)**: the owner adds email addresses in the Private tab, copies the Matrix.page link and sends it themselves. The email is only a check that the person signed in with Clerk on `https://matrix.page/<id>` has a verified address on the owner's list. Email delivery stays deferred.
 
@@ -26,15 +26,15 @@ Checked 2026-11-26 with read-only requests:
 Clerk does not support sign-in components on a satellite with a different root domain, so FR-011's "sign in without leaving the app URL" cannot hold. **Proposed replacement** (needs requester approval, since the original spec forbade a primary-domain redirect):
 
 - AL-1: matrix.page becomes a Clerk satellite of the Matrix production instance. The gate shows **Sign in** and **Create account**; each goes to `https://app.matrix-os.com/sign-in` or `/sign-up` with `redirect_url=https://matrix.page/<id>` and comes straight back. A browser already signed in to Matrix syncs on load and enters with no extra step (FR-011's second sentence still holds).
-- AL-2: The return target must be exactly `https://matrix.page/<publication-uuid>`. The sign-in/sign-up pages force-redirect there, so no onboarding, billing, desktop, app-session or provisioning step runs (FR-012, FR-013 unchanged).
+- AL-2: The return target must be exactly `https://matrix.page/<publication-uuid>` (Clerk's sync query is allowed; frames, assets, data and friendly paths are not). The sign-in/sign-up pages force-redirect there, so no onboarding, billing, desktop, app-session or provisioning step runs (FR-012, FR-013 unchanged).
 - AL-3: Sign-out and account switch keep the current order: revoke the Matrix.page viewer session first, then Clerk sign-out, then back to the canonical URL (FR-021 unchanged).
 
 ### Behavior in allowlist mode
 
 - AL-4: Adding addresses creates the same invitation rows (pending → accepted → revoked/expired) with `delivery_state = 'suppressed'` (an existing allowed value: "no email will be sent") and **no** delivery-outbox row. No mailer, worker or provider is started. No migration.
 - AL-5: Wire values stay as they are so mixed Platform/host-bundle versions keep parsing: the create outcome is still `queued`/`existing`; only the UI copy changes.
-- AL-6: The capability response gains `emailDelivery: "none"`. New clients show the Private tab only when `privateEmailInvitations` is true **and** `emailDelivery` is `"none"`. Old Gateway/shell bundles parse this response strictly, fail closed, and keep the Private tab hidden until the VPS updates, so no old client shows "Email queued".
-- AL-7: Pending entries expire after **[7 / 30 days — requester to choose]**. The owner's resend action becomes **Renew**: it starts a new window and generation without sending anything. Acceptance needs a currently verified Clerk email that matches (trimmed, case-insensitive); after acceptance, access follows the account, not the email text (FR-015–FR-020 unchanged).
+- AL-6: The Gateway↔Platform site contract moves to version 4. Platform answers the owner readiness read with `{ privateEmailInvitations, emailDelivery: "none" }` only to v4 Gateways and with `{ privateEmailInvitations: false }` to older ones. New clients show the Private tab only when both fields say so. Site records are unchanged, so publishing keeps working on every version. A Web Desktop/Canvas or Electron client older than its Gateway also parses the new readiness strictly and fails closed, so no old client shows "Email queued".
+- AL-7: Pending entries expire after **30 days** (requester, 2026-11-26). The owner's resend action becomes **Renew**: it starts a new window and generation without sending anything. Acceptance needs a currently verified Clerk email that matches (trimmed, case-insensitive); after acceptance, access follows the account, not the email text (FR-015–FR-020 unchanged).
 - AL-8: Resource bound replaces the outbox cap: at most 500 pending, unexpired entries per owner across sites, plus the existing 100 addresses / 32 KiB per request.
 
 ### UI copy (shared `packages/ui/src/share`, so Web Desktop, Web Canvas and Electron Desktop stay identical)
@@ -53,10 +53,12 @@ Clerk does not support sign-in components on a satellite with a different root d
 | Input | How it is decided | Why it cannot be derived further |
 | --- | --- | --- |
 | Kill switch | `MATRIX_PAGE_EMAIL_INVITATIONS_ENABLED=true` | Operator decision |
+
+All three switches are GitHub repository variables (default `false`) that `.github/workflows/platform-cloud-run.yml` passes to every Cloud Run deploy; a hand-set Cloud Run variable would be dropped by the next `--set-env-vars` deploy.
 | Schema | `platform_schema_revisions` marker equals `SITES_SCHEMA_REVISION` (unchanged) | — |
 | Secrets | `SITES_EDGE_SECRET` (≥32, trimmed), `CLERK_SECRET_KEY`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `ACCOUNT_DELETION_SECRET` (≥32 bytes) well-formed (unchanged) | — |
 | Lifecycle webhook | Derived: `CLERK_USER_WEBHOOK_SIGNING_SECRET` is a well-formed `whsec_` secret **and** the account-deletion runtime is wired (the `/webhooks/clerk/users` route returns 503 without it) | Clerk-side event subscription is dashboard state; covered by the manual checklist |
-| Edge exchange | `MATRIX_PAGE_EMAIL_EDGE_VERIFIED=true` | Worker is deployed by hand with wrangler; Platform cannot see its revision. Verified once on 2026-11-26 (above); recheck command in the checklist |
+| Edge exchange | `MATRIX_PAGE_EMAIL_EDGE_VERIFIED=true` | The platform workflow deploys the Worker on production promotion, but Platform cannot observe which revision Cloudflare serves. Verified live on 2026-11-26 (above) |
 | Clerk satellite | `MATRIX_PAGE_EMAIL_CLERK_SATELLITE_VERIFIED=true` | Clerk dashboard + DNS state; set only after the manual checklist passes |
 
 ### Security architecture

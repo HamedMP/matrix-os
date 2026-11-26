@@ -58,8 +58,36 @@ describe("clerkSatelliteReturnTarget", () => {
     expect(clerkSatelliteReturnTarget(42)).toBeNull();
   });
 
-  it("allowlists exactly one https origin with no wildcard", () => {
-    expect(CLERK_SATELLITE_RETURN_ORIGINS).toEqual(["https://ai-insights.app"]);
+  it("allowlists exact https origins with no wildcard", () => {
+    expect(CLERK_SATELLITE_RETURN_ORIGINS).toEqual(["https://ai-insights.app", "https://matrix.page"]);
+  });
+});
+
+// Fault detected: a Matrix.page allowlist visitor signs in on Matrix and must land
+// back on the same shared app, never on onboarding and never on another
+// matrix.page path (frames, assets, data or a look-alike publication).
+describe("clerkSatelliteReturnTarget for Matrix.page shared apps", () => {
+  const app = "https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2";
+
+  it("returns only the canonical publication URL, keeping Clerk sync markers", () => {
+    expect(clerkSatelliteReturnTarget(app)).toBe(app);
+    expect(clerkSatelliteReturnTarget(`${app}?__clerk_synced=false`)).toBe(`${app}?__clerk_synced=false`);
+  });
+
+  it.each([
+    ["site root", "https://matrix.page/"],
+    ["bare origin", "https://matrix.page"],
+    ["friendly path", "https://matrix.page/sales-crm"],
+    ["frame route", `${app}/frame`],
+    ["access route", `${app}/access/email`],
+    ["trailing slash", `${app}/`],
+    ["upper-case id", app.toUpperCase().replace("HTTPS://MATRIX.PAGE", "https://matrix.page")],
+    ["dot segment", `https://matrix.page/x/../a2fd72d0-0926-49d5-b45f-bbfb167e50d2`],
+    ["encoded slash", "https://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2%2Fframe"],
+    ["subdomain", "https://www.matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2"],
+    ["plain http", "http://matrix.page/a2fd72d0-0926-49d5-b45f-bbfb167e50d2"],
+  ])("refuses %s", (_label, value) => {
+    expect(clerkSatelliteReturnTarget(value)).toBeNull();
   });
 });
 
@@ -70,6 +98,7 @@ describe("clerkAllowedRedirectOrigins", () => {
       "https://matrix-os.com",
       "https://*.matrix-os.com",
       "https://ai-insights.app",
+      "https://matrix.page",
     ]);
   });
 
@@ -80,6 +109,7 @@ describe("clerkAllowedRedirectOrigins", () => {
       "https://*.quiet-fox-12.accounts.dev",
       "https://quiet-fox-12.clerk.accounts.dev",
       "https://ai-insights.app",
+      "https://matrix.page",
     ]);
   });
 

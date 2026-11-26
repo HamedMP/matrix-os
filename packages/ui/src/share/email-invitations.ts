@@ -48,11 +48,14 @@ export interface LiveEmailInvitationAdapter extends EmailInvitationOperations {
 
 export type EmailInvitationAdapter = PreviewEmailInvitationAdapter | LiveEmailInvitationAdapter;
 
-/** Match the server's resend policy, including delivery with an unknown outcome. */
+/**
+ * Allowlist mode sends no email, so "Renew" is offered only once an entry can no
+ * longer be claimed (expired or removed). The server also renews failed deliveries.
+ */
 export function canResendEmailInvitation(invitation: EmailInvitationSummary, now = Date.now()): boolean {
   return invitation.state === "expired" || invitation.state === "revoked"
     || (invitation.state === "pending" && (Date.parse(invitation.expiresAt) <= now
-      || ["failed", "ambiguous", "suppressed"].includes(invitation.deliveryState ?? "")));
+      || ["failed", "ambiguous"].includes(invitation.deliveryState ?? "")));
 }
 
 export class EmailInvitationError extends Error {
@@ -62,7 +65,8 @@ export class EmailInvitationError extends Error {
 export const EMAIL_INVITES_PER_REQUEST = 100;
 const MAX_PREVIEW_APPS = 32;
 const MAX_PREVIEW_INVITES = 200;
-const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Allowlist mode claim window (spec 2691 amendment, AL-7).
+const INVITATION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface PreviewApp { active: boolean; revision: number; invitations: EmailInvitationSummary[] }
 

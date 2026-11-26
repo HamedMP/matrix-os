@@ -1,4 +1,4 @@
-import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateResponseSchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema, SiteRecordSchema, SiteSlugAvailabilitySchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SiteSlugAvailability, SiteEmailInvitationsCapabilitySchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema } from '@matrix-os/contracts';
+import { SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER, SITE_PUBLISH_TIMEOUT_MS, SiteAccessLinkCreateResponseSchema, SiteAccessLinksQuerySchema, SiteAccessLinksResponseSchema, SiteRecordSchema, SiteSlugAvailabilitySchema, type SiteAccessLinkCreateResponse, type SiteAccessLinksResponse, type SiteRecord, type SiteSlugAvailability, SiteEmailInvitationReadinessSchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 // 410: platform refused a retired capability (one-time links, ENG-490); relayed with generic copy only.
 export class SitePlatformError extends Error{constructor(readonly status:400|404|409|410|503){super('Publishing request failed');}}
@@ -8,7 +8,7 @@ export interface SitePlatformClient {
  createAccessLink(slug:string,body:{baseRevision:number}):Promise<SiteAccessLinkCreateResponse>;
  revokeAccessLink(slug:string,linkId:string):Promise<void>;
  slugAvailability(slug:string,friendlySlug:string,signal?:AbortSignal):Promise<SiteSlugAvailability>;
- emailInvitationCapabilities?(slug:string,signal?:AbortSignal):Promise<z.infer<typeof SiteEmailInvitationsCapabilitySchema>>;
+ emailInvitationCapabilities?(slug:string,signal?:AbortSignal):Promise<z.infer<typeof SiteEmailInvitationReadinessSchema>>;
  listEmailInvitations(slug:string,query:{limit:number;cursor?:string}):Promise<z.infer<typeof SiteEmailInvitationPageSchema>>;
  createEmailInvitations(slug:string,body:{baseRevision:number;emailAddresses:string[]}):Promise<z.infer<typeof SiteEmailInvitationCreateResponseSchema>>;
  resendEmailInvitation(slug:string,id:string,body:{baseRevision:number;invitationRevision:number}):Promise<z.infer<typeof SiteEmailInvitationMutationResponseSchema>>;
@@ -46,7 +46,7 @@ export function createSitePlatformClient(options:{url:string;token:string;handle
   revokeAccessLink:async(slug,linkId)=>{await request(slug,'DELETE',undefined,'/access-links/'+encodeURIComponent(linkId),undefined,undefined,z.object({ok:z.literal(true)}).strict());},
   slugAvailability:async(slug,friendlySlug,signal)=>request(slug,'GET',undefined,`/slug-availability?${new URLSearchParams({slug:friendlySlug})}`,signal,undefined,SiteSlugAvailabilitySchema) as Promise<SiteSlugAvailability>,
   emailInvitationCapabilities:async(slug,signal)=>request(slug,'GET',undefined,
-   '/email-invitation-capabilities',signal,undefined,SiteEmailInvitationsCapabilitySchema) as Promise<z.infer<typeof SiteEmailInvitationsCapabilitySchema>>,
+   '/email-invitation-capabilities',signal,undefined,SiteEmailInvitationReadinessSchema) as Promise<z.infer<typeof SiteEmailInvitationReadinessSchema>>,
   listEmailInvitations:async(slug,query)=>request(slug,'GET',undefined,
    `/invitations?limit=${query.limit}${query.cursor?'&cursor='+encodeURIComponent(query.cursor):''}`,
    undefined,undefined,SiteEmailInvitationPageSchema) as Promise<z.infer<typeof SiteEmailInvitationPageSchema>>,

@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const fixture = vi.hoisted(() => ({
   client: {
     getConfig: vi.fn(async () => ({ data: {}, forms: [] })), get: vi.fn(async () => null), slugAvailability: vi.fn(async () => ({ status: "available", suggestions: [] })),
-    emailInvitationCapabilities: vi.fn(async () => ({ privateEmailInvitations: true })), emailInvitations: vi.fn(async () => ({ invitations: [], nextCursor: null, siteRevision: 0 })),
+    emailInvitationCapabilities: vi.fn(async () => ({ privateEmailInvitations: true, emailDelivery: "none" as const })), emailInvitations: vi.fn(async () => ({ invitations: [], nextCursor: null, siteRevision: 0 })),
     createEmailInvitations: vi.fn(), resendEmailInvitation: vi.fn(), revokeEmailInvitation: vi.fn(),
   },
   connection: { api: { forRuntime: () => null } as object | null, runtimeSlot: "primary", authGeneration: 0, email: null as string | null, userId: "user_fallback" as string | null },

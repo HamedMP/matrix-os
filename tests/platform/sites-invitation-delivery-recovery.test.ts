@@ -47,7 +47,7 @@ it('caps one owner\'s outstanding mail across repeated invitation requests',asyn
   await db.executor.insertInto('public_site_invitation_deliveries').values(invitations.map(row=>({id:randomUUID(),
    invitation_id:row.id,invitation_generation:'1',idempotency_key:randomUUID(),state:'queued' as const,attempts:0,
    available_at:now,lease_token:null,lease_until:null,provider_message_id:null,failure_code:null,sent_at:null,created_at:now,updated_at:now}))).execute();
-  await expect(createSiteEmailInvitations(db,owner,{baseRevision:1,emailAddresses:['new@example.com']})).rejects.toMatchObject({code:'unavailable'});
+  await expect(createSiteEmailInvitations(db,owner,{baseRevision:1,emailAddresses:['new@example.com']},{delivery:'email'})).rejects.toMatchObject({code:'unavailable'});
   expect(await db.executor.selectFrom('public_site_email_invitations').select('id').where('normalized_email','=','new@example.com').executeTakeFirst()).toBeUndefined();
   await acceptSiteEmailInvitation({db,siteId,secret:'mail-capacity-recipient-secret-32-bytes',
    identity:{clerkUserId:'user_mail_guest',clerkSessionId:'sess_mail_guest',verifiedEmails:['guest0@example.com']}});
@@ -56,7 +56,7 @@ it('caps one owner\'s outstanding mail across repeated invitation requests',asyn
   await db.executor.updateTable('public_site_invitation_deliveries').set({state:'failed',failure_code:'rejected',attempts:1})
    .where('invitation_id','=',invitations[1]!.id).execute();
   const result=await createSiteEmailInvitations(db,owner,{baseRevision:1,
-   emailAddresses:['new@example.com','another@example.com']});
+   emailAddresses:['new@example.com','another@example.com']},{delivery:'email'});
   expect(result.results.map(item=>item.outcome)).toEqual(['queued','queued']);
  }finally{await destroyTestPlatformDb(db);}
 });

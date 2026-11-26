@@ -58,13 +58,15 @@ export function createSiteManagementRoutes(options: {
     const denied = (c: Context) => c.json({ error: 'Unauthorized' }, 401);
     const smallBody = bodyLimit({ maxSize: 2048, onError: c => c.json({ error: 'Site unavailable' }, 413) });
     const usesCurrentContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === SITE_MANAGEMENT_CONTRACT_VERSION;
-    const usesAccessModeContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === '2' || usesCurrentContract(c);
+    // Version 3 gateways understand email capabilities in site records but not allowlist mode.
+    const usesEmailContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === '3' || usesCurrentContract(c);
+    const usesAccessModeContract = (c: Context) => c.req.header(SITE_MANAGEMENT_CONTRACT_VERSION_HEADER) === '2' || usesEmailContract(c);
     const rejectUnnegotiatedAccessMode = (c: Context, input: unknown) => {
         if (!usesAccessModeContract(c) && typeof input === 'object' && input !== null && Object.hasOwn(input, 'accessMode'))
             throw new SiteError('invalid_request');
     };
     const siteResponse = (c: Context, site: SiteRecord) => {
-        if (usesCurrentContract(c))
+        if (usesEmailContract(c))
             return c.json(site);
         const { capabilities: _, ...withoutEmail } = site;
         if (usesAccessModeContract(c))
@@ -151,7 +153,9 @@ export function createSiteManagementRoutes(options: {
     // site or relaxes the gate on invitation mutations.
     app.get('/:appSlug/email-invitation-capabilities', async c => {
         const identity = await owner(c); if (!identity) return denied(c);
-        return c.json({ privateEmailInvitations: options.emailEnabled ? await options.emailEnabled() : false });
+        // Older gateways would render email-delivery copy, so they never see allowlist mode as ready.
+        if (!usesCurrentContract(c)) return c.json({ privateEmailInvitations: false });
+        return c.json({ privateEmailInvitations: options.emailEnabled ? await options.emailEnabled() : false, emailDelivery: 'none' });
     });
     app.get('/:appSlug/invitations', async c => {
         const identity = await emailOwner(c, true); if (!identity) return denied(c);

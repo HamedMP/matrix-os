@@ -94,21 +94,22 @@ postgres('site email invitations across independent PostgreSQL connections', () 
     expect(events.filter(event => event.event_type === 'invitation_accepted')).toHaveLength(1);
   });
 
-  it('creates ordered normalized owner results and a committed outbox before delivery', async () => {
+  it('creates ordered normalized allowlist entries with a 30-day window and no delivery work', async () => {
     const {siteId}=await seed();
     const owner={ownerId:'user_site_owner',machineId:'owner-machine',appSlug:`app-${siteId}`};
     const created=await createSiteEmailInvitations(dbA,owner,{baseRevision:1,emailAddresses:[
       '  ADA@example.com  ','ada@EXAMPLE.com','bad address','recipient@example.com','bob+notes@example.com','',
     ]});
     expect(created.results.map(result=>result.outcome)).toEqual(['queued','duplicate_in_batch','invalid','existing','queued','invalid']);
-    expect(created.results[0]).toMatchObject({invitation:{emailAddress:'ada@example.com',state:'pending',generation:1}});
+    expect(created.results[0]).toMatchObject({invitation:{emailAddress:'ada@example.com',state:'pending',generation:1,deliveryState:'suppressed'}});
+    const first=(created.results[0] as {invitation:{issuedAt:string;expiresAt:string}}).invitation;
+    expect(Date.parse(first.expiresAt)-Date.parse(first.issuedAt)).toBe(30*86400_000);
     expect(created.siteRevision).toBe(2);
     const rows=await dbB.executor.selectFrom('public_site_email_invitations').selectAll().where('site_id','=',siteId).execute();
     expect(rows).toHaveLength(3);
     const deliveries=await dbB.executor.selectFrom('public_site_invitation_deliveries').selectAll()
-      .where('invitation_id','in',rows.filter(row=>row.normalized_email!=='recipient@example.com').map(row=>row.id)).execute();
-    expect(deliveries).toHaveLength(2);
-    expect(deliveries.every(row=>row.state==='queued')).toBe(true);
+      .where('invitation_id','in',rows.map(row=>row.id)).execute();
+    expect(deliveries).toHaveLength(0);
     const audit=await dbB.executor.selectFrom('public_site_access_audit_events').selectAll().where('site_id','=',siteId).execute();
     expect(audit.filter(row=>row.event_type==='invitation_created')).toHaveLength(2);
     const page=await listSiteEmailInvitations(dbB,owner,{limit:2});
@@ -132,7 +133,56 @@ postgres('site email invitations across independent PostgreSQL connections', () 
     expect(result.results.every(row=>row.outcome==='queued')).toBe(true);
     expect((await dbB.executor.selectFrom('public_site_invitation_deliveries').select('id')
       .where('invitation_id','in',dbB.executor.selectFrom('public_site_email_invitations').select('id').where('site_id','=',siteId))
-      .execute())).toHaveLength(100);
+      .execute())).toHaveLength(0);
+  });
+
+  it('keeps the email-delivery path behind an explicit option with a seven-day window and outbox row', async () => {
+    const {siteId}=await seed('existing-email-mode@example.com');
+    const owner={ownerId:'user_site_owner',machineId:'owner-machine',appSlug:`app-${siteId}`};
+    const created=await createSiteEmailInvitations(dbA,owner,{baseRevision:1,emailAddresses:['mailed@example.com']},{delivery:'email'});
+    const invitation=(created.results[0] as {invitation:{id:string;issuedAt:string;expiresAt:string;deliveryState:string}}).invitation;
+    expect(invitation.deliveryState).toBe('queued');
+    expect(Date.parse(invitation.expiresAt)-Date.parse(invitation.issuedAt)).toBe(7*86400_000);
+    expect(await dbB.executor.selectFrom('public_site_invitation_deliveries').select('state')
+      .where('invitation_id','=',invitation.id).execute()).toEqual([{state:'queued'}]);
+  });
+
+  it('renews an expired allowlist entry with a new generation and no delivery work', async () => {
+    const {siteId,invitationId}=await seed('renew@example.com',new Date(Date.now()-1000));
+    const owner={ownerId:'user_site_owner',machineId:'owner-machine',appSlug:`app-${siteId}`};
+    const renewed=await resendSiteEmailInvitation(dbA,owner,invitationId,{baseRevision:1,invitationRevision:0});
+    expect(renewed).toMatchObject({siteRevision:2,invitation:{id:invitationId,generation:2,state:'pending',deliveryState:'suppressed'}});
+    expect(Date.parse(renewed.invitation.expiresAt)-Date.parse(renewed.invitation.issuedAt)).toBe(30*86400_000);
+    expect(await dbB.executor.selectFrom('public_site_invitation_deliveries').select('id')
+      .where('invitation_id','=',invitationId).execute()).toHaveLength(0);
+  });
+
+  it('caps each owner at 500 pending allowlist entries across sites', async () => {
+    const {siteId}=await seed('cap-existing@example.com');
+    const owner={ownerId:'user_site_owner',machineId:'owner-machine',appSlug:`app-${siteId}`};
+    const pendingElsewhere=await dbA.executor.selectFrom('public_site_email_invitations as i')
+      .innerJoin('public_sites as s','s.id','i.site_id').select(sql<number>`count(*)::int`.as('count'))
+      .where('s.owner_id','=',owner.ownerId).where('i.state','=','pending').where('i.expires_at','>',new Date())
+      .executeTakeFirstOrThrow();
+    const fill=500-pendingElsewhere.count;
+    try {
+    await sql`INSERT INTO public_site_email_invitations (id, site_id, normalized_email, display_email, generation, state,
+        delivery_state, invited_by_clerk_user_id, created_at, issued_at, expires_at, updated_at, revision)
+      SELECT gen_random_uuid(), ${siteId}, 'cap-' || n || '@example.com', 'cap-' || n || '@example.com', 1, 'pending',
+        'suppressed', ${owner.ownerId}, now(), now(), now() + interval '30 days', now(), 0
+      FROM generate_series(1, ${fill - 1}) AS n`.execute(dbA.executor);
+    const last=await createSiteEmailInvitations(dbA,owner,{baseRevision:1,emailAddresses:['cap-last@example.com']});
+    expect(last.results[0]).toMatchObject({outcome:'queued'});
+    await expect(createSiteEmailInvitations(dbB,owner,{baseRevision:2,emailAddresses:['cap-over@example.com']}))
+      .rejects.toMatchObject({code:'unavailable'});
+    // An address already on the list is still reported, not rejected.
+    expect((await createSiteEmailInvitations(dbB,owner,{baseRevision:2,emailAddresses:['cap-last@example.com']})).results[0])
+      .toMatchObject({outcome:'existing'});
+    } finally {
+      // The suite shares one owner; release the cap for later cases.
+      await dbA.executor.updateTable('public_site_email_invitations').set({state:'revoked',revoked_at:new Date()})
+        .where('site_id','=',siteId).execute();
+    }
   });
 
   it('resends a failed invitation with one new generation and cancels stale delivery work', async () => {
@@ -143,12 +193,12 @@ postgres('site email invitations across independent PostgreSQL connections', () 
       invitation_generation:'1',idempotency_key:randomUUID(),state:'failed',attempts:1,available_at:now,
       lease_token:null,lease_until:null,provider_message_id:null,failure_code:'timeout',sent_at:null,created_at:now,updated_at:now}).execute();
     await dbA.executor.updateTable('public_site_email_invitations').set({delivery_state:'failed'}).where('id','=',invitationId).execute();
-    const resent=await resendSiteEmailInvitation(dbA,owner,invitationId,{baseRevision:1,invitationRevision:0});
+    const resent=await resendSiteEmailInvitation(dbA,owner,invitationId,{baseRevision:1,invitationRevision:0},{delivery:'email'});
     expect(resent).toMatchObject({siteRevision:2,invitation:{id:invitationId,generation:2,state:'pending',deliveryState:'queued'}});
     const deliveries=await dbB.executor.selectFrom('public_site_invitation_deliveries').selectAll().where('invitation_id','=',invitationId)
       .orderBy('invitation_generation','asc').execute();
     expect(deliveries.map(row=>row.state)).toEqual(['cancelled','queued']);
-    await expect(resendSiteEmailInvitation(dbB,owner,invitationId,{baseRevision:2,invitationRevision:0}))
+    await expect(resendSiteEmailInvitation(dbB,owner,invitationId,{baseRevision:2,invitationRevision:0},{delivery:'email'}))
       .rejects.toMatchObject({code:'conflict'});
   });
 

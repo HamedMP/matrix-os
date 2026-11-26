@@ -21,7 +21,7 @@ const site: SiteRecord = {
   capabilities: { privateEmailInvitations: true },
 };
 const invitation = (overrides: Partial<SiteEmailInvitationSummary> = {}): SiteEmailInvitationSummary => ({
-  id: INVITE_ID, emailAddress: "sara@example.com", state: "pending", deliveryState: "queued",
+  id: INVITE_ID, emailAddress: "sara@example.com", state: "pending", deliveryState: "suppressed",
   generation: 1, revision: 0, issuedAt: "2026-11-01T00:00:00.000Z", expiresAt: "2030-11-08T00:00:00.000Z",
   updatedAt: "2026-11-01T00:00:00.000Z", ...overrides,
 });
@@ -31,9 +31,9 @@ function deferred<T>() {
   return { promise, resolve };
 }
 function fixture(initial: SiteRecord | null = site, enabled = true, initialPeople: SiteEmailInvitationSummary[] = []) {
-  const state = { site: initial, people: initialPeople, enabled, next: null as string | null };
+  const state = { site: initial, people: initialPeople, enabled, next: null as string | null, readiness: null as Record<string, unknown> | null };
   const get = vi.fn(async (path: string): Promise<unknown> => {
-    if (path.endsWith("/email-invitation-capabilities")) return { privateEmailInvitations: state.enabled };
+    if (path.endsWith("/email-invitation-capabilities")) return state.readiness ?? { privateEmailInvitations: state.enabled, emailDelivery: "none" };
     if (path.includes("/invitations?")) return { invitations: state.people, nextCursor: state.next, siteRevision: state.site!.revision };
     if (path.includes("/access-links?")) return { links: [], nextCursor: null };
     if (path.endsWith("/manifest")) return { manifest: { publishing: { data: {}, forms: [] } } };
@@ -94,7 +94,7 @@ const openPrivate = () => fireEvent.mouseDown(screen.getByRole("tab", { name: /P
 async function invite() {
   openPrivate();
   fireEvent.change(screen.getByLabelText("Email address"), { target: { value: "sara@example.com" } });
-  fireEvent.click(screen.getByRole("button", { name: "Invite", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Add", exact: true }));
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -143,16 +143,38 @@ it("lets the owner stop a live invite-only site without making it public", async
   expect(f.patch).not.toHaveBeenCalled();
 });
 
-it("resends an ambiguous invitation and revokes it using the new invitation and site revisions", async () => {
-  const f = fixture(site, true, [invitation({ deliveryState: "ambiguous" })]);
+it("renews an expired entry and removes it using the new invitation and site revisions", async () => {
+  const f = fixture(site, true, [invitation({ state: "expired" })]);
   render(<Host api={f.api} />); await ready();
-  expect(screen.getByText("Pending · Email status unknown")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Resend invitation to sara@example.com" }));
+  expect(screen.getByText("Expired")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Renew access for sara@example.com" }));
   await waitFor(() => expect(screen.getByTestId("revision").textContent).toBe("4"));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Revoke invitation for sara@example.com" })).toHaveProperty("disabled", false));
-  fireEvent.click(screen.getByRole("button", { name: "Revoke invitation for sara@example.com" }));
-  await waitFor(() => expect(screen.getByText("Revoked")).toBeTruthy());
+  expect(screen.getByText("Not opened yet")).toBeTruthy();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Remove access for sara@example.com" })).toHaveProperty("disabled", false));
+  fireEvent.click(screen.getByRole("button", { name: "Remove access for sara@example.com" }));
+  await waitFor(() => expect(screen.getByText("Removed")).toBeTruthy());
   expect(f.remove.mock.calls[0][1]).toEqual({ baseRevision: 4, invitationRevision: 1 });
+});
+
+it("says no email is sent, shows the link before anyone is added, and never claims delivery", async () => {
+  const f = fixture(site, true, []);
+  render(<Host api={f.api} />); await ready();
+  expect(screen.getByText("We don’t send email. Copy the link and send it yourself. Only these people can open it after signing in.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Copy link" })).toBeTruthy();
+  expect(screen.getByLabelText("Email address").getAttribute("placeholder")).toBe("Add people by email");
+  await invite();
+  expect(await screen.findByText("Added. Copy the link and send it to them.")).toBeTruthy();
+  expect(screen.getByText("Not opened yet")).toBeTruthy();
+  expect(screen.queryByText(/Email (queued|sent|processing|failed|stopped|status)/)).toBeNull();
+  expect(screen.queryByText(/Invitation queued/)).toBeNull();
+});
+
+it("keeps the Private tab hidden when the server has not confirmed allowlist mode", async () => {
+  const f = fixture(null);
+  f.state.readiness = { privateEmailInvitations: true };
+  render(<Host api={f.api} />); await ready();
+  expect(screen.queryByRole("tab", { name: /Private/ })).toBeNull();
+  expect(screen.queryByLabelText("Email address")).toBeNull();
 });
 
 it("keeps older invitation pages visible until explicitly returning to the newest page", async () => {
@@ -161,7 +183,7 @@ it("keeps older invitation pages visible until explicitly returning to the newes
   f.get.mockImplementation(async (path) => {
     if (path.includes("cursor=older")) return { invitations: [invitation({ id: "55555555-5555-4555-8555-555555555555", emailAddress: "older@example.com" })], siteRevision: 3, nextCursor: null };
     if (path.includes("/invitations?")) return { invitations: f.state.people, siteRevision: 3, nextCursor: "older" };
-    return path.endsWith("/email-invitation-capabilities") ? { privateEmailInvitations: true } : site;
+    return path.endsWith("/email-invitation-capabilities") ? { privateEmailInvitations: true, emailDelivery: "none" } : site;
   });
   render(<Host api={f.api} />); await ready();
   fireEvent.click(screen.getByRole("button", { name: "Load more invitations" }));
@@ -237,7 +259,7 @@ it("prevents paging from cancelling a pending newest-page reset", async () => {
  const older=invitation({id:'55555555-5555-4555-8555-555555555555',emailAddress:'older@example.com'});
  let reset=false,held=false;
  f.get.mockImplementation(async(path)=>{
-  if(path.endsWith('/email-invitation-capabilities'))return {privateEmailInvitations:true};
+  if(path.endsWith('/email-invitation-capabilities'))return {privateEmailInvitations:true,emailDelivery:'none'};
   if(path.endsWith('/site')){if(reset){held=true;return fresh.promise;}return site;}
   if(path.includes('cursor=older'))return {invitations:[older],siteRevision:3,nextCursor:'last'};
   return {invitations:[invitation()],siteRevision:3,nextCursor:'older'};
