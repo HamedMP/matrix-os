@@ -122,15 +122,45 @@ rejects because `main` moved, return here instead of dropping the pin.
 
 ## 4. Qualify the platform lane
 
-Compare the release range with the current path filters in
-`.github/workflows/platform-cloud-run.yml`. If no platform-relevant inputs
-changed, record `not needed` with the serving platform SHA.
+Read the **authoritative serving source SHA** from the Cloud Run revision that
+currently receives production traffic, as described by `release-platform`.
+The latest successful workflow run is supporting evidence, not proof of what is
+serving. Fetch that commit and establish its relationship to the locked release
+SHA before using path filters:
 
-If relevant inputs changed, use `release-platform`. Prefer the successful
-automatic production run from `main`; otherwise show the user the exact SHA and
-ask before a production dispatch or retry. Verify production traffic, health,
-the sign-in shell, and the changed route. Record serving, worker, and edge
-rollback targets before an authorized manual deployment.
+```bash
+git merge-base --is-ancestor "$PLATFORM_SHA" "$SHA"
+git diff --name-only "$PLATFORM_SHA..$SHA"
+```
+
+If the serving SHA is unavailable, is not verified main provenance, or is not
+an ancestor of the locked SHA, stop and qualify the platform explicitly. Do not
+infer compatibility from timestamps, run order, or a green workflow. Inspect
+every commit and changed file from the serving SHA through the locked release
+SHA against the **current** `on.push.paths` filters in
+`.github/workflows/platform-cloud-run.yml`. This whole gap matters: checking
+only the host or Desktop release range can miss an earlier skipped or failed
+platform deployment.
+
+Also build a short **dependency ledger** for the host and Desktop changes being
+released. For each client or bundle behavior that needs a platform route,
+contract, environment value, migration, worker, or edge behavior, record:
+
+- the required production behavior and introducing commit;
+- proof that the introducing commit is contained in the serving SHA; and
+- a live production check of the required route or contract.
+
+Record `none` only after reviewing the release changes for such dependencies.
+Do not mark Platform `not needed` unless the serving ancestry is proven, the
+entire missing-commit gap contains no platform-trigger path, the dependency
+ledger is empty or fully satisfied by the serving SHA, and the standard health
+and sign-in checks pass. If any proof is missing, or a platform-relevant commit
+is absent from production, use `release-platform`; prefer a successful
+automatic production run only when the authoritative traffic and source label
+confirm it actually deployed. Otherwise show the exact SHA and ask before a
+production dispatch or retry. Verify production traffic, health, sign-in, every
+ledger entry, and the changed route. Record serving, worker, and edge rollback
+targets before an authorized manual deployment.
 
 Platform readiness is a gate for host/Desktop publication when the new clients
 depend on it. A host release never substitutes for a platform deployment.
@@ -154,14 +184,44 @@ previous stable version before promotion.
 
 ## 6. Roll out and verify the fleet
 
-After stable promotion, take a fresh fleet inventory. Define an
-**inventory-derived denominator**: every eligible running production VPS, with
-preview/test machines and intentionally excluded machines listed separately.
-Never hard-code a few handles as proof of fleet health.
+After stable promotion, take a complete, non-truncated fleet inventory. Define
+an **inventory-derived denominator**: every eligible running production VPS,
+with preview/test machines and intentionally excluded machines listed
+separately. Never hard-code a few handles as proof of fleet health.
 
-Show the user the exact stable version and eligible count, then ask for final
-approval to deploy that **exact approved version** fleet-wide. Use the platform
-rollout path, not SSH copies. A triggered rollout is not a completed rollout.
+Create an immutable **approval manifest** containing:
+
+- the exact stable version;
+- the inventory observation time;
+- the sorted target list, with machine ID and handle for every recipient;
+- the sorted exclusion list, with machine ID, handle, and reason; and
+- the target count and a SHA-256 digest of the canonical manifest.
+
+Show the complete target and exclusion lists, version, count, and digest, then
+ask for final approval. Approval binds both the version and that exact target
+set. Adding or removing a target, changing the version, or changing an
+exclusion requires a new manifest and new approval.
+
+Immediately before the first deploy request, fetch another complete inventory
+and verify that every approved machine ID still maps uniquely to its approved
+handle and remains eligible, every exclusion remains outside the target list,
+and the derived recipients must exactly match the approved target set. Stop on
+missing, duplicate, renamed, newly ineligible, or otherwise changed targets.
+Never add a newly eligible machine without new approval; list it as appearing
+after the approved snapshot or ask for a replacement manifest.
+
+Use only a deploy mechanism that can honor the approved recipients and version.
+With the current platform API, first prove each approved handle uniquely maps to
+the approved machine ID, then issue one scoped request per manifest entry with
+the exact body `{"handle":"<approved-handle>","version":"<exact-version>"}`.
+Require each response to name exactly the approved machine ID and handle. Do
+not use `deploy_after_publish=true`, a `/vps/deploy` body that omits `handle`,
+or any other broad path that selects the fleet again at dispatch. If the
+available API cannot preserve both the exact version and target set, stop and
+report the fleet rollout as blocked. Never fall back to SSH copies or a broad
+deploy. If a scoped request fails after dispatch begins, preserve the manifest
+and report the rollout as partial; do not silently substitute another target.
+A triggered rollout is not a completed rollout.
 
 Observe both control-plane release reports and Loki update/health evidence.
 Track at least:
@@ -173,11 +233,14 @@ Track at least:
 - unreachable or stale;
 - excluded, with reason.
 
-Use a bounded monitoring window and report the remaining machines by handle
-and state. A historically unreachable machine may be an accepted exception only
-when the current inventory confirms it and the report names it; do not encode
-customer handles in this skill. If Loki is unavailable, say which verification
-is missing and do not claim fleet-wide observed completion from trigger counts
+Reconcile every control-plane response and Loki result to the manifest's
+machine ID and handle. An excluded or post-approval machine is never part of the
+success denominator, even if it updates independently. Use a bounded monitoring
+window and report the remaining approved machines by handle and state. A
+historically unreachable machine may be an accepted exception only when the
+current inventory confirms it and the report names it; do not encode customer
+handles in this skill. If Loki is unavailable, say which verification is
+missing and do not claim fleet-wide observed completion from trigger counts
 alone.
 
 ## 7. Publish and verify Desktop stable
