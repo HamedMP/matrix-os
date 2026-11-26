@@ -21,7 +21,7 @@
 - No new embedded databases. hostd stores per-VM state as JSON files written atomically (`{ flag: 'wx' }` temp + rename).
 - Free VM limits: boot 2048 MiB, hotplug ceiling 8192 MiB, 2 vCPU, 20 GiB disk, egress shaped to 50 Mbit/s, port 25 blocked.
 - Sleep: free VMs only, after 60 minutes with no owner interaction and nothing running; never while an agent turn, routine, or job runs; a free VM awake 6 hours with no owner interaction is suspended and flagged. Paid VMs never sleep or shrink.
-- Scheduled wake fires 60 s before the next scheduled time.
+- Scheduled wake fires 2 min before the next scheduled time.
 - Snapshots live in the data pool (`/var/lib/matrix-hostd/snapshots`, a filesystem on its own thin LV), never the root filesystem; a failed snapshot leaves the VM running.
 - Guest settings proven in S7: kernel args `memhp_default_state=online memory_hotplug.online_policy=auto-movable page_reporting.page_reporting_order=5`; `ptp_kvm` plus `phc2sys -s /dev/ptp0 -c CLOCK_REALTIME -O 0 -R 4 -S 0.5`; restore with `memory_restore_mode=ondemand`.
 - Max 3000 additions or 50 files per PR; about 5 to 6 layers per stack.
@@ -31,7 +31,7 @@
 1. **Wake while a wake is in flight.** Two owner tabs and the mobile app hit a sleeping VM at once. Expected: one resume, all requests served. Test in Task P3 (`concurrent owner requests share one resume`).
 2. **Sleep racing a new request.** A request arrives while the sleeper is snapshotting. Expected: the request waits and the VM resumes after the snapshot; no lost request, no double resume. Test in Task H2 (`resume during suspend waits for the snapshot and then resumes`).
 3. **Snapshot fails** (full pool, Cloud Hypervisor error). Expected: the VM keeps running, the platform keeps it `running`, and an alert is logged. Tests in Task H2 (`snapshot failure keeps the VM running`) and Task P6 (`sleeper leaves running on suspend failure`).
-4. **Scheduled job due while asleep.** Expected: the VM is awake 60 s before and the job runs on time; if missed, it runs once on wake. Tests in Task G1, Task G2 and Task P6 (`wakes 60 s before nextScheduledAt`).
+4. **Scheduled job due while asleep.** Expected: the VM is awake 2 min before and the job runs on time; if missed, it runs once on wake. Tests in Task G1, Task G2 and Task P6 (`wakes 2 min before nextScheduledAt`).
 5. **Host agent unreachable.** Expected: owner requests get a 503 `runtime_unavailable` with `Retry-After`, the sleeper does not mark the VM asleep, and no state is lost. Test in Task P2 (`hostd timeout maps to failed provider_unavailable`).
 
 ---
@@ -322,7 +322,7 @@
 - Produces: `createMetalSleeper(deps)` with `tick(now)`, run every 60 s, single-flight. For each running free metal machine:
   - If `last_activity_at` is older than 60 min, read the lifecycle.
   - If `busy`, skip, unless `awake_since` is 6 h or more with no owner activity; then suspend and flag `idle_guard`.
-  - Otherwise record `next_wake_at = nextScheduledAt - 60 s` and call `stop`.
+  - Otherwise record `next_wake_at = nextScheduledAt - 2 min` and call `stop`.
   - Machines with `next_wake_at <= now` get `ensureRunning`.
 
 - [ ] **Step 1: Write the failing tests:**
@@ -330,7 +330,7 @@
   - `does not sleep while lifecycle reports busy`
   - `suspends and flags after 6 hours awake with no owner activity`
   - `never sleeps paid VMs`
-  - `wakes 60 s before nextScheduledAt`
+  - `wakes 2 min before nextScheduledAt`
   - `sleeper leaves running on suspend failure`
   - `lifecycle timeout skips the machine this tick`
 - [ ] **Step 2: Run** `pnpm exec vitest run tests/platform/metal-sleeper.test.ts`. Expected: FAIL.

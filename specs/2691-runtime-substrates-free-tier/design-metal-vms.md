@@ -163,8 +163,8 @@ A small service on each host that owns every VM on it. The platform is its only 
   wake (about 0.5 s measured) rather than failed; clients show a waking state only after
   3 s. WebSocket upgrades wait for the gateway before upgrading.
 - **Scheduled wake**: on sleep, the gateway reports its next scheduled time (cron,
-  routines, background agents). The platform wakes the VM about 60 s before it so the job
-  starts on time; the VM sleeps again under the normal idle rule once the work finishes.
+  routines, background agents). The platform wakes the VM 2 min before it, which leaves room
+  for several bounded wake batches and the gaps between sleeper scans, so the job starts on time; the VM sleeps again under the normal idle rule once the work finishes.
   If a run was missed (for example during host trouble), the gateway runs it on the next
   wake instead of skipping it. Push notifications from those runs go out as usual.
 - **Channels** (Telegram and other bridges): inbound messages need a running process.
