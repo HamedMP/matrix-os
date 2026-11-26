@@ -7,14 +7,17 @@
  * The host saves a Matrix document's edits by itself before it leaves it.
  * Only edits it cannot save (a new workbook, a local document, a failed
  * write) stop the move: the owner then picks Save, Discard or Cancel. A
- * failed save keeps the document open and shows why.
+ * failed save keeps the document open and shows why. Both questions belong
+ * to the workbook they were asked for and are dropped when another one is
+ * shown (see `useSessionBound`).
  */
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { LocalFileError, type LocalFile, pickLocalFile, useToast } from "../../../_shared/office-ui";
 import { type RecentFiles, type SessionHost, fileName } from "../session";
 import type { Workbook } from "../session/engine";
 import { logFailure } from "./bridge";
 import { type Download, describeSave, saveDocument } from "./file-actions";
+import { useSessionBound } from "./session-bound";
 import { type SheetsTemplateId, buildTemplate, sheetsTemplate } from "./templates";
 
 export type DocumentAction =
@@ -60,8 +63,8 @@ function newWorkbookOptions(action: { rows?: string[][]; template?: SheetsTempla
 
 export function useDocumentFlow(host: SessionHost, recents: RecentFiles, download: Download): DocumentFlow {
   const toast = useToast();
-  const [pending, setPending] = useState<DocumentAction | null>(null);
-  const [saveAs, setSaveAs] = useState<SaveAsRequest | null>(null);
+  const { value: pending, set: setPending, current: currentPending } = useSessionBound<DocumentAction>(host);
+  const { value: saveAs, set: setSaveAs, current: currentSaveAs } = useSessionBound<SaveAsRequest>(host);
   const notify = useCallback((message: string, tone: "info" | "success" | "warning" | "danger" = "info") => void toast.show({ title: message, tone }), [toast]);
 
   const run = useCallback(
@@ -102,25 +105,32 @@ export function useDocumentFlow(host: SessionHost, recents: RecentFiles, downloa
         if (!imported.ok) toast.show({ title: "The text could not be imported", description: imported.message, tone: "danger" });
       }
     },
-    [host, recents, toast],
+    [host, recents, toast, setPending],
   );
 
   const savePending = useCallback(async (): Promise<void> => {
-    const action = pending;
+    // Read now, not from the render: a question asked for another workbook is never answered for this one.
+    const action = currentPending();
     setPending(null);
     const session = host.session;
     if (action === null || session === null) return;
     const result = await saveDocument(session, download, notify);
+    if (host.session !== session) return;
     if (result === "saved") await run(action);
     else if (result === "needs-path") setSaveAs({ purpose: "save", then: action });
-  }, [pending, host, download, notify, run]);
+  }, [currentPending, setPending, setSaveAs, host, download, notify, run]);
 
   const submitSaveAs = useCallback(
     async (path: string): Promise<string | null> => {
       const session = host.session;
-      const request = saveAs;
-      if (session === null || request === null) return null;
+      const request = currentSaveAs();
+      if (session === null || request === null) {
+        setSaveAs(null);
+        return null;
+      }
       const outcome = await session.saveAs(path);
+      // Another workbook took the window while this one was written: its own question is not answered here.
+      if (host.session !== session) return null;
       if (outcome.status === "saved") {
         setSaveAs(null);
         const text = describeSave(outcome);
@@ -131,10 +141,10 @@ export function useDocumentFlow(host: SessionHost, recents: RecentFiles, downloa
       if (outcome.status === "error") return outcome.code === "exists" ? "A file with that name already exists in this folder." : outcome.message;
       return describeSave(outcome)?.message ?? null;
     },
-    [host, saveAs, notify, run],
+    [host, currentSaveAs, setSaveAs, notify, run],
   );
 
-  const requestSaveAs = useCallback((purpose: "save" | "copy") => setSaveAs({ purpose, then: null }), []);
+  const requestSaveAs = useCallback((purpose: "save" | "copy") => setSaveAs({ purpose, then: null }), [setSaveAs]);
   const rejectLocalFile = useCallback((error: LocalFileError) => notify(error.message, "danger"), [notify]);
   const openLocalFile = useCallback((file: LocalFile) => void run({ kind: "local", name: file.name, bytes: file.bytes }), [run]);
 
@@ -155,7 +165,7 @@ export function useDocumentFlow(host: SessionHost, recents: RecentFiles, downloa
     pending,
     cancelPending: () => setPending(null),
     discardPending: () => {
-      const action = pending;
+      const action = currentPending();
       setPending(null);
       if (action !== null) void run(action, true);
     },
