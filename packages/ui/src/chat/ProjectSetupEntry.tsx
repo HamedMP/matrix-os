@@ -12,10 +12,7 @@ export function ProjectSetupEntry({ onStart, pending = false }: { onStart: () =>
   );
   if (collapsed) return <div className="my-3">{startButton}</div>;
   return (
-    <div
-      className="my-3 min-w-0 space-y-5 rounded-xl border p-4 sm:p-5"
-      style={borderStyle}
-    >
+    <div className="my-3 min-w-0 space-y-5 rounded-xl border p-4 sm:p-5" style={borderStyle}>
       <div className="min-w-0">
         <p className="text-lg font-semibold leading-snug">Tell the AI how you work</p>
         <p className="mt-1 text-sm" style={mutedStyle}>
