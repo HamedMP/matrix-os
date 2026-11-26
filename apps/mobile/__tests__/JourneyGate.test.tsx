@@ -69,6 +69,35 @@ describe("JourneyGate", () => {
     expect(onRetry).toHaveBeenCalled();
   });
 
+  it("shows why a free start failed and lets the owner try again", () => {
+    const onRetry = jest.fn();
+    const { getByText, getByTestId } = render(
+      <JourneyGate
+        result={ok({ phase: "install_choices_required", detail: "Set up your free Matrix computer.", nextAction: { kind: "start_provision" } })}
+        onRetry={onRetry}
+        onOpenUrl={noop}
+        setupError="Matrix can’t start new computers right now. Try again in a few minutes."
+      />,
+    );
+    expect(getByText("Matrix can’t start new computers right now. Try again in a few minutes.")).toBeTruthy();
+    fireEvent.press(getByTestId("journey-start"));
+    expect(onRetry).toHaveBeenCalled();
+    expect(getByText("Try again")).toBeTruthy();
+  });
+
+  it("shows why a retry failed on the failed-build screen", () => {
+    const { getByText, getByTestId } = render(
+      <JourneyGate
+        result={ok({ phase: "provisioning_failed", detail: "Setting up ran into a problem.", failure: { retryable: true, attempt: 1 } })}
+        onRetry={noop}
+        onOpenUrl={noop}
+        setupError="Setup was just tried. Wait a moment, then try again."
+      />,
+    );
+    expect(getByText("Setup was just tried. Wait a moment, then try again.")).toBeTruthy();
+    expect(getByTestId("journey-retry")).toBeTruthy();
+  });
+
   it("keeps the existing hand-off screen for install choices that are not a free start", () => {
     const { queryByTestId, getByTestId } = render(
       <JourneyGate result={ok({ phase: "install_choices_required", nextAction: { kind: "choose_default_installs" } })} onRetry={noop} onOpenUrl={noop} />,

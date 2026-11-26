@@ -21,6 +21,8 @@ interface JourneyGateProps {
   /** Clear the local Clerk session so the user can sign in again. */
   onSignOut?: () => void;
   working?: boolean;
+  /** Fixed copy explaining why the last build start was refused; never server text. */
+  setupError?: string | null;
 }
 
 function Centered({ children, scrollable = false }: { children: React.ReactNode; scrollable?: boolean }) {
@@ -99,7 +101,7 @@ function PlanRequired({ detail, plansUrl, onOpenUrl, onRefresh, onSignOut }: Pla
  * screens for plan selection, payment settling, machine build, and retry —
  * `first_run`/`ready` are handled by the caller (it hands off to the shell).
  */
-export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, onSignOut = () => {}, working = false }: JourneyGateProps) {
+export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, onSignOut = () => {}, working = false, setupError = null }: JourneyGateProps) {
   const { theme } = useUnistyles();
   // The first answer is still on its way: hold the startup screen rather than
   // switching to a loading layout of its own for a moment.
@@ -151,7 +153,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
         </Centered>
       );
     case "install_choices_required":
-      return <InstallChoices journey={journey} working={working} onStart={onRetry} />;
+      return <InstallChoices journey={journey} working={working} error={setupError} onStart={onRetry} />;
     case "provisioning":
       return (
         <Centered>
@@ -165,6 +167,7 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
         <Centered>
           <Title>Setup needs attention</Title>
           <Body>{journey.detail}</Body>
+          {setupError ? <SetupError message={setupError} /> : null}
           {journey.failure?.retryable ? (
             <PrimaryButton label={working ? "Retrying…" : "Retry setup"} testID="journey-retry" onPress={onRetry} />
           ) : (
@@ -182,15 +185,23 @@ export function JourneyGate({ result, onRetry, onOpenUrl, onRefresh = () => {}, 
 }
 
 /** The platform offers a direct start (free plan): no plans and no install choices. */
-function InstallChoices({ journey, working, onStart }: { journey: MobileJourneyState; working: boolean; onStart: () => void }) {
+function InstallChoices({ journey, working, error, onStart }: {
+  journey: MobileJourneyState; working: boolean; error: string | null; onStart: () => void;
+}) {
   if (journey.nextAction.kind !== "start_provision") return <HandOff />;
+  const idleLabel = error ? "Try again" : "Set up";
   return (
     <Centered>
       <Title>Set up your Matrix computer</Title>
       <Body>{journey.detail}</Body>
-      <PrimaryButton label={working ? "Starting…" : "Set up"} testID="journey-start" onPress={onStart} />
+      {error ? <SetupError message={error} /> : null}
+      <PrimaryButton label={working ? "Starting…" : idleLabel} testID="journey-start" onPress={onStart} />
     </Centered>
   );
+}
+
+function SetupError({ message }: { message: string }) {
+  return <Text accessibilityRole="alert" testID="journey-setup-error" style={styles.error}>{message}</Text>;
 }
 
 function HandOff() {
@@ -212,5 +223,6 @@ const styles = StyleSheet.create((theme) => ({
   body: { fontFamily: theme.fonts.sans, fontSize: 14, color: theme.v2.colors.textDefault, opacity: 0.8, textAlign: "center" },
   button: { backgroundColor: theme.v2.colors.controlPrimary, paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.lg, borderRadius: theme.radius.md },
   buttonPressed: { opacity: 0.85 },
+  error: { fontFamily: theme.fonts.sans, fontSize: 14, color: theme.v2.colors.danger, textAlign: "center" },
   buttonLabel: { fontFamily: theme.fonts.sansSemiBold, fontSize: 15, color: theme.v2.colors.onControlPrimary },
 }));

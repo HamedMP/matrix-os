@@ -1,4 +1,4 @@
-import { fetchMobileJourney, isConnectablePhase } from "../lib/journey";
+import { PROVISION_START_MESSAGES, fetchMobileJourney, isConnectablePhase, requestMobileProvisionStart } from "../lib/journey";
 
 describe("fetchMobileJourney", () => {
   const realFetch = global.fetch;
@@ -40,5 +40,61 @@ describe("isConnectablePhase", () => {
     expect(isConnectablePhase("first_run")).toBe(true);
     expect(isConnectablePhase("provisioning")).toBe(false);
     expect(isConnectablePhase("plan_required")).toBe(false);
+  });
+});
+
+describe("requestMobileProvisionStart", () => {
+  const realFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = realFetch;
+  });
+
+  function answer(status: number, body: unknown) {
+    const spy = jest.fn(async () => new Response(JSON.stringify(body), { status }));
+    global.fetch = spy as unknown as typeof fetch;
+    return spy;
+  }
+
+  it("asks the platform to start the build with the session token", async () => {
+    const spy = answer(200, { status: "started" });
+    expect(await requestMobileProvisionStart("https://app.matrix-os.com/", "tok")).toBeNull();
+    expect(spy).toHaveBeenCalledWith("https://app.matrix-os.com/api/journey/retry-provision", expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({ Authorization: "Bearer tok" }),
+      body: "{}",
+    }));
+  });
+
+  it("explains a full or unavailable build service without the server's text", async () => {
+    answer(503, { error: "Free capacity is full at host-a 10.0.0.7" });
+    const message = await requestMobileProvisionStart("https://app.matrix-os.com", "tok");
+    expect(message).toBe(PROVISION_START_MESSAGES.unavailable);
+    expect(message).not.toMatch(/host-a|10\.0|capacity is full/);
+  });
+
+  it.each([
+    [429, { error: "retry_throttled" }, PROVISION_START_MESSAGES.throttled],
+    [409, { error: "support_required" }, PROVISION_START_MESSAGES.support],
+    [409, { error: "retry_exhausted" }, PROVISION_START_MESSAGES.support],
+    [409, { error: "account_deletion_pending" }, PROVISION_START_MESSAGES.deletionPending],
+    [409, { error: "something new" }, PROVISION_START_MESSAGES.generic],
+    [500, "not json", PROVISION_START_MESSAGES.generic],
+  ])("maps HTTP %i %j to a fixed message", async (status, body, expected) => {
+    answer(status, body);
+    expect(await requestMobileProvisionStart("https://app.matrix-os.com", "tok")).toBe(expected);
+  });
+
+  it.each([401, 402, 403])("leaves HTTP %i to the journey reload (sign-in or plans)", async (status) => {
+    answer(status, { error: "billing_required" });
+    expect(await requestMobileProvisionStart("https://app.matrix-os.com", "tok")).toBeNull();
+  });
+
+  it("reports a network failure as unreachable and never calls without a token", async () => {
+    global.fetch = (async () => { throw new TypeError("network"); }) as unknown as typeof fetch;
+    expect(await requestMobileProvisionStart("https://app.matrix-os.com", "tok")).toBe(PROVISION_START_MESSAGES.unreachable);
+    const spy = jest.fn();
+    global.fetch = spy as unknown as typeof fetch;
+    expect(await requestMobileProvisionStart("https://app.matrix-os.com", null)).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
   });
 });
