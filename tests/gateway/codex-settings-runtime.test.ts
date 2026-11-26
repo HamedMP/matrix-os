@@ -46,7 +46,7 @@ if(r.method==='account/read'){
 if(r.method==='account/rateLimits/read')send({id:r.id,result:{rateLimits:null,rateLimitsByLimitId:null}});
 if(r.method==='account/login/start'){
  send({id:r.id,result:{type:'chatgptDeviceCode',loginId:'11111111-1111-4111-8111-111111111111',verificationUrl:'https://auth.openai.com/codex/device',userCode:'ABCD-EFGHI'}});
- if(['success','slow-success','rotate-on-release','rotate-before-persist','hold-release'].includes(${JSON.stringify(mode)}))setTimeout(()=>{fs.writeFileSync(auth,JSON.stringify({auth_mode:'chatgpt',tokens:{access_token:'synthetic-access',refresh_token:'synthetic-refresh'}}),{mode:0o600});send({method:'account/login/completed',params:{loginId:'11111111-1111-4111-8111-111111111111',success:true,error:null}})},${mode === "slow-success" ? 500 : 50});
+ if(['success','slow-success','rotate-on-release','rotate-before-persist','hold-release','hold-after-release'].includes(${JSON.stringify(mode)}))setTimeout(()=>{fs.writeFileSync(auth,JSON.stringify({auth_mode:'chatgpt',tokens:{access_token:'synthetic-access',refresh_token:'synthetic-refresh'}}),{mode:0o600});send({method:'account/login/completed',params:{loginId:'11111111-1111-4111-8111-111111111111',success:true,error:null}})},${mode === "slow-success" ? 500 : 50});
 }
 if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
 });`); await chmod(executable, 0o700);
@@ -77,6 +77,7 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
     return async () => {
       if (mode === "hold-release") { signalProofReady(); await completionGate; }
       await release(); if (mode === "rotate-on-release") await rotateGeneration();
+      if (mode === "hold-after-release") { signalProofReady(); await completionGate; }
     };
   } };
   const rollback = vi.spyOn(generic, "rollbackConfiguration");
@@ -87,10 +88,12 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
     codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({ executable, cwd: home, ...(metadataNow ? { now: metadataNow } : {}), environment: { HOME: home, CODEX_HOME: join(home, ".codex") } }),
   });
   const initial = await store.getSnapshot(), harness = initial.harnesses.find(row => row.harness === "codex")!;
-  await store.mutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false, expectedRevision: initial.revision, idempotencyKey: "initial-off" });
-  const configuration = JSON.parse(await readFile(store.configurationPath, "utf8"));
-  Object.assign(configuration.harnesses.find((row: { id: string }) => row.id === harness.id), { accessSourceId: "owner_openai_key", selectedAccountId: "owner_openai" });
-  await writeFile(store.configurationPath, JSON.stringify(configuration));
+  if (mode !== "hold-after-release") {
+    await store.mutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false, expectedRevision: initial.revision, idempotencyKey: "initial-off" });
+    const configuration = JSON.parse(await readFile(store.configurationPath, "utf8"));
+    Object.assign(configuration.harnesses.find((row: { id: string }) => row.id === harness.id), { accessSourceId: "owner_openai_key", selectedAccountId: "owner_openai" });
+    await writeFile(store.configurationPath, JSON.stringify(configuration));
+  }
   const terminal = { ensureWorkspace: vi.fn(), createTab: vi.fn(), terminateTab: vi.fn(), attach: vi.fn(), listWorkspaces: vi.fn(async () => []), getCommandResult: vi.fn() };
   const handoff = createProviderTerminalLoginHandoff(store, async () => { throw new Error("No Terminal handoff for device login"); });
   // Observe real completion I/O without shortening it to vi.waitFor's default
@@ -383,6 +386,67 @@ it("does not let delayed Settings completion override an intervening owner Off",
     expect((await f.store.getSnapshot()).harnesses.find(row => row.id === f.harness.id)).toMatchObject({ configuredEnabled: false, configuredAccessSourceId: "owner_openai_key" });
     expect(await (await f.app.request(`${route}/start`, post(input))).json()).toMatchObject({ id: started.id, state: "failed" });
     expect(f.nativeCompletions).not.toHaveBeenCalled();
+  } finally { f.resumeCompletion(); }
+});
+
+it("lets explicit device completion own the native binding during a passive recovery read", async () => {
+  const f = await fixture("0.171.0", "hold-after-release");
+  try {
+    const before = await f.store.getSnapshot();
+    expect(before.harnesses.find(row => row.id === f.harness.id)).toMatchObject({
+      configuredEnabled: true, configuredAccessSourceId: "owner_openai_profile",
+    });
+    const response = await f.app.request(`${route}/start`, post({
+      harnessInstanceId: f.harness.id, optionId: "openai_device_code", idempotencyKey: "repair-during-device-login",
+    }));
+    expect(response.status).toBe(200);
+    const started = await response.json();
+    await f.proofReady;
+    await expect(f.guard.assertReadable("codex")).resolves.toBeUndefined();
+    const concurrent = await f.store.getSnapshot({
+      includeNativeAccountMetadata: true, includeNativeAccountUsage: false, recoverNativeConnection: true,
+    });
+    f.resumeCompletion();
+    const readReceipt = async () => (await f.app.request(`${route}/${started.id}`)).json();
+    await vi.waitFor(async () => expect((await readReceipt()).state).toMatch(/^(succeeded|failed)$/), { timeout: 5000 });
+    expect(await readReceipt()).toMatchObject({ state: "succeeded", safeFailure: null });
+    expect(concurrent.revision).toBe(before.revision);
+    expect(f.nativeCompletions).toHaveBeenCalledOnce();
+    const connected = await f.store.getSnapshot({ includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
+    expect(connected.revision).toBe(before.revision + 1);
+    expect(connected.harnesses.find(row => row.id === f.harness.id)).toMatchObject({
+      enabled: true, authState: "authenticated", accessSourceId: "owner_openai_profile",
+    });
+    const saved = JSON.parse(await readFile(f.store.configurationPath, "utf8"));
+    expect(saved.receipts).toEqual([expect.objectContaining({
+      key: expect.stringMatching(/^connect-/), appliedRevision: connected.revision,
+    })]);
+  } finally { f.resumeCompletion(); }
+});
+
+it("resumes passive recovery of an already selected route after a device proof changes", async () => {
+  const f = await fixture("0.171.0", "hold-after-release");
+  try {
+    const before = await f.store.getSnapshot();
+    const response = await f.app.request(`${route}/start`, post({
+      harnessInstanceId: f.harness.id, optionId: "openai_device_code", idempotencyKey: "failed-device-proof",
+    }));
+    expect(response.status).toBe(200);
+    const operation = await response.json();
+    await f.proofReady;
+    await f.rotateGeneration();
+    f.resumeCompletion();
+    expect(await f.completionBoundary).toMatchObject({ kind: "native_completion", error: { code: "invalid_route" } });
+    await vi.waitFor(async () => {
+      expect(await (await f.app.request(`${route}/${operation.id}`)).json()).toMatchObject({ state: "failed", safeFailure: "unavailable" });
+    }, { timeout: 5000 });
+    expect((await f.store.getSnapshot()).revision).toBe(before.revision);
+
+    const recovered = await f.store.getSnapshot({
+      includeNativeAccountMetadata: true, includeNativeAccountUsage: false, recoverNativeConnection: true,
+    });
+    expect(recovered.revision).toBe(before.revision + 1);
+    expect(recovered.harnesses.find(row => row.id === f.harness.id)).toMatchObject({ enabled: true, authState: "authenticated" });
   } finally { f.resumeCompletion(); }
 });
 

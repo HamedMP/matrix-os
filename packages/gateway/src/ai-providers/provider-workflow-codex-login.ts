@@ -7,6 +7,12 @@ import { ProviderWorkflowError } from "./provider-workflows.js";
 
 type Publish = (update: Partial<Pick<ProviderWorkflow, "state" | "authorizationUrl" | "deviceCode" | "safeFailure">>) => void;
 type SpawnObserver = (command: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
+type LoginLifecycle = {
+  publish: Publish;
+  onSuccess: (proof: NativeAccountCompletionProof | undefined, current: () => boolean) => Promise<void>;
+  registerCleanup?: (cancel: () => Promise<void>) => void;
+  deferRecovery?: () => () => void;
+};
 const DeviceResponse = z.object({ type: z.literal("chatgptDeviceCode"), loginId: z.uuid(),
   verificationUrl: z.literal("https://auth.openai.com/codex/device"), userCode: z.string().regex(/^[A-Z0-9]{4,8}-[A-Z0-9]{4,8}$/) });
 
@@ -25,7 +31,7 @@ export function createCodexSettingsLogin(options: {
   acquire: () => Promise<() => void | Promise<void>>;
   captureAccountProof?: (spawnObserver: SpawnObserver) => Promise<NativeAccountCompletionProof>;
 }) {
-  return async ({ publish, onSuccess, registerCleanup }: { publish: Publish; onSuccess: (proof: NativeAccountCompletionProof | undefined, current: () => boolean) => Promise<void>; registerCleanup?: (cancel: () => Promise<void>) => void }) => {
+  return async ({ publish, onSuccess, registerCleanup, deferRecovery }: LoginLifecycle) => {
     const release = await options.acquire();
     let releaseTask: Promise<void> | undefined;
     let child: ReturnType<typeof spawn> | undefined;
@@ -80,10 +86,16 @@ export function createCodexSettingsLogin(options: {
       if (settled) return finishTask;
       settled = true; clearTimeout(deadline); clearTimeout(startup);
       finishTask = (async () => {
+        let resumeRecovery: (() => void) | undefined;
         try {
           await reap();
           let proof: NativeAccountCompletionProof | undefined;
-          try { if (success && !cancelled) proof = await options.captureAccountProof?.(spawnObserver); }
+          try {
+            if (success && !cancelled) proof = await options.captureAccountProof?.(spawnObserver);
+            // Normal readers can observe the new identity after lease release.
+            // Keep them from committing the same binding ahead of this workflow.
+            if (proof && !cancelled) resumeRecovery = deferRecovery?.();
+          }
           finally { await reap(); await releaseProfile(); }
           if (cancelled) return true;
           if (!success) throw new ProviderWorkflowError("unavailable");
@@ -94,7 +106,7 @@ export function createCodexSettingsLogin(options: {
             ...(error instanceof ProviderSettingsStoreError ? [error.code] : []));
           if (!cancelled) publish(allClosed() ? { state: "failed", safeFailure: "unavailable" } : { safeFailure: "unavailable" });
           return false;
-        }
+        } finally { resumeRecovery?.(); }
       })();
       return finishTask;
     };

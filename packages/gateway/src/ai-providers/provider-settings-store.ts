@@ -95,6 +95,8 @@ export interface ProviderSettingsStoreWriter {
   mutate(mutation: ProviderSettingsMutation): Promise<ProviderSettingsMutationResponse>;
   /** Server-only observation. Calling this never changes the native account or saved Settings. */
   captureExistingCodexLoginProof?(): Promise<NativeAccountCompletionProof | null>;
+  /** Defer passive Codex bookkeeping until the explicit native completion settles. */
+  deferCodexNativeRecovery?(): () => void;
   /** Server-only completion; never accepts a client-supplied source or proof. */
   completeCodexNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string; verifyNativeAccount?: NativeAccountCompletionProof }): Promise<ProviderSettingsMutationResponse>;
   completeClaudeNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse>;
@@ -145,6 +147,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   #writeTail: Promise<void> = Promise.resolve();
   #mutationGeneration = 0;
   readonly #homePath: string;
+  #codexNativeRecoveryDeferrals = 0;
   readonly #recoverCodexNativeConnection = createCodexNativeConnectionRecovery(input => this.completeCodexNativeLogin(input),
     input => this.recordCodexConsentAlias(input));
 
@@ -439,7 +442,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       if (accepted) {
         if (options.recoverNativeConnection && options.includeNativeAccountMetadata) {
           try {
-            const recovered = await this.#recoverCodexNativeConnection(config, metadata, await this.#codexConsentAlias());
+            const alias = await this.#codexConsentAlias();
+            const recovered = this.#codexNativeRecoveryDeferrals === 0
+              ? await this.#recoverCodexNativeConnection(config, metadata, alias) : null;
             if (recovered) {
               // Completion reads identity without quota and projects only its own
               // account. Reverify the requested enrichment before rebuilding the
@@ -690,6 +695,11 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     // Completion freshly observes and verifies the current principal inside
     // mutation admission and again before the settings commit.
     return async current => sameBoundNativeAccountPrincipal(account, current);
+  }
+
+  deferCodexNativeRecovery(): () => void {
+    this.#codexNativeRecoveryDeferrals += 1;
+    return () => { this.#codexNativeRecoveryDeferrals -= 1; };
   }
 
   async completeCodexNativeLogin(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string; verifyNativeAccount?: NativeAccountCompletionProof }): Promise<ProviderSettingsMutationResponse> {

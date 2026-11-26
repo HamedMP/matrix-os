@@ -106,6 +106,12 @@ without launching a login process. Missing or changed proof fails in Settings.
 Only a verified ChatGPT subscription qualifies for this action. Terminal
 remains available for other callers and for a Settings sign-in that needs it.
 
+After device authorization captures the native account proof, the explicit
+workflow defers automatic Codex recovery until its Settings binding resolves.
+Passive Settings and Chat reads can still return a snapshot during the handoff.
+The explicit workflow checks the captured revision and verifies the same
+account before enabling the binding. Other owner writes retain the revision fence.
+
 The Coding agents sign-in panel keeps connection choices, progress, and actions in
 separate blocks. A single choice fills the available row. At narrow widths,
 choices stack and device-code controls wrap within the panel.
