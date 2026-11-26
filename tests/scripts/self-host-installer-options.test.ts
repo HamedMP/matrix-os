@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -382,7 +382,7 @@ prepare_scope_runtime_roots "${home}" alice`,
     // and prove the loopback listener refuses one.
     const identityCheck = source.split("\nwait_private_identity_ok() {")[1]!.split("\n}\n")[0]!;
     expect(identityCheck).toContain('--unix-socket "$TAILNET_SOCKET"');
-    const verify = source.split("\nverify_services() {")[1]!.split("\n}\n")[0]!;
+    const verify = source.split("\nverify_private_access() {")[1]!.split("\n}\n")[0]!;
     expect(verify).toContain("only Tailscale Serve may present one");
   });
 
@@ -834,4 +834,347 @@ capture_install_telemetry matrix_manual_install_started started 0`,
     expect(payload.herdr).toBe("off");
     expect(JSON.stringify(payload)).not.toMatch(/login|authkey|tskey|alice/i);
   });
+
+  // Review P1 (#3531 at 632a3f6f), fixed in this layer for size: four installer findings.
+  describe("browser account network isolation", () => {
+    // matrix-browser shared loopback with code-server (owner, --auth none) and the
+    // shell proxy (adds the gateway bearer); it must reach neither, nor the
+    // machine's own tailnet name, while Chrome keeps the internet and its own ports.
+    it("renders an owner-matched nftables table that refuses loopback and tailnet except the browser's own ports and DNS", () => {
+      const rules = run(`render_browser_isolation matrix-browser`).stdout;
+      expect(rules).toContain("table inet matrix_browser_isolation {");
+      expect(rules).toContain('meta skuid != "matrix-browser" accept');
+      expect(rules).toContain("ct state established,related accept");
+      expect(rules).toContain("ip daddr 127.0.0.53 meta l4proto { tcp, udp } th dport 53 accept");
+      expect(rules).toContain("ip daddr 127.0.0.1 tcp dport { 6901, 8730, 9222 } accept");
+      expect(rules).toContain("ip daddr 127.0.0.0/8 reject");
+      expect(rules).toContain("ip6 daddr ::1 reject");
+      expect(rules).toContain("ip daddr 100.64.0.0/10 reject");
+      expect(rules).toContain("ip6 daddr fd7a:115c:a1e0::/48 reject");
+      expect(rules.indexOf("established")).toBeLessThan(rules.indexOf("127.0.0.0/8 reject"));
+    });
+
+    // Review P1 (Greptile, #3532 at 6a02cadb14): a host that resolves through
+    // Tailscale's MagicDNS resolver sends DNS to 100.100.100.100, inside the
+    // rejected tailnet range, so Chrome could not resolve any website.
+    it("lets the browser account reach the tailnet DNS resolver on port 53 only, before the tailnet is refused", () => {
+      const rules = run(`render_browser_isolation matrix-browser`).stdout;
+      const v4 = "ip daddr 100.100.100.100 meta l4proto { tcp, udp } th dport 53 accept";
+      const v6 = "ip6 daddr fd7a:115c:a1e0::53 meta l4proto { tcp, udp } th dport 53 accept";
+      expect(rules).toContain(v4);
+      expect(rules).toContain(v6);
+      expect(rules.indexOf(v4)).toBeLessThan(rules.indexOf("ip daddr 100.64.0.0/10 reject"));
+      expect(rules.indexOf(v6)).toBeLessThan(rules.indexOf("ip6 daddr fd7a:115c:a1e0::/48 reject"));
+      expect(rules).not.toMatch(/100\.100\.100\.100(?! meta l4proto \{ tcp, udp \} th dport 53 accept)/);
+    });
+
+    it("installs the table durably and refuses to start browser use when it cannot apply it", () => {
+      const unit = run(`render_browser_isolation_unit`).stdout;
+      expect(unit).toContain("ExecStart=/usr/sbin/nft -f /etc/matrix/browser-isolation.nft");
+      expect(unit).toContain("Before=matrix-browser-runtime.service matrix-browser-lab-vnc.service");
+      expect(unit).toContain("WantedBy=multi-user.target");
+      const body = readFileSync(script, "utf8").split("\nconfigure_browser() {")[1]!.split("\n}\n")[0]!;
+      expect(body.indexOf("install_browser_isolation")).toBeGreaterThan(-1);
+      expect(body.indexOf("install_browser_isolation")).toBeLessThan(body.indexOf("systemctl enable matrix-browser-runtime"));
+      expect(body).toMatch(/install_browser_isolation \|\| \{[^}]*browser use stays off/);
+      expect(readFileSync(script, "utf8")).toMatch(/apt-get install -y [^\n]*nftables/);
+    });
+
+    // Review P1 (Greptile, #3532 at b854833b31): user@<uid> is BindsTo= the table, so
+    // restarting the table on a rerun stopped the browser account's user manager and
+    // nothing started it again; the desktop's Files/Terminal buttons need its bus.
+    it("starts the browser account's user manager again after the table restarts, and checks it", () => {
+      const units = join(dir, "units");
+      spawnSync("mkdir", ["-p", units]);
+      const calls = join(dir, "isolation-calls");
+      const body = (active: number) => `install() { case "\${@: -1}" in /etc/*) ;; *) mkdir -p "\${@: -1}" ;; esac; }
+id() { echo 1234; }
+render_browser_isolation() { :; }
+systemctl() { echo "systemctl $*" >>"${calls}"; [ "$1" != is-active ] || return ${active}; }
+nft() { :; }
+MATRIX_INSTALL_LOG=/dev/null MATRIX_BROWSER_ACCOUNT=matrix-browser MATRIX_SYSTEMD_UNIT_DIR="${units}" MATRIX_BROWSER_ISOLATION_FILE="${dir}/browser-isolation.nft" install_browser_isolation`;
+      const ok = run(body(0));
+      expect(ok.status, ok.stderr).toBe(0);
+      const log = readFileSync(calls, "utf8");
+      const restart = log.indexOf("systemctl restart matrix-browser-isolation.service");
+      expect(restart).toBeGreaterThan(-1);
+      expect(log.indexOf("systemctl start user@1234.service")).toBeGreaterThan(restart);
+      expect(log.indexOf("systemctl is-active --quiet user@1234.service")).toBeGreaterThan(log.indexOf("systemctl start user@1234.service"));
+      rmSync(calls);
+      expect(run(body(3)).status).not.toBe(0);
+    });
+
+    // Review P1 (#3532 at 0b159db3): ordering alone let a browser unit start without the table.
+    it("binds every browser unit and the account's user manager to the table, so a failed load starts none", () => {
+      const units = join(dir, "units");
+      spawnSync("mkdir", ["-p", units]);
+      const result = run(`install() { case "\${@: -1}" in /etc/*) ;; *) mkdir -p "\${@: -1}" ;; esac; }
+id() { echo 1234; }
+render_browser_isolation() { :; }
+systemctl() { :; }
+nft() { return 1; }
+MATRIX_INSTALL_LOG=/dev/null MATRIX_BROWSER_ACCOUNT=matrix-browser MATRIX_SYSTEMD_UNIT_DIR="${units}" install_browser_isolation`);
+      expect(result.status).not.toBe(0);
+      const bound = ["matrix-browser-runtime.service", "matrix-browser-lab-vnc.service", "matrix-browser-lab-wm.service", "matrix-browser-lab-desktop.service", "matrix-browser-lab-panel.service", "matrix-browser-lab-chrome.service", "matrix-browser-lab.service", "user@1234.service"];
+      for (const unit of bound) {
+        const dropin = readFileSync(join(units, `${unit}.d/matrix-isolation.conf`), "utf8");
+        expect(dropin).toContain("BindsTo=matrix-browser-isolation.service");
+        expect(dropin).toContain("After=matrix-browser-isolation.service");
+      }
+      // The units are bound first, so any later failure leaves them unstartable.
+      const body = readFileSync(script, "utf8").split("\nconfigure_browser() {")[1]!.split("\n}\n")[0]!;
+      expect(body).toMatch(/install_browser_isolation \|\| \{[^}]*stop_browser_use; return 0; \}/);
+    });
+  });
+
+  describe("unattended reruns keep a working access mode", () => {
+    function saved(mode: string, extra = "") {
+      const env = join(dir, "host.env");
+      writeFileSync(env, `MATRIX_ACCESS_MODE=${mode}\n${extra}`);
+      return env;
+    }
+
+    it("keeps the saved access mode when no access flag is given, and an explicit flag still wins", () => {
+      const env = saved("public");
+      const kept = run(`parse_args\nMATRIX_HOST_ENV_FILE="${env}" restore_saved_access_mode >/dev/null\nprintf '%s\\n' "$OPT_ACCESS"`);
+      expect(kept.stdout.trim()).toBe("public");
+      const explicit = run(`parse_args --access tailscale\nMATRIX_HOST_ENV_FILE="${env}" restore_saved_access_mode\nprintf '%s\\n' "$OPT_ACCESS"`);
+      expect(explicit.stdout.trim()).toBe("tailscale");
+      const headscale = saved("headscale", "MATRIX_TAILSCALE_LOGIN_SERVER=https://hs.example.com\n");
+      const hs = run(`parse_args\nMATRIX_HOST_ENV_FILE="${headscale}" restore_saved_access_mode >/dev/null\nprintf '%s|%s\\n' "$OPT_ACCESS" "$OPT_LOGIN_SERVER"`);
+      expect(hs.stdout.trim()).toBe("headscale|https://hs.example.com");
+      const body = readFileSync(script, "utf8").split("\nask_install_choices() {")[1]!.split("\n}\n")[0]!;
+      expect(body.indexOf("restore_saved_access_mode")).toBeLessThan(body.indexOf("ask_access_mode"));
+    });
+
+    // Review P1 (Nima, #3531 review 6045446199): the old public-only installer
+    // never wrote MATRIX_ACCESS_MODE, so a flagless upgrade picked Tailscale and
+    // skipped the existing-public guard.
+    describe("a legacy public install with no recorded access mode", () => {
+      function legacy(site: string | null, env = "MATRIX_SELF_HOSTED=1\nMATRIX_HANDLE=box\n") {
+        const hostEnv = join(dir, "legacy-host.env");
+        writeFileSync(hostEnv, env);
+        const siteFile = join(dir, "matrix-self-host");
+        if (site !== null) writeFileSync(siteFile, site);
+        return (flags: string) => run(`parse_args ${flags}
+MATRIX_HOST_ENV_FILE="${hostEnv}" MATRIX_NGINX_SITE_FILE="${siteFile}" restore_saved_access_mode >/dev/null
+printf '%s|%s\n' "$OPT_ACCESS" "$PREVIOUS_ACCESS_MODE"`);
+      }
+      const publicSite = 'server {\n  listen 80 default_server;\n  server_name _;\n  auth_basic "Matrix OS";\n}\n';
+
+      it("stays public on a flagless upgrade", () => {
+        const result = legacy(publicSite)("");
+        expect(result.status, result.stderr).toBe(0);
+        expect(result.stdout.trim()).toBe("public|public");
+      });
+
+      it("still honors an explicit --access, guarded as a switch away from public", () => {
+        const result = legacy(publicSite)("--access tailscale");
+        expect(result.stdout.trim()).toBe("tailscale|public");
+      });
+
+      it("does not invent a public install from a private site or a fresh machine", () => {
+        const privateSite = "server {\n  listen 127.0.0.1:80 default_server;\n  listen unix:/run/matrix-nginx/tailnet.sock;\n}\n";
+        expect(legacy(privateSite)("").stdout.trim()).toBe("tailscale|");
+        expect(legacy(null)("").stdout.trim()).toBe("tailscale|");
+        expect(legacy(publicSite, "MATRIX_HANDLE=box\n")("").stdout.trim()).toBe("tailscale|");
+      });
+    });
+
+    it("keeps the public listener and fails loudly when private access is not ready", () => {
+      const calls = join(dir, "switch-calls");
+      const result = run(`tailscale_status_line() { printf 'NeedsLogin\\t\\t\\n'; }
+write_env() { printf 'write_env %s\\n' "$OPT_ACCESS" >>"${calls}"; }
+systemctl() { :; }
+verify_public_websocket() { :; }
+PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN= MATRIX_TAILNET_URL= require_private_access_ready`);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toMatch(/keeping your public/i);
+      expect(readFileSync(calls, "utf8")).toContain("write_env public");
+      const ready = run(`tailscale_status_line() { printf 'Running\\tbox.ts.net\\talice@example.com\\n'; }
+PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN=alice@example.com MATRIX_TAILNET_URL=https://box.ts.net TAILNET_SERVE_PORT=443 require_private_access_ready`);
+      expect(ready.status, ready.stderr).toBe(0);
+      const main = readFileSync(script, "utf8").split("\nmain() {")[1]!;
+      expect(main.indexOf("require_private_access_ready")).toBeGreaterThan(main.indexOf("configure_tailscale_serve"));
+      expect(main.indexOf("require_private_access_ready")).toBeLessThan(main.indexOf("configure_nginx"));
+    });
+
+    // Review P1 (Nima, #3531 review 6045446199): with Tailscale signed in but both
+    // Serve commands failing, the installer still replaced the public site and
+    // reported success, because the later checks only hit the local socket.
+    function serveFixture(serveExit: number, status: string) {
+      const bin = join(dir, "serve-bin");
+      spawnSync("mkdir", ["-p", bin]);
+      writeFileSync(join(bin, "tailscale"), `#!/bin/sh
+case "$1 $2" in
+  "serve --bg") exit ${serveExit} ;;
+  "serve status") printf '%s' '${status}' ;;
+esac
+exit 0
+`);
+      chmodSync(join(bin, "tailscale"), 0o755);
+      const calls = join(dir, "serve-calls");
+      const result = run(`tailscale_status_line() { printf 'Running\tbox.ts.net\talice@example.com\n'; }
+write_env() { printf 'write_env %s\n' "$OPT_ACCESS" >>"${calls}"; }
+nginx() { echo "nginx $*" >>"${calls}"; }
+systemctl() { echo "systemctl $*" >>"${calls}"; }
+verify_public_websocket() { :; }
+MATRIX_INSTALL_LOG=/dev/null PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN=alice@example.com MATRIX_TAILNET_URL=https://box.ts.net
+configure_tailscale_serve
+require_private_access_ready
+echo switched-to-private`, { PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}` });
+      return { result, calls: existsSync(calls) ? readFileSync(calls, "utf8") : "" };
+    }
+    const published = (port: number) => JSON.stringify({ Web: { [`box.ts.net:${port}`]: { Handlers: { "/": { Proxy: "unix:/run/matrix-nginx/tailnet.sock" } } } } });
+
+    it("keeps a public install public and fails when Tailscale Serve cannot publish Matrix", () => {
+      const { result, calls } = serveFixture(1, "{}");
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("switched-to-private");
+      expect(result.stdout + result.stderr).toMatch(/Tailscale Serve/);
+      expect(result.stdout + result.stderr).toMatch(/keeping your public listener/i);
+      expect(calls).toContain("write_env public");
+    });
+
+    it("does not trust a Serve command that exits 0 but publishes nothing for Matrix's socket", () => {
+      const other = JSON.stringify({ Web: { "box.ts.net:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:9000" } } } } });
+      const { result, calls } = serveFixture(0, other);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("switched-to-private");
+      expect(calls).toContain("write_env public");
+    });
+
+    it("switches a public install to private only once Serve publishes Matrix's socket", () => {
+      const { result } = serveFixture(0, published(443));
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("switched-to-private");
+    });
+
+    it("never reports private access verified without an authenticated request", () => {
+      const result = run(`curl() { printf '403'; }
+ss() { :; }
+MATRIX_INSTALL_LOG=/dev/null PREVIOUS_ACCESS_MODE= OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN= verify_private_access`);
+      expect(result.stdout + result.stderr).not.toMatch(/is reachable|only through Tailscale Serve/);
+      expect(result.stdout + result.stderr).toMatch(/not verified/i);
+      const switching = run(`curl() { printf '403'; }
+restore_previous_listener() { echo restored; }
+MATRIX_INSTALL_LOG=/dev/null PREVIOUS_ACCESS_MODE=public OPT_ACCESS=tailscale MATRIX_TAILSCALE_OWNER_LOGIN= verify_private_access`);
+      expect(switching.status).not.toBe(0);
+      expect(switching.stdout).toContain("restored");
+    });
+  });
+
+  // Review P1 (#3532 at 0b159db3): a rollback restored public nginx but left the
+  // gateway on the tailnet origin and private mode, so public terminals got 403.
+  describe("rolling back to public access", () => {
+    it("restores the public mode and origin, restarts the gateway and shell, and requires a public WebSocket upgrade", () => {
+      const env = join(dir, "host.env");
+      writeFileSync(env, "MATRIX_ACCESS_MODE=public\nSHELL_ORIGIN=http://matrix.example.com\n");
+      const calls = join(dir, "rollback-calls");
+      const body = (code: string) => `read_env_value() { sed -n "s/^$2=//p" "${env}" | grep . ; }
+parse_args
+MATRIX_HOST_ENV_FILE="${env}" restore_saved_access_mode >/dev/null
+printf 'MATRIX_ACCESS_MODE=tailscale\\nSHELL_ORIGIN=https://box.ts.net\\n' >"${env}"
+write_env() { o="$(self_host_shell_origin "$OPT_ACCESS" https://box.ts.net "$([ "$PREVIOUS_ACCESS_MODE" = public ] && echo "$PREVIOUS_SHELL_ORIGIN")" http://203.0.113.7)"; printf 'write_env %s origin=%s\\n' "$OPT_ACCESS" "$o" >>"${calls}"; printf 'SHELL_ORIGIN=%s\\n' "$o" >"${env}"; }
+systemctl() { echo "systemctl $*" >>"${calls}"; }
+nginx() { :; }
+cat() { echo secret; }
+sleep() { :; }
+curl() { echo "curl $*" >>"${calls}"; printf '${code}'; }
+MATRIX_INSTALL_LOG=/dev/null OPT_ACCESS=tailscale restore_previous_listener`;
+      const ok = run(body("101"));
+      expect(ok.status, ok.stderr).toBe(0);
+      const log = readFileSync(calls, "utf8");
+      expect(log).toContain("write_env public origin=http://matrix.example.com");
+      expect(log).toContain("systemctl restart matrix-gateway.service matrix-shell.service");
+      expect(log.indexOf("systemctl restart")).toBeLessThan(log.indexOf("curl"));
+      expect(log).toMatch(/curl .*Upgrade: websocket.*http:\/\/127\.0\.0\.1\/ws/);
+      // Review P2: public nginx requires the Origin host to be the Host, or a working recovery reads as failed.
+      expect(log).toContain("Origin: http://matrix.example.com -H Host: matrix.example.com");
+      const refused = run(body("403"));
+      expect(refused.status).not.toBe(0);
+    });
+
+    // Found live: Tailscale Serve kept port 80 on the tailnet address, so public nginx could not bind.
+    it("turns off Matrix's Tailscale Serve handlers before public nginx binds port 80", () => {
+      const calls = join(dir, "serve-calls");
+      const status = join(dir, "serve.json");
+      const serve = (web: Record<string, string>) => {
+        writeFileSync(status, JSON.stringify({ Web: Object.fromEntries(Object.entries(web).map(([host, proxy]) => [host, { Handlers: { "/": { Proxy: proxy } } }])) }));
+        rmSync(calls, { force: true });
+        return run(`tailscale() { [ "$*" = "serve status --json" ] && { cat "${status}"; return 0; }; echo "tailscale $*" >>"${calls}"; }
+timeout() { shift; "$@"; }
+MATRIX_INSTALL_LOG=/dev/null stop_matrix_tailscale_serve`);
+      };
+      const matrix = "unix:/run/matrix-nginx/tailnet.sock";
+      expect(serve({ "box.ts.net:443": "http://127.0.0.1:9000" }).status).toBe(0);
+      expect(existsSync(calls)).toBe(false);
+      // Review P1: another app's HTTPS site on 443 stays when Matrix used HTTP on 80.
+      const result = serve({ "box.ts.net:80": matrix, "box.ts.net:443": "http://127.0.0.1:9000" });
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(calls, "utf8")).toBe("tailscale serve --http=80 off\n");
+      serve({ "box.ts.net:443": matrix });
+      expect(readFileSync(calls, "utf8")).toBe("tailscale serve --https=443 off\n");
+      const main = readFileSync(script, "utf8").split("\nmain() {")[1]!;
+      expect(main).toContain('[ "$OPT_ACCESS" != "public" ] || stop_matrix_tailscale_serve');
+      expect(main.indexOf("stop_matrix_tailscale_serve")).toBeLessThan(main.indexOf("configure_nginx"));
+      const restore = readFileSync(script, "utf8").split("\nrestore_previous_listener() {")[1]!.split("\n}\n")[0]!;
+      // Found live: a reload cannot trade private nginx's 127.0.0.1:80 for 0.0.0.0:80.
+      expect(restore).not.toContain("systemctl reload nginx");
+      expect(restore.indexOf("stop_matrix_tailscale_serve")).toBeLessThan(restore.indexOf("systemctl restart nginx"));
+    });
+
+    it("never keeps a stale tailnet origin for a public install", () => {
+      const writeEnv = readFileSync(script, "utf8").split("\nwrite_env() {")[1]!.split("\n}\n")[0]!;
+      expect(writeEnv).toContain('saved_origin="${PREVIOUS_SHELL_ORIGIN:-$saved_origin}"');
+      expect(writeEnv).toContain('[ "$saved_origin" != "$MATRIX_TAILNET_URL" ] || saved_origin=""');
+      const failing = readFileSync(script, "utf8").split("\nprivate_access_failed() {")[1]!.split("\n}\n")[0]!;
+      expect(failing).toMatch(/restore_previous_listener \|\| fail "\$1 Restoring public access failed/);
+    });
+  });
+
+  it("records the public address the summary prints as the gateway's browser origin", () => {
+    // Review P1: a public install with MATRIX_DOMAIN left SHELL_ORIGIN unset, so the
+    // Browser viewer and retry refused the printed address.
+    const origin = (args: string) => run(`self_host_shell_origin ${args}`).stdout.trim();
+    expect(origin("public '' '' http://matrix.example.com")).toBe("http://matrix.example.com");
+    expect(origin("public '' https://saved.example.com http://matrix.example.com")).toBe("https://saved.example.com");
+    expect(origin("tailscale https://box.ts.net '' http://matrix.example.com")).toBe("https://box.ts.net");
+    expect(run(`MATRIX_DOMAIN=matrix.example.com public_ui_origin`).stdout.trim()).toBe("http://matrix.example.com");
+    expect(run(`hostname() { echo '203.0.113.7 10.0.0.2'; }\nMATRIX_DOMAIN=_ public_ui_origin`).stdout.trim()).toBe("http://203.0.113.7");
+    const writeEnv = readFileSync(script, "utf8").split("\nwrite_env() {")[1]!.split("\n}\n")[0]!;
+    expect(writeEnv).toContain('"$(public_ui_origin)"');
+  });
+
+  describe("browser profile move and the lifecycle", () => {
+    it("finishes the move before the browser lifecycle is enabled, with the lifecycle stopped during it", () => {
+      const body = readFileSync(script, "utf8").split("\nconfigure_browser() {")[1]!.split("\n}\n")[0]!;
+      expect(body.indexOf("systemctl disable --now matrix-browser-runtime")).toBeGreaterThan(-1);
+      expect(body.indexOf("systemctl disable --now matrix-browser-runtime")).toBeLessThan(body.indexOf("prepare_browser_account"));
+      expect(body.indexOf("prepare_browser_account")).toBeLessThan(body.indexOf("systemctl enable matrix-browser-runtime"));
+    });
+
+    it("places a staged profile even when a fresh one was created, keeping the fresh one aside", () => {
+      const home = join(dir, "browser-home");
+      const stage = join(dir, "stage");
+      const fresh = join(home, ".local/share/matrix-browser-lab/chrome");
+      spawnSync("mkdir", ["-p", join(stage, "matrix-browser/chrome/Default"), join(fresh, "Default")]);
+      writeFileSync(join(stage, "matrix-browser/chrome/Default/Cookies"), "saved session");
+      writeFileSync(join(fresh, "Default/Cookies"), "fresh");
+      const result = run(`systemctl() { :; }
+chown() { :; }
+runuser() { shift 3; "$@"; }
+id() { case "$*" in "-gn matrix-browser") echo matrix-browser ;; *) command id "$@" ;; esac; }
+MATRIX_INSTALL_LOG=/dev/null MATRIX_LEGACY_BROWSER_ROOT="${join(dir, "legacy")}" MATRIX_BROWSER_PROFILE_STAGE="${stage}" migrate_browser_profile matrix-browser "${home}"`);
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(join(fresh, "Default/Cookies"), "utf8")).toBe("saved session");
+      const parent = join(home, ".local/share/matrix-browser-lab");
+      const asides = readdirSync(parent).filter((name) => name.startsWith("chrome.replaced-"));
+      expect(asides).toHaveLength(1);
+      const aside = join(parent, asides[0]!);
+      expect(readFileSync(join(aside, "Default/Cookies"), "utf8")).toBe("fresh");
+      expect(existsSync(stage)).toBe(false);
+    });
+  });
+
 });

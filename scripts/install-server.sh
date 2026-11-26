@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 # Matrix OS standalone server installer.
 # Public copy is served from https://matrix-os.com/install-server.sh.
+# pattern-allow large-file: single-file curl|bash installer (expires 2026-12-31, approved-by hamed)
 
 DEFAULT_CHANNEL="${MATRIX_CHANNEL:-dev}"
 DEFAULT_BUNDLE_BASE="https://app.matrix-os.com/system-bundles/${DEFAULT_CHANNEL}"
@@ -39,8 +40,15 @@ INSTALL_TMP_SUM=""
 INSTALL_PHASE="init"
 INSTALL_COMPLETED=0
 INSTALL_FAILURE_CAPTURED=0
+# 0: no public-to-private switch running; 1: switching (a failed exit restores
+# public); 2: private access verified.
+PRIVATE_CUTOVER=0
+PRIVATE_CUTOVER_BACKUP=""
 
 cleanup_install_tmp() {
+  local status=$?
+  # A public install switching to private gets its public listener back on any failed exit.
+  ! declare -F rollback_failed_private_cutover >/dev/null || rollback_failed_private_cutover "$status"
   [ -z "$INSTALL_TMP_BUNDLE" ] || rm -f "$INSTALL_TMP_BUNDLE"
   [ -z "$INSTALL_TMP_SUM" ] || rm -f "$INSTALL_TMP_SUM"
 }
@@ -660,6 +668,7 @@ EOF
 # Private modes: only Tailscale Serve (root) reaches nginx's root-only unix socket, so
 # only it presents a tailnet identity; the loopback listener refuses one before auth.
 TAILNET_SOCKET=/run/matrix-nginx/tailnet.sock
+TAILNET_SERVE_PORT=""
 nginx_private_identity_map() {
   cat <<'EOF'
 map "$remote_addr|$http_tailscale_user_login" $matrix_forged_identity {
@@ -843,10 +852,63 @@ detect_herdr() {
   ok "herdr-core found; Herdr sessions: ${OPT_HERDR}"
 }
 
+# restore_saved_access_mode: a rerun without --access keeps the installed mode
+# (and its Headscale server), so an unattended reinstall never switches a working
+# public install to a private network nobody has signed in to.
+restore_saved_access_mode() {
+  local env="${MATRIX_HOST_ENV_FILE:-/opt/matrix/env/host.env}" mode server
+  PREVIOUS_ACCESS_MODE="$(read_env_value "$env" MATRIX_ACCESS_MODE 2>/dev/null || true)"
+  PREVIOUS_SHELL_ORIGIN="$(read_env_value "$env" SHELL_ORIGIN 2>/dev/null || true)"
+  if [ -z "$PREVIOUS_ACCESS_MODE" ] && legacy_public_install "$env"; then
+    PREVIOUS_ACCESS_MODE=public
+  fi
+  [ "$OPT_ACCESS_EXPLICIT" != "1" ] && [ -z "$OPT_LOGIN_SERVER" ] || return 0
+  mode="$PREVIOUS_ACCESS_MODE"
+  case "$mode" in tailscale|headscale|public) ;; *) return 0 ;; esac
+  OPT_ACCESS="$mode"
+  OPT_ACCESS_EXPLICIT=1
+  if [ "$mode" = "headscale" ]; then
+    server="$(read_env_value "$env" MATRIX_TAILSCALE_LOGIN_SERVER 2>/dev/null || true)"
+    OPT_LOGIN_SERVER="$server"
+  fi
+  log "Keeping access mode ${mode}; pass --access to change it"
+}
+
+# legacy_public_install <host.env>: the public-only installer before access modes
+# wrote no MATRIX_ACCESS_MODE. Its install is a self-host host.env plus an nginx
+# site listening on port 80 on every address; a private site listens only on
+# loopback and the tailnet socket.
+legacy_public_install() {
+  local site="${MATRIX_NGINX_SITE_FILE:-/etc/nginx/sites-available/matrix-self-host}"
+  [ "$(read_env_value "$1" MATRIX_SELF_HOSTED 2>/dev/null || true)" = "1" ] || return 1
+  [ -f "$site" ] && [ ! -L "$site" ] || return 1
+  grep -Eq '^[[:space:]]*listen[[:space:]]+(\[::\]:)?80([[:space:]]|;)' "$site"
+}
+
+# require_private_access_ready: before a public install's listener is replaced by
+# private-only nginx, the private network must be signed in with a recorded
+# owner and address. Otherwise the saved mode stays public and nothing changes.
+require_private_access_ready() {
+  local line
+  [ "$PREVIOUS_ACCESS_MODE" = "public" ] && [ "$OPT_ACCESS" != "public" ] || return 0
+  local requested="$OPT_ACCESS"
+  line="$(tailscale_status_line)"
+  if [ "${line%%$'\t'*}" = "Running" ] && [ -n "$MATRIX_TAILSCALE_OWNER_LOGIN" ] && [ -n "$MATRIX_TAILNET_URL" ]; then
+    [ -n "$TAILNET_SERVE_PORT" ] && return 0
+    # Signed in, but nothing on the tailnet reaches Matrix yet: replacing the
+    # public site now would leave no way in.
+    restore_previous_listener || fail "Tailscale Serve did not publish Matrix on your private network, and public access did not come back. Check: journalctl -u matrix-gateway -n 200 --no-pager"
+    fail "Tailscale Serve did not publish Matrix on your private network; keeping your public listener. Check: sudo tailscale serve status, then rerun the installer with --access ${requested}"
+  fi
+  restore_previous_listener || fail "private access is not ready (sign-in did not finish), and public access did not come back. Check: journalctl -u matrix-gateway -n 200 --no-pager"
+  fail "private access is not ready (sign-in did not finish); keeping your public listener. Sign in with: sudo tailscale up, then rerun the installer with --access ${requested}"
+}
+
 ask_install_choices() {
   if ! browser_flag_given; then
     OPT_BROWSER="$(ask_yes_no "Enable browser use (a private Chrome your agents can drive)?" on)"
   fi
+  restore_saved_access_mode
   ask_access_mode
   finalize_access_choice
 }
@@ -1040,10 +1102,25 @@ record_tailscale_owner() {
   fi
 }
 
+# tailnet_serve_published <port>: Tailscale Serve reports a handler on <port>
+# that proxies to Matrix's tailnet socket. A zero exit from `tailscale serve`
+# alone is not trusted.
+tailnet_serve_published() {
+  local port
+  for port in $(timeout 30 tailscale serve status --json 2>>"$MATRIX_INSTALL_LOG" | matrix_serve_ports); do
+    [ "$port" != "$1" ] || return 0
+  done
+  return 1
+}
+
+# Sets TAILNET_SERVE_PORT only once Serve publishes Matrix's socket; a public
+# install is never switched away from without it (require_private_access_ready).
 configure_tailscale_serve() {
+  TAILNET_SERVE_PORT=""
   if [ "$OPT_ACCESS" = "headscale" ]; then
     timeout 60 tailscale serve --bg --yes --http=80 unix:${TAILNET_SOCKET} >>"$MATRIX_INSTALL_LOG" 2>&1 \
       || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 unix:${TAILNET_SOCKET}"; return 0; }
+    tailnet_serve_published 80 && TAILNET_SERVE_PORT=80
   else
     if ! timeout 60 tailscale serve --bg --yes --https=443 unix:${TAILNET_SOCKET} >>"$MATRIX_INSTALL_LOG" 2>&1; then
       # Certificates are off for this tailnet. Tailnet traffic is already
@@ -1052,9 +1129,46 @@ configure_tailscale_serve() {
         || { warn "tailscale serve failed; Matrix is not yet reachable on your private network. Retry: sudo tailscale serve --bg --http=80 unix:${TAILNET_SOCKET}"; return 0; }
       MATRIX_TAILNET_URL="${MATRIX_TAILNET_URL/#https:/http:}"
       warn "HTTPS certificates are off for your tailnet, so Matrix is served over tailnet-only HTTP. For an https link, enable HTTPS in the Tailscale admin console, then run: sudo tailscale serve --bg --https=443 unix:${TAILNET_SOCKET}"
+      tailnet_serve_published 80 && TAILNET_SERVE_PORT=80
+    else
+      tailnet_serve_published 443 && TAILNET_SERVE_PORT=443
     fi
   fi
+  if [ -z "$TAILNET_SERVE_PORT" ]; then
+    warn "Tailscale Serve did not report Matrix on your private network. Check: sudo tailscale serve status"
+    return 0
+  fi
   ok "Matrix is served on your private network only"
+}
+
+# stop_matrix_tailscale_serve: after a private install, Tailscale Serve holds port 80
+# (and 443) on the tailnet address, so public nginx cannot bind 0.0.0.0:80. Only
+# a port whose handler points at Matrix's socket is turned off; other apps' ports stay.
+stop_matrix_tailscale_serve() {
+  local port
+  command -v tailscale >/dev/null 2>&1 || return 0
+  for port in $(timeout 30 tailscale serve status --json 2>>"$MATRIX_INSTALL_LOG" | matrix_serve_ports); do
+    case "$port" in
+      80) timeout 30 tailscale serve --http=80 off >>"$MATRIX_INSTALL_LOG" 2>&1 || warn "could not turn off Tailscale Serve on port 80" ;;
+      443) timeout 30 tailscale serve --https=443 off >>"$MATRIX_INSTALL_LOG" 2>&1 || warn "could not turn off Tailscale Serve on port 443" ;;
+    esac
+  done
+}
+
+# matrix_serve_ports: reads `tailscale serve status --json`; prints each port
+# whose handlers proxy to Matrix's tailnet socket.
+matrix_serve_ports() {
+  SOCKET="unix:${TAILNET_SOCKET}" python3 -I -c '
+import json, os, sys
+try:
+    web = json.load(sys.stdin).get("Web") or {}
+except ValueError:
+    sys.exit(0)
+for host, conf in web.items():
+    handlers = (conf or {}).get("Handlers") or {}
+    if any((h or {}).get("Proxy") == os.environ["SOCKET"] for h in handlers.values()):
+        print(host.rsplit(":", 1)[-1])
+'
 }
 
 configure_private_network() {
@@ -1110,8 +1224,14 @@ migrate_browser_profile() {
   new="${home}/.local/share/matrix-browser-lab/chrome"
   old="${root}/.local/share/matrix-browser-lab/chrome"
   staged="${stage}/${account}/chrome"
-  [ ! -e "$new" ] && [ ! -L "$new" ] || return 0
   group="$(id -gn "$account")"
+  if [ -e "$new" ] || [ -L "$new" ]; then
+    # A boot after staging may have created a fresh profile; the staged one is the
+    # owner's saved sessions, so it wins and the fresh one is kept aside.
+    [ -d "$staged" ] && [ ! -L "$staged" ] && [ ! -L "${stage}/${account}" ] && [ ! -L "$stage" ] || return 0
+    systemctl stop matrix-browser-lab-chrome.service >>"$MATRIX_INSTALL_LOG" 2>&1 || true
+    run_required "keeping the fresh browser profile aside" runuser -u "$account" -- mv -T "$new" "${new}.replaced-$(date +%s)"
+  fi
   # A move that stopped after staging resumes; a staged profile is never deleted.
   if [ ! -d "$staged" ] || [ -L "$staged" ] || [ -L "${stage}/${account}" ] || [ -L "$stage" ]; then
     [ -d "$old" ] || return 0
@@ -1153,6 +1273,79 @@ prepare_browser_account() {
   run_required "starting the browser account's session" systemctl start "user@$(id -u "$account").service"
 }
 
+# render_browser_isolation <account>: the browser account shares loopback with
+# owner services (code-server runs as the owner with --auth none; the shell proxy
+# adds the gateway bearer) and could reach this machine's own tailnet name. An
+# owner-matched nftables table refuses its new connections to loopback and the
+# tailnet, except DNS (the systemd-resolved stub and Tailscale/Headscale's
+# MagicDNS resolver, port 53 only) and the browser stack's own ports (Xvnc 6901, supervisor
+# 8730, Chrome CDP 9222); replies on connections others opened stay allowed.
+render_browser_isolation() {
+  cat <<EOF
+table inet matrix_browser_isolation {
+  chain output {
+    type filter hook output priority filter; policy accept;
+    meta skuid != "$1" accept
+    ct state established,related accept
+    ip daddr 127.0.0.53 meta l4proto { tcp, udp } th dport 53 accept
+    ip daddr 100.100.100.100 meta l4proto { tcp, udp } th dport 53 accept
+    ip6 daddr fd7a:115c:a1e0::53 meta l4proto { tcp, udp } th dport 53 accept
+    ip daddr 127.0.0.1 tcp dport { 6901, 8730, 9222 } accept
+    ip daddr 127.0.0.0/8 reject
+    ip6 daddr ::1 reject
+    ip daddr 100.64.0.0/10 reject
+    ip6 daddr fd7a:115c:a1e0::/48 reject
+  }
+}
+EOF
+}
+
+# Each browser unit, its lifecycle and the account's user manager are bound to
+# the table: none starts without it, and all stop if it stops.
+render_browser_isolation_dropin() {
+  printf '[Unit]\nBindsTo=matrix-browser-isolation.service\nAfter=matrix-browser-isolation.service\n'
+}
+
+render_browser_isolation_unit() {
+  cat <<'EOF'
+[Unit]
+Description=Matrix browser account network isolation
+Before=matrix-browser-runtime.service matrix-browser-lab-vnc.service matrix-browser-lab-wm.service matrix-browser-lab-desktop.service matrix-browser-lab-panel.service matrix-browser-lab-chrome.service matrix-browser-lab.service
+After=network-pre.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/sbin/nft delete table inet matrix_browser_isolation
+ExecStart=/usr/sbin/nft -f /etc/matrix/browser-isolation.nft
+ExecStop=/usr/sbin/nft delete table inet matrix_browser_isolation
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# install_browser_isolation: applied now and at every boot before the browser units.
+install_browser_isolation() {
+  local unit_dir="${MATRIX_SYSTEMD_UNIT_DIR:-/etc/systemd/system}" uid unit
+  # Tests point this elsewhere; matrix-browser-isolation.service loads the default.
+  local table="${MATRIX_BROWSER_ISOLATION_FILE:-/etc/matrix/browser-isolation.nft}"
+  uid="$(id -u "$MATRIX_BROWSER_ACCOUNT")" || return 1
+  for unit in matrix-browser-runtime.service "${BROWSER_NATIVE_UNITS[@]}" "user@${uid}.service"; do
+    install -d -m 0755 "${unit_dir}/${unit}.d" || return 1
+    render_browser_isolation_dropin >"${unit_dir}/${unit}.d/matrix-isolation.conf" || return 1
+  done
+  install -d -o root -g root -m 0755 "${table%/*}"
+  render_browser_isolation "$MATRIX_BROWSER_ACCOUNT" >"$table" || return 1
+  render_browser_isolation_unit >"${unit_dir}/matrix-browser-isolation.service" || return 1
+  systemctl daemon-reload >>"$MATRIX_INSTALL_LOG" 2>&1 || return 1
+  systemctl enable matrix-browser-isolation.service >>"$MATRIX_INSTALL_LOG" 2>&1 || return 1
+  systemctl restart matrix-browser-isolation.service >>"$MATRIX_INSTALL_LOG" 2>&1 || return 1
+  nft list table inet matrix_browser_isolation >/dev/null 2>&1 || return 1
+  # user@<uid> is BindsTo= the table, so the restart above stopped the browser
+  # account's user manager; the desktop's Files/Terminal buttons need its bus.
+  systemctl start "user@${uid}.service" >>"$MATRIX_INSTALL_LOG" 2>&1 || return 1
+  systemctl is-active --quiet "user@${uid}.service"
+}
+
 configure_browser() {
   if [ "$OPT_BROWSER" != "on" ]; then
     rm -f /etc/sudoers.d/matrix-browser-runtime
@@ -1176,8 +1369,12 @@ configure_browser() {
     warn "browser use sudoers rule failed validation; Settings cannot show browser setup status"
   fi
   run_required "reloading systemd" systemctl daemon-reload
-  systemctl enable matrix-browser-runtime >>"$MATRIX_INSTALL_LOG" 2>&1 || true
+  # The lifecycle stays off until the profile move has finished, so a reboot
+  # mid-move cannot start Chrome on a fresh profile.
+  systemctl disable --now matrix-browser-runtime >>"$MATRIX_INSTALL_LOG" 2>&1 || true
   prepare_browser_account
+  install_browser_isolation || { warn "could not isolate the browser account from this computer's services; browser use stays off"; stop_browser_use; return 0; }
+  systemctl enable matrix-browser-runtime >>"$MATRIX_INSTALL_LOG" 2>&1 || true
   log "Installing Chrome and the browser desktop (this can take several minutes)"
   if timeout 1800 /opt/matrix/bin/matrix-install-browser >>"$MATRIX_INSTALL_LOG" 2>&1 \
     && timeout 60 /opt/matrix/bin/matrix-install-browser --health-check >>"$MATRIX_INSTALL_LOG" 2>&1; then
@@ -1281,7 +1478,7 @@ install_packages() {
     log "Writing apt output to ${MATRIX_INSTALL_LOG}"
     apt_get_update >>"$MATRIX_INSTALL_LOG" 2>&1 || fail "apt-get update failed"
     enable_ubuntu_universe
-    apt-get install -y acl bubblewrap ca-certificates curl docker.io git nginx openssl postgresql-client procps socat sudo tar zsh >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    apt-get install -y acl bubblewrap ca-certificates curl docker.io git nftables nginx openssl postgresql-client procps socat sudo tar zsh >>"$MATRIX_INSTALL_LOG" 2>&1 \
       || fail "apt-get install failed"
     configure_bwrap_apparmor
     ok "OS packages installed"
@@ -1356,14 +1553,31 @@ self_host_shell_origin() {
     printf '%s\n' "$2"
   elif [[ "$3" =~ $pattern ]]; then
     printf '%s\n' "$3"
+  elif [ "$1" = "public" ] && [[ "${4:-}" =~ $pattern ]]; then
+    # The public address the install summary prints (MATRIX_DOMAIN, else this server's address).
+    printf '%s\n' "$4"
   fi
   return 0
 }
 
+# public_ui_origin: the address a public install's summary prints.
+public_ui_origin() {
+  local ip
+  if [ "$MATRIX_DOMAIN" != "_" ]; then
+    printf 'http://%s\n' "$MATRIX_DOMAIN"
+    return 0
+  fi
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [ -z "$ip" ] || printf 'http://%s\n' "$ip"
+}
+
 write_env() {
+  local access
+  access="$(env_access_mode)"
+  local OPT_ACCESS="$access"
   local auth_token code_token postgres_password funded_ai_enabled funded_ai_relay_url funded_ai_runtime_token platform_internal_url
   local platform_speech_enabled platform_speech_origin platform_speech_runtime_token
-  local browser_lab browser_viewer_auth skip_legacy_migration shell_origin
+  local browser_lab browser_viewer_auth skip_legacy_migration shell_origin saved_origin
   auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN || random_secret)"
   code_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN || random_secret)"
   postgres_password="$(read_env_value /opt/matrix/env/postgres.env POSTGRES_PASSWORD || random_secret | tr '/+' 'ab')"
@@ -1384,7 +1598,13 @@ write_env() {
     MATRIX_TAILNET_URL="$(read_env_value /opt/matrix/env/host.env MATRIX_TAILNET_URL || true)"
   fi
   browser_lab="$(browser_lab_value "$OPT_BROWSER" "$browser_lab")"
-  shell_origin="$(self_host_shell_origin "$OPT_ACCESS" "$MATRIX_TAILNET_URL" "$(read_env_value /opt/matrix/env/host.env SHELL_ORIGIN || true)")"
+  saved_origin="$(read_env_value /opt/matrix/env/host.env SHELL_ORIGIN || true)"
+  if [ "$OPT_ACCESS" = "public" ]; then
+    # A rollback to public restores the public origin, never the tailnet one.
+    [ "$PREVIOUS_ACCESS_MODE" != "public" ] || saved_origin="${PREVIOUS_SHELL_ORIGIN:-$saved_origin}"
+    [ -z "$MATRIX_TAILNET_URL" ] || [ "$saved_origin" != "$MATRIX_TAILNET_URL" ] || saved_origin=""
+  fi
+  shell_origin="$(self_host_shell_origin "$OPT_ACCESS" "$MATRIX_TAILNET_URL" "$saved_origin" "$(public_ui_origin)")"
   skip_legacy_migration=0
   [ "$MATRIX_RUN_USER" = "matrix" ] || skip_legacy_migration=1
 
@@ -1622,7 +1842,7 @@ install_systemd_units() {
 }
 
 configure_nginx() {
-  local auth_token code_proxy_token password hash server_name htpasswd_file legacy_htpasswd_file browser_viewer
+  local auth_token code_proxy_token password hash server_name htpasswd_file legacy_htpasswd_file browser_viewer site next
   auth_token="$(read_env_value /opt/matrix/env/host.env MATRIX_AUTH_TOKEN)" || fail "MATRIX_AUTH_TOKEN is missing from host.env"
   code_proxy_token="$(read_env_value /opt/matrix/env/host.env MATRIX_CODE_PROXY_TOKEN)" || fail "MATRIX_CODE_PROXY_TOKEN is missing from host.env"
   server_name="$MATRIX_DOMAIN"
@@ -1653,7 +1873,12 @@ configure_nginx() {
 
   browser_viewer=off
   [ "$OPT_BROWSER" != "on" ] || browser_viewer=on
-  render_nginx_site "$OPT_ACCESS" "$server_name" "$htpasswd_file" "$browser_viewer" >/etc/nginx/sites-available/matrix-self-host
+  # Rendered beside the live site and swapped in with one rename; a public site
+  # being replaced was saved by begin_private_cutover and comes back on failure.
+  site=/etc/nginx/sites-available/matrix-self-host
+  next="${site}.next"
+  render_nginx_site "$OPT_ACCESS" "$server_name" "$htpasswd_file" "$browser_viewer" >"${next}" || { rm -f "${next}"; fail "could not write the nginx site"; }
+  mv -f "${next}" "${site}"
 
   rm -f /etc/nginx/sites-enabled/default
   ln -sfn /etc/nginx/sites-available/matrix-self-host /etc/nginx/sites-enabled/matrix-self-host
@@ -1707,11 +1932,11 @@ wait_private_identity_ok() {
       return 0
     fi
     if [ "$code" = "403" ] || [ "$code" = "500" ]; then
-      fail "${description} returned HTTP ${code}. ${log_hint}"
+      private_access_failed "${description} returned HTTP ${code}. ${log_hint}"
     fi
     sleep 2
   done
-  fail "${description} did not become reachable. ${log_hint}"
+  private_access_failed "${description} did not become reachable. ${log_hint}"
 }
 
 # Private modes: the web surface must not listen on a public interface.
@@ -1731,6 +1956,131 @@ verify_loopback_listeners() {
   ok "Matrix listens on loopback and your private network only"
 }
 
+# private_access_failed <message>: a switch from public restores the public
+# listener before failing, so the owner keeps a reachable UI.
+private_access_failed() {
+  if [ "$PREVIOUS_ACCESS_MODE" = "public" ] && [ "$OPT_ACCESS" != "public" ]; then
+    restore_previous_listener || fail "$1 Restoring public access failed: a WebSocket through nginx did not upgrade. Check: journalctl -u matrix-gateway -n 200 --no-pager"
+    fail "$1 Kept your public listener; finish private-network sign-in, then rerun the installer."
+  fi
+  fail "$1"
+}
+
+# env_access_mode: the access mode host.env records. A public install switching
+# to private stays recorded as public until the cutover begins, so a failure
+# before it, or a flagless retry, keeps the public guard.
+env_access_mode() {
+  if [ "${PREVIOUS_ACCESS_MODE:-}" = "public" ] && [ "$OPT_ACCESS" != "public" ] && [ "$PRIVATE_CUTOVER" = "0" ]; then
+    printf 'public\n'
+  else
+    printf '%s\n' "$OPT_ACCESS"
+  fi
+}
+
+# begin_private_cutover: from here until private access is verified, a public
+# install switching to private restores its public listener on any failed exit
+# (fail, run_required, or set -e). Saves the live public site now, never an
+# older run's copy.
+begin_private_cutover() {
+  local site="${MATRIX_NGINX_SITE_FILE:-/etc/nginx/sites-available/matrix-self-host}"
+  local backup="${MATRIX_NGINX_SITE_BACKUP:-/etc/nginx/matrix-self-host.previous-site}"
+  [ "$PREVIOUS_ACCESS_MODE" = "public" ] && [ "$OPT_ACCESS" != "public" ] || return 0
+  rm -f "$backup"
+  if [ -f "$site" ]; then
+    run_required "saving the public nginx site" cp -f "$site" "$backup"
+    PRIVATE_CUTOVER_BACKUP="$backup"
+  fi
+  PRIVATE_CUTOVER=1
+}
+
+end_private_cutover() {
+  [ "$PRIVATE_CUTOVER" = "1" ] || return 0
+  PRIVATE_CUTOVER=2
+  [ -z "$PRIVATE_CUTOVER_BACKUP" ] || rm -f "$PRIVATE_CUTOVER_BACKUP"
+  PRIVATE_CUTOVER_BACKUP=""
+}
+
+# rollback_failed_private_cutover <exit status>: run by the EXIT trap.
+rollback_failed_private_cutover() {
+  [ "$1" != "0" ] && [ "$PRIVATE_CUTOVER" = "1" ] || return 0
+  warn "switching to private access failed; restoring your public listener"
+  if restore_previous_listener; then
+    ok "Kept your public listener; fix the error above, then rerun the installer."
+  else
+    warn "public access did not come back. Check: journalctl -u matrix-gateway -n 200 --no-pager; tail -120 /var/log/nginx/error.log"
+  fi
+}
+
+# restore_previous_listener: the public site this run's begin_private_cutover
+# saved (before the cutover the live site is still public and is left alone), the
+# public mode and origin in host.env, and a gateway and shell running with them.
+# Succeeds only once a WebSocket through public nginx upgrades (HTTP 101).
+restore_previous_listener() {
+  local site="${MATRIX_NGINX_SITE_FILE:-/etc/nginx/sites-available/matrix-self-host}"
+  local backup="$PRIVATE_CUTOVER_BACKUP"
+  # Restoring ends the cutover, so a failure after it does not restore again.
+  PRIVATE_CUTOVER=0
+  PRIVATE_CUTOVER_BACKUP=""
+  stop_matrix_tailscale_serve
+  if [ -n "$backup" ] && [ -f "$backup" ]; then
+    cp -f "$backup" "$site"
+    rm -f "$backup"
+    # A restart, not a reload: a reload cannot trade 127.0.0.1:80 for 0.0.0.0:80.
+    nginx -t >>"$MATRIX_INSTALL_LOG" 2>&1 && systemctl restart nginx >>"$MATRIX_INSTALL_LOG" 2>&1 \
+      || warn "could not restore the public nginx site; see /var/log/nginx/error.log"
+  fi
+  OPT_ACCESS=public
+  write_env
+  systemctl restart matrix-gateway.service matrix-shell.service >>"$MATRIX_INSTALL_LOG" 2>&1 \
+    || warn "could not restart matrix-gateway and matrix-shell"
+  verify_public_websocket
+}
+
+# verify_public_websocket: a /ws upgrade through public nginx, with the UI
+# password and the recorded browser origin, returns HTTP 101.
+verify_public_websocket() {
+  local password origin code attempt
+  local -a page=()
+  password="$(cat /opt/matrix/env/initial-ui-password 2>/dev/null || true)"
+  origin="$(read_env_value /opt/matrix/env/host.env SHELL_ORIGIN || true)"
+  [ -n "$password" ] || { warn "cannot check public WebSockets: no saved UI password"; return 1; }
+  # Public nginx accepts a page's socket only when the Origin host[:port] is the Host.
+  [ -z "$origin" ] || page=(-H "Origin: ${origin}" -H "Host: ${origin#*://}")
+  for attempt in $(seq 1 30); do
+    code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 3 --http1.1 --user "matrix:${password}" \
+      -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
+      -H "Sec-WebSocket-Key: bWF0cml4LW9zLWNoZWNrIQ==" "${page[@]}" \
+      "http://127.0.0.1/ws" 2>>"$MATRIX_INSTALL_LOG" || true)"
+    if [ "$code" = "101" ]; then
+      ok "public access works: a WebSocket through nginx upgraded"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+# verify_private_access: reports private access verified only after an
+# authenticated request through Tailscale Serve.
+verify_private_access() {
+  local status
+  status="$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" "http://127.0.0.1/" || true)"
+  [ "$status" = "403" ] || private_access_failed "nginx private-network identity check returned HTTP ${status}, expected 403 without an owner identity."
+  ok "nginx refuses requests without your private-network identity"
+  status="$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" -H "Tailscale-User-Login: ${MATRIX_TAILSCALE_OWNER_LOGIN:-owner@example.com}" "http://127.0.0.1/" || true)"
+  [ "$status" = "403" ] || private_access_failed "nginx accepted a private-network identity on its loopback listener (HTTP ${status}); only Tailscale Serve may present one."
+  ok "nginx refuses a private-network identity on its loopback listener"
+  if [ -z "$MATRIX_TAILSCALE_OWNER_LOGIN" ]; then
+    [ "$PREVIOUS_ACCESS_MODE" != "public" ] || private_access_failed "no private-network owner has signed in."
+    warn "private access is not verified: no owner has signed in yet. Sign in with: sudo tailscale up, then rerun the installer"
+    return 0
+  fi
+  wait_private_identity_ok "nginx shell" "http://127.0.0.1/" "$MATRIX_TAILSCALE_OWNER_LOGIN" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-shell -n 200 --no-pager"
+  wait_private_identity_ok "nginx gateway API" "http://127.0.0.1/api/identity" "$MATRIX_TAILSCALE_OWNER_LOGIN" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-gateway -n 200 --no-pager"
+  ok "nginx accepts your private-network identity only through Tailscale Serve"
+  verify_loopback_listeners
+}
+
 verify_services() {
   local password status
   section "Verifying Matrix OS"
@@ -1740,17 +2090,7 @@ verify_services() {
   wait_http_ok "Matrix gateway" "http://127.0.0.1:4000/health" "Check: journalctl -u matrix-gateway -n 200 --no-pager"
   wait_http_ok "Matrix shell" "http://127.0.0.1:3000/" "Check: journalctl -u matrix-shell -n 200 --no-pager"
   if [ "$OPT_ACCESS" != "public" ]; then
-    status="$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" "http://127.0.0.1/" || true)"
-    [ "$status" = "403" ] || fail "nginx private-network identity check returned HTTP ${status}, expected 403 without an owner identity"
-    ok "nginx refuses requests without your private-network identity"
-    status="$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" -H "Tailscale-User-Login: ${MATRIX_TAILSCALE_OWNER_LOGIN:-owner@example.com}" "http://127.0.0.1/" || true)"
-    [ "$status" = "403" ] || fail "nginx accepted a private-network identity on its loopback listener (HTTP ${status}); only Tailscale Serve may present one"
-    ok "nginx accepts your private-network identity only through Tailscale Serve"
-    if [ -n "$MATRIX_TAILSCALE_OWNER_LOGIN" ]; then
-      wait_private_identity_ok "nginx shell" "http://127.0.0.1/" "$MATRIX_TAILSCALE_OWNER_LOGIN" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-shell -n 200 --no-pager"
-      wait_private_identity_ok "nginx gateway API" "http://127.0.0.1/api/identity" "$MATRIX_TAILSCALE_OWNER_LOGIN" "Check: tail -120 /var/log/nginx/error.log; journalctl -u matrix-gateway -n 200 --no-pager"
-    fi
-    verify_loopback_listeners
+    verify_private_access
     return 0
   fi
   if [ -f /opt/matrix/env/initial-ui-password ]; then
@@ -1963,8 +2303,11 @@ main() {
   configure_private_network
   # First: an HTTP fallback changes the tailnet address recorded for the gateway.
   [ "$OPT_ACCESS" = "public" ] || configure_tailscale_serve
+  require_private_access_ready
+  begin_private_cutover
   write_env
   INSTALL_PHASE="nginx"
+  [ "$OPT_ACCESS" != "public" ] || stop_matrix_tailscale_serve
   configure_nginx
   grant_run_user_access "$MATRIX_RUN_USER"
   INSTALL_PHASE="services"
@@ -1973,6 +2316,7 @@ main() {
   configure_browser
   INSTALL_PHASE="verify"
   verify_services
+  end_private_cutover
   INSTALL_PHASE="pairing"
   pair_with_primary
   INSTALL_PHASE="complete"

@@ -254,6 +254,7 @@ import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
+import { createPrivateNetworkRuntime } from "./server/private-network-runtime.js";
 import { isBrowserRuntimeEnabled } from "./browser-lab/setup.js";
 import { registerGatewayCodingAgentRoutes, registerGatewayProjectDriveRoutes, registerGatewayProjectFileRoutes } from "./server/project-routes.js";
 import { registerHomeUtilityRoutes } from "./server/home-utility-routes.js";
@@ -1257,6 +1258,8 @@ export async function createGateway(config: GatewayConfig) {
   }
   // Before CORS and auth, so a refused browser origin reaches neither.
   registerBrowserOriginGates(app, { env: process.env, allowedOrigins: allowedOriginController });
+  const privateNetwork = await createPrivateNetworkRuntime({ env: process.env, homePath, db: kyselyInstance });
+  app.use("*", privateNetwork.identity); // Spec 2701: foreign Tailscale identities fail before bearer auth.
   registerGatewayAccessMiddleware(app, {
     resolveAllowedOrigin: allowedOriginController.resolve,
     devAppAuthBypass: APP_AUTH_DEV_BYPASS,
@@ -1267,6 +1270,7 @@ export async function createGateway(config: GatewayConfig) {
     },
   });
   app.route("/api/desktop-pairing", await createRuntimeDesktopPairingRoutes({ ownerDatabase: kyselyInstance }));
+  app.route("/api/system/private-network", privateNetwork.routes);
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
@@ -1347,12 +1351,7 @@ export async function createGateway(config: GatewayConfig) {
     finalizeWithSummary, logUnexpectedJsonParseFailure,
   });
 
-  app.get(
-    "/ws/forward",
-    upgradeWebSocket(() => forwardTunnelHub.createHandler()),
-  );
-
-
+  app.get("/ws/forward", upgradeWebSocket(() => forwardTunnelHub.createHandler()));
 
   registerCodingAgentThreadWebSocketRoutes({
     app, upgradeWebSocket, codingAgentThreadStream,
@@ -1868,6 +1867,7 @@ export async function createGateway(config: GatewayConfig) {
       nativeClaudeChatRuntime?.beginShutdown();
       await managedFeatureRestart.close();
       await githubDeveloperSetup.close();
+      privateNetwork.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
