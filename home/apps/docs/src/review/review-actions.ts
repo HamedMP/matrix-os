@@ -21,11 +21,13 @@ export type ResolveOutcome =
   /** No open document, or none of the ids is pending any more. */
   | { ok: false; reason: "nothing" }
   /** The engine refused; the document is unchanged. */
-  | { ok: false; reason: "failed" };
+  | { ok: false; reason: "failed" }
+  /** The editor shows a read-only view (Original); the document is unchanged. */
+  | { ok: false; reason: "read_only" };
 
 export type CommentOutcome =
   | { ok: true; commentId: CommentId | null }
-  | { ok: false; reason: "empty" | "too_long" | "no_selection" | "not_found" | "invalid_range" | "failed" };
+  | { ok: false; reason: "empty" | "too_long" | "no_selection" | "not_found" | "invalid_range" | "failed" | "read_only" };
 
 export type ReviewLog = (message: string, error: unknown) => void;
 

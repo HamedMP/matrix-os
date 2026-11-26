@@ -93,6 +93,38 @@ describe("<ReviewPanel>", () => {
     expect(new Set(session.requireDocument().listRevisions().map((revision) => revision.author))).toEqual(new Set([PRIYA]));
   });
 
+  it("accepts from an author group only the changes the filter shows", async () => {
+    const session = await fixtureSession("tracked.docx");
+    const { panel } = await renderHarness(session);
+    const hidden = latest.review!.getSnapshot().items.filter((item) => item.author === ALEX && item.category === "substantive").map((item) => item.id);
+    fireEvent.click(within(panel).getByRole("radio", { name: "Formatting only" }));
+    fireEvent.click(within(panel).getByRole("button", { name: `Accept all changes by ${ALEX}` }));
+    expect(revisionIds(session)).toHaveLength(12);
+    expect(hidden.every((id) => revisionIds(session).includes(id))).toBe(true);
+  });
+
+  it("keeps navigation but no accept, reject or comment shortcut in the original view", async () => {
+    const session = await fixtureSession("tracked.docx");
+    const { panel } = await renderHarness(session);
+    act(() => latest.editor!.setViewMode("original"));
+    const press = (code: string) => {
+      const event = new KeyboardEvent("keydown", { code, key: code.slice(3), altKey: true, shiftKey: true, bubbles: true, cancelable: true });
+      act(() => {
+        document.body.dispatchEvent(event);
+      });
+      return event;
+    };
+    expect(press("KeyN").defaultPrevented).toBe(true);
+    expect(within(panel).getByText("1 of 14")).toBeTruthy();
+    press("KeyA");
+    press("KeyR");
+    press("KeyM");
+    expect(revisionIds(session)).toHaveLength(14);
+    expect(document.activeElement).not.toBe(screen.getByLabelText("New comment"));
+    expect(press("KeyN").defaultPrevented).toBe(true);
+    expect(within(panel).getByText("2 of 14")).toBeTruthy();
+  });
+
   it("accepts one row from its own button and shows an empty state when nothing is left", async () => {
     const session = await fixtureSession("tracked.docx");
     const { panel } = await renderHarness(session);

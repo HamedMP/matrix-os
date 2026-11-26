@@ -41,15 +41,14 @@ import {
   acceptFormattingChanges,
   addComment,
   replyToComment,
-  resolveByAuthor,
   resolveRevisions,
   setCommentResolved,
 } from "./review-actions";
 import { type ReviewItem, listReviewItems, positionKey } from "./revision-items";
 import { type ShortcutEvent, matchReviewShortcut } from "./shortcuts";
 
-/** The part of the editor controller the review needs. */
-export type ReviewEditor = Pick<DocumentEditorController, "scrollTo" | "setHighlights" | "getSelection">;
+/** The part of the editor controller the review needs; `getSnapshot().readOnly` blocks every change. */
+export type ReviewEditor = Pick<DocumentEditorController, "scrollTo" | "setHighlights" | "getSelection" | "getSnapshot">;
 
 /** Immutable; replaced on every change. */
 export interface ReviewSnapshot {
@@ -66,7 +65,7 @@ export interface ReviewSnapshot {
   current: ReviewItem | null;
   /** Index of `current` in `visible`, or -1. */
   currentIndex: number;
-  /** Pending formatting revisions, whatever the filter. */
+  /** Shown formatting revisions: the ones "Accept formatting" accepts. */
   formattingCount: number;
   threads: readonly CommentThread[];
   /** Threads the thread filter shows. */
@@ -95,7 +94,10 @@ const MESSAGES = {
   invalidRange: "A comment can't span that selection. Select text within one paragraph or neighbouring paragraphs.",
   notFound: "That comment is no longer in the document.",
   comment: "The comment could not be saved.",
+  readOnly: "The original view is read-only.",
 } as const;
+
+const READ_ONLY = Object.freeze({ ok: false, reason: "read_only" }) as { ok: false; reason: "read_only" };
 
 export class ReviewController {
   private readonly session: DocumentSession;
@@ -196,12 +198,13 @@ export class ReviewController {
     return this.resolveShown("reject");
   }
 
+  /** Accepts the shown revisions by one author: with a filter on, only those it lets through. */
   acceptByAuthor(author: string): ResolveOutcome {
-    return this.report(resolveByAuthor(this.session, "accept", author, this.log));
+    return this.resolveIds("accept", this.shownIds((item) => item.author === author));
   }
 
   rejectByAuthor(author: string): ResolveOutcome {
-    return this.report(resolveByAuthor(this.session, "reject", author, this.log));
+    return this.resolveIds("reject", this.shownIds((item) => item.author === author));
   }
 
   /** The shown revisions the editor selection touches (a caret touches the change it is in). */
@@ -219,9 +222,14 @@ export class ReviewController {
     return this.resolveIds("reject", this.selectedItems().map((item) => item.id));
   }
 
-  /** Accepts every formatting change and keeps the substantive ones for review. One undo step. */
+  /**
+   * Accepts every shown formatting change (all of them, or those the filter
+   * lets through) and keeps the substantive ones for review. One undo step.
+   */
   acceptFormatting(): ResolveOutcome {
-    return this.report(acceptFormattingChanges(this.session, this.log));
+    if (this.isReadOnly()) return READ_ONLY;
+    if (!isFilterActive(this.filter)) return this.report(acceptFormattingChanges(this.session, this.log));
+    return this.resolveIds("accept", this.shownIds((item) => item.category === "formatting"));
   }
 
   // ---------------------------------------------------------------- comments
@@ -243,6 +251,7 @@ export class ReviewController {
 
   /** Starts a thread on the editor selection; the new thread becomes active. */
   addComment(text: string): CommentOutcome {
+    if (this.isReadOnly()) return READ_ONLY;
     const selection = this.editor?.getSelection() ?? null;
     const range = selection === null ? null : { start: selection.start, end: selection.end };
     const outcome = this.reportComment(addComment(this.session, range, text, this.log));
@@ -251,10 +260,12 @@ export class ReviewController {
   }
 
   reply(threadId: string, text: string): CommentOutcome {
+    if (this.isReadOnly()) return READ_ONLY;
     return this.reportComment(replyToComment(this.session, threadId, text, this.log));
   }
 
   resolveThread(threadId: string, resolved = true): CommentOutcome {
+    if (this.isReadOnly()) return READ_ONLY;
     return this.reportComment(setCommentResolved(this.session, threadId, resolved, this.log));
   }
 
@@ -272,12 +283,17 @@ export class ReviewController {
     this.publish();
   }
 
-  /** Runs the review command bound to a key press. True when one ran; the caller then cancels the event. */
+  /**
+   * Runs the review command bound to a key press. True when one ran; the
+   * caller then cancels the event. In a read-only view only next and
+   * previous run.
+   */
   handleShortcut(event: ShortcutEvent): boolean {
     const command = matchReviewShortcut(event);
     if (command === null || this.session.document === null) return false;
     if (command === "next") this.next();
     else if (command === "previous") this.previous();
+    else if (this.isReadOnly()) return false;
     else if (command === "accept") {
       if (this.currentId !== null) this.accept();
       else this.acceptSelection();
@@ -289,6 +305,15 @@ export class ReviewController {
   }
 
   // ---------------------------------------------------------------- internals
+
+  /** True while the editor shows a read-only view of an open document (Original). */
+  private isReadOnly(): boolean {
+    return this.session.document !== null && this.editor?.getSnapshot().readOnly === true;
+  }
+
+  private shownIds(match: (item: ReviewItem) => boolean): RevisionId[] {
+    return this.snapshot.visible.filter(match).map((item) => item.id);
+  }
 
   private step(direction: "next" | "previous"): boolean {
     const visible = this.snapshot.visible;
@@ -305,12 +330,14 @@ export class ReviewController {
   }
 
   private resolveShown(action: ResolveAction): ResolveOutcome {
+    if (this.isReadOnly()) return READ_ONLY;
     if (!isFilterActive(this.filter)) return this.report(resolveRevisions(this.session, action, "all", this.log));
     return this.resolveIds(action, this.snapshot.visible.map((item) => item.id));
   }
 
   /** Resolves ids and, when the current revision went with them, moves on to the next shown one. */
   private resolveIds(action: ResolveAction, ids: readonly RevisionId[]): ResolveOutcome {
+    if (this.isReadOnly()) return READ_ONLY;
     if (ids.length === 0) return { ok: false, reason: "nothing" };
     const visible = this.snapshot.visible;
     const from = this.currentId === null ? -1 : visible.findIndex((item) => item.id === this.currentId);
@@ -348,6 +375,7 @@ export class ReviewController {
       invalid_range: MESSAGES.invalidRange,
       not_found: MESSAGES.notFound,
       failed: MESSAGES.comment,
+      read_only: MESSAGES.readOnly,
     };
     this.commentError = messages[outcome.reason];
     this.publish();
@@ -408,7 +436,7 @@ export class ReviewController {
       filtered: isFilterActive(this.filter),
       current,
       currentIndex,
-      formattingCount: this.items.filter((item) => item.category === "formatting").length,
+      formattingCount: visible.filter((item) => item.category === "formatting").length,
       threads: this.threads,
       visibleThreads,
       showResolved: this.showResolved,

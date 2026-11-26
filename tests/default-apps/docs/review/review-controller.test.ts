@@ -111,6 +111,37 @@ describe("ReviewController filters", () => {
     expect(review.getSnapshot().visible.map((item) => item.scope).sort()).toEqual(["paragraphFormat", "runFormat"]);
   });
 
+  it("resolves by author only the shown changes of that author", async () => {
+    const { review, session } = await mountReview(await fixtureSession("tracked.docx"));
+    const alexSubstantive = review.getSnapshot().items.filter((item) => item.author === ALEX && item.category === "substantive").map((item) => item.id);
+    expect(alexSubstantive.length).toBeGreaterThan(0);
+    review.setFilter({ category: "formatting" });
+    const shown = review.getSnapshot().visible.filter((item) => item.author === ALEX).map((item) => item.id);
+    expect(shown.length).toBeGreaterThan(0);
+    expect(review.acceptByAuthor(ALEX).ok).toBe(true);
+    const left = revisionIds(session);
+    expect(left.filter((id) => shown.includes(id))).toEqual([]);
+    expect(alexSubstantive.every((id) => left.includes(id))).toBe(true);
+    review.setFilter({ category: "all", kinds: ["insert"] });
+    const inserts = review.getSnapshot().visible.filter((item) => item.author === ALEX).map((item) => item.id);
+    const hiddenDelete = review.getSnapshot().items.find((item) => item.author === ALEX && item.kind === "delete")!;
+    expect(review.rejectByAuthor(ALEX).ok).toBe(true);
+    expect(revisionIds(session).filter((id) => inserts.includes(id))).toEqual([]);
+    expect(revisionIds(session)).toContain(hiddenDelete.id);
+  });
+
+  it("accepts only the shown formatting changes while a filter is on", async () => {
+    const { review, session } = await mountReview(await fixtureSession("tracked.docx"));
+    review.setFilter({ authors: [PRIYA] });
+    expect(review.getSnapshot().formattingCount).toBe(0);
+    expect(review.acceptFormatting()).toEqual({ ok: false, reason: "nothing" });
+    expect(revisionIds(session)).toHaveLength(14);
+    review.setFilter({ authors: [ALEX] });
+    expect(review.getSnapshot().formattingCount).toBe(2);
+    expect(review.acceptFormatting().ok).toBe(true);
+    expect(revisionIds(session)).toHaveLength(12);
+  });
+
   it("drops the current revision when the filter hides it", async () => {
     const { review } = await mountReview(await fixtureSession("tracked.docx"));
     const alex = review.getSnapshot().items.find((item) => item.author === ALEX)!;
@@ -198,6 +229,55 @@ describe("ReviewController accept and reject", () => {
     expect(review.getSnapshot().composeRequest).toBe(before + 1);
     expect(review.handleShortcut({ ...keys("KeyN"), ctrlKey: true })).toBe(false);
     expect(review.handleShortcut({ ...keys("KeyN"), altKey: false })).toBe(false);
+  });
+
+  it("keeps the original view read-only: navigation works, nothing is resolved or commented", async () => {
+    const { review, editor, session } = await mountReview(await fixtureSession("tracked.docx"));
+    const keys = (code: string) => ({ code, altKey: true, shiftKey: true, ctrlKey: false, metaKey: false });
+    editor.setViewMode("original");
+    expect(review.handleShortcut(keys("KeyN"))).toBe(true);
+    const current = review.getSnapshot().current!;
+    expect(current.order).toBe(0);
+    expect(review.handleShortcut(keys("KeyN"))).toBe(true);
+    expect(review.handleShortcut(keys("KeyP"))).toBe(true);
+    expect(review.getSnapshot().current!.id).toBe(current.id);
+    const composeBefore = review.getSnapshot().composeRequest;
+    expect(review.handleShortcut(keys("KeyA"))).toBe(false);
+    expect(review.handleShortcut(keys("KeyR"))).toBe(false);
+    expect(review.handleShortcut(keys("KeyM"))).toBe(false);
+    expect(review.getSnapshot().composeRequest).toBe(composeBefore);
+    const readOnly = { ok: false, reason: "read_only" };
+    expect(review.accept()).toEqual(readOnly);
+    expect(review.reject()).toEqual(readOnly);
+    expect(review.acceptAll()).toEqual(readOnly);
+    expect(review.rejectAll()).toEqual(readOnly);
+    expect(review.acceptByAuthor(ALEX)).toEqual(readOnly);
+    expect(review.rejectByAuthor(PRIYA)).toEqual(readOnly);
+    expect(review.acceptFormatting()).toEqual(readOnly);
+    review.select(null);
+    editor.setSelection({ anchor: current.range!.start, focus: current.range!.end });
+    expect(review.acceptSelection()).toEqual(readOnly);
+    expect(review.rejectSelection()).toEqual(readOnly);
+    expect(review.addComment("Why?")).toEqual(readOnly);
+    expect(revisionIds(session)).toHaveLength(14);
+    expect(session.getState().canUndo).toBe(false);
+    expect(review.getSnapshot().error).toBeNull();
+    editor.setViewMode("markup");
+    review.select(current.id);
+    expect(review.handleShortcut(keys("KeyA"))).toBe(true);
+    expect(revisionIds(session)).toHaveLength(13);
+  });
+
+  it("does not reply to or resolve comments in the original view", async () => {
+    const { review, editor, session } = await mountReview(await plainSession(["The fee is due on signing."]));
+    const blockId = session.requireDocument().getView().body.blocks[0]!.id;
+    editor.setSelection({ anchor: { blockId, offset: 4 }, focus: { blockId, offset: 7 } });
+    expect(review.addComment("Which fee?").ok).toBe(true);
+    const thread = review.getSnapshot().activeThread!;
+    editor.setViewMode("original");
+    expect(review.reply(thread.id, "The set-up fee.")).toEqual({ ok: false, reason: "read_only" });
+    expect(review.resolveThread(thread.id)).toEqual({ ok: false, reason: "read_only" });
+    expect(review.getSnapshot().threads[0]).toMatchObject({ resolved: false, replies: [] });
   });
 });
 

@@ -77,7 +77,7 @@ export function ReviewPanel({ controller, busy = false, className }: ReviewPanel
             </button>
             <Dropdown label="More" ariaLabel="More review actions" items={MORE_ACTIONS.map((item) => ({ ...item, disabled: busy || (item.id === "accept-formatting" && formattingCount === 0) }))} onSelect={runMore} align="end" />
           </div>
-          {filtered && <p className="docs-review__note">Accept all and Reject all apply to the {visible.length} shown {visible.length === 1 ? "change" : "changes"}.</p>}
+          {filtered && <p className="docs-review__note">Accept and reject actions apply to the {visible.length} shown {visible.length === 1 ? "change" : "changes"}.</p>}
           {visible.length === 0 ? (
             <p className="docs-review__note">No changes match these filters.</p>
           ) : (

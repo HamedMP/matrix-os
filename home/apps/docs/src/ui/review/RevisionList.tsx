@@ -56,7 +56,7 @@ export interface RevisionListProps {
   busy?: boolean;
 }
 
-/** The shown revisions grouped by author, each group with its own accept-all and reject-all. */
+/** The shown revisions grouped by author, each group with its own accept-all and reject-all of the changes it shows. */
 export function RevisionList({ groups, currentId, controller, busy = false }: RevisionListProps) {
   return (
     <div className="docs-review__groups">

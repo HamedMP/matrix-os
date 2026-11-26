@@ -17,7 +17,11 @@ interface LayerProps {
   readOnly: boolean;
 }
 
-/** Mounted beside the editor while a document is open. */
+/**
+ * Mounted beside the editor while a document is open. In a read-only view
+ * the controller itself refuses every change, so the shortcuts keep only
+ * next and previous.
+ */
 export function ReviewDocumentLayer({ controller, container, readOnly }: LayerProps) {
   useReviewShortcuts(controller);
   useCommentClicks(controller, container);
