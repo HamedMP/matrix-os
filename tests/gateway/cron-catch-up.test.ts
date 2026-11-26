@@ -75,6 +75,50 @@ describe("cron catch-up of missed runs", () => {
     expect(onTrigger).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps overdue one-shot reminders until channels can deliver them exactly once", async () => {
+    const now = new Date("2026-11-21T12:30:00.000Z");
+    vi.setSystemTime(now);
+    const jobs = [
+      makeJob({
+        id: "already-overdue",
+        schedule: { type: "once", at: new Date(now.getTime() - 60_000).toISOString() },
+      }),
+      makeJob({
+        id: "due-during-startup",
+        schedule: { type: "once", at: new Date(now.getTime() + 1_000).toISOString() },
+      }),
+    ];
+    store = createCronStore(storePath);
+    store.save(jobs);
+    const recordRun = vi.spyOn(store, "recordRun");
+    let channelStarted = false;
+    let openGate: () => void = () => undefined;
+    const channelsReady = new Promise<void>((resolve) => {
+      openGate = () => {
+        channelStarted = true;
+        resolve();
+      };
+    });
+    const delivered: string[] = [];
+    onTrigger.mockImplementation((job: CronJob) => {
+      if (channelStarted) delivered.push(job.id);
+    });
+    service = createCronService({ store, onTrigger, catchUpAfter: channelsReady });
+    service.start();
+
+    await vi.advanceTimersByTimeAsync(65_000);
+    expect(onTrigger).not.toHaveBeenCalled();
+    expect(createCronStore(storePath).load()).toEqual(jobs);
+
+    openGate();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(delivered).toEqual(["already-overdue", "due-during-startup"]);
+    expect(createCronStore(storePath).load()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(65_000);
+    expect(onTrigger).toHaveBeenCalledTimes(2);
+    await Promise.all(recordRun.mock.results.map((result) => result.value));
+  });
+
   it("drops a deferred startup catch-up when the service stopped before the channels started", async () => {
     vi.setSystemTime(new Date("2026-11-21T12:30:00.000Z"));
     createCronStore(storePath).save([makeJob({ lastRunAt: "2026-11-21T11:00:00.010Z" })]);

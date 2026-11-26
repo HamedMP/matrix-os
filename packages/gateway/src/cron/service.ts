@@ -6,8 +6,8 @@ export interface CronServiceConfig {
   store: CronStore;
   onTrigger: (job: CronJob) => void;
   /**
-   * Startup catch-up runs wait for this to settle (for example channel adapters starting), so a
-   * missed reminder is not sent into a channel that cannot deliver it yet. Scheduling is not delayed.
+   * Startup catch-up runs and due one-shots wait for this to settle (for example channel adapters
+   * starting), so a reminder is not sent into a channel that cannot deliver it yet.
    */
   catchUpAfter?: Promise<unknown>;
 }
@@ -90,6 +90,13 @@ export function createCronService(config: CronServiceConfig): CronService {
     }
   }
 
+  function runOnce(job: CronJob, entry: TimerEntry): void {
+    if (!catchUpGateOpen || timers.get(job.id) !== entry) return;
+    clearJob(job.id);
+    runJob(job);
+    store.remove(job.id);
+  }
+
   /** True when an occurrence came due after the job's persisted lastRunAt. A job that never ran is never due. */
   function missedSinceLastRun(job: CronJob, now: number): boolean {
     const lastRunAt = epochMs(job.lastRunAt);
@@ -105,7 +112,7 @@ export function createCronService(config: CronServiceConfig): CronService {
         return next !== null && next <= now;
       }
       case "once":
-        // A past-due once job already fires as soon as it is scheduled.
+        // One-shots use their scheduled time rather than lastRunAt.
         return false;
     }
   }
@@ -125,17 +132,13 @@ export function createCronService(config: CronServiceConfig): CronService {
     const overdueBefore = jumped ? wall : wall - CRON_CATCH_UP_GRACE_MS;
 
     for (const job of store.list()) {
-      const nextAt = timers.get(job.id)?.nextAt ?? cronTasks.get(job.id)?.nextAt ?? null;
+      const timer = timers.get(job.id);
+      const nextAt = timer?.nextAt ?? cronTasks.get(job.id)?.nextAt ?? null;
       const overdue = nextAt !== null && nextAt <= overdueBefore;
       if (!overdue && !jumped) continue;
       if (job.schedule.type === "once") {
-        if (!overdue) {
-          scheduleJob(job);
-          continue;
-        }
-        clearJob(job.id);
-        runJob(job);
-        store.remove(job.id);
+        if (overdue && timer) runOnce(job, timer);
+        else scheduleJob(job);
         continue;
       }
       if (!overdue) {
@@ -179,14 +182,11 @@ export function createCronService(config: CronServiceConfig): CronService {
       case "once": {
         const at = new Date(job.schedule.at).getTime();
         const safeDelay = Math.max(0, at - Date.now());
-        timers.set(job.id, {
+        const entry: TimerEntry = {
           nextAt: Number.isFinite(at) ? at : Date.now(),
-          handle: setTimeout(() => {
-            timers.delete(job.id);
-            runJob(job);
-            store.remove(job.id);
-          }, safeDelay),
-        });
+          handle: setTimeout(() => runOnce(job, entry), safeDelay),
+        };
+        timers.set(job.id, entry);
         break;
       }
 
@@ -246,7 +246,12 @@ export function createCronService(config: CronServiceConfig): CronService {
           // Re-read: a job removed or already run since start must not run again.
           const nowAfter = Date.now();
           for (const job of store.list()) {
-            if (missed.some((m) => m.id === job.id) && missedSinceLastRun(job, nowAfter)) runJob(job);
+            if (job.schedule.type === "once") {
+              const entry = timers.get(job.id);
+              if (entry && entry.nextAt <= nowAfter) runOnce(job, entry);
+            } else if (missed.some((m) => m.id === job.id) && missedSinceLastRun(job, nowAfter)) {
+              runJob(job);
+            }
           }
         });
       }
