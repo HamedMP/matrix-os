@@ -84,6 +84,30 @@ it("records Keep off as an explicit per-computer choice and does not ask or regi
   expect(JSON.parse(writes[0][1]?.body as string)).toEqual({ token: TOKEN });
 });
 
+it.each([["Enable for this computer", true], ["Keep off for this computer", false]] as const)(
+  "retains an unknown choice after %s fails and confirms only its explicit retry", async (label, selected) => {
+    const normal = fetchMock.getMockImplementation()!;
+    let fail = true;
+    fetchMock.mockImplementation(async (url, request) => {
+      if (String(url).includes("/api/push/register") && fail) {
+        fail = false;
+        return jsonResponse({}, { status: 503 });
+      }
+      return normal(url, request);
+    });
+    render(<DevicePushSettings computer={computerA} />);
+    fireEvent.press(await screen.findByRole("button", { name: label }));
+    await screen.findByText("Couldn’t save this computer’s notification choice. Try again.");
+    expect(enabled).toBeNull();
+    expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState.disabled).toBe(true);
+    expect(screen.getByRole("button", { name: label }).props.accessibilityState.disabled).toBe(false);
+    fireEvent.press(screen.getByRole("button", { name: label }));
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Push notifications" }).props.accessibilityState)
+      .toMatchObject({ checked: selected, disabled: false }));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/push/register"))).toHaveLength(2);
+  },
+);
+
 it("leaves known explicit off silent and off, even with a retained global token", async () => {
   enabled = false;
   render(<PushRegistrationSync />);
