@@ -1330,6 +1330,7 @@ async function startPlatformServerWithCleanup(
     getRuntimeEntitlementDecision,
     getRuntimeEntitlementDecisionForUser,
     collaborationDirect: collaboration?.direct,
+    substrates: substrateRegistry,
   });
 }
 

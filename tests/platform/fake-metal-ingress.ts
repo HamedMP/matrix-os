@@ -27,6 +27,8 @@ export interface FakeMetalIngress {
   asleepResponses: number;
   /** The next N requests reach the VM, whose app answers a 503 runtime_asleep body without the ingress marker. */
   vmAsleepBodyResponses: number;
+  /** The next N upgrades answer the marked runtime_asleep 503 with a chunked body (no Content-Length). */
+  chunkedAsleepUpgrades: number;
   /** Optional VM answer for a forwarded request; return undefined for the default text answer. */
   respond?: (request: FakeIngressRequest) => { status: number; body: unknown } | undefined;
   close(): Promise<void>;
@@ -40,8 +42,8 @@ function record(req: IncomingMessage, upgrade: boolean): FakeIngressRequest {
 
 export async function startFakeMetalIngress(cert: { key: string; cert: string }): Promise<FakeMetalIngress> {
   const requests: FakeIngressRequest[] = [];
-  const state: { asleepResponses: number; vmAsleepBodyResponses: number; respond?: FakeMetalIngress['respond'] } = {
-    asleepResponses: 0, vmAsleepBodyResponses: 0,
+  const state: { asleepResponses: number; vmAsleepBodyResponses: number; chunkedAsleepUpgrades: number; respond?: FakeMetalIngress['respond'] } = {
+    asleepResponses: 0, vmAsleepBodyResponses: 0, chunkedAsleepUpgrades: 0,
   };
   const server: Server = createServer({ key: cert.key, cert: cert.cert }, (req, res) => {
     const recorded = record(req, false);
@@ -77,6 +79,12 @@ export async function startFakeMetalIngress(cert: { key: string; cert: string })
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
     requests.push(record(req, true));
+    if (state.chunkedAsleepUpgrades > 0) {
+      state.chunkedAsleepUpgrades -= 1;
+      const size = Buffer.byteLength(ASLEEP_BODY).toString(16);
+      socket.end(`HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nx-matrix-ingress-error: runtime_asleep\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n${size}\r\n${ASLEEP_BODY}\r\n0\r\n\r\n`);
+      return;
+    }
     if (state.asleepResponses > 0) {
       state.asleepResponses -= 1;
       socket.end(`HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nx-matrix-ingress-error: runtime_asleep\r\nContent-Length: ${ASLEEP_BODY.length}\r\nConnection: close\r\n\r\n${ASLEEP_BODY}`);
@@ -102,6 +110,8 @@ export async function startFakeMetalIngress(cert: { key: string; cert: string })
     set asleepResponses(value: number) { state.asleepResponses = value; },
     get vmAsleepBodyResponses() { return state.vmAsleepBodyResponses; },
     set vmAsleepBodyResponses(value: number) { state.vmAsleepBodyResponses = value; },
+    get chunkedAsleepUpgrades() { return state.chunkedAsleepUpgrades; },
+    set chunkedAsleepUpgrades(value: number) { state.chunkedAsleepUpgrades = value; },
     get respond() { return state.respond; },
     set respond(value: FakeMetalIngress['respond']) { state.respond = value; },
     async close() {
