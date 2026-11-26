@@ -2,7 +2,7 @@ import { Monitor, SquareTerminal } from "@renderer/lib/hugeicons";
 
 export interface ComposerMentionAction {
   label: string;
-  kind: "preview" | "terminal";
+  kind: "preview" | "terminal" | "herdr";
   keywords: string;
   consumeTrigger?: true;
   defaultDraft?: string;
@@ -19,7 +19,7 @@ export function ComposerMentionActions({ actions, selectedIndex, onSelect }: {
   return (
     <>
       <p className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
-        This Mac
+        {actions.some(action => action.kind === "herdr") ? "Computer actions" : "This Mac"}
       </p>
       {actions.map(({ label, kind }, index) => {
         const Icon = kind === "preview" ? Monitor : SquareTerminal;

@@ -94,6 +94,8 @@ import { useChatCredentialDisclosure } from "./use-chat-credential-disclosure";
 import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 import { chatElectronPreviewWorktree, isChatElectronPreviewDraft, type StageChatWorktreeDraft } from "./ChatElectronPreview";
 import { canSendBackgroundMacCheck, isMacTerminalProbeDraft } from "./ChatMacTerminalProbe";
+import { herdrControlParts } from "@matrix-os/ui/herdr-sessions";
+import type { HerdrControlDraft } from "./HerdrChatControlAction";
 import { ChatWorktreeActions } from "./ChatWorktreeActions";
 import { isMacVerificationReceiptRun } from "../../../../shared/chat-electron-preview";
 import { MATCHING_MAC_BUILD } from "../../../../shared/chat-electron-preview-ipc";
@@ -499,6 +501,14 @@ function CanonicalChatWorkspaceContent({
   const pendingTool = pendingSupervisedTool(transcript);
   const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
   const privateOwner = controller.detail?.record.chat.ownerScope;
+  const herdrControl = api && live && nativeChatChecksActive && chatConnection === "open"
+    && !explicitSharedRoute && !sharedScopeId && controller.detail?.record.chat.collaboration?.mode !== "shared"
+    && privateOwner?.type === "personal" && privateOwner.ownerId === actorId
+    && controller.detail?.record.chat.lifecycle === "active" && !activeRun && !editingQueuedTurn
+    && providerSelectionScopeReady && selectionAvailable && selection?.interactionMode === "default"
+    && mentionPermission.permissionMode === "full_access" && selection.permissionMode === "full_access"
+    && providerCatalog.instances.find(instance => instance.id === selection.instanceId)?.driverKind === "codex"
+    && chatWorktree ? { api, authGeneration, runtimeSlot, scope: JSON.stringify([admissionIdentity, draftRequestIdentity, chatWorktree.projectId, chatWorktree.worktreeId]) } : undefined;
   const existingFilesScope = slashRecord && controller.detail ? resolveWorkFilesScope(controller.detail, projects) : null;
   const draftAttachmentProject = !routedComposerChatId
     ? projects.find(project => project.id === draftProjectId || project.slug === draftProjectId)
@@ -621,7 +631,7 @@ function CanonicalChatWorkspaceContent({
     return parts.length > 0 ? parts : null;
   };
 
-  const submit = async (submission: SharedChatComposerSubmission, verification?: MacVerificationDraft) => {
+  const submit = async (submission: SharedChatComposerSubmission, verification?: MacVerificationDraft, herdr?: HerdrControlDraft) => {
     if (
       !selection
       || (!directBotId && providerCatalogLoading)
@@ -665,7 +675,13 @@ function CanonicalChatWorkspaceContent({
       // Confirmation can settle the original request while the retry prepares its parts.
       if (pendingReply && pendingReply.requestId !== pendingChatReply()?.requestId) return;
       const worktreeRequest = terminalRequest || previewRequest;
-      const requestedRoot = worktreeRequest || verification ? composerOwner.current.worktree : null;
+      if (herdr && (!herdr.isCurrent() || !herdrControl || !composerOwner.current.worktree
+        || worktreeRequest || verification || submission.projectSkill || submission.invocations.length || submission.resources.length)) {
+        setSubmissionError("Select the Herdr terminal again in this worktree before sending.");
+        return;
+      }
+      if (herdr) parts.push(...herdrControlParts(herdr.target));
+      const requestedRoot = worktreeRequest || verification || herdr ? composerOwner.current.worktree : null;
       const staged = worktreeDraft.current;
       if (worktreeRequest && (!requestedRoot || staged?.text !== submission.text || staged.scope !== draftScope
         || staged.identity !== owner.identity || staged.root.projectId !== requestedRoot.projectId
@@ -708,7 +724,7 @@ function CanonicalChatWorkspaceContent({
         : selectedCheckout ? controller.detail?.record.projectId : undefined;
       const input = {
         ...chatInput,
-        parts: !directBotId && (verification || pendingReply?.requestedExecutionRoot?.kind === "worktree")
+        parts: !herdr && !directBotId && (verification || pendingReply?.requestedExecutionRoot?.kind === "worktree")
           ? macVerificationWorkflowParts(parts) : chatInput.parts,
         ...(executionRoot ? { executionRoot }
           : submission.projectSkill ? { executionRoot: { kind: "project" as const, projectId: submission.projectSkill.projectId } }
@@ -758,6 +774,7 @@ function CanonicalChatWorkspaceContent({
         }
       }
       if (!isCurrentSubmission()) return;
+      if (herdr && !herdr.isCurrent()) return;
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = pendingReply ? undefined : mentionRequests.resolve(client, requestScope,
         permissionResources.length ? input : { ...input, draftRevision }, "send");
@@ -775,6 +792,7 @@ function CanonicalChatWorkspaceContent({
         settle: () => {
           settleRequest();
           mentionPermission.confirm(false);
+          herdr?.accepted();
           submission.projectSkill?.onAccepted();
           updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
           for (const id of submittedAttachmentIds) attachments.remove(id);
@@ -970,8 +988,8 @@ function CanonicalChatWorkspaceContent({
     restoreNewDraft: () => { controller.startNewChat(); reportedChatId.current = null; onActiveChatChanged?.(null); setGlobalView("draft"); },
   });
 
-  const renderComposer = (mentionActions?: readonly ComposerMentionAction[], verification?: MacVerificationDraft) => {
-    const canUseCheckout = !directBotId && !activeRun && !editingQueuedTurn && !verification && !matrixAttachments.pending
+  const renderComposer = (mentionActions?: readonly ComposerMentionAction[], verification?: MacVerificationDraft, herdr?: HerdrControlDraft) => {
+    const canUseCheckout = !herdr && !directBotId && !activeRun && !editingQueuedTurn && !verification && !matrixAttachments.pending
       && referenceTokens.length === 0 && attachments.items.length === 0
       && !isMacTerminalProbeDraft(draft) && !isChatElectronPreviewDraft(draft);
     const pendingCheckout = pendingChatReply()?.requestedExecutionRoot?.kind === "project";
@@ -1028,7 +1046,7 @@ function CanonicalChatWorkspaceContent({
             setSubmissionError("Wait for the active run before retrying this message.");
             return;
           }
-          void (editingQueuedTurn || activeRun ? submitQueueAction(submission) : submit(submission, verification));
+          void (editingQueuedTurn || activeRun ? submitQueueAction(submission) : submit(submission, verification, herdr));
         }}
         onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
         busy={Boolean(activeRun) || uploadingAttachments}
@@ -1295,6 +1313,7 @@ function CanonicalChatWorkspaceContent({
             <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>
               <ChatWorktreeActions
                 key={JSON.stringify([admissionIdentity, controller.detail.record.chat.id])}
+                herdr={herdrControl}
                 active={nativeChatChecksActive}
                 editingQueuedTurn={Boolean(editingQueuedTurn)}
                 actorId={actorId}
@@ -1303,7 +1322,7 @@ function CanonicalChatWorkspaceContent({
                 onDraft={stageWorktreeDraft}
                 onDiscardDraft={discardWorktreeDraft}
               >
-                {(mentionActions, verification) => (
+                {(mentionActions, verification, herdr) => (
                   <>
                     {pendingTool ? (
                       <SupervisedToolApprovalBar
@@ -1311,7 +1330,7 @@ function CanonicalChatWorkspaceContent({
                         onReview={() => document.getElementById(`tool-approval-${pendingTool.id}`)?.scrollIntoView({ block: "center" })}
                       />
                     ) : null}
-                    {renderComposer(mentionActions, verification)}
+                    {renderComposer(mentionActions, verification, herdr)}
                   </>
                 )}
               </ChatWorktreeActions>
