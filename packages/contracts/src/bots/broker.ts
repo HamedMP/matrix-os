@@ -1,3 +1,4 @@
+import { SlackRuleOperationSchema } from "#bots/slack-rules";
 import { RoutineCliOperationSchema } from "#bots/routine-cli";
 import { BotToolDisplaySchema } from "#bots/tool-display";
 import {BotRoutineProposalSchema,BotRoutineToolControlSchema} from "#bots/routines";
@@ -29,6 +30,7 @@ const textEncoder = new TextEncoder();
 
 /** M1 capabilities. Later milestones add handoffs and computer actions. */
 export const BotToolCapabilitySchema = z.enum([
+  "slack.rules",
   "routine.cli",
   "routine.propose",
   "routine.control",
@@ -56,6 +58,7 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 }).strict();
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
+  capability("slack.rules", SlackRuleOperationSchema),
   capability("browser.action", SharedBrowserActionSchema),
   capability("github.developer", GithubDeveloperActionSchema),
   capability("routine.cli", RoutineCliOperationSchema),

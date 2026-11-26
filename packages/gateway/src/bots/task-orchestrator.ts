@@ -124,6 +124,7 @@ export function createBotTaskOrchestrator(deps: {
   transact: BotStateTransactions;
   interactions?: Pick<BotInteractionService, "answerWithMessage">;
   routineTools?: boolean;
+  slackRuleTools?: boolean;
   resolveRoutineProposalRoute?(ownerId: string, model: string): Promise<ResolvedBotRoute>;
   /** Server-owned durable checker; no request or model field can provide phase authority. */
   routineExecution?: Pick<import("./routine-execution.js").BotRoutineExecution, "assertOccurrencePhase"> & Partial<Pick<import("./routine-execution.js").BotRoutineExecution, "describeChatPhase" | "approvalReply">>;
@@ -439,6 +440,7 @@ export function createBotTaskOrchestrator(deps: {
       && (capability !== "github.developer" || !input.backgroundTaskId)
       && (!group || ["integration.inventory", "integration.call"].includes(capability)));
     if (!input.readonlySummary && !isolatedModel && !group && !input.backgroundTaskId && deps.routineTools) capabilities.push("routine.propose", "routine.control");
+    if(!input.readonlySummary && !isolatedModel && !group && !input.backgroundTaskId && deps.slackRuleTools)capabilities.push("slack.rules");
     if (run.inputs.fileAliases.length && !capabilities.includes("artifact.read")) return settle(task, "blocked", "policy_denied");
     try { if (!input.readonlySummary && !isolatedModel && !group && !input.backgroundTaskId && await setup(async () => await deps.executorReady?.(input.ownerId, botId))) capabilities.push('agent.task'); }
     catch (error) { console.warn('[bots] Saved task executor unavailable:', error instanceof Error ? error.name : 'UnknownError'); return interrupted(error) ? settle(task, interruptedStatus()) : settle(task, 'blocked', 'policy_denied'); }

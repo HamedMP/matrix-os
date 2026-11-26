@@ -1,4 +1,5 @@
 import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
+import { slackRulePublicationCurrent } from "../slack/rule-publication.js";
 import { sql, type Expression, type Kysely, type QueryExecutorProvider, type Transaction } from "kysely";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
@@ -55,7 +56,7 @@ function isPrivateAutomaticRequest(requestId: string): boolean {
  * Private automatic sources include routines and opted-in Slack summaries. */
 export async function assertPrivateRoutineRequest(executor: Executor, owner: ChatOwner, chatId: string, requestId: string): Promise<void> {
   if (!isPrivateAutomaticRequest(requestId)) return;
-  if (owner.type !== "personal" || await hasNonPrivateChatScope(executor, owner, chatId)) {
+  if (owner.type !== "personal" || await hasNonPrivateChatScope(executor, owner, chatId) || !await slackRulePublicationCurrent(executor,owner.ownerId,chatId,requestId)) {
     throw new ChatConflictError(chatId, 0);
   }
 }

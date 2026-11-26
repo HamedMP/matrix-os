@@ -791,6 +791,7 @@ export class ChatRunLifecycleRepository {
         .orderBy("seq")
         .forUpdate()
         .execute();
+      if(pendingRows.length>0 && input.outcome==="completed")await assertPrivateRoutineRun(trx,owner,input.chatId,input.runId);
       let finalizedOutput: CanonicalChatMessage | undefined;
       let insertedOutput = false;
       if (pendingRows.length > 0) {

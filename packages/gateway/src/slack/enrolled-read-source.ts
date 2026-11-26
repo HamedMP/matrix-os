@@ -11,6 +11,7 @@ const ThreadParams = Params.extend({ ts: z.string().regex(/^\d{1,16}\.\d{1,8}$/)
 type Args = Extract<BotToolRequest, {
   capability: "integration.call";
 }>["args"];
+export const enrolledSlackSourceId = (enrollment: NonNullable<Awaited<ReturnType<PrivateSlackThreadContext["enrollment"]>>>) => PREFIX + createHash("sha256").update(JSON.stringify(enrollment.access)).digest("hex").slice(0,32);
 /** A read authority projection, never a connected-services account or grant. */
 export function createEnrolledSlackReadSource(options: {
   context: Pick<PrivateSlackThreadContext, "enrollment">;
@@ -18,7 +19,7 @@ export function createEnrolledSlackReadSource(options: {
     available: true;
   }>>;
 }) {
-  const id = (enrollment: NonNullable<Awaited<ReturnType<PrivateSlackThreadContext["enrollment"]>>>) => PREFIX + createHash("sha256").update(JSON.stringify(enrollment.access)).digest("hex").slice(0, 32);
+  const id = enrolledSlackSourceId;
   async function resolve(binding: BotRuntimeBinding, signal: AbortSignal) {
     if (binding.group || binding.readonlySummary || binding.requestClass !== "interactive")
       return undefined;

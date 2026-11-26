@@ -2,7 +2,7 @@
 
 ## 1. Scope
 
-Ordinary human messages in an explicitly enrolled public Slack channel or thread can supply reference context to one selected private Matrix bot. An ordinary message alone never admits a Chat Turn or Run. An independently enabled, recipient-owned rule may admit one restricted private summary for a genuine mention by another human. A channel grant accepts new top-level posts and thread replies. A legacy thread grant accepts replies in its exact thread. The owner may also ask that selected bot to fetch bounded recent history through its native integration tools. Permanent historical backfill, edits, deletion reconciliation, group DMs and outbound actions are outside this contract.
+Ordinary human messages in an explicitly enrolled public Slack channel or thread can supply reference context to one selected private Matrix bot. Without a matching active policy, an ordinary message never admits a Chat Turn or Run. A [Chat-defined owner rule](slack-summary-rules.md) may admit a restricted private summary for all new human messages or genuine mentions by another human, at explicit immediate or bounded per-thread cadence. The earlier environment mention pilot remains a separate legacy path and is suppressed once an owner policy takes control. A channel grant accepts new top-level posts and thread replies. A legacy thread grant accepts replies in its exact thread. The owner may also ask that selected bot to fetch bounded recent history through its native integration tools. Permanent historical backfill, edits, deletion reconciliation, group DMs and outbound actions are outside this contract.
 
 ## 2. Interfaces
 

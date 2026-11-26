@@ -11,6 +11,12 @@ One native Matrix Slack app is installed once per workspace. An employee links t
 
 The first release is an owner-hosted company context pilot: the host owner supplies storage, the Pi model access source, and funding. Do not advertise organization-owned durability or employee-departure recovery. Organization-owned principal, billing, source transfer, and failover need a subsequent ownership feature. Every employee remains a distinct requester; no fake Clerk user or impersonation is permitted.
 
+## Owner-private Slack summary rules
+
+The PR-preview personal context path is a separate audience from company-channel answers. An explicitly enrolled public channel/thread may supply passive reference context to one owner's selected private bot. A user may configure durable automatic summaries by talking to that bot in a private Matrix Chat: choose all new human messages or genuine mentions of the owner, explicit immediate or bounded per-thread grouping cadence, report focus and language. The agent saves and acknowledges a revisioned executable policy in owner Postgres; a prompt or memory note alone is not a rule. The same Chat supports inspecting, changing, pausing, resuming and deleting the policy. One-shot history requests remain one-shot.
+
+Rules cannot enroll another source, widen Slack scopes, change payer/model authority or publish back to Slack. Ordinary messages remain passive unless an active owner policy matches. Automatic output is private Matrix text with suggested to-dos, one inference and zero tools; it does not execute the to-dos. Paused/deleted policy cannot fall back to the legacy environment mention pilot. Resumption does not backfill history. The bounded implementation and qualification gates are specified in [chat-defined-summary-rules-plan.md](chat-defined-summary-rules-plan.md) and the executable Slack context contract. This local implementation is not evidence of live activation, CI qualification or release availability.
+
 ## Direct-user agent parity with WhatsApp Cloud API
 
 The personal Slack DM and the Direct WhatsApp access flow in spec 546 share the same user promise: a verified person can message Matrix from a channel they already use, get a private agent response in that same channel, and continue their private Matrix-owned conversation without entering a company conversation. They should share acceptance scenarios and failure semantics, while retaining channel-specific identity proof and the currently qualified agent runtime.

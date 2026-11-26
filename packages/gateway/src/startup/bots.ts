@@ -1,3 +1,5 @@
+import { retireRevokedSlackJobs } from "../slack/rule-revocation.js";
+import { createSlackRuleTools, type SlackRuleTools } from "../slack/rule-tools.js";
 import { createEnrolledSlackReadSource, type EnrolledSlackReadSource } from "../slack/enrolled-read-source.js";
 import { createSlackMentionSummaries, type SlackMentionSummaries } from "../slack/mention-summary.js";
 import { bootstrapCollaborationDatabase } from "../collaboration/database.js";
@@ -430,6 +432,7 @@ export async function startBots(options: {
   const inputHistory = createBotInputHistoryReader(options.repository);
   let slackThreadContext: PrivateSlackThreadContext | undefined;
   let slackMentionSummaries: SlackMentionSummaries | undefined;
+  let slackRules: SlackRuleTools | undefined;
   const platform = options.routineActionPlatform;
   if (platform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(platform.runtimeSlot) && platform.handle === platform.runtimeSlot) {
     try {
@@ -447,6 +450,7 @@ export async function startBots(options: {
           return Boolean(bot?.recipeRef && !bot.archived);
         },
       });
+      slackRules=createSlackRuleTools({db,ownerId:options.runtimeOwnerId,runtimeId:platform.machineId,context:slackThreadContext,afterCommit:chatId=>retireRevokedSlackJobs(db,options.runtimeOwnerId!,chatId,runId=>orchestrator.cancel(runId))});
       enrolledSlack = createEnrolledSlackReadSource({ context: slackThreadContext, read: slackClient.readEnrolledContext });
     } catch (error) {
       console.warn("[bots] Slack thread context unavailable", error instanceof Error ? error.name : "UnknownError");
@@ -458,6 +462,7 @@ export async function startBots(options: {
     inputHistory,
     slackThreadContext: slackThreadContext?.prompt,
     slackSummaries: slackMentionSummaries,
+    slackRuleTools:Boolean(slackRules),
     homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),
     personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId },
@@ -498,7 +503,7 @@ export async function startBots(options: {
   const managed = createManagedPiRuntime({ routineCli: managedRoutineCli, routineSignal: binding => registry.inferenceSignal(binding), toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
-    homePath: options.homePath, githubDeveloper, managedRoutine: { execute: managed.executeRoutine }, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
+    homePath: options.homePath, slackRules, githubDeveloper, managedRoutine: { execute: managed.executeRoutine }, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateSource,
     submittedArtifact: (binding, args) => isManagedPiBinding(binding) ? managed.readSubmittedArtifact(binding, args) : orchestrator.readSubmittedArtifact(binding, args),
     ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),
@@ -557,6 +562,7 @@ export async function startBots(options: {
   forgetRun = (runId) => { githubDeveloper.closeRun(runId); actions.forgetRun(runId); };
   const unregister = registerBotBroker(host, actions);
   const adapter = createMatrixBotChatProviderAdapter({
+    toolOutputKey: options.toolOutputKey,
     orchestrator, routines, summaries: slackMentionSummaries, proposals: routineCli?.proposals,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
   });

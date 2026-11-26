@@ -11,7 +11,7 @@ import { projectBotToolDisplay } from "./tool-event-display.js";
  * found afterwards is failed, its runtime stopped, and nothing is replayed.
  */
 import { createHash } from "node:crypto";
-import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, type BotEvent } from "@matrix-os/contracts";
+import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, SLACK_RULE_ACTIVITY_LABEL, type BotEvent } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import {
   CanonicalProviderRunEventSchema,
@@ -66,13 +66,15 @@ export function mapBotEvent(event: BotEvent["event"], options: { toolOutputKey?:
       }
       return deltas;
     }
-    case "tool_progress":
-      return projectBotToolDisplay(event, safeRef("tool", event.toolCallId), TOOL_LABELS[event.capability] ?? "Using a tool", options.toolOutputKey) ?? [{
-        type: "tool.progress",
-        toolCallId: safeRef("tool", event.toolCallId),
-        label: TOOL_LABELS[event.capability] ?? "Using a tool",
-        status: event.phase === "started" || event.phase === "updated" ? "running" : event.phase,
-      }];
+    case "tool_progress": {
+      const id = safeRef("tool", event.toolCallId);
+      const status = event.phase === "started" || event.phase === "updated" ? "running" : event.phase;
+      if (event.capability === "slack.rules") {
+        return [{ type: "agent.activity", activityId: id, kind: "phase", label: SLACK_RULE_ACTIVITY_LABEL, status }];
+      }
+      const label = TOOL_LABELS[event.capability] ?? "Using a tool";
+      return projectBotToolDisplay(event, id, label, options.toolOutputKey) ?? [{ type: "tool.progress", toolCallId: id, label, status }];
+    }
     case "activity":
       return [{
         type: "agent.activity",
@@ -111,6 +113,7 @@ function messageText(parts: readonly { type: string; text?: string }[]): string 
 }
 
 export function createMatrixBotChatProviderAdapter(options: {
+  toolOutputKey?: Buffer;
   orchestrator: Pick<BotTaskOrchestrator, "start" | "steer" | "cancel" | "abandon">;
   summaries?: Pick<import("../slack/mention-summary.js").SlackMentionSummaries, "prepareRun">;
   stopRuntime(runtimeHandle: string): Promise<void>;
@@ -165,7 +168,7 @@ export function createMatrixBotChatProviderAdapter(options: {
             yield CanonicalProviderRunEventSchema.parse({ type: "state.updated", state: BotChatStateSchema.parse(item.state) });
             continue;
           }
-          for (const event of mapBotEvent(item.event)) {
+          for (const event of mapBotEvent(item.event, { toolOutputKey: options.toolOutputKey })) {
             if (event.type === "tool.progress" || event.type === "agent.activity") {
               // Past the budget the reply still streams; further progress is summarized once.
               activities += 1;

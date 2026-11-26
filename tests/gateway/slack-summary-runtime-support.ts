@@ -30,7 +30,7 @@ const sse = (text: string) => [
   ["message_stop", { type: "message_stop" }],
 ].map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join("");
 /** Real canonical admission, bot adapter, Pi loop and broker; only host allocation and provider HTTP are fixtures. */
-export async function summaryRuntime(db: Kysely<OwnerBotDatabase>, summaries: SlackMentionSummaries, ownerId: string, botId: string) {
+export async function summaryRuntime(db: Kysely<OwnerBotDatabase>, summaries: SlackMentionSummaries, ownerId: string, botId: string, reply = SUMMARY_REPLY) {
   const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
   const registry = new BotRuntimeRegistry();
   const lifetime = new AbortController();
@@ -43,7 +43,7 @@ export async function summaryRuntime(db: Kysely<OwnerBotDatabase>, summaries: Sl
     tools: { effectClass: () => "write", dispatch: async () => { throw new Error("Unexpected tool"); } },
     inference: { homePath: "/synthetic", lifetime: lifetime.signal, revalidateBinding: binding => summaries.assertAuthorized(binding), consumeReadonlyInference: binding => summaries.consumeInference(binding),
       resolveCredentials: async () => ({ env: { ANTHROPIC_AUTH_TOKEN: "synthetic", ANTHROPIC_BASE_URL: "https://relay.invalid" } }),
-      fetchImpl: async (_url, init) => { modelRequests.push(JSON.parse(String(init?.body))); return new Response(sse(SUMMARY_REPLY), { headers: { "content-type": "text/event-stream" } }); } },
+      fetchImpl: async (_url, init) => { modelRequests.push(JSON.parse(String(init?.body))); return new Response(sse(reply), { headers: { "content-type": "text/event-stream" } }); } },
   });
   let runtimeHandle = "";
   let runId = "";
