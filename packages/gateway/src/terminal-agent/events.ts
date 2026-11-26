@@ -1,4 +1,4 @@
-import type { TerminalRef, TerminalWorkspace } from "@matrix-os/contracts";
+import type { TeamTerminalOwnerEntry, TerminalRef, TerminalWorkspace } from "@matrix-os/contracts";
 import type { TerminalAgentStatusSource } from "./status-source.js";
 import { terminalRefKey } from "./status-source.js";
 import type { TerminalSeenStore } from "./seen-store.js";
@@ -14,6 +14,8 @@ const MAX_BACKLOG_BYTES = 1024 * 1024;
  * runtime bounds how many can run); finished history fills what is left.
  */
 export const TERMINAL_EVENTS_MAX_TABS = 1_024;
+/** Team entries the owner feed carries: the most shared terminals one computer hosts. */
+const MAX_TEAM_TABS = 64;
 /** Longest working folder a stream entry carries (about 1 KiB per tab at most). */
 export const MAX_STREAM_CWD_CHARS = 256;
 
@@ -58,6 +60,12 @@ export type TerminalEventFrame =
    */
   | { type: "attention"; seq: number; tabs: Record<string, TerminalTabAttention> }
   | { type: "event"; seq: number; event: TerminalEvent }
+  /**
+   * Spec 2710: presence and who-typed-what for every shared tab someone is
+   * watching, by ref key; sent after each snapshot and whenever it changes.
+   * Clients that predate it ignore an unknown frame type.
+   */
+  | { type: "team"; seq: number; tabs: Record<string, TeamTerminalOwnerEntry> }
   | { type: "heartbeat"; seq: number }
   | { type: "missed"; seq: number }
   | { type: "shutdown"; seq: number };
@@ -84,6 +92,8 @@ export interface TerminalEventSubscription {
 
 export interface TerminalEventHub {
   subscribe(subscriber: TerminalEventSubscriber): TerminalEventSubscription;
+  /** Spec 2710: replaces the team terminal state the owner sees; bounded by the shared-terminal cap. */
+  publishTeam(entries: readonly TeamTerminalOwnerEntry[]): void;
   tick(): Promise<void>;
   size(): number;
   shutdown(): void;
@@ -206,6 +216,8 @@ export function createTerminalEventHub(options: {
   let facts: Map<string, TerminalTabFacts> | null = null;
   let done: Map<string, DoneTab> = new Map();
   let attention: { tabs: Record<string, TerminalTabAttention>; json: string } | null = null;
+  let team: { tabs: Record<string, TeamTerminalOwnerEntry>; json: string } = { tabs: {}, json: "{}" };
+  const teamFrame = (): TerminalEventFrame => ({ type: "team", seq: ++seq, tabs: team.tabs });
   let seq = 0;
   let pollTimer: NodeJS.Timeout | null = null;
   let heartbeatTimer: NodeJS.Timeout | null = null;
@@ -289,7 +301,8 @@ export function createTerminalEventHub(options: {
         subscriber.needsSnapshot = false;
         subscriber.missed = false;
         if (!deliver(subscriber, { type: "snapshot", seq: ++seq, tabs: snapshotTabs(next) })
-          || (options.seen && !deliver(subscriber, attentionFrame()))) dead.push(subscriber);
+          || (options.seen && !deliver(subscriber, attentionFrame()))
+          || (team.json !== "{}" && !deliver(subscriber, teamFrame()))) dead.push(subscriber);
         continue;
       }
       for (const frame of frames) {
@@ -338,6 +351,20 @@ export function createTerminalEventHub(options: {
           return true;
         },
       };
+    },
+    publishTeam(entries) {
+      const tabs: Record<string, TeamTerminalOwnerEntry> = {};
+      for (const entry of entries.slice(0, MAX_TEAM_TABS)) tabs[terminalRefKey(entry.ref)] = entry;
+      const json = JSON.stringify(tabs);
+      if (json === team.json) return;
+      team = { tabs, json };
+      const dead: SubscriberState[] = [];
+      for (const subscriber of subscribers) {
+        if (subscriber.needsSnapshot || subscriber.missed) continue;
+        if ((subscriber.backlog?.() ?? 0) > MAX_BACKLOG_BYTES) subscriber.missed = true;
+        else if (!deliver(subscriber, teamFrame())) dead.push(subscriber);
+      }
+      dead.forEach(evict);
     },
     tick,
     size: () => subscribers.size,

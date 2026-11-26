@@ -2,6 +2,7 @@ import type { ColumnType, Generated, Kysely } from "kysely";
 import type { CollaborationRuntimeIdentityTable } from "./runtime-identity.js";
 import type { CollaborationGitOperationsTable } from "./project-git-operations.js";
 import type { CollaborationTerminalBindingsTable } from "./terminal-bindings.js";
+import type { CollaborationTeamTerminalLabelsTable } from "./team-terminal-labels.js";
 import { applyCollaborationBaseSchema, COLLABORATION_VERSIONED_MIGRATIONS } from "./database-migrations.js";
 import type { ChatDatabase } from "../chat/database.js";
 
@@ -390,6 +391,7 @@ export interface CollaborationDatabase {
   collaboration_app_readiness: CollaborationAppReadinessTable;
   collaboration_app_bindings: CollaborationAppBindingsTable;
   collaboration_terminal_bindings: CollaborationTerminalBindingsTable;
+  collaboration_team_terminal_labels: CollaborationTeamTerminalLabelsTable;
   collaboration_resource_catalog: CollaborationResourceCatalogTable;
   collaboration_upload_stages: CollaborationUploadStagesTable;
   collaboration_upload_parts: CollaborationUploadPartsTable;

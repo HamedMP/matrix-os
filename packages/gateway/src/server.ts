@@ -1706,13 +1706,13 @@ export async function createGateway(config: GatewayConfig) {
   registerTerminalWebSocketRoutes({
     app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership,
     workspaceSessionRuntimeBridge, terminalRuntimeOwnerIds, chatRepository,
-    terminalWorkspaceProjectAdmission, terminalInputActivity: terminalAgents.inputActivity, captureTerminalEvent,
+    terminalWorkspaceProjectAdmission, terminalInputActivity: terminalAgents.inputActivity, captureTerminalEvent, teamTerminals: () => gatewayCollaboration?.teamTerminalOwnerFeed(),
     getPrincipal: requireRequestPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
   });
 
   registerTerminalEventWebSocket({
-    app, upgradeWebSocket, hub: terminalAgents.events,
+    app, upgradeWebSocket, hub: terminalAgents.events, teamTerminals: () => gatewayCollaboration?.teamTerminalOwnerFeed(),
     getPrincipal: requireRequestPrincipal,
     terminalOwnerIds: terminalRuntimeOwnerIds,
   });
