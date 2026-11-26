@@ -1,13 +1,23 @@
 import { isManagedCustomBot, isAutomaticBotSelection, chatgptPlanSelectionBinding, matrixAnthropicSelectionBinding, type ChatAgent, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import type { ChatAgentRecipeResolver } from "../chat/agent-recipe.js";
-import { composeManagedCustomDefinition } from "./custom-definition.js";
+import { composeManagedCustomDefinition, configuredCatalogProcedure } from "./custom-definition.js";
 import { BotRouteError } from "./route-resolver.js";
 import type { BotRecipeCatalog, BotRecipe } from "./recipe-catalog.js";
 import type { BotExecutor } from "./repositories/shared.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
 import { sql } from "kysely";
 import { MANAGED_CUSTOM_OPERATION_PREFIX } from "./custom-creation-authority.js";
+
+/** Owner-selected Skills and account labels belong only in ordinary private runs of a named recipe. */
+export function resolveRuntimeProcedure(
+  deps: { recipes: BotRecipeCatalog; resolveProcedure?(ownerId: string, agent: ChatAgent): Promise<BotRecipe> },
+  ownerId: string, agent: ChatAgent, privateSetup: boolean,
+): BotRecipe | Promise<BotRecipe> {
+  if (!agent.recipeRef) throw new BotRouteError("model_unavailable");
+  if (deps.resolveProcedure && (privateSetup || isManagedCustomBot(agent))) return deps.resolveProcedure(ownerId, agent);
+  return deps.recipes.resolve(agent.recipeRef);
+}
 
 /** A server-created definition is executable only with its active, owner-scoped creation operation. */
 export function createBotProcedureResolver(deps: {
@@ -32,7 +42,8 @@ export function createBotProcedureResolver(deps: {
     async resolve(ownerId: string, agent: ChatAgent): Promise<BotRecipe> {
       if (!isManagedCustomBot(agent)) {
         if (!agent.recipeRef) throw new BotRouteError("model_unavailable");
-        return deps.recipes.resolve(agent.recipeRef);
+        const base = deps.recipes.resolve(agent.recipeRef);
+        return agent.recipe ? configuredCatalogProcedure(base, agent, deps.customRecipes) : base;
       }
       await assert(ownerId, agent);
       return composeManagedCustomDefinition(agent, deps.customRecipes);

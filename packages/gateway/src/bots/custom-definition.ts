@@ -50,6 +50,29 @@ export async function resolveManagedCustomDefinition(
   recipes?: Pick<ChatAgentRecipeResolver, "resolve">,
 ): Promise<BotRecipe> {
   const procedure = await composeManagedCustomDefinition(definition, recipes);
+  return checkProcedureBudget(procedure);
+}
+
+/** Keep the catalog's procedure, identity and effect policy. New dependencies are optional reads. */
+export async function configuredCatalogProcedure(
+  base: BotRecipe, definition: Definition, resolver?: Pick<ChatAgentRecipeResolver, "resolve">,
+): Promise<BotRecipe> {
+  const configured = await composeManagedCustomDefinition(definition, resolver);
+  const extra = configured.integrations.filter(item => !base.integrations.some(existing => existing.service === item.service));
+  const capabilities = new Set(base.capabilities);
+  if (extra.length) {
+    capabilities.add("integration.inventory");
+    capabilities.add("integration.call");
+  }
+  return checkProcedureBudget({ ...base, name: definition.name, description: definition.description,
+    instructions: configured.instructions, output: definition.recipe?.output ?? base.output,
+    capabilities: [...capabilities], integrations: [...base.integrations,
+      ...extra.filter((item, i) => extra.findIndex(peer => peer.service === item.service) === i)
+        .map(item => ({ service: item.service, effects: ["read"] as const, required: false }))],
+  });
+}
+
+function checkProcedureBudget(procedure: BotRecipe): BotRecipe {
   try {
     // The timestamp has the same ISO width as runtime. Optional confirmed memory
     // retains the runtime's existing priority-based trimming; never trim the job.

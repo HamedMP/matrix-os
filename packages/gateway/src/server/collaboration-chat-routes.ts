@@ -159,6 +159,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   }));
   app.route("/", createChatAgentRoutes({
     recovery: botServices?.recovery,
+    botRecipes: botServices?.recipes,
     ...(canonicalChatRuntime && chatRepository ? {
       agents: canonicalChatRuntime.agents,
       context: canonicalChatRuntime.context,

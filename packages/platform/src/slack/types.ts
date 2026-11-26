@@ -34,7 +34,7 @@ export interface SlackApi {
   hasChannelMember?(input: { token: string; channelId: string; userId: string; signal?: AbortSignal }): Promise<boolean>;
   addReaction(input: { token: string; channelId: string; ts: string; name: string; signal?: AbortSignal }): Promise<void>;
 }
-export interface SlackMessagePage { messages: Array<{ user?: string; text?: string; ts: string; thread_ts?: string }>; nextCursor?: string; hasMore: boolean }
+export interface SlackMessagePage { messages: Array<{ user?: string; text?: string; ts: string; thread_ts?: string; reply_count?: number; latest_reply?: string }>; nextCursor?: string; hasMore: boolean }
 export interface SlackRuntimeIdentity { ownerId: string; runtimeId: string }
 export interface SlackAuthorityDependencies {
   resolveActor(c: Context): Promise<string | null>;

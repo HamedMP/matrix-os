@@ -17,7 +17,7 @@ import { BotRuntimeRegistry, type BotRuntimeBinding } from "../../../packages/ga
 import { createBotToolDispatcher } from "../../../packages/gateway/src/bots/tool-dispatcher.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
-import { BOT, NOW, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
+import { BOT, NOW, OWNER, createBotStateDatabase, createRealBotStateDatabase, insertChat } from "./bot-state-support.js";
 
 const CHAT = "chat_uncertain1";
 const REQUEST_ID = "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1";
@@ -33,7 +33,7 @@ let destroy: () => Promise<void>;
 let binding: BotRuntimeBinding;
 
 beforeEach(async () => {
-  ({ db, destroy } = await createBotStateDatabase());
+  ({ db, destroy } = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase()));
   await insertChat(db, CHAT);
   await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: NOW });
   const task = await createBotTasksRepository(db).create({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: NOW });

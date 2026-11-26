@@ -1059,7 +1059,11 @@ describe("group Pi run isolation", () => {
     const admitted = vi.fn(async () => ["PRIVATE OWNER FACT"]);
     const executorReady = vi.fn(async () => true);
     let orchestrator: ReturnType<typeof createBotTaskOrchestrator>;
-    const service = setup({ admitted, executorReady, routineTools: true,
+    const privateOutput = "Report to the private payroll account.";
+    const addon = { skills: [], integrations: [{ service: "slack", accountLabel: "Payroll" }], output: privateOutput };
+    const service = setup({ admitted, executorReady, routineTools: true, agent: { ...AGENT, recipe: addon },
+      resolveProcedure: async () => ({ ...createBotRecipeCatalog().resolve(AGENT.recipeRef),
+        instructions: "Use the Payroll account.", output: privateOutput }),
       authorizeGroup: async () => ({ scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat", organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai", role: "editor" }),
       resolveGroupRun: async () => ({ scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project", projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" }),
       worker: async (input) => {
@@ -1067,6 +1071,8 @@ describe("group Pi run isolation", () => {
         expect(binding).toBeDefined();
         const spec = await orchestrator.runSource.loadRunSpec(binding!);
         expect(spec.systemPrompt).not.toContain("PRIVATE OWNER FACT");
+        expect(spec.systemPrompt).not.toContain("Payroll");
+        expect(spec.systemPrompt).not.toContain(privateOutput);
         expect(spec.systemPrompt).toContain("shared company thread");
         expect(spec.capabilities).toEqual([]);
         return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
@@ -1183,6 +1189,8 @@ it("makes receipt-proved Slack summaries tool-free and excludes memory, history,
  let actual:import("@matrix-os/contracts").BotRunSpec|undefined;
  let app:ReturnType<typeof setup>;
  app=setup({inputHistory:history as never,admitted,routineTools:true,executorReady:async()=>true,
+  agent: { ...AGENT, recipe: { skills: ["retired-skill"], integrations: [], output: "Private setup" } },
+  resolveProcedure: async () => { throw new Error("The private supplemental Skill was removed"); },
   slackSummaries:{assertAuthorized:async()=>true,prompt:async()=>"Untrusted source from #tech"},
   worker:async input=>{const binding=app.registry.lookupRun({...input,runId:input.command.runId})!;actual=await app.orchestrator.runSource.loadRunSpec(binding);
    expect(binding.capabilities).toEqual([]);expect(binding.readonlySummary).toBe(true);
