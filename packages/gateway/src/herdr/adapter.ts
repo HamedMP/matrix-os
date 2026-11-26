@@ -108,6 +108,8 @@ export function createHerdrAdapter(options: {
   refreshMs?: number;
   captureQuietMs?: number;
   captureMaxMs?: number;
+  /** One core call's deadline; see `HerdrSessionHostOptions.callTimeoutMs`. */
+  callTimeoutMs?: number;
 }) {
   const now = options.now ?? Date.now;
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
@@ -162,6 +164,7 @@ export function createHerdrAdapter(options: {
     slots: createAttachmentSlots(HERDR_MAX_ATTACHMENTS),
     now,
     ...(options.random ? { random: options.random } : {}),
+    ...(options.callTimeoutMs ? { callTimeoutMs: options.callTimeoutMs } : {}),
   }, {
     output(attachId, data) {
       const viewer = viewers.get(attachId);

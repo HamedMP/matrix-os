@@ -53,6 +53,13 @@ export function encodeFacts(channel: number, facts: HcDisplayFacts): Buffer {
  * a buffer sized from its header; reads are never joined together.
  */
 export class HcFrameDecoder {
+  /** `maxPayload` may set a lower cap per channel and kind, checked as soon as a header arrives. */
+  constructor(private readonly maxPayload?: (channel: number, kind: number) => number) {}
+
+  private cap(channel: number, kind: number): number {
+    return Math.min(HC_MAX_PAYLOAD, this.maxPayload?.(channel, kind) ?? HC_MAX_PAYLOAD);
+  }
+
   private readonly header = Buffer.alloc(HEADER);
   private headerFill = 0;
   private partial: { channel: number; kind: number; payload: Buffer; filled: number } | null = null;
@@ -84,7 +91,7 @@ export class HcFrameDecoder {
         continue;
       }
       const length = chunk.readUInt32LE(offset + 5);
-      if (length > HC_MAX_PAYLOAD) throw new Error("frame too large");
+      if (length > this.cap(chunk.readUInt32LE(offset), chunk.readUInt8(offset + 4))) throw new Error("frame too large");
       const start = offset + HEADER;
       if (chunk.length - start >= length) {
         frames.push({ channel: chunk.readUInt32LE(offset), kind: chunk.readUInt8(offset + 4), payload: chunk.subarray(start, start + length) });
@@ -100,9 +107,9 @@ export class HcFrameDecoder {
   /** A header has been read whole; its payload is still to come (or empty). */
   private begin(source: Buffer, at: number, frames: HcFrame[]): void {
     const length = source.readUInt32LE(at + 5);
-    if (length > HC_MAX_PAYLOAD) throw new Error("frame too large");
     const channel = source.readUInt32LE(at);
     const kind = source.readUInt8(at + 4);
+    if (length > this.cap(channel, kind)) throw new Error("frame too large");
     if (length === 0) { frames.push({ channel, kind, payload: Buffer.alloc(0) }); return; }
     this.partial = { channel, kind, payload: Buffer.allocUnsafe(length), filled: 0 };
   }

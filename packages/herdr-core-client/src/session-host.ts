@@ -61,6 +61,11 @@ export interface HerdrSessionHostOptions {
   idleMs?: number;
   now?: () => number;
   random?: () => number;
+  /**
+   * How long one core call may take. A desktop link (spec 2716) waits for the
+   * owner's approval on the desktop, so it allows longer than a local core.
+   */
+  callTimeoutMs?: number;
 }
 
 export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: HcSessionSink) {
@@ -75,6 +80,8 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
   let waitsForRetry = false;
   let blockedUntil = 0;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  // Calls the core has not answered yet: a connection waiting on one is never idle.
+  let pending = 0;
   let connectedAt = 0;
   // Ends a stream that is still waiting for its handshake; set only while one is.
   let abandonPending: (() => void) | null = null;
@@ -89,10 +96,10 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
     });
     try {
       const opened = await Promise.race([
-        connectHc({ open: () => socket, accepts: acceptsRemoteCore, timeoutMs: CALL_TIMEOUT_MS }),
+        connectHc({ open: () => socket, accepts: acceptsRemoteCore, timeoutMs: options.callTimeoutMs ?? CALL_TIMEOUT_MS }),
         abandoned,
       ]);
-      return restrictHcConnection(opened, ALLOWED_METHODS);
+      return counted(restrictHcConnection(opened, ALLOWED_METHODS));
     } finally {
       abandonPending = null;
     }
@@ -122,13 +129,32 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
     if (!connection || disposed) return;
     idleTimer = setTimeout(() => {
       idleTimer = null;
-      if (sessions.attached() > 0) { touch(); return; }
+      if (sessions.attached() > 0 || pending > 0) { touch(); return; }
       const idle = connection;
       connection = null;
       connectionEnded();
       idle?.close();
     }, idleMs);
     idleTimer.unref?.();
+  }
+
+  /** Counts calls in flight, so a slow answer (one waiting for an owner's approval) keeps the connection. */
+  function counted(connection: HcConnection): HcConnection {
+    return {
+      get version() { return connection.version; },
+      call: async (method, params, timeoutMs) => {
+        pending += 1;
+        try {
+          return await connection.call(method, params, timeoutMs);
+        } finally {
+          pending -= 1;
+          touch();
+        }
+      },
+      attach: (params, handlers) => connection.attach(params, handlers),
+      onDisconnect: (listener) => connection.onDisconnect(listener),
+      close: () => connection.close(),
+    };
   }
 
   function ensure(): Promise<HcConnection> {

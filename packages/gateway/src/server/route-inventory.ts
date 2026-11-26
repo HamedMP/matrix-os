@@ -28,7 +28,7 @@ export const GATEWAY_ROUTE_GROUPS: GatewayRouteGroup[] = [
   {
     id: "shell-terminal",
     label: "Shell terminal HTTP and WebSocket routes",
-    paths: ["/api/terminal/workspaces", "/api/terminal/herdr", "/ws/terminal/tab", "/ws/terminal/herdr", "/ws/terminal/events"],
+    paths: ["/api/terminal/workspaces", "/api/terminal/herdr", "/ws/terminal/tab", "/ws/terminal/herdr", "/ws/terminal/events", "/api/desktop-link", "/ws/desktop-link"],
     plannedModule: "server/routes/shell-terminal.ts",
   },
   {

@@ -40,6 +40,27 @@ describe("herdr-core frame codec", () => {
     header.writeUInt32LE(HC_MAX_PAYLOAD + 1, 5);
     expect(() => new HcFrameDecoder().push(header)).toThrow("frame too large");
   });
+
+  // Fault detected (review, desktop link): the cap was checked only once a whole frame had
+  // arrived, and every read joined the whole buffer again, so a 16 MiB frame sent in tiny
+  // pieces froze the reader.
+  it("refuses a frame over a caller's cap as soon as its header arrives", () => {
+    const decoder = new HcFrameDecoder((channel) => (channel === 0 ? 1024 : Infinity));
+    const header = encodeFrame(0, HC_FRAME.DATA, Buffer.alloc(2048)).subarray(0, 9);
+    expect(() => decoder.push(header)).toThrow("frame too large");
+    expect(new HcFrameDecoder((channel) => (channel === 0 ? 1024 : Infinity)).push(encodeFrame(3, HC_FRAME.DATA, Buffer.alloc(2048)))).toHaveLength(1);
+  });
+
+  it("reads a large frame sent in small pieces in time proportional to its size", () => {
+    const frame = encodeFrame(5, HC_FRAME.DATA, Buffer.alloc(8 * 1024 * 1024, 1));
+    const decoder = new HcFrameDecoder();
+    const started = Date.now();
+    const frames = [];
+    for (let offset = 0; offset < frame.length; offset += 4096) frames.push(...decoder.push(frame.subarray(offset, offset + 4096)));
+    expect(frames).toHaveLength(1);
+    expect(frames[0]!.payload.length).toBe(8 * 1024 * 1024);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
 });
 
 describe("herdr-core client", () => {
