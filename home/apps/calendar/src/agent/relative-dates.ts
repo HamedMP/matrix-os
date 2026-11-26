@@ -192,6 +192,55 @@ function midnight(day: DayKey, context: DateContext): number {
   return instantToMs(instantAtWall(day, 0, context.timeZone));
 }
 
+/** `[startMs, endMs)` a window reference means, before the `MAX_WINDOW_DAYS` cap; null when a date does not resolve. */
+function windowSpan(ref: WindowRef, context: DateContext, fromNow: boolean): [number, number] | null {
+  const today = todayKey(context);
+  const floor = (startMs: number) => (fromNow ? Math.max(startMs, context.now) : startMs);
+  switch (ref.type) {
+    case "this_week": {
+      const start = startOfWeek(today, context.weekStart);
+      return [floor(midnight(start, context)), midnight(addDays(start, 7), context)];
+    }
+    case "next_week": {
+      const start = addDays(startOfWeek(today, context.weekStart), 7);
+      return [midnight(start, context), midnight(addDays(start, 7), context)];
+    }
+    case "this_month": {
+      const start = `${today.slice(0, 7)}-01`;
+      return [floor(midnight(start, context)), midnight(addMonths(start, 1), context)];
+    }
+    case "day": {
+      const day = resolveDateRef(ref.date, context);
+      return day ? [floor(midnight(day, context)), midnight(addDays(day, 1), context)] : null;
+    }
+    case "before": {
+      let day = resolveDateRef(ref.date, context);
+      if (!day) return null;
+      // "Before Friday" said on a Friday means next Friday.
+      if (ref.date.type === "weekday" && compareDayKeys(day, today) <= 0) day = addDays(day, 7);
+      return [context.now, midnight(day, context)];
+    }
+    case "between": {
+      const from = resolveDateRef(ref.from, context);
+      const to = resolveDateRef(ref.to, context);
+      if (!from || !to || compareDayKeys(to, from) < 0) return null;
+      return [floor(midnight(from, context)), midnight(addDays(to, 1), context)];
+    }
+    case "next_days":
+      return [floor(midnight(today, context)), midnight(addDays(today, ref.days + 1), context)];
+  }
+}
+
+/**
+ * `resolveWindow`, plus whether the window was cut to `MAX_WINDOW_DAYS`, so an
+ * answer can say it covers only part of what the owner asked about.
+ */
+export function resolveWindowDetail(ref: WindowRef, context: DateContext, options: { fromNow?: boolean } = {}): { window: ResolvedWindow; cut: boolean } | null {
+  const span = windowSpan(ref, context, options.fromNow === true);
+  const window = span ? windowOf(span[0], span[1], context) : null;
+  return span && window ? { window, cut: instantToMs(window.end) < span[1] } : null;
+}
+
 /**
  * The span of time a window reference means. Windows that would start before
  * "now" (this week, before Friday, the next few days) start at "now" when
@@ -199,41 +248,7 @@ function midnight(day: DayKey, context: DateContext): number {
  * `MAX_WINDOW_DAYS` long; an empty or inverted one is null.
  */
 export function resolveWindow(ref: WindowRef, context: DateContext, options: { fromNow?: boolean } = {}): ResolvedWindow | null {
-  const today = todayKey(context);
-  const floor = (startMs: number) => (options.fromNow ? Math.max(startMs, context.now) : startMs);
-  switch (ref.type) {
-    case "this_week": {
-      const start = startOfWeek(today, context.weekStart);
-      return windowOf(floor(midnight(start, context)), midnight(addDays(start, 7), context), context);
-    }
-    case "next_week": {
-      const start = addDays(startOfWeek(today, context.weekStart), 7);
-      return windowOf(midnight(start, context), midnight(addDays(start, 7), context), context);
-    }
-    case "this_month": {
-      const start = `${today.slice(0, 7)}-01`;
-      return windowOf(floor(midnight(start, context)), midnight(addMonths(start, 1), context), context);
-    }
-    case "day": {
-      const day = resolveDateRef(ref.date, context);
-      return day ? windowOf(floor(midnight(day, context)), midnight(addDays(day, 1), context), context) : null;
-    }
-    case "before": {
-      let day = resolveDateRef(ref.date, context);
-      if (!day) return null;
-      // "Before Friday" said on a Friday means next Friday.
-      if (ref.date.type === "weekday" && compareDayKeys(day, today) <= 0) day = addDays(day, 7);
-      return windowOf(context.now, midnight(day, context), context);
-    }
-    case "between": {
-      const from = resolveDateRef(ref.from, context);
-      const to = resolveDateRef(ref.to, context);
-      if (!from || !to || compareDayKeys(to, from) < 0) return null;
-      return windowOf(floor(midnight(from, context)), midnight(addDays(to, 1), context), context);
-    }
-    case "next_days":
-      return windowOf(floor(midnight(today, context)), midnight(addDays(today, ref.days + 1), context), context);
-  }
+  return resolveWindowDetail(ref, context, options)?.window ?? null;
 }
 
 /** The instant `minuteOfDay` on a resolved date, in the context's zone. */

@@ -21,7 +21,7 @@ import { cappedAddresses, resolvePeople, searchAtTime, searchAvailability, start
 import { clockLabel, durationLabel, eventLabel, eventRef, firstOf, plural, rangeLabel, slotRef, windowLabel } from "./describe";
 import { MAX_INTENT_ATTENDEES } from "./parse-intent";
 import type { PeopleEntry } from "./prompt";
-import { endOfDayInstant, instantOnDay, parseWallTime, resolveDateRef, resolveWindow, todayKey } from "./relative-dates";
+import { MAX_WINDOW_DAYS, endOfDayInstant, instantOnDay, parseWallTime, resolveDateRef, resolveWindow, resolveWindowDetail, todayKey } from "./relative-dates";
 import type {
   AgendaIntent,
   CalendarAgentAnswer,
@@ -57,8 +57,23 @@ function blank(kind: "clarify" | "error", text: string, notes: string[] = []): C
   return { kind, text, notes, events: [], slots: [] };
 }
 
-function windowFor(ref: WindowRef | null, fallback: WindowRef, context: CalendarAgentContext, fromNow: boolean): ResolvedWindow | null {
-  return resolveWindow(ref ?? fallback, context, { fromNow });
+interface WindowChoice {
+  window: ResolvedWindow;
+  /** Says when the window was cut to the longest one searched, so a partial answer never reads as the whole range. */
+  notes: string[];
+}
+
+function windowFor(ref: WindowRef | null, fallback: WindowRef, context: CalendarAgentContext, fromNow: boolean): WindowChoice | null {
+  const detail = resolveWindowDetail(ref ?? fallback, context, { fromNow });
+  if (!detail) return null;
+  const notes = detail.cut ? [`That is more than ${MAX_WINDOW_DAYS} days, so I looked at ${windowLabel(detail.window, context.timeZone)} only.`] : [];
+  return { window: detail.window, notes };
+}
+
+/** One day, from now on; never cut. */
+function dayWindow(day: string, context: CalendarAgentContext): WindowChoice | null {
+  const window = resolveWindow({ type: "day", date: { type: "date", date: day } }, context, { fromNow: true });
+  return window ? { window, notes: [] } : null;
 }
 
 function leftOutNote(leftOut: number): string[] {
@@ -73,8 +88,9 @@ function peopleNotes(people: ResolvedPeople, ref: PeopleRef): string[] {
 }
 
 async function agenda(intent: AgendaIntent, { context, deps }: ExecuteOptions): Promise<CalendarAgentAnswer> {
-  const window = windowFor(intent.window, { type: "day", date: { type: "today" } }, context, false);
-  if (!window) return blank("clarify", UNCLEAR_WINDOW);
+  const chosen = windowFor(intent.window, { type: "day", date: { type: "today" } }, context, false);
+  if (!chosen) return blank("clarify", UNCLEAR_WINDOW);
+  const { window } = chosen;
   let events;
   try {
     events = await deps.listEvents(window.start, window.end);
@@ -90,7 +106,7 @@ async function agenda(intent: AgendaIntent, { context, deps }: ExecuteOptions): 
   const text = sorted.length === 0
     ? `Nothing on your calendar for ${label}.`
     : `${plural(sorted.length, "event")} on your calendar for ${label}.${partial}`;
-  return { kind: "agenda", text, notes: [], events: shown.map(eventRef), slots: [], window };
+  return { kind: "agenda", text, notes: chosen.notes, events: shown.map(eventRef), slots: [], window };
 }
 
 async function slotsFor(
@@ -98,8 +114,9 @@ async function slotsFor(
   options: ExecuteOptions,
 ): Promise<{ window: ResolvedWindow; addresses: string[]; duration: number; count: number; slots: CalendarAgentAnswer["slots"]; notes: string[]; failed: boolean } | null> {
   const { context, deps } = options;
-  const window = windowFor(intent.window, DEFAULT_SEARCH, context, true);
-  if (!window) return null;
+  const chosen = windowFor(intent.window, DEFAULT_SEARCH, context, true);
+  if (!chosen) return null;
+  const { window } = chosen;
   const people = resolvePeople(intent, context, options.people, options.aliases);
   const named = people.addresses.length > 0 || intent.attendees.length > 0 || intent.attendeesFromEvent;
   // "We" with no names means the people already in the scheduling assistant, every one of them.
@@ -108,7 +125,7 @@ async function slotsFor(
   const duration = intent.durationMinutes ?? context.defaultDurationMinutes;
   const count = intent.count ?? DEFAULT_SLOT_COUNT;
   const result = await searchAvailability({ addresses, window, durationMinutes: duration, count }, context, deps);
-  const notes = [...peopleNotes(people, intent), ...leftOutNote(assistant?.leftOut ?? 0), ...result.notes];
+  const notes = [...chosen.notes, ...peopleNotes(people, intent), ...leftOutNote(assistant?.leftOut ?? 0), ...result.notes];
   return { window, addresses, duration, count, slots: result.slots, notes, failed: result.failed };
 }
 
@@ -181,14 +198,16 @@ async function draftAnswer(intent: DraftEventIntent, options: ExecuteOptions): P
     startMs = instantToMs(instantOnDay(day, minute, context));
   } else if (minute !== null && intent.window) {
     // A time within a stretch of days: that exact time, on the first of those days everyone is free.
-    const window = windowFor(intent.window, DEFAULT_SEARCH, context, true);
-    if (!window) return blank("clarify", UNCLEAR_WINDOW);
+    const chosen = windowFor(intent.window, DEFAULT_SEARCH, context, true);
+    if (!chosen) return blank("clarify", UNCLEAR_WINDOW);
+    const { window } = chosen;
+    notes.unshift(...chosen.notes);
     const starts = startsAtTime(window, minute, context);
-    if (starts.length === 0) return blank("clarify", `${clockLabel(minute)} has passed on every day you named. Tell me the date.`);
+    if (starts.length === 0) return blank("clarify", `${clockLabel(minute)} has passed on every day you named. Tell me the date.`, notes);
     const lengthMs = duration * MS_PER_MINUTE;
     // The meeting must also end inside the window the owner named.
     const fitting = startsAtTime(window, minute, context, { lengthMs });
-    if (fitting.length === 0) return blank("clarify", `A ${durationLabel(duration)} meeting at ${clockLabel(minute)} would end after the days you named. Tell me the date.`);
+    if (fitting.length === 0) return blank("clarify", `A ${durationLabel(duration)} meeting at ${clockLabel(minute)} would end after the days you named. Tell me the date.`, notes);
     const found = await searchAtTime({ addresses: people.addresses, window, minuteOfDay: minute, lengthMs, count: 1 }, context, deps);
     notes.push(...found.notes);
     if (found.slots[0]) startMs = instantToMs(found.slots[0].start);
@@ -202,15 +221,23 @@ async function draftAnswer(intent: DraftEventIntent, options: ExecuteOptions): P
     const todayAt = instantToMs(instantOnDay(today, minute, context));
     startMs = todayAt > context.now ? todayAt : instantToMs(instantOnDay(addDays(today, 1), minute, context));
   } else {
-    const window = day ? resolveWindow({ type: "day", date: { type: "date", date: day } }, context, { fromNow: true }) : windowFor(intent.window, DEFAULT_SEARCH, context, true);
-    if (!window) return blank("clarify", UNCLEAR_WINDOW);
+    const chosen = day ? dayWindow(day, context) : windowFor(intent.window, DEFAULT_SEARCH, context, true);
+    if (!chosen) return blank("clarify", UNCLEAR_WINDOW);
+    const { window } = chosen;
+    notes.unshift(...chosen.notes);
     const found = await searchAvailability({ addresses: people.addresses, window, durationMinutes: duration, count: 1 }, context, deps);
     notes.push(...found.notes);
     if (found.slots[0]) startMs = instantToMs(found.slots[0].start);
     else {
-      const step = 30 * MS_PER_MINUTE;
-      startMs = day ? instantToMs(instantOnDay(day, context.workingHours.startMinute, context)) : Math.ceil(context.now / step) * step;
-      notes.push("I found no free time for everyone, so pick a time in the draft.");
+      // The fallback stays inside the window: the first working-hours start there with room for the whole meeting.
+      const fallback = startsAtTime(window, context.workingHours.startMinute, context, { lengthMs: duration * MS_PER_MINUTE })[0];
+      if (fallback === undefined) {
+        if (found.failed) return blank("error", "Could not read your calendar. Try again.", notes);
+        return blank("clarify", `I found no ${durationLabel(duration)} time when everyone is free, ${windowLabel(window, context.timeZone)}. Tell me the time you want.`, notes);
+      }
+      startMs = fallback;
+      // A failed read already says so; it is not a finding that nobody is free.
+      if (!found.failed) notes.push("I found no free time for everyone, so pick a time in the draft.");
     }
   }
 
@@ -256,16 +283,21 @@ async function rescheduleAnswer(intent: RescheduleIntent, options: ExecuteOption
   // A move keeps the event's length and guests; asking to change them is answered, not dropped.
   const keeps = intent.asksForChanges ? [`Moving "${event.title}" keeps its length and guests. Change those in the draft.`] : [];
   if (day && minute !== null) {
-    const slot = slotFrom(instantToMs(instantOnDay(day, minute, context)));
+    const startMs = instantToMs(instantOnDay(day, minute, context));
+    const slot = slotFrom(startMs);
+    // The time the event already has is not a new time.
+    if (startMs === instantToMs(event.start)) {
+      return blank("clarify", `"${event.title}" is already at ${rangeLabel(slot.start, slot.end, context.timeZone)}. Tell me the new time.`, keeps);
+    }
     return {
       kind: "reschedule", eventId: event.id, durationMinutes: duration, events: [ref], slots: [slot], notes: keeps,
       text: `Move "${event.title}" to ${rangeLabel(slot.start, slot.end, context.timeZone)}? Open the draft to check and send the update. ${NOTHING_SENT}`,
     };
   }
-  const window = day
-    ? resolveWindow({ type: "day", date: { type: "date", date: day } }, context, { fromNow: true })
-    : windowFor(intent.window, DEFAULT_SEARCH, context, true);
-  if (!window) return blank("clarify", UNCLEAR_WINDOW);
+  const chosen = day ? dayWindow(day, context) : windowFor(intent.window, DEFAULT_SEARCH, context, true);
+  if (!chosen) return blank("clarify", UNCLEAR_WINDOW);
+  const { window } = chosen;
+  const lead = [...chosen.notes, ...keeps];
   const owner = context.ownerAddress?.toLowerCase() ?? null;
   // Every guest is checked (the app reads them in batches), so "everyone is free" means everyone.
   const guests = cappedAddresses(event.attendees.map((attendee) => attendee.address.trim().toLowerCase()), owner);
@@ -281,7 +313,7 @@ async function rescheduleAnswer(intent: RescheduleIntent, options: ExecuteOption
       deps,
     );
     if (found.failed) return blank("error", "Could not read your calendar. Try again.", found.notes);
-    const notes = [...keeps, ...leftOutNote(guests.leftOut), ...found.notes];
+    const notes = [...lead, ...leftOutNote(guests.leftOut), ...found.notes];
     const text = found.slots.length === 0
       ? `No day when everyone on "${event.title}" is free at ${clock}, ${label}. Tell me the date to move it to.`
       : `${firstOf(found.slots.length, count, "time")} to move "${event.title}" (${eventLabel(ref, context.timeZone)}) to ${clock} when everyone is free. Pick one to open the draft. ${NOTHING_SENT}`;
@@ -302,7 +334,7 @@ async function rescheduleAnswer(intent: RescheduleIntent, options: ExecuteOption
   const text = found.slots.length === 0
     ? `No time when everyone on "${event.title}" is free, ${label}.`
     : `${firstOf(found.slots.length, count, "time")} to move "${event.title}" (${eventLabel(ref, context.timeZone)}) when everyone is free. Pick one to open the draft. ${NOTHING_SENT}`;
-  return { kind: "reschedule", eventId: event.id, durationMinutes: duration, events: [ref], slots: found.slots, notes: [...keeps, ...leftOutNote(guests.leftOut), ...found.notes], text };
+  return { kind: "reschedule", eventId: event.id, durationMinutes: duration, events: [ref], slots: found.slots, notes: [...lead, ...leftOutNote(guests.leftOut), ...found.notes], text };
 }
 
 /** Runs one intent. Never throws for provider failures; they become an "error" answer with a fixed sentence. */
