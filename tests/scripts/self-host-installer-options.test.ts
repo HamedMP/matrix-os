@@ -1178,3 +1178,36 @@ MATRIX_INSTALL_LOG=/dev/null MATRIX_LEGACY_BROWSER_ROOT="${join(dir, "legacy")}"
   });
 
 });
+
+// Spec 2707: connecting an installed computer to a Matrix account.
+describe("self-host installer account connection", () => {
+  it("parses --connect and both --platform-url forms alongside the other options", () => {
+    const spaced = run(`parse_args --user alice --connect --platform-url https://staging.example.com\nprintf '%s|%s|%s\\n' "$OPT_RUN_USER" "$MATRIX_CONNECT" "$MATRIX_PLATFORM_URL"`);
+    expect(spaced.status, spaced.stderr).toBe(0);
+    expect(spaced.stdout.trim()).toBe("alice|1|https://staging.example.com");
+    const joined = run(`parse_args --platform-url=https://staging.example.com:8443\nprintf '%s|%s\\n' "$MATRIX_CONNECT" "$MATRIX_PLATFORM_URL"`);
+    expect(joined.status, joined.stderr).toBe(0);
+    expect(joined.stdout.trim()).toBe("0|https://staging.example.com:8443");
+  });
+
+  it("defaults to not connecting and to the hosted platform", () => {
+    const result = run(`parse_args\nprintf '%s|%s\\n' "$MATRIX_CONNECT" "$MATRIX_PLATFORM_URL"`);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("0|https://app.matrix-os.com");
+  });
+
+  it("rejects a platform URL that is not an https origin before installing", () => {
+    for (const url of ["http://app.matrix-os.com", "https://app.matrix-os.com/path", "https://evil.example.com@x"]) {
+      const result = run(`parse_args --platform-url '${url}'\nvalidate_config`);
+      expect(result.status, url).not.toBe(0);
+      expect(result.stderr + result.stdout).toContain("--platform-url must be an https origin");
+    }
+  });
+
+  it("connects only after the services are verified and machine pairing ran", () => {
+    const source = readFileSync(script, "utf8");
+    const main = source.slice(source.indexOf("\nmain() {"));
+    expect(main.indexOf("pair_with_primary")).toBeGreaterThan(main.indexOf("verify_services"));
+    expect(main.indexOf("connect_machine")).toBeGreaterThan(main.indexOf("pair_with_primary"));
+  });
+});
