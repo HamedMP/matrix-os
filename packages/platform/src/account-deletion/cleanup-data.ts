@@ -98,11 +98,14 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string,
     const machineIds = trx.executor.selectFrom('user_machines').select('machine_id').where('clerk_user_id','=',owner);
     const pending = await trx.executor.selectFrom('provider_deletion_queue').select('id')
       .where('machine_id','in',machineIds).where('completed_at','is',null).limit(1).execute();
-    if (pending.length) throw new Error('runtime_cleanup_pending');
+    const metalPending = await trx.executor.selectFrom('metal_vm_deletions').select('id')
+      .where('machine_id','in',machineIds).where('completed_at','is',null).limit(1).execute();
+    if (pending.length || metalPending.length) throw new Error('runtime_cleanup_pending');
     if (await hasTable(trx, 'preview_pair_members')) await eraseRetiredPreviewPairBindings(trx, owner);
     await trx.executor.deleteFrom('billing_runtime_actions').where('machine_id','in',machineIds).execute();
     await trx.executor.deleteFrom('provisioning_jobs').where('machine_id','in',machineIds).execute();
     await trx.executor.deleteFrom('provider_deletion_queue').where('machine_id','in',machineIds).execute();
+    await trx.executor.deleteFrom('metal_vm_deletions').where('machine_id','in',machineIds).execute();
     await trx.executor.deleteFrom('golden_snapshot_create_intents').where('machine_id','in',machineIds).execute();
     await trx.executor.deleteFrom('golden_snapshot_leases').where('machine_id','in',machineIds).execute();
     // Maintain counts on other people's surviving content before deleting this owner's edges.

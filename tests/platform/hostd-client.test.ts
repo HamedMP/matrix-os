@@ -67,6 +67,18 @@ describe('hostd client', () => {
     expect(JSON.parse(req!.body)).toEqual({ budgetMs: 8000 });
   });
 
+  it('reads a host inventory large enough to exceed the single-VM response limit', async () => {
+    const vms = Array.from({ length: 250 }, (_, index) => ({
+      ...VM,
+      id: `vm_${index.toString(16).padStart(24, '0')}`,
+      machineId: `machine-${index}`,
+    }));
+    expect(Buffer.byteLength(JSON.stringify({ vms }))).toBeGreaterThan(HOSTD_RESPONSE_LIMIT_BYTES);
+    hostd.handle((_req, res) => json(res, 200, { vms }));
+
+    await expect(client().listVms()).resolves.toEqual(vms);
+  });
+
   it('getVm parses the public VM record', async () => {
     hostd.handle((_req, res) => json(res, 200, VM));
 
