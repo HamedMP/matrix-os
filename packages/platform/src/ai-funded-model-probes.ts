@@ -1,4 +1,6 @@
-import { MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
+import {
+  FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS, MANAGED_WORKERS_AI_MODEL_IDS,
+} from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import {
   createSharedFundedProbeCache, fundedProbeCacheKey, REVIEWED_FUNDED_HEALTH_TTL_MS,
@@ -11,7 +13,6 @@ import type { PlatformDB } from "./db.js";
 import { JevProbeRuntimeSchema, probeOwnerFundedJev, probeWithSignal, cancelProbeBody, type JevProbeRuntime, type JevProbeCredentials } from "./ai-funded-jev-probe.js";
 
 export const FUNDED_PROBE_MODELS = [...MANAGED_WORKERS_AI_MODEL_IDS, "anthropic/claude-sonnet-5"] as const;
-type FundedProbeModel = typeof FUNDED_PROBE_MODELS[number];
 const MAX_PROBE_RESPONSE_BYTES = 1_024;
 const POSITIVE_TTL_MS = 30_000;
 const NEGATIVE_TTL_MS = 5_000;
@@ -161,10 +162,13 @@ export function createFundedModelProbeService(input: {
   now?: () => Date;
   budgetDeadlineMs?: number;
   reserveProbe?: typeof reserveFundedModelProbe;
+  cloudflarePreviewEnabled?: boolean;
   credentials?: JevProbeCredentials;
   readPricingReview?: (modelId: string, signal: AbortSignal) => Promise<{ version: string; validThrough: string } | null>;
 }): FundedModelProbeService {
   const now = input.now ?? (() => new Date());
+  const ordinaryModels = new Set<string>(input.cloudflarePreviewEnabled
+    ? FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS : FUNDED_PROBE_MODELS);
   const readPricingReview = input.readPricingReview;
   const reviewed = readPricingReview !== undefined;
   const shared = createSharedFundedProbeCache({ db: input.db, now, dbDeadlineMs: input.budgetDeadlineMs, reviewed });
@@ -231,7 +235,7 @@ export function createFundedModelProbeService(input: {
         if (/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(call.receiptId ?? "")) {
           console.info(JSON.stringify({ event: "funded_readiness_join", receiptId: call.receiptId!.toLowerCase(),
             ...(entry.probeId ? { probeId: entry.probeId } : {}),
-            modelId: FUNDED_PROBE_MODELS.includes(model as FundedProbeModel) ? model : JEV_MODEL_ID, ready: result.ready }));
+            modelId: ordinaryModels.has(model) ? model : JEV_MODEL_ID, ready: result.ready }));
         }
         if (entry.waiters.size === 0 && inFlight.get(model) === entry) {
           inFlight.delete(model);
@@ -251,7 +255,7 @@ export function createFundedModelProbeService(input: {
   }
   return {
     async invalidateAfterUpstreamFailure(modelId, version, observedAt) {
-      if (!enabled || !reviewed || !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel)) return;
+      if (!enabled || !reviewed || !ordinaryModels.has(modelId)) return;
       const observedMs = observedAt.getTime();
       const currentMs = now().getTime();
       if (!Number.isSafeInteger(observedMs) || observedMs < currentMs - REVIEWED_FUNDED_HEALTH_TTL_MS
@@ -263,7 +267,7 @@ export function createFundedModelProbeService(input: {
       }
     },
     async readCached(modelId, call = {}) {
-      if (!enabled || !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel)) return unavailable();
+      if (!enabled || !ordinaryModels.has(modelId)) return unavailable();
       const deadline = Math.min(call.deadlineAtMs ?? Date.now() + 1500, Date.now() + 1500);
       if (deadline <= Date.now() || call.signal?.aborted) return unavailable();
       const signal = AbortSignal.any([...(call.signal ? [call.signal] : []), AbortSignal.timeout(deadline - Date.now())]);
@@ -278,7 +282,7 @@ export function createFundedModelProbeService(input: {
     async probe(modelId, call = {}) {
       const runtime = modelId === JEV_MODEL_ID ? JevProbeRuntimeSchema.safeParse(call.runtime).data : undefined;
       if (!enabled || (modelId === JEV_MODEL_ID ? !runtime || !input.credentials
-        : !FUNDED_PROBE_MODELS.includes(modelId as FundedProbeModel))) return unavailable();
+        : !ordinaryModels.has(modelId))) return unavailable();
       if (call.signal?.aborted || (call.deadlineAtMs !== undefined && call.deadlineAtMs <= Date.now())) return unavailable();
       const model = runtime ? JSON.stringify([JEV_MODEL_ID, runtime.identity.ownerId, runtime.identity.machineId,
         runtime.identity.runtimeSlot, runtime.globalRevision, runtime.runtimeRevision]) : modelId;

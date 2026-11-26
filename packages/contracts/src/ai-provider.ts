@@ -20,6 +20,9 @@ export const AiProviderVendorSchema = z.enum([
   "openai",
   "baseten",
   "cloudflare",
+  "google",
+  "moonshotai",
+  "alibaba",
 ]);
 
 export const AiProviderReadinessStateSchema = z.enum([

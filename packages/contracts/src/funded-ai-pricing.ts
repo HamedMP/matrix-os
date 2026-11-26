@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { ALIBABA_QWEN_37_PLUS_MODEL_ID, GOOGLE_GEMINI_38_FLASH_MODEL_ID, MOONSHOT_KIMI_K31_PRO_MODEL_ID } from "#funded-ai";
 
 /** Immutable USD/M-token rates in thousandths of a microusd/token.
  * Each version records the review date against official Workers AI pricing.
@@ -16,6 +17,7 @@ export const WORKERS_AI_PRICE_SNAPSHOTS = Object.freeze({
   "@cf/qwen/qwen3.8-27b": { prefix: "QWEN_38", version: "cloudflare-2026-10-15-qwen3.8-27b", input: 450, output: 3200, cached: 50 },
   "@cf/openai/gpt-oss-20b": { prefix: "GPT_OSS_20B", version: "cloudflare-2026-10-15-gpt-oss-20b", input: 200, output: 300, cached: 200 },
   "@cf/deepseek-ai/deepseek-v4.1-flash-1017": { prefix: "DEEPSEEK_V41_FLASH", version: "cloudflare-2026-11-12-deepseek-v4.1-flash-1017", input: 300, output: 1200, cached: 6 },
+  "@cf/thinkingmachines/inkling-2-small": { prefix: "INKLING_2_SMALL", version: "cloudflare-2026-11-25-inkling-2-small", input: 300, output: 1000, cached: 100 },
 } as const);
 export type WorkersPricingModelId = keyof typeof WORKERS_AI_PRICE_SNAPSHOTS;
 export const WORKERS_AI_PRICING_VERSIONS = Object.freeze(Object.fromEntries(
@@ -29,6 +31,39 @@ export const FUNDED_SONNET_5_PRICE = Object.freeze({
   cached: 200,
   cacheWrite5m: 2_500,
   cacheWrite1h: 4_000,
+});
+
+// The Cloudflare Chat Completions route uses implicit caching without an
+// explicit cache resource or a separate cache creation charge.
+// https://developers.cloudflare.com/ai/models/google/gemini-3.8-flash/
+export const GOOGLE_GEMINI_38_FLASH_PRICE = Object.freeze({
+  version: "cloudflare-2026-11-26-gemini-3.8-flash",
+  input: 750,
+  output: 3750,
+  cached: 75,
+  cacheWrite5m: 750,
+  cacheWrite1h: 750,
+});
+
+// Cloudflare's Moonshot route charges uncached input at the standard input rate.
+// https://developers.cloudflare.com/ai/models/moonshotai/kimi-k3.1-pro/
+export const MOONSHOT_KIMI_K31_PRO_PRICE = Object.freeze({
+  version: "cloudflare-2026-11-26-kimi-k3.1-pro",
+  input: 2000,
+  output: 10000,
+  cached: 200,
+  cacheWrite5m: 2000,
+  cacheWrite1h: 2000,
+});
+
+// https://developers.cloudflare.com/ai/models/alibaba/qwen3.7-plus/
+export const ALIBABA_QWEN_37_PLUS_PRICE = Object.freeze({
+  version: "cloudflare-2026-11-26-qwen3.7-plus",
+  input: 320,
+  output: 1280,
+  cached: 64,
+  cacheWrite5m: 320,
+  cacheWrite1h: 320,
 });
 
 type FundedRate = {
@@ -45,6 +80,9 @@ export const FUNDED_PRICING_CATALOG: Readonly<Record<string, Readonly<FundedRate
     modelId, Object.freeze({ ...rate, cacheWrite5m: rate.input, cacheWrite1h: rate.input }),
   ])),
   "anthropic/claude-sonnet-5": FUNDED_SONNET_5_PRICE,
+  [GOOGLE_GEMINI_38_FLASH_MODEL_ID]: GOOGLE_GEMINI_38_FLASH_PRICE,
+  [MOONSHOT_KIMI_K31_PRO_MODEL_ID]: MOONSHOT_KIMI_K31_PRO_PRICE,
+  [ALIBABA_QWEN_37_PLUS_MODEL_ID]: ALIBABA_QWEN_37_PLUS_PRICE,
 });
 
 export const FUNDED_PRICING_REVIEW_MAX_MS = 31 * 24 * 60 * 60_000;

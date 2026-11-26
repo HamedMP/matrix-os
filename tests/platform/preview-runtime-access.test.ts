@@ -1,4 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ALIBABA_QWEN_37_PLUS_MODEL_ID,
+  FUNDED_AI_READINESS_CATALOG,
+  FundedAiRouteReadinessReceiptSchema,
+  FundedAiRuntimeChatFundingSummaryResponseSchema,
+  GOOGLE_GEMINI_38_FLASH_MODEL_ID,
+  INKLING_2_SMALL_MODEL_ID,
+  loadFundedCloudflarePreviewBinding,
+  MOONSHOT_KIMI_K31_PRO_MODEL_ID,
+} from "@matrix-os/contracts";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { createAiFundedRuntimeRoutes } from "../../packages/platform/src/ai-funded-policy-routes.js";
 import {
@@ -397,6 +407,95 @@ describe("bounded Preview runtime access", () => {
       body: JSON.stringify({ includeChatAvailability: true }),
     });
     expect(replay.status).toBe(401);
+  });
+
+  it("rejects malformed Cloudflare Preview scope without exposing its contents", () => {
+    expect(loadFundedCloudflarePreviewBinding({})).toBeUndefined();
+    for (const value of ["{", "null", JSON.stringify(identity), JSON.stringify({
+      ...identity, runtimeSlot: "pv-2383-deadbeef", extra: "private configuration",
+    })]) {
+      expect(() => loadFundedCloudflarePreviewBinding({ MATRIX_FUNDED_AI_CLOUDFLARE_PREVIEW_BINDING: value }))
+        .toThrow(/^Cloudflare funded Preview binding is invalid$/);
+    }
+  });
+
+  it.each([
+    { provisioningClass: "private-preview", mismatch: {}, candidatesReady: true },
+    { provisioningClass: "private-preview", mismatch: undefined, candidatesReady: false },
+    { provisioningClass: "private-preview", mismatch: { ownerId: "user_other" }, candidatesReady: false },
+    { provisioningClass: "private-preview", mismatch: { machineId: "other-machine" }, candidatesReady: false },
+    { provisioningClass: "private-preview", mismatch: { runtimeSlot: "pv-2383-12345678" }, candidatesReady: false },
+    { provisioningClass: "preview", mismatch: { runtimeSlot: "pv-2383-deadbeef" }, candidatesReady: false },
+  ])("scopes candidate allocation, discovery and health to one Private Preview: %j", async ({
+    provisioningClass, mismatch, candidatesReady,
+  }) => {
+    const workerModel = "@cf/zai-org/glm-5.3";
+    const candidates = [INKLING_2_SMALL_MODEL_ID, MOONSHOT_KIMI_K31_PRO_MODEL_ID,
+      GOOGLE_GEMINI_38_FLASH_MODEL_ID, ALIBABA_QWEN_37_PLUS_MODEL_ID] as const;
+    const allowedModelIds = [workerModel, ...candidates];
+    const ordinaryModels = [modelId, workerModel];
+    const runtimeSlot = provisioningClass === "private-preview" ? "pv-2383-deadbeef" : identity.runtimeSlot;
+    const runtimeIdentity = { ...identity, runtimeSlot };
+    const cloudflareBinding = loadFundedCloudflarePreviewBinding({
+      MATRIX_FUNDED_AI_CLOUDFLARE_PREVIEW_BINDING: mismatch
+        ? JSON.stringify({ ...runtimeIdentity, ...mismatch }) : undefined,
+    });
+    await db.executor.updateTable("user_machines").set({ provisioning_class: provisioningClass,
+      handle: runtimeSlot, runtime_slot: runtimeSlot, confirmed_bundle_version: "preview-build",
+      source_pr: provisioningClass === "private-preview" ? 2383 : null })
+      .where("machine_id", "=", machineId).execute();
+    await db.executor.updateTable("ai_funded_global_policy").set({ allowed_model_ids: JSON.stringify([modelId, ...allowedModelIds]) })
+      .where("policy_id", "=", "default").execute();
+    await initializePreviewRuntimeAccess({ db, repository, config: { ...enabledConfig(), cloudflareBinding },
+      request: { ...runtimeIdentity, expectedRuntimeTokenEpoch: 1 }, now: () => new Date(clock) });
+    expect((await repository.getRuntimePolicy(runtimeIdentity))?.allowedModelIds)
+      .toEqual(candidatesReady ? allowedModelIds : ordinaryModels);
+
+    const previewRuntimeSecret = "p".repeat(32);
+    const token = buildPlatformRuntimeVerificationToken({ handle: runtimeSlot, machineId, runtimeSlot }, previewRuntimeSecret, 1);
+    const probe = vi.fn(async (_modelId: string) => ({ ready: true, checkedAt: now,
+      staleAfter: "2026-10-20T10:00:30.000Z" }));
+    const routes = createAiFundedRuntimeRoutes({ db, repository, platformSecret: "x".repeat(32),
+      previewRuntimeSecret, now: () => new Date(clock), routeProbes: { probe }, cloudflareBinding });
+    const app = new Hono().route("/:handle/ai", routes);
+    if (cloudflareBinding && !candidatesReady) {
+      for (const [route, body] of [["funded-credential", {}], ["funding-summary", { includeChatAvailability: true }],
+        ["route-readiness", {}]] as const) {
+        const denied = await app.request(`/${runtimeSlot}/ai/${route}?runtimeSlot=${runtimeSlot}`, {
+          method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json",
+            [FUNDED_AI_READINESS_CATALOG.header]: FUNDED_AI_READINESS_CATALOG.version }, body: JSON.stringify(body),
+        });
+        expect(denied.status, route).toBe(401);
+      }
+      expect(probe).not.toHaveBeenCalled();
+      return;
+    }
+    const summary = await app.request(`/${runtimeSlot}/ai/funding-summary?runtimeSlot=${runtimeSlot}`, {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ includeChatAvailability: true }),
+    });
+    expect(summary.status).toBe(200);
+    const policy = FundedAiRuntimeChatFundingSummaryResponseSchema.parse(await summary.json()).policy;
+    expect(policy.allowedModelIds).toEqual(candidatesReady ? allowedModelIds : ordinaryModels);
+    if (!candidatesReady) {
+      // An explicit but overly broad database policy must not opt another runtime into the cohort.
+      await repository.setRuntimePolicy({ identity: runtimeIdentity, expectedRevision: 1, enabled: true,
+        allowedModelIds: [modelId, ...allowedModelIds], expiresAt: "2026-10-20T11:00:00.000Z", monthlyBudgetMicrousd: 1_000 });
+      const badSummary = await app.request(`/${runtimeSlot}/ai/funding-summary?runtimeSlot=${runtimeSlot}`, {
+        method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ includeChatAvailability: true }),
+      });
+      expect(FundedAiRuntimeChatFundingSummaryResponseSchema.parse(await badSummary.json()).policy.allowedModelIds)
+        .toEqual(ordinaryModels);
+    }
+    const response = await app.request(`/${runtimeSlot}/ai/route-readiness?runtimeSlot=${runtimeSlot}`, {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json",
+        [FUNDED_AI_READINESS_CATALOG.header]: FUNDED_AI_READINESS_CATALOG.version }, body: "{}",
+    });
+    expect(response.status).toBe(200);
+    const expected = candidatesReady ? allowedModelIds : [workerModel, modelId];
+    expect(FundedAiRouteReadinessReceiptSchema.parse(await response.json()).readyModelIds).toEqual(expected);
+    expect(probe.mock.calls.map(([id]) => id)).toEqual(expected);
   });
 
   it.each([

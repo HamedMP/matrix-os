@@ -2,9 +2,81 @@ import { z } from "zod/v4";
 import { canonicalReferenceId } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { JEV_MODEL_ID, JEV_PRICING_VERSION, JevProvenanceSchema } from "#jev";
-import { LEGACY_MANAGED_WORKERS_AI_MODEL_IDS } from "#funded-workers-models";
+import { PRIVATE_PREVIEW_HANDLE_PATTERN } from "#private-preview";
+import {
+  INKLING_2_SMALL_MODEL_ID, LEGACY_MANAGED_WORKERS_AI_MODEL_IDS, isManagedWorkersAiModel, type ManagedWorkersAiModelId,
+} from "#funded-workers-models";
 export * from "#funded-ai-execution-recovery";
 export * from "#funded-workers-models";
+
+export const GOOGLE_GEMINI_38_FLASH_MODEL_ID = "google/gemini-3.8-flash" as const;
+export const GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS = 2_048;
+export const MOONSHOT_KIMI_K31_PRO_MODEL_ID = "moonshotai/kimi-k3.1-pro" as const;
+export const MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS = 2_048;
+export const ALIBABA_QWEN_37_PLUS_MODEL_ID = "alibaba/qwen3.7-plus" as const;
+export const ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS = 2_048;
+
+export type FundedThirdPartyPreviewModelId =
+  | typeof GOOGLE_GEMINI_38_FLASH_MODEL_ID
+  | typeof MOONSHOT_KIMI_K31_PRO_MODEL_ID
+  | typeof ALIBABA_QWEN_37_PLUS_MODEL_ID;
+
+export function isFundedThirdPartyPreviewModel(id: string): id is FundedThirdPartyPreviewModelId {
+  return id === GOOGLE_GEMINI_38_FLASH_MODEL_ID || id === MOONSHOT_KIMI_K31_PRO_MODEL_ID || id === ALIBABA_QWEN_37_PLUS_MODEL_ID;
+}
+
+export function isManagedFundedOpenAiModel(id: string): id is ManagedWorkersAiModelId | FundedThirdPartyPreviewModelId {
+  return isFundedThirdPartyPreviewModel(id) || isManagedWorkersAiModel(id);
+}
+
+export const FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS = [
+  INKLING_2_SMALL_MODEL_ID,
+  MOONSHOT_KIMI_K31_PRO_MODEL_ID,
+  GOOGLE_GEMINI_38_FLASH_MODEL_ID,
+  ALIBABA_QWEN_37_PLUS_MODEL_ID,
+] as const;
+
+export const FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS = [
+  "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+  "@cf/zai-org/glm-5.3",
+  "@cf/qwen/qwen3.8-27b",
+  ...FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS,
+] as const;
+
+export type FundedCloudflarePreviewModelId = typeof FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS[number];
+
+export function isFundedCloudflarePreviewModel(id: string): id is FundedCloudflarePreviewModelId {
+  return (FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS as readonly string[]).includes(id);
+}
+
+export function isFundedCloudflarePreviewCohortModel(id: string): boolean {
+  return (FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS as readonly string[]).includes(id);
+}
+
+export function loadFundedCloudflarePreviewBinding(env: Readonly<Record<string, string | undefined>>): FundedAiIdentity | undefined {
+  const raw = env.MATRIX_FUNDED_AI_CLOUDFLARE_PREVIEW_BINDING;
+  if (raw === undefined) return undefined;
+  if (raw.length > 1024) throw new Error("Cloudflare funded Preview binding is invalid");
+  let input: unknown;
+  try {
+    input = JSON.parse(raw) as unknown;
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new Error("Cloudflare funded Preview binding is invalid");
+  }
+  const binding = FundedAiIdentitySchema.safeParse(input);
+  if (!binding.success || !PRIVATE_PREVIEW_HANDLE_PATTERN.test(binding.data.runtimeSlot)) {
+    throw new Error("Cloudflare funded Preview binding is invalid");
+  }
+  return binding.data;
+}
+
+export function matchesFundedCloudflarePreviewBinding(
+  binding: FundedAiIdentity | undefined, identity: FundedAiIdentity,
+): boolean {
+  return binding !== undefined && binding.ownerId === identity.ownerId
+    && binding.machineId === identity.machineId && binding.runtimeSlot === identity.runtimeSlot;
+}
 
 export const FUNDED_AI_AUDIENCE = "matrix-funded-relay" as const;
 export const FUNDED_AI_SCOPE = "ai:invoke" as const;

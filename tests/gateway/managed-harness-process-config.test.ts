@@ -13,7 +13,9 @@ describe("managed generic harness process configuration", () => {
       expect(content).not.toContain("private-lease");
       const provider = JSON.parse(content).providers.cloudflare;
       expect(provider).toMatchObject({ api: "openai-completions", apiKey: "OPENAI_API_KEY" });
-      expect(provider.models).toHaveLength(10);
+      expect(provider.models).toContainEqual(expect.objectContaining({
+        id: "@cf/thinkingmachines/inkling-2-small", input: ["text"],
+      }));
       expect(provider.models[0]).toMatchObject({ id: "@cf/zai-org/glm-5.3-flash", input: ["text"] });
       expect(env).toMatchObject({ HOME: home, OPENAI_API_KEY: "private-lease" });
       expect(env.ANTHROPIC_API_KEY).toBeUndefined();

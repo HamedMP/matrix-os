@@ -650,3 +650,26 @@ Final broad UI and synthetic Electron fixtures exercise the combined delivered s
 - Codex API-key Connect holds one profile lease across prior native-auth capture, staged native CLI completion, replacement, fresh Settings observation, and revision-fenced enablement. A rejected Settings observation/CAS must restore exact prior auth bytes and safe original file mode, or original absence. Secrets must stay in bounded owner-only files/buffers and never enter argv, logs, Settings DTOs or exports.
 - Prior auth capture rejects symlinks, non-regular/multiply-linked files, files above 64 KiB, wrong-owner files, and group/other-accessible modes. Restoration is fenced by parent and installed-file identity; it never overwrites a concurrently changed target. Zero the bounded in-memory copy after capture.
 - A failed restoration retains both the durable marker and the single private 0700 staged recovery directory inside the hard-excluded native `.codex` directory, including its bounded owner-only prior-auth backup. Automatic expiry or cleanup must not discard that backup or unlock the profile. Explicit operator recovery must verify the native writer is drained and inspect/reconcile the exact auth identity before restoring/removing the backup and releasing its matching marker. Successful commit or proven restoration removes ordinary staged files after native-process drain.
+
+## Cloudflare-funded models in a Private Preview
+
+The configured Preview catalog includes DeepSeek V4.1 Flash, full GLM 5.3, Qwen
+3.8 27B, Inkling 2 Small, Kimi K3.1 Pro, Gemini 3.8 Flash, and Qwen 3.7 Plus.
+The four Cloudflare-hosted models use Workers AI Standard for the scoped Preview.
+Kimi, Gemini, and Qwen 3.7 Plus use the approved Cloudflare AI Gateway. They have
+a 2,048-token output ceiling. All seven require a current price review, positive
+route health, an affordable reservation, and provider usage for exact settlement.
+
+The isolated Platform and Relay bind this catalog to the same owner, machine,
+and runtime slot. Platform also checks the machine's Private Preview
+provisioning class. The existing signed runtime token authenticates funding
+summary and credential issuance. The existing Relay control token protects
+readiness. Chat requests use the scoped funded credential, and the reserve and
+settle calls use the isolated Platform ledger. There are no new routes or
+database tables.
+
+Qualification uses the exact PR host bundle and isolated Platform and Relay
+from the same commit. The owner sees seven available choices and gets real
+replies and exact debits. DeepSeek remains the first-use default, and the last
+explicit Web model selection carries into new chats. Deployment and customer
+enablement require a separate release decision.

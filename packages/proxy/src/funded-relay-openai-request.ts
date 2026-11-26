@@ -1,11 +1,18 @@
 import { z } from "zod/v4";
 import {
+  ALIBABA_QWEN_37_PLUS_MODEL_ID,
+  ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS,
   BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES,
   BOT_INFERENCE_TEXT_MAX_BYTES,
+  GOOGLE_GEMINI_38_FLASH_MODEL_ID,
+  GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS,
   MANAGED_WORKERS_AI_MODEL_IDS,
+  MOONSHOT_KIMI_K31_PRO_MODEL_ID,
+  MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS,
   managedWorkersAiModel,
   validateBotImageInferenceBody,
 } from "@matrix-os/contracts";
+import { FundedGeminiReplaySchema, restoreFundedGeminiToolSignatures } from "./funded-relay-gemini.js";
 import { BoundedJsonSchema } from "./funded-relay-request.js";
 
 const Text = z.string().max(1024 * 1024);
@@ -21,14 +28,15 @@ const ImagePart = z.object({ type: z.literal("image_url"), image_url: z.object({
 }).strict() }).strict();
 const Content = z.union([Text, z.array(TextPart).max(1024)]);
 const UserContent = z.union([Text, z.array(z.discriminatedUnion("type", [TextPart, ImagePart])).max(1024)]);
-const Message = z.discriminatedUnion("role", [
-  z.object({ role: z.enum(["system", "developer"]), content: Content }).strict(),
-  z.object({ role: z.literal("user"), content: UserContent }).strict(),
-  z.object({ role: z.literal("assistant"), content: Content.nullable().optional(),
-    reasoning_content: Text.nullable().optional(), tool_calls: z.array(ToolCall).max(256).optional(),
-  }).strict(),
-  z.object({ role: z.literal("tool"), content: Content, tool_call_id: z.string().min(1).max(256) }).strict(),
-]);
+const SystemMessage = z.object({ role: z.enum(["system", "developer"]), content: Content }).strict();
+const UserMessage = z.object({ role: z.literal("user"), content: UserContent }).strict();
+const AssistantMessage = z.object({ role: z.literal("assistant"), content: Content.nullable().optional(),
+  reasoning_content: Text.nullable().optional(), tool_calls: z.array(ToolCall).max(256).optional() }).strict();
+const ToolMessage = z.object({ role: z.literal("tool"), content: Content, tool_call_id: z.string().min(1).max(256) }).strict();
+const Message = z.discriminatedUnion("role", [SystemMessage, UserMessage, AssistantMessage, ToolMessage]);
+const GeminiMessage = z.discriminatedUnion("role", [SystemMessage, UserMessage, AssistantMessage.extend({
+  reasoning_details: z.array(FundedGeminiReplaySchema).max(256).optional(),
+}), ToolMessage]);
 const MaxTokens = z.number().int().positive().max(128_000);
 const RequestSchema = z.object({
   model: z.string().min(1).max(256), messages: z.array(Message).min(1).max(1024),
@@ -44,7 +52,7 @@ const RequestSchema = z.object({
   }).strict()]).optional(),
   parallel_tool_calls: z.boolean().optional(),
   // The selected model validates its own supported effort levels below.
-  reasoning_effort: z.enum(["none", "low", "medium", "high", "xhigh", "max"]).optional(),
+  reasoning_effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"]).optional(),
   temperature: z.number().min(0).max(2).optional(), top_p: z.number().min(0).max(1).optional(),
   frequency_penalty: z.number().min(-2).max(2).optional(), presence_penalty: z.number().min(-2).max(2).optional(),
   stop: z.union([z.string().max(1024), z.array(z.string().max(1024)).max(4)]).optional(),
@@ -55,7 +63,93 @@ const RequestSchema = z.object({
   }
 });
 
+const GeminiRequestSchema = RequestSchema.safeExtend({
+  model: z.literal(GOOGLE_GEMINI_38_FLASH_MODEL_ID),
+  messages: z.array(GeminiMessage).min(1).max(1024),
+  reasoning_effort: z.enum(["low", "medium", "high"]).optional(),
+});
+
+const KimiRequestSchema = RequestSchema.safeExtend({
+  model: z.literal(MOONSHOT_KIMI_K31_PRO_MODEL_ID),
+  reasoning_effort: z.enum(["low", "high", "max"]).optional(),
+});
+
+const ObjectToolParameters = z.looseObject({ type: z.literal("object") });
+const ObjectToolParameterUnion = z.looseObject({
+  type: z.never().optional(),
+  oneOf: z.array(ObjectToolParameters).nonempty(),
+});
+
+function previewObjectToolParameters(parameters: unknown): unknown {
+  if (ObjectToolParameters.safeParse(parameters).success) return parameters;
+  const untypedUnion = ObjectToolParameterUnion.safeParse(parameters);
+  if (!untypedUnion.success) throw new Error("Unsupported Cloudflare Preview tool parameter schema");
+  // These Cloudflare routes accept tool objects with an explicit root type. The type is
+  // already implied by every variant, so preserve the schema and annotations.
+  return { ...untypedUnion.data, type: "object" };
+}
+
+function previewObjectTools(tools: z.infer<typeof RequestSchema>["tools"]) {
+  return tools?.map(tool => ({ ...tool,
+    function: { ...tool.function, parameters: previewObjectToolParameters(tool.function.parameters) },
+  }));
+}
+
+function hasImageInput(messages: Array<z.infer<typeof Message>>): boolean {
+  return messages.some(message => message.role === "user" && Array.isArray(message.content)
+    && message.content.some(part => part.type === "image_url"));
+}
+
+function serializeKimiRequest(value: unknown) {
+  const parsed = KimiRequestSchema.parse(value);
+  const maxTokens = parsed.max_completion_tokens ?? parsed.max_tokens ?? MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS;
+  if (maxTokens > MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS || hasImageInput(parsed.messages)) {
+    throw new Error("Unsupported Kimi Preview request");
+  }
+  const { max_completion_tokens: _alternativeMax, store: _store, tools, ...rest } = parsed;
+  const request = { ...rest, reasoning_effort: parsed.reasoning_effort ?? "low", max_tokens: maxTokens,
+    ...(tools === undefined ? {} : { tools: previewObjectTools(tools) }) };
+  return { request, body: JSON.stringify({ ...request,
+    ...(parsed.stream ? { stream_options: { include_usage: true } } : {}) }) };
+}
+
+function serializeGeminiRequest(value: unknown) {
+  const parsed = GeminiRequestSchema.parse(value);
+  const maxTokens = parsed.max_completion_tokens ?? parsed.max_tokens ?? GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS;
+  if (maxTokens > GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS) throw new Error("Invalid funded Gemini output bound");
+  // The isolated transport covers text and tool calling. It does not expose media inputs.
+  if (hasImageInput(parsed.messages)) throw new Error("Unsupported funded AI image input");
+  const messages = parsed.messages.map(message => {
+    if (message.role !== "assistant") return message;
+    const { reasoning_details, reasoning_content: _reasoningContent, tool_calls, ...assistant } = message;
+    if (!tool_calls && !reasoning_details?.length) return assistant;
+    return { ...assistant, tool_calls: restoreFundedGeminiToolSignatures(tool_calls ?? [], reasoning_details ?? []) };
+  });
+  const reasoning_effort = parsed.reasoning_effort ?? "low";
+  const { max_tokens: _max, max_completion_tokens: _maxCompletion, store: _store, tools, ...rest } = parsed;
+  return { request: { ...parsed, reasoning_effort, max_tokens: maxTokens },
+    body: JSON.stringify({ ...rest, messages, tools: previewObjectTools(tools), reasoning_effort, max_completion_tokens: maxTokens,
+      ...(parsed.stream ? { stream_options: { include_usage: true } } : {}) }) };
+}
+
+function serializeQwenPlusRequest(value: unknown) {
+  const parsed = RequestSchema.parse(value);
+  const maxTokens = parsed.max_completion_tokens ?? parsed.max_tokens ?? ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS;
+  if (maxTokens > ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS || hasImageInput(parsed.messages)) {
+    throw new Error("Unsupported Qwen 3.7 Plus Preview request");
+  }
+  const { max_tokens: _max, max_completion_tokens: _maxCompletion, store: _store, ...rest } = parsed;
+  return { request: { ...rest, max_tokens: maxTokens },
+    body: JSON.stringify({ ...rest, max_completion_tokens: maxTokens,
+      ...(parsed.stream ? { stream_options: { include_usage: true } } : {}) }) };
+}
+
 export function serializeFundedOpenAiRequest(value: unknown) {
+  if (typeof value === "object" && value !== null && "model" in value) {
+    if (value.model === GOOGLE_GEMINI_38_FLASH_MODEL_ID) return serializeGeminiRequest(value);
+    if (value.model === ALIBABA_QWEN_37_PLUS_MODEL_ID) return serializeQwenPlusRequest(value);
+    if (value.model === MOONSHOT_KIMI_K31_PRO_MODEL_ID) return serializeKimiRequest(value);
+  }
   const parsed = RequestSchema.parse(value);
   const model = managedWorkersAiModel(parsed.model);
   if (!model) throw new Error("Unsupported funded AI model");
@@ -69,8 +163,7 @@ export function serializeFundedOpenAiRequest(value: unknown) {
   const { max_tokens: _max, max_completion_tokens: _maxCompletion, ...rest } = request;
   const body = JSON.stringify({ ...rest, [model.outputTokenField]: maxTokens,
     ...(parsed.stream ? { stream_options: { include_usage: true } } : {}), store: false });
-  const hasImages = parsed.messages.some(message => message.role === "user" && Array.isArray(message.content)
-    && message.content.some(part => part.type === "image_url"));
+  const hasImages = hasImageInput(parsed.messages);
   // The managed Bot validator accepts only local PNG/JPEG/WebP data URLs.
   // Match the funded Chat attachment cap before obtaining policy or credit.
   if (hasImages && (!model.vision || !validateBotImageInferenceBody(

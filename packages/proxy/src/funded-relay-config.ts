@@ -1,3 +1,15 @@
+import {
+  ALIBABA_QWEN_37_PLUS_MODEL_ID,
+  ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS,
+  GOOGLE_GEMINI_38_FLASH_MODEL_ID,
+  GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS,
+  MOONSHOT_KIMI_K31_PRO_MODEL_ID,
+  MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS,
+  isFundedCloudflarePreviewCohortModel,
+  isFundedThirdPartyPreviewModel,
+  loadFundedCloudflarePreviewBinding,
+  type FundedAiIdentity,
+} from "@matrix-os/contracts";
 import { readFundedPricingReviews, type FundedPricingReviews } from "./funded-pricing-review.js";
 
 import { readJevPricingReview, type JevPricingReview } from "./jev-pricing-review.js";
@@ -33,6 +45,7 @@ export interface FundedRelayConfig {
   jevPricingReview?: Readonly<JevPricingReview>;
   reservationMode: "cloudflare-count" | "usage";
   workersAiToken?: string;
+  cloudflarePreview?: FundedCloudflarePreview;
   platformBaseUrl: string;
   relayControlToken: string;
   metadataSecret: string;
@@ -178,11 +191,16 @@ export function resolveFundedRelayConfig(
     !== [gatewayToken, relayControlToken, metadataSecret].filter(Boolean).length) {
     throw new Error("Funded AI relay credentials must be distinct");
   }
+  const pricingRegistryEnabled = readEnabled(env.MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED, "MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED");
+  const cloudflarePreview = resolveFundedCloudflarePreview(
+    env, gatewayBaseUrl, workersAiToken, reservationMode === "usage" && pricingRegistryEnabled,
+  );
   return {
     gatewayBaseUrl,
     gatewayToken,
     pricingReviews: readFundedPricingReviews(env),
-    pricingRegistryEnabled: readEnabled(env.MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED, "MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED"),
+    pricingRegistryEnabled,
+    ...(cloudflarePreview ? { cloudflarePreview } : {}),
     jevPricingReview: readJevPricingReview(env),
     jevMaxCostMicrousd: readInteger(
       env, "MATRIX_JEV_MAX_COST_MICROUSD", DEFAULT_JEV_MAX_COST_MICROUSD, 1, 1_000_000,
@@ -237,5 +255,67 @@ export function resolveFundedRelayConfig(
     settlementTtlMs: readInteger(
       env, "MATRIX_FUNDED_AI_SETTLEMENT_TTL_MS", DEFAULT_SETTLEMENT_TTL_MS, 60_000, 30 * 60_000,
     ),
+  };
+}
+
+const GATEWAY_ID = /^[a-zA-Z0-9_-]{1,64}$/;
+const WORKERS_TOKEN = /^[A-Za-z0-9._~-]{32,4096}$/;
+const ACCOUNT_ID = /^[a-f0-9]{32}$/;
+const PREVIEW_MODELS = {
+  [GOOGLE_GEMINI_38_FLASH_MODEL_ID]: { alias: undefined, maxOutputTokens: GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS },
+  [MOONSHOT_KIMI_K31_PRO_MODEL_ID]: { alias: "kimi-k3.1-pro", maxOutputTokens: MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS },
+  [ALIBABA_QWEN_37_PLUS_MODEL_ID]: { alias: "qwen3.7-plus", maxOutputTokens: ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS },
+} as const;
+
+export interface FundedCloudflarePreview extends FundedAiIdentity {
+  accountId: string;
+  gatewayId: string;
+  token: string;
+}
+
+function resolveFundedCloudflarePreview(
+  env: NodeJS.ProcessEnv,
+  gatewayBaseUrl: string,
+  workersAiToken: string | undefined,
+  usesReviewedReservations: boolean,
+): FundedCloudflarePreview | undefined {
+  const binding = loadFundedCloudflarePreviewBinding(env);
+  const gatewayId = env.MATRIX_FUNDED_AI_CLOUDFLARE_PREVIEW_GATEWAY_ID;
+  if (!binding && gatewayId === undefined) return undefined;
+  if (!binding || !gatewayId || !GATEWAY_ID.test(gatewayId) || !workersAiToken
+    || !WORKERS_TOKEN.test(workersAiToken) || !usesReviewedReservations) {
+    throw new Error("Cloudflare Preview requires an exact binding, a Gateway ID, a Workers AI token, usage reservations, and the pricing registry");
+  }
+  // The ordinary Relay validates the official HTTPS gateway URL first.
+  const accountId = new URL(gatewayBaseUrl).pathname.split("/")[2] ?? "";
+  if (!ACCOUNT_ID.test(accountId)) throw new Error("Invalid Cloudflare Preview account");
+  return { ...binding, accountId, gatewayId, token: workersAiToken };
+}
+
+export function fundedCloudflarePreviewModel(modelId: string) {
+  return isFundedThirdPartyPreviewModel(modelId) ? PREVIEW_MODELS[modelId] : undefined;
+}
+
+export function fundedCloudflarePreviewUpstream(
+  config: FundedCloudflarePreview,
+  modelId: string,
+): { target: string; headers: Headers } {
+  if (!isFundedCloudflarePreviewCohortModel(modelId) || !ACCOUNT_ID.test(config.accountId) || !GATEWAY_ID.test(config.gatewayId)
+    || !WORKERS_TOKEN.test(config.token)) {
+    throw new Error("Invalid funded Cloudflare Preview config");
+  }
+  const usesGateway = isFundedThirdPartyPreviewModel(modelId);
+  const path = usesGateway ? "v1/chat/completions" : `run/${modelId}`;
+  return {
+    target: `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/ai/${path}`,
+    headers: new Headers({
+      authorization: `Bearer ${config.token}`,
+      "content-type": "application/json",
+      ...(usesGateway ? {
+        "cf-aig-gateway-id": config.gatewayId,
+        "cf-aig-skip-cache": "true",
+        "cf-aig-collect-log-payload": "false",
+      } : {}),
+    }),
   };
 }

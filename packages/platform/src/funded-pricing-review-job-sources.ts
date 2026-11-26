@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import { FUNDED_PRICING_CATALOG } from "@matrix-os/contracts";
+import {
+  ALIBABA_QWEN_37_PLUS_MODEL_ID, FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS, FUNDED_PRICING_CATALOG,
+  GOOGLE_GEMINI_38_FLASH_MODEL_ID,
+  MOONSHOT_KIMI_K31_PRO_MODEL_ID, isFundedCloudflarePreviewModel, isFundedThirdPartyPreviewModel,
+} from "@matrix-os/contracts";
 import { readFundedPricingReviewText } from "./funded-pricing-review-job-http.js";
 
 export const FUNDED_PRICING_SOURCE_URLS = {
@@ -10,12 +14,21 @@ export const FUNDED_PRICING_SOURCE_URLS = {
   anthropicLifecycle: "https://platform.claude.com/docs/en/about-claude/model-deprecations.md",
 } as const;
 
+const CLOUDFLARE_PREVIEW_PRICING_URLS = {
+  [GOOGLE_GEMINI_38_FLASH_MODEL_ID]: "https://developers.cloudflare.com/ai/models/google/gemini-3.8-flash/index.md",
+  [MOONSHOT_KIMI_K31_PRO_MODEL_ID]: "https://developers.cloudflare.com/ai/models/moonshotai/kimi-k3.1-pro/index.md",
+  [ALIBABA_QWEN_37_PLUS_MODEL_ID]: "https://developers.cloudflare.com/ai/models/alibaba/qwen3.7-plus/index.md",
+};
 const SONNET = "anthropic/claude-sonnet-5";
 const MAX_SOURCE_BYTES = 512 * 1024;
 const SOURCE_TIMEOUT_MS = 8_000;
 type ExpectedRates = (typeof FUNDED_PRICING_CATALOG)[string];
 type Rates = { input: number; output: number; cached?: number };
 type FullRates = Required<Rates> & { cacheWrite5m: number; cacheWrite1h: number };
+const ORDINARY_PRICING_CATALOG = Object.fromEntries(Object.entries(FUNDED_PRICING_CATALOG)
+  .filter(([id]) => !isFundedCloudflarePreviewModel(id)));
+const PREVIEW_PRICING_CATALOG = Object.fromEntries(FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS
+  .map(id => [id, FUNDED_PRICING_CATALOG[id]!]));
 
 export interface OfficialPricingObservation {
   kind: "match" | "changed" | "inconclusive";
@@ -62,8 +75,8 @@ function modelPageMatches(text: string, modelId: string): boolean {
   return ids.length === 1 && ids[0]?.[1] === modelId;
 }
 
-function cloudflareSonnet(text: string): Omit<FullRates, "cacheWrite1h"> | null {
-  if (!modelPageMatches(text, SONNET)) return null;
+function cloudflareModelPageRates(text: string, modelId: string): (Required<Rates> & { cacheWrite5m?: number }) | null {
+  if (!modelPageMatches(text, modelId)) return null;
   const value = uniqueCell(text, "Pricing");
   if (!value?.startsWith("<ul>") || !value.endsWith("</ul>")) return null;
   const rates: Partial<FullRates> = {};
@@ -79,7 +92,7 @@ function cloudflareSonnet(text: string): Omit<FullRates, "cacheWrite1h"> | null 
     rates[key] = rate;
   }
   const { input, output, cached, cacheWrite5m } = rates;
-  if (input === undefined || output === undefined || cached === undefined || cacheWrite5m === undefined) return null;
+  if (input === undefined || output === undefined || cached === undefined) return null;
   return { input, output, cached, cacheWrite5m };
 }
 
@@ -189,7 +202,8 @@ function evidenceDigest(...sources: (string | null)[]): string {
 function assessSonnet(
   expected: ExpectedRates, cloudflare: string | null, anthropic: string | null, lifecycle: string | null,
 ): OfficialPricingObservation {
-  const cfRates = cloudflare ? cloudflareSonnet(cloudflare) : null;
+  const cloudflareRates = cloudflare ? cloudflareModelPageRates(cloudflare, SONNET) : null;
+  const cfRates = cloudflareRates?.cacheWrite5m === undefined ? null : cloudflareRates;
   const vendorRates = anthropic ? anthropicSonnet(anthropic) : null;
   const status = lifecycle ? sonnetLifecycle(lifecycle) : null;
   const retiredAt = status?.retiredAt ?? null;
@@ -206,6 +220,21 @@ function assessSonnet(
     sourceUrl: FUNDED_PRICING_SOURCE_URLS.sonnet,
     ...(retiredAt ? { retirementSourceUrl: FUNDED_PRICING_SOURCE_URLS.anthropicLifecycle } : {}),
   };
+}
+
+async function assessCloudflarePreview(
+  modelId: keyof typeof CLOUDFLARE_PREVIEW_PRICING_URLS,
+  expected: ExpectedRates, fetchFn: typeof fetch, signal: AbortSignal,
+): Promise<OfficialPricingObservation> {
+  const sourceUrl = CLOUDFLARE_PREVIEW_PRICING_URLS[modelId];
+  const page = await getOfficialText(sourceUrl, fetchFn, signal);
+  const inconclusive = { kind: "inconclusive", retiredAt: null, sourceDigest: null, sourceUrl } as const;
+  if (!page || /\b(?:deprecated|retired|retirement)\b/i.test(page)) return inconclusive;
+  const rates = cloudflareModelPageRates(page, modelId);
+  if (!rates) return inconclusive;
+  const matches = matchBaseRates(rates, expected) && rates.cached === expected.cached
+    && rates.cacheWrite5m === undefined && expected.cacheWrite5m === expected.input && expected.cacheWrite1h === expected.input;
+  return { kind: matches ? "match" : "changed", retiredAt: null, sourceDigest: evidenceDigest(page), sourceUrl };
 }
 
 async function assessWorkers(options: {
@@ -246,7 +275,7 @@ export async function readOfficialFundedPricing(options: {
   signal: AbortSignal;
   catalog?: Readonly<Record<string, ExpectedRates>>;
 }): Promise<Readonly<Record<string, OfficialPricingObservation>>> {
-  const { signal, catalog = FUNDED_PRICING_CATALOG, fetchFn = fetch } = options;
+  const { signal, catalog = ORDINARY_PRICING_CATALOG, fetchFn = fetch } = options;
   const workers = Object.keys(catalog).some((model) => model.startsWith("@cf/"));
   const sonnet = Object.hasOwn(catalog, SONNET);
   const [workersPricing, changelog, sonnetPricing, anthropicPricing, anthropicLifecycle] = await Promise.all([
@@ -259,6 +288,7 @@ export async function readOfficialFundedPricing(options: {
   const retirementDates = changelog ? retirements(changelog, catalog) : null;
   const rows = await Promise.all(Object.entries(catalog).map(async ([modelId, expected]) => {
     const result = modelId === SONNET ? assessSonnet(expected, sonnetPricing, anthropicPricing, anthropicLifecycle)
+      : isFundedThirdPartyPreviewModel(modelId) ? await assessCloudflarePreview(modelId, expected, fetchFn, signal)
       : await assessWorkers({
         modelId, expected, catalog: workersPricing, changelog, retiredAt: retirementDates?.[modelId] ?? null,
         retirementsAvailable: retirementDates !== null, fetchFn, signal,
@@ -266,4 +296,10 @@ export async function readOfficialFundedPricing(options: {
     return [modelId, result] as const;
   }));
   return Object.fromEntries(rows);
+}
+
+export function readOfficialFundedPreviewPricing(
+  options: Parameters<typeof readOfficialFundedPricing>[0],
+): ReturnType<typeof readOfficialFundedPricing> {
+  return readOfficialFundedPricing({ ...options, catalog: PREVIEW_PRICING_CATALOG });
 }

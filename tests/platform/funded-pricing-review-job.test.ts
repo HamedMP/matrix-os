@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { FUNDED_PRICING_CATALOG, type FundedAiPricingReview } from "@matrix-os/contracts";
+import {
+  ALIBABA_QWEN_37_PLUS_MODEL_ID, FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS, FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS,
+  FUNDED_PRICING_CATALOG,
+  GOOGLE_GEMINI_38_FLASH_MODEL_ID, MOONSHOT_KIMI_K31_PRO_MODEL_ID, type FundedAiPricingReview,
+} from "@matrix-os/contracts";
 import {
   runFundedPricingReview,
   runFundedPricingWatchdog,
@@ -9,6 +13,7 @@ import {
 import {
   FUNDED_PRICING_SOURCE_URLS,
   readOfficialFundedPricing,
+  readOfficialFundedPreviewPricing,
   type OfficialPricingObservation,
 } from "../../packages/platform/src/funded-pricing-review-job-sources.js";
 
@@ -92,6 +97,47 @@ describe("official funded pricing verification", () => {
       catalog: { [deepseek]: FUNDED_PRICING_CATALOG[deepseek] },
     });
     expect(result[deepseek]).toMatchObject({ kind: "match", retiredAt: null });
+  });
+
+  it.each([
+    { id: GOOGLE_GEMINI_38_FLASH_MODEL_ID, input: "0.75", output: "3.75", cache: "0.075" },
+    { id: MOONSHOT_KIMI_K31_PRO_MODEL_ID, input: "2.00", output: "10.00", cache: "0.20" },
+    { id: ALIBABA_QWEN_37_PLUS_MODEL_ID, input: "0.32", output: "1.28", cache: "0.064" },
+  ])("requires exact Cloudflare route and complete rates for $id", async ({ id, input, output, cache }) => {
+    const sourceUrl = `https://developers.cloudflare.com/ai/models/${id}/index.md`;
+    const prices = `<li>Input (per 1M tokens)$${input}</li><li>Cached input (per 1M tokens)$${cache}</li><li>Output (per 1M tokens)$${output}</li>`;
+    const published = `Model ID\n\n\`${id}\` Copy\n\n| Pricing | <ul>${prices}</ul> |\n`;
+    const catalog = { [id]: FUNDED_PRICING_CATALOG[id]! };
+    const assess = (text: string) => readOfficialFundedPricing({
+      catalog, signal: new AbortController().signal,
+      fetchFn: vi.fn(async (url) => {
+        expect(url).toBe(sourceUrl);
+        return new Response(text);
+      }),
+    });
+    expect((await assess(published))[id]).toMatchObject({ kind: "match", sourceUrl, retiredAt: null });
+    expect((await assess(published.replace(`$${cache}</li>`, "$0.80</li>")))[id]?.kind).toBe("changed");
+    expect((await assess(published.replace(id, "google/wrong-route")))[id]?.kind).toBe("inconclusive");
+    expect((await assess(published.replace(`<li>Cached input (per 1M tokens)$${cache}</li>`, "")))[id]?.kind).toBe("inconclusive");
+    expect((await assess(published.replace("</ul>", `<li>Cache creation (per 1M tokens)$${input}</li></ul>`)))[id]?.kind)
+      .toBe("changed");
+    expect((await assess(`${published}\nThis model is deprecated.`))[id]?.kind).toBe("inconclusive");
+  });
+
+  it("does not fetch or consider the Cloudflare Preview models by default", async () => {
+    const fetchFn = sourceFetch();
+    const rows = await readOfficialFundedPricing({ fetchFn, signal: new AbortController().signal });
+    for (const id of FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS) {
+      expect(rows).not.toHaveProperty([id]);
+      expect(fetchFn.mock.calls.some(([url]) => String(url).includes(id))).toBe(false);
+    }
+  });
+
+  it("limits the configured Preview reviewer to its seven routes", async () => {
+    const fetchFn = sourceFetch();
+    const rows = await readOfficialFundedPreviewPricing({ fetchFn, signal: new AbortController().signal });
+    expect(Object.keys(rows)).toEqual(FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS);
+    expect(fetchFn.mock.calls.some(([url]) => String(url) === FUNDED_PRICING_SOURCE_URLS.sonnet)).toBe(false);
   });
 
   it("requires model-specific cache evidence and reads the provider retirement deadline", async () => {
