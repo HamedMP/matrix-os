@@ -598,3 +598,15 @@ describe("group bot broker fencing", () => {
       .resolves.toMatchObject({ ok: true, result: { messages: nextMessages } });
   });
 });
+
+it("keeps summary sessions ephemeral without replacing the ordinary bot session",async()=>{
+ binding={...binding,readonlySummary:true,capabilities:[],route:{...binding.route,maxOutputTokens:2048}};
+ const {actions}=setup({revalidateBinding:async()=>true});
+ const stored=createBotSessionsRepository(db);
+ await stored.save({ownerId:OWNER,botId:BOT,chatId:binding.chatId,baseRevision:0,messages:[],tokenEstimate:0,runtimeVersions:{},now:NOW});
+ const before=await stored.load({ownerId:OWNER,botId:BOT,chatId:binding.chatId});
+ expect(await actions.handleFrame(frame({action:"bot.session.load"}))).toMatchObject({ok:true,result:{revision:0,messages:[],needsRecompaction:false}});
+ expect(await actions.handleFrame(frame({action:"bot.session.save",session:{baseRevision:0,messages:[]}}))).toMatchObject({ok:true,result:{revision:1}});
+ expect(await stored.load({ownerId:OWNER,botId:BOT,chatId:binding.chatId})).toEqual(before);
+ expect(await actions.handleFrame(tool())).toMatchObject({ok:false,code:"denied"});
+});

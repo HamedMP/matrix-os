@@ -113,6 +113,7 @@ function messageText(parts: readonly { type: string; text?: string }[]): string 
 
 export function createMatrixBotChatProviderAdapter(options: {
   orchestrator: Pick<BotTaskOrchestrator, "start" | "steer" | "cancel" | "abandon">;
+  summaries?: Pick<import("../slack/mention-summary.js").SlackMentionSummaries, "prepareRun">;
   stopRuntime(runtimeHandle: string): Promise<void>;
   proposals?: Pick<import("./routine-cli-proposals.js").RoutineCliProposalRuntime, "recover">;
   routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"prepareRun"|"completeRun">;
@@ -129,11 +130,13 @@ export function createMatrixBotChatProviderAdapter(options: {
       let scheduled: Awaited<ReturnType<NonNullable<typeof options.routines>["prepareRun"]>>;
       let handle: ReturnType<typeof options.orchestrator.start>;
       try {
-        scheduled = await options.routines?.prepareRun(input);
+        const summary = await options.summaries?.prepareRun(input);
+        scheduled = summary ? undefined : await options.routines?.prepareRun(input);
         handle = options.orchestrator.start({
         ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
         selection: scheduled?.selection??input.selection, text: scheduled?.text??messageText(input.parts), parts: scheduled ? [{type:"text",text:scheduled.text}] : input.parts, signal: input.signal,
         ...(scheduled ? {backgroundTaskId:scheduled.backgroundTaskId} : {}),
+        ...(summary ? {readonlySummary: true as const} : {}),
         });
       } catch (error: unknown) {
         let finalized: BotTurnResult | void;

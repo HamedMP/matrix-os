@@ -156,7 +156,8 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     if (threadContext.receive && installed && event.type === "message" && event.channel_type === "channel"
       && !event.bot_id && !event.subtype && event.app_id === undefined && event.user !== installed.botUserId) {
       const status = await threadContext.receive({ appId, teamId, eventId, userId: event.user, channelId: event.channel,
-        threadTs: event.thread_ts, ts: event.ts, text: event.text }, body, installed, signal);
+        threadTs: event.thread_ts, ts: event.ts, text: event.text,
+        ...(Object.hasOwn(event, "blocks") ? { blocks: event.blocks } : {}) }, body, installed, signal);
       return status === 200 ? c.json({ received: true }) : fail(c, status === 409 ? "Conflicting delivery" : "Slack unavailable", status);
     }
     const relevant = event.type === "app_mention" || (event.type === "message" && event.channel_type === "im");
@@ -242,7 +243,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
   });
   app.route("/", createSlackReplyRoutes(options));
   app.route("/", createSlackReactionRoutes(options));
-  app.route("/", createSlackContextRoutes(options));
+  app.route("/", createSlackContextRoutes(options, threadContext.readPrivateThread));
   app.route("/", threadContext.routes);
   app.route("/", createSlackLinkPage(options));
   return Object.assign(app, { async shutdownSlack() { closed = true; await Promise.allSettled([...activeEvents]); } });

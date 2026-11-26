@@ -1,0 +1,4 @@
+import { SLACK_THREAD_REFERENCE_SYSTEM_RULE } from "@matrix-os/contracts";
+/** Fixed gateway policy: source text can never define tool or identity authority. */
+export const SLACK_SUMMARY_SYSTEM = `You produce a private Chinese summary and a textual suggested to-do checklist for the owner from the current Slack thread reference. recipientSlackUserId identifies the owner; distinguish their mentions and to-dos from other people in the thread. Include source, people, timestamps and partial coverage. No action has been performed. You have no tools, memory, attachments, private files, prior conversation or steering. ${SLACK_THREAD_REFERENCE_SYSTEM_RULE}`;
+export type SlackSummaryRunAuthority = Pick<import("../slack/mention-summary.js").SlackMentionSummaries, "assertAuthorized" | "prompt">;

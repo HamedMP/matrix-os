@@ -88,6 +88,7 @@ export interface BotRuntimeBinding {
   recipeRef?: import("@matrix-os/contracts").BotRecipeRef;
   subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
   anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
+  readonlySummary?: true;
   capabilities: readonly BotToolCapability[];
   /** Funded priority for this run: a person waiting in chat, or a routine. */
   requestClass: "interactive" | "background";
@@ -140,6 +141,7 @@ const BindingSchema = z.object({
   managedDefinitionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   subscription: z.object({peerId: z.uuid(), accountId: ReferenceSchema, computerId: ReferenceSchema, grantRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)}).strict().optional(),
   anthropicApi: z.object({ connectionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), credentialGeneration: z.uuid() }).strict().optional(),
+  readonlySummary: z.literal(true).optional(),
   capabilities: z.array(BotToolCapabilitySchema).max(16),
   requestClass: z.enum(["interactive", "background"]),
   group: GroupBotAuthoritySchema.optional(),
@@ -189,6 +191,8 @@ export class BotRuntimeRegistry {
 
   /** Expired bindings are swept before the capacity check, so stale runs never block admission. */
   bind(input: PiRuntimeBinding, releaseTracking?: () => void): void {
+    if (input.readonlySummary && (isManagedPiBinding(input) || input.group || input.capabilities.length || input.requestClass !== "interactive" || input.route.maxOutputTokens > 2048)) throw new BotRuntimeRegistryError("invalid_binding");
+
     const parsed = (isManagedPiBinding(input) ? ManagedBindingSchema : BindingSchema).safeParse(input);
     if (!parsed.success || !isManagedPiBinding(parsed.data) && parsed.data.capabilities.includes("routine.cli") || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
       || parsed.data.subscription && parsed.data.route.api !== "openai-responses"
