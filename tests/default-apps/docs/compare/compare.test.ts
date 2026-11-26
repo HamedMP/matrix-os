@@ -115,6 +115,28 @@ describe("docs compare", () => {
     expect(session.requireDocument()).toBe(reopened);
   });
 
+  it("drops the result when the open document is edited while the comparison runs, keeping the edit", async () => {
+    const { session, files } = await contractSession({});
+    const original = session.requireDocument();
+    const first = original.getView().body.blocks[0]!.id;
+    const pending = compareWithBytes({ session, now: NOW }, fixture("contract-v2.docx"), "contract-v2.docx");
+    session.apply([{ type: "insertText", at: { blockId: first, offset: 0 }, text: "Late " }]);
+    expect(await pending).toEqual({ status: "failed", reason: "document_edited", message: "The document changed while comparing. Compare again." });
+    // Nothing was saved on the owner's behalf and the edited document is still the open one.
+    expect(session.requireDocument()).toBe(original);
+    expect(original.getPlainText({ view: "final" }).startsWith("Late ")).toBe(true);
+    expect(files.writes).toEqual([]);
+  });
+
+  it("drops the result when the document was edited after the panel took its mark", async () => {
+    const { session } = await contractSession({});
+    const documentKey = session.getState().documentKey;
+    const editMark = session.editMark();
+    // The panel reads a device file first; an edit made meanwhile is not in the comparison it would show.
+    session.apply([{ type: "insertText", at: { blockId: session.requireDocument().getView().body.blocks[0]!.id, offset: 0 }, text: "x" }]);
+    expect(await compareWithBytes({ session, now: NOW, documentKey, editMark }, fixture("contract-v2.docx"), "contract-v2.docx")).toMatchObject({ status: "failed", reason: "document_edited" });
+  });
+
   it("names the comparison after both files", () => {
     expect(comparisonName("contract.docx", "contract-v2.docx")).toBe("contract compared with contract-v2.docx");
   });

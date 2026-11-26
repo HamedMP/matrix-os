@@ -90,6 +90,49 @@ describe("<ComparePanel>", () => {
     expect(session.getState().revisionCount).toBeGreaterThan(0);
   });
 
+  it("refuses a device file over the size limit, chosen or dropped, without reading it", async () => {
+    const { session } = await contractSession();
+    render(<ComparePanel session={session} editor={null} />);
+    const huge = (): File => {
+      const file = new File(["small"], "huge.docx");
+      Object.defineProperty(file, "size", { value: 10 * 1024 * 1024 + 1 });
+      Object.defineProperty(file, "arrayBuffer", { value: vi.fn(() => Promise.reject(new Error("read"))) });
+      return file;
+    };
+    const chosen = huge();
+    fireEvent.change(screen.getByLabelText("Word document to compare with"), { target: { files: [chosen] } });
+    await until(() => (screen.queryByRole("alert")?.textContent ?? "").includes("That file is too large to compare."));
+    expect(chosen.arrayBuffer).not.toHaveBeenCalled();
+    const dropped = huge();
+    const panel = screen.getByRole("region", { name: "Choose the other version" }).parentElement!;
+    fireEvent.drop(panel, { dataTransfer: { types: ["Files"], files: [dropped] } });
+    await settle();
+    expect(dropped.arrayBuffer).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toContain("That file is too large to compare.");
+    expect(session.getState().revisionCount).toBe(0);
+  });
+
+  it("drops a comparison when the document is edited while the device file is read", async () => {
+    const { session } = await contractSession();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    render(<ComparePanel session={session} editor={null} />);
+    const original = session.requireDocument();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const file = new File([fixture("contract-v2.docx")], "contract-v2.docx");
+    const bytes = await file.arrayBuffer();
+    Object.defineProperty(file, "arrayBuffer", { value: async () => (await gate, bytes) });
+    fireEvent.change(screen.getByLabelText("Word document to compare with"), { target: { files: [file] } });
+    act(() => {
+      session.apply([{ type: "insertText", at: { blockId: original.getView().body.blocks[0]!.id, offset: 0 }, text: "Late " }]);
+    });
+    release();
+    await until(() => screen.queryByRole("alert") !== null);
+    expect(screen.getByRole("alert").textContent).toContain("The document changed while comparing. Compare again.");
+    expect(session.requireDocument()).toBe(original);
+    warn.mockRestore();
+  });
+
   it("explains a file that cannot be compared", async () => {
     const { session } = await contractSession();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);

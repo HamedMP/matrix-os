@@ -143,6 +143,15 @@ export class DocumentSession {
   }
 
   /**
+   * Names the content of the active document right now: every edit, undo and
+   * redo moves it, and it is the same again only for the same content. Compare
+   * it together with `documentKey` to tell whether the document changed.
+   */
+  editMark(): number {
+    return this.history.current;
+  }
+
+  /**
    * Registers where the owner's selection is. The session carries it through
    * edits made by others (`DocumentChange.selection`) and stores it with undo
    * steps. Pass null to unregister.

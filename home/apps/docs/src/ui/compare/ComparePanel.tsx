@@ -10,7 +10,7 @@ import { useRef, useState, useSyncExternalStore } from "react";
 import type { DragEvent } from "react";
 import type { MatrixOSFiles } from "../../../../_shared/matrix-os";
 import { Badge, EmptyState, Spinner } from "../../../../_shared/office-ui";
-import { compareWithBytes, compareWithFile } from "../../compare/index";
+import { MAX_COMPARE_BYTES, compareWithBytes, compareWithFile } from "../../compare/index";
 import type { CompareFlowResult } from "../../compare/index";
 import type { DocumentEditorController, ViewMode } from "../../editor/index";
 import type { DocumentSession } from "../../session/index";
@@ -73,14 +73,16 @@ export function ComparePanel({ session, editor, pickDocument, files, setViewMode
     }
   };
 
-  // Each flow takes the open document's key before its first slow step, so a result for a document
-  // the owner has since left is dropped instead of replacing the one now open.
+  // Each flow takes the open document's key and edit mark before its first slow step, so a result
+  // for a document the owner has since left or edited is dropped instead of replacing the one now open.
+  const mark = () => ({ documentKey: session.getState().documentKey, editMark: session.editMark() });
+
   const chooseFromFiles = async () => {
     if (pickDocument === undefined) return;
-    const documentKey = session.getState().documentKey;
+    const taken = mark();
     const path = await pickDocument({ title: "Compare with another version" });
     if (path === null) return;
-    await run(() => compareWithFile({ session, documentKey, files: files ?? bridgeFiles(), log }, path));
+    await run(() => compareWithFile({ session, ...taken, files: files ?? bridgeFiles(), log }, path));
   };
 
   const compareFile = async (file: File | undefined) => {
@@ -89,8 +91,13 @@ export function ComparePanel({ session, editor, pickDocument, files, setViewMode
       setState({ status: "error", message: "Choose a Word document (.docx).", documentKey: session.getState().documentKey });
       return;
     }
-    const documentKey = session.getState().documentKey;
-    await run(async () => compareWithBytes({ session, documentKey, log }, new Uint8Array(await file.arrayBuffer()), file.name));
+    // Refused before its bytes are read: reading a very large file could stall the app on its own.
+    if (file.size > MAX_COMPARE_BYTES) {
+      setState({ status: "error", message: "That file is too large to compare.", documentKey: session.getState().documentKey });
+      return;
+    }
+    const taken = mark();
+    await run(async () => compareWithBytes({ session, ...taken, log }, new Uint8Array(await file.arrayBuffer()), file.name));
   };
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {

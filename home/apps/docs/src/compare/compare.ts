@@ -36,7 +36,7 @@ export interface KindCount {
   count: number;
 }
 
-export type CompareFailure = "no_document" | "not_found" | "too_large" | "unreadable" | "unavailable" | "blocked" | "document_changed";
+export type CompareFailure = "no_document" | "not_found" | "too_large" | "unreadable" | "unavailable" | "blocked" | "document_changed" | "document_edited";
 
 export type CompareFlowResult =
   /** `documentKey`: the session key of the comparison document the flow opened. */
@@ -51,6 +51,7 @@ const FAILURE_MESSAGES: Record<CompareFailure, string> = {
   unavailable: "The comparison could not be made. Try again.",
   blocked: "Save or discard the changes to the open document before comparing.",
   document_changed: "Another document was opened while comparing. Compare again.",
+  document_edited: "The document changed while comparing. Compare again.",
 };
 
 function fail(reason: CompareFailure): CompareFlowResult {
@@ -107,6 +108,12 @@ export interface CompareDeps {
    * flow starts. The result is dropped when another document is open by then.
    */
   documentKey?: number;
+  /**
+   * `session.editMark()` taken with `documentKey`. Default: the mark when the
+   * flow starts. The result is dropped when the document was edited by then,
+   * since the comparison would not include that edit.
+   */
+  editMark?: number;
   files?: Pick<MatrixOSFiles, "read">;
   now?: () => Date;
   log?: (message: string, error: unknown) => void;
@@ -117,6 +124,7 @@ export async function compareWithFile(deps: CompareDeps, path: string): Promise<
   if (deps.session.document === null) return fail("no_document");
   if (deps.files === undefined) return fail("unavailable");
   const documentKey = deps.documentKey ?? deps.session.getState().documentKey;
+  const editMark = deps.editMark ?? deps.session.editMark();
   let bytes: Uint8Array;
   try {
     const content = await deps.files.read(path);
@@ -126,7 +134,7 @@ export async function compareWithFile(deps: CompareDeps, path: string): Promise<
     const code = (error as { name?: string; code?: string } | null)?.name === "BridgeFileError" ? (error as { code?: string }).code : null;
     return fail(code === "not_found" ? "not_found" : code === "too_large" ? "too_large" : "unavailable");
   }
-  return compareWithBytes({ ...deps, documentKey }, bytes, fileName(path));
+  return compareWithBytes({ ...deps, documentKey, editMark }, bytes, fileName(path));
 }
 
 function logDefault(message: string, detail: unknown): void {
@@ -137,8 +145,12 @@ function logDefault(message: string, detail: unknown): void {
 export async function compareWithBytes(deps: CompareDeps, bytes: Uint8Array, otherName: string): Promise<CompareFlowResult> {
   const { session } = deps;
   const documentKey = deps.documentKey ?? session.getState().documentKey;
+  const editMark = deps.editMark ?? session.editMark();
   const changed = () => session.getState().documentKey !== documentKey;
+  // Checked after a document switch: another document's mark says nothing about this one.
+  const edited = () => session.editMark() !== editMark;
   if (changed()) return fail("document_changed");
+  if (edited()) return fail("document_edited");
   const original = session.document;
   if (original === null) return fail("no_document");
   if (bytes.byteLength > MAX_COMPARE_BYTES) return fail("too_large");
@@ -154,8 +166,10 @@ export async function compareWithBytes(deps: CompareDeps, bytes: Uint8Array, oth
     }
     return fail("unavailable");
   }
-  // The owner may have opened or closed a document while the engine worked.
+  // The owner may have opened or closed a document, or edited this one, while the engine worked.
+  // Opening the comparison would save that edit to the original file without it being compared.
   if (changed()) return fail("document_changed");
+  if (edited()) return fail("document_edited");
   const name = comparisonName(session.getState().name, otherName);
   let opened: OpenResult;
   try {
