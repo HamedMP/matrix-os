@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryPersistence } from "../../../../home/apps/calendar/src/model/preferences";
 import { createCalendarStore } from "../../../../home/apps/calendar/src/model/store";
-import { agentContext, createStoreAgentDeps } from "../../../../home/apps/calendar/src/ui/agent/store-bridge";
+import { agentContext, createStoreAgentDeps, openRescheduleDraft } from "../../../../home/apps/calendar/src/ui/agent/store-bridge";
 import { calendarInfo, FakeCalendarProvider } from "../model/fake-provider";
 import { event } from "../model/fixtures";
 
@@ -69,6 +69,17 @@ describe("calendar agent store bridge", () => {
     expect(provider.callsTo("getFreeBusy")).toHaveLength(1);
     expect(store.getSnapshot().assistant.attendees).toEqual([]);
     expect(store.getSnapshot().assistant.overlays).toEqual({});
+  });
+
+  // Outcome: the reschedule draft keeps the event's length, whatever slot it is moved to.
+  // Fault: the draft takes both times from the slot, so a slot of another length shortens or stretches the meeting.
+  it("moves the event to the slot's start and keeps its own length", async () => {
+    const { store } = await setup("week");
+    expect(openRescheduleDraft(store, "family/sunday", { id: "slot", start: "2026-12-01T09:00:00-05:00", end: "2026-12-01T10:00:00-05:00" })).toBe(true);
+    const draft = store.getSnapshot().draft?.draft;
+    expect(draft && Date.parse(draft.start)).toBe(Date.parse("2026-12-01T14:00:00Z"));
+    // Sunday hike lasts six hours.
+    expect(draft && Date.parse(draft.end) - Date.parse(draft.start)).toBe(6 * 3_600_000);
   });
 
   it("treats an empty account address as unknown, not as the owner's address", async () => {

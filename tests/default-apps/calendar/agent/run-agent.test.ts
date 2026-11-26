@@ -178,6 +178,38 @@ describe("calendar agent: write requests only ever yield drafts or proposals", (
     expect(provider.callsTo("getFreeBusy")[0].args[0]).toEqual(["sam@example.com"]);
   });
 
+  // Outcome: moving an event keeps its length, however long or short it is.
+  // Fault: the length is clamped to 5 minutes..24 hours, so a two-day event becomes a one-day draft.
+  it("keeps a two-day or a three-minute event's exact length when moving it to a named time", async () => {
+    for (const [title, start, end] of [
+      ["Offsite", "2026-11-25T14:00:00Z", "2026-11-27T14:00:00Z"],
+      ["Quick check", "2026-11-25T14:00:00Z", "2026-11-25T14:03:00Z"],
+    ] as const) {
+      const { deps, context, provider } = setup((prompt) => JSON.stringify({
+        intent: "reschedule", event: aliasFor(prompt, title), date: { type: "date", date: "2026-12-01" }, time: "09:00",
+      }));
+      provider.events.push(event({ id: `work/${title}`, calendarId: "work", title, start, end }));
+      const answer = await runCalendarAgent(`move ${title} to 1 December at 9`, { ...context, events: provider.events }, deps);
+      expect(answer.kind).toBe("reschedule");
+      if (answer.kind !== "reschedule") return;
+      const [slot] = answer.slots;
+      expect(slot.start).toBe("2026-12-01T09:00:00-05:00");
+      expect(instantToMs(slot.end) - instantToMs(slot.start)).toBe(instantToMs(end) - instantToMs(start));
+      expect(answer.durationMinutes).toBe((instantToMs(end) - instantToMs(start)) / 60_000);
+    }
+  });
+
+  // Outcome: the agent says why it cannot search free time for an event longer than the working day, and changes nothing.
+  // Fault: the search runs with a shortened length, or reports that nobody is free.
+  it("explains that it cannot search free time for an event longer than the working day", async () => {
+    const { deps, context, provider } = setup((prompt) => JSON.stringify({ intent: "reschedule", event: aliasFor(prompt, "Offsite") }));
+    provider.events.push(event({ id: "work/offsite", calendarId: "work", title: "Offsite", start: "2026-11-25T14:00:00Z", end: "2026-11-27T14:00:00Z" }));
+    const answer = await runCalendarAgent("find another time for the offsite", { ...context, events: provider.events }, deps);
+    expect(answer).toMatchObject({ kind: "clarify", slots: [] });
+    expect(answer.text).toBe("\"Offsite\" lasts 48 hours, longer than your working hours, so I cannot look for a free time for it. Tell me the date and time to move it to.");
+    expect(provider.callsTo("getFreeBusy")).toEqual([]);
+  });
+
   it("places proposals from the agent source on the calendar's default writable calendar", async () => {
     const { deps, context } = setup(JSON.stringify({ intent: "propose_times", title: "Kickoff", attendees: ["Bo Chen"], durationMinutes: 60, count: 2 }));
     const answer = await runCalendarAgent("propose two times for a kickoff with Bo", context, deps);

@@ -97,11 +97,14 @@ export function openAgentDraft(store: CalendarStore, draft: EventDraft): boolean
   return true;
 }
 
-/** Opens the event's edit draft moved to `slot`. Saving it is the owner's click. */
+/** Opens the event's edit draft moved to start at `slot`, keeping the event's own length. Saving it is the owner's click. */
 export function openRescheduleDraft(store: CalendarStore, eventId: string, slot: SlotRef): boolean {
   if (!store.openEditDraft(eventId)) return false;
-  const zone = store.getSnapshot().draft?.draft.timeZone || store.getSnapshot().timeZone;
-  store.setDraftTimes(wall(slot.start, zone), wall(slot.end, zone), zone);
+  const opened = store.getSnapshot().draft?.draft;
+  const zone = opened?.timeZone || store.getSnapshot().timeZone;
+  const startMs = instantToMs(slot.start);
+  const lengthMs = opened ? Math.max(0, instantToMs(opened.end) - instantToMs(opened.start)) : instantToMs(slot.end) - startMs;
+  store.setDraftTimes(wall(slot.start, zone), wall(new Date(startMs + lengthMs).toISOString(), zone), zone);
   return true;
 }
 

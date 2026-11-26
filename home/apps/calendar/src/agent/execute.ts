@@ -17,7 +17,7 @@ import { MS_PER_MINUTE, addDays, compareDayKeys, dayKeyAt, zonedInstant } from "
 import { parseProposals } from "../model/proposals";
 import { NO_CALENDAR_MESSAGE, defaultCalendar } from "../model/store-schedule";
 import { resolvePeople, searchAvailability } from "./availability";
-import { durationLabel, eventLabel, eventRef, minutesBetween, plural, rangeLabel, slotRef, windowLabel } from "./describe";
+import { durationLabel, eventLabel, eventRef, plural, rangeLabel, slotRef, windowLabel } from "./describe";
 import type { PeopleEntry } from "./prompt";
 import { endOfDayInstant, instantOnDay, parseWallTime, resolveDateRef, resolveWindow, todayKey } from "./relative-dates";
 import type {
@@ -208,13 +208,15 @@ async function rescheduleAnswer(intent: RescheduleIntent, options: ExecuteOption
   if (!context.calendars.some((calendar) => calendar.id === event.calendarId && calendar.writable)) {
     return blank("error", "That event is on a calendar you cannot change.");
   }
-  const duration = Math.max(5, Math.min(1440, minutesBetween(event.start, event.end)));
+  // The move keeps the event's exact length; every slot offered is that long.
+  const lengthMs = Math.max(0, instantToMs(event.end) - instantToMs(event.start));
+  const duration = lengthMs / MS_PER_MINUTE;
+  const slotFrom = (startMs: number) => slotRef(zonedInstant(startMs, context.timeZone), zonedInstant(startMs + lengthMs, context.timeZone));
   const ref = eventRef(event);
   const day = intent.date ? resolveDateRef(intent.date, context) : null;
   const minute = parseWallTime(intent.time);
   if (day && minute !== null) {
-    const startMs = instantToMs(instantOnDay(day, minute, context));
-    const slot = slotRef(zonedInstant(startMs, context.timeZone), zonedInstant(startMs + duration * MS_PER_MINUTE, context.timeZone));
+    const slot = slotFrom(instantToMs(instantOnDay(day, minute, context)));
     return {
       kind: "reschedule", eventId: event.id, durationMinutes: duration, events: [ref], slots: [slot], notes: [],
       text: `Move "${event.title}" to ${rangeLabel(slot.start, slot.end, context.timeZone)}? Open the draft to check and send the update. ${NOTHING_SENT}`,
@@ -224,13 +226,21 @@ async function rescheduleAnswer(intent: RescheduleIntent, options: ExecuteOption
     ? resolveWindow({ type: "day", date: { type: "date", date: day } }, context, { fromNow: true })
     : windowFor(intent.window, DEFAULT_SEARCH, context, true);
   if (!window) return blank("clarify", UNCLEAR_WINDOW);
+  // Free time is searched inside working hours, whole minutes at a time; a longer event cannot fit, so the owner names the time.
+  const searchMinutes = Math.max(1, Math.ceil(duration));
+  if (searchMinutes > context.workingHours.endMinute - context.workingHours.startMinute) {
+    return blank("clarify", `"${event.title}" lasts ${durationLabel(searchMinutes)}, longer than your working hours, so I cannot look for a free time for it. Tell me the date and time to move it to.`);
+  }
   const owner = context.ownerAddress?.toLowerCase() ?? null;
   const addresses = [...new Set(event.attendees.map((attendee) => attendee.address.trim().toLowerCase()))].filter((address) => address !== owner).slice(0, 20);
   const count = intent.count ?? 3;
-  const found = await searchAvailability({ addresses, window, durationMinutes: duration, count: count + 1, excludeEventId: event.id }, context, deps);
+  const found = await searchAvailability({ addresses, window, durationMinutes: searchMinutes, count: count + 1, excludeEventId: event.id }, context, deps);
   if (found.failed) return blank("error", "Could not read your calendar. Try again.", found.notes);
-  // The event's current time is not a new time.
-  found.slots = found.slots.filter((slot) => instantToMs(slot.start) !== instantToMs(event.start)).slice(0, count);
+  // The event's current time is not a new time. A free slot of the rounded-up length holds the exact one.
+  found.slots = found.slots
+    .filter((slot) => instantToMs(slot.start) !== instantToMs(event.start))
+    .slice(0, count)
+    .map((slot) => slotFrom(instantToMs(slot.start)));
   const text = found.slots.length === 0
     ? `No time when everyone on "${event.title}" is free, ${windowLabel(window, context.timeZone)}.`
     : `${plural(found.slots.length, "time")} to move "${event.title}" (${eventLabel(ref, context.timeZone)}) when everyone is free. Pick one to open the draft. ${NOTHING_SENT}`;

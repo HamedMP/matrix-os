@@ -3,7 +3,7 @@
  * structured result (never copied from the model's reply).
  */
 import { allDayDate, instantToMs, type CalendarEvent, type IsoInstant } from "../../../_shared/office-accounts/types/calendar";
-import { MS_PER_MINUTE, dayKeyAt, diffDays } from "../model/dates";
+import { dayKeyAt, diffDays } from "../model/dates";
 import type { EventRef, ResolvedWindow, SlotRef } from "./types";
 
 function format(timeZone: string, options: Intl.DateTimeFormatOptions, ms: number): string {
@@ -53,10 +53,6 @@ export function durationLabel(minutes: number): string {
   if (minutes % 60 === 0) return minutes === 60 ? "1 hour" : `${minutes / 60} hours`;
   if (minutes > 60) return `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
   return `${minutes} min`;
-}
-
-export function minutesBetween(start: IsoInstant, end: IsoInstant): number {
-  return Math.round((instantToMs(end) - instantToMs(start)) / MS_PER_MINUTE);
 }
 
 export function eventRef(event: CalendarEvent): EventRef {
