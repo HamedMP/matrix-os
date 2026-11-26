@@ -32,7 +32,7 @@ export type TerminalServerMessage =
   | (TerminalMessageIdentity & { type: "pong" })
   | (TerminalMessageIdentity & { type: "exit"; code: number | null })
   | { type: "lease-revoked"; sessionId: string; epoch: number | null }
-  | { type: "error"; message: string; sessionId?: string };
+  | { type: "error"; message: string; code?: string; sessionId?: string };
 
 export interface TerminalCanonicalSize {
   cols: number;
@@ -59,6 +59,7 @@ export function parseTerminalServerMessage(raw: string): TerminalServerMessage |
     return {
       type: "error",
       message: msg.type === "error" ? msg.message : msg.error.safeMessage,
+      ...(msg.type === "error" ? { code: msg.code } : {}),
       ...(msg.terminalRef ? { sessionId: terminalRefKey(msg.terminalRef) } : {}),
     };
   }

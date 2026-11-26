@@ -58,7 +58,7 @@ function corsSession() {
 }
 
 type BeforeSendHeadersListener = (
-  details: { url: string; requestHeaders: Record<string, string> },
+  details: { url: string; method?: string; requestHeaders: Record<string, string> },
   callback: (response: { requestHeaders: Record<string, string> }) => void,
 ) => void;
 
@@ -74,9 +74,9 @@ function headerSession() {
   };
   return {
     session,
-    fire(url: string, requestHeaders: Record<string, string> = {}) {
+    fire(url: string, requestHeaders: Record<string, string> = {}, method = "GET") {
       const cb = vi.fn();
-      listener?.({ url, requestHeaders }, cb);
+      listener?.({ url, method, requestHeaders }, cb);
       return cb.mock.calls[0]?.[0]?.requestHeaders ?? {};
     },
   };
@@ -203,6 +203,54 @@ describe("installHeaderInjection", () => {
       Authorization: "Bearer matrix-token",
       Referer: "https://app.matrix-os.com/",
     });
+  });
+});
+
+describe("gateway WebSocket Origin", () => {
+  // A private self-hosted gateway refuses browser WebSocket upgrades from an
+  // Origin other than its own shell. The packaged renderer is a file:// page
+  // (Origin "null", which a sandboxed frame on any site can also send) and the
+  // dev renderer is on localhost, so the trusted core names the gateway itself.
+  it("sends the gateway's own origin on renderer WebSockets to the active gateway", () => {
+    const tailnet = "https://matrix.example-tailnet.ts.net";
+    for (const rendererOrigin of ["null", "http://localhost:5173"]) {
+      const { session, fire } = headerSession();
+      installHeaderInjection(session, () => "matrix-token", () => tailnet, rendererOrigin);
+      expect(fire(`wss://matrix.example-tailnet.ts.net/ws/terminal/herdr?id=t1`, { Origin: rendererOrigin })).toEqual({
+        Authorization: "Bearer matrix-token",
+        Origin: tailnet,
+      });
+      expect(fire("ws://matrix.example-tailnet.ts.net:80/ws/terminal/tab", { origin: "null" }).Origin).toBeUndefined();
+    }
+    const plain = headerSession();
+    installHeaderInjection(plain.session, () => null, () => "http://matrix.example-tailnet.ts.net", "null");
+    const headers = plain.fire("ws://matrix.example-tailnet.ts.net/ws/terminal/tab", { origin: "null" });
+    expect(headers).toEqual({ Origin: "http://matrix.example-tailnet.ts.net" });
+  });
+
+  // Review P1 (Greptile, #3530 at bed14b4e4e): the gateway also refuses
+  // state-changing HTTP requests from a foreign browser Origin, so the packaged
+  // renderer's writes (Origin "null") were refused on private self-hosted computers.
+  it("sends the gateway's own origin on renderer writes to the active gateway", () => {
+    const tailnet = "https://matrix.example-tailnet.ts.net";
+    const { session, fire } = headerSession();
+    installHeaderInjection(session, () => "matrix-token", () => tailnet, "null");
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      expect(fire(`${tailnet}/api/terminal/herdr/sessions/t1`, { Origin: "null" }, method), method).toEqual({
+        Authorization: "Bearer matrix-token",
+        Origin: tailnet,
+      });
+    }
+  });
+
+  it("leaves reads and other hosts' requests with the renderer's own Origin", () => {
+    const { session, fire } = headerSession();
+    installHeaderInjection(session, () => null, () => GATEWAY, "null");
+    for (const method of ["GET", "HEAD", "OPTIONS"]) {
+      expect(fire(`${GATEWAY}/api/apps`, { Origin: "null" }, method).Origin, method).toBe("null");
+    }
+    expect(fire("wss://evil.example/ws", { Origin: "null" }).Origin).toBe("null");
+    expect(fire("https://evil.example/api/apps", { Origin: "null" }, "POST").Origin).toBe("null");
   });
 });
 

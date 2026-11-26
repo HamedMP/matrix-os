@@ -6,8 +6,13 @@ import { TerminalTabIdSchema, TerminalWorkspaceIdSchema } from "@matrix-os/contr
 import { AppError } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
+import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminals";
+import { closeHerdrSession, herdrSessionRefKey, loadHerdrSessions, shouldShowHerdrSessions } from "@matrix-os/ui/herdr-sessions";
+import { herdrSessionsRequest } from "../terminal/herdr-desktop-session";
 
 const MAX_TABS_SHOWN = 200;
+// Herdr sessions have their own budget so Matrix tab history cannot hide the group.
+const MAX_HERDR_SESSIONS_SHOWN = 100;
 
 // Only the fields the sidebar shows are read; the gateway owns the full shape.
 const ListingSchema = z.object({
@@ -74,13 +79,26 @@ export function terminalsFailure(error: unknown): ComputerTerminalsFailure {
 }
 
 export async function listComputerTabs(api: ApiClient): Promise<ComputerTerminalTab[]> {
-  const listing = ListingSchema.parse(await api.get("/api/terminal/workspaces"));
-  return listing.workspaces.flatMap((workspace) => workspace.tabs.map((tab) => ({
+  const [listed, herdr] = await Promise.all([
+    api.get("/api/terminal/workspaces"),
+    // The computer's own Herdr sessions through its gateway (spec 2701); a
+    // gateway without the adapter lists none, and the SSH path still applies.
+    loadHerdrSessions(herdrSessionsRequest(api)).catch((error: unknown) => {
+      console.warn("[terminal-window] Herdr sessions unavailable:", error instanceof Error ? error.name : "unknown");
+      return null;
+    }),
+  ]);
+  const listing = ListingSchema.parse(listed);
+  const tabs = listing.workspaces.flatMap((workspace) => workspace.tabs.map((tab) => ({
     refKey: terminalRefKey({ workspaceId: workspace.id, tabId: tab.id }),
     name: tab.name,
     group: workspace.scope === "project" ? workspace.projectId ?? "project" : "main",
     ended: tab.status === "exited" || tab.status === "failed",
-  }))).slice(0, MAX_TABS_SHOWN);
+  })));
+  const herdrTabs = shouldShowHerdrSessions(herdr) ? herdr!.sessions.slice(0, MAX_HERDR_SESSIONS_SHOWN).map((session) => ({
+    refKey: herdrSessionRefKey(session), name: session.title, group: "herdr", ended: false,
+  })) : [];
+  return [...tabs.slice(0, MAX_TABS_SHOWN), ...herdrTabs];
 }
 
 /**
@@ -88,10 +106,12 @@ export async function listComputerTabs(api: ApiClient): Promise<ComputerTerminal
  * workspace, or beside another tab (its workspace and folder) for a split.
  */
 export async function createComputerTab(api: ApiClient, name: string, beside?: { workspaceId: string; cwd: string }): Promise<string> {
-  const workspaceId = beside?.workspaceId
+  // A Herdr terminal's workspace is herdr-core's, not Matrix's: a split beside one opens in `main`.
+  const near = beside?.workspaceId === HERDR_TERMINAL_WORKSPACE_ID ? undefined : beside;
+  const workspaceId = near?.workspaceId
     ?? EnsuredSchema.parse(await api.post("/api/terminal/workspaces/ensure", {})).workspace.id;
   const { tab } = CreatedSchema.parse(
-    await api.post(`/api/terminal/workspaces/${encodeURIComponent(workspaceId)}/tabs`, { name, cwd: beside?.cwd ?? "" }),
+    await api.post(`/api/terminal/workspaces/${encodeURIComponent(workspaceId)}/tabs`, { name, cwd: near?.cwd ?? "" }),
   );
   return terminalRefKey({ workspaceId, tabId: tab.id });
 }
@@ -115,5 +135,14 @@ export async function renameComputerTab(api: ApiClient, ref: { workspaceId: stri
 
 /** Ends a computer tab's program and removes the tab. */
 export async function closeComputerTab(api: ApiClient, ref: { workspaceId: string; tabId: string }): Promise<void> {
+  if (ref.workspaceId === HERDR_TERMINAL_WORKSPACE_ID) {
+    // herdr-core ends its own terminals, by its id; one no longer listed has already ended.
+    const request = herdrSessionsRequest(api);
+    const list = await loadHerdrSessions(request);
+    if (!list.available) throw new AppError("server");
+    const session = list.sessions.find((candidate) => candidate.tabId === ref.tabId);
+    if (session) await closeHerdrSession(request, session.id);
+    return;
+  }
   await api.delete(`/api/terminal/workspaces/${encodeURIComponent(ref.workspaceId)}/tabs/${encodeURIComponent(ref.tabId)}`);
 }

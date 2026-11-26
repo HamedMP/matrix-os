@@ -737,6 +737,86 @@ describe("TerminalPane scrolling", () => {
     }
   });
 
+  // Fault detected (#3529 live fix): the gateway ends attaches to a gone Herdr terminal
+  // with error session_not_found + close 1000, and the pane reconnected on every close,
+  // printing "[Error: Terminal ended]" forever.
+  describe("a Herdr terminal that has ended", () => {
+    const HERDR_REF = { workspaceId: "tws_00000000000000000000006865726472", tabId: `tt_${"9".repeat(32)}` };
+    const HERDR_REF_KEY = `${HERDR_REF.workspaceId}:${HERDR_REF.tabId}`;
+    const endedFrame = JSON.stringify({ type: "error", terminalRef: HERDR_REF, code: "session_not_found", message: "Terminal ended" });
+    const endedLines = (terminal: (typeof createdTerminals)[number]) => terminal.write.mock.calls
+      .filter(([data]) => typeof data === "string" && data.includes("[Error: Terminal ended]"));
+
+    function renderHerdrPane(onSessionEnded = vi.fn()) {
+      render(
+        <TerminalPane
+          paneId="pane-herdr-ended"
+          cwd=""
+          theme={theme}
+          isFocused
+          sessionId={HERDR_REF_KEY}
+          isClosing={false}
+          shouldCacheOnUnmount={() => false}
+          shouldDestroyOnUnmount={() => false}
+          onSessionEnded={onSessionEnded}
+        />,
+      );
+      return onSessionEnded;
+    }
+
+    async function settleReconnects() {
+      await act(async () => {
+        document.dispatchEvent(new Event("visibilitychange"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+    }
+
+    it("prints the ended message once and opens no further socket", async () => {
+      const onSessionEnded = renderHerdrPane();
+      await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+      expect(new URL(WebSocketMock.instances[0]!.url).pathname).toBe("/ws/terminal/herdr");
+      const terminal = createdTerminals[0]!;
+      const reconnectDelays: number[] = [];
+      const nativeSetTimeout = window.setTimeout.bind(window);
+      const setTimeoutSpy = vi.spyOn(window, "setTimeout").mockImplementation((handler, timeout, ...args) => {
+        if (typeof timeout === "number" && timeout >= 800) reconnectDelays.push(timeout);
+        return nativeSetTimeout(handler, timeout, ...args);
+      });
+      try {
+        await act(async () => {
+          WebSocketMock.instances[0]!.onmessage?.({ data: endedFrame });
+          WebSocketMock.instances[0]!.onclose?.();
+        });
+        await settleReconnects();
+      } finally {
+        setTimeoutSpy.mockRestore();
+      }
+      expect(WebSocketMock.instances).toHaveLength(1);
+      expect(reconnectDelays).toEqual([]);
+      expect(endedLines(terminal)).toHaveLength(1);
+      expect(onSessionEnded).toHaveBeenCalledWith(HERDR_REF_KEY);
+    });
+
+    it("stops after one reconnect when the terminal exits while attached", async () => {
+      renderHerdrPane();
+      await waitFor(() => expect(WebSocketMock.instances).toHaveLength(1));
+      const terminal = createdTerminals[0]!;
+      await act(async () => {
+        WebSocketMock.instances[0]!.onmessage?.({ data: JSON.stringify({ type: "exit", terminalRef: HERDR_REF, revision: 1, exitCode: 0 }) });
+        WebSocketMock.instances[0]!.onclose?.();
+      });
+      await settleReconnects();
+      await waitFor(() => expect(WebSocketMock.instances).toHaveLength(2));
+      await act(async () => {
+        WebSocketMock.instances[1]!.onmessage?.({ data: endedFrame });
+        WebSocketMock.instances[1]!.onclose?.();
+      });
+      await settleReconnects();
+      expect(WebSocketMock.instances).toHaveLength(2);
+      expect(endedLines(terminal)).toHaveLength(1);
+    });
+  });
+
   it.each([0, 55])("renders the durable observer snapshot when attach announces cursor %s", async (nextSeq) => {
     render(
       <TerminalPane

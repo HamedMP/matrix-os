@@ -58,6 +58,66 @@ describe("shell CLI command", () => {
     expect(JSON.parse(errors[0]!)).toMatchObject({ v: 1, error: { code: "not_authenticated" } });
   });
 
+  it("prints a herdr section after the Matrix tabs when the computer has Herdr sessions", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.endsWith("/api/coding-agents/summary")) return json({ projects: { items: [] } });
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: [{
+        id: WORKSPACE_ID, scope: "main", tabs: [{ id: TAB_ID, name: "Shell", cwd: "", status: "running" }],
+      }] });
+      if (url.endsWith("/api/terminal/herdr")) return json({ available: true, status: "ready", sessions: [
+        { id: "t3", tabId: `tt_${"3".repeat(32)}`, title: "claude", status: "blocked", statusMessage: "Allow edit?" },
+        { id: "t4", tabId: `tt_${"4".repeat(32)}`, title: "build", status: null },
+      ] });
+      throw new Error(`unexpected request ${url}`);
+    }));
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));
+
+    await shellCommand.subCommands!.list.run!({ args: { dev: true, token: "tok" } } as never);
+
+    expect(logs).toEqual([
+      "main:",
+      `  ${TAB_ID}  Shell  running`,
+      "herdr:",
+      "  t3  claude  blocked  Allow edit?",
+      "  t4  build",
+    ]);
+  });
+
+  it("shows no herdr section when the gateway has no Herdr sessions", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.endsWith("/api/coding-agents/summary")) return json({ projects: { items: [] } });
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: [] });
+      if (url.endsWith("/api/terminal/herdr")) return json({ available: false, status: "not-installed", sessions: [] });
+      throw new Error(`unexpected request ${url}`);
+    }));
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));
+    await shellCommand.subCommands!.list.run!({ args: { dev: true, token: "tok" } } as never);
+    expect(logs).toEqual(["No terminal tabs."]);
+  });
+
+  it("keeps listing Matrix tabs and reports a safe error kind when the Herdr request fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.endsWith("/api/coding-agents/summary")) return json({ projects: { items: [] } });
+      if (url.endsWith("/api/terminal/workspaces")) return json({ workspaces: [{
+        id: WORKSPACE_ID, scope: "main", tabs: [{ id: TAB_ID, name: "Shell", cwd: "", status: "running" }],
+      }] });
+      if (url.endsWith("/api/terminal/herdr")) throw new Error("connect ECONNREFUSED /home/matrix/secret.sock");
+      throw new Error(`unexpected request ${url}`);
+    }));
+    const logs: string[] = [];
+    const warnings: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => logs.push(String(line)));
+    vi.spyOn(console, "warn").mockImplementation((...parts: unknown[]) => warnings.push(parts.map(String).join(" ")));
+
+    await shellCommand.subCommands!.list.run!({ args: { dev: true, token: "tok" } } as never);
+
+    expect(logs).toEqual(["main:", `  ${TAB_ID}  Shell  running`]);
+    expect(process.exitCode).toBeUndefined();
+    expect(warnings).toEqual(["Herdr sessions unavailable (gateway_unreachable)"]);
+  });
+
   it("emits versioned JSON grouped by workspace", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
       if (url.endsWith("/api/coding-agents/summary")) return json({ projects: { items: [] } });

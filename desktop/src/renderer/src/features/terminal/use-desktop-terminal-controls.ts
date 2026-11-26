@@ -6,6 +6,7 @@ import {
   type TerminalControlsTransport,
 } from "@matrix-os/ui";
 import type { TerminalPaneAction } from "@matrix-os/contracts";
+import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminals";
 import type { ApiClient } from "../../lib/api";
 import type { ShellSocketState } from "../../lib/shell-socket";
 import type { ActiveAttachment } from "./attach-manager";
@@ -50,6 +51,8 @@ export function useDesktopTerminalControls({
   useEffect(() => { onPaneActionRef.current = onPaneAction; }, [onPaneAction]);
   const hostsPanes = onPaneAction !== undefined;
   const local = sessionName.startsWith("local:");
+  // A Herdr terminal has no Matrix workspace, so the computer's pane routes cannot act on it.
+  const herdr = sessionName.startsWith(`${HERDR_TERMINAL_WORKSPACE_ID}:`);
   const transport = useMemo<TerminalControlsTransport | null>(
     () => {
       const computer: TerminalControlsTransport | null = api
@@ -76,8 +79,8 @@ export function useDesktopTerminalControls({
         savePreferences: computer?.savePreferences ?? (async () => { throw new AppError("server"); }),
         paneAction: async (session, action) => {
           if (action.type === "scroll") {
-            // A local terminal's history is in its own xterm; a computer's is on the computer.
-            if (local) {
+            // A local or Herdr terminal's history is in its own xterm; a computer's is on the computer.
+            if (local || herdr) {
               if (action.edge === "top") termRef.current?.scrollToTop();
               else termRef.current?.scrollToBottom();
               return undefined;
@@ -90,7 +93,7 @@ export function useDesktopTerminalControls({
         },
       };
     },
-    [api, chatId, hostsPanes, local, termRef],
+    [api, chatId, herdr, hostsPanes, local, termRef],
   );
   const enabled = active && writable && socketState === "attached" && (api !== null || hostsPanes);
   const sendInput = useCallback(
@@ -110,6 +113,8 @@ export function useDesktopTerminalControls({
   return useTerminalControls({
     sessionName,
     enabled,
+    // The Terminal window's own panes can split, zoom and close a Herdr pane; Zellij cannot.
+    paneActionsEnabled: hostsPanes || !herdr,
     isMac,
     transport,
     sendInput,
