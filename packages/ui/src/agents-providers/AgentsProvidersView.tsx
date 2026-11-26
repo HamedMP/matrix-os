@@ -97,10 +97,11 @@ export function AgentsProvidersView({
     }).catch(caught => {
       if (controller.signal.aborted) return;
       console.warn("[provider-settings] Workflow capabilities unavailable:", caught instanceof Error ? caught.name : typeof caught);
+      // A transient read failure leaves this computer's last confirmed capabilities intact.
+      // Removing them would unmount the panel and abort its foreground sign-in.
+      if (caught instanceof ProviderWorkflowClientError && caught.reason === "unavailable") return;
       setWorkflowCapabilities([]);
       setWorkflowPermission(caught instanceof ProviderWorkflowClientError && caught.reason === "forbidden" ? "forbidden" : "unknown");
-      // An owner denial is not evidence that the Matrix login expired.
-      if (caught instanceof ProviderWorkflowClientError && caught.reason === "forbidden") return;
     });
     return () => controller.abort();
   }, [workflowClient, capabilityRefreshKey]);

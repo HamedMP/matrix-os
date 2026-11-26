@@ -110,6 +110,11 @@ The shared sign-in panel keeps connection choices, progress, and actions in
 separate blocks. A single choice fills the available row. At narrow widths,
 choices stack and device-code controls wrap within the panel.
 
+On a transient workflow capability read failure, Settings keeps the last
+confirmed capabilities for the same computer so an in-flight sign-in can
+finish. Authorization failures, a computer switch, and a successful response
+that withdraws a capability clear the stale choices.
+
 Canvas, Web Desktop, and Electron must expose the same:
 
 - harnesses, accounts, access sources, models, and readiness states;

@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, expect, it, vi } from "vitest";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { AgentsProvidersView } from "../../packages/ui/src/agents-providers/AgentsProvidersView";
+import { ProviderWorkflowClientError } from "../../packages/ui/src/agents-providers/provider-workflow-client";
 afterEach(cleanup);
 const device = { id: "openai_device_code", providerId: "openai", authKind: "subscription", method: "device_code", billingKind: "subscription", executionKind: "native", availability: "available" } as const;
 const terminal = { ...device, id: "openai_terminal", method: "terminal" } as const;
@@ -22,9 +23,11 @@ function workflow(connectionOption: typeof device | typeof existing = device, st
 }
 async function mount(initial = codexFixture(), rejectLogout = false, client = workflow(), afterLogin?: ProviderSettingsSnapshot) {
   const mutate = vi.fn(), refresh = vi.fn(), refreshConnection = vi.fn(), openTerminal = vi.fn(), openAuthorization = vi.fn();
-  function App() {
+  function App({ capabilityRefreshRevision, workflowClient = client }: {
+    capabilityRefreshRevision?: number; workflowClient?: ReturnType<typeof workflow>;
+  }) {
     const [snapshot, setSnapshot] = useState(initial);
-    return <AgentsProvidersView snapshot={snapshot} selectedHarnessId="codex" onSelectHarness={vi.fn()} onRefresh={() => { refresh(); }} onRefreshForConnection={async receipt => {
+    return <AgentsProvidersView snapshot={snapshot} capabilityRefreshRevision={capabilityRefreshRevision} selectedHarnessId="codex" onSelectHarness={vi.fn()} onRefresh={() => { refresh(); }} onRefreshForConnection={async receipt => {
       refreshConnection(receipt);
       if (receipt?.state === "succeeded" && afterLogin) {
         setSnapshot(afterLogin);
@@ -33,11 +36,14 @@ async function mount(initial = codexFixture(), rejectLogout = false, client = wo
       return snapshot;
     }}
       onMutate={async intent => { mutate(intent); if (rejectLogout) return false; if (intent.type === "logout_account") setSnapshot(codexFixture("none")); return true; }}
-      onOpenTerminal={openTerminal} onOpenAuthorizationUrl={openAuthorization} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()} workflowClient={client as never}/>;
+      onOpenTerminal={openTerminal} onOpenAuthorizationUrl={openAuthorization} onOpenBrowser={vi.fn()} onAddCredit={vi.fn()} workflowClient={workflowClient as never}/>;
   }
   const view = render(<App/>); await act(async () => {});
   fireEvent.click(screen.getByRole("button", { name: /^Codex/ }));
-  return { client, mutate, refresh, refreshConnection, openTerminal, openAuthorization, ...view };
+  const refreshWorkflowCapabilities = (revision: number, workflowClient = client) => act(async () => {
+    view.rerender(<App capabilityRefreshRevision={revision} workflowClient={workflowClient}/>);
+  });
+  return { client, mutate, refresh, refreshConnection, openTerminal, openAuthorization, refreshWorkflowCapabilities, ...view };
 }
 async function existingWorkflow(state: "succeeded" | "failed" = "succeeded") {
   const client = workflow(existing, state), capability = (await client.capabilities())[0]!;
@@ -95,6 +101,53 @@ it("retains initial sign-in and API-key choices without authenticated identity",
   expect(screen.getByRole("button", { name: /OpenAI API key/ })).toBeEnabled();
   expect(screen.queryByRole("button", { name: /Log out|Change account|Reconnect/ })).toBeNull();
 });
+it("keeps the active Codex device sign-in when background workflow capabilities time out", async () => {
+  const client = workflow();
+  const started = Promise.withResolvers<typeof client.receipt>();
+  client.startConnection.mockReturnValueOnce(started.promise);
+  const { refreshWorkflowCapabilities, openAuthorization, openTerminal } = await mount(codexFixture("none"), false, client);
+
+  fireEvent.click(screen.getByRole("button", { name: /ChatGPT account · Sign in with a code/ }));
+  expect(screen.getByRole("status", { name: "Starting sign-in" })).toBeVisible();
+  const startSignal = client.startConnection.mock.calls[0]![1] as AbortSignal;
+  client.capabilities.mockRejectedValueOnce(new ProviderWorkflowClientError("unavailable"));
+  await refreshWorkflowCapabilities(1);
+
+  expect(startSignal.aborted).toBe(false);
+  expect(screen.getByRole("status", { name: "Starting sign-in" })).toBeVisible();
+  await act(async () => started.resolve(client.receipt));
+  expect(await screen.findByRole("button", { name: "Open sign-in page" })).toBeEnabled();
+  expect(client.startConnection).toHaveBeenCalledOnce();
+  expect(openAuthorization).not.toHaveBeenCalled();
+  expect(openTerminal).not.toHaveBeenCalled();
+});
+it.each(["forbidden", "unauthorized", "removed", "switched"] as const)(
+  "dismisses a pending sign-in when its workflow scope is %s",
+  async reason => {
+    const client = workflow();
+    const started = Promise.withResolvers<typeof client.receipt>();
+    client.startConnection.mockReturnValueOnce(started.promise);
+    const { refreshWorkflowCapabilities, openAuthorization } = await mount(codexFixture("none"), false, client);
+    fireEvent.click(screen.getByRole("button", { name: /ChatGPT account · Sign in with a code/ }));
+    const startSignal = client.startConnection.mock.calls[0]![1] as AbortSignal;
+
+    if (reason === "switched") {
+      const next = workflow();
+      next.capabilities.mockRejectedValueOnce(new ProviderWorkflowClientError("unavailable"));
+      await refreshWorkflowCapabilities(1, next);
+    } else {
+      if (reason === "removed") client.capabilities.mockResolvedValueOnce([]);
+      else client.capabilities.mockRejectedValueOnce(new ProviderWorkflowClientError(reason));
+      await refreshWorkflowCapabilities(1);
+    }
+    await act(async () => started.resolve(client.receipt));
+
+    expect(startSignal.aborted).toBe(true);
+    expect(screen.queryByRole("status", { name: "Starting sign-in" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Sign in with a code|Open sign-in page/ })).not.toBeInTheDocument();
+    expect(openAuthorization).not.toHaveBeenCalled();
+  },
+);
 it.each(["none", "consent"] as const)("uses the verified existing account only after a click from %s Settings", async initial => {
   const client = await existingWorkflow();
   const pending = Promise.withResolvers<typeof client.receipt>();
