@@ -40,10 +40,20 @@ outside the workspace and cannot depend on the package.
 
 /** Temporary files a concurrent sync is about to rename into place. */
 const TEMPORARY_FILE = /\.office-sync-\d+-\d+\.tmp$/;
+/**
+ * A temporary file this much older than its last write was left by a sync
+ * that crashed, since a sync writes each file and renames it at once. Younger
+ * ones may belong to a sync that is still running and are left alone.
+ */
+export const STALE_TEMPORARY_MS = 10 * 60 * 1000;
 let temporaryCounter = 0;
 
-/** Relative paths (forward slashes) of every file under `directory`, sorted. */
-function listFiles(directory, prefix = '') {
+/**
+ * Relative paths (forward slashes) of every file under `directory`, sorted.
+ * With `temporaries`, sync temporary files are collected there instead,
+ * whatever their type, and left out of the result.
+ */
+function listFiles(directory, prefix = '', temporaries = null) {
   let entries;
   try {
     entries = readdirSync(join(directory, prefix), { withFileTypes: true });
@@ -54,10 +64,14 @@ function listFiles(directory, prefix = '') {
   const files = [];
   for (const entry of entries) {
     const relative = `${prefix}${entry.name}`;
+    if (temporaries !== null && TEMPORARY_FILE.test(entry.name)) {
+      temporaries.push(relative);
+      continue;
+    }
     if (entry.isSymbolicLink()) {
       throw new Error(`Refusing to mirror a symbolic link: ${join(directory, relative)}`);
     }
-    if (entry.isDirectory()) files.push(...listFiles(directory, `${relative}/`));
+    if (entry.isDirectory()) files.push(...listFiles(directory, `${relative}/`, temporaries));
     else if (entry.isFile()) files.push(relative);
     else throw new Error(`Refusing to mirror a special file: ${join(directory, relative)}`);
   }
@@ -70,6 +84,21 @@ function readIfPresent(path) {
   } catch (error) {
     if (error?.code === 'ENOENT') return null;
     throw error;
+  }
+}
+
+/**
+ * Deletes abandoned sync temporary files under `mirrorRoot`. Each is checked
+ * with lstat: only a regular file older than STALE_TEMPORARY_MS goes, so a
+ * symbolic link is never followed or removed and a running sync keeps its file.
+ */
+function sweepTemporaries(mirrorRoot, temporaries, now) {
+  for (const path of temporaries) {
+    const file = join(mirrorRoot, path);
+    const stats = lstatSync(file, { throwIfNoEntry: false });
+    if (!stats?.isFile() || now - stats.mtimeMs < STALE_TEMPORARY_MS) continue;
+    rmSync(file, { force: true });
+    pruneEmptyDirectories(dirname(file), mirrorRoot);
   }
 }
 
@@ -123,16 +152,23 @@ export function syncOfficeEngine({
     // Write then rename, so a test or build reading the mirror while another
     // process syncs it never sees a half-written file.
     const temporary = `${target}.office-sync-${process.pid}-${(temporaryCounter += 1)}.tmp`;
-    writeFileSync(temporary, content);
-    renameSync(temporary, target);
+    try {
+      writeFileSync(temporary, content);
+      renameSync(temporary, target);
+    } catch (error) {
+      rmSync(temporary, { force: true });
+      throw error;
+    }
   }
-  for (const path of listFiles(mirrorRoot)) {
-    if (wanted.has(path) || TEMPORARY_FILE.test(path)) continue;
+  const temporaries = [];
+  for (const path of listFiles(mirrorRoot, '', temporaries)) {
+    if (wanted.has(path)) continue;
     changes.push({ path, action: 'delete' });
     if (check) continue;
     rmSync(join(mirrorRoot, path), { force: true });
     pruneEmptyDirectories(dirname(join(mirrorRoot, path)), mirrorRoot);
   }
+  if (!check) sweepTemporaries(mirrorRoot, temporaries, Date.now());
   changes.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   return { changes };
 }

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import fs, { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,6 +19,7 @@ const MIRROR = "home/apps/_shared/office-engine";
 type Change = { path: string; action: "add" | "update" | "delete" };
 type SyncModule = {
   syncOfficeEngine(options: { root: string; check?: boolean }): { changes: Change[] };
+  STALE_TEMPORARY_MS: number;
 };
 const load = (): Promise<SyncModule> => import(pathToFileURL(script).href);
 
@@ -141,6 +143,49 @@ describe("office engine mirror", () => {
 
     const colliding = makeRoot({ [`${SOURCE}/README.md`]: "notes\n" });
     expect(() => syncOfficeEngine({ root: colliding })).toThrow(/README\.md/);
+  });
+
+  it("removes its temporary file when publishing a mirrored file fails", async () => {
+    const { syncOfficeEngine } = await load();
+    const directory = makeRoot({ [`${SOURCE}/index.ts`]: "one\n" });
+    const rename = fs.renameSync;
+    fs.renameSync = () => {
+      throw Object.assign(new Error("cross-device link"), { code: "EXDEV" });
+    };
+    syncBuiltinESMExports();
+    try {
+      expect(() => syncOfficeEngine({ root: directory })).toThrow(/cross-device/);
+    } finally {
+      fs.renameSync = rename;
+      syncBuiltinESMExports();
+    }
+    expect(listFiles(join(directory, MIRROR))).toEqual([]);
+  });
+
+  it("sweeps abandoned temporary files, but keeps a running sync's fresh one and never follows a symbolic link", async () => {
+    const { syncOfficeEngine, STALE_TEMPORARY_MS } = await load();
+    const directory = makeRoot({ [`${SOURCE}/index.ts`]: "one\n", "outside.ts": "keep\n" });
+    syncOfficeEngine({ root: directory });
+    const mirror = join(directory, MIRROR);
+    const old = new Date(Date.now() - STALE_TEMPORARY_MS - 60_000);
+    write(mirror, "index.ts.office-sync-111-1.tmp", "abandoned\n");
+    write(mirror, "deep/x.ts.office-sync-111-2.tmp", "abandoned\n");
+    utimesSync(join(mirror, "index.ts.office-sync-111-1.tmp"), old, old);
+    utimesSync(join(mirror, "deep/x.ts.office-sync-111-2.tmp"), old, old);
+    write(mirror, "index.ts.office-sync-222-1.tmp", "being written\n");
+    symlinkSync(join(directory, "outside.ts"), join(mirror, "link.ts.office-sync-333-1.tmp"));
+    const link = join(mirror, "link.ts.office-sync-333-1.tmp");
+    fs.lutimesSync(link, old, old);
+
+    expect(syncOfficeEngine({ root: directory, check: true }).changes).toEqual([]);
+    expect(existsSync(join(mirror, "index.ts.office-sync-111-1.tmp"))).toBe(true);
+
+    expect(syncOfficeEngine({ root: directory }).changes).toEqual([]);
+    expect(existsSync(join(mirror, "index.ts.office-sync-111-1.tmp"))).toBe(false);
+    expect(existsSync(join(mirror, "deep"))).toBe(false);
+    expect(readFileSync(join(mirror, "index.ts.office-sync-222-1.tmp"), "utf8")).toBe("being written\n");
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(directory, "outside.ts"), "utf8")).toBe("keep\n");
   });
 
   it("exits 1 from the command line when the mirror is stale and 0 after a sync", () => {
