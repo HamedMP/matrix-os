@@ -1,3 +1,4 @@
+import { ownerHttpInputProvenance } from "../../packages/gateway/src/chat/owner-http-input.js";
 import {
   CanonicalChatNavigationItemSchema,
   CanonicalChatRunCancellationResponseSchema,
@@ -787,7 +788,7 @@ describe("canonical Chat routes", () => {
       { type: "personal", ownerId: "owner_1" },
       "chat_route_test",
       expect.objectContaining({ clientRequestId: "req_route_queue" }),
-      { routineCreationProof: undefined },
+      { ...ownerHttpInputProvenance({ userId: "owner_1", source: "jwt" }, { type: "personal", ownerId: "owner_1" }), routineCreationProof: undefined },
     );
   });
 
@@ -1076,7 +1077,7 @@ describe("canonical Chat routes", () => {
       { type: "personal", ownerId: "owner_1" },
       "chat_route_test",
       expect.objectContaining({ clientRequestId: "req_route_turn" }),
-      { previewTurnProof: undefined },
+      { ...ownerHttpInputProvenance({ userId: "owner_1", source: "jwt" }, { type: "personal", ownerId: "owner_1" }), previewTurnProof: undefined },
     );
 
     const cancelled = await app.request("/api/chats/chat_route_test/runs/run_route/cancel", {
