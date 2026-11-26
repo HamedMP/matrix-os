@@ -64,12 +64,15 @@ function collaboration(checkResults: Array<"ready" | "blocked" | "failed">, opti
   };
 }
 
-function files(initial: unknown = null) {
+function files(initial: unknown = null, options: { firstPutGate?: Promise<void> } = {}) {
   let stored: unknown = initial;
+  let gate = options.firstPutGate;
   return {
     get: vi.fn(async () => { if (stored === null) throw Object.assign(new Error("missing"), { category: "notFound" }); return stored; }),
     // Mirrors the gateway blob route: replacing an existing file needs force=true.
     put: vi.fn(async (path: string, body: unknown) => {
+      const waiting = gate; gate = undefined;
+      if (waiting) await waiting;
       if (stored !== null && !path.includes("force=true")) throw Object.assign(new Error("file_exists"), { status: 409 });
       stored = body; return { ok: true };
     }),
@@ -382,5 +385,22 @@ describe("Organization tab view-only refresh", () => {
     render(<Host organizations={[finna]} api={collaboration([], { initialShare: share(), initialReadiness: "blocked" })} fileApi={files()} />);
     await openOrganizationTab();
     expect(await screen.findByText("Shared · View only")).toBeTruthy();
+  });
+
+  // Fault: an older "applied" write still in flight landed after a newer Start in Chats record,
+  // replacing it on disk and in the UI and stopping completion tracking.
+  it("keeps a newer chat request when an older applied write lands late", async () => {
+    let release!: () => void;
+    const fileApi = files(completed, { firstPutGate: new Promise((resolve) => { release = resolve; }) });
+    const api = collaboration(["blocked"], { initialShare: share() });
+    render(<Host organizations={[finna]} api={api} fileApi={fileApi} />);
+    await openOrganizationTab();
+    await waitFor(() => expect(fileApi.put).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByRole("button", { name: /Start in Chats/ }));
+    release();
+    await waitFor(() => expect(fileApi.put).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fileApi.current()).toMatchObject({ state: "running" }));
+    expect(fileApi.current()!.requestId).not.toBe(completed.requestId);
+    expect(await screen.findByText("Setting up…")).toBeTruthy();
   });
 });
