@@ -56,23 +56,31 @@ function finalTables(document: DocxDocument): TableVisibility {
       cellGone: () => false,
     };
   }
-  // The rows of the table being walked, listed once: a table is asked about each of its rows in turn.
-  let listed: { id: string; rows: readonly XmlElement[] } | null = null;
-  const rowsOf = (table: TableBlock): readonly XmlElement[] => {
+  // The rows of the table being walked and the cells of each row, listed once: a table is asked about
+  // each of its rows and cells in turn. Only the current table is kept, so the cache is bounded by it.
+  let listed: { id: string; rows: readonly XmlElement[]; cells: Array<readonly XmlElement[] | undefined> } | null = null;
+  const tableOf = (table: TableBlock) => {
     if (listed === null || listed.id !== table.id) {
       const record = index.block(table.id);
-      listed = { id: table.id, rows: record === null || record.type !== "table" ? [] : tableRows(record.element) };
+      listed = { id: table.id, rows: record === null || record.type !== "table" ? [] : tableRows(record.element), cells: [] };
     }
-    return listed.rows;
+    return listed;
   };
   return {
     rowGone: (table, rowIndex) => {
-      const row = rowsOf(table)[rowIndex];
+      const row = tableOf(table).rows[rowIndex];
       return row !== undefined && rowGoneInView(row, "final");
     },
     cellGone: (table, rowIndex, cellIndex) => {
-      const row = rowsOf(table)[rowIndex];
-      const cell = row === undefined ? undefined : rowCells(row)[cellIndex];
+      const current = tableOf(table);
+      const row = current.rows[rowIndex];
+      if (row === undefined) return false;
+      let cells = current.cells[rowIndex];
+      if (cells === undefined) {
+        cells = rowCells(row);
+        current.cells[rowIndex] = cells;
+      }
+      const cell = cells[cellIndex];
       return cell !== undefined && cellGoneInView(cell, "final");
     },
   };
