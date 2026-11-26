@@ -11,16 +11,17 @@ const initialMessages = [
 ] satisfies ChatMessage[];
 
 function SetupWindow() {
-  const [phase, setPhase] = useState<"opening" | "generating" | "review">("opening");
+  const reviewReply = new URLSearchParams(window.location.search).get("reviewReply");
+  const [phase, setPhase] = useState<"opening" | "generating" | "review">(reviewReply ? "review" : "opening");
   const [closed, setClosed] = useState(false);
   const messages: ChatMessage[] = phase === "opening" ? [...initialMessages] : [
     ...initialMessages,
-    { id: "msg_setup_answer", role: "user", content: "Plan weekly shifts for the volunteers.", timestamp: 3 },
-    ...Array.from({ length: 12 }, (_, index) => ({
+    { id: "msg_setup_answer", role: "user", content: reviewReply ? "Require reviewer approval." : "Plan weekly shifts for the volunteers.", timestamp: 3 },
+    ...Array.from({ length: reviewReply ? 0 : 12 }, (_, index) => ({
       id: `msg_setup_preference_${index}`, role: "assistant" as const, content: `Discussed scheduling preference ${index + 1}.`, timestamp: 4 + index,
     })),
     ...(phase === "review" ? [{
-      id: "msg_setup_review", role: "assistant", content: "Review the weekly schedule setup.", timestamp: 17,
+      id: "msg_setup_review", role: "assistant", content: reviewReply ?? "Review the weekly schedule setup.", timestamp: 17,
     }] : []),
   ];
   return (
@@ -29,7 +30,7 @@ function SetupWindow() {
         <button type="button" onClick={() => setPhase("generating")}>Receive running Chat frame</button>
         <button type="button" onClick={() => setPhase("review")}>Receive completed Chat frame</button>
       </div>
-      <div data-test-window style={{ width: 624, height: 540 }}>
+      <div data-test-window style={reviewReply ? { width: 1120, height: 760 } : { width: 624, height: 540 }}>
         {closed ? <p>Returned to Harbor project</p> : (
           <ChatApp messages={messages} sessionId="chat_setup" activeConversationTitle="Project setup"
             chatProjectId="proj_harbor" projectSkillRootAvailable={phase === "generating" ? "pending" : true}

@@ -40,6 +40,7 @@ Example. In **Release Notes**, the user says, “Draft customer release notes fr
 - Use the currently selected compatible model. If it is unavailable or cannot run with the required tool restrictions, preserve the typed answer and draft. Offer model choice, retry or Skip. Do not silently switch account, provider, or billing source. Qualify the existing eligible providers individually. Report any runtime that cannot safely support the interview.
 - Preserve existing setup conversations, user answers, scoped drafts and file receipts from #3573. A user deliberately continuing an unfinished setup resumes at the next meaningful question based on known answers. Saved setups do not restart, and opening the project home never starts a model run.
 - Record accepted answers once before admitting their corresponding Agent turn. Bind the projected result to project, owner, computer, checkout, and draft revision. Limit each answer to one active turn and offer retry after a failure without repeating the user bubble. Ignore late results for a superseded turn.
+- Bind the list of Markdown drafts withheld for prompt size to the admitted turn. If a reply tries to replace or remove a withheld draft, preserve its full contents and guide the user to Review for a direct edit or to check a file conflict.
 
 ## Context and authority
 

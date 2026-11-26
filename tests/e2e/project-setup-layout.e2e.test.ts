@@ -8,6 +8,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import type { Browser } from "playwright";
 import { CanonicalChatDetailResponseSchema, type ProjectSetupDraft } from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
+import { auditRequirement, preservedSkillNotice, reviewEditNotice, reviewWithWithheldSkill } from "./fixtures/project-setup-withheld";
 
 const root = resolve(import.meta.dirname, "../..");
 const desktopRequire = createRequire(join(root, "desktop/package.json"));
@@ -128,6 +129,47 @@ it("keeps a visible, aligned Cancel setup button while a floating Web Chat grows
     if (evidenceDir) await page.locator("[data-test-window]").screenshot({ path: join(evidenceDir, "web-setup-review.png") });
     await cancel.click();
     await page.getByText("Returned to Harbor project", { exact: true }).waitFor();
+  } finally {
+    await page.close();
+  }
+}, 25_000);
+
+it("offers direct Markdown editing for a Skill the Agent could not revise", async () => {
+  const evidenceDir = process.env.MATRIX_PROJECT_SETUP_WEB_EVIDENCE_DIR;
+  if (evidenceDir) await mkdir(evidenceDir, { recursive: true });
+  const page = await browser.newPage({ viewport: { width: 1280, height: 840 } });
+  page.setDefaultTimeout(8_000);
+  const path = ".agents/skills/shift-review/SKILL.md";
+  const content = `---\nname: shift-review\ndescription: Review shift changes\n---\n\n${auditRequirement}\n`;
+  const result = reviewWithWithheldSkill({
+    chatId: "chat_setup", projectId: "proj_harbor", revision: 2, step: "review",
+    currentQuestionMessageId: "msg_setup_review", interview: { focus: "review", suggestions: [] },
+    answers: { purpose: "Review the weekly schedule" }, mcp: { state: "not_requested" },
+    skill: { name: "shift-review", path, content }, proposals: [{ path, content, status: "pending" }],
+    updatedAt: "2026-11-26T12:00:00Z",
+  });
+  await page.route("**/*", route => {
+    switch (new URL(route.request().url()).pathname) {
+      case "/":
+        return route.fulfill({ contentType: "text/html", body: `<!doctype html><style>${css}</style><div id="root"></div>` });
+      case "/api/workspace/projects":
+        return route.fulfill({ json: { projects: [{ id: "proj_harbor", slug: "harbor", name: "Harbor Volunteer Scheduling" }] } });
+      case "/api/chats/chat_setup/project-setup":
+        return route.fulfill({ json: { draft: result.draft } });
+      default:
+        return route.fulfill({ status: 404, json: {} });
+    }
+  });
+  try {
+    await page.goto(`https://project-setup.test/?reviewReply=${encodeURIComponent(result.assistantText)}`);
+    await page.addScriptTag({ content: script });
+    await page.getByText(preservedSkillNotice, { exact: true }).waitFor();
+    await page.getByText(reviewEditNotice, { exact: true }).waitFor();
+    const skill = page.getByRole("region", { name: `Review ${path}`, exact: true });
+    await skill.getByText(auditRequirement, { exact: true }).waitFor();
+    if (evidenceDir) await page.locator("[data-test-window]").screenshot({ path: join(evidenceDir, "web-setup-preserved-skill.png") });
+    await skill.getByRole("button", { name: "Edit Markdown" }).click();
+    expect(await skill.getByRole("textbox", { name: `Markdown for ${path}` }).inputValue()).toBe(content);
   } finally {
     await page.close();
   }

@@ -25,9 +25,11 @@ import {
 import {
   initialProjectSetup,
   applyProjectSetupGeneration,
+  transitionProjectSetupInterview,
 } from "../../../packages/gateway/src/chat/project-setup-state";
 import { createCanonicalChatFixture } from "../../contracts/fixtures/canonical-chat";
 import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
+import { approvalRequirement, auditRequirement, preservedSkillNotice, reviewEditNotice, reviewWithWithheldSkill } from "../fixtures/project-setup-withheld";
 import { closeElectronApp } from "./fixtures/close-electron";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
@@ -232,7 +234,7 @@ function setupFixture() {
           skill: {
             name: "release-check",
             description: "Check a release before publishing",
-            instructions: "Run the relevant tests, review the diff, and summarize the changes.",
+            instructions: `Run the relevant tests and review the diff.\n\n${auditRequirement}`,
           },
         });
         next = applyProjectSetupGeneration(
@@ -245,6 +247,10 @@ function setupFixture() {
         if (action.text === failedCorrection) {
           next.generation = { status: "failed" };
           append(action.text, null);
+        } else if (action.text === approvalRequirement) {
+          const result = reviewWithWithheldSkill(next);
+          next = result.draft;
+          next.currentQuestionMessageId = append(action.text, result.assistantText);
         } else {
           expect(action.text).toBe(correction);
           next.generation = { status: "completed" };
@@ -253,6 +259,8 @@ function setupFixture() {
             ? { ...file, content: `${file.content}\n\n${correction}\n` } : file);
           next.currentQuestionMessageId = append(action.text, correctedReply);
         }
+      } else if (action.type === "review_file") {
+        next = transitionProjectSetupInterview(next, action).draft;
       } else if (action.type === "save") {
         for (const file of next.proposals) {
           files.set(file.path, file.content);
@@ -532,11 +540,26 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     await page.getByRole("region", { name: "Review AGENTS.md", exact: true }).getByText(correction, { exact: true }).waitFor();
     expect(state.files.size).toBe(0);
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-review.png") });
+    await composer.fill(approvalRequirement);
+    await composer.press("Enter");
+    await messages.getByText(preservedSkillNotice, { exact: true }).waitFor();
+    await messages.getByText(reviewEditNotice, { exact: true }).waitFor();
+    const path = ".agents/skills/release-check/SKILL.md";
+    const skill = page.getByRole("region", { name: `Review ${path}`, exact: true });
+    await skill.getByText(auditRequirement, { exact: true }).waitFor();
+    await page.screenshot({ path: join(evidence, "electron-setup-fixture-preserved-skill.png") });
+    await skill.getByRole("button", { name: "Edit Markdown" }).click();
+    const markdown = skill.getByRole("textbox", { name: `Markdown for ${path}` });
+    expect(await markdown.inputValue()).toContain(auditRequirement);
+    await markdown.fill((await markdown.inputValue()) + `\n${approvalRequirement}\n`);
+    await skill.getByRole("button", { name: "Apply draft changes" }).click();
     await page.getByRole("button", { name: "Save project setup", exact: true }).click();
     await page.getByText(savedReply, { exact: true }).waitFor();
     expect([...state.files.keys()].sort()).toEqual([".agents/skills/release-check/SKILL.md", "AGENTS.md", "CLAUDE.md"]);
     expect(state.actions).toContain("save");
     expect(state.files.get("AGENTS.md")).toContain(correction);
+    expect(state.files.get(path)).toContain(auditRequirement);
+    expect(state.files.get(path)).toContain(approvalRequirement);
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-saved.png") });
     await openProject();
     await page.getByRole("button", { name: "Agent configuration", exact: true }).click();
