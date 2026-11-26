@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ScheduleBotPicker } from "./bots/ScheduleBotPicker.js";
 import { ScheduleCenter } from "./bots/ScheduleCenter.js";
 import { ChatAgentsPanel } from "./ChatAgentsEntry.js";
+import type { AgentSetupResource } from "./AgentSetupResources.js";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import type { ChatAgentClient } from "./client.js";
 import type { AgentProviderCatalogSource } from "./use-agent-provider-catalog.js";
 
 export function ChatAgentsContent({ onOpenResourceSettings, client, scopeKey, onOpenBotChat, hostedChrome = false, providerCatalog, headerLeading, children }: {
-  onOpenResourceSettings?: (resource: 'integrations' | 'mcp') => void; hostedChrome?: boolean; client?: ChatAgentClient; scopeKey: string; onOpenBotChat?: (chatId: string) => void;
+  onOpenResourceSettings?: (resource: AgentSetupResource) => void; hostedChrome?: boolean; client?: ChatAgentClient; scopeKey: string; onOpenBotChat?: (chatId: string) => void;
   providerCatalog?: AgentProviderCatalogSource;
   /** Host controls before the Agents title, such as Web's Chat sidebar toggle. */
   headerLeading?: ReactNode;

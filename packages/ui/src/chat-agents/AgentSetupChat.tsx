@@ -9,7 +9,7 @@ import type { ChatAgentIntegrationConnection } from "./client.js";
 import type { CreationConversationClient } from "./creation-conversation.js";
 import { useCreationConversation } from "./useCreationConversation.js";
 
-import { AgentSetupResources } from "./AgentSetupResources.js";
+import { AgentSetupResources, type AgentSetupResource } from "./AgentSetupResources.js";
 import { AgentSetupTranscript } from "./AgentSetupTranscript.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "./theme.js";
 
@@ -31,7 +31,7 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
   seed?: BotCreationSnapshot["seed"];
   resourcesLoading?: boolean;
   onRefreshResources?(): void;
-  onOpenResourceSettings?(resource: "integrations" | "mcp"): void;
+  onOpenResourceSettings?(resource: AgentSetupResource): void;
   recipeContext?: BotRecipeSetupContext;
   children?: ReactNode;
   reviewInitially?: boolean;
@@ -62,21 +62,23 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
     window.addEventListener("focus", focused, { once: true });
     return () => window.removeEventListener("focus", focused);
   }, [resourceVisit]);
-  const openSettings = (resource: "integrations" | "mcp") => {
+  const openSettings = (resource: AgentSetupResource) => {
     setResourceVisit(value => value + 1);
     onOpenResourceSettings?.(resource);
   };
   const lastApplied = useRef(-1);
   const editableRecipe = editing === "new" || !editing.recipeRef || isManagedCustomBot(editing) || Boolean(recipeContext);
   const { name, description, instructions, selection, recipe } = draft;
-  const skills = recipes?.enabled && editableRecipe ? recipes.skills
-    .filter(skill => skill.id !== "matrix-jev-email-triage").map(skill => skill.id) : [];
+  const offeredSkills = recipes?.enabled && editableRecipe ? recipes.skills
+    .filter(skill => skill.id !== "matrix-jev-email-triage") : [];
   const services = recipes?.enabled && editableRecipe ? recipes.services
     .filter(service => connections.some(account => account.service === service.id && account.status === "active"))
     .map(service => service.id) : [];
   const snapshot: BotCreationSnapshot = {
     sessionId, draftRevision: currentRevision.number, seed,
-    draft: { name, description, instructions, selection, recipe }, choices: { skills, services },
+    draft: { name, description, instructions, selection, recipe }, choices: {
+      skills: offeredSkills.map(skill => skill.id), services,
+    },
   };
   const conversation = useCreationConversation({
     client, snapshot, catalog, ready: !resourcesLoading && !pending,
@@ -101,18 +103,24 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
   };
   const disabled = pending || !conversation.available || conversation.busy || Boolean(conversation.activeRunId);
   const question = conversation.question?.baseDraftRevision === currentRevision.number ? conversation.question : null;
+  const questionText = conversation.question?.question;
   const currentProposal = proposal?.revision === currentRevision.number ? proposal : null;
   const proposedRun = currentProposal && conversation.detail?.activities.find(item => item.type === "bot.draft.proposed" && item.proposalId === currentProposal.id)?.runId;
   const confirmation = proposedRun && conversation.detail?.messages.filter(message => message.role === "assistant"
     && message.chatId === conversation.detail?.record.chat.id && message.runId === proposedRun).at(-1)
     ?.parts.flatMap(part => part.type === "text" ? [part.text] : []).join("").trim();
   const summary = currentProposal?.summary !== "No configuration changes." && confirmation && confirmation.length <= 140 && !/[\r\n]/.test(confirmation) ? confirmation : currentProposal?.summary;
-  return <section aria-label="Agent setup conversation" className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-4">
-    <div className="grid min-w-0 content-start gap-4">
+  const changeResources = (next: AgentDraft["recipe"]) => {
+    const updated = next ?? (recipe ? null : undefined);
+    if (JSON.stringify(updated) !== JSON.stringify(recipe)) change({ recipe: updated });
+  };
+  return <section aria-label="Agent setup conversation" className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-3">
+    <div className="grid min-w-0 content-start gap-3">
       <AgentSetupTranscript detail={conversation.detail} questions={conversation.questions}
-        openingMessageId={conversation.openingMessageId} question={question} reviewing={Boolean(proposal) && !disabled} disabled={disabled}
+        openingMessageId={conversation.openingMessageId} question={question} questionText={questionText}
+        reviewing={Boolean(proposal) && !disabled} disabled={disabled}
         onAnswer={value => { void send(value); }} />
-      {conversation.busy ? <p role="status" className="text-sm" style={chatAgentMutedStyle}>Thinking…</p> : null}
+      {conversation.busy ? <p role="status" className="text-sm" style={chatAgentMutedStyle}>Preparing the next reply…</p> : null}
       {resourcesLoading ? <p role="status" className="text-sm" style={chatAgentMutedStyle}>Loading setup resources…</p> : null}
       {!resourcesLoading && !pending && !conversation.available && !conversation.accessLost ? <p className="text-sm" role="status">Setup Chat is unavailable.</p> : null}
       {conversation.error ? <div className="grid justify-items-start gap-2">
@@ -122,14 +130,10 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
       </div> : null}
       {conversation.activeRunId && !conversation.busy ? <button type="button" className={`${chatAgentButtonClass} justify-self-start`}
         onClick={() => void conversation.refresh()}>Check setup progress</button> : null}
-      <AgentSetupResources context={recipeContext} recipe={recipe} catalog={recipes}>
-        {onOpenResourceSettings ? <div className="flex flex-wrap gap-2" aria-label="Resource settings">
-          <button type="button" className={chatAgentButtonClass} disabled={pending} onClick={() => openSettings("integrations")}>Integration settings</button>
-          <button type="button" className={chatAgentButtonClass} disabled={pending} onClick={() => openSettings("mcp")}>MCP settings</button>
-          {resourceVisit > 0 && onRefreshResources ? <button type="button" className={chatAgentButtonClass} disabled={pending || resourcesLoading}
-            onClick={onRefreshResources}>Check resources</button> : null}
-        </div> : null}
-      </AgentSetupResources>
+      <AgentSetupResources context={recipeContext} recipe={recipe} catalog={recipes} connections={connections} skills={offeredSkills}
+        loading={resourcesLoading} pending={pending} settingsVisited={resourceVisit > 0} revision={currentRevision.number}
+        onChange={editableRecipe && !recipe?.jevInboxLabeling ? changeResources : undefined}
+        onOpenSettings={onOpenResourceSettings ? openSettings : undefined} onRefresh={onRefreshResources} />
       {children ? review ? <section key={proposal?.id ?? "manual"} className="grid gap-3 rounded-xl border p-4" aria-label="Configuration preview">
         <h3 className="text-sm font-semibold">Configuration preview</h3>
         {summary ? <p className="text-sm" role="status">{summary}</p> : null}
@@ -139,7 +143,8 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
     </div>
     <div className="sticky bottom-0 mt-auto pb-4 pt-2">
       <ChatPromptInput value={conversation.text} onChange={conversation.setText} onSubmit={() => void send()}
-        disabled={disabled} ariaLabel="Message about this agent" placeholder="Message about this agent…"
+        disabled={disabled} ariaLabel="Message about this agent"
+        placeholder={review ? "Tell me what to change…" : questionText ? "Write your own answer…" : "Message about this agent…"}
         sendLabel="Send setup message" layout="narrow" maxLength={8_000} busy={Boolean(conversation.activeRunId)}
         onAbort={conversation.activeRunId ? () => void conversation.abort() : undefined} />
     </div>

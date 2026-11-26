@@ -5,6 +5,7 @@ import { ChatAgentInputFieldsSchema, ChatAgentRecipeSchema, type BotRecipeSetupC
   type CanonicalChatModelSelection, type CanonicalProviderCatalog, type ChatAgentRecipeCatalog, type InstantiateBotRequest } from "@matrix-os/contracts";
 import type { CanonicalProviderChoice } from "../../canonical-provider-choice.js";
 import { AgentSetupChat } from "../AgentSetupChat.js";
+import type { AgentSetupResource } from "../AgentSetupResources.js";
 import type { AgentDraft } from "../AgentEditor.js";
 import type { ChatAgentIntegrationConnection } from "../client.js";
 import type { CreationConversationClient } from "../creation-conversation.js";
@@ -15,7 +16,7 @@ import type { BotClient } from "./client.js";
 import { useBotConnections } from "./use-bot-connections.js";
 
 export type RecipeConfiguration = NonNullable<InstantiateBotRequest["configuration"]>;
-export type RecipeSetupResources = { loading?: boolean; onRefreshResources?: () => void; onOpenResourceSettings?: (resource: 'integrations' | 'mcp') => void; chat: CreationConversationClient; recipes: ChatAgentRecipeCatalog | null; connections: ChatAgentIntegrationConnection[] };
+export type RecipeSetupResources = { loading?: boolean; onRefreshResources?: () => void; onOpenResourceSettings?: (resource: AgentSetupResource) => void; chat: CreationConversationClient; recipes: ChatAgentRecipeCatalog | null; connections: ChatAgentIntegrationConnection[] };
 type SetupProps = {
   setupResources?: RecipeSetupResources; onRefreshCatalog?(): void; onSetup?(): void; botClient?: BotClient;
   creationUncertain?: boolean; creationRetained?: boolean; recipe: BotRecipeSummary; pending: boolean; createDisabled?: boolean; error: string;

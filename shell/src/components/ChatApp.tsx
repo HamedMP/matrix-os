@@ -260,7 +260,7 @@ function ChatAppContent({
   const projectHome = !mobile && !sessionId && !collaborationView && focusedProject
     && (!onSetChatProject || chatProjectId === focusedProject.id) ? focusedProject : undefined;
   const agentsNavigation = useChatAgentsNavigation();
-  const resourceSettings = useContext(WebProjectAgentContextNavigation)?.openMcpSettings;
+  const resourceSettings = useContext(WebProjectAgentContextNavigation)?.openAgentResourceSettings;
   useCloseAgentsOnDraftRequest(composerDraftRequest?.id);
   const summaryClient = agentSummaryClient ?? agentClient;
   const [localUnreadOnly, setUnreadOnly] = useState(false);

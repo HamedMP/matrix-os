@@ -6,7 +6,7 @@ import { ChatAgentsEntry as AgentsLauncher, ChatAgentsRailSection } from "../../
 import { ChatAgentsWorkspace, useChatAgentsNavigation, useCloseAgentsOnDraftRequest } from "../../packages/ui/src/chat-agents/ChatAgentsNavigation.js";
 import { AgentRecipesPanel } from "../../packages/ui/src/chat-agents/AgentRecipesPanel.js";
 import { ChatAgentsContent } from "../../packages/ui/src/chat-agents/ChatAgentsContent.js";
-import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
+import { MANAGED_CUSTOM_BOT_RECIPE_REF, MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
 import type { BotClient } from "../../packages/ui/src/chat-agents/bots/client.js";
 import { createBotRecipeCatalog } from "../../packages/gateway/src/bots/recipe-catalog.js";
 import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client.js";
@@ -638,6 +638,48 @@ describe("shared Agents entry", () => {
     render(<ChatAgentsEntry client={client} />);
     await waitFor(() => expect(client.list).toHaveBeenCalled());
     expect(screen.queryByRole("button", { name: "Agents" })).toBeNull();
+  });
+  it("opens a saved Bot for management and archives it without starting a setup Run", async () => {
+    const base = clientFixture({ matrix: true });
+    const bot = { ...saved, recipeRef: MANAGED_CUSTOM_BOT_RECIPE_REF };
+    base.list.mockResolvedValue({ enabled: true, agents: [bot] });
+    const setupChat = { create: vi.fn(() => new Promise<never>(() => {})), admitTurn: vi.fn(), detail: vi.fn(), cancelRun: vi.fn() };
+    const client = { ...base, setupChat };
+    render(<ChatAgentsEntry client={client} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Meeting helper" }));
+    expect(await screen.findByRole("textbox", { name: "Instructions" })).toHaveProperty("value", saved.instructions);
+    expect(screen.queryByRole("region", { name: "Agent setup conversation" })).toBeNull();
+    expect(setupChat.create).not.toHaveBeenCalled();
+    expect(setupChat.admitTurn).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Archive Agent" }));
+    await screen.findByText("Agent archived. Previous Chat replies are preserved.");
+    expect(base.update).toHaveBeenCalledExactlyOnceWith(saved.id, { baseRevision: saved.revision, archived: true });
+    expect(screen.queryByRole("button", { name: "Edit Meeting helper" })).toBeNull();
+    expect(setupChat.create).not.toHaveBeenCalled();
+  });
+  it("opens the original saved Bot Chat separately from management and setup", async () => {
+    const base = clientFixture({ matrix: true });
+    const bot = { ...saved, recipeRef: MANAGED_CUSTOM_BOT_RECIPE_REF };
+    base.list.mockResolvedValue({ enabled: true, agents: [bot] });
+    const ensureDirectChat = vi.fn(async () => "chat_existing");
+    const setupChat = { create: vi.fn(() => new Promise<never>(() => {})), admitTurn: vi.fn(), detail: vi.fn(), cancelRun: vi.fn() };
+    const client = { ...base, setupChat, bots: {
+      ensureDirectChat, recipes: vi.fn(async () => []), authority: vi.fn(async () => ({ connections: [], grants: [], memory: { items: [] }, routines: [], pendingInteractions: [] })),
+    } as unknown as BotClient };
+    const open = vi.fn();
+    render(<ChatAgentsWorkspace>
+      <AgentsLauncher client={client} />
+      <ChatAgentsContent client={client} scopeKey="chat_current" onOpenBotChat={open}><p>Current Chat</p></ChatAgentsContent>
+    </ChatAgentsWorkspace>);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Meeting helper" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Chat" }));
+    await waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith("chat_existing"));
+    expect(ensureDirectChat).toHaveBeenCalledExactlyOnceWith(saved.id);
+    expect(setupChat.create).not.toHaveBeenCalled();
+    expect(base.update).not.toHaveBeenCalled();
   });
   it("retains an Agent in the list when archival fails", async () => {
     const client = clientFixture({ matrix: true }); client.list.mockResolvedValue({ enabled: true, agents: [saved] });

@@ -235,10 +235,10 @@ export function createCanonicalChatClient(
     agents: createChatAgentClient((path, method, body, requestOptions) => {
       const accept = botRoutineOriginReadAccept(path, method);
       if (accept) return transport.get(path, { ...requestOptions, headers: { Accept: accept } });
+      if (method === "DELETE") return body === undefined ? transport.delete(path) : transport.delete(path, body);
       return method === "GET" ? requestOptions ? transport.get(path, requestOptions) : transport.get(path)
         : method === "POST" ? requestOptions ? transport.post(path, body, requestOptions) : transport.post(path, body)
-          : method === "DELETE" ? transport.delete(path)
-            : transport.patch(path, body);
+          : transport.patch(path, body);
     }, {
       create: input => client.create(input),
       detail: id => client.getDetail(id, { limit: 200 }, true),

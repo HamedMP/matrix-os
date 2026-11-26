@@ -322,8 +322,11 @@ it("uses the selected native recipe version and confirms the reviewed configurat
   }) }));
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByRole("region", { name: "Recipe resources" })).toBeNull();
-  fireEvent.click(screen.getByText("Skills, sources & permissions"));
+  fireEvent.click(screen.getByRole("button", { name: "Included in this recipe" }));
   expect(screen.getByRole("region", { name: "Recipe resources" })).toHaveTextContent("Gmail");
+  fireEvent.click(screen.getByRole("button", { name: "Add skills" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Matrix integrations" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add to configuration" }));
   fireEvent.click(screen.getByRole("button", { name: "Review configuration" }));
   fireEvent.click(screen.getByRole("button", { name: "Edit configuration" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Draft concise answers." } });
@@ -331,7 +334,8 @@ it("uses the selected native recipe version and confirms the reviewed configurat
   fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
   await waitFor(() => expect(open).toHaveBeenCalledWith("chat_writing01"));
   expect(bots.instantiate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ recipe: ref, name: recipe.name,
-    configuration: { description: recipe.description, instructions: "Draft concise answers." } }));
+    configuration: { description: recipe.description, instructions: "Draft concise answers.",
+      recipe: { skills: ["matrix-integrations"], integrations: [], output: context.output } } }));
   expect(bots.createCustom).not.toHaveBeenCalled();
 });
 

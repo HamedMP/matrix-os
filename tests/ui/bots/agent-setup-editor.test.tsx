@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import type { CanonicalChatDetailResponse, CanonicalChatTurnAdmissionResponse, CanonicalCreateChatTurnRequest, BotCreationDraftPatch } from "@matrix-os/contracts";
 import { ChatAgentsPanel } from "../../../packages/ui/src/chat-agents/ChatAgentsEntry.js";
@@ -65,6 +65,11 @@ function send() {
   fireEvent.click(screen.getByRole("button", { name: "Send setup message" }));
 }
 
+async function editWithChat(name: string) {
+  fireEvent.click(await screen.findByRole("button", { name: `Edit ${name}` }));
+  fireEvent.click(await screen.findByRole("button", { name: "Edit with chat" }));
+}
+
 it("previews a real scoped proposal in the scratch form and creates only after the owner confirms", async () => {
   const recap = "Named the agent Onboarding guide and added Gmail to the brief.";
   const client = fixture(patch, recap);
@@ -75,8 +80,11 @@ it("previews a real scoped proposal in the scratch form and creates only after t
   expect(screen.getAllByText(question)).toHaveLength(1);
   expect(screen.queryByText(/I reviewed the whole draft/)).toBeNull();
   expect(screen.queryByText("Start agent setup.")).toBeNull();
-  fireEvent.click(await screen.findByRole("button", { name: "New colleagues" }));
+  const answer = await screen.findByRole("button", { name: "New colleagues" });
+  await waitFor(() => expect(answer).toBeEnabled());
+  fireEvent.click(answer);
   await screen.findByRole("region", { name: "Configuration preview" });
+  expect(screen.queryByRole("button", { name: "Earlier messages" })).toBeNull();
   expect(screen.queryByText(patch.instructions)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Configuration details" }));
   expect(screen.getByText(patch.instructions)).toBeVisible();
@@ -92,17 +100,56 @@ it("previews a real scoped proposal in the scratch form and creates only after t
   expect(client.create).toHaveBeenCalledWith(expect.objectContaining(patch));
 });
 
+it("adds installed skills and a specific connected account from setup before explicit creation", async () => {
+  const client = fixture({ name: patch.name, instructions: patch.instructions });
+  render(<ChatAgentsPanel client={client} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
+  await screen.findByText(question);
+
+  fireEvent.click(screen.getByRole("button", { name: "Add skills" }));
+  let picker = within(screen.getByRole("region", { name: "Choose skills" }));
+  fireEvent.click(picker.getByRole("checkbox", { name: "Matrix integrations" }));
+  fireEvent.click(picker.getByRole("button", { name: "Cancel resource changes" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add skills" }));
+  picker = within(screen.getByRole("region", { name: "Choose skills" }));
+  expect(picker.getByRole("checkbox", { name: "Matrix integrations" })).not.toBeChecked();
+  fireEvent.click(picker.getByRole("checkbox", { name: "Matrix integrations" }));
+  fireEvent.change(picker.getByRole("textbox", { name: "Expected output" }), { target: { value: "A private brief." } });
+  fireEvent.click(picker.getByRole("button", { name: "Add to configuration" }));
+
+  fireEvent.click(screen.getByRole("button", { name: "Add integrations" }));
+  picker = within(screen.getByRole("region", { name: "Choose integrations" }));
+  fireEvent.change(picker.getByRole("combobox", { name: "Add integration" }), { target: { value: "gmail" } });
+  fireEvent.change(picker.getByRole("combobox", { name: "Gmail account" }), { target: { value: "Work" } });
+  fireEvent.click(picker.getByRole("button", { name: "Add to configuration" }));
+  expect(screen.getByText("Gmail · Work")).toBeVisible();
+  expect(screen.getByText(question)).toBeVisible();
+  expect(screen.getByPlaceholderText("Write your own answer…")).toBeVisible();
+  expect(screen.queryByRole("group", { name: "Suggested replies" })).toBeNull();
+  expect(client.create).not.toHaveBeenCalled();
+  expect(client.setupChat.admitTurn).toHaveBeenCalledTimes(1);
+
+  send();
+  await screen.findByRole("region", { name: "Configuration preview" });
+  const expectedRecipe = { ...recipe, integrations: [{ service: "gmail", accountLabel: "Work" }] };
+  expect(client.setupChat.admitTurn.mock.calls[1]?.[1].botCreation?.draft.recipe).toMatchObject(expectedRecipe);
+  expect(client.create).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Create Agent" }));
+  await waitFor(() => expect(client.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ recipe: expectedRecipe })));
+});
+
 it("discarding a proposed edit preserves saved instructions, and reopening permits a fresh explicit Save", async () => {
   const client = fixture();
   client.list.mockResolvedValue({ enabled: true, agents: [saved] as never[] });
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Edit Meeting helper" }));
+  await editWithChat("Meeting helper");
   await screen.findByRole("button", { name: "New colleagues" });
   send();
   await screen.findByText(/^Updated name, instructions,/);
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(client.update).not.toHaveBeenCalled();
-  fireEvent.click(await screen.findByRole("button", { name: "Edit Meeting helper" }));
+  await editWithChat("Meeting helper");
   fireEvent.click(await screen.findByRole("button", { name: "Review configuration" }));
   fireEvent.click(screen.getByRole("button", { name: "Configuration details" }));
   expect(screen.getByText(saved.instructions)).toBeVisible();
@@ -112,7 +159,7 @@ it("discarding a proposed edit preserves saved instructions, and reopening permi
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
   await waitFor(() => expect(client.update).toHaveBeenCalledTimes(1));
   expect(client.update).toHaveBeenCalledWith(saved.id, expect.objectContaining({ baseRevision: saved.revision, ...patch }));
-  fireEvent.click(await screen.findByRole("button", { name: "Edit Onboarding guide" }));
+  await editWithChat("Onboarding guide");
   fireEvent.click(await screen.findByRole("button", { name: "Review configuration" }));
   fireEvent.click(screen.getByRole("button", { name: "Configuration details" }));
   expect(screen.getByText(patch.instructions)).toBeVisible();
@@ -155,17 +202,26 @@ it("waits for scoped resources and retains the same unsaved setup when opening r
   expect(client.setupChat.admitTurn).not.toHaveBeenCalled();
   await act(async () => load());
   await screen.findByRole("button", { name: "New colleagues" });
+  const priorConnections = await loadDevices();
+  client.integrations.mockResolvedValueOnce([...priorConnections, {
+    service: "gmail", account_label: "New inbox", account_email: "new@example.test", status: "active",
+  }]);
   fireEvent.click(screen.getByRole("button", { name: "Review configuration" }));
   fireEvent.click(screen.getByRole("button", { name: "Edit configuration" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "My unsaved helper" } });
-  expect(screen.queryByRole("button", { name: "MCP settings" })).toBeNull();
-  fireEvent.click(screen.getByText("Skills, sources & permissions"));
   fireEvent.click(screen.getByRole("button", { name: "MCP settings" }));
   expect(onOpenResourceSettings).toHaveBeenCalledWith("mcp");
-  fireEvent.click(screen.getByRole("button", { name: "Integration settings" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add skills" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open Skills settings" }));
+  expect(onOpenResourceSettings).toHaveBeenCalledWith("skills");
+  fireEvent.click(screen.getByRole("button", { name: "Add integrations" }));
+  fireEvent.click(screen.getByRole("button", { name: "Connect an app" }));
   expect(onOpenResourceSettings).toHaveBeenCalledWith("integrations");
   await act(async () => window.dispatchEvent(new Event("focus")));
   expect(client.integrations).toHaveBeenCalledTimes(2);
+  const picker = within(screen.getByRole("region", { name: "Choose integrations" }));
+  fireEvent.change(picker.getByRole("combobox", { name: "Add integration" }), { target: { value: "gmail" } });
+  expect(picker.getByRole("option", { name: "New inbox · new@example.test" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Check resources" }));
   await waitFor(() => expect(client.integrations).toHaveBeenCalledTimes(3));
   view.rerender(<ChatAgentsPanel client={client} onClose={vi.fn()} onOpenResourceSettings={onOpenResourceSettings}/>);
@@ -179,7 +235,7 @@ it("reviews only the latest actual change and preserves the complete draft behin
   const client = fixture({ name: saved.name, instructions: patch.instructions });
   client.list.mockResolvedValue({ enabled: true, agents: [saved] as never[] });
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Edit Meeting helper" }));
+  await editWithChat("Meeting helper");
   await screen.findByRole("button", { name: "New colleagues" });
   send();
   expect(await screen.findByText("Updated instructions.")).toBeVisible();
