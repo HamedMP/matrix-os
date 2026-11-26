@@ -13,6 +13,8 @@ import { encryptSlackToken } from "../../packages/platform/src/slack/security.js
 import { createSlackHomeTransport } from "../../packages/platform/src/slack-home-transport.js";
 import { createSlackOwnerClient } from "../../packages/gateway/src/startup/slack-owner-client.js";
 import { registerOwnerSlack } from "../../packages/gateway/src/startup/slack-owner.js";
+import { resolveSlackPlatform } from "../../packages/gateway/src/startup/slack-platform.js";
+import { composeManagedCustomDefinition } from "../../packages/gateway/src/bots/custom-definition.js";
 import { createPrivateSlackThreadContext } from "../../packages/gateway/src/slack/private-thread-context.js";
 import { createSlackMentionSummaries } from "../../packages/gateway/src/slack/mention-summary.js";
 import { createRealBotStateDatabase, insertChat } from "./bots/bot-state-support.js";
@@ -21,15 +23,19 @@ import { ownerRuleHarness } from "./slack-rule-tools-support.js";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse())
     await close(); });
-it.each(["new_message", "owner_mention"] as const)("owner Chat rule %s drives signed ingress into one English private zero-tool summary", async (trigger) => {
+it.each([
+    { trigger: "new_message", dev: false },
+    { trigger: "owner_mention", dev: false },
+    { trigger: "new_message", dev: true },
+] as const)("owner Chat rule $trigger (Dev=$dev) drives signed ingress into one English private zero-tool summary", async ({ trigger, dev }) => {
     const fixture = await createRealBotStateDatabase();
     cleanup.push(fixture.destroy);
-    const ownerId = "user_rules", runtimeId = "preview_runtime";
+    const ownerId = "user_rules", runtimeId = dev ? "a1234567-1234-4123-8123-123456789abc" : "preview_runtime";
     let createdAgent: Awaited<ReturnType<typeof createEng85AgentThroughSetup>> | undefined;
     if (trigger === "new_message") {
         const homePath = await mkdtemp(join(tmpdir(), "eng85-slack-agent-"));
         cleanup.push(() => rm(homePath, { recursive: true, force: true }));
-        createdAgent = await createEng85AgentThroughSetup({ fixture, ownerId, homePath });
+        createdAgent = await createEng85AgentThroughSetup({ fixture, ownerId, homePath, withoutIntegrations: dev });
         expect(createdAgent.ownerId).toBe(ownerId);
         cleanup.push(createdAgent.close);
     }
@@ -53,30 +59,67 @@ it.each(["new_message", "owner_mention"] as const)("owner Chat rule %s drives si
     const grantId = createHash("sha256").update(JSON.stringify(grant)).digest("hex");
     const gateway = new Hono(), home = createSlackHomeTransport({ fetchImpl: async (url, init) => gateway.fetch(new Request(url, init)) });
     const api = { conversationInfo: vi.fn(async () => ({ canAccess: true, isExternalShared: false, channelMetadata: { id: channelId, name: "tech" } })), hasChannelMember: vi.fn(async () => true), replies: vi.fn(async () => ({ messages: [{ user: "U456", ts: root, text: "Release risk: deployment checklist is incomplete." }], hasMore: false })), postMessage: vi.fn(), addReaction: vi.fn(), history: vi.fn(), exchangeCode: vi.fn() };
-    const platform = await createSlackApp({ db: fixture.db as unknown as Kysely<SlackDatabase>, config, api, startCleanup: false, now: () => date, resolveActor: async () => null, requireOrgAdmin: async () => false, isCurrentMember: async () => true, authorizeChannelBinding: async () => false, authorizeReply: async () => true, resolveDestination: async () => ({ ownerId, runtimeId }), authenticateRuntime: async () => ({ ownerId, runtimeId }), contextGrant: grant, dispatch: vi.fn(), dispatchContext: async (envelope: SlackThreadContextEnvelope) => { await home({ ownerId, token, origin: "https://gateway.example" }, "context", envelope); } });
+    const handle = dev ? "owner-dev" : "pr-3482";
+    const readOnlyDev = dev ? { ownerId, organizationId, ownerSlackId, teamId, channelId, handle, machineId: runtimeId } : undefined;
+    const dispatchContext = vi.fn(async (envelope: SlackThreadContextEnvelope) => {
+        await home({ ownerId, token, origin: "https://gateway.example" }, "context", envelope);
+    });
+    const platform = await createSlackApp({ db: fixture.db as unknown as Kysely<SlackDatabase>, config, api, startCleanup: false, now: () => date, resolveActor: async () => null, requireOrgAdmin: async () => false, isCurrentMember: async () => true, authorizeChannelBinding: async () => false, authorizeReply: async () => true, resolveDestination: async () => ({ ownerId, runtimeId }), authenticateRuntime: async () => ({ ownerId, runtimeId }), contextGrant: grant, dispatch: vi.fn(), dispatchContext, readOnlyDev });
     cleanup.push(platform.close);
     await platform.repository.saveInstallation({ appId, teamId, organizationId, installedBy: ownerId, botUserId: "UBOT", encryptedBotToken: encryptSlackToken("xoxb-synthetic", config.tokenEncryptionKey, `${appId}:${teamId}`) });
     await platform.repository.createChallenge({ hash: "f".repeat(64), appId, teamId, slackUserId: ownerSlackId });
     await platform.repository.completeLink({ hash: "f".repeat(64), actorId: ownerId, organizationId });
-    const client = createSlackOwnerClient({ platformUrl: config.publicBaseUrl, handle: "pr-3482", token, fetchImpl: async (url, init) => platform.routes.fetch(new Request(url, init)) });
+    const client = createSlackOwnerClient({ platformUrl: config.publicBaseUrl, handle, token, fetchImpl: async (url, init) => platform.routes.fetch(new Request(url, init)) });
     const summaries = await createSlackMentionSummaries({ db: fixture.db, ownerId, runtimeId, authorize: client.readThreadContextAccess, readThread: client.readSummaryThread });
     cleanup.push(summaries.close);
-    const context = await createPrivateSlackThreadContext({ db: fixture.db, ownerId, runtimeId, authorize: client.readThreadContextAccess, discoverEnrollment: client.discoverThreadEnrollment, onReceive: summaries.receive });
-    const bridge = registerOwnerSlack({ app: gateway, ownerId, token, context, summaries, startDrain: false, authority: { authorize: async () => { throw Error("No collaboration"); } } });
+    let swapEnrollment = false;
+    const context = await createPrivateSlackThreadContext({ db: fixture.db, ownerId, runtimeId, authorize: client.readThreadContextAccess,
+        async discoverEnrollment(target, signal) {
+            const enrollment = await client.discoverThreadEnrollment(target, signal);
+            return swapEnrollment && enrollment.available ? { ...enrollment, access: { ...enrollment.access, chatId: otherChatId } } : enrollment;
+        }, onReceive: summaries.receive });
+    const connection = dev ? resolveSlackPlatform({
+        MATRIX_RUNTIME_SLOT: "dev", MATRIX_HANDLE: handle, MATRIX_MACHINE_ID: runtimeId, MATRIX_USER_ID: ownerId,
+        MATRIX_SLACK_PLATFORM_URL: "https://slack-dev-a1234567---matrix-platform-preview-fixture-ey.a.run.app", MATRIX_SLACK_PLATFORM_TOKEN: token,
+        MATRIX_SLACK_DEV_TARGET: JSON.stringify({ ownerId, machineId: runtimeId, handle, appId, teamId, channelId, botId, chatId }),
+    }).connection : undefined;
+    if (dev) expect(connection?.devTarget).toMatchObject({ ownerId, chatId, channelId });
+    const bridge = registerOwnerSlack({ app: gateway, ownerId, token, devTarget: connection?.devTarget, context, summaries, startDrain: false, authority: { authorize: async () => { throw Error("No collaboration"); } } });
     cleanup.push(bridge.close);
-    const push = async (eventId: string, ts: string, text: string) => { const body = JSON.stringify({ type: "event_callback", api_app_id: appId, team_id: teamId, event_id: eventId, event: { type: "message", channel_type: "channel", channel: channelId, user: "U456", thread_ts: root, ts, text } }); const timestamp = String(Math.floor(date.getTime() / 1000)); const signature = createHmac("sha256", config.signingSecret).update(`v0:${timestamp}:${body}`).digest("hex"); return platform.routes.request("/webhooks/slack/events", { method: "POST", body, headers: { "x-slack-request-timestamp": timestamp, "x-slack-signature": `v0=${signature}` } }); };
+    const push = async (eventId: string, ts: string, text: string, origin = { appId, channelId }) => { const body = JSON.stringify({ type: "event_callback", api_app_id: origin.appId, team_id: teamId, event_id: eventId, event: { type: "message", channel_type: "channel", channel: origin.channelId, user: "U456", thread_ts: root, ts, text } }); const timestamp = String(Math.floor(date.getTime() / 1000)); const signature = createHmac("sha256", config.signingSecret).update(`v0:${timestamp}:${body}`).digest("hex"); return platform.routes.request("/webhooks/slack/events", { method: "POST", body, headers: { "x-slack-request-timestamp": timestamp, "x-slack-signature": `v0=${signature}` } }); };
     expect(Number((await sql<{count:string}>`SELECT count(*) AS count FROM slack_private_thread_context`.execute(fixture.db)).rows[0]!.count)).toBe(0);
     let policyTime = date.getTime() - 1_000;
     const harness = await ownerRuleHarness({ fixture, enrollment: { access: { ownerId, botId, chatId, runtimeId, grantId }, appId, teamId, channel: { id: channelId, name: "tech" } }, context, now: () => new Date(policyTime) });
-    const instruction = trigger === "new_message" ? "From now on summarize every new message in #tech immediately in English, focus on release risks. Do not reply in Slack." : "Whenever teammates mention me in #tech, summarize immediately in English, focus on release risks. Do not reply in Slack.";
+    const instruction = trigger === "new_message" ? "From now on summarize every new message in #tech immediately in English, with or without an @mention, focusing on release risks. Do not reply in Slack." : "Whenever teammates mention me in #tech, summarize immediately in English, focus on release risks. Do not reply in Slack.";
     const binding = await harness.turn(instruction);
-    const receipt = await harness.call(binding, { operation: "create", sourceId: harness.sourceId, ownerInstruction: instruction, definition: { trigger, cadence: { kind: "immediate" }, focus: "release risks", language: "English" } });
+    if (dev) {
+        const saved = (await createdAgent!.agents.get({ type: "personal", ownerId }, botId))!;
+        expect(saved.recipe?.integrations).toEqual([]);
+        expect((await composeManagedCustomDefinition(saved, createdAgent!.customRecipes)).capabilities).not.toContain("integration.inventory");
+        swapEnrollment = true;
+        expect(await harness.call(binding, { operation: "list" })).toEqual({ rules: [] });
+        swapEnrollment = false;
+        const other = await ownerRuleHarness({ fixture, enrollment: { access: { ownerId, botId, chatId: otherChatId, runtimeId, grantId },
+            appId, teamId, channel: { id: channelId, name: "tech" } }, context });
+        expect(await other.call(await other.turn("List my Slack rules."), { operation: "list" })).toEqual({ saved: false, reason: "invalid_input" });
+        await other.finish();
+    }
+    const discovered = await harness.call(binding, { operation: "list" });
+    expect(discovered).toEqual({ rules: [], enrolledSource: { sourceId: harness.sourceId, label: "#tech" } });
+    const receipt = await harness.call(binding, { operation: "create", sourceId: discovered.enrolledSource.sourceId, ownerInstruction: instruction, definition: { trigger, cadence: { kind: "immediate" }, focus: "release risks", language: "English" } });
     expect(receipt).toMatchObject({ saved: true, receipt: { language: "English", state: "active" } });
     await harness.finish();
     const reply = "Summary: The deployment checklist is incomplete.\nSuggested to-dos:\n- [ ] Review the deployment checklist.\nSource: #tech; current thread only.";
     const runtime = await summaryRuntime(fixture.db, summaries, ownerId, botId, reply, createdAgent);
     cleanup.push(runtime.close);
-    const ts = `${Math.floor(date.getTime() / 1000)}.000001`, text = trigger === "new_message" ? "An ordinary release update without any mention" : "<@U123> please review the release risk";
+    const ts = `${Math.floor(date.getTime() / 1000)}.000001`;
+    // Exercise both payloads for an all-new-messages rule, including mention in the isolated Dev lane.
+    const text = trigger === "new_message" && !dev ? "An ordinary release update without any mention" : "<@U123> please review the release risk";
+    if (dev) {
+        expect((await push("EvWrongChannel", ts, text, { appId, channelId: "C456" })).status).toBe(200);
+        expect((await push("EvWrongApp", ts, text, { appId: "A456", channelId })).status).toBe(403);
+        expect(dispatchContext).not.toHaveBeenCalled();
+    }
     if (trigger === "owner_mention") {
         expect((await push("EvPlain", ts, "Ordinary context, no trigger")).status).toBe(200);
         await summaries.drain();
@@ -129,8 +172,8 @@ it.each(["new_message", "owner_mention"] as const)("owner Chat rule %s drives si
         const jobs = await sql<{ event_id: string }>`SELECT sources->0->>'eventId' AS event_id FROM slack_mention_summary_jobs`.execute(fixture.db);
         expect(jobs.rows).toEqual([{ event_id: "EvTrigger" }]);
         expect(await delivery()).toEqual(expectedDelivery);
-        expect(await fixture.db.selectFrom("chat_messages").select("id").where("chat_id", "=", otherChatId).execute()).toEqual([]);
-        expect(await fixture.db.selectFrom("chat_runs").select("id").where("chat_id", "=", otherChatId).execute()).toEqual([]);
+        expect(await fixture.db.selectFrom("chat_messages").select("role").where("chat_id", "=", otherChatId).execute()).toEqual(dev ? [{ role: "user" }] : []);
+        expect(await fixture.db.selectFrom("chat_runs").select("status").where("chat_id", "=", otherChatId).execute()).toEqual(dev ? [{ status: "failed" }] : []);
         expect(runtime.modelRequests).toHaveLength(1);
     }
     const actual = JSON.stringify(runtime.modelRequests);
@@ -145,4 +188,12 @@ it.each(["new_message", "owner_mention"] as const)("owner Chat rule %s drives si
     expect(api.postMessage).not.toHaveBeenCalled();
     expect(api.addReaction).not.toHaveBeenCalled();
     expect(await platform.repository.getReplyDestination({ appId, teamId, eventId: "EvTrigger" })).toBeNull();
+    if (dev) {
+        await platform.repository.revokeInstallation(appId, teamId);
+        const revoked = await harness.turn("List my Slack rules.");
+        const result = await harness.call(revoked, { operation: "list" });
+        expect(result.rules).toHaveLength(1);
+        expect(result).not.toHaveProperty("enrolledSource");
+        await harness.finish();
+    }
 }, 30000);

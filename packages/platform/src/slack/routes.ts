@@ -2,13 +2,16 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { SLACK_OAUTH_COMPLETION_PATH, SlackOAuthCallbackQuerySchema } from '@matrix-os/contracts/slack-bridge';
+import { SLACK_DEV_OAUTH_BROWSER_ORIGIN, SLACK_DEV_OAUTH_FINISH_PATH, SLACK_OAUTH_COMPLETION_PATH,
+  SlackDevOAuthTicketSchema, SlackOAuthCallbackQuerySchema, slackDevOAuthCompletionPath } from '@matrix-os/contracts/slack-bridge';
+import { createSlackAgentChannels, type SlackAgentChannelsOptions } from "./agent-channels.js";
 import { createSlackContextRoutes } from "./context-routes.js";
 import { createSlackThreadContext, type SlackThreadContextOptions } from "./thread-context.js";
 import { createSlackLinkPage } from "./link-page.js";
 import { createSlackReplyRoutes } from "./reply-routes.js";
 import { createSlackReactionRoutes } from "./reaction-routes.js";
-import { SLACK_BOT_SCOPES } from "./api.js";
+import { SLACK_BOT_SCOPES, SLACK_DEV_BOT_SCOPES } from "./api.js";
+import type { SlackDevAcceptance } from "./home-resolver.js";
 import { SlackRepositoryError, type SlackRepository } from "./repository.js";
 import { decryptSlackToken, encryptSlackToken, verifySlackSignature } from "./security.js";
 import { ActorIdSchema, OrganizationIdSchema, SlackAppIdSchema, SlackChannelIdSchema, SlackTeamIdSchema, SlackTokenSchema,
@@ -23,17 +26,25 @@ const CallbackQuerySchema = SlackOAuthCallbackQuerySchema;
 const ChallengeSchema = z.object({ type: z.literal("url_verification"), challenge: z.string().min(1).max(1_024), api_app_id: SlackAppIdSchema.optional() }).passthrough();
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
-export type SlackAppRouteOptions = SlackAuthorityDependencies & SlackThreadContextOptions & {
-  config: SlackAppConfig; repository: SlackRepository; api: SlackApi; now?: () => Date;
+export type SlackAppRouteOptions = SlackAuthorityDependencies & SlackThreadContextOptions & SlackAgentChannelsOptions & {
+  config: SlackAppConfig; repository: SlackRepository; api: SlackApi; now?: () => Date; readOnlyDev?: SlackDevAcceptance;
+  devBrowserOAuth?: boolean;
 };
 
 export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { shutdownSlack(): Promise<void> } {
   const app = new Hono();
+  const dev = options.readOnlyDev;
   const now = options.now ?? (() => new Date());
   const threadContext = createSlackThreadContext(options);
+  const agentLane = createSlackAgentChannels(options);
+  if (agentLane) app.route("/", agentLane.routes);
   const publicUrl = new URL(options.config.publicBaseUrl);
   if (publicUrl.protocol !== "https:" || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash || publicUrl.pathname !== "/") throw new Error("Slack public origin unavailable");
   const callbackUrl = `${publicUrl.origin}/api/slack/oauth/callback`;
+  const browserHandoff = dev && options.devBrowserOAuth ? {
+    returnUrl: SLACK_DEV_OAUTH_BROWSER_ORIGIN + slackDevOAuthCompletionPath(dev.handle),
+    encryptionContext: `matrix-slack-dev-oauth-ticket:v1:${options.config.appId}:${dev.machineId}`,
+  } : undefined;
   const activeEvents = new Set<Promise<Response>>();
   let closed = false;
   const limit = bodyLimit({ maxSize: 256 * 1024, onError: (c) => fail(c, "Request too large", 413) });
@@ -41,12 +52,36 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     console.warn("[slack] request failed", error.name);
     return fail(c, "Slack unavailable", 503);
   });
+  if (browserHandoff) {
+    app.on("OPTIONS", ["/api/slack/install", SLACK_DEV_OAUTH_FINISH_PATH], c => {
+      const headers = c.req.header("access-control-request-headers")?.toLowerCase().split(",").map(name => name.trim());
+      if (c.req.header("origin") !== SLACK_DEV_OAUTH_BROWSER_ORIGIN || c.req.header("cookie")
+        || c.req.header("access-control-request-method") !== "POST" || new URL(c.req.url).search
+        || !headers || headers.length !== 2 || !headers.includes("authorization") || !headers.includes("content-type")) {
+        return fail(c, "Forbidden", 403);
+      }
+      devBrowserHeaders(c);
+      c.header("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers");
+      c.header("Access-Control-Allow-Methods", "POST");
+      c.header("Access-Control-Allow-Headers", "Authorization, Content-Type");
+      return c.body(null, 204);
+    });
+  }
   app.use("/api/slack/*", async (c, next) => {
     if (["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method)) {
       const origin = c.req.header("origin");
-      const bearer = /^Bearer [A-Za-z0-9._~-]{1,4096}$/i.test(c.req.header("authorization") ?? "");
+      const bearer = hasCookieLessBearer(c);
+      if (browserHandoff && c.req.method === "POST"
+        && (c.req.path === "/api/slack/install" || c.req.path === SLACK_DEV_OAUTH_FINISH_PATH)
+        && origin === SLACK_DEV_OAUTH_BROWSER_ORIGIN) {
+        devBrowserHeaders(c);
+        if (!bearer || !/^application\/json(?:;\s*charset=utf-8)?$/i.test(c.req.header("content-type") ?? "")
+          || new URL(c.req.url).search) return fail(c, "Forbidden", 403);
+        await next();
+        return;
+      }
       // Cookie-bearing requests never inherit a Bearer bypass; the auth resolver must authenticate the Bearer for native callers.
-      if (origin !== publicUrl.origin && !(origin === undefined && bearer && !c.req.header("cookie"))) return fail(c, "Forbidden", 403);
+      if (origin !== publicUrl.origin && !(origin === undefined && bearer)) return fail(c, "Forbidden", 403);
     }
     await next();
   });
@@ -55,47 +90,85 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     return parsed.success ? parsed.data : null;
   }
 
+  const isDevInstaller = (actorId: string, organizationId: string) => !dev || (actorId === dev.ownerId && organizationId === dev.organizationId);
+
   app.post("/api/slack/install", limit, async (c) => {
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
     const request = await parse(c, z.object({ organizationId: OrganizationIdSchema }).strict());
     if (!request) return fail(c, "Invalid request", 422);
-    if (!await options.requireOrgAdmin({ actorId, organizationId: request.organizationId })) return fail(c, "Forbidden", 403);
+    if (!isDevInstaller(actorId, request.organizationId) || !await options.requireOrgAdmin({ actorId, organizationId: request.organizationId })) return fail(c, "Forbidden", 403);
     const token = randomBytes(32).toString("base64url");
     await options.repository.createOAuthState({ hash: digest(token), appId: options.config.appId, actorId, organizationId: request.organizationId });
     const url = new URL("https://slack.com/oauth/v2/authorize");
-    url.search = new URLSearchParams({ client_id: options.config.clientId, scope: SLACK_BOT_SCOPES.join(","), redirect_uri: callbackUrl, state: token }).toString();
+    const scopes = dev ? SLACK_DEV_BOT_SCOPES : SLACK_BOT_SCOPES;
+    url.search = new URLSearchParams({ client_id: options.config.clientId, scope: scopes.join(","),
+      redirect_uri: callbackUrl, state: token, ...(dev ? { team: dev.teamId } : {}) }).toString();
     c.header("Cache-Control", "no-store"); return c.json({ url: url.toString() });
   });
 
   app.get("/api/slack/oauth/callback", limit, async (c) => {
     c.header('Cache-Control', 'no-store'); c.header('Referrer-Policy', 'no-referrer');
-    const actorId = await actor(c);
+    const actorId = browserHandoff && !hasCookieLessBearer(c) ? null : await actor(c);
     if (!actorId) {
       const query = CallbackQuerySchema.safeParse(c.req.query());
-      if (query.success && c.req.header('accept')?.includes('text/html') && !c.req.header('authorization')) {
+      if (c.req.header('accept')?.includes('text/html') && !c.req.header('authorization')) {
+        if (browserHandoff && c.req.query("error") === "access_denied") return c.redirect(browserHandoff.returnUrl + "#error=access_denied", 303);
         // The browser refreshes its own Clerk session. State never supplies identity.
-        return c.redirect(SLACK_OAUTH_COMPLETION_PATH + '?' + new URLSearchParams(query.data).toString(), 303);
+        if (query.success) {
+          if (browserHandoff) {
+            const ticket = encryptSlackToken(JSON.stringify(query.data), options.config.tokenEncryptionKey, browserHandoff.encryptionContext);
+            return c.redirect(browserHandoff.returnUrl + "#ticket=" + ticket, 303);
+          }
+          return c.redirect(SLACK_OAUTH_COMPLETION_PATH + "?" + new URLSearchParams(query.data).toString(), 303);
+        }
       }
       return fail(c, "Unauthorized", 401);
     }
-    const parsed = CallbackQuerySchema.safeParse(c.req.query()); if (!parsed.success) return fail(c, "Invalid request", 422);
-    const hash = digest(parsed.data.state);
+    const parsed = CallbackQuerySchema.safeParse(c.req.query());
+    if (!parsed.success) return fail(c, "Invalid request", 422);
+    return finishInstallation(c, actorId, parsed.data);
+  });
+
+  if (browserHandoff) {
+    app.post(SLACK_DEV_OAUTH_FINISH_PATH, bodyLimit({ maxSize: 8 * 1024, onError: c => fail(c, "Request too large", 413) }), async c => {
+      if (c.req.header("origin") !== SLACK_DEV_OAUTH_BROWSER_ORIGIN || !hasCookieLessBearer(c)) return fail(c, "Forbidden", 403);
+      const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
+      if (actorId !== dev?.ownerId) return fail(c, "Forbidden", 403);
+      const request = await parse(c, SlackDevOAuthTicketSchema); if (!request) return fail(c, "Invalid request", 422);
+      try {
+        const plaintext = decryptSlackToken(request.ticket, options.config.tokenEncryptionKey, browserHandoff.encryptionContext);
+        const query = CallbackQuerySchema.safeParse(JSON.parse(plaintext));
+        if (query.success) return finishInstallation(c, actorId, query.data);
+      } catch (error: unknown) {
+        // The token helper records decryption errors without credential values.
+        if (!(error instanceof Error)) throw error;
+      }
+      return fail(c, "Invalid request", 422);
+    });
+  }
+
+  async function finishInstallation(c: Context, actorId: string, query: z.infer<typeof CallbackQuerySchema>) {
+    const hash = digest(query.state);
     const state = await options.repository.getOAuthState(hash);
     if (!state) return fail(c, "Request expired", 409);
-    if (state.appId !== options.config.appId || state.actorId !== actorId || !await options.requireOrgAdmin({ actorId, organizationId: state.organizationId })) return fail(c, "Forbidden", 403);
+    if (state.appId !== options.config.appId || state.actorId !== actorId || !isDevInstaller(actorId, state.organizationId) || !await options.requireOrgAdmin({ actorId, organizationId: state.organizationId })) return fail(c, "Forbidden", 403);
     try { await options.repository.consumeOAuthState(hash, actorId); } catch (error: unknown) { return repositoryFailure(c, error); }
-    const installed = await options.api.exchangeCode({ code: parsed.data.code, redirectUri: callbackUrl });
-    if (installed.appId !== options.config.appId) return fail(c, "Forbidden", 403);
+    const installed = await options.api.exchangeCode({ code: query.code, redirectUri: callbackUrl });
+    if (installed.appId !== options.config.appId || (dev && (installed.teamId !== dev.teamId || installed.slackUserId !== dev.ownerSlackId))) {
+      return fail(c, "Forbidden", 403);
+    }
     // Provider latency must not let an expired administrator privilege commit installation.
     if (!await options.requireOrgAdmin({ actorId, organizationId: state.organizationId })) return fail(c, "Forbidden", 403);
     try {
-      await options.repository.saveInstallation({ ...installed, organizationId: state.organizationId, installedBy: actorId,
-        encryptedBotToken: encryptSlackToken(installed.botToken, options.config.tokenEncryptionKey, `${installed.appId}:${installed.teamId}`) }, { oauthStateHash: hash });
+      const ownerBinding = await options.repository.saveInstallation({ ...installed, organizationId: state.organizationId, installedBy: actorId,
+        encryptedBotToken: encryptSlackToken(installed.botToken, options.config.tokenEncryptionKey, `${installed.appId}:${installed.teamId}`) },
+      dev ? { oauthStateHash: hash, ownerSlackUserId: dev.ownerSlackId } : { oauthStateHash: hash });
+      return c.json({ connected: true, teamId: installed.teamId, ...(ownerBinding ? { ownerBinding } : {}) });
     } catch (error: unknown) { return repositoryFailure(c, error); }
-    c.header("Cache-Control", "no-store"); return c.json({ connected: true, teamId: installed.teamId });
-  });
+  }
 
   app.post("/api/slack/link/complete", limit, async (c) => {
+    if (dev) return fail(c, "Forbidden", 403);
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
     const request = await parse(c, z.object({ token: SlackTokenSchema }).strict()); if (!request) return fail(c, "Invalid request", 422);
     const hash = digest(request.token);
@@ -110,16 +183,19 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
   app.delete("/api/slack/workspaces/:teamId/link", limit, async (c) => {
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
     const teamId = SlackTeamIdSchema.safeParse(c.req.param("teamId")); if (!teamId.success) return fail(c, "Invalid request", 422);
+    if (dev && (actorId !== dev.ownerId || teamId.data !== dev.teamId)) return fail(c, "Forbidden", 403);
     await options.repository.removeLink(options.config.appId, teamId.data, actorId); return c.body(null, 204);
   });
   app.delete("/api/slack/workspaces/:teamId", limit, async (c) => {
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
     const teamId = SlackTeamIdSchema.safeParse(c.req.param("teamId")); if (!teamId.success) return fail(c, "Invalid request", 422);
+    if (dev && (actorId !== dev.ownerId || teamId.data !== dev.teamId)) return fail(c, "Forbidden", 403);
     const installed = await options.repository.getInstallation(options.config.appId, teamId.data);
     if (!installed || !await options.requireOrgAdmin({ actorId, organizationId: installed.organizationId })) return fail(c, "Forbidden", 403);
     await options.repository.revokeInstallation(options.config.appId, teamId.data, { source: "administrator" }); return c.body(null, 204);
   });
   app.put("/api/slack/workspaces/:teamId/channels/:channelId", limit, async (c) => {
+    if (dev) return fail(c, "Forbidden", 403);
     const actorId = await actor(c); if (!actorId) return fail(c, "Unauthorized", 401);
     const params = z.object({ teamId: SlackTeamIdSchema, channelId: SlackChannelIdSchema }).safeParse(c.req.param());
     const request = await parse(c, z.object({ scopeId: z.uuid(), approvedOutput: z.literal(true) }).strict()); if (!params.success || !request || params.data.channelId.startsWith("D")) return fail(c, "Invalid request", 422);
@@ -148,11 +224,20 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
     }
     const envelope = EnvelopeSchema.safeParse(payload); if (!envelope.success) return fail(c, "Invalid request", 422);
     const { api_app_id: appId, team_id: teamId, event_id: eventId, event } = envelope.data;
-    if (appId !== options.config.appId) return fail(c, "Forbidden", 403);
+    const routeWorkspace = Boolean(agentLane && teamId === options.agentChannels?.teamId);
+    if (appId !== options.config.appId || (dev && teamId !== dev.teamId && !routeWorkspace)) return fail(c, "Forbidden", 403);
     const revocation = event.type === "app_uninstalled" || event.type === "tokens_revoked";
     const installed = await options.repository.getInstallation(appId, teamId);
     if ((!installed || installed.state !== "active") && !revocation) return fail(c, "Forbidden", 403);
     if (envelope.data.is_ext_shared_channel || event.is_ext_shared || (event.user_team && event.user_team !== teamId)) return c.json({ received: true });
+    if (agentLane && routeWorkspace && event.type === "message" && event.channel_type === "channel" && installed
+      && !event.bot_id && !event.subtype && event.app_id === undefined && event.user && event.user !== installed.botUserId
+      && event.channel && event.ts && event.text && options.agentChannels!.channels.some(ch => ch.channelId === event.channel)) {
+      const status = await agentLane.receive({ eventId, channelId: event.channel, userId: event.user, ts: event.ts,
+        threadTs: event.thread_ts, text: event.text }, installed, body, signal);
+      return status === 200 ? c.json({ received: true }) : fail(c, status === 409 ? "Conflicting delivery" : "Slack unavailable", status);
+    }
+    if (dev && !revocation && (event.type !== "message" || teamId !== dev.teamId || event.channel !== dev.channelId)) return c.json({ received: true });
     if (threadContext.receive && installed && event.type === "message" && event.channel_type === "channel"
       && !event.bot_id && !event.subtype && event.app_id === undefined && event.user !== installed.botUserId) {
       const status = await threadContext.receive({ appId, teamId, eventId, userId: event.user, channelId: event.channel,
@@ -160,6 +245,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
         ...(Object.hasOwn(event, "blocks") ? { blocks: event.blocks } : {}) }, body, installed, signal);
       return status === 200 ? c.json({ received: true }) : fail(c, status === 409 ? "Conflicting delivery" : "Slack unavailable", status);
     }
+    if (dev && !revocation) return c.json({ received: true });
     const relevant = event.type === "app_mention" || (event.type === "message" && event.channel_type === "im");
     if (event.bot_id || event.subtype || (event.user && event.user === installed?.botUserId) || (!relevant && !revocation)) return c.json({ received: true });
     if (relevant && !event.text?.trim()) return c.json({ received: true });
@@ -241,11 +327,17 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
       return fail(c, "Slack unavailable", 503);
     }
   });
-  app.route("/", createSlackReplyRoutes(options));
-  app.route("/", createSlackReactionRoutes(options));
+  if (dev) {
+    app.post("/internal/slack/replies", limit, c => fail(c, "Not found", 404));
+    app.post("/internal/slack/reactions", limit, c => fail(c, "Not found", 404));
+    app.get("/slack/link", c => fail(c, "Not found", 404));
+  } else {
+    app.route("/", createSlackReplyRoutes(options));
+    app.route("/", createSlackReactionRoutes(options));
+    app.route("/", createSlackLinkPage(options));
+  }
   app.route("/", createSlackContextRoutes(options, threadContext.readPrivateThread, threadContext.readEnrolledContext));
   app.route("/", threadContext.routes);
-  app.route("/", createSlackLinkPage(options));
   return Object.assign(app, { async shutdownSlack() { closed = true; await Promise.allSettled([...activeEvents]); } });
 }
 
@@ -263,4 +355,15 @@ function repositoryFailure(c: Context, error: unknown) {
   if (error instanceof SlackRepositoryError) return fail(c, "Request unavailable", error.code === "forbidden" ? 403 : error.code === "capacity" ? 429 : 409);
   console.warn("[slack] database request failed", error instanceof Error ? error.name : "UnknownError"); return fail(c, "Slack unavailable", 503);
 }
-function fail(c: Context, error: string, status: 401 | 403 | 409 | 413 | 422 | 429 | 503) { c.header("Cache-Control", "no-store"); return c.json({ error }, status); }
+function fail(c: Context, error: string, status: 401 | 403 | 404 | 409 | 413 | 422 | 429 | 503) { c.header("Cache-Control", "no-store"); return c.json({ error }, status); }
+
+function hasCookieLessBearer(c: Context): boolean {
+  return !c.req.header("cookie") && /^Bearer [A-Za-z0-9._~-]{1,4096}$/i.test(c.req.header("authorization") ?? "");
+}
+
+function devBrowserHeaders(c: Context): void {
+  c.header("Access-Control-Allow-Origin", SLACK_DEV_OAUTH_BROWSER_ORIGIN);
+  c.header("Vary", "Origin");
+  c.header("Cache-Control", "no-store");
+  c.header("Referrer-Policy", "no-referrer");
+}

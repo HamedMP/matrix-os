@@ -106,6 +106,7 @@ import {
 } from './r2-capability.js';
 import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
 import { bootstrapPlatformSlack } from './slack-startup.js';
+import { startSlackDevCallbackServer } from './slack-dev-callback-startup.js';
 import type { PlatformCollaborationComposition } from './collaboration/wiring.js';
 import { getCustomMcpProjectionMachine, resolveCustomMcpUserIdForMachine } from './custom-mcp-route-registration.js';
 import { createSpeechRuntimeRoutes } from './speech/routes.js';
@@ -311,6 +312,21 @@ async function importRuntimeModule<T>(specifier: string): Promise<T> {
   return import(specifier) as Promise<T>;
 }
 
+async function loadPlatformClerkAuth(): Promise<ClerkAuth | undefined> {
+  const config = resolveClerkVerificationConfig(process.env);
+  if (!config) return undefined;
+  const { verifyToken } = await import('@clerk/backend');
+  return createClerkAuth({
+    verifyToken: async (token: string) => {
+      const payload = await verifyToken(token, config.verifyTokenOptions);
+      return payload as { sub: string; [key: string]: unknown };
+    },
+    ...(config.sessionRevocationSecret
+      ? { revokeSession: createClerkSessionRevoker({ secretKey: config.sessionRevocationSecret }) }
+      : {}),
+  });
+}
+
 async function startPlatformServerWithCleanup(
   opts: StartPlatformServerOptions,
   registerCustomMcpStartupCleanup: (cleanup: () => Promise<void>) => void,
@@ -335,6 +351,31 @@ async function startPlatformServerWithCleanup(
     getRuntimeEntitlementDecisionForUser,
   } = opts;
 
+  let runtimeConfig;
+  try {
+    runtimeConfig = loadPlatformRuntimeConfig();
+  } catch (err: unknown) {
+    if (err instanceof PlatformStartupConfigError) {
+      console.error(`[platform] ${err.message}`);
+      process.exit(1);
+    }
+    throw err;
+  }
+  if (runtimeConfig.slackDevCallbackOrigin) {
+    await startSlackDevCallbackServer({
+      env: process.env,
+      origin: runtimeConfig.slackDevCallbackOrigin,
+      port,
+      databaseUrl: runtimeConfig.platformDatabaseUrl,
+      clerkAuth: await loadPlatformClerkAuth(),
+      platformSecret,
+      customerVpsProxyDispatcher,
+      containerProxyDispatcher,
+      registerStartupCleanup: registerCustomMcpStartupCleanup,
+    });
+    return;
+  }
+
   if (checkUnsafeDefaultSecrets().length > 0) {
     process.exit(1);
   }
@@ -345,14 +386,12 @@ async function startPlatformServerWithCleanup(
     process.exit(1);
   }
   const backgroundWorkersEnabled = shouldEnablePlatformBackgroundWorkers(process.env);
-  let runtimeConfig;
   let speechConfig;
   try {
-    runtimeConfig = loadPlatformRuntimeConfig();
     speechConfig = loadPlatformSpeechConfig(process.env);
     if (speechConfig.enabled && platformSecret.length < 32) throw new PlatformSpeechConfigError();
   } catch (err: unknown) {
-    if (err instanceof PlatformStartupConfigError || err instanceof PlatformSpeechConfigError) {
+    if (err instanceof PlatformSpeechConfigError) {
       console.error(`[platform] ${err.message}`);
       process.exit(1);
     }
@@ -491,24 +530,7 @@ async function startPlatformServerWithCleanup(
     console.log('[platform] Cloud Run mode enabled; legacy Docker container orchestration is disabled');
   }
 
-  let clerkAuth: ClerkAuth | undefined;
-  const clerkVerificationConfig = resolveClerkVerificationConfig(process.env);
-  if (clerkVerificationConfig) {
-    const { verifyToken } = await import('@clerk/backend');
-    clerkAuth = createClerkAuth({
-      verifyToken: async (token: string) => {
-        const payload = await verifyToken(token, clerkVerificationConfig.verifyTokenOptions);
-        return payload as { sub: string; [key: string]: unknown };
-      },
-      ...(clerkVerificationConfig.sessionRevocationSecret
-        ? {
-            revokeSession: createClerkSessionRevoker({
-              secretKey: clerkVerificationConfig.sessionRevocationSecret,
-            }),
-          }
-        : {}),
-    });
-  }
+  const clerkAuth = await loadPlatformClerkAuth();
 
   const collaboration = await bootstrapPlatformCollaboration({
     env: process.env,

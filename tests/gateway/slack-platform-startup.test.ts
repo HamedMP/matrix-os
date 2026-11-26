@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
 import { resolveSlackPlatform } from "../../packages/gateway/src/startup/slack-platform.js";
 import { createSlackOwnerClient } from "../../packages/gateway/src/startup/slack-owner-client.js";
 import { startOwnerSlack } from "../../packages/gateway/src/startup/slack-owner.js";
-import { signSlackBridgeRequest } from "../../packages/contracts/src/slack-bridge.js";
+import { signSlackBridgeRequest, signSlackContextSource } from "../../packages/contracts/src/slack-bridge.js";
+import { markAuthContextReady, markVerifiedRuntimeBearer, setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 const core = { PLATFORM_INTERNAL_URL: "https://core.example.test", UPGRADE_TOKEN: "c".repeat(64),
   MATRIX_HANDLE: "pr-3482", MATRIX_RUNTIME_SLOT: "pr-3482", MATRIX_MACHINE_ID: "11111111-2222-4333-8444-555555555555", MATRIX_PREVIEW_RUNTIME: "true" };
 const preview = { ...core, MATRIX_SLACK_PLATFORM_URL: "https://pr-3482---matrix-platform-preview-fixture-ey.a.run.app",
@@ -59,19 +61,119 @@ it("uses selected credentials for actual owner RPC and signed receiver, rejectin
   } finally { await runtime.close(); }
 });
 
+const devTarget = {
+  ownerId: "user_fixture", machineId: core.MATRIX_MACHINE_ID, handle: "fixture-dev",
+  appId: "A123", teamId: "T123", channelId: "C123", botId: "bot_12345678", chatId: "chat_fixture",
+};
+const dev = {
+  ...core, MATRIX_USER_ID: devTarget.ownerId, MATRIX_HANDLE: devTarget.handle, MATRIX_RUNTIME_SLOT: "dev", MATRIX_PREVIEW_RUNTIME: "false",
+  MATRIX_SLACK_DEV_TARGET: JSON.stringify(devTarget), MATRIX_SLACK_PLATFORM_TOKEN: "d".repeat(64),
+  MATRIX_SLACK_PLATFORM_URL: "https://slack-dev-11111111---matrix-platform-preview-fixture-ey.a.run.app",
+};
+it("discovers only the pinned Dev callback for the verified owner", async () => {
+  const expected = { ...devTarget, organizationId: "org_fixture" };
+  const selected = resolveSlackPlatform({ ...dev, MATRIX_SLACK_DEV_TARGET: JSON.stringify(expected) });
+  const app = new Hono();
+  let verifiedActor: string | undefined;
+  app.use("*", async (c, next) => {
+    markAuthContextReady(c);
+    if (verifiedActor) {
+      markVerifiedRuntimeBearer(c);
+      setPlatformVerifiedPrincipal(c, verifiedActor);
+    }
+    await next();
+  });
+  const runtime = await startOwnerSlack({ app, ...selected.connection, ownerId: devTarget.ownerId,
+    repository: null, orchestrator: null, executionRoots: null, collaboration: null, bots: undefined });
+  try {
+    const path = "/api/slack/dev-oauth/config";
+    expect((await app.request(path, { headers: { "x-platform-user-id": devTarget.ownerId } })).status).toBe(403);
+    verifiedActor = "user_other";
+    expect((await app.request(path)).status).toBe(403);
+    verifiedActor = devTarget.ownerId;
+    const response = await app.request(path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      handle: expected.handle, machineId: expected.machineId, organizationId: expected.organizationId,
+      platformOrigin: dev.MATRIX_SLACK_PLATFORM_URL,
+    });
+    expect((await app.request(path + "?url=https://other.example")).status).toBe(404);
+  } finally { await runtime.close(); }
+});
+it("selects the dedicated Slack transport only for the exact opted-in Dev computer", () => {
+  const selected = resolveSlackPlatform(dev);
+  expect(selected.connection).toEqual({
+    devTarget, platformUrl: dev.MATRIX_SLACK_PLATFORM_URL, token: dev.MATRIX_SLACK_PLATFORM_TOKEN, handle: devTarget.handle,
+  });
+  expect(selected.botConnection).toMatchObject({ ...selected.connection, machineId: devTarget.machineId, runtimeSlot: "dev" });
+});
+it("accepts the provisioned Clerk owner and fails closed on contradictory owner IDs", () => {
+  const expected = resolveSlackPlatform(dev);
+  expect(resolveSlackPlatform({ ...dev, MATRIX_USER_ID: undefined, MATRIX_CLERK_USER_ID: devTarget.ownerId })).toEqual(expected);
+  expect(resolveSlackPlatform({ ...dev, MATRIX_CLERK_USER_ID: devTarget.ownerId })).toEqual(expected);
+  expect(resolveSlackPlatform({ ...dev, MATRIX_CLERK_USER_ID: "user_other" })).toEqual({ connection: undefined, botConnection: null });
+});
+it.each([
+  { MATRIX_SLACK_DEV_TARGET: "" }, { MATRIX_SLACK_DEV_TARGET: "bad json" },
+  { MATRIX_SLACK_DEV_TARGET: JSON.stringify({ ...devTarget, extra: "not accepted" }) },
+  { MATRIX_SLACK_DEV_TARGET: JSON.stringify({ ...devTarget, chatId: "" }) },
+  { MATRIX_USER_ID: "user_other" }, { MATRIX_HANDLE: "other-dev" }, { MATRIX_RUNTIME_SLOT: "primary" },
+  { MATRIX_MACHINE_ID: "aaaaaaaa-2222-4333-8444-555555555555" }, { MATRIX_PREVIEW_RUNTIME: "true" },
+  { MATRIX_SLACK_PLATFORM_URL: preview.MATRIX_SLACK_PLATFORM_URL },
+  { MATRIX_SLACK_PLATFORM_URL: dev.MATRIX_SLACK_PLATFORM_URL.replace("11111111", "22222222") },
+  { MATRIX_SLACK_PLATFORM_URL: dev.MATRIX_SLACK_PLATFORM_URL + "/path" },
+  { MATRIX_SLACK_PLATFORM_TOKEN: undefined }, { MATRIX_SLACK_PLATFORM_TOKEN: core.UPGRADE_TOKEN },
+])("rejects invalid Dev opt-in without using core transport: %j", patch => {
+  expect(resolveSlackPlatform({ ...dev, ...patch })).toEqual({ connection: undefined, botConnection: null });
+});
+it("blocks signed Slack ingress outside the exact private Dev Chat and accepts the existing signed read-only context", async () => {
+  const selected = resolveSlackPlatform(dev);
+  const app = new Hono(), receive = vi.fn(async () => true);
+  const runtime = await startOwnerSlack({ app, ...selected.connection, ownerId: devTarget.ownerId, repository: null, orchestrator: null,
+    executionRoots: null, collaboration: null, bots: { slackThreadContext: { receive } } as never });
+  const envelope = { ownerId: devTarget.ownerId, botId: devTarget.botId, chatId: devTarget.chatId, runtimeId: devTarget.machineId,
+    grantId: "b".repeat(64), event: { appId: devTarget.appId, teamId: devTarget.teamId, channelId: devTarget.channelId,
+      eventId: "Ev123", ts: "1795000001.000001", threadTs: "1795000000.000001", userId: "U123", text: "ordinary fixture" } };
+  const source = { version: 1 as const, ownerMention: false, textDigest: "1".repeat(64), proof: "2".repeat(64) };
+  const contextPath = "/api/internal/slack/context";
+  async function post(path: string, payload: unknown, token = dev.MATRIX_SLACK_PLATFORM_TOKEN, attest = false) {
+    const body = JSON.stringify(payload);
+    const headers = await signSlackBridgeRequest({ token, path, body });
+    const extension = attest
+      ? await signSlackContextSource({ token, path, body, timestamp: headers["x-matrix-slack-timestamp"], source }) : {};
+    return app.request(path, { method: "POST", body, headers: { ...headers, ...extension } });
+  }
+  try {
+    expect((await post(contextPath, envelope, core.UPGRADE_TOKEN, true)).status).toBe(401);
+    expect((await post(contextPath, envelope)).status).toBe(403);
+    for (const payload of [
+      { ...envelope, ownerId: "user_other" }, { ...envelope, chatId: "chat_other" }, { ...envelope, botId: "bot_87654321" },
+      { ...envelope, runtimeId: "other_runtime" }, { ...envelope, event: { ...envelope.event, appId: "A124" } },
+      { ...envelope, event: { ...envelope.event, teamId: "T124" } }, { ...envelope, event: { ...envelope.event, channelId: "C124" } },
+    ]) expect((await post(contextPath, payload, undefined, true)).status).toBe(403);
+    const legacySummary = { ruleId: "legacy_rule", version: 1, proof: "1".repeat(64) };
+    expect((await post(contextPath, { ...envelope, summary: legacySummary }, undefined, true)).status).toBe(403);
+    expect((await post("/api/internal/slack/events", {})).status).toBe(403);
+    expect((await post("/api/internal/slack/authorize", {})).status).toBe(403);
+    expect((await post(contextPath, envelope, undefined, true)).status).toBe(202);
+    expect(receive).toHaveBeenCalledExactlyOnceWith({ ...envelope, source });
+  } finally { await runtime.close(); }
+});
+
 import { startBots } from "../../packages/gateway/src/startup/bots.js";
 import { createRealBotStateDatabase, OWNER, BOT } from "./bots/bot-state-support.js";
 import { requestFixture } from "./bots/routine-cli-request-support.js";
 import type { SlackBotPlatform } from "../../packages/gateway/src/startup/slack-platform.js";
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
-async function startBotFixture(slackPlatform: SlackBotPlatform | null | undefined, coreConfigured = true) {
+async function startBotFixture(slackPlatform: SlackBotPlatform | null | undefined, coreConfigured = true, computerId = core.MATRIX_HANDLE) {
   const data = await createRealBotStateDatabase(); cleanups.push(data.destroy);
   const f = await requestFixture(data.db, { recipeRef: { recipeId: "personal-assistant", version: "2026-09-30.1" } }); cleanups.push(f.close);
-  const platform = { platformUrl: core.PLATFORM_INTERNAL_URL, token: core.UPGRADE_TOKEN, handle: core.MATRIX_HANDLE,
-    machineId: core.MATRIX_MACHINE_ID, runtimeSlot: core.MATRIX_RUNTIME_SLOT };
+  const platform = { platformUrl: core.PLATFORM_INTERNAL_URL, token: core.UPGRADE_TOKEN, handle: computerId,
+    machineId: core.MATRIX_MACHINE_ID, runtimeSlot: computerId === core.MATRIX_HANDLE ? core.MATRIX_RUNTIME_SLOT : "dev" };
   const services = await startBots({ homePath: f.home, repository: f.chats, agents: f.agents, runtimeOwnerId: OWNER,
-    computerId: core.MATRIX_HANDLE, configuredOwnerIds: [OWNER], executionRoots: { resolve: vi.fn() }, providers: { getSnapshot: vi.fn() },
+    computerId, configuredOwnerIds: [OWNER], executionRoots: { resolve: vi.fn() }, providers: { getSnapshot: vi.fn() },
     host: { available: true, client: {}, registerAuthorizer: vi.fn(() => vi.fn()) } as never,
     ...(coreConfigured ? { routineActionPlatform: platform } : {}), ...(slackPlatform === undefined ? {} : { slackPlatform }) });
   if (!services) throw new Error("Actual bot startup required"); cleanups.push(services.close);
@@ -92,6 +194,43 @@ it("wires actual bot context and rule/read service startup to the isolated pair 
   expect(calls).toEqual([{ url: preview.MATRIX_SLACK_PLATFORM_URL + "/internal/slack/thread-context/access", token: `Bearer ${preview.MATRIX_SLACK_PLATFORM_TOKEN}` }]);
   expect(await data.db.selectFrom("chat_runs").select("id").execute()).toHaveLength(0);
 });
+it("starts the private Slack read and rule services on the actual pinned Dev bot runtime", async () => {
+  const target = { ...devTarget, ownerId: OWNER, botId: BOT, chatId: "chat_target_a" };
+  const selected = resolveSlackPlatform({ ...dev, MATRIX_USER_ID: OWNER, MATRIX_SLACK_DEV_TARGET: JSON.stringify(target) });
+  const observe = vi.spyOn(integrationToolsModule, "createBotIntegrationTools");
+  const calls: Array<{ url: string; token: string | null; handle: string | null }> = [];
+  vi.stubGlobal("fetch", vi.fn(async (url, init) => {
+    const headers = new Headers(init?.headers);
+    calls.push({ url: String(url), token: headers.get("authorization"), handle: headers.get("x-matrix-handle") });
+    const channel = { id: target.channelId, name: "tech" };
+    return String(url).endsWith("/enrollment")
+      ? Response.json({ available: true, access: { ...JSON.parse(String(init?.body)), grantId: "f".repeat(64) },
+        appId: target.appId, teamId: target.teamId, channelId: target.channelId, scope: "channel", channel })
+      : Response.json({ allowed: true, channel });
+  }));
+  const { services, data } = await startBotFixture(selected.botConnection, true, target.handle);
+  expect(services.routineOrigin).toBeDefined();
+  expect(services.routineOriginMachine).toEqual({ handle: target.handle, machineId: target.machineId, runtimeSlot: "dev" });
+  expect(services.slackMentionSummaries).toBeDefined();
+  const slackContext = services.slackThreadContext;
+  expect(slackContext).toBeDefined();
+  const access = { ownerId: OWNER, botId: BOT, chatId: target.chatId, runtimeId: target.machineId, grantId: "f".repeat(64) };
+  const event = { appId: target.appId, teamId: target.teamId, channelId: target.channelId, eventId: "EvDevStartup",
+    ts: "1795000001.000001", threadTs: "1795000000.000001", userId: "U123", text: "Dev #tech fixture" };
+  const source = { version: 1 as const, ownerMention: false, textDigest: createHash("sha256").update(event.text).digest("hex"), proof: "b".repeat(64) };
+  expect(await slackContext!.receive({ ...access, event, source })).toBe(true);
+  expect(await slackContext!.prompt({ ...access, signal: AbortSignal.timeout(5000) })).toContain(event.text);
+  expect(observe).toHaveBeenCalledOnce();
+  const inventory = await observe.mock.results[0]!.value.inventory({ ...access, requestClass: "interactive" } as never,
+    { service: "slack" }, AbortSignal.timeout(5000));
+  expect(JSON.stringify(inventory)).toContain("#tech");
+  expect(calls).toEqual(["access", "enrollment"].map(route => ({
+    url: `${dev.MATRIX_SLACK_PLATFORM_URL}/internal/slack/thread-context/${route}`,
+    token: `Bearer ${dev.MATRIX_SLACK_PLATFORM_TOKEN}`, handle: target.handle,
+  })));
+  expect(await data.db.selectFrom("chat_runs").select("id").execute()).toHaveLength(0);
+});
+
 it("keeps real bot startup available but Slack disabled for explicit null rather than falling through to routine transport", async () => {
   const { services } = await startBotFixture(null);
   expect(services.routineOrigin).toBeDefined(); expect(services.slackThreadContext).toBeUndefined(); expect(services.slackMentionSummaries).toBeUndefined();
@@ -144,4 +283,40 @@ it("exposes actual enrolled native inventory with Slack-only composition and no 
 });
 it("preserves legacy opaque runtime identifiers when the override pair is absent", () => {
   expect(resolveSlackPlatform({ ...core, MATRIX_MACHINE_ID: "legacy_opaque_runtime" }).botConnection?.machineId).toBe("legacy_opaque_runtime");
+});
+
+it.each([
+  { env: dev, deadline: 25_000 },
+  { env: preview, deadline: 2_000 },
+])("allows only the pinned Dev callback to finish a cold enrollment start ($deadline ms)", async ({ env, deadline }) => {
+  const connection = resolveSlackPlatform(env).botConnection;
+  if (!connection) throw new Error("Expected the test's configured Slack connection");
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  try {
+    const client = createSlackOwnerClient({ ...connection, fetchImpl: async () => Response.json({ available: false }) });
+    const target = { ownerId: devTarget.ownerId, botId: devTarget.botId, chatId: devTarget.chatId, runtimeId: connection.machineId };
+    expect(await client.discoverThreadEnrollment(target, new AbortController().signal)).toEqual({ available: false });
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(deadline);
+  } finally {
+    timeout.mockRestore();
+  }
+});
+
+it("shows the legacy pilot in Apps only after verifying the same enrollment for its existing Agent and Chat", async () => {
+  const { createPilotChannelReader } = await import("../../packages/gateway/src/startup/slack-owner-client.js");
+  const pilot = {ownerId:"user_owner",botId:"bot_12345678",chatId:"chat_private",machineId:"3c19c852-7793-4072-a280-bba8dd4b9284",handle:"owner-dev",appId:"A123",teamId:"T123",channelId:"C123"};
+  const platform = {platformUrl:"https://example.test",token:"a".repeat(64),runtimeSlot:"dev",machineId:pilot.machineId,handle:pilot.handle,devTarget:pilot};
+  const target = {ownerId:pilot.ownerId,agentId:pilot.botId,chatId:pilot.chatId};
+  const access = {ownerId:pilot.ownerId,botId:pilot.botId,chatId:pilot.chatId,runtimeId:pilot.machineId,grantId:"f".repeat(64)};
+  const enrolled = {available:true as const,scope:"channel" as const,appId:pilot.appId,teamId:pilot.teamId,channelId:pilot.channelId,channel:{id:pilot.channelId,name:"tech"},access};
+  const discover = vi.fn().mockResolvedValue(enrolled);
+  const read = createPilotChannelReader(platform,discover);
+  expect(await read({...target,agentId:"bot_99999999"})).toBeUndefined();
+  expect(await read({...target,chatId:"chat_other"})).toBeUndefined();
+  expect(discover).not.toHaveBeenCalled();
+  expect(await read(target)).toEqual({name:"tech"});
+  discover.mockResolvedValue({...enrolled,access:{...access,chatId:"chat_foreign"}});
+  expect(await read(target)).toBeUndefined();
+  discover.mockResolvedValue({available:false});
+  expect(await read(target)).toBeUndefined();
 });

@@ -18,6 +18,7 @@ import { OrganizationStateProvider } from "@/lib/collaboration-organization-stat
 import { Toaster } from "@/components/ui/sonner";
 import { AppProviders } from "./providers";
 import { clerkAllowedRedirectOrigins } from "@/lib/clerk-satellite-return";
+import { SLACK_DEV_OAUTH_SCRUB_SCRIPT } from "@/lib/slack-dev-oauth-privacy";
 
 // Lets sign-ins on this primary domain return to the Clerk satellite
 // (ai-insights.app) while keeping Clerk's default redirect origins.
@@ -71,6 +72,7 @@ export default function RootLayout({
   const renderDocument = (withClerk: boolean, content: React.ReactNode) => {
     const bodyContent = (
       <>
+        <Script id="matrix-slack-dev-oauth-privacy" strategy="beforeInteractive">{SLACK_DEV_OAUTH_SCRUB_SCRIPT}</Script>
         {!selfHostedMode ? <Script {...{ src: "/billing/tracking.js" }} strategy="beforeInteractive" /> : null}
         {content}
         {withClerk ? <PostHogIdentify /> : null}

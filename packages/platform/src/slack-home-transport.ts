@@ -3,7 +3,7 @@ import { SlackThreadContextEnvelopeSchema, signSlackBridgeRequest, signSlackCont
 export interface SlackHome { ownerId:string;origin:string;token:string }
 export function createSlackHomeTransport(options:{fetchImpl?:typeof fetch}={}) {
   const fetchImpl=options.fetchImpl??fetch;
-  return async(home:SlackHome,operation:"events"|"context"|"authorize",payload:unknown,signal?:AbortSignal):Promise<{accepted?:boolean;allowed?:boolean}>=>{
+  return async(home:SlackHome,operation:"events"|"context"|"authorize"|"agent-event",payload:unknown,signal?:AbortSignal):Promise<{accepted?:boolean;allowed?:boolean}>=>{
     // The origin is resolved exclusively from the platform's reviewed machine registry.
     const origin=new URL(home.origin);
     if(origin.protocol!=="https:" || origin.pathname!=="/" || origin.username || origin.password || origin.search || origin.hash) throw new Error("Slack home unavailable");

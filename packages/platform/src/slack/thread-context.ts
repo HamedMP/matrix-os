@@ -9,6 +9,7 @@ import {
   SlackMentionSummaryRuleSchema, type SlackMentionSummaryRule,
 } from "@matrix-os/contracts/slack-bridge";
 import { decryptSlackToken } from "./security.js";
+import type { SlackDevAcceptance } from "./home-resolver.js";
 import type { SlackAppRouteOptions } from "./routes.js";
 import { OrganizationIdSchema, SlackUserIdSchema, type SlackInstallation } from "./types.js";
 import { hasActiveSlackUserMention } from "./owner-mention.js";
@@ -33,6 +34,17 @@ export function loadSlackThreadContextGrant(env: NodeJS.ProcessEnv, previewHandl
   if (!env.SLACK_PREVIEW_THREAD_CONTEXT_GRANT) return undefined;
   if (!previewHandle) throw new Error("Slack thread context requires preview runtime");
   return GrantSchema.parse(JSON.parse(env.SLACK_PREVIEW_THREAD_CONTEXT_GRANT));
+}
+
+export function loadSlackDevThreadContextGrant(env: NodeJS.ProcessEnv, target: SlackDevAcceptance, appId: string) {
+  if (env.SLACK_DEV_THREAD_CONTEXT_GRANT === undefined) return undefined;
+  const grant = GrantSchema.parse(JSON.parse(env.SLACK_DEV_THREAD_CONTEXT_GRANT));
+  if (grant.scope !== "channel" || grant.appId !== appId || grant.runtimeId !== target.machineId
+    || grant.ownerId !== target.ownerId || grant.ownerSlackId !== target.ownerSlackId
+    || grant.organizationId !== target.organizationId || grant.teamId !== target.teamId || grant.channelId !== target.channelId) {
+    throw new Error("Slack Dev context scope mismatch");
+  }
+  return grant;
 }
 
 export type SlackThreadContextOptions = {
@@ -65,7 +77,8 @@ export function createSlackThreadContext(options: SlackAppRouteOptions) {
     if (!options.api.hasChannelMember) return null;
     const token = decryptSlackToken(installation.encryptedBotToken, options.config.tokenEncryptionKey, `${grant.appId}:${grant.teamId}`);
     const channel = await options.api.conversationInfo({ token, channelId: grant.channelId, signal });
-    if (!channel.canAccess || channel.isExternalShared || (channel.channelMetadata && channel.channelMetadata.id !== grant.channelId)) return null;
+    if (!channel.canAccess || channel.isExternalShared || (channel.channelMetadata && channel.channelMetadata.id !== grant.channelId)
+      || (options.readOnlyDev && channel.channelMetadata?.name !== "tech")) return null;
     if (!await options.api.hasChannelMember({ token, channelId: grant.channelId, userId: grant.ownerSlackId, signal })) return null;
     const metadata = SlackChannelMetadataSchema.safeParse(channel.channelMetadata);
     return { channel: metadata.success ? metadata.data : undefined };
