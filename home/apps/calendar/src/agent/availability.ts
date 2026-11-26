@@ -170,12 +170,20 @@ export async function searchAvailability(
   return { slots, events: read.events, notes: read.notes, failed: false };
 }
 
+export interface StartsAtTimeOptions {
+  /** How long the meeting lasts; a start whose end falls after `window.end` is left out. Default 0. */
+  lengthMs?: number;
+  /** A start that is not a new time (the time an event already has); left out. */
+  skipStartMs?: number;
+}
+
 /**
  * Epoch-ms starts at exactly `minuteOfDay` on each day of `window` from now on,
  * earliest first: the working days, or every day when the window holds none.
- * `skipStartMs` (the time an event already has) is left out.
+ * Each start, and its end `lengthMs` later, lies inside the window.
  */
-export function startsAtTime(window: ResolvedWindow, minuteOfDay: number, context: CalendarAgentContext, skipStartMs?: number): number[] {
+export function startsAtTime(window: ResolvedWindow, minuteOfDay: number, context: CalendarAgentContext, options: StartsAtTimeOptions = {}): number[] {
+  const lengthMs = Math.max(0, options.lengthMs ?? 0);
   const startMs = instantToMs(window.start);
   const endMs = instantToMs(window.end);
   const floorMs = Math.max(startMs, context.now);
@@ -188,7 +196,7 @@ export function startsAtTime(window: ResolvedWindow, minuteOfDay: number, contex
   const working = days.filter((day) => workDays.has(weekdayOf(day)));
   const starts = (working.length > 0 ? working : days)
     .map((day) => instantToMs(instantOnDay(day, minuteOfDay, context)))
-    .filter((ms) => ms >= floorMs && ms < endMs && ms !== skipStartMs);
+    .filter((ms) => ms >= floorMs && ms < endMs && ms + lengthMs <= endMs && ms !== options.skipStartMs);
   return [...new Set(starts)].sort((a, b) => a - b);
 }
 
@@ -221,12 +229,13 @@ export interface AtTimeRequest {
 
 /**
  * Times at exactly `minuteOfDay` (see `startsAtTime`) when the owner and
- * `addresses` are free for `lengthMs`; never another time of day. Busy,
- * tentative and unknown time all block, and a time whose end falls past what
- * one read can cover is left out rather than guessed.
+ * `addresses` are free for `lengthMs`; never another time of day. Every
+ * meeting starts and ends inside `request.window`. Busy, tentative and unknown
+ * time all block, and a time whose end falls past what one read can cover is
+ * left out rather than guessed.
  */
 export async function searchAtTime(request: AtTimeRequest, context: CalendarAgentContext, deps: CalendarAgentDeps): Promise<AvailabilityResult> {
-  const starts = startsAtTime(request.window, request.minuteOfDay, context, request.skipStartMs);
+  const starts = startsAtTime(request.window, request.minuteOfDay, context, { lengthMs: request.lengthMs, skipStartMs: request.skipStartMs });
   if (starts.length === 0) return { slots: [], events: [], notes: [], failed: false };
   const readStart = starts[0];
   const readEnd = Math.min(starts[starts.length - 1] + Math.max(request.lengthMs, MS_PER_MINUTE), readStart + MAX_EVENT_RANGE_DAYS * MINUTES_PER_DAY * MS_PER_MINUTE);

@@ -185,11 +185,15 @@ async function draftAnswer(intent: DraftEventIntent, options: ExecuteOptions): P
     if (!window) return blank("clarify", UNCLEAR_WINDOW);
     const starts = startsAtTime(window, minute, context);
     if (starts.length === 0) return blank("clarify", `${clockLabel(minute)} has passed on every day you named. Tell me the date.`);
-    const found = await searchAtTime({ addresses: people.addresses, window, minuteOfDay: minute, lengthMs: duration * MS_PER_MINUTE, count: 1 }, context, deps);
+    const lengthMs = duration * MS_PER_MINUTE;
+    // The meeting must also end inside the window the owner named.
+    const fitting = startsAtTime(window, minute, context, { lengthMs });
+    if (fitting.length === 0) return blank("clarify", `A ${durationLabel(duration)} meeting at ${clockLabel(minute)} would end after the days you named. Tell me the date.`);
+    const found = await searchAtTime({ addresses: people.addresses, window, minuteOfDay: minute, lengthMs, count: 1 }, context, deps);
     notes.push(...found.notes);
     if (found.slots[0]) startMs = instantToMs(found.slots[0].start);
     else {
-      startMs = starts[0];
+      startMs = fitting[0];
       // A failed read already says so; it is not a finding that nobody is free.
       if (!found.failed) notes.push(`I found no day when everyone is free at ${clockLabel(minute)}, so check the time in the draft.`);
     }

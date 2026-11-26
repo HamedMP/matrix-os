@@ -55,6 +55,28 @@ describe("calendar agent: answers keep every field the owner gave", () => {
     expect(fallback.notes).toContain("I found no day when everyone is free at 11:00, so check the time in the draft.");
   });
 
+  // Outcome: "move standup to 23:45 before Friday" offers only times that also end before Friday starts.
+  // Fault: only the start is checked against the window, so Thursday 23:45–Friday 00:15 is offered past the deadline.
+  it("offers a named time only when the meeting also ends inside the window", async () => {
+    const { deps, context } = setup((prompt) => JSON.stringify({
+      intent: "reschedule", event: aliasFor(prompt, "Standup"), time: "23:45", count: 5, window: { type: "before", date: { type: "weekday", day: "friday" } },
+    }));
+    const answer = await runCalendarAgent("move standup to 23:45 before Friday", context, deps);
+    expect(answer.kind).toBe("reschedule");
+    expect(answer.slots.map((slot) => slot.start)).toEqual(["2026-11-23T23:45:00-05:00", "2026-11-24T23:45:00-05:00", "2026-11-25T23:45:00-05:00"]);
+    for (const slot of answer.slots) expect(instantToMs(slot.end)).toBeLessThanOrEqual(Date.parse("2026-11-27T05:00:00Z"));
+  });
+
+  // Outcome: a one-hour review "at 23:30 before Tuesday" is not drafted to run into Tuesday; the owner is asked for a date.
+  // Fault: the draft lands Monday 23:30–Tuesday 00:30, past the owner's deadline.
+  it("asks for a date instead of drafting a named time that would end after the window", async () => {
+    const { deps, context } = setup(JSON.stringify({
+      intent: "draft_event", title: "Review", durationMinutes: 60, time: "23:30", window: { type: "before", date: { type: "weekday", day: "tuesday" } },
+    }));
+    const answer = await runCalendarAgent("an hour-long review at 23:30 before Tuesday", context, deps);
+    expect(answer).toMatchObject({ kind: "clarify", text: "A 1 hour meeting at 23:30 would end after the days you named. Tell me the date." });
+  });
+
   // Outcome: asking to change the length or the guests while moving says those stay, rather than dropping them silently.
   it("says a move keeps the event's length and guests when the owner asked to change them", async () => {
     const { deps, context } = setup((prompt) => JSON.stringify({
