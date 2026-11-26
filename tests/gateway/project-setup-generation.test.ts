@@ -722,6 +722,22 @@ describe("project setup context", () => {
     } finally { await workspace.close(); }
   });
 
+  it.each([
+    { url: "https://mcp.linear.app/mcp/", connection: "authorization_required" },
+    { url: "https://MCP.LINEAR.APP:443/mcp", connection: "connected" },
+  ])("projects Linear as $connection for $url", async ({ url, connection }) => {
+    const fetcher = vi.fn<typeof fetch>(async request => Response.json(String(request).endsWith("/catalog")
+      ? { presets: [{ name: "Linear", url: "https://mcp.linear.app/mcp", auth: "oauth_dcr" }] }
+      : [{ name: "Linear", url, enabled: true, status: "ready" }]));
+    const registration = registerCustomMcpGatewayRoutes(new Hono(), {
+      homePath: tmpdir(), clerkUserId: owner.ownerId, fetchInterviewInventory: fetcher,
+      platformProxy: { internalPlatformUrl: "https://platform.example.com", handle: "workspace-dev", token: "machine-token", request: vi.fn() },
+    });
+    try {
+      expect(await registration.listProjectSetupMcpServices(owner)).toEqual([{ name: "Linear", connection }]);
+    } finally { registration.stop(); }
+  });
+
   it("projects broker status and catalog names without forwarding URLs, tool metadata, or cross-owner access", async () => {
     const fetcher = vi.fn<typeof fetch>(async url => new Response(JSON.stringify(String(url).endsWith("/catalog") ? {
       presets: [

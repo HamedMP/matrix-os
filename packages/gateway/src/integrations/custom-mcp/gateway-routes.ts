@@ -114,7 +114,7 @@ const Catalog = z.object({ presets: z.array(z.object({ name: Name, url: Url, aut
 function endpointKey(value: string): string | undefined {
   const url = URL.parse(value);
   if (!url || url.protocol !== "https:" || url.username || url.password || url.hash) return;
-  return `${url.origin}${url.pathname.replace(/\/+$/, "")}${url.search}`;
+  return url.href;
 }
 
 function safeName(name: string): string | undefined {
