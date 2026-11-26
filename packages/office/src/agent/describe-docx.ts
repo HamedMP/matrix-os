@@ -4,10 +4,20 @@
  */
 
 import type { DescribeDocx } from "../api/agent.js";
-import type { BlockId, DocxDocument, DocxStory, OutlineItem, ParagraphBlock } from "../api/docx.js";
-import { OfficeError } from "../errors.js";
+import type { BlockId, DocxDocument, DocxStory, OutlineItem, ParagraphBlock, TableBlock } from "../api/docx.js";
+import type { XmlElement } from "../api/xml.js";
+import { cellGoneInView, getDocxIndex, rowCells, rowGoneInView, tableRows } from "../docx/internal.js";
+import { OfficeError, isOfficeError } from "../errors.js";
 import { ELLIPSIS, MAX_DESCRIPTION_CHARS, OUTLINE_SHARE } from "./limits.js";
-import { type FlatBlock, type TablePlace, flattenStories, isRemovedParagraph, paragraphFinalText, singleLine } from "./text.js";
+import {
+  type FlatBlock,
+  type TablePlace,
+  type TableVisibility,
+  flattenStories,
+  isRemovedParagraph,
+  paragraphFinalText,
+  singleLine,
+} from "./text.js";
 
 const OUTLINE_HEADER = "# Outline";
 const CONTENT_HEADER = "# Content";
@@ -24,6 +34,48 @@ function storyOf(document: DocxDocument, storyId: string | undefined): DocxStory
   const story = document.getStory(storyId);
   if (story === null) throw new OfficeError("stale_reference", "unknown story id");
   return story;
+}
+
+/**
+ * The rows and cells the `final` view keeps, read from the document itself:
+ * a tracked cell has no mark in the view model, and a row that one author
+ * inserted and another deleted shows only one. A handle of another engine
+ * falls back to the row mark of the view model.
+ */
+function finalTables(document: DocxDocument): TableVisibility {
+  let index;
+  try {
+    index = getDocxIndex(document);
+  } catch (error) {
+    if (!isOfficeError(error) || error.code !== "invalid_argument") throw error;
+    return {
+      rowGone: (table, rowIndex) => {
+        const kind = table.rows[rowIndex]?.revision?.kind;
+        return kind === "delete" || kind === "moveFrom";
+      },
+      cellGone: () => false,
+    };
+  }
+  // The rows of the table being walked, listed once: a table is asked about each of its rows in turn.
+  let listed: { id: string; rows: readonly XmlElement[] } | null = null;
+  const rowsOf = (table: TableBlock): readonly XmlElement[] => {
+    if (listed === null || listed.id !== table.id) {
+      const record = index.block(table.id);
+      listed = { id: table.id, rows: record === null || record.type !== "table" ? [] : tableRows(record.element) };
+    }
+    return listed.rows;
+  };
+  return {
+    rowGone: (table, rowIndex) => {
+      const row = rowsOf(table)[rowIndex];
+      return row !== undefined && rowGoneInView(row, "final");
+    },
+    cellGone: (table, rowIndex, cellIndex) => {
+      const row = rowsOf(table)[rowIndex];
+      const cell = row === undefined ? undefined : rowCells(row)[cellIndex];
+      return cell !== undefined && cellGoneInView(cell, "final");
+    },
+  };
 }
 
 function placeMarker(place: TablePlace | null): string {
@@ -79,7 +131,7 @@ function paragraphsFrom(flat: readonly FlatBlock[], startBlockId: BlockId | unde
 export const describeDocx: DescribeDocx = (document, options) => {
   const maxChars = checkBudget(options?.maxChars);
   const story = storyOf(document, options.storyId);
-  const paragraphs = paragraphsFrom(flattenStories([story]), options.startBlockId);
+  const paragraphs = paragraphsFrom(flattenStories([story], finalTables(document)), options.startBlockId);
   const wantOutline = options.includeOutline !== false && options.startBlockId === undefined && story.kind === "body";
   const outlineItems = wantOutline ? document.getOutline() : [];
   let text = outlineItems.length > 0 ? outlineSection(outlineItems, Math.floor(maxChars * OUTLINE_SHARE)) : "";

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { describeDocx, describeSheet } from "../../../packages/office/src/agent/index.js";
 import { createDocx, createDocxFromMarkdown, createXlsx, isOfficeError } from "../../../packages/office/src/index.js";
+import { build } from "../docx/edit/helpers.js";
+import { cell, p, r, row, tbl } from "../docx/model/build.js";
 import { TRACKED, bodyParagraphs, openDocxFixture, openXlsxFixture, paragraphStarting, sheetId } from "./helpers.js";
 
 function codeOf(run: () => unknown): string | null {
@@ -117,6 +119,37 @@ describe("describeDocx", () => {
     const description = describeDocx(doc, { maxChars: 10_000 });
     expect(description.text).toBe(`# Content\n[${first?.id}] Pay within 45 days. No set-off.\n[${last?.id}] Last.`);
     expect(description.blockIds).toEqual([first?.id, last?.id]);
+  });
+
+  it("leaves out the table rows, cells and tables that are gone in the final view and counts places among those kept", () => {
+    const A = 'w:author="Alex Morgan" w:date="2026-01-05T09:30:00Z"';
+    const B = 'w:author="Priya Shah" w:date="2026-01-06T14:15:00Z"';
+    const doc = build({
+      body:
+        p(r("before")) +
+        tbl(
+          row(cell(p(r("Item"))) + cell(p(r("Price")), `<w:cellDel w:id="1" ${A}/>`) + cell(p(r("Qty")), `<w:cellIns w:id="2" ${A}/>`)) +
+            // A deleted row whose runs are not marked deleted themselves, as some word processors write it.
+            row(cell(p(r("Old row"))) + cell(p(r("x"))) + cell(p(r("y"))), `<w:del w:id="3" ${A}/>`) +
+            // One author inserted the row and another deleted it: gone in every view.
+            row(cell(p(r("Never kept"))) + cell(p(r("x"))) + cell(p(r("y"))), `<w:ins w:id="4" ${A}/><w:del w:id="5" ${B}/>`) +
+            row(cell(p(r("Widget"))) + cell(p(r("9.99")), `<w:cellDel w:id="6" ${A}/>`) + cell(p(r("4")), `<w:cellIns w:id="7" ${A}/>`)),
+        ) +
+        p(r("between")) +
+        tbl(row(cell(p(r("Gone table"))), `<w:del w:id="8" ${A}/>`)) +
+        p(r("end")),
+    });
+    const lines = describeDocx(doc, { maxChars: 5000, includeOutline: false }).text.split("\n").map((line) => line.replace(/^\[b\d+\] /, ""));
+    expect(lines).toEqual([
+      "# Content",
+      "before",
+      "(table row 1, cell 1) Item",
+      "(table row 1, cell 2) Qty",
+      "(table row 2, cell 1) Widget",
+      "(table row 2, cell 2) 4",
+      "between",
+      "end",
+    ]);
   });
 
   it("describes another story", async () => {

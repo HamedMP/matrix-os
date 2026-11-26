@@ -78,15 +78,26 @@ export interface FlatBlock {
   place: TablePlace | null;
 }
 
+/**
+ * Which table rows and cells a walk leaves out, by their index in the view
+ * model. Without one every row and cell is walked.
+ */
+export interface TableVisibility {
+  rowGone(table: TableBlock, rowIndex: number): boolean;
+  cellGone(table: TableBlock, rowIndex: number, cellIndex: number): boolean;
+}
+
 /** Deepest table nesting that is walked; deeper content is left out. */
 const MAX_TABLE_DEPTH = 32;
 
 /**
  * Every block of the stories in document order: a table comes before the
  * blocks in its cells. Iterative, so a deeply nested table cannot overflow
- * the stack.
+ * the stack. With `visibility`, rows and cells it leaves out are not walked,
+ * a table with no row left is left out with its content, and places are
+ * counted among the rows and cells that are kept.
  */
-export function flattenStories(stories: readonly DocxStory[]): FlatBlock[] {
+export function flattenStories(stories: readonly DocxStory[], visibility?: TableVisibility): FlatBlock[] {
   const flat: FlatBlock[] = [];
   interface Frame {
     blocks: readonly DocxBlock[];
@@ -103,10 +114,11 @@ export function flattenStories(stories: readonly DocxStory[]): FlatBlock[] {
         continue;
       }
       const block = frame.blocks[frame.index++] as DocxBlock;
+      if (block.type === "table" && visibility !== undefined && tableGone(block, visibility)) continue;
       flat.push({ block, order: flat.length, place: frame.place });
       if (block.type !== "table" || frame.depth >= MAX_TABLE_DEPTH) continue;
       // Pushed in reverse so the first cell is walked first.
-      const cells = tableCells(block);
+      const cells = tableCells(block, visibility);
       for (let i = cells.length - 1; i >= 0; i--) {
         const cell = cells[i] as { blocks: DocxBlock[]; place: TablePlace };
         stack.push({ blocks: cell.blocks, index: 0, place: cell.place, depth: frame.depth + 1 });
@@ -116,14 +128,24 @@ export function flattenStories(stories: readonly DocxStory[]): FlatBlock[] {
   return flat;
 }
 
-function tableCells(table: TableBlock): Array<{ blocks: DocxBlock[]; place: TablePlace }> {
+function tableCells(table: TableBlock, visibility: TableVisibility | undefined): Array<{ blocks: DocxBlock[]; place: TablePlace }> {
   const cells: Array<{ blocks: DocxBlock[]; place: TablePlace }> = [];
+  let rowNumber = 0;
   table.rows.forEach((row, rowIndex) => {
+    if (visibility?.rowGone(table, rowIndex)) return;
+    rowNumber++;
+    let cellNumber = 0;
     row.cells.forEach((cell, cellIndex) => {
-      cells.push({ blocks: cell.blocks, place: { row: rowIndex + 1, cell: cellIndex + 1 } });
+      if (visibility?.cellGone(table, rowIndex, cellIndex)) return;
+      cells.push({ blocks: cell.blocks, place: { row: rowNumber, cell: ++cellNumber } });
     });
   });
   return cells;
+}
+
+/** True when a table has rows and the walk leaves out every one of them. */
+function tableGone(table: TableBlock, visibility: TableVisibility): boolean {
+  return table.rows.length > 0 && table.rows.every((_, rowIndex) => visibility.rowGone(table, rowIndex));
 }
 
 /** Start offsets of every non-overlapping occurrence of `needle` in `text`. `needle` is not empty. */
