@@ -1,7 +1,7 @@
 import { stripVTControlCharacters } from "node:util";
 import { z } from "zod/v4";
 import {
-  LOCAL_TERMINAL_LIST_MAX, LOCAL_TERMINAL_MAX_OUTPUT_CHARS, LocalTerminalIdSchema,
+  LOCAL_TERMINAL_LIST_MAX, LocalTerminalIdSchema,
 } from "../../shared/local-terminals";
 import { MAC_TERMINAL_SNAPSHOT_MAX_CHARS } from "../../shared/mac-terminal-probe-ipc";
 import type { HcConnection } from "./hc-client";
@@ -9,6 +9,8 @@ import { safeTerminalTitle, TERMINAL_TITLE_LABEL } from "./hc-sessions";
 
 const MAX_PICKER_TERMINALS = 20;
 const RPC_TIMEOUT_MS = 3_000;
+// A screen snapshot from herdr-core is plain text, capped as before output moved to bytes.
+const SCREEN_MAX_CHARS = 262_144;
 const TerminalList = z.object({ terminals: z.array(z.unknown()).max(LOCAL_TERMINAL_LIST_MAX) });
 const LiveTerminal = z.object({
   address: LocalTerminalIdSchema,
@@ -24,7 +26,7 @@ const TitledTerminal = LiveTerminal.extend({
 const Screen = z.object({
   how: z.literal("screen"),
   complete: z.literal(true),
-  text: z.string().max(LOCAL_TERMINAL_MAX_OUTPUT_CHARS),
+  text: z.string().max(SCREEN_MAX_CHARS),
 });
 // Preserve only newline and tab among control characters. Remove direction
 // overrides and unpaired surrogates before handing plain text to native UI.

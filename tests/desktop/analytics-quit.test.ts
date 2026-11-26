@@ -48,7 +48,7 @@ function registerMacQuitWiring(dependencies: {
     const organizationDriveTransfers = null, nativeAppChatNavigation = null, cancelDesktopPairing = null;
     const disposeDesktopPairing = dependencies.disposeDesktopPairing;
     const navigationCacheDrained = true, planDrained = true, planDiagnosticsDrained = true, importsDrained = true, downloadsDrained = true;
-    let updateCheckTimer, closeCodingAgentThreadEvents, terminalWindows, shortcutWiring, computerCredentials;
+    let updateCheckTimer, closeCodingAgentThreadEvents, terminalWindows, shortcutWiring, computerCredentials, localTerminalStreams = null;
     let localTerminals = dependencies.localTerminalHost;
     const senderRole = () => "main", windowSenders = {};
     const logMainError = (context, error) => { throw new Error(context, { cause: error }); };

@@ -39,6 +39,7 @@ import {
   terminalPasteFiles,
 } from "./terminal-rich-paste";
 import { getDesktopTerminalXtermTheme } from "./terminal-appearance";
+import { terminalDisplayFacts } from "./terminal-display-facts";
 import { installMouseTrackingSelection } from "./terminal-mouse-selection";
 import { decodeOsc52Clipboard } from "./terminal-osc52";
 import { useDesktopTerminalControls } from "./use-desktop-terminal-controls";
@@ -126,6 +127,12 @@ interface TerminalViewProps {
    * keeps one live terminal at a time.
    */
   attachManager?: AttachManager;
+  /**
+   * Where this view's saved screen is kept, when the session name alone does not
+   * identify the terminal: a Herdr terminal has the same name on every computer.
+   * Defaults to the session name; the socket always addresses `sessionName`.
+   */
+  snapshotKey?: string;
   /** Takes keyboard focus when it attaches or becomes focused. Defaults to `active`. */
   focused?: boolean;
   /**
@@ -178,9 +185,11 @@ export default function TerminalView({
   findRequest = 0,
   onPaneAction,
   attachManager: attachManagerProp,
+  snapshotKey: snapshotKeyProp,
   focused,
   reservedKeys,
 }: TerminalViewProps) {
+  const snapshotKey = snapshotKeyProp ?? sessionName;
   // The size last sent to the attachment: a pixel change that keeps the grid, or a focus change, sends nothing,
   // so the program never gets a resize (and redraws its prompt) for nothing.
   const sentSizeRef = useRef<{ cols: number; rows: number } | null>(null);
@@ -216,6 +225,18 @@ export default function TerminalView({
   const gridWriterRef = useRef(false);
   const serializeRef = useRef<SerializeAddon | null>(null);
   const attachmentRef = useRef<ActiveAttachment | null>(null);
+  // The display facts the attachment was last told, so only changes are sent.
+  const sentFactsRef = useRef("");
+  const sendDisplayFacts = useCallback(() => {
+    const terminal = termRef.current;
+    const attachment = attachmentRef.current;
+    if (!terminal || !attachment) return;
+    const facts = terminalDisplayFacts(terminal, getDesktopTerminalXtermTheme(latestTerminalThemeIdRef.current));
+    const key = JSON.stringify(facts);
+    if (key === sentFactsRef.current) return;
+    sentFactsRef.current = key;
+    attachment.facts(facts);
+  }, []);
   const pasteClipboardRef = useRef<() => Promise<void>>(async () => undefined);
   const fileSelectionRef = useRef<(files: File[]) => void>(() => undefined);
   const selectFiles = useCallback((files: File[]) => fileSelectionRef.current(files), []);
@@ -506,13 +527,18 @@ export default function TerminalView({
     host.addEventListener("mouseup", onTerminalPointer, true);
     host.addEventListener("mouseup", onLinkMouseUp, true);
     host.addEventListener("contextmenu", onTerminalContextMenu, true);
+    // Programs that asked for focus reports learn when this terminal gains or loses focus.
+    const onTextareaFocus = () => attachmentRef.current?.focus(true);
+    const onTextareaBlur = () => attachmentRef.current?.focus(false);
+    terminal.textarea?.addEventListener("focus", onTextareaFocus);
+    terminal.textarea?.addEventListener("blur", onTextareaBlur);
     try {
       terminal.loadAddon(new WebglAddon());
     } catch (err: unknown) {
       console.warn("[terminal] webgl unavailable:", err instanceof Error ? err.message : String(err));
     }
     fit.fit();
-    const cached = (attachManagerProp ?? getAttachManager()).getCachedBuffer(sessionName);
+    const cached = (attachManagerProp ?? getAttachManager()).getCachedBuffer(snapshotKey);
     if (cached) terminal.write(cached);
     termRef.current = terminal;
     fitRef.current = fit;
@@ -543,6 +569,7 @@ export default function TerminalView({
         const proposed = proposedTerminalDimensions(fit, terminal, host);
         sendSize(proposed);
         presentation.schedule();
+        sendDisplayFacts();
       });
     });
     observer.observe(host);
@@ -561,6 +588,8 @@ export default function TerminalView({
       host.removeEventListener("mouseup", onTerminalPointer, true);
       host.removeEventListener("mouseup", onLinkMouseUp, true);
       host.removeEventListener("contextmenu", onTerminalContextMenu, true);
+      terminal.textarea?.removeEventListener("focus", onTextareaFocus);
+      terminal.textarea?.removeEventListener("blur", onTextareaBlur);
       host.ownerDocument.removeEventListener("selectionchange", onDocumentSelectionChange);
       linkProviderDisposable.dispose();
       selectionDisposable.dispose();
@@ -575,7 +604,7 @@ export default function TerminalView({
       }
       const manager = (attachManagerProp ?? getAttachManager());
       try {
-        manager.cacheBuffer(sessionName, serialize.serialize());
+        manager.cacheBuffer(snapshotKey, serialize.serialize());
       } catch (err: unknown) {
         console.warn("[terminal] buffer snapshot failed:", err instanceof Error ? err.message : String(err));
       }
@@ -584,7 +613,7 @@ export default function TerminalView({
       termRef.current = null;
       setSearch(null);
     };
-  }, [attachManagerProp, copyTerminalTextWithFeedback, sendSize, sessionName]);
+  }, [attachManagerProp, copyTerminalTextWithFeedback, sendDisplayFacts, sendSize, sessionName, snapshotKey]);
 
   useEffect(() => {
     const terminal = termRef.current;
@@ -593,7 +622,8 @@ export default function TerminalView({
     terminal.options.theme = theme;
     applyTerminalSurfaceTheme(terminal.element, theme.background);
     gridPresentationRef.current?.schedule();
-  }, [terminalThemeId]);
+    sendDisplayFacts();
+  }, [sendDisplayFacts, terminalThemeId]);
 
   // Attach lifecycle — only the active tab holds the live socket (L4).
   useEffect(() => {
@@ -612,12 +642,17 @@ export default function TerminalView({
     const attachment = manager.attach(sessionName, {
       onState: (state) => {
         setSocketState(state);
-        if (state !== "attached") nativeHistoryRef.current?.attach(false);
+        if (state !== "attached") { nativeHistoryRef.current?.attach(false); return; }
+        // Attached: the program's colour and size queries are answered from this view.
+        sentFactsRef.current = "";
+        sendDisplayFacts();
+        if (terminal.textarea && terminal.textarea.ownerDocument.activeElement === terminal.textarea) attachmentRef.current?.focus(true);
       },
       onNativeScroll: (state) => nativeHistoryRef.current?.update(state),
       onNativeScrollSupported: (supported) => nativeHistoryRef.current?.attach(supported),
       // xterm calls back once the chunk is parsed, which paces sources that wait for it.
       onOutput: (data, _seq, written) => terminal.write(data, written),
+      onRepaint: () => terminal.reset(),
       onCanonicalSize: (size) => {
         if (terminal.cols !== size.cols || terminal.rows !== size.rows) {
           terminal.resize(size.cols, size.rows);
@@ -659,7 +694,7 @@ export default function TerminalView({
       attachmentRef.current = null;
       if (manager.activeSessionName === sessionName) manager.detachActive();
     };
-  }, [sessionName, chatId, active, leaseAttempt, attachManagerProp, sendSize]);
+  }, [sessionName, chatId, active, leaseAttempt, attachManagerProp, sendSize, sendDisplayFacts]);
 
   // A pane that becomes the focused one takes the keyboard; attaching already focuses it the first time.
   const takesFocusRef = useRef(takesFocus);

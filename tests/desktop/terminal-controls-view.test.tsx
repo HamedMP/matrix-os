@@ -69,7 +69,7 @@ describe("TerminalView keyboard control wiring", () => {
     write.mockReset();
     attach.mockReset().mockImplementation((sessionName: string, callbacks: ShellSocketEvents) => {
       events = callbacks;
-      return { sessionName, write, resize() {} };
+      return { sessionName, write, resize() {}, focus() {}, facts() {} };
     });
     api = {
       get: vi.fn().mockResolvedValue({ preferences: { keyboard: { profile: "mac", overrides: {} } } }),
