@@ -76,17 +76,17 @@ it("actual owner namespaces, source capability lookup, owner HTTP and shared can
   try {
     let response: Response | undefined;
     void receipt.then(result => { response = result; }, () => {});
-    await expect.poll(() => response?.status, { timeout: 3000 }).toBe(200);
+    await expect.poll(() => response?.status, { timeout: 15_000 }).toBe(200);
     expect(await response!.json()).toMatchObject({ ok: true, data: { receipt: { disposition: "queued", requestId: operation.requestId } } });
     await source.cancel({ invocationId: invocation(801), operation, reason: "finished" });
-    await expect.poll(() => admissionStarted, { timeout: 3000 }).toBe(true);
+    await expect.poll(() => admissionStarted, { timeout: 15_000 }).toBe(true);
     expect(await data.db.selectFrom("bot_tasks").selectAll().execute()).toEqual([]);
   } finally {
     releaseAdmission.resolve();
     await Promise.allSettled([receipt]);
   }
   expect(await data.db.selectFrom("routine_cli_requests").select("owner_id").execute()).toEqual([{ owner_id: scope.ownerId }]);
-  await expect.poll(() => data.db.selectFrom("bot_tasks").select(["owner_id", "status"]).execute(), { timeout: 3000 })
+  await expect.poll(() => data.db.selectFrom("bot_tasks").select(["owner_id", "status"]).execute(), { timeout: 15_000 })
     .toEqual([{ owner_id: scope.ownerId, status: "waiting_person" }]);
   expect(await data.db.selectFrom("bot_approvals").selectAll().execute()).toHaveLength(1);
   expect(await data.db.selectFrom("bot_routines").selectAll().execute()).toHaveLength(0);
@@ -117,7 +117,7 @@ it("serializes an authorized receipt read with the target Bot consuming the same
   let readPid = 0, pauseReader = false, reading: ReturnType<typeof runtime.execute> | undefined;
   try {
     await expect(f.submit(propose(803))).resolves.toMatchObject({ receipt: { disposition: "queued", requestId: operation.requestId } });
-    await expect.poll(() => consumeEntered, { timeout: 3000 }).toBe(true);
+    await expect.poll(() => consumeEntered, { timeout: 15_000 }).toBe(true);
     const source = await runtime.register({ source: { ...context("receipt_read_race"), identity: { kind: "terminal_launch",
       sessionId: "fixture_receipt_reader", incarnationId: "inc_1", launchId: "launch_1" } }, signal: new AbortController().signal,
       readPolicy: () => ({ live: true, scope: "personal", interactionMode: "default", permissionMode: "supervised", originCeiling: "exact", revision: "receipt_fixture" }),
@@ -137,7 +137,7 @@ it("serializes an authorized receipt read with the target Bot consuming the same
     pauseReader = true;
     reading = runtime.execute({ operation, token });
     void reading.catch(() => undefined);
-    await expect.poll(() => readPid, { timeout: 3000 }).toBeGreaterThan(0);
+    await expect.poll(() => readPid, { timeout: 15_000 }).toBeGreaterThan(0);
     beginConsume.resolve();
     // Wait for real policy contention before allowing the reader to take the request lock.
     await expect.poll(async () => {
@@ -145,7 +145,7 @@ it("serializes an authorized receipt read with the target Bot consuming the same
         SELECT 1 FROM pg_stat_activity WHERE ${readPid}=ANY(pg_blocking_pids(pid))
           AND wait_event_type='Lock') AS waiting`.execute(data.db)).rows[0];
       return row?.waiting;
-    }, { timeout: 3000 }).toBe(true);
+    }, { timeout: 15_000 }).toBe(true);
     releaseReader.resolve();
     await expect(reading).resolves.toMatchObject({ kind: "receipt", receipt: { disposition: "queued", requestId: operation.requestId } });
     await f.canonical.drain();

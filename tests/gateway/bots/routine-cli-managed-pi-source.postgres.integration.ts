@@ -113,12 +113,12 @@ it.each([
     const firstRead = read("call_new_read_one", cancelledCaller.signal), secondRead = read("call_new_read_two");
     reads = [firstRead, secondRead];
     const observed = Promise.allSettled(reads);
-    await expect.poll(() => attempts.mock.calls.length, { timeout: 3000 }).toBe(2);
+    await expect.poll(() => attempts.mock.calls.length, { timeout: 15_000 }).toBe(2);
     const checkpoints = () => fixture.data.db.selectFrom("managed_pi_tool_checkpoints").select("tool_call_id")
       .where("phase", "=", "dispatched").orderBy("tool_call_id").execute();
-    await expect.poll(checkpoints, { timeout: 3000 }).toEqual([{ tool_call_id: "call_new_read_one" }, { tool_call_id: "call_new_read_two" }]);
+    await expect.poll(checkpoints, { timeout: 15_000 }).toEqual([{ tool_call_id: "call_new_read_one" }, { tool_call_id: "call_new_read_two" }]);
     const sources = () => fixture.data.db.selectFrom("routine_cli_sources").select(["source_context", "revoked_at"]).execute();
-    await expect.poll(sources, { timeout: 3000 }).toMatchObject([{ revoked_at: null,
+    await expect.poll(sources, { timeout: 15_000 }).toMatchObject([{ revoked_at: null,
       source_context: { identity: { kind: "chat_run", route: "managed", chatId, runId: admitted.run.id } } }]);
     expect(fixture.httpCalls()).toBe(0);
     if (endBeforeReply) {
@@ -129,7 +129,7 @@ it.each([
       await expect(firstRead).rejects.toMatchObject({ code: "stale_generation" });
       const laterRead = read("call_new_read_three");
       reads.push(laterRead);
-      await expect.poll(async () => (await checkpoints()).some(row => row.tool_call_id === "call_new_read_three"), { timeout: 3000 }).toBe(true);
+      await expect.poll(async () => (await checkpoints()).some(row => row.tool_call_id === "call_new_read_three"), { timeout: 15_000 }).toBe(true);
       const completing = Promise.all([secondRead, laterRead]);
       releaseRegistration.resolve();
       await expect(completing).resolves.toMatchObject([

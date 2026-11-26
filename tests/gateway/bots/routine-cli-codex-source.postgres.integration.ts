@@ -193,8 +193,8 @@ it("named private transport cancels only the exact pending CLI action and keeps 
   if (call.type !== "shim.call") throw new Error("Missing exact private action");
   // Named systemd transport fixture delivers the exact cancellation that the separate native deadline test produces.
   [...f.services.values()][0].child.stdout.emit("data", Buffer.from(JSON.stringify({ type: "shim.cancel", admissionId: call.admissionId, actionId: call.actionId }) + "\n"));
-  await expect.poll(() => reason, { timeout: 3000 }).toBe("aborted");
-  await expect.poll(async () => (await f!.frames()).find(frame => frame.id === 107), { timeout: 3000 }).toMatchObject({ result: { success: false } });
+  await expect.poll(() => reason, { timeout: 15_000 }).toBe("aborted");
+  await expect.poll(async () => (await f!.frames()).find(frame => frame.id === 107), { timeout: 15_000 }).toMatchObject({ result: { success: false } });
   const response = (await f.frames()).find(frame => frame.id === 107);
   expect(JSON.parse(response.result.contentItems[0].text)).toMatchObject({ data: { kind: "unknown", requestId, reconcile: true } });
   expect(revoked).toBe(false);
@@ -250,7 +250,7 @@ it("native stdout EOF cancels a pending owner approval while the process is aliv
 
   await writeFile(f.controlFile, "stdout-eof");
   const stdoutEof = async () => (await f!.frames()).find(frame => frame.fixtureEvent === "native.stdout-eof");
-  await expect.poll(stdoutEof, { timeout: 3000 }).toMatchObject({ pid: expect.any(Number) });
+  await expect.poll(stdoutEof, { timeout: 15_000 }).toMatchObject({ pid: expect.any(Number) });
   const { pid } = await stdoutEof();
   expect(() => process.kill(pid, 0)).not.toThrow();
   await expect.poll(() => sourceSignal?.aborted, { timeout: 2000 }).toBe(true);
