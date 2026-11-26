@@ -1,7 +1,7 @@
 import type { ChannelAdapter, ChannelConfig, ChannelMessage, ChannelReply } from "./types.js";
 import { z } from "zod/v4";
 import { MatrixComputerHandleSchema } from "@matrix-os/contracts";
-import type { PushTokenStore } from "../notifications/push-tokens.js";
+import type { PushRegistrationStatus, PushTokenStore } from "../notifications/push-tokens.js";
 import { SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
@@ -40,8 +40,11 @@ export interface PushAdapterOptions {
 }
 
 export interface PushAdapter extends ChannelAdapter {
-  registerToken(token: string, platform: string, ownerId: string): Promise<void>;
-  removeToken(token: string, ownerId: string): Promise<void>;
+  registerToken(token: string, platform: string, ownerId: string, identity?: string): Promise<void>;
+  registerLegacyToken(token: string, platform: string, ownerId: string, identity?: string): Promise<boolean>;
+  refreshToken(token: string, platform: string, ownerId: string, identity?: string): Promise<boolean>;
+  removeToken(token: string, ownerId: string, deliveryToken?: string): Promise<void>;
+  getRegistrationStatus(identity: string, ownerId: string): Promise<PushRegistrationStatus>;
   /** Deletes tokens unseen for the TTL. Runs hourly until `dispose()`. */
   sweepExpiredTokens(): Promise<number>;
   dispose(): void;
@@ -196,12 +199,24 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
   return {
     id: "push",
 
-    async registerToken(token: string, platform: string, ownerId: string) {
-      await requireTokens().register({ token, platform, ownerId, seenAt: new Date(now()), maxPerOwner: maxRegisteredTokens });
+    async registerToken(token: string, platform: string, ownerId: string, identity = token) {
+      await requireTokens().register({ token, identity, platform, ownerId, seenAt: new Date(now()), maxPerOwner: maxRegisteredTokens });
     },
 
-    async removeToken(token: string, ownerId: string) {
-      await requireTokens().remove({ token, ownerId });
+    async registerLegacyToken(token: string, platform: string, ownerId: string, identity = token) {
+      return requireTokens().registerLegacy({ token, identity, platform, ownerId, seenAt: new Date(now()), maxPerOwner: maxRegisteredTokens });
+    },
+
+    async refreshToken(token: string, platform: string, ownerId: string, identity = token) {
+      return requireTokens().refresh({ token, identity, platform, ownerId, seenAt: new Date(now()), maxPerOwner: maxRegisteredTokens });
+    },
+
+    async removeToken(token: string, ownerId: string, deliveryToken?: string) {
+      await requireTokens().remove({ token, ownerId, ...(deliveryToken ? { deliveryToken } : {}), seenAt: new Date(now()) });
+    },
+
+    async getRegistrationStatus(identity: string, ownerId: string) {
+      return requireTokens().status({ identity, ownerId, seenSince: tokenCutoff() });
     },
 
     sweepExpiredTokens,
