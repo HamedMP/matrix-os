@@ -2,10 +2,12 @@
  * Copy, cut and paste.
  *
  * Copy puts tab-separated text and an HTML table on the clipboard and
- * remembers which cells they came from. A paste of that same text takes the
- * cells themselves: values, formulas with their references moved along, and
- * looks. A cut and paste is a move: formulas that read the moved cells follow
- * them. Anything else pasted (from another program or another window) is
+ * remembers which cells they came from. The table carries a random mark of
+ * that one copy; a paste whose HTML still carries it (and the same text)
+ * takes the cells themselves: values, formulas with their references moved
+ * along, and looks. A cut and paste is a move: formulas that read the moved
+ * cells follow them. Matching text alone is no proof: another window may
+ * have copied cells that read the same. Anything else pasted (from another program or another window) is
  * typed into the cells as text, formulas included when the HTML carries them,
  * and values copied from another Sheets window keep their full value and type.
  *
@@ -16,7 +18,7 @@
 import { applyInputs } from "../session/edits";
 import type { CellAddress, CellRange, RawCell, SheetId } from "../session/engine";
 import { MAX_ACTION_CELLS, createCellWriter, report } from "./actions-data";
-import { type ClipboardCell, type ParsedTable, readClipboard, serializeHtmlTable, serializeTsv } from "./clipboard";
+import { type ClipboardCell, type ParsedTable, clipMarkOf, newClipMark, readClipboard, serializeHtmlTable, serializeTsv } from "./clipboard";
 import { cellLook } from "./cell-look";
 import type { GridContext } from "./context";
 import { adjustFormula } from "./fill";
@@ -29,9 +31,11 @@ export interface ClipboardPayload {
   html: string;
 }
 
-/** The cells the last copy or cut took, to recognise its text when it is pasted back. */
+/** The cells the last copy or cut took, to recognise its clipboard content when it is pasted back. */
 export interface InternalClip {
   text: string;
+  /** The mark put on the copy's HTML table; a paste must carry it to be taken for this copy. */
+  mark: string;
   sheet: SheetId;
   range: CellRange;
   /** The rows of the range that were copied: the ones the filter showed. */
@@ -109,9 +113,10 @@ export function copySelection(ctx: GridContext, cut: boolean): ClipboardPayload 
     cells.push(cellRow);
   }
   const text = serializeTsv(texts);
-  clips.set(ctx, { text: normalize(text), sheet, range, rows, cut });
+  const mark = newClipMark();
+  clips.set(ctx, { text: normalize(text), mark, sheet, range, rows, cut });
   ctx.store.set({ copy: { sheet, range, cut } });
-  return { text, html: serializeHtmlTable(cells, { row: range.start.row, col: range.start.col }, rows) };
+  return { text, html: serializeHtmlTable(cells, { row: range.start.row, col: range.start.col }, rows, mark) };
 }
 
 /**
@@ -310,13 +315,18 @@ function pasteExternal(ctx: GridContext, table: ParsedTable): boolean {
   return ok;
 }
 
+/** True when the clipboard still holds this window's last copy or cut: its HTML carries the copy's mark, with the same text. */
+function holdsClip(clip: InternalClip, data: { text?: string | null; html?: string | null }): boolean {
+  if (typeof data.html !== "string" || clipMarkOf(data.html) !== clip.mark) return false;
+  return (typeof data.text === "string" ? normalize(data.text) : "") === clip.text;
+}
+
 /** Pastes clipboard content at the selection. Returns true when cells were written. */
 export function pasteClipboard(ctx: GridContext, data: { text?: string | null; html?: string | null }): boolean {
   const clip = clips.get(ctx) ?? null;
-  const text = typeof data.text === "string" ? normalize(data.text) : "";
   pasting.add(ctx);
   try {
-    if (clip !== null && text !== "" && text === clip.text && ctx.session.sheets().some((sheet) => sheet.id === clip.sheet)) {
+    if (clip !== null && holdsClip(clip, data) && ctx.session.sheets().some((sheet) => sheet.id === clip.sheet)) {
       return clip.cut ? pasteMove(ctx, clip) : pasteCopy(ctx, clip);
     }
     const table = readClipboard(data);

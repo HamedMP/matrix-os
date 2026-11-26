@@ -281,14 +281,76 @@ describe("SheetGrid editing", () => {
     const setData = vi.fn();
     fireEvent.cut(grid, { clipboardData: { setData } });
     expect(session.cell(sheet, 0, 1).formula).toBe("SUM(A1:A3)");
+    const text = setData.mock.calls.find((call) => call[0] === "text/plain")?.[1] as string;
+    const html = setData.mock.calls.find((call) => call[0] === "text/html")?.[1] as string;
     click(grid, 6, 4);
-    fireEvent.paste(grid, { clipboardData: { getData: (kind: string) => (kind === "text/plain" ? "6" : "") } });
+    fireEvent.paste(grid, { clipboardData: { getData: (kind: string) => (kind === "text/plain" ? text : html) } });
     expect(session.cell(sheet, 0, 1).value).toBeNull();
     expect(session.cell(sheet, 6, 4)).toMatchObject({ formula: "SUM(A1:A3)", value: 6 });
     expect(container.querySelector(".sg-copy")).toBeNull();
     press(grid, "z", { ctrlKey: true });
     expect(session.cell(sheet, 0, 1).formula).toBe("SUM(A1:A3)");
     expect(session.cell(sheet, 6, 4).value).toBeNull();
+  });
+
+  it("pastes what the clipboard holds when another copy replaced a cut there, even with the same text", async () => {
+    const { session, sheet, grid } = await renderGrid();
+    click(grid, 0, 1);
+    const setData = vi.fn();
+    fireEvent.cut(grid, { clipboardData: { setData } });
+    const cutHtml = setData.mock.calls.find((call) => call[0] === "text/html")?.[1] as string;
+    expect(cutHtml).toMatch(/data-sheets-clip="[0-9a-f]{32}"/);
+
+    // Another window copied a literal 6, which reads like the cut formula's result.
+    const other = cutHtml.replace(/data-sheets-clip="[0-9a-f]{32}"/, `data-sheets-clip="${"0".repeat(32)}"`).replace(/ data-sheets-formula="[^"]*"/, ' data-sheets-type="n" data-sheets-value="6"');
+    click(grid, 6, 4);
+    fireEvent.paste(grid, { clipboardData: { getData: (kind: string) => (kind === "text/plain" ? "6" : other) } });
+    expect(session.cell(sheet, 6, 4)).toMatchObject({ formula: null, value: 6 });
+    expect(session.cell(sheet, 0, 1)).toMatchObject({ formula: "SUM(A1:A3)", value: 6 });
+
+    // Plain text alone does not prove the cut is still on the clipboard either: it is typed in.
+    click(grid, 0, 1);
+    fireEvent.cut(grid, { clipboardData: { setData: vi.fn() } });
+    click(grid, 7, 4);
+    fireEvent.paste(grid, { clipboardData: { getData: (kind: string) => (kind === "text/plain" ? "6" : "") } });
+    expect(session.cell(sheet, 7, 4)).toMatchObject({ formula: null, value: 6 });
+    expect(session.cell(sheet, 0, 1).formula).toBe("SUM(A1:A3)");
+  });
+
+  it("gives each copy its own mark, so an older copy of the same cells is not taken for the newer one", async () => {
+    const { session, sheet, grid } = await renderGrid();
+    click(grid, 0, 1);
+    const first = vi.fn();
+    fireEvent.copy(grid, { clipboardData: { setData: first } });
+    const firstHtml = first.mock.calls.find((call) => call[0] === "text/html")?.[1] as string;
+    const second = vi.fn();
+    fireEvent.cut(grid, { clipboardData: { setData: second } });
+    const secondHtml = second.mock.calls.find((call) => call[0] === "text/html")?.[1] as string;
+    expect(firstHtml).not.toBe(secondHtml);
+
+    // The clipboard still holds the first copy: a paste copies the formula and leaves the cut cells in place.
+    click(grid, 6, 4);
+    fireEvent.paste(grid, { clipboardData: { getData: (kind: string) => (kind === "text/plain" ? "6" : firstHtml) } });
+    expect(session.cell(sheet, 6, 4).formula).toBe("SUM(D7:D9)");
+    expect(session.cell(sheet, 0, 1).formula).toBe("SUM(A1:A3)");
+  });
+
+  it("moves cut cells in a mostly empty sheet without reading every position of it", async () => {
+    const { session, sheet, grid } = await renderGrid((workbook, id) => {
+      workbook.setRange(id, { row: 0, col: 0 }, [[1], [2], [3]]);
+      workbook.setFormula(id, { row: 0, col: 1 }, "A1*2");
+      workbook.setCell(id, { row: 1_048_575, col: 16_383 }, "far corner");
+    });
+    click(grid, 0, 0);
+    const setData = vi.fn();
+    fireEvent.cut(grid, { clipboardData: { setData } });
+    const text = setData.mock.calls.find((call) => call[0] === "text/plain")?.[1] as string;
+    const html = setData.mock.calls.find((call) => call[0] === "text/html")?.[1] as string;
+    click(grid, 5, 3);
+    fireEvent.paste(grid, { clipboardData: { getData: (kind: string) => (kind === "text/plain" ? text : html) } });
+    expect(session.cell(sheet, 5, 3).value).toBe(1);
+    expect(session.cell(sheet, 0, 0).value).toBeNull();
+    expect(session.cell(sheet, 0, 1)).toMatchObject({ formula: "D6*2", value: 2 });
   });
 
   it("pastes text and tables from other programs as typed values", async () => {

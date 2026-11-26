@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { MAX_PASTE_CHARS, MAX_PASTE_COLS, MAX_PASTE_ROWS, parseHtmlTable, parseTsv, readClipboard, serializeHtmlTable, serializeTsv } from "../../../../home/apps/sheets/src/grid/clipboard";
+import { MAX_PASTE_CHARS, MAX_PASTE_COLS, MAX_PASTE_ROWS, clipMarkOf, newClipMark, parseHtmlTable, parseTsv, readClipboard, serializeHtmlTable, serializeTsv } from "../../../../home/apps/sheets/src/grid/clipboard";
 import { type FillSource, adjustFormula, createFiller, fillFromEdge, fillTarget, planFill } from "../../../../home/apps/sheets/src/grid/fill";
 import { compareValues, distinctValues, filterHiddenRows, planSort, sortOrder } from "../../../../home/apps/sheets/src/grid/sort-filter";
 
@@ -110,6 +110,19 @@ describe("HTML table clipboard", () => {
     const padding = " ".repeat(MAX_PASTE_CHARS);
     expect(readClipboard({ html: `<table><tr><td data-sheets-formula="A1">1</td></tr></table>${padding}`, text: "1" })?.tooLarge).toBe(true);
     expect(readClipboard({ html: `<p>x</p>${padding}`, text: "a\tb" })?.rows).toEqual([["a", "b"]]);
+  });
+
+  it("marks each copy's table with its own mark, read back without parsing the HTML", () => {
+    const mark = newClipMark();
+    expect(mark).toMatch(/^[0-9a-f]{32}$/);
+    expect(newClipMark()).not.toBe(mark);
+    const html = serializeHtmlTable([[{ text: "1" }]], { row: 0, col: 0 }, undefined, mark);
+    expect(clipMarkOf(html)).toBe(mark);
+    // Still found in HTML too long to parse, and only on the first table.
+    expect(clipMarkOf(`${html}${" ".repeat(MAX_PASTE_CHARS)}`)).toBe(mark);
+    expect(clipMarkOf(`<table><tr><td>x</td></tr></table>${html}`)).toBeNull();
+    expect(clipMarkOf(serializeHtmlTable([[{ text: "1" }]], undefined, undefined, "not a mark"))).toBeNull();
+    expect(clipMarkOf("<p>no table</p>")).toBeNull();
   });
 
   it("prefers the table and falls back to text", () => {

@@ -7,7 +7,8 @@
  * `data-sheets-origin` and the sheet row of each table row in
  * `data-sheets-row` (rows a filter hid are left out of a copy), so that a paste into another Sheets window keeps
  * formulas, full precision and text that looks like a number; other programs
- * see an ordinary table. Paste prefers the HTML table and falls back to the
+ * see an ordinary table. The table also carries `data-sheets-clip`, a random
+ * mark of that one copy. Paste prefers the HTML table and falls back to the
  * text.
  *
  * Pasted HTML is untrusted. It is parsed into an inert document and only the
@@ -175,12 +176,42 @@ function cellStyle(cell: ClipboardCell): string {
   return parts.join(";");
 }
 
+const CLIP_MARK = /^[0-9a-f]{32}$/;
+
+/** A new mark for one copy or cut: 128 random bits as hex. */
+export function newClipMark(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  let mark = "";
+  for (const byte of bytes) mark += byte.toString(16).padStart(2, "0");
+  return mark;
+}
+
+/**
+ * The mark a Sheets copy put on its table (`data-sheets-clip` on the first
+ * table), or null when the HTML has none. Read without parsing the HTML, so
+ * that it also works for a table too large to paste from the HTML.
+ */
+export function clipMarkOf(html: string): string | null {
+  const tag = /<table\b[^>]*>/i.exec(html);
+  if (tag === null) return null;
+  const mark = /\sdata-sheets-clip\s*=\s*["']([0-9a-f]{32})["']/i.exec(tag[0]);
+  return mark === null ? null : (mark[1] as string).toLowerCase();
+}
+
 /**
  * Cells as an HTML table that other programs paste as a table. `sourceRows`
  * gives the sheet row of each table row, for a copy that left rows out.
+ * `mark` identifies the copy, so that a paste can tell it is still the one on
+ * the clipboard.
  */
-export function serializeHtmlTable(rows: ReadonlyArray<ReadonlyArray<ClipboardCell>>, origin?: ClipboardOrigin, sourceRows?: readonly number[]): string {
-  const attr = origin === undefined ? "" : ` data-sheets-origin="${origin.row},${origin.col}"`;
+export function serializeHtmlTable(
+  rows: ReadonlyArray<ReadonlyArray<ClipboardCell>>,
+  origin?: ClipboardOrigin,
+  sourceRows?: readonly number[],
+  mark?: string,
+): string {
+  let attr = origin === undefined ? "" : ` data-sheets-origin="${origin.row},${origin.col}"`;
+  if (mark !== undefined && CLIP_MARK.test(mark)) attr += ` data-sheets-clip="${mark}"`;
   let html = `<meta charset="utf-8"><table${attr}><tbody>`;
   rows.forEach((row, index) => {
     const source = sourceRows?.[index];
