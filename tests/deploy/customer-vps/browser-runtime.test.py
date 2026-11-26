@@ -452,6 +452,26 @@ class BrowserRuntimeTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.runtime.environment()
 
+    def test_connected_self_host_computer_keeps_browser_with_its_enrolled_identity(self):
+        # Spec 2707: connecting a self-hosted computer replaces the self-host ids with its
+        # platform machine id, Clerk owner and owned-* slot; Browser stays on the self-host site.
+        owned = ('MATRIX_SELF_HOSTED=1\nMATRIX_SUBSTRATE=owned\nMATRIX_MACHINE_ID=12345678-1234-1234-1234-123456789abc\n'
+                 'MATRIX_HANDLE=owner-handle\nMATRIX_RUNTIME_SLOT=owned-0a1b2c3d\nMATRIX_CLERK_USER_ID=user_owner\n'
+                 'MATRIX_USER_ID=user_owner\n')
+        self.env.write_text(owned)
+        _, values = self.runtime.environment()
+        self.assertEqual(values['MATRIX_CLERK_USER_ID'], 'user_owner')
+        self.assertEqual(self.runtime.nginx_site(), self.root / 'etc/nginx/sites-available/matrix-self-host')
+        for old, new in [('MATRIX_SUBSTRATE=owned\n', ''), ('MATRIX_SUBSTRATE=owned', 'MATRIX_SUBSTRATE=vps'),
+                         ('MATRIX_RUNTIME_SLOT=owned-0a1b2c3d', 'MATRIX_RUNTIME_SLOT=primary'),
+                         ('MATRIX_RUNTIME_SLOT=owned-0a1b2c3d', 'MATRIX_RUNTIME_SLOT=owned-../x'),
+                         ('MATRIX_USER_ID=user_owner', 'MATRIX_USER_ID=user_other'),
+                         ('MATRIX_CLERK_USER_ID=user_owner', 'MATRIX_CLERK_USER_ID=self-host-matrix'),
+                         ('12345678-1234-1234-1234-123456789abc', 'self-host-matrix')]:
+            self.env.write_text(owned.replace(old, new))
+            with self.assertRaises(ValueError, msg=new):
+                self.runtime.environment()
+
     def test_managed_hosts_keep_the_managed_nginx_site(self):
         self.assertEqual(self.runtime.nginx_site(), self.root / 'etc/nginx/sites-available/matrix')
         self.env.write_text(self.env.read_text() + 'MATRIX_SELF_HOSTED=1\n')
