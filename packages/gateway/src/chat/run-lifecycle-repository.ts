@@ -96,6 +96,10 @@ function canTransitionAgentActivity(
   if (current.activityId !== next.activityId || current.kind !== next.kind || current.label !== next.label) return false;
   if (current.status === "running") return true;
   if (current.status === "partial") {
+    // An unknown subagent status can be temporary while the same child resumes work.
+    if (next.status === "running" && current.kind === "delegation" && current.subagent?.status === "unknown") {
+      return next.subagent?.agentId === current.subagent.agentId;
+    }
     return ["partial", "completed", "failed", "cancelled"].includes(next.status);
   }
   return current.status === next.status;
