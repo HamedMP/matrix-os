@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { registerCollaborativeAppReadinessRoutes } from "../../packages/gateway/src/collaboration/collaborative-app-readiness-routes.js";
+import { CollaborativeAppBuildResolver } from "../../packages/gateway/src/collaboration/collaborative-app-build-resolver.js";
+import { appRegistryIncarnation } from "../../packages/gateway/src/collaboration/app-incarnation.js";
 import {
   markAuthContextReady,
   markVerifiedRuntimeBearer,
@@ -251,7 +253,7 @@ describe("collaborative app readiness routes", () => {
   });
 
   it("returns not found or null without projecting stale catalog/build state", async () => {
-    const missing = setup({ resolveCurrentBuild: async () => null });
+    const missing = setup({ resolveCurrentBuild: async () => null, registrationIncarnation: async () => null });
     expect((await missing.routes.request(`/api/collaboration/apps/${appId}/readiness`, {
       headers: { "x-test-principal": "user_owner" },
     })).status).toBe(404);
@@ -271,6 +273,73 @@ describe("collaborative app readiness routes", () => {
       });
       expect(await response.json()).toBeNull();
     }
+  });
+
+  // Outcome: an owned app that was never checked reads as "not checked yet" instead of an error.
+  // Fault detected: the GET mapped the resolver's "no catalog entry yet" null to 404, which
+  // every client renders as "App collaboration readiness is unavailable."
+  it("reads an owned app without a catalog entry as not checked, without registering it", async () => {
+    const registration = { slug: appId, created_at: "2026-11-05T10:00:00.000Z", tables: {} };
+    const resolverFor = (
+      appRegistry: { get(appId: string): Promise<unknown> },
+      liveCatalog: unknown = null,
+    ) => {
+      const catalog = { getLiveByPath: vi.fn(async () => liveCatalog), register: vi.fn() };
+      const resolver = new CollaborativeAppBuildResolver({
+        homePath: "/nonexistent-matrix-home",
+        ownerId: "user_owner",
+        appRegistry: appRegistry as never,
+        catalog: catalog as never,
+        readiness: { invalidateDriftedBuilds: async () => 0 },
+        store: {} as never,
+      });
+      const state = setup({
+        resolveCurrentBuild: (ownerId: string, id: string, options: { ensureCatalog: boolean }) =>
+          resolver.resolve(ownerId, id, options),
+        registrationIncarnation: (ownerId: string, id: string) => resolver.registrationIncarnation(ownerId, id),
+      });
+      return { ...state, catalog };
+    };
+    const read = (routes: Hono) => routes.request(`/api/collaboration/apps/${appId}/readiness`, {
+      headers: { "x-test-principal": "user_owner" },
+    });
+
+    const unchecked = resolverFor({ get: async () => registration });
+    const uncheckedResponse = await read(unchecked.routes);
+    expect(uncheckedResponse.status).toBe(200);
+    expect(await uncheckedResponse.json()).toBeNull();
+    expect(unchecked.catalog.register).not.toHaveBeenCalled();
+    expect(unchecked.dependencies.repository.getCurrent).not.toHaveBeenCalled();
+
+    const replaced = resolverFor({ get: async () => registration }, {
+      id: build.catalogId, ownerId: "user_owner", projectId: null, kind: "app", path: appId,
+      parentId: null, incarnation: "f".repeat(64), revision: 0,
+      updatedAt: registration.created_at, deletedAt: null,
+    });
+    expect(appRegistryIncarnation(registration as never)).not.toBe("f".repeat(64));
+    const replacedResponse = await read(replaced.routes);
+    expect(replacedResponse.status).toBe(200);
+    expect(await replacedResponse.json()).toBeNull();
+    expect(replaced.catalog.register).not.toHaveBeenCalled();
+
+    for (const appRegistry of [
+      { get: async () => null },
+      { get: async () => ({ ...registration, slug: "other-app" }) },
+    ]) {
+      const missing = resolverFor(appRegistry);
+      const response = await read(missing.routes);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "App not found", code: "not_found" });
+      expect(missing.catalog.register).not.toHaveBeenCalled();
+    }
+
+    const failing = setup({
+      resolveCurrentBuild: async () => null,
+      registrationIncarnation: async () => { throw new Error("postgres password=secret"); },
+    });
+    const failingResponse = await read(failing.routes);
+    expect(failingResponse.status).toBe(503);
+    expect(await failingResponse.json()).toEqual({ error: "App readiness is unavailable", code: "unavailable" });
   });
 
   it("uses a bounded default limiter and maps unavailable auth context safely", async () => {
