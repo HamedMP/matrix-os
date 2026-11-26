@@ -56,8 +56,12 @@ export class FakeCalendarProvider implements CalendarProvider {
     }
   }
 
-  releaseReads(): void {
-    for (const deferred of this.heldReads.splice(0)) deferred.resolve();
+  /** Answers the held event reads, or fails them all with `error`. */
+  releaseReads(error?: unknown): void {
+    for (const deferred of this.heldReads.splice(0)) {
+      if (error === undefined) deferred.resolve();
+      else deferred.reject(error);
+    }
   }
 
   callsTo(method: string) {

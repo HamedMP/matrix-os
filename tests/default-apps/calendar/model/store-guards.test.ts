@@ -98,3 +98,24 @@ describe("calendar store: draft guards", () => {
     expect(provider.callsTo("updateEvent")[0].args[1] as EventChanges).toEqual({ title: "Call (moved)" });
   });
 });
+
+describe("calendar store: event loads", () => {
+  // Outcome: going back to a week already loaded shows it as ready, and a late failure of the week left behind does not mark it.
+  // Fault: a cached load returns without taking the load token, so the abandoned week's failure owns the shown week's status.
+  it("lets a cached load supersede an earlier request that later fails", async () => {
+    const { store, provider } = setup();
+    await store.init();
+    expect(store.getSnapshot().eventsStatus).toBe("ready");
+
+    provider.holdReads = true;
+    store.shift(1);
+    expect(store.getSnapshot().eventsStatus).toBe("loading");
+    const pending = store.loadEvents();
+    store.shift(-1);
+    expect(store.getSnapshot()).toMatchObject({ eventsStatus: "ready", eventsError: null });
+
+    provider.releaseReads(new ProviderError("failed"));
+    await pending;
+    expect(store.getSnapshot()).toMatchObject({ eventsStatus: "ready", eventsError: null });
+  });
+});

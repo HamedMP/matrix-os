@@ -218,6 +218,9 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
   }
 
   async function runLoadEvents(loadOptions: { force?: boolean }): Promise<void> {
+    // Every load supersedes the one before, including one answered from the cache,
+    // so an abandoned range's late reply never sets the shown range's status.
+    const token = ++eventsToken;
     const { range, calendars, cache } = state;
     const visible = calendars.filter((calendar) => calendar.visible);
     const keys = visible.map((calendar) => cacheKey(calendar.id, range.start, range.end));
@@ -228,7 +231,6 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
       ctx.set((current) => ({ ...current, eventsStatus: "ready", eventsError: null }));
       return;
     }
-    const token = ++eventsToken;
     ctx.set((current) => ({ ...current, eventsStatus: "loading", eventsError: null, proposals: withoutAssistantProposals(current.proposals) }));
     const fetched = await fetchEvents(missing, range.start, range.end);
     ctx.set((current) => {
