@@ -59,7 +59,8 @@ export function ListView<T>({
   const [measured, setMeasured] = useState<number | null>(null);
   const [innerSelected, setInnerSelected] = useState<readonly string[]>(defaultSelectedKeys);
   const [innerActive, setInnerActive] = useState<string | null>(null);
-  const anchorRef = useRef<number | null>(null);
+  // The key of the row a Shift range starts from, so it survives a reorder.
+  const anchorRef = useRef<string | null>(null);
 
   const selected = selectedKeys ?? innerSelected;
   const active = activeKey !== undefined ? activeKey : innerActive;
@@ -107,6 +108,9 @@ export function ListView<T>({
     }
   };
 
+  /** Where the range anchor is now, or -1 when it is unset or no longer listed. */
+  const anchorIndex = () => (anchorRef.current === null ? -1 : indexByKey.get(anchorRef.current) ?? -1);
+
   const rangeKeys = (from: number, to: number) => {
     const [start, end] = from <= to ? [from, to] : [to, from];
     return keys.slice(start, end + 1);
@@ -120,17 +124,18 @@ export function ListView<T>({
     scrollIntoView(target);
     if (selectionMode === "single") {
       setSelection([key]);
-      anchorRef.current = target;
+      anchorRef.current = key;
     } else if (selectionMode === "multiple" && extend) {
-      const anchor = anchorRef.current ?? (activeIndex >= 0 ? activeIndex : target);
-      anchorRef.current = anchor;
+      const listed = anchorIndex();
+      const anchor = listed >= 0 ? listed : activeIndex >= 0 ? activeIndex : target;
+      anchorRef.current = keys[anchor];
       setSelection(rangeKeys(anchor, target));
     }
   };
 
   const toggle = (index: number) => {
     const key = keys[index];
-    anchorRef.current = index;
+    anchorRef.current = key;
     if (selectionMode === "single") setSelection([key]);
     else if (selectionMode === "multiple") {
       setSelection(selectedSet.has(key) ? selected.filter((k) => k !== key) : [...selected, key]);
@@ -188,15 +193,16 @@ export function ListView<T>({
     const key = keys[index];
     setActive(key);
     if (selectionMode === "none") return;
-    if (selectionMode === "multiple" && event.shiftKey && anchorRef.current !== null) {
-      setSelection(rangeKeys(anchorRef.current, index));
+    const anchor = anchorIndex();
+    if (selectionMode === "multiple" && event.shiftKey && anchor >= 0) {
+      setSelection(rangeKeys(anchor, index));
       return;
     }
     if (selectionMode === "multiple" && (event.metaKey || event.ctrlKey)) {
       toggle(index);
       return;
     }
-    anchorRef.current = index;
+    anchorRef.current = key;
     setSelection([key]);
   };
 

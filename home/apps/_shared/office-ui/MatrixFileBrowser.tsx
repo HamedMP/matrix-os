@@ -60,16 +60,19 @@ type Listing =
   | { status: "ready"; dir: string; entries: StartFileEntry[]; truncated: boolean }
   | { status: "error"; dir: string; message: string };
 
-/** A folder that is gone or closed to the app, as opposed to one that failed to list this time. */
+/**
+ * A folder that is gone, closed to the app or no longer a folder (now a file:
+ * `invalid_request`), as opposed to one that failed to list this time.
+ */
 function isUnusableFolder(error: unknown): boolean {
   const code = errorCode(error);
-  return code === "not_found" || code === "forbidden";
+  return code === "not_found" || code === "forbidden" || code === "invalid_request";
 }
 
 function listingMessage(error: unknown, appName: string): string {
   const code = errorCode(error);
   if (code === "forbidden") return `${appName} is not allowed to look in this folder.`;
-  if (code === "not_found") return "This folder no longer exists.";
+  if (code === "not_found" || code === "invalid_request") return "This folder no longer exists.";
   return "This folder could not be listed. Try again in a moment.";
 }
 

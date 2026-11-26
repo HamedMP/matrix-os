@@ -116,6 +116,28 @@ describe("ListView", () => {
     expect(selected()).toBe("m3,m4,m5");
   });
 
+  it("extends a shift click from the anchor item after the items reorder", () => {
+    const abc: Row[] = [{ id: "a", subject: "A" }, { id: "b", subject: "B" }, { id: "c", subject: "C" }];
+    const { rerender } = render(<Harness mode="multiple" items={abc} />);
+    fireEvent.click(screen.getByText("B"));
+    expect(selected()).toBe("b");
+    rerender(<Harness mode="multiple" items={[abc[1], abc[0], abc[2]]} />);
+    fireEvent.click(screen.getByText("C"), { shiftKey: true });
+    expect(selected()).toBe("b,a,c");
+  });
+
+  it("extends a shift arrow from the anchor item after the items reorder", () => {
+    const abcd: Row[] = [{ id: "a", subject: "A" }, { id: "b", subject: "B" }, { id: "c", subject: "C" }, { id: "d", subject: "D" }];
+    const { rerender } = render(<Harness mode="multiple" items={abcd} />);
+    fireEvent.click(screen.getByText("B"));
+    fireEvent.keyDown(listbox(), { key: "ArrowDown", shiftKey: true });
+    expect(selected()).toBe("b,c");
+    // B moves to the end; the range still runs from B to the row below C.
+    rerender(<Harness mode="multiple" items={[abcd[0], abcd[2], abcd[3], abcd[1]]} />);
+    fireEvent.keyDown(listbox(), { key: "ArrowUp", shiftKey: true });
+    expect(selected()).toBe("a,c,d,b");
+  });
+
   it("activates the active row with Enter and with double click", () => {
     const onActivate = vi.fn();
     render(<Harness mode="single" onActivate={onActivate} />);

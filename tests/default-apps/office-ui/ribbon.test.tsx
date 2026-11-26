@@ -293,6 +293,41 @@ describe("Ribbon collapse", () => {
     expect(document.activeElement).toBe(insert);
   });
 
+  it("closes only a floating panel on Escape inside it, keeping the overlay open", () => {
+    function Collapsed() {
+      const [color, setColor] = useState<string | null>("#000000");
+      return (
+        <Ribbon
+          tabs={[{
+            id: "home",
+            label: "Home",
+            groups: [{ id: "font", label: "Font", items: [{ kind: "color", id: "text-color", label: "Font colour", value: color, onChange: setColor }] }],
+          }]}
+          activeTab="home"
+          onTabChange={vi.fn()}
+          collapsed
+          onToggleCollapsed={vi.fn()}
+        />
+      );
+    }
+    render(<Collapsed />);
+    const home = screen.getByRole("tab", { name: "Home" });
+    fireEvent.click(home);
+    const arrow = screen.getByRole("button", { name: "Font colour options" });
+    fireEvent.click(arrow);
+    const palette = screen.getByRole("dialog", { name: "Font colour" });
+    expect(palette.contains(document.activeElement)).toBe(true);
+
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Font colour" })).toBeNull();
+    expect(screen.getByRole("tabpanel")).toBeTruthy();
+    expect(document.activeElement).toBe(arrow);
+
+    fireEvent.keyDown(arrow, { key: "Escape" });
+    expect(screen.queryByRole("tabpanel")).toBeNull();
+    expect(document.activeElement).toBe(home);
+  });
+
   it("closes the overlay when the open tab is clicked again or the pointer goes down outside", () => {
     render(<Harness spies={spies()} initialCollapsed />);
     const home = screen.getByRole("tab", { name: "Home" });

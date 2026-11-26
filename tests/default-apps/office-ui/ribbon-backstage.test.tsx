@@ -98,6 +98,22 @@ describe("Ribbon backstage", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("closes when its open File tab is activated again, by click or by Enter", () => {
+    renderRibbon();
+    const file = openFile();
+    fireEvent.click(within(screen.getByRole("dialog", { name: "File" })).getByRole("button", { name: "New" }));
+    fireEvent.click(file);
+    expect(screen.queryByRole("dialog", { name: "File" })).toBeNull();
+    expect(file.getAttribute("aria-expanded")).toBe("false");
+
+    openFile();
+    expect(screen.getByRole("region", { name: "Open" })).toBeTruthy();
+    fireEvent.keyDown(file, { key: "ArrowDown" });
+    expect(screen.getByRole("dialog", { name: "File" })).toBeTruthy();
+    fireEvent.keyDown(file, { key: "Enter" });
+    expect(screen.queryByRole("dialog", { name: "File" })).toBeNull();
+  });
+
   it("opens from ArrowDown or Enter on the File tab", () => {
     renderRibbon();
     const file = screen.getByRole("tab", { name: "File" });
@@ -194,6 +210,11 @@ describe("Ribbon backstage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
     expect(changes.at(-1)).toEqual({ tab: "file", item: "open" });
     fireEvent.click(screen.getByRole("button", { name: "Back to document" }));
+    expect(changes.at(-1)).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Shortcut" }));
+    fireEvent.click(screen.getByRole("tab", { name: "File" }));
     expect(changes.at(-1)).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });

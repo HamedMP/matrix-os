@@ -14,7 +14,7 @@ const kindOf = () => ({ kind: "document" as const });
  * `listLimit` cuts each listing short and marks it truncated, like a folder
  * larger than the gateway lists.
  */
-function fakeFiles(paths: string[], options: { fail?: Set<string>; forbid?: Set<string>; missing?: Set<string>; listLimit?: number } = {}) {
+function fakeFiles(paths: string[], options: { fail?: Set<string>; forbid?: Set<string>; missing?: Set<string>; notFolder?: Set<string>; listLimit?: number } = {}) {
   const calls: string[] = [];
   const stats: string[] = [];
   return {
@@ -32,6 +32,7 @@ function fakeFiles(paths: string[], options: { fail?: Set<string>; forbid?: Set<
       calls.push(dir);
       if (options.missing?.has(dir)) throw Object.assign(new Error("gone"), { name: "BridgeFileError", code: "not_found" });
       if (options.forbid?.has(dir)) throw Object.assign(new Error("no"), { name: "BridgeFileError", code: "forbidden" });
+      if (options.notFolder?.has(dir)) throw Object.assign(new Error("file"), { name: "BridgeFileError", code: "invalid_request" });
       if (options.fail?.delete(dir)) throw Object.assign(new Error("down"), { name: "BridgeFileError", code: "unavailable" });
       const prefix = dir === "" ? "" : `${dir}/`;
       const children = new Map<string, StartFileEntry>();
@@ -189,6 +190,24 @@ describe("MatrixFileBrowser", () => {
     fireEvent.click(screen.getByRole("button", { name: "Folder old" }));
     expect((await screen.findByRole("alert")).textContent).toContain("This folder no longer exists.");
     expect(memory.writes).toEqual([]);
+  });
+
+  it("falls back past a remembered folder that is now a file, to documents and then the home", async () => {
+    const toDocuments = fakeFiles(["documents/brief.docx", "documents/old/x.docx", "work"], { notFolder: new Set(["work", "documents/old"]) });
+    render(<MatrixFileBrowser files={toDocuments} memory={fakeMemory("work")} accept={[".docx"]} onOpen={vi.fn()} appName="Docs" fileNoun="Word documents" kindOf={kindOf} />);
+    await screen.findByRole("button", { name: /^brief\.docx/ });
+    expect(toDocuments.calls).toEqual(["work", "documents"]);
+    expect(screen.queryByRole("alert")).toBeNull();
+    // A folder the owner walks into that has become a file is gone, not failing for now.
+    fireEvent.click(screen.getByRole("button", { name: "Folder old" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("This folder no longer exists.");
+    cleanup();
+
+    const toHome = fakeFiles(["top.docx", "work", "documents"], { notFolder: new Set(["work", "documents"]) });
+    render(<MatrixFileBrowser files={toHome} memory={fakeMemory("work")} accept={[".docx"]} onOpen={vi.fn()} appName="Docs" fileNoun="Word documents" kindOf={kindOf} />);
+    await screen.findByRole("button", { name: /^top\.docx/ });
+    expect(toHome.calls).toEqual(["work", "documents", ""]);
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("shows a failure instead of falling back when the remembered folder cannot be listed right now", async () => {

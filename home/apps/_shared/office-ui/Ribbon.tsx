@@ -215,8 +215,8 @@ function isOutsideRibbon(root: HTMLElement | null, target: Node | null): boolean
 
 /**
  * Closes the overlay panel of a collapsed ribbon when a press or the focus
- * leaves the ribbon, and on Escape (`focusTab` then returns the focus to the
- * tab). Returns the root's blur and key handlers.
+ * leaves the ribbon, and on Escape in the ribbon itself (`focusTab` then
+ * returns the focus to the tab). Returns the root's blur and key handlers.
  */
 function useOverlayDismiss(rootRef: RefObject<HTMLDivElement | null>, open: boolean, setOpen: (open: boolean) => void, focusTab: () => void) {
   useEffect(() => {
@@ -233,6 +233,9 @@ function useOverlayDismiss(rootRef: RefObject<HTMLDivElement | null>, open: bool
     },
     onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
       if (event.key !== "Escape" || !open || event.defaultPrevented) return;
+      // Escape in a popover, menu or dialog the ribbon opened reaches here through
+      // React before that panel's own handler: leave it to close just that panel.
+      if (!rootRef.current?.contains(event.target as Node)) return;
       event.preventDefault();
       focusTab();
       setOpen(false);
@@ -304,7 +307,8 @@ export function Ribbon({
 
   const activate = (tab: RibbonTab) => {
     if (isBackstageTab(tab)) {
-      setBackstage({ tab: tab.id, item: defaultBackstageItem(tab.backstage) });
+      // The tab that opened the backstage closes it again.
+      setBackstage(backstageState?.tab === tab.id ? null : { tab: tab.id, item: defaultBackstageItem(tab.backstage) });
       return;
     }
     if (collapsed) {
@@ -330,6 +334,8 @@ export function Ribbon({
     if (!opens && event.key !== "ArrowDown") return;
     event.preventDefault();
     if (opens || isBackstageTab(tab)) {
+      // Enter and Space toggle the backstage; ArrowDown only opens it.
+      if (!opens && backstageState?.tab === tab.id) return;
       activate(tab);
       return;
     }
