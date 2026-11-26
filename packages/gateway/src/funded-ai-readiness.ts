@@ -1,4 +1,4 @@
-import { FUNDED_AI_READINESS_TIMEOUTS, JEV_MODEL_ID, FundedAiRouteReadinessReceiptSchema, FundedAiRuntimeFundingSummaryResponseSchema, FundedAiRuntimeChatFundingSummaryResponseSchema, type AiProviderReadiness, type FundedAiUpstreamPreferenceView } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_TIMEOUTS, isManagedFundedOpenAiModel, JEV_MODEL_ID, FundedAiRouteReadinessReceiptSchema, FundedAiRuntimeFundingSummaryResponseSchema, FundedAiRuntimeChatFundingSummaryResponseSchema, type AiProviderReadiness, type FundedAiUpstreamPreferenceView } from "@matrix-os/contracts";
 import type { FundedAiFundingSummaryReader } from "./funded-ai-funding-summary-client.js";
 import type { FundedAiRouteReadinessReader } from "./funded-ai-route-readiness-client.js";
 import { fundedAiFundingBarrier } from "./funded-ai-funding-state.js";
@@ -16,6 +16,11 @@ export interface FundedAiReadiness {
   upstreamPreference?: FundedAiUpstreamPreferenceView;
 }
 export interface FundedAiReadinessReader { read(options?: { signal?: AbortSignal }): Promise<FundedAiReadiness> }
+
+function requiresBedrockEvidence(modelId: string): boolean {
+  return modelId !== JEV_MODEL_ID && !isManagedFundedOpenAiModel(modelId)
+    && !MATRIX_INCLUDED_MODEL_IDS.some(id => modelId === `anthropic/${id}`);
+}
 
 export function createFundedAiReadinessReader(options: {
   summary: FundedAiFundingSummaryReader;
@@ -95,14 +100,12 @@ export function createFundedAiReadinessReader(options: {
       if (receipt.globalRevision !== policy.globalRevision || receipt.runtimeRevision !== policy.runtimeRevision
         || Date.parse(receipt.checkedAt) > readyTime || Date.parse(receipt.staleAfter) <= readyTime
         || receipt.readyModelIds.some((id) => !policy.allowedModelIds.includes(id))) return observed(discovery);
-      const effectiveBedrockModels = () => new Set(upstreamPreference?.effectiveBedrockModelIds ?? []);
-      const missingBedrockEvidence = () => receipt.readyModelIds.some((id) => id.startsWith("anthropic/")
-        && !MATRIX_INCLUDED_MODEL_IDS.some((modelId) => id === `anthropic/${modelId}`)
-        && !effectiveBedrockModels().has(id));
+      const hasBedrockEvidence = (id: string) => upstreamPreference?.effectiveBedrockModelIds?.includes(id) === true;
+      const missingBedrockEvidence = receipt.readyModelIds.some(id => requiresBedrockEvidence(id) && !hasBedrockEvidence(id));
       // A readiness call may refresh the Bedrock health cache after the
       // concurrent summary read. Re-read platform truth before binding the
       // newly ready custom model to a request protocol.
-      if (upstreamPreference?.selectedUpstream === "aws_bedrock" && missingBedrockEvidence()) {
+      if (upstreamPreference?.selectedUpstream === "aws_bedrock" && missingBedrockEvidence) {
         const refreshedRaw = await Promise.race([options.summary.getFundingSummary({ signal }), deadline]);
         const refreshed = FundedAiRuntimeChatFundingSummaryResponseSchema.parse({ contractVersion: 1, ...refreshedRaw });
         const refreshedCurrent = now().getTime();
@@ -121,9 +124,7 @@ export function createFundedAiReadinessReader(options: {
       }
       const allowedModelIds = policy.allowedModelIds
         .filter((id) => receipt.readyModelIds.includes(id))
-        .filter((id) => !id.startsWith("anthropic/")
-          || MATRIX_INCLUDED_MODEL_IDS.some((modelId) => id === `anthropic/${modelId}`)
-          || effectiveBedrockModels().has(id))
+        .filter(id => !requiresBedrockEvidence(id) || hasBedrockEvidence(id))
         .map((id) => id.replace(/^anthropic\//, ""));
       if (allowedModelIds.length === 0) return observed(discovery);
       const staleAfter = new Date(Math.min(Date.parse(policy.staleAfter), Date.parse(receipt.staleAfter), checkedAt.getTime() + 30_000)).toISOString();
