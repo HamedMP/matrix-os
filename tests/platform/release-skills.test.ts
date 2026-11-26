@@ -115,8 +115,36 @@ describe('release skills', () => {
 
   it('retires the old release command instead of pushing to main', () => {
     const command = read('.claude/commands/release.md');
+    expect(command).toContain('release-full-stable');
     expect(command).toContain('release-platform');
     expect(command).toContain('release-matrix-stable');
     expect(command).not.toContain('git push origin main');
+  });
+
+  it('coordinates a full stable release around an approved release-modal story', () => {
+    const skill = read('.agents/skills/release-full-stable/SKILL.md');
+
+    expect(read('.claude/skills/release-full-stable/SKILL.md')).toBe(skill);
+    expect(skill.split('\n')[1]).toBe('name: release-full-stable');
+    expect(skill).toContain('release-notes/<version>.json');
+    expect(skill).toContain('release-notes');
+    expect(skill).toContain('release-matrix-stable');
+    expect(skill).toContain('release-platform');
+
+    const modal = skill.indexOf('## 2. Collaborate on the release modal');
+    const release = skill.indexOf('## 5. Release the host bundle');
+    expect(modal).toBeGreaterThan(-1);
+    expect(release).toBeGreaterThan(modal);
+    expect(skill).toContain('complete recommended draft');
+    expect(skill).toContain('recommended default');
+    expect(skill).toContain('Do not ask the user to write the copy');
+    expect(skill).toMatch(/explicit\s+approval before committing/i);
+
+    expect(skill).toContain('exact approved version');
+    expect(skill).toContain('inventory-derived denominator');
+    expect(skill).toContain('A triggered rollout is not a completed rollout');
+    expect(skill).toContain('Europe/Berlin');
+    expect(skill).toContain('Golden snapshot');
+    expect(skill).toContain('Desktop stable');
   });
 });
