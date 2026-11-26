@@ -2,6 +2,7 @@ import { migrateAccountDeletion } from './migrations/account-deletion.js';
 import type { PlatformMigrationExecutor } from './migration-types.js';
 import { migrateIdentity } from './migrations/identity.js';
 import { migrateUserMachines } from './migrations/user-machines.js';
+import { migrateMetalHosts } from './migrations/metal-hosts.js';
 import { migrateAiFunded } from './migrations/ai-funded.js';
 import { migrateAiCreditHistory } from './migrations/ai-credit-history.js';
 import { migrateSpeech } from './migrations/speech.js';
@@ -28,6 +29,7 @@ export interface PlatformMigrationStep {
  */
 export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'identity', run: migrateIdentity },
+  { name: 'metal-hosts', run: migrateMetalHosts },
   { name: 'user-machines', run: migrateUserMachines },
   { name: 'ai-funded', run: migrateAiFunded },
   { name: 'ai-credit-history', run: migrateAiCreditHistory },
