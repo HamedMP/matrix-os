@@ -1,7 +1,7 @@
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { AgentPanel, Toolbar, ToolbarButton } from "../../../../_shared/office-ui";
 import type { AssistantState, SheetSelection, SheetsAssistant } from "../../agent";
-import { toAgentResult } from "./ResultBody";
+import { type RunAction, toAgentResult } from "./ResultBody";
 import "./agent.css";
 
 export function useAssistantState(assistant: SheetsAssistant): AssistantState {
@@ -32,10 +32,15 @@ const SUGGESTIONS = ["Clean and normalise the selected column", "Build a table o
 export function SheetsAgentPanel({ assistant, getSelection, beforeAction, onClose, aiAvailable = true, unavailableMessage, className }: SheetsAgentPanelProps) {
   const state = useAssistantState(assistant);
   const [hint, setHint] = useState<string | null>(null);
-  const results = useMemo(() => state.results.map((result) => toAgentResult(result, assistant)), [state.results, assistant]);
+  // Every action commits the cell editor first, and stops when it refused the text.
+  const ready = (): boolean => beforeAction?.() !== false;
+  const run: RunAction = (action) => {
+    if (ready()) void action(assistant);
+  };
+  const results = state.results.map((result) => toAgentResult(result, run));
 
   const withSelection = (action: (selection: SheetSelection) => void) => () => {
-    if (beforeAction?.() === false) return;
+    if (!ready()) return;
     const selection = getSelection();
     if (selection === null) {
       setHint("Select a cell or a range on the sheet first.");
@@ -55,7 +60,7 @@ export function SheetsAgentPanel({ assistant, getSelection, beforeAction, onClos
           showLabel
           disabled={state.busy}
           onClick={() => {
-            if (beforeAction?.() === false) return;
+            if (!ready()) return;
             setHint(null);
             void assistant.check();
           }}

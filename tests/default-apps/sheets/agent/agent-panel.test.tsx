@@ -138,4 +138,52 @@ describe("SheetsAgentPanel", () => {
     expect(model.session.workbook.listChanges()).toEqual([]);
     assistant.dispose();
   });
+
+  // Outcome: a result card button commits the cell editor first and does nothing when its text is refused.
+  // Fault: Link to calculation proposes a formula under a still-open editor, whose Enter then writes the old draft over it.
+  it("commits the cell editor before every result card button and stops when it is refused", async () => {
+    installBridge("It divides net income by revenue.");
+    const model = await openModel();
+    const grid = new FakeGrid();
+    const reviewed: string[] = [];
+    const assistant = new SheetsAssistant({ session: model.session, ai: bridgeSheetsAi(window), grid, now: NOW, onReview: (id) => reviewed.push(id) });
+    const selection = { sheet: model.sheets.summary, range: { start: { row: 3, col: 1 }, end: { row: 3, col: 1 } } };
+    let refuse = false;
+    let commits = 0;
+    const beforeAction = () => {
+      commits++;
+      return !refuse;
+    };
+    render(<SheetsAgentPanel assistant={assistant} getSelection={() => selection} beforeAction={beforeAction} />);
+    fireEvent.click(screen.getByRole("button", { name: "Explain" }));
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: "Check for hard-coded values" }));
+    await settle();
+
+    refuse = true;
+    commits = 0;
+    const selectedBefore = grid.selected.length;
+    fireEvent.click(screen.getByRole("button", { name: "Link Summary!B2 to its calculation" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Go to Summary!B2" })[0]!);
+    fireEvent.click(screen.getByRole("button", { name: "Clear highlights" }));
+    await settle();
+    expect(commits).toBe(3);
+    expect(model.session.workbook.listChanges()).toEqual([]);
+    expect(screen.queryByRole("article", { name: "Link Summary!B2 to its calculation" })).toBeNull();
+    expect(grid.selected.length).toBe(selectedBefore);
+    expect(grid.layers.get("assistant-sources")).toHaveLength(2);
+
+    refuse = false;
+    fireEvent.click(screen.getByRole("button", { name: "Link Summary!B2 to its calculation" }));
+    await settle();
+    const card = screen.getByRole("article", { name: "Link Summary!B2 to its calculation" });
+
+    refuse = true;
+    commits = 0;
+    for (const name of ["Accept all", "Reject all", "Review"]) fireEvent.click(within(card).getByRole("button", { name }));
+    expect(commits).toBe(3);
+    expect(model.session.workbook.listChanges()).toHaveLength(1);
+    expect(reviewed).toEqual([]);
+    assistant.dispose();
+  });
 });

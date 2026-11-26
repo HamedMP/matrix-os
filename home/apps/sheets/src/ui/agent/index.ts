@@ -16,3 +16,4 @@ export type { SheetsAgentPanelProps } from "./SheetsAgentPanel";
 export { selectionFromGrid } from "./selection";
 export type { SelectionSource } from "./selection";
 export { toAgentResult } from "./ResultBody";
+export type { RunAction } from "./ResultBody";
