@@ -11,7 +11,7 @@ import { RoutineCliError } from "./routine-cli-errors.js";
 export const RoutineSourcePolicySchema = z.strictObject({
   live: z.boolean(), scope: z.enum(["personal", "shared", "org"]),
   interactionMode: z.enum(["default", "plan", "review"]),
-  permissionMode: z.enum(["full_access", "supervised", "auto", "auto_accept_edits", "unsupported"]),
+  permissionMode: z.enum(["full_access", "supervised", "auto", "auto_review", "auto_accept_edits", "unsupported"]),
   originCeiling: z.enum(["read", "exact", "full"]), revision: z.string().min(1).max(128),
 });
 export type RoutineSourcePolicy = z.infer<typeof RoutineSourcePolicySchema>;

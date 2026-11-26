@@ -23,7 +23,7 @@ export function createChatRoutineSourceProducer(options: { input: CanonicalProvi
   let narrowed = false;
   const policy: RoutineSourcePolicy = { live: true, scope: input.owner.type === "personal" && !input.sharedScopeId ? "personal" : input.owner.type === "organization" ? "org" : "shared",
     interactionMode: input.interactionMode === "default" ? "default" : input.interactionMode === "review" ? "review" : "plan",
-    permissionMode: ["full_access", "supervised", "auto", "auto_accept_edits"].includes(input.permissionMode) ? input.permissionMode as RoutineSourcePolicy["permissionMode"] : "unsupported",
+    permissionMode: ["full_access", "supervised", "auto", "auto_review", "auto_accept_edits"].includes(input.permissionMode) ? input.permissionMode as RoutineSourcePolicy["permissionMode"] : "unsupported",
     originCeiling: "exact", revision: generation };
   const source: RoutineSourceProducer["source"] = {
     ownerId: input.owner.ownerId, computerId: options.computerId, harness: provider === "matrix_pi" ? "pi" : provider,

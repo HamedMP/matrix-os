@@ -48,6 +48,10 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
     }
     try { await deps.agentContext?.revalidate(owner, chatId, context.latestRun.context); }
     catch (error: unknown) { return mapRepositoryError(error); }
+    // Historical Codex aliases never gain the new automatic reviewer on retry.
+    const permissionMode = context.latestRun.driverKind === "codex"
+      && ["auto", "auto_accept_edits"].includes(context.latestRun.permissionMode)
+      ? "supervised" : context.latestRun.permissionMode;
     const catalog = await deps.catalog.getCatalog(principal, context.latestRun.selection);
     const validated = validateChatProviderSelection({
       catalog,
@@ -58,7 +62,7 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
         attachmentInputs: context.message.parts.filter(part => part.type === "attachment_reference"),
         resources: context.latestRun.context?.drives?.length ? ["organization_drive"] : [],
         interactionMode: context.latestRun.interactionMode,
-        permissionMode: context.latestRun.permissionMode,
+        permissionMode,
         worktree: context.latestRun.executionRoot?.kind === "worktree",
       },
     });
@@ -100,7 +104,7 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
         repository: deps.repository, owner, chatId, throughSeq: context.turn.baseMessageSeq,
         requestHash: context.latestRun.context?.requestHash ?? chatContextRequestHash({
           parts: context.message.parts, selection: context.latestRun.selection,
-          interactionMode: context.latestRun.interactionMode, permissionMode: context.latestRun.permissionMode,
+          interactionMode: context.latestRun.interactionMode, permissionMode,
           executionRoot: context.latestRun.executionRoot,
         }),
         instanceId: context.latestRun.instanceId, resumeState, context: context.latestRun.context,
@@ -129,7 +133,7 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
       instanceId: validated.instance.id,
       selection: validated.selection,
       interactionMode: context.latestRun.interactionMode,
-      permissionMode: context.latestRun.permissionMode,
+      permissionMode,
       ...(sessionContext ? { context: sessionContext } : {}),
       ...(resolvedRoot ? {
         executionRoot: resolvedRoot.ref,

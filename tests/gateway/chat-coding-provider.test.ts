@@ -392,7 +392,7 @@ describe("canonical coding Chat Provider adapter", () => {
 
   it.each([
     ["supervised", "on_request", "workspace_write"],
-    ["auto", "on_failure", "workspace_write"],
+    ["auto_review", "auto_review", "workspace_write"],
     ["full_access", "never", "full_access"],
   ] as const)(
     "passes %s permission mode to the Codex runtime as %s/%s",

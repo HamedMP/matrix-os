@@ -31,6 +31,7 @@ export function claudeChatPermissionMode(value: string, interactionMode: string)
   if (value === "supervised") return "default" as const;
   if (value === "auto_accept_edits") return "acceptEdits" as const;
   if (value === "auto") return "auto" as const;
+  if (value === "dont_ask") return "dontAsk" as const;
   if (value === "full_access") return "bypassPermissions" as const;
   throw new Error("Unsupported Claude permission mode");
 }
@@ -110,7 +111,7 @@ const RECOVERY_ENV = [
   "HOME", "PATH", "LANG", "LC_ALL", "TZ", "MATRIX_HOME", "MATRIX_NODE_PREFIX", "ANTHROPIC_API_KEY",
   "ANTHROPIC_BASE_URL", "CLAUDE_CODE_DISABLE_CRON", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
 ] as const;
-const RECOVERY_PERMISSION_MODES = ["supervised", "auto_accept_edits", "auto", "full_access"] as const;
+const RECOVERY_PERMISSION_MODES = ["supervised", "auto_accept_edits", "auto", "dont_ask", "full_access"] as const;
 
 type RecoveryBrowserBroker = SharedBrowserBroker & {
   allowsSupervisedRun?(binding: Pick<SharedBrowserBinding, "ownerId" | "chatId">): boolean;

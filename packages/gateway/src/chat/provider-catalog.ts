@@ -157,7 +157,8 @@ function codingSupports(
     interactionModes: supportedModes,
     permissionModes: driverKind === "pi" || driverKind === "opencode"
       ? ["supervised"]
-      : ["supervised", "auto_accept_edits", "auto", "full_access"],
+      : isCodex ? ["supervised", "auto_review", "full_access"]
+      : ["supervised", "auto_accept_edits", "auto", "dont_ask", "full_access"],
   };
 }
 

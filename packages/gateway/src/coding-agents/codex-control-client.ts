@@ -47,6 +47,8 @@ const TurnFrameSchema = z.object({
     .refine((value) => Buffer.byteLength(value, "utf8") <= 64 * 1024),
   model: ProviderModelReferenceSchema.optional(),
   modelOptions: z.array(AgentModelOptionSchema).max(32),
+  approvalPolicy: z.enum(["untrusted", "on_request", "on_failure", "auto_review", "never"]).optional(),
+  sandboxMode: z.enum(["read_only", "workspace_write", "full_access"]).optional(),
   browser: CodexBrowserLeaseSchema.nullable().optional(),
   clientRequestId: RequestIdSchema,
 }).strict();
@@ -96,6 +98,8 @@ export interface CodexControlClient {
     prompt: string;
     model?: string;
     modelOptions: z.infer<typeof AgentModelOptionSchema>[];
+    approvalPolicy?: z.infer<typeof TurnFrameSchema>["approvalPolicy"];
+    sandboxMode?: z.infer<typeof TurnFrameSchema>["sandboxMode"];
     browser?: z.infer<typeof CodexBrowserLeaseSchema> | null;
   }): Promise<void>;
   interruptTurn(input: {
@@ -239,6 +243,8 @@ export function createCodexControlClient(options: {
         prompt: input.prompt,
         ...(input.model ? { model: input.model } : {}),
         modelOptions: input.modelOptions,
+        ...(input.approvalPolicy ? { approvalPolicy: input.approvalPolicy } : {}),
+        ...(input.sandboxMode ? { sandboxMode: input.sandboxMode } : {}),
         ...(input.browser !== undefined ? { browser: input.browser } : {}),
         clientRequestId: `req_${input.turnId.slice("turn_".length)}`,
       });

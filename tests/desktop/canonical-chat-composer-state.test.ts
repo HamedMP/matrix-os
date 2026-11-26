@@ -174,6 +174,18 @@ describe("canonical Chat composer state", () => {
     }).model).toBe("gpt-5.6-sol");
   });
 
+  it("restores the destination provider's effort and access rather than resetting or copying the source", () => {
+    const catalog = catalogFixture();
+    const codex = createCanonicalComposerSelection(catalog, "codex_work")!;
+    const source = { ...codex, instanceId: "claude_code_default", permissionMode: "supervised" };
+    const restored = changeCanonicalComposerInstance(catalog, source, "codex_work", {
+      model: "gpt-5.6-terra", options: [{ id: "effort", value: "high" }], permissionMode: "full_access",
+    });
+    expect(restored).toMatchObject({ instanceId: "codex_work", model: "gpt-5.6-terra",
+      permissionMode: "full_access", options: expect.arrayContaining([{ id: "effort", value: "high" }]) });
+    expect(source.permissionMode).toBe("supervised");
+  });
+
   it("combines skills and commands into one slash menu", () => {
     const catalog = catalogFixture();
     expect(listCanonicalSlashEntries(catalog.instances[1]!)).toEqual([

@@ -21,6 +21,7 @@ export const RunnerConfigSchema = z.object({
   providerThreadId: NativeReferenceSchema.optional(),
   browserAttemptId: z.uuid().optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
+  approvalsReviewer: z.enum(["user", "auto_review"]).default("user"),
   sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
   writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
   model: ProviderModelReferenceSchema.optional(),
@@ -38,6 +39,8 @@ export const PendingTurnSchema = z.object({
   prompt: z.string().trim().min(1).max(64 * 1024),
   model: RunnerConfigSchema.shape.model,
   modelOptions: z.array(ModelOptionSchema).max(32).default([]),
+  approvalPolicy: z.enum(["untrusted", "on_request", "on_failure", "auto_review", "never"]).optional(),
+  sandboxMode: z.enum(["read_only", "workspace_write", "full_access"]).optional(),
   browser: CodexBrowserLeaseSchema.nullable().optional(),
 }).strict();
 export const EffortSchema = RunnerConfigSchema.shape.effort;

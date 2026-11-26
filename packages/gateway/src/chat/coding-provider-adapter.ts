@@ -87,7 +87,8 @@ function permissions(
     return { approvalPolicy: "on_request", sandboxMode: "read_only" };
   }
   if (permissionMode === "full_access") return { approvalPolicy: "never", sandboxMode: "full_access" };
-  if (permissionMode === "auto" || permissionMode === "auto_accept_edits") {
+  if (providerId === "codex" && permissionMode === "auto_review") return { approvalPolicy: "auto_review", sandboxMode: "workspace_write" };
+  if (providerId !== "codex" && (permissionMode === "auto" || permissionMode === "auto_accept_edits")) {
     return { approvalPolicy: "on_failure", sandboxMode: "workspace_write" };
   }
   if (permissionMode === "supervised") return { approvalPolicy: "on_request", sandboxMode: "workspace_write" };

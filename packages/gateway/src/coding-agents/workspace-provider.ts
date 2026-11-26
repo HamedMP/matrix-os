@@ -418,6 +418,8 @@ export function createWorkspaceCodingAgentProvider(
             : options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId));
           const submitStartedAt = startChatSendStage();
           const privateTurn = await nativeCodexRoutineAdmission(principal.userId)?.queued(sessionId, { prompt, ...(turn.model ? { model: turn.model } : {}), modelOptions: turn.modelOptions ?? [],
+            ...(turn.approvalPolicy ? { approvalPolicy: turn.approvalPolicy } : {}),
+            ...(turn.sandboxMode ? { sandboxMode: turn.sandboxMode } : {}),
             ...(browser ? { browser: { attemptId: browser.attemptId, token: browser.token, gatewayPort: Number(browser.mcpServer.env.MATRIX_SHARED_BROWSER_GATEWAY_PORT) } } : {}) }, `req_${turn.turnId.slice("turn_".length)}`);
           if (!privateTurn) await options.codexControl.submitTurn({
             sessionId,
@@ -425,6 +427,8 @@ export function createWorkspaceCodingAgentProvider(
             prompt,
             ...(turn.model ? { model: turn.model } : {}),
             modelOptions: turn.modelOptions ?? [],
+            ...(turn.approvalPolicy ? { approvalPolicy: turn.approvalPolicy } : {}),
+            ...(turn.sandboxMode ? { sandboxMode: turn.sandboxMode } : {}),
             ...(browser ? { browser: { attemptId: browser.attemptId, token: browser.token, gatewayPort: Number(browser.mcpServer.env.MATRIX_SHARED_BROWSER_GATEWAY_PORT) } } : {}),
           });
           recordChatSendStage("turn_submit", submitStartedAt);
