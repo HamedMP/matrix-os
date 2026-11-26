@@ -222,15 +222,16 @@ describe("BootSequence", () => {
     );
   });
 
-  it("lets a free owner in a device sign-in start their build from the passive path", async () => {
+  it("lets a free owner in a device sign-in start their build and reach device approval", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     let started = false;
+    const deviceReturn = "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK";
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       requests.push({ url, init });
       if (url.startsWith("/api/journey")) {
         const state: JourneyState = started
-          ? { phase: "provisioning", detail: "Building your Matrix computer.", nextAction: { kind: "wait" } }
+          ? { phase: "ready", detail: "Your Matrix computer is ready.", nextAction: { kind: "open_shell" } }
           : { phase: "install_choices_required", detail: "Set up your free Matrix computer.", nextAction: { kind: "start_provision" } };
         return Response.json(state);
       }
@@ -238,21 +239,29 @@ describe("BootSequence", () => {
         started = true;
         return Response.json({ runtime: "metal", status: "provisioning" }, { status: 202 });
       }
+      if (url === "/api/auth/app-session") return Response.json({ ok: true });
       return Response.json({}, { status: 500 });
     });
     vi.stubGlobal("fetch", fetchMock);
 
     render(
-      <BootSequence completionRedirect="/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK" passivePostCheckout>
+      <BootSequence completionRedirect={deviceReturn} passivePostCheckout>
         <div data-testid="shell">SHELL</div>
       </BootSequence>,
     );
 
+    // The passive device path must not wait forever: it offers the free start.
     expect(await screen.findByText("Set up your free Matrix computer.")).toBeTruthy();
+    expect(screen.queryByText("Finishing your Matrix computer")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Set up" }));
     await waitFor(() => expect(requests.some(({ url }) => url === "/api/auth/provision-runtime")).toBe(true));
     const provision = requests.find(({ url }) => url === "/api/auth/provision-runtime");
     expect(JSON.parse(String(provision?.init?.body))).toEqual({ developerTools: [] });
+    // Once the build is ready, the app session carries the device return so sign-in reaches device approval.
+    await waitFor(() => expect(onboardingNavigation.navigate).toHaveBeenCalledWith(deviceReturn));
+    const session = requests.find(({ url }) => url === "/api/auth/app-session");
+    expect(JSON.parse(String(session?.init?.body))).toEqual({ redirectTo: deviceReturn });
+    expect(screen.queryByTestId("shell")).toBeNull();
   });
 
   it("calls a free owner's computer a computer, not a VPS, on the web install step", async () => {
