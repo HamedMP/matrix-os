@@ -11,7 +11,7 @@ import { projectBotToolDisplay } from "./tool-event-display.js";
  * found afterwards is failed, its runtime stopped, and nothing is replayed.
  */
 import { createHash } from "node:crypto";
-import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, type BotEvent } from "@matrix-os/contracts";
+import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, SLACK_RULE_ACTIVITY_LABEL, type BotEvent } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import {
   CanonicalProviderRunEventSchema,
@@ -38,7 +38,6 @@ const BotChatStateSchema = z.object({
 export type BotChatState = z.infer<typeof BotChatStateSchema>;
 
 const TOOL_LABELS: Record<string, string> = {
-  "slack.rules": "Managing Slack summary rules",
   "artifact.read": "Reading a file",
   "artifact.write": "Saving a file",
   "memory.search": "Checking what it remembers",
@@ -67,13 +66,15 @@ export function mapBotEvent(event: BotEvent["event"], options: { toolOutputKey?:
       }
       return deltas;
     }
-    case "tool_progress":
-      return projectBotToolDisplay(event, safeRef("tool", event.toolCallId), TOOL_LABELS[event.capability] ?? "Using a tool", options.toolOutputKey) ?? [{
-        type: "tool.progress",
-        toolCallId: safeRef("tool", event.toolCallId),
-        label: TOOL_LABELS[event.capability] ?? "Using a tool",
-        status: event.phase === "started" || event.phase === "updated" ? "running" : event.phase,
-      }];
+    case "tool_progress": {
+      const id = safeRef("tool", event.toolCallId);
+      const status = event.phase === "started" || event.phase === "updated" ? "running" : event.phase;
+      if (event.capability === "slack.rules") {
+        return [{ type: "agent.activity", activityId: id, kind: "phase", label: SLACK_RULE_ACTIVITY_LABEL, status }];
+      }
+      const label = TOOL_LABELS[event.capability] ?? "Using a tool";
+      return projectBotToolDisplay(event, id, label, options.toolOutputKey) ?? [{ type: "tool.progress", toolCallId: id, label, status }];
+    }
     case "activity":
       return [{
         type: "agent.activity",

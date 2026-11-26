@@ -3,6 +3,7 @@ const normalize = (text: string) => text.normalize("NFKC").toLocaleLowerCase().r
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const NEW_MESSAGES = /(?:every|all|ordinary|new)\s+(?:new\s+)?messages?|每条|所有.*消息|普通.*消息/u;
 const OWNER_MENTION = /(?:mention(?:s|ed)?\s+me|@me|mentions?\s+of\s+me|@我|提及我)/u;
+const WITH_OR_WITHOUT_MENTION = /\b(?:with or without (?:an? )?@?mentions?|whether or not (?:it mentions me|i(?: am|'m) @?mentioned))\b|(?:无论|不管)?(?:有没有|有无|是否)\s*@(?:我)?\s*[,，]?\s*都/u;
 const IMMEDIATE = /\bimmediate(?:ly)?\b|立即/u;
 const WINDOW = /\b(?:group|batch|coalesce|window|wait)\b|合并|聚合|窗口/u;
 /** Recognized fields must consume the entire instruction. Unknown qualifiers are
@@ -59,7 +60,13 @@ export function permitsSlackRuleInstruction(text: string, operation: string, def
     if (!definition || !/^(?:from now on|whenever|every time|always|summariz[es] (?:every|all) |create (?:a |my |the )?(?:standing |slack |summary )*rule|set (?:up )?(?:a |my |the )?(?:standing |slack |summary )*rule|update (?:my |the )?(?:slack |summary )*rule|以后|从现在起|每当|创建.*规则|更新.*规则)/u.test(prefix))
         return false;
     const sentences = prefix.split(/[.!?。\n]/u).map(sentence => sentence.trim()).filter(Boolean);
-    const clause = sentences[0]!;
+    const instruction = sentences[0]!;
+    // "Every message" remains required. Strip the explicit both-cases phrase only from policy text before report focus.
+    const focusStart = instruction.search(/\bfocus(?:ing)?\s+|重点/u);
+    const policyEnd = focusStart === -1 ? instruction.length : focusStart;
+    const clause = definition.trigger === "new_message"
+        ? instruction.slice(0, policyEnd).replace(WITH_OR_WITHOUT_MENTION, " ") + instruction.slice(policyEnd)
+        : instruction;
     const guard = /^(?:(?:do not|don't|never)\s+(?:reply|respond|write|send(?: messages)?)\s+(?:in|to|on)\s+slack|no slack (?:replies|writes|messages)|不要回复\s*slack)$/u;
     if (sentences.slice(1).some(sentence => !guard.test(sentence)))
         return false;
@@ -75,7 +82,7 @@ export function permitsSlackRuleInstruction(text: string, operation: string, def
       if(new RegExp(`(?:\\b(?:not|except|excluding)\\s+(?:(?:in|from|for)\\s+)?|不在\\s*|排除\\s*)${token}(?![a-z0-9_-])`,"u").test(sourceClause))return false;
     }
     const focus = clause.match(/(?:\bfocus(?:ing)?\s+(?:on\s+)?|重点(?:是|为|在于)?\s*)([^,;，；]+)/u)?.[1]?.trim();
-    if (focus !== normalize(definition.focus))
+    if ((focus ?? "key points") !== normalize(definition.focus))
         return false;
     const aliases = definition.language.toLowerCase() === "english" ? ["english", "英文"] : definition.language.toLowerCase() === "chinese" ? ["chinese", "中文"] : [normalize(definition.language)];
     const languages = aliases.map(alias => escape(alias) + (/^[a-z -]+$/u.test(alias) ? "(?![a-z])" : "")).join("|");

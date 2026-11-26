@@ -13,7 +13,12 @@ import { BotStateError } from "../bots/repositories/shared.js";
 import type { PrivateSlackThreadContext } from "./private-thread-context.js";
 import { enrolledSlackSourceId } from "./enrolled-read-source.js";
 const result = (value: unknown): BotToolResult => ({ ok: true, content: [{ type: "text", text: JSON.stringify(value) }] });
-const clarification = () => result({ saved: false, clarification: "In this private Matrix Chat, give a complete standing instruction, for example: From now on summarize every new message in #tech immediately in English, focusing on release risks. Name the enrolled channel, every-new-message or mention-me trigger, immediate or explicit thread grouping duration, report focus and output language. One-shot summaries do not create rules." });
+const clarification = (operation: SlackRuleOperation["operation"]) => result({
+    saved: false,
+    clarification: operation === "create" || operation === "update"
+        ? "Ask one short question about any missing or conflicting choice: the approved channel, all messages or mentions only, when to send the summary, or the language. When those are clear, ask the owner to send the full instruction in one message. The default focus is key points."
+        : "Ask the owner to state the requested change directly in this private chat, for example: Pause my Slack summary rule.",
+});
 export function createSlackRuleTools(options: {
     db: Kysely<OwnerBotDatabase>;
     ownerId: string;
@@ -71,14 +76,14 @@ export function createSlackRuleTools(options: {
                     if (args.operation === "get")
                         return existing ? result({ rule: existing }) : result({ found: false });
                     if (args.ownerInstruction !== origin.text)
-                        return clarification();
+                        return clarification(args.operation);
                     const imported = await createBotCheckpointsRepository(tx).listForRun({ ownerId: binding.ownerId, runId: binding.runId }, tx);
                     if (imported.some(item => ["integration.call", "artifact.read", "jev.inbox", "mcp.call", "browser.action", "agent.task"].includes(String(item.action.capability))))
                         return result({ saved: false, clarification: "This run already consumed imported content. Repeat the complete standing rule instruction in a fresh message in this private Matrix Chat. No rule was changed." });
                     const label = enrolledLabel ?? existing?.label;
                     const definition = args.operation === "create" || args.operation === "update" ? args.definition : undefined;
                     if (!permitsSlackRuleInstruction(origin.text, args.operation, definition, definition ? label : undefined))
-                        return clarification();
+                        return clarification(args.operation);
                     if (needsEnrollment && existing && (existing.grantId !== enrolled!.access.grantId || existing.sourceId !== sourceId))
                         throw new BotBrokerActionError("not_granted");
                     const argsDigest = createHash("sha256").update(JSON.stringify(args)).digest("hex");

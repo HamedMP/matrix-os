@@ -1,5 +1,5 @@
 import { RoutineActionIdSchema } from "@matrix-os/contracts";
-import { projectChatSubagent, canonicalChatToolDetail, canonicalChatToolActivityState, canonicalReviewedAgentFailure } from "@matrix-os/contracts";
+import { projectChatSubagent, canonicalChatToolDetail, canonicalChatToolActivityState, canonicalReviewedAgentFailure, isSlackRuleActivity } from "@matrix-os/contracts";
 import type { CanonicalChatRun, CanonicalChatRunActivity } from "@matrix-os/contracts";
 import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
 import type {
@@ -243,7 +243,8 @@ export function runPresentation(
     if (entry.type === "agent") {
       const activity = agentActivities.get(entry.id);
       if (!activity) continue;
-      const detail = canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId), activity.previewKind === "command" ? activity.preview : undefined);
+      const compact = isSlackRuleActivity(run.driverKind, activity.label);
+      const detail = compact ? undefined : canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId), activity.previewKind === "command" ? activity.preview : undefined);
       activityGroups.push({
         kind: "activity-group",
         id: `${run.id}:activities:${activity.subagent ? activity.activityId : activity.id}`,
@@ -251,11 +252,11 @@ export function runPresentation(
         ...(entry.sequence !== undefined ? { sequence: entry.sequence } : {}),
         activities: [{
           id: activity.subagent ? activity.activityId : activity.id,
-          kind: activity.kind,
+          kind: compact ? "phase" : activity.kind,
           state: canonicalChatToolActivityState(run, activity.status),
           label: activity.label,
           ...(activity.subagent ? { subagent: projectChatSubagent(activity.subagent, run.status) } : {}),
-          ...(activity.preview ? {
+          ...(compact ? {} : activity.preview ? {
             preview: activity.preview,
             previewKind: activity.previewKind,
             copyText: activity.previewKind === "command" ? activity.preview : undefined,
@@ -267,7 +268,8 @@ export function runPresentation(
     }
     const activity = toolProgress.get(entry.id);
     if (!activity) continue;
-    const detail = canonicalChatToolDetail(undefined, toolOutput.get(activity.toolCallId));
+    const compact = isSlackRuleActivity(run.driverKind, activity.label);
+    const detail = compact ? undefined : canonicalChatToolDetail(undefined, toolOutput.get(activity.toolCallId));
     activityGroups.push({
       kind: "activity-group",
       id: `${run.id}:activities:${activity.id}`,
@@ -275,7 +277,7 @@ export function runPresentation(
       ...(entry.sequence !== undefined ? { sequence: entry.sequence } : {}),
       activities: [{
         id: activity.id,
-        kind: "tool",
+        kind: compact ? "phase" : "tool",
         state: canonicalChatToolActivityState(run, activity.status),
         label: activity.label,
         ...(detail ? { detail, preview: detail, previewKind: "text" as const } : {}),

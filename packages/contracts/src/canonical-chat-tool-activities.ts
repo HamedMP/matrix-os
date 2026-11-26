@@ -1,6 +1,7 @@
 import { projectChatSubagent, type ChatSubagent } from "#chat-subagent";
 import type { CanonicalChatRun, CanonicalChatRunActivity } from "./canonical-chat.js";
 import { canonicalChatToolDetail } from "#canonical-chat-tool-details";
+import { isSlackRuleActivity } from "#bots/slack-rules";
 
 export type CanonicalToolActivityState = "running" | "completed" | "partial" | "stopped" | "failed";
 
@@ -82,11 +83,12 @@ export function canonicalChatToolActivities(run: CanonicalChatRun, activities: C
     if (type === "agent") {
       const activity = agentActivities.get(id);
       if (!activity) return [];
-      const preview = activity.preview ?? activity.summary;
-      const detail = canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId), activity.previewKind === "command" ? activity.preview : undefined);
+      const compact = isSlackRuleActivity(run.driverKind, activity.label);
+      const preview = compact ? undefined : activity.preview ?? activity.summary;
+      const detail = compact ? undefined : canonicalChatToolDetail(activity.detail ?? activity.summary, toolOutput.get(activity.activityId), activity.previewKind === "command" ? activity.preview : undefined);
       return [{
         id: activity.activityId,
-        kind: activity.kind,
+        kind: compact ? "phase" : activity.kind,
         state: canonicalChatToolActivityState(run, activity.status),
         label: activity.label,
         ...(activity.subagent ? { subagent: projectChatSubagent(activity.subagent, run.status) } : {}),
@@ -96,10 +98,11 @@ export function canonicalChatToolActivities(run: CanonicalChatRun, activities: C
     }
     const activity = toolProgress.get(id);
     if (!activity) return [];
-    const detail = canonicalChatToolDetail(undefined, toolOutput.get(activity.toolCallId));
+    const compact = isSlackRuleActivity(run.driverKind, activity.label);
+    const detail = compact ? undefined : canonicalChatToolDetail(undefined, toolOutput.get(activity.toolCallId));
     return [{
       id: activity.toolCallId,
-      kind: "tool",
+      kind: compact ? "phase" : "tool",
       state: canonicalChatToolActivityState(run, activity.status),
       label: activity.label,
       ...(detail ? { detail } : {}),

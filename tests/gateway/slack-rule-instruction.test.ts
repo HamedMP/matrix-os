@@ -18,6 +18,26 @@ it("permits explicit readonly safeguards and Chinese standing instructions with 
     expect(permits("以后把 #tech 每条新消息立即整理，用 English 输出，重点是 release risks，不要回复 Slack。", "create", immediate, "#tech")).toBe(true);
 });
 it.each([
+    "From now on summarize every new message in #tech immediately in English, with or without an @mention, focus on decisions.",
+    "以后把 #tech 每条新消息，无论有没有 @我，都立即整理，用英文输出，重点是 decisions。",
+    "以后把 #tech 每条新消息，有没有 @ 都立即整理，用英文输出，重点是 decisions。",
+])("authorizes all new messages when the owner explicitly includes both mention cases: %s", text => {
+    const allMessages = { ...definition, focus: "decisions", cadence: { kind: "immediate" as const } };
+    expect(permits(text, "create", allMessages, "#tech")).toBe(true);
+    expect(permits(text, "create", { ...allMessages, trigger: "owner_mention" }, "#tech")).toBe(false);
+});
+it("still asks for clarification if a second condition limits an all-messages instruction", () => {
+    const allMessages = { ...definition, focus: "decisions", cadence: { kind: "immediate" as const } };
+    expect(permits("From now on summarize every new message in #tech immediately in English, with or without an @mention, but only from Alex, focus on decisions.",
+        "create", allMessages, "#tech")).toBe(false);
+});
+it("allows a general summary without asking the owner to invent a focus", () => {
+    const text = "From now on summarize every new message in #team-updates immediately in English, with or without an @mention.";
+    const immediate = { ...definition, cadence: { kind: "immediate" as const } };
+    expect(permits(text, "create", { ...immediate, focus: "key points" }, "#team-updates")).toBe(true);
+    expect(permits(text, "create", immediate, "#team-updates")).toBe(false);
+});
+it.each([
     "From now on summarize only messages that mention me in #tech immediately in English, focus on release risks. Ordinary messages must remain read-only.",
     "From now on summarize every new message in #technology immediately in English, focus on release risks.",
     "From now on summarize every new message in #tech immediately in Chinese, not English, focus on release risks.",

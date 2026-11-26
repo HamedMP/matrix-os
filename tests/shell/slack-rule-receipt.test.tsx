@@ -12,6 +12,7 @@ import {
   type CanonicalChatMessage,
 } from "@matrix-os/contracts";
 import { CanonicalApprovalMessage } from "../../shell/src/components/chat/CanonicalApprovalMessage";
+import { canonicalChatPresentation } from "../../desktop/src/renderer/src/features/chat/canonical-chat-presentation";
 import { createCanonicalShellChatClient } from "../../shell/src/lib/canonical-chat-client";
 import { projectCanonicalTranscript } from "../../shell/src/lib/canonical-chat-terminal-notices";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
@@ -95,8 +96,26 @@ it.each([
   );
   expect(screen.getByText(`Slack summary rule ${label} for #tech.`)).toBeTruthy();
   expect(container.textContent).not.toMatch(/"ruleId"|"channelId"|"limits"/);
-  if (state === "active") expect(screen.getByText("English summaries go to this private Chat.")).toBeTruthy();
+  if (state === "active") expect(screen.getByText("Every new message, with or without an @mention. English summaries go to this private Chat right away.")).toBeTruthy();
   if (operation === "update") expect(screen.getByText("Rule is paused.")).toBeTruthy();
+});
+
+it("explains a grouped mention-only rule using owner-facing terms", () => {
+  renderSystemNotice(`Slack summary rule create committed.\n${JSON.stringify({
+    ...persistedReceipt, state: "active", trigger: "owner_mention", cadence: { kind: "coalesce", seconds: 90 },
+  })}`);
+  expect(screen.getByText("Messages that mention you. English summaries go to this private Chat after grouping messages in the same thread for 1 min 30 sec.")).toBeTruthy();
+});
+
+it("shows the same committed rule receipt in Electron and does not show an attributed copy", () => {
+  const text = `Slack summary rule resume committed.\n${JSON.stringify({ ...persistedReceipt, state: "active" })}`;
+  expect(canonicalChatPresentation(noticeDetail(text)).find(view => view.id === "msg_slack_receipt")?.final).toMatchObject({
+    kind: "notice",
+    label: "Slack summary rule resumed for #tech.",
+    markdown: "Every new message, with or without an @mention. English summaries go to this private Chat right away.",
+  });
+  expect(canonicalChatPresentation(noticeDetail(text, { actorId: "owner_fixture" })))
+    .not.toContainEqual(expect.objectContaining({ id: "msg_slack_receipt" }));
 });
 
 it.each([

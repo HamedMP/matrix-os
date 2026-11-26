@@ -12,7 +12,6 @@ import type { ChatMessage } from "@/lib/chat";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { SupervisedToolApprovalCard } from "@matrix-os/ui";
-import { slackRuleNotice } from "./slack-rule-notice";
 
 const APPROVAL_DECISIONS = new Set<CanonicalChatApprovalDecision>([
   "approve", "approve_for_session", "decline", "cancel",
@@ -80,7 +79,7 @@ export function CanonicalApprovalMessage({
   const [failed, setFailed] = useState<{ runId: string; approvalId: string } | null>(null);
   const approval = canonicalApproval(message);
   if (!approval) {
-    const notice = message.slackRuleReceiptText ? slackRuleNotice(message.slackRuleReceiptText) : undefined;
+    const notice = message.slackRuleReceipt;
     return (
       <div className="min-w-0 max-w-full rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
         {notice ? <><p className="font-medium">{notice.title}</p>{notice.detail ? <p>{notice.detail}</p> : null}</> : message.content}

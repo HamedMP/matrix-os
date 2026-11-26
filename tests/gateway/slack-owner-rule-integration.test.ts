@@ -90,7 +90,7 @@ it.each([
     expect(Number((await sql<{count:string}>`SELECT count(*) AS count FROM slack_private_thread_context`.execute(fixture.db)).rows[0]!.count)).toBe(0);
     let policyTime = date.getTime() - 1_000;
     const harness = await ownerRuleHarness({ fixture, enrollment: { access: { ownerId, botId, chatId, runtimeId, grantId }, appId, teamId, channel: { id: channelId, name: "tech" } }, context, now: () => new Date(policyTime) });
-    const instruction = trigger === "new_message" ? "From now on summarize every new message in #tech immediately in English, focusing on release risks. Do not reply in Slack." : "Whenever teammates mention me in #tech, summarize immediately in English, focus on release risks. Do not reply in Slack.";
+    const instruction = trigger === "new_message" ? "From now on summarize every new message in #tech immediately in English, with or without an @mention, focusing on release risks. Do not reply in Slack." : "Whenever teammates mention me in #tech, summarize immediately in English, focus on release risks. Do not reply in Slack.";
     const binding = await harness.turn(instruction);
     if (dev) {
         const saved = (await createdAgent!.agents.get({ type: "personal", ownerId }, botId))!;
@@ -112,7 +112,9 @@ it.each([
     const reply = "Summary: The deployment checklist is incomplete.\nSuggested to-dos:\n- [ ] Review the deployment checklist.\nSource: #tech; current thread only.";
     const runtime = await summaryRuntime(fixture.db, summaries, ownerId, botId, reply, createdAgent);
     cleanup.push(runtime.close);
-    const ts = `${Math.floor(date.getTime() / 1000)}.000001`, text = trigger === "new_message" ? "An ordinary release update without any mention" : "<@U123> please review the release risk";
+    const ts = `${Math.floor(date.getTime() / 1000)}.000001`;
+    // Exercise both payloads for an all-new-messages rule, including mention in the isolated Dev lane.
+    const text = trigger === "new_message" && !dev ? "An ordinary release update without any mention" : "<@U123> please review the release risk";
     if (dev) {
         expect((await push("EvWrongChannel", ts, text, { appId, channelId: "C456" })).status).toBe(200);
         expect((await push("EvWrongApp", ts, text, { appId: "A456", channelId })).status).toBe(403);

@@ -28,7 +28,7 @@ export function hydrateMessages(messages: PersistedMessage[]): ChatMessage[] {
 
 export interface ChatMessage {
   routineReceipt?: import("@matrix-os/contracts").RoutineChatReceiptPart;
-  slackRuleReceiptText?: string;
+  slackRuleReceipt?: import("@matrix-os/ui").SlackRuleNotice;
   scheduledMessage?: import("@matrix-os/ui/chat-scheduled-message").ScheduledMessagePresentation;
   id: string;
   role: "user" | "assistant" | "system";

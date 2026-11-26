@@ -358,6 +358,7 @@ export { RoutineOriginApprovals } from "./chat/RoutineOriginApprovals.js";
 export { routineApprovalPlacement, routineOriginHistoryStatus } from "./chat/routine-approval-placement.js";
 export { RoutineReceipt } from "./chat/RoutineReceipt.js";
 export { routineReceiptMessage, routineReceiptOutcome } from "./chat/routine-receipt.js";
+export { slackRuleReceiptMessage, type SlackRuleNotice } from "./chat/slack-rule-notice.js";
 
 export { ScheduledInputText } from "./chat/ScheduledInputText.js";
 

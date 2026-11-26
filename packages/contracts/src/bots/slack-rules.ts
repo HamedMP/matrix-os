@@ -1,5 +1,13 @@
 import { z } from "zod/v4";
 import { canonicalBoundedText } from "#canonical-chat-primitives";
+
+export const SLACK_RULE_ACTIVITY_LABEL = "Managing Slack summary rules";
+
+/** Rule changes are presented by their committed receipt. Tool activity is progress only. */
+export function isSlackRuleActivity(driverKind: string, label: string): boolean {
+    return driverKind === "matrix_bot" && label === SLACK_RULE_ACTIVITY_LABEL;
+}
+
 export const SlackRuleDefinitionSchema = z.object({
     trigger: z.enum(["new_message", "owner_mention"]),
     cadence: z.discriminatedUnion("kind", [
