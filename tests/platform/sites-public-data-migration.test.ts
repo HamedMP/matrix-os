@@ -27,4 +27,19 @@ describe('sites public data opt-in migration', () => {
       await runPlatformMigration(db, migrateSites, { scope: 'sites', revision: SITES_SCHEMA_REVISION });
     } finally { await db.destroy(); }
   });
+
+  it('starts on a database holding a stale generation 4 marker with another fingerprint (ENG-593)', async () => {
+    // Shared preview databases keep a generation 4 sites marker recorded by an unmerged build.
+    // Startup must move past it instead of failing closed on an equal generation.
+    const instance = await KyselyPGlite.create();
+    const db = new Kysely<PlatformDatabase>({ dialect: instance.dialect });
+    try {
+      await runPlatformStartupMigrations(db);
+      await sql`UPDATE platform_schema_revisions SET generation = 4, fingerprint = 'stale-preview-sites-v4' WHERE scope = 'sites'`.execute(db);
+      await expect(runPlatformStartupMigrations(db)).resolves.toBeUndefined();
+      expect((await sql`SELECT generation, fingerprint FROM platform_schema_revisions WHERE scope = 'sites'`.execute(db)).rows)
+        .toEqual([{ generation: SITES_SCHEMA_REVISION.generation, fingerprint: SITES_SCHEMA_REVISION.fingerprint }]);
+      expect(SITES_SCHEMA_REVISION.generation).toBeGreaterThan(4);
+    } finally { await db.destroy(); }
+  });
 });
