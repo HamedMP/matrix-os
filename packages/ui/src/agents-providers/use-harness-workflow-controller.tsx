@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   ProviderHarnessInstance,
@@ -317,7 +318,7 @@ export function useHarnessWorkflowController({
           kind,
           ...(loginMethod ? { method: loginMethod } : {}),
           ...(exactOption ? {optionId: exactOption.id} : {}),
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: randomUUID(),
         };
       }
       const result = exactOption ? await client.startConnection!({harnessInstanceId: harness.id,

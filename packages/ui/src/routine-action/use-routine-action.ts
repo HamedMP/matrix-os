@@ -1,8 +1,9 @@
+import { randomUUID } from "../random-uuid.js";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { RoutineActionView, RoutineActionSubmit } from "@matrix-os/contracts";
 import type { RoutineActionClient } from "./client.js";
 /** Shared owner/Computer/session fencing and one-operation decision lifecycle for web and Native Mobile. */
-export function useRoutineAction({ client, challengeId, identity, openConfirmation, createRequestId = () => crypto.randomUUID() }: {
+export function useRoutineAction({ client, challengeId, identity, openConfirmation, createRequestId = () => randomUUID() }: {
   client: RoutineActionClient; challengeId: string; identity: string; openConfirmation?: (id: string, signal?: AbortSignal) => Promise<void>; createRequestId?: () => string;
 }) {
   const [view, setView] = useState<RoutineActionView | null>(null), [error, setError] = useState<string | null>(null);

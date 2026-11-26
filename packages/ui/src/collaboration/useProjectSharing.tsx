@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import {
   CollaborationProjectInventorySchema,
   CollaborationScopePreflightResponseSchema,
@@ -114,7 +115,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
           kind: "project",
           resourceId: projectId,
           organizationId,
-          clientRequestId: crypto.randomUUID(),
+          clientRequestId: randomUUID(),
           expectedRevision: preflight.resourceRevision,
           confirmationToken: preflight.confirmationToken,
         },

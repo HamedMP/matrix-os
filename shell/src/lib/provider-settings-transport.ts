@@ -1,3 +1,4 @@
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 import {
   ProviderManagedCreditObservationSchema,
   type ProviderManagedCreditObservation,
@@ -210,7 +211,7 @@ export async function openWebProviderAgentSetup(
     getCatalog: () => fetchJson(fetch, canonicalChatProviderCatalogPath(true, true), {
       signal: requestSignal(undefined, FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs), cache: "no-store",
     }),
-    openCommand: (cmd) => openWebProviderTerminalCommand(["sh", "-lc", cmd], `setup-${harness}-${crypto.randomUUID().slice(0, 8)}`,
+    openCommand: (cmd) => openWebProviderTerminalCommand(["sh", "-lc", cmd], `setup-${harness}-${randomUUID().slice(0, 8)}`,
       onOpenTerminal, () => getGatewayUrl() === runtimeUrl),
   });
 }

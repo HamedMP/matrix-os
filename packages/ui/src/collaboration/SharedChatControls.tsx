@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import {
   COLLABORATION_PAGE_LIMIT,
   CollaborationAiRequestAcceptedResponseSchema,
@@ -222,7 +223,7 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     dispatch({ type: "action_started", key: "submit" });
     try {
       const accepted = CollaborationAiRequestAcceptedResponseSchema.parse(await api.post(`${endpoint}/requests`, {
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId: randomUUID(),
         expectedRevision: latestResourceRevision.current,
         text: draft.text.trim(),
       }));
@@ -244,7 +245,7 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     dispatch({ type: "action_started", key });
     try {
       await api.post(`${endpoint}/requests/${encodeURIComponent(request.id)}/${action}`, {
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId: randomUUID(),
         expectedRevision: latestResourceRevision.current,
       });
       await load();
@@ -263,7 +264,7 @@ function useSharedAiController({ api, scope, actorId, resourceRevision, draft, u
     dispatch({ type: "action_started", key });
     try {
       await api.post(`${endpoint}/approvals/${encodeURIComponent(approval.approvalId)}/decision`, {
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId: randomUUID(),
         expectedRevision: latestResourceRevision.current,
         runId: approval.runId,
         decision,

@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import {
   CollaborationGrantSchema,
   CollaborationScopeSchema,
@@ -98,12 +99,12 @@ export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = tr
       if (nextPreset) {
         if (!api.patch) throw new Error("Grant editing unavailable");
         CollaborationGrantSchema.parse(await api.patch(path, {
-          clientRequestId: crypto.randomUUID(), expectedRevision: revision,
+          clientRequestId: randomUUID(), expectedRevision: revision,
           expectedGrantRevision: grant.revision, preset: nextPreset,
         }));
       } else {
         await api.delete(path, {
-          clientRequestId: crypto.randomUUID(), expectedRevision: revision,
+          clientRequestId: randomUUID(), expectedRevision: revision,
           expectedMemberRevision: grant.revision,
         });
       }
@@ -122,7 +123,7 @@ export function AudienceGrantPicker({ api, scope, onRefresh, allowNewGrants = tr
     setPending(true); setFeedback("");
     try {
       const created = CollaborationGrantSchema.parse(await api.post(`${base}/grants`, {
-        clientRequestId: crypto.randomUUID(), expectedRevision: revision, audience: selected, preset,
+        clientRequestId: randomUUID(), expectedRevision: revision, audience: selected, preset,
       }));
       await reloadGrants();
       setFeedback(beforeShare ? "Access starts when you share the whole project."

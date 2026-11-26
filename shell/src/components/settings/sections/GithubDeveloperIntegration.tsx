@@ -1,4 +1,5 @@
 "use client";
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 
 import { useMemo, type ReactNode } from "react";
 import { GITHUB_DEVELOPER_DEVICE_URL, githubDeveloperDisconnectCommand, GithubDeveloperAccess, type GithubDeveloperAccessClient, type IntegrationRowPresentation } from "@matrix-os/ui";
@@ -63,7 +64,7 @@ export function GithubDeveloperIntegration({
         async startDisconnect(account: string, signal: AbortSignal) {
           const command = githubDeveloperDisconnectCommand(account);
           if (!command) return false;
-          return openWebProviderTerminalCommand(command, `disconnect-github-${crypto.randomUUID().slice(0, 8)}`,
+          return openWebProviderTerminalCommand(command, `disconnect-github-${randomUUID().slice(0, 8)}`,
             onOpenGithubDisconnectTerminal, isIdentityCurrent, signal);
         },
       } : {}),

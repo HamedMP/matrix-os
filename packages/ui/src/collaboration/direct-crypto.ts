@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 /**
  * Browser-side primitives for the direct collaboration protocol (S06 / T031).
  * Web Crypto only: an Ed25519 proof key that is generated per scope session,
@@ -69,7 +70,7 @@ export function randomHex(bytes = 32): string {
 }
 
 export function randomId(): string {
-  return globalThis.crypto.randomUUID();
+  return randomUUID();
 }
 
 /** A fresh non-extractable Ed25519 proof key. The private key never leaves the CryptoKey object. */

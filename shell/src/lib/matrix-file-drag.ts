@@ -1,3 +1,4 @@
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 import { FileResourceRefSchema } from "@matrix-os/contracts";
 
 const MIME = "application/x-matrix-web-file";
@@ -6,7 +7,7 @@ let active: { id: string; path: string; authority: string; gatewayUrl: string } 
 export function startMatrixFileDrag(transfer: DataTransfer, path: string, authority: string, gatewayUrl: string): void {
   active = null;
   if (!FileResourceRefSchema.safeParse({ kind: "home", path }).success) return;
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   transfer.effectAllowed = "copy";
   transfer.setData(MIME, id);
   active = { id, path, authority, gatewayUrl };

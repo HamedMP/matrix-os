@@ -1,4 +1,5 @@
 "use client";
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 import { MAX_AGENT_ATTACHMENT_BYTES, mergeTrySuggestion, type CanonicalProviderInstanceDescriptor, type TrySuggestionDraft } from "@matrix-os/contracts";
 import { matchChatSlashToken, ProjectSkillDraftChips, useProjectSkillDraft, type ProjectChatSlashScope } from "@matrix-os/ui";
 import { ChatSlashPicker } from "./ChatSlashPicker";
@@ -227,7 +228,7 @@ export function ChatInput({
       if (projectSkillProjectId && !currentSkillScope()) return;
       const prompt = projectSkillDraft.prompt(text || (files?.length ? `Attached ${files.length} file(s)` : ""));
       const accepted = await onSubmit(prompt, files, {
-        resources, clientRequestId: composer.requestId || crypto.randomUUID(), permissionMode: permission.permissionMode, onAccepted: acknowledge,
+        resources, clientRequestId: composer.requestId || randomUUID(), permissionMode: permission.permissionMode, onAccepted: acknowledge,
         ...(projectSkillProjectId ? { projectSkillProjectId } : {}),
       });
       if (accepted !== false) acknowledge();

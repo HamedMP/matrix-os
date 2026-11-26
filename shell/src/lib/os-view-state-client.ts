@@ -1,3 +1,4 @@
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 import {
   LegacyDesktopImportSchema,
   OsViewStateResponseSchema,
@@ -25,7 +26,7 @@ export class OsViewStateConflictExhaustedError extends Error {
 }
 
 function mutationId(): string {
-  return `osvm_${crypto.randomUUID().replaceAll("-", "")}`;
+  return `osvm_${randomUUID().replaceAll("-", "")}`;
 }
 
 async function requestState(gatewayUrl: string, signal?: AbortSignal): Promise<OsViewStateResponse> {

@@ -1,4 +1,5 @@
 "use client";
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 
 import { create } from "zustand";
 import { fileBlobUrl } from "@/lib/file-blob";
@@ -131,7 +132,7 @@ export const usePreviewWindow = create<
 
     const name = path.split("/").pop() ?? path;
     const type = detectFileType(name);
-    const id = crypto.randomUUID();
+    const id = randomUUID();
     const tab: PreviewTab = { id, path, name, type, mode: mode ?? defaultMode(type), authority };
 
     set((s) => ({

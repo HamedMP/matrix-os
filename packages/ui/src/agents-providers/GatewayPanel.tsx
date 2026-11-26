@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { checkoutUnavailablePresentation } from "./checkout-unavailable-presentation.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
@@ -286,7 +287,7 @@ export function GatewayPanel({
               className="matrix-ap-button matrix-ap-button-primary"
               onClick={() => {
                 setCreditError(false);
-                setCreditRequestId(crypto.randomUUID());
+                setCreditRequestId(randomUUID());
                 setCreditDialogOpen(true);
               }}
               disabled={disabled}

@@ -1,3 +1,4 @@
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 export type TerminalLaunchAction =
   | "claude-login"
   | "codex-login"
@@ -120,7 +121,7 @@ function isTerminalLaunchAction(value: unknown): value is TerminalLaunchAction {
 }
 
 function terminalTabId(): string {
-  return `tt_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+  return `tt_${randomUUID().replaceAll("-", "")}`;
 }
 
 function isTerminalTabId(value: unknown): value is string {

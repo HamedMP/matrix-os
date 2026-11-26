@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import {
   CollaborationGrantSchema,
   CollaborationScopeSchema,
@@ -85,12 +86,12 @@ export async function ensureOrganizationContributorGrant(api: CollaborationDirec
     && grant.state !== "revoked" && grant.state !== "expired");
   if (activeGrant?.preset === "viewer") {
     await api.direct.request(scopeId, "PATCH", `/api/collaboration/scopes/${scopeId}/grants/${activeGrant.id}`, {
-      clientRequestId: crypto.randomUUID(), expectedRevision: scope.revision,
+      clientRequestId: randomUUID(), expectedRevision: scope.revision,
       expectedGrantRevision: activeGrant.revision, preset: "contributor",
     });
   } else if (!activeGrant) {
     await api.direct.request(scopeId, "POST", `/api/collaboration/scopes/${scopeId}/grants`, {
-      clientRequestId: crypto.randomUUID(), expectedRevision: scope.revision,
+      clientRequestId: randomUUID(), expectedRevision: scope.revision,
       audience: { kind: "organization" }, preset: "contributor",
     });
   }
