@@ -12,6 +12,7 @@ import type { PlatformDB } from '../db.js';
  */
 export const METAL_MAINTENANCE_LOCK_KEY = 2_691_520_001;
 export const METAL_SLEEPER_LOCK_KEY = 2_691_520_002;
+export const METAL_SCHEDULED_WAKE_LOCK_KEY = 2_691_520_003;
 
 export async function runAsSingleton(db: PlatformDB, key: number, run: () => Promise<void>): Promise<boolean> {
   await db.ready;

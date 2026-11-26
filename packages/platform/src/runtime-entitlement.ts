@@ -49,7 +49,16 @@ export async function getRuntimeEntitlementDecisionForUser(
     const existing = deletion.runtimeAccess === 'grace'
       ? await db.executor.selectFrom('user_machines').select('machine_id')
         .where('clerk_user_id', '=', clerkUserId).where('deleted_at', 'is', null)
-        .where('activation_state', '=', 'authorized').where('status', 'in', ['running', 'recovering'])
+        .where('activation_state', '=', 'authorized')
+        // Existing metal computers can wake on an authenticated owner request during grace.
+        .where((eb) => eb.or([
+          eb('status', 'in', ['running', 'recovering']),
+          eb.and([
+            eb('substrate', '=', 'metal'),
+            eb('metal_vm_id', 'is not', null),
+            eb('status', 'in', ['stopped', 'suspending', 'suspended', 'resuming']),
+          ]),
+        ]))
         .where('provisioned_at', '<=', deletion.scheduledAt!)
         .$if(Boolean(runtimeSlot), (query) => query.where('runtime_slot', '=', runtimeSlot!))
         .executeTakeFirst()

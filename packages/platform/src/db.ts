@@ -111,6 +111,11 @@ export interface UserMachinesTable {
   started_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   metal_host_id: Generated<string | null>;
   metal_vm_id: Generated<string | null>;
+  next_wake_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  awake_since: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  idle_guard_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  sleep_checked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  wake_failures: Generated<number>;
 }
 
 export interface AiFundedGlobalPolicyTable {
@@ -1051,6 +1056,12 @@ export interface UserMachineRecord {
   metalHostId: string | null;
   /** hostd VM id on that host; null until the VM is created. */
   metalVmId: string | null;
+  /** Metal sleep: when the sleeper must wake this sleeping runtime; null when nothing is scheduled. */
+  nextWakeAt: string | null;
+  /** Metal sleep: when the runtime last became running. */
+  awakeSince: string | null;
+  /** Metal sleep: when the 6 h idle guard last suspended a runtime that still reported work. */
+  idleGuardAt: string | null;
 }
 
 export type BillingCheckoutAttemptStatus = 'creating' | 'open' | 'paid' | 'expired' | 'abandoned';
@@ -1358,6 +1369,9 @@ export interface NewUserMachine {
   startedAt?: string | null;
   metalHostId?: string | null;
   metalVmId?: string | null;
+  nextWakeAt?: string | null;
+  awakeSince?: string | null;
+  idleGuardAt?: string | null;
 }
 
 export interface NewProviderDeletionQueueRecord {

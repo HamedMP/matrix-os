@@ -5,6 +5,8 @@ import {
   startMetalMaintenanceWorker,
 } from '../../packages/platform/src/substrates/metal-runtime.js';
 import type { PlatformDB } from '../../packages/platform/src/db.js';
+import { createSubstrateRegistry } from '../../packages/platform/src/substrates/registry.js';
+import type { OnDemandRuntimeSubstrate } from '../../packages/platform/src/substrates/types.js';
 import { createTestConfig } from './customer-vps-service-test-helper.js';
 
 /**
@@ -157,6 +159,63 @@ describe('metal runtime composition', () => {
       await vi.advanceTimersByTimeAsync(5 * 60_000);
       expect(vi.getTimerCount()).toBe(0);
     } finally { vi.useRealTimers(); }
+  });
+
+  describe('idle sleeper', () => {
+    const metal: OnDemandRuntimeSubstrate = {
+      kind: 'metal', startsOnDemand: true, resolveUpstream: () => null,
+      isSuspended: async () => true,
+      ensureRunning: async () => ({ state: 'running' }), stop: async () => ({ state: 'stopping' }),
+    };
+    const substrates = createSubstrateRegistry([metal]);
+    const platformSecret = 'p'.repeat(40);
+    const sleepEnv = { ...metalEnv, MATRIX_FREE_TIER_SLEEP_ENABLED: '1' };
+
+    it('starts only when MATRIX_FREE_TIER_SLEEP_ENABLED is set, and stop clears both sleep and wake timers', async () => {
+      vi.useFakeTimers();
+      try {
+        const off = createConfiguredMetalRuntime({
+          db, env: metalEnv, customerVps, backgroundWorkersEnabled: true, substrates, platformSecret, log: () => {},
+        });
+        expect(vi.getTimerCount()).toBe(1);
+        await off?.shutdown();
+
+        const on = createConfiguredMetalRuntime({
+          db, env: sleepEnv, customerVps, backgroundWorkersEnabled: true, substrates, platformSecret, log: () => {},
+        });
+        expect(vi.getTimerCount()).toBe(3);
+        on?.stop();
+        expect(vi.getTimerCount()).toBe(0);
+        await on?.shutdown();
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('does not start without background workers, the metal substrate, or the platform secret', async () => {
+      vi.useFakeTimers();
+      try {
+        const logs: Array<{ event: string; fields: Record<string, unknown> }> = [];
+        const log = (event: string, fields: Record<string, unknown>) => { logs.push({ event, fields }); };
+        const noWorkers = createConfiguredMetalRuntime({
+          db, env: sleepEnv, customerVps, backgroundWorkersEnabled: false, substrates, platformSecret, log,
+        });
+        expect(vi.getTimerCount()).toBe(0);
+        await noWorkers?.shutdown();
+
+        const noMetal = createConfiguredMetalRuntime({
+          db, env: sleepEnv, customerVps, backgroundWorkersEnabled: true, substrates: createSubstrateRegistry([]), platformSecret, log,
+        });
+        const noSecret = createConfiguredMetalRuntime({
+          db, env: sleepEnv, customerVps, backgroundWorkersEnabled: true, substrates, platformSecret: 'short', log,
+        });
+        expect(vi.getTimerCount()).toBe(2);
+        expect(logs.filter((entry) => entry.event === 'metal_sleeper_unconfigured')).toEqual([
+          { event: 'metal_sleeper_unconfigured', fields: { missing: 'metal_substrate' } },
+          { event: 'metal_sleeper_unconfigured', fields: { missing: 'platform_secret' } },
+        ]);
+        await noMetal?.shutdown();
+        await noSecret?.shutdown();
+      } finally { vi.useRealTimers(); }
+    });
   });
 
   it('composes a provisioner without starting maintenance when background workers are off', async () => {

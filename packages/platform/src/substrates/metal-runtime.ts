@@ -6,7 +6,11 @@ import { loadMetalSubstrateConfig } from './metal-config.js';
 import { createMetalHostsRepository } from './metal-hosts-repository.js';
 import { createMetalProvisioner, type MetalProvisioner } from './metal-provisioner.js';
 import { createMetalVmDeletionDrainer } from './metal-vm-deletions.js';
-import { METAL_MAINTENANCE_LOCK_KEY, runAsSingleton } from './metal-singleton.js';
+import { createLifecycleReader } from './metal-lifecycle-reader.js';
+import { createMetalSleeper, startMetalSleeperWorker, type MetalSleeperWorker } from './metal-sleeper.js';
+import { METAL_MAINTENANCE_LOCK_KEY, METAL_SCHEDULED_WAKE_LOCK_KEY, METAL_SLEEPER_LOCK_KEY, runAsSingleton } from './metal-singleton.js';
+import type { SubstrateRegistry } from './registry.js';
+import type { OnDemandRuntimeSubstrate } from './types.js';
 
 /**
  * Startup composition for metal provisioning (spec 2691, ENG-520): the
@@ -17,6 +21,13 @@ import { METAL_MAINTENANCE_LOCK_KEY, runAsSingleton } from './metal-singleton.js
  */
 
 export const METAL_MAINTENANCE_INTERVAL_MS = 60_000;
+const MIN_PLATFORM_SECRET_LENGTH = 32;
+
+/** The idle sleeper (spec 2691, Task P6) is off unless `MATRIX_FREE_TIER_SLEEP_ENABLED` is `1` or `true`. */
+export function isFreeTierSleepEnabled(env: NodeJS.ProcessEnv): boolean {
+  const flag = env.MATRIX_FREE_TIER_SLEEP_ENABLED?.trim().toLowerCase();
+  return flag === '1' || flag === 'true';
+}
 
 type Log = (event: string, fields: Record<string, unknown>) => void;
 const defaultLog: Log = (event, fields) => console.error(`[metal-runtime] ${event}`, JSON.stringify(fields));
@@ -106,6 +117,10 @@ export function createConfiguredMetalRuntime(input: {
   env: NodeJS.ProcessEnv;
   customerVps: { config: CustomerVpsConfig; cloudInitTemplate?: string } | undefined;
   backgroundWorkersEnabled: boolean;
+  /** The platform substrate registry; the idle sleeper suspends and wakes through its metal substrate. */
+  substrates?: SubstrateRegistry;
+  /** Signs the platform runtime credential the sleeper reads the gateway lifecycle with. */
+  platformSecret?: string;
   log?: Log;
 }): MetalRuntime | undefined {
   const log = input.log ?? defaultLog;
@@ -146,18 +161,51 @@ export function createConfiguredMetalRuntime(input: {
       log,
     })
     : undefined;
+  const sleeper = input.backgroundWorkersEnabled && isFreeTierSleepEnabled(input.env)
+    ? startConfiguredSleeper(input.db, input.substrates, input.platformSecret, log)
+    : undefined;
   let closing: Promise<void> | undefined;
   return {
     provisioner,
     stop() {
       worker?.stop();
+      sleeper?.stop();
     },
     shutdown() {
       return closing ??= (async () => {
         worker?.stop();
-        await Promise.all([worker?.drain(), provisioner.drain()]);
+        sleeper?.stop();
+        await Promise.all([worker?.drain(), sleeper?.drain(), provisioner.drain()]);
         await dispatcher.close();
       })();
     },
   };
+}
+
+function startConfiguredSleeper(
+  db: PlatformDB,
+  substrates: SubstrateRegistry | undefined,
+  platformSecret: string | undefined,
+  log: Log,
+): MetalSleeperWorker | undefined {
+  const lookup = substrates?.get('metal');
+  const metal = lookup?.ok ? lookup.substrate : undefined;
+  if (!substrates || !metal || !metal.startsOnDemand || !('stop' in metal) || !('isSuspended' in metal)) {
+    log('metal_sleeper_unconfigured', { missing: 'metal_substrate' });
+    return undefined;
+  }
+  if (!platformSecret || platformSecret.length < MIN_PLATFORM_SECRET_LENGTH) {
+    log('metal_sleeper_unconfigured', { missing: 'platform_secret' });
+    return undefined;
+  }
+  const sleeper = createMetalSleeper({
+    db,
+    substrate: metal as OnDemandRuntimeSubstrate,
+    readLifecycle: createLifecycleReader({ substrates, platformSecret }),
+  });
+  return startMetalSleeperWorker({
+    sleeper: { tick: sleeper.sleepTick },
+    singleton: (run) => runAsSingleton(db, METAL_SLEEPER_LOCK_KEY, run),
+    scheduledWake: { tick: sleeper.wakeTick, singleton: (run) => runAsSingleton(db, METAL_SCHEDULED_WAKE_LOCK_KEY, run) },
+  });
 }
