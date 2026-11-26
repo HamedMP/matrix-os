@@ -14,6 +14,7 @@ import {
   DIRTY_STYLE,
   type RowRec,
   type SheetModel,
+  TRACE_LIMIT,
   type WorkbookState,
   cellKey,
 } from "./model.js";
@@ -87,12 +88,20 @@ function markupBefore(state: WorkbookState, sheet: SheetModel, cell: CellRec): (
 }
 
 function markEdited(state: WorkbookState, sheet: SheetModel, row: number, col: number): void {
-  let edited = state.calc.edited.get(sheet);
+  const calc = state.calc;
+  // The next run calculates everything: the edit needs no mark of its own.
+  if (calc.all) return;
+  let edited = calc.edited.get(sheet);
   if (edited === undefined) {
     edited = new Set();
-    state.calc.edited.set(sheet, edited);
+    calc.edited.set(sheet, edited);
   }
   edited.add(cellKey(row, col));
+  if (edited.size > TRACE_LIMIT) {
+    // A run calculates everything past this many edits anyway; the marks are dropped instead of kept.
+    calc.all = true;
+    calc.edited.clear();
+  }
 }
 
 /**

@@ -170,8 +170,14 @@ export interface PartEntry {
   dirty: boolean;
 }
 
+/** With more edited cells than this, everything is calculated instead of tracing what they reach. */
+export const TRACE_LIMIT = 2000;
+
 export interface CalcState {
-  /** Cells edited since the last calculation, per sheet, as `row * 16384 + col`. Bounded by the cell count. */
+  /**
+   * Cells edited since the last calculation, per sheet, as `row * 16384 + col`. A sheet holds at most
+   * {@link TRACE_LIMIT} + 1 of them: past that `all` is set and the marks are dropped.
+   */
   edited: Map<SheetModel, Set<number>>;
   /** Everything must be calculated again (rows or columns moved, a sheet was removed). */
   all: boolean;

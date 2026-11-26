@@ -3,6 +3,8 @@ import type { FormulaError, FormulaScalar, NameResolution } from "../../../../..
 import {
   CIRCULAR_REFERENCE,
   DependencyGraph,
+  MAX_GRAPH_DIRTY_CELLS,
+  MAX_GRAPH_SHEETS,
   createFunctionRegistry,
   evaluateCell,
   parseFormula,
@@ -428,6 +430,59 @@ describe("limits", () => {
     expect(b.graph.plan({ maxDepth: 2 })).toMatchObject({ complete: true });
     expect(b.recalc().computed).toBe(1);
     expect(b.value("D1")).toBe(4);
+  });
+
+  /** The sheets the graph keeps an index for, and the value cells it holds out-of-date marks for. */
+  const tracked = (graph: DependencyGraph) => {
+    const sheets = (graph as unknown as { sheets: Map<string, { dirty: Set<number> }> }).sheets;
+    let dirty = 0;
+    for (const index of sheets.values()) dirty += index.dirty.size;
+    return { sheets: sheets.size, dirty };
+  };
+
+  it("keeps no index for a sheet without formulas or cells read by one", () => {
+    const b = book(["S", "T"]);
+    for (let i = 0; i < 1000; i++) b.graph.markDirty(`Unused${i}`, 0, 0);
+    for (let i = 0; i < 1000; i++) b.graph.setFormula(`Empty${i}`, 0, 0, null);
+    b.graph.markRangeDirty({ sheet: "Elsewhere", startRow: 0, startCol: 0, endRow: 9, endCol: 9 });
+    expect(tracked(b.graph)).toEqual({ sheets: 0, dirty: 0 });
+
+    b.set("A1", 1, "T");
+    b.formula("B1", "T!A1+SUM(T!A2:A3)");
+    expect(tracked(b.graph).sheets).toBe(2);
+    b.set("B1", 0);
+    expect(tracked(b.graph)).toEqual({ sheets: 0, dirty: 0 });
+    b.formula("C1", "1");
+    expect(b.graph.removeFormula("S", 0, 2)).toBe(true);
+    expect(tracked(b.graph)).toEqual({ sheets: 0, dirty: 0 });
+    expect(b.graph.hasDirty).toBe(false);
+  });
+
+  it("caps the sheets it indexes and treats a formula that reads past the cap as volatile", () => {
+    const graph = new DependencyGraph();
+    for (let i = 0; i < MAX_GRAPH_SHEETS; i++) graph.setFormula(`S${i}`, 0, 0, parseFormulaExtended("1"));
+    expect(tracked(graph).sheets).toBe(MAX_GRAPH_SHEETS);
+    expect(() => graph.setFormula("One more", 0, 0, parseFormulaExtended("1"))).toThrow(expect.objectContaining({ code: "limit_exceeded" }));
+    graph.setFormula("S0", 0, 1, parseFormulaExtended("Other!A1"));
+    expect(tracked(graph).sheets).toBe(MAX_GRAPH_SHEETS);
+    expect(graph.isVolatile("S0", 0, 1)).toBe(true);
+  });
+
+  it("marks every formula out of date instead of holding more than the cap of out-of-date cells", () => {
+    const b = book();
+    b.set("A1", 1);
+    b.formula("B1", "A1+1");
+    b.formula("C1", "B1+SUM(A1:A1000000)");
+    b.recalc();
+    for (let row = 0; row <= MAX_GRAPH_DIRTY_CELLS + 10; row++) b.graph.markDirty("S", row, 0);
+    expect(tracked(b.graph).dirty).toBeLessThanOrEqual(MAX_GRAPH_DIRTY_CELLS);
+    expect(b.graph.hasDirty).toBe(true);
+    // A formula loaded with its value after the cap still reads a cell marked out of date.
+    b.formula("D1", "A5", "S", { dirty: false });
+    b.recalc();
+    expect([...b.computed].sort()).toEqual(["S!B1", "S!C1", "S!D1"]);
+    expect(b.graph.hasDirty).toBe(false);
+    expect(tracked(b.graph).dirty).toBe(0);
   });
 });
 

@@ -23,8 +23,7 @@ import { ensureRow, findCell } from "./cells.js";
 import { DIRTY_CONTENT, DIRTY_STYLE, type SheetModel, type WorkbookState, cellKey } from "./model.js";
 import { copyValue, sameValue } from "./state.js";
 
-/** With more edited cells than this, everything is calculated instead of tracing what they reach. */
-export const TRACE_LIMIT = 2000;
+export { TRACE_LIMIT } from "./model.js";
 /** How often formulas that pick their cells at run time are calculated again before they count as circular. */
 const MAX_ROUNDS = 32;
 

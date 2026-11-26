@@ -11,6 +11,8 @@
 
 import { describe, expect, it } from "vitest";
 import { createXlsx, openXlsx, parseA1 } from "../../../../packages/office/src/xlsx/index.js";
+import { TRACE_LIMIT } from "../../../../packages/office/src/xlsx/workbook/model.js";
+import { stateOf } from "../../../../packages/office/src/xlsx/workbook/workbook.js";
 import { buildXlsx, err, valueAt } from "./helpers.js";
 
 const NOW = "2026-11-23T10:00:00Z";
@@ -282,6 +284,27 @@ describe("the bounds of a run", () => {
     // Save finishes what the bounded runs left.
     const reopened = await openXlsx(await workbook.save());
     for (let i = 0; i < 50; i++) expect(reopened.getCell(reopened.listSheets()[0]!.id, { row: i, col: 1 }).value).toBe(2 + i);
+  });
+});
+
+describe("edits between runs", () => {
+  it("are not held one by one past the trace limit, and every formula is calculated instead", () => {
+    const workbook = createXlsx({ sheetNames: ["S"] });
+    const sheet = workbook.listSheets()[0]!.id;
+    workbook.setFormula(sheet, parseA1("B1"), "SUM(A1:A100000)");
+    workbook.setFormula(sheet, parseA1("C1"), "B1*2");
+    workbook.recalc();
+    // Typing into a cell and clearing it again leaves the cell count where it was.
+    for (let row = 0; row < 20_000; row++) {
+      workbook.setCell(sheet, { row, col: 3 }, 1);
+      workbook.setCell(sheet, { row, col: 3 }, null);
+    }
+    workbook.setCell(sheet, parseA1("A7"), 5);
+    let held = 0;
+    for (const edited of stateOf(workbook).calc.edited.values()) held += edited.size;
+    expect(held).toBeLessThanOrEqual(TRACE_LIMIT + 1);
+    workbook.recalc();
+    expect([valueAt(workbook, "S", "B1"), valueAt(workbook, "S", "C1")]).toEqual([5, 10]);
   });
 });
 

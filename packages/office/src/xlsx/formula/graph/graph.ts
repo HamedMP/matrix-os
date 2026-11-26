@@ -38,7 +38,9 @@ import { visitNodes } from "../parser/walk.js";
 import { calculationOrder } from "./order.js";
 import { RangeIndex, rectContains, type RangeEntry } from "./range-index.js";
 import {
+  MAX_GRAPH_DIRTY_CELLS,
   MAX_GRAPH_FORMULAS,
+  MAX_GRAPH_SHEETS,
   type CellRef,
   type GraphOptions,
   type GraphRecalcOptions,
@@ -89,12 +91,17 @@ const sheetKeyOf = (sheet: string): string => sheet.toUpperCase();
 const toRef = (node: CellRef): CellRef => ({ sheet: node.sheet, row: node.row, col: node.col });
 
 export class DependencyGraph {
-  // Bounded by MAX_GRAPH_FORMULAS: every other collection here grows with the formulas.
+  // Bounded by MAX_GRAPH_SHEETS. A sheet has an index only while it has formulas or cells a formula reads.
   private readonly sheets = new Map<string, SheetIndex>();
+  // Bounded by MAX_GRAPH_FORMULAS: these grow with the formulas.
   private readonly nameReaders = new Map<string, Set<FormulaNode>>();
   private readonly volatile = new Set<FormulaNode>();
   private readonly dirtyNodes = new Set<FormulaNode>();
   private count = 0;
+  /** Value cells marked out of date, over every sheet; at most MAX_GRAPH_DIRTY_CELLS. */
+  private dirtyCells = 0;
+  /** Set when the out-of-date cells passed their cap: the next run takes every formula as out of date. */
+  private allDirty = false;
 
   constructor(private readonly options: GraphOptions = {}) {}
 
@@ -105,11 +112,7 @@ export class DependencyGraph {
 
   /** True when a recalculation has something to do, volatile formulas aside. */
   get hasDirty(): boolean {
-    if (this.dirtyNodes.size > 0) return true;
-    for (const sheet of this.sheets.values()) {
-      if (sheet.dirty.size > 0) return true;
-    }
-    return false;
+    return this.dirtyNodes.size > 0 || this.dirtyCells > 0 || (this.allDirty && this.count > 0);
   }
 
   /**
@@ -118,14 +121,22 @@ export class DependencyGraph {
    * loaded from a file together with its value).
    */
   setFormula(sheet: string, row: number, col: number, ast: ExtendedAst | null, options: { dirty?: boolean } = {}): void {
-    const index = this.sheet(sheet);
     const key = cellKey(row, col);
-    const existing = index.formulas.get(key);
     if (ast === null) {
+      // Without an index the sheet has no formula to drop and no cell any formula reads.
+      const index = this.sheets.get(sheetKeyOf(sheet));
+      if (index === undefined) return;
+      const existing = index.formulas.get(key);
       if (existing !== undefined) this.drop(existing, index);
-      if (options.dirty !== false) index.dirty.add(key);
+      if (options.dirty !== false) this.markCell(index, key);
+      this.prune(sheetKeyOf(sheet));
       return;
     }
+    const index = this.sheet(sheet);
+    if (index === null) {
+      throw new OfficeError("limit_exceeded", "too many sheets with formulas", { details: { max: MAX_GRAPH_SHEETS } });
+    }
+    const existing = index.formulas.get(key);
     let node = existing;
     if (node === undefined) {
       if (this.count >= MAX_GRAPH_FORMULAS) {
@@ -148,7 +159,8 @@ export class DependencyGraph {
     const node = index?.formulas.get(cellKey(row, col));
     if (index === undefined || node === undefined) return false;
     this.drop(node, index);
-    index.dirty.add(node.key);
+    this.markCell(index, node.key);
+    this.prune(node.sheetKey);
     return true;
   }
 
@@ -164,16 +176,19 @@ export class DependencyGraph {
 
   /** Marks a cell out of date: its own formula, if it has one, and every formula that reads it. */
   markDirty(sheet: string, row: number, col: number): void {
-    const index = this.sheet(sheet);
+    // Without an index no formula is on the sheet or reads a cell of it.
+    const index = this.sheets.get(sheetKeyOf(sheet));
+    if (index === undefined) return;
     const key = cellKey(row, col);
     const node = index.formulas.get(key);
     if (node !== undefined) this.dirtyNodes.add(node);
-    else index.dirty.add(key);
+    else this.markCell(index, key);
   }
 
   /** Marks every cell of a rectangle out of date, for a paste, a clear or a fill. */
   markRangeDirty(bounds: RangeBounds): void {
-    const index = this.sheet(bounds.sheet);
+    const index = this.sheets.get(sheetKeyOf(bounds.sheet));
+    if (index === undefined) return;
     for (const node of index.formulas.values()) {
       if (rectContains(bounds, node.row, node.col)) this.dirtyNodes.add(node);
     }
@@ -265,8 +280,7 @@ export class DependencyGraph {
       if (!changed) continue;
       for (const next of plan.successors.get(node) ?? []) needed.add(next);
     }
-    this.dirtyNodes.clear();
-    for (const sheet of this.sheets.values()) sheet.dirty.clear();
+    this.clearMarks();
     for (const node of plan.deferred) this.dirtyNodes.add(node);
     return { computed, skipped, circular, complete: plan.deferred.length === 0, remaining: plan.deferred.length };
   }
@@ -277,17 +291,50 @@ export class DependencyGraph {
     this.nameReaders.clear();
     this.volatile.clear();
     this.dirtyNodes.clear();
+    this.dirtyCells = 0;
+    this.allDirty = false;
     this.count = 0;
   }
 
-  private sheet(name: string): SheetIndex {
+  /** The index of a sheet, created when missing; null when that would pass MAX_GRAPH_SHEETS. */
+  private sheet(name: string): SheetIndex | null {
     const key = sheetKeyOf(name);
     let index = this.sheets.get(key);
     if (index === undefined) {
+      if (this.sheets.size >= MAX_GRAPH_SHEETS) return null;
       index = { formulas: new Map(), readers: new Map(), ranges: new RangeIndex<FormulaNode>(), dirty: new Set() };
       this.sheets.set(key, index);
     }
     return index;
+  }
+
+  /** Forgets the index of a sheet that no longer has formulas or cells a formula reads. */
+  private prune(sheetKey: string): void {
+    const index = this.sheets.get(sheetKey);
+    if (index === undefined || index.formulas.size > 0 || index.readers.size > 0 || index.ranges.size > 0) return;
+    this.dirtyCells -= index.dirty.size;
+    this.sheets.delete(sheetKey);
+  }
+
+  /** Marks a value cell out of date; past MAX_GRAPH_DIRTY_CELLS every formula is taken as out of date instead. */
+  private markCell(index: SheetIndex, key: number): void {
+    if (this.allDirty || index.dirty.has(key)) return;
+    if (this.dirtyCells >= MAX_GRAPH_DIRTY_CELLS) {
+      for (const sheet of this.sheets.values()) sheet.dirty.clear();
+      this.dirtyCells = 0;
+      this.allDirty = true;
+      return;
+    }
+    index.dirty.add(key);
+    this.dirtyCells += 1;
+  }
+
+  /** Clears every out-of-date mark. */
+  private clearMarks(): void {
+    this.dirtyNodes.clear();
+    for (const sheet of this.sheets.values()) sheet.dirty.clear();
+    this.dirtyCells = 0;
+    this.allDirty = false;
   }
 
   private readersOf(index: SheetIndex, row: number, col: number): FormulaNode[] {
@@ -312,8 +359,12 @@ export class DependencyGraph {
       if (index === undefined || readers === undefined) continue;
       readers.delete(node);
       if (readers.size === 0) index.readers.delete(cell.key);
+      this.prune(cell.sheetKey);
     }
-    for (const range of node.ranges) this.sheets.get(range.sheetKey)?.ranges.remove(range.entry, node);
+    for (const range of node.ranges) {
+      this.sheets.get(range.sheetKey)?.ranges.remove(range.entry, node);
+      this.prune(range.sheetKey);
+    }
     for (const name of node.names) {
       const readers = this.nameReaders.get(name);
       if (readers === undefined) continue;
@@ -346,6 +397,11 @@ export class DependencyGraph {
     }
     seen.add(id);
     const index = this.sheet(bounds.sheet);
+    if (index === null) {
+      // Past the sheet cap the reads are not filed: the formula is recalculated on every run instead.
+      node.volatile = true;
+      return;
+    }
     if (single) {
       const key = cellKey(bounds.startRow, bounds.startCol);
       let readers = index.readers.get(key);
@@ -421,6 +477,9 @@ export class DependencyGraph {
 
   private buildPlan(options: GraphRecalcOptions): Plan {
     const seeds = new Set<FormulaNode>(this.dirtyNodes);
+    if (this.allDirty) {
+      for (const index of this.sheets.values()) for (const node of index.formulas.values()) seeds.add(node);
+    }
     if (options.volatile !== false) for (const node of this.volatile) seeds.add(node);
     for (const index of this.sheets.values()) {
       for (const key of index.dirty) {

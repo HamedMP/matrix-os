@@ -8,6 +8,10 @@ export const CIRCULAR_REFERENCE: FormulaError = Object.freeze(makeError("#REF!",
 
 /** The most formula cells one graph tracks. */
 export const MAX_GRAPH_FORMULAS = 4_000_000;
+/** The most sheets one graph keeps an index for: sheets with formulas or with cells a formula reads. */
+export const MAX_GRAPH_SHEETS = 16_384;
+/** The most value cells held as out of date; past it every formula is taken as out of date instead. */
+export const MAX_GRAPH_DIRTY_CELLS = 65_536;
 
 export interface CellRef {
   sheet: string;
