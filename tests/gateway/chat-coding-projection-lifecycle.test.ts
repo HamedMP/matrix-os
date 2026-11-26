@@ -1,3 +1,4 @@
+import { CanonicalChatContentSchema } from "@matrix-os/contracts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,76 @@ import { createChatFailureRecorder } from "../../packages/gateway/src/chat/failu
 import { catalog, owner, principal } from "./helpers/canonical-codex-catalog.js";
 
 describe("Chat projection preserves the backing execution lifecycle", () => {
+  it("completes a Codex turn when the same subagent resumes after an unknown status", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "chat-subagent-status-"));
+    const pglite = await KyselyPGlite.create();
+    const repository = new ChatRepository(pglite.dialect);
+    await repository.bootstrap();
+    const resume = Promise.withResolvers<void>();
+    const threads = createCodingAgentThreadStore({ homePath, providers: [{
+      providerId: "codex", initialRunExecution: "background",
+      async startThread({ thread, nextEventId, now, publishEvents }) {
+        const base = () => ({ threadId: thread.id, eventId: nextEventId(), occurredAt: now().toISOString() });
+        const child = (status: "running" | "unknown" | "completed") => ({
+          ...base(), type: "subagent.activity" as const, activityId: "composer_activity",
+          subagent: { agentId: "agent_child", parentAgentId: "agent_parent", name: "Composer", status },
+        });
+        await publishEvents!({ events: [child("running"), child("unknown")] });
+        await resume.promise;
+        return { events: [
+          child("running"),
+          child("completed"),
+          { ...base(), type: "assistant.text.delta", messageId: "msg_result", delta: "Delegated work finished." },
+          { ...base(), type: "thread.completed", outcome: "completed" },
+        ] };
+      },
+    }] });
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads });
+    const orchestrator = new CanonicalChatOrchestrator({ repository,
+      catalog: { getCatalog: async () => catalog }, adapters: new CanonicalChatProviderRegistry([adapter]) });
+    const chatId = "chat_subagent_status";
+    try {
+      await repository.create(owner, { id: chatId, clientRequestId: "req_create_subagent_status", title: "Delegated work" });
+      await orchestrator.admitTurn(principal, owner, chatId, {
+        clientRequestId: "req_subagent_status", baseRevision: 0,
+        parts: [{ type: "text", text: "Delegate this task" }],
+        selection: { instanceId: "codex_default", model: "model" },
+        interactionMode: "default", permissionMode: "supervised",
+      });
+      await vi.waitFor(async () => {
+        const snapshot = await repository.exportChat(owner, chatId);
+        expect(snapshot?.activities.filter((activity) => activity.type === "agent.activity"))
+          .toEqual([expect.objectContaining({
+            activityId: "composer_activity", status: "partial", subagent: expect.objectContaining({ status: "unknown" }),
+          })]);
+      }, { timeout: 5_000 });
+
+      resume.resolve();
+      await orchestrator.drain();
+      const snapshot = await repository.exportChat(owner, chatId);
+      expect(snapshot?.runs.map((run) => run.status)).toEqual(["completed"]);
+      const outbox = await repository.replayOutbox(owner, { afterCursor: 0, limit: 50 });
+      const statuses = outbox.filter((event) => event.eventType === "run.activity")
+        .flatMap((event) => CanonicalChatContentSchema.parse(event.payload.streamContent).activities ?? [])
+        .flatMap((activity) => activity.type === "agent.activity" && activity.activityId === "composer_activity"
+          ? [activity.status] : []);
+      expect(statuses).toEqual(["running", "partial", "running", "completed"]);
+      expect(snapshot?.messages.at(-1)).toMatchObject({
+        role: "assistant", state: "committed", parts: [{ type: "text", text: "Delegated work finished." }],
+      });
+      expect(snapshot?.activities.filter((activity) => activity.type === "agent.activity"))
+        .toEqual([expect.objectContaining({
+          activityId: "composer_activity", status: "completed", subagent: expect.objectContaining({ status: "completed" }),
+        })]);
+    } finally {
+      resume.resolve();
+      await orchestrator.close();
+      await threads.shutdownTurns();
+      await repository.kysely.destroy();
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
   it("rejects retry before admission when a historically failed Chat still has active backing work", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "chat-projection-retry-"));
     const pglite = await KyselyPGlite.create();
