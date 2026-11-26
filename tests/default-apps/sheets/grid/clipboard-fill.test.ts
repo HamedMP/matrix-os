@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { MAX_PASTE_CHARS, MAX_PASTE_COLS, MAX_PASTE_ROWS, clipMarkOf, newClipMark, parseHtmlTable, parseTsv, readClipboard, serializeHtmlTable, serializeTsv } from "../../../../home/apps/sheets/src/grid/clipboard";
+import { MAX_PASTE_CELLS, MAX_PASTE_CHARS, MAX_PASTE_COLS, MAX_PASTE_ROWS, clipMarkOf, newClipMark, parseHtmlTable, parseTsv, readClipboard, serializeHtmlTable, serializeTsv } from "../../../../home/apps/sheets/src/grid/clipboard";
 import { type FillSource, adjustFormula, createFiller, fillFromEdge, fillTarget, planFill } from "../../../../home/apps/sheets/src/grid/fill";
 import { compareValues, distinctValues, filterHiddenRows, planSort, sortOrder } from "../../../../home/apps/sheets/src/grid/sort-filter";
 
@@ -110,6 +110,42 @@ describe("HTML table clipboard", () => {
     const padding = " ".repeat(MAX_PASTE_CHARS);
     expect(readClipboard({ html: `<table><tr><td data-sheets-formula="A1">1</td></tr></table>${padding}`, text: "1" })?.tooLarge).toBe(true);
     expect(readClipboard({ html: `<p>x</p>${padding}`, text: "a\tb" })?.rows).toEqual([["a", "b"]]);
+  });
+
+  // Outcome: a text paste whose rows times its widest row cover more cells than one paste writes is
+  // refused while it is read. Fault: the text was read into millions of empty fields (2,000 per row,
+  // 9,999 rows) before the area was checked, freezing the tab or exhausting its memory.
+  it("refuses tab-separated text as soon as its rows times its widest row pass the cell limit", () => {
+    const emptyRow = `${"\t".repeat(MAX_PASTE_COLS - 1)}\n`;
+    expect(parseTsv(emptyRow.repeat(9_999))).toBeNull();
+    // Narrow rows first, then one wide row: the area grows past the limit inside that row.
+    expect(parseTsv(`${"x\n".repeat(MAX_PASTE_CELLS / MAX_PASTE_COLS)}${emptyRow}`)).toBeNull();
+    expect(readClipboard({ text: emptyRow.repeat(9_999) })?.tooLarge).toBe(true);
+    // Exactly at the limit still reads.
+    expect(parseTsv(emptyRow.repeat(MAX_PASTE_CELLS / MAX_PASTE_COLS))).toHaveLength(MAX_PASTE_CELLS / MAX_PASTE_COLS);
+  });
+
+  // Outcome: HTML with more table cells than one paste writes is refused before it is parsed.
+  // Fault: the whole fragment was parsed into a document of millions of cells before the area check.
+  it("refuses HTML with more table cells than a paste writes before parsing it", () => {
+    const Original = globalThis.DOMParser;
+    let parsed = 0;
+    globalThis.DOMParser = class extends Original {
+      override parseFromString(...args: Parameters<DOMParser["parseFromString"]>): Document {
+        parsed++;
+        return super.parseFromString(...args);
+      }
+    };
+    try {
+      const row = `<tr>${"<td></td>".repeat(1_000)}</tr>`;
+      const html = `<table>${row.repeat(MAX_PASTE_CELLS / 1_000 + 1)}</table>`;
+      expect(parseHtmlTable(html)?.tooLarge).toBe(true);
+      expect(parsed).toBe(0);
+      expect(parseHtmlTable("<table><tr><td>1</td></tr></table>")?.rows).toEqual([["1"]]);
+      expect(parsed).toBe(1);
+    } finally {
+      globalThis.DOMParser = Original;
+    }
   });
 
   it("marks each copy's table with its own mark, read back without parsing the HTML", () => {

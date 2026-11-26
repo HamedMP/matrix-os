@@ -7,8 +7,13 @@
  * file is written back in the shape it had.
  */
 
-import { type Workbook, isOfficeError, openXlsx, parseCsv, sniffDelimiter, toCsv } from "./engine";
+import { type Workbook, isOfficeError, openXlsx, parseCsv, scanCsv, sniffDelimiter, toCsv } from "./engine";
 import type { SessionErrorCode, SheetFileFormat } from "./types";
+
+/** Most characters a cell holds. */
+export const MAX_CELL_CHARS = 32_767;
+/** Most cells with a value read from a CSV or TSV file: the engine's own bound for `parseCsv`. */
+const MAX_OPEN_CSV_CELLS = 2_000_000;
 
 const MESSAGES: Record<SessionErrorCode, string> = {
   not_found: "This file no longer exists.",
@@ -23,6 +28,8 @@ const MESSAGES: Record<SessionErrorCode, string> = {
   not_allowed: "This change is not possible here.",
   too_many_cells: "This change touches too many cells for one step.",
   review_pending: "A CSV or TSV file cannot keep the assistant's suggested changes. Accept or reject them to save, or save as .xlsx to keep reviewing later.",
+  field_too_long: "A field in this file is longer than a cell holds (32,767 characters). It was not opened, so none of its text is cut.",
+  edited_meanwhile: "New edits were made while the file was read again, so it was not reloaded. Your edits are still here.",
   failed: "Something went wrong. Your edits are still here.",
 };
 
@@ -156,13 +163,26 @@ export interface LoadedWorkbook {
   csv: CsvShape | null;
 }
 
+/**
+ * True when a field of the delimited text is longer than a cell holds. The
+ * engine's CSV reader would cut it to fit, and the next save would write
+ * the shortened text over the file, so such a file is not opened.
+ */
+function hasOverlongField(text: string, delimiter: string): boolean {
+  // No field can be longer than the text.
+  if (text.length <= MAX_CELL_CHARS) return false;
+  const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  return scanCsv(body, { delimiter, maxCells: MAX_OPEN_CSV_CELLS }).some((record) => record.some((field) => field.text.length > MAX_CELL_CHARS));
+}
+
 /** Opens file bytes. Throws {@link SheetSessionError}; nothing is written. */
 export async function loadWorkbook(bytes: Uint8Array, format: SheetFileFormat): Promise<LoadedWorkbook> {
   try {
     if (format === "xlsx") return { workbook: await openXlsx(bytes), csv: null };
     const text = new TextDecoder("utf-8").decode(bytes);
     const csv = sniffCsvShape(bytes, text, format);
-    return { workbook: parseCsv(text, { delimiter: csv.delimiter }), csv };
+    if (hasOverlongField(text, csv.delimiter)) throw new SheetSessionError("field_too_long");
+    return { workbook: parseCsv(text, { delimiter: csv.delimiter, maxCells: MAX_OPEN_CSV_CELLS }), csv };
   } catch (error: unknown) {
     throw toSessionError(error);
   }

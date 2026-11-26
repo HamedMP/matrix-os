@@ -27,6 +27,10 @@ const EXPLANATIONS: Partial<Record<SessionErrorCode, { headline: string; descrip
     headline: "This file is too large",
     description: "Sheets opens files up to 10 MB with a bounded number of cells. The file was not changed.",
   },
+  field_too_long: {
+    headline: "A value is too long for a cell",
+    description: "A field in this file is longer than a cell holds (32,767 characters). Sheets did not open it, so none of its text is cut. The file was not changed.",
+  },
   not_found: {
     headline: "This file is gone",
     description: "It was moved, renamed or deleted since it was last opened.",

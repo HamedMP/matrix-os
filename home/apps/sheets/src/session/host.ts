@@ -8,6 +8,9 @@
  * it stays on the document and reports `unsaved`, unless the caller chose to
  * discard them. The old document stays on screen and editable while the new
  * one loads, so its edits are saved again right before it is replaced.
+ * Discarding drops only the edits made before the move was asked for: when
+ * more arrive while the new document loads and are not saved, the host stays
+ * and reports `unsaved` so that the owner is asked again.
  * Opening the document already shown keeps it (see `open`). Text still in
  * its cell editor is committed first (see `holdEditor`); when
  * the editor refuses it, the host stays and reports `editing`.
@@ -36,6 +39,12 @@ export type HostCloseResult = { status: "closed" } | { status: "superseded" } | 
 export type EditorCommit = () => boolean;
 
 type Release = "released" | "unsaved" | "editing";
+
+/** The document shown when a move was asked for, and its edit mark then: what a discarding move may drop. */
+interface Discard {
+  session: SheetSession | null;
+  mark: number;
+}
 
 export interface HostState {
   session: SheetSession | null;
@@ -95,14 +104,28 @@ export class SessionHost {
     for (const listener of [...this.listeners]) listener();
   }
 
+  /** What a move asked for now may discard, when `discardUnsaved`; null when it keeps every edit. */
+  private discardFrom(discardUnsaved: boolean): Discard | null {
+    if (!discardUnsaved) return null;
+    const session = this.state.session;
+    return { session, mark: session?.editMark() ?? 0 };
+  }
+
   /**
    * Commits the current document's editor and saves its pending edits, again
    * when more arrived while the file was written. Runs right before the
-   * document is replaced, so nothing typed meanwhile is left out.
+   * document is replaced, so nothing typed meanwhile is left out. A
+   * discarding move lets go of the edits made before it was asked for; edits
+   * made since that are not saved stop it.
    */
-  private async release(discardUnsaved: boolean): Promise<Release> {
+  private async release(discard: Discard | null): Promise<Release> {
     const current = this.state.session;
-    if (current === null || discardUnsaved) return "released";
+    if (current === null) return "released";
+    if (discard !== null) {
+      // Another document is shown only after a newer move, which supersedes this one.
+      const editedSince = discard.session === current && current.editMark() !== discard.mark;
+      return editedSince && current.getState().dirty ? "unsaved" : "released";
+    }
     for (let attempt = 0; attempt < MAX_RELEASE_SAVES; attempt++) {
       if (!this.commitEditor(current)) return "editing";
       const state = current.getState();
@@ -142,10 +165,10 @@ export class SessionHost {
    * instead, and once more when this window saved it during the read.
    */
   async open(path: string, options: { discardUnsaved?: boolean } = {}): Promise<HostOpenResult> {
-    const discard = options.discardUnsaved === true;
+    const discard = this.discardFrom(options.discardUnsaved === true);
     const ticket = ++this.ticket;
     const shown = this.state.session;
-    if (!discard && shown !== null && shown.getState().path === path) return this.keep(shown);
+    if (discard === null && shown !== null && shown.getState().path === path) return this.keep(shown);
     this.set({ opening: path, error: null });
     const before = await this.release(discard);
     if (before !== "released") return this.stopped(ticket, before);
@@ -179,10 +202,10 @@ export class SessionHost {
       }
       // The same file under another spelling of its path: the read names it as the current document does.
       const same = current !== null && current === this.state.session && current.getState().path === session.getState().path;
-      if (same && (!discard || current.fileVersion !== versionBefore)) {
+      if (same && (discard === null || current.fileVersion !== versionBefore)) {
         // Kept edits were saved over the copy read; discarded ones may have been autosaved during the read. Either way the copy may be older than the file.
         session.dispose();
-        if (!discard || attempt >= MAX_RELEASE_SAVES) return this.keep(current);
+        if (discard === null || attempt >= MAX_RELEASE_SAVES) return this.keep(current);
         continue;
       }
       this.replace(session);
@@ -196,7 +219,7 @@ export class SessionHost {
    */
   async openNew(options: { discardUnsaved?: boolean; name?: string; template?: () => Workbook | null } = {}): Promise<HostOpenResult> {
     const ticket = ++this.ticket;
-    const released = await this.release(options.discardUnsaved === true);
+    const released = await this.release(this.discardFrom(options.discardUnsaved === true));
     if (released !== "released") return { status: released };
     if (ticket !== this.ticket) return { status: "superseded" };
     const session = createSheetSession(this.deps, { name: options.name, workbook: options.template?.() ?? undefined });
@@ -211,6 +234,7 @@ export class SessionHost {
    */
   async openLocal(name: string, bytes: Uint8Array, options: { discardUnsaved?: boolean } = {}): Promise<HostOpenResult> {
     const ticket = ++this.ticket;
+    const discard = this.discardFrom(options.discardUnsaved === true);
     let session: SheetSession;
     try {
       session = await openLocalSheetSession(this.deps, name, bytes);
@@ -222,7 +246,7 @@ export class SessionHost {
       session.dispose();
       return { status: "superseded" };
     }
-    const released = await this.release(options.discardUnsaved === true);
+    const released = await this.release(discard);
     if (released !== "released") {
       session.dispose();
       return { status: released };
@@ -238,7 +262,7 @@ export class SessionHost {
   /** Closes the current document after saving its pending edits. */
   async close(options: { discardUnsaved?: boolean } = {}): Promise<HostCloseResult> {
     const ticket = ++this.ticket;
-    const released = await this.release(options.discardUnsaved === true);
+    const released = await this.release(this.discardFrom(options.discardUnsaved === true));
     if (released !== "released") return { status: released };
     if (ticket !== this.ticket) return { status: "superseded" };
     this.replace(null);

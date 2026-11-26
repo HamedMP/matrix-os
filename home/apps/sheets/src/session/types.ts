@@ -80,6 +80,10 @@ export type SessionErrorCode =
   | "too_many_cells"
   /** A CSV or TSV file cannot hold assistant changes that wait for review. */
   | "review_pending"
+  /** A CSV or TSV field is longer than a cell holds; opening it would cut the text. */
+  | "field_too_long"
+  /** A reload was refused: edits were made while the file was read again. */
+  | "edited_meanwhile"
   /** Anything else. */
   | "failed";
 

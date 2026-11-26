@@ -83,9 +83,11 @@ export function serializeTsv(rows: ReadonlyArray<ReadonlyArray<string>>): string
  * Reads tab-separated text as spreadsheets write it: quoted fields may hold
  * tabs and line breaks, `""` is a quote, any line ending is accepted and one
  * trailing line break is ignored. Null when the text is longer than
- * {@link MAX_PASTE_CHARS} or holds more than {@link MAX_PASTE_ROWS} rows or a
- * row of more than {@link MAX_PASTE_COLS} fields: such a table is refused
- * whole, never read in part.
+ * {@link MAX_PASTE_CHARS}, holds more than {@link MAX_PASTE_ROWS} rows or a
+ * row of more than {@link MAX_PASTE_COLS} fields, or its rows times its
+ * widest row pass {@link MAX_PASTE_CELLS}: such a table is refused whole,
+ * never read in part. The area is checked before each field is added, so an
+ * oversized table stops being read as soon as it is too large.
  */
 export function parseTsv(text: string): string[][] | null {
   if (text.length > MAX_PASTE_CHARS) return null;
@@ -94,10 +96,13 @@ export function parseTsv(text: string): string[][] | null {
   let row: string[] = [];
   let field = "";
   let i = 0;
+  /** The widest row read so far. Rows are padded to it, so the table covers `rows × width` cells. */
+  let width = 0;
   const length = source.length;
-  /** Adds the field to the row; false when the row is wider than a paste reads. */
+  /** Adds the field to the row; false when the row is wider, or the table larger, than a paste reads. */
   const pushField = (): boolean => {
     if (row.length >= MAX_PASTE_COLS) return false;
+    if ((rows.length + 1) * Math.max(width, row.length + 1) > MAX_PASTE_CELLS) return false;
     row.push(field);
     field = "";
     return true;
@@ -106,6 +111,7 @@ export function parseTsv(text: string): string[][] | null {
   const endRow = (): boolean => {
     if (!pushField() || rows.length >= MAX_PASTE_ROWS) return false;
     rows.push(row);
+    width = Math.max(width, row.length);
     row = [];
     return true;
   };
@@ -270,6 +276,21 @@ function span(cell: Element, name: string): number {
   return Number.isInteger(value) && value > 1 ? value : 1;
 }
 
+const CELL_TAG = /<t[dh][\s/>]/gi;
+
+/** True when the HTML has more `<td>` and `<th>` tags than a paste writes cells. Counted without building anything. */
+function tooManyCellTags(html: string): boolean {
+  CELL_TAG.lastIndex = 0;
+  let cells = 0;
+  while (CELL_TAG.test(html)) {
+    if (++cells > MAX_PASTE_CELLS) {
+      CELL_TAG.lastIndex = 0;
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Reads the first table of an HTML clipboard fragment. Cells spanning rows or
  * columns put their text in the first cell and leave the others empty.
@@ -280,6 +301,8 @@ export function parseHtmlTable(html: string): ParsedTable | null {
   if (typeof DOMParser === "undefined") return null;
   // Too long to parse: a table in it is refused rather than pasted from the plain text without its formulas.
   if (html.length > MAX_PASTE_CHARS) return /<table[\s>]/i.test(html) ? tooLargeTable() : null;
+  // Each cell covers at least one position of the table: more cell tags than a paste writes is refused before the HTML is parsed into a document.
+  if (tooManyCellTags(html)) return tooLargeTable();
   let document: Document;
   try {
     document = new DOMParser().parseFromString(html, "text/html");

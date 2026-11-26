@@ -99,6 +99,44 @@ describe("sheet session saving", () => {
     expect(session.getState().dirty).toBe(true);
   });
 
+  // Outcome: edits made after the owner chose to reload, while the file is read, are kept and the
+  // owner is told the file was not reloaded. Fault: the reload replaced the workbook with the file
+  // read and marked it clean, so cells typed during the read were lost without a word.
+  it("keeps edits made while a reload reads the file and does not replace the workbook", async () => {
+    const { h, session, sheet } = await open();
+    session.setCellInput(sheet, { row: 0, col: 0 }, "5");
+    h.files.put("Docs/Budget.xlsx", await sampleXlsx());
+    expect(await session.save()).toEqual({ status: "conflict" });
+
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const read = h.files.read.bind(h.files);
+    h.files.read = async (path: string) => {
+      await gate;
+      return read(path);
+    };
+    const reloading = session.reload();
+    await settle();
+    session.setCellInput(sheet, { row: 4, col: 4 }, "typed during the read");
+    release();
+
+    expect(await reloading).toEqual({
+      ok: false,
+      code: "edited_meanwhile",
+      message: "New edits were made while the file was read again, so it was not reloaded. Your edits are still here.",
+    });
+    expect(session.cell(sheet, 0, 0).value).toBe(5);
+    expect(session.cell(sheet, 4, 4).value).toBe("typed during the read");
+    expect(session.getState()).toMatchObject({ dirty: true, saveState: "conflict", canUndo: true });
+
+    // Asked again with nothing typed meanwhile, the reload goes ahead.
+    h.files.read = read;
+    expect(await session.reload()).toEqual({ ok: true });
+    expect(session.cell(session.getState().activeSheetId, 0, 0).value).toBe(1);
+  });
+
   it("refuses save-as to an existing file or a path it cannot write", async () => {
     const { h, session } = await open();
     h.files.put("Docs/Other.xlsx", encode("x"));
@@ -261,6 +299,28 @@ describe("sheet session file formats", () => {
     const reopened = await openXlsx(h.files.bytes("data.xlsx"));
     expect(reopened.getCell(reopened.listSheets()[0]!.id, { row: 1, col: 2 })).toMatchObject({ formula: "A2+B2", value: 3 });
     expect(h.files.text("data.tsv")).toBe("a\tb\r\n1\t2\r\n");
+  });
+
+  // Outcome: a CSV or TSV file with a field longer than a cell holds does not open, says why, and is
+  // never written. Fault: the field was cut to 32,767 characters on open and the next autosave wrote
+  // the shortened text over the original file.
+  it("refuses to open delimited text with a field longer than a cell holds, and writes nothing", async () => {
+    const h = harness();
+    const long = "x".repeat(32_768);
+    h.files.put("notes.csv", encode(`id,note\n1,"${long}"\n`));
+    h.files.put("notes.tsv", encode(`id\tnote\n1\t${long}\n`));
+    for (const path of ["notes.csv", "notes.tsv"]) {
+      await expect(openSheetSession(h.deps, path)).rejects.toMatchObject({
+        name: "SheetSessionError",
+        code: "field_too_long",
+        message: "A field in this file is longer than a cell holds (32,767 characters). It was not opened, so none of its text is cut.",
+      });
+    }
+    expect(h.files.writes).toEqual([]);
+
+    h.files.put("fits.csv", encode(`id,note\n1,"${"y".repeat(32_767)}"\n`));
+    const session = await openSheetSession(h.deps, "fits.csv");
+    expect(session.cell(session.getState().activeSheetId, 1, 1).value).toHaveLength(32_767);
   });
 
   it("explains a file it cannot open and writes nothing", async () => {

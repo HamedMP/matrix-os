@@ -515,8 +515,13 @@ export class SheetSession {
   /**
    * Reads the file again and replaces the workbook, dropping local edits and
    * the undo history. When reading fails the local workbook stays as it is.
+   * Only the edits made before the call are dropped: when more arrive while
+   * the file is read, nothing is replaced and the result is
+   * `edited_meanwhile`.
    */
   reload(): Promise<EditResult> {
+    // The edits the owner chose to drop; any made after this are kept.
+    const mark = this.editSeq;
     return this.saver.enqueue(async () => {
       const path = this.saver.path;
       if (this.disposed || path === null) return failure(new SheetSessionError("failed"));
@@ -525,6 +530,7 @@ export class SheetSession {
         const loaded = await loadWorkbook(content.bytes, this.saver.format);
         // Closed while reading: this document is no longer the one on screen.
         if (this.disposed) return failure(new SheetSessionError("failed"));
+        if (this.editSeq !== mark) return failure(new SheetSessionError("edited_meanwhile"));
         const activeName = this.wb.getSheet(this.activeSheet).name;
         this.recorder.detach();
         this.wb = loaded.workbook;

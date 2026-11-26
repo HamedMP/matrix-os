@@ -81,6 +81,51 @@ describe("session host: edits made while another file loads", () => {
     expect(a.session.getState().dirty).toBe(true);
     expect(host.getState().opening).toBeNull();
   });
+
+  // Outcome: when the owner discards unsaved edits to open another file, edits made while that file
+  // loads are not discarded with them: the host stays and asks again. Fault: a discarding open
+  // replaced the document after the read without looking, dropping cells typed during the read.
+  it("stays and asks again when a discarding open meets edits made while the file loads", async () => {
+    const h = harness();
+    h.files.put("A.xlsx", await sampleXlsx());
+    h.files.put("B.xlsx", await sampleXlsx());
+    const host = new SessionHost(h.deps);
+    const a = await host.open("A.xlsx");
+    if (a.status !== "opened") throw new Error("not opened");
+    const sheet = a.session.getState().activeSheetId;
+    a.session.setCellInput(sheet, { row: 4, col: 4 }, "chosen to discard");
+    const release = holdReads(h.files, "B.xlsx");
+
+    const opening = host.open("B.xlsx", { discardUnsaved: true });
+    await settle();
+    a.session.setCellInput(sheet, { row: 5, col: 5 }, "typed while loading");
+    release();
+    expect(await opening).toEqual({ status: "unsaved" });
+    expect(host.session).toBe(a.session);
+    expect(host.getState().opening).toBeNull();
+    expect(a.session.cell(sheet, 5, 5).value).toBe("typed while loading");
+
+    // Nothing typed meanwhile: the discarding open goes ahead.
+    expect(await host.open("B.xlsx", { discardUnsaved: true })).toMatchObject({ status: "opened" });
+    expect(a.session.isDisposed).toBe(true);
+  });
+
+  it("stays and asks again when a discarding local open meets edits made while the file is read", async () => {
+    const h = harness();
+    h.files.put("A.xlsx", await sampleXlsx());
+    const host = new SessionHost(h.deps);
+    const a = await host.open("A.xlsx");
+    if (a.status !== "opened") throw new Error("not opened");
+    const sheet = a.session.getState().activeSheetId;
+    a.session.setCellInput(sheet, { row: 4, col: 4 }, "chosen to discard");
+
+    const opening = host.openLocal("Local.xlsx", await sampleXlsx(), { discardUnsaved: true });
+    // The local file is still being read when the owner types.
+    a.session.setCellInput(sheet, { row: 5, col: 5 }, "typed while reading");
+    expect(await opening).toEqual({ status: "unsaved" });
+    expect(host.session).toBe(a.session);
+    expect(a.session.cell(sheet, 5, 5).value).toBe("typed while reading");
+  });
 });
 
 describe("session host: opening the document already shown", () => {
