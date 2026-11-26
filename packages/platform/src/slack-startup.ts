@@ -9,6 +9,7 @@ import { buildPlatformVerificationToken, timingSafeTokenEquals } from "./platfor
 import type { PlatformCollaborationComposition } from "./collaboration/wiring.js";
 import { createSlackApp, loadSlackAppConfig } from "./slack/wiring.js";
 import type { SlackDatabase } from "./slack/database.js";
+import { loadSlackThreadContextGrant } from "./slack/thread-context.js";
 import { createSlackHomeTransport, type SlackHome } from "./slack-home-transport.js";
 import { createSlackMachineResolver, isSlackMachineAvailable, loadSlackPreviewHandle } from "./slack/home-resolver.js";
 
@@ -22,7 +23,10 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
   clerkAuth?:ClerkAuth;collaboration?:PlatformCollaborationComposition;customerVpsProxyDispatcher?:Agent;fetchImpl?:typeof fetch;startCleanup?:boolean}) {
   let config:ReturnType<typeof loadSlackAppConfig>;
   let previewHandle:string|undefined;
+  let contextGrant: ReturnType<typeof loadSlackThreadContextGrant>;
   try {config=loadSlackAppConfig(options.env);previewHandle=loadSlackPreviewHandle(options.env);}catch(error:unknown){console.warn("[slack] app configuration unavailable",error instanceof Error?error.name:"UnknownError");return unavailable();}
+  try { contextGrant=loadSlackThreadContextGrant(options.env,previewHandle); }
+  catch (error) { console.warn("[slack] thread context configuration unavailable",error instanceof Error?error.name:"UnknownError"); }
   const collaboration=options.collaboration;
   if(!config || !collaboration || !("organizations" in collaboration) || !collaboration.organizations || !options.platformSecret) return unavailable();
   const organizations=collaboration.organizations;
@@ -42,6 +46,12 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
   return createSlackApp({db:options.db.kysely as unknown as Kysely<SlackDatabase>,config,resolveActor,fetchImpl,startCleanup:options.startCleanup,
     linkTransaction: (actorId, work) => withAccountDeletionAdmission(options.db, actorId,
       trx => work(trx.executor as unknown as Kysely<SlackDatabase>), options.env),
+    contextGrant,
+    dispatchContext: async (envelope, signal) => {
+      const home = await homeFor(envelope.ownerId);
+      if (home.ownerId !== envelope.ownerId || home.runtimeId !== envelope.runtimeId) throw new Error("Slack destination changed");
+      await rpc(home, "context", envelope, signal);
+    },
     isCurrentMember:input=>organizations.projection.isCurrentMember(input),
     requireOrgAdmin:async input=>{
       const refreshed=await organizations.projection.reconcile(input.organizationId);
@@ -69,13 +79,15 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
       if(!handle || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(handle))return null;
       const machine=await getRunningUserMachineByHandle(options.db,handle);
       const bearer=c.req.header("authorization")?.replace(/^Bearer /,"");
-      return isSlackMachineAvailable(machine,previewHandle) && timingSafeTokenEquals(bearer,buildPlatformVerificationToken(machine.handle,options.platformSecret))?{ownerId:machine.clerkUserId}:null;
+      if (!isSlackMachineAvailable(machine, previewHandle)
+        || !timingSafeTokenEquals(bearer, buildPlatformVerificationToken(machine.handle, options.platformSecret))) return null;
+      return { ownerId: machine.clerkUserId, runtimeId: machine.machineId };
     },
     authorizeReply:async({destination,ownerId,publication})=>{
       if(destination.ownerId!==ownerId || !await organizations.projection.isCurrentMember({actorId:destination.actorId,organizationId:destination.organizationId}))return false;
       if(!destination.scopeId)return ownerId===destination.actorId && destination.channelId.startsWith("D");
       const home=await homeFor(destination.actorId,destination.scopeId,destination.organizationId);
-      if(home.ownerId!==ownerId)return false;
+      if(home.ownerId!==ownerId || home.runtimeId!==destination.runtimeId)return false;
       return (await rpc(home,"authorize",{ownerId,organizationId:destination.organizationId,actorId:destination.actorId,scopeId:destination.scopeId,
         ...(publication?{action:"publish_reply",appId:destination.appId,teamId:destination.teamId,eventId:destination.eventId,textDigest:publication.textDigest}:{action:"discuss"})})).allowed===true;
     },
