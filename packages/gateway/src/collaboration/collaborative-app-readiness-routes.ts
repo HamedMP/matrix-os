@@ -197,7 +197,12 @@ export function registerCollaborativeAppReadinessRoutes(
       const appId = AppIdSchema.parse(context.req.param("appId"));
       if (!readLimiter.check(ownerId)) return context.json({ error: "Too many readiness reads", code: "rate_limited" }, 429);
       const current = await dependencies.resolveCurrentBuild(ownerId, appId, { ensureCatalog: false });
-      if (!current) throw new ReadinessRouteError("not_found");
+      if (!current) {
+        // Reads never register a catalog entry, so an owned app that was never checked
+        // (or was replaced since) has no current build yet: that is "not checked", not missing.
+        if (await dependencies.registrationIncarnation(ownerId, appId)) return context.json(null);
+        throw new ReadinessRouteError("not_found");
+      }
       const record = await dependencies.repository.getCurrent({
         ownerId, catalogId: current.build.catalogId, buildId: current.build.buildId,
       });
