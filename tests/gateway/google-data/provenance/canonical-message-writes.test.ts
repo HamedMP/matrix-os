@@ -267,6 +267,21 @@ describe('canonical assistant delta copy writer foundation', () => {
       delta: 'cancelled reply', createdAt: new Date().toISOString() }, controller.signal)).rejects.toThrow();
     expect(await repository.kysely.selectFrom('chat_messages').select('id').where('id', '=', 'msg_assistant_legacy').executeTakeFirst()).toBeUndefined();
   });
+  it('keeps the untainted passthrough write bounded while the context fence is held', async () => {
+    await admit(new ChatRepository(repository.kysely), 'legacy');
+    const hook = createGoogleCanonicalMessageWriteHook();
+    const seen = await hook.write({ owner, chatId: 'chat_legacy', runId: 'run_legacy', messageId: 'msg_assistant_legacy' },
+      // The caller transaction has no query timeouts (PostgreSQL's default).
+      work => repository.kysely.transaction().execute(async tx => {
+        await sql`SET LOCAL statement_timeout = 0`.execute(tx);
+        await sql`SET LOCAL lock_timeout = 0`.execute(tx);
+        const result = await work(tx);
+        expect((await sql<{ statement: string }>`SELECT current_setting('statement_timeout') AS statement`.execute(tx)).rows[0]!.statement).toBe('0');
+        return result;
+      }),
+      async tx => (await sql<{ statement: string }>`SELECT current_setting('statement_timeout') AS statement`.execute(tx)).rows[0]!.statement);
+    expect(seen).toBe('5s');
+  });
   it('still refuses assistant output in a Google-tainted unknown chat', async () => {
     await admit(new ChatRepository(repository.kysely), 'legacy');
     await contexts.mark({ ownerId: owner.ownerId, chatId: 'chat_legacy', googleAccountId: account, consentId: 'consent_one', profileId: 'managed',

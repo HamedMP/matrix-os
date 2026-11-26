@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { ChatRunContextSchema, CanonicalOwnerScopeSchema, CanonicalChatIdSchema, CanonicalChatRunIdSchema, CanonicalChatQueuedTurnIdSchema } from '@matrix-os/contracts';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely , type Transaction } from 'kysely';
 import { z } from 'zod/v4';
 import type { ChatDatabase } from '../../chat/database.js';
 import type { ChatOwner } from '../../chat/records.js';
@@ -8,7 +8,7 @@ import type { AssistantDeltaExecutor, AssistantDeltaTransact } from '../../chat/
 import type { ChatContextWriteKey } from '../../chat/context-write-hook.js';
 import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runtime/model-history.js';
 import { createGoogleProvenanceStore } from './store.js';
-import { boundedProvenanceTransaction } from './transaction.js';
+import { boundedProvenanceSavepoint, boundedProvenanceTransaction } from './transaction.js';
 import { untaintedOutsideGoogleProvenance } from './google-taint.js';
 import { GoogleProvenanceUnavailable, originKey, type GoogleCopy, type PurgeHandlers } from './contracts.js';
 import type { GoogleActivityQuiescenceAuthority } from './activity-copies.js';
@@ -83,7 +83,8 @@ export function createGoogleContextSnapshotAdapter(db: Kysely<ChatDatabase>, opt
       // Untainted unknown/shared/organization chats keep their pre-pilot writes; taint keeps the strict path.
       if (await untaintedOutsideGoogleProvenance<ChatDatabase>(tx, owner, chatId, now)) {
         // Skipping Google checks never skips cancellation: an aborted call must not write or release.
-        passthrough = true; check(signal); const written = await content(tx); check(signal); return written;
+        passthrough = true; check(signal); // The context fence is held until commit, so the ordinary write stays bounded too; caller timeouts are restored after.
+        const written = await boundedProvenanceSavepoint(tx as Transaction<ChatDatabase>, current => content(current)); check(signal); return written;
       }
       if (owner.type !== 'personal') deny();
       live();

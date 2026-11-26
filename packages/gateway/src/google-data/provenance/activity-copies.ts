@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import { CanonicalChatIdSchema, CanonicalChatRunIdSchema, CanonicalChatRunActivitySchema, CanonicalOwnerScopeSchema } from '@matrix-os/contracts';
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely , type Transaction } from 'kysely';
 import { z } from 'zod/v4';
 import type { ChatDatabase } from '../../chat/database.js';
 import type { ChatActivityWriteKey } from '../../chat/activity-write-hook.js';
 import type { AssistantDeltaExecutor, AssistantDeltaTransact } from '../../chat/assistant-delta-repository.js';
 import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runtime/model-history.js';
-import { boundedProvenanceTransaction } from './transaction.js';
+import { boundedProvenanceSavepoint, boundedProvenanceTransaction } from './transaction.js';
 import { untaintedOutsideGoogleProvenance } from './google-taint.js';
 import { createGoogleProvenanceStore } from './store.js';
 import { GoogleProvenanceUnavailable, originKey, type PurgeHandlers } from './contracts.js';
@@ -66,7 +66,8 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
       // Untainted unknown/shared/organization chats keep their pre-pilot writes; taint keeps the strict path.
       if (await untaintedOutsideGoogleProvenance<ChatDatabase>(tx, key.owner, key.chatId, now)) {
         // Skipping Google checks never skips cancellation: an aborted call must not write or release.
-        passthrough = true; check(signal); const written = await content(tx); check(signal); return written;
+        passthrough = true; check(signal); // The context fence is held until commit, so the ordinary write stays bounded too; caller timeouts are restored after.
+        const written = await boundedProvenanceSavepoint(tx as Transaction<ChatDatabase>, current => content(current)); check(signal); return written;
       }
       if (key.owner.type !== 'personal') deny();
       live();

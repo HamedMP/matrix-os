@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import { CanonicalChatIdSchema, CanonicalChatMessageIdSchema, CanonicalChatRunIdSchema, CanonicalOwnerScopeSchema } from '@matrix-os/contracts';
-import { sql } from 'kysely';
+import { sql , type Transaction } from 'kysely';
 import type { ChatDatabase } from '../../chat/database.js';
 import type { AssistantDeltaExecutor, AssistantDeltaTransact, AssistantDeltaWriteHook, AssistantDeltaWriteKey, AssistantRunWriteKey } from '../../chat/assistant-delta-repository.js';
 import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runtime/model-history.js';
 import { GoogleProvenanceUnavailable, originKey, type GoogleCopy, type GoogleOrigin } from './contracts.js';
 import { createGoogleProvenanceStore } from './store.js';
-import { boundedProvenanceTransaction } from './transaction.js';
+import { boundedProvenanceSavepoint, boundedProvenanceTransaction } from './transaction.js';
 import { untaintedOutsideGoogleProvenance } from './google-taint.js';
 import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipts, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
 
@@ -70,7 +70,8 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
       // Untainted unknown/shared/organization chats keep their pre-pilot writes; taint keeps the strict path.
       if (await untaintedOutsideGoogleProvenance<ChatDatabase>(tx, key.owner, key.chatId, now)) {
         // Skipping Google checks never skips cancellation: an aborted call must not write or release.
-        passthrough = true; check(signal); const written = await content(tx); check(signal); return written;
+        passthrough = true; check(signal); // The context fence is held until commit, so the ordinary write stays bounded too; caller timeouts are restored after.
+        const written = await boundedProvenanceSavepoint(tx as Transaction<ChatDatabase>, current => content(current)); check(signal); return written;
       }
       if (key.owner.type !== 'personal') deny();
       live();
