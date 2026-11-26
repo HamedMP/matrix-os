@@ -1363,7 +1363,7 @@ function CanonicalChatWorkspaceContent({
           </>
         ) : projectSetup.header ? (
           <CanonicalNewChatContent introduction={projectSetup.introductionContent} projectId={projectId}
-            workspaceLayout={workspaceLayout} composer={composer} onSelect={setDraft} />
+            workspaceLayout={workspaceLayout} composer={renderComposer()} onSelect={setDraft} />
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
           <div
             role="status"
