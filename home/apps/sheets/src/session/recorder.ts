@@ -24,7 +24,8 @@ import {
   getWorkbookInternals,
   isOfficeError,
 } from "./engine";
-import type { Transaction } from "./edits";
+import { MAX_TRANSACTION_CELLS, type Transaction } from "./edits";
+import { SheetSessionError } from "./file-io";
 import { forEachStoredCell } from "./stored-cells";
 import {
   type BandCell,
@@ -39,8 +40,7 @@ import {
   structuralSheets,
 } from "./history";
 
-/** Most cells one transaction may change and still be undoable. */
-export const MAX_TRANSACTION_CELLS = 500_000;
+export { MAX_TRANSACTION_CELLS };
 
 interface OpenTransaction {
   label: string;
@@ -48,6 +48,8 @@ interface OpenTransaction {
   cells: Map<string, CellDelta>;
   /** True when the transaction changed more cells than the history keeps. */
   overflow: boolean;
+  /** The cells its edits claimed with `reserve` before writing them. */
+  reserved: number;
 }
 
 /** The names in `before` that `after` no longer holds as they were. */
@@ -116,7 +118,19 @@ export class Recorder {
 
   begin(label: string): void {
     if (this.open !== null) throw new Error("a transaction is already open");
-    this.open = { label, steps: [], cells: new Map(), overflow: false };
+    this.open = { label, steps: [], cells: new Map(), overflow: false, reserved: 0 };
+  }
+
+  /**
+   * Claims room for `cells` changed cells in the open transaction. Edits call
+   * it before they write, so an edit too large to take back is refused while
+   * the workbook is still as it was.
+   */
+  reserve(cells: number): void {
+    const open = this.requireOpen();
+    if (!Number.isFinite(cells) || cells < 0) throw new SheetSessionError("too_many_cells");
+    if (open.reserved + cells > MAX_TRANSACTION_CELLS) throw new SheetSessionError("too_many_cells");
+    open.reserved += cells;
   }
 
   /** Closes the cell changes gathered so far into a step, so that a structural step can follow. */
@@ -156,14 +170,19 @@ export class Recorder {
    * Takes back everything the open transaction did and drops it. `accepted`
    * are the proposed changes it accepted by writing over their cells; they
    * are proposed again, so they stay pending for review.
+   *
+   * Returns false when the transaction changed more than it kept, so part of
+   * it stays in the workbook: the history is cleared, and the session must
+   * treat the workbook as changed.
    */
-  rollback(accepted: readonly CellChange[] = []): void {
+  rollback(accepted: readonly CellChange[] = []): boolean {
     const open = this.requireOpen();
     this.flushCells(open);
     this.open = null;
+    if (open.overflow) this.history.clear();
     const steps: HistoryStep[] = accepted.length > 0 ? [{ kind: "accepted", changes: [...accepted] }, ...open.steps] : open.steps;
     this.replay(() => applyEntry(this.internals, { label: open.label, steps }, false));
-    if (open.overflow) this.history.clear();
+    return !open.overflow;
   }
 
   private replay(run: () => void): void {
@@ -348,6 +367,7 @@ export class Recorder {
 export function transactionFor(recorder: Recorder, workbook: Workbook): Transaction {
   return {
     workbook,
+    reserve: (cells) => recorder.reserve(cells),
     insertRows: (sheet, index, count) => recorder.axis(sheet, "row", index, count, true),
     deleteRows: (sheet, index, count) => recorder.axis(sheet, "row", index, count, false),
     insertColumns: (sheet, index, count) => recorder.axis(sheet, "col", index, count, true),

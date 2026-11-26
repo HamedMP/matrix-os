@@ -25,6 +25,12 @@ import { SheetSessionError } from "./file-io";
 export interface Transaction {
   /** Use any cell method: `setCell`, `setRange`, `setFormula`, `setCellInput`, `clearRange`, `setStyle`. */
   readonly workbook: Workbook;
+  /**
+   * Claims room for `cells` changed cells before writing them, so that a step
+   * never changes more than it can take back. Throws `too_many_cells` when the
+   * step, with what it already claimed, would pass {@link MAX_TRANSACTION_CELLS}.
+   */
+  reserve(cells: number): void;
   insertRows(sheet: SheetId, index: number, count: number): void;
   deleteRows(sheet: SheetId, index: number, count: number): void;
   insertColumns(sheet: SheetId, index: number, count: number): void;
@@ -54,9 +60,11 @@ export interface SessionCellEdit {
   style?: CellStylePatch;
 }
 
+/** Most cells one transaction may change: what its undo record keeps, and so what a failed step can put back. */
+export const MAX_TRANSACTION_CELLS = 500_000;
+
 /** Most cells one style or clear call touches before a whole-row or whole-column range is cut to the used area. */
 export const LARGE_RANGE_CELLS = 100_000;
-const HARD_RANGE_CELLS = 2_000_000;
 const MIN_STYLED_ROWS = 1000;
 const MIN_STYLED_COLS = 26;
 
@@ -78,7 +86,7 @@ export function clampRange(workbook: Workbook, sheet: SheetId, range: CellRange)
     start: range.start,
     end: { row: Math.min(range.end.row, lastRow), col: Math.min(range.end.col, lastCol) },
   };
-  if (rangeArea(cut) > HARD_RANGE_CELLS) throw new SheetSessionError("too_many_cells");
+  if (rangeArea(cut) > MAX_TRANSACTION_CELLS) throw new SheetSessionError("too_many_cells");
   return cut;
 }
 
@@ -89,6 +97,14 @@ export function applyCellEdit(workbook: Workbook, edit: SessionCellEdit): void {
   else if (edit.value !== undefined) workbook.setCell(edit.sheet, address, edit.value);
   else if (edit.formula === null) workbook.setFormula(edit.sheet, address, null);
   if (edit.style !== undefined) workbook.setStyle(edit.sheet, { start: address, end: address }, edit.style);
+}
+
+/** The cells `applyInputs` writes from `start`: the fields that fall inside the sheet. */
+export function inputCellCount(start: CellAddress, rows: ReadonlyArray<ReadonlyArray<string>>): number {
+  const width = Math.max(0, MAX_COLS - start.col);
+  let count = 0;
+  for (let r = 0; r < rows.length && start.row + r < MAX_ROWS; r++) count += Math.min((rows[r] as ReadonlyArray<string>).length, width);
+  return count;
 }
 
 /** Writes rows of typed text from `start`, as a paste of plain text does. Cells past the sheet edge are dropped. */

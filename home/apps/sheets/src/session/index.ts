@@ -20,7 +20,10 @@
  *   with a message that is safe to show. Nothing throws for a bad edit.
  * - Each call is one undo step. `transact(label, (tx) => ...)` groups several
  *   edits into one step: use `tx.workbook` for cell edits and the `tx` methods
- *   for rows, columns, sizes, merges, frozen panes and sheet names.
+ *   for rows, columns, sizes, merges, frozen panes and sheet names. An edit
+ *   of many cells calls `tx.reserve(count)` before it writes, so that a step
+ *   larger than its undo record keeps is refused with `too_many_cells` while
+ *   the workbook is still unchanged.
  * - After every edit, undo and redo the workbook is recalculated before
  *   listeners hear of it; `event.recalculated` lists the cells whose value
  *   changed.

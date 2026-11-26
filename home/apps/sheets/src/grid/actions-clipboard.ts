@@ -177,6 +177,13 @@ function selectPasted(ctx: GridContext, tiles: readonly Tile[], width: number): 
   ctx.select({ ranges: [{ start, end, kind: "cells" }], active: start, anchor: start, focus: end }, start);
 }
 
+/** The cells two ranges share. */
+function overlap(a: CellRange, b: CellRange): number {
+  const rows = Math.min(a.end.row, b.end.row) - Math.max(a.start.row, b.start.row) + 1;
+  const cols = Math.min(a.end.col, b.end.col) - Math.max(a.start.col, b.start.col) + 1;
+  return rows > 0 && cols > 0 ? rows * cols : 0;
+}
+
 function tooMany(tiles: readonly Tile[] | null, height: number, width: number): boolean {
   return tiles === null || tiles.length * height * width > MAX_ACTION_CELLS || tiles.some((tile) => tile.rows.length < height);
 }
@@ -201,6 +208,7 @@ function pasteCopy(ctx: GridContext, clip: InternalClip): boolean {
   const ok = report(
     ctx,
     session.transact("Paste", (tx) => {
+      tx.reserve(placed.length * height * width);
       const write = createCellWriter(tx.workbook, sheet, (row, col) => session.raw(sheet, row, col).styleId);
       for (const tile of placed) {
         for (let r = 0; r < height; r++) {
@@ -249,6 +257,13 @@ function pasteMove(ctx: GridContext, clip: InternalClip): boolean {
     ctx.notice(MOVE_TOO_LARGE);
     return false;
   }
+  // The move empties the cut cells, fills the target and rewrites the formulas that follow them: all in one step.
+  const landing: CellRange = { start: target, end: { row: target.row + height - 1, col: target.col + width - 1 } };
+  const changed = 2 * height * width - (clip.sheet === sheet ? overlap(clip.range, landing) : 0) + plan.others.length;
+  if (changed > MAX_ACTION_CELLS) {
+    ctx.notice(TOO_MANY);
+    return false;
+  }
   const source: RawCell[][] = [];
   for (let r = 0; r < height; r++) {
     const cells: RawCell[] = [];
@@ -258,6 +273,7 @@ function pasteMove(ctx: GridContext, clip: InternalClip): boolean {
   const ok = report(
     ctx,
     session.transact("Cut and paste", (tx) => {
+      tx.reserve(changed);
       tx.workbook.clearRange(clip.sheet, clip.range, "all");
       const write = createCellWriter(tx.workbook, sheet, (row, col) => session.raw(sheet, row, col).styleId);
       for (let r = 0; r < height; r++) {
@@ -291,6 +307,7 @@ function pasteExternal(ctx: GridContext, table: ParsedTable): boolean {
   const ok = report(
     ctx,
     ctx.session.transact("Paste", (tx) => {
+      tx.reserve(placed.length * height * width);
       for (const tile of placed) {
         table.rows.forEach((fields, r) => {
           const row = tile.rows[r] as number;

@@ -16,7 +16,7 @@ import {
   isOfficeError,
   xlsx,
 } from "../session/engine";
-import { styleAsPatch } from "../session/edits";
+import { MAX_TRANSACTION_CELLS, styleAsPatch } from "../session/edits";
 import { forEachStoredCell } from "../session/stored-cells";
 import type { EditResult } from "../session/types";
 import { CELL_PADDING_PX, cellLook, textWidth } from "./cell-look";
@@ -27,8 +27,8 @@ import { activeRange, columnFullySelected, rangeCols, rangeRows, rowFullySelecte
 import { type FilterSpec, type SortKey, filterHiddenRows, planSort } from "./sort-filter";
 import { hiddenRows, visibleFillDown, visibleRuns } from "./visible-rows";
 
-/** Most cells one fill, paste or sort writes. */
-export const MAX_ACTION_CELLS = 500_000;
+/** Most cells one fill, paste or sort writes: what one undo step keeps, so a failed one can be put back. */
+export const MAX_ACTION_CELLS = MAX_TRANSACTION_CELLS;
 const MAX_STYLE_PATCHES = 4096;
 const TOO_MANY = "That is too many cells for one step. Select a smaller area.";
 
@@ -141,6 +141,7 @@ function applyFill(ctx: GridContext, source: CellRange, target: CellRange, direc
   return report(
     ctx,
     session.transact("Fill", (tx) => {
+      tx.reserve(edits.length);
       const write = createCellWriter(tx.workbook, sheet, (row, col) => session.raw(sheet, row, col).styleId);
       for (const edit of edits) {
         write(edit.row, edit.col, {
@@ -436,6 +437,7 @@ export function sortRange(ctx: GridContext, range: CellRange, keys: readonly Sor
   const sorted = report(
     ctx,
     session.transact("Sort", (tx) => {
+      tx.reserve(plan.length);
       const write = createCellWriter(tx.workbook, sheet, (row, col) => session.raw(sheet, row, col).styleId);
       for (const entry of plan) write(entry.row, entry.col, entry.cell);
     }),

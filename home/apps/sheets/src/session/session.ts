@@ -17,7 +17,17 @@ import {
   type Workbook,
   isOfficeError,
 } from "./engine";
-import { type SessionCellEdit, type Transaction, applyCellEdit, applyInputs, clampRange, nextSheetName } from "./edits";
+import {
+  MAX_TRANSACTION_CELLS,
+  type SessionCellEdit,
+  type Transaction,
+  applyCellEdit,
+  applyInputs,
+  clampRange,
+  inputCellCount,
+  nextSheetName,
+  rangeArea,
+} from "./edits";
 import { type LoadedWorkbook, SheetSessionError, fileName, loadWorkbook, serializeWorkbook } from "./file-io";
 import { affectedRange } from "./history";
 import { acceptedBy } from "./implicit-accept";
@@ -25,6 +35,7 @@ import { type RecentFiles, createRecentFiles } from "./recents";
 import { Listeners } from "./listeners";
 import { Recorder, transactionFor } from "./recorder";
 import { ARRAY_MESSAGE, OK, PENDING_MESSAGE, failure } from "./results";
+import { forEachStoredCell } from "./stored-cells";
 import { DEFAULT_AUTOSAVE_DELAY_MS, SaveController, type SaveTarget } from "./save";
 import type {
   DocumentSource,
@@ -225,6 +236,11 @@ export class SheetSession {
    * Runs edits as one undoable step, then recalculates and tells listeners.
    * When `run` throws, everything it did is taken back and the failure is
    * returned. A call inside another transaction joins it.
+   *
+   * An edit that writes many cells claims them first with `tx.reserve`, so
+   * that it is refused before it writes more than a failed step can put back.
+   * Should part of a failed step stay in the workbook all the same, the
+   * workbook counts as changed (and unsaved), and the history is dropped.
    */
   transact(label: string, run: (tx: Transaction) => void): EditResult {
     if (this.disposed) return failure(new SheetSessionError("failed"));
@@ -237,9 +253,17 @@ export class SheetSession {
     try {
       run(transactionFor(this.recorder, this.wb));
     } catch (error: unknown) {
-      // Changes accepted by writing over their cells are proposed again.
-      this.recorder.rollback(acceptedBy(pending, this.wb.listChanges()));
+      let restored = false;
+      try {
+        // Changes accepted by writing over their cells are proposed again.
+        restored = this.recorder.rollback(acceptedBy(pending, this.wb.listChanges()));
+      } catch (rollbackError: unknown) {
+        this.log("a failed edit could not be taken back", rollbackError);
+        this.recorder.history.clear();
+      }
       if (!isOfficeError(error) && !(error instanceof SheetSessionError)) this.log("an edit failed", error);
+      // Part of the edit stayed: it must show as a change to save, never as the saved file.
+      if (!restored) this.afterChange("external", null);
       return failure(error);
     }
     const committed = this.recorder.commit();
@@ -309,25 +333,52 @@ export class SheetSession {
 
   /** Writes rows of typed text from `start`. Text that looks like a formula but does not parse is kept as text. */
   setInputs(sheet: SheetId, start: CellAddress, rows: ReadonlyArray<ReadonlyArray<string>>, label = "Paste"): EditResult {
-    return this.transact(label, (tx) => applyInputs(tx.workbook, sheet, start, rows));
+    return this.transact(label, (tx) => {
+      tx.reserve(inputCellCount(start, rows));
+      applyInputs(tx.workbook, sheet, start, rows);
+    });
   }
 
   applyEdits(edits: readonly SessionCellEdit[], label = "Edit"): EditResult {
     return this.transact(label, (tx) => {
+      tx.reserve(edits.length);
       for (const edit of edits) applyCellEdit(tx.workbook, edit);
     });
   }
 
   clear(sheet: SheetId, ranges: readonly CellRange[], what: "contents" | "formats" | "all" = "contents"): EditResult {
     return this.transact("Clear", (tx) => {
+      tx.reserve(this.storedCells(sheet, ranges));
       for (const range of ranges) tx.workbook.clearRange(sheet, range, what);
     });
   }
 
-  /** Applies a style patch. A whole-row or whole-column range is cut to the used area plus a margin. */
+  /**
+   * The cells the sheet stores in `ranges` (clearing changes no other),
+   * counted up to just past what one step may change. Where the stored cells
+   * cannot be walked, every position of the range counts.
+   */
+  private storedCells(sheet: SheetId, ranges: readonly CellRange[]): number {
+    let count = 0;
+    for (const range of ranges) {
+      let found = 0;
+      const complete = forEachStoredCell(this.recorder.internals, sheet, range, () => ++found <= MAX_TRANSACTION_CELLS);
+      count += complete ? found : Math.max(found, rangeArea(range));
+      if (count > MAX_TRANSACTION_CELLS) return count;
+    }
+    return count;
+  }
+
+  /**
+   * Applies a style patch. A whole-row or whole-column range is cut to the
+   * used area plus a margin. Every range is cut and counted before the first
+   * is written, so a refused range leaves the others as they were.
+   */
   setStyle(sheet: SheetId, ranges: readonly CellRange[], patch: CellStylePatch): EditResult {
     return this.transact("Format", (tx) => {
-      for (const range of ranges) tx.workbook.setStyle(sheet, clampRange(tx.workbook, sheet, range), patch);
+      const cut = ranges.map((range) => clampRange(tx.workbook, sheet, range));
+      tx.reserve(cut.reduce((sum, range) => sum + rangeArea(range), 0));
+      for (const range of cut) tx.workbook.setStyle(sheet, range, patch);
     });
   }
 

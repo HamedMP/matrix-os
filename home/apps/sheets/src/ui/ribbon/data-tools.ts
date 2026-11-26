@@ -55,6 +55,7 @@ export function removeDuplicateRows(controller: SheetGridController): DataResult
   const removed = height - kept.length;
   if (removed === 0) return { ok: true, message: "No duplicate rows found." };
   const result = session.transact("Remove duplicates", (tx) => {
+    tx.reserve(height * width);
     tx.workbook.setRange(sheet, start, kept);
     tx.workbook.clearRange(sheet, { start: { row: start.row + kept.length, col: start.col }, end }, "contents");
   });

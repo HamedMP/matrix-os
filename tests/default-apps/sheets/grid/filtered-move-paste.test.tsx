@@ -194,6 +194,30 @@ describe("pasting a table that is too large", () => {
   });
 });
 
+describe("cut and paste too large for one step", () => {
+  // Fault: the move emptied the cut cells and filled the target past what one undo step keeps, so a failure could not put them back.
+  it("refuses a move whose emptied and filled cells together pass the limit, before moving anything", async () => {
+    const h = await renderGrid((workbook: Workbook, sheet: string) => {
+      workbook.setCell(sheet, { row: 0, col: 0 }, "kept");
+    });
+    act(() => h.controller.select({ start: { row: 0, col: 0 }, end: { row: 2999, col: 99 } }));
+    let payload: ReturnType<typeof h.controller.cut> = null;
+    act(() => {
+      payload = h.controller.cut();
+    });
+    act(() => h.controller.select({ row: 0, col: 200 }));
+    let pasted = true;
+    act(() => {
+      pasted = h.controller.paste({ text: payload!.text, html: payload!.html });
+    });
+    expect(pasted).toBe(false);
+    expect(value(h, 0, 0)).toBe("kept");
+    expect(value(h, 0, 200)).toBeNull();
+    expect(h.container.querySelector("[role='alert']")?.textContent).toContain("That is too many cells for one step.");
+    h.unmount();
+  }, 60_000);
+});
+
 describe("cut on a filtered range", () => {
   function cutAndPaste(h: GridHarness, range: { start: { row: number; col: number }; end: { row: number; col: number } }): void {
     act(() => h.controller.select(range));

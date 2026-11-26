@@ -55,7 +55,12 @@ export function applyBorders(controller: SheetGridController, preset: BorderPres
   const { start, end } = range;
   const row = (r: number): CellRange => ({ start: { row: r, col: start.col }, end: { row: r, col: end.col } });
   const col = (c: number): CellRange => ({ start: { row: start.row, col: c }, end: { row: end.row, col: c } });
+  const rows = end.row - start.row + 1;
+  const cols = end.col - start.col + 1;
+  const cells = preset === "all" || preset === "none" ? rows * cols : preset === "outside" ? 2 * (rows + cols) : preset === "top" || preset === "bottom" ? cols : rows;
   return session.transact(BORDER_PRESETS.find((item) => item.id === preset)?.label ?? "Borders", (tx) => {
+    // Counted before the first edge is drawn: a preset too large for one step changes nothing.
+    tx.reserve(cells);
     const wb = tx.workbook;
     switch (preset) {
       case "all":
