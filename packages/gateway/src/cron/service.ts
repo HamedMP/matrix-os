@@ -59,6 +59,11 @@ function epochMs(value: Date | string | null | undefined): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
+function intervalDeadline(job: CronJob, intervalMs: number): number | null {
+  const anchor = epochMs(job.lastRunAt) ?? epochMs(job.createdAt);
+  return anchor === null ? null : anchor + intervalMs;
+}
+
 export function createCronService(config: CronServiceConfig): CronService {
   const { store, onTrigger } = config;
   let catchUpGateOpen = config.catchUpAfter === undefined;
@@ -97,14 +102,16 @@ export function createCronService(config: CronServiceConfig): CronService {
     store.remove(job.id);
   }
 
-  /** True when an occurrence came due after the job's persisted lastRunAt. A job that never ran is never due. */
-  function missedSinceLastRun(job: CronJob, now: number): boolean {
-    const lastRunAt = epochMs(job.lastRunAt);
-    if (lastRunAt === null) return false;
+  /** True when a recurring occurrence came due while the scheduler was stopped. */
+  function missedOccurrence(job: CronJob, now: number): boolean {
     switch (job.schedule.type) {
-      case "interval":
-        return lastRunAt + job.schedule.intervalMs <= now;
+      case "interval": {
+        const deadline = intervalDeadline(job, job.schedule.intervalMs);
+        return deadline !== null && deadline <= now;
+      }
       case "cron": {
+        const lastRunAt = epochMs(job.lastRunAt);
+        if (lastRunAt === null) return false;
         const entry = cronTasks.get(job.id);
         const matcher = entry ? cronMatcher(entry.task) : null;
         if (matcher === null) return false;
@@ -131,7 +138,7 @@ export function createCronService(config: CronServiceConfig): CronService {
         continue;
       }
 
-      if (!due && !missedSinceLastRun(job, now)) continue;
+      if (!due && !missedOccurrence(job, now)) continue;
       // Replace a timer already due so its queued callback cannot dispatch the same run.
       if (due) scheduleJob(job);
       runJob(job);
@@ -174,7 +181,7 @@ export function createCronService(config: CronServiceConfig): CronService {
     }
   }
 
-  /** `intervalFirstAt` (epoch ms) overrides an interval job's first fire; otherwise lastRunAt + interval, or now + interval. */
+  /** `intervalFirstAt` overrides the first timer. Otherwise use the persisted deadline if it is still ahead. */
   function scheduleJob(job: CronJob, intervalFirstAt?: number): void {
     clearJob(job.id);
 
@@ -182,8 +189,8 @@ export function createCronService(config: CronServiceConfig): CronService {
       case "interval": {
         const intervalMs = job.schedule.intervalMs;
         const now = Date.now();
-        const afterLastRun = (epochMs(job.lastRunAt) ?? Number.NaN) + intervalMs;
-        const firstAt = intervalFirstAt ?? (afterLastRun > now ? afterLastRun : now + intervalMs);
+        const deadline = intervalDeadline(job, intervalMs);
+        const firstAt = intervalFirstAt ?? (deadline !== null && deadline > now ? deadline : now + intervalMs);
         const tick = (): void => {
           if (!catchUpGateOpen || timers.get(job.id) !== entry) return;
           entry.nextAt = Date.now() + intervalMs;
@@ -257,7 +264,7 @@ export function createCronService(config: CronServiceConfig): CronService {
       for (const job of store.list()) scheduleJob(job);
       if (catchUpGateOpen || !catchUpGate) {
         for (const job of store.list()) {
-          if (missedSinceLastRun(job, now)) runJob(job);
+          if (missedOccurrence(job, now)) runJob(job);
         }
       } else {
         void catchUpGate.then(() => {

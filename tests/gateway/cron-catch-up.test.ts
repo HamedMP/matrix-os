@@ -16,7 +16,7 @@ function makeJob(overrides: Partial<CronJob> = {}): CronJob {
     name: "test-job",
     message: "Hello from cron",
     schedule: { type: "cron", cron: "0 * * * *" },
-    createdAt: "2026-11-01T00:00:00.000Z",
+    createdAt: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -201,7 +201,7 @@ describe("cron catch-up of missed runs", () => {
     expect(onTrigger).toHaveBeenCalledTimes(2);
   });
 
-  it("a job never run before does not run on start", () => {
+  it("a newly created job does not run on start", () => {
     vi.setSystemTime(new Date("2026-11-21T12:30:00.000Z"));
     startWith([
       makeJob({ id: "cron" }),
@@ -210,6 +210,39 @@ describe("cron catch-up of missed runs", () => {
     expect(onTrigger).not.toHaveBeenCalled();
     vi.advanceTimersByTime(60_000);
     expect(onTrigger).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { restartAt: "11:58", untilDue: 2 * 60_000, deliveredAt: "12:00" },
+    { restartAt: "12:00", untilDue: 0, deliveredAt: "12:00" },
+    { restartAt: "12:02", untilDue: 0, deliveredAt: "12:02" },
+  ])("keeps a first interval run due at noon across a restart at $restartAt", async ({ restartAt, untilDue, deliveredAt }) => {
+    vi.setSystemTime(new Date("2026-11-21T10:00:00.000Z"));
+    const intervalMs = 2 * 60 * 60_000;
+    startWith([makeJob({ schedule: { type: "interval", intervalMs } })]);
+    expect(service.nextRunAt()?.toISOString()).toBe("2026-11-21T12:00:00.000Z");
+    service.stop();
+    vi.setSystemTime(new Date(`2026-11-21T${restartAt}:00.000Z`));
+
+    const recordRun = vi.spyOn(store, "recordRun");
+    try {
+      service.start();
+      if (untilDue > 0) {
+        expect(service.nextRunAt()?.toISOString()).toBe("2026-11-21T12:00:00.000Z");
+        await vi.advanceTimersByTimeAsync(untilDue - 1);
+        expect(onTrigger).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+      }
+
+      expect(onTrigger).toHaveBeenCalledTimes(1);
+      const firstRun = `2026-11-21T${deliveredAt}:00.000Z`;
+      expect(store.list()[0]?.lastRunAt).toBe(firstRun);
+      expect(service.nextRunAt()?.getTime()).toBe(Date.parse(firstRun) + intervalMs);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(onTrigger).toHaveBeenCalledTimes(1);
+    } finally {
+      await Promise.all(recordRun.mock.results.map((result) => result.value));
+    }
   });
 
   it("a resumed process whose wall clock jumped past occurrences runs each missed job once", async () => {
