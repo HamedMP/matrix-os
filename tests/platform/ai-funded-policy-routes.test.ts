@@ -33,7 +33,7 @@ import {
   buildPlatformSpeechRuntimeVerificationToken,
 } from "../../packages/platform/src/platform-token.js";
 import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
-import { createFundedModelProbeService, type FundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
+import { createFundedModelProbeService, FUNDED_PROBE_MODELS, type FundedModelProbeService } from "../../packages/platform/src/ai-funded-model-probes.js";
 import { loadFundedAiRuntimeConfig } from "../../packages/gateway/src/funded-ai-credential-manager.js";
 import { createFundedAiFundingSummaryClient } from "../../packages/gateway/src/funded-ai-funding-summary-client.js";
 import { createFundedAiRouteReadinessClient } from "../../packages/gateway/src/funded-ai-route-readiness-client.js";
@@ -356,9 +356,9 @@ describe("funded AI policy routes", () => {
     }));
   });
 
-  it("returns both static models and a healthy entitled custom Bedrock model", async () => {
+  it("returns the full Cloudflare catalog and a healthy entitled custom Bedrock model", async () => {
     const customModel = "anthropic/claude-opus-5";
-    const staticModels = ["@cf/zai-org/glm-5.3-flash", modelId];
+    const staticModels = FUNDED_PROBE_MODELS;
     const probe = vi.fn(async () => ({ ready: true, checkedAt: now,
       staleAfter: "2026-08-30T20:00:30.000Z", priceValidThrough: "2026-09-30T20:00:00.000Z" }));
     const created = await createTestApp({

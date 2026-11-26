@@ -455,12 +455,14 @@ export function createAiFundedRuntimeRoutes(options: {
       ])] : !expandedCatalog ? FUNDED_AI_LEGACY_READINESS_MODEL_IDS
         : options.cloudflareBinding ? FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS : FUNDED_PROBE_MODELS;
       const requestedModels = body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : aggregateModels;
+      const maxModels = FUNDED_AI_READINESS_CATALOG.maxModels
+        + (bedrockCatalog ? FUNDED_AI_READINESS_CATALOG.maxBedrockModels : 0);
       const eligible = first.policy.enabled && Date.parse(first.policy.checkedAt) <= firstNow
         && Date.parse(first.policy.staleAfter) > firstNow && first.funding.remainingBudgetMicrousd > 0
         ? requestedModels.filter(model => first.policy.allowedModelIds.includes(model)
           && (!options.cloudflareBinding || isFundedCloudflarePreviewCohortModel(model))
           && (!cacheOnly || model === phase!.modelId))
-          .slice(0, FUNDED_AI_READINESS_CATALOG.maxModels) : [];
+          .slice(0, maxModels) : [];
       if (Date.now() >= deadlineAtMs) throw new Error("Funded route readiness timed out");
       stage = "model_health";
       const observations = options.routeProbes
