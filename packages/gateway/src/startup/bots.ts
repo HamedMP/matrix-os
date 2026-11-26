@@ -1,4 +1,5 @@
 import { createBotSelectedChatReader } from "../chat/bot-selected-chat.js";
+import { createSlackAgentRouteLane } from "./slack-agent-route-lane.js";
 import type { SlackBotPlatform } from "./slack-platform.js";
 import { retireRevokedSlackJobs } from "../slack/rule-revocation.js";
 import { createSlackRuleTools, type SlackRuleTools } from "../slack/rule-tools.js";
@@ -14,7 +15,7 @@ import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routin
 import {BotStateError} from "../bots/repositories/shared.js";
 import { createBotInputHistoryReader } from "../bots/historical-input.js";
 import { createPrivateSlackThreadContext, type PrivateSlackThreadContext } from "../slack/private-thread-context.js";
-import { createSlackOwnerClient } from "./slack-owner-client.js";
+import { createPilotChannelReader, createSlackOwnerClient } from "./slack-owner-client.js";
 import { createSharedAttachmentSource } from "../bots/shared-integration-attachment.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -322,9 +323,16 @@ export async function startBots(options: {
   };
   const memory = createBotMemoryService({ transact });
   const grants = createBotGrantService({ transact });
+  const githubReview = readBotResourceGitHubReviewConfig(process.env);
+  const slackAgentRoutes = createSlackAgentRouteLane({
+    platform: enrolledPlatform, ownerId: options.runtimeOwnerId, computerId: options.computerId,
+    transact, isActiveManagedAgent, repository: githubReview,
+    github: options.integrations ? integrationClient : undefined,
+  });
   const resourceGrants = createBotResourceGrantService({ transact, now, isActiveManagedAgent, providers: createBotResourceCandidates({
     client: options.integrations ? integrationClient : undefined,
-    githubReview: readBotResourceGitHubReviewConfig(process.env), runtimeOwnerId: options.runtimeOwnerId,
+    githubReview, runtimeOwnerId: options.runtimeOwnerId, slackRouteChannels: slackAgentRoutes?.listChannels,
+    readPilotChannel: enrolledPlatform && devTarget && enrolledSlackEnabled ? createPilotChannelReader(enrolledPlatform) : undefined,
   }) });
   // Overdue questions are expired and announced; passes never overlap and stop on close.
   let sweeping: Promise<unknown> | undefined;
@@ -454,7 +462,7 @@ export async function startBots(options: {
         const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
         return Boolean(bot?.recipeRef && !bot.archived);
       };
-      slackMentionSummaries = await createSlackMentionSummaries({ db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess, readThread: slackClient.readSummaryThread, botAvailable });
+      slackMentionSummaries = await createSlackMentionSummaries({ db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess, readThread: slackClient.readSummaryThread, botAvailable, routed: slackAgentRoutes?.worker });
       slackThreadContext = await createPrivateSlackThreadContext({
         db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess,
         discoverEnrollment: slackClient.discoverThreadEnrollment,

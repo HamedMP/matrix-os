@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
-import { SlackBridgeEnvelopeSchema, SlackBridgeAuthorizationSchema, SlackThreadContextEnvelopeSchema, verifySlackBridgeRequest,
+import { RoutedSlackEventSchema, type RoutedSlackEvent, SlackBridgeEnvelopeSchema, SlackBridgeAuthorizationSchema, SlackThreadContextEnvelopeSchema, verifySlackBridgeRequest,
   SLACK_CONTEXT_SOURCE_HEADER, SLACK_CONTEXT_SOURCE_SIGNATURE_HEADER, verifySlackContextSource,
   type SlackBridgeEnvelope, type SlackPublicationIdentity, type SlackThreadContextEnvelope } from "@matrix-os/contracts/slack-bridge";
 import type { SlackDevTarget } from "./slack-platform.js";
 import { CollaborationAuthorizationError, type CollaborationAuthority } from "../collaboration/authority.js";
 
 export function createSlackBridgeRoutes(options:{ownerId:string;token:string;authority:Pick<CollaborationAuthority,"authorize">;
+  receiveRoutedSlack?(event: RoutedSlackEvent, signal: AbortSignal): Promise<boolean>;
   devTarget?: SlackDevTarget; receive(envelope:SlackBridgeEnvelope):Promise<unknown>; receiveContext?(envelope: SlackThreadContextEnvelope): Promise<boolean>; authorizePublication?(input:SlackPublicationIdentity):Promise<boolean>;now?:()=>Date}) {
   const app=new Hono();
   app.onError((error,c)=>{
@@ -26,6 +27,16 @@ export function createSlackBridgeRoutes(options:{ownerId:string;token:string;aut
     await next();
   });
   const devTarget = options.devTarget;
+  app.post("/api/internal/slack/agent-event", async c => {
+    if (!devTarget?.agentRoutes) return c.notFound();
+    const event = RoutedSlackEventSchema.parse(await c.req.json());
+    if (event.ownerId !== options.ownerId || event.ownerId !== devTarget.ownerId || event.runtimeId !== devTarget.machineId
+      || event.appId !== devTarget.appId || event.teamId === devTarget.teamId && event.channelId === devTarget.channelId) return c.json({error:"Forbidden"},403);
+    if (!options.receiveRoutedSlack) return c.json({error:"Slack unavailable"},503);
+    // An authenticated ineligible event is consumed without retries or disclosure of the mapped Agent.
+    await options.receiveRoutedSlack(event, c.req.raw.signal);
+    return c.json({accepted:true},202);
+  });
   app.post("/api/internal/slack/events",async c=>{
     if (devTarget) return c.json({ error: "Forbidden" }, 403);
     const envelope=SlackBridgeEnvelopeSchema.parse(await c.req.json());

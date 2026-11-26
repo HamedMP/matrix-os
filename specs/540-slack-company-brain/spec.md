@@ -192,3 +192,19 @@ Read the Dev Gateway's public nginx certificate through the verified owner runti
 On the authorized Dev computer, set `MATRIX_SLACK_DEV_TARGET` with `ownerId`, `machineId`, `handle`, `appId`, `teamId`, `channelId`, `botId` and `chatId`. Point `MATRIX_SLACK_PLATFORM_URL` at the exact tag and set `MATRIX_SLACK_PLATFORM_TOKEN` to the dedicated bridge token. Preserve the normal platform, sync, update and model credentials. Use a legitimate Clerk owner session for both OAuth start and completion. A missing or mismatched Dev binding disables Slack for that target.
 
 With the new App installed and joined only to the approved channel, define an English rule from the bound Dev Chat and observe one natural unmentioned message. Join the signed event, automatic job, completed Run and one committed English result in that Chat. Verify a duplicate event, a wrong-channel or wrong-runtime attempt, revocation, and pause/resume with no backfill. A failed control-plane lookup stops the operation and never chooses Main or a previous Preview. Record live and fixture evidence separately.
+
+## Two Agents using one Slack installation
+
+An owner maps a channel to a named Agent in **Agents → Details → Apps**. Choose a channel for summaries, or first assign an exact GitHub repository and then choose a channel for reviews. Reopening Apps shows the saved assignments. Each channel resolves to one Agent and one active, exclusively bound private Chat. The original pilot keeps its existing Chat-authored rule and destination. Apps shows that assignment to its owner. The callback never chooses a recipient from the prose in a message.
+
+| Trigger in its mapped channel | Acceptance |
+| --- | --- |
+| A new ordinary message from the approved sender | Deliver one English summary to the Summary Agent's private Chat. No mention is required. |
+| A request to review one canonical GitHub PR URL | Read the actual patch through the assigned GitHub connection. Deliver a verdict with a changed filename, a supporting line, the PR link and the verified SHA to the reviewer's private Chat. |
+| Redelivery, unmapped channel, ambiguous binding, withdrawn authority or wrong repository | Prevent a new review, model call and private Chat result. Revalidate in-flight work before each external read, inference and publication. |
+
+The dedicated callback reads `SLACK_DEV_AGENT_CHANNELS`. The Dev gateway opts in with `MATRIX_SLACK_DEV_AGENT_ROUTES=true`. Discovery checks the specific app installation, linked owner, channel identity and Slack membership. For review, match both `MATRIX_AGENT_GITHUB_REVIEW_REPOSITORY_ID` and `MATRIX_AGENT_GITHUB_REVIEW_REPOSITORY_FULL_NAME`. The gateway uses the general GitHub integration to read PR metadata, changed files and metadata again. Require a consistent base and head, matching repository identities, complete patch hunks and file counts. v1 accepts up to ten added or modified files and 14,000 bytes of serialized patch data. An ineligible patch ends the job before inference.
+
+Each accepted event supplies an isolated input to a private Run. Capture two real events on the same build, reopen both Chats, then pause the pilot rule, withdraw the test route and inspect the job queue. Record the installed build and distinguish a live GitHub CLI preflight from a provider invocation under the Agent's saved grant. The following capabilities remain follow-ups. They include continuing an existing Slack thread session, multiple Agents in one channel with an explicit selector, separate visible Slack identities and Slack thread write-back.
+
+[Claude Tag documents its app identity, channel access and per-thread sessions.](https://claude.com/docs/claude-tag/concepts/agent-identity)

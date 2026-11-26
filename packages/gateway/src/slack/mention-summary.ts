@@ -1,7 +1,9 @@
+import { ROUTED_REVIEW_INSTRUCTION, ROUTED_SUMMARY_INSTRUCTION } from "../bots/slack-summary-run.js";
+import { createRoutedSlackJobs, routedReference, reviewedPatchResult, type RoutedJob, type RoutedSlackDependencies } from "./agent-route-jobs.js";
 import { RULE_SUMMARY_INSTRUCTION, parseRulePolicy, currentRulePolicy, receiveRuleJob } from "./rule-jobs.js";
 import { lockSlackRuleChat, type SlackRule } from "./rules.js";
 import { createHash, randomUUID } from "node:crypto";
-import { sql, type Kysely, type Transaction } from "kysely";
+import { sql, type Kysely, type ColumnType, type Transaction } from "kysely";
 import { CanonicalChatMessageSchema, MATRIX_BOT_SELECTION, MATRIX_BOT_INSTANCE_ID, type CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
 import { SlackEnrolledEventSourceSchema, SlackThreadContextEnvelopeSchema, type SlackThreadContextEnvelope, type SlackThreadContextAccessResponse, type SlackPrivateThreadContextRequest, type SlackPrivateThreadContextResponse } from "@matrix-os/contracts/slack-bridge";
 import type { OwnerBotDatabase } from "../bots/database.js";
@@ -48,6 +50,8 @@ interface Job {
   accepted_kind: "run" | "queue" | null;
   inference_at: Date | string | null;
   policy: unknown; sources: unknown;
+  routed: ColumnType<RoutedJob["routed"], undefined, never>;
+  review_patch: ColumnType<RoutedJob["review_patch"], undefined, never>;
 }
 interface Database extends OwnerBotDatabase {
   slack_mention_summary_jobs: Job;
@@ -59,8 +63,13 @@ function access(envelope: SlackThreadContextEnvelope, policy?: SlackRule): Summa
   const { ownerId, botId, chatId, runtimeId, grantId, event, summary } = envelope;
   return { ownerId, botId, chatId, runtimeId, grantId, summary: { ...summary, eventId: event.eventId, threadTs: event.threadTs, ts: event.ts, userId: event.userId } };
 }
-function source(row: Job) { return SlackThreadContextEnvelopeSchema.parse(typeof row.envelope === "string" ? JSON.parse(row.envelope) : row.envelope); }
-function submission(row: Job): SummarySubmission { return { ownerId: row.owner_id, botId: row.bot_id, chatId: row.chat_id, clientRequestId: row.request_id, text: row.policy ? RULE_SUMMARY_INSTRUCTION : SUMMARY_INSTRUCTION }; }
+type SavedJob = import("kysely").Selectable<Job>;
+function source(row: SavedJob) { return SlackThreadContextEnvelopeSchema.parse(typeof row.envelope === "string" ? JSON.parse(row.envelope) : row.envelope); }
+function submission(row: SavedJob): SummarySubmission {
+  let text = row.policy ? RULE_SUMMARY_INSTRUCTION : SUMMARY_INSTRUCTION;
+  if (row.routed) text = row.routed.kind === "review" ? ROUTED_REVIEW_INSTRUCTION : ROUTED_SUMMARY_INSTRUCTION;
+  return { ownerId: row.owner_id, botId: row.bot_id, chatId: row.chat_id, clientRequestId: row.request_id, text };
+}
 /** One recipient-owned pilot outbox, never a Slack publication or a general scheduler. */
 export async function createSlackMentionSummaries(options: {
   db: Kysely<OwnerBotDatabase>;
@@ -69,6 +78,7 @@ export async function createSlackMentionSummaries(options: {
   now?: () => Date;
   authorize(input: SummaryAccess, signal: AbortSignal): Promise<boolean | SlackThreadContextAccessResponse>;
   readThread(input: SummaryAccess, signal: AbortSignal): Promise<SummaryThread | null>;
+  routed?: RoutedSlackDependencies;
   botAvailable?(input: {
     ownerId: string;
     botId: string;
@@ -84,6 +94,7 @@ export async function createSlackMentionSummaries(options: {
     queuedTurnId?: string;
   }>) | undefined;
   const lifetime = new AbortController();
+  const routeJobs = createRoutedSlackJobs({ ...options, now, lifetime: lifetime.signal });
   await db.transaction().execute(async (trx) => {
     await sql `SELECT pg_advisory_xact_lock(219784016)`.execute(trx);
     await sql `CREATE TABLE IF NOT EXISTS slack_mention_summary_jobs(
@@ -93,6 +104,8 @@ export async function createSlackMentionSummaries(options: {
    accepted_id TEXT,accepted_kind TEXT,inference_at TIMESTAMPTZ)`.execute(trx);
     await sql`ALTER TABLE slack_mention_summary_jobs ADD COLUMN IF NOT EXISTS policy JSONB, ADD COLUMN IF NOT EXISTS sources JSONB NOT NULL DEFAULT '[]'::jsonb`.execute(trx);
     await sql `CREATE INDEX IF NOT EXISTS slack_summary_owner_pending ON slack_mention_summary_jobs(owner_id,state,next_at)`.execute(trx);
+    await sql`ALTER TABLE slack_mention_summary_jobs ADD COLUMN IF NOT EXISTS routed JSONB, ADD COLUMN IF NOT EXISTS review_patch JSONB,
+      ADD COLUMN IF NOT EXISTS review_started_at TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS routed_failure TEXT`.execute(trx);
   });
   async function local(envelope: SlackThreadContextEnvelope) {
     const row = await db.selectFrom("chats as chat").innerJoin("bot_chat_bindings as binding", "binding.chat_id", "chat.id")
@@ -106,6 +119,9 @@ export async function createSlackMentionSummaries(options: {
       return false;
     const result = await options.authorize(access(envelope,policy), AbortSignal.any([signal, AbortSignal.timeout(10000)]));
     return !stopping && !signal.aborted && (typeof result === "boolean" ? result : result.allowed) && await local(envelope) && await currentRulePolicy(options.db,envelope,policy);
+  }
+  async function currentJob(row: SavedJob, signal = lifetime.signal): Promise<boolean> {
+    return row.routed ? routeJobs.current(row, signal) : current(source(row), signal, parseRulePolicy(row.policy));
   }
   async function forRun(identity: SummaryIdentity) {
     if (identity.ownerId !== options.ownerId)
@@ -130,7 +146,7 @@ export async function createSlackMentionSummaries(options: {
       throw new Error("Summary authority unavailable");
     return row;
   }
-  async function authorized(identity: SummaryIdentity) { const row = await forRun(identity); return Boolean(row && await current(source(row),lifetime.signal,parseRulePolicy(row.policy))); }
+  async function authorized(identity: SummaryIdentity) { const row = await forRun(identity); return Boolean(row && await currentJob(row)); }
   async function work() {
     if (!submit)
       return;
@@ -168,8 +184,17 @@ export async function createSlackMentionSummaries(options: {
     if (!row || stopping)
       return;
     try {
-      if (!await current(source(row),lifetime.signal,parseRulePolicy(row.policy)))
-        throw new SummaryDenied();
+      if (!await currentJob(row)) throw new SummaryDenied();
+      if (row.routed?.kind === "review" && !row.review_patch) {
+        try { await routeJobs.prepare(row); }
+        catch (error) {
+          console.warn("[slack-agent-review] Patch unavailable:", error instanceof Error ? error.name : "UnknownError");
+          await sql`UPDATE slack_mention_summary_jobs SET routed_failure='eligible_patch_unavailable'
+            WHERE id=${row.id} AND lease=${row.lease}`.execute(db);
+          throw new SummaryDenied();
+        }
+      }
+      if (row.routed && !await currentJob(row)) throw new SummaryDenied();
       const accepted = await submit(submission(row));
       const id = accepted.runId ?? accepted.queuedTurnId;
       if (!id || !new RegExp(accepted.runId ? "^run_[A-Za-z0-9_-]{1,128}$" : "^qturn_[A-Za-z0-9_-]{1,128}$").test(id))
@@ -184,14 +209,15 @@ export async function createSlackMentionSummaries(options: {
     }
   }
   return {
+    receiveRoutedSlack: routeJobs.receive,
     /** Called only after inserting the signed source, in that exact transaction. */
     async receive(envelope: SlackThreadContextEnvelope, trx: Transaction<OwnerBotDatabase>) {
       if (stopping || (!envelope.summary && !envelope.source) || envelope.ownerId !== options.ownerId || envelope.runtimeId !== options.runtimeId)
         return;
       const tx = trx as unknown as Transaction<Database>;
       await sql `SELECT pg_advisory_xact_lock(hashtext(${`slack-summary:${options.ownerId}`}))`.execute(tx);
-      const daily = await tx.selectFrom("slack_mention_summary_jobs").select(eb => eb.fn.countAll().as("count")).where("owner_id", "=", options.ownerId).where("created_at", ">=", new Date(now().toISOString().slice(0, 10))).executeTakeFirstOrThrow();
-      const pending = await tx.selectFrom("slack_mention_summary_jobs").select(eb => eb.fn.countAll().as("count")).where("owner_id", "=", options.ownerId).where("state", "in", ["pending", "processing", "accepted"]).executeTakeFirstOrThrow();
+      const daily = await tx.selectFrom("slack_mention_summary_jobs").select(eb => eb.fn.countAll().as("count")).where("owner_id", "=", options.ownerId).where("created_at", ">=", new Date(now().toISOString().slice(0, 10))).where("routed", "is", null).executeTakeFirstOrThrow();
+      const pending = await tx.selectFrom("slack_mention_summary_jobs").select(eb => eb.fn.countAll().as("count")).where("owner_id", "=", options.ownerId).where("state", "in", ["pending", "processing", "accepted"]).where("routed","is",null).executeTakeFirstOrThrow();
       const withinCaps=Number(daily.count)<25 && Number(pending.count)<100;
       if(await receiveRuleJob(trx,envelope,now(),withinCaps)) return;
       if(!envelope.summary)return;
@@ -212,9 +238,16 @@ export async function createSlackMentionSummaries(options: {
       const row = await forRun({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId });
       if (!row)
         return undefined;
-      if (!await current(source(row), input.signal,parseRulePolicy(row.policy)))
+      if (!await currentJob(row,input.signal))
         throw new SummaryDenied();
+      if (row.routed?.kind === "review" && !row.review_patch) throw new SummaryDenied();
       return { readonlySummary: true as const };
+    },
+    async routedResult(identity: SummaryIdentity, text: string) {
+      const row = await forRun(identity);
+      if (!row?.routed || !text.trim() || !await currentJob(row)) return null;
+      if (row.routed.kind === "summary") return text;
+      return row.review_patch ? reviewedPatchResult(row.review_patch,text) : null;
     },
     async assertAuthorized(identity: SummaryIdentity) { try {
       return await authorized(identity);
@@ -230,17 +263,23 @@ export async function createSlackMentionSummaries(options: {
       if (!row)
         return false;
       return options.db.transaction().execute(async tx=>{
-        const envelope=source(row);
-        await lockSlackRuleChat(tx,envelope);
-        if(stopping || !await currentRulePolicy(tx,envelope,parseRulePolicy(row.policy)))return false;
+        if (stopping) return false;
+        if (row.routed) {
+          if (!await options.routed?.current(row.routed,tx) || row.routed.kind === "review" && !row.review_patch) return false;
+        } else {
+          const envelope = source(row);
+          await lockSlackRuleChat(tx,envelope);
+          if (!await currentRulePolicy(tx,envelope,parseRulePolicy(row.policy))) return false;
+        }
         const jobDb=tx as unknown as Transaction<Database>;
         return Boolean(await jobDb.updateTable("slack_mention_summary_jobs").set({ inference_at: now() }).where("id", "=", row.id).where("inference_at", "is", null).where("state", "in", ["processing", "accepted"]).where("expires_at",">",now()).returning("id").executeTakeFirst());
       });
     },
     async prompt(identity: SummaryIdentity, signal: AbortSignal) {
       const row = await forRun(identity);
-      if (!row || !await current(source(row), signal,parseRulePolicy(row.policy)))
+      if (!row || !await currentJob(row,signal))
         throw new SummaryDenied();
+      if (row.routed) return routedReference(row);
       const envelope = source(row);
       const thread = await options.readThread(access(envelope,parseRulePolicy(row.policy)), signal);
       if (!thread || !await current(envelope, signal,parseRulePolicy(row.policy)) || thread.channel && thread.channel.id !== envelope.event.channelId)

@@ -35,6 +35,10 @@ export function registerOwnerSlack(options:{
         const allowed=await authorizePublication(input);
         return !stopping && allowed;
       },
+      receiveRoutedSlack: options.summaries?.receiveRoutedSlack ? async (event, signal) => {
+        if (stopping) throw new Error("SlackServiceUnavailable");
+        return options.summaries!.receiveRoutedSlack(event, signal);
+      } : undefined,
       receiveContext: context ? async envelope => !stopping && await context.receive(envelope) : undefined,
       async receive(envelope){
         const service=envelope.event.kind==="direct_message"?options.personal:options.company;

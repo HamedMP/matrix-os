@@ -17,7 +17,7 @@ export async function retireRevokedSlackJobs(db: Kysely<OwnerBotDatabase>, owner
             envelope: unknown;
             accepted_kind: string | null;
             accepted_id: string | null;
-        }> `SELECT id,request_id,policy,envelope,accepted_kind,accepted_id FROM slack_mention_summary_jobs WHERE owner_id=${ownerId} AND chat_id=${chatId} AND state IN('pending','processing','accepted') LIMIT 100 FOR UPDATE`.execute(tx);
+        }> `SELECT id,request_id,policy,envelope,accepted_kind,accepted_id FROM slack_mention_summary_jobs WHERE owner_id=${ownerId} AND chat_id=${chatId} AND state IN('pending','processing','accepted') AND to_jsonb(slack_mention_summary_jobs)->>'routed' IS NULL LIMIT 100 FOR UPDATE`.execute(tx);
         const result: string[] = [];
         for (const job of jobs.rows) {
             const envelope = SlackThreadContextEnvelopeSchema.parse(typeof job.envelope === "string" ? JSON.parse(job.envelope) : job.envelope);

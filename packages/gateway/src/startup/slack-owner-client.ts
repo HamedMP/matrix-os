@@ -37,11 +37,14 @@ export function createSlackOwnerClient(options: SlackPlatformConnection & { fetc
       try {
         const response = await rpc("/internal/slack/agent-channels", channelId ? { channelId } : {}, signal, 7500);
         const parsed = z.strictObject({ channels: z.array(SlackAgentChannelSchema).max(2) }).safeParse(response.body);
-        return response.status === 200 && parsed.success ? parsed.data.channels.filter(c => c.ownerId === options.devTarget!.ownerId
+        if (response.status !== 200 || !parsed.success) throw new Error("Slack channel verification unavailable");
+        return parsed.data.channels.filter(c => c.ownerId === options.devTarget!.ownerId
           && c.runtimeId === options.devTarget!.machineId && c.appId === options.devTarget!.appId
           && !(c.teamId === options.devTarget!.teamId && c.channelId === options.devTarget!.channelId)
-          && (!channelId || c.channelId === channelId)) : [];
+          && (!channelId || c.channelId === channelId));
       } catch (error) {
+        // A failed authority lookup is retryable. A valid empty response means the exact channel is unavailable.
+        if (channelId) throw error;
         console.warn("[slack-owner] Agent channel verification unavailable", error instanceof Error ? error.name : "UnknownError");
         return [];
       }
