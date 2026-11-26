@@ -8,7 +8,7 @@ import { DesktopAppSiteButton } from "../../desktop/src/renderer/src/features/ap
 import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering";
 
 const fixture = vi.hoisted(() => {
-  const client = { getConfig: vi.fn(async () => ({ data: {}, forms: [] })), get: vi.fn(async () => null), submissions: vi.fn(async () => ({ submissions: [] as unknown[], nextCursor: null })), slugAvailability: vi.fn(async () => ({ status: "available", suggestions: [] })) };
+  const client = { getConfig: vi.fn(async () => ({ data: {}, forms: [] })), get: vi.fn(async () => null), submissions: vi.fn(async () => ({ submissions: [] as unknown[], nextCursor: null })), slugAvailability: vi.fn(async () => ({ status: "available", suggestions: [] })), deploy: vi.fn(), update: vi.fn(), unpublish: vi.fn() };
   const connection = { api: { forRuntime: () => null } as object | null, runtimeSlot: "primary", authGeneration: 0, email: "owner@example.com" as string | null, userId: "user_owner" as string | null };
   return { client, connection, acquire: vi.fn(), release: vi.fn() };
 });
@@ -30,9 +30,9 @@ afterEach(cleanup);
 
 const rsvpForm = { id: "rsvp", title: "RSVP", fields: { email: { type: "email", required: true } } };
 const savedResponse = { id: "55555555-5555-4555-8555-555555555555", siteId: "11111111-1111-4111-8111-111111111111", formId: "rsvp", fields: { email: "ada@example.com" }, createdAt: "2026-11-01T10:00:00.000Z" };
-function siteRecord({ status, forms }: { status: "published" | "unpublished"; forms: unknown[] }) {
+function siteRecord({ status, forms, appSlug = "launch" }: { status: "published" | "unpublished"; forms: unknown[]; appSlug?: string }) {
   const siteId = "11111111-1111-4111-8111-111111111111";
-  return { id: siteId, appSlug: "launch", title: "Launch", description: "", slug: null, url: `https://matrix.page/${siteId}`, revision: 4, status, accessMode: "public", activeVersion: null, versions: [], config: { data: {}, forms } };
+  return { id: siteId, appSlug, title: "Launch", description: "", slug: null, url: `https://matrix.page/${siteId}`, revision: 4, status, accessMode: "public", activeVersion: null, versions: [], config: { data: {}, forms } };
 }
 
 function ContainedTrigger({
@@ -128,6 +128,56 @@ for (const [surface, Component] of [["Web", AppSiteButton], ["Electron", Desktop
         expect(fixture.release).toHaveBeenCalledTimes(2);
       }
     });
+    // Default apps (Calculator, Notes, games) never start sharing, but an owner who
+    // published one earlier must still be able to take the live link down.
+    it("shows no Share on a default app that is not shared", async () => {
+      // Fault: a default app offering Publish like an app the owner built.
+      render(<ContainedTrigger Component={Component} appSlug="calculator" />);
+      await waitFor(() => expect(fixture.client.get).toHaveBeenCalledWith("calculator", expect.any(AbortSignal)));
+      await act(async () => {});
+      expect(screen.queryByRole("button", { name: "Share" })).toBeNull();
+    });
+
+    it("lets the owner only unpublish a default app that is already live", async () => {
+      // Fault: hiding Share on default apps strands an earlier Calculator link with no way to unpublish it.
+      const live = siteRecord({ status: "published", forms: [], appSlug: "calculator" });
+      fixture.client.get.mockResolvedValue(live as never);
+      fixture.client.unpublish.mockImplementation(async () => {
+        fixture.client.get.mockResolvedValue({ ...live, status: "unpublished", revision: 5 } as never);
+        return { ...live, status: "unpublished", revision: 5 };
+      });
+      render(<ContainedTrigger Component={Component} appSlug="calculator" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Live" }));
+      const dialog = await screen.findByRole("dialog", { name: "Share app" });
+      await within(dialog).findByText(/^Live\b/);
+      expect(within(dialog).getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Public"]);
+      expect(within(dialog).queryByRole("button", { name: /Update/ })).toBeNull();
+      expect(within(dialog).queryByRole("button", { name: "Edit details" })).toBeNull();
+      fireEvent.click(within(dialog).getByRole("button", { name: "Unpublish" }));
+      await waitFor(() => expect(fixture.client.unpublish).toHaveBeenCalledWith("calculator", 4, expect.any(AbortSignal)));
+      // Nothing is shared any more, so the default app loses its Share entry.
+      await waitFor(() => expect(screen.queryByRole("button", { name: /Live|Share/ })).toBeNull());
+      expect(fixture.client.deploy).not.toHaveBeenCalled();
+      if (surface === "Electron") await waitFor(() => expect(fixture.release.mock.calls.length).toBe(fixture.acquire.mock.calls.length));
+    });
+
+    it("keeps Share and Retry on a default app whose sharing state could not be read", async () => {
+      // Fault: a failed first read hides Share on a live Calculator, leaving no Retry and no Unpublish.
+      const live = siteRecord({ status: "published", forms: [], appSlug: "calculator" });
+      // Fails the first read and the re-read on open; recovers for Retry.
+      const offline = Object.assign(new Error("offline"), { status: 503 });
+      fixture.client.get.mockRejectedValueOnce(offline).mockRejectedValueOnce(offline);
+      fixture.client.get.mockResolvedValue(live as never);
+      render(<ContainedTrigger Component={Component} appSlug="calculator" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Share" }));
+      const dialog = await screen.findByRole("dialog", { name: "Share app" });
+      expect(within(dialog).queryByRole("button", { name: /^Publish$/ })).toBeNull();
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Retry" }));
+      // The popover stays open through the retry and lands on the live publication.
+      expect(await within(screen.getByRole("dialog", { name: "Share app" })).findByRole("button", { name: "Unpublish" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Live" })).toBeTruthy();
+    });
+
     it("resets the visible app identity and releases the Electron overlay on unmount", async () => {
       const view = render(<ContainedTrigger Component={Component} />);
       fireEvent.click(screen.getByRole("button", { name: "Share" }));

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SharePanel, ShareTriggerLabel, useShareController, useShareOrganization, type ShareOrganization, type ShareSiteClient } from "../../packages/ui/src/share/index";
 import { HANDOFF_POLL_MS } from "../../packages/ui/src/share/use-collaborative-handoff";
@@ -79,12 +79,13 @@ const site: ShareSiteClient = {
   slugAvailability: vi.fn(async () => ({ status: "available" as const, suggestions: [] })),
 };
 
-function Host({ organizations, api, fileApi, startChat = vi.fn(async () => true) }: {
+function Host({ organizations, api, fileApi, startChat = vi.fn(async () => true), allowNewSharing }: {
   organizations: ShareOrganization[]; api: ReturnType<typeof collaboration>; fileApi: ReturnType<typeof files>; startChat?: (prompt: string) => Promise<boolean>;
+  allowNewSharing?: boolean;
 }) {
-  const controller = useShareController({ appSlug: "sales-crm", appName: "Sales CRM", client: site, emailInvites: null });
+  const controller = useShareController({ appSlug: "sales-crm", appName: "Sales CRM", client: site, emailInvites: null, allowNewSharing });
   const organization = useShareOrganization({
-    appSlug: "sales-crm", appName: "Sales CRM", organizations, preferredOrganizationId: ORG,
+    appSlug: "sales-crm", appName: "Sales CRM", organizations, preferredOrganizationId: ORG, allowNewSharing,
     collaborationApi: api, fileApi, startChat, openChat: vi.fn(),
     orgLink: (value, hints) => `https://app.matrix-os.com/open/shared-app/${value.scopeId}?app=${hints.app}`,
   });
@@ -141,6 +142,30 @@ describe("Organization tab", () => {
     fireEvent.click(stop);
     await waitFor(() => expect(api.delete).toHaveBeenCalled());
     expect(await screen.findByRole("button", { name: "Share with Finna" })).toBeTruthy();
+  });
+
+  it("keeps Stop sharing for a default app already shared with an org, and never offers a new share", async () => {
+    // Fault: hiding Share on default apps strands an org share of Notes with no way to stop it.
+    const api = collaboration([], { initialShare: share() });
+    render(<Host organizations={[finna]} api={api} fileApi={files()} allowNewSharing={false} />);
+    await openOrganizationTab();
+    const stop = await screen.findByRole("button", { name: "Stop sharing with Finna" });
+    expect(screen.getByTestId("trigger").textContent).toBe("Shared");
+    fireEvent.click(stop);
+    await waitFor(() => expect(api.delete).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole("tab", { name: /Organization/ })).toBeNull());
+    expect(screen.queryByRole("button", { name: "Share with Finna" })).toBeNull();
+    expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything());
+  });
+
+  it("hides the Organization tab for a default app that is not shared", async () => {
+    // Fault: a default app offering a new org share like an app the owner built.
+    const api = collaboration([]);
+    render(<Host organizations={[finna]} api={api} fileApi={files()} allowNewSharing={false} />);
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringMatching(/\/share$/)));
+    await act(async () => {});
+    expect(screen.queryByRole("tab", { name: /Organization/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Share with Finna" })).toBeNull();
   });
 
   it("pins the org picker as a static summary once shared", async () => {
@@ -276,6 +301,19 @@ describe("Organization tab review fixes", () => {
     expect(await screen.findByRole("button", { name: "Share with Finna" })).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/readiness/check", expect.anything());
+  });
+
+  it("never applies a setup that finished for a default app, so no new org share starts", async () => {
+    // Fault: a Make-collaborative setup started before default apps went stop-only finishes and
+    // creates a brand-new org share for Notes/Calculator through the automatic completion path.
+    const api = collaboration(["ready"]);
+    const fileApi = files(completedRecord);
+    render(<Host organizations={[finna]} api={api} fileApi={fileApi} allowNewSharing={false} />);
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(expect.stringMatching(/\/share$/)));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/readiness/check", expect.anything());
+    expect(api.post).not.toHaveBeenCalledWith("/api/collaboration/apps/sales-crm/share", expect.anything());
+    expect(fileApi.current()).toMatchObject({ state: "completed" });
   });
 
   it("retries a failed share read so a finished setup still applies", async () => {

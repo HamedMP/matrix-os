@@ -64,6 +64,7 @@ export default function EmbedHost({
   const [retryRevision, setRetryRevision] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "host-offline" | "access-ended" | "needs-recheck" | "failed">("loading");
   const [snapshotDataUrl, setSnapshotDataUrl] = useState<string | null>(null);
+  // Default apps keep the Share host: the button shows only while one is still shared.
   const publishingChrome = useMemo(() => slug && visible && !product ? ({
     rightActions: (
       <DesktopAppSiteButton

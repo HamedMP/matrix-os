@@ -1447,6 +1447,8 @@ export async function startStubGateway(options: StubGatewayOptions = {}): Promis
         apps: [
           { slug: "notes", name: "Notes", category: "productivity" },
           { slug: "pomodoro", name: "Pomodoro", category: "productivity" },
+          // An app the owner built: Matrix default apps cannot start sharing.
+          { slug: "team-tracker", name: "Team Tracker", category: "productivity" },
         ],
       });
       return;

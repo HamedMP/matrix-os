@@ -42,8 +42,13 @@ const initialView = (): ShareView => ({
  * mounted so the trigger label (Share / Live) and the lazily mounted popover
  * read the same server truth without a second fetch or a child-to-parent push.
  */
-export function useShareController({ appSlug, appName, client, emailInvites }: {
+export function useShareController({ appSlug, appName, client, emailInvites, allowNewSharing = true }: {
   appSlug: string; appName: string; client: ShareSiteClient | null; emailInvites: EmailInvitationAdapter | null;
+  /**
+   * False for Matrix default apps: the owner may only stop existing sharing
+   * (unpublish, stop private sharing, revoke invites), never start or extend it.
+   */
+  allowNewSharing?: boolean;
 }) {
   const [view, setView] = useState(initialView);
   const [reload, setReload] = useState(0);
@@ -234,7 +239,7 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
   }
 
   function request(next: ShareModeRequest): Promise<boolean> {
-    if (view.loading || view.loadFailed || (next.to === "private_email" && !view.emailAvailable)) return Promise.resolve(false);
+    if (!allowNewSharing || view.loading || view.loadFailed || (next.to === "private_email" && !view.emailAvailable)) return Promise.resolve(false);
     const target: PageModeTarget = next.to;
     if (needsModeSwitchConfirm(pageMode, target)) { patch({ pendingSwitch: next, error: null }); return Promise.resolve(false); }
     const operation: ShareOperation = next.to === "private_email" ? "invite" : "publish";
@@ -243,7 +248,7 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
 
   async function confirmSwitch(): Promise<boolean> {
     const pending = view.pendingSwitch;
-    if (!pending) return false;
+    if (!pending || !allowNewSharing) return false;
     const ok = await run("switch", (signal) => apply(pending, signal));
     if (ok) patch({ pendingSwitch: null });
     return ok;
@@ -252,20 +257,21 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
   return {
     ...view,
     pageMode,
+    allowNewSharing,
     /** The preview fake is always on; a live adapter waits for the server capability. */
     emailInvitesAvailable: view.emailAvailable || emailInvites?.kind === "preview",
     retry: () => { setCurrentView(initialView()); setReload((value) => value + 1); },
     /** Silent re-read (e.g. when the popover opens) so mutations use the current revision. */
     refresh: () => { if (!busy.current) setReload((value) => value + 1); },
     /** Redeploys the app's current files, keeping access mode and details. */
-    publishUpdate: () => run("update", async (signal) => {
+    publishUpdate: () => !allowNewSharing ? Promise.resolve(false) : run("update", async (signal) => {
       const site = view.site;
       if (!client || !site || site.status !== "published") return;
       const reviewedConfig = await client.getConfig(appSlug, signal);
       patch({ site: await client.deploy(appSlug, { title: site.title, description: site.description, slug: site.slug, accessMode: site.accessMode, baseRevision: site.revision, reviewedConfig }, signal) });
     }),
     /** Saves friendly path, title and description of a published app. */
-    saveDetails: (metadata: PublicMetadata) => run("save", async (signal) => {
+    saveDetails: (metadata: PublicMetadata) => !allowNewSharing ? Promise.resolve(false) : run("save", async (signal) => {
       const site = view.site;
       if (!client || !site || site.status !== "published") return;
       try {
@@ -308,7 +314,7 @@ export function useShareController({ appSlug, appName, client, emailInvites }: {
       syncEmailRevision(result.siteRevision);
       syncEmailPage(await emailInvites.list(appSlug, signal), result.siteRevision);
     }),
-    resendInvite: (invitation: EmailInvitationSummary) => run("invite_change", async (signal) => {
+    resendInvite: (invitation: EmailInvitationSummary) => !allowNewSharing ? Promise.resolve(false) : run("invite_change", async (signal) => {
       if (!emailInvites || !view.emailAvailable) return;
       const result = await emailInvites.resend(appSlug, invitation.id, { baseRevision: view.emailRevision, invitationRevision: invitation.revision }, signal);
       syncEmailRevision(result.siteRevision);

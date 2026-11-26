@@ -56,8 +56,25 @@ export function modeSwitchCopy(current: ActivePageMode, target: PageModeTarget, 
  * The Private tab exists for email invites, invite-only sites, and legacy
  * one-time-link sites, whose owner still needs a way to stop sharing.
  */
-export function privateTabVisible(pageMode: PageMode, emailInvitesAvailable: boolean): boolean {
-  return emailInvitesAvailable || pageMode === "private_link" || pageMode === "private_email";
+export function privateTabVisible(pageMode: PageMode, emailInvitesAvailable: boolean, allowNewSharing = true): boolean {
+  return (allowNewSharing && emailInvitesAvailable) || pageMode === "private_link" || pageMode === "private_email";
+}
+
+/** The Public tab offers Publish, so a stop-only app shows it only while it is live. */
+export function publicTabVisible(pageMode: PageMode, allowNewSharing = true): boolean {
+  return allowNewSharing || pageMode === "public";
+}
+
+/**
+ * Whether an app window shows Share. Matrix default apps never start sharing
+ * (`allowNewSharing` false) but keep Share while something is still shared, so
+ * the owner can stop it. While the first read loads `pageMode` is `none` and
+ * `orgShared` false, so a default app never flashes a Share button. A failed
+ * read keeps Share (with Retry) because the app may still be live, and an open
+ * popover stays up while that retry loads.
+ */
+export function shareEntryVisible(allowNewSharing: boolean, share: { pageMode: PageMode; loading: boolean; loadFailed: boolean }, orgShared: boolean, open: boolean): boolean {
+  return allowNewSharing || share.pageMode !== "none" || orgShared || share.loadFailed || (open && share.loading);
 }
 
 /** Opens on the tab whose sharing is on; otherwise Public. */

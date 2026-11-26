@@ -42,8 +42,8 @@ vi.mock("../../shell/src/components/system-activity/ActivityMonitorApp.js", () =
 
 const appWindow: AppWindow = {
   id: "win-app",
-  title: "Notes",
-  path: "apps/notes",
+  title: "Team Tracker",
+  path: "apps/team-tracker",
   x: 20,
   y: 30,
   width: 640,
@@ -70,10 +70,10 @@ describe("CanvasWindow design-system title bars", () => {
 
   // The useThemeStyle hook mirrors data-theme-style via an effect + a
   // MutationObserver whose callbacks are microtasks; flush both inside act.
-  async function renderWindow() {
+  async function renderWindow(win: AppWindow = appWindow) {
     let result!: ReturnType<typeof render>;
     await act(async () => {
-      result = render(<CanvasWindow win={appWindow} />);
+      result = render(<CanvasWindow win={win} />);
       await Promise.resolve();
     });
     return result;
@@ -92,8 +92,19 @@ describe("CanvasWindow design-system title bars", () => {
     const titleBar = container.querySelector<HTMLElement>('[data-canvas-title-bar]')!;
     expect(within(titleBar).getByRole("button", { name: "Publish app" })).toBeTruthy();
     expect(container.querySelector('[data-testid="app-publishing-bar"]')).toBeNull();
-    expect(publishingProps.current?.appSlug).toBe("notes");
+    expect(publishingProps.current?.appSlug).toBe("team-tracker");
     expect(publishingProps.current?.portalContainer).toBe(container.firstElementChild);
+  });
+
+  it("mounts the Share host on a Matrix default app so a live link can still be unpublished", async () => {
+    // Fault: dropping the Share host for default apps strands an earlier Notes link with no Unpublish.
+    // The Share button itself decides to show only while something is shared (tests/ui/app-site-button.test.tsx).
+    const notes: AppWindow = { ...appWindow, id: "win-notes", title: "Notes", path: "apps/notes" };
+    useWindowManager.setState({ windows: [notes], focusedWindowId: notes.id });
+
+    await renderWindow(notes);
+
+    expect(publishingProps.current?.appSlug).toBe("notes");
   });
 
   it("does not leave an invisible publishing control clickable when canvas titles are hidden", async () => {
