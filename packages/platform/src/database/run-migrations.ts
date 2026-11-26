@@ -9,6 +9,7 @@ import { PLATFORM_SCHEMA_REVISION } from './migration-revision.js';
 import { assertFundedConservativeFence, migrateFundedConservativeFence, FUNDED_CONSERVATIVE_FENCE_SCOPE } from "./funded-conservative-fence.js";
 import { FUNDED_CONSERVATIVE_FENCE_REVISION } from "./funded-conservative-fence-revision.js";
 import { migratePlatformSchema } from './migrate.js';
+import { migrateOwnedMachines, OWNED_MACHINES_SCHEMA_REVISION } from '../owned-machines/migration.js';
 import { migrateFundedProbeCache } from "./funded-probe-cache-migration.js";
 import { FUNDED_PROBE_CACHE_REVISION } from "./funded-probe-cache-revision.js";
 import { migrateAiFundedPricing } from './funded-pricing-review-migration.js';
@@ -19,6 +20,10 @@ import { WHATSAPP_SCHEMA_REVISION } from './whatsapp-migration-revision.js';
 export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>): Promise<void> {
   await runPlatformMigration(db, migratePlatformSchema, {
     revision: PLATFORM_SCHEMA_REVISION, deadlockAttempts: 12,
+  });
+  // Spec 2707: owned machines widen user_machines checks, so they follow core.
+  await runPlatformMigration(db, migrateOwnedMachines, {
+    scope: 'owned-machines', revision: OWNED_MACHINES_SCHEMA_REVISION, deadlockAttempts: 12,
   });
   await runPlatformMigration(db, migrateFundedConservativeFence, {
     scope: FUNDED_CONSERVATIVE_FENCE_SCOPE, revision: FUNDED_CONSERVATIVE_FENCE_REVISION, deadlockAttempts: 12,

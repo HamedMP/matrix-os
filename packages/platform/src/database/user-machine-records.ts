@@ -18,7 +18,7 @@ import { parseStringArray } from './json.js';
 
 /** Extracted verbatim from packages/platform/src/db.ts (S01 / T007): user machine and provider deletion row mappers. */
 
-export const UserMachineProvisioningClassSchema = z.enum(['customer', 'preview', 'private-preview']);
+export const UserMachineProvisioningClassSchema = z.enum(['customer', 'preview', 'private-preview', 'owned']);
 
 export type UserMachineProvisioningClass = z.infer<typeof UserMachineProvisioningClassSchema>;
 

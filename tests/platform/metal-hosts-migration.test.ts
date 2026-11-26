@@ -4,6 +4,7 @@ import pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createPlatformDb, type PlatformDB } from '../../packages/platform/src/db.js';
 import { migratePlatformSchema } from '../../packages/platform/src/database/migrate.js';
+import { migrateOwnedMachines } from '../../packages/platform/src/owned-machines/migration.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
 const databaseUrl = process.env.MATRIX_TEST_POSTGRES_URL;
@@ -129,7 +130,8 @@ for (const [label, target] of targets) {
       expect(fresh.constraints).toEqual(expect.arrayContaining([
         expect.objectContaining({
           name: 'user_machines_substrate_check',
-          definition: "CHECK ((substrate = ANY (ARRAY['vps'::text, 'container'::text, 'metal'::text])))",
+          // The owned-machines scope (spec 2707) widens this check after the core metal step.
+          definition: "CHECK ((substrate = ANY (ARRAY['container'::text, 'metal'::text, 'vps'::text, 'owned'::text]))) NOT VALID",
         }),
         expect.objectContaining({
           name: 'user_machines_metal_host_check',
@@ -145,10 +147,12 @@ for (const [label, target] of targets) {
       await migratePlatformSchema(db.executor);
       expect(await captureMetalSchema(db)).toEqual(fresh);
 
-      // A database migrated before the metal kind existed converges on the fresh shape.
+      // A database migrated before the metal kind existed converges on the fresh shape once
+      // startup runs the core steps and then the owned-machines scope (spec 2707).
       await downgradeToPreMetal(db);
       await migratePlatformSchema(db.executor);
       await migratePlatformSchema(db.executor);
+      await migrateOwnedMachines(db.executor);
       expect(await captureMetalSchema(db)).toEqual(fresh);
     });
 

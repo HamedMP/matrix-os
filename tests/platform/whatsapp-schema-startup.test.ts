@@ -13,6 +13,7 @@ import { FUNDED_PROBE_CACHE_REVISION } from '../../packages/platform/src/databas
 import { FUNDED_PRICING_REVIEW_REVISION } from '../../packages/platform/src/database/funded-pricing-review-revision.js';
 import { WHATSAPP_SCHEMA_REVISION } from '../../packages/platform/src/database/whatsapp-migration-revision.js';
 import { GOOGLE_TRACKING_REVISION } from '../../packages/platform/src/billing/google-tracking-revision.js';
+import { OWNED_MACHINES_SCHEMA_REVISION } from '../../packages/platform/src/owned-machines/migration.js';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
@@ -89,6 +90,7 @@ describe('WhatsApp schema startup', () => {
         { scope: 'funded-conservative-fence', ...FUNDED_CONSERVATIVE_FENCE_REVISION },
         { scope: 'funded-pricing-review', ...FUNDED_PRICING_REVIEW_REVISION },
         { scope: 'funded-probe-cache', ...FUNDED_PROBE_CACHE_REVISION },
+        { scope: 'owned-machines', ...OWNED_MACHINES_SCHEMA_REVISION },
         { scope: 'preview-pairs', generation: 5, fingerprint: 'collaboration-preview-pair-publisher-v5' },
         { scope: 'sites', ...SITES_SCHEMA_REVISION },
         { scope: 'whatsapp', ...WHATSAPP_SCHEMA_REVISION },

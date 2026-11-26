@@ -318,6 +318,8 @@ export async function listRunningUserMachines(
     .selectAll()
     .where('status', '=', 'running')
     .where('deleted_at', 'is', null);
+  // Spec 2707: owned machines are not Hetzner fleet members; fleet jobs opt in explicitly.
+  if (filters.provisioningClass !== 'owned') query = query.where('substrate', '<>', 'owned');
   if (filters.handle !== undefined) {
     query = query.where('handle', '=', filters.handle);
   }
@@ -353,6 +355,7 @@ export async function* iterateRunningUserMachinePages(
   while (true) {
     let query = db.executor.selectFrom('user_machines').selectAll()
       .where('status', '=', 'running').where('deleted_at', 'is', null);
+    if (filters.provisioningClass !== 'owned') query = query.where('substrate', '<>', 'owned');
     if (filters.handle !== undefined) query = query.where('handle', '=', filters.handle);
     if (filters.provisioningClass !== undefined) {
       query = query.where('provisioning_class', '=', filters.provisioningClass);
@@ -379,6 +382,7 @@ export async function listAllUserMachines(
     .selectAll()
     .where('status', '!=', 'deleted')
     .where('deleted_at', 'is', null)
+    .where('substrate', '<>', 'owned')
     .orderBy('last_seen_at', 'desc')
     .limit(limit)
     .execute();
@@ -399,7 +403,8 @@ export async function listStaleUserMachines(
     .selectAll()
     .where('status', 'in', statuses)
     .where('provisioned_at', '<', olderThanIso)
-    .where('deleted_at', 'is', null);
+    .where('deleted_at', 'is', null)
+    .where('substrate', '<>', 'owned');
   if (options.ordinaryOnly) query = query.where(ordinaryMachinePredicate);
   if (options.substrate) query = query.where('substrate', '=', options.substrate);
   const rows = await query.orderBy('provisioned_at')
