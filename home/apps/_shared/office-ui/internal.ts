@@ -19,11 +19,55 @@ const FOCUSABLE = [
   "[contenteditable='true']",
 ].join(",");
 
-/** Focusable descendants in DOM order, excluding hidden and inert subtrees. */
+/**
+ * Focusable descendants in DOM order, including ones outside the Tab order
+ * (tabIndex -1, as roving items are), for arrow-key navigation. Excludes
+ * disabled controls and hidden or inert subtrees.
+ */
 export function focusableWithin(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-    (el) => !el.hasAttribute("inert") && !el.closest("[inert]") && el.getAttribute("aria-hidden") !== "true",
+    (el) =>
+      !el.closest("[inert]") &&
+      !el.closest("[hidden]") &&
+      el.getAttribute("aria-hidden") !== "true" &&
+      !el.matches(":disabled"),
   );
+}
+
+/** True when an explicit tabindex attribute takes the element out of the Tab order. */
+function outOfTabOrder(el: HTMLElement): boolean {
+  const value = el.getAttribute("tabindex");
+  if (value === null) return false;
+  const parsed = Number.parseInt(value, 10);
+  return !Number.isNaN(parsed) && parsed < 0;
+}
+
+/** True when the element or an ancestor up to root is not rendered. */
+function notRendered(el: HTMLElement, root: HTMLElement): boolean {
+  if (getComputedStyle(el).visibility === "hidden") return true;
+  for (let node: HTMLElement | null = el; node && node !== root; node = node.parentElement) {
+    if (getComputedStyle(node).display === "none") return true;
+  }
+  return false;
+}
+
+/**
+ * The elements Tab actually stops on, in DOM order: focusable descendants that
+ * are in the Tab order and rendered. Use this for Tab cycles; focusableWithin
+ * stays the list for arrow keys.
+ */
+export function tabStopsWithin(root: HTMLElement): HTMLElement[] {
+  return focusableWithin(root).filter((el) => !outOfTabOrder(el) && !notRendered(el, root));
+}
+
+/** True when node comes before ref in DOM order. */
+function isBefore(node: Node, ref: Node): boolean {
+  return Boolean(ref.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_PRECEDING);
+}
+
+/** True when node comes after ref in DOM order. */
+function isAfter(node: Node, ref: Node): boolean {
+  return Boolean(ref.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
 }
 
 export const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
@@ -107,7 +151,7 @@ export function useFocusTrap(
     const container = containerRef.current;
     if (!container) return undefined;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const initial = initialFocusRef?.current ?? focusableWithin(container)[0] ?? container;
+    const initial = initialFocusRef?.current ?? tabStopsWithin(container)[0] ?? focusableWithin(container)[0] ?? container;
     initial.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -120,21 +164,22 @@ export function useFocusTrap(
         onEscape.current();
         return;
       }
-      const items = focusableWithin(container);
-      if (items.length === 0) {
+      // Wrap only where the browser would leave the container: no tab stop
+      // past the focused element in the Tab direction. A focused element
+      // outside the Tab order (a roving item, the panel itself) still counts
+      // by its place in the DOM, as the browser counts it.
+      const stops = tabStopsWithin(container);
+      if (stops.length === 0) {
         event.preventDefault();
         container.focus();
         return;
       }
-      const first = items[0];
-      const last = items[items.length - 1];
       const current = document.activeElement;
-      if (event.shiftKey && (current === first || !container.contains(current))) {
+      const inside = current !== null && current !== container && container.contains(current);
+      const hasNext = inside && stops.some((stop) => stop !== current && (event.shiftKey ? isBefore(stop, current) : isAfter(stop, current)));
+      if (!hasNext) {
         event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (current === last || !container.contains(current))) {
-        event.preventDefault();
-        first.focus();
+        (event.shiftKey ? stops[stops.length - 1] : stops[0]).focus();
       }
     };
     const trap: ActiveTrap = { container, handlesEscape: () => Boolean(onEscape.current) };

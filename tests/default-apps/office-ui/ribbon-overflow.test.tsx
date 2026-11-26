@@ -134,6 +134,34 @@ describe("Ribbon overflow", () => {
     expect(document.activeElement).toBe(overflow);
   });
 
+  it("keeps Tab on the group's one tab stop inside its popover, so Escape still closes it", () => {
+    renderRibbon();
+    resize(480);
+    const overflow = screen.getByRole("button", { name: "Styles" });
+    fireEvent.click(overflow);
+    const popover = screen.getByRole("dialog", { name: "Styles" });
+    const heading = within(popover).getByRole("button", { name: "Heading" });
+    const title = within(popover).getByRole("button", { name: "Title" });
+    expect(document.activeElement).toBe(heading);
+    expect(title.tabIndex).toBe(-1);
+
+    // The browser would skip Title (tabIndex -1) and leave the popover, so the trap must wrap.
+    expect(fireEvent.keyDown(heading, { key: "Tab" })).toBe(false);
+    expect(document.activeElement).toBe(heading);
+    expect(fireEvent.keyDown(heading, { key: "Tab", shiftKey: true })).toBe(false);
+    expect(document.activeElement).toBe(heading);
+
+    fireEvent.keyDown(heading, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(title);
+    expect(heading.tabIndex).toBe(-1);
+    expect(fireEvent.keyDown(title, { key: "Tab" })).toBe(false);
+    expect(document.activeElement).toBe(title);
+
+    fireEvent.keyDown(title, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Styles" })).toBeNull();
+    expect(document.activeElement).toBe(overflow);
+  });
+
   it("closes the group popover after a command, and keeps it open while a list or a menu is being used", () => {
     const onRun = vi.fn();
     const onSize = vi.fn();

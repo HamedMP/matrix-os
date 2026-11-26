@@ -69,6 +69,54 @@ describe("Dialog", () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  it("cycles Tab through real tab stops only, skipping tabIndex -1, hidden, disabled and inert controls", () => {
+    const onClose = vi.fn();
+    render(
+      <Dialog open onClose={onClose} title="Insert link" showClose={false}>
+        <button type="button" tabIndex={-1}>Leading roving item</button>
+        <button type="button">First stop</button>
+        <button type="button">Last stop</button>
+        <button type="button" tabIndex={-1}>Trailing roving item</button>
+        <div hidden><button type="button">Hidden item</button></div>
+        <button type="button" style={{ display: "none" }}>Undisplayed item</button>
+        <fieldset disabled><button type="button">Fieldset item</button></fieldset>
+        <div inert><button type="button">Inert item</button></div>
+      </Dialog>,
+    );
+    const first = screen.getByRole("button", { name: "First stop" });
+    const last = screen.getByRole("button", { name: "Last stop" });
+    expect(document.activeElement).toBe(first);
+
+    last.focus();
+    expect(fireEvent.keyDown(last, { key: "Tab" })).toBe(false);
+    expect(document.activeElement).toBe(first);
+    expect(fireEvent.keyDown(first, { key: "Tab", shiftKey: true })).toBe(false);
+    expect(document.activeElement).toBe(last);
+
+    // A control that is focusable but not a tab stop: Tab moves on to the next stop in the dialog.
+    const trailing = screen.getByRole("button", { name: "Trailing roving item" });
+    trailing.focus();
+    expect(fireEvent.keyDown(trailing, { key: "Tab" })).toBe(false);
+    expect(document.activeElement).toBe(first);
+    const leading = screen.getByRole("button", { name: "Leading roving item" });
+    leading.focus();
+    expect(fireEvent.keyDown(leading, { key: "Tab", shiftKey: true })).toBe(false);
+    expect(document.activeElement).toBe(last);
+
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts on the first tab stop rather than an earlier control outside the Tab order", () => {
+    render(
+      <Dialog open onClose={vi.fn()} title="Choose a tab" showClose={false}>
+        <button type="button" tabIndex={-1}>Unselected tab</button>
+        <button type="button">Selected tab</button>
+      </Dialog>,
+    );
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Selected tab" }));
+  });
+
   it("lets a control inside consume Escape before the dialog closes", () => {
     const onClose = vi.fn();
     function Filter() {
