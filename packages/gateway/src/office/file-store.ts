@@ -158,7 +158,11 @@ export class OfficeFileStore {
       const temp = join(parent, `${OFFICE_TEMP_PREFIX}${randomUUID()}.tmp`);
       let published = false;
       try {
-        const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o644);
+        // A replace starts the temp file private and gives it the target's
+        // permissions only once the bytes are written, so a reader the target
+        // shuts out cannot open the temp copy in between. A new file is
+        // published as this inode, so its umask-limited mode is the final one.
+        const handle = await open(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, current ? 0o600 : 0o644);
         try {
           await handle.writeFile(bytes);
           if (current) await handle.chmod(Number(current.mode) & 0o7777);

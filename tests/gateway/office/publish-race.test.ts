@@ -1,4 +1,5 @@
-import { basename } from "node:path";
+import { chmod, stat } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OFFICE_TEMP_PREFIX } from "../../../packages/gateway/src/office/file-store";
 import { createOfficeHarness, json, type OfficeHarness } from "./helpers";
@@ -8,12 +9,21 @@ import { createOfficeHarness, json, type OfficeHarness } from "./helpers";
  * window in which a writer outside the gateway (the sync daemon) can replace
  * the target.
  */
-const race = vi.hoisted(() => ({ duringTempSync: null as null | (() => Promise<void>) }));
+const race = vi.hoisted(() => ({
+  duringTempSync: null as null | (() => Promise<void>),
+  /** Permission bits of each temp file right after its bytes were written. */
+  tempModesAfterWrite: [] as number[],
+}));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   const open = (async (...args: Parameters<typeof actual.open>) => {
     const handle = await actual.open(...args);
     if (!basename(String(args[0])).startsWith(OFFICE_TEMP_PREFIX)) return handle;
+    const writeFile = handle.writeFile.bind(handle);
+    handle.writeFile = (async (...writeArgs: Parameters<typeof handle.writeFile>) => {
+      await writeFile(...writeArgs);
+      race.tempModesAfterWrite.push(Number((await handle.stat()).mode) & 0o777);
+    }) as typeof handle.writeFile;
     const sync = handle.sync.bind(handle);
     handle.sync = async () => {
       const step = race.duringTempSync;
@@ -31,6 +41,7 @@ let h: OfficeHarness;
 beforeEach(async () => { h = await createOfficeHarness(); });
 afterEach(async () => {
   race.duringTempSync = null;
+  race.tempModesAfterWrite = [];
   await h.cleanup();
 });
 
@@ -73,5 +84,29 @@ describe("office saves racing a writer outside the gateway", () => {
       path, author: AGENT, edits: [{ op: "replaceText", blockId: "b3", find: "three", replace: "four" }],
     });
     expect(response.status).toBe(200);
+  });
+});
+
+describe("office saves of a private file", () => {
+  it("never leaves the edited bytes readable by other users while the temp file is written", async () => {
+    const path = await h.copyFixture("basic.docx");
+    await chmod(join(h.home, path), 0o600);
+    const response = await h.post("/documents/propose-edits", {
+      path, author: AGENT, edits: [{ op: "replaceText", blockId: "b3", find: "three", replace: "four" }],
+    });
+    expect(response.status).toBe(200);
+    expect(race.tempModesAfterWrite).toEqual([0o600]);
+    expect(Number((await stat(join(h.home, path))).mode) & 0o777).toBe(0o600);
+  });
+
+  it("keeps the permissions of a shared file after the save", async () => {
+    const path = await h.copyFixture("model.xlsx");
+    await chmod(join(h.home, path), 0o640);
+    const response = await h.post("/sheets/propose-edits", {
+      path, author: AGENT, label: "Edit", edits: [{ op: "setCell", sheet: "Summary", cell: "D1", value: 1 }],
+    });
+    expect(response.status).toBe(200);
+    expect(race.tempModesAfterWrite).toEqual([0o600]);
+    expect(Number((await stat(join(h.home, path))).mode) & 0o777).toBe(0o640);
   });
 });
