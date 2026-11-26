@@ -1,5 +1,5 @@
 import { hasOwnerHttpInput } from "./owner-http-input.js";
-import { assertPrivateRoutineRequest } from "./private-routine-authority.js";
+import { assertPrivateChatAdmission, hasNonPrivateChatScope } from "./private-routine-authority.js";
 import { createHash } from "node:crypto";
 import { verifyClaudeNativeRecoveryGeneration, type ClaudeNativeRecoveryAdmissionFence } from "./claude-native-recovery-store.js";
 import { NATIVE_SCHEDULED_INPUT_TEXT, nativeScheduledRequestHash, nativeScheduledRequestId, NativeScheduledSourceSchema, readNativeScheduledSource, sameNativeScheduledRun, type NativeScheduledSource } from "./native-scheduled-source.js";
@@ -99,7 +99,10 @@ async function admitOwnedChatTurn(deps: TurnAdmissionDependencies, ownerInput: C
       if (current.lifecycle !== "active") {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }
-      await assertPrivateRoutineRequest(trx, owner, input.chatId, turn.clientRequestId);
+      if (run.context?.botCreation && (current.project_id || await hasNonPrivateChatScope(trx, owner, input.chatId))) {
+        throw new ChatConflictError(input.chatId, Number(current.revision));
+      }
+      await assertPrivateChatAdmission(trx, owner, input.chatId, turn.clientRequestId, run.context?.botCreation);
       if (current.collaboration !== null) {
         throw new ChatConflictError(input.chatId, Number(current.revision));
       }

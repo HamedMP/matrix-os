@@ -11,7 +11,7 @@ import { projectBotToolDisplay } from "./tool-event-display.js";
  * found afterwards is failed, its runtime stopped, and nothing is replayed.
  */
 import { createHash } from "node:crypto";
-import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, SLACK_RULE_ACTIVITY_LABEL, type BotEvent } from "@matrix-os/contracts";
+import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, BOT_SETTINGS_PROPOSAL_ACTIVITY_ID, BOT_CONNECTION_REQUEST_ACTIVITY_ID, SLACK_RULE_ACTIVITY_LABEL, type BotEvent } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import {
   CanonicalProviderRunEventSchema,
@@ -69,6 +69,7 @@ export function mapBotEvent(event: BotEvent["event"], options: { toolOutputKey?:
     case "tool_progress": {
       const id = safeRef("tool", event.toolCallId);
       const status = event.phase === "started" || event.phase === "updated" ? "running" : event.phase;
+      if (event.capability === "bot.settings.propose") return [];
       if (event.capability === "slack.rules") {
         return [{ type: "agent.activity", activityId: id, kind: "phase", label: SLACK_RULE_ACTIVITY_LABEL, status }];
       }
@@ -162,7 +163,17 @@ export function createMatrixBotChatProviderAdapter(options: {
       let resultUnconfirmed = false;
       try {
         for await (const item of handle.events) {
-          if (item.kind === "routine_action") { yield CanonicalProviderRunEventSchema.parse(item.event); continue; }
+          if (item.kind === "broker_activity") {
+            yield CanonicalProviderRunEventSchema.parse(item.event);
+            if (item.event.type === "bot.draft.proposed") {
+              yield CanonicalProviderRunEventSchema.parse({ type: "agent.activity", activityId: BOT_SETTINGS_PROPOSAL_ACTIVITY_ID,
+                kind: "phase", label: "Suggested changes", status: "completed" });
+            } else if (item.event.type === "bot.connection.requested") {
+              yield { type: "agent.activity", activityId: BOT_CONNECTION_REQUEST_ACTIVITY_ID,
+                kind: "phase", label: "Connection setup", status: "completed" };
+            }
+            continue;
+          }
           if (item.kind === "state") {
             if(scheduled && item.state.taskId===scheduled.backgroundTaskId) ownsScheduledTask=true;
             yield CanonicalProviderRunEventSchema.parse({ type: "state.updated", state: BotChatStateSchema.parse(item.state) });

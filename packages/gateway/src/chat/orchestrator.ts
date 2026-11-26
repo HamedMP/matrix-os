@@ -19,7 +19,7 @@ import { promptFor } from "./orchestration-input.js";
 import { submitCanonicalInput } from "./input-control.js";
 import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import { BackgroundProjectionDetached, recoverBackgroundRunControl } from "./background-run-control.js";
-import { activityPersistenceId } from "./activity-persistence.js";
+import { activityPersistenceId, assertBotDraftProposalAuthority } from "./activity-persistence.js";
 import { randomUUID } from "node:crypto";
 import { assistantMessageId } from "./assistant-credential-crypto.js";
 import { createBoundedAssistantPreview } from "./bounded-assistant-preview.js";
@@ -97,6 +97,7 @@ const STEER_FINALIZE_ATTEMPTS = 2;
 
 export { CanonicalChatOrchestrationError, mapRepositoryError } from "./orchestration-errors.js";
 interface ActiveRun {
+  botCreation?: boolean;
   admissionKey?: string;
   controller: AbortController;
   adapter: CanonicalChatProviderAdapter;
@@ -462,6 +463,7 @@ export class CanonicalChatOrchestrator {
         }
       });
     this.active.set(run.id, {
+      ...(run.context?.botCreation ? { botCreation: true } : {}),
       admissionKey,
       controller,
       adapter,
@@ -825,6 +827,7 @@ export class CanonicalChatOrchestrator {
     events: Array<Record<string, unknown>>,
     occurredAt = (this.options.now ?? (() => new Date()))().toISOString(),
   ): Promise<void> {
+    events.forEach(event => assertBotDraftProposalAuthority(run, event));
     const activities = events.map((event) => CanonicalChatRunActivitySchema.parse({
       ...event,
       id: activityPersistenceId(run.id, event),
@@ -921,7 +924,7 @@ export class CanonicalChatOrchestrator {
     const input = CanonicalSteerChatRunRequestSchema.parse(inputValue);
     const active = this.active.get(runId);
     if (!active || active.chatId !== chatId || active.owner.type !== owner.type
-      || active.owner.ownerId !== owner.ownerId || !active.adapter.steer) {
+      || active.owner.ownerId !== owner.ownerId || active.botCreation || !active.adapter.steer) {
       throw new CanonicalChatOrchestrationError(
         safeError("capability_mismatch", "This Run cannot be steered."),
         409,
@@ -1017,7 +1020,7 @@ export class CanonicalChatOrchestrator {
     const input = CanonicalSteerQueuedChatTurnRequestSchema.parse(inputValue);
     const active = this.active.get(runId);
     if (!active || active.chatId !== chatId || active.owner.type !== owner.type
-      || active.owner.ownerId !== owner.ownerId || !active.adapter.steer) {
+      || active.owner.ownerId !== owner.ownerId || active.botCreation || !active.adapter.steer) {
       throw new CanonicalChatOrchestrationError(
         safeError("capability_mismatch", "This Run cannot be steered."),
         409,

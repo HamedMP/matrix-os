@@ -1,3 +1,4 @@
+import { ChatBotCreationWireVersionSchema, projectChatBotCreationResponse } from "@matrix-os/contracts";
 import { ownerHttpInputProvenance } from "./owner-http-input.js";
 import { ROUTINE_CREATION_PROOF_HEADER, ROUTINE_FULL_ACCESS_PROOF_HEADER } from "@matrix-os/contracts";
 import { isRoutineDirectResourcePath } from "./routine-direct-visibility.js";
@@ -313,7 +314,8 @@ function handleError(c: Context, error: unknown) {
 }
 
 function chatJson(context: Context, value: object, status: 200 | 201 | 202 = 200) {
-  return context.json(projectChatReadStateResponse(projectChatRecipeSources(projectChatImportSource(value,
+  return context.json(projectChatReadStateResponse(projectChatRecipeSources(projectChatImportSource(projectChatBotCreationResponse(value,
+    ChatBotCreationWireVersionSchema.parse(context.req.query("botCreationVersion"))),
     ChatImportSourceVersionSchema.parse(context.req.query("importSourceVersion")))),
     ChatReadStateWireVersionSchema.parse(context.req.query("readStateVersion"))), status);
 }
@@ -325,7 +327,9 @@ export function createCanonicalChatRoutes(options: {
   const routes = new Hono();
   routes.use("/api/chats/*", async (context, next) => {
     if (isRoutineDirectResourcePath(context.req.path)) return notFound(context);
-    if (!ChatImportSourceVersionSchema.safeParse(context.req.query("importSourceVersion")).success
+    if (!ChatBotCreationWireVersionSchema.safeParse(context.req.query("botCreationVersion")).success
+      || (context.req.queries("botCreationVersion")?.length ?? 0) > 1
+      || !ChatImportSourceVersionSchema.safeParse(context.req.query("importSourceVersion")).success
       || (context.req.queries("importSourceVersion")?.length ?? 0) > 1
       || !ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
       || !ChatAssistantTextWireVersionSchema.safeParse(context.req.query("assistantTextVersion")).success

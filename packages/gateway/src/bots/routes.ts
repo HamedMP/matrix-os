@@ -20,6 +20,8 @@ import { BotMemoryError, type BotMemoryService } from "./memory-service.js";
 import { BotGrantError, type BotGrantService } from "./grants-service.js";
 import { BotResourceGrantError, type BotResourceGrantService } from "./resource-grant-service.js";
 import { BotAuthorityError, type BotAuthority } from "./authority.js";
+import { BotRecipeRefSchema } from "@matrix-os/contracts";
+import { recipeSetupContext } from "./recipe-setup-context.js";
 import type { BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotChatLookup } from "../chat/agent-context.js";
 import { createBotProviderConnectionRoutes } from './provider-connection-routes.js';
@@ -146,6 +148,17 @@ export function createBotRoutes(options: {
       ({ recipeId, version, name, description, output }));
     context.header("Cache-Control", "private, no-store");
     return context.json(BotRecipeListResponseSchema.parse({ recipes }));
+  });
+
+  routes.get("/api/chat-agents/bot-recipes/:recipeId/:version/setup-context", context => {
+    options.getPrincipal(context);
+    if (!options.recipes) return errorResponse(context, "unavailable");
+    const ref = BotRecipeRefSchema.safeParse(context.req.param());
+    if (!ref.success) return errorResponse(context, "invalid_request");
+    const recipe = recipeSetupContext(ref.data, options.recipes);
+    if (!recipe) return errorResponse(context, "not_found");
+    context.header("Cache-Control", "private, no-store");
+    return context.json(recipe);
   });
 
   routes.get("/api/chat-agents/:agentId/direct-chat", async (context) => {

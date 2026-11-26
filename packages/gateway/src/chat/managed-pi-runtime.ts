@@ -126,13 +126,13 @@ export function createManagedPiRuntime(deps: {
       await cancellation.wait(() => Promise.all([...active.values()].filter(previous => previous !== run && previous.stopping
         && previous.ownerId === input.owner.ownerId && previous.chatId === input.chatId).map(previous => previous.worker?.done)));
       run.isolated = deps.isolatedChat?.select({ ownerId: input.owner.ownerId, chatId: input.chatId, modelId: input.selection.model }) ?? false;
-      if (run.isolated && (input.resumeState || input.continuationId || input.selection.instanceId !== "matrix_pi_default"
+      if (run.isolated && (input.context?.botCreation || input.resumeState || input.continuationId || input.selection.instanceId !== "matrix_pi_default"
         || input.parts.some(part => part.type !== "text"))) throw new BotRouteError("model_unavailable");
       const resolved = await cancellation.wait(() => resolveManagedPiSelection(input.selection, input.owner.ownerId, deps));
       if (signal.aborted || run.stopping) return cancelled();
       if (run.isolated) resolved.route = { ...resolved.route, maxOutputTokens: 256 };
       stage = "input";
-      run.inputs = await cancellation.wait(() => prepareSteerableBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, history: run.isolated ? undefined : deps.inputHistory, parts: input.parts, route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal,
+      run.inputs = await cancellation.wait(() => prepareSteerableBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, history: run.isolated || input.context?.botCreation ? undefined : deps.inputHistory, parts: input.parts, route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal,
         assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } }), inputs => inputs.dispose());
       await cancellation.wait(() => run.inputs!.revalidate());
       stage = "admission";
@@ -302,7 +302,7 @@ export function createManagedPiRuntime(deps: {
     },
     async steer(input) {
       const run = active.get(input.runId);
-      if (!run?.binding || run.isolated || input.owner.type !== "personal" || run.ownerId !== input.owner.ownerId
+      if (!run?.binding || run.binding.botCreation || run.isolated || input.owner.type !== "personal" || run.ownerId !== input.owner.ownerId
         || run.chatId !== input.chatId || run.stopping || run.finished || run.signal?.aborted) throw new Error("Matrix AI run unavailable");
       if (!run.inputs) throw new Error("Matrix AI steering unavailable");
       const binding = run.binding;

@@ -9,7 +9,7 @@ import { BotToolRequestSchema, type BotToolCapability, type BotToolRequest, type
 export async function openClaudeBotBridge(input: { capabilities: readonly BotToolCapability[]; signal: AbortSignal;
   authorize(): Promise<void>; call(request: BotToolRequest): Promise<BotToolResult> }) {
   const token = randomBytes(32).toString('hex'); const expected = Buffer.from(`Bearer ${token}`);
-  const capabilities: readonly BotToolCapability[] = input.capabilities.filter(capability => capability !== 'agent.task');
+  const capabilities: readonly BotToolCapability[] = input.capabilities.filter(capability => capability !== 'agent.task' && capability !== 'bot.settings.propose');
   const app = new Hono(); let calls = 0;
   app.use('*', bodyLimit({ maxSize: 240 * 1024, onError: c => c.json({ error: 'unavailable' }, 413) }));
   app.post('/', async c => {

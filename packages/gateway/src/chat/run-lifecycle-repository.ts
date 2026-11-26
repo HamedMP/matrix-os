@@ -1,4 +1,6 @@
+import { assertBotDraftProposalAuthority } from "./activity-persistence.js";
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
+import { canProposeBotSettings } from "./bot-settings-authority.js";
 import { assertPrivateRoutineRun } from "./private-routine-authority.js";
 import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
 import {
@@ -391,6 +393,26 @@ export class ChatRunLifecycleRepository {
       if (existingRun && !run) throw new ChatRunNotActiveError(chatId, runId);
       if (!run) throw new ChatNotFoundError(chatId);
       await assertPrivateRoutineRun(trx, owner, chatId, runId);
+      const proposals = activities.filter(activity => activity.type === "bot.draft.proposed"
+        || activity.type === "bot.setup.question" || activity.type === "bot.connection.requested");
+      if (proposals.length) {
+        if (owner.type !== "personal" || current.collaboration || current.project_id || current.lifecycle !== "active"
+          || new Set(proposals.map(proposal => proposal.id)).size !== 1
+          || new Set(proposals.map(proposal => proposal.proposalId)).size !== 1) throw new ChatConflictError(chatId, Number(current.revision));
+        const saved = await trx.selectFrom("chat_runs").selectAll().where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirstOrThrow();
+        if (saved.driver_kind === "matrix_bot" && !await canProposeBotSettings(trx, owner, chatId, runId, proposals[0]!.sessionId)) {
+          throw new ChatConflictError(chatId, Number(current.revision));
+        }
+        for (const proposal of proposals) assertBotDraftProposalAuthority(toRun(saved), {
+          type: proposal.type, proposalId: proposal.proposalId, sessionId: proposal.sessionId,
+          baseDraftRevision: proposal.baseDraftRevision,
+          ...(proposal.type === "bot.connection.requested" ? { resource: proposal.resource }
+            : "patch" in proposal ? { patch: proposal.patch } : { question: proposal.question, suggestedReplies: proposal.suggestedReplies }),
+        });
+        const previous = await trx.selectFrom("chat_run_events").select("id").where("run_id", "=", runId)
+          .where(sql<string>`event->>'type'`, "in", ["bot.draft.proposed", "bot.setup.question", "bot.connection.requested"]).limit(1).executeTakeFirst();
+        if (previous && previous.id !== proposals[0]!.id) throw new ChatConflictError(chatId, Number(current.revision));
+      }
       if (expectedInputClaim) {
         const state = await getChatInputState(trx, owner, { chatId, runId, requestId: expectedInputClaim.requestId });
         if (state.resolved || state.submitted?.id !== expectedInputClaim.submissionId) throw new ChatConflictError(chatId, Number(current.revision));

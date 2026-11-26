@@ -26,6 +26,18 @@ describe("bot UI read routes", () => {
     expect((await app(false).request("/api/chat-agents/bot-recipes")).status).toBe(401);
   });
 
+  it("resolves setup requirements only for a listed recipe at its exact version", async () => {
+    const { createBotRecipeCatalog } = await import("../../../packages/gateway/src/bots/recipe-catalog.js");
+    const server = createBotRoutes({ recipes: createBotRecipeCatalog(), getPrincipal: () => ({ userId: "owner_1", source: "jwt" }) });
+    const get = (id: string, version: string) => server.request(`/api/chat-agents/bot-recipes/${id}/${version}/setup-context`);
+    const response = await get("personal-daily-brief", "2026-09-27.1");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ name: "Daily Brief", skills: [], mcpServers: [], capabilities: expect.arrayContaining(["artifact.read"]),
+      integrations: [{ service: "google_calendar", effects: ["read"], required: true }, { service: "gmail", effects: ["read"], required: true }] });
+    expect((await get("personal-daily-brief", "future")).status).toBe(404);
+    expect((await get("matrix-routine-executor", "2026-11-08.1")).status).toBe(404);
+  });
+
   it("resolves only the principal's direct bot and validates the chat id first", async () => {
     const directBot = vi.fn(async () => "bot_research1");
     const server = new Hono();

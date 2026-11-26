@@ -10,7 +10,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { link, lstat, mkdir, open, opendir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
+import { type BotSettingsProposalInput, type BotToolRequest, type BotToolResult } from "@matrix-os/contracts";
 import { readBotArtifact } from "./artifact-read.js";
 import { ARTIFACT_RECOVERY_DIRECTORY, replaceBotArtifact } from "./artifact-replacement.js";
 import { BotAdmissionError } from "./admission.js";
@@ -21,7 +21,7 @@ import { BotBrokerActionError, type BotToolDispatcher } from "./broker-actions.j
 import type { BotInteractionService } from "./interactions.js";
 import type { BotIntegrationTools } from "./integration-tools.js";
 import type { BotMemoryService } from "./memory-service.js";
-import { getAction } from "../integrations/registry.js";
+import { getAction, getService } from "../integrations/registry.js";
 import { isManagedPiBinding, type PiRuntimeBinding } from "./runtime-registry.js";
 
 const MAX_TEXT_PART_CHARS = 60 * 1024;
@@ -54,6 +54,8 @@ function rememberScanOffset(directory: string, offset: number): void {
 }
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
+  "bot.creation.propose": "read",
+  "bot.settings.propose": "read",
   "slack.rules":"write",
   "routine.cli": "write",
   "routine.propose":"write",
@@ -200,6 +202,7 @@ export function createBotToolDispatcher(deps: {
   homePath: string;
   githubDeveloper?: import("./github-developer-tools.js").BotGithubDeveloperTools;
   managedRoutine?: { execute(binding: PiRuntimeBinding, operation: import("@matrix-os/contracts").RoutineCliOperation, toolCallId: string, signal: AbortSignal): Promise<BotToolResult> };
+  proposeSettings?(binding: import("./runtime-registry.js").BotRuntimeBinding, proposal: BotSettingsProposalInput): void;
   slackRules?: import("../slack/rule-tools.js").SlackRuleTools;
   routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"propose"|"list"|"control">;
   submittedArtifact?(binding: PiRuntimeBinding, args: Extract<BotToolRequest, { capability: "artifact.read" }>["args"]): Promise<string | undefined>;
@@ -373,6 +376,16 @@ export function createBotToolDispatcher(deps: {
           if (await workspace(binding) !== root) throw new BotBrokerActionError("stale_generation");
           await deps.assertSource?.(binding, signal);
         }) };
+      }
+      if (request.capability === "bot.settings.propose") {
+        if (!deps.proposeSettings || isManagedPiBinding(binding) || binding.group || binding.readonlySummary || binding.requestClass !== "interactive") throw new BotBrokerActionError("not_granted");
+        const { args } = request;
+        if ("resource" in args && args.resource.kind === "integration" && getService(args.resource.service)?.id !== args.resource.service) {
+          throw new BotBrokerActionError("not_granted");
+        }
+        deps.proposeSettings(binding, args);
+        return { result: textResult("resource" in args ? "The Settings action is ready. No connection or grant has changed."
+          : "The proposed changes are ready for the owner to review and save.") };
       }
       if(request.capability==="slack.rules"){
         if(!deps.slackRules || isManagedPiBinding(binding))throw new BotBrokerActionError("not_granted");

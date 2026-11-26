@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+import { BOT_DRAFT_REVIEW_RECEIPT, BotToolRequestSchema, botDraftPatchMatchesChoices } from "@matrix-os/contracts";
 /** Gateway-only owner tools. No recipe identity or bearer reaches the Pi worker. */
 import { randomUUID } from "node:crypto";
 import { SharedBrowserError, type SharedBrowserBroker, type SharedBrowserBinding } from "../shared-browser/broker.js";
@@ -34,6 +36,7 @@ interface Run {
   mcpInitialization?: Promise<McpControl>;
   revoking?: Promise<boolean>;
   generation?: number;
+  proposed?: boolean;
   browserRegistered?: boolean;
   browserPermissionMode?: string;
 }
@@ -46,7 +49,7 @@ function text(value: unknown): BotToolResult {
 }
 export function createManagedPiOwnerTools(deps: {
   toolOutputKey?: Buffer;
-  authority(binding: ManagedPiRuntimeBinding): Promise<{ permissionMode: string }>;
+  authority(binding: ManagedPiRuntimeBinding): Promise<{ permissionMode: string; botCreation?: import("@matrix-os/contracts").BotCreationSnapshot }>;
   signalFor(binding: ManagedPiRuntimeBinding): AbortSignal | null;
   integrations?: Pick<BotIntegrationClient, "inventory" | "describe" | "call">;
   mcp?: ManagedPiMcpClient;
@@ -88,6 +91,8 @@ export function createManagedPiOwnerTools(deps: {
       || !owned || owned.aborted || signal.aborted || run.controller.signal.aborted) throw new BotBrokerActionError("stale_generation");
     const authority = await deps.authority(binding);
     if (!["full_access", "supervised"].includes(authority.permissionMode) || signal.aborted || owned.aborted) throw new BotBrokerActionError("denied");
+    if (run.binding.botCreation && (!isDeepStrictEqual(run.binding.botCreation, binding.botCreation)
+      || !isDeepStrictEqual(run.binding.botCreation, authority.botCreation))) throw new BotBrokerActionError("stale_generation");
     return { run, permissionMode: authority.permissionMode,
       signal: AbortSignal.any([signal, owned, run.controller.signal]) };
   }
@@ -138,8 +143,12 @@ export function createManagedPiOwnerTools(deps: {
     });
   }
   async function prepare(binding: ManagedPiRuntimeBinding, request: BotToolRequest, callerSignal: AbortSignal): Promise<void> {
+    request = BotToolRequestSchema.parse(request);
     const { run, permissionMode, signal } = await live(binding, callerSignal);
-    if (!capabilities.includes(request.capability) || !binding.capabilities.includes(request.capability)) throw new BotBrokerActionError("not_granted");
+    const available = run.binding.botCreation
+      ? request.capability === "bot.creation.propose"
+      : capabilities.includes(request.capability);
+    if (!available || !binding.capabilities.includes(request.capability)) throw new BotBrokerActionError("not_granted");
     if (run.seen.has(request.toolCallId) || run.seen.size >= MAX_ACTIONS) throw new BotBrokerActionError("denied");
     run.seen.add(request.toolCallId);
     const prepared: Prepared = { args: JSON.stringify(request.args) };
@@ -212,10 +221,12 @@ export function createManagedPiOwnerTools(deps: {
     },
     prepare,
     async dispatch(binding: ManagedPiRuntimeBinding, request: BotToolRequest, callerSignal: AbortSignal): Promise<BotToolResult> {
+      request = BotToolRequestSchema.parse(request);
       let liveRun = await live(binding, callerSignal);
       if (!liveRun.run.prepared.has(request.toolCallId)) await prepare(binding, request, callerSignal);
       liveRun = await live(binding, callerSignal);
       const { run, permissionMode, signal } = liveRun;
+      if (run.binding.botCreation && request.capability !== "bot.creation.propose") throw new BotBrokerActionError("not_granted");
       const prepared = run.prepared.get(request.toolCallId);
       run.prepared.delete(request.toolCallId);
       if (!prepared || prepared.args !== JSON.stringify(request.args)) throw new BotBrokerActionError("denied");
@@ -236,6 +247,29 @@ export function createManagedPiOwnerTools(deps: {
           if (error instanceof SharedBrowserError && error.code === "run_unavailable" && !error.dispatched) throw new BotBrokerActionError("stale_generation");
           throw error;
         }
+      }
+      if (request.capability === "bot.creation.propose") {
+        const snapshot = run.binding.botCreation;
+        if (!snapshot || run.proposed) throw new BotBrokerActionError("denied");
+        const args = request.args;
+        if ("resource" in args) {
+          if (snapshot.intent !== "reply" || args.resource.kind === "integration" && getService(args.resource.service)?.id !== args.resource.service) {
+            throw new BotBrokerActionError("not_granted");
+          }
+        } else if ("patch" in args ? !botDraftPatchMatchesChoices(snapshot, args.patch) : !snapshot.intent) {
+          throw new BotBrokerActionError("denied");
+        }
+        const proposal = CanonicalProviderRunEventSchema.parse({
+          type: "patch" in args ? "bot.draft.proposed" : "resource" in args ? "bot.connection.requested" : "bot.setup.question",
+          proposalId: `proposal_${randomUUID().replaceAll("-", "")}`, sessionId: snapshot.sessionId,
+          baseDraftRevision: snapshot.draftRevision, ...args,
+        });
+        // No await between the one-proposal claim and emission; concurrent tool calls cannot both win.
+        run.proposed = true;
+        run.emit(proposal);
+        if ("patch" in args) return text(snapshot.intent ? BOT_DRAFT_REVIEW_RECEIPT : { proposed: true });
+        if ("resource" in args) return text({ settingsActionDisplayed: true, accessChanged: false });
+        return text({ questionDisplayed: true, awaitOwnerReply: true });
       }
       if (request.capability === "integration.inventory") {
         const rows = await deps.integrations!.inventory(binding.ownerId, signal);

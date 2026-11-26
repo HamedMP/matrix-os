@@ -1,3 +1,4 @@
+import { BotCreationSnapshotSchema } from "#bot-creation-draft";
 import { ChatRunContextSchema } from "#chat-agent-context";
 import { BrowserApprovalIntentSchema, browserCanonicalDecision } from "#browser-chat-approval";
 import { z } from "zod/v4";
@@ -147,6 +148,7 @@ const MentionAwareInputPartsSchema = z.array(CanonicalChatUserInputPartSchema).m
   .refine(validMentionCounts, { message: "Use one Agent and up to three distinct Chats and drive references" });
 
 export const CanonicalCreateChatTurnRequestSchema = z.object({
+  botCreation: BotCreationSnapshotSchema.optional(),
   clientRequestId: CanonicalChatRequestIdSchema,
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   parts: MentionAwareInputPartsSchema,
@@ -167,10 +169,11 @@ export const CanonicalChatQueuedTurnIdSchema = canonicalReferenceId(128)
  * request key fence the write separately and are intentionally excluded.
  */
 export function canonicalChatTurnRequestIdentity(input: Pick<CanonicalCreateChatTurnRequest,
-  "parts" | "selection" | "interactionMode" | "permissionMode" | "executionRoot" | "routineCreation">): string {
+  "parts" | "selection" | "interactionMode" | "permissionMode" | "executionRoot" | "routineCreation" | "botCreation">): string {
   return JSON.stringify({ parts: input.parts, selection: input.selection,
     interactionMode: input.interactionMode, permissionMode: input.permissionMode,
     executionRoot: input.executionRoot ?? null,
+    ...(input.botCreation ? { botCreation: input.botCreation } : {}),
     ...(input.routineCreation ? { routineCreation: input.routineCreation } : {}) });
 }
 

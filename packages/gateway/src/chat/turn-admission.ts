@@ -75,6 +75,9 @@ export async function admitCanonicalTurn(
     deps.assertOpen();
     await deps.assertPersonalExecutionAllowed(owner, chatId);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
+    if (input.botCreation && (owner.type !== "personal" || principal.userId !== owner.ownerId)) {
+      throw new CanonicalChatOrchestrationError(safeError("authorization_failed", "Agent setup is private to its owner."), 400);
+    }
     if (input.routineCreation && (owner.type !== "personal" || principal.userId !== owner.ownerId)) {
       throw new CanonicalChatOrchestrationError(safeError("authorization_failed", "Persistent task selection is unavailable."), 400);
     }
@@ -100,6 +103,8 @@ export async function admitCanonicalTurn(
     let prepared;
     try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
     catch (error: unknown) { return mapRepositoryError(error); }
+    if (input.botCreation && !prepared?.context?.botCreation) throw new CanonicalChatOrchestrationError(
+      safeError("capability_mismatch", "Bot drafting is unavailable in this Chat."), 400);
     const effective = { ...input, ...prepared };
     const catalog = await deps.catalog.getCatalog(principal, effective.selection);
     const requirements = requirementsFor({ ...effective, parts: prepared ? input.parts.filter((part) =>
@@ -164,7 +169,7 @@ export async function admitCanonicalTurn(
         );
       }
     }
-    const resumeState = prepared?.context?.agent ? undefined : await loadChatResumeState({
+    const resumeState = prepared?.context?.agent || prepared?.context?.botCreation ? undefined : await loadChatResumeState({
       repository: deps.repository, owner, chatId, adapter,
       instanceId: validated.instance.id,
       selection: validated.selection, interactionMode: effective.interactionMode, permissionMode: effective.permissionMode,

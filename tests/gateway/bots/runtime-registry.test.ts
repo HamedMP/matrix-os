@@ -22,6 +22,11 @@ const binding = (overrides: Partial<BotRuntimeBinding> = {}): BotRuntimeBinding 
 });
 
 describe("bot runtime registry", () => {
+  it("refuses a settings proposal capability on a background binding", () => {
+    const registry = new BotRuntimeRegistry();
+    expect(() => registry.bind(binding({ requestClass: "background", capabilities: ["bot.settings.propose"] }))).toThrow(new BotRuntimeRegistryError("invalid_binding"));
+  });
+
   it("blocks recovery only for the same owner and Chat until release or expiry", () => {
     let now = 0;
     const registry = new BotRuntimeRegistry({ now: () => now, ttlMs: 1000 });
