@@ -1,3 +1,4 @@
+import { MATRIX_BEDROCK_SOURCE_ID } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { z } from "zod/v4";
 import type { AiProviderSnapshotReader } from "./service.js";
@@ -37,15 +38,18 @@ export function createAiProviderRoutes(options: {
           : readiness.safeReason === "credit_reserved" && query.data.includeFundingState !== "true"
             ? { ...readiness, safeReason: "credit_required" } : readiness;
       const { matrixAnthropicConnection, upstreamPreference, ...baseSnapshot } = internalSnapshot;
+      const includeUpstream = query.data.includeUpstreamPreference === "true"
+        && options.canAccessUpstreamPreference?.(context) === true;
       const snapshot = {
         ...baseSnapshot,
         ...(query.data.includeMatrixAnthropicConnection === "true" && options.canReadMatrixConnections?.(context) === true && matrixAnthropicConnection ? { matrixAnthropicConnection: projectConnectionModelInputs(matrixAnthropicConnection) } : {}),
-        ...(query.data.includeUpstreamPreference === "true"
-          && options.canAccessUpstreamPreference?.(context) === true
-          && upstreamPreference ? { upstreamPreference } : {}),
+        ...(includeUpstream && upstreamPreference ? { upstreamPreference } : {}),
+        models: internalSnapshot.models.filter(model => includeUpstream
+          || !model.eligibleAccessSourceIds.includes(MATRIX_BEDROCK_SOURCE_ID)),
         // Internal policy inventory is projected through the canonical Chat
         // catalog. Historical V3 clients reject unknown source fields.
-        accessSources: internalSnapshot.accessSources.map(({ discoverableModelIds: _discovery, ...source }) => legacyReadiness(source)),
+        accessSources: internalSnapshot.accessSources.filter(source => includeUpstream || source.id !== MATRIX_BEDROCK_SOURCE_ID)
+          .map(({ discoverableModelIds: _discovery, ...source }) => legacyReadiness(source)),
         accounts: internalSnapshot.accounts.map(legacyReadiness),
         instances: internalSnapshot.instances.map(instance => ({ ...instance, readiness: legacyReadiness(instance.readiness) })),
       };

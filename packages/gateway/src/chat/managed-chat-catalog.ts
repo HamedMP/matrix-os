@@ -2,13 +2,14 @@ import { resolveManagedPiRoute, MANAGED_PI_INSTANCE_ID, BotRouteError } from "..
 import { FUNDED_PREVIEW_CHAT_ROUTES } from "../ai-providers/model-catalog.js";
 import {
   isEffectiveBedrockModel,
+  MATRIX_BEDROCK_SOURCE_ID,
   type AiProviderSnapshotV3,
   type CanonicalChatSkillDescriptor,
   type CanonicalProviderInstanceDescriptor,
 } from "@matrix-os/contracts";
 
 const DEFAULT_MANAGED_CHAT_MODEL_ID = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
-const MANAGED_CHAT_SOURCE_IDS = ["matrix_included", "matrix_cloudflare", ...FUNDED_PREVIEW_CHAT_ROUTES.map(route => route.sourceId)];
+const MANAGED_CHAT_SOURCE_IDS = ["matrix_included", "matrix_cloudflare", MATRIX_BEDROCK_SOURCE_ID, ...FUNDED_PREVIEW_CHAT_ROUTES.map(route => route.sourceId)];
 
 /** Project funded readiness from V3; model discovery must never acquire a credential. */
 export function managedChatInstances(
@@ -108,7 +109,7 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
     : fundingSources.some(source => source.safeReason === "credit_reserved") ? "credit_reserved" as const
     : fundingSources.some(source => source.safeReason === "credit_required") ? "credit_required" as const : "unavailable" as const;
   const projectModel = (model: AiProviderSnapshotV3["models"][number], availability: "available" | "unavailable") => {
-    const bedrock = isEffectiveBedrockModel(snapshot, "matrix_included", model.id);
+    const bedrock = model.eligibleAccessSourceIds.some(sourceId => isEffectiveBedrockModel(snapshot, sourceId, model.id));
     const capabilities = bedrock
       ? model.capabilities.filter((capability) => capability !== "vision")
       : model.capabilities;

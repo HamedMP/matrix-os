@@ -24,6 +24,7 @@ export const AiProviderVendorSchema = z.enum([
   "google",
   "moonshotai",
   "alibaba",
+  "amazon",
 ]);
 
 export const AiProviderReadinessStateSchema = z.enum([
@@ -374,14 +375,16 @@ export type AiProviderInstanceView = z.infer<typeof AiProviderInstanceViewSchema
 export type AiModelDescriptorView = z.infer<typeof AiModelDescriptorViewSchema>;
 export type AiProviderSnapshotV3 = z.infer<typeof AiProviderSnapshotV3Schema>;
 
+export const MATRIX_BEDROCK_SOURCE_ID = "matrix_bedrock";
+
 /** Platform routing for an exact Matrix model on the OpenAI-compatible Bedrock relay. */
 export function isEffectiveBedrockModel(
   snapshot: Pick<AiProviderSnapshotV3, "upstreamPreference"> | undefined,
   accessSourceId: string,
   modelId: string,
 ): boolean {
-  if (accessSourceId !== "matrix_included"
-    || snapshot?.upstreamPreference?.effectiveUpstream !== "aws_bedrock") return false;
+  if (accessSourceId !== "matrix_included" && accessSourceId !== MATRIX_BEDROCK_SOURCE_ID) return false;
+  if (snapshot?.upstreamPreference?.effectiveUpstream !== "aws_bedrock") return false;
   const leafModelId = modelId.replace(/^anthropic\//, "");
   return (snapshot.upstreamPreference.effectiveBedrockModelIds ?? [])
     .some((candidate) => candidate.replace(/^anthropic\//, "") === leafModelId);

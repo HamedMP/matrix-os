@@ -16,6 +16,7 @@ import {
   BotModelRouteSchema,
   isFundedThirdPartyPreviewModel,
   MANAGED_WORKERS_AI_MODEL_IDS,
+  MATRIX_BEDROCK_SOURCE_ID,
   MATRIX_PI_BEDROCK_CONTEXT_WINDOW,
   MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS,
   isEffectiveBedrockModel,
@@ -28,6 +29,7 @@ const SOURCES_IN_ORDER: ReadonlyArray<{ id: string; credential: BotCredentialAcc
   { id: "matrix_cloudflare", credential: "matrix_included", anthropicOnly: false },
   ...FUNDED_PREVIEW_CHAT_ROUTES.map(({ sourceId }) => ({ id: sourceId, credential: "matrix_included" as const, anthropicOnly: false })),
   { id: "matrix_included", credential: "matrix_included", anthropicOnly: true },
+  { id: MATRIX_BEDROCK_SOURCE_ID, credential: "matrix_included", anthropicOnly: false },
   { id: "owner_anthropic_key", credential: "owner_anthropic_key", anthropicOnly: true },
 ];
 const ANTHROPIC_CONTEXT_WINDOW = 200_000;
@@ -64,7 +66,7 @@ function routeFor(snapshot: AiProviderSnapshotV3, entry: (typeof SOURCES_IN_ORDE
   if (!model.capabilities.includes("tools")) return undefined;
   const anthropic = model.vendor === "anthropic";
   const bedrock = isEffectiveBedrockModel(snapshot, entry.id, modelId);
-  if ((!anthropic && entry.anthropicOnly) || (bedrock && entry.id !== "matrix_included")) return undefined;
+  if ((!anthropic && entry.anthropicOnly) || (entry.id === MATRIX_BEDROCK_SOURCE_ID && !bedrock)) return undefined;
   const route = BotModelRouteSchema.safeParse({
     api: anthropic && !bedrock ? "anthropic-messages" : "openai-completions",
     modelId,
@@ -100,7 +102,7 @@ export function resolveBotRoute(snapshot: AiProviderSnapshotV3, now = Date.now()
       const resolved = routeFor(snapshot, entry, instance.defaultModelId, now);
       if (resolved) return resolved;
     }
-    if (entry.id === "matrix_included") {
+    if (entry.id === "matrix_included" || entry.id === MATRIX_BEDROCK_SOURCE_ID) {
       for (const modelId of snapshot.upstreamPreference?.effectiveBedrockModelIds ?? []) {
         const canonicalId = modelId.replace(/^anthropic\//, "");
         if (!isEffectiveBedrockModel(snapshot, entry.id, canonicalId)) continue;

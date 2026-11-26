@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import {
+  MATRIX_BEDROCK_SOURCE_ID,
   ProviderDependencyCountsSchema,
   ProviderManagedCreditObservationSchema,
   ProviderSettingsMutationSchema,
@@ -21,6 +22,8 @@ const RefreshQuerySchema = z.enum(["true", "false"]).optional();
 function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, includeModels = false,
   includeInventory = false, includeFundingState = false, includeAccountDetails = false, includeChatFunding = false, includeMatrixConnection = false, includeClaudeAccountDetails = false, includeUpstreamPreference = false): ProviderSettingsSnapshot {
   const { matrixModelInventory, matrixAnthropicConnection, upstreamPreference, ...baseSnapshot } = snapshot;
+  const hiddenModels = new Set(includeUpstreamPreference ? [] :
+    snapshot.accessSources.find(source => source.id === MATRIX_BEDROCK_SOURCE_ID)?.eligibleModelIds ?? []);
   const publicSnapshot = {
     ...baseSnapshot,
     supportedActions: includeUpstreamPreference
@@ -40,12 +43,18 @@ function withCapabilities(snapshot: ProviderSettingsSnapshot, include: boolean, 
       }
       return { ...account, ...(includeAccountDetails && details ? { connectionDetails: details } : {}) };
     }),
-    ...(includeInventory && matrixModelInventory ? { matrixModelInventory } : {}),
-    modelProviders: snapshot.modelProviders.map(provider => ({ ...provider,
-      models: provider.models.map(({ capabilities, ...model }) => includeModels
-        ? { ...model, ...(capabilities ? { capabilities } : {}) } : model),
-    })),
-    accessSources: snapshot.accessSources.map(source => {
+    ...(includeInventory && matrixModelInventory ? {
+      matrixModelInventory: matrixModelInventory.filter(model => includeUpstreamPreference || model.accessSourceId !== MATRIX_BEDROCK_SOURCE_ID),
+    } : {}),
+    gatewayPolicy: snapshot.gatewayPolicy && { ...snapshot.gatewayPolicy,
+      allowedModelIds: snapshot.gatewayPolicy.allowedModelIds.filter(id => !hiddenModels.has(id)) },
+    modelProviders: snapshot.modelProviders.flatMap(provider => {
+      const models = provider.models.filter(model => !hiddenModels.has(model.id))
+        .map(({ capabilities, ...model }) => includeModels
+          ? { ...model, ...(capabilities ? { capabilities } : {}) } : model);
+      return provider.models.length > 0 && models.length === 0 ? [] : [{ ...provider, models }];
+    }),
+    accessSources: snapshot.accessSources.filter(source => includeUpstreamPreference || source.id !== MATRIX_BEDROCK_SOURCE_ID).map(source => {
       const safeReason = source.readiness.safeReason === "credit_reserved" && !includeFundingState
         ? "credit_required" as const
         : source.readiness.safeReason === "budget_exceeded" && !includeChatFunding

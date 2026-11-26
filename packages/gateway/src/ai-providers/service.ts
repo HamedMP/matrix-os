@@ -9,6 +9,7 @@ import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
   FUNDED_AI_READINESS_TIMEOUTS,
+  MATRIX_BEDROCK_SOURCE_ID,
   isFundedCloudflarePreviewCohortModel,
   isFundedCloudflarePreviewModel,
   AiProviderDriverViewSchema,
@@ -462,7 +463,10 @@ export class AiProviderService implements AiProviderSnapshotReader {
       ...(funded?.discoverableModelIds ?? []),
       ...(funded?.allowedModelIds ?? []),
     ])];
-    const catalog = buildBundledModelCatalog(observedMatrixIncludedModelIds)
+    const effectiveBedrockModelIds = new Set((funded?.upstreamPreference?.effectiveBedrockModelIds ?? [])
+      .map((modelId) => modelId.replace(/^anthropic\//, "")));
+    const catalog = buildBundledModelCatalog(observedMatrixIncludedModelIds,
+      new Set(observedMatrixIncludedModelIds.filter(modelId => effectiveBedrockModelIds.has(modelId))))
       .filter(model => !isFundedCloudflarePreviewModel(model.id)
         || isFundedCloudflarePreviewCohortModel(model.id) && observedMatrixIncludedModelIds.includes(model.id));
     const observeFundedSource = (sourceId: string) => fundedSourceObservation(
@@ -479,8 +483,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
         eligibleModelIds, discoverableModelIds, policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, readiness)];
     });
-    const effectiveBedrockModelIds = new Set((funded?.upstreamPreference?.effectiveBedrockModelIds ?? [])
-      .map((modelId) => modelId.replace(/^anthropic\//, "")));
+    const { eligibleModelIds: bedrockEligible, discoverableModelIds: bedrockDiscoverable, readiness: bedrockReadiness } =
+      observeFundedSource(MATRIX_BEDROCK_SOURCE_ID);
 
     const accessSources: AiAccessSourceView[] = [
       sourceFromReadiness({
@@ -491,6 +495,11 @@ export class AiProviderService implements AiProviderSnapshotReader {
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, fundedSources.matrix_cloudflare.readiness),
       ...previewSources,
+      ...(bedrockDiscoverable.length === 0 ? [] : [sourceFromReadiness({
+        id: MATRIX_BEDROCK_SOURCE_ID, displayName: "Matrix AI", fundingKind: "matrix_included", vendor: "amazon",
+        accountLabel: "Included", eligibleModelIds: bedrockEligible, discoverableModelIds: bedrockDiscoverable,
+        policyVersion: AI_PROVIDER_CATALOG_VERSION,
+      }, bedrockReadiness)]),
       sourceFromReadiness({
         id: "matrix_included",
         displayName: "Matrix AI",

@@ -51,6 +51,42 @@ describe("owner-funded discovery projection", () => {
     } finally { service.close(); await rm(homePath, { recursive: true, force: true }); }
   });
 
+  it("exposes the qualified Nova Pro route in Settings and on the managed Matrix Chat picker", async () => {
+    const modelId = "bedrock/amazon.nova-pro-v1:0";
+    const homePath = await mkdtemp(join(tmpdir(), "provider-bedrock-nova-"));
+    const checkedAt = now.toISOString();
+    const staleAfter = "2026-10-02T08:00:30.000Z";
+    const readiness: AiProviderReadiness = { state: "ready", checkedAt, staleAfter, action: "none", safeReason: null };
+    let effective = false;
+    const service = new AiProviderService({ homePath, now: () => now,
+      fundedCredentialProvider: { enabled: true, maxRunMs: 600_000,
+        getCredential: vi.fn(), invalidate: () => {}, close: () => {} },
+      driverInventory: async () => [],
+      fundedReadinessReader: { read: async () => ({ readiness,
+        allowedModelIds: [modelId], discoverableModelIds: [modelId],
+        upstreamPreference: {
+          selectedUpstream: "aws_bedrock", effectiveUpstream: effective ? "aws_bedrock" : "cloudflare",
+          effectiveBedrockModelIds: effective ? [modelId] : [], revision: 2, updatedAt: checkedAt,
+          validThrough: "2026-10-31T00:00:00.000Z",
+        },
+      }) },
+    });
+    try {
+      expect((await service.getSnapshot()).models.some(model => model.id === modelId)).toBe(false);
+      effective = true;
+      const canonical = await service.getSnapshot({ refresh: true });
+      const settings = await projectProviderSettings({ canonical, config: initialProviderSettingsConfiguration(canonical),
+        now, supportedActions: [], fundedPolicyAuthoritative: true,
+        fundedPolicy: { enabled: true, globalRevision: 1, runtimeRevision: 1, allowedModelIds: [modelId],
+          monthlyBudgetMicrousd: 5_000_000, checkedAt, staleAfter } });
+      expect(settings.matrixModelInventory).toContainEqual(expect.objectContaining({ id: modelId, displayName: "Nova Pro" }));
+      expect(managedPiChatInstances(canonical, now.getTime())[0]?.models).toContainEqual(expect.objectContaining({
+        id: modelId, availability: "available", supportsVision: false,
+      }));
+      expect(canonical.instances.some(instance => instance.driverId === "kernel" && instance.modelIds.includes(modelId))).toBe(false);
+    } finally { service.close(); await rm(homePath, { recursive: true, force: true }); }
+  });
+
   it.each(["pi", "opencode"] as const)("keeps Bedrock in managed Matrix AI while excluding it from the Anthropic %s launcher", async (harness) => {
     const homePath = await mkdtemp(join(tmpdir(), "provider-bedrock-coding-"));
     const checkedAt = now.toISOString();

@@ -1,7 +1,7 @@
 import {
   ALIBABA_QWEN_37_PLUS_MODEL_ID, ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS,
   GOOGLE_GEMINI_38_FLASH_MODEL_ID, GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS,
-  MANAGED_WORKERS_AI_MODELS, MANAGED_WORKERS_AI_MODEL_IDS,
+  MANAGED_WORKERS_AI_MODELS, MANAGED_WORKERS_AI_MODEL_IDS, MATRIX_BEDROCK_SOURCE_ID,
   MOONSHOT_KIMI_K31_PRO_MODEL_ID, MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS, retiredManagedWorkersAiModel,
   type AiModelDescriptorView,
 } from "@matrix-os/contracts";
@@ -42,6 +42,7 @@ const CURRENT_STATUS = new Map<string, "current">(
 
 export function buildBundledModelCatalog(
   observedMatrixIncludedModelIds: readonly string[] = [],
+  effectiveBedrockModelIds: ReadonlySet<string> = new Set(),
 ): AiModelDescriptorView[] {
   const matrixIncludedModelIds = new Set<string>([
     ...MATRIX_INCLUDED_MODEL_IDS,
@@ -97,6 +98,7 @@ export function buildBundledModelCatalog(
       aliases: [], catalogVersion: AI_PROVIDER_CATALOG_VERSION,
     })),
     ...anthropicModels,
+    ...novaProModel(effectiveBedrockModelIds),
     ...FUNDED_PREVIEW_CHAT_ROUTES.map(({ modelId, sourceId, vendor, displayName, disclosureKey }): AiModelDescriptorView => ({
       id: modelId,
       vendor,
@@ -126,6 +128,18 @@ export function buildBundledModelCatalog(
       catalogVersion: AI_PROVIDER_CATALOG_VERSION,
     },
   ];
+}
+
+function novaProModel(effectiveBedrockModelIds: ReadonlySet<string>): AiModelDescriptorView[] {
+  const id = "bedrock/amazon.nova-pro-v1:0";
+  if (!effectiveBedrockModelIds.has(id)) return [];
+  return [{
+    id, vendor: "amazon", displayName: "Nova Pro", status: "preview",
+    capabilities: ["tools", "long_context"], effortControls: [],
+    eligibleAccessSourceIds: [MATRIX_BEDROCK_SOURCE_ID],
+    dataPolicies: [{ accessSourceId: MATRIX_BEDROCK_SOURCE_ID, route: "matrix_relay", disclosureKey: "matrix-aws-bedrock" }],
+    aliases: [], catalogVersion: AI_PROVIDER_CATALOG_VERSION,
+  }];
 }
 
 export function eligibleModelsForSource(

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { AiProviderSnapshotV3Schema, type AiProviderSnapshotV3 } from "@matrix-os/contracts";
+import { buildBundledModelCatalog } from "../../packages/gateway/src/ai-providers/model-catalog.js";
 import { createAiProviderRoutes } from "../../packages/gateway/src/ai-providers/routes.js";
 import { makeAiProviderSnapshot } from "../fixtures/ai-provider-snapshot.js";
 
@@ -76,14 +77,26 @@ describe("AI provider routes", () => {
       effectiveUpstream: "aws_bedrock" as const,
       effectiveBedrockModelIds: ["anthropic/claude-sonnet-5"], revision: 2,
       updatedAt: "2026-08-29T20:59:00.000Z", validThrough: "2026-09-30T00:00:00.000Z" };
+    const modelId = "bedrock/amazon.nova-pro-v1:0";
+    upstreamPreference.effectiveBedrockModelIds.push(modelId);
+    const snapshot = makeAiProviderSnapshot();
+    const nova = buildBundledModelCatalog([], new Set([modelId])).find(model => model.id === modelId)!;
+    snapshot.models.push(nova);
+    snapshot.accessSources.push({
+      ...snapshot.accessSources[0]!, id: "matrix_bedrock", vendor: "amazon", eligibleModelIds: [modelId],
+    });
     const app = new Hono();
     app.route("/api/ai", createAiProviderRoutes({ service: { getSnapshot: async () => ({
-      ...emptySnapshot, upstreamPreference,
+      ...snapshot, upstreamPreference,
     }) }, getPrincipal: () => ({ userId: "owner_123" }),
       canAccessUpstreamPreference: () => true }));
-    expect(await (await app.request("/api/ai/providers")).json()).not.toHaveProperty("upstreamPreference");
-    expect(await (await app.request("/api/ai/providers?includeUpstreamPreference=true")).json())
-      .toHaveProperty("upstreamPreference", upstreamPreference);
+    const legacy = AiProviderSnapshotV3Schema.parse(await (await app.request("/api/ai/providers")).json());
+    expect(legacy.upstreamPreference).toBeUndefined();
+    expect(legacy.models.some(model => model.id === modelId)).toBe(false);
+    expect(legacy.accessSources.some(source => source.id === "matrix_bedrock")).toBe(false);
+    const current = AiProviderSnapshotV3Schema.parse(await (await app.request("/api/ai/providers?includeUpstreamPreference=true")).json());
+    expect(current.upstreamPreference).toEqual(upstreamPreference);
+    expect(current.models).toContainEqual(nova);
     expect((await app.request("/api/ai/providers?includeUpstreamPreference=yes")).status).toBe(400);
   });
   it("hides platform upstream truth from authenticated runtime guests", async () => {

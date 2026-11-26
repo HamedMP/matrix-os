@@ -98,8 +98,11 @@ never authority.
    For entitled current clients, the platform projection carries the exact
    healthy Bedrock model IDs into Provider V3. Shared Chat and Settings
    projections consume that field rather than inferring eligibility. Bedrock
-   models are exposed through Matrix Pi's OpenAI-compatible route. The Claude
-   SDK instance and the standalone Pi and OpenCode Anthropic launchers exclude
+   models are exposed through Matrix Pi's OpenAI-compatible route. The bundled
+   Nova Pro descriptor appears only for the exact qualified
+   `bedrock/amazon.nova-pro-v1:0` model in Platform policy and readiness.
+   The Claude SDK instance and standalone Pi and OpenCode Anthropic launchers
+   exclude
    those exact routes while Matrix AI still lists the models. Settings clients must
    opt in to the preference field and matching mutation together; legacy
    clients receive neither. Raw Provider V3 reads negotiate the same additive
