@@ -111,16 +111,23 @@ check, so revoking takes effect on the next action.
 
 - The approval names the computer and the request ("matrix-demo wants to run a
   command on this Mac") and shows the whole command and the folder it starts in:
-  argv quoted part by part, a shell line as written, and every character that
+  argv quoted part by part the way the desktop's OS reads it (POSIX quoting, or
+  the Windows command line), a shell line as written, and every character that
   would not show as itself (newlines, escapes, zero-width, direction marks, tags,
-  separators other than a space) written out as `⟨U+XXXX⟩`. A command or folder
-  longer than 500 characters once shown is refused, never shortened, and so is a
-  start whose `argv[0]` names a herdr-core template (the core would run the
-  template's command, not the one shown) or one made while the core cannot say.
-  A terminal approval names its title and folder from the core's own record, not
-  from the computer. The computer's name is shown the same way (≤ 64 characters).
-  One approval is on screen at a time; at most four wait; more are
-  refused at once. Approved terminals are remembered for the pairing revision
+  combining marks, separators other than a space) written out as `⟨U+XXXX⟩`, and
+  a run of spaces as `⟨N spaces⟩`. A command or folder longer than 500
+  characters once shown is refused, never shortened. A start is refused without
+  asking when `argv[0]` could name a herdr-core template (compared by its last
+  path part, without case or `.md`; a relative path with a separator is refused
+  outright), since the core would run the template's command, not the one shown,
+  and when the core cannot say which templates it has. The dialog says the
+  computer can then see and type into the terminal it starts. A terminal approval
+  leads with the address and shows the program, folder and title from the core's
+  own record, the title marked as set by the program. The computer's name is
+  shown the same way (≤ 64 characters), inside the fixed phrase "Your Matrix
+  computer “…”". One approval is on screen at a time, the next opens a second
+  after the last closes; at most four wait; more are refused at once, and a
+  request whose deadline passes while it waits never gets a dialog. Approved terminals are remembered for the pairing revision
   (≤ 256, oldest forgotten first) as one terminal instance, address and start
   time, so an address the core gives a later terminal (after the core restarts)
   is asked about again; Stop, disconnect, sign-out, an account or
@@ -130,8 +137,10 @@ check, so revoking takes effect on the next action.
   90 s. Each approval's deadline starts when the request arrives, not when its
   dialog shows; an answer after it counts as no. The computer's own terminal
   listing waits at most 3 s on a desktop, then leaves its terminals out.
-- While an approval is on screen, later bytes on that core stream wait behind it
-  (the guard keeps order); heartbeats and other streams do not.
+- While an approval is on screen, the call waiting for it is decided off the
+  stream's queue: later calls, typing and credit on that stream keep moving.
+  After an approval the guard re-reads the terminal and refuses the call if it is
+  no longer the same instance.
 - Calls waiting for the owner are decided off the core stream's queue: other
   calls, typing, resizes and credit on the same stream keep moving.
 - The guard refuses: a start carrying both `argv` and `line` (the owner sees one
@@ -349,15 +358,22 @@ it, for VPS and owned computers alike.
 
 ### desktop-side guard (`desktop/src/main/desktop-link/guard.ts`)
 
-The desktop never trusts the computer beyond "may run terminals", and the guard
-denies by default. Each core stream gets a fresh guard. herdr-core starts
-unframed: the client's first message is one newline-terminated JSON-RPC `hello`.
-The guard reads that line first (at most 64 KiB, only `framed`, `generation` and
-`features`, `framed: true`), sends the core a rebuilt copy, and only then
-switches to `HcFrameDecoder` for the framed bytes that follow. On channel 0 it
-accepts exactly the four calls the computer's Herdr session host makes
-(`HERDR_SESSION_METHODS`, `DESKTOP_LINK_METHODS` in contracts), each through a
-strict schema that lists every allowed parameter:
+The desktop never trusts the computer beyond "may run terminals". The guard
+terminates the protocol on both sides and denies by default; each core stream
+gets a fresh guard on its own connection to the core.
+
+- **The handshake is the guard's.** On connecting, the guard sends the core the
+  one fixed `{"method":"hello","params":{"framed":true}}` line, exactly what the
+  Herdr client sends, and writes nothing else, not even its own questions,
+  until the core answers that hello with `framed: true` at protocol generation 1.
+  Anything else ends the stream with nothing more written; bytes waiting for the
+  handshake are capped at 1 MiB. The computer's own first line must be exactly
+  `hello` with `framed: true` (≤ 64 KiB); the guard answers it with the core's
+  version and features and only the four methods below, and never forwards it.
+- **Channel 0** carries JSON-RPC. The guard accepts exactly the four calls the
+  computer's Herdr session host makes (`HERDR_SESSION_METHODS`,
+  `DESKTOP_LINK_METHODS` in contracts), each through a strict schema that lists
+  every allowed parameter:
 
 | Method | Allowed parameters |
 | --- | --- |
@@ -378,8 +394,15 @@ goes back on the answer). A start is fixed as `keep: false`, `no_parent: true`,
 computer's name: it never becomes a shell when its program ends, and never
 reports into another terminal. At most 256 calls wait for the core per stream.
 Oversized requests (channel 0 payload > 256 KiB) or malformed JSON close the
-stream. Stream frames on other channels pass through; the core rejects channels
-it did not open.
+stream. `env` values are plain words (≤ 64 characters), and a `name` never looks
+like an address.
+
+- **Other channels** carry a terminal's bytes. A frame from the computer passes,
+  rebuilt, only on a channel the guard saw the core open in answer to an attach
+  it forwarded, and only as data, credit, resize or close; a close forgets the
+  channel. A frame on any other channel, or of another kind, closes the link.
+  The core's own bytes for channels the computer was not given stay on the
+  desktop.
 
 Answers are rebuilt too. The core's handshake offers only the four methods and
 drops the core's id, name and login details. A listing carries each local
