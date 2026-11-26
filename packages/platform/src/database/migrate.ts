@@ -17,6 +17,7 @@ import { migrateDirectoryAndSocial } from './migrations/directory-and-social.js'
 import { migratePreviewDrive } from './migrations/preview-drive.js';
 import { migrateFreeTier } from './migrations/free-tier.js';
 import { migrateMetalSleep } from './migrations/metal-sleep.js';
+import { migrateFreeFunding } from './migrations/free-funding.js';
 
 export interface PlatformMigrationStep {
   readonly name: string;
@@ -48,6 +49,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'account-deletion', run: migrateAccountDeletion },
   { name: 'free-tier', run: migrateFreeTier },
   { name: 'metal-sleep', run: migrateMetalSleep },
+  { name: 'free-funding', run: migrateFreeFunding },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {

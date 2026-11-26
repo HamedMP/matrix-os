@@ -132,6 +132,7 @@ export interface AiFundedRuntimePoliciesTable {
   runtime_slot: string;
   enabled: boolean;
   allowed_model_ids: string;
+  uses_free_model_default: Generated<boolean>;
   monthly_budget_microusd: number;
   expires_at: string | null;
   next_issue_at: string;
@@ -183,6 +184,8 @@ export interface AiFundedPriorityClaimsTable {
 }
 
 export interface AiFundedUsageReservationsTable {
+  /** The free plan funded this reservation (spec 2691), recorded at creation. */
+  free_funded: Generated<boolean>;
   terminal_outcome: Generated<string | null>;
   charge_waiver: Generated<string | null>;
   customer_charge_release: Generated<string | null>;

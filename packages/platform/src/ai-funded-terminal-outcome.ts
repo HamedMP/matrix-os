@@ -7,6 +7,7 @@ import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { readFundedUsageAuthorization } from "./ai-funded-recovery-audit.js";
 import { assertRecoveryMachine } from "./ai-funded-recovery-lifecycle.js";
 import { recoverFundedTerminalReceipt } from "./ai-funded-terminal-reconciliation.js";
+import { isFreePrepaidHold } from "./free-tier/prepaid-unknown-usage.js";
 export const TerminalOutcomeAuditSchema = z.object({ request: FundedAiTerminalOutcomeRequestSchema,
   response: FundedAiTerminalOutcomeResponseSchema }).strict();
 export function readTerminalOutcome(row: Selectable<AiFundedUsageReservationsTable>) {
@@ -85,7 +86,8 @@ export function createFundedTerminalOutcome(options: {
         throw new AiFundedPolicyError("reservation_closed");
       await trx.executor.updateTable("ai_funded_usage_reservations").set({ terminal_outcome: JSON.stringify({ request, response }) })
         .where("reservation_id", "=", row.reservation_id).where("terminal_outcome", "is", null).executeTakeFirstOrThrow();
-      if (!settled && !customerReleased) {
+      // A free prepaid hold stays reserved and blocking until it is settled; it is never released here.
+      if (!settled && !customerReleased && !await isFreePrepaidHold(trx.executor, row)) {
         await releaseCustomerCharge(trx.executor, row,
           request.terminalState === "completed" ? "usage_unknown" : "gateway_failure", checkedAt);
       }

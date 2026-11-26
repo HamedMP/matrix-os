@@ -5,7 +5,9 @@ import type { PlatformDB } from './db.js';
 import { AccountDeletionAdmissionError, withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { createAiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { parseModels } from './ai-funded-metering-helpers.js';
-import { ordinaryCustomerModelIds } from './customer-ordinary-model-policy.js';
+import { freeRuntimeModelIds, ordinaryCustomerModelIds } from './customer-ordinary-model-policy.js';
+import { FREE_MONTHLY_ALLOWANCE_MICROUSD } from './free-tier/funded-policy.js';
+import { isFreeMetalRuntime } from './free-tier/free-runtime.js';
 
 const STARTER_MICROUSD = 5_000_000;
 const STARTER_SOURCE = 'matrix-ai-lifetime-starter';
@@ -56,7 +58,11 @@ export async function initializeCustomerFundedStarterPolicy(
     if (!global.enabled) return false;
     const policy = FundedAiGlobalPolicySchema.parse({ enabled: global.enabled, revision: global.revision,
       allowedModelIds: JSON.parse(global.allowed_model_ids) as unknown, updatedAt: global.updated_at });
-    const models = ordinaryCustomerModelIds(policy.allowedModelIds);
+    // A free metal runtime is limited to the managed default model (spec 2691 D2, ENG-520 P7).
+    const free = await isFreeMetalRuntime(trx.executor, machineId);
+    const models = free
+      ? freeRuntimeModelIds(policy.allowedModelIds)
+      : ordinaryCustomerModelIds(policy.allowedModelIds);
     if (models.length === 0) return false;
     const existing = await trx.executor.selectFrom('ai_funded_runtime_policies').selectAll()
       .where('machine_id', '=', machineId).forUpdate().executeTakeFirst();
@@ -65,9 +71,21 @@ export async function initializeCustomerFundedStarterPolicy(
     }
     if (existing && (!existing.enabled || (existing.expires_at !== null && !(Date.parse(existing.expires_at) > atMs))
       || !models.some(model => parseModels(existing.allowed_model_ids).includes(model)))) return false;
+    // A free runtime registered before the monthly allowance kept the $5 starter budget; raise exactly
+    // that default to the allowance budget, never a budget an operator set.
+    const upgraded = existing !== undefined && free
+      && Number(existing.monthly_budget_microusd) === STARTER_MICROUSD
+      && Boolean(await trx.executor.updateTable('ai_funded_runtime_policies').set({
+        monthly_budget_microusd: STARTER_MICROUSD + FREE_MONTHLY_ALLOWANCE_MICROUSD,
+        revision: sql<number>`revision + 1`, updated_at: at,
+      }).where('machine_id', '=', machineId).where('monthly_budget_microusd', '=', STARTER_MICROUSD)
+        .returning('machine_id').executeTakeFirst());
     const inserted = existing ? undefined : await trx.executor.insertInto('ai_funded_runtime_policies').values({
       machine_id: machineId, owner_id: machine.clerk_user_id, runtime_slot: 'primary', enabled: true,
-      allowed_model_ids: JSON.stringify(models), monthly_budget_microusd: STARTER_MICROUSD,
+      allowed_model_ids: JSON.stringify(models),
+      uses_free_model_default: free,
+      // A free owner's month may spend the new allowance on top of any starter credit left.
+      monthly_budget_microusd: free ? STARTER_MICROUSD + FREE_MONTHLY_ALLOWANCE_MICROUSD : STARTER_MICROUSD,
       expires_at: null, revision: 1, next_issue_at: '1970-01-01T00:00:00.000Z', created_at: at, updated_at: at,
     }).onConflict(conflict => conflict.column('machine_id').doNothing()).returning('machine_id').executeTakeFirst();
     const month = new Date(Date.UTC(new Date(at).getUTCFullYear(), new Date(at).getUTCMonth(), 1)).toISOString();
@@ -94,7 +112,7 @@ export async function initializeCustomerFundedStarterPolicy(
         : row.source_reference !== LEGACY_SOURCE || !row.entry_id.startsWith(LEGACY_PREFIX)))) {
       throw new Error('Conflicting permanent starter entitlement');
     }
-    if (prior.length === 1) return Boolean(inserted);
+    if (prior.length === 1) return Boolean(inserted) || upgraded;
     const repo = createAiFundedPolicyRepository({ db: trx,
       credentialHashSecret: env.AI_FUNDED_CREDENTIAL_HASH_SECRET ?? '', now: () => new Date(at) });
     await repo.grantCreditInTransaction(trx, { entryId,

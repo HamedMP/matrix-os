@@ -6,6 +6,7 @@ import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { readFundedRecoveryAudit, readFundedRecoveryLiability } from "./ai-funded-recovery-audit.js";
 import { readTerminalOutcome, readTerminalStart } from "./ai-funded-terminal-outcome.js";
 import { readUnknownUsageWaivers } from "./ai-funded-usage-waiver-admission.js";
+import { freePrepaidHold } from "./free-tier/prepaid-unknown-usage.js";
 type Row = Selectable<AiFundedUsageReservationsTable>;
 type Executor = PlatformDB["executor"];
 export function assertRecoveryAge(row: Row, terminalAt: string, checked: Date) {
@@ -111,7 +112,10 @@ export async function recoverTerminalOutcomes(executor: Executor, ownerId: strin
   const unknown = await readRecoveredUnknowns(executor, ownerId);
   const candidates = await executor.selectFrom("ai_funded_usage_reservations").selectAll().where("owner_id", "=", ownerId)
     .where("execution_admission_release", "is", null).where("terminal_outcome", "is not", null).where("charge_waiver", "is", null)
-    .where("actual_microusd", "is", null).where("status", "=", "in_flight").limit(FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN + 1).execute();
+    .where("actual_microusd", "is", null).where("status", "=", "in_flight")
+    // A free prepaid hold with unknown usage keeps its owner blocked until it is settled.
+    .where(sql<boolean>`NOT ${freePrepaidHold()}`)
+    .limit(FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN + 1).execute();
   if (candidates.length === 0 || candidates.length + unknown.rows.length > FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN)
     return;
   const valid = [];
