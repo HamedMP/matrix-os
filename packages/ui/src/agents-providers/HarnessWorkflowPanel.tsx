@@ -61,7 +61,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   return (
     <section
       ref={connectionPanel}
-      className="matrix-ap-workflow"
+      className="matrix-ap-workflow matrix-ap-harness-workflow"
       aria-label={`${harness.displayName} connection`}
       aria-busy={reconciling || (pending && !startingLogin)}
     >
@@ -159,7 +159,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
           {capability.connectionOptions ? (showConnectionChoices ? <WorkflowConnectionChooser state={state} /> : null) : (inlineLogin ||
             capability.apiKeyProviders.length > 0) &&
           showConnectionChoices ? (
-            <>
+            <div className="matrix-ap-login-choices">
               <h3>Connect {harness.displayName} with</h3>
               <div className="matrix-ap-connection-options">
                 {inlineLogin ? (
@@ -190,7 +190,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                   />
                 ) : null}
               </div>
-            </>
+            </div>
           ) : null}
       <WorkflowKeyForm state={state} />
       {harness.harness === "claude" || showCodexLoginProgress ? <WorkflowLoginProgress state={state} /> : null}

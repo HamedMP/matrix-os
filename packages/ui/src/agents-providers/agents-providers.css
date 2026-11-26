@@ -381,9 +381,6 @@
 .matrix-ap-loading-spinner { flex-shrink: 0; animation: matrix-ap-loading 1s linear infinite; }
 @keyframes matrix-ap-loading { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .matrix-ap-loading-spinner { animation: none; } }
-.matrix-ap-device-login { margin: 16px 0; }
-.matrix-ap-device-code { display: flex; align-items: center; gap: 12px; padding: 12px; margin: 12px 0; background: var(--matrix-ap-sunken); border: 1px solid var(--matrix-ap-border); border-radius: 10px; }
-.matrix-ap-device-code code { font-size: 20px; letter-spacing: .08em; }
 .matrix-ap-operation-logs { background: var(--matrix-ap-sunken); border-radius: 10px; padding: 12px; margin-top: 12px; font-size: 12px; }
 .matrix-ap-operation-logs ol { padding-left: 18px; }
 .matrix-ap-uninstall-choice { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; margin-top: 18px; font-size: 13px; }
@@ -532,6 +529,53 @@
 .matrix-ap-connection-choice.matrix-ap-method-card { display: grid; grid-template-columns: 20px minmax(0, 1fr) 16px; align-items: start; width: 100%; }
 .matrix-ap-method-card .matrix-ap-method-copy { min-width: 0; overflow-wrap: anywhere; }
 .matrix-ap-method-card .matrix-ap-method-check { position: static; justify-self: end; }
+
+/* Keep each sign-in step separate while aligning the chooser, instructions, and form. */
+.matrix-ap-harness-workflow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.matrix-ap-harness-workflow > :is(.matrix-ap-help, .matrix-ap-notice, .matrix-ap-key-form, .matrix-ap-workflow-actions, .matrix-ap-advanced, .matrix-ap-operation-logs) { margin: 0; }
+.matrix-ap-harness-workflow > .matrix-ap-workflow-actions:empty { display: none; }
+.matrix-ap-harness-workflow > .matrix-ap-button,
+.matrix-ap-device-login > .matrix-ap-button,
+.matrix-ap-device-login .matrix-ap-key-form > .matrix-ap-button { justify-self: start; }
+.matrix-ap-agent-details > .matrix-ap-connected:has(+ .matrix-ap-harness-workflow) { margin-bottom: 16px; }
+.matrix-ap-harness-workflow > .matrix-ap-notice { flex-wrap: wrap; }
+.matrix-ap-harness-workflow > .matrix-ap-notice > span { flex: 1 1 12rem; font-size: 12px; overflow-wrap: anywhere; }
+
+.matrix-ap-login-choices { display: grid; gap: 8px; }
+.matrix-ap-harness-workflow .matrix-ap-login-choices > h3,
+.matrix-ap-harness-workflow .matrix-ap-device-login > h3 { margin: 0; }
+.matrix-ap-login-choices .matrix-ap-connection-options {
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+}
+.matrix-ap-login-choices .matrix-ap-connection-options > div { display: grid; grid-template-rows: 1fr auto; min-width: 0; }
+.matrix-ap-device-login {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding: 16px;
+  background: var(--matrix-ap-surface);
+  border: 1px solid var(--matrix-ap-border);
+  border-radius: 10px;
+}
+.matrix-ap-device-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  background: var(--matrix-ap-sunken);
+  border-radius: 8px;
+}
+.matrix-ap-device-code code { min-width: 0; overflow-wrap: anywhere; font-size: 20px; letter-spacing: .08em; }
+.matrix-ap-harness-workflow .matrix-ap-key-form { gap: 12px; max-width: none; }
+.matrix-ap-device-login > :is(.matrix-ap-key-form, .matrix-ap-help),
+.matrix-ap-harness-workflow .matrix-ap-key-form > :is(.matrix-ap-help, .matrix-ap-workflow-actions) { margin: 0; }
+@media (max-width: 520px) {
+  .matrix-ap-device-login { padding: 12px; }
+  .matrix-ap-harness-workflow :is(.matrix-ap-device-login, .matrix-ap-device-code, .matrix-ap-key-form, .matrix-ap-workflow-actions)
+    > :is(.matrix-ap-button, .matrix-ap-link-button) { min-height: 44px; }
+}
 .matrix-ap-agent-logo, .matrix-ap-harness-mark:has(.matrix-ap-agent-logo) { height: 32px; width: 32px; }
 .matrix-ap-agent-logo { border: 1px solid var(--matrix-ap-border); background: var(--matrix-ap-sunken); border-radius: 8px; }
 .matrix-ap-agent-logo img { height: 20px; width: 20px; }

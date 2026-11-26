@@ -106,6 +106,10 @@ without launching a login process. Missing or changed proof fails in Settings.
 Only a verified ChatGPT subscription qualifies for this action. Terminal
 remains available for other callers and for a Settings sign-in that needs it.
 
+The shared sign-in panel keeps connection choices, progress, and actions in
+separate blocks. A single choice fills the available row. At narrow widths,
+choices stack and device-code controls wrap within the panel.
+
 Canvas, Web Desktop, and Electron must expose the same:
 
 - harnesses, accounts, access sources, models, and readiness states;

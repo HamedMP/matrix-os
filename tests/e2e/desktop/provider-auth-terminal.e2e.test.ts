@@ -99,9 +99,41 @@ it("keeps browser login in Settings and disconnects execution without logging ou
     await settings();
     const accountChoice = page.getByRole("button", { name: /Claude account.*Use your Claude plan/ });
     await accountChoice.click();
-    await page.getByRole("heading", { name: "Finish signing in to Claude", exact: true }).waitFor();
-    await page.getByRole("button", { name: "Open sign-in page", exact: true }).waitFor();
-    await page.getByLabel("Paste the sign-in code", { exact: true }).waitFor();
+    const signInHeading = page.getByRole("heading", { name: "Finish signing in to Claude", exact: true });
+    await signInHeading.waitFor();
+    const openSignInPage = page.getByRole("button", { name: "Open sign-in page", exact: true });
+    await openSignInPage.waitFor();
+    await signInHeading.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(output, "settings-browser-login-progress.png") });
+    const progressInset = await signInHeading.evaluate(heading => {
+      const progress = heading.closest(".matrix-ap-device-login");
+      if (!progress) throw new Error("The sign-in heading must be in the sign-in panel");
+      return heading.getBoundingClientRect().top - progress.getBoundingClientRect().top;
+    });
+    expect(progressInset).toBeGreaterThanOrEqual(12);
+    const authorizationField = page.getByLabel("Paste the sign-in code", { exact: true });
+    await authorizationField.waitFor();
+
+    const desktop = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+    try {
+      await page.setViewportSize({ width: 480, height: 800 });
+      await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(480);
+      const formBounds = await authorizationField.evaluate(input => {
+        const progress = input.closest(".matrix-ap-device-login");
+        if (!progress) throw new Error("The authorization field must be in the sign-in panel");
+        const panel = progress.getBoundingClientRect();
+        const field = input.getBoundingClientRect();
+        return { leftInset: field.left - panel.left, rightInset: panel.right - field.right };
+      });
+      expect(formBounds.leftInset).toBeGreaterThanOrEqual(12);
+      expect(formBounds.rightInset).toBeGreaterThanOrEqual(12);
+      const button = await openSignInPage.boundingBox();
+      expect(button?.height ?? 0).toBeGreaterThanOrEqual(44);
+      await signInHeading.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: join(output, "settings-browser-login-narrow.png") });
+    } finally {
+      await page.setViewportSize(desktop);
+    }
     expect(gateway.workflowEvents).toEqual(["browser-login"]);
     await terminal.waitFor({ state: "hidden" });
     expect(gateway.commands).toHaveLength(0);

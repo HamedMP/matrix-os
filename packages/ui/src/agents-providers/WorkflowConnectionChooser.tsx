@@ -18,7 +18,7 @@ export function WorkflowConnectionChooser({state}: {state: HarnessWorkflowContro
    ? connectionOptions.filter(option => option.authKind === "api_key" || isCodexExistingAccountOption(option))
    : connectionOptions;
  const restoringCodex = codex && operationId !== null && operation?.id !== operationId;
- return <>
+ return <div className="matrix-ap-login-choices">
    <h3>Connect {harness.displayName} with</h3>
    <div className="matrix-ap-connection-options">
      {options.map(option => {
@@ -44,5 +44,5 @@ export function WorkflowConnectionChooser({state}: {state: HarnessWorkflowContro
        </div>;
      })}
    </div>
- </>;
+ </div>;
 }
