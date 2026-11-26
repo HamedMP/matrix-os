@@ -10,6 +10,8 @@ import { DesktopLinkDeviceIdSchema, desktopLinkDevicePrefix, desktopLinkWorkspac
 import { HcCallError } from "@matrix-os/herdr-core-client/client";
 import { HerdrAdapterError, type HerdrAdapter } from "../herdr/adapter.js";
 import { herdrTabId } from "../herdr/refs.js";
+import { TERMINAL_KEYS_MAX, TerminalAgentVerbError, type TerminalAgentVerbs } from "../terminal-agent/verbs.js";
+import { TERMINAL_WAIT_MAX_MS, TERMINAL_WAIT_OUTPUT_MAX_CHARS, TerminalWaitCapacityError, type TerminalWaiter } from "../terminal-agent/wait.js";
 import { registerHerdrTerminalWebSocket } from "../herdr/ws.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { TerminalInputActivity } from "../terminal-agent/input-activity.js";
@@ -57,7 +59,6 @@ export const DESKTOP_LINK_AGENT_LINES = {
   pi: "pi",
 } as const;
 
-const MAX_RUNS_PER_MINUTE = 10;
 const MAX_SCREEN_LINES = 2_000;
 const MAX_INPUT_CHARS = 64 * 1024;
 
@@ -87,29 +88,24 @@ async function parseJson<T>(c: Context, schema: z.ZodType<T>): Promise<T | undef
   }
 }
 
-/** `terminal.run` from the computer, per desktop per minute. Bounded: one entry per linked device. */
-function createRunLimiter(now: () => number, maxDevices: number) {
-  const runs = new Map<string, number[]>();
-  return (deviceId: string): boolean => {
-    const at = now();
-    const recent = (runs.get(deviceId) ?? []).filter((time) => at - time < 60_000);
-    if (recent.length >= MAX_RUNS_PER_MINUTE) { runs.set(deviceId, recent); return false; }
-    recent.push(at);
-    runs.delete(deviceId);
-    runs.set(deviceId, recent);
-    while (runs.size > maxDevices) {
-      const oldest = runs.keys().next().value;
-      if (oldest === undefined) break;
-      runs.delete(oldest);
-    }
-    return true;
-  };
-}
+/** The 2692 verbs and waits this layer uses on desktop terminals (keys, interrupt, wait). */
+export type DesktopTerminalVerbs = Pick<TerminalAgentVerbs, "keys" | "interrupt">;
+export type DesktopTerminalWaiter = Pick<TerminalWaiter, "wait">;
 
-export function addDesktopLinkTerminalRoutes(api: Hono, registry: DesktopLinkRegistry, options: { now?: () => number; log: (message: string) => void }): void {
-  const now = options.now ?? Date.now;
-  const allowRun = createRunLimiter(now, 16);
+const KeysSchema = z.strictObject({ keys: z.array(z.string().min(1).max(16)).min(1).max(TERMINAL_KEYS_MAX) });
+const InterruptSchema = z.strictObject({});
+const WaitSchema = z.strictObject({
+  output: z.string().min(1).max(TERMINAL_WAIT_OUTPUT_MAX_CHARS).optional(),
+  seen: z.number().int().min(0).max(1_000_000).optional(),
+  timeoutMs: z.number().int().min(0).max(TERMINAL_WAIT_MAX_MS).optional(),
+});
 
+export function addDesktopLinkTerminalRoutes(api: Hono, registry: DesktopLinkRegistry, options: {
+  now?: () => number;
+  log: (message: string) => void;
+  verbs?: DesktopTerminalVerbs;
+  waiter?: DesktopTerminalWaiter;
+}): void {
   function linked(c: Context): { deviceId: string; adapter: HerdrAdapter } | Response {
     const device = DesktopLinkDeviceIdSchema.safeParse(c.req.param("deviceId"));
     if (!device.success) return c.json({ error: "invalid_request" }, 400);
@@ -149,7 +145,7 @@ export function addDesktopLinkTerminalRoutes(api: Hono, registry: DesktopLinkReg
     if (target instanceof Response) return target;
     const body = await parseJson(c, CreateSchema);
     if (!body) return c.json({ error: "invalid_request" }, 400);
-    if (!allowRun(target.deviceId)) return c.json({ error: "busy" }, 429);
+    if (!registry.allowRun(target.deviceId)) return c.json({ error: "busy" }, 429);
     try {
       const id = await target.adapter.create({ cols: body.cols, rows: body.rows }, {
         ...(body.agent ? { line: DESKTOP_LINK_AGENT_LINES[body.agent] } : {}),
@@ -199,5 +195,53 @@ export function addDesktopLinkTerminalRoutes(api: Hono, registry: DesktopLinkReg
       await target.adapter.writeInput(id, body.data);
       return c.json({ ok: true });
     } catch (error: unknown) { return failed(c, error, "typing into a terminal"); }
+  });
+
+  /** A desktop terminal's ref in the 2692 pipeline, once the desktop is linked and the id is known. */
+  function desktopRef(c: Context): { ref: { workspaceId: string; tabId: string } } | Response {
+    const target = linked(c);
+    if (target instanceof Response) return target;
+    const id = terminalId(c);
+    if (!id) return c.json({ error: "invalid_request" }, 400);
+    return { ref: { workspaceId: desktopLinkWorkspaceId(target.deviceId), tabId: herdrTabId(id) } };
+  }
+  function verbFailed(c: Context, error: unknown, what: string): Response {
+    if (error instanceof TerminalWaitCapacityError) return c.json({ error: "busy" }, 429);
+    if (error instanceof TerminalAgentVerbError) {
+      if (error.code === "blocked") return c.json({ error: "blocked" }, 409);
+      if (error.code === "finished") return c.json({ error: "finished" }, 409);
+      if (error.code === "invalid_request") return c.json({ error: "invalid_request" }, 400);
+      return c.json({ error: "not_found" }, 404);
+    }
+    return failed(c, error, what);
+  }
+
+  api.post("/machines/:deviceId/terminals/:id/keys", small, async (c) => {
+    if (!options.verbs) return c.json({ error: "unavailable" }, 503);
+    const target = desktopRef(c);
+    if (target instanceof Response) return target;
+    const body = await parseJson(c, KeysSchema);
+    if (!body) return c.json({ error: "invalid_request" }, 400);
+    try { return c.json(await options.verbs.keys(target.ref, body)); }
+    catch (error: unknown) { return verbFailed(c, error, "pressing keys"); }
+  });
+
+  api.post("/machines/:deviceId/terminals/:id/interrupt", small, async (c) => {
+    if (!options.verbs) return c.json({ error: "unavailable" }, 503);
+    const target = desktopRef(c);
+    if (target instanceof Response) return target;
+    if (!(await parseJson(c, InterruptSchema))) return c.json({ error: "invalid_request" }, 400);
+    try { return c.json(await options.verbs.interrupt(target.ref, { signal: c.req.raw.signal })); }
+    catch (error: unknown) { return verbFailed(c, error, "interrupting"); }
+  });
+
+  api.post("/machines/:deviceId/terminals/:id/wait", small, async (c) => {
+    if (!options.waiter) return c.json({ error: "unavailable" }, 503);
+    const target = desktopRef(c);
+    if (target instanceof Response) return target;
+    const body = await parseJson(c, WaitSchema);
+    if (!body) return c.json({ error: "invalid_request" }, 400);
+    try { return c.json(await options.waiter.wait(target.ref, { ...body, signal: c.req.raw.signal })); }
+    catch (error: unknown) { return verbFailed(c, error, "waiting"); }
   });
 }

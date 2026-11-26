@@ -11,6 +11,7 @@ export const DESKTOP_LINK_PING_MS = 15_000;
 export const DESKTOP_LINK_STALE_MS = 45_000;
 /** Heartbeats between re-reads of the pairing for live links (about once a minute). */
 const PAIRING_CHECK_SWEEPS = 4;
+const MAX_RUNS_PER_MINUTE = 10;
 
 export interface DesktopLinkRegistryOptions {
   now?: () => number;
@@ -39,6 +40,8 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
   const links = new Map<string, DesktopLink>();
   const adapters = new Map<string, HerdrAdapter>();
   let draining = false;
+  // Start times per device, for allowRun. Bounded to twice the link cap, oldest first out.
+  const runs = new Map<string, number[]>();
   // Set by the routes (the registry is built before the owner database is known).
   let pairing = options.pairing;
   let seen = options.seen;
@@ -188,6 +191,30 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
     draining: () => draining,
     /** Where the current pairing is read from (2698's owner table). */
     usePairing(read: () => Promise<{ deviceId: string | null; revision: number }>): void { pairing = read; },
+    /**
+     * One more terminal started on this device by the computer: at most 10 a
+     * minute per desktop, shared by the routes and the kernel.
+     */
+    allowRun(deviceId: string): boolean {
+      const at = now();
+      const recent = (runs.get(deviceId) ?? []).filter((time) => at - time < 60_000);
+      if (recent.length >= MAX_RUNS_PER_MINUTE) { runs.set(deviceId, recent); return false; }
+      recent.push(at);
+      runs.delete(deviceId);
+      runs.set(deviceId, recent);
+      while (runs.size > maxLinks * 2) {
+        const oldest = runs.keys().next().value;
+        if (oldest === undefined) break;
+        runs.delete(oldest);
+      }
+      return true;
+    },
+    /** Every linked device's id, name and adapter, for terminal verbs and the kernel. */
+    linked(): Array<{ deviceId: string; name: string; adapter: HerdrAdapter }> {
+      return [...links.values()].filter((link) => !link.closed).map((link) => ({
+        deviceId: link.info.deviceId, name: link.info.name, adapter: adapterFor(link.info.deviceId),
+      }));
+    },
     sweep,
     /** Shutdown: tells each desktop, closes links, then adapters. */
     async drain(): Promise<void> {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   TERMINAL_AGENT_IPC_TOOL_NAMES,
+  terminalAgentIpcToolNames,
   terminalAgentToolDefinitions,
   type TerminalAgentKernelTools,
 } from "../../packages/kernel/src/tools/terminal-agents.js";
@@ -33,6 +34,10 @@ describe("kernel terminal tools", () => {
   it("declares one allowed tool name per definition", () => {
     const definitions = terminalAgentToolDefinitions(tools());
     expect(definitions.map((definition) => `mcp__matrix-os-ipc__${definition.name}`)).toEqual(TERMINAL_AGENT_IPC_TOOL_NAMES);
+    // With a linked desktop (spec 2716) the desktop tools are allowed too, and only then.
+    const withMacs = { ...tools(), desktops: async () => [], desktopRun: async () => ({ machine: "desktop", workspaceId: "w", tabId: "t" }) };
+    expect(terminalAgentToolDefinitions(withMacs).map((definition) => `mcp__matrix-os-ipc__${definition.name}`)).toEqual(terminalAgentIpcToolNames(withMacs));
+    expect(terminalAgentIpcToolNames(tools())).toEqual(TERMINAL_AGENT_IPC_TOOL_NAMES);
   });
 
   it("wraps terminal output as untrusted content", async () => {
@@ -50,6 +55,19 @@ describe("kernel terminal tools", () => {
     expect(backend.run).toHaveBeenCalledWith({ name: "tests", cwd: "", template: "reviewer", task: "review x" });
     const refused = await find(definitions, "terminal_run").handler({ name: "x", argv: ["sh"], template: "reviewer" });
     expect(refused).toMatchObject({ isError: true });
+  });
+
+  // Fault detected (Greptile on #3749): desktop_run took names the desktop always refuses,
+  // so an input mistake came back looking like the owner's refusal.
+  it("refuses a desktop terminal name the desktop would refuse, before calling it", async () => {
+    const desktopRun = vi.fn(async () => ({ machine: "desktop", workspaceId: "w", tabId: "t" }));
+    const definitions = terminalAgentToolDefinitions({ ...tools(), desktops: async () => [], desktopRun });
+    for (const name of ["Build tests", "t12", "x".repeat(33)]) {
+      expect(await find(definitions, "desktop_run").handler({ name })).toMatchObject({ isError: true });
+    }
+    expect(desktopRun).not.toHaveBeenCalled();
+    await find(definitions, "desktop_run").handler({ name: "build-tests" });
+    expect(desktopRun).toHaveBeenCalledTimes(1);
   });
 
   it("tells the kernel to ask the user when an agent is blocked", async () => {

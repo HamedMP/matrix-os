@@ -25,6 +25,18 @@ export interface TerminalAgentKernelTools {
   keys(ref: TerminalAgentRef, keys: string[]): Promise<unknown>;
   interrupt(ref: TerminalAgentRef): Promise<unknown>;
   wait(ref: TerminalAgentRef, input: { output?: string; timeoutMs?: number }): Promise<unknown>;
+  /** The owner's linked desktops (spec 2716), when the Desktop link is on for this computer. */
+  desktops?(): Promise<Array<{ machine: string; workspaceId: string }>>;
+  /** Starts a terminal on a linked desktop: its shell, an agent preset or argv. Returns its ref. */
+  desktopRun?(input: DesktopRunToolInput): Promise<{ machine: string; workspaceId: string; tabId: string }>;
+}
+
+export interface DesktopRunToolInput {
+  machine?: string;
+  agent?: "claude" | "codex" | "opencode" | "pi";
+  argv?: string[];
+  cwd?: string;
+  name?: string;
 }
 
 export const TERMINAL_AGENT_IPC_TOOL_NAMES = [
@@ -37,6 +49,14 @@ export const TERMINAL_AGENT_IPC_TOOL_NAMES = [
   "mcp__matrix-os-ipc__terminal_interrupt",
   "mcp__matrix-os-ipc__terminal_wait",
 ];
+
+/** Present only when the Desktop link is on for this computer (spec 2716). */
+export const DESKTOP_IPC_TOOL_NAMES = ["mcp__matrix-os-ipc__desktop_list", "mcp__matrix-os-ipc__desktop_run"];
+
+/** The allowed tool names for exactly the definitions these tools produce. */
+export function terminalAgentIpcToolNames(tools: TerminalAgentKernelTools): string[] {
+  return tools.desktops && tools.desktopRun ? [...TERMINAL_AGENT_IPC_TOOL_NAMES, ...DESKTOP_IPC_TOOL_NAMES] : TERMINAL_AGENT_IPC_TOOL_NAMES;
+}
 
 const RunSchema = z.object({
   projectId: z.string().min(1).max(128).optional(),
@@ -51,6 +71,14 @@ const ReadSchema = z.object({ ...RefShape, lines: z.number().int().min(0).max(10
 const SendSchema = z.object({ ...RefShape, text: z.string().min(1).max(8 * 1024) }).strict();
 const KeysSchema = z.object({ ...RefShape, keys: z.array(z.string().min(1).max(16)).min(1).max(64) }).strict();
 const RefSchema = z.object(RefShape).strict();
+const DesktopRunSchema = z.object({
+  machine: z.string().trim().min(1).max(64).optional(),
+  agent: z.enum(["claude", "codex", "opencode", "pi"]).optional(),
+  argv: z.array(z.string().min(1).max(4096)).min(1).max(64).optional(),
+  cwd: z.string().min(1).max(1024).optional(),
+  // The desktop's own name rule, so a bad name is an input error, never a refusal.
+  name: z.string().regex(/^[a-z0-9_.-]{1,32}$/).refine((name) => !/^t[0-9]/.test(name)).optional(),
+}).strict();
 const WaitSchema = z.object({
   ...RefShape,
   output: z.string().min(1).max(256).optional(),
@@ -152,6 +180,38 @@ export function terminalAgentToolDefinitions(tools: TerminalAgentKernelTools) {
       handler: (input: unknown) => safely(async () => {
         const { output, timeoutMs, ...ref } = WaitSchema.parse(input);
         return text(await tools.wait(ref, { ...(output ? { output } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}) }));
+      }),
+    },
+    ...desktopToolDefinitions(tools),
+  ];
+}
+
+/**
+ * The owner's linked desktop (spec 2716): list it and start terminals there. Its
+ * terminals then appear in terminal_list under the desktop's workspace (with
+ * `machine`), and terminal_read, _send, _keys, _interrupt and _wait reach them.
+ * Present only when the Desktop link is on for this computer.
+ */
+function desktopToolDefinitions(tools: TerminalAgentKernelTools) {
+  const { desktops, desktopRun } = tools;
+  if (!desktops || !desktopRun) return [];
+  return [
+    {
+      name: "desktop_list",
+      description: "List the owner's desktops linked to this computer right now (name and terminal workspace id). Empty when no desktop is linked: then tell the user to open Matrix OS on the desktop, open the Terminal window and choose Let a computer use this device.",
+      schema: z.object({}).strict(),
+      annotations: { readOnlyHint: true },
+      handler: () => safely(async () => text(await desktops())),
+    },
+    {
+      name: "desktop_run",
+      description: "Start a terminal on the owner's linked desktop, as the desktop user: its shell, an agent preset (claude, codex, opencode, pi), or a program as argv (for example [\"open\", \"https://example.com\"] to open a page in the desktop's browser). cwd is a folder in the desktop user's home. Returns the terminal's ref for terminal_read, terminal_send, terminal_keys and terminal_wait.",
+      schema: DesktopRunSchema,
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      handler: (input: unknown) => safely(async () => {
+        const parsed = DesktopRunSchema.parse(input);
+        if (parsed.agent && parsed.argv) throw Object.assign(new Error("agent and argv"), { code: "invalid_request" });
+        return text(await desktopRun(parsed));
       }),
     },
   ];

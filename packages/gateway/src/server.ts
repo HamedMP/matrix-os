@@ -268,7 +268,7 @@ import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.j
 import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation.js";
 import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
-import { registerTerminalSockets } from "./server/terminal-sockets.js";
+import { createDesktopLinkRegistryFromEnv, registerTerminalSockets } from "./server/terminal-sockets.js";
 import { createLocalTerminalAgentToken, type LocalTerminalAgentToken } from "./terminal-agent/local-token.js";
 import { createTerminalAgentServices, type TerminalAgentServices } from "./terminal-agent/services.js";
 import { createHerdrSessionsFromEnv } from "./herdr/register.js";
@@ -335,7 +335,7 @@ export async function createGateway(config: GatewayConfig) {
   // Assigned once collaboration is known (project fences); a startup failure before
   // then must still be able to run shutdown.
   let terminalAgentServices: TerminalAgentServices | null = null;
-  const herdrSessions = createHerdrSessionsFromEnv(process.env); // Owner's herdr-core (spec 2701); null unless MATRIX_HERDR=on.
+  const herdrSessions = createHerdrSessionsFromEnv(process.env), desktopLinks = createDesktopLinkRegistryFromEnv(process.env); // Owner's herdr-core (2701) and linked desktops (2716); null unless enabled.
   let herdrViewers: ReturnType<typeof registerTerminalSockets> | null = null;
   // Lets `matrix shell …` inside this machine's terminals call the gateway (spec 2692).
   let localTerminalAgentToken: LocalTerminalAgentToken | null = null;
@@ -891,7 +891,7 @@ export async function createGateway(config: GatewayConfig) {
       runtime: terminalWorkspaceRuntime,
       ...(gatewayCollaboration ? { projectOperationAdmission: gatewayCollaboration.projectOperationAdmission } : {}),
     }),
-    ...(herdrSessions ? { herdr: herdrSessions } : {}),
+    ...(herdrSessions ? { herdr: herdrSessions } : {}), ...(desktopLinks ? { desktopLinks } : {}),
   });
   terminalAgentServices = terminalAgents;
   herdrSessions?.start();
@@ -1711,7 +1711,7 @@ export async function createGateway(config: GatewayConfig) {
 
   herdrViewers = registerTerminalSockets({
     app, upgradeWebSocket, homePath, terminalWorkspaceRuntime, terminalLiveOwnership, workspaceSessionRuntimeBridge,
-    terminalRuntimeOwnerIds, chatRepository, terminalWorkspaceProjectAdmission, terminalAgents, herdrSessions, ownerDatabase: kyselyInstance,
+    terminalRuntimeOwnerIds, chatRepository, terminalWorkspaceProjectAdmission, terminalAgents, herdrSessions, ownerDatabase: kyselyInstance, desktopLinks,
     captureTerminalEvent, getPrincipal: requireRequestPrincipal,
     logBestEffortFailure, logUnexpectedJsonParseFailure, logUnexpectedWsSendFailure,
   });
