@@ -9,8 +9,9 @@
  */
 
 import { type CellRange, type SheetId, type Workbook, formula as formulaEngine, getWorkbookInternals, isOfficeError } from "../session/engine";
+import { forEachStoredCell } from "../session/stored-cells";
 
-/** Most cells read to find the formulas a move changes. */
+/** Most stored cells read to find the formulas a move changes. */
 export const MAX_MOVE_SCAN_CELLS = 2_000_000;
 
 export interface MoveTarget {
@@ -63,32 +64,29 @@ export function planMove(workbook: Workbook, sourceSheet: SheetId, source: CellR
     start: { row: target.row, col: target.col },
     end: { row: target.row + source.end.row - source.start.row, col: target.col + source.end.col - source.start.col },
   };
-  let scanned = 0;
-  for (const sheet of sheets) {
-    const used = sheet.dimensions;
-    if (used !== null) scanned += (used.end.row - used.start.row + 1) * (used.end.col - used.start.col + 1);
-  }
-  if (scanned > MAX_MOVE_SCAN_CELLS) return null;
   const moved = new Map<string, string>();
   const others: FormulaRewrite[] = [];
+  let scanned = 0;
   for (const sheet of sheets) {
     const used = sheet.dimensions;
     if (used === null) continue;
     const home = name(sheet.id);
-    for (let row = used.start.row; row <= used.end.row; row++) {
-      for (let col = used.start.col; col <= used.end.col; col++) {
-        const text = internals.readRawCell(sheet.id, { row, col }).formula;
-        if (text === null) continue;
-        if (sheet.id === sourceSheet && inside(source, row, col)) {
-          moved.set(`${row - source.start.row},${col - source.start.col}`, rewrite(text, change, home, name(target.sheet)));
-          continue;
-        }
-        // The paste writes over the destination; what was there is gone.
-        if (sheet.id === target.sheet && inside(destination, row, col)) continue;
-        const next = rewrite(text, change, home, home);
-        if (next !== text) others.push({ sheet: sheet.id, row, col, formula: next });
+    // The stored cells, not every position of the used area: a mostly empty sheet can span billions of them.
+    const complete = forEachStoredCell(internals, sheet.id, used, (row, col) => {
+      if (++scanned > MAX_MOVE_SCAN_CELLS) return false;
+      const text = internals.readRawCell(sheet.id, { row, col }).formula;
+      if (text === null) return true;
+      if (sheet.id === sourceSheet && inside(source, row, col)) {
+        moved.set(`${row - source.start.row},${col - source.start.col}`, rewrite(text, change, home, name(target.sheet)));
+        return true;
       }
-    }
+      // The paste writes over the destination; what was there is gone.
+      if (sheet.id === target.sheet && inside(destination, row, col)) return true;
+      const next = rewrite(text, change, home, home);
+      if (next !== text) others.push({ sheet: sheet.id, row, col, formula: next });
+      return true;
+    });
+    if (!complete) return null;
   }
   return { moved, others };
 }

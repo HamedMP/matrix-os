@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { opc } from "../../../../home/apps/_shared/office-engine/index";
 import { type SessionEvent, type SheetSession, createSheetSession, openSheetSession } from "../../../../home/apps/sheets/src/session";
+import { getWorkbookInternals } from "../../../../home/apps/sheets/src/session/engine";
 import { buildXlsx } from "../../../office/xlsx/workbook/helpers";
 import { harness, sampleXlsx, settle } from "./fakes";
 
@@ -228,6 +229,46 @@ describe("sheet session editing", () => {
     session.redo();
     expect(value(session, sheet, "A2")).toBe(3);
     expect(session.cell(sheet, 0, 1).formula).toBe("SUM(A1:A2)");
+  });
+
+  it("deletes rows and columns of a mostly empty sheet by its stored cells, not every position, and undoes them", async () => {
+    const session = createSheetSession(harness().deps);
+    const sheet = session.getState().activeSheetId;
+    // A1 and XFD1048576 make a used area of every position in the sheet.
+    session.setCellInput(sheet, { row: 0, col: 0 }, "1");
+    session.setCellInput(sheet, { row: 4, col: 2 }, "kept");
+    session.setCellInput(sheet, { row: 1_048_575, col: 16_383 }, "2");
+    const internals = getWorkbookInternals(session.workbook);
+    const read = internals.readRawCell.bind(internals);
+    let reads = 0;
+    internals.readRawCell = (target, address) => {
+      if (++reads > 10_000) throw new Error("read every position of the deleted band");
+      return read(target, address);
+    };
+
+    expect(session.deleteRows(sheet, 0, 100_000)).toEqual({ ok: true });
+    expect(session.cell(sheet, 0, 0).value).toBeNull();
+    expect(session.undo()).toEqual({ ok: true });
+    expect([value(session, sheet, "A1"), value(session, sheet, "C5")]).toEqual([1, "kept"]);
+    expect(session.cell(sheet, 1_048_575, 16_383).value).toBe(2);
+
+    expect(session.deleteColumns(sheet, 0, 26)).toEqual({ ok: true });
+    expect(session.undo()).toEqual({ ok: true });
+    expect([value(session, sheet, "A1"), value(session, sheet, "C5")]).toEqual([1, "kept"]);
+    expect(reads).toBeLessThan(10_000);
+  });
+
+  it("finds the cells of a file whose rows and cells leave out their positions when it undoes a deletion", async () => {
+    const h = harness();
+    const rows = "<row><c><v>1</v></c><c><v>2</v></c></row><row><c/><c><v>4</v></c></row><row r=\"4\"><c r=\"C4\"><v>9</v></c></row>";
+    h.files.put("Implicit.xlsx", await buildXlsx({ sheets: [{ name: "Sheet1", rows }] }));
+    const session = await openSheetSession(h.deps, "Implicit.xlsx");
+    const sheet = session.getState().activeSheetId;
+    expect([value(session, sheet, "A1"), value(session, sheet, "B1"), value(session, sheet, "B2"), value(session, sheet, "C4")]).toEqual([1, 2, 4, 9]);
+    session.deleteRows(sheet, 0, 4);
+    expect(value(session, sheet, "B2")).toBeNull();
+    expect(session.undo()).toEqual({ ok: true });
+    expect([value(session, sheet, "A1"), value(session, sheet, "B1"), value(session, sheet, "B2"), value(session, sheet, "C4")]).toEqual([1, 2, 4, 9]);
   });
 
   it("restores deleted columns and their widths", async () => {

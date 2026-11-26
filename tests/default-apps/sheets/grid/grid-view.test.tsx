@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createXlsx } from "../../../../home/apps/_shared/office-engine/index";
 import { canvasFont, cellLook } from "../../../../home/apps/sheets/src/grid/cell-look";
+import { getWorkbookInternals } from "../../../../home/apps/sheets/src/session/engine";
 import { COL, HEAD_H, HEAD_W, ROW, at, cellElement, cellText, click, drag, editor, liveText, press, renderGrid } from "./harness";
 
 afterEach(cleanup);
@@ -257,6 +258,29 @@ describe("SheetGrid view and selection", () => {
     expect(fitted.width).toBeGreaterThan(20);
     fireEvent.doubleClick(container.querySelector("[data-resize='row'][data-index='0']")!);
     expect(session.sheet(sheet).rows).toEqual([]);
+  });
+
+  it("fits every selected column of a mostly empty sheet by its stored cells, not every position", async () => {
+    const { session, sheet, grid, container } = await renderGrid((workbook, id) => {
+      workbook.setCell(id, { row: 0, col: 0 }, "a fairly long heading in column A");
+      workbook.setCell(id, { row: 9_000, col: 3 }, "another long value far down in column D");
+      workbook.setCell(id, { row: 1_048_575, col: 16_383 }, "far corner");
+    });
+    press(grid, "a", { ctrlKey: true });
+    const internals = getWorkbookInternals(session.workbook);
+    const read = internals.readRawCell.bind(internals);
+    let reads = 0;
+    internals.readRawCell = (target, address) => {
+      if (++reads > 100_000) throw new Error("read every position of the selected columns");
+      return read(target, address);
+    };
+    fireEvent.doubleClick(container.querySelector("[data-resize='col'][data-index='0']")!);
+    const width = (col: number) => session.sheet(sheet).columns.find((column) => column.index === col)?.width;
+    expect(session.getState().undoLabel).toBe("Fit column");
+    expect(width(0)).toBeGreaterThan(20);
+    expect(width(3)).toBeGreaterThan(20);
+    expect(width(1)).toBeUndefined();
+    expect(reads).toBeLessThan(100_000);
   });
 
   it("inserts, deletes, sorts and filters from the context menu", async () => {

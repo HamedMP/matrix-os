@@ -12,10 +12,12 @@ import {
   type SheetId,
   type StyleId,
   type Workbook,
+  getWorkbookInternals,
   isOfficeError,
   xlsx,
 } from "../session/engine";
 import { styleAsPatch } from "../session/edits";
+import { forEachStoredCell } from "../session/stored-cells";
 import type { EditResult } from "../session/types";
 import { CELL_PADDING_PX, cellLook, textWidth } from "./cell-look";
 import type { GridContext } from "./context";
@@ -265,41 +267,61 @@ export function resizeRow(ctx: GridContext, row: number, px: number): void {
 }
 
 const AUTOFIT_ROWS = 20_000;
+/** Most stored cells one fit looks at, over all its columns. */
+const AUTOFIT_CELLS = 400_000;
 const AUTOFIT_MAX_PX = 600;
 const AUTOFIT_MIN_PX = 24;
 
-/** The width in pixels that shows every value of a column, or null when the column is empty. */
-export function fittingColumnWidth(ctx: GridContext, col: number): number | null {
+/**
+ * The width in pixels that shows every value of each column, or null for a
+ * column with nothing in it. Looks at the stored cells of the first rows of
+ * the used area, not at every position: the columns of a mostly empty sheet
+ * can span millions of them.
+ */
+export function fittingColumnWidths(ctx: GridContext, cols: readonly number[]): Map<number, number | null> {
+  const widths = new Map<number, number | null>(cols.map((col) => [col, null]));
   const sheet = ctx.sheet;
   const used = ctx.info().dimensions;
-  if (used === null || col < used.start.col || col > used.end.col) return null;
+  if (used === null || cols.length === 0) return widths;
   const merges = ctx.info().mergedRanges;
-  let widest = 0;
-  const last = Math.min(used.end.row, used.start.row + AUTOFIT_ROWS - 1);
-  for (let row = used.start.row; row <= last; row++) {
-    if (ctx.session.isBlank(sheet, row, col)) continue;
+  let first = used.end.col;
+  let last = used.start.col;
+  for (const col of cols) {
+    first = Math.min(first, col);
+    last = Math.max(last, col);
+  }
+  const range: CellRange = {
+    start: { row: used.start.row, col: Math.max(first, used.start.col) },
+    end: { row: Math.min(used.end.row, used.start.row + AUTOFIT_ROWS - 1), col: Math.min(last, used.end.col) },
+  };
+  if (range.start.col > range.end.col) return widths;
+  const widest = new Map<number, number>();
+  let looked = 0;
+  forEachStoredCell(getWorkbookInternals(ctx.session.workbook), sheet, range, (row, col) => {
+    if (!widths.has(col) || ctx.session.isBlank(sheet, row, col)) return true;
+    if (++looked > AUTOFIT_CELLS) return false;
     // A merged cell takes its width from several columns; it does not drive this one.
-    if (merges.some((merge) => row >= merge.start.row && row <= merge.end.row && col >= merge.start.col && col <= merge.end.col)) continue;
+    if (merges.some((merge) => row >= merge.start.row && row <= merge.end.row && col >= merge.start.col && col <= merge.end.col)) return true;
     const cell = ctx.session.cell(sheet, row, col);
     const look = cellLook(ctx.session.workbook.getStyle(cell.styleId), cell.value);
     const longest = look.wrap ? cell.display : cell.display.split("\n").reduce((a, b) => (a.length >= b.length ? a : b), "");
-    widest = Math.max(widest, textWidth(longest, look));
+    widest.set(col, Math.max(widest.get(col) ?? 0, textWidth(longest, look)));
+    return true;
+  });
+  for (const [col, px] of widest) {
+    if (px > 0) widths.set(col, Math.min(AUTOFIT_MAX_PX, Math.max(AUTOFIT_MIN_PX, px + CELL_PADDING_PX + 4)));
   }
-  if (widest === 0) return null;
-  return Math.min(AUTOFIT_MAX_PX, Math.max(AUTOFIT_MIN_PX, widest + CELL_PADDING_PX + 4));
+  return widths;
 }
 
 /** Double click on a column edge: fits the column (and the other selected columns) to its content. */
 export function autoFitColumn(ctx: GridContext, col: number): void {
-  const targets = sizeTargets(ctx, "col", col);
+  const widths = fittingColumnWidths(ctx, sizeTargets(ctx, "col", col));
   const sheet = ctx.sheet;
   report(
     ctx,
     ctx.session.transact("Fit column", (tx) => {
-      for (const target of targets) {
-        const px = fittingColumnWidth(ctx, target);
-        tx.setColumnWidths(sheet, [target], px === null ? null : pxToColumnWidth(px));
-      }
+      for (const [target, px] of widths) tx.setColumnWidths(sheet, [target], px === null ? null : pxToColumnWidth(px));
     }),
   );
 }

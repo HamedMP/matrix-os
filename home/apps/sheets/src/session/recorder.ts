@@ -25,6 +25,7 @@ import {
   isOfficeError,
 } from "./engine";
 import type { Transaction } from "./edits";
+import { forEachStoredCell } from "./stored-cells";
 import {
   type BandCell,
   type CellDelta,
@@ -207,15 +208,22 @@ export class Recorder {
     const cells: BandCell[] = [];
     const used = info.dimensions;
     if (used !== null) {
-      const rowStart = axis === "row" ? Math.max(index, used.start.row) : used.start.row;
-      const rowEnd = axis === "row" ? Math.min(index + count - 1, used.end.row) : used.end.row;
-      const colStart = axis === "col" ? Math.max(index, used.start.col) : used.start.col;
-      const colEnd = axis === "col" ? Math.min(index + count - 1, used.end.col) : used.end.col;
-      for (let row = rowStart; row <= rowEnd; row++) {
-        for (let col = colStart; col <= colEnd; col++) {
-          const cell = this.internals.readRawCell(sheet, { row, col });
-          if (cell.value !== null || cell.formula !== null || cell.styleId !== 0) cells.push({ row, col, cell });
-        }
+      const band: CellRange = {
+        start: { row: axis === "row" ? Math.max(index, used.start.row) : used.start.row, col: axis === "col" ? Math.max(index, used.start.col) : used.start.col },
+        end: { row: axis === "row" ? Math.min(index + count - 1, used.end.row) : used.end.row, col: axis === "col" ? Math.min(index + count - 1, used.end.col) : used.end.col },
+      };
+      // The stored cells, not every position: a band of a mostly empty sheet can span billions of them.
+      const complete = forEachStoredCell(this.internals, sheet, band, (row, col) => {
+        const cell = this.internals.readRawCell(sheet, { row, col });
+        if (cell.value === null && cell.formula === null && cell.styleId === 0) return true;
+        if (cells.length >= MAX_TRANSACTION_CELLS) return false;
+        cells.push({ row, col, cell });
+        return true;
+      });
+      // More cells than one step keeps, or cells that could not be walked: the rows go all the same, without undo.
+      if (!complete) {
+        open.overflow = true;
+        cells.length = 0;
       }
     }
     const sizes: Array<{ index: number; size: number }> = [];
