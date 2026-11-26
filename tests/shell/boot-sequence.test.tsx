@@ -256,7 +256,8 @@ describe("BootSequence", () => {
     fireEvent.click(screen.getByRole("button", { name: "Set up" }));
     await waitFor(() => expect(requests.some(({ url }) => url === "/api/auth/provision-runtime")).toBe(true));
     const provision = requests.find(({ url }) => url === "/api/auth/provision-runtime");
-    expect(JSON.parse(String(provision?.init?.body))).toEqual({ developerTools: [] });
+    // The free plan names no tools: the server preinstalls its fixed set.
+    expect(JSON.parse(String(provision?.init?.body))).toEqual({});
     // Once the build is ready, the app session carries the device return so sign-in reaches device approval.
     await waitFor(() => expect(onboardingNavigation.navigate).toHaveBeenCalledWith(deviceReturn));
     const session = requests.find(({ url }) => url === "/api/auth/app-session");
@@ -277,9 +278,35 @@ describe("BootSequence", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByRole("button", { name: "Set up" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Build VPS" })).toBeNull();
-    expect(screen.getByText("Choose command-line agents to preinstall on this computer.")).toBeTruthy();
     expect(screen.getByText(/after your computer is ready\.$/)).toBeTruthy();
     expect(screen.queryByText(/VPS/)).toBeNull();
+  });
+
+  it("shows a free owner the fixed preinstalls instead of the agent selector and starts with no tools named", async () => {
+    const fetchMock = mockJourney({
+      phase: "install_choices_required",
+      detail: "Set up your free Matrix computer.",
+      nextAction: { kind: "start_provision" },
+    });
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+
+    fireEvent.click(await screen.findByRole("radio", { name: "TikTok" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("button", { name: "Set up" });
+    expect(screen.queryByRole("list", { name: "Coding agents" })).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByText(/any combination, including none/)).toBeNull();
+    expect(screen.getByText(
+      "Claude Code and Codex come preinstalled on your free computer. You can install OpenCode or Pi later from the Terminal’s + menu.",
+    )).toBeTruthy();
+    // Number keys do not toggle a hidden selection.
+    fireEvent.keyDown(window, { key: "3" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/auth/provision-runtime")).toBe(true));
+    const provision = fetchMock.mock.calls.find(([url]) => String(url) === "/api/auth/provision-runtime");
+    expect(JSON.parse(String(provision?.[1]?.body))).toEqual({});
   });
 
   it("keeps the paid VPS wording on the web install step", async () => {

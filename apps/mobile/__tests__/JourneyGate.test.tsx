@@ -69,6 +69,19 @@ describe("JourneyGate", () => {
     expect(onRetry).toHaveBeenCalled();
   });
 
+  it("tells a free-plan owner which coding agents come preinstalled, as the web install step does", () => {
+    const { getByText } = render(
+      <JourneyGate
+        result={ok({ phase: "install_choices_required", detail: "Set up your free Matrix computer.", nextAction: { kind: "start_provision" } })}
+        onRetry={noop}
+        onOpenUrl={noop}
+      />,
+    );
+    expect(getByText(
+      "Claude Code and Codex come preinstalled on your free computer. You can install OpenCode or Pi later from the Terminal’s + menu.",
+    )).toBeTruthy();
+  });
+
   it("shows why a free start failed and lets the owner try again", () => {
     const onRetry = jest.fn();
     const { getByText, getByTestId } = render(

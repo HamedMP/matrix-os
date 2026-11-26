@@ -10,6 +10,9 @@ import {
 import { allowsExternalPurchaseLinks } from "@/lib/store-policy";
 
 const SUPPORT_URL = "mailto:support@matrix-os.com";
+/** Same copy as the web install step: free computers preinstall a fixed pair of agents (spec 2691). */
+const FREE_PREINSTALLS_NOTE =
+  "Claude Code and Codex come preinstalled on your free computer. You can install OpenCode or Pi later from the Terminal’s + menu.";
 
 interface JourneyGateProps {
   /** null while the first fetch is in flight. */
@@ -194,6 +197,7 @@ function InstallChoices({ journey, working, error, onStart }: {
     <Centered>
       <Title>Set up your Matrix computer</Title>
       <Body>{journey.detail}</Body>
+      <Body>{FREE_PREINSTALLS_NOTE}</Body>
       {error ? <SetupError message={error} /> : null}
       <PrimaryButton label={working ? "Starting…" : idleLabel} testID="journey-start" onPress={onStart} />
     </Centered>
