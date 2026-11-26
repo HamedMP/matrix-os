@@ -553,6 +553,76 @@ describe("a run without a clock", () => {
       expect(valueAt(reopened, "T", "B1")).toBe(expected);
     });
 
+    // Fault detected: a position that moved inside an OFFSET or INDIRECT argument, or inside the name INDIRECT reads,
+    // counted as a change of the call even when the call gives the same answer after the move (the same error, or the
+    // cells it read moved along), so a date formula whose answer stays was saved as #N/A. The call is now worked out
+    // before and after the move, and only another answer counts.
+    it.each([
+      // The name gives a number before and after, which INDIRECT answers with #REF! both times.
+      ["ROW(S!A5)", 'IF(ISERROR(INDIRECT("Picked")),TODAY(),42)', 46349],
+      // The error the name gives changes kind, #DIV/0! to #REF!.
+      ["1/(ROW(S!A5)-5)", 'IF(ERROR.TYPE(INDIRECT("Picked"))=2,TODAY(),42)', 42],
+      // The name gives a reference after the move.
+      ["CHOOSE(ROW(S!A5)-4,3,3,S!A1)", 'IF(ISERROR(INDIRECT("Picked")),TODAY(),42)', 42],
+    ] as const)("judges INDIRECT of a name holding %s by what INDIRECT gives after inserting rows above A5", async (refersTo, formula, expected) => {
+      const source = createXlsx({ sheetNames: ["S", "T"] });
+      const [s, t] = source.listSheets().map((info) => info.id) as [string, string];
+      source.setCell(s, parseA1("A1"), 1);
+      source.setCell(s, parseA1("A5"), 1);
+      source.setDefinedName({ name: "Picked", refersTo, scope: null });
+      source.setFormula(t, parseA1("B1"), formula);
+      source.recalc({ now: NOW });
+      const workbook = await openXlsx(await source.save());
+      move(workbook, "rows above A5");
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "T", "B1")).toBe(expected);
+    });
+
+    it.each([
+      // The same error before and after.
+      ['IF(ISERROR(OFFSET(S!A5,"x"&ROW(S!A5),0)),TODAY(),42)', 46349],
+      ['IF(ISERROR(INDIRECT("#"&ROW(S!A5))),TODAY(),42)', 46349],
+      // The address moves along with the cell it names.
+      ['IF(INDIRECT("S!A"&ROW(S!A5))=1,TODAY(),42)', 46349],
+      ["IF(OFFSET(S!A1,ROW(S!A5)-5,0)=1,TODAY(),42)", 42],
+      // The address now names an inserted row.
+      ['IF(INDIRECT("S!A"&(ROW(S!A5)-4))=1,TODAY(),42)', 42],
+    ] as const)("judges %s by what the call gives after inserting rows above A5", async (formula, expected) => {
+      const workbook = await openXlsx(await crossBook(formula));
+      move(workbook, "rows above A5");
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "T", "B1")).toBe(expected);
+    });
+
+    // Fault guarded: the call is judged by values that move along unchanged, which a formula it reads need not keep:
+    // here the cell INDIRECT reads asks for its own row, so the move changes what INDIRECT gives.
+    it("calculates again a date formula whose INDIRECT reads a formula the move changes", async () => {
+      const source = createXlsx({ sheetNames: ["S", "T"] });
+      const [s, t] = source.listSheets().map((info) => info.id) as [string, string];
+      source.setFormula(s, parseA1("A5"), "ROW()");
+      source.setFormula(t, parseA1("B1"), 'IF(INDIRECT("S!A"&ROW(S!A5))=5,TODAY(),42)');
+      source.recalc({ now: NOW });
+      const workbook = await openXlsx(await source.save());
+      move(workbook, "rows above A5");
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "T", "B1")).toBe(42);
+    });
+
+    // Fault guarded: an address INDIRECT reads inside an OFFSET argument is not rewritten, so after deleting a row it
+    // reads other cells, and the sum moves OFFSET onto a cell that was not its target before.
+    it("calculates again a date formula whose OFFSET argument reads other cells by address after deleting a row", async () => {
+      const source = createXlsx({ sheetNames: ["S", "T"] });
+      const [s, t] = source.listSheets().map((info) => info.id) as [string, string];
+      source.setCell(s, parseA1("A4"), 1);
+      source.setCell(s, parseA1("C4"), 1);
+      source.setFormula(t, parseA1("B1"), 'IF(OFFSET(S!A5,SUM(INDIRECT("S!C1:C3"))-1,0)=1,TODAY(),42)');
+      source.recalc({ now: NOW });
+      const workbook = await openXlsx(await source.save());
+      workbook.deleteRows(workbook.listSheets()[0]!.id, 1, 1);
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "T", "B1")).toBe(42);
+    });
+
     it("keeps the date of a formula asking where a reference points when its sheet is renamed", async () => {
       const workbook = await openXlsx(await crossBook("IF(ROW(S!A5)=5,TODAY(),42)"));
       workbook.renameSheet(workbook.listSheets()[0]!.id, "R");

@@ -79,7 +79,7 @@ export interface CalcGraph {
 /** Functions whose result depends on cells their arguments do not name. */
 const DYNAMIC_FUNCTIONS: ReadonlySet<string> = new Set(["OFFSET", "INDIRECT"]);
 /** Functions that need the time of the run. */
-const CLOCK_FUNCTIONS: ReadonlySet<string> = new Set(["NOW", "TODAY"]);
+export const CLOCK_FUNCTIONS: ReadonlySet<string> = new Set(["NOW", "TODAY"]);
 /**
  * Functions that use where a reference points and never the values there.
  * A reference given to one of them directly is not read: `ROW(A1)` in A1 is

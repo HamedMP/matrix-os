@@ -18,10 +18,18 @@
  * the same walk. A value the function cannot take (text that is no number)
  * makes it an error before and after, which the move does not change.
  *
+ * An OFFSET or INDIRECT call is first worked out whole, before the move and
+ * as the move leaves the workbook (`calc-move-world.ts`): it is unaffected
+ * when both give the same error, or references whose cells are the same ones
+ * moved along, whatever moved inside its arguments or inside the name
+ * INDIRECT reads; another answer is a change. Only when that cannot be worked
+ * out, or it reads a cell holding a formula (whose value the run may change,
+ * unseen for a cell picked at run time), are its arguments judged as above.
+ *
  * Each formula is so either proved unaffected, proved affected, or left
- * unresolved: an argument that evaluates to an error (a clock read without a
- * time among them), to several values INDIRECT would take one by one, or
- * that needs more cells than the move's budget. An unresolved formula is
+ * unresolved: an argument that evaluates to an error, reads a clock (which
+ * has no time here), gives several values INDIRECT would take one by one, or
+ * needs more cells than the move's budget. An unresolved formula is
  * judged by the cells the last calculation read. A formula that has not been
  * calculated since it was opened has no such record, and it is calculated
  * again: keeping its date could keep a value the moved formula no longer
@@ -29,18 +37,16 @@
  * have kept.
  */
 
-import type { CellProvider, FormulaAst, FormulaScalar, FormulaValue, RangeBounds } from "../../api/formula.js";
+import type { CallNode, FormulaAst, FormulaScalar, FormulaValue, RangeBounds } from "../../api/formula.js";
 import { isOfficeError } from "../../errors.js";
 import { formatValue } from "../format/index.js";
-import { isError, toScalar } from "../formula/coerce.js";
+import { isArray, isError, toScalar } from "../formula/coerce.js";
 import { boolArg, intArg, textArg } from "../formula/functions/text/args.js";
 import { type CalcNode, type Dep, MAX_NAME_DEPTH, collectDeps, functionsOf, pushChildren } from "./calc-graph.js";
-import { makeProvider } from "./calc-provider.js";
-import { errorValue } from "./calc-values.js";
+import { type ArgumentBudget, type Meter, clockNoting, meteredProvider, providerAfterMove, treeAfterMove } from "./calc-move-world.js";
 import type { SheetModel, WorkbookState } from "./model.js";
 import { lookupName } from "./names.js";
 import { type StructuralOp, movePoint, moveSpan } from "./refs-rewrite.js";
-import { sheetDimensions } from "./sheet-write.js";
 import { parseCached } from "./state.js";
 
 /** Cells that working out computed arguments may read during one move, across every formula it judges. */
@@ -62,39 +68,17 @@ function spanOf(dep: Dep, op: StructuralOp): Span {
   return op.axis === "row" ? { low: dep.r1, high: dep.r2 } : { low: dep.c1, high: dep.c2 };
 }
 
-/** What working out computed arguments may still read during one move. */
-interface ArgumentBudget {
-  cells: number;
+/** What an OFFSET or INDIRECT call answers: an error, or the cells it reads. Null for anything else. */
+type Answer = { error: string } | { ref: RangeBounds };
+
+function answerOf(value: FormulaValue): Answer | null {
+  if (isError(value)) return { error: value.code };
+  return isArray(value) && value.ref !== null ? { ref: value.ref } : null;
 }
 
-/** Cells a read of `bounds` covers, clipped to the used part of the sheet as the provider clips it. */
-function usedArea(state: WorkbookState, bounds: RangeBounds): number {
-  const sheet = state.sheetsByKey.get(bounds.sheet.toLowerCase());
-  const used = sheet === undefined ? null : sheetDimensions(sheet);
-  if (used === null) return 0;
-  const lastRow = Math.min(bounds.endRow, used.end.row);
-  const lastCol = Math.min(bounds.endCol, used.end.col);
-  if (bounds.startRow > lastRow || bounds.startCol > lastCol) return 0;
-  return (lastRow - bounds.startRow + 1) * (lastCol - bounds.startCol + 1);
-}
-
-/** The workbook's provider, refusing reads past the budget and noting in `meter` that it did. */
-function meteredProvider(state: WorkbookState, budget: ArgumentBudget, meter: { over: boolean }): CellProvider {
-  const inner = makeProvider(state, { reads: null, overflow: false });
-  const spend = (count: number): boolean => {
-    if (meter.over || count > budget.cells) {
-      meter.over = true;
-      return false;
-    }
-    budget.cells -= count;
-    return true;
-  };
-  return {
-    getCellValue: (sheet, row, col) => (spend(1) ? inner.getCellValue(sheet, row, col) : errorValue("#NUM!")),
-    getRangeValues: (bounds) => (spend(usedArea(state, bounds)) ? inner.getRangeValues(bounds) : errorValue("#NUM!")),
-    resolveName: (name, sheet) => inner.resolveName(name, sheet),
-  };
-}
+/** A call that gives the same answer after the move, or another one. */
+const SAME = Symbol("same");
+const CHANGED = Symbol("changed");
 
 /** An argument the walk could not work out before the move. */
 const UNRESOLVED = Symbol("unresolved");
@@ -116,6 +100,8 @@ interface Finding {
 
 class PositionWalk {
   readonly found: Finding = { changed: false, unresolved: false, allowed: new Set() };
+  /** Where the formula stands after the move; null when its cell is deleted. */
+  private readonly place: { row: number; col: number } | null;
 
   constructor(
     private readonly state: WorkbookState,
@@ -123,32 +109,36 @@ class PositionWalk {
     private readonly sheet: SheetModel,
     private readonly op: StructuralOp,
     private readonly budget: ArgumentBudget,
-  ) {}
+  ) {
+    const moves = node.sheet === sheet;
+    const row = moves && op.axis === "row" ? movePoint(node.row, op) : node.row;
+    const col = moves && op.axis === "col" ? movePoint(node.col, op) : node.col;
+    this.place = row < 0 || col < 0 ? null : { row, col };
+  }
 
   /**
-   * The value of an argument before the move, as the engine evaluates it:
-   * null when it is left out, {@link REFUSED} for a written error,
-   * {@link UNRESOLVED} when it cannot be worked out (a typed failure, or more
-   * cells than the budget leaves).
+   * `ast` as the engine evaluates it, before the move or (`after`) as the
+   * move leaves the workbook; {@link UNRESOLVED} when that says nothing about
+   * the run: a typed failure, a clock read, more cells than the budget
+   * leaves, or (`strict`) a read of a cell holding a formula.
    */
-  private argValue(ast: FormulaAst | undefined, context: SheetModel): FormulaValue | typeof UNRESOLVED | typeof REFUSED {
-    if (ast === undefined || ast.type === "missing") return null;
-    if (ast.type === "string" || ast.type === "number" || ast.type === "boolean") return ast.value;
-    if (ast.type === "error") return REFUSED;
+  private evaluate(ast: FormulaAst, context: SheetModel, after: boolean, strict = false): FormulaValue | typeof UNRESOLVED {
     const state = this.state;
     const formula = state.formula;
     const functions = functionsOf(state);
-    if (formula === null || functions === null) return UNRESOLVED;
-    const meter = { over: false };
+    const place = after ? this.place : this.node;
+    if (formula === null || functions === null || place === null) return UNRESOLVED;
+    const meter: Meter = { over: false, clock: false, formula: false };
+    const metered = meteredProvider(state, this.budget, meter);
     let value: FormulaValue;
     try {
       const date1904 = state.date1904;
       value = formula.evaluate(ast, {
-        provider: meteredProvider(state, this.budget, meter),
-        functions,
+        provider: after ? providerAfterMove(state, this.sheet, this.op, metered) : metered,
+        functions: clockNoting(functions, meter),
         sheet: context.name,
-        row: this.node.row,
-        col: this.node.col,
+        row: place.row,
+        col: place.col,
         now: null,
         date1904,
         formatValue: (scalar, code) => formatValue(scalar, code, { date1904 }),
@@ -158,7 +148,56 @@ class PositionWalk {
       if (!isOfficeError(error)) throw error;
       return UNRESOLVED;
     }
-    return meter.over ? UNRESOLVED : value;
+    return meter.over || meter.clock || (strict && meter.formula) ? UNRESOLVED : value;
+  }
+
+  /**
+   * The value of an argument before the move, as the engine evaluates it:
+   * null when it is left out, {@link REFUSED} for a written error,
+   * {@link UNRESOLVED} when it cannot be worked out (see {@link evaluate}).
+   */
+  private argValue(ast: FormulaAst | undefined, context: SheetModel): FormulaValue | typeof UNRESOLVED | typeof REFUSED {
+    if (ast === undefined || ast.type === "missing") return null;
+    if (ast.type === "string" || ast.type === "number" || ast.type === "boolean") return ast.value;
+    if (ast.type === "error") return REFUSED;
+    return this.evaluate(ast, context, false);
+  }
+
+  /** True when `after` holds the cells `before` held, each moved along. */
+  private follows(before: RangeBounds, after: RangeBounds): boolean {
+    if (before.sheet.toLowerCase() !== after.sheet.toLowerCase()) return false;
+    let { startRow, endRow, startCol, endCol } = before;
+    if (this.state.sheetsByKey.get(before.sheet.toLowerCase()) === this.sheet) {
+      const rows = this.op.axis === "row";
+      const low = movePoint(rows ? startRow : startCol, this.op);
+      const high = movePoint(rows ? endRow : endCol, this.op);
+      // Lines inserted or deleted inside it, or an end gone, make it other cells.
+      if (low < 0 || high < 0 || high - low !== (rows ? endRow - startRow : endCol - startCol)) return false;
+      if (rows) [startRow, endRow] = [low, high];
+      else [startCol, endCol] = [low, high];
+    }
+    return after.startRow === startRow && after.endRow === endRow && after.startCol === startCol && after.endCol === endCol;
+  }
+
+  /**
+   * An OFFSET or INDIRECT call worked out before the move and as the move
+   * leaves it (`moved`, the call as the move rewrites it): {@link SAME} for
+   * the same error or the same cells moved along, {@link CHANGED} for another
+   * answer, null when either cannot be worked out or reads a cell holding a formula.
+   */
+  private compare(call: CallNode, moved: FormulaAst | null, context: SheetModel): typeof SAME | typeof CHANGED | null {
+    if (moved === null || moved.type !== "call" || moved.name !== call.name) return null;
+    // The values read are taken to move along unchanged, which a cell holding a formula need not do.
+    const before = this.evaluate(call, context, false, true);
+    if (before === UNRESOLVED) return null;
+    const after = this.evaluate(moved, context, true, true);
+    if (after === UNRESOLVED) return null;
+    const was = answerOf(before);
+    const now = answerOf(after);
+    if (was === null || now === null) return null;
+    if ("error" in was) return "error" in now && now.error === was.error ? SAME : CHANGED;
+    if ("error" in now) return CHANGED;
+    return this.follows(was.ref, now.ref) ? SAME : CHANGED;
   }
 
   /**
@@ -203,23 +242,42 @@ class PositionWalk {
     return deps.filter((dep) => dep.sheet === this.sheet);
   }
 
-  walk(ast: FormulaAst, context: SheetModel, depth: number): void {
-    const stack: FormulaAst[] = [ast];
+  /**
+   * Walks `ast` with `after`, the same tree as the move rewrites it (null
+   * when that is not known), side by side.
+   */
+  walk(ast: FormulaAst, after: FormulaAst | null, context: SheetModel, depth: number): void {
+    const stack: Array<[FormulaAst, FormulaAst | null]> = [[ast, after]];
     const children: FormulaAst[] = [];
+    const movedChildren: FormulaAst[] = [];
     while (stack.length > 0 && !this.found.changed) {
-      const node = stack.pop() as FormulaAst;
+      const [node, moved] = stack.pop() as [FormulaAst, FormulaAst | null];
       if (node.type === "name") {
         if (depth >= MAX_NAME_DEPTH) continue;
         const scope = node.sheet === null ? context : (this.state.sheetsByKey.get(node.sheet.toLowerCase()) ?? null);
         const name = lookupName(this.state, node.name, scope);
         const inner = name === null ? null : parseCached(this.state, name.refersTo);
-        if (name !== null && inner !== null) this.walk(inner, name.scope ?? context, depth + 1);
+        if (name === null || inner === null) continue;
+        const innerAfter = moved === null ? null : treeAfterMove(this.state, name.refersTo, name.scope, this.sheet, this.op);
+        this.walk(inner, innerAfter, name.scope ?? context, depth + 1);
         continue;
       }
-      if (node.type === "call") this.call(node.name, node.args, context, depth);
+      if (node.type === "call") {
+        // A call that gives the same answer after the move is unaffected, whatever moved inside it.
+        const verdict = node.name === "OFFSET" || node.name === "INDIRECT" ? this.compare(node, moved, context) : null;
+        if (verdict === SAME) continue;
+        if (verdict === CHANGED) {
+          this.found.changed = true;
+          return;
+        }
+        this.call(node.name, node.args, context, depth);
+      }
       children.length = 0;
       pushChildren(node, children);
-      for (const child of children) stack.push(child);
+      movedChildren.length = 0;
+      if (moved !== null && moved.type === node.type) pushChildren(moved, movedChildren);
+      const paired = movedChildren.length === children.length;
+      for (let i = 0; i < children.length; i++) stack.push([children[i] as FormulaAst, paired ? (movedChildren[i] as FormulaAst) : null]);
     }
   }
 
@@ -312,7 +370,8 @@ class PositionWalk {
     if (ast === null) return;
     // A name follows its cells like any reference, and what in it asks for a position is judged like the formula.
     if (ast.type === "name") {
-      this.walk(ast, context, depth);
+      // The text is not rewritten, so the name is the same one after the move.
+      this.walk(ast, ast, context, depth);
       return;
     }
     if (ast.type !== "cell" && ast.type !== "range") return;
@@ -329,8 +388,9 @@ class PositionWalk {
  * answer a formula gets from where a reference points: ROW, COLUMN, ROWS or
  * COLUMNS of a reference the move shifts or resizes along that axis, ROW() or
  * COLUMN() of a formula the move shifts, OFFSET from a base whose target does
- * not move alike, INDIRECT of an address whose cells moved away. Computed
- * OFFSET and INDIRECT arguments are worked out first, within
+ * not move alike, INDIRECT of an address whose cells moved away. An OFFSET or
+ * INDIRECT call is first worked out whole before and after the move;
+ * otherwise its computed arguments are worked out, within
  * {@link MOVE_ARGUMENT_CELLS} cells for the whole move. Cells picked at run
  * time from an address that still cannot be worked out are judged by the
  * cells the last calculation read: any of them that does not follow the move
@@ -341,7 +401,8 @@ export function positionsAcrossMove(state: WorkbookState, sheet: SheetModel, op:
   const budget: ArgumentBudget = { cells: MOVE_ARGUMENT_CELLS };
   return (node) => {
     const walk = new PositionWalk(state, node, sheet, op, budget);
-    walk.walk(node.ast, node.sheet, 0);
+    // Only a formula that calls OFFSET or INDIRECT has a call to work out after the move.
+    walk.walk(node.ast, node.dynamic ? treeAfterMove(state, node.formula, node.sheet, sheet, op) : null, node.sheet, 0);
     const found = walk.found;
     if (found.changed) return true;
     if (!found.unresolved) return false;
