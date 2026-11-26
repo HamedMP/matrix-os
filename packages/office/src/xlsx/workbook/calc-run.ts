@@ -16,7 +16,8 @@ import type { CellProvider, FormulaScalar, FormulaValue, FunctionRegistry } from
 import type { CellRange, CellValue, ChangedCell, SheetCellRef } from "../../api/xlsx.js";
 import { isOfficeError } from "../../errors.js";
 import { formatValue } from "../format/index.js";
-import { type CalcGraph, type CalcNode, type Dep, functionsOf } from "./calc-graph.js";
+import { type CalcGraph, type CalcNode, functionsOf } from "./calc-graph.js";
+import { type CellSets, addTo, fillsRange, isEmpty, noteClockInputs, readsAny, touches } from "./calc-inputs.js";
 import { type ReadLog, makeProvider } from "./calc-provider.js";
 import { arrayCellValue, errorValue, toCellValue } from "./calc-values.js";
 import { ensureRow, findCell } from "./cells.js";
@@ -27,53 +28,10 @@ export { TRACE_LIMIT } from "./model.js";
 /** How often formulas that pick their cells at run time are calculated again before they count as circular. */
 const MAX_ROUNDS = 32;
 
-type CellSets = Map<SheetModel, Set<number>>;
-
 /** The last time a cell was stored in a run, and the entry that reports it. */
 interface StoreMark {
   seq: number;
   entry: ChangedCell;
-}
-
-/** True for an array formula that fills cells besides its own. */
-function fillsRange(node: CalcNode): boolean {
-  const spill = node.spill;
-  return spill !== null && (spill.end.row > spill.start.row || spill.end.col > spill.start.col);
-}
-
-function touches(dep: Dep, changed: CellSets): boolean {
-  const set = changed.get(dep.sheet);
-  if (set === undefined || set.size === 0) return false;
-  const area = (dep.r2 - dep.r1 + 1) * (dep.c2 - dep.c1 + 1);
-  if (area <= set.size) {
-    for (let r = dep.r1; r <= dep.r2; r++) for (let c = dep.c1; c <= dep.c2; c++) if (set.has(cellKey(r, c))) return true;
-    return false;
-  }
-  for (const key of set) {
-    const col = key % 16384;
-    const row = (key - col) / 16384;
-    if (row >= dep.r1 && row <= dep.r2 && col >= dep.c1 && col <= dep.c2) return true;
-  }
-  return false;
-}
-
-function overlaps(dep: Dep, ranges: ReadonlyMap<SheetModel, CellRange>): boolean {
-  const range = ranges.get(dep.sheet);
-  return range !== undefined && dep.r1 <= range.end.row && dep.r2 >= range.start.row && dep.c1 <= range.end.col && dep.c2 >= range.start.col;
-}
-
-export function isEmpty(sets: CellSets): boolean {
-  for (const set of sets.values()) if (set.size > 0) return false;
-  return true;
-}
-
-export function addTo(sets: CellSets, sheet: SheetModel, key: number): void {
-  let set = sets.get(sheet);
-  if (set === undefined) {
-    set = new Set();
-    sets.set(sheet, set);
-  }
-  set.add(key);
 }
 
 /** One calculation of a workbook. */
@@ -229,6 +187,7 @@ export class Run {
       node.readsAll = log.overflow;
       log.reads = null;
     }
+    if (node.clock) this.state.calc.clockInputs.delete(node.cell);
     this.put(node, value, result, false);
     return true;
   }
@@ -255,21 +214,27 @@ export class Run {
   }
 
   /**
-   * True when the node reads into the range around edits no longer marked one by one. The node's own
-   * cell does not count: a formula typed into it has no value yet, and so is calculated anyway.
+   * True for a formula that needs a time and keeps the value it has in a run without one: none of the
+   * cells it reads was edited or stored since, and no change the marks do not show was noted for it.
+   * Its own cell does not count: a rewrite of its reference text is no edit, and a formula typed into
+   * it has no value and is calculated anyway.
    */
-  private readsFolded(node: CalcNode): boolean {
-    const folded = this.state.calc.folded;
-    if (folded.size === 0) return false;
-    for (const dep of node.deps) if (overlaps(dep, folded)) return true;
-    if (fillsRange(node)) {
-      const spill = node.spill as CellRange;
-      if (overlaps({ sheet: node.sheet, r1: spill.start.row, c1: spill.start.col, r2: spill.end.row, c2: spill.end.col }, folded)) return true;
+  private keepsDate(node: CalcNode): boolean {
+    if (!node.clock || this.now !== null || node.cell.value === null || node.circular) return false;
+    return !this.state.calc.clockInputs.has(node.cell) && !readsAny(node, this.sink);
+  }
+
+  /**
+   * Notes the formulas that need a time from `from` on whose inputs are among the cells changed so far,
+   * before a bound leaves them pending: the marks are dropped when the run ends.
+   */
+  private noteDeferredClocks(from: number): void {
+    const hits = new Set<CalcNode>();
+    for (let i = from; i < this.order.length; i++) {
+      const node = this.order[i] as CalcNode;
+      if (node.clock && readsAny(node, this.sink)) hits.add(node);
     }
-    if (!node.dynamic || node.reads === null) return false;
-    if (node.readsAll) return true;
-    for (const dep of node.reads) if (overlaps(dep, folded)) return true;
-    return false;
+    if (hits.size > 0) noteClockInputs(this.state, (node) => hits.has(node));
   }
 
   /** True when a cell the node read was stored after the node was calculated. */
@@ -305,6 +270,7 @@ export class Run {
    * may reach, taking each such node as changed. With `everything`, all of them.
    */
   private defer(from: number, everything: boolean): void {
+    this.noteDeferredClocks(from);
     const pending = this.state.calc.pending;
     const sink = this.sink;
     for (let i = from; i < this.order.length; i++) {
@@ -336,20 +302,12 @@ export class Run {
       const waiting = pending.get(node.sheet);
       const key = cellKey(node.row, node.col);
       const waited = waiting !== undefined && waiting.has(key);
-      let due = this.all || node.circular || waited || (this.forced && (node.volatile || node.dynamic)) || (node.dynamic && node.reads === null);
-      let touched: boolean | null = null;
-      if (!due) {
-        touched = this.touched(node, sink);
-        due = touched;
-      }
+      const due = this.all || node.circular || waited || (this.forced && (node.volatile || node.dynamic)) || (node.dynamic && node.reads === null) || this.touched(node, sink);
       if (!due) continue;
       // Without a time, a formula that needs one keeps the value it has unless what it reads changed.
-      if (node.clock && this.now === null && node.cell.value !== null && !node.circular) {
-        if (touched === null) touched = this.touched(node, sink);
-        if (!touched && !this.readsFolded(node)) {
-          if (waited) waiting.delete(key);
-          continue;
-        }
+      if (this.keepsDate(node)) {
+        if (waited) waiting.delete(key);
+        continue;
       }
       if (!this.evaluate(node)) {
         this.defer(i, this.all);

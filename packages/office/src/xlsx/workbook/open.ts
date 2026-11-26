@@ -147,11 +147,12 @@ export function buildState(pkg: OpcPackage, sources: Sources, deps: WorkbookDeps
     // asks for it, is calculated in full by the first run.
     calc: {
       edited: new Map(),
-      folded: new Map(),
+      clockInputs: new Set(),
       pending: new Map(),
       all: false,
       onLoad: context.uncalculated === true || asksFullCalc(root),
       graph: null,
+      clocks: null,
       lastNow: null,
     },
     listeners: [],

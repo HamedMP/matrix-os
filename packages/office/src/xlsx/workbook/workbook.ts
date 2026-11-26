@@ -29,6 +29,7 @@ import { partNamesEqual, relativeTargetFor } from "../../opc/index.js";
 import { serializeXml } from "../../xml/index.js";
 import { MAX_COLS, MAX_ROWS, requireAddress, requireRange } from "./a1.js";
 import { checkFormula, dependents, needsRecalc, precedents, recalc } from "./calc.js";
+import { noteNameChange } from "./calc-inputs.js";
 import { guardArrayWrite } from "./arrays.js";
 import { checkTableHeaderWrites, flushTables, holdsTableHeader } from "./tables.js";
 import {
@@ -338,11 +339,11 @@ export class WorkbookHandle implements Workbook {
   }
 
   setDefinedName(name: DefinedName): void {
-    setName(this.#state, name);
+    noteNameChange(this.#state, () => setName(this.#state, name));
   }
 
   removeDefinedName(name: string, scope?: SheetId | null): boolean {
-    return removeName(this.#state, name, scope);
+    return noteNameChange(this.#state, () => removeName(this.#state, name, scope));
   }
 
   recalc(options?: RecalcOptions): RecalcResult {

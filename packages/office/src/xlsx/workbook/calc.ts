@@ -9,9 +9,10 @@
 
 import type { CellAddress, RecalcOptions, RecalcResult, SheetCellRef, SheetRangeRef } from "../../api/xlsx.js";
 import { OfficeError } from "../../errors.js";
-import { type CalcGraph, type CalcNode, type Dep, buildGraph, collectDeps } from "./calc-graph.js";
+import { type CalcNode, type Dep, collectDeps } from "./calc-graph.js";
+import { addTo, graphOf, isEmpty, noteClockInputs, readsAny } from "./calc-inputs.js";
 import { orderGraph } from "./calc-order.js";
-import { Run, TRACE_LIMIT, addTo, isEmpty } from "./calc-run.js";
+import { Run, TRACE_LIMIT } from "./calc-run.js";
 import { findCell } from "./cells.js";
 import { type SheetModel, type WorkbookState, cellKey } from "./model.js";
 import { parseCached } from "./state.js";
@@ -20,19 +21,10 @@ const DEFAULT_MAX_CELLS = 200_000;
 
 /** True when the workbook has edits that formulas have not seen yet, or formulas a bounded run left. */
 export function needsRecalc(state: WorkbookState): boolean {
-  if (state.calc.all || state.calc.folded.size > 0) return true;
+  if (state.calc.all || state.calc.clockInputs.size > 0) return true;
   for (const edited of state.calc.edited.values()) if (edited.size > 0) return true;
   for (const pending of state.calc.pending.values()) if (pending.size > 0) return true;
   return false;
-}
-
-function graphOf(state: WorkbookState): CalcGraph {
-  let graph = state.calc.graph as CalcGraph | null;
-  if (graph === null) {
-    graph = buildGraph(state);
-    state.calc.graph = graph;
-  }
-  return graph;
 }
 
 function bound(value: unknown, fallback: number): number {
@@ -49,7 +41,7 @@ export function recalc(state: WorkbookState, options: RecalcOptions | undefined,
   if (options?.now !== undefined) calc.lastNow = options.now;
   if (state.formula === null) {
     calc.edited.clear();
-    calc.folded.clear();
+    calc.clockInputs.clear();
     calc.pending.clear();
     calc.all = false;
     return { changed: [], circular: [], complete: true };
@@ -80,12 +72,17 @@ export function recalc(state: WorkbookState, options: RecalcOptions | undefined,
   let complete = run.run();
   if (blocked.length > 0) {
     complete = false;
+    // The marks are dropped below: a blocked formula that needs a time is noted if what it reads changed.
+    const hits = new Set(blocked.filter((node) => node.clock && readsAny(node, calc.edited)));
+    if (hits.size > 0) noteClockInputs(state, (node) => hits.has(node));
     for (const node of blocked) addTo(calc.pending, node.sheet, cellKey(node.row, node.col));
   }
   calc.edited.clear();
-  calc.folded.clear();
   calc.all = false;
-  if (complete) calc.pending.clear();
+  if (complete) {
+    calc.pending.clear();
+    calc.clockInputs.clear();
+  }
   return { changed: run.changed, circular: run.circular, complete };
 }
 

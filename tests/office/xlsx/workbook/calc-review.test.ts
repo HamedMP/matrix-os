@@ -388,6 +388,119 @@ describe("a run without a clock", () => {
       const reopened = await openXlsx(await workbook.save());
       expect([valueAt(reopened, "S", "B2"), valueAt(reopened, "S", "G2")]).toEqual([42, 46349]);
     });
+
+    // Fault detected: the date formulas kept from the last graph going stale while formulas are written past the trace
+    // limit, so a date formula whose input changed is missed or one whose input did not is calculated.
+    it("recalculates a date formula whose input was edited before many formulas were written", async () => {
+      const workbook = await openXlsx(await inputBook());
+      const sheet = workbook.listSheets()[0]!.id;
+      // A run without a time builds the graph and keeps the dates.
+      workbook.recalc();
+      workbook.setCell(sheet, parseA1("A1"), 2);
+      for (let row = 0; row <= TRACE_LIMIT; row++) workbook.setFormula(sheet, { row, col: 3 }, `${row}+1`);
+      const reopened = await openXlsx(await workbook.save());
+      expect([valueAt(reopened, "S", "B1"), valueAt(reopened, "S", "G1"), valueAt(reopened, "S", "D3")]).toEqual([42, 46349, 3]);
+    });
+
+    // Fault detected: edits past the trace limit kept only as a range around them, so a date formula reading an
+    // untouched cell between the edits is taken as changed and loses its date.
+    it("keeps the date of a formula whose input lies between edits past the trace limit", async () => {
+      const source = createXlsx({ sheetNames: ["S"] });
+      const id = source.listSheets()[0]!.id;
+      source.setCell(id, parseA1("B1"), 1);
+      source.setFormula(id, parseA1("D1"), "IF(B1=1,TODAY(),42)");
+      source.recalc({ now: NOW });
+      const workbook = await openXlsx(await source.save());
+      const sheet = workbook.listSheets()[0]!.id;
+      workbook.setCell(sheet, parseA1("A1"), 7);
+      for (let row = 0; row < TRACE_LIMIT; row++) workbook.setCell(sheet, { row, col: 2 }, row);
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "S", "D1")).toBe(46349);
+    });
+
+    // Fault detected: a rewrite of reference text (a sheet renamed, rows moved on another sheet) counted as an edit of
+    // the formula, so a date formula whose inputs did not change is calculated without a time.
+    async function crossBook(formula: string): Promise<Uint8Array> {
+      const workbook = createXlsx({ sheetNames: ["S", "T"] });
+      const [s, t] = workbook.listSheets().map((info) => info.id) as [string, string];
+      workbook.setCell(s, parseA1("A1"), 1);
+      workbook.setCell(s, parseA1("A5"), 1);
+      workbook.setFormula(t, parseA1("B1"), formula);
+      workbook.recalc({ now: NOW });
+      return workbook.save();
+    }
+
+    it.each(["alone", "after a sheet is added"] as const)("keeps the date of a formula reading a sheet renamed %s", async (when) => {
+      const workbook = await openXlsx(await crossBook("S!A1+TODAY()"));
+      const s = workbook.listSheets()[0]!.id;
+      if (when === "after a sheet is added") workbook.addSheet("U");
+      workbook.renameSheet(s, "R");
+      const reopened = await openXlsx(await workbook.save());
+      expect(reopened.getCell(reopened.getSheetByName("T")!.id, parseA1("B1")).formula).toBe("R!A1+TODAY()");
+      expect(valueAt(reopened, "T", "B1")).toBe(46350);
+    });
+
+    it("keeps the date of a formula on another sheet whose input moved with inserted rows", async () => {
+      const workbook = await openXlsx(await crossBook("IF(S!A5=1,TODAY(),42)"));
+      workbook.insertRows(workbook.listSheets()[0]!.id, 0, 2);
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "T", "B1")).toBe(46349);
+    });
+
+    // Fault detected: with rewrites no longer counted as edits, a date formula whose input was deleted keeping a date
+    // its inputs no longer give.
+    it.each(["deleted rows", "a removed sheet"] as const)("recalculates a date formula whose input went with %s", async (what) => {
+      const workbook = await openXlsx(await crossBook("IF(S!A5=1,TODAY(),42)"));
+      const s = workbook.listSheets()[0]!.id;
+      if (what === "deleted rows") workbook.deleteRows(s, 4, 1);
+      else workbook.removeSheet(s);
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "T", "B1")).toEqual(err("#REF!"));
+    });
+
+    it("recalculates a date formula on the same sheet whose range lost rows, and keeps one whose input only moved", async () => {
+      const source = createXlsx({ sheetNames: ["S"] });
+      const id = source.listSheets()[0]!.id;
+      source.setCell(id, parseA1("A1"), 1);
+      source.setCell(id, parseA1("A2"), 1);
+      source.setFormula(id, parseA1("B10"), "IF(SUM(A1:A3)=2,TODAY(),42)");
+      source.setFormula(id, parseA1("C10"), "IF(A3=0,TODAY(),42)");
+      source.recalc({ now: NOW });
+      const workbook = await openXlsx(await source.save());
+      workbook.deleteRows(workbook.listSheets()[0]!.id, 1, 1);
+      const reopened = await openXlsx(await workbook.save());
+      expect([valueAt(reopened, "S", "B9"), valueAt(reopened, "S", "C9")]).toEqual([42, 46349]);
+    });
+
+    // Fault detected: a defined name pointed at other cells leaving the date formulas that use it with dates their
+    // inputs no longer give, or the change reaching date formulas that do not use the name.
+    it.each(["set", "removed"] as const)("recalculates a date formula reading through a name that was %s", async (how) => {
+      const source = createXlsx({ sheetNames: ["S"] });
+      const id = source.listSheets()[0]!.id;
+      source.setCell(id, parseA1("A1"), 1);
+      source.setDefinedName({ name: "Val", scope: null, refersTo: "S!$A$1" });
+      source.setDefinedName({ name: "Other", scope: null, refersTo: "S!$A$1" });
+      source.setFormula(id, parseA1("B1"), "IF(Val=1,TODAY(),42)");
+      source.setFormula(id, parseA1("C1"), "IF(A1=1,TODAY(),42)");
+      source.recalc({ now: NOW });
+      const workbook = await openXlsx(await source.save());
+      if (how === "set") workbook.setDefinedName({ name: "Val", scope: null, refersTo: "S!$A$2" });
+      else workbook.removeDefinedName("Val", null);
+      workbook.setDefinedName({ name: "Other", scope: null, refersTo: "S!$A$3" });
+      const reopened = await openXlsx(await workbook.save());
+      expect([valueAt(reopened, "S", "B1"), valueAt(reopened, "S", "C1")]).toEqual([how === "set" ? 42 : err("#NAME?"), 46349]);
+    });
+
+    // Fault detected: a bounded run that stops before a date formula whose input changed leaving it pending, and the
+    // next run without a time no longer knowing that its input changed.
+    it("recalculates a date formula whose input changed after a bounded run stopped before it", async () => {
+      const workbook = await openXlsx(await inputBook());
+      const sheet = workbook.listSheets()[0]!.id;
+      workbook.setCell(sheet, parseA1("A1"), 2);
+      expect(workbook.recalc({ maxCells: 0 }).complete).toBe(false);
+      const reopened = await openXlsx(await workbook.save());
+      expect([valueAt(reopened, "S", "B1"), valueAt(reopened, "S", "G1")]).toEqual([42, 46349]);
+    });
   });
 
   it("shows an error for a date formula that was never calculated", () => {

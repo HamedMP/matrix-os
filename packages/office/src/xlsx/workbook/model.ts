@@ -175,16 +175,21 @@ export const TRACE_LIMIT = 2000;
 
 export interface CalcState {
   /**
-   * Cells edited since the last calculation, per sheet, as `row * 16384 + col`. A sheet holds at most
-   * {@link TRACE_LIMIT} + 1 of them: past that `all` is set and the marks are folded into {@link folded}.
+   * Cells whose content was edited since the last calculation, per sheet, as `row * 16384 + col`. A
+   * rewrite of reference text (a sheet renamed, rows moved) is no edit. A sheet holds at most
+   * {@link TRACE_LIMIT} + 1 of them: past that `all` is set and the marks are dropped, after the formulas
+   * that need a time and read one of them are noted in {@link clockInputs}.
    */
   edited: Map<SheetModel, Set<number>>;
   /**
-   * Per sheet, the smallest range around edits since the last calculation that are no longer marked one
-   * by one in {@link edited}. One range per sheet. `all` calculates every formula anyway; the range is for
-   * formulas that need a time in a run without one, which are calculated only when what they read changed.
+   * Cells of formulas that need a time (TODAY, NOW) whose inputs changed in a way {@link edited} no longer
+   * shows: edits past the trace limit, rows or columns moved across a range, a sheet removed, a defined
+   * name changed, or a run a bound stopped before them. A run without a time calculates such a formula
+   * only when what it reads changed: when it reads a marked cell, or is in this set. Rebuilt from the
+   * graph's formulas that need a time whenever entries are added, so it is capped by construction at one
+   * entry per formula cell, which `maxCells` bounds.
    */
-  folded: Map<SheetModel, CellRange>;
+  clockInputs: Set<CellRec>;
   /** Everything must be calculated again (rows or columns moved, a sheet was removed). */
   all: boolean;
   /**
@@ -202,6 +207,13 @@ export interface CalcState {
   pending: Map<SheetModel, Set<number>>;
   /** The dependency graph, or null when a formula or the structure changed since it was built. */
   graph: unknown;
+  /**
+   * The nodes of the last graph that need a time, kept after a write of one formula cell drops the graph,
+   * so that noting {@link clockInputs} does not build a graph for every few thousand edits. A node whose
+   * cell no longer holds its formula, or holds no value, is passed over. Null when the names, sheets or
+   * structure changed, or a formula was written with a value. At most one node per formula cell.
+   */
+  clocks: unknown;
   /** The `now` of the last explicit calculation, reused by the one `save` runs. */
   lastNow: string | null;
 }

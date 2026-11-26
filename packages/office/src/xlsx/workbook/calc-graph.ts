@@ -24,6 +24,8 @@ export interface CalcNode {
   row: number;
   col: number;
   cell: CellRec;
+  /** The formula text the node was built from. */
+  formula: string;
   ast: FormulaAst;
   deps: Dep[];
   /**
@@ -68,6 +70,8 @@ export interface CalcGraph {
   spills: CalcNode[];
   /** The nodes that pick their cells at run time. */
   dynamic: CalcNode[];
+  /** The nodes that need the time of the run. */
+  clock: CalcNode[];
   /** Nodes with their precedents first; null until computed. */
   order: CalcNode[] | null;
 }
@@ -332,10 +336,11 @@ export function collectDeps(state: WorkbookState, ast: FormulaAst, sheet: SheetM
 export function buildGraph(state: WorkbookState): CalcGraph {
   const nodes: CalcNode[] = [];
   const functions = functionsOf(state);
-  if (functions === null) return { nodes, columns: new Map(), spills: [], dynamic: [], order: null };
+  if (functions === null) return { nodes, columns: new Map(), spills: [], dynamic: [], clock: [], order: null };
   const columns = new Map<SheetModel, Map<number, CalcNode[]>>();
   const spills: CalcNode[] = [];
   const dynamic: CalcNode[] = [];
+  const clock: CalcNode[] = [];
   for (const sheet of state.sheets) {
     const byColumn = new Map<number, CalcNode[]>();
     for (const row of sheet.rows.values()) {
@@ -357,6 +362,7 @@ export function buildGraph(state: WorkbookState): CalcGraph {
           row: row.index,
           col,
           cell,
+          formula: cell.formula,
           ast,
           deps,
           spill,
@@ -374,6 +380,7 @@ export function buildGraph(state: WorkbookState): CalcGraph {
         };
         nodes.push(node);
         if (node.dynamic) dynamic.push(node);
+        if (node.clock) clock.push(node);
         if (spill !== null && (spill.end.row > spill.start.row || spill.end.col > spill.start.col)) spills.push(node);
         const list = byColumn.get(col);
         if (list === undefined) byColumn.set(col, [node]);
@@ -383,5 +390,5 @@ export function buildGraph(state: WorkbookState): CalcGraph {
     for (const list of byColumn.values()) list.sort((a, b) => a.row - b.row);
     if (byColumn.size > 0) columns.set(sheet, byColumn);
   }
-  return { nodes, columns, spills, dynamic, order: null };
+  return { nodes, columns, spills, dynamic, clock, order: null };
 }
