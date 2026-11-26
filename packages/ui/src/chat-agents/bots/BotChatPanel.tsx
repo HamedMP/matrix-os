@@ -8,6 +8,7 @@ import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 import { RoutineMessageContext } from "./RoutineMessage.js";
 import { useRoutineMessages } from "./use-routine-messages.js";
 import { BotEditDialog } from "./BotEditDialog.js";
+import { useSavedBotProposal, savedBotProposals } from "./BotSettingsProposal.js";
 import { BotDetailsPanel } from "./BotDetailsPanel.js";
 import { BotMessageStateContext, BotUnassignedMessageBody } from "./BotMessageBody.js";
 import { useBotModelRecovery } from "./BotModelRecovery.js";
@@ -20,6 +21,7 @@ const REFRESH_INTERVAL_MS = 15_000;
 
 interface BotChatPanelProps {
   children?: ReactNode;
+  settingsRunId?: string;
   onSetup?: () => void; onRefreshCatalog?: () => void; onModelChanged?: () => void;
   chatId?: string;
   client?: ChatAgentClient;
@@ -35,11 +37,12 @@ interface BotChatPanelProps {
 }
 
 /** Shared by Web Canvas and Web Desktop through ChatApp. */
-export function BotChatPanel({ children, chatId, client, refreshKey, directBotId, catalog, catalogLoading = false, visible = true, detailsContainer, headerContainer, headerLeading, headerActions, onSetup, onRefreshCatalog, onModelChanged }: BotChatPanelProps) {
+export function BotChatPanel({ settingsRunId, children, chatId, client, refreshKey, directBotId, catalog, catalogLoading = false, visible = true, detailsContainer, headerContainer, headerLeading, headerActions, onSetup, onRefreshCatalog, onModelChanged }: BotChatPanelProps) {
   const navigation = useChatAgentsNavigation();
   const shown = visible && navigation?.opened?.client !== client;
   const bots = client?.bots;
   const agentId = useDirectBotChat(chatId, client, directBotId);
+  const settings = useSavedBotProposal(client, chatId, agentId, shown ? settingsRunId : undefined);
   const routineMessages = useRoutineMessages(bots?.routines, chatId, Boolean(shown && agentId));
   const [agent, setAgent] = useState<ChatAgent | null>(null);
   const [modelPending, setModelPending] = useState(false);
@@ -74,6 +77,7 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
     setName(null);
     setShowAuthority(false);
     setError("");
+    return () => { selectionSequence.current += 1; };
   }, [chatId, bots, agentId]);
   const railDetailsRequest = navigation?.detailsRequest;
   const consumeRailDetails = navigation?.consumeDetails;
@@ -83,7 +87,7 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
     consumeRailDetails?.(railDetailsRequest.sequence);
   }, [shown, agentId, chatId, client, railDetailsRequest, consumeRailDetails]);
   useEffect(() => {
-    if (!agentId || !chatId || !bots || !client) return;
+    if (!shown || !agentId || !chatId || !bots || !client) return;
     let current = true;
     const refresh = async () => {
       try {
@@ -119,7 +123,7 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
     void refresh();
     const timer = setInterval(() => setTick((value) => value + 1), REFRESH_INTERVAL_MS);
     return () => { current = false; clearInterval(timer); };
-  }, [agentId, chatId, bots, client, tick, refreshKey]);
+  }, [agentId, chatId, bots, client, tick, refreshKey, shown]);
   const changeModel = async (selection: CanonicalChatModelSelection) => {
     if (!agent || !client || modelPending || catalogLoading) return;
     const sequence = ++selectionSequence.current;
@@ -134,8 +138,22 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
       if (selectionSequence.current === sequence) setError("Could not change the bot model. Refresh and try again.");
     } finally { if (selectionSequence.current === sequence) setModelPending(false); }
   };
+  const saveProposal = async () => {
+    const proposal = settings.proposal;
+    if (!client?.setupChat || !bots || !proposal || agent?.id !== proposal.agentId || !chatId || agent.revision !== proposal.revision) throw new Error("Suggestion unavailable");
+    const sequence = selectionSequence.current;
+    const [binding, detail] = await Promise.all([bots.directBot(chatId), client.setupChat.detail(chatId)]);
+    const fresh = savedBotProposals(detail, chatId, agent.id).find(item => item.proposalId === proposal.proposalId && item.runId === proposal.runId);
+    if (sequence !== selectionSequence.current || binding !== agent.id || !fresh || fresh.revision !== proposal.revision
+      || JSON.stringify(fresh.patch) !== JSON.stringify(proposal.patch)) throw new Error("Suggestion changed");
+    const updated = await client.update(agent.id, { ...fresh.patch, baseRevision: fresh.revision });
+    if (sequence === selectionSequence.current) { latestRevision.current = updated.revision; setAgent(updated); setName(updated.name); }
+  };
   const details = shown && agentId && chatId && bots && showAuthority ? <BotDetailsPanel chatId={chatId} agent={agent} agentId={agentId} authority={authority} bots={bots} catalog={catalog} catalogLoading={catalogLoading} pending={modelPending}
-    tasks={tasks} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} hosted={Boolean(detailsContainer)} onModelChange={selection => { void changeModel(selection); }} onClose={() => setShowAuthority(false)} onEdit={() => setShowEdit(true)} onChanged={() => setTick(value => value + 1)}/> : null;
+    tasks={tasks} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} hosted={Boolean(detailsContainer)} onModelChange={selection => { void changeModel(selection); }} onClose={() => setShowAuthority(false)} onEdit={() => {
+      if (client?.setupChat && navigation && agent) navigation.open({ client, view: "library", requestedAgentId: agent.id, onSetup });
+      else setShowEdit(true);
+    }} onChanged={() => setTick(value => value + 1)}/> : null;
   const identity = shown && agentId && chatId && bots ? <div className="matrix-bot-identity-bar flex min-w-0 items-center gap-3 px-3 py-1" data-hosted={headerContainer ? "true" : undefined}>
       {headerLeading}
       <AgentAvatar id={agentId} name={name ?? "Your bot"} size="small" />
@@ -145,11 +163,12 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
         onClick={() => setShowAuthority(value => !value)}>Details</button>
       {headerActions}
     </div> : null;
-  return <BotMessageStateContext.Provider value={shown && agentId && chatId && bots ? { chatId, agentId, agentName: name ?? undefined, interactions, interactionsFresh, tasks, error,
+  return <BotMessageStateContext.Provider value={shown && agentId && chatId && bots ? { chatId, agentId, agentName: name ?? undefined, ...(agent && settings.proposal ? { settings: { agent, proposal: settings.proposal, save: saveProposal } } : {}), interactions, interactionsFresh, tasks, error,
     resolve: (interactionId, input) => bots.resolve(chatId, interactionId, input), refresh: () => setTick(value => value + 1) } : null}>
     {identity ? <section aria-label="Bot controls" className="matrix-bot-chat-header" data-bot-header>
     {headerContainer ? createPortal(identity, headerContainer) : identity}
       {details && detailsContainer ? createPortal(details, detailsContainer) : details}
+      {settings.error ? <button type="button" className="text-sm underline" onClick={settings.retry}>Reload suggested changes</button> : null}
       {showEdit && agent && client ? <BotEditDialog key={agent.id} agent={agent} client={client} catalog={catalog} catalogLoading={catalogLoading} authority={authority} onClose={() => setShowEdit(false)} onSaved={updated => { latestRevision.current = updated.revision; setAgent(updated); setName(updated.name); }}/>:null}
     </section> : null}
     <RoutineMessageContext.Provider value={shown && agentId ? routineMessages : null}>

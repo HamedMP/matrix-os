@@ -108,7 +108,7 @@ it("uses subscription models in the library Daily Brief creation path", async ()
   x.bots.recipes.mockResolvedValue([daily]);
   render(<ChatAgentsPanel client={x.client} onClose={vi.fn()} onOpenBotChat={open}/>);
   fireEvent.click(await screen.findByRole("button", { name: "Personal Daily Brief" }));
-  const dialog = await screen.findByRole("dialog", { name: "Set up Personal Daily Brief" });
+  const dialog = await screen.findByRole("region", { name: "Set up Personal Daily Brief" });
   fireEvent.change(within(dialog).getByRole("combobox", { name: "Connection" }), { target: { value: planSelection.instanceId } });
   const models = within(dialog).getByRole("combobox", { name: "Bot model" });
   expect(within(models).getAllByRole("option", { name: /Owner model/ })).toHaveLength(4);

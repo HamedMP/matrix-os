@@ -232,3 +232,41 @@ it.each([false, true])('deduplicates a visible final input only while unresolved
   expect(screen.getByText('Which company?').closest('[data-agent-message-body]')?.getAttribute('data-agent-message-body'))
     .toBe(resolved ? 'unassigned' : turn.id);
 });
+
+function settingsDetail(patch: { name?: string; instructions?: string }) {
+  return { record: { chat: { id: task.chatId, ownerScope: { type: "personal", ownerId: "owner" }, lifecycle: "active" } },
+    messages: [{ id: "msg_owner", chatId: task.chatId, actorId: "owner", role: "user", state: "committed" }],
+    turns: [{ id: "cturn_test", inputMessageId: "msg_owner", chatId: task.chatId }],
+    runs: [{ id: task.runId, chatId: task.chatId, driverKind: "matrix_bot", instanceId: "matrix_bot_default", status: "completed", turnId: "cturn_test" }],
+    activities: [{ type: "bot.draft.proposed", chatId: task.chatId, runId: task.runId, sessionId: task.agentId, proposalId: "proposal_test", baseDraftRevision: 1, patch }] };
+}
+
+it("opens a model-suggested change in the existing direct Chat, then saves only on the owner's click", async () => {
+  const base = clientFor([], []);
+  const patch = { instructions: "Review the patch and cite the changed file." };
+  const detail = settingsDetail(patch);
+  const client = { ...base, update: vi.fn(async () => ({ ...saved, id: task.agentId, revision: 2, ...patch })),
+    setupChat: { detail: vi.fn(async () => detail), create: vi.fn(), admitTurn: vi.fn() } };
+  render(<BotChatPanel chatId={task.chatId} client={client as never} settingsRunId={task.runId}>
+    <BotRunMessageBody runIds={[task.runId]}/>
+  </BotChatPanel>);
+  expect(await screen.findByText(patch.instructions)).toBeTruthy();
+  expect(client.update).not.toHaveBeenCalled();
+  expect(client.setupChat.create).not.toHaveBeenCalled();
+  expect(client.setupChat.admitTurn).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(client.update).toHaveBeenCalledExactlyOnceWith(task.agentId, { ...patch, baseRevision: 1 }));
+  await screen.findByText("Agent settings match this suggestion.");
+});
+
+it("refuses a saved suggestion if the direct Chat binding changed before the owner clicked", async () => {
+  const base = clientFor([], []);
+  const detail = settingsDetail({ name: "Reviewer" });
+  const client = { ...base, update: vi.fn(), setupChat: { detail: vi.fn(async () => detail) } };
+  render(<BotChatPanel chatId={task.chatId} client={client as never} settingsRunId={task.runId}><BotRunMessageBody runIds={[task.runId]}/></BotChatPanel>);
+  const save = await screen.findByRole("button", { name: "Save changes" });
+  base.bots.directBot.mockResolvedValue("bot_other123");
+  fireEvent.click(save);
+  await screen.findByText(/Could not confirm these changes/);
+  expect(client.update).not.toHaveBeenCalled();
+});

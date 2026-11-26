@@ -31,6 +31,7 @@ const IntegrationConnectionListSchema = z.array(IntegrationConnectionSchema).max
 export type ChatAgentIntegrationConnection = z.infer<typeof IntegrationConnectionSchema>;
 
 export interface ChatAgentClient {
+  setupChat?: import("./creation-conversation.js").CreationConversationClient;
   driveProjects?: ChatDriveProjectClient;
   bots?: BotClient;
   list(): Promise<ChatAgentListResponse>;
@@ -46,8 +47,9 @@ export interface ChatAgentClient {
 /** The surface supplies its existing authenticated, timeout-bounded transport. */
 export function createChatAgentClient(request: (
   path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown, options?: { timeoutMs?: number; signal?: AbortSignal },
-) => Promise<unknown>): ChatAgentClient {
+) => Promise<unknown>, setupChat?: ChatAgentClient["setupChat"]): ChatAgentClient {
   return {
+    setupChat,
     driveProjects: createChatDriveProjectClient(request),
     bots: createBotClient(request),
     list: async () => ChatAgentListResponseSchema.parse(await request("/api/chat-agents?includeManagedCustomRecoveries=true", "GET")),

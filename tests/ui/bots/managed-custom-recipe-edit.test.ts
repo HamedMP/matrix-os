@@ -4,12 +4,12 @@ import { clientFixture } from '../../desktop/chat-agents-fixture.js';
 import { agentRecipePatch } from '../../../packages/ui/src/chat-agents/recipe-edit.js';
 import { saved } from '../../desktop/chat-agents-fixture.js';
 
-it('persists custom coordinator recipe edits while preserving fixed server recipe definitions', () => {
+it('persists owner changes to supplemental recipe fields without replacing the native template identity', () => {
  const original={skills:[],integrations:[],output:'A short answer'};
  const recipe={...original,output:'A revised answer'};
  const managed={...saved,recipeRef:{recipeId:'custom-coordinator',version:'1'},recipe:original};
  expect(agentRecipePatch(managed,recipe)).toEqual({recipe});
- expect(agentRecipePatch({...managed,recipeRef:{recipeId:'writing-bot',version:'1'}},recipe)).toEqual({});
+ expect(agentRecipePatch({...managed,recipeRef:{recipeId:'writing-bot',version:'1'}},recipe)).toEqual({recipe});
  expect(agentRecipePatch(managed,null)).toEqual({recipe:null});
 });
 

@@ -5,7 +5,7 @@ import { postWithProviderCatalogRecovery } from "../features/chat/provider-catal
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, type ChatAgentClient } from "@matrix-os/ui";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
-import { botRoutineOriginReadAccept, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
+import { botRoutineOriginReadAccept, chatBotCreationVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import {
   CanonicalAcknowledgeChatCompletionRequestSchema,
   CanonicalCancelChatRunRequestSchema,
@@ -152,6 +152,7 @@ export interface CanonicalChatClient {
   getDetail(
     chatId: string,
     input?: z.input<typeof CanonicalChatDetailInputSchema>,
+    includeSetupProposals?: boolean,
   ): Promise<CanonicalChatDetailResponse>;
   getCredentialOccurrences(chatId: string, messageIds: readonly string[]): Promise<ChatCredentialOccurrence[]>;
   revealCredential(chatId: string, occurrenceId: string): Promise<string>;
@@ -229,15 +230,20 @@ export function createCanonicalChatClient(
     delete: (path, ...args) => transport.delete(chatImportSourceVersionUrl(chatReadStateVersionUrl(path)), ...args),
   };
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
-  return {
+  const client: CanonicalChatClient = {
     browserPermissions: createBrowserPermissionClient((path, method, body) => method === "GET" ? transport.get(path) : transport.delete(path, body)),
     agents: createChatAgentClient((path, method, body, requestOptions) => {
       const accept = botRoutineOriginReadAccept(path, method);
       if (accept) return transport.get(path, { ...requestOptions, headers: { Accept: accept } });
+      if (method === "DELETE") return body === undefined ? transport.delete(path) : transport.delete(path, body);
       return method === "GET" ? requestOptions ? transport.get(path, requestOptions) : transport.get(path)
         : method === "POST" ? requestOptions ? transport.post(path, body, requestOptions) : transport.post(path, body)
-          : method === "DELETE" ? transport.delete(path)
-            : transport.patch(path, body);
+          : transport.patch(path, body);
+    }, {
+      create: input => client.create(input),
+      detail: id => client.getDetail(id, { limit: 200 }, true),
+      admitTurn: (id, input) => client.admitTurn(id, input),
+      cancelRun: (id, runId, clientRequestId) => client.cancelRun(id, runId, { clientRequestId }),
     }),
     async navigation() {
       markChatNavigation("request");
@@ -335,13 +341,11 @@ export function createCanonicalChatClient(
       }));
     },
 
-    async getDetail(chatId, input = {}) {
+    async getDetail(chatId, input = {}, includeSetupProposals) {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
       const parsed = CanonicalChatDetailInputSchema.parse(input);
-      const response = await api.get(chatMessageVersionUrl(withQuery(`/api/chats/${encodeURIComponent(parsedChatId)}`, {
-        limit: parsed.limit,
-        cursor: parsed.cursor,
-      }), true));
+      const path = withQuery(`/api/chats/${encodeURIComponent(parsedChatId)}`, { limit: parsed.limit, cursor: parsed.cursor });
+      const response = await api.get(chatMessageVersionUrl(includeSetupProposals ? chatBotCreationVersionUrl(path) : path, true));
       return CanonicalChatDetailResponseSchema.parse(response);
     },
 
@@ -394,6 +398,7 @@ export function createCanonicalChatClient(
     async admitTurn(chatId, input, analytics) {
       const parsedChatId = CanonicalChatIdSchema.parse(chatId);
       const request = CanonicalCreateChatTurnRequestSchema.parse(input);
+      const responsePath = (path: string) => chatMessageVersionUrl(request.botCreation ? chatBotCreationVersionUrl(path) : path, true);
       const hasAttachments = request.parts.some((part) => (
         part.type === "attachment_reference" || part.type === "resource_reference"
       ));
@@ -408,7 +413,7 @@ export function createCanonicalChatClient(
         const response = await (async () => {
           try {
             return CanonicalChatTurnAdmissionResponseSchema.parse(await api.post(
-              chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turns`, true), request,
+              responsePath(`/api/chats/${encodeURIComponent(parsedChatId)}/turns`), request,
               // Fresh funded observation has a 14s deadline; allow bounded transport margin.
               { timeoutMs: 30_000 },
             ));
@@ -417,8 +422,8 @@ export function createCanonicalChatClient(
               || (error.category === "server" && error.httpStatus !== undefined && error.httpStatus >= 500));
             if (ambiguous) {
               const recovered = await recoverCanonicalChatAdmission(parsedChatId, request,
-                requestHash => api.get(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turn-admissions/${encodeURIComponent(request.clientRequestId)}?requestHash=${requestHash}`, true)),
-                () => api.get(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}?limit=200`, true)));
+                requestHash => api.get(responsePath(`/api/chats/${encodeURIComponent(parsedChatId)}/turn-admissions/${encodeURIComponent(request.clientRequestId)}?requestHash=${requestHash}`)),
+                () => api.get(responsePath(`/api/chats/${encodeURIComponent(parsedChatId)}?limit=200`)));
               if (recovered) return recovered;
             }
             throw error;
@@ -557,4 +562,5 @@ export function createCanonicalChatClient(
       ));
     },
   };
+  return client;
 }

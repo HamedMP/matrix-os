@@ -124,7 +124,7 @@ it("shows the built-in Jev recipe to a fresh user without connections or model c
   fireEvent.change(screen.getByRole("searchbox", { name: "Search recipes" }), { target: { value: "jev" } });
   expect(screen.getAllByRole("button", { name: "Use Jev Inbox Triage" })).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Use Jev Inbox Triage" }));
-  expect(screen.getByRole("dialog")).toBeTruthy();
+  expect(screen.getByRole("region", { name: /^Set up / })).toBeTruthy();
   expect(create).not.toHaveBeenCalled();
 });
 
@@ -145,4 +145,17 @@ it("instantiates the upgraded Inbox recipe with its existing identity and curren
     { recipeId: "jev-inbox-triage", version: "2026-10-06.1" },
     expect.stringMatching(/^req_/), MATRIX_BOT_SELECTION,
   );
+});
+
+it("replays an uncertain create with the same recipe configuration and request id", async () => {
+  const create = vi.fn().mockRejectedValueOnce(new Error("response lost")).mockResolvedValueOnce("chat_recipe");
+  render(<AgentRecipesPanel botRecipes={[recipe]} onInstantiateBot={create} onOpenBotChat={vi.fn()}/>);
+  fireEvent.click(screen.getByRole("button", { name: "Use Writing Bot" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Bot model" }), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveProperty("disabled", true);
+  fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
+  expect(create.mock.calls[1]).toEqual(create.mock.calls[0]);
 });
