@@ -170,3 +170,23 @@ describe("owner Slack bridge", () => {
   });
 
 });
+
+it("accepts routed events only with the Dev callback signature on the opted-in machine", async () => {
+  const receiveRoutedSlack = vi.fn().mockResolvedValue(false);
+  const pilot = { ownerId, machineId: scopeId, handle: "owner-dev", appId: "A123", teamId: "TPILOT", channelId: "COLD",
+    botId: "bot_12345678", chatId: "chat_private" };
+  const build = (enabled: boolean) => createSlackBridgeRoutes({ ownerId, token, now, receive: vi.fn(), authority: { authorize: vi.fn() },
+    devTarget: { ...pilot, ...(enabled ? { agentRoutes: true } : {}) }, receiveRoutedSlack });
+  const event = { ownerId, runtimeId: scopeId, appId: pilot.appId, teamId: "T123", channelId: "C001",
+    installationGeneration: 2, sourceId: "a".repeat(64), eventId: "Ev001", ts: "123.000001", threadTs: "123.000001", userId: "U123", text: "Natural message" };
+  const path = "/api/internal/slack/agent-event";
+  const enabled = build(true);
+  expect((await build(false).request(path, await request(path,event))).status).toBe(404);
+  expect((await enabled.request(path, await request(path,event,"b".repeat(64)))).status).toBe(401);
+  expect((await enabled.request(path, await request(path,{...event, channelId:pilot.channelId,teamId:pilot.teamId}))).status).toBe(403);
+  expect((await enabled.request(path, await request(path,{...event, ownerId:"user_other"}))).status).toBe(403);
+  expect((await enabled.request(path, await request(path,{...event, botId:pilot.botId}))).status).toBe(400);
+  expect(receiveRoutedSlack).not.toHaveBeenCalled();
+  expect((await enabled.request(path, await request(path,event))).status).toBe(202);
+  expect(receiveRoutedSlack).toHaveBeenCalledExactlyOnceWith(event, expect.any(AbortSignal));
+});

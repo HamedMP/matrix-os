@@ -1744,7 +1744,8 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   slackRuntime = await startOwnerSlack({
-    app, ownerId: process.env.MATRIX_USER_ID?.trim(), ...slackPlatform.connection, repository: chatRepository,
+    app, ownerId: slackPlatform.connection?.devTarget?.ownerId ?? process.env.MATRIX_USER_ID?.trim(),
+    ...slackPlatform.connection, repository: chatRepository,
     orchestrator: canonicalChatOrchestrator, executionRoots: canonicalChatExecutionRoots,
     collaboration: gatewayCollaboration, bots: botServices,
   });

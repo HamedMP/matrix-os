@@ -4,6 +4,7 @@ import { escapeSlackText } from "./security.js";
 import { SlackAppIdSchema, SlackTeamIdSchema, SlackUserIdSchema, SlackTimestampSchema, SlackChannelIdSchema, type SlackApi, type SlackMessagePage } from "./types.js";
 
 export const SLACK_BOT_SCOPES = ["app_mentions:read", "channels:history", "groups:history", "im:history", "im:read", "channels:read", "groups:read", "chat:write", "reactions:write"] as const;
+export const SLACK_DEV_BOT_SCOPES = ["channels:history", "channels:read"] as const;
 const MessagePageSchema = z.object({ messages: z.array(z.object({ user: SlackUserIdSchema.optional(), text: z.string().max(65_536).optional(), ts: SlackTimestampSchema, thread_ts: SlackTimestampSchema.optional(), reply_count:z.number().int().nonnegative().max(1_000_000).optional(), latest_reply:SlackTimestampSchema.optional() }).passthrough()).max(100),
   has_more: z.boolean().optional(), response_metadata: z.object({ next_cursor: z.string().max(1_024).optional() }).optional() }).passthrough();
 const MAX_RESPONSE_BYTES = 256 * 1024;
@@ -20,8 +21,13 @@ export class SlackApiRateLimitError extends SlackApiError {
   }
 }
 
-export function createSlackApi(options: { clientId: string; clientSecret: string; fetchImpl?: typeof fetch }): SlackApi {
+export function createSlackApi(options: { clientId: string; clientSecret: string; fetchImpl?: typeof fetch; readOnlyDev?: { channelId: string }; metadataChannels?: readonly string[] }): SlackApi {
   const fetchImpl = options.fetchImpl ?? fetch;
+  function readableChannel(value: string, metadata = false) {
+    const channelId = SlackChannelIdSchema.parse(value);
+    if (options.readOnlyDev && channelId !== options.readOnlyDev.channelId && !(metadata && options.metadataChannels?.includes(channelId))) throw new SlackApiError();
+    return channelId;
+  }
   async function call(method: string, params: Record<string, string | number | boolean>, token?: string, signal?: AbortSignal): Promise<unknown> {
     try {
       const response = await fetchImpl(`https://slack.com/api/${method}`, {
@@ -56,7 +62,7 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
     }
   }
   async function messagePage(method: "conversations.replies" | "conversations.history", input: { token: string; channelId: string; cursor?: string; ts?: string; signal?: AbortSignal }): Promise<SlackMessagePage> {
-    const parsed = MessagePageSchema.parse(await call(method, { channel: SlackChannelIdSchema.parse(input.channelId), limit: 15,
+    const parsed = MessagePageSchema.parse(await call(method, { channel: readableChannel(input.channelId), limit: 15,
       ...(input.ts ? { ts: SlackTimestampSchema.parse(input.ts) } : {}), ...(input.cursor ? { cursor: z.string().max(1_024).parse(input.cursor) } : {}) }, input.token, input.signal));
     return { messages: parsed.messages.map(({ user, text, ts, thread_ts, reply_count, latest_reply }) => ({ ...(user ? { user } : {}), ...(text !== undefined ? { text } : {}), ts, ...(thread_ts ? { thread_ts } : {}), ...(reply_count !== undefined ? {reply_count} : {}), ...(latest_reply ? {latest_reply} : {}) })),
       hasMore: parsed.has_more ?? false, ...(parsed.response_metadata?.next_cursor ? { nextCursor: parsed.response_metadata.next_cursor } : {}) };
@@ -65,14 +71,24 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
     async exchangeCode(input) {
       const result = z.object({ app_id: SlackAppIdSchema, team: z.object({ id: SlackTeamIdSchema }), bot_user_id: SlackUserIdSchema,
         access_token: z.string().min(10).max(4_096), token_type: z.literal("bot"), scope: z.string().max(4_096),
-        is_enterprise_install: z.literal(false).optional(), expires_in: z.number().optional() }).passthrough().parse(await call("oauth.v2.access", {
+        is_enterprise_install: z.literal(false).optional(), expires_in: z.number().optional(), refresh_token: z.unknown().optional() }).passthrough().parse(await call("oauth.v2.access", {
           client_id: options.clientId, client_secret: options.clientSecret, code: input.code, redirect_uri: input.redirectUri,
         }));
       // Rotation requires a durable refresh flow. Never store a short-lived token as if it were permanent.
-      if (result.expires_in !== undefined || SLACK_BOT_SCOPES.some((scope) => !result.scope.split(",").includes(scope))) throw new SlackApiError();
-      return { appId: result.app_id, teamId: result.team.id, botUserId: result.bot_user_id, botToken: result.access_token };
+      const scopes = result.scope.split(",");
+      const required = options.readOnlyDev ? SLACK_DEV_BOT_SCOPES : SLACK_BOT_SCOPES;
+      if (result.expires_in !== undefined || required.some(scope => !scopes.includes(scope))) throw new SlackApiError();
+      const credentials = { appId: result.app_id, teamId: result.team.id, botUserId: result.bot_user_id, botToken: result.access_token };
+      if (!options.readOnlyDev) return credentials;
+      const installer = z.object({
+        id: SlackUserIdSchema, access_token: z.never().optional(), refresh_token: z.never().optional(),
+        scope: z.literal("").optional(),
+      }).safeParse(result.authed_user);
+      if (!installer.success || scopes.length !== required.length || result.refresh_token !== undefined) throw new SlackApiError();
+      return { ...credentials, slackUserId: installer.data.id };
     },
     async postMessage(input) {
+      if (options.readOnlyDev) throw new SlackApiError();
       const text = z.string().min(1).max(35_000).parse(input.text);
       const result = z.object({ ts: SlackTimestampSchema }).passthrough().parse(await call("chat.postMessage", {
         channel: SlackChannelIdSchema.parse(input.channelId), text: escapeSlackText(text), mrkdwn: false, parse: "none", link_names: false,
@@ -83,7 +99,7 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
     replies: (input) => messagePage("conversations.replies", input),
     history: (input) => messagePage("conversations.history", input),
     async conversationInfo(input) {
-      const channelId = SlackChannelIdSchema.parse(input.channelId);
+      const channelId = readableChannel(input.channelId, true);
       const result = z.object({ channel: z.object({ is_ext_shared: z.boolean().optional(), is_pending_ext_shared: z.boolean().optional(),
         is_member: z.boolean().optional(), pending_connected_team_ids: z.array(z.string().max(64)).max(100).optional() }).passthrough() }).passthrough()
         .parse(await call("conversations.info", { channel: channelId }, input.token, input.signal));
@@ -95,7 +111,7 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
     },
 
     async hasChannelMember(input) {
-      const channel = SlackChannelIdSchema.parse(input.channelId);
+      const channel = readableChannel(input.channelId, true);
       const member = SlackUserIdSchema.parse(input.userId);
       const pageSchema = z.object({
         members: z.array(SlackUserIdSchema).max(200),
@@ -112,6 +128,7 @@ export function createSlackApi(options: { clientId: string; clientSecret: string
       return false;
     },
     async addReaction(input) {
+      if (options.readOnlyDev) throw new SlackApiError();
       await call("reactions.add", { channel: SlackChannelIdSchema.parse(input.channelId), timestamp: SlackTimestampSchema.parse(input.ts),
         name: z.string().regex(/^[a-z0-9_+-]{1,64}$/).parse(input.name) }, input.token, input.signal);
     },

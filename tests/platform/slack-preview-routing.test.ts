@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSlackMachineResolver, loadSlackPreviewHandle, isSlackMachineAvailable } from "../../packages/platform/src/slack/home-resolver.js";
+import { createSlackMachineResolver, loadSlackDevAcceptance, loadSlackPreviewHandle, isSlackMachineAvailable } from "../../packages/platform/src/slack/home-resolver.js";
 
 const id = "a1234567-1234-4123-8123-123456789abc";
 const machine = { machineId: id, handle: "pr-2079", runtimeSlot: "pr-2079",
@@ -59,5 +59,43 @@ describe("Slack preview routing", () => {
     const s = setup("pr-2079");
     s.findMachineById.mockResolvedValue(candidate);
     await expect(s.resolve("user_member", "scope", "org_test")).rejects.toThrow();
+  });
+});
+
+describe("Slack Dev acceptance routing", () => {
+  const target = { handle: "owner-dev", machineId: id, ownerId: "user_owner", organizationId: "org_test",
+    teamId: "T123", channelId: "C123", ownerSlackId: "U123" };
+  const env = { PLATFORM_PREVIEW: "true", SLACK_DEV_ACCEPTANCE: JSON.stringify(target), SLACK_DEV_BRIDGE_TOKEN: "a".repeat(64) };
+  const devMachine = { ...machine, handle: target.handle, provisioningClass: "customer", runtimeSlot: "dev" };
+
+  it("requires complete isolated Dev configuration and rejects coexistence with Preview", () => {
+    expect(loadSlackDevAcceptance({})).toBeUndefined();
+    expect(loadSlackDevAcceptance(env)).toMatchObject({ target });
+    for (const override of [
+      { PLATFORM_PREVIEW: undefined }, { SLACK_DEV_BRIDGE_TOKEN: undefined },
+      { SLACK_PREVIEW_RUNTIME_HANDLE: "pr-2079" }, { SLACK_PREVIEW_THREAD_CONTEXT_GRANT: "{}" },
+      { SLACK_PREVIEW_MENTION_SUMMARY_RULE: "{}" },
+      { SLACK_DEV_ACCEPTANCE: JSON.stringify({ ...target, channelId: "D123" }) },
+      { SLACK_DEV_ACCEPTANCE: JSON.stringify({ ...target, handle: "owner" }) },
+    ]) expect(() => loadSlackDevAcceptance({ ...env, ...override })).toThrow();
+  });
+
+  it("resolves only the exact owner and registered Dev machine without a fallback lookup", async () => {
+    const findMachineById = vi.fn().mockResolvedValue(devMachine);
+    const findDirectoryRoute = vi.fn();
+    const findPersonalMachine = vi.fn().mockResolvedValue(machine);
+    const resolve = createSlackMachineResolver({ devAcceptance: target, findMachineById, findDirectoryRoute, findPersonalMachine });
+    await expect(resolve(target.ownerId)).resolves.toEqual(devMachine);
+    expect(findMachineById).toHaveBeenCalledWith(id);
+    await expect(resolve("user_other")).rejects.toThrow();
+    await expect(resolve(target.ownerId, "project", target.organizationId)).rejects.toThrow();
+    await expect(resolve(target.ownerId, undefined, "org_other")).rejects.toThrow();
+    for (const mutation of [{ runtimeSlot: "primary" }, { provisioningClass: "preview" }, { handle: "other-dev" },
+      { clerkUserId: "user_other" }, { machineId: "b1234567-1234-4123-8123-123456789abc" }, { status: "stopped" }]) {
+      findMachineById.mockResolvedValueOnce({ ...devMachine, ...mutation });
+      await expect(resolve(target.ownerId)).rejects.toThrow();
+    }
+    expect(findPersonalMachine).not.toHaveBeenCalled();
+    expect(findDirectoryRoute).not.toHaveBeenCalled();
   });
 });

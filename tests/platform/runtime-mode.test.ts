@@ -5,7 +5,56 @@ import {
 } from '../../packages/platform/src/runtime-mode.js';
 import { candidateRuntimeEnvironment } from './preview-pair-candidate-env.js';
 
+const slackDevOrigin = 'https://slack-dev-1a2b3c4d---matrix-platform-preview-example-ey.a.run.app';
+const slackDevEnvironment = {
+  PLATFORM_RUNTIME_MODE: 'cloud_run',
+  PLATFORM_PREVIEW: 'true',
+  K_SERVICE: 'matrix-platform-preview',
+  CUSTOMER_VPS_ENABLED: 'false',
+  AUTH_SHELL_ENABLED: 'false',
+  SLACK_DEV_CALLBACK_ONLY: 'true',
+  PLATFORM_PUBLIC_URL: slackDevOrigin,
+  PLATFORM_DATABASE_URL: 'postgres://eng85_dev_slack_1a2b3c4d:fixture@preview-db.example/matrixos_eng85_dev_slack_1a2b3c4d?sslmode=verify-full',
+};
+
 describe('platform/runtime-mode', () => {
+  it('starts a dedicated Slack callback before App enrollment without provisioning, storage or Docker', () => {
+    const config = loadPlatformRuntimeConfig(slackDevEnvironment);
+    expect(config).toMatchObject({
+      mode: 'cloud_run',
+      customerVpsEnabled: false,
+      legacyContainerOrchestrationEnabled: false,
+      slackDevCallbackOrigin: slackDevOrigin,
+    });
+  });
+
+  it.each([
+    { SLACK_DEV_CALLBACK_ONLY: 'yes' },
+    { PLATFORM_RUNTIME_MODE: 'local' },
+    { PLATFORM_PREVIEW: 'false' },
+    { K_SERVICE: 'matrix-platform' },
+    { CUSTOMER_VPS_ENABLED: 'true' },
+    { AUTH_SHELL_ENABLED: 'true' },
+    { PLATFORM_BACKGROUND_WORKERS_ENABLED: 'true' },
+    { PLATFORM_PUBLIC_URL: 'https://matrix-platform-preview-example-ey.a.run.app' },
+    { PLATFORM_PUBLIC_URL: slackDevOrigin + '/extra' },
+    { SLACK_PUBLIC_BASE_URL: 'https://slack-dev-ffffffff---matrix-platform-preview-example-ey.a.run.app' },
+    { SLACK_PREVIEW_RUNTIME_HANDLE: 'pr-3482' },
+    { PLATFORM_DATABASE_URL: 'postgres://prod:fixture@prod-db.example/matrixos_platform?sslmode=verify-full' },
+    { PLATFORM_DATABASE_URL: slackDevEnvironment.PLATFORM_DATABASE_URL.replace('verify-full', 'require') },
+    { PLATFORM_DATABASE_URL: slackDevEnvironment.PLATFORM_DATABASE_URL.replaceAll('1a2b3c4d', 'ffffffff') },
+    { PLATFORM_DATABASE_URL: slackDevEnvironment.PLATFORM_DATABASE_URL.replace('preview-db.example', 'localhost') },
+    { PLATFORM_DATABASE_URL: slackDevEnvironment.PLATFORM_DATABASE_URL + '&host=prod-db.example&user=prod' },
+    { PLATFORM_DATABASE_URL: slackDevEnvironment.PLATFORM_DATABASE_URL + '&sslrootcert=/production-ca.pem' },
+    { PLATFORM_DATABASE_URL: slackDevEnvironment.PLATFORM_DATABASE_URL + '&sslmode=no-verify' },
+    { R2_BUNDLES_ACCESS_KEY_ID: 'shared-bundles' },
+    { STRIPE_SECRET_KEY: 'test-provider-key' },
+    { HETZNER_API_TOKEN: 'test-provider-key' },
+  ])('rejects a Dev callback with unrelated authority or ambiguous routing (%o)', overrides => {
+    expect(() => loadPlatformRuntimeConfig({ ...slackDevEnvironment, ...overrides }))
+      .toThrow(PlatformStartupConfigError);
+  });
+
   it('boots a validated runtime-only candidate without enabling paid provisioning or Docker', () => {
     const config = loadPlatformRuntimeConfig({ ...candidateRuntimeEnvironment(), PLATFORM_RUNTIME_MODE: 'cloud_run',
       PLATFORM_DATABASE_URL: 'postgres://fixture:fixture@preview-db.example/fixture' });

@@ -1,7 +1,9 @@
 import {describe,it,expect,vi,beforeEach} from "vitest";
 import { Hono } from "hono";
+import { Agent } from "undici";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import type {SlackAppRouteOptions} from "../../packages/platform/src/slack/routes.js";
+import {makeSlackDevCertificate} from "./slack-dev-certificate-fixture.js";
 const {machine,createSlackApp}=vi.hoisted(()=>({machine:vi.fn(),createSlackApp:vi.fn()}));
 vi.mock("../../packages/platform/src/db.js",()=>({getRunningUserMachineByClerkId:machine,getRunningUserMachineByHandle:machine,getUserMachine:machine}));
 vi.mock("../../packages/platform/src/slack/wiring.js",async(importOriginal)=>({...await importOriginal<object>(),createSlackApp}));
@@ -52,4 +54,45 @@ describe("production Slack durable destination routing",()=>{
   await expect(options.dispatch({...input as object,destination,signal:AbortSignal.timeout(1000)} as never)).rejects.toThrow(/Slack (?:destination changed|home unavailable)/);
   expect(fetchImpl).not.toHaveBeenCalled();
  });
+});
+
+it("wires the Dev ingress pool only to the registered private Chat RPC and drains it on close", async () => {
+  const ingress = makeSlackDevCertificate();
+  const customerVpsProxyDispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+  const target = { handle: "owner-dev", machineId: original.machineId, ownerId: original.clerkUserId,
+    organizationId: "org_dev", teamId: "T123", channelId: "C123", ownerSlackId: "U123" };
+  const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ accepted: true }));
+  let slack: Awaited<ReturnType<typeof bootstrapPlatformSlack>> | undefined;
+  let devDispatcher: Agent | undefined;
+  try {
+    machine.mockResolvedValue({ ...original, handle: target.handle, runtimeSlot: "dev", provisioningClass: "customer" });
+    createSlackApp.mockResolvedValue({ routes: new Hono(), close: vi.fn() });
+    slack = await bootstrapPlatformSlack({
+      env: { ...env, PLATFORM_PREVIEW: "true", SLACK_DEV_ACCEPTANCE: JSON.stringify(target),
+        SLACK_DEV_BRIDGE_TOKEN: "d".repeat(64), SLACK_DEV_INGRESS_CA_PEM: ingress.cert,
+        SLACK_PUBLIC_BASE_URL: "https://slack-dev-11111111---matrix-platform-preview-fixture-ey.a.run.app" },
+      db: { kysely: {} } as never, platformSecret: "a".repeat(64), platformJwtSecret: "j".repeat(64),
+      collaboration: { organizations: {}, repository: {} } as never, customerVpsProxyDispatcher, fetchImpl,
+    });
+    const wiring = createSlackApp.mock.lastCall?.[0] as SlackAppRouteOptions & { fetchImpl: typeof fetch };
+    await wiring.fetchImpl("https://slack.com/api/conversations.info", { signal: AbortSignal.timeout(1000) });
+    expect(fetchImpl.mock.lastCall?.[1]).not.toHaveProperty("dispatcher");
+
+    await wiring.dispatchContext!({
+      runtimeId: target.machineId, ownerId: target.ownerId, botId: "bot_12345678", chatId: "chat_private",
+      grantId: "d".repeat(64),
+      event: { eventId: "Ev123", appId: "A123", teamId: target.teamId, channelId: target.channelId,
+        userId: "U456", ts: "1795000000.000001", threadTs: "1795000000.000001", text: "ordinary source" },
+    }, AbortSignal.timeout(1000));
+    const [url, init] = fetchImpl.mock.lastCall!;
+    devDispatcher = (init as RequestInit & { dispatcher?: Agent }).dispatcher;
+    expect(url).toBe("https://192.0.2.1/api/internal/slack/context");
+    expect(devDispatcher).toBeInstanceOf(Agent);
+    expect(devDispatcher).not.toBe(customerVpsProxyDispatcher);
+  } finally {
+    await slack?.close();
+    ingress.close();
+    await customerVpsProxyDispatcher.close();
+  }
+  expect(devDispatcher?.closed).toBe(true);
 });

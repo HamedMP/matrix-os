@@ -1,5 +1,6 @@
 import { canProposeBotSettings } from "../chat/bot-settings-authority.js";
 import { createBotSelectedChatReader } from "../chat/bot-selected-chat.js";
+import { createSlackAgentRouteLane } from "./slack-agent-route-lane.js";
 import type { SlackBotPlatform } from "./slack-platform.js";
 import { retireRevokedSlackJobs } from "../slack/rule-revocation.js";
 import { createSlackRuleTools, type SlackRuleTools } from "../slack/rule-tools.js";
@@ -15,7 +16,7 @@ import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routin
 import {BotStateError} from "../bots/repositories/shared.js";
 import { createBotInputHistoryReader } from "../bots/historical-input.js";
 import { createPrivateSlackThreadContext, type PrivateSlackThreadContext } from "../slack/private-thread-context.js";
-import { createSlackOwnerClient } from "./slack-owner-client.js";
+import { createPilotChannelReader, createSlackOwnerClient } from "./slack-owner-client.js";
 import { createSharedAttachmentSource } from "../bots/shared-integration-attachment.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -276,11 +277,17 @@ export async function startBots(options: {
   const transact = createBotStateTransactions(options.repository);
   const routineApprovals=createBotRoutineApprovals({db,transact,source:chatgptPlanPeers,now:options.now,definitionRevision:async(ownerId,botId)=>{const agent=await options.agents.get({type:"personal",ownerId},botId);if(!agent?.recipeRef || agent.archived) throw new BotStateError("not_found");return agent.revision;}});
   const routines=createBotRoutineExecution({db,transact,approvals:routineApprovals,available:()=>Boolean(options.host?.available),now:options.now});
-  const enrolledPlatform = options.slackPlatform === undefined ? options.routineActionPlatform : options.slackPlatform;
-  const enrolledPreview = enrolledPlatform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(enrolledPlatform.runtimeSlot) && enrolledPlatform.handle === enrolledPlatform.runtimeSlot;
+  const enrolledPlatform: SlackBotPlatform | null | undefined = options.slackPlatform === undefined
+    ? options.routineActionPlatform : options.slackPlatform;
+  const devTarget = enrolledPlatform?.devTarget;
+  const enrolledSlackEnabled = enrolledPlatform && (devTarget
+    ? enrolledPlatform.runtimeSlot === "dev" && enrolledPlatform.handle === devTarget.handle
+      && enrolledPlatform.machineId === devTarget.machineId && options.runtimeOwnerId === devTarget.ownerId
+      && options.computerId === devTarget.handle
+    : /^pr-[1-9][0-9]{0,8}$/.test(enrolledPlatform.runtimeSlot) && enrolledPlatform.handle === enrolledPlatform.runtimeSlot);
   const corePlatform = options.routineActionPlatform;
   const corePreview = corePlatform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(corePlatform.runtimeSlot) && corePlatform.handle === corePlatform.runtimeSlot;
-  const integrationClient = options.integrations || corePreview || enrolledPreview
+  const integrationClient = options.integrations || corePreview || (enrolledSlackEnabled && options.runtimeOwnerId)
     ? createBotIntegrationClient(options.integrations ?? (async () => new Response(null, {status:503}))) : undefined;
   let enrolledSlack: EnrolledSlackReadSource | undefined;
   const integrationTools = integrationClient
@@ -317,9 +324,16 @@ export async function startBots(options: {
   };
   const memory = createBotMemoryService({ transact });
   const grants = createBotGrantService({ transact });
+  const githubReview = readBotResourceGitHubReviewConfig(process.env);
+  const slackAgentRoutes = createSlackAgentRouteLane({
+    platform: enrolledPlatform, ownerId: options.runtimeOwnerId, computerId: options.computerId,
+    transact, isActiveManagedAgent, repository: githubReview,
+    github: options.integrations ? integrationClient : undefined,
+  });
   const resourceGrants = createBotResourceGrantService({ transact, now, isActiveManagedAgent, providers: createBotResourceCandidates({
     client: options.integrations ? integrationClient : undefined,
-    githubReview: readBotResourceGitHubReviewConfig(process.env), runtimeOwnerId: options.runtimeOwnerId,
+    githubReview, runtimeOwnerId: options.runtimeOwnerId, slackRouteChannels: slackAgentRoutes?.listChannels,
+    readPilotChannel: enrolledPlatform && devTarget && enrolledSlackEnabled ? createPilotChannelReader(enrolledPlatform) : undefined,
   }) });
   // Overdue questions are expired and announced; passes never overlap and stop on close.
   let sweeping: Promise<unknown> | undefined;
@@ -441,22 +455,20 @@ export async function startBots(options: {
   let slackMentionSummaries: SlackMentionSummaries | undefined;
   let slackRules: SlackRuleTools | undefined;
   const platform = enrolledPlatform;
-  if (platform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(platform.runtimeSlot) && platform.handle === platform.runtimeSlot) {
+  if (platform && options.runtimeOwnerId && enrolledSlackEnabled) {
     try {
       const slackClient = createSlackOwnerClient(platform);
       const botAvailable = async (target: {ownerId:string;botId:string;chatId:string}) => {
+        if (devTarget && (target.ownerId !== devTarget.ownerId || target.botId !== devTarget.botId || target.chatId !== devTarget.chatId)) return false;
         const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
         return Boolean(bot?.recipeRef && !bot.archived);
       };
-      slackMentionSummaries = await createSlackMentionSummaries({ db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess, readThread: slackClient.readSummaryThread, botAvailable });
+      slackMentionSummaries = await createSlackMentionSummaries({ db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess, readThread: slackClient.readSummaryThread, botAvailable, routed: slackAgentRoutes?.worker });
       slackThreadContext = await createPrivateSlackThreadContext({
         db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess,
         discoverEnrollment: slackClient.discoverThreadEnrollment,
         onReceive: slackMentionSummaries.receive,
-        botAvailable: async target => {
-          const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);
-          return Boolean(bot?.recipeRef && !bot.archived);
-        },
+        botAvailable,
       });
       slackRules=createSlackRuleTools({db,ownerId:options.runtimeOwnerId,runtimeId:platform.machineId,context:slackThreadContext,afterCommit:chatId=>retireRevokedSlackJobs(db,options.runtimeOwnerId!,chatId,runId=>orchestrator.cancel(runId))});
       enrolledSlack = createEnrolledSlackReadSource({ context: slackThreadContext, read: slackClient.readEnrolledContext });

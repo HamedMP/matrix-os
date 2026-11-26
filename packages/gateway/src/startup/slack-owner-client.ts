@@ -1,11 +1,13 @@
+import type { BotResourceGrantProviders } from "../bots/resource-grant-scope.js";
+import type { SlackBotPlatform, SlackPlatformConnection } from "./slack-platform.js";
 import type { SummaryAccess } from "../slack/mention-summary.js";
 import { z } from "zod/v4";
-import { SlackThreadContextEnrollmentRequestSchema, SlackThreadContextEnrollmentResponseSchema, type SlackThreadContextEnrollmentRequest, SlackEnrolledContextRequestSchema, SlackEnrolledContextResponseSchema, type SlackEnrolledContextRequest, SlackPrivateThreadContextResponseSchema, SlackThreadContextAccessResponseSchema, type SlackBridgeEnvelope, type SlackThreadContextAccess } from "@matrix-os/contracts/slack-bridge";
+import { SlackAgentChannelSchema, type SlackAgentChannel, SlackThreadContextEnrollmentRequestSchema, SlackThreadContextEnrollmentResponseSchema, type SlackThreadContextEnrollmentRequest, SlackEnrolledContextRequestSchema, SlackEnrolledContextResponseSchema, type SlackEnrolledContextRequest, SlackPrivateThreadContextResponseSchema, SlackThreadContextAccessResponseSchema, type SlackBridgeEnvelope, type SlackThreadContextAccess } from "@matrix-os/contracts/slack-bridge";
 
 const ContextSchema=z.object({available:z.literal(true),untrusted:z.literal(true),partial:z.boolean(),messages:z.array(z.object({
   user:z.string().max(80).optional(),ts:z.string().max(32),thread_ts:z.string().max(32).optional(),text:z.string().max(16_384).optional(),
 }).strict()).max(20)}).strict();
-export function createSlackOwnerClient(options:{platformUrl:string;handle:string;token:string;fetchImpl?:typeof fetch}) {
+export function createSlackOwnerClient(options: SlackPlatformConnection & { fetchImpl?: typeof fetch }) {
   const origin=new URL(options.platformUrl);
   const local=["localhost","127.0.0.1","[::1]"].includes(origin.hostname);
   if((origin.protocol!=="https:" && !(origin.protocol==="http:" && local)) || origin.username || origin.password || origin.search || origin.hash || origin.pathname!=="/"
@@ -30,10 +32,28 @@ export function createSlackOwnerClient(options:{platformUrl:string;handle:string
     return{status:response.status,body,retryAfterMs:undefined};
   }
   return{
+    async listAgentRouteChannels(signal?: AbortSignal, channelId?: string): Promise<SlackAgentChannel[]> {
+      if (!options.devTarget?.agentRoutes || channelId !== undefined && !SlackAgentChannelSchema.shape.channelId.safeParse(channelId).success) return [];
+      try {
+        const response = await rpc("/internal/slack/agent-channels", channelId ? { channelId } : {}, signal, 7500);
+        const parsed = z.strictObject({ channels: z.array(SlackAgentChannelSchema).max(2) }).safeParse(response.body);
+        if (response.status !== 200 || !parsed.success) throw new Error("Slack channel verification unavailable");
+        return parsed.data.channels.filter(c => c.ownerId === options.devTarget!.ownerId
+          && c.runtimeId === options.devTarget!.machineId && c.appId === options.devTarget!.appId
+          && !(c.teamId === options.devTarget!.teamId && c.channelId === options.devTarget!.channelId)
+          && (!channelId || c.channelId === channelId));
+      } catch (error) {
+        // A failed authority lookup is retryable. A valid empty response means the exact channel is unavailable.
+        if (channelId) throw error;
+        console.warn("[slack-owner] Agent channel verification unavailable", error instanceof Error ? error.name : "UnknownError");
+        return [];
+      }
+    },
     async discoverThreadEnrollment(input: SlackThreadContextEnrollmentRequest, signal: AbortSignal) {
       try {
         const request = SlackThreadContextEnrollmentRequestSchema.parse(input);
-        const response = await rpc("/internal/slack/thread-context/enrollment", request, signal);
+        // The isolated zero-traffic revision may cold-start on the first lookup.
+        const response = await rpc("/internal/slack/thread-context/enrollment", request, signal, options.devTarget ? 25_000 : undefined);
         const parsed = SlackThreadContextEnrollmentResponseSchema.safeParse(response.body);
         return response.status === 200 && parsed.success ? parsed.data : { available: false as const };
       } catch (error) {
@@ -99,5 +119,22 @@ export function createSlackOwnerClient(options:{platformUrl:string;handle:string
         return result.status===429?{status:"retryable",retryAfterMs:result.retryAfterMs}:{status:"uncertain"};
       }catch(error:unknown){console.warn("[slack-owner] delivery outcome unknown",error instanceof Error?error.name:"UnknownError");return{status:"uncertain"};}
     },
+  };
+}
+
+
+/** Read the pilot enrollment for its original private Chat. This grants no route or rule authority. */
+export function createPilotChannelReader(platform: SlackBotPlatform,
+  discover = createSlackOwnerClient(platform).discoverThreadEnrollment): NonNullable<BotResourceGrantProviders["readPilotChannel"]> {
+  return async target => {
+    const pilot = platform.devTarget;
+    if (!pilot || platform.runtimeSlot !== "dev" || platform.machineId !== pilot.machineId || platform.handle !== pilot.handle
+      || target.ownerId !== pilot.ownerId || target.agentId !== pilot.botId || target.chatId !== pilot.chatId) return;
+    const enrolled = await discover({ ownerId: target.ownerId, botId: target.agentId, chatId: target.chatId,
+      runtimeId: pilot.machineId }, AbortSignal.timeout(7500));
+    if (enrolled.available && enrolled.scope === "channel" && enrolled.appId === pilot.appId && enrolled.teamId === pilot.teamId
+      && enrolled.channelId === pilot.channelId && enrolled.channel.id === pilot.channelId && enrolled.channel.name === "tech"
+      && enrolled.access.ownerId === target.ownerId && enrolled.access.botId === target.agentId && enrolled.access.chatId === target.chatId
+      && enrolled.access.runtimeId === pilot.machineId) return {name:"tech"};
   };
 }

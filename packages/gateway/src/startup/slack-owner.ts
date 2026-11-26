@@ -1,9 +1,12 @@
 import { createSlackSummarySubmitter, type SlackMentionSummaries } from "../slack/mention-summary.js";
 import {Hono} from "hono";
+import { SLACK_DEV_OAUTH_CONFIG_PATH, SlackDevOAuthBrowserConfigSchema } from "@matrix-os/contracts/slack-bridge";
 import type {SlackBridgeEnvelope,SlackPublicationIdentity} from "@matrix-os/contracts/slack-bridge";
 import type {CollaborationAuthority} from "../collaboration/authority.js";
 import {createSlackBridgeRoutes} from "./slack-bridge.js";
+import type { SlackDevTarget } from "./slack-platform.js";
 import type { PrivateSlackThreadContext } from "../slack/private-thread-context.js";
+import { getOptionalRequestPrincipal, hasVerifiedRuntimeBearer } from "../request-principal.js";
 
 interface SlackInboxTransport {
   receive(envelope:SlackBridgeEnvelope):Promise<unknown>;
@@ -16,7 +19,7 @@ interface SlackInboxTransport {
 export function registerOwnerSlack(options:{
   app:Hono;ownerId:string;token?:string;authority:Pick<CollaborationAuthority,"authorize">;
   personal?:SlackInboxTransport;company?:SlackInboxTransport;brainRoutes?:Hono;context?:PrivateSlackThreadContext;
-  summaries?: SlackMentionSummaries;
+  summaries?: SlackMentionSummaries; devTarget?: SlackDevTarget;
   now?:()=>Date;startDrain?:boolean;
 }) {
   let stopping=false;
@@ -26,12 +29,16 @@ export function registerOwnerSlack(options:{
   const services=[options.personal,options.company,options.summaries].filter((service):service is NonNullable<typeof service>=>!!service);
   const unavailable=new Hono();unavailable.all("*",c=>c.json({error:"Slack unavailable"},503));
   if(options.token && /^[a-f0-9]{64}$/.test(options.token)) {
-    options.app.route("/",createSlackBridgeRoutes({ownerId:options.ownerId,token:options.token,authority:options.authority,now:options.now,
+    options.app.route("/",createSlackBridgeRoutes({ownerId:options.ownerId,token:options.token,authority:options.authority,now:options.now,devTarget:options.devTarget,
       authorizePublication:async input=>{
         if(stopping || !authorizePublication)return false;
         const allowed=await authorizePublication(input);
         return !stopping && allowed;
       },
+      receiveRoutedSlack: options.summaries?.receiveRoutedSlack ? async (event, signal) => {
+        if (stopping) throw new Error("SlackServiceUnavailable");
+        return options.summaries!.receiveRoutedSlack(event, signal);
+      } : undefined,
       receiveContext: context ? async envelope => !stopping && await context.receive(envelope) : undefined,
       async receive(envelope){
         const service=envelope.event.kind==="direct_message"?options.personal:options.company;
@@ -71,17 +78,34 @@ import {SlackPersonalService,createSlackPersonalChatResolver,createSlackPersonal
 /** Owner-side databases are borrowed from canonical Chat and remain owned by it. */
 export async function startOwnerSlack(options:{app:Hono;ownerId?:string;token?:string;platformUrl?:string;handle?:string;
   repository:ChatRepository|null;orchestrator:CanonicalChatOrchestrator|null;executionRoots:ChatExecutionRootResolver|null;
-  collaboration:GatewayCollaborationRuntime|null;bots:BotServices|undefined;
+  collaboration:GatewayCollaborationRuntime|null;bots:BotServices|undefined;devTarget?:SlackDevTarget;
 }) {
   let personal:SlackPersonalService|undefined;
   let company:Awaited<ReturnType<typeof startSlackCompany>>|undefined;
   const ownerId=options.ownerId??"";
+  const dev = options.devTarget;
+  const browser = SlackDevOAuthBrowserConfigSchema.safeParse({
+    handle: dev?.handle, machineId: dev?.machineId, organizationId: dev?.organizationId,
+    platformOrigin: options.platformUrl?.replace(/\/$/, ""),
+  });
+  if (browser.success && dev?.ownerId === ownerId && browser.data.handle === options.handle) {
+    options.app.get(SLACK_DEV_OAUTH_CONFIG_PATH, c => {
+      c.header("Cache-Control", "no-store");
+      if (new URL(c.req.url).search) return c.notFound();
+      if (!hasVerifiedRuntimeBearer(c)) return c.json({ error: "Forbidden" }, 403);
+      const principal = getOptionalRequestPrincipal(c);
+      if (principal?.source !== "platform-verified" || principal.userId !== ownerId) {
+        return c.json({ error: "Forbidden" }, 403);
+      }
+      return c.json(browser.data);
+    });
+  }
   const authority=options.collaboration?.authority??{async authorize(){throw new Error("SlackAuthorityUnavailable");}};
   if(/^user_[A-Za-z0-9_-]+$/.test(ownerId) && options.token && options.platformUrl && options.handle
     && options.repository && options.orchestrator && options.executionRoots && options.bots) {
     try {
-      const client=createSlackOwnerClient({platformUrl:options.platformUrl,handle:options.handle,token:options.token});
-      if(options.collaboration) {
+      const client=options.devTarget ? undefined : createSlackOwnerClient({platformUrl:options.platformUrl,handle:options.handle,token:options.token});
+      if(client && options.collaboration) {
         try {
           company=await startSlackCompany({ownerId,repository:options.repository,
             collaboration:options.collaboration,executionRoots:options.executionRoots,bots:options.bots,client});
@@ -89,8 +113,10 @@ export async function startOwnerSlack(options:{app:Hono;ownerId?:string;token?:s
           console.warn("[slack] company composition unavailable",error instanceof Error?error.name:"UnknownError");
         }
       }
-      if(options.bots.adapter) {
+      if (options.bots.adapter) {
         options.bots.slackMentionSummaries?.attach(createSlackSummarySubmitter({db:ownerBotExecutor(options.repository.kysely),orchestrator:options.orchestrator}));
+      }
+      if(options.bots.adapter && client) {
         const personalDb=options.repository.kysely as unknown as Kysely<SlackPersonalDatabase>;
         await bootstrapSlackPersonalDatabase(personalDb);
         const botDb=ownerBotExecutor(options.repository.kysely);
@@ -103,5 +129,5 @@ export async function startOwnerSlack(options:{app:Hono;ownerId?:string;token?:s
       console.warn("[slack] owner composition unavailable",error instanceof Error?error.name:"UnknownError");
     }
   }
-  return registerOwnerSlack({app:options.app,ownerId,token:options.token,authority,personal,company:company?.service,brainRoutes:company?.routes,context:options.bots?.slackThreadContext,summaries:options.bots?.slackMentionSummaries});
+  return registerOwnerSlack({app:options.app,ownerId,token:options.token,authority,devTarget:options.devTarget,personal,company:company?.service,brainRoutes:company?.routes,context:options.bots?.slackThreadContext,summaries:options.bots?.slackMentionSummaries});
 }

@@ -15,6 +15,7 @@ import { subscribePostHogFlag, type FeatureFlagSource } from "@matrix-os/ui/feat
 import { buildClientErrorReport, type ClientErrorProperties } from "./client-error-report";
 import { getGatewayUrl } from "./gateway";
 import { getMarketingAttributionProperties } from "./marketing-attribution";
+import { slackDevOAuthHandle } from "./slack-dev-oauth-privacy";
 
 type ClientProperties = ClientErrorProperties;
 type PostHogInitOptions = Parameters<typeof posthog.init>[1];
@@ -53,7 +54,7 @@ let initialized = false;
 export function capturePostHogException(error: unknown, properties: ClientProperties = {}) {
   if (!config) return;
   try {
-    ensurePostHogInitialized(config);
+    if (!ensurePostHogInitialized(config)) return;
     posthog.captureException(error, sanitizeProperties(properties));
   } catch (err: unknown) {
     console.warn("[posthog] Failed to capture client exception:", err instanceof Error ? err.name : typeof err);
@@ -89,7 +90,7 @@ export function reportClientError(error: unknown, properties: ClientProperties =
 export function capturePostHogEvent(event: string, properties: ClientProperties = {}) {
   if (!config) return;
   try {
-    ensurePostHogInitialized(config);
+    if (!ensurePostHogInitialized(config)) return;
     posthog.capture(event, sanitizeProperties({
       ...getMarketingAttributionProperties(),
       ...properties,
@@ -102,7 +103,7 @@ export function capturePostHogEvent(event: string, properties: ClientProperties 
 export async function openShellSupport(currentConfig: typeof config = config): Promise<boolean> {
   if (!currentConfig) return reportSupportUnavailable();
   try {
-    ensurePostHogInitialized(currentConfig);
+    if (!ensurePostHogInitialized(currentConfig)) return false;
     const properties = await loadShellSupportProperties();
     applySupportChatProperties(properties);
     const deadline = Date.now() + SUPPORT_AVAILABILITY_TIMEOUT_MS;
@@ -218,7 +219,7 @@ export function setPostHogPersonPropertiesOnce(
 ) {
   if (!currentConfig) return;
   try {
-    ensurePostHogInitialized(currentConfig);
+    if (!ensurePostHogInitialized(currentConfig)) return;
     posthog.setPersonProperties({}, sanitizeProperties(properties));
   } catch (err: unknown) {
     console.warn(
@@ -235,7 +236,7 @@ export function capturePostHogLog(
 ) {
   if (!config) return;
   try {
-    ensurePostHogInitialized(config);
+    if (!ensurePostHogInitialized(config)) return;
     const sanitized = sanitizeProperties(properties);
     const logger = (posthog as PostHogWithLogger).logger?.[level];
     if (logger) {
@@ -259,7 +260,7 @@ export function identifyPostHogUser(
 ) {
   if (!currentConfig || !distinctId) return;
   try {
-    ensurePostHogInitialized(currentConfig);
+    if (!ensurePostHogInitialized(currentConfig)) return;
     posthog.identify(distinctId, sanitizeProperties(properties));
   } catch (err: unknown) {
     console.warn("[posthog] Failed to identify user:", err instanceof Error ? err.name : typeof err);
@@ -267,7 +268,7 @@ export function identifyPostHogUser(
 }
 
 export function resetPostHogIdentity(currentConfig: typeof config = config) {
-  if (!currentConfig || !initialized) return;
+  if (!currentConfig || !initialized || isSlackDevOAuthPage()) return;
   try {
     // Only reset provably identified sessions; resetting an anonymous session
     // would rotate its distinct id on every signed-out page load. If the
@@ -280,14 +281,20 @@ export function resetPostHogIdentity(currentConfig: typeof config = config) {
   }
 }
 
-function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>) {
+function isSlackDevOAuthPage(): boolean {
+  return typeof window !== "undefined" && slackDevOAuthHandle(window.location) !== null;
+}
+
+function ensurePostHogInitialized(currentConfig: NonNullable<typeof config>): boolean {
+  if (isSlackDevOAuthPage()) return false;
   initializeShellPostHog(currentConfig);
+  return true;
 }
 
 export function initializeShellPostHog(
   currentConfig: typeof config = config,
 ) {
-  if (!currentConfig || initialized) return;
+  if (!currentConfig || initialized || isSlackDevOAuthPage()) return;
   // The shell serves a same-origin PostHog proxy at /relay (see next.config
   // rewrites), so the relative api host stays first-party on whichever origin
   // serves the shell (app.matrix-os.com session routing, staging, local dev).
@@ -332,7 +339,7 @@ export function initializeShellPostHog(
 
 /** The shell's PostHog flags; undefined in builds without a PostHog project, where the gateway decides. */
 export function getShellFeatureFlagSource(currentConfig: typeof config = config): FeatureFlagSource | undefined {
-  if (!currentConfig) return undefined;
+  if (!currentConfig || isSlackDevOAuthPage()) return undefined;
   return {
     subscribe(key, listener) {
       try {
