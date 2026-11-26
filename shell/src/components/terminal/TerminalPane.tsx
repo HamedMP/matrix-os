@@ -10,7 +10,7 @@ import { ImageAddon } from "@xterm/addon-image";
 import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal } from "@xterm/xterm";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { TerminalControls, createTerminalNativeHistory } from "@matrix-os/ui";
+import { TerminalControls, TerminalControlsStatus, createTerminalNativeHistory } from "@matrix-os/ui";
 import { createTerminalKeyHandler } from "./terminal-key-handler";
 import { useWebTerminalControls } from "./useWebTerminalControls";
 import type { TerminalFontFamily, TerminalThemeId } from "@/stores/terminal-settings";
@@ -163,6 +163,7 @@ export function TerminalPane({
   shouldCacheOnUnmount,
   shouldDestroyOnUnmount,
   allowRemoteResize = true,
+  showControls = true,
   suppressNativeKeyboard = false,
   canvasZoom = 1,
 }: TerminalPaneProps) {
@@ -1800,8 +1801,8 @@ export function TerminalPane({
 
   return (
     <div className="ph-no-capture flex h-full w-full min-h-0 min-w-0 flex-col" style={{ backgroundColor: terminalSurfaceBackground }}>
-      <TerminalControls layers={{ popover: SHELL_Z_INDEX.popover, dialog: SHELL_Z_INDEX.appDialog }} controls={controls} theme={terminalSurfaceTheme}
-        attachment={{ enabled: controls.enabled, onSelectFiles: attachFiles }} />
+      {showControls ? <TerminalControls layers={{ popover: SHELL_Z_INDEX.popover, dialog: SHELL_Z_INDEX.appDialog }} controls={controls} theme={terminalSurfaceTheme}
+        attachment={{ enabled: controls.enabled, onSelectFiles: attachFiles }} /> : <TerminalControlsStatus controls={controls} theme={terminalSurfaceTheme} />}
     {/* react-doctor-disable-next-line react-doctor/no-static-element-interactions, react-doctor/click-events-have-key-events -- presentational click-to-focus wrapper: clicking anywhere in the pane forwards focus to the embedded xterm terminal, which is itself the keyboard-interactive element (its textarea is in natural tab order). This div is not a control, so a role/tabIndex would be misleading; keyboard users interact with the terminal directly. */}
     <div
       ref={containerRef}

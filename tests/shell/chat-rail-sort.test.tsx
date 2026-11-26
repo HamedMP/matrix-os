@@ -135,7 +135,7 @@ it("opens the full archive page from Search and keeps its own search bar", async
   expect(screen.queryByRole("button",{name:"Archived chats"})).toBeNull();
   fireEvent.click(screen.getByRole("button",{name:"Search chats"}));
   fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));
-  fireEvent.click(screen.getByRole("button",{name:"Open archived list"}));
+  fireEvent.click(screen.getByRole("button",{name:"Open the archived list"}));
   expect(screen.queryByRole("dialog",{name:"Archived chats"})).toBeNull();
   expect(screen.getByRole("region",{name:"Archived chats"})).toBeTruthy();
   expect(screen.getByRole("searchbox",{name:"Search archived chats"})).toBeTruthy();
@@ -173,7 +173,7 @@ it("keeps archive navigation visible when Search was opened with the sidebar col
  render(<Harness/>);
  fireEvent.click(screen.getByRole("button",{name:"Close Chat sidebar"}));
  fireEvent.keyDown(window,{key:"k",metaKey:true});
- fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));fireEvent.click(screen.getByRole("button",{name:"Open archived list"}));
+ fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));fireEvent.click(screen.getByRole("button",{name:"Open the archived list"}));
  fireEvent.click(screen.getByRole("button",{name:"Open Chat sidebar"}));
  expect(screen.getByRole("button",{name:"Search chats"})).toBeTruthy();
 });
@@ -207,7 +207,7 @@ it.each(['Agents','Schedules','Shared with me','Shared from Search'])('leaves th
  const shared=vi.fn();const api={list:vi.fn(async()=>({items:[]})),search:vi.fn(),updateLifecycle:vi.fn(),delete:vi.fn()};
  render(<ChatAgentsWorkspace><ChatApp messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client} archiveClient={api} onOpenSharedHome={shared}/></ChatAgentsWorkspace>);
  await screen.findByRole("button",{name:"Agents",exact:true});
- fireEvent.click(screen.getByRole('button',{name:'Search chats'}));fireEvent.click(screen.getByRole('tab',{name:'Archived',exact:true}));fireEvent.click(screen.getByRole('button',{name:'Open archived list'}));
+ fireEvent.click(screen.getByRole('button',{name:'Search chats'}));fireEvent.click(screen.getByRole('tab',{name:'Archived',exact:true}));fireEvent.click(screen.getByRole('button',{name:'Open the archived list'}));
  expect(screen.getByRole('region',{name:'Archived chats'})).toBeTruthy();
  if(destination==='Shared from Search'){
   fireEvent.click(screen.getByRole('button',{name:'Search chats'}));fireEvent.click(screen.getByRole('tab',{name:'Shared',exact:true}));

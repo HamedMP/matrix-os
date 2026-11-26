@@ -219,7 +219,7 @@ export {
   subscribeCollaborationDiscoveryChanged,
 } from "./collaboration/discovery-events.js";
 export { isAcceptedProjectOwnedByRail } from "./collaboration/discovery-visibility.js";
-export { TerminalControls } from './terminal/TerminalControls.js';
+export { TerminalControls, TerminalControlsStatus } from './terminal/TerminalControls.js';
 export { useTerminalControls } from './terminal/use-terminal-controls.js';
 export type { TerminalControlsState, TerminalControlsTransport, TerminalControlsOptions } from './terminal/use-terminal-controls.js';
 
@@ -414,4 +414,4 @@ export { routineOriginChatEligible } from "./chat/routine-origin.js";
 export { DiscordIcon } from "./discord-icon.js";
 export { AgentLogo } from "./agent-logo.js";
 export { isAgentLogoKind, type AgentLogoKind } from "./agent-logo-kind.js";
-export { archiveRestoreLocation } from "./chat/ArchivedChatsPage.js";
+export { archiveRestoreLocation, archivedChatContextLabel } from "./chat/ArchivedChatsPage.js";

@@ -1,7 +1,7 @@
 import { Terminal } from "@xterm/xterm";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { createPortal } from "react-dom";
-import { TerminalControls, captureTerminalFileDrag, terminalDropFiles, terminalDropMimeType, MAX_TERMINAL_DROP_FILES, createTerminalNativeHistory, createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
+import { TerminalControls, TerminalControlsStatus, captureTerminalFileDrag, terminalDropFiles, terminalDropMimeType, MAX_TERMINAL_DROP_FILES, createTerminalNativeHistory, createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
 import {
   resolveTerminalClipboardKeyEvent,
   classifyTerminalPointerEvent,
@@ -927,7 +927,7 @@ export default function TerminalView({
         <TerminalControls layers={DESKTOP_Z_INDEX} controls={controls} placement="header" theme={{ background: "var(--bg-surface)", foreground: "var(--text-primary)" }}
           attachment={{ enabled: controls.enabled, onSelectFiles: selectFiles }} />,
         controlsHost,
-      ) : null}
+      ) : <TerminalControlsStatus controls={controls} theme={terminalTheme} />}
       <div
         ref={hostRef}
         className="h-full min-h-0 w-full min-w-0 flex-1 overflow-hidden"

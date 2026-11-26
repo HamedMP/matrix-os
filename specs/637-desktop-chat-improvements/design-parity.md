@@ -102,3 +102,39 @@ Web Archives now hides the retained conversation/inspector subtree, with inactiv
 ### Current-main self-hosted reconciliation
 
 Organization Drive navigation keeps its empty-organization boundary and adopts main's Clerk-safe identity helper. Project and bot navigation retain the caller's verified owner/session/runtime/authority scope, which already supports self-hosted mode without a Clerk provider. Main's shortcut registry and other independent fixes are preserved. The unchanged main self-hosted tests and the affected archive, project, window-control and inspector suites pass together (238 tests across 12 files).
+
+## ENG-572 Figma parity pass (after the ENG-461 stack merged)
+
+Goal: bring the nine Desktop Chat screens to the current Figma frames (section 2343:13253: 7.x sidebar, 8.x archive, 9.x side panel) on Web Desktop, Web Canvas and Electron Desktop. Reference renders were taken from Figma on 2026-11-24.
+
+Requester decisions:
+
+- Keep Schedules, Shared with me and Company Drives in the sidebar; they shipped after the frames. Restyle spacing only.
+- Match terminal chrome only. The terminal keeps the owner's colour theme.
+- The composer is in scope for this ticket (overlaps ENG-559; coordinate before editing shared composer parts).
+
+Done in this pass:
+
+- **Inspector:** inactive tabs and the close icon use the muted colour; the add button is 32px and its menu is 220px with Files, New terminal, Side chat (Browser on Electron) first; the New tab picker uses 36px and 44px rows with 16px icons; file header, split handle and terminal bar follow the Figma sizes and the lighter divider. Electron names inspector terminals "Terminal". The Web inspector terminal omits the standalone pane controls row, as Electron already did.
+- **Archived page:** 18px row icon, outlined checkbox with a check mark, 32px row actions, medium date, 32px selection-bar buttons, and the Figma delete confirmation ("Delete “title” forever?" / "Its messages are deleted too. You can’t undo this.").
+- **Search popover:** Web scopes render as bordered badges; archived results show the shared "Project · Archived day" sub-line in both shells; inset row dividers hide next to the hovered row; both shells use "Open the archived list" and the same footer hints.
+- **Web chat header:** 52px minimum height, panel-right toggle that is muted when closed.
+- **Sidebar project rows (both shells):** indented 14px under Projects with a 14px muted folder icon; nested chat titles and Show more align with the project name at 48px, and a status dot hangs in the indent.
+- **Composer card:** 1.5px border and the light Figma shadow instead of the elevated panel shadow.
+
+Tab order is not a gap: tabs appear in the order they are opened in both shells and in Figma 9.1.
+
+Deferred, with reason:
+
+- **"+24 −8" and changed-line tint in the file preview.** Only per-turn totals reach the client (`canonical-chat-surface.ts`); per-file counts and changed lines need a contract change. Track as a follow-up.
+- **Result counts** ("Archived 13", "13 chats") need an archived total from the list endpoint.
+- **Terminal shell label** ("zsh") is not in the session summary.
+- **Browser in the Web inspector** has no Web panel; Electron keeps it.
+
+Needs a design decision:
+
+- **Chat title size:** Figma uses 14px; both shells use 15px from the shared Electron pane title (`OSWindow`), which every Electron window uses. Kept at 15px for parity.
+- **Composer controls:** Figma shows a branch button and a separate effort picker; the app puts effort under the settings button and has no branch control. These are functional changes and overlap ENG-559, so they are not in this pass.
+- **Agents count** in the sidebar is not shown.
+
+Acceptance: fresh Figma / Web Desktop / Web Canvas / Electron Desktop captures of each frame at 1512×982, with every remaining difference listed in the PR.

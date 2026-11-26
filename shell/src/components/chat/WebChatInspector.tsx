@@ -147,7 +147,7 @@ function InspectorContent({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="desktop-chat-icon mb-1 shrink-0"
+                  className="desktop-chat-icon shrink-0"
                   aria-label="Add inspector tab"
                   onClick={() => {
                     if (layout.tabs.length === 1 && selected.kind === "files" && !filePath) picker();
@@ -159,32 +159,32 @@ function InspectorContent({
               <DropdownMenu.Portal>
                 <DropdownMenu.Content
                   align="end"
-                  sideOffset={6}
-                  className="desktop-chat-design min-w-52 rounded-lg border p-1 shadow-lg"
-                  style={{ zIndex: SHELL_Z_INDEX.appDialog }}
+                  sideOffset={4}
+                  className="desktop-chat-design w-[220px] rounded-xl border p-1"
+                  style={{ zIndex: SHELL_Z_INDEX.appDialog, boxShadow: "0 12px 16px -4px rgba(36,35,35,0.08), 0 4px 6px -2px rgba(36,35,35,0.03), 0 2px 2px -1px rgba(36,35,35,0.04)" }}
                 >
-                  <DropdownMenu.Item
-                    onSelect={picker}
-                    className="flex cursor-default items-center gap-2 rounded px-2.5 py-1.5 outline-none data-[highlighted]:bg-accent"
-                  >
-                    <Plus size={14} />
-                    New tab
-                  </DropdownMenu.Item>
                   {(["files", "terminal", "side-chat"] as const).map((kind) => (
                     <DropdownMenu.Item
                       key={kind}
                       onSelect={() => choose(kind)}
-                      className="flex cursor-default items-center gap-2 rounded px-2.5 py-1.5 outline-none data-[highlighted]:bg-accent"
+                      className="flex h-8 cursor-default items-center gap-1.5 rounded-lg px-2 text-sm leading-5 outline-none data-[highlighted]:bg-accent"
                     >
-                      <InspectorToolIcon kind={kind} />
-                      <span className="flex-1">
-                        {kind === "files" ? "Files" : kind === "terminal" ? "Terminal" : "Side chat"}
+                      <span aria-hidden className="flex shrink-0 text-muted-foreground">
+                        <InspectorToolIcon kind={kind} />
                       </span>
-                      <kbd className="text-xs text-muted-foreground">
+                      <span className="flex-1">
+                        {kind === "files" ? "Files" : kind === "terminal" ? "New terminal" : "Side chat"}
+                      </span>
+                      <kbd className="font-sans text-xs text-muted-foreground">
                         {kind === "files" ? "⌘P" : kind === "terminal" ? "⌃`" : "⌥⌘S"}
                       </kbd>
                     </DropdownMenu.Item>
                   ))}
+                  <DropdownMenu.Separator className="my-1 h-px bg-border/50" />
+                  <DropdownMenu.Item onSelect={picker} className="flex h-8 cursor-default items-center gap-1.5 rounded-lg px-2 text-sm leading-5 outline-none data-[highlighted]:bg-accent">
+                    <Plus size={14} aria-hidden className="shrink-0 text-muted-foreground" />
+                    New tab
+                  </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
@@ -262,7 +262,7 @@ function InspectorContent({
                     aria-valuemax={treeMax}
                     aria-valuenow={Math.round(treeHeight)}
                     tabIndex={0}
-                    className="relative h-2 shrink-0 cursor-row-resize"
+                    className="flex h-3 shrink-0 cursor-row-resize items-center justify-center border-y border-border/50"
                     onPointerDown={(event) => drag(event, "tree")}
                     onKeyDown={(event) => {
                       if (event.key === "ArrowUp" || event.key === "ArrowDown") {
@@ -280,8 +280,7 @@ function InspectorContent({
                       }
                     }}
                   >
-                    <span className="absolute inset-x-0 top-[3px] h-px bg-border" />
-                    <GripHorizontal size={12} aria-hidden className="absolute left-1/2 top-[-2px] -translate-x-1/2" />
+                    <GripHorizontal size={14} aria-hidden />
                   </div>
                 ) : null}
                 <ChatFilePanel
@@ -328,13 +327,12 @@ function InspectorContent({
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-auto"
                     disabled={pending}
                     onClick={() => {
                       void createTerminal();
                     }}
                   >
-                    <Plus size={14} className="size-3.5" aria-hidden />
+                    <Plus size={16} aria-hidden />
                     New terminal
                   </Button>
                 </header>
@@ -346,6 +344,7 @@ function InspectorContent({
                     isFocused={active && selected.id === tab.id}
                     sessionId={session.ref}
                     chatId={chatId}
+                    showControls={false}
                     shouldCacheOnUnmount={() => false}
                   />
                 ) : (

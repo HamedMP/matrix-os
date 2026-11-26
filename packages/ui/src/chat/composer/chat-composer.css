@@ -34,7 +34,8 @@
 
 /* Figma Chat geometry, scoped so legacy coding-agent composer presentation stays intact. */
 .matrix-chat-composer [data-slot="composer-context-row"]:empty { display: none; }
-.matrix-chat-composer .prompt-card { min-height: 114px; border-radius: 12px; }
+.matrix-chat-composer .prompt-card { min-height: 114px; border-radius: 12px; border-width: 1.5px; box-shadow: 0 4px 5px rgb(0 0 0 / 4%); }
+.matrix-chat-composer .prompt-card:focus-within { box-shadow: 0 0 0 3px var(--composer-focus-ring, var(--accent-muted)), 0 4px 5px rgb(0 0 0 / 4%); }
 .matrix-chat-composer [data-slot="prompt-input-content"] { min-height: 64px; padding-top: 16px; padding-bottom: 12px; }
 .matrix-chat-composer [data-slot="prompt-input-placeholder"] { top: 16px; font-weight: 400; }
 .matrix-chat-composer [data-slot="prompt-input-toolbar"] { min-height: 48px; padding: 0 15px 16px; gap: 8px; }

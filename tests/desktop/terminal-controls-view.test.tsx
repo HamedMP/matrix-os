@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TerminalView from "@desktop/renderer/src/features/terminal/TerminalView";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
@@ -182,6 +182,15 @@ describe("TerminalView keyboard control wiring", () => {
     view.unmount();
     expect(header.childElementCount).toBe(0);
     header.remove();
+  });
+
+  it("shows the pane command hint when an embedding host hides the controls toolbar", async () => {
+    const view = render(<TerminalView sessionName="session-one" controlsHost={null} />);
+    act(() => events.onState("attached"));
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    expect(view.container.querySelector('[data-testid="terminal-controls"]')).toBeNull();
+    act(() => { terminals[0].key!(new KeyboardEvent("keydown", { key: "g", ctrlKey: true, cancelable: true })); });
+    expect((await screen.findByRole("status")).textContent).toContain("Pane command");
   });
 
   it("uses the latest attached controller without remounting xterm and preserves select-all", async () => {

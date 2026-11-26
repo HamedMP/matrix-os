@@ -204,7 +204,7 @@ describe("Chat canonical provider state", () => {
     const view = render(<ChatApp {...props} readState={seen} displayedThroughSeq={1} />);
     fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
     fireEvent.click(screen.getByRole("tab", { name: "Archived", exact: true }));
-    fireEvent.click(screen.getByRole("button", { name: "Open archived list" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open the archived list" }));
     expect(await screen.findByRole("region", { name: "Archived chats" })).toBeVisible();
     expect(screen.getByText("Inspect this answer")).not.toBeVisible();
     const unseen = { ...seen, unread: true, version: 2, latestIncomingSeq: 2 };

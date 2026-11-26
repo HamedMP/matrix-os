@@ -261,17 +261,42 @@ export function TerminalControls({
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+      <TerminalControlsMessages controls={controls} showError={!shortcutsOpen} />
+    </div>
+  );
+}
+
+function TerminalControlsMessages({ controls, showError = true }: { controls: Pick<TerminalControlsState, "prefixActive" | "error">; showError?: boolean }) {
+  return (
+    <>
       {controls.prefixActive && (
         <div role="status" className="matrix-terminal-prefix">
           Pane command: H/J/K/L focus · V/S split · F maximize · X close · Esc
           cancel
         </div>
       )}
-      {controls.error && !shortcutsOpen && (
+      {controls.error && showError && (
         <div role="alert" className="matrix-terminal-error">
           {controls.error}
         </div>
       )}
+    </>
+  );
+}
+
+/** Pane-command hint and shortcut errors for hosts that hide the controls toolbar. */
+export function TerminalControlsStatus({ controls, theme }: {
+  controls: Pick<TerminalControlsState, "prefixActive" | "error">;
+  theme?: { background?: string; foreground?: string };
+}) {
+  if (!controls.prefixActive && !controls.error) return null;
+  const palette = {
+    "--terminal-control-bg": theme?.background ?? "var(--matrix-background, #101218)",
+    "--terminal-control-fg": theme?.foreground ?? "var(--matrix-fg, #e4e4e7)",
+  } as CSSProperties;
+  return (
+    <div data-testid="terminal-controls-status" className="matrix-terminal-controls" style={palette}>
+      <TerminalControlsMessages controls={controls} />
     </div>
   );
 }

@@ -2,7 +2,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ArchivedChatsPage, type ChatArchiveClient } from "../../packages/ui/src/chat/ArchivedChatsPage";
+import { ArchivedChatsPage, archivedChatContextLabel, type ChatArchiveClient } from "../../packages/ui/src/chat/ArchivedChatsPage";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
 beforeEach(() => {
@@ -168,4 +168,29 @@ it("reloads conflicted revisions while preserving the failed restore selection",
  expect((await screen.findByRole("checkbox",{name:"Select Archived design"}) as HTMLInputElement).checked).toBe(true);
  fireEvent.click(screen.getByRole("button",{name:"Restore",exact:true}));
  await waitFor(()=>expect(api.updateLifecycle).toHaveBeenLastCalledWith("chat_archive",{baseRevision:9,lifecycle:"active"}));
+});
+
+it("labels an archived search result with its project and archive day the same way in both desktops", () => {
+  const day = 86400_000;
+  const at = (offset: number) => ({ chat: { archivedAt: new Date(Date.now() - offset).toISOString(), updatedAt: new Date(0).toISOString() } });
+  expect(archivedChatContextLabel(at(0), "Lisbon trip")).toBe("Lisbon trip · Archived today");
+  expect(archivedChatContextLabel(at(0))).toBe("Archived today");
+  const old = new Date(Date.now() - 40 * day);
+  expect(archivedChatContextLabel(at(40 * day), "Portfolio")).toBe(`Portfolio · Archived ${old.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`);
+  expect(archivedChatContextLabel({ chat: { archivedAt: null, updatedAt: old.toISOString() } })).toBe(`Archived ${old.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`);
+});
+
+it("labels yesterday by calendar day across a daylight-saving change", () => {
+  const previousTz = process.env.TZ;
+  process.env.TZ = "America/New_York";
+  vi.useFakeTimers();
+  try {
+    // US clocks fall back on 1 Nov 2026, so that local day is 25 hours long.
+    vi.setSystemTime(new Date(2026, 10, 2, 0, 30));
+    const archivedAt = new Date(2026, 10, 1, 0, 30).toISOString();
+    expect(archivedChatContextLabel({ chat: { archivedAt, updatedAt: archivedAt } })).toBe("Archived yesterday");
+  } finally {
+    vi.useRealTimers();
+    if (previousTz === undefined) delete process.env.TZ; else process.env.TZ = previousTz;
+  }
 });

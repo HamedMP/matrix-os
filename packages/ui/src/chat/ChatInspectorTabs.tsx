@@ -6,7 +6,7 @@ import { Button } from "../Button.js";
 import { Input } from "../Input.js";
 import "./desktop-chat.css";
 
-const pickerActionStyle: CSSProperties = { width: "100%", justifyContent: "flex-start", gap: 10, padding: "8px 12px", borderRadius: 8, color: "var(--chat-fg)", font: "inherit", background: "var(--chat-inspector-picker-background, transparent)" };
+const pickerActionStyle: CSSProperties = { width: "100%", justifyContent: "flex-start", gap: 10, padding: "0 10px", borderRadius: 8, color: "var(--chat-fg)", font: "inherit", background: "var(--chat-inspector-picker-background, transparent)" };
 
 export type InspectorTool = "files" | "terminal" | "side-chat" | "browser" | "new";
 export interface InspectorTabItem { id: string; kind: InspectorTool; label: string; closing?: boolean }
@@ -18,14 +18,14 @@ export function ChatInspectorFileHeader({ name, path, expandLabel = "Expand file
   return <header className="desktop-chat-design chat-inspector-file-header"><FileCode2 size={14} aria-hidden/><strong>{name}</strong><span title={directory}>{directory}</span>
     <Tooltip content="Copy path"><Button variant="ghost" size="icon" className="desktop-chat-icon" aria-label={`Copy path ${name}`} onClick={() => {
       setCopyFailed(false); void onCopy().catch((cause: unknown) => { console.warn("[chat-file] Copy failed:", cause instanceof Error ? cause.name : "UnknownError"); setCopyFailed(true); });
-    }}><Copy size={14} aria-hidden/></Button></Tooltip>
-    {onExpand ? <Tooltip content={expandLabel}><Button variant="ghost" size="icon" className="desktop-chat-icon" aria-label={expandLabel} onClick={onExpand}><Maximize2 size={14} aria-hidden/></Button></Tooltip> : null}
+    }}><Copy size={16} aria-hidden/></Button></Tooltip>
+    {onExpand ? <Tooltip content={expandLabel}><Button variant="ghost" size="icon" className="desktop-chat-icon" aria-label={expandLabel} onClick={onExpand}><Maximize2 size={16} aria-hidden/></Button></Tooltip> : null}
     {copyFailed ? <p role="alert">The path could not be copied. Try again.</p> : null}{children}
   </header>;
 }
-export function InspectorToolIcon({ kind }: { kind: InspectorTool }) {
+export function InspectorToolIcon({ kind, size = 14 }: { kind: InspectorTool; size?: number }) {
   const Icon = kind === "files" ? Folder : kind === "terminal" ? SquareTerminal : kind === "side-chat" ? MessagesSquare : kind === "browser" ? Globe : Plus;
-  return <Icon size={14} aria-hidden/>;
+  return <Icon size={size} aria-hidden/>;
 }
 export function ChatInspectorTabs({ tabs, selectedId, onSelect, onClose, onAdd, addControl, trailing }: {
   tabs: readonly InspectorTabItem[]; selectedId: string; onSelect(id: string): void;
@@ -34,7 +34,7 @@ export function ChatInspectorTabs({ tabs, selectedId, onSelect, onClose, onAdd, 
   return <header className="desktop-chat-design chat-inspector-tabs"><div role="tablist" aria-label="Inspector tabs">
     {tabs.map(tab => <div key={tab.id} className="chat-inspector-tab" data-selected={selectedId === tab.id || undefined}>
       <Button variant="ghost" style={{ padding: 0, height: 40, gap: 6, color: "inherit", font: "500 14px/20px Geist, sans-serif" }} role="tab" aria-selected={selectedId === tab.id} aria-controls={`work-inspector-panel-${tab.id}`} onClick={() => onSelect(tab.id)}><InspectorToolIcon kind={tab.kind}/><span>{tab.label}</span></Button>
-      {selectedId === tab.id ? <Button variant="ghost" size="icon" style={{ width: 14, height: "100%", padding: 0, ...(tab.closing ? {} : { color: "inherit" }) }} aria-label={`Close ${tab.label} tab`} title={`Close ${tab.label}`} disabled={tab.closing} onClick={() => onClose(tab.id)}><X size={14} aria-hidden/></Button> : null}
+      {selectedId === tab.id ? <Button variant="ghost" size="icon" className="chat-inspector-tab-close" style={{ width: 14, height: "100%", padding: 0 }} aria-label={`Close ${tab.label} tab`} title={`Close ${tab.label}`} disabled={tab.closing} onClick={() => onClose(tab.id)}><X size={14} aria-hidden/></Button> : null}
     </div>)}
   </div>{tabs.find(tab => tab.id === selectedId)?.kind !== "new" ? addControl ?? <Button variant="ghost" size="icon" className="desktop-chat-icon" aria-label="Add inspector tab" onClick={onAdd}><Plus size={16} aria-hidden/></Button> : null}{trailing}</header>;
 }
@@ -46,8 +46,8 @@ export function ChatInspectorNewTab({ browser = false, sideChat = true, onChoose
   const choices = [{ kind: "files" as const, label: "Files", shortcut: "⌘P" }, { kind: "terminal" as const, label: "Terminal", shortcut: "⌃`" },
     ...(sideChat ? [{ kind: "side-chat" as const, label: "Side chat", shortcut: "⌥⌘S" }] : []), ...(browser ? [{ kind: "browser" as const, label: "Browser", shortcut: "⌘T" }] : [])];
   return <div className="desktop-chat-design chat-inspector-picker" role="tabpanel" aria-label="New tab" id="work-inspector-panel-new-tab"><h2>Open</h2>
-    {choices.map(choice => <Button variant="ghost" style={pickerActionStyle} key={choice.kind} onClick={() => onChoose(choice.kind)}><InspectorToolIcon kind={choice.kind}/><span>{choice.label}</span><kbd>{choice.shortcut}</kbd></Button>)}
-    {recent.length ? <><h2>Recent</h2>{recent.map(item => <Button variant="ghost" style={pickerActionStyle} key={item.id} onClick={item.onOpen}><InspectorToolIcon kind={item.kind}/><span>{item.title}{item.subtitle ? <small>{item.subtitle}</small> : null}</span></Button>)}</> : null}
+    {choices.map(choice => <Button variant="ghost" style={pickerActionStyle} key={choice.kind} onClick={() => onChoose(choice.kind)}><InspectorToolIcon kind={choice.kind} size={16}/><span>{choice.label}</span><kbd>{choice.shortcut}</kbd></Button>)}
+    {recent.length ? <><h2>Recent</h2>{recent.map(item => <Button variant="ghost" style={pickerActionStyle} key={item.id} data-recent onClick={item.onOpen}>{item.kind === "files" ? <FileCode2 size={16} aria-hidden/> : <InspectorToolIcon kind={item.kind} size={16}/>}<span>{item.title}{item.subtitle ? <small>{item.subtitle}</small> : null}</span></Button>)}</> : null}
   </div>;
 }
 

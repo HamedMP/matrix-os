@@ -94,7 +94,7 @@ it("restores an older archived chat into an expanded project without reopening i
   await within(nav).findByText("No chats in this project yet.");
   fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
   fireEvent.click(screen.getByRole("tab", { name: "Archived", exact: true }));
-  fireEvent.click(screen.getByRole("button", { name: "Open archived list" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open the archived list" }));
   fireEvent.click(await screen.findByRole("checkbox", { name: "Select Older project chat" }));
   fireEvent.click(screen.getByRole("button", { name: "Restore" }));
   await screen.findByText("No archived chats.");
@@ -260,7 +260,7 @@ it("opens archive management from Chat and searches the full archived history", 
     searchConversations={search as never} onRestoreConversation={vi.fn(async () => true)} onDeleteConversation={vi.fn(async () => true)}/></OrganizationStateProvider>);
   fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
   fireEvent.click(screen.getByRole("tab", { name: "Archived", exact: true }));
-  fireEvent.click(screen.getByRole("button", { name: "Open archived list" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open the archived list" }));
   fireEvent.change(screen.getByRole("searchbox", { name: "Search archived chats" }), { target: { value: "planning" } });
   expect(await screen.findByRole("checkbox", { name: "Select Older planning" })).toBeTruthy();
   expect(search).toHaveBeenCalledWith("planning", { lifecycle: "archived", limit: 50 });
@@ -772,7 +772,7 @@ it("leaves the archive when a project is selected from Search", async()=>{
  await screen.findByRole("button",{name:"Expand Local project chats"});
  fireEvent.click(screen.getByRole("button",{name:"Search chats"}));
  fireEvent.click(screen.getByRole("tab",{name:"Archived",exact:true}));
- fireEvent.click(screen.getByRole("button",{name:"Open archived list"}));
+ fireEvent.click(screen.getByRole("button",{name:"Open the archived list"}));
  expect(screen.getByRole("region",{name:"Archived chats"})).toBeTruthy();
  fireEvent.click(screen.getByRole("button",{name:"Search chats"}));
  fireEvent.click(screen.getByRole("tab",{name:"Projects",exact:true}));

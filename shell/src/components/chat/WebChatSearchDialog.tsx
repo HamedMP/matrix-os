@@ -4,7 +4,7 @@ import {
   Archive,
   ArchiveRestore,
   Check,
-  CornerDownLeft,
+  ChevronRight,
   Folder,
   MessageSquare,
   Search,
@@ -13,7 +13,7 @@ import {
   X,
 } from "lucide-react";
 import type { CanonicalChatListResponse, CanonicalChatRecord } from "@matrix-os/contracts";
-import { type ChatArchiveClient, type ChatNavigationRecord } from "@matrix-os/ui";
+import { archivedChatContextLabel, type ChatArchiveClient, type ChatNavigationRecord } from "@matrix-os/ui";
 import {
   Dialog,
   DialogContent,
@@ -269,8 +269,8 @@ export function WebChatSearchDialog({
             <DialogTitle>Search chats</DialogTitle>
             <DialogDescription>Search your chats, projects, and archived history.</DialogDescription>
           </DialogHeader>
-          <div className="flex h-14 items-center gap-3 border-b px-4">
-            <Search size={20} className="shrink-0 text-muted-foreground" aria-hidden />
+          <div className="flex h-12 items-center gap-2.5 border-b px-4" style={{ borderColor: "var(--chat-divider)" }}>
+            <Search size={16} className="shrink-0 text-muted-foreground" aria-hidden />
             <input
               autoFocus
               role="combobox"
@@ -278,11 +278,11 @@ export function WebChatSearchDialog({
               aria-expanded
               aria-controls={listId}
               aria-activedescendant={rows[index] ? `${listId}-${index}` : undefined}
-              placeholder="Search"
+              placeholder="Search chats, projects and files"
               maxLength={200}
               value={query}
               disabled={busy}
-              className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+              className="min-w-0 flex-1 bg-transparent text-sm leading-5 outline-none placeholder:text-muted-foreground"
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -312,12 +312,9 @@ export function WebChatSearchDialog({
                 key={value}
                 type="button"
                 role="tab"
-                className="chat-search-filter flex h-6 items-center gap-1.5 rounded-md border px-1.5 text-[13px] font-medium"
+                className="chat-search-filter chat-search-badge"
                 aria-selected={scope === value}
                 disabled={busy}
-                style={{
-                  background: scope === value ? "var(--chat-fill)" : "transparent",
-                }}
                 onClick={() => setScope(value)}
               >
                 {scope === value ? <Check size={12} aria-hidden /> : null}
@@ -327,7 +324,7 @@ export function WebChatSearchDialog({
           </div>
           <div className="chat-search-results max-h-[min(480px,60vh)] overflow-y-auto">
             {scope === "Archived" && !phrase ? (
-              <p className="px-2 pb-1 text-xs text-muted-foreground">Recently archived</p>
+              <p className="chat-search-section-label">Recently archived</p>
             ) : null}
             {page.loading ? (
               <p role="status" className="px-2 py-2 text-xs">
@@ -366,7 +363,11 @@ export function WebChatSearchDialog({
                       <span className="min-w-0 flex-1">
                         <span className="block truncate">{row.label}</span>
                         <small className="block truncate text-xs text-muted-foreground">
-                          {row.project ? "Project" : (project?.name ?? "Chat")}
+                          {row.project
+                            ? "Project"
+                            : scope === "Archived" && row.record
+                              ? archivedChatContextLabel(row.record, project?.name)
+                              : (project?.name ?? "Chat")}
                         </small>
                       </span>
                     </button>
@@ -376,21 +377,22 @@ export function WebChatSearchDialog({
                           type="button"
                           disabled={busy}
                           aria-label={`Restore ${row.label}`}
-                          title="Restore"
+                          title="Restore ⌘R"
                           onClick={() => {
                             if (row.record) void apply("restore", row.record);
                           }}
                         >
-                          <ArchiveRestore size={14} className="size-3.5" />
+                          <ArchiveRestore size={16} aria-hidden />
                         </Button>
                         <Button variant="ghost" size="icon-sm"
                           type="button"
                           disabled={busy}
                           aria-label={`Delete ${row.label}`}
                           title="Delete"
+                          data-danger
                           onClick={() => setDeletion(row.record!)}
                         >
-                          <Trash2 size={14} className="size-3.5" />
+                          <Trash2 size={16} aria-hidden />
                         </Button>
                       </div>
                     ) : null}
@@ -438,16 +440,16 @@ export function WebChatSearchDialog({
                 onClose();
               }}
             >
-              <Archive size={16} />
-              <span>Open archived list</span>
-              <CornerDownLeft size={14} />
+              <Archive size={16} aria-hidden />
+              <span>Open the archived list</span>
+              <ChevronRight size={14} aria-hidden />
             </Button>
           ) : null}
           <footer className="chat-search-footer">
-            <span>↑ ↓ to navigate</span>
-            <span>↵ to open</span>
-            {scope === "Archived" ? <span>⌘R restore</span> : null}
-            <span className="ml-auto">esc to close</span>
+            <span>↑↓ Move</span>
+            <span>↵ Open</span>
+            {scope === "Archived" ? <span>⌘R Restore</span> : null}
+            <span>esc Close</span>
           </footer>
         </DialogContent>
       </Dialog>
@@ -459,17 +461,15 @@ export function WebChatSearchDialog({
       >
         <DialogContent
           role="alertdialog"
-          aria-label="Delete this chat forever?"
+          aria-label={`Delete “${deletion?.chat.title ?? "this chat"}” forever?`}
           showCloseButton={false}
           className="sm:max-w-[420px]"
           style={{ zIndex: SHELL_Z_INDEX.appDialog + 1 }}
           overlayStyle={{ zIndex: SHELL_Z_INDEX.appDialog + 1 }}
         >
           <DialogHeader>
-            <DialogTitle className="text-sm">Delete this chat forever?</DialogTitle>
-            <DialogDescription>
-              This permanently deletes the chat and its messages. This can’t be undone.
-            </DialogDescription>
+            <DialogTitle className="text-sm leading-5 font-semibold">Delete “{deletion?.chat.title}” forever?</DialogTitle>
+            <DialogDescription>Its messages are deleted too. You can’t undo this.</DialogDescription>
           </DialogHeader>
           {error ? (
             <p role="alert" className="text-sm text-destructive">
