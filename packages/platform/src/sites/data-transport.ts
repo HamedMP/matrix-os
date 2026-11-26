@@ -5,7 +5,8 @@ import { z } from 'zod/v4';
 import { SITE_PUBLIC_DATA_RESPONSE_MAX_BYTES, type SitePublicDataRequest, type SiteRecord } from '@matrix-os/contracts';
 import { getUserMachine, type PlatformDB } from '../db.js';
 import { buildPlatformSyncVerificationToken } from '../platform-token.js';
-import { buildCustomerVpsProxyUrl } from '../profile-routing.js';
+import type { SubstrateRegistry } from '../substrates/registry.js';
+import { resolveSiteMachineUpstream } from './machine-upstream.js';
 import { SiteError } from './types.js';
 
 export type SiteDataOutcome = { ok: true; result: unknown } | { ok: false; status: 400 | 429 | 503 };
@@ -40,24 +41,27 @@ async function boundedText(response: Response): Promise<string | null> {
 }
 
 /** Platform-signed, app-scoped forwarding to the owner gateway (2694). */
-export function createSiteDataTransport(options: { db: PlatformDB; platformSecret: string; dispatcher?: Agent }): SiteDataTransport {
+export function createSiteDataTransport(options: { db: PlatformDB; platformSecret: string; dispatcher?: Agent; substrates?: SubstrateRegistry }): SiteDataTransport {
     const visitorKey = createHmac('sha256', options.platformSecret).update('matrix-site-visitor-v1').digest();
     const forward: SiteDataTransport['forward'] = async (site, visitor, request, trx = options.db) => {
         if (!site.activeVersion) throw new SiteError('not_found');
         const record = await trx.executor.selectFrom('public_sites').select('machine_id').where('id', '=', site.id).executeTakeFirstOrThrow();
         const machine = await getUserMachine(trx, record.machine_id);
-        if (!machine || machine.status !== 'running' || machine.deletedAt || machine.provisioningClass !== 'customer')
-            throw new SiteError('unavailable');
-        const url = buildCustomerVpsProxyUrl(machine, `/api/internal/sites/${site.id}/data`);
-        if (!url) throw new SiteError('unavailable');
+        // Hosted runtimes and online owned machines (spec 2707, through their tunnel) answer visitor data.
+        const upstream = machine ? resolveSiteMachineUpstream(machine, `/api/internal/sites/${site.id}/data`, options) : null;
+        if (!machine || !upstream) throw new SiteError('unavailable');
         const timestamp = String(Date.now());
         // The visitor never names the app: the published site's app slug is signed here.
         const body = JSON.stringify({ siteId: site.id, appSlug: site.appSlug, versionId: site.activeVersion, visitor, request });
         const token = buildPlatformSyncVerificationToken({ handle: machine.handle, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot }, options.platformSecret, machine.runtimeTokenEpoch);
         const signature = createHmac('sha256', token).update(`${timestamp}.${body}`).digest('hex');
-        const response = await fetch(url, {
-            method: 'POST', headers: { 'content-type': 'application/json', 'x-matrix-site-timestamp': timestamp, 'x-matrix-site-signature': signature },
-            body, redirect: 'error', signal: AbortSignal.timeout(10000), ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
+        const headers = upstream.headers;
+        headers.set('content-type', 'application/json');
+        headers.set('x-matrix-site-timestamp', timestamp);
+        headers.set('x-matrix-site-signature', signature);
+        const response = await fetch(upstream.url, {
+            method: 'POST', headers, body, redirect: 'error', signal: AbortSignal.timeout(10000),
+            ...(upstream.dispatcher ? { dispatcher: upstream.dispatcher } : {}),
         } as RequestInit);
         if (response.status === 400 || response.status === 429) {
             await response.body?.cancel();
