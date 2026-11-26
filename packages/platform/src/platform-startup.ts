@@ -1272,7 +1272,7 @@ async function startPlatformServerWithCleanup(
   const role = platformRole(process.env);
   const fetchHandler = role === 'worker' ? createWorkerHealthApp().fetch : app.fetch;
   const server = serve({ fetch: fetchHandler, hostname: process.env.MATRIX_BIND_HOST, port }, () => {
-    console.log(`Platform (${role}) listening on :${port}`);
+    console.log(`Platform listening on :${port} (${role})`);
   });
   configureEdgeRequestDeadlines(server);
   if (backgroundWorkersEnabled) { whatsappRuntime?.start(); previewPairRuntime?.start(); }
