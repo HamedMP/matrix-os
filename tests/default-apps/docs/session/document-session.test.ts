@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { openDocx } from "../../../../home/apps/_shared/office-engine/index";
+import { createDocx, openDocx } from "../../../../home/apps/_shared/office-engine/index";
 import type { DocumentChange } from "../../../../home/apps/docs/src/session/index";
 import { OWNER, bodyText, docxBytes, firstId, harness, paragraphs } from "./helpers";
 
@@ -368,5 +368,75 @@ describe("document session: saving", () => {
     session.apply([{ type: "insertText", at: { blockId: firstId(session), offset: 0 }, text: "My " }]);
     expect(await session.open("b.docx")).toEqual({ status: "opened", path: "b.docx" });
     expect(bodyText(await openDocx(files.bytes("a.docx")!))).toBe("My Alpha\n");
+  });
+});
+
+describe("document session: a request that waited for the save before it", () => {
+  /** Opens a.docx, edits it, holds its write, and returns the release function. */
+  async function editedWithHeldSave() {
+    const h = await harness({ "a.docx": ["Alpha"], "b.docx": ["Beta"], "c.docx": ["Gamma"] });
+    await h.session.open("a.docx");
+    h.session.apply([{ type: "insertText", at: { blockId: firstId(h.session), offset: 0 }, text: "My " }]);
+    return { ...h, release: h.files.holdWrites() };
+  }
+
+  it("does not open its document after the owner discarded the one it was saving", async () => {
+    const { session, release } = await editedWithHeldSave();
+    const opening = session.open("b.docx");
+    // Home: the owner leaves without saving while the save for the open is still being written.
+    expect(await session.close({ discardChanges: true })).toEqual({ status: "opened", path: null });
+    release();
+    expect(await opening).toEqual({ status: "superseded" });
+    expect(session.document).toBeNull();
+    expect(session.getState()).toMatchObject({ status: "empty", path: null });
+  });
+
+  it("does not replace a newer document opened while it waited", async () => {
+    const { session, release } = await editedWithHeldSave();
+    const opening = session.open("b.docx");
+    expect(await session.open("c.docx", { discardChanges: true })).toEqual({ status: "opened", path: "c.docx" });
+    release();
+    expect(await opening).toEqual({ status: "superseded" });
+    expect(session.getState().path).toBe("c.docx");
+    expect(bodyText(session.requireDocument())).toBe("Gamma\n");
+  });
+
+  it("does not replace a new document started while it waited", async () => {
+    const { session, release } = await editedWithHeldSave();
+    const opening = session.open("b.docx");
+    await session.createNew({ name: "Fresh", discardChanges: true });
+    release();
+    expect(await opening).toEqual({ status: "superseded" });
+    expect(session.getState()).toMatchObject({ name: "Fresh", path: null });
+  });
+
+  it("does not close or replace a document that took the place of the one it was saving", async () => {
+    const { session, release } = await editedWithHeldSave();
+    const closing = session.close();
+    const opening = session.open("b.docx");
+    expect(await session.open("c.docx", { discardChanges: true })).toEqual({ status: "opened", path: "c.docx" });
+    release();
+    expect(await closing).toEqual({ status: "superseded" });
+    expect(await opening).toEqual({ status: "superseded" });
+    expect(session.getState().path).toBe("c.docx");
+  });
+
+  it("lets the newest of two requests that both waited for the save win", async () => {
+    const { session, files, release } = await editedWithHeldSave();
+    const toB = session.open("b.docx");
+    const toC = session.open("c.docx");
+    release();
+    expect(await toB).toEqual({ status: "superseded" });
+    expect(await toC).toEqual({ status: "opened", path: "c.docx" });
+    expect(bodyText(await openDocx(files.bytes("a.docx")!))).toBe("My Alpha\n");
+  });
+
+  it("does not adopt over a document opened while it waited", async () => {
+    const { session, release } = await editedWithHeldSave();
+    const adopting = session.adopt(createDocx({ paragraphs: ["Compared"] }), { name: "Comparison" });
+    expect(await session.open("c.docx", { discardChanges: true })).toEqual({ status: "opened", path: "c.docx" });
+    release();
+    expect(await adopting).toEqual({ status: "superseded" });
+    expect(session.getState().path).toBe("c.docx");
   });
 });

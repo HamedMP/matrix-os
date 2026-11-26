@@ -69,6 +69,7 @@ export class DocumentSession {
   private doc: DocxDocument | null = null;
   /** Identifies the active document; bumped whenever another one (or none) becomes active. */
   private documentToken = 0;
+  /** Identifies the newest open, close or replace request; an older one that is still waiting gives way. */
   private loadToken = 0;
   private savedState = 0;
   private savedTracking = false;
@@ -170,9 +171,9 @@ export class DocumentSession {
   /** Reads and opens a document. Unsaved changes of the current one are saved first. */
   async open(path: string, options: OpenOptions = {}): Promise<OpenResult> {
     if (!isBridgePath(path)) return this.openFailed(sessionError("invalid_request"));
-    const blocked = await this.leaveCurrent(options);
-    if (blocked !== null) return blocked;
-    return this.load(() => this.files.read(path), { path, name: fileName(path), source: "matrix" }, options);
+    const token = await this.leaveCurrent(options);
+    if (typeof token !== "number") return token;
+    return this.load(() => this.files.read(path), { path, name: fileName(path), source: "matrix" }, options, token);
   }
 
   /**
@@ -181,16 +182,16 @@ export class DocumentSession {
    * changes of the current document are saved first, as for `open`.
    */
   async openLocal(file: LocalFileInput, options: OpenOptions = {}): Promise<OpenResult> {
-    const blocked = await this.leaveCurrent(options);
-    if (blocked !== null) return blocked;
-    return this.load(async () => ({ bytes: file.bytes, version: null }), { path: null, name: localFileName(file.name), source: "local" }, options);
+    const token = await this.leaveCurrent(options);
+    if (typeof token !== "number") return token;
+    return this.load(async () => ({ bytes: file.bytes, version: null }), { path: null, name: localFileName(file.name), source: "local" }, options, token);
   }
 
   /** Reads the file again and replaces the local document with it. Unsaved changes are dropped. */
   async reload(): Promise<OpenResult> {
     const path = this.store.state.path;
     if (path === null) return { status: "error", error: sessionError("not_found") };
-    return this.load(() => this.files.read(path), { path, name: fileName(path), source: "matrix" }, { discardChanges: true });
+    return this.load(() => this.files.read(path), { path, name: fileName(path), source: "matrix" }, { discardChanges: true }, ++this.loadToken);
   }
 
   /** Starts an empty, unsaved document. */
@@ -205,18 +206,18 @@ export class DocumentSession {
    * `dirty: false`.
    */
   async adopt(doc: DocxDocument, options: AdoptOptions & { dirty?: boolean }): Promise<OpenResult> {
-    const blocked = await this.leaveCurrent(options);
-    if (blocked !== null) return blocked;
-    this.loadToken++;
+    const token = await this.leaveCurrent(options);
+    if (typeof token !== "number") return token;
+    if (this.superseded(token)) return { status: "superseded" };
     this.activate(doc, { path: null, name: options.name, version: null, dirty: options.dirty ?? true, source: "matrix" });
     return { status: "opened", path: null };
   }
 
   /** Closes the document. Unsaved changes are saved first unless `discardChanges`. */
   async close(options: OpenOptions = {}): Promise<OpenResult> {
-    const blocked = await this.leaveCurrent(options);
-    if (blocked !== null) return blocked;
-    this.loadToken++;
+    const token = await this.leaveCurrent(options);
+    if (typeof token !== "number") return token;
+    if (this.superseded(token)) return { status: "superseded" };
     this.saver.cancel();
     this.documentToken++;
     this.doc = null;
@@ -354,8 +355,9 @@ export class DocumentSession {
     read: () => Promise<{ bytes: Uint8Array; version: string | null }>,
     file: { path: string | null; name: string; source: DocumentSource },
     options: OpenOptions,
+    token: number,
   ): Promise<OpenResult> {
-    const token = ++this.loadToken;
+    if (this.superseded(token)) return { status: "superseded" };
     this.store.patch({ status: "loading" });
     let doc: DocxDocument;
     let version: string | null;
@@ -364,13 +366,13 @@ export class DocumentSession {
       doc = await openDocx(content.bytes);
       version = content.version;
     } catch (error) {
-      if (token !== this.loadToken || this.disposed) return { status: "superseded" };
+      if (this.superseded(token)) return { status: "superseded" };
       this.log("docs: could not open the document", error);
       // The document that was open stays open.
       if (this.doc !== null) this.store.patch({ status: "ready" });
       return this.openFailed(toSessionError(error));
     }
-    if (token !== this.loadToken || this.disposed) return { status: "superseded" };
+    if (this.superseded(token)) return { status: "superseded" };
     if (this.doc !== null && this.isDirty() && options.discardChanges !== true) {
       // The current document was edited while the new one was being read.
       this.store.patch({ status: "ready" });
@@ -385,18 +387,35 @@ export class DocumentSession {
     return { status: "error", error };
   }
 
-  /** Saves or abandons the current document before another one takes its place. Null means go ahead. */
-  private async leaveCurrent(options: OpenOptions): Promise<OpenResult | null> {
+  /**
+   * Saves or abandons the current document before another one takes its place.
+   * A number means go ahead: it is the request's token, which the caller checks
+   * with `superseded` after every wait. A request made while this one waited
+   * for the save (another open, Home, a new document) supersedes it.
+   */
+  private async leaveCurrent(options: OpenOptions): Promise<OpenResult | number> {
     if (this.disposed) return { status: "superseded" };
-    if (this.doc === null || options.discardChanges === true || !this.isDirty()) return null;
+    if (this.doc === null || options.discardChanges === true || !this.isDirty()) return ++this.loadToken;
     const state = this.store.state;
     if (state.conflict !== null) return { status: "blocked", reason: "conflict" };
     if (state.path === null) return { status: "blocked", reason: "unsaved_changes" };
+    const token = ++this.loadToken;
+    const documentKey = this.documentToken;
     const saved = await this.saver.save();
-    if (this.disposed) return { status: "superseded" };
+    // Another document (or none) took the place of the one this request saved.
+    if (this.superseded(token) || documentKey !== this.documentToken) return { status: "superseded" };
     if (saved.status === "conflict") return { status: "blocked", reason: "conflict" };
     if (saved.status === "error") return { status: "blocked", reason: "save_failed" };
-    return this.isDirty() ? { status: "blocked", reason: "unsaved_changes" } : null;
+    return this.isDirty() ? { status: "blocked", reason: "unsaved_changes" } : token;
+  }
+
+  /**
+   * True when a newer request was made since `token` was taken, or the session
+   * was disposed. Every change of the active document (open, new, adopt,
+   * close, dispose) is such a request, so the document is the one it was.
+   */
+  private superseded(token: number): boolean {
+    return this.disposed || token !== this.loadToken;
   }
 
   private activate(doc: DocxDocument, file: { path: string | null; name: string; version: string | null; dirty: boolean; source: DocumentSource }): void {
