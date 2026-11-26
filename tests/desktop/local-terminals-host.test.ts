@@ -304,6 +304,54 @@ describe("local terminal host against a scripted core", () => {
     expect(refused.host.status()).toBe("unavailable");
   });
 
+  // An app update replaces the bundled binary while the previous app's core keeps
+  // running with its terminals. That older core is asked for herdr-core's planned
+  // restart (programs keep running, the next core adopts them), then the bundled
+  // core is started. A newer or unknown core is reported and never restarted over.
+  function runningCore(version: string, calls: string[], methods = ["terminal.list", "server.restart"]) {
+    const core = fakeCore({ version, hello: { result: {
+      version, generation: 1, framed: true, features: ["framed", "attach"], methods, core: {},
+    } } });
+    core.onCall((call) => {
+      calls.push(call.method);
+      if (call.method === "server.restart") { core.reply(call.id, { result: { stopped: true } }); queueMicrotask(() => core.socket.emit("close")); }
+    });
+    return core.socket;
+  }
+
+  it("hands an older core's terminals to the bundled core with a planned restart", async () => {
+    const calls: string[] = [];
+    let dials = 0;
+    const live = start(listing([{ address: "t1", state: "live", title: "zsh" }]));
+    const updated = start(listing([]), {
+      openSocket: () => (dials++ < 2 ? runningCore("0.1.19", calls) : live.opts.openSocket("")),
+    });
+    expect((await updated.host.list()).map((terminal) => terminal.id)).toEqual(["t1"]);
+    expect(calls).toEqual(["server.restart"]);
+    expect(updated.opts.startCore).toHaveBeenCalledTimes(1);
+    expect(updated.host.status()).toBe("ready");
+  });
+
+  it("never restarts over a core newer than the bundled one, or one off the 0.1 line", async () => {
+    for (const version of ["0.1.999", "0.2.0", "dev"]) {
+      const calls: string[] = [];
+      const newer = start(listing([]), { openSocket: () => runningCore(version, calls) });
+      await expect(newer.host.list(), version).rejects.toThrow();
+      expect(newer.host.status(), version).toBe("version-mismatch");
+      expect(calls, version).toEqual([]);
+      expect(newer.opts.startCore, version).not.toHaveBeenCalled();
+    }
+  });
+
+  it("leaves an older core that offers no planned restart running and reports the mismatch", async () => {
+    const calls: string[] = [];
+    const older = start(listing([]), { openSocket: () => runningCore("0.1.19", calls, ["terminal.list"]) });
+    await expect(older.host.list()).rejects.toThrow();
+    expect(older.host.status()).toBe("version-mismatch");
+    expect(calls).toEqual([]);
+    expect(older.opts.startCore).not.toHaveBeenCalled();
+  });
+
   it("starts the login shell without the core's own variables", async () => {
     const runs: Call[] = [];
     const { host } = start((core, call) => {

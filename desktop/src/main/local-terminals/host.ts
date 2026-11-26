@@ -18,6 +18,7 @@ import type { MacTerminalProbeAction } from "../../shared/mac-terminal-probe";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
+import { handOverOlderCore, isOlderBundledLine } from "./core-upgrade";
 import { createAttachmentSlots, createHcSessions, TERMINAL_TITLE_LABEL, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
 import {
   createLocalTerminalEvents, FINISHED_SEEN_LABEL, HERDR_SEEN_LABEL,
@@ -182,13 +183,23 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     } catch (error: unknown) {
       // Only "nothing is listening" is answered by starting a core. A core
       // that is there but refuses, stalls or speaks another version is
-      // reported as it is and never restarted over.
+      // reported as it is and never restarted over. The one exception is the
+      // previous app's older core after an update: it hands its terminals to
+      // the bundled core through herdr-core's planned restart.
       const code = (error as NodeJS.ErrnoException | null)?.code;
-      if (error instanceof HcVersionMismatchError || typeof code !== "string" || !NO_CORE_CODES.has(code)) throw error;
+      const upgrade = error instanceof HcVersionMismatchError && isOlderBundledLine(error.found, options.expectedVersion);
+      if (!upgrade && (error instanceof HcVersionMismatchError || typeof code !== "string" || !NO_CORE_CODES.has(code))) throw error;
       const cutoff = now() - RESTART_WINDOW_MS;
       while (starts.length > 0 && starts[0]! < cutoff) starts.shift();
       if (starts.length >= MAX_STARTS_PER_WINDOW) throw new Error("local terminal runtime keeps failing");
       starts.push(now());
+      if (upgrade) {
+        try { await handOverOlderCore(() => options.openSocket(socketPath), options.expectedVersion); }
+        catch (handover: unknown) {
+          console.warn("[local-terminals] older runtime handover failed:", describeError(handover));
+          throw error;
+        }
+      }
       await options.startCore(binary, coreEnv(), START_TIMEOUT_MS);
       return dial();
     }
