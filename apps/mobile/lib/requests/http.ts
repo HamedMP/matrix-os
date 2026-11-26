@@ -1,4 +1,4 @@
-import { formatAuthorizationHeader } from "@/lib/authorization";
+import { formatAuthorizationHeader } from "../authorization";
 
 interface ResponseSchema<T> {
   parse(value: unknown): T;
