@@ -1,6 +1,6 @@
 import {
-  MAX_COLS, MAX_ROWS, applySheetEdits, describeSheet, formatA1, formatA1Range, openXlsx, parseA1Range, parseAgentEdits, parseCsv,
-  toSheetEdits,
+  MAX_COLS, MAX_ROWS, applySheetEdits, columnLabel, describeSheet, formatA1, formatA1Range, listJournalChanges, openXlsx, parseA1Range,
+  parseAgentEdits, parseCsv, toSheetEdits,
 } from "@matrix-os/office";
 import type { AgentSheetEdit, CellRange, CellValue, RejectedEdit, SheetInfo, Workbook } from "@matrix-os/office";
 import {
@@ -128,14 +128,37 @@ export function proposeWorkbookEdits(
   return { changed: changeIds.length > 0, proposalId: changeIds.length > 0 ? proposalId : null, changeIds, appliedEdits, rejected };
 }
 
+type JournalChange = ReturnType<typeof listJournalChanges>[number];
+
+/** The cell, rows or columns a change touches; null for one that adds or renames a sheet. */
+function changeRange(change: JournalChange): string | null {
+  switch (change.kind) {
+    case "cell": return formatA1({ row: change.row, col: change.col });
+    case "insertRows":
+    case "deleteRows": return `${change.row + 1}:${change.row + change.count}`;
+    case "insertColumns":
+    case "deleteColumns": return `${columnLabel(change.col)}:${columnLabel(change.col + change.count - 1)}`;
+    default: return null;
+  }
+}
+
+/**
+ * Every pending change with its kind and scope. A structural change (rows,
+ * columns, sheets) is listed with its range, count and summary rather than as
+ * a cell, so whoever accepts or rejects its id can see everything it moves.
+ */
 export function listWorkbookChanges(workbook: Workbook) {
-  const all = workbook.listChanges();
+  const all = listJournalChanges(workbook);
   const names = new Map(workbook.listSheets().map((sheet) => [sheet.id, sheet.name]));
   const changes = all.slice(0, OFFICE_MAX_LISTED_CHANGES).map((change): OfficeCellChange => ({
     id: change.id,
     proposalId: change.proposalId,
     sheet: names.get(change.sheet) ?? change.sheet,
-    cell: formatA1({ row: change.row, col: change.col }),
+    kind: change.kind,
+    cell: change.kind === "cell" ? formatA1({ row: change.row, col: change.col }) : null,
+    range: changeRange(change),
+    count: change.count,
+    summary: change.summary,
     author: change.author,
     date: change.date,
     label: change.label,

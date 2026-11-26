@@ -1,3 +1,5 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   SheetChangesListReplySchema, SheetDescribeReplySchema, SheetProposeEditsReplySchema, SheetReadRangeReplySchema,
@@ -183,6 +185,33 @@ describe("sheet changes list, accept and reject", () => {
     expect(revenue).toMatchObject({ cell: "B2", oldValue: 725000, oldFormula: null, newFormula: "Projection!N4", label: "Fix typed-in revenue" });
     expect(body.proposals).toHaveLength(1);
     expect(body.proposals[0]).toMatchObject({ author: AGENT, pendingCount: 2 });
+  });
+
+  it("lists row, column and sheet changes with their kind, count, summary and affected range", async () => {
+    const path = await h.copyFixture("model.xlsx");
+    const workbook = await h.xlsx(path);
+    const assumptions = workbook.getSheetByName("Assumptions")!.id;
+    const projection = workbook.getSheetByName("Projection")!.id;
+    workbook.beginProposal({ author: AGENT, date: FIXED_NOW.toISOString(), label: "Restructure" });
+    workbook.insertRows(assumptions, 1, 2);
+    workbook.deleteColumns(projection, 2, 1);
+    workbook.addSheet("Notes");
+    workbook.endProposal();
+    await writeFile(join(h.home, path), await workbook.save());
+
+    const body = SheetChangesListReplySchema.parse(await json(await h.post("/sheets/changes/list", { path })));
+    const byKind = Object.fromEntries(body.changes.map((change) => [change.kind, change]));
+    expect(byKind.insertRows).toMatchObject({ sheet: "Assumptions", cell: null, range: "2:3", count: 2, summary: "Insert rows 2-3" });
+    expect(byKind.deleteColumns).toMatchObject({ sheet: "Projection", cell: null, range: "C:C", count: 1, summary: "Delete column C" });
+    expect(byKind.addSheet).toMatchObject({ sheet: "Notes", cell: null, range: null, count: 1, summary: "Add sheet Notes" });
+  });
+
+  it("keeps a cell change's cell and reports it as a one-cell range", async () => {
+    const path = await h.copyFixture("model.xlsx");
+    await proposeRevenueFix(path);
+    const body = SheetChangesListReplySchema.parse(await json(await h.post("/sheets/changes/list", { path })));
+    const revenue = body.changes.find((change) => change.sheet === "Summary")!;
+    expect(revenue).toMatchObject({ kind: "cell", cell: "B2", range: "B2", count: 1, summary: "Edit cell" });
   });
 
   it("accepts one change and keeps the other pending", async () => {

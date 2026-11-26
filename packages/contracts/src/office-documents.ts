@@ -38,6 +38,17 @@ export const OFFICE_DOCUMENT_ROUTES = {
 export const OFFICE_DOCUMENT_MAX_BYTES = 10 * 1024 * 1024;
 /** JSON body cap of every request. */
 export const OFFICE_DOCUMENT_REQUEST_MAX_BYTES = 2 * 1024 * 1024;
+/**
+ * Request header: how many milliseconds the caller still waits for the reply.
+ * The service starts no engine run and saves nothing for a request past it,
+ * so a caller that gave up can retry without the edit landing twice.
+ */
+export const OFFICE_DOCUMENT_BUDGET_HEADER = "x-matrix-office-budget-ms";
+/** The budget of a request without the header, and the most a header can ask for. */
+export const OFFICE_DOCUMENT_MAX_BUDGET_MS = 30_000;
+/** A positive whole number of milliseconds, capped at {@link OFFICE_DOCUMENT_MAX_BUDGET_MS}. */
+export const OfficeDocumentBudgetHeaderSchema = z.string().regex(/^[1-9][0-9]{0,8}$/)
+  .transform((value) => Math.min(Number(value), OFFICE_DOCUMENT_MAX_BUDGET_MS));
 export const OFFICE_DESCRIBE_MAX_CHARS = 200_000;
 export const OFFICE_DESCRIBE_DEFAULT_CHARS = 24_000;
 export const OFFICE_MAX_EDITS = 500;
@@ -263,8 +274,18 @@ export const SheetProposeEditsReplySchema = z.strictObject({
   path: Path, version: Version, saved: z.boolean(), proposalId: z.string().nullable(), changeIds: Ids,
   appliedEdits: z.array(z.number().int().min(0)), rejected: z.array(RejectedEditSchema),
 });
+export const OFFICE_CHANGE_KINDS = ["cell", "insertRows", "deleteRows", "insertColumns", "deleteColumns", "addSheet", "renameSheet"] as const;
+/**
+ * One pending change. A `cell` change names its `cell` and carries the old
+ * and new value and formula. Any other kind changes the sheet's structure:
+ * `cell` and the values are null, `range` names the rows (`2:3`) or columns
+ * (`C:D`) it inserts or deletes (null for an added or renamed sheet), `count`
+ * how many, and `summary` says what it does in one line.
+ */
 export const OfficeCellChangeSchema = z.strictObject({
-  id: z.string(), proposalId: z.string(), sheet: z.string(), cell: z.string(), author: z.string(), date: z.string(), label: z.string(),
+  id: z.string(), proposalId: z.string(), sheet: z.string(), kind: z.enum(OFFICE_CHANGE_KINDS),
+  cell: z.string().nullable(), range: z.string().nullable(), count: z.number().int().min(1), summary: z.string(),
+  author: z.string(), date: z.string(), label: z.string(),
   oldValue: OfficeCellValueSchema, newValue: OfficeCellValueSchema, oldFormula: z.string().nullable(), newFormula: z.string().nullable(),
 });
 export const SheetChangesListReplySchema = z.strictObject({
