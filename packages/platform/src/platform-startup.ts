@@ -97,8 +97,8 @@ import {
   type CustomerVpsReconciliationWorker,
 } from './customer-vps-reconciliation-worker.js';
 import { createPrivatePreviewSweep } from './private-preview-sweep.js';
-import { createFundedHostActivationRoutes } from './funded-host-activation.js';
-import { createManagedFeatureActivator, createManagedFeatureReconciliationPass, type ManagedFeatureActivator } from './managed-feature-activation.js';
+import { createFundedHostActivationRoutes, fundedPlatformOrigin } from './funded-host-activation.js';
+import { createManagedFeatureActivator, createManagedFeatureReconciliationPass, createManagedFeatureResumeTrigger, type ManagedFeatureActivator, type ManagedFeatureResumeTrigger } from './managed-feature-activation.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
@@ -929,7 +929,14 @@ async function startPlatformServerWithCleanup(
   let customerVpsDependencies: CustomerVpsServiceDeps | undefined;
   let customerVpsService: CustomerVpsService | undefined = createPreviewPairRuntimeOnlyService({ db, env: process.env });
   let activateManagedFeatures: ManagedFeatureActivator | undefined;
-  const substrateRegistry = createPlatformSubstrateRegistry(db, process.env);
+  // Bound below when the activator is built, before any wake source starts (the HTTP server
+  // and the metal sleeper both start later). With customer VPS off there is no activator and
+  // the hook stays a no-op.
+  let activateResumedRuntime: ManagedFeatureResumeTrigger | undefined;
+  // Built before the activator, which reaches metal runtimes through their host ingress.
+  const substrateRegistry = createPlatformSubstrateRegistry(db, process.env, {
+    onMetalResumed: (ref) => activateResumedRuntime?.(ref),
+  });
   let activatePreviewRuntimeAccess: PreviewRuntimeAccessActivator | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
   let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
@@ -941,6 +948,7 @@ async function startPlatformServerWithCleanup(
   registerCustomMcpStartupCleanup(createPlatformStartupWorkerCleanup(() => [
     customerVpsReconciliationWorker,
     managedFeatureReconciliationWorker,
+    activateResumedRuntime,
     {
       stop() { goldenSnapshotStopped = true; if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval); },
       drain: () => goldenSnapshotPromise ?? Promise.resolve(),
@@ -999,15 +1007,19 @@ async function startPlatformServerWithCleanup(
       ...(activatePreviewRuntimeAccess ? { activatePreviewRuntimeAccess } : {}),
     });
     customerVpsService = createCustomerVpsService(customerVpsDependencies);
+    // Production configures guests against app.matrix-os.com; only a preview
+    // platform uses its own origin, which must pair with the reviewed preview relay.
+    const fundedOrigin = fundedPlatformOrigin(process.env);
     activateManagedFeatures = createManagedFeatureActivator({ db, platformSecret: customerVpsConfig.platformSecret,
-      relayOrigin: customerVpsConfig.fundedAiRelayUrl, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
+      relayOrigin: customerVpsConfig.fundedAiRelayUrl, platformOrigin: fundedOrigin, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
       speechEnabled: customerVpsConfig.platformSpeechEnabled, activateSpeech: target => customerVpsService!.activateSpeech(target),
-      fetchDispatcher: customerVpsProxyDispatcher });
+      fetchDispatcher: customerVpsProxyDispatcher, substrates: substrateRegistry });
+    activateResumedRuntime = createManagedFeatureResumeTrigger(activateManagedFeatures);
     if ((customerVpsConfig.fundedAiEnabled || previewRuntimeAccess.enabled) && internalFundedAiRuntimeRoutes) {
       internalFundedAiRuntimeRoutes.route('/', createFundedHostActivationRoutes({ db,
         platformSecret: customerVpsConfig.platformSecret,
         ...(previewRuntimeAccess.enabled ? { previewRuntimeSecret: previewRuntimeAccess.runtimeSecret } : {}),
-        relayOrigin: customerVpsConfig.fundedAiRelayUrl }));
+        relayOrigin: customerVpsConfig.fundedAiRelayUrl, platformOrigin: fundedOrigin }));
     }
     const reconcileManagedFeatures = createManagedFeatureReconciliationPass(activateManagedFeatures);
     if (backgroundWorkersEnabled) {
@@ -1289,6 +1301,7 @@ async function startPlatformServerWithCleanup(
     customerVpsReconciliationWorker?.stop();
     previewPairRuntime?.stop();
     managedFeatureReconciliationWorker?.stop();
+    activateResumedRuntime?.stop();
     metalRuntime?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
@@ -1317,6 +1330,7 @@ async function startPlatformServerWithCleanup(
         await customerVpsReconciliationWorker?.drain();
         await previewPairRuntime?.close();
         await managedFeatureReconciliationWorker?.drain();
+        await activateResumedRuntime?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         // Drain the metal maintenance pass (DB writes, hostd deletes) and sleeper tick before the pool closes.
         await metalShutdown;
