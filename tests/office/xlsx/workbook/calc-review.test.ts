@@ -447,6 +447,63 @@ describe("a run without a clock", () => {
       expect(valueAt(reopened, "T", "B1")).toBe(46349);
     });
 
+    // Fault detected: a date formula that asks where a reference points (ROW, COLUMN, ROWS, COLUMNS) or reads cells by
+    // position (OFFSET, INDIRECT) keeping its date when a move changes that answer, because those references are not
+    // read as values; or one losing its date when the move leaves the answer as it was.
+    type Move = "rows at the top" | "rows above A5" | "a row inside A1:A5" | "rows below" | "a column at the left";
+    function move(workbook: Awaited<ReturnType<typeof openXlsx>>, how: Move): void {
+      const s = workbook.listSheets()[0]!.id;
+      if (how === "rows at the top") workbook.insertRows(s, 0, 2);
+      if (how === "rows above A5") workbook.insertRows(s, 2, 2);
+      if (how === "a row inside A1:A5") workbook.insertRows(s, 2, 1);
+      if (how === "rows below") workbook.insertRows(s, 10, 1);
+      if (how === "a column at the left") workbook.insertColumns(s, 0, 1);
+    }
+
+    it.each([
+      ["IF(ROW(S!A5)=5,TODAY(),42)", "rows at the top", 42],
+      ["IF(ROW(S!A5)=5,TODAY(),42)", "rows above A5", 42],
+      ["IF(ROW(S!A5)=5,TODAY(),42)", "a column at the left", 46349],
+      ["IF(ROW(S!A5)=5,TODAY(),42)", "rows below", 46349],
+      ["IF(COLUMN(S!C1)=3,TODAY(),42)", "a column at the left", 42],
+      ["IF(COLUMN(S!C1)=3,TODAY(),42)", "rows at the top", 46349],
+      ["IF(ROWS(S!A1:A5)=5,TODAY(),42)", "a row inside A1:A5", 42],
+      ["IF(ROWS(S!A1:A5)=5,TODAY(),42)", "rows at the top", 46349],
+      ["IF(COLUMNS(S!A1:C1)=3,TODAY(),42)", "a column at the left", 46349],
+      ["IF(OFFSET(S!A5,-4,0)=1,TODAY(),42)", "rows above A5", 42],
+      ["IF(OFFSET(S!A5,-4,0)=1,TODAY(),42)", "rows at the top", 46349],
+      ['IF(INDIRECT("S!A5")=1,TODAY(),42)', "rows at the top", 42],
+      ['IF(INDIRECT("S!A5")=1,TODAY(),42)', "rows below", 46349],
+    ] as const)("gives %s after inserting %s the value it now has", async (formula, how, expected) => {
+      const workbook = await openXlsx(await crossBook(formula));
+      move(workbook, how);
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "T", "B1")).toBe(expected);
+    });
+
+    it("keeps the date of a formula asking where a reference points when its sheet is renamed", async () => {
+      const workbook = await openXlsx(await crossBook("IF(ROW(S!A5)=5,TODAY(),42)"));
+      workbook.renameSheet(workbook.listSheets()[0]!.id, "R");
+      const reopened = await openXlsx(await workbook.save());
+      expect(valueAt(reopened, "T", "B1")).toBe(46349);
+    });
+
+    it("recalculates a date formula on the moved sheet that asks where it or a reference is, and keeps one that reads a value", async () => {
+      const source = createXlsx({ sheetNames: ["S"] });
+      const id = source.listSheets()[0]!.id;
+      source.setCell(id, parseA1("A5"), 1);
+      source.setDefinedName({ name: "Spot", scope: null, refersTo: "S!$A$5" });
+      source.setFormula(id, parseA1("B10"), "IF(ROW()=10,TODAY(),42)");
+      source.setFormula(id, parseA1("C10"), "IF(ROW(A5)=5,TODAY(),42)");
+      source.setFormula(id, parseA1("D10"), "IF(A5=1,TODAY(),42)");
+      source.setFormula(id, parseA1("E10"), "IF(ROW(Spot)=5,TODAY(),42)");
+      source.recalc({ now: NOW });
+      const workbook = await openXlsx(await source.save());
+      workbook.insertRows(workbook.listSheets()[0]!.id, 0, 1);
+      const reopened = await openXlsx(await workbook.save());
+      expect(["B11", "C11", "D11", "E11"].map((a) => valueAt(reopened, "S", a))).toEqual([42, 42, 46349, 42]);
+    });
+
     // Fault detected: with rewrites no longer counted as edits, a date formula whose input was deleted keeping a date
     // its inputs no longer give.
     it.each(["deleted rows", "a removed sheet"] as const)("recalculates a date formula whose input went with %s", async (what) => {

@@ -8,7 +8,8 @@
  * are marked one by one the run sees that from the marks. When the marks are
  * dropped (past the trace limit, or a run a bound stopped) or a change is no
  * edit of a cell (rows deleted, a sheet removed, a name changed), the formulas that need a time and read what
- * changed are noted in `calc.clockInputs` first. That set holds formula
+ * changed are noted in `calc.clockInputs` first. A move also notes those whose answer depends on where a
+ * reference points (`calc-positions.ts`). That set holds formula
  * cells of the graph only, so it is bounded by the formula cells of the
  * workbook, which `maxCells` bounds.
  */

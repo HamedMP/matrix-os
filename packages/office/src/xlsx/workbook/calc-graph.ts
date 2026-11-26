@@ -99,7 +99,7 @@ const LAST_COL = 16_383;
  * built. A formula that reaches deeper is treated like one that picks its
  * cells at run time: the cells its calculation reads are recorded then.
  */
-const MAX_NAME_DEPTH = 8;
+export const MAX_NAME_DEPTH = 8;
 /** Largest range one array formula fills; a larger one keeps its stored values. */
 export const MAX_ARRAY_FORMULA_CELLS = 100_000;
 
@@ -120,7 +120,7 @@ export function arrayFormulaRange(cell: CellRec, row: number, col: number): Cell
 }
 
 /** The nodes inside `node`, for a walk with an explicit stack. */
-function pushChildren(node: FormulaAst, stack: FormulaAst[]): void {
+export function pushChildren(node: FormulaAst, stack: FormulaAst[]): void {
   switch (node.type) {
     case "call":
       for (const arg of node.args) stack.push(arg);
