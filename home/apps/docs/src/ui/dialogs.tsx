@@ -54,6 +54,9 @@ export function SaveAsDialog({ open, ...props }: SaveAsDialogProps) {
 
 function SaveAsBody({ session, title = "Save document", description = "Choose where in your home to keep this document.", onClose, onSaved }: Omit<SaveAsDialogProps, "open">) {
   const state = session.getState();
+  // The document this dialog was opened for; the app closes it when another one opens, and it never saves another.
+  const [openedFor] = useState(state.documentKey);
+  const stillOpen = () => session.getState().documentKey === openedFor;
   const [folder, setFolder] = useState(state.path === null ? "Documents" : directoryOf(state.path));
   const [name, setName] = useState(state.path === null ? state.name : fileName(state.path));
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +66,10 @@ function SaveAsBody({ session, title = "Save document", description = "Choose wh
 
   const save = async (overwrite: boolean) => {
     if (path === null) return;
+    if (!stillOpen()) {
+      onClose();
+      return;
+    }
     setBusy(true);
     setError(null);
     let result: Awaited<ReturnType<DocumentSession["saveAs"]>>;
@@ -75,6 +82,8 @@ function SaveAsBody({ session, title = "Save document", description = "Choose wh
     } finally {
       setBusy(false);
     }
+    // Another document opened while this one was written: what was to follow (such as closing) is not for it.
+    if (!stillOpen()) return;
     if (result.status === "saved") {
       onSaved(result.path);
       onClose();

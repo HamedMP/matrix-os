@@ -10,6 +10,7 @@ import type { MatrixOSBridge, MatrixOSFiles } from "../../../_shared/matrix-os";
 import { AppFrame, EmptyState, FileDropZone, LocalFileError, Spinner, createStartFolderMemory, pickLocalFile, useToast, type StartFolderMemory } from "../../../_shared/office-ui";
 import { useSessionState } from "../editor/index";
 import { MarkdownDialog, SaveAsDialog, UnsavedDialog } from "./dialogs";
+import { useDocumentBound } from "./document-bound";
 import { DocsWorkspace, type WorkspaceFileCommands } from "./DocsWorkspace";
 import { FilePickerDialog } from "./FilePickerDialog";
 import { DOCS_ACCEPT } from "./accept";
@@ -56,29 +57,36 @@ function DocsHome({ handles, files, author, folderMemory }: { handles: SessionHa
   const { session } = handles;
   const toast = useToast();
   const state = useSessionState(session);
-  const [saveAs, setSaveAs] = useState<SaveAsRequest | null>(null);
-  const requestSaveAs = useCallback((after: () => void) => setSaveAs({ mode: "save", after }), []);
+  // Save as and the picker belong to the document they were opened for: another one opening closes them.
+  const [saveAs, setSaveAs] = useDocumentBound<SaveAsRequest>(session);
+  const requestSaveAs = useCallback((after: () => void) => setSaveAs({ mode: "save", after }), [setSaveAs]);
   const actions = useDocumentActions(handles, author, { requestSaveAs });
   const recents = useRecentDocuments(handles.recents, state.documentKey);
   const [markdownOpen, setMarkdownOpen] = useState(false);
-  const [pickerTitle, setPickerTitle] = useState<string | null>(null);
   const resolver = useRef<((path: string | null) => void) | null>(null);
+  const settlePicker = useCallback((path: string | null) => {
+    const resolve = resolver.current;
+    resolver.current = null;
+    resolve?.(path);
+  }, []);
+  const [pickerTitle, setPickerTitle] = useDocumentBound<string>(session, () => settlePicker(null));
 
   const pickDocument = useCallback(
     (options?: { title?: string }) =>
       new Promise<string | null>((resolve) => {
-        resolver.current?.(null);
+        settlePicker(null);
         resolver.current = resolve;
         setPickerTitle(options?.title ?? "Open a document");
       }),
-    [],
+    [settlePicker, setPickerTitle],
   );
-  const finishPicker = useCallback((path: string | null) => {
-    const resolve = resolver.current;
-    resolver.current = null;
-    setPickerTitle(null);
-    resolve?.(path);
-  }, []);
+  const finishPicker = useCallback(
+    (path: string | null) => {
+      setPickerTitle(null);
+      settlePicker(path);
+    },
+    [setPickerTitle, settlePicker],
+  );
 
   const { openPath, openLocalFile } = actions;
   const openWithPicker = useCallback(async () => {

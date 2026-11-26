@@ -12,6 +12,7 @@ import { isOfficeError } from "../../../_shared/office-engine/index";
 import { useToast, watchLeave } from "../../../_shared/office-ui";
 import { DocumentSession, type LocalFileInput, type OpenResult, type RecentFile, RecentFilesStore } from "../session/index";
 import { isDocxPath } from "./file-picker-model";
+import { useDocumentBound } from "./document-bound";
 import { saveForLeave } from "./leave-flow";
 import { DOCS_TEMPLATES, type DocsTemplateId, templateMarkdown } from "./templates";
 
@@ -166,8 +167,9 @@ function titleFromMarkdown(markdown: string): string {
 
 export function useDocumentActions(handles: SessionHandles | null, author: string, options: DocumentActionOptions): DocumentActions {
   const toast = useToast();
-  const [pending, setPending] = useState<(PendingLeave & { attempt: Attempt; path: string | null; failure: FailureOf }) | null>(null);
   const session = handles?.session ?? null;
+  // The question is about the document it was asked for; once another one is active it is dropped, so Save or Discard never act on that one.
+  const [pending, setPending] = useDocumentBound<PendingLeave & { attempt: Attempt; path: string | null; failure: FailureOf }>(session);
   const recents = handles?.recents ?? null;
   const { requestSaveAs } = options;
 
@@ -184,7 +186,7 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
       // Without a document the start screen shows the session's error; with one, the document stays open.
       if (session.document !== null) toast.show({ title: "The document could not be opened", description: result.error.message, tone: "danger" });
     },
-    [session, recents, toast],
+    [session, recents, toast, setPending],
   );
 
   /** Runs an attempt and settles its answer. A throw (e.g. Markdown the engine refuses) is logged and shown as a fixed message. */
@@ -258,11 +260,12 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
       return;
     }
     await run(attempt, null, closeFailure);
-  }, [session, run]);
+  }, [session, run, setPending]);
 
   const savePending = useCallback(async () => {
     if (session === null || pending === null || pending.busy) return;
     const current = pending;
+    const documentKey = session.getState().documentKey;
     setPending({ ...current, busy: true, error: null });
     let outcome: Awaited<ReturnType<typeof saveForLeave>>;
     try {
@@ -271,6 +274,8 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
       console.warn("[docs] saving before leaving failed", error instanceof Error ? error.name : error);
       outcome = { status: "failed", message: SAVE_FAILED_MESSAGE };
     }
+    // Another document became active meanwhile: the question was dropped and its leave is not for that one.
+    if (session.getState().documentKey !== documentKey) return;
     if (outcome.status === "failed") {
       setPending({ ...current, busy: false, error: outcome.message });
       return;
@@ -278,16 +283,16 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
     setPending(null);
     if (outcome.status === "needs-path") requestSaveAs(() => void run(current.attempt, current.path, current.failure));
     else await run(current.attempt, current.path, current.failure);
-  }, [session, pending, requestSaveAs, run]);
+  }, [session, pending, setPending, requestSaveAs, run]);
 
   const discardPending = useCallback(() => {
     if (pending === null || pending.busy) return;
     const current = pending;
     setPending(null);
     void attemptAndSettle(current.attempt, current.path, current.failure, true);
-  }, [pending, attemptAndSettle]);
+  }, [pending, setPending, attemptAndSettle]);
 
-  const cancelPending = useCallback(() => setPending(null), []);
+  const cancelPending = useCallback(() => setPending(null), [setPending]);
 
   const publicPending: PendingLeave | null = pending === null ? null : { reason: pending.reason, name: pending.name, local: pending.local, busy: pending.busy, error: pending.error };
   return { openPath, openLocalFile, newBlank, newFromMarkdown, newFromTemplate, closeDocument, pending: publicPending, savePending, discardPending, cancelPending };

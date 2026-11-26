@@ -7,6 +7,7 @@
  */
 
 import { Spinner } from "../../../_shared/office-ui";
+import { useSessionState } from "../editor/index";
 import type { ReviewController } from "../review/index";
 import type { ShellPanelProps } from "./SidePanels";
 import { CommentsPanel, ReviewPanel, RevisionHoverCard, useCommentClicks, useReviewShortcuts } from "./review/index";
@@ -31,11 +32,16 @@ export function ReviewDocumentLayer({ controller, container, readOnly, onRequest
   return <RevisionHoverCard controller={controller} container={container} disabled={readOnly} />;
 }
 
-/** The Review tab: revisions and comments of the open document. */
-export function ReviewTab({ review, readOnly, composeComment = false, onComposeHandled }: ShellPanelProps) {
+/**
+ * The Review tab: revisions and comments of the open document. It starts
+ * afresh for every document (keyed by it), so a comment or reply drafted for
+ * one is never sent to the next.
+ */
+export function ReviewTab({ session, review, readOnly, composeComment = false, onComposeHandled }: ShellPanelProps) {
+  const { documentKey } = useSessionState(session);
   if (review === null) return <Spinner label="Loading review" />;
   return (
-    <div className="docs-review-tab">
+    <div key={documentKey} className="docs-review-tab">
       <ReviewPanel controller={review} busy={readOnly} />
       <CommentsPanel controller={review} busy={readOnly} focusComposer={composeComment} onComposerFocused={onComposeHandled} />
     </div>
