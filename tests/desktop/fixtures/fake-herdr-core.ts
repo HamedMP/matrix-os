@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { encodeFrame, HC_FRAME, HcFrameDecoder } from "@matrix-os/herdr-core-client/protocol";
+import { LOCAL_TERMINAL_VERSION } from "@desktop/shared/local-terminals";
 
 /** An in-memory herdr-core speaking the documented protocol. */
 export function fakeCore(options: { version?: string; generation?: number; hello?: Record<string, unknown> } = {}) {
@@ -17,7 +18,7 @@ export function fakeCore(options: { version?: string; generation?: number; hello
       sent.plain.push(String(data));
       framed = true;
       queueMicrotask(() => socket.emit("data", Buffer.from(`${JSON.stringify({ jsonrpc: "2.0", id: 1, ...(options.hello ?? { result: {
-        version: options.version ?? "0.1.19", generation: options.generation ?? 1, framed: true, features: ["framed", "attach"], methods: [], core: {},
+        version: options.version ?? LOCAL_TERMINAL_VERSION, generation: options.generation ?? 1, framed: true, features: ["framed", "attach"], methods: [], core: {},
       } }) })}\n`)));
       return;
     }

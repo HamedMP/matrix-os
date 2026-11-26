@@ -7,6 +7,7 @@ import { HC_FRAME } from "@matrix-os/herdr-core-client/protocol";
 import { createHcSessions } from "@matrix-os/herdr-core-client/sessions";
 import { createOperatorBridge } from "@desktop/shared/operator-bridge";
 import { fakeCore } from "./fixtures/fake-herdr-core";
+import { LOCAL_TERMINAL_VERSION } from "@desktop/shared/local-terminals";
 import { localTerminalPorts } from "./fixtures/local-terminal-ports";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
@@ -27,7 +28,7 @@ describe("local terminal streams", () => {
   it("carries the core's bytes to the window unchanged, and returns credit only once the window acknowledges", async () => {
     const core = fakeCore();
     core.onCall((call) => { if (call.method === "terminal.attach") core.reply(call.id, { result: { channel: 3 } }); });
-    const connection = await connectHc({ open: () => core.socket, expectedVersion: "0.1.19" });
+    const connection = await connectHc({ open: () => core.socket, expectedVersion: LOCAL_TERMINAL_VERSION });
     const sessions = createHcSessions({ ensure: async () => connection }, ports.streams.sink);
     ports.streams.bind(sessions);
     const attachId = await sessions.attach("t1", { cols: 80, rows: 24 });
@@ -54,7 +55,7 @@ describe("local terminal streams", () => {
   it("sends the core FOCUS and FACTS frames for the attachment", async () => {
     const core = fakeCore();
     core.onCall((call) => { if (call.method === "terminal.attach") core.reply(call.id, { result: { channel: 5 } }); });
-    const connection = await connectHc({ open: () => core.socket, expectedVersion: "0.1.19" });
+    const connection = await connectHc({ open: () => core.socket, expectedVersion: LOCAL_TERMINAL_VERSION });
     const sessions = createHcSessions({ ensure: async () => connection }, ports.streams.sink);
     ports.streams.bind(sessions);
     const attachId = await sessions.attach("t1", { cols: 80, rows: 24 });

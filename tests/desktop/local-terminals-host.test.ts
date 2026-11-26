@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, statSync, symlinkSync, mkdirSync, chmodSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, mkdirSync, chmodSync, realpathSync } from "node:fs";
 import { connect } from "node:net";
 import { homedir, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -302,6 +302,54 @@ describe("local terminal host against a scripted core", () => {
     await expect(refused.host.list()).rejects.toThrow();
     expect(refused.opts.startCore).not.toHaveBeenCalled();
     expect(refused.host.status()).toBe("unavailable");
+  });
+
+  // An app update replaces the bundled binary while the previous app's core keeps
+  // running with its terminals. That older core is asked for herdr-core's planned
+  // restart (programs keep running, the next core adopts them), then the bundled
+  // core is started. A newer or unknown core is reported and never restarted over.
+  function runningCore(version: string, calls: string[], methods = ["terminal.list", "server.restart"]) {
+    const core = fakeCore({ version, hello: { result: {
+      version, generation: 1, framed: true, features: ["framed", "attach"], methods, core: {},
+    } } });
+    core.onCall((call) => {
+      calls.push(call.method);
+      if (call.method === "server.restart") { core.reply(call.id, { result: { stopped: true } }); queueMicrotask(() => core.socket.emit("close")); }
+    });
+    return core.socket;
+  }
+
+  it("hands an older core's terminals to the bundled core with a planned restart", async () => {
+    const calls: string[] = [];
+    let dials = 0;
+    const live = start(listing([{ address: "t1", state: "live", title: "zsh" }]));
+    const updated = start(listing([]), {
+      openSocket: () => (dials++ < 2 ? runningCore("0.1.19", calls) : live.opts.openSocket("")),
+    });
+    expect((await updated.host.list()).map((terminal) => terminal.id)).toEqual(["t1"]);
+    expect(calls).toEqual(["server.restart"]);
+    expect(updated.opts.startCore).toHaveBeenCalledTimes(1);
+    expect(updated.host.status()).toBe("ready");
+  });
+
+  it("never restarts over a core newer than the bundled one, or one off the 0.1 line", async () => {
+    for (const version of ["0.1.999", "0.2.0", "dev"]) {
+      const calls: string[] = [];
+      const newer = start(listing([]), { openSocket: () => runningCore(version, calls) });
+      await expect(newer.host.list(), version).rejects.toThrow();
+      expect(newer.host.status(), version).toBe("version-mismatch");
+      expect(calls, version).toEqual([]);
+      expect(newer.opts.startCore, version).not.toHaveBeenCalled();
+    }
+  });
+
+  it("leaves an older core that offers no planned restart running and reports the mismatch", async () => {
+    const calls: string[] = [];
+    const older = start(listing([]), { openSocket: () => runningCore("0.1.19", calls, ["terminal.list"]) });
+    await expect(older.host.list()).rejects.toThrow();
+    expect(older.host.status()).toBe("version-mismatch");
+    expect(calls).toEqual([]);
+    expect(older.opts.startCore).not.toHaveBeenCalled();
   });
 
   it("starts the login shell without the core's own variables", async () => {
@@ -686,6 +734,16 @@ if (process.env.MATRIX_DESKTOP_HC_REQUIRED === "1" && !binary) throw new Error(`
     await until(() => (outputs.get(attachId) ?? "").includes("STILL_2"));
     host.resize(attachId, { cols: 120, rows: 40 });
     host.detach(attachId);
+  }, 30_000);
+
+  it("writes a pasted file beside the terminal in one put and refuses one over the cap", async () => {
+    // The app sends a whole file in one terminal.put; cores from 0.1.22 also take
+    // puts in pieces, so the single call must still land the exact bytes.
+    const bytes = Buffer.from(Array.from({ length: 300_000 }, (_, index) => index % 251));
+    const path = await host.put(terminalId, "paste.bin", bytes.toString("base64"));
+    expect(readFileSync(path)).toEqual(bytes);
+    const over = Buffer.alloc(8 * 1024 * 1024 + 1).toString("base64");
+    await expect(host.put(terminalId, "big.bin", over)).rejects.toThrow();
   }, 30_000);
 
   it("refuses a core of another version without creating terminals", async () => {
