@@ -1,4 +1,6 @@
 import { botSavedAnswerRecovery, type BotInteraction, type BotTaskSummary, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
+import { BotSettingsProposal, type SavedBotProposal } from "./BotSettingsProposal.js";
+import type { ChatAgent } from "@matrix-os/contracts";
 import { createContext, useContext } from "react";
 import { InteractionCard } from "./InteractionCard.js";
 import { BotCurrentTaskStatus, currentBotAttentionTask } from "./BotCurrentTaskStatus.js";
@@ -7,6 +9,7 @@ export interface BotMessageState {
   chatId: string;
   agentId: string;
   agentName?: string;
+  settings?: { proposal: SavedBotProposal; agent: ChatAgent; save(): Promise<void> };
   interactions: readonly BotInteraction[];
   interactionsFresh: boolean;
   tasks: readonly BotTaskSummary[];
@@ -38,8 +41,12 @@ function MessageBody({ runIds, requestIds = [], unassigned = false }: {
   const interactions = body.interactions.filter(interaction => !requestIds.includes(interaction.interactionId));
   const error = state.error && (unassigned ? !state.tasks.some(task => task.runId && runIds.includes(task.runId))
     : body.tasks.length > 0);
-  if (!interactions.length && !currentBotAttentionTask(body.tasks) && !error) return null;
+  const settings = state.settings;
+  const showSettings = settings && settings.proposal.chatId === state.chatId && settings.proposal.agentId === state.agentId
+    && (unassigned ? !runIds.includes(settings.proposal.runId) : runIds.includes(settings.proposal.runId));
+  if (!interactions.length && !currentBotAttentionTask(body.tasks) && !error && !showSettings) return null;
   return <div data-bot-message-state className="grid min-w-0 gap-3 py-2">
+    {showSettings ? <BotSettingsProposal key={settings.proposal.proposalId} {...settings} /> : null}
     {interactions.map(interaction => <InteractionCard key={interaction.interactionId} interaction={interaction}
       agentName={state.agentName}
       actionsAvailable={state.interactionsFresh} onResolve={input => state.resolve(interaction.interactionId, input)} onResolved={state.refresh}/>)}

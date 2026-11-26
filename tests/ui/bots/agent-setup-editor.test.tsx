@@ -65,11 +65,6 @@ function send() {
   fireEvent.click(screen.getByRole("button", { name: "Send setup message" }));
 }
 
-async function editWithChat(name: string) {
-  fireEvent.click(await screen.findByRole("button", { name: `Edit ${name}` }));
-  fireEvent.click(await screen.findByRole("button", { name: "Edit with chat" }));
-}
-
 it("previews a real scoped proposal in the scratch form and creates only after the owner confirms", async () => {
   const recap = "Named the agent Onboarding guide and added Gmail to the brief.";
   const client = fixture(patch, recap);
@@ -77,6 +72,8 @@ it("previews a real scoped proposal in the scratch form and creates only after t
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
   fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   expect(await screen.findByText(question)).toBeVisible();
+  const progress = screen.getByRole("navigation", { name: "Agent setup progress" });
+  expect(within(progress).getByText("Discuss").closest("li")).toHaveAttribute("aria-current", "step");
   expect(screen.getAllByText(question)).toHaveLength(1);
   expect(screen.queryByText(/I reviewed the whole draft/)).toBeNull();
   expect(screen.queryByText("Start agent setup.")).toBeNull();
@@ -84,6 +81,7 @@ it("previews a real scoped proposal in the scratch form and creates only after t
   await waitFor(() => expect(answer).toBeEnabled());
   fireEvent.click(answer);
   await screen.findByRole("region", { name: "Configuration preview" });
+  expect(within(progress).getByText("Review").closest("li")).toHaveAttribute("aria-current", "step");
   expect(screen.queryByRole("button", { name: "Earlier messages" })).toBeNull();
   expect(screen.queryByText(patch.instructions)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Configuration details" }));
@@ -108,6 +106,7 @@ it("adds installed skills and a specific connected account from setup before exp
   await screen.findByText(question);
 
   fireEvent.click(screen.getByRole("button", { name: "Add skills" }));
+  expect(within(screen.getByRole("navigation", { name: "Agent setup progress" })).getByText("Resources").closest("li")).toHaveAttribute("aria-current", "step");
   let picker = within(screen.getByRole("region", { name: "Choose skills" }));
   fireEvent.click(picker.getByRole("checkbox", { name: "Matrix integrations" }));
   fireEvent.click(picker.getByRole("button", { name: "Cancel resource changes" }));
@@ -139,30 +138,24 @@ it("adds installed skills and a specific connected account from setup before exp
   await waitFor(() => expect(client.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ recipe: expectedRecipe })));
 });
 
-it("discarding a proposed edit preserves saved instructions, and reopening permits a fresh explicit Save", async () => {
+it("opens saved settings without restarting setup and preserves manual edits only on Save", async () => {
   const client = fixture();
   client.list.mockResolvedValue({ enabled: true, agents: [saved] as never[] });
-  render(<ChatAgentsPanel client={client} onClose={vi.fn()} />);
-  await editWithChat("Meeting helper");
-  await screen.findByRole("button", { name: "New colleagues" });
-  send();
-  await screen.findByText(/^Updated name, instructions,/);
+  const onClose = vi.fn();
+  const view = render(<ChatAgentsPanel client={client} onClose={onClose} requestedAgentId={saved.id}/>);
+  expect(await screen.findByRole("textbox", { name: "Instructions" })).toHaveValue(saved.instructions);
+  expect(screen.queryByRole("button", { name: "Edit with chat" })).toBeNull();
+  fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: "Unsaved" } });
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(client.update).not.toHaveBeenCalled();
-  await editWithChat("Meeting helper");
-  fireEvent.click(await screen.findByRole("button", { name: "Review configuration" }));
-  fireEvent.click(screen.getByRole("button", { name: "Configuration details" }));
-  expect(screen.getByText(saved.instructions)).toBeVisible();
-  await screen.findByRole("button", { name: "New colleagues" });
-  send();
-  await screen.findByText(/^Updated name, instructions,/);
+  view.unmount();
+  render(<ChatAgentsPanel client={client} onClose={onClose}/>);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit Meeting helper" }));
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(saved.instructions);
+  fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: patch.instructions } });
   fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-  await waitFor(() => expect(client.update).toHaveBeenCalledTimes(1));
-  expect(client.update).toHaveBeenCalledWith(saved.id, expect.objectContaining({ baseRevision: saved.revision, ...patch }));
-  await editWithChat("Onboarding guide");
-  fireEvent.click(await screen.findByRole("button", { name: "Review configuration" }));
-  fireEvent.click(screen.getByRole("button", { name: "Configuration details" }));
-  expect(screen.getByText(patch.instructions)).toBeVisible();
+  await waitFor(() => expect(client.update).toHaveBeenCalledWith(saved.id, expect.objectContaining({ baseRevision: saved.revision, instructions: patch.instructions })));
+  expect(client.setupChat.admitTurn).not.toHaveBeenCalled();
 });
 
 it("ignores an old proposal after a manual edit while the drafting run is in flight", async () => {
@@ -232,19 +225,20 @@ it("waits for scoped resources and retains the same unsaved setup when opening r
 });
 
 it("reviews only the latest actual change and preserves the complete draft behind a disclosure", async () => {
-  const client = fixture({ name: saved.name, instructions: patch.instructions });
+  const client = fixture({ name: patch.name, instructions: patch.instructions });
   client.list.mockResolvedValue({ enabled: true, agents: [saved] as never[] });
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} />);
-  await editWithChat("Meeting helper");
+  fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   await screen.findByRole("button", { name: "New colleagues" });
   send();
-  expect(await screen.findByText("Updated instructions.")).toBeVisible();
+  expect(await screen.findByText("Updated name and instructions.")).toBeVisible();
   expect(screen.queryByText(patch.instructions)).toBeNull();
-  expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Create Agent" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Configuration details" }));
   expect(screen.getByText(patch.instructions)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Edit configuration" }));
   fireEvent.change(screen.getByRole("textbox", { name: "Instructions" }), { target: { value: saved.instructions } });
-  expect(screen.queryByText("Updated instructions.")).toBeNull();
+  expect(screen.queryByText("Updated name and instructions.")).toBeNull();
   expect(client.update).not.toHaveBeenCalled();
 });

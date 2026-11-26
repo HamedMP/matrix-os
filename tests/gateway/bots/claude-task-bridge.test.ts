@@ -14,7 +14,7 @@ describe('bounded native task MCP protocol', () => {
   });
   it('serves actual stdio MCP only through a child-specific bearer and exact Bot capabilities', async () => {
     const call = vi.fn(async () => ({ ok: true as const, content: [{ type: 'text' as const, text: 'owner artifact' }] })); const authorize = vi.fn(async () => undefined);
-    const bridge = await openClaudeBotBridge({ capabilities: ['artifact.read', 'agent.task'], signal: new AbortController().signal, authorize, call });
+    const bridge = await openClaudeBotBridge({ capabilities: ['artifact.read', 'agent.task', 'bot.settings.propose'], signal: new AbortController().signal, authorize, call });
     const child = spawn(process.execPath, [runner], { env: { PATH: process.env.PATH, MATRIX_BOT_TASK_URL: bridge.url, MATRIX_BOT_TASK_TOKEN: bridge.token }, stdio: ['pipe', 'pipe', 'pipe'] });
     const exit = once(child, 'exit'); let output = ''; child.stdout.on('data', chunk => { output += chunk.toString('utf8'); });
     try {

@@ -85,7 +85,7 @@ function RecipeDraft({ setupResources, context, onRefreshCatalog, botClient, cre
     {paused ? <button type="button" className={chatAgentButtonClass} onClick={() => { onRefreshCatalog?.(); connections.refresh(); setPaused(false); }}>Resume bot setup</button> : null}
     <div hidden={paused} className="flex min-h-0 flex-1 flex-col gap-3">
       <button type="button" aria-label="Close bot setup" className="self-start text-sm hover:underline" disabled={pending} onClick={onClose}>← Templates</button>
-      {setupResources && context ? <AgentSetupChat onRefreshResources={setupResources.onRefreshResources} onOpenResourceSettings={setupResources.onOpenResourceSettings} resourcesLoading={setupResources.loading} client={setupResources.chat} draft={draft} editing="new" catalog={catalog ?? null} recipes={setupResources.recipes}
+      {setupResources && context ? <AgentSetupChat onRefreshResources={setupResources.onRefreshResources} onOpenResourceSettings={setupResources.onOpenResourceSettings} resourcesLoading={setupResources.loading} client={setupResources.chat} draft={draft} catalog={catalog ?? null} recipes={setupResources.recipes}
         connections={setupResources.connections} pending={locked} change={change} seed={{ kind: "recipe", recipeId: recipe.recipeId, version: recipe.version }}
         recipeContext={context}>{controls}</AgentSetupChat> : <><h2 className="text-base font-semibold">{recipe.name}</h2>{controls}</>}
       {error ? <p role="alert" className="text-xs">{error}</p> : null}

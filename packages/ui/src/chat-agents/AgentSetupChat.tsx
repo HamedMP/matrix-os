@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 import {
-  botDraftPatchMatchesChoices, isManagedCustomBot, type BotCreationDraftPatch, type BotCreationSnapshot, type BotRecipeSetupContext, type CanonicalProviderCatalog,
-  type ChatAgent, type ChatAgentRecipeCatalog
+  botDraftPatchMatchesChoices, type BotCreationDraftPatch, type BotCreationSnapshot, type BotRecipeSetupContext, type CanonicalProviderCatalog,
+  type ChatAgentRecipeCatalog
 } from "@matrix-os/contracts";
 import { ChatPromptInput } from "../chat/composer/ChatPromptInput.js";
 import type { AgentDraft } from "./AgentEditor.js";
@@ -10,6 +10,7 @@ import type { CreationConversationClient } from "./creation-conversation.js";
 import { useCreationConversation } from "./useCreationConversation.js";
 
 import { AgentSetupResources, type AgentSetupResource } from "./AgentSetupResources.js";
+import { AgentSetupProgress } from "./AgentSetupProgress.js";
 import { AgentSetupTranscript } from "./AgentSetupTranscript.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "./theme.js";
 
@@ -26,18 +27,16 @@ function describeChanges(draft: AgentDraft, patch: BotCreationDraftPatch): strin
   return changed.length ? `Updated ${new Intl.ListFormat("en").format(changed)}.` : "No configuration changes.";
 }
 
-export function AgentSetupChat({ client, draft, editing, catalog, recipes, connections, pending, change,
-  seed = { kind: "scratch" }, resourcesLoading = false, recipeContext, children, reviewInitially = false, onOpenResourceSettings, onRefreshResources }: {
+export function AgentSetupChat({ client, draft, catalog, recipes, connections, pending, change,
+  seed = { kind: "scratch" }, resourcesLoading = false, recipeContext, children, onOpenResourceSettings, onRefreshResources }: {
   seed?: BotCreationSnapshot["seed"];
   resourcesLoading?: boolean;
   onRefreshResources?(): void;
   onOpenResourceSettings?(resource: AgentSetupResource): void;
   recipeContext?: BotRecipeSetupContext;
   children?: ReactNode;
-  reviewInitially?: boolean;
   client: CreationConversationClient;
   draft: AgentDraft;
-  editing: "new" | ChatAgent;
   catalog: CanonicalProviderCatalog | null;
   recipes: ChatAgentRecipeCatalog | null;
   connections: ChatAgentIntegrationConnection[];
@@ -51,9 +50,10 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
     currentRevision = { key: draft.requestId, number: revision.number + 1 };
     setRevision(currentRevision);
   }
-  const [review, setReview] = useState(reviewInitially);
+  const [review, setReview] = useState(false);
   const [proposal, setProposal] = useState<{ id: string; revision: number; summary: string } | null>(null);
 
+  const [picker, setPicker] = useState<"skills" | "integrations" | null>(null);
   const [resourceVisit, setResourceVisit] = useState(0);
   const refreshOnReturn = useEffectEvent(() => onRefreshResources?.());
   useEffect(() => {
@@ -67,11 +67,10 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
     onOpenResourceSettings?.(resource);
   };
   const lastApplied = useRef(-1);
-  const editableRecipe = editing === "new" || !editing.recipeRef || isManagedCustomBot(editing) || Boolean(recipeContext);
   const { name, description, instructions, selection, recipe } = draft;
-  const offeredSkills = recipes?.enabled && editableRecipe ? recipes.skills
+  const offeredSkills = recipes?.enabled ? recipes.skills
     .filter(skill => skill.id !== "matrix-jev-email-triage") : [];
-  const services = recipes?.enabled && editableRecipe ? recipes.services
+  const services = recipes?.enabled ? recipes.services
     .filter(service => connections.some(account => account.service === service.id && account.status === "active"))
     .map(service => service.id) : [];
   const snapshot: BotCreationSnapshot = {
@@ -85,7 +84,7 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
     onProposal(next) {
       if (pending || next.sessionId !== sessionId || next.baseDraftRevision !== snapshot.draftRevision
         || lastApplied.current === snapshot.draftRevision || !botDraftPatchMatchesChoices(snapshot, next.patch)) return false;
-      if (next.patch.recipe !== undefined && (!editableRecipe || draft.recipe?.jevInboxLabeling)) return false;
+      if (next.patch.recipe !== undefined && draft.recipe?.jevInboxLabeling) return false;
       lastApplied.current = snapshot.draftRevision;
       setProposal({ id: next.proposalId, revision: next.baseDraftRevision + 1, summary: describeChanges(draft, next.patch) });
       change(next.patch);
@@ -115,6 +114,7 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
     if (JSON.stringify(updated) !== JSON.stringify(recipe)) change({ recipe: updated });
   };
   return <section aria-label="Agent setup conversation" className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-3">
+    <AgentSetupProgress stage={picker ? "Resources" : review ? "Review" : "Discuss"} hasRole={Boolean(draft.instructions.trim())} hasResources={Boolean(recipe?.skills.length || recipe?.integrations.length)}/>
     <div className="grid min-w-0 content-start gap-3">
       <AgentSetupTranscript detail={conversation.detail} questions={conversation.questions}
         openingMessageId={conversation.openingMessageId} question={question} questionText={questionText}
@@ -130,9 +130,9 @@ export function AgentSetupChat({ client, draft, editing, catalog, recipes, conne
       </div> : null}
       {conversation.activeRunId && !conversation.busy ? <button type="button" className={`${chatAgentButtonClass} justify-self-start`}
         onClick={() => void conversation.refresh()}>Check setup progress</button> : null}
-      <AgentSetupResources context={recipeContext} recipe={recipe} catalog={recipes} connections={connections} skills={offeredSkills}
+      <AgentSetupResources picker={picker} setPicker={setPicker} context={recipeContext} recipe={recipe} catalog={recipes} connections={connections} skills={offeredSkills}
         loading={resourcesLoading} pending={pending} settingsVisited={resourceVisit > 0} revision={currentRevision.number}
-        onChange={editableRecipe && !recipe?.jevInboxLabeling ? changeResources : undefined}
+        onChange={!recipe?.jevInboxLabeling ? changeResources : undefined}
         onOpenSettings={onOpenResourceSettings ? openSettings : undefined} onRefresh={onRefreshResources} />
       {children ? review ? <section key={proposal?.id ?? "manual"} className="grid gap-3 rounded-xl border p-4" aria-label="Configuration preview">
         <h3 className="text-sm font-semibold">Configuration preview</h3>

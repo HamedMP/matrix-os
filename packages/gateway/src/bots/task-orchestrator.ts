@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import type { BotSavedSettingsPatch } from "@matrix-os/contracts";
 import type { BotSelectedChatReader, SelectedBotChats } from "../chat/bot-selected-chat.js";
 import { isRoutedSlackInstruction, readonlySlackSystemPrompt, type SlackSummaryRunAuthority } from "./slack-summary-run.js";
 import type { BotInputHistoryReader } from "./historical-input.js";
@@ -67,7 +69,7 @@ const SERVED_CAPABILITIES: readonly BotToolCapability[] = [
 ];
 
 export type BotTurnEvent =
-  | { kind: "routine_action"; event: import("../chat/provider-adapter.js").CanonicalProviderRunEvent }
+  | { kind: "broker_activity"; event: import("../chat/provider-adapter.js").CanonicalProviderRunEvent }
   | { kind: "event"; event: BotEvent["event"] }
   | { kind: "state"; state: BotChatRunState };
 
@@ -92,6 +94,7 @@ export interface BotTurnHandle {
 
 interface ActiveRun {
   routedOutput?: string;
+  settingsDraft?: { botId: string; revision: number; proposed: boolean };
   selectedChats?: SelectedBotChats;
   readonlySummary?: true;
   ownerId: string;
@@ -127,6 +130,7 @@ export function createBotTaskOrchestrator(deps: {
   /** Task writes and their `bot.task.updated` events commit together. */
   transact: BotStateTransactions;
   interactions?: Pick<BotInteractionService, "answerWithMessage">;
+  settingsProposals?(ownerId: string, chatId: string, runId: string, botId: string): Promise<boolean>;
   routineTools?: boolean;
   slackRuleTools?: boolean;
   resolveRoutineProposalRoute?(ownerId: string, model: string): Promise<ResolvedBotRoute>;
@@ -446,6 +450,17 @@ export function createBotTaskOrchestrator(deps: {
       && (capability !== "github.developer" || !input.backgroundTaskId)
       && (!group || ["integration.inventory", "integration.call"].includes(capability)));
     if (!input.readonlySummary && !isolatedModel && !group && !input.backgroundTaskId && deps.routineTools) capabilities.push("routine.propose", "routine.control");
+    if (deps.settingsProposals && chatBinding.kind === "direct" && !input.readonlySummary && !isolatedModel && !input.backgroundTaskId && !internalScheduleChat) {
+      try {
+        if (await setup(() => deps.settingsProposals!(input.ownerId, input.chatId, input.runId, botId))) {
+          capabilities.push("bot.settings.propose");
+          run.settingsDraft = { botId: agent.id, revision: agent.revision, proposed: false };
+        }
+      } catch (error: unknown) {
+        if (interrupted(error)) return settle(task, interruptedStatus());
+        console.warn("[bots] Settings proposal unavailable:", error instanceof Error ? error.name : "UnknownError");
+      }
+    }
     if(!input.readonlySummary && !isolatedModel && !group && !input.backgroundTaskId && deps.slackRuleTools)capabilities.push("slack.rules");
     if (run.inputs.fileAliases.length && !capabilities.includes("artifact.read")) return settle(task, "blocked", "policy_denied");
     try { if (!input.readonlySummary && !isolatedModel && !group && !input.backgroundTaskId && await setup(async () => await deps.executorReady?.(input.ownerId, botId))) capabilities.push('agent.task'); }
@@ -662,12 +677,22 @@ export function createBotTaskOrchestrator(deps: {
     selectedChatReference,
     hasSelectedChats: (runId: string) => Boolean(active.get(runId)?.selectedChats),
     eventSink,
+    proposeSettings(binding: import("./runtime-registry.js").BotRuntimeBinding, patch: BotSavedSettingsPatch) {
+      const run = active.get(binding.runId);
+      if (!run?.settingsDraft || run.stopping || run.finished || run.signal.aborted || run.settingsDraft.proposed
+        || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId || run.settingsDraft.botId !== binding.botId
+        || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration
+        || !binding.capabilities.includes("bot.settings.propose")) throw new BotBrokerActionError("denied");
+      run.settingsDraft.proposed = true;
+      run.queue.push({ kind: "broker_activity", event: { type: "bot.draft.proposed", proposalId: `proposal_${randomUUID().replaceAll("-", "")}`,
+        sessionId: binding.botId, baseDraftRevision: run.settingsDraft.revision, patch } });
+    },
     publishRoutineAction(binding: import("./runtime-registry.js").BotRuntimeBinding, event: import("../chat/provider-adapter.js").CanonicalProviderRunEvent) {
       const run = active.get(binding.runId);
       if (!run || run.stopping || run.finished || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId
         || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration
         || !["approval.requested", "approval.resolved"].includes(event.type)) throw new BotBrokerActionError("stale_generation");
-      run.queue.push({ kind: "routine_action", event });
+      run.queue.push({ kind: "broker_activity", event });
     },
     directBot,
     async readSubmittedArtifact(binding: import("./runtime-registry.js").PiRuntimeBinding, args: Extract<import("@matrix-os/contracts").BotToolRequest, { capability: "artifact.read" }>["args"]) {

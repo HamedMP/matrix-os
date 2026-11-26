@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { canonicalBoundedText, canonicalEncodedByteLength, canonicalReferenceId } from "#canonical-chat-primitives";
+import { canonicalBoundedText, canonicalEncodedByteLength, canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { CanonicalChatModelSelectionSchema } from "#canonical-chat-selection";
 import { ChatAgentRecipeSchema } from "#chat-agent-recipe";
 
@@ -19,6 +19,15 @@ export const BotCreationDraftSchema = z.object({
 export const BotCreationDraftPatchSchema = BotCreationDraftSchema.pick({ name: true, description: true, instructions: true, recipe: true }).partial()
   .refine(value => Object.keys(value).length > 0, { message: "Draft patch must change a field" })
   .refine(value => value.recipe?.jevInboxLabeling !== true, { message: "Model proposals cannot grant inbox labeling" });
+
+export const BOT_SETTINGS_PROPOSAL_ACTIVITY_ID = "bot_settings_proposal";
+/** A direct Bot can propose text fields. The owner manages access and execution settings. */
+export const BotSavedSettingsPatchSchema = z.object({
+  name: canonicalSafeLabel(80, 320).optional(),
+  description: BotCreationDraftSchema.shape.description.optional(),
+  instructions: canonicalBoundedText(8_000, 24 * 1024).optional(),
+}).strict().refine(patch => Object.keys(patch).length > 0, { message: "Choose a setting to change" });
+export type BotSavedSettingsPatch = z.infer<typeof BotSavedSettingsPatchSchema>;
 
 export const BotCreationSnapshotSchema = z.object({
   sessionId: canonicalReferenceId(128),

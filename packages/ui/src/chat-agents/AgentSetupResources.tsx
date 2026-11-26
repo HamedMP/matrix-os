@@ -96,8 +96,9 @@ function ResourcePicker({ id, group, context, recipe, catalog, connections, skil
   </section>;
 }
 
-export function AgentSetupResources({ revision, settingsVisited, ...props }: SetupResources & { revision: number; settingsVisited: boolean }) {
-  const [picker, setPicker] = useState<ResourceGroup | null>(null);
+export function AgentSetupResources({ revision, settingsVisited, picker, setPicker, ...props }: SetupResources & {
+  revision: number; settingsVisited: boolean; picker: ResourceGroup | null; setPicker(group: ResourceGroup | null): void;
+}) {
   const pickerId = useId();
   const { context, recipe, catalog, loading, pending, onChange, onOpenSettings, onRefresh } = props;
   const skillLabels = (recipe?.skills ?? []).map(id => catalog?.skills.find(skill => skill.id === id)?.name ?? id);
@@ -107,7 +108,7 @@ export function AgentSetupResources({ revision, settingsVisited, ...props }: Set
   });
   if (!context && !onChange && !onOpenSettings) return null;
 
-  const toggle = (group: ResourceGroup) => setPicker(current => current === group ? null : group);
+  const toggle = (group: ResourceGroup) => setPicker(picker === group ? null : group);
   return <section aria-label="Setup resources" className="grid min-w-0 gap-2">
     <div className="flex flex-wrap gap-2">
       {onChange && (catalog?.enabled || picker || settingsVisited) ? <>

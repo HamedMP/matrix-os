@@ -1,4 +1,4 @@
-import { botDraftPatchMatchesChoices, BotDraftProposalSchema, BotSetupQuestionSchema, type CanonicalChatRun } from "@matrix-os/contracts";
+import { botDraftPatchMatchesChoices, BotDraftProposalSchema, BotSavedSettingsPatchSchema, ChatAgentIdSchema, BotSetupQuestionSchema, type CanonicalChatRun } from "@matrix-os/contracts";
 import { createHash, randomUUID } from "node:crypto";
 
 /** Control replay and normal delivery use the same durable identity. */
@@ -19,6 +19,9 @@ export function assertBotDraftProposalAuthority(run: Pick<CanonicalChatRun, "dri
   const payload = { ...event };
   delete payload.type;
   const proposal = event.type === "bot.setup.question" ? BotSetupQuestionSchema.parse(payload) : BotDraftProposalSchema.parse(payload);
+  if (run.driverKind === "matrix_bot" && event.type === "bot.draft.proposed" && "patch" in proposal
+    && !run.context?.botCreation && ChatAgentIdSchema.safeParse(proposal.sessionId).success
+    && proposal.baseDraftRevision > 0 && BotSavedSettingsPatchSchema.safeParse(proposal.patch).success) return;
   const snapshot = run.context?.botCreation;
   if (run.driverKind !== "matrix_pi" || !snapshot || proposal.sessionId !== snapshot.sessionId
     || proposal.baseDraftRevision !== snapshot.draftRevision || ("patch" in proposal ? !botDraftPatchMatchesChoices(snapshot, proposal.patch) : !snapshot.intent)) throw new Error("Invalid Bot draft proposal provenance");

@@ -9,3 +9,14 @@ it("requires a genuine drafting run and exact admitted session/revision before c
   for (const invalid of [{ ...run, driverKind: "codex" as const }, { ...run, context: undefined }, { ...run, context: { ...run.context, botCreation: undefined } }]) expect(() => assertBotDraftProposalAuthority(invalid, event)).toThrow();
   for (const invalid of [{ ...event, sessionId: "other_session" }, { ...event, baseDraftRevision: 4 }, { ...event, patch: { grants: [] } }]) expect(() => assertBotDraftProposalAuthority(run, invalid)).toThrow();
 });
+
+it("accepts text-only proposals for an exact Bot identity from the direct Bot adapter", () => {
+  const direct = { driverKind: "matrix_bot" as const };
+  const change = { ...event, sessionId: "bot_meeting01", baseDraftRevision: 1 };
+  expect(() => assertBotDraftProposalAuthority(direct, change)).not.toThrow();
+  for (const bad of [{ ...change, baseDraftRevision: 0 }, { ...change, sessionId: "creation_test" },
+    { ...change, patch: { recipe: null } }, { ...change, patch: { archived: true } }]) {
+    expect(() => assertBotDraftProposalAuthority(direct, bad)).toThrow();
+  }
+  expect(() => assertBotDraftProposalAuthority(run, change)).toThrow();
+});

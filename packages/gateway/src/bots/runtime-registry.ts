@@ -200,6 +200,10 @@ export class BotRuntimeRegistry {
     if (!parsed.success || !isManagedPiBinding(parsed.data) && parsed.data.capabilities.includes("routine.cli") || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
       || parsed.data.subscription && parsed.data.route.api !== "openai-responses"
       || parsed.data.anthropicApi && (parsed.data.accessSourceId !== "owner_anthropic_key" || parsed.data.route.api !== "anthropic-messages" || parsed.data.subscription)) throw new BotRuntimeRegistryError("invalid_binding");
+    if (parsed.data.capabilities.includes("bot.settings.propose")
+      && (isManagedPiBinding(parsed.data) || parsed.data.requestClass !== "interactive" || parsed.data.group || parsed.data.readonlySummary)) {
+      throw new BotRuntimeRegistryError("invalid_binding");
+    }
     const draft = isManagedPiBinding(parsed.data) ? parsed.data.botCreation : undefined;
     if (parsed.data.capabilities.includes("bot.creation.propose") !== Boolean(draft)
       || draft && (parsed.data.capabilities.length !== 1 || parsed.data.accessSourceId !== "matrix_included"

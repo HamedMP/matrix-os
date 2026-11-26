@@ -1,5 +1,6 @@
 import { assertBotDraftProposalAuthority } from "./activity-persistence.js";
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
+import { canProposeBotSettings } from "./bot-settings-authority.js";
 import { assertPrivateRoutineRun } from "./private-routine-authority.js";
 import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
 import {
@@ -398,6 +399,9 @@ export class ChatRunLifecycleRepository {
           || new Set(proposals.map(proposal => proposal.id)).size !== 1
           || new Set(proposals.map(proposal => proposal.proposalId)).size !== 1) throw new ChatConflictError(chatId, Number(current.revision));
         const saved = await trx.selectFrom("chat_runs").selectAll().where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirstOrThrow();
+        if (saved.driver_kind === "matrix_bot" && !await canProposeBotSettings(trx, owner, chatId, runId, proposals[0]!.sessionId)) {
+          throw new ChatConflictError(chatId, Number(current.revision));
+        }
         for (const proposal of proposals) assertBotDraftProposalAuthority(toRun(saved), {
           type: proposal.type, proposalId: proposal.proposalId, sessionId: proposal.sessionId,
           baseDraftRevision: proposal.baseDraftRevision,

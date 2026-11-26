@@ -55,6 +55,7 @@ function rememberScanOffset(directory: string, offset: number): void {
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
   "bot.creation.propose": "read",
+  "bot.settings.propose": "read",
   "slack.rules":"write",
   "routine.cli": "write",
   "routine.propose":"write",
@@ -201,6 +202,7 @@ export function createBotToolDispatcher(deps: {
   homePath: string;
   githubDeveloper?: import("./github-developer-tools.js").BotGithubDeveloperTools;
   managedRoutine?: { execute(binding: PiRuntimeBinding, operation: import("@matrix-os/contracts").RoutineCliOperation, toolCallId: string, signal: AbortSignal): Promise<BotToolResult> };
+  proposeSettings?(binding: import("./runtime-registry.js").BotRuntimeBinding, patch: import("@matrix-os/contracts").BotSavedSettingsPatch): void;
   slackRules?: import("../slack/rule-tools.js").SlackRuleTools;
   routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"propose"|"list"|"control">;
   submittedArtifact?(binding: PiRuntimeBinding, args: Extract<BotToolRequest, { capability: "artifact.read" }>["args"]): Promise<string | undefined>;
@@ -374,6 +376,11 @@ export function createBotToolDispatcher(deps: {
           if (await workspace(binding) !== root) throw new BotBrokerActionError("stale_generation");
           await deps.assertSource?.(binding, signal);
         }) };
+      }
+      if (request.capability === "bot.settings.propose") {
+        if (!deps.proposeSettings || isManagedPiBinding(binding) || binding.group || binding.readonlySummary || binding.requestClass !== "interactive") throw new BotBrokerActionError("not_granted");
+        deps.proposeSettings(binding, request.args.patch);
+        return { result: textResult("The proposed changes are ready for the owner to review and save.") };
       }
       if(request.capability==="slack.rules"){
         if(!deps.slackRules || isManagedPiBinding(binding))throw new BotBrokerActionError("not_granted");
