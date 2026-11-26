@@ -1,4 +1,4 @@
-import { ALIBABA_QWEN_37_PLUS_MODEL_ID, ALIBABA_QWEN_37_PLUS_PRICE, FUNDED_PRICING_REVIEW_MAX_MS, FUNDED_SONNET_5_PRICE, GOOGLE_GEMINI_38_FLASH_MODEL_ID, GOOGLE_GEMINI_38_FLASH_PRICE, MOONSHOT_KIMI_K31_PRO_MODEL_ID, MOONSHOT_KIMI_K31_PRO_PRICE } from "@matrix-os/contracts";
+import { ALIBABA_QWEN_37_PLUS_MODEL_ID, ALIBABA_QWEN_37_PLUS_PRICE, FUNDED_PRICING_CATALOG, FUNDED_PRICING_REVIEW_MAX_MS, FUNDED_SONNET_5_PRICE, GOOGLE_GEMINI_38_FLASH_MODEL_ID, GOOGLE_GEMINI_38_FLASH_PRICE, MOONSHOT_KIMI_K31_PRO_MODEL_ID, MOONSHOT_KIMI_K31_PRO_PRICE } from "@matrix-os/contracts";
 import { WORKERS_AI_PRICE_SNAPSHOTS, WORKERS_AI_PRICING_VERSIONS } from "./funded-workers-pricing.js";
 /** Numeric rates are immutable code snapshots; operator configuration only
  * re-attests their validity after checking the official provider price pages. */
@@ -9,7 +9,6 @@ export const FUNDED_PRICING_VERSIONS = Object.freeze({
   [MOONSHOT_KIMI_K31_PRO_MODEL_ID]: MOONSHOT_KIMI_K31_PRO_PRICE.version,
   [ALIBABA_QWEN_37_PLUS_MODEL_ID]: ALIBABA_QWEN_37_PLUS_PRICE.version,
 });
-const GEMINI_INTRODUCTORY_RATE_END = Date.parse("2026-12-31T23:59:59.999Z");
 export interface FundedPricingReview {
   canonicalModelId: keyof typeof FUNDED_PRICING_VERSIONS;
   version: string;
@@ -45,8 +44,9 @@ export function validateFundedPricingReview(review: FundedPricingReview): void {
   }
   const end = canonicalTime(review.validThrough);
   const duration = end - canonicalTime(review.reviewedAt);
+  const rateExpiresAt = FUNDED_PRICING_CATALOG[review.canonicalModelId]?.rateExpiresAt;
   if (duration <= 0 || duration > FUNDED_PRICING_REVIEW_MAX_MS
-    || (review.canonicalModelId === GOOGLE_GEMINI_38_FLASH_MODEL_ID && end > GEMINI_INTRODUCTORY_RATE_END)) {
+    || (rateExpiresAt !== undefined && end > Date.parse(rateExpiresAt))) {
     throw new Error("Invalid funded AI pricing review window");
   }
 }

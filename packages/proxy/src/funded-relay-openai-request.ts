@@ -12,7 +12,7 @@ import {
   managedWorkersAiModel,
   validateBotImageInferenceBody,
 } from "@matrix-os/contracts";
-import { FundedGeminiReplaySchema, restoreFundedGeminiToolSignatures } from "./funded-relay-gemini.js";
+import { FundedGeminiReplaySchema, restoreFundedGeminiToolSignatures } from "./funded-relay-openai-response.js";
 import { BoundedJsonSchema } from "./funded-relay-request.js";
 
 const Text = z.string().max(1024 * 1024);

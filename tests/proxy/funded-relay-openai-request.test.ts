@@ -13,10 +13,9 @@ import { BROKER_PLACEHOLDER_KEY, createBridgeModel } from "../../packages/bot-ru
 import { createBotTools } from "../../packages/bot-runtime/src/tools.js";
 import { createFundedRelayService, requireFundedRelayServiceConfig } from "../../packages/proxy/src/funded-main-app.js";
 import { FUNDED_PRICING_VERSIONS } from "../../packages/proxy/src/funded-pricing-review.js";
-import { normalizeFundedGeminiResponse } from "../../packages/proxy/src/funded-relay-gemini.js";
 import { FUNDED_GLM_FLASH } from "../../packages/proxy/src/funded-relay-model.js";
 import { serializeFundedOpenAiRequest } from "../../packages/proxy/src/funded-relay-openai-request.js";
-import { normalizeFundedOpenAiResponse } from "../../packages/proxy/src/funded-relay-openai-response.js";
+import { normalizeFundedGeminiResponse, normalizeFundedOpenAiResponse } from "../../packages/proxy/src/funded-relay-openai-response.js";
 import { createFundedOpenAiUsageTracker } from "../../packages/proxy/src/funded-relay-openai-usage.js";
 import type { FundedPlatformClient } from "../../packages/proxy/src/funded-relay-platform-client.js";
 import { probeFundedModel } from "../../packages/proxy/src/funded-relay-readiness.js";

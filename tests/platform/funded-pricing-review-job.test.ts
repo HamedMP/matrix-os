@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ALIBABA_QWEN_37_PLUS_MODEL_ID, FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS, FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS,
   FUNDED_PRICING_CATALOG,
-  GOOGLE_GEMINI_38_FLASH_MODEL_ID, MOONSHOT_KIMI_K31_PRO_MODEL_ID, type FundedAiPricingReview,
+  GOOGLE_GEMINI_38_FLASH_MODEL_ID, MOONSHOT_KIMI_K31_PRO_MODEL_ID, currentFundedAiPricingReview,
+  type FundedAiPricingReview,
 } from "@matrix-os/contracts";
 import {
   runFundedPricingReview,
@@ -260,6 +261,53 @@ describe("funded pricing review job", () => {
     expect(opts.linear.resolve).toHaveBeenCalledWith(qwen, signal);
     expect(store.finish).toHaveBeenCalledWith("review", "lease-1", now, true);
   });
+
+  it.each([
+    { validThrough: undefined, description: "new approval" },
+    { validThrough: "2027-01-06T00:00:00.000Z", description: "legacy approval outside the renewal window" },
+  ])("caps the Gemini $description at the introductory pricing deadline", async ({ validThrough }) => {
+    const modelId = GOOGLE_GEMINI_38_FLASH_MODEL_ID;
+    const clock = new Date("2026-12-15T00:00:00.000Z");
+    const deadline = "2026-12-31T23:59:59.999Z";
+    const store = jobStore(validThrough ? [{
+      ...existing(modelId, 0), reviewedAt: "2026-12-07T00:00:00.000Z", validThrough,
+    }] : []);
+    const opts = options(store);
+    await runFundedPricingReview({
+      ...opts, now: () => clock, readOfficial: async () => ({ [modelId]: observation("match") }),
+    }, signal);
+    expect(store.save).toHaveBeenCalledWith(expect.objectContaining({
+      modelId, reviewedAt: clock.toISOString(), validThrough: deadline, blockedAt: null,
+    }), "lease-1");
+    expect(opts.linear.notify).toHaveBeenCalledWith(expect.objectContaining({
+      key: modelId, deadline, description: expect.stringContaining("introductory pricing"),
+    }), signal);
+    const [review] = vi.mocked(store.save).mock.calls[0]!;
+    expect(currentFundedAiPricingReview(review, clock)).toBe(true);
+    expect(currentFundedAiPricingReview(review, new Date(deadline))).toBe(false);
+  });
+
+  it.each(["2026-12-31T23:59:59.999Z", "2027-01-01T00:00:00.000Z"])(
+    "never re-attests Gemini after introduction ends at %s even if posted prices have not changed", async (time) => {
+      const modelId = GOOGLE_GEMINI_38_FLASH_MODEL_ID;
+      const invalid = { ...existing(modelId, 0), reviewedAt: "2026-12-07T00:00:00.000Z",
+        validThrough: "2027-01-06T00:00:00.000Z" };
+      const clock = new Date(time);
+      const store = jobStore([invalid]);
+      const opts = options(store);
+      expect(currentFundedAiPricingReview(invalid, new Date("2026-12-15T00:00:00.000Z"))).toBe(false);
+      expect(currentFundedAiPricingReview(invalid, clock)).toBe(false);
+      await runFundedPricingReview({
+        ...opts, now: () => clock, readOfficial: async () => ({ [modelId]: observation("match") }),
+      }, signal);
+      expect(store.save).not.toHaveBeenCalled();
+      expect(opts.linear.notify).toHaveBeenCalledWith(expect.objectContaining({
+        key: modelId, deadline: "2026-12-31T23:59:59.999Z", priority: 1,
+        description: expect.stringContaining("introductory pricing has expired"),
+      }), signal);
+      expect(opts.linear.resolve).not.toHaveBeenCalledWith(modelId, signal);
+    },
+  );
 
   it("fences a changed price immediately while preserving the existing deadline", async () => {
     const old = existing(glm, 6);

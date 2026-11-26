@@ -52,15 +52,23 @@ function alertFor(
 }
 
 function reviewModel(
-  modelId: string, version: string, old: FundedAiPricingReview | undefined, evidence: OfficialPricingObservation, now: Date,
+  modelId: string, rate: (typeof FUNDED_PRICING_CATALOG)[string],
+  old: FundedAiPricingReview | undefined, evidence: OfficialPricingObservation, now: Date,
 ): Result {
+  const { version, rateExpiresAt } = rate;
   const previous = old?.version === version ? old : undefined;
   const nowIso = now.toISOString();
   const nowMs = now.getTime();
+  if (rateExpiresAt && rateExpiresAt <= nowIso) return {
+    alert: alertFor(modelId, "The introductory pricing has expired. Review a new rate version before restoring admission.",
+      evidence.sourceUrl, rateExpiresAt, now),
+  };
   const priorRetirement = previous?.blockedAt && previous.blockedAt !== previous.reviewedAt ? previous.blockedAt : null;
   const retirement = evidence.retiredAt ?? priorRetirement;
   const retirementSource = evidence.retirementSourceUrl ?? FUNDED_PRICING_SOURCE_URLS.changelog;
-  const deadline = previous?.validThrough ?? null;
+  const recordedDeadline = previous?.validThrough ?? null;
+  const needsDeadlineRepair = recordedDeadline !== null && rateExpiresAt !== undefined && recordedDeadline > rateExpiresAt;
+  const deadline = needsDeadlineRepair ? rateExpiresAt : recordedDeadline;
   const sourceDigest = evidence.sourceDigest;
   const activeBlock = previous?.blockedAt && previous.blockedAt <= nowIso ? previous.blockedAt : null;
 
@@ -86,11 +94,12 @@ function reviewModel(
   const retireSooner = retirement !== null && (deadline === null || retirement < deadline);
   const retirementChanged = retirement !== (previous?.blockedAt ?? null);
   let update: FundedAiPricingReview | undefined;
-  if (canRenew && (currentWindow <= RENEWAL_THRESHOLD || retireSooner || retirementChanged)) {
+  if (canRenew && (currentWindow <= RENEWAL_THRESHOLD || retireSooner || retirementChanged || needsDeadlineRepair)) {
     const renewed = new Date(nowMs + RENEWAL_PERIOD).toISOString();
     const next = currentWindow <= RENEWAL_THRESHOLD || !retirement ? renewed : deadline ?? renewed;
-    const validThrough = retirement && retirement < next ? retirement : next;
-    if (validThrough > nowIso && (!previous || validThrough !== deadline || retirementChanged)) {
+    const retiredThrough = retirement && retirement < next ? retirement : next;
+    const validThrough = rateExpiresAt && rateExpiresAt < retiredThrough ? rateExpiresAt : retiredThrough;
+    if (validThrough > nowIso && (!previous || validThrough !== recordedDeadline || retirementChanged)) {
       update = { modelId, version, reviewedAt: nowIso, validThrough, blockedAt: retirement, sourceDigest };
     }
   } else if (retirement && sourceDigest && deadline && deadline > nowIso && retirementChanged) {
@@ -110,6 +119,11 @@ function reviewModel(
     alert: alertFor(modelId, "Official pricing evidence is incomplete, inconsistent or unavailable. The prior approval was not renewed.",
       evidence.sourceUrl, deadline, now),
   };
+  if (rateExpiresAt && (update?.validThrough ?? deadline) === rateExpiresAt) return {
+    update,
+    alert: alertFor(modelId, "The introductory pricing ends on the review deadline. Verify the replacement rates.",
+      evidence.sourceUrl, rateExpiresAt, now),
+  };
   return { update };
 }
 
@@ -128,7 +142,7 @@ export async function runFundedPricingReview(options: FundedPricingReviewJobOpti
       signal.throwIfAborted();
       if (!Object.hasOwn(FUNDED_PRICING_CATALOG, modelId)) throw new Error("Unknown funded pricing review model");
       const previous = rows.find((row) => row.modelId === modelId);
-      const result = reviewModel(modelId, FUNDED_PRICING_CATALOG[modelId]!.version, previous, evidence, at);
+      const result = reviewModel(modelId, FUNDED_PRICING_CATALOG[modelId]!, previous, evidence, at);
       if (result.update && !await options.store.save(result.update, leaseId)) {
         throw new Error("Funded pricing review lease lost");
       }

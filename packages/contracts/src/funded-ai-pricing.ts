@@ -38,6 +38,7 @@ export const FUNDED_SONNET_5_PRICE = Object.freeze({
 // https://developers.cloudflare.com/ai/models/google/gemini-3.8-flash/
 export const GOOGLE_GEMINI_38_FLASH_PRICE = Object.freeze({
   version: "cloudflare-2026-11-26-gemini-3.8-flash",
+  rateExpiresAt: "2026-12-31T23:59:59.999Z",
   input: 750,
   output: 3750,
   cached: 75,
@@ -68,6 +69,7 @@ export const ALIBABA_QWEN_37_PLUS_PRICE = Object.freeze({
 
 type FundedRate = {
   version: string;
+  rateExpiresAt?: string;
   input: number;
   output: number;
   cached: number;
@@ -127,6 +129,7 @@ export function currentFundedAiPricingReview(review: FundedAiPricingReview, at: 
   const price = Object.hasOwn(FUNDED_PRICING_CATALOG, review.modelId) ? FUNDED_PRICING_CATALOG[review.modelId] : undefined;
   const time = at.getTime();
   return price?.version === review.version && Date.parse(review.reviewedAt) <= time
+    && (!price.rateExpiresAt || review.validThrough <= price.rateExpiresAt)
     && Date.parse(review.validThrough) > time
     && (review.blockedAt === null || Date.parse(review.blockedAt) > time);
 }

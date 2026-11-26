@@ -34,8 +34,7 @@ import {
 import { JEV_READINESS_PATH, jevProbeControlAuthorized, fixedJevProbeRequest, assertJevProbeSettlement } from "./funded-relay-jev-probe.js";
 import { estimateWorstCaseMicrousd, isFundedModelPriceCurrent, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
-import { normalizeFundedGeminiResponse } from "./funded-relay-gemini.js";
-import { normalizeFundedOpenAiResponse } from "./funded-relay-openai-response.js";
+import { normalizeFundedGeminiResponse, normalizeFundedOpenAiResponse } from "./funded-relay-openai-response.js";
 import { normalizeWorkersAiResponse } from "./funded-relay-workers-response.js";
 import {
   createFundedPlatformClient,
