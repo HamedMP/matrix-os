@@ -1,5 +1,6 @@
+import type { SummaryAccess } from "../slack/mention-summary.js";
 import { z } from "zod/v4";
-import { SlackThreadContextAccessResponseSchema, type SlackBridgeEnvelope, type SlackThreadContextAccess } from "@matrix-os/contracts/slack-bridge";
+import { SlackPrivateThreadContextResponseSchema, SlackThreadContextAccessResponseSchema, type SlackBridgeEnvelope, type SlackThreadContextAccess } from "@matrix-os/contracts/slack-bridge";
 
 const ContextSchema=z.object({available:z.literal(true),untrusted:z.literal(true),partial:z.boolean(),messages:z.array(z.object({
   user:z.string().max(80).optional(),ts:z.string().max(32),thread_ts:z.string().max(32).optional(),text:z.string().max(16_384).optional(),
@@ -10,8 +11,8 @@ export function createSlackOwnerClient(options:{platformUrl:string;handle:string
   if((origin.protocol!=="https:" && !(origin.protocol==="http:" && local)) || origin.username || origin.password || origin.search || origin.hash || origin.pathname!=="/"
     || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(options.handle) || !/^[a-f0-9]{64}$/.test(options.token))throw new Error("Slack transport unavailable");
   const fetchImpl=options.fetchImpl??fetch;
-  async function rpc(path:string,payload:unknown,signal?:AbortSignal){
-    const response=await fetchImpl(`${origin.origin}${path}`,{method:"POST",body:JSON.stringify(payload),redirect:"error",signal:signal ? AbortSignal.any([signal, AbortSignal.timeout(2_000)]) : AbortSignal.timeout(10_000),
+  async function rpc(path:string,payload:unknown,signal?:AbortSignal,timeoutMs=2_000,maxBytes=16*1024){
+    const response=await fetchImpl(`${origin.origin}${path}`,{method:"POST",body:JSON.stringify(payload),redirect:"error",signal:signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(10_000),
       headers:{"content-type":"application/json",authorization:`Bearer ${options.token}`,"x-matrix-handle":options.handle}});
     if(!response.ok && response.status!==503){
       const header=response.headers.get("retry-after");
@@ -23,12 +24,17 @@ export function createSlackOwnerClient(options:{platformUrl:string;handle:string
     const reader=response.body?.getReader();if(!reader)throw new Error("Slack transport unavailable");
     const chunks:Uint8Array[]=[];let size=0;
     try{while(true){const next=await reader.read();if(next.done)break;size+=next.value.byteLength;
-      if(size>16*1024){await reader.cancel();throw new Error("Slack transport unavailable");}chunks.push(next.value);}}
+      if(size>maxBytes){await reader.cancel();throw new Error("Slack transport unavailable");}chunks.push(next.value);}}
     finally{reader.releaseLock();}
     const body:unknown=JSON.parse(Buffer.concat(chunks,size).toString("utf8"));
     return{status:response.status,body,retryAfterMs:undefined};
   }
   return{
+    async readSummaryThread(access: SummaryAccess, signal: AbortSignal) {
+      const response = await rpc("/internal/slack/context", access, signal, 30_000, 24*1024);
+      const parsed = SlackPrivateThreadContextResponseSchema.safeParse(response.body);
+      return response.status === 200 && parsed.success && parsed.data.available ? parsed.data : null;
+    },
     async readThreadContextAccess(access: SlackThreadContextAccess, signal: AbortSignal) {
       try {
         const response = await rpc("/internal/slack/thread-context/access", { ...access, includeChannelMetadata: true }, signal);

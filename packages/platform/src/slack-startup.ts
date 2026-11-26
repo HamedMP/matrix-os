@@ -10,6 +10,7 @@ import type { PlatformCollaborationComposition } from "./collaboration/wiring.js
 import { createSlackApp, loadSlackAppConfig } from "./slack/wiring.js";
 import type { SlackDatabase } from "./slack/database.js";
 import { loadSlackThreadContextGrant } from "./slack/thread-context.js";
+import { loadSlackMentionSummaryRule } from "./slack/mention-summary.js";
 import { createSlackHomeTransport, type SlackHome } from "./slack-home-transport.js";
 import { createSlackMachineResolver, isSlackMachineAvailable, loadSlackPreviewHandle } from "./slack/home-resolver.js";
 
@@ -27,6 +28,7 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
   try {config=loadSlackAppConfig(options.env);previewHandle=loadSlackPreviewHandle(options.env);}catch(error:unknown){console.warn("[slack] app configuration unavailable",error instanceof Error?error.name:"UnknownError");return unavailable();}
   try { contextGrant=loadSlackThreadContextGrant(options.env,previewHandle); }
   catch (error) { console.warn("[slack] thread context configuration unavailable",error instanceof Error?error.name:"UnknownError"); }
+  const mentionSummaryRule = loadSlackMentionSummaryRule(options.env, contextGrant, previewHandle);
   const collaboration=options.collaboration;
   if(!config || !collaboration || !("organizations" in collaboration) || !collaboration.organizations || !options.platformSecret) return unavailable();
   const organizations=collaboration.organizations;
@@ -46,7 +48,7 @@ export async function bootstrapPlatformSlack(options:{env:NodeJS.ProcessEnv;db:P
   return createSlackApp({db:options.db.kysely as unknown as Kysely<SlackDatabase>,config,resolveActor,fetchImpl,startCleanup:options.startCleanup,
     linkTransaction: (actorId, work) => withAccountDeletionAdmission(options.db, actorId,
       trx => work(trx.executor as unknown as Kysely<SlackDatabase>), options.env),
-    contextGrant,
+    contextGrant, mentionSummaryRule,
     dispatchContext: async (envelope, signal) => {
       const home = await homeFor(envelope.ownerId);
       if (home.ownerId !== envelope.ownerId || home.runtimeId !== envelope.runtimeId) throw new Error("Slack destination changed");

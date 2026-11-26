@@ -22,6 +22,7 @@ export async function createPrivateSlackThreadContext(options: {
   db: Kysely<OwnerBotDatabase>; ownerId: string; runtimeId: string;
   authorize(input: SlackThreadContextAccess, signal: AbortSignal): Promise<boolean | SlackThreadContextAccessResponse>;
   botAvailable?(target: Target): Promise<boolean>;
+  onReceive?(envelope: SlackThreadContextEnvelope, trx: Transaction<OwnerBotDatabase>): Promise<void>;
 }) {
   const db = options.db as unknown as Kysely<ThreadContextDatabase>;
   await db.transaction().execute(async trx => {
@@ -62,6 +63,7 @@ export async function createPrivateSlackThreadContext(options: {
           sender_id: event.userId, text: truncate(event.text), received_at: new Date(),
         }).onConflict(conflict => conflict.doNothing()).returning("event_id").executeTakeFirst();
         if (inserted) {
+          await options.onReceive?.(envelope, trx as unknown as Transaction<OwnerBotDatabase>);
           await sql`DELETE FROM slack_private_thread_context AS stored
             WHERE stored.owner_id = ${ownerId} AND (stored.grant_id, stored.message_ts) IN (
               SELECT grant_id, message_ts FROM slack_private_thread_context

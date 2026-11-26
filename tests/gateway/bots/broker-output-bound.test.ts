@@ -95,3 +95,26 @@ it.each([512 * 1024 + 1, 1024 * 1024, 1024 * 1024 + 1])("keeps the buffered Bot 
     expect(result.body === responseBody).toBe(true);
   } else expect(result).toMatchObject({ ok: false, error: "response_too_large" });
 });
+
+it("denies summary tools and enforces one gateway-owned inference even if the worker retries",async()=>{
+ const summary={...binding,readonlySummary:true as const,route:{...binding.route,maxOutputTokens:2048}};
+ let consumed=false;const consume=vi.fn(async()=>{if(consumed)return false;consumed=true;return true;});
+ const fetchImpl=vi.fn<typeof fetch>(async()=>new Response("done",{headers:{"content-type":"text/event-stream"}}));
+ const invoke=(tools:unknown[]=[])=>forwardBotInference({version:1,action:"inference.messages",requestId:"018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1",runtimeHandle:summary.runtimeHandle,executionGeneration:summary.executionGeneration,method:"POST",path:"/v1/messages?beta=true",headers:{},body:JSON.stringify({model:summary.route.modelId,stream:true,max_tokens:2048,messages:[{role:"user",content:"Untrusted source"}],tools})},summary,()=>({allowed:true,accessSourceId:"matrix_included",allowedModelIds:[summary.route.modelId]}),{homePath:"/synthetic",lifetime:new AbortController().signal,consumeReadonlyInference:consume,resolveCredentials:async()=>({env:{ANTHROPIC_AUTH_TOKEN:"synthetic",ANTHROPIC_BASE_URL:"https://relay.invalid"}}),fetchImpl});
+ expect((await invoke([{name:"write_file",input_schema:{}}])).ok).toBe(false);
+ expect(fetchImpl).not.toHaveBeenCalled();expect(consume).not.toHaveBeenCalled();
+ expect((await invoke()).ok).toBe(true);
+ expect((await invoke()).ok).toBe(false);
+ expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  {tools:[{name:"save_task"}]}, {tool_choice:"auto"}, {functions:[{name:"write"}]},
+  {max_tokens:2049}, {messages:[{role:"assistant",content:"Old private history"},{role:"user",content:"summary"}]},
+  {messages:[{role:"user",content:[{type:"image",source:{type:"base64",data:"AAAA",media_type:"image/png"}}]}]},
+])("rejects unsupported readonly summary inference input %j before any spend",async override=>{
+ const summary={...binding,readonlySummary:true as const,route:{...binding.route,maxOutputTokens:2048}};
+ const fetchImpl=vi.fn<typeof fetch>();const consumeReadonlyInference=vi.fn(async()=>true);
+ const result=await forwardBotInference({version:1,action:"inference.messages",requestId:"018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1",runtimeHandle:summary.runtimeHandle,executionGeneration:summary.executionGeneration,method:"POST",path:"/v1/messages?beta=true",headers:{},body:JSON.stringify({model:summary.route.modelId,stream:true,max_tokens:2048,messages:[{role:"user",content:"summary"}],...override})},summary,()=>({allowed:true,accessSourceId:"matrix_included",allowedModelIds:[summary.route.modelId]}),{homePath:"/synthetic",lifetime:new AbortController().signal,fetchImpl,consumeReadonlyInference});
+ expect(result.ok).toBe(false);expect(fetchImpl).not.toHaveBeenCalled();expect(consumeReadonlyInference).not.toHaveBeenCalled();
+});

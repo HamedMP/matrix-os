@@ -2,7 +2,7 @@
 
 ## 1. Scope
 
-Ordinary human messages in an explicitly enrolled public Slack channel or thread can supply reference context to one selected private Matrix bot. A message alone never admits a Chat Turn or Run. A channel grant accepts new top-level posts and thread replies. A legacy thread grant accepts replies in its exact thread. Historical backfill, edits, deletion reconciliation, group DMs, personal mention triggers, and outbound actions are outside this contract.
+Ordinary human messages in an explicitly enrolled public Slack channel or thread can supply reference context to one selected private Matrix bot. An ordinary message alone never admits a Chat Turn or Run. An independently enabled, recipient-owned rule may admit one restricted private summary for a genuine mention by another human. A channel grant accepts new top-level posts and thread replies. A legacy thread grant accepts replies in its exact thread. Historical backfill, edits, deletion reconciliation, group DMs and outbound actions are outside this contract.
 
 ## 2. Interfaces
 
@@ -80,3 +80,49 @@ Correct. Check the explicit channel grant or exact thread grant, forward via the
 Wrong. Hardcode a channel ID to a display name or use a label as enrollment authority.
 
 Correct. Obtain the current provider label for the already authorized channel ID and attach it as bounded reference data at read time.
+
+
+## 8. Optional recipient mention summary pilot
+
+`SLACK_PREVIEW_MENTION_SUMMARY_RULE` is a separate optional JSON object. Its strict shape is `{ruleId,version,grantId,enabledAfter}`: a safe 1–64 character rule ID, positive integer version, unchanged read-grant SHA-256 digest, and ISO not-before time. A missing or invalid rule disables automation only. It never changes the existing read grant, app scopes, installations, ordinary DM routes or legacy access response. It is configured only for the reviewed PR-preview runtime.
+
+Only a new real human other than the linked recipient can trigger. The event must pass existing channel/source filters, the exact read grant and all current access checks, and contain an active user mention of `grant.ownerSlackId`. Code, quotes, escaped examples, link labels, self-mentions, app/bot/subtype messages, external shares, and unknown rich-text structures do not trigger. A teammate need not have a Matrix account: the sender remains Slack provenance, while the linked recipient supplies Matrix execution authority. Ordinary posts/replies continue to update reference context without a Run.
+
+Platform attaches `envelope.summary = {ruleId,version,proof}` only after that admission. `proof` is a domain-separated source HMAC bound to the configured grant, rule and exact event/root/timestamp/sender tuple. It is carried only through the signed owner bridge and private owner job. It is never included in model input, canonical Chat, public responses or logs. Possession of a machine credential cannot mint a proof for a different root or sender.
+
+### Private broker payload
+
+The explicit private variant uses the existing `POST /internal/slack/context` route:
+
+```json
+{
+  "ownerId":"user_owner","botId":"bot_12345678","chatId":"chat_12345678",
+  "runtimeId":"runtime_preview","grantId":"<64 hex grant digest>",
+  "summary":{"ruleId":"owner_mentions","version":1,"eventId":"Ev123",
+    "threadTs":"1795000000.000001","ts":"1795000001.000001","userId":"U456","proof":"<64 hex source proof>"}
+}
+```
+
+The machine-authenticated route verifies the current rule and source proof, derives channel ID from the grant, and uses the proved signed root. It does not create a Slack reply/reaction destination. Current app and linked-recipient conversation access, installation/link generation, organization membership, owner/bot/Chat/runtime and exact rule are checked before and after bounded retrieval. At most three pages of 15 messages and 16 KiB of source are retained; a provider cursor/page cap sets `partial`, never a claim of complete coverage. Provider failures are unavailable, not an empty successful thread. The response includes trusted `recipientUserId` from the grant so the summary distinguishes the owner's mentions and proposed to-dos. Display labels remain optional, validated metadata.
+
+| Route or execution boundary | Authentication and authority |
+| --- | --- |
+| Slack events → summary marker | Existing raw Slack HMAC and event receipt, current opted-in read grant/rule, real other-human active mention, no historical catchup. |
+| Owner context receive → job | Existing exact path/body bridge HMAC; active private direct Chat/bot; source insert and job insert share one owner transaction. |
+| Private thread broker / access with `summary` | Registered owner machine bearer; current exact grant, rule and source HMAC; owner link/org/install/Slack membership rechecked. |
+| Canonical summary admission / queue | Process-private symbol and reserved deterministic request ID. Public bodies cannot provide provenance. |
+| Bot adapter / model send | Durable job joined to canonical owner/Chat/Turn/Run/request/actor/normalized parts and first attempt; recheck local private binding after remote access returns. |
+
+The owner table `slack_mention_summary_jobs` retains the immutable signed source and metadata for 24 hours. The source reference and pending job commit atomically. Durable logical message identity uses grant + rule ID/version + channel + timestamp, excluding the event-specific proof; a second unique event identity prevents event reuse. This dedup remains effective after the passive 64-reference retention window evicts the original row. The pilot caps creation at 25 jobs per UTC day, pending work at 100, and summary concurrency at one. Leased claims get at most five bounded exponential admission retries. A lost canonical acknowledgment reconciles the same deterministic request against the existing canonical Run/queue, never starts a second logical Run, and never repeats an ambiguous paid call. Terminal/expired leases and raw records are cleaned by the bounded owner drain; shutdown aborts access work and drains owned resources. Disabling/replacing the rule prevents pending/model work after current authority revalidation.
+
+### Enforced read-only execution
+
+The existing canonical Matrix bot adapter derives summary mode from the durable receipt, never from model text or an HTTP `readonly` flag. Both runtime binding and worker spec have `capabilities: []`; no tools, routines, tasks, memory, attachments, owner SOUL, unrelated Chat history or steering are admitted. The task gets a fresh private task rather than continuing a waiting manual task. A fixed policy requests a Chinese summary and a **textual suggested to-do checklist**, including source/people/time/coverage. It does not claim to execute any to-do.
+
+The broker rejects nonempty model tool definitions and non-text/history payloads. One durable compare-and-set at the final provider dispatch enforces a single inference even if a worker retries or bypasses its own limit. Output is capped at 2,048 tokens. This pilot supports existing included completions and messages inference paths; `openai-responses` routes fail closed instead of inheriting unrestricted behavior. Broker session load/save is ephemeral for this run and never reads, replaces or tags the ordinary Personal Assistant session. Source is injected only into the current model-request copy, under the existing 16 KiB source ceiling; ordinary passive reads retain their 4 KiB cap.
+
+Public retries of a summary-origin Turn, queued-message edits, steering a summary queue item into an ordinary tool-enabled Run, and shared/published queue promotion are refused. The immutable original Turn identity is checked as well as the current Run request ID. Missing summary service/authority cannot fall back to normal tool-enabled execution. Canonical Chat stores only the fixed automatic request and resulting summary, not the raw source, proof or replayable thread history. No Slack outbox is created.
+
+Required regression: signed teammate mention → atomic owner job → existing canonical queue promotion → actual Pi loop → real gateway inference broker with synthetic provider HTTP → private committed summary. Assert ordinary/code/self messages admit no Run, same event/message stays single, no source/proof in canonical history, no ordinary-session writes, no tools, at most one provider dispatch, recipient mapping and bounded partial context, current revocation, canonical retry/queue steering/edit denials, daily/retry/TTL bounds, and zero Slack posts/reactions/destinations. Local synthetic/CI evidence does not qualify a live Slack mention or a paid provider acceptance.
+
+The existing canonical private-authority transaction helper also fences summary-origin admission and output. It checks historical sharing under the same Chat row lock held by canonical admission/output and sharing transitions, so an asynchronous broker authorization snapshot cannot publish private automatic output after a concurrent share. Source reads separately revalidate live local and remote authority. Project sharing enrollment treats an outstanding summary-origin queue like other private automation and refuses promotion into shared authority. These checks supplement the broker's current remote membership checks; a successful read at model admission does not grant later publication authority.
