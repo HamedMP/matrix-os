@@ -21,7 +21,7 @@ export function createSlackContextRoutes(options: SlackAppRouteOptions): Hono {
     try { request = await c.req.json(); } catch (error: unknown) { if (error instanceof Error && error.name === "BodyLimitError") throw error; if (!(error instanceof SyntaxError)) console.warn("[slack] context parse failed"); return c.json({ error: "Invalid request" }, 422); }
     const parsed = RequestSchema.safeParse(request); if (!parsed.success) return c.json({ error: "Invalid request" }, 422);
     const key = { appId: options.config.appId, teamId: parsed.data.teamId, eventId: parsed.data.eventId };
-    const authorized = await authorizeSlackDestination(options, key, runtime.ownerId);
+    const authorized = await authorizeSlackDestination(options, key, runtime);
     if (!authorized) return c.json({ error: "Forbidden" }, 403);
     const { installed, destination } = authorized;
     const token = decryptSlackToken(installed.encryptedBotToken, options.config.tokenEncryptionKey, `${key.appId}:${key.teamId}`);
@@ -41,7 +41,7 @@ export function createSlackContextRoutes(options: SlackAppRouteOptions): Hono {
       }
       if (messages.length < page.messages.length) partial = true;
       // A revocation during the upstream read must prevent the fetched source from leaving this boundary.
-      if (!await authorizeSlackDestination(options, key, runtime.ownerId)) return c.json({ error: "Forbidden" }, 403);
+      if (!await authorizeSlackDestination(options, key, runtime)) return c.json({ error: "Forbidden" }, 403);
       return c.json({ available: true, untrusted: true, partial, messages });
     } catch (error: unknown) {
       console.warn("[slack] thread context unavailable", error instanceof Error ? error.name : "UnknownError");
