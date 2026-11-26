@@ -1,4 +1,5 @@
 "use client";
+import { randomUUID } from "@matrix-os/ui/random-uuid";
 import {COMPANY_DRIVE_MOBILE_CHAT_EVENT,useCompanyDriveChatDraft} from "@/stores/company-drive-chat-draft";
 import {useWindowManager} from "@/hooks/useWindowManager";
 
@@ -105,7 +106,7 @@ export function OrganizationDrivesView({ requestedScopeId, requestedIntentId, dr
       await api.direct.request(option.scopeId, "POST", `${base(option.scopeId)}/files/lookup`, { path }));
     const reservation = OrganizationDriveUploadReservationSchema.parse(await api.direct.request(option.scopeId,
       "POST", `${base(option.scopeId)}/uploads`, { path, size: file.size, sha256: digest,
-        requestId: crypto.randomUUID(), baseVersion: version.baseVersion }));
+        requestId: randomUUID(), baseVersion: version.baseVersion }));
     try {
       const response = await fetch(reservation.putUrl, { method: "PUT", body: bytes,
         redirect: "error", signal: AbortSignal.timeout(15 * 60_000) });

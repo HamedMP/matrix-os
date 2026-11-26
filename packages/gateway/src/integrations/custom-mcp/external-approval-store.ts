@@ -8,9 +8,9 @@
  * and only the same owner + client lease can consume it, exactly once.
  */
 import { createHash } from "node:crypto";
-import type { Kysely } from "kysely";
+import type { Kysely, Transaction } from "kysely";
 import type { PlatformDatabase } from "../../platform-db.js";
-import { isCurrentServerPolicy } from "./approval-store.js";
+import { INTEGRATION_APPROVAL_REVISION, isCurrentIntegrationPolicy, isCurrentServerPolicy } from "./approval-store.js";
 
 export const EXTERNAL_RUN_PREFIX = "ext.";
 /** Lease windows rotate so an expired lease never blocks a client (leases are not reusable). */
@@ -37,7 +37,8 @@ export function externalLeaseExpiry(now: number): Date {
 }
 
 export interface PendingExternalApproval {
-  approvalId: string; serverId: string; toolName: string; createdAt: Date; expiresAt: Date;
+  approvalId: string; serverId: string | null; integrationConnectionId: string | null;
+  toolName: string; createdAt: Date; expiresAt: Date;
 }
 
 export interface CustomMcpExternalApprovalStore {
@@ -50,6 +51,11 @@ export interface CustomMcpExternalApprovalStore {
     userId: string; actorId: string; runId: string; approvalId: string; serverId: string;
     serverRevision: number; toolName: string; argsDigest: string;
   }): Promise<boolean>;
+  /** The same single-use consumption for a Connect Apps write; `toolName` is the registry action id. */
+  consumeExternalIntegrationToolApproval(input: {
+    userId: string; actorId: string; runId: string; approvalId: string; connectionId: string;
+    toolName: string; argsDigest: string;
+  }): Promise<boolean>;
   listPendingExternalCustomMcpToolApprovals(userId: string): Promise<PendingExternalApproval[]>;
 }
 
@@ -59,6 +65,48 @@ export function createCustomMcpExternalApprovalStore(
   db: Kysely<PlatformDatabase>,
   now: () => Date = () => new Date(),
 ): CustomMcpExternalApprovalStore {
+  /** Owner policy for the approval's subject, locked inside the caller's transaction. */
+  async function currentPolicy(trx: Transaction<PlatformDatabase>, userId: string, approval: {
+    server_id: string | null; integration_connection_id: string | null; server_revision: number; tool_name: string;
+  }): Promise<boolean> {
+    if (approval.integration_connection_id !== null) {
+      const connection = await trx.selectFrom("connected_services").selectAll()
+        .where("id", "=", approval.integration_connection_id).where("user_id", "=", userId).forUpdate().executeTakeFirst();
+      return approval.server_id === null && isCurrentIntegrationPolicy(connection, { userId, toolName: approval.tool_name });
+    }
+    if (approval.server_id === null) return false;
+    const server = await trx.selectFrom("custom_mcp_servers").selectAll()
+      .where("id", "=", approval.server_id).where("user_id", "=", userId).forUpdate().executeTakeFirst();
+    return isCurrentServerPolicy(server, { serverRevision: approval.server_revision, toolName: approval.tool_name });
+  }
+
+  async function consume(input: {
+    userId: string; actorId: string; runId: string; approvalId: string; toolName: string; argsDigest: string;
+  }, subject: { serverId: string | null; integrationConnectionId: string | null; serverRevision: number }): Promise<boolean> {
+    if (!isExternalRun(input.runId) || input.runId.length > 256 || !input.actorId
+      || input.actorId.length > 256 || !HEX_64.test(input.argsDigest)) return false;
+    return db.transaction().execute(async (trx) => {
+      const lease = await trx.selectFrom("custom_mcp_run_leases").selectAll()
+        .where("user_id", "=", input.userId).where("run_id", "=", input.runId).forUpdate().executeTakeFirst();
+      const current = now();
+      if (!lease || lease.status !== "active" || lease.actor_id !== input.actorId || lease.expires_at <= current) return false;
+      const approval = await trx.selectFrom("custom_mcp_tool_approvals").selectAll()
+        .where("id", "=", input.approvalId).where("user_id", "=", input.userId).forUpdate().executeTakeFirst();
+      if (!approval || approval.status !== "approved" || approval.expires_at <= current
+        || approval.lease_id !== lease.id || approval.lease_generation !== lease.generation
+        || approval.actor_id !== input.actorId || approval.run_id !== input.runId
+        || approval.server_id !== subject.serverId || approval.integration_connection_id !== subject.integrationConnectionId
+        || approval.server_revision !== subject.serverRevision
+        || approval.tool_name !== input.toolName || approval.args_digest !== input.argsDigest) return false;
+      if (!await currentPolicy(trx, input.userId, approval)) return false;
+      const consumed = await trx.updateTable("custom_mcp_tool_approvals")
+        .set({ status: "consumed", consumed_at: current })
+        .where("id", "=", approval.id).where("status", "=", "approved").where("expires_at", ">", current)
+        .returning("id").executeTakeFirst();
+      return Boolean(consumed);
+    });
+  }
+
   return {
     async decideExternalCustomMcpToolApproval(input) {
       return db.transaction().execute(async (trx) => {
@@ -74,9 +122,7 @@ export function createCustomMcpExternalApprovalStore(
         if (!lease || !approval || lease.status !== "active" || lease.expires_at <= current
           || approval.lease_id !== lease.id || approval.lease_generation !== lease.generation
           || approval.status !== "pending" || approval.expires_at <= current) return null;
-        const server = await trx.selectFrom("custom_mcp_servers").selectAll()
-          .where("id", "=", approval.server_id).where("user_id", "=", input.userId).forUpdate().executeTakeFirst();
-        if (!isCurrentServerPolicy(server, { serverRevision: approval.server_revision, toolName: approval.tool_name })) return null;
+        if (!await currentPolicy(trx, input.userId, approval)) return null;
         const status = input.decision === "approve" ? "approved" as const : "denied" as const;
         const updated = await trx.updateTable("custom_mcp_tool_approvals")
           .set({ status, receipt_hash: null, decided_at: current })
@@ -87,38 +133,22 @@ export function createCustomMcpExternalApprovalStore(
     },
 
     async consumeExternalCustomMcpToolApproval(input) {
-      if (!isExternalRun(input.runId) || input.runId.length > 256 || !input.actorId
-        || input.actorId.length > 256 || !HEX_64.test(input.argsDigest)) return false;
-      return db.transaction().execute(async (trx) => {
-        const lease = await trx.selectFrom("custom_mcp_run_leases").selectAll()
-          .where("user_id", "=", input.userId).where("run_id", "=", input.runId).forUpdate().executeTakeFirst();
-        const current = now();
-        if (!lease || lease.status !== "active" || lease.actor_id !== input.actorId || lease.expires_at <= current) return false;
-        const approval = await trx.selectFrom("custom_mcp_tool_approvals").selectAll()
-          .where("id", "=", input.approvalId).where("user_id", "=", input.userId).forUpdate().executeTakeFirst();
-        if (!approval || approval.status !== "approved" || approval.expires_at <= current
-          || approval.lease_id !== lease.id || approval.lease_generation !== lease.generation
-          || approval.actor_id !== input.actorId || approval.run_id !== input.runId
-          || approval.server_id !== input.serverId || approval.server_revision !== input.serverRevision
-          || approval.tool_name !== input.toolName || approval.args_digest !== input.argsDigest) return false;
-        const server = await trx.selectFrom("custom_mcp_servers").selectAll()
-          .where("id", "=", input.serverId).where("user_id", "=", input.userId).forUpdate().executeTakeFirst();
-        if (!isCurrentServerPolicy(server, input)) return false;
-        const consumed = await trx.updateTable("custom_mcp_tool_approvals")
-          .set({ status: "consumed", consumed_at: current })
-          .where("id", "=", approval.id).where("status", "=", "approved").where("expires_at", ">", current)
-          .returning("id").executeTakeFirst();
-        return Boolean(consumed);
-      });
+      return consume(input, { serverId: input.serverId, integrationConnectionId: null, serverRevision: input.serverRevision });
+    },
+
+    async consumeExternalIntegrationToolApproval(input) {
+      return consume(input, { serverId: null, integrationConnectionId: input.connectionId,
+        serverRevision: INTEGRATION_APPROVAL_REVISION });
     },
 
     async listPendingExternalCustomMcpToolApprovals(userId) {
       const rows = await db.selectFrom("custom_mcp_tool_approvals")
-        .select(["id", "server_id", "tool_name", "created_at", "expires_at"])
+        .select(["id", "server_id", "integration_connection_id", "tool_name", "created_at", "expires_at"])
         .where("user_id", "=", userId).where("status", "=", "pending")
         .where("run_id", "like", `${EXTERNAL_RUN_PREFIX}%`).where("expires_at", ">", now())
         .orderBy("created_at", "desc").limit(MAX_PENDING_LIST).execute();
-      return rows.map(row => ({ approvalId: row.id, serverId: row.server_id, toolName: row.tool_name,
+      return rows.map(row => ({ approvalId: row.id, serverId: row.server_id,
+        integrationConnectionId: row.integration_connection_id, toolName: row.tool_name,
         createdAt: row.created_at, expiresAt: row.expires_at }));
     },
   };

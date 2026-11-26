@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import type { Kysely } from "kysely";
+import type { Kysely, Transaction } from "kysely";
 import type { PlatformDatabase } from "../../platform-db.js";
+import { getService } from "../registry.js";
 
 export interface CustomMcpRunLeasesTable {
   id: string;
@@ -22,7 +23,9 @@ export interface CustomMcpToolApprovalsTable {
   lease_id: string;
   lease_generation: number;
   native_request_id: string;
-  server_id: string;
+  /** Exactly one of `server_id` (custom MCP) and `integration_connection_id` (Connect Apps) is set. */
+  server_id: string | null;
+  integration_connection_id: string | null;
   server_revision: number;
   tool_name: string;
   args_digest: string;
@@ -42,6 +45,11 @@ export interface CustomMcpApprovalStore {
     userId: string; actorId: string; runId: string; generation: number; nativeRequestId: string;
     serverId: string; serverRevision: number; toolName: string; argsDigest: string;
     expiresAt: Date;
+  }): Promise<{ approvalId: string; expiresAt: Date } | null>;
+  /** External-client writes to a Connect Apps connection (spec 2691); `toolName` is the registry action id. */
+  reserveIntegrationToolApproval(input: {
+    userId: string; actorId: string; runId: string; generation: number; nativeRequestId: string;
+    connectionId: string; toolName: string; argsDigest: string; expiresAt: Date;
   }): Promise<{ approvalId: string; expiresAt: Date } | null>;
   decideCustomMcpToolApproval(input: {
     userId: string; actorId: string; runId: string; approvalId: string;
@@ -65,7 +73,7 @@ export interface CustomMcpApprovalStore {
     userId: string; actorId: string; runId: string; approvalId: string;
   }): Promise<{
     status: "pending" | "approved" | "denied" | "consumed" | "revoked" | "expired";
-    expiresAt: Date; serverId: string; toolName: string;
+    expiresAt: Date; serverId: string | null; integrationConnectionId: string | null; toolName: string;
   } | null>;
 }
 
@@ -93,10 +101,104 @@ export function isCurrentServerPolicy(row: PlatformDatabase["custom_mcp_servers"
   return Boolean(tool?.enabled && tool.approval === "always_ask");
 }
 
+/** Integration approval rows carry no server revision; the column keeps its `>= 1` check. */
+export const INTEGRATION_APPROVAL_REVISION = 1;
+
+/**
+ * A Connect Apps write stays approvable only while its connection is the
+ * owner's active Pipedream connection and the registry still marks the
+ * action as non-read. A read action never needs (or accepts) an approval.
+ */
+export function isCurrentIntegrationPolicy(row: PlatformDatabase["connected_services"] | undefined, input: {
+  userId: string; toolName: string;
+}): boolean {
+  if (!row || row.user_id !== input.userId || row.status !== "active") return false;
+  const def = getService(row.service);
+  if (!def || def.connectorKind !== "pipedream") return false;
+  const action = Object.hasOwn(def.actions, input.toolName) ? def.actions[input.toolName] : undefined;
+  return Boolean(action && action.risk !== "read");
+}
+
+type ApprovalSubject =
+  | { kind: "server"; serverId: string; serverRevision: number }
+  | { kind: "integration"; connectionId: string };
+
+function subjectColumns(subject: ApprovalSubject) {
+  return subject.kind === "server"
+    ? { server_id: subject.serverId, integration_connection_id: null, server_revision: subject.serverRevision }
+    : { server_id: null, integration_connection_id: subject.connectionId, server_revision: INTEGRATION_APPROVAL_REVISION };
+}
+
 export function createCustomMcpApprovalStore(
   db: Kysely<PlatformDatabase>,
   now: () => Date = () => new Date(),
 ): CustomMcpApprovalStore {
+  /** Policy for the approval subject, read under a row lock inside the caller's transaction. */
+  async function currentSubjectPolicy(trx: Transaction<PlatformDatabase>, userId: string, subject: ApprovalSubject,
+    toolName: string): Promise<boolean> {
+    if (subject.kind === "integration") {
+      const connection = await trx.selectFrom("connected_services").selectAll()
+        .where("id", "=", subject.connectionId).where("user_id", "=", userId).forUpdate().executeTakeFirst();
+      return isCurrentIntegrationPolicy(connection, { userId, toolName });
+    }
+    const server = await trx.selectFrom("custom_mcp_servers")
+      .selectAll().where("id", "=", subject.serverId)
+      .where("user_id", "=", userId).forUpdate().executeTakeFirst();
+    return isCurrentServerPolicy(server, { serverRevision: subject.serverRevision, toolName });
+  }
+
+  async function reserve(input: {
+    userId: string; actorId: string; runId: string; generation: number; nativeRequestId: string;
+    toolName: string; argsDigest: string; expiresAt: Date;
+  }, subject: ApprovalSubject): Promise<{ approvalId: string; expiresAt: Date } | null> {
+    if (!validIdentity(input.actorId, input.runId) || !Number.isSafeInteger(input.generation)
+      || input.generation < 1 || !input.nativeRequestId
+      || input.nativeRequestId.length > 256 || !HEX_64.test(input.argsDigest)) return null;
+    return db.transaction().execute(async (trx) => {
+      const lease = await trx.selectFrom("custom_mcp_run_leases")
+        .selectAll().where("user_id", "=", input.userId)
+        .where("run_id", "=", input.runId).forUpdate().executeTakeFirst();
+      const current = now();
+      if (!lease || lease.status !== "active" || lease.actor_id !== input.actorId
+        || lease.generation !== input.generation
+        || lease.expires_at <= current || input.expiresAt <= current) return null;
+      if (!await currentSubjectPolicy(trx, input.userId, subject, input.toolName)) return null;
+      const columns = subjectColumns(subject);
+      const nativeRequestKey = `${input.generation}:${input.nativeRequestId}`;
+      const existing = await trx.selectFrom("custom_mcp_tool_approvals")
+        .selectAll().where("lease_id", "=", lease.id)
+        .where("native_request_id", "=", nativeRequestKey).executeTakeFirst();
+      if (existing) return existing.status === "pending" && existing.expires_at > now()
+        && lease.expires_at > now()
+        && existing.server_id === columns.server_id
+        && existing.integration_connection_id === columns.integration_connection_id
+        && existing.server_revision === columns.server_revision
+        && existing.tool_name === input.toolName && existing.args_digest === input.argsDigest
+        ? { approvalId: existing.id, expiresAt: existing.expires_at } : null;
+      const count = await trx.selectFrom("custom_mcp_tool_approvals")
+        .select((eb) => eb.fn.countAll<number>().as("count"))
+        .where("lease_id", "=", lease.id)
+        .where("status", "in", ["pending", "approved"])
+        .where("expires_at", ">", current).executeTakeFirstOrThrow();
+      if (Number(count.count) >= MAX_PENDING_PER_RUN) return null;
+      const admissionTime = now();
+      if (lease.expires_at <= admissionTime || input.expiresAt <= admissionTime) return null;
+      const expiresAt = new Date(Math.min(input.expiresAt.getTime(), lease.expires_at.getTime(),
+        admissionTime.getTime() + MAX_APPROVAL_TTL_MS));
+      const id = randomUUID();
+      await trx.insertInto("custom_mcp_tool_approvals").values({
+        id, user_id: input.userId, actor_id: input.actorId, run_id: input.runId,
+        lease_id: lease.id, lease_generation: input.generation,
+        native_request_id: nativeRequestKey,
+        ...columns,
+        tool_name: input.toolName, args_digest: input.argsDigest,
+        status: "pending", receipt_hash: null, expires_at: expiresAt,
+        created_at: admissionTime, decided_at: null, consumed_at: null,
+      }).onConflict((conflict) => conflict.columns(["lease_id", "native_request_id"]).doNothing()).execute();
+      return { approvalId: id, expiresAt };
+    });
+  }
+
   return {
     async registerCustomMcpRunLease(input) {
       if (!validIdentity(input.actorId, input.runId)) return null;
@@ -132,53 +234,11 @@ export function createCustomMcpApprovalStore(
     },
 
     async reserveCustomMcpToolApproval(input) {
-      if (!validIdentity(input.actorId, input.runId) || !Number.isSafeInteger(input.generation)
-        || input.generation < 1 || !input.nativeRequestId
-        || input.nativeRequestId.length > 256 || !HEX_64.test(input.argsDigest)) return null;
-      return db.transaction().execute(async (trx) => {
-        const lease = await trx.selectFrom("custom_mcp_run_leases")
-          .selectAll().where("user_id", "=", input.userId)
-          .where("run_id", "=", input.runId).forUpdate().executeTakeFirst();
-        const current = now();
-        if (!lease || lease.status !== "active" || lease.actor_id !== input.actorId
-          || lease.generation !== input.generation
-          || lease.expires_at <= current || input.expiresAt <= current) return null;
-        const server = await trx.selectFrom("custom_mcp_servers")
-          .selectAll().where("id", "=", input.serverId)
-          .where("user_id", "=", input.userId).forUpdate().executeTakeFirst();
-        if (!isCurrentServerPolicy(server, input)) return null;
-        const nativeRequestKey = `${input.generation}:${input.nativeRequestId}`;
-        const existing = await trx.selectFrom("custom_mcp_tool_approvals")
-          .selectAll().where("lease_id", "=", lease.id)
-          .where("native_request_id", "=", nativeRequestKey).executeTakeFirst();
-        if (existing) return existing.status === "pending" && existing.expires_at > now()
-          && lease.expires_at > now()
-          && existing.server_id === input.serverId
-          && existing.server_revision === input.serverRevision
-          && existing.tool_name === input.toolName && existing.args_digest === input.argsDigest
-          ? { approvalId: existing.id, expiresAt: existing.expires_at } : null;
-        const count = await trx.selectFrom("custom_mcp_tool_approvals")
-          .select((eb) => eb.fn.countAll<number>().as("count"))
-          .where("lease_id", "=", lease.id)
-          .where("status", "in", ["pending", "approved"])
-          .where("expires_at", ">", current).executeTakeFirstOrThrow();
-        if (Number(count.count) >= MAX_PENDING_PER_RUN) return null;
-        const admissionTime = now();
-        if (lease.expires_at <= admissionTime || input.expiresAt <= admissionTime) return null;
-        const expiresAt = new Date(Math.min(input.expiresAt.getTime(), lease.expires_at.getTime(),
-          admissionTime.getTime() + MAX_APPROVAL_TTL_MS));
-        const id = randomUUID();
-        await trx.insertInto("custom_mcp_tool_approvals").values({
-          id, user_id: input.userId, actor_id: input.actorId, run_id: input.runId,
-          lease_id: lease.id, lease_generation: input.generation,
-          native_request_id: nativeRequestKey,
-          server_id: input.serverId, server_revision: input.serverRevision,
-          tool_name: input.toolName, args_digest: input.argsDigest,
-          status: "pending", receipt_hash: null, expires_at: expiresAt,
-          created_at: admissionTime, decided_at: null, consumed_at: null,
-        }).onConflict((conflict) => conflict.columns(["lease_id", "native_request_id"]).doNothing()).execute();
-        return { approvalId: id, expiresAt };
-      });
+      return reserve(input, { kind: "server", serverId: input.serverId, serverRevision: input.serverRevision });
+    },
+
+    async reserveIntegrationToolApproval(input) {
+      return reserve(input, { kind: "integration", connectionId: input.connectionId });
     },
 
     async decideCustomMcpToolApproval(input) {
@@ -196,6 +256,8 @@ export function createCustomMcpApprovalStore(
         if (!approval || approval.lease_id !== lease.id || approval.lease_generation !== lease.generation
           || approval.actor_id !== input.actorId
           || approval.run_id !== input.runId) return null;
+        // Connect Apps approvals are external-client only and decided by the owner session.
+        if (approval.server_id === null) return null;
         if (input.decision === "cancel") {
           const cancelTime = now();
           if (lease.expires_at <= cancelTime || approval.expires_at <= cancelTime
@@ -311,14 +373,15 @@ export function createCustomMcpApprovalStore(
     async readCustomMcpToolApproval(input) {
       if (!validIdentity(input.actorId, input.runId)) return null;
       const row = await db.selectFrom("custom_mcp_tool_approvals")
-        .select(["status", "expires_at", "server_id", "tool_name"])
+        .select(["status", "expires_at", "server_id", "integration_connection_id", "tool_name"])
         .where("id", "=", input.approvalId).where("user_id", "=", input.userId)
         .where("actor_id", "=", input.actorId).where("run_id", "=", input.runId)
         .executeTakeFirst();
       if (!row) return null;
       const live = row.status === "pending" || row.status === "approved";
       return { status: live && row.expires_at <= now() ? "expired" : row.status,
-        expiresAt: row.expires_at, serverId: row.server_id, toolName: row.tool_name };
+        expiresAt: row.expires_at, serverId: row.server_id, integrationConnectionId: row.integration_connection_id,
+        toolName: row.tool_name };
     },
 
     async sweepCustomMcpApprovals(now) {

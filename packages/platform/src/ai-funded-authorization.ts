@@ -24,6 +24,7 @@ import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import {
   FUNDED_TOKEN_PATTERN,
   FundedReferenceSchema,
+  advanceMonthWindow,
   exactInteger,
   fundingSummary,
   hashesEqual,
@@ -56,7 +57,6 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
     if (!tokenMatch) throw new AiFundedPolicyError("unauthorized");
     const checked = deps.now();
     const checkedAt = checked.toISOString();
-    const periodStart = utcMonthStart(checked);
     const payloadHash = createHash("sha256").update(JSON.stringify({
       tokenId: tokenMatch[1], requestId: request.requestId,
       modelId: request.modelId, maxCostMicrousd: request.maxCostMicrousd,
@@ -121,13 +121,13 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       };
       await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
       const balance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
-        month_period_start: periodStart,
-        month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${periodStart} THEN month_spent_microusd ELSE 0 END`,
-        month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${periodStart} THEN month_reserved_microusd ELSE 0 END`,
+        ...advanceMonthWindow(utcMonthStart(checked)),
         updated_at: checkedAt,
       }).where("machine_id", "=", identity.machineId).where("owner_id", "=", identity.ownerId)
         .where("runtime_slot", "=", identity.runtimeSlot).returningAll().executeTakeFirst();
       if (!balance) throw new AiFundedPolicyError("access_disabled");
+      // The window this hold is counted in. It can be newer than this request's clock.
+      const periodStart = balance.month_period_start;
 
       const existing = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .select(["payload_hash", "authorization_response", "terminal_outcome", "execution_admission_release", "charge_waiver", "customer_charge_release"])

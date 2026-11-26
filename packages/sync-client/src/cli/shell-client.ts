@@ -1,3 +1,4 @@
+import { HerdrSessionListSchema, type HerdrSessionList } from "@matrix-os/contracts/herdr-terminals";
 import { SHELL_ATTACH_LIVE_TAIL_FROM_SEQ } from "../protocol/shell.js";
 import {
   createMacOsClipboardImageReader,
@@ -22,6 +23,8 @@ export interface ShellClientOptions {
 
 export interface ShellClient {
   listWorkspaces(): Promise<unknown[]>;
+  /** The owner's Herdr sessions (spec 2701); the hidden list when the gateway has none or predates them. */
+  listHerdrSessions(): Promise<HerdrSessionList>;
   listProjects(): Promise<unknown[]>;
   ensureWorkspace(input?: { projectId?: string }): Promise<Record<string, unknown>>;
   runCommand(input: {
@@ -605,6 +608,10 @@ export function createShellClient(options: ShellClientOptions): ShellClient {
         return (payload as { workspaces: unknown[] }).workspaces;
       }
       return [];
+    },
+    async listHerdrSessions() {
+      const parsed = HerdrSessionListSchema.safeParse(await request("/api/terminal/herdr"));
+      return parsed.success ? parsed.data : { available: false, status: "unavailable", sessions: [] };
     },
     async listProjects() {
       const payload = await request("/api/coding-agents/summary");

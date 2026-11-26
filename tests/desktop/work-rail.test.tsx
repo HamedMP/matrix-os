@@ -15,6 +15,7 @@ import { clientFixture as agentClientFixture } from "./chat-agents-fixture";
 import { WorkRail } from "@desktop/renderer/src/features/work/WorkRail";
 import { ChatAgentsWorkspace, ChatAgentsContent, subscribeCollaborationDiscoveryChanged } from "@matrix-os/ui";
 import { WorkArchiveProvider, WorkArchiveOutlet } from "@desktop/renderer/src/features/work/WorkSurfaceRuntime";
+import { CHAT_NAVIGATION_EVENT_COALESCE_MS } from "../../packages/ui/src/chat-navigation/use-chat-navigation";
 import { PinOffIcon } from "lucide-react";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import type { Project } from "@desktop/renderer/src/stores/board";
@@ -628,7 +629,7 @@ describe("WorkRail", () => {
     expect(await screen.findByLabelText("Unread Streaming")).toBeTruthy();
   });
 
-  it("coalesces a burst of shared Chat events into one in-flight and one pending canonical refresh", async () => {
+  it("batches shared Chat events and refreshes again for events during an in-flight read", async () => {
     const events = eventHarness();
     let resolveInFlight!: (value: { items: CanonicalChatRecord[] }) => void;
     const inFlight = new Promise<{ items: CanonicalChatRecord[] }>((resolve) => { resolveInFlight = resolve; });
@@ -646,15 +647,29 @@ describe("WorkRail", () => {
     renderRail(client, events.eventSource);
     await screen.findByRole("button", { name: "Burst chat" });
 
-    act(() => { for (const cursor of [1, 2, 3]) events.emit(chatChanged(initial.chat.id, cursor)); });
-    expect(client.list).toHaveBeenCalledTimes(2);
+    vi.useFakeTimers();
+    try {
+      act(() => { for (const cursor of [1, 2, 3]) events.emit(chatChanged(initial.chat.id, cursor)); });
+      expect(client.list).toHaveBeenCalledTimes(1);
+      await act(() => vi.advanceTimersByTimeAsync(CHAT_NAVIGATION_EVENT_COALESCE_MS));
+      expect(client.list).toHaveBeenCalledTimes(2);
 
-    await act(async () => {
-      resolveInFlight({ items: [initial] });
-      await inFlight;
-    });
-    await waitFor(() => expect(client.list).toHaveBeenCalledTimes(3));
-    expect(await screen.findByLabelText("Agent running for Burst chat")).toBeTruthy();
+      // Another burst can make the in-flight snapshot stale.
+      await act(async () => {
+        for (const cursor of [4, 5]) events.emit(chatChanged(initial.chat.id, cursor));
+        await vi.advanceTimersByTimeAsync(CHAT_NAVIGATION_EVENT_COALESCE_MS);
+      });
+      expect(client.list).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        resolveInFlight({ items: [initial] });
+        await inFlight;
+      });
+      expect(client.list).toHaveBeenCalledTimes(3);
+      expect(screen.getByLabelText("Agent running for Burst chat")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("renders attention ahead of running and completion for every Chat row", async () => {

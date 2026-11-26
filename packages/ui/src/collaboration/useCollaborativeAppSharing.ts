@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import {
   CollaborativeAppReadinessSchema,
   CollaborativeAppShareSchema,
@@ -196,7 +197,7 @@ export function useCollaborativeAppSharing(input: {
         ?? CurrentRegistrationSchema.parse(await input.api.get(`${path}/registration`)).registrationIncarnation;
       const response = await input.api.post(`${path}/check`, {
         organizationId: parsed.organizationId,
-        clientRequestId: parsed.clientRequestId ?? crypto.randomUUID(),
+        clientRequestId: parsed.clientRequestId ?? randomUUID(),
         expectedRegistrationIncarnation,
       });
       const next = CollaborativeAppReadinessSchema.parse(response);
@@ -220,7 +221,7 @@ export function useCollaborativeAppSharing(input: {
     if (!path || !input.api.delete) return null;
     try {
       return CollaborativeAppShareSchema.parse(await input.api.delete(path.replace(/\/readiness$/, "/share"), {
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId: randomUUID(),
         expectedShareRevision: target.shareRevision,
         expectedBindingRevision: target.bindingRevision,
       }));
@@ -256,7 +257,7 @@ export function useCollaborativeAppSharing(input: {
       }
       const next = preflight.existingShare ?? CollaborativeAppShareSchema.parse(await input.api.post(sharePath, {
         organizationId: parsed.organizationId,
-        clientRequestId: parsed.clientRequestId ?? crypto.randomUUID(),
+        clientRequestId: parsed.clientRequestId ?? randomUUID(),
         expectedResourceRevision: preflight.resourceRevision,
         expectedReadinessRevision: currentReadiness.revision,
         readinessId: preflight.readinessId,
@@ -299,7 +300,7 @@ export function useCollaborativeAppSharing(input: {
       const next = CollaborativeAppShareSchema.parse(await input.api.delete(
         path.replace(/\/readiness$/, "/share"),
         {
-          clientRequestId: clientRequestId ?? crypto.randomUUID(),
+          clientRequestId: clientRequestId ?? randomUUID(),
           expectedShareRevision: share.shareRevision,
           expectedBindingRevision: share.bindingRevision,
         },

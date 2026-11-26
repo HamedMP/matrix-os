@@ -2,7 +2,7 @@ import {useState} from "react";
 import {BotConnectionSelector} from "./BotConnectionSelector.js";
 import {useBotConnections} from "./use-bot-connections.js";
 import type {BotClient} from "./client.js";
-import { MATRIX_BOT_SELECTION, MATRIX_PI_CHAT_INSTANCE_ID, MATRIX_CHATGPT_PLAN_INSTANCE_ID, MATRIX_ANTHROPIC_API_INSTANCE_ID, isMatrixAnthropicBotRoute, matrixAnthropicSelectionBinding, sameMatrixAnthropicSelectionBinding, isAutomaticBotSelection, isManagedPiBotRoute, isPiBotCoordinatorRoute, isChatgptPlanBotRoute, chatgptPlanSelectionBinding, sameChatgptPlanSelectionBinding, canonicalProviderModelRouteLabel, canonicalProviderFundingState, canonicalProviderAvailabilityReasonLabel, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { MATRIX_BOT_SELECTION, MATRIX_PI_CHAT_INSTANCE_ID, MATRIX_CHATGPT_PLAN_INSTANCE_ID, MATRIX_ANTHROPIC_API_INSTANCE_ID, isMatrixAnthropicBotRoute, matrixAnthropicSelectionBinding, sameMatrixAnthropicSelectionBinding, isAutomaticBotSelection, isManagedPiBotRoute, isPiBotCoordinatorRoute, isChatgptPlanBotRoute, chatgptPlanSelectionBinding, sameChatgptPlanSelectionBinding, canonicalProviderModelRouteLabel, canonicalProviderFundingState, canonicalProviderAvailabilityReasonLabel, retiredManagedWorkersAiModel, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { canonicalProviderUnavailableSelectionLabel, type CanonicalProviderChoice } from "../../canonical-provider-choice.js";
 import { deriveChatPickerModelRows } from "../../chat-picker-entries.js";
 import { chatAgentInputClass, chatAgentMutedStyle } from "../theme.js";
@@ -71,11 +71,14 @@ export function MatrixBotModelField({ botClient, id, label = "Model", selection,
   const legacyLabel = canonicalProviderModelRouteLabel(legacyInstance, legacyModel?.displayName ?? legacyChoice?.modelLabel ?? legacy?.model ?? "")
     + (legacyInstance ? "" : legacyChoice ? ` · ${legacyChoice.harnessLabel}` : "") + ` · Saved route${legacyAvailable ? "" : " · unavailable"}`;
   const unselected = !selection && (requireSelection || !!connectionIntent || !allowAutomatic);
-  const key = unselected ? "unselected" : automatic || !selection ? "" : modelSelectionKey(selection);
   const legacySelected = Boolean(legacy && selection && JSON.stringify(selection) === JSON.stringify(legacy));
   const available = automatic || legacySelected && legacyAvailable || choices.some((choice) => botModelChoiceMatchesSelection(choice, selection));
   const blockedRows = rows.filter(row => !row.choice);
   const savedRow = blockedRows.find(row => row.instanceId === selection?.instanceId && row.modelId === selection.model);
+  const retiredModel = selection?.instanceId === MATRIX_PI_CHAT_INSTANCE_ID && !available && !savedRow
+    ? retiredManagedWorkersAiModel(selection.model)
+    : undefined;
+  const key = unselected || retiredModel ? "unselected" : automatic || !selection ? "" : modelSelectionKey(selection);
   const selectedInstance = catalog?.instances.find(instance => instance.id === selection?.instanceId);
   const reserved = savedRow && selectedInstance && canonicalProviderFundingState(selectedInstance) === "credit_reserved";
   const managedInstance = catalog?.instances.find(instance => instance.id === (sourceId === "computer" ? MATRIX_PI_CHAT_INSTANCE_ID : sourceId));
@@ -100,10 +103,10 @@ export function MatrixBotModelField({ botClient, id, label = "Model", selection,
         const choice = choices.find((candidate) => modelSelectionKey(matrixBotModelSelection(candidate)) === event.target.value);
         if (choice) onChange(matrixBotModelSelection(choice));
       }}>
-        {unselected ? <option value="unselected" disabled>Choose a bot model</option> : null}
+        {unselected || retiredModel ? <option value="unselected" disabled>Choose a bot model</option> : null}
         {allowAutomatic ? <option value="">Automatic · managed by this computer</option> : null}
         {legacy ? <option value={legacyKey} disabled={!legacyAvailable}>{legacyLabel}</option> : null}
-        {selection && !available && !savedRow && !legacySelected ? <option value={key} disabled>{selection?.model} · unavailable</option> : null}
+        {selection && !available && !savedRow && !legacySelected && !retiredModel ? <option value={key} disabled>{selection?.model} · unavailable</option> : null}
         {choices.map((choice) => <option key={`${choice.instanceId}:${choice.modelId}`} value={modelSelectionKey(matrixBotModelSelection(choice))}>
           {choice.modelLabel} · {choice.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID ? "ChatGPT subscription" : choice.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID ? "Anthropic API" : "Matrix AI"}</option>)}
         {blockedRows.map(row => <option key={`${row.instanceId}:${row.modelId}`} disabled value={JSON.stringify([row.instanceId, row.modelId])}>
@@ -114,7 +117,8 @@ export function MatrixBotModelField({ botClient, id, label = "Model", selection,
     {onRefreshCatalog ? <button type="button" className="justify-self-start text-xs underline" disabled={pending || catalogLoading} onClick={onRefreshCatalog}>Refresh models</button> : null}
     {legacySelected ? <p className="text-xs" style={chatAgentMutedStyle}>This agent keeps its saved route until you choose a Matrix AI model.</p> : null}
     {catalogLoading ? <p role="status" className="text-xs" style={chatAgentMutedStyle}>Loading available bot models…</p> : null}
-    {selection && !available && !legacySelected && (reserved || !noModels) ? <p className="text-xs" style={chatAgentMutedStyle}>{reserved ? "Your credit is reserved while usage is confirmed."
+    {selection && !available && !legacySelected && (reserved || retiredModel || !noModels) ? <p className="text-xs" style={chatAgentMutedStyle}>{reserved ? "Your credit is reserved while usage is confirmed."
+      : retiredModel ? `This saved bot model is unavailable (${retiredModel.displayName}). Choose another model.`
       : "This saved bot model is unavailable. Choose another model or check Agents & providers."}</p> : null}
     {noModels ? <div className="grid gap-2 text-xs" style={chatAgentMutedStyle}>
       <p>No {sourceName} models available. {unavailableReason === "Available" ? "Check Agents & providers." : `${unavailableReason}.`}</p>

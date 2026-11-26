@@ -26,6 +26,7 @@ function isStoredTrashPath(path: string): boolean {
 }
 
 const TrashManifestSchema = z.array(z.object({
+  entryId: z.uuid().optional(),
   name: z.string().min(1).max(4096),
   originalPath: z.string().min(1).max(4096),
   deletedAt: z.string().min(1).max(128),
@@ -110,7 +111,8 @@ function unavailable(operation: string, error: unknown) {
 export async function fileDelete(
   homePath: string,
   requestedPath: string,
-): Promise<{ ok: boolean; trashPath?: string; error?: string; status?: number }> {
+  options?: { withUndo: boolean },
+): Promise<{ ok: boolean; trashPath?: string; entryId?: string; error?: string; status?: number }> {
   const lexicalPath = resolveWithinHome(homePath, requestedPath);
   if (!lexicalPath) return { ok: false, error: "Invalid path" };
   if (isProtectedHomeSubpath(homePath, lexicalPath)) {
@@ -133,7 +135,11 @@ export async function fileDelete(
       const manifest = entries.entries.map(({ type: _type, size: _size, ...entry }) => entry);
       // Never reuse restore tokens, even if the same source is moved again.
       const trashPath = `.trash/${randomUUID()}`;
-      const entry = { name, originalPath: relative(homePath, resolved), deletedAt: new Date().toISOString(), trashPath };
+      const entryId = options?.withUndo ? randomUUID() : undefined;
+      const entry = {
+        ...(entryId ? { entryId } : {}),
+        name, originalPath: relative(homePath, resolved), deletedAt: new Date().toISOString(), trashPath,
+      };
       // Recovery is recorded first. A stopped operation with no destination
       // file leaves an invisible reservation that the next mutation drops.
       await writeManifest(trashDir, [...manifest, entry]);
@@ -143,7 +149,7 @@ export async function fileDelete(
         return { ok: false, error: "Source changed", status: 409 };
       }
       await rename(resolved, join(homePath, trashPath));
-      return { ok: true, trashPath };
+      return { ok: true, trashPath, ...(entryId ? { entryId } : {}) };
     });
   } catch (error) {
     return unavailable("Move to Trash", error);
@@ -164,6 +170,7 @@ export async function trashList(homePath: string): Promise<{ entries: TrashListE
 export async function trashRestore(
   homePath: string,
   trashPath: string,
+  expectedEntryId?: string,
 ): Promise<{ ok: boolean; restoredTo?: string; error?: string; status?: number }> {
   const normalized = trashPath.replace(/^\/+/, "");
   if (!isStoredTrashPath(normalized)) return { ok: false, error: "Invalid trash path" };
@@ -177,6 +184,10 @@ export async function trashRestore(
       const sourceInfo = entry && await statIfPresent(source);
       if (!entry || (!sourceInfo?.isFile() && !sourceInfo?.isDirectory())) {
         return { ok: false, error: "Not found in trash", status: 404 };
+      }
+
+      if (expectedEntryId !== undefined && entry.entryId !== expectedEntryId) {
+        return { ok: false, error: "Trash entry changed", status: 409 };
       }
 
       const lexicalPath = resolveWithinHome(homePath, entry.originalPath);

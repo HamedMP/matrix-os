@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import { saveAgentDraft, type AgentCreationAttempt } from "./save-agent-draft.js";
 import { safeHttpStatus } from "./safe-http-status.js";
 import { botCreationFailureMessage } from "./creation-error.js";
@@ -30,7 +31,7 @@ import { chatAgentButtonClass, chatAgentLauncherClass, chatAgentMutedStyle, chat
 
 const button = chatAgentButtonClass;
 const muted = chatAgentMutedStyle;
-const requestId = () => `req_${crypto.randomUUID().replaceAll("-", "")}`;
+const requestId = () => `req_${randomUUID().replaceAll("-", "")}`;
 type Draft = AgentDraft;
 type Library = {
   managedCustomRecoveries?: ChatAgentListResponse["managedCustomRecoveries"];

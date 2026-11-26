@@ -55,6 +55,7 @@ import {
   isBillingSetupPath,
   isSignupBillingHandoff,
   isPlatformShellAssetNamespacePath,
+  isPlatformShellServerAction,
   readRuntimeSlotSelection,
   shouldProxyAuthShellForUnroutedUser,
   shouldProxyShellForBillingGate,
@@ -117,6 +118,7 @@ import {
   resolveContainerEndpoint,
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
+import { logAppDomainUpstreamFailure } from './app-domain-upstream-log.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
@@ -307,6 +309,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         redirect: 'manual',
         signal: AbortSignal.timeout(authShellProxyTimeoutMs),
       });
+      if (response.status >= 500) logAppDomainUpstreamFailure('auth-shell', c, response.status);
       const responseHeaders = sanitizeProxyResponseHeaders(response.headers);
       if (!proxyOpts.preserveUpstreamCacheHeaders) {
         applyNoStoreResponseHeaders(responseHeaders);
@@ -560,6 +563,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const authHeader = c.req.header('authorization');
     const cookieHeader = c.req.header('cookie');
     const path = c.req.path;
+    if (isAppDomain && !isAppDomainStaticAssetPath(path) && isPlatformShellServerAction({
+      method: c.req.method,
+      path,
+      actionId: c.req.header('next-action'),
+      deploymentId: c.req.header('x-deployment-id'),
+    })) {
+      return proxyAuthShell(c, host, { redirectToBillingOnFailure: false });
+    }
     const explicitVmRoute = isAppDomain ? readExplicitVmRoute(path) : null;
     const explicitVmRouteHasValidAppAssetToken = Boolean(
       explicitVmRoute &&
@@ -838,6 +849,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           dispatcher: customerVpsProxyDispatcher,
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
         shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath));
+        if (upstream.status >= 500) logAppDomainUpstreamFailure('runtime', c, upstream.status, machine.handle);
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
@@ -1017,6 +1029,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           dispatcher: customerVpsProxyDispatcher,
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
         shouldReleaseRuntimeProxyTimeout(c.req.method, path));
+        if (isAppDomain && upstream.status >= 500) {
+          logAppDomainUpstreamFailure('runtime', c, upstream.status, runningMachine.handle);
+        }
         if (isCodeDomain && upstream.status >= 500) {
           logCodeDomainUpstreamFailure({
             handle: runningMachine.handle,
@@ -1245,6 +1260,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           dispatcher: containerProxyDispatcher,
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
         shouldReleaseRuntimeProxyTimeout(c.req.method, path));
+        if (isAppDomain && upstream.status >= 500) {
+          logAppDomainUpstreamFailure('runtime', c, upstream.status, record.handle);
+        }
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));

@@ -58,6 +58,14 @@ export function registerBrowserSetupRoutes(app: Hono, options: BrowserSetupOptio
 export function resolveBrowserSetupOwner(env: NodeJS.ProcessEnv): string | undefined {
   const owner = env.MATRIX_CLERK_USER_ID;
   const slot = env.MATRIX_RUNTIME_SLOT;
+  // Self-host (spec 2701): the installer writes self-host-<handle> ids instead of Clerk ids.
+  if (env.MATRIX_SELF_HOSTED !== undefined) {
+    const selfHostId = /^self-host-[A-Za-z0-9_-]{1,64}$/;
+    if (env.MATRIX_SELF_HOSTED !== "1" || slot !== "primary" || !/^[a-z][a-z0-9-]{0,62}$/.test(env.MATRIX_HANDLE ?? "")
+      || !selfHostId.test(env.MATRIX_MACHINE_ID ?? "") || !selfHostId.test(owner ?? "")
+      || (env.MATRIX_USER_ID !== undefined && env.MATRIX_USER_ID !== owner)) return undefined;
+    return owner;
+  }
   const eligibleSlot = slot === "primary" || (slot === "dev" && env.MATRIX_BROWSER_DEV_SETUP === "true");
   if (!eligibleSlot || !/^[a-z][a-z0-9-]{0,62}$/.test(env.MATRIX_HANDLE ?? "")
     || /^(?:pv-|pr-)/.test(env.MATRIX_HANDLE ?? "")

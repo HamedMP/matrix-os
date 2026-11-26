@@ -1,4 +1,4 @@
-import { FUNDED_SONNET_5_PRICE, isManagedWorkersAiModel, managedWorkersAiModel } from "@matrix-os/contracts";
+import { ALIBABA_QWEN_37_PLUS_MODEL_ID, ALIBABA_QWEN_37_PLUS_PRICE, FUNDED_SONNET_5_PRICE, GOOGLE_GEMINI_38_FLASH_MODEL_ID, GOOGLE_GEMINI_38_FLASH_PRICE, MOONSHOT_KIMI_K31_PRO_MODEL_ID, MOONSHOT_KIMI_K31_PRO_PRICE, isFundedThirdPartyPreviewModel, isManagedFundedOpenAiModel, managedWorkersAiModel } from "@matrix-os/contracts";
 import { WORKERS_AI_PRICE_SNAPSHOTS } from "./funded-workers-pricing.js";
 import { z } from "zod/v4";
 import { FUNDED_PRICING_VERSIONS, validateFundedPricingReview, type FundedPricingReviews } from "./funded-pricing-review.js";
@@ -43,7 +43,17 @@ const WORKERS_PRICING: FundedPricing[] = Object.entries(WORKERS_AI_PRICE_SNAPSHO
   cacheReadRateThousandths: price.cached, cacheWrite5mRateThousandths: price.input,
   cacheWrite1hRateThousandths: price.input,
 }));
-const ALL_PRICING = [CURRENT_PRICING, ...WORKERS_PRICING];
+const CLOUDFLARE_PREVIEW_PRICING: FundedPricing[] = ([
+  [GOOGLE_GEMINI_38_FLASH_MODEL_ID, GOOGLE_GEMINI_38_FLASH_PRICE],
+  [MOONSHOT_KIMI_K31_PRO_MODEL_ID, MOONSHOT_KIMI_K31_PRO_PRICE],
+  [ALIBABA_QWEN_37_PLUS_MODEL_ID, ALIBABA_QWEN_37_PLUS_PRICE],
+] as const).map(([modelId, price]) => ({
+  canonicalModelId: modelId, version: price.version, validThrough: "2026-09-30T23:59:59.999Z",
+  inputRateThousandths: price.input, outputRateThousandths: price.output,
+  cacheReadRateThousandths: price.cached, cacheWrite5mRateThousandths: price.cacheWrite5m,
+  cacheWrite1hRateThousandths: price.cacheWrite1h,
+}));
+const ALL_PRICING = [CURRENT_PRICING, ...CLOUDFLARE_PREVIEW_PRICING, ...WORKERS_PRICING];
 
 /** Readiness and admission resolve the same model-specific review. */
 export function fundedModelPriceValidThrough(modelId: string, reviews: FundedPricingReviews = []): string | undefined {
@@ -70,8 +80,7 @@ const SETTLEMENT_PRICING: Readonly<Record<string, FundedPricing>> = {
     validThrough: "2026-09-30T23:59:59.999Z", inputRateThousandths: 2_000, outputRateThousandths: 10_000,
     cacheReadRateThousandths: 200, cacheWrite5mRateThousandths: 2_500, cacheWrite1hRateThousandths: 4_000,
   },
-  [CURRENT_PRICING.version]: CURRENT_PRICING,
-  ...Object.fromEntries(WORKERS_PRICING.map(price => [price.version, price])),
+  ...Object.fromEntries(ALL_PRICING.map(price => [price.version, price])),
 };
 
 export interface FundedModelMapping {
@@ -88,7 +97,7 @@ export interface FundedTokenUsage {
 }
 
 export function mapFundedModel(modelId: string): FundedModelMapping {
-  if (isManagedWorkersAiModel(modelId)) return { nativeModelId: modelId, canonicalModelId: modelId };
+  if (isManagedFundedOpenAiModel(modelId)) return { nativeModelId: modelId, canonicalModelId: modelId };
   if (modelId !== NATIVE_SONNET_5) throw new Error("Unsupported funded AI model");
   return { nativeModelId: NATIVE_SONNET_5, canonicalModelId: CANONICAL_SONNET_5 };
 }
@@ -104,6 +113,7 @@ export function maximumFundedInputTokens(canonicalModelId: string): number {
   // admission), even though the public model page currently lists 1,048,576.
   const workersModel = managedWorkersAiModel(canonicalModelId);
   if (workersModel) return workersModel.maximumInputTokens;
+  if (isFundedThirdPartyPreviewModel(canonicalModelId)) return 1_048_576;
   if (canonicalModelId !== CANONICAL_SONNET_5) throw new Error("Unsupported funded AI model");
   return 1_000_000;
 }

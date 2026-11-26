@@ -83,6 +83,10 @@ function runtimePublicPathPlugin(webpack: NextWebpack) {
 
 const nextConfig: NextConfig = {
   assetPrefix: platformShellAssetPrefix ?? privatePreviewAssetPrefix,
+  // Next includes this value on Server Action requests from this build.
+  deploymentId: platformShellAssetPrefix
+    ? `${platformShellAssetPrefix.slice(1)}-${process.env.NEXT_PUBLIC_MATRIX_BUILD_SHA || "local"}`
+    : undefined,
   env: {
     NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX: platformShellAssetPrefix ?? "",
   },

@@ -438,6 +438,24 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
       // shape. These idempotent additions make re-running migrate safe.
       await sql`ALTER TABLE custom_mcp_run_leases ADD COLUMN IF NOT EXISTS generation INTEGER NOT NULL DEFAULT 1 CHECK (generation >= 1)`.execute(kysely);
       await sql`ALTER TABLE custom_mcp_tool_approvals ADD COLUMN IF NOT EXISTS lease_generation INTEGER NOT NULL DEFAULT 1 CHECK (lease_generation >= 1)`.execute(kysely);
+      // Spec 2691 Connect Apps: an external write approval targets either a custom
+      // MCP server or a Connect Apps connection, never both and never neither.
+      await sql`ALTER TABLE custom_mcp_tool_approvals ADD COLUMN IF NOT EXISTS integration_connection_id UUID REFERENCES connected_services(id) ON DELETE CASCADE`.execute(kysely);
+      await sql`ALTER TABLE custom_mcp_tool_approvals ALTER COLUMN server_id DROP NOT NULL`.execute(kysely);
+      await sql`
+        DO $custom_mcp_approval_subject$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'custom_mcp_tool_approvals_one_subject'
+              AND conrelid = 'custom_mcp_tool_approvals'::regclass
+          ) THEN
+            ALTER TABLE custom_mcp_tool_approvals ADD CONSTRAINT custom_mcp_tool_approvals_one_subject
+              CHECK ((server_id IS NULL) <> (integration_connection_id IS NULL));
+          END IF;
+        END
+        $custom_mcp_approval_subject$
+      `.execute(kysely);
       // Existing rows predate this marker. Treat them as already discovered so
       // a later sync cannot silently undo a user's disabled server policy.
       await sql`

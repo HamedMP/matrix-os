@@ -292,3 +292,12 @@ it('centers Web Search over the conversation while an inspector is open',()=>{
   fireEvent.click(screen.getByRole('button',{name:'Toggle chat inspector'}));fireEvent.click(screen.getByRole('button',{name:'Search chats'}));expect(screen.getByRole('dialog',{name:'Search chats'}).style.left).toBe('676px');
  }finally{measure.mockRestore();}
 });
+
+it("renders the Web chat rail over plain tailnet HTTP, where browsers hide crypto.randomUUID", () => {
+  const getRandomValues = globalThis.crypto.getRandomValues.bind(globalThis.crypto);
+  vi.stubGlobal("crypto", { getRandomValues });
+  const items=[{id:"a",preview:"A",messageCount:1,updatedAt:1}];
+  const hook=renderHook(()=>useWebChatRailOrder(items,{}));
+  expect(hook.result.current.chats.map(item=>item.id)).toEqual(["a"]);
+  expect(hook.result.current.scopeKey).toMatch(/^[0-9a-f-]{36}$/);
+});

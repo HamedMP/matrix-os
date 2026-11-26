@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MatrixAnthropicConnectSchema, type MatrixAnthropicConnection, type MatrixAnthropicDisconnect } from "@matrix-os/contracts";
 import type { MatrixAnthropicConnectionClient } from "./matrix-anthropic-connection-client.js";
@@ -95,7 +96,7 @@ export function MatrixAnthropicConnectionCard({ client, initialStatus, disabled,
     const same = previous?.client === client && previous.kind === kind && previous.revision === status.revision
       && previous.generation === status.credentialGeneration && previous.apiKey === apiKey;
     const intent: MatrixAnthropicDisconnect = { expectedRevision: status.revision,
-      expectedCredentialGeneration: status.credentialGeneration, idempotencyKey: same ? previous.id : crypto.randomUUID() };
+      expectedCredentialGeneration: status.credentialGeneration, idempotencyKey: same ? previous.id : randomUUID() };
     const connect = kind === "connect" ? MatrixAnthropicConnectSchema.safeParse({ ...intent, apiKey }) : null;
     if (kind === "connect" && !connect?.success) return;
     lastAttempt.current = { client, kind, revision: status.revision, generation: status.credentialGeneration, apiKey, id: intent.idempotencyKey };

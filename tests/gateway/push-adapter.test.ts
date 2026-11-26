@@ -65,7 +65,51 @@ describe("push adapter with owner Postgres tokens", () => {
   it("bootstraps the token table once and records its schema version", async () => {
     expect(await bootstrapNotificationDatabase(db)).toEqual({ applied: [] });
     const versions = await db.selectFrom("notification_schema_migrations").select(["version", "name"]).execute();
-    expect(versions).toEqual([{ version: 1, name: "push_tokens" }, { version: 2, name: "canonical_attention" }, { version: 3, name: "attention_device_receipts" }]);
+    expect(versions).toEqual([{ version: 1, name: "push_tokens" }, { version: 2, name: "canonical_attention" }, { version: 3, name: "attention_device_receipts" }, { version: 4, name: "push_consent" }]);
+  });
+
+  it("canonical delivery honors unknown consent, durable off, and explicit re-enable", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => expoOk());
+    const push = adapter({ handle: "test-computer", ownerId: "owner_a" });
+    const identity = "phone_identity", token = "phone_delivery";
+    const notification = { id: "11111111-2222-4333-8444-555555555555", ownerId: "owner_a", kind: "question" as const,
+      title: "Matrix OS", body: "Your agent has a question", target: { type: "chat" as const, chatId: "chat_attention" },
+      sound: true, timeSensitive: false, expiresAt: new Date(now + 60_000).toISOString() };
+    expect(await push.getRegistrationStatus(identity, "owner_a")).toEqual({ enabled: null, registered: false });
+    expect(await push.refreshToken(token, "ios", "owner_a", identity)).toBe(false);
+    await push.sendAttention(notification);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(await push.getRegistrationStatus(identity, "owner_a")).toEqual({ enabled: null, registered: false });
+    await push.registerToken(token, "ios", "owner_a", identity);
+    await push.sendAttention(notification);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await push.removeToken(identity, "owner_a", token);
+    expect(await push.refreshToken(token, "ios", "owner_a", identity)).toBe(false);
+    await push.sendAttention(notification);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(await push.getRegistrationStatus(identity, "owner_a")).toEqual({ enabled: false, registered: false });
+    await push.registerToken(token, "ios", "owner_a", identity);
+    await push.sendAttention(notification);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(await push.getRegistrationStatus(identity, "owner_a")).toEqual({ enabled: true, registered: true });
+    expect(sentMessages(fetchSpy, 1).map(message => message.to)).toEqual([token]);
+  });
+
+  it("adds A6 migrations to an A5 owner database without resetting retained off consent", async () => {
+    const push = adapter({ ownerId: "owner_a" });
+    await push.registerToken("delivery", "ios", "owner_a", "identity");
+    await push.removeToken("identity", "owner_a", "delivery");
+    // Reproduce A5's deployed v1/v4 schema, then apply the actual A6 bootstrap.
+    await db.transaction().execute(async trx => {
+      await trx.schema.dropTable("notification_attempts").execute();
+      await trx.schema.dropTable("notification_events").execute();
+      await trx.deleteFrom("notification_schema_migrations").where("version", "in", [2, 3]).execute();
+    });
+    expect(await bootstrapNotificationDatabase(db)).toEqual({ applied: [2, 3] });
+    expect(await bootstrapNotificationDatabase(db)).toEqual({ applied: [] });
+    expect(await push.getRegistrationStatus("identity", "owner_a")).toEqual({ enabled: false, registered: false });
+    expect(await push.refreshToken("delivery", "ios", "owner_a", "identity")).toBe(false);
+    expect(await db.selectFrom("notification_events").selectAll().execute()).toEqual([]);
   });
 
   it("sends canonical attention with v1 tap identity, attention channel, expiry, and active interruption by default", async () => {
@@ -142,7 +186,7 @@ describe("push adapter with owner Postgres tokens", () => {
       log: (event) => { statements.push(event.query.sql.replace(/\s+/g, " ").trim()); },
     });
     try {
-      expect(await bootstrapNotificationDatabase(logged)).toEqual({ applied: [1, 2, 3] });
+      expect(await bootstrapNotificationDatabase(logged)).toEqual({ applied: [1, 2, 3, 4] });
     } finally {
       await logged.destroy();
     }

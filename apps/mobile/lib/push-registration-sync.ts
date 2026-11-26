@@ -3,11 +3,12 @@ import { ensureNotificationChannels } from "@/lib/notification-channels";
 
 import {
   disablePushNotifications,
-  enablePushNotifications,
+  refreshPushNotifications,
   isPushNotificationsEnabled,
+  type PushRegistrationSession,
 } from "@/lib/push";
 
-export type PushRegistrationResult = "off" | "registered" | "denied";
+export type PushRegistrationResult = "off" | "registered" | "denied" | "confirmation-required";
 
 // The tail of the push changes waiting to run. It never rejects.
 let pushChanges: Promise<unknown> = Promise.resolve();
@@ -26,7 +27,7 @@ export function queuePushChange<T>(change: () => Promise<T>): Promise<T> {
   return run;
 }
 
-type PushTurnedOffListener = () => void;
+type PushTurnedOffListener = (scopeKey: string | undefined) => void;
 
 // Only open App settings screens listen, so a few slots are plenty.
 const MAX_PUSH_TURNED_OFF_LISTENERS = 8;
@@ -44,10 +45,10 @@ export function subscribePushTurnedOff(listener: PushTurnedOffListener): () => v
   };
 }
 
-function notifyPushTurnedOff() {
+function notifyPushTurnedOff(scopeKey: string | undefined) {
   for (const listener of pushTurnedOffListeners) {
     try {
-      listener();
+      listener(scopeKey);
     } catch (error: unknown) {
       console.warn("[mobile] Push state listener failed:", error instanceof Error ? error.message : "unknown");
     }
@@ -55,33 +56,33 @@ function notifyPushTurnedOff() {
 }
 
 /**
- * Brings this phone's push registration in line with its push switch, which is
- * on whenever a token is saved. iOS keeps that token in the Keychain after the
- * app is deleted, so a new install can start with push on, never asked for
- * permission and never registered. And the computer forgets a token it has not
- * seen for 30 days. So while push is on this asks for permission if it may
- * still ask, then registers again; without permission it turns push off, so
- * the switch shows what the phone can get.
+ * Restores delivery while durable owner/computer consent remains on. Token
+ * expiry and Expo cleanup do not revoke consent; explicit opt-out does.
+ * Conditional refresh cannot grant consent, including after a stale read.
  */
-export function syncPushRegistration(session: {
-  clerkToken: string;
-  gatewayUrl: string;
-}): Promise<PushRegistrationResult> {
+export function syncPushRegistration(session: PushRegistrationSession, isCurrent = () => true): Promise<PushRegistrationResult> {
   return queuePushChange(async () => {
-    if (!(await isPushNotificationsEnabled())) return "off";
+    if (!isCurrent()) return "off";
+    const enabled = await isPushNotificationsEnabled(session);
+    if (!isCurrent()) return "off";
+    if (enabled === null) return "confirmation-required";
+    if (!enabled) return "off";
 
     await ensureNotificationChannels();
     const existing = await Notifications.getPermissionsAsync();
     const permission = existing.granted || !existing.canAskAgain
       ? existing
       : await Notifications.requestPermissionsAsync();
+    if (!isCurrent()) return "off";
     if (!permission.granted) {
       await disablePushNotifications(session);
-      notifyPushTurnedOff();
+      notifyPushTurnedOff(session.scopeKey);
       return "denied";
     }
 
-    await enablePushNotifications(session);
-    return "registered";
+    const registered = await refreshPushNotifications(session, isCurrent);
+    if (!isCurrent()) return "off";
+    if (!registered) notifyPushTurnedOff(session.scopeKey);
+    return registered ? "registered" : "off";
   });
 }

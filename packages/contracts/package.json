@@ -13,6 +13,7 @@
     "./codex-chat-import-client": "./src/codex-chat-import-client.ts",
     "./local-chat-import": "./src/local-chat-import/index.ts",
     "./bots": "./src/bots/index.ts",
+    "./mac-verification-terminal": "./src/mac-verification-terminal.ts",
     "./routine-cli": "./src/routine-cli.ts",
     "./app-gallery": "./src/app-gallery.ts",
     "./app-gallery-bridge-policy": "./src/app-gallery-bridge-policy.ts",
@@ -32,7 +33,8 @@
     "./ai-usage": "./src/ai-usage/index.ts",
     "./ai-usage/node": "./src/ai-usage/node.ts",
     "./routine-destination": "./src/routine-destination.ts",
-    "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts"
+    "./keyboard-shortcuts": "./src/keyboard-shortcuts.ts",
+    "./herdr-terminals": "./src/herdr-terminals.ts"
   },
   "imports": {
     "#notifications": "./src/notifications.ts",
@@ -67,6 +69,7 @@
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
     "#chat-navigation": "./src/chat-navigation.ts",
+    "#desktop-pairing": "./src/desktop-pairing.ts",
     "#canonical-chat": "./src/canonical-chat.ts",
     "#canonical-chat-tool-activities": "./src/canonical-chat-tool-activities.ts",
     "#canonical-chat-tool-details": "./src/canonical-chat-tool-details.ts",

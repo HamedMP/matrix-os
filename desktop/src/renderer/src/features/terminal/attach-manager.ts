@@ -13,9 +13,16 @@ export interface SocketControl {
   sendBinary(data: string): void;
   resize(cols: number, rows: number): void;
   scroll?(frame: { type: "scroll-query" } | { type: "scroll-to"; line: number }): void;
+  /** The view gained or lost focus (herdr-core passes it to programs that ask). */
+  focus?(focused: boolean): void;
+  /** The view's colours and cell size, for the program's queries. */
+  facts?(display: TerminalDisplayFacts): void;
   detach(): void;
   dispose(): void;
 }
+
+/** A terminal view's default colours (`#rrggbb`) and cell size in pixels. */
+export interface TerminalDisplayFacts { fg?: string; bg?: string; cursor?: string; cell?: [number, number] }
 
 export interface TerminalDimensions {
   cols: number;
@@ -30,6 +37,12 @@ export interface AttachManagerOptions {
    * a screen outlives the pane that saved it. Not cleared when this manager is disposed.
    */
   sharedBuffers?: Map<string, string>;
+  /**
+   * Sessions whose source repaints the whole terminal on attach. A snapshot
+   * of theirs is never kept: shown before the repaint, it would only be
+   * painted over, and its scrollback would stay below the source's own.
+   */
+  repaintsOnAttach?: (sessionName: string) => boolean;
 }
 
 export interface ActiveAttachment {
@@ -38,6 +51,8 @@ export interface ActiveAttachment {
   writeBinary(data: string): void;
   resize(cols: number, rows: number): void;
   scroll?(frame: { type: "scroll-query" } | { type: "scroll-to"; line: number }): void;
+  focus(focused: boolean): void;
+  facts(display: TerminalDisplayFacts): void;
 }
 
 interface ActiveSocket {
@@ -55,6 +70,7 @@ export class AttachManager {
   private readonly bufferCacheCap: number;
   private readonly buffers: Map<string, string>;
   private readonly ownsBuffers: boolean;
+  private readonly repaintsOnAttach: (sessionName: string) => boolean;
   private active: ActiveSocket | null = null;
   private generation = 0;
   private disposed = false;
@@ -64,6 +80,7 @@ export class AttachManager {
     this.bufferCacheCap = Math.max(1, Math.floor(options.bufferCacheCap ?? DEFAULT_BUFFER_CACHE_CAP));
     this.buffers = options.sharedBuffers ?? new Map<string, string>();
     this.ownsBuffers = options.sharedBuffers === undefined;
+    this.repaintsOnAttach = options.repaintsOnAttach ?? (() => false);
   }
 
   get activeSessionName(): string | null {
@@ -86,11 +103,12 @@ export class AttachManager {
       onState: (state: ShellSocketState, detail?: { code?: string }) => {
         if (this.isLive(generation)) events.onState(state, detail);
       },
-      onOutput: (data: string, seq: number, written?: () => void) => {
+      onOutput: (data: string | Uint8Array, seq: number, written?: () => void) => {
         if (this.isLive(generation)) events.onOutput(data, seq, written);
         // Output for a view that is gone is dropped; that still counts as taken.
         else written?.();
       },
+      onRepaint: () => { if (this.isLive(generation)) events.onRepaint?.(); },
       onNativeScroll: (state) => { if (this.isLive(generation)) events.onNativeScroll?.(state); },
       onNativeScrollSupported: (supported) => { if (this.isLive(generation)) events.onNativeScrollSupported?.(supported); },
       onCanonicalSize: (size) => {
@@ -122,10 +140,16 @@ export class AttachManager {
       resize: (cols: number, rows: number) => {
         if (this.isLive(generation)) socket.resize(cols, rows);
       },
+      focus: (focused) => { if (this.isLive(generation)) socket.focus?.(focused); },
+      facts: (display) => { if (this.isLive(generation)) socket.facts?.(display); },
     };
   }
 
   cacheBuffer(sessionName: string, serialized: string): void {
+    if (this.repaintsOnAttach(sessionName)) {
+      this.buffers.delete(sessionName);
+      return;
+    }
     if (this.buffers.has(sessionName)) {
       this.buffers.delete(sessionName);
     } else if (this.buffers.size >= this.bufferCacheCap) {
@@ -138,6 +162,7 @@ export class AttachManager {
   }
 
   getCachedBuffer(sessionName: string): string | null {
+    if (this.repaintsOnAttach(sessionName)) return null;
     const value = this.buffers.get(sessionName);
     if (value === undefined) return null;
     this.buffers.delete(sessionName);

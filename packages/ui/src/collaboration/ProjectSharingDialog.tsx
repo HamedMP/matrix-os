@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import {
   CollaborationProjectInventorySchema,
   CollaborationProjectTransitionSchema,
@@ -75,7 +76,7 @@ export function ProjectSharingDialog({
       const result = CollaborationProjectTransitionSchema.parse(await api.post(
         `/api/collaboration/scopes/${scope.id}/project/confirm`,
         {
-          clientRequestId: crypto.randomUUID(),
+          clientRequestId: randomUUID(),
           expectedScopeRevision: confirmationInventory.scopeRevision,
           expectedProjectRevision: confirmationInventory.projectRevision,
           inventoryHash: confirmationInventory.inventoryHash,
@@ -113,7 +114,7 @@ export function ProjectSharingDialog({
     setError("");
     try {
       await api.post(`/api/collaboration/scopes/${scope.id}/project/unshare`, {
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId: randomUUID(),
         expectedRevision: scope.revision,
       });
       if (alive.current) onClose();

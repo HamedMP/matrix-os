@@ -1,4 +1,5 @@
 import { getGatewayUrl } from "./gateway";
+import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminals";
 import { isCanonicalShellSessionId } from "../components/terminal/terminal-session-id";
 
 const QUEUE_KEY = "matrix:provider-terminal-session-queue";
@@ -171,6 +172,30 @@ async function readBoundedJson(response: Response, limit: number): Promise<unkno
  * One known tab, looked up on its own: used when the workspace list is too big to
  * read (finished history counts toward its limits). "gone" when it ended or vanished.
  */
+// Names learned while confirming a tab, so a tab opened by reference is titled
+// like its sidebar row. Bounded; the oldest name is forgotten first.
+const MAX_REMEMBERED_NAMES = 64;
+const UNSAFE_NAME_CHARS = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+const terminalRefNames = new Map<string, string>();
+
+function rememberTerminalRefName(terminalRef: string, name: unknown): void {
+  if (typeof name !== "string") return;
+  const safe = name.replace(UNSAFE_NAME_CHARS, "").trim().slice(0, 120);
+  if (!safe) return;
+  terminalRefNames.delete(terminalRef);
+  terminalRefNames.set(terminalRef, safe);
+  while (terminalRefNames.size > MAX_REMEMBERED_NAMES) terminalRefNames.delete(terminalRefNames.keys().next().value!);
+}
+
+/** The name the gateway gave a tab confirmed by reference, if one was learned. */
+export function terminalRefDisplayName(terminalRef: string): string | null {
+  return terminalRefNames.get(terminalRef) ?? null;
+}
+
+function isHerdrTerminalRefKey(terminalRef: string): boolean {
+  return terminalRef.startsWith(`${HERDR_TERMINAL_WORKSPACE_ID}:`);
+}
+
 async function lookUpTerminalRef(fetcher: Fetcher, terminalRef: string): Promise<"live" | "gone" | "unknown"> {
   const [workspaceId, tabId] = terminalRef.split(":");
   if (!workspaceId || !tabId || !WORKSPACE_ID_PATTERN.test(workspaceId) || !TAB_ID_PATTERN.test(tabId)) return "gone";
@@ -182,8 +207,9 @@ async function lookUpTerminalRef(fetcher: Fetcher, terminalRef: string): Promise
   if (response.status === 404) return "gone";
   const value = await readBoundedJson(response, TAB_RESPONSE_LIMIT_BYTES);
   if (!value || typeof value !== "object") return "unknown";
-  const facts = value as { tab?: { id?: unknown; status?: unknown }; state?: unknown };
+  const facts = value as { tab?: { id?: unknown; status?: unknown; name?: unknown }; state?: unknown };
   if (facts.tab?.id !== tabId || (facts.state !== "live" && facts.state !== "finished")) return "unknown";
+  rememberTerminalRefName(terminalRef, facts.tab.name);
   return facts.state === "live" && typeof facts.tab.status === "string" && ACTIVE_TAB_STATUSES.has(facts.tab.status) ? "live" : "gone";
 }
 
@@ -243,8 +269,9 @@ export async function drainExistingTerminalSessionQueue(
     const settledEntries = new Set<QueuedSession>();
     const acceptedRefs = new Set<string>();
     for (const entry of matched) {
-      if (entry.terminalRef && !active.authoritative) {
-        // The list was too big or unreadable: ask about this one tab instead.
+      if (entry.terminalRef && (!active.authoritative || isHerdrTerminalRefKey(entry.terminalRef))) {
+        // The list was too big or unreadable, or the tab is a Herdr terminal,
+        // which workspace lists never include (spec 2701): ask about this tab.
         const found = await lookUpTerminalRef(options.fetcher ?? fetch, entry.terminalRef);
         if (found !== "unknown") settledEntries.add(entry);
         if (found === "live") acceptedRefs.add(entry.terminalRef);

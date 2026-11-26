@@ -10,6 +10,7 @@ COPY patches/ patches/
 COPY packages/clerk-sync/package.json packages/clerk-sync/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/gateway/package.json packages/gateway/package.json
+COPY packages/herdr-core-client/package.json packages/herdr-core-client/package.json
 COPY packages/scope-runtime/package.json packages/scope-runtime/package.json
 COPY packages/terminal-runtime/package.json packages/terminal-runtime/package.json
 COPY packages/kernel/package.json packages/kernel/package.json
@@ -78,6 +79,7 @@ COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/node_modules 
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/package.json ./packages/clerk-sync/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/gateway/package.json ./packages/gateway/package.json
+COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/herdr-core-client/package.json ./packages/herdr-core-client/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/scope-runtime/package.json ./packages/scope-runtime/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/terminal-runtime/package.json ./packages/terminal-runtime/package.json
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/kernel/package.json ./packages/kernel/package.json
@@ -90,6 +92,7 @@ COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/packages/sync
 COPY --from=prod-deps --chown=matrix-platform:matrix-platform /app/shell/package.json ./shell/package.json
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/clerk-sync/src ./packages/clerk-sync/src
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/contracts/src ./packages/contracts/src
+COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/herdr-core-client/src ./packages/herdr-core-client/src
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/scope-runtime/src ./packages/scope-runtime/src
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/terminal-runtime/dist ./packages/terminal-runtime/dist
 COPY --from=builder --chown=matrix-platform:matrix-platform /app/packages/sync-client/src ./packages/sync-client/src
@@ -114,6 +117,8 @@ ENV CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml
 ENV AUTH_SHELL_HOST=127.0.0.1
 ENV AUTH_SHELL_PORT=3200
 ENV MATRIX_PLATFORM_AUTH_SHELL=1
+ARG MATRIX_BUILD_SHA
+ENV NEXT_PUBLIC_MATRIX_BUILD_SHA=$MATRIX_BUILD_SHA
 
 EXPOSE 8080
 EXPOSE 3200

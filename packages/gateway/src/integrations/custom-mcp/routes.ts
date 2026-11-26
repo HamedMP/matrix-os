@@ -83,6 +83,8 @@ export interface CustomMcpRoutesOptions {
   core?: CoreToolService;
   /** Owner-session router only (never the VPS-internal one): decides external-client writes. */
   ownerApprovals?: CustomMcpExternalApprovalStore;
+  /** Core service ids including Connect Apps, so owner approvals name the same service clients saw. */
+  coreServiceSlugs?: (userId: string) => Promise<Map<string, string>>;
   now?: () => number;
 }
 
@@ -163,7 +165,8 @@ export function createCustomMcpRoutes(options: CustomMcpRoutesOptions): Hono {
   }
   if (options.ownerApprovals) {
     registerCoreOwnerApprovalRoutes(app, { store: options.ownerApprovals, requireUser,
-      listServers: userId => options.broker.list(userId) });
+      listServers: userId => options.broker.list(userId),
+      ...(options.coreServiceSlugs ? { serviceSlugs: options.coreServiceSlugs } : {}) });
   }
 
   app.get("/", async (context) => {

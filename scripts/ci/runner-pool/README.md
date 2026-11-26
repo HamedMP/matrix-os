@@ -3,8 +3,11 @@
 The dedicated Linux host runs ephemeral GitHub Actions runners for `ci.yml`
 ([spec 633](../../../specs/633-ci-runner-pool/spec.md)). Each slot starts a
 fresh container for one job, then removes it. CI routes to the pool only while
-the host publishes a fresh `MATRIX_CI_POOL_HEARTBEAT` with four idle slots;
-otherwise jobs run on GitHub-hosted runners. Four unit shards, Pattern Scan
+the host publishes a fresh `MATRIX_CI_POOL_HEARTBEAT` with an idle slot;
+otherwise jobs run on GitHub-hosted runners. A freed slot takes the next queued
+pool job at once, so an idle slot means the pool has no backlog. A runner still
+waiting after 30 minutes (`IDLE_RECYCLE_SECONDS`) is deregistered and
+restarted, so idle time never eats into a job's 2-hour limit. Four unit shards, Pattern Scan
 and both E2E lanes share the admission decision. Seven jobs can queue within
 the four slots; GitHub starts each as a slot becomes free.
 

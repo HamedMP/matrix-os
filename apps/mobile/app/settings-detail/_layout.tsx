@@ -67,6 +67,7 @@ export default function SettingsDetailLayout() {
       ))}
       {[
         ["support", "Contact support", "Back to help"],
+        ["notifications", "Notifications", "Back to app settings"],
         // Also opened straight from the journey gate, where there is no
         // account screen behind it.
         ["delete-account", "Delete account", "Back"],

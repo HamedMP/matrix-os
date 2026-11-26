@@ -1,4 +1,5 @@
 import { resolveCanonicalChatScope } from "./resolve-chat-scope.js";
+import { randomUUID } from "../random-uuid.js";
 import {
   CollaborationChatMessagesResponseSchema,
   CollaborationChatSchema,
@@ -226,7 +227,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
     try {
       const result = z.looseObject({ scopeId: z.uuid() }).parse(await api.post(
         `/api/collaboration/invitations/${encodeURIComponent(item.invitationId)}/${action}`,
-        { clientRequestId: crypto.randomUUID(), expectedRevision: item.resource.revision },
+        { clientRequestId: randomUUID(), expectedRevision: item.resource.revision },
       ));
       setItems((current) => current.filter((candidate) => discoveryKey(candidate) !== discoveryKey(item)));
       notifyCollaborationDiscoveryChanged();
@@ -436,7 +437,7 @@ function InvitationView({ api, invitationId, openChat, openTerminal, openProject
     try {
       const result = z.looseObject({ scopeId: z.uuid() }).parse(await api.post(
         `/api/collaboration/invitations/${encodeURIComponent(invitation.id)}/${action}`,
-        { clientRequestId: crypto.randomUUID(), expectedRevision: invitation.revision },
+        { clientRequestId: randomUUID(), expectedRevision: invitation.revision },
       ));
       notifyCollaborationDiscoveryChanged();
       if (action === "accept") {
@@ -694,7 +695,7 @@ function useSharedChatController({ api, actorId, runtimeId, scopeId, storage, on
     dispatch({ type: "send_started" });
     try {
       await api.post(`/api/collaboration/scopes/${encodeURIComponent(scopeId)}/chat/messages`, {
-        clientRequestId: crypto.randomUUID(), expectedRevision: state.scope.revision, text: state.draft.text.trim(),
+        clientRequestId: randomUUID(), expectedRevision: state.scope.revision, text: state.draft.text.trim(),
       });
       draftStore.clear(draftKey);
       dispatch({ type: "draft_changed", draft: { text: "", mode: "discussion" } });

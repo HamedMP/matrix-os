@@ -198,7 +198,7 @@ export function registerCanonicalChatEventHttpRoute(options: {
 
     return new Response(body, {
       headers: {
-        "cache-control": "no-store",
+        "cache-control": "no-store, no-transform",
         "content-type": "text/event-stream; charset=utf-8",
         "x-accel-buffering": "no",
       },

@@ -1,0 +1,27 @@
+# Bridges guest AF_VSOCK port 1024 (reached by the host through Cloud
+# Hypervisor's vsock unix socket) to the guest agent's unix socket. Node has no
+# AF_VSOCK server, so socat (apt package `socat`) carries the bytes only; all
+# protocol handling, line limits and idle timeouts live in the agent.
+[Unit]
+Description=Matrix guest agent vsock bridge
+Requires=matrix-guest-agent.service
+After=matrix-guest-agent.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/socat VSOCK-LISTEN:1024,fork,reuseaddr,max-children=8 UNIX-CONNECT:/run/matrix-guest-agent/agent.sock
+Restart=always
+RestartSec=2
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_VSOCK
+MemoryMax=32M
+TasksMax=16
+OOMScoreAdjust=-900
+
+[Install]
+WantedBy=multi-user.target

@@ -1,10 +1,13 @@
-import { FUNDED_PRICING_REVIEW_MAX_MS, FUNDED_SONNET_5_PRICE } from "@matrix-os/contracts";
+import { ALIBABA_QWEN_37_PLUS_MODEL_ID, ALIBABA_QWEN_37_PLUS_PRICE, FUNDED_PRICING_CATALOG, FUNDED_PRICING_REVIEW_MAX_MS, FUNDED_SONNET_5_PRICE, GOOGLE_GEMINI_38_FLASH_MODEL_ID, GOOGLE_GEMINI_38_FLASH_PRICE, MOONSHOT_KIMI_K31_PRO_MODEL_ID, MOONSHOT_KIMI_K31_PRO_PRICE } from "@matrix-os/contracts";
 import { WORKERS_AI_PRICE_SNAPSHOTS, WORKERS_AI_PRICING_VERSIONS } from "./funded-workers-pricing.js";
 /** Numeric rates are immutable code snapshots; operator configuration only
  * re-attests their validity after checking the official provider price pages. */
 export const FUNDED_PRICING_VERSIONS = Object.freeze({
   "anthropic/claude-sonnet-5": FUNDED_SONNET_5_PRICE.version,
   ...WORKERS_AI_PRICING_VERSIONS,
+  [GOOGLE_GEMINI_38_FLASH_MODEL_ID]: GOOGLE_GEMINI_38_FLASH_PRICE.version,
+  [MOONSHOT_KIMI_K31_PRO_MODEL_ID]: MOONSHOT_KIMI_K31_PRO_PRICE.version,
+  [ALIBABA_QWEN_37_PLUS_MODEL_ID]: ALIBABA_QWEN_37_PLUS_PRICE.version,
 });
 export interface FundedPricingReview {
   canonicalModelId: keyof typeof FUNDED_PRICING_VERSIONS;
@@ -39,14 +42,18 @@ export function validateFundedPricingReview(review: FundedPricingReview): void {
     || review.version !== FUNDED_PRICING_VERSIONS[review.canonicalModelId]) {
     throw new Error("Invalid funded AI pricing review version");
   }
-  const duration = canonicalTime(review.validThrough) - canonicalTime(review.reviewedAt);
-  if (duration <= 0 || duration > FUNDED_PRICING_REVIEW_MAX_MS) {
+  const end = canonicalTime(review.validThrough);
+  const duration = end - canonicalTime(review.reviewedAt);
+  const rateExpiresAt = FUNDED_PRICING_CATALOG[review.canonicalModelId]?.rateExpiresAt;
+  if (duration <= 0 || duration > FUNDED_PRICING_REVIEW_MAX_MS
+    || (rateExpiresAt !== undefined && end > Date.parse(rateExpiresAt))) {
     throw new Error("Invalid funded AI pricing review window");
   }
 }
 export function readFundedPricingReviews(env: NodeJS.ProcessEnv): FundedPricingReviews {
   const models: readonly (readonly [string, keyof typeof FUNDED_PRICING_VERSIONS])[] = [
     ["SONNET", "anthropic/claude-sonnet-5"],
+    ["GEMINI_38_FLASH", GOOGLE_GEMINI_38_FLASH_MODEL_ID],
     ...Object.entries(WORKERS_AI_PRICE_SNAPSHOTS).map(([id, price]) =>
       [price.prefix, id as keyof typeof WORKERS_AI_PRICE_SNAPSHOTS] as const),
   ];

@@ -1,6 +1,6 @@
 import { sql, type Selectable } from "kysely";
 import type { PlatformDB, AiFundedUsageReservationsTable } from "../db.js";
-import { exactInteger, recordUsageFunding, utcMonthStart } from "../ai-funded-metering-helpers.js";
+import { advanceMonthWindow, exactInteger, recordUsageFunding, utcMonthStart } from "../ai-funded-metering-helpers.js";
 import { fundingSourceAvailability, reconcileExpiredPromotionalCredit, reserveFundingSources } from "../ai-funded-reservation-sources.js";
 import { readCustomerChargeRelease, releaseCustomerCharge, releaseSpeechAllowance } from "../ai-funded-customer-charge-release.js";
 import { readSpeechAuthorization, SpeechSettlementReceiptSchema } from "./reservation-policy.js";
@@ -41,9 +41,7 @@ export async function settlePostpaidSpeech(executor: PlatformDB["executor"], row
       const runtime = await executor.selectFrom("ai_funded_runtime_policies").select("monthly_budget_microusd")
         .where("machine_id", "=", row.machine_id).executeTakeFirstOrThrow();
       budget = exactInteger(runtime.monthly_budget_microusd);
-      await executor.updateTable("ai_funded_runtime_balances").set({ month_period_start: period,
-        month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${period} THEN month_spent_microusd ELSE 0 END`,
-        month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${period} THEN month_reserved_microusd ELSE 0 END` })
+      await executor.updateTable("ai_funded_runtime_balances").set({ ...advanceMonthWindow(period) })
         .where("machine_id", "=", row.machine_id).execute();
     }
     const balance = await reconcileExpiredPromotionalCredit(executor, identity, checkedAt);
@@ -62,7 +60,8 @@ export async function settlePostpaidSpeech(executor: PlatformDB["executor"], row
       period_spent_microusd: sql<number>`period_spent_microusd + ${actual}`, updated_at: checkedAt,
     }).where("machine_id", "=", row.machine_id).where("period_start", "=", capture.allowancePeriodStart!)
       .returning("machine_id").executeTakeFirstOrThrow();
-    await recordUsageFunding(executor, { ...row, reserved_microusd: 0, period_start: period }, actual,
+    // General-budget speech is accounted in the runtime's current window, which can be newer than this clock.
+    await recordUsageFunding(executor, { ...row, reserved_microusd: 0, period_start: capture.monthly ? period : balance.month_period_start }, actual,
       promotionalDebit, addonDebit, checkedAt, true, !capture.monthly);
   }
   const response = SpeechSettlementReceiptSchema.parse({ capability: "speech:transcribe", billingPolicy: "postpaid", status: "settled",

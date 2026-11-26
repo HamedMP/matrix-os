@@ -40,11 +40,11 @@ describe("canonical attention delivery", () => {
   beforeEach(async () => {
     if (process.env.MATRIX_TEST_POSTGRES_URL) {
       const fixture = await createRealCollaborationTestDatabase();
-      repository = new ChatRepository(fixture.db);
+      repository = new ChatRepository(fixture.dialect);
       cleanup = fixture.destroy;
     } else {
       const instance = await createTestPGlite();
-      repository = new ChatRepository(new Kysely({ dialect: instance.dialect }));
+      repository = new ChatRepository(instance.dialect);
       cleanup = () => repository.kysely.destroy();
     }
     await repository.bootstrap();

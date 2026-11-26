@@ -194,6 +194,21 @@ describe("the engines of the model sheet", () => {
     ]);
   });
 
+  it.each(["@cf/zai-org/glm-5.3-flash", "cloudflare:@cf/zai-org/glm-5.3-flash"])(
+    "keeps %s on the old Chat trigger without offering it again",
+    model => {
+      const saved = { ...GLM, model };
+      const catalog = catalogOf(matrixInstance());
+      expect(modelTrigger(catalog, saved, false)).toEqual({
+        provider: "matrix", label: "Matrix AI · GLM 5.3 Flash · unavailable", canChoose: true,
+      });
+      expect(modelEngines(catalog, saved)[0]!.models.map(choice => choice.name)).toEqual(["Sonnet 5"]);
+      expect(selectionCanRun(catalog, saved)).toBe(false);
+      expect(chosenSelection(catalog, modelKey(saved.instanceId, model))).toBeNull();
+      expect(chosenSelection(catalog, modelKey(SONNET.instanceId, SONNET.model))).toEqual(SONNET);
+    },
+  );
+
   it("leaves a saved model out when its engine is not offered at all", () => {
     const engines = modelEngines(catalogOf(matrixInstance()), { instanceId: "gone_default", model: "gone" });
 

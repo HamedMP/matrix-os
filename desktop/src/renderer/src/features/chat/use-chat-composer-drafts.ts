@@ -109,16 +109,18 @@ export function useChatComposerDrafts({
   }, [scope, updateScope]);
 
   return {
-    seedChatDraft: (targetChatId: string, text: string) => {
+    seedChatDraft: (targetChatId: string, text: string, replace?: { text: string; revision: number }) => {
       if (retentionIdentity !== undefined && retentionIdentity !== desktopComposerDraftIdentity(useConnection.getState())) return false;
       const target = `chat:${targetChatId}`;
       const saved = retentionIdentity === undefined ? draftsRef.current[target]
         : useRetainedComposerDrafts.getState().drafts[target];
-      if (saved && (saved.text.trim() || saved.referenceTokens.length)) return false;
+      const canSeed = (existing: ComposerDraft | undefined) => replace
+        ? existing?.text === replace.text && existing.revision === replace.revision && !existing.referenceTokens.length
+        : !existing || (!existing.text.trim() && !existing.referenceTokens.length);
+      if (!canSeed(saved)) return false;
       setDrafts((current, revision) => {
-        const existing = current[target];
-        return existing && (existing.text.trim() || existing.referenceTokens.length) ? current
-          : rememberDraft(current, target, { text, referenceTokens: [] }, null, revision);
+        return canSeed(current[target])
+          ? rememberDraft(current, target, { text, referenceTokens: [] }, null, revision) : current;
       });
       return true;
     },
@@ -127,6 +129,20 @@ export function useChatComposerDrafts({
     updateIfUnchanged: useCallback((revision: number, patch: Pick<ComposerDraft, "text" | "referenceTokens">) => {
       setDrafts((current, nextRevision) => (current[scope]?.revision ?? 0) === revision
         ? rememberDraft(current, scope, patch, projectId, nextRevision) : current);
+    }, [projectId, scope, setDrafts]),
+    /**
+     * Puts a sent draft back at its original revision after the send was not
+     * admitted, so a retry is the same request; a draft written since stays.
+     */
+    restoreIfEmpty: useCallback((revision: number, sent: Pick<ComposerDraft, "text" | "referenceTokens">) => {
+      if (!sent.text.trim() && !sent.referenceTokens.length) return;
+      setDrafts((current, nextRevision) => {
+        const existing = current[scope];
+        if (existing && (existing.text.trim() || existing.referenceTokens.length)) return current;
+        const next = rememberDraft(current, scope, sent, projectId, nextRevision);
+        next[scope] = { ...next[scope]!, revision };
+        return next;
+      });
     }, [projectId, scope, setDrafts]),
     text: draft?.text ?? "",
     referenceTokens: draft?.referenceTokens ?? EMPTY_REFERENCE_TOKENS,

@@ -406,38 +406,48 @@ describe("Chat canonical provider state", () => {
   });
 
   it("retains trust after a routine failure and forces the next read while settings trust is suspended", async () => {
-    let finishRoutine!: (response: Response) => void;
-    let finishSettings!: (response: Response) => void;
-    const routineRefresh = new Promise<Response>((resolve) => { finishRoutine = resolve; });
-    const settingsRefresh = new Promise<Response>((resolve) => { finishSettings = resolve; });
-    let catalogReads = 0;
-    const fetchMock = vi.fn<typeof fetch>(async () => {
-      catalogReads += 1;
-      if (catalogReads === 1 || catalogReads === 4) return Response.json(providerCatalog());
-      if (catalogReads === 2) return routineRefresh;
-      if (catalogReads === 3) return settingsRefresh;
-      throw new Error("Unexpected provider catalog read");
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    const initial = Promise.withResolvers<Response>();
+    const routine = Promise.withResolvers<Response>();
+    const settings = Promise.withResolvers<Response>();
+    const recovery = Promise.withResolvers<Response>();
+    const fetchCatalog = vi.fn<typeof fetch>(async () => { throw new Error("Unexpected provider catalog read"); })
+      .mockImplementationOnce(() => initial.promise)
+      .mockImplementationOnce(() => routine.promise)
+      .mockImplementationOnce(() => settings.promise)
+      .mockImplementationOnce(() => recovery.promise);
+    vi.stubGlobal("fetch", ((input, init) => {
+      const path = new URL(String(input), window.location.href).pathname;
+      // The shared WebSocket's credential retry can overlap this hook test.
+      if (!path.endsWith("/api/chat-providers")) return Promise.resolve(new Response(null, { status: 503 }));
+      return fetchCatalog(input, init);
+    }) satisfies typeof fetch);
     const { result } = renderHook(() => useChatProviderState());
-    await waitFor(() => expect(result.current.hasTrustedCatalog).toBe(true));
+    expect(fetchCatalog).toHaveBeenCalledTimes(1);
+    await act(async () => initial.resolve(Response.json(providerCatalog())));
+    expect(result.current.hasTrustedCatalog).toBe(true);
 
     act(() => window.dispatchEvent(new Event("focus")));
-    await waitFor(() => expect(catalogReads).toBe(2));
-    await act(async () => finishRoutine(new Response("{}", { status: 503 })));
-    await waitFor(() => expect(result.current.unavailable).toBe(true));
+    expect(fetchCatalog).toHaveBeenCalledTimes(2);
+    expect(String(fetchCatalog.mock.calls[1]?.[0])).not.toContain("refresh=true");
+    await act(async () => routine.resolve(new Response(null, { status: 503 })));
+    expect(result.current.unavailable).toBe(true);
     expect(result.current.hasTrustedCatalog).toBe(true);
 
     act(() => window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_CHANGED_EVENT)));
-    await waitFor(() => expect(catalogReads).toBe(3));
+    expect(fetchCatalog).toHaveBeenCalledTimes(3);
+    expect(String(fetchCatalog.mock.calls[2]?.[0])).toContain("refresh=true");
     expect(result.current.hasTrustedCatalog).toBe(false);
-    await act(async () => finishSettings(new Response("{}", { status: 503 })));
+    await act(async () => settings.resolve(new Response(null, { status: 503 })));
     expect(result.current.hasTrustedCatalog).toBe(false);
 
     act(() => window.dispatchEvent(new Event("focus")));
-    await waitFor(() => expect(catalogReads).toBe(4));
-    await waitFor(() => expect(result.current.hasTrustedCatalog).toBe(true));
-    expect(String(fetchMock.mock.calls[3]?.[0])).toContain("refresh=true");
+    expect(fetchCatalog).toHaveBeenCalledTimes(4);
+    expect(String(fetchCatalog.mock.calls[3]?.[0])).toContain("refresh=true");
+    expect(result.current.hasTrustedCatalog).toBe(false);
+    await act(async () => recovery.resolve(Response.json(providerCatalog())));
+    expect(result.current.hasTrustedCatalog).toBe(true);
+    expect(result.current.unavailable).toBe(false);
+    expect(fetchCatalog).toHaveBeenCalledTimes(4);
   });
 
   it("refreshes the canonical catalog after provider settings change", async () => {
@@ -496,6 +506,8 @@ describe("Chat canonical provider state", () => {
         displayText: "Keep this draft",
         clientRequestId: expect.any(String),
         onAccepted: expect.any(Function),
+        onShown: expect.any(Function),
+        onAdmissionUnconfirmed: expect.any(Function),
         instanceId: "pi_default",
         model: "anthropic:claude-sonnet-5",
         interactionMode: "default",
@@ -714,6 +726,54 @@ it("retains a saved native Codex choice during checking rather than choosing ano
   expect(result.current.displaySelection).toEqual(selection);
   expect(result.current.selected).toBeNull();
   expect(result.current.selectionStatus).toBe("Checking Codex access…");
+});
+
+it("remembers the last explicit Matrix AI model for new Web chats while isolating bound chat controls", async () => {
+  const source = providerCatalog();
+  const base = source.instances[0]!;
+  const instanceId = "matrix_pi_default";
+  const deepSeek = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+  const glm = "@cf/zai-org/glm-5.3";
+  const catalog = CanonicalProviderCatalogSchema.parse({
+    revision: source.revision,
+    drivers: [{ kind: "matrix_pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "system_agent" }],
+    instances: [{
+      ...base, id: instanceId, driverKind: "matrix_pi", displayName: "Matrix AI", connectionLabel: "Matrix AI",
+      connectionState: "ready", defaultSelection: { instanceId, model: deepSeek },
+      models: [
+        { ...base.models[0]!, id: deepSeek, displayName: "DeepSeek V4.1 Flash" },
+        { ...base.models[0]!, id: glm, displayName: "GLM 5.3" },
+      ],
+    }],
+  });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(catalog)));
+  const props = { messages: [], busy: false, connected: true, conversations: [], onNewChat: vi.fn(), onSwitchConversation: vi.fn(), onSubmit: vi.fn() };
+  const picker = () => screen.getByRole("button", { name: "Choose model and provider" });
+  const permission = () => screen.getByRole("button", { name: "Permission mode" });
+  const reasoning = () => screen.getByRole("button", { name: "Reasoning" });
+  const view = render(<ChatApp {...props} sessionId="chat_glm" providerSelection={{ instanceId, model: glm }} boundProviderInstanceId={instanceId} />);
+  await waitFor(() => expect(picker()).toHaveAttribute("data-model", glm));
+  view.rerender(<ChatApp {...props} />);
+  expect(picker()).toHaveAttribute("data-model", deepSeek);
+
+  view.rerender(<ChatApp {...props} sessionId="chat_deepseek" providerSelection={{ instanceId, model: deepSeek }} boundProviderInstanceId={instanceId} />);
+  fireEvent.click(permission());
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: "Full Access" }));
+  fireEvent.click(reasoning());
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
+  fireEvent.click(picker());
+  fireEvent.click(await screen.findByRole("option", { name: "GLM 5.3 via Matrix AI" }));
+  expect(picker()).toHaveAttribute("data-model", glm);
+  expect(permission()).toHaveTextContent("Full Access");
+  expect(reasoning()).toHaveTextContent("High");
+
+  view.rerender(<ChatApp {...props} />);
+  expect(picker()).toHaveAttribute("data-model", glm);
+  expect(permission()).toHaveTextContent("Supervised");
+  expect(reasoning()).toHaveTextContent("Low");
+  view.unmount();
+  render(<ChatApp {...props} />);
+  await waitFor(() => expect(picker()).toHaveAttribute("data-model", glm));
 });
 
 it.each([false, true])("keeps explicitly chosen unavailable Matrix models selectable and saved without enabling Web send (mobile=%s)", async mobile => {

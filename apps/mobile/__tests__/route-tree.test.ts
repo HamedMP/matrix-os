@@ -95,6 +95,7 @@ describe("route tree", () => {
     expect(resolve("/app-preview/chess")).toEqual([["app-preview"], ["[app]"]]);
     expect(resolve("/integration-detail/github")).toEqual([["integration-detail"], ["[integration]"]]);
     expect(resolve("/integrations-installed")).toEqual([["integrations-installed"], ["index"]]);
+    expect(resolve("/settings-detail/notifications")).toEqual([["settings-detail"], ["notifications"]]);
     expect(resolve("/settings-detail/system")).toEqual([["settings-detail"], ["system"]]);
     expect(resolve("/settings-detail/developer-access")).toEqual([["settings-detail"], ["developer-access"]]);
   });

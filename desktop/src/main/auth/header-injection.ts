@@ -11,7 +11,7 @@ import { DESKTOP_REQUEST_SESSION_HEADER, desktopRequestSessionKey, type DesktopR
 interface WebRequestLike {
   onBeforeSendHeaders(
     listener: (
-      details: { url: string; requestHeaders: Record<string, string> },
+      details: { url: string; method?: string; requestHeaders: Record<string, string> },
       callback: (response: { requestHeaders: Record<string, string>; cancel?: boolean }) => void,
     ) => void,
   ): void;
@@ -72,6 +72,41 @@ export function shouldInjectAuth(requestUrl: string, gatewayOrigin: string | nul
     request.hostname === gateway.hostname &&
     request.port === gateway.port
   );
+}
+
+const SAFE_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * A private self-hosted gateway refuses browser WebSocket upgrades and
+ * state-changing HTTP requests whose Origin is not its own shell's, because its
+ * ingress adds the owner's credentials to every request. The renderer's Origin
+ * cannot pass that check: the packaged renderer is a file:// page (Origin
+ * "null", which a sandboxed frame on any site can also send) and the dev
+ * renderer is on localhost. So the trusted core, which already adds the bearer
+ * to these requests, names the gateway itself as their Origin, as a native
+ * client would. Reads (CORS still applies to them) and every other host keep
+ * the renderer's Origin.
+ */
+export function setGatewayRequestOrigin(
+  requestUrl: string,
+  method: string | undefined,
+  gatewayOrigin: string | null,
+  headers: Record<string, string>,
+): void {
+  if (!shouldInjectAuth(requestUrl, gatewayOrigin)) return;
+  const request = new URL(requestUrl);
+  let origin: string;
+  if (request.protocol === "ws:" || request.protocol === "wss:") {
+    origin = `${request.protocol === "wss:" ? "https:" : "http:"}//${request.host}`;
+  } else if (!SAFE_HTTP_METHODS.has((method ?? "GET").toUpperCase())) {
+    origin = request.origin;
+  } else {
+    return;
+  }
+  for (const name of Object.keys(headers)) {
+    if (name.toLowerCase() === "origin") delete headers[name];
+  }
+  headers.Origin = origin;
 }
 
 function websocketOrigin(origin: string): string | null {
@@ -164,6 +199,7 @@ export function installHeaderInjection(
     if (token && shouldInjectAuth(details.url, gatewayOrigin)) {
       details.requestHeaders["Authorization"] = `Bearer ${token}`;
     }
+    setGatewayRequestOrigin(details.url, details.method, gatewayOrigin, details.requestHeaders);
     if (rendererOrigin === "null" && shouldInjectAuth(details.url, gatewayOrigin)) {
       // shouldInjectAuth has already parsed and validated this URL against the
       // active gateway origin, so constructing it here cannot fail.

@@ -1,0 +1,28 @@
+{
+  "name": "@matrix-os/hostd",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./ch-client": "./src/ch-client.ts",
+    "./guest-client": "./src/guest-client.ts",
+    "./memory-controller": "./src/memory-controller.ts",
+    "./api": "./src/api.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build:hostd": "esbuild src/main.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/hostd/main.mjs '--banner:js=import { createRequire as __hostdCreateRequire } from \"node:module\"; const require = __hostdCreateRequire(import.meta.url);'",
+    "build:guest-agent": "esbuild src/guest-agent/agent.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/guest-agent/agent.mjs"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.15",
+    "hono": "^4.12.25",
+    "undici": "7.30.1",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "esbuild": "0.25.12",
+    "typescript": "^5.9.3"
+  }
+}

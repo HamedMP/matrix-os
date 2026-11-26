@@ -33,7 +33,7 @@ async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
 }
 
 describe("unreadable Zellij structured output", () => {
-  it("raises a typed, ANSI-free, bounded error instead of a raw SyntaxError", async () => {
+  it("identifies the failing command without retaining non-JSON stdout", async () => {
     vi.useFakeTimers();
     const adapter = new ZellijCliRuntimeAdapter({
       homePath: "/home/matrix",
@@ -48,29 +48,34 @@ describe("unreadable Zellij structured output", () => {
     expect(error).toBeInstanceOf(ZellijOutputError);
     expect(error).not.toBeInstanceOf(SyntaxError);
     const typed = error as ZellijOutputError;
-    expect(typed.reason).toBe("non_json");
-    expect(typed.code).toBe("unavailable");
-    expect(typed.snippet).not.toMatch(/\x1b/);
-    expect(typed.snippet).toContain("not found");
-    expect(typed.snippet.length).toBeLessThanOrEqual(160);
-    // The raw output must not leak through the client-facing message.
-    expect(typed.message).not.toContain("matrix-rt_");
+    expect(typed).toMatchObject({ command: "list-tabs", reason: "non_json", code: "unavailable" });
+    expect(JSON.stringify(typed)).not.toContain("matrix-rt_");
+    expect(typed.cause).toBeUndefined();
   });
 
-  it("reports schema-invalid JSON as a typed error", async () => {
+  it("reports the failing pane fields without retaining their values", async () => {
     vi.useFakeTimers();
+    const tabName = "matrix-tab-0123456789abcdef0123456789abcdef";
+    const paneTitle = "private pane title ".repeat(8);
     const adapter = new ZellijCliRuntimeAdapter({
       homePath: "/home/matrix",
-      run: vi.fn(async () => JSON.stringify([{ unexpected: true }])),
+      run: vi.fn(async (args: string[]) => args.includes("list-tabs")
+        ? JSON.stringify([{ tab_id: 1, name: tabName }])
+        : JSON.stringify([{ id: 1, tab_id: 1, is_plugin: false, pane_title: paneTitle }])),
     });
 
     const error = await rejectionOf(adapter.findTabsByInternalName(
       "matrix-w-0123456789abcdef0123456789abcdef",
-      ["matrix-tab-0123456789abcdef0123456789abcdef"],
+      [tabName],
     ));
 
     expect(error).toBeInstanceOf(ZellijOutputError);
-    expect((error as ZellijOutputError).reason).toBe("schema_invalid");
+    expect(error).toMatchObject({
+      command: "list-panes",
+      reason: "schema_invalid",
+      invalidFields: ["pane_title"],
+    });
+    expect(JSON.stringify(error)).not.toContain("private pane title");
   });
 
   it("stops retrying a structured read once the caller's deadline passes", async () => {
@@ -91,17 +96,6 @@ describe("unreadable Zellij structured output", () => {
     // Without the deadline the read makes ten 3 s attempts (over 30 s).
     expect(Date.now() - startedAt).toBeLessThanOrEqual(6_500);
     expect(run.mock.calls.length).toBeLessThanOrEqual(2);
-  });
-
-  it("bounds the log snippet and redacts long token-like runs", () => {
-    const error = ZellijOutputError.fromOutput(
-      "non_json",
-      `\x1b]0;title\x07token=${"A".repeat(80)} ${"x ".repeat(400)}`,
-    );
-    expect(error.snippet).not.toContain("A".repeat(48));
-    expect(error.snippet).toContain("[redacted]");
-    expect(error.snippet).not.toMatch(/[\x00-\x1f\x7f]/);
-    expect(error.snippet.length).toBeLessThanOrEqual(160);
   });
 });
 
@@ -188,13 +182,13 @@ describe("runtime startup with one unreadable Zellij session", () => {
     expect(zellij.subscribed.has(goodSession)).toBe(true);
     expect(zellij.subscribed.has(badSession)).toBe(false);
     const restoreLog = errors.mock.calls.find(([message]) => message === "[terminal-runtime] workspace restore failed");
-    expect(restoreLog?.[1]).toMatchObject({
+    expect(restoreLog?.[1]).toEqual({
       workspaceId: bad.id,
       error: "ZellijOutputError",
       code: "unavailable",
+      command: "list-tabs",
       reason: "non_json",
     });
-    expect(JSON.stringify(restoreLog)).not.toMatch(/\x1b/);
     // A read failure is not evidence the program ended: the tab stays recoverable.
     expect(await store.getTab({ workspaceId: bad.id, tabId: badTab.id }))
       .not.toMatchObject({ status: "exited" });

@@ -1,3 +1,4 @@
+import { randomUUID } from "../random-uuid.js";
 import {
   CollaborationExecutionPolicyOptionsSchema,
   CollaborationExecutionPolicySchema,
@@ -73,7 +74,7 @@ export function ContributorAiSettings({ api, scope, onPolicyUpdated, compact = f
       const updated = CollaborationExecutionPolicySchema.parse(await api.put(
         `/api/collaboration/scopes/${encodeURIComponent(executionScopeId)}/execution-policy`,
         {
-          clientRequestId: crypto.randomUUID(),
+          clientRequestId: randomUUID(),
           expectedRevision: policy?.revision ?? "0",
           accessSourceId: option.source.accessSourceId,
           providerInstanceId: option.source.providerInstanceId,

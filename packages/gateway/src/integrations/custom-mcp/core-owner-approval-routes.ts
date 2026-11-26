@@ -19,6 +19,8 @@ const DecisionBody = z.object({ decision: z.enum(["approve", "decline"]) }).stri
 export interface CoreOwnerApprovalRouteOptions {
   store: CustomMcpExternalApprovalStore;
   listServers(userId: string): Promise<CustomMcpServer[]>;
+  /** Core service ids for every Core target, Connect Apps included; defaults to the MCP servers only. */
+  serviceSlugs?(userId: string): Promise<Map<string, string>>;
   requireUser(context: Context, mutation?: boolean): Promise<string | Response>;
 }
 
@@ -33,13 +35,13 @@ export function registerCoreOwnerApprovalRoutes(app: Hono, options: CoreOwnerApp
     const userId = await options.requireUser(context);
     if (typeof userId !== "string") return userId;
     try {
-      const [pending, servers] = await Promise.all([
-        options.store.listPendingExternalCustomMcpToolApprovals(userId), options.listServers(userId),
+      const [pending, slugs] = await Promise.all([
+        options.store.listPendingExternalCustomMcpToolApprovals(userId),
+        options.serviceSlugs ? options.serviceSlugs(userId) : options.listServers(userId).then(assignCoreServiceSlugs),
       ]);
-      const slugs = assignCoreServiceSlugs(servers);
       // Arguments are never returned: the owner reviews tool identity, not upstream payloads.
       return context.json({ approvals: pending.map(entry => ({
-        approvalId: entry.approvalId, service: slugs.get(entry.serverId) ?? null, tool: entry.toolName,
+        approvalId: entry.approvalId, service: slugs.get(entry.serverId ?? entry.integrationConnectionId ?? "") ?? null, tool: entry.toolName,
         createdAt: entry.createdAt.toISOString(), expiresAt: entry.expiresAt.toISOString(),
       })) });
     } catch (error: unknown) { return unavailable(context, error); }

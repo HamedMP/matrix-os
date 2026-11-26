@@ -1,0 +1,111 @@
+#!/usr/bin/python3 -I
+"""Reserve full thin-volume capacity under one host-wide allocation lock."""
+
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from decimal import Decimal
+
+
+CAPACITY_EXIT = 75
+LOCK = os.environ.get("MATRIX_HOSTD_THIN_LOCK", "/var/lib/matrix-hostd/thin-admission.lock")
+FIELDS = "lv_name,lv_size,pool_lv,segtype,data_percent,metadata_percent,chunk_size,lv_metadata_size"
+
+
+class CapacityError(Exception):
+    pass
+
+
+def run(lock_fd, *args):
+    # An in-flight LVM child still holds the lock if hostd times out this
+    # helper or the process is interrupted past the point of a disk write.
+    return subprocess.run(args, check=True, text=True, stdout=subprocess.PIPE, timeout=12,
+                          pass_fds=(lock_fd,), env={**os.environ, "LC_ALL": "C"}).stdout
+
+
+def size_bytes(size):
+    match = re.fullmatch(r"([1-9][0-9]{0,5})([GT])", size)
+    if not match:
+        raise ValueError("size must be a positive whole number of GiB or TiB")
+    return int(match[1]) * (1024 ** (3 if match[2] == "G" else 4))
+
+
+def check_space(lock_fd, vg, pool, requested, data_limit, metadata_limit):
+    reports = json.loads(run(lock_fd, "lvs", "--reportformat", "json", "--units", "b", "--nosuffix", "-o", FIELDS, vg))
+    rows = reports["report"][0]["lv"]
+    pools = [row for row in rows if row["lv_name"] == pool and row["segtype"] == "thin-pool"]
+    if len(pools) != 1:
+        raise ValueError("could not identify the thin pool")
+    capacity = pools[0]
+    thins = {row["lv_name"]: int(row["lv_size"]) for row in rows if row.get("pool_lv") == pool}
+    if Decimal(capacity["data_percent"]) > data_limit or Decimal(capacity["metadata_percent"]) > metadata_limit:
+        raise CapacityError("thin pool usage exceeds the admission threshold")
+
+    chunk = int(capacity["chunk_size"])
+    committed = sum((size + chunk - 1) // chunk * chunk for size in [*thins.values(), requested])
+    if committed * 100 > int(capacity["lv_size"]) * data_limit:
+        raise CapacityError("physical data space is already reserved")
+
+    # Count every snapshot, golden image and guest at its independent maximum.
+    if committed == 0:
+        return thins
+    devices = len(thins) + int(requested > 0)
+    metadata = int(run(lock_fd, "thin_metadata_size", "-b", f"{chunk}b", "-s", f"{committed}b",
+                       "-m", str(devices), "-u", "b", "-n").strip())
+    if metadata * 100 > int(capacity["lv_metadata_size"]) * metadata_limit:
+        raise CapacityError("physical metadata space is already reserved")
+    return thins
+
+
+def main():
+    action, vg, pool, data, metadata, *volume = sys.argv[1:]
+    expected = {"check": 0, "create": 2, "clone": 3}
+    if expected.get(action) != len(volume):
+        raise ValueError("expected check, create <name> <size>, or clone <name> <size> <origin>")
+    name, size = volume[:2] if volume else ("", "")
+    origin = volume[2] if action == "clone" else None
+    if not all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}", item)
+               for item in (vg, pool, *filter(None, (name, origin)))):
+        raise ValueError("invalid LVM identifier")
+    data_limit, metadata_limit = min(95, Decimal(data)), min(95, Decimal(metadata))
+    if not 0 < data_limit <= 95 or not 0 < metadata_limit <= 95:
+        raise ValueError("invalid LVM admission threshold")
+    requested = size_bytes(size) if volume else 0
+
+    fd = os.open(LOCK, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as lock_file:
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as error:
+                if time.monotonic() >= deadline:
+                    raise CapacityError("another thin allocation is in progress") from error
+                time.sleep(0.05)
+
+        thins = check_space(fd, vg, pool, requested, data_limit, metadata_limit)
+        if action == "create":
+            run(fd, "lvcreate", "--thin", "--virtualsize", size, "--name", name, f"{vg}/{pool}")
+        elif action == "clone":
+            if origin not in thins or thins[origin] > requested:
+                raise ValueError("origin is absent, outside the pool, or larger than the requested disk")
+            run(fd, "lvcreate", "--snapshot", "--setactivationskip", "n", "--activate", "y",
+                "--name", name, f"{vg}/{origin}")
+            if thins[origin] < requested:
+                run(fd, "lvextend", "--size", size, f"{vg}/{name}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except CapacityError as error:
+        print(f"matrix-hostd-thin: {error}", file=sys.stderr)
+        sys.exit(CAPACITY_EXIT)
+    except (ValueError, KeyError, ArithmeticError, OSError, subprocess.SubprocessError) as error:
+        print(f"matrix-hostd-thin: allocation failed: {error}", file=sys.stderr)
+        sys.exit(1)

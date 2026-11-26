@@ -205,6 +205,8 @@ describe("TerminalView session switching", () => {
       resize: attachmentResize,
       write: attachmentWrite,
       writeBinary: attachmentWriteBinary,
+      focus: vi.fn(),
+      facts: vi.fn(),
     }));
     attachmentResize.mockReset();
     attachmentWrite.mockReset();
@@ -359,6 +361,26 @@ describe("TerminalView session switching", () => {
     expect(terminal.focus).toHaveBeenCalledTimes(2);
     expect(attachMock).toHaveBeenCalledTimes(2);
     expect(attachmentResize).toHaveBeenCalledTimes(2);
+  });
+
+  // Fault detected: Herdr terminals have the same session name on every computer
+  // (one workspace id, ids derived from herdr's own), so Terminal window panes of
+  // two computers shared one saved screen and showed each other's output.
+  it("saves and restores a pane's screen under its own snapshot key, not the shared session name", async () => {
+    const { AttachManager } = await vi.importActual<typeof import("@desktop/renderer/src/features/terminal/attach-manager")>(
+      "@desktop/renderer/src/features/terminal/attach-manager",
+    );
+    const screens = new Map<string, string>();
+    const socket = () => ({ connect() {}, sendInput() {}, sendBinary() {}, resize() {}, detach() {}, dispose() {} });
+    const manager = (seen: string[]) => new AttachManager({ createSocket: (name) => { seen.push(name); return socket(); }, sharedBuffers: screens });
+    const attached: string[] = [];
+    const first = render(<TerminalView sessionName="tws_shared:tt_shared" snapshotKey="computer:primary|tws_shared:tt_shared" attachManager={manager(attached)} active />);
+    first.unmount();
+    expect([...screens.keys()]).toEqual(["computer:primary|tws_shared:tt_shared"]);
+    render(<TerminalView sessionName="tws_shared:tt_shared" snapshotKey="computer:extra|tws_shared:tt_shared" attachManager={manager(attached)} active />);
+    expect(screens.has("tws_shared:tt_shared")).toBe(false);
+    // The socket still addresses the terminal by its session name.
+    expect(attached).toEqual(["tws_shared:tt_shared", "tws_shared:tt_shared"]);
   });
 
   it("clears the ended banner before the next session emits state", () => {

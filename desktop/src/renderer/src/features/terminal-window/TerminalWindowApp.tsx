@@ -142,7 +142,7 @@ const SSH_STATE_COLOR: Record<LocalMachine["state"], string> = {
 /** What to do about an ssh machine the core cannot use now: log in or check its key in a terminal, or dial again. */
 /** The line under a machine about its core: why the last update did not run, or how old it is. */
 function coreStatusText(state: { unsupported: boolean; changed: boolean; failed: boolean; version?: string }): string {
-  if (state.unsupported) return "Not updated: the app can't update the core on this machine (Windows). Update it there.";
+  if (state.unsupported) return "Not updated: this SSH connection cannot safely update the core. Update it on the machine.";
   if (state.changed) return "Not updated: this name now belongs to a different machine. Check it, then try again.";
   if (state.failed) return "Couldn't update its core.";
   return `Its core is ${state.version}; this app has ${LOCAL_TERMINAL_VERSION}.`;
@@ -243,8 +243,8 @@ function EmptyPane({ signedIn }: { signedIn: boolean }) {
  * streams live, not only the focused one. Disposed with its pane.
  */
 // Memoized: the window redraws on every status event, and a terminal must not redraw with it.
-const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequest, onPaneAction, reservedKeys }: {
-  sessionName: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
+const PaneTerminal = memo(function PaneTerminal({ sessionName, snapshotKey, focused, findRequest, onPaneAction, reservedKeys }: {
+  sessionName: string; snapshotKey: string; focused: boolean; findRequest: number; onPaneAction(action: TerminalPaneAction): void;
   reservedKeys(event: KeyboardEvent): boolean;
 }) {
   const [manager, setManager] = useState<AttachManager | null>(null);
@@ -255,7 +255,7 @@ const PaneTerminal = memo(function PaneTerminal({ sessionName, focused, findRequ
     return () => created.dispose();
   }, []);
   if (!manager) return null;
-  return <TerminalView sessionName={sessionName} attachManager={manager} active focused={focused} findRequest={findRequest}
+  return <TerminalView sessionName={sessionName} snapshotKey={snapshotKey} attachManager={manager} active focused={focused} findRequest={findRequest}
     onPaneAction={onPaneAction} reservedKeys={reservedKeys}
     // The pane header holds the pane buttons, so the terminal's own controls bar is not repeated.
     controlsHost={null} />;
@@ -316,7 +316,9 @@ function Panes({ view, tab }: { view: TerminalWindowView; tab: PaneTab }) {
         return (
           <>
             {/* Not focused while the overview covers it, so uncovering hands the keyboard back without reattaching. */}
-            <PaneTerminal key={`${sessionName}|${view.cloud.attachEpoch}`} sessionName={sessionName} focused={focused && !view.overview.open}
+            {/* A Herdr terminal has the same session name on every computer: its saved screen is kept per row. */}
+            <PaneTerminal key={`${leaf.terminal}|${view.cloud.attachEpoch}`} sessionName={sessionName} snapshotKey={leaf.terminal}
+              focused={focused && !view.overview.open}
               findRequest={view.findRequestFor(leaf.terminal)} onPaneAction={paneAction} reservedKeys={view.reservedKeys} />
             {ended && leaf.terminal === view.selectedKey ? <EndedNotice title={ended.title} onClose={view.dismissEndedLocal} /> : null}
           </>

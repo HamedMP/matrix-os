@@ -8,7 +8,7 @@ import { initialProviderSettingsConfiguration, readProviderSettingsConfiguration
 import { providerSettingsCanonicalFixture } from "./provider-settings-test-support.js";
 import { projectProviderSettings } from "../../packages/gateway/src/ai-providers/provider-settings-projector.js";
 
-const glm = "@cf/zai-org/glm-5.3-flash";
+const glm = "@cf/zai-org/glm-5.3";
 function fixture() {
   const snapshot = providerSettingsCanonicalFixture();
   snapshot.models = buildBundledModelCatalog();
@@ -26,7 +26,7 @@ describe("managed GLM defaults", () => {
   it("publishes Cloudflare GLM with Matrix access in V3", () => {
     const snapshot = fixture();
     expect(snapshot.models.find((model) => model.id === glm)).toMatchObject({
-      vendor: "cloudflare", displayName: "GLM 5.3 Flash", eligibleAccessSourceIds: ["matrix_cloudflare"],
+      vendor: "cloudflare", displayName: "GLM 5.3", eligibleAccessSourceIds: ["matrix_cloudflare"],
     });
     expect(AiProviderSnapshotV3Schema.safeParse(snapshot).success).toBe(true);
   });
@@ -61,12 +61,15 @@ describe("managed GLM defaults", () => {
     expect(snapshot.gatewayPolicy?.allowedModelIds).toEqual(expect.arrayContaining([glm, "claude-sonnet-5"]));
     expect(snapshot.modelProviders.find((provider) => provider.id === "cloudflare")?.displayName).toBe("Cloudflare Workers AI");
   });
-  it("preserves an explicit saved generic route during reconciliation", async () => {
+  it.each([
+    { providerId: "anthropic", modelId: "claude-sonnet-5", sourceId: "matrix_included" },
+    { providerId: "cloudflare", modelId: "@cf/zai-org/glm-5.3-flash", sourceId: "matrix_cloudflare" },
+  ])("preserves an explicit saved generic route during reconciliation ($modelId)", async ({ providerId, modelId, sourceId }) => {
     const canonical = fixture();
     const config = initialProviderSettingsConfiguration(canonical);
     const pi = config.harnesses.find((item) => item.harness === "pi")!;
-    pi.route = { kind: "configurable", providerId: "anthropic", modelId: "claude-sonnet-5" };
-    pi.accessSourceId = "matrix_included";
+    pi.route = { kind: "configurable", providerId, modelId };
+    pi.accessSourceId = sourceId;
     const directory = await mkdtemp(join(tmpdir(), "managed-glm-selection-"));
     try {
       const path = join(directory, "providers.json");

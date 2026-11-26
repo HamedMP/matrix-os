@@ -1,6 +1,6 @@
 import { prepareNativeScrollPlugin, queryNativeScroll } from "./native-scroll-bridge.js";
 import { readClientPanes, returnViewerMovedToNewTab } from "./zellij-viewer-return.js";
-import { execFile as nodeExecFile, spawn as spawnProcess } from "node:child_process";
+import { execFile as nodeExecFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, open, realpath as nodeRealpath, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,21 +18,26 @@ import {
   TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
   TERMINAL_RUNTIME_CONTROL_OPERATION_TIMEOUT_MS,
 } from "./limits.js";
-import { parseZellijStructuredOutput } from "./zellij-structured-output.js";
+import type { ZellijStructuredCommand } from "./errors.js";
+import { parseZellijStructuredOutput, type ZellijInventorySchema } from "./zellij-structured-output.js";
 import { createTerminalRuntimeEnvironment } from "./runtime-environment.js";
-import { decodeZellijScreenDump } from "./zellij-screen-dump.js";
+import {
+  createZellijObserver,
+  spawnLineProcess,
+  type RuntimeSubscriptionProcess,
+  ZELLIJ_PANE_ID as PANE_ID,
+} from "./zellij-observer.js";
 import { terminalCommandStateFromPanes, type TerminalCommandState } from "./terminal-command-state.js";
 import { heldPaneExitsFromPanes, terminalCommandResultFromPanes, type HeldPaneExit, type TerminalCommandResult } from './terminal-command-state.js';
 import { ArchiveTabInventorySchema, ArchivePaneInventorySchema, archivedTabRuntimeIdentity } from "./terminal-ended-tab-archive.js";
 
 const MAX_COMMAND_OUTPUT_BYTES = 5 * 1024 * 1024;
-const MAX_SUBSCRIPTION_LINE_BYTES = 1024 * 1024;
 const MAX_ATTACHMENT_HANDSHAKE_BYTES = 1024 * 1024;
+const STRUCTURED_COMMAND_ATTEMPTS = 10;
 const STRUCTURED_READINESS_ATTEMPTS = 20;
 const SWITCH_SESSION_RECONNECT_SEQUENCE = "\x1b[2J";
 const SESSION_NAME = /^matrix-w-[0-9a-f]{32}$/;
 const TAB_NAME = /^matrix-tab-[0-9a-f]{32}$/;
-const PANE_ID = /^terminal_[0-9]+$/;
 const LEGACY_SESSION_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const PaneSchema = z.object({
   id: z.number().int().min(0),
@@ -53,16 +58,7 @@ const TabSchema = z.object({
   tab_id: z.number().int().min(0),
   name: z.string().max(128),
 }).passthrough();
-const SubscribeEventSchema = z.discriminatedUnion("event", [
-  z.object({
-    event: z.literal("pane_update"),
-    pane_id: z.string().regex(PANE_ID),
-    viewport: z.array(z.string().max(16_384)).max(200),
-    scrollback: z.array(z.string().max(16_384)).max(100_000).nullable().optional(),
-    is_initial: z.boolean().optional(),
-  }).strict(),
-  z.object({ event: z.literal("pane_closed"), pane_id: z.string().regex(PANE_ID) }).strict(),
-]);
+export type { RuntimeSubscriptionProcess } from "./zellij-observer.js";
 
 export interface RuntimePty {
   write(data: string | Buffer): void;
@@ -70,10 +66,6 @@ export interface RuntimePty {
   kill(): void;
   onData(listener: (data: string) => void): { dispose(): void };
   onExit(listener: (event: { exitCode: number; signal?: number }) => void): { dispose(): void };
-}
-
-export interface RuntimeSubscriptionProcess {
-  close(): Promise<void>;
 }
 
 export interface WorkspaceZellijTarget {
@@ -97,7 +89,7 @@ export interface ZellijCliRuntimeAdapterOptions {
   env?: Record<string, string>;
   binaryPath?: string;
   timeoutMs?: number;
-  run?: (args: string[], binaryPath?: string) => Promise<string>;
+  run?: (args: string[], binaryPath?: string, signal?: AbortSignal) => Promise<string>;
   resolveRealpath?: (path: string) => Promise<string>;
   spawnPty?: (args: string[], options: {
     cwd: string;
@@ -122,6 +114,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     args: string[],
     binaryPath?: string,
     timeoutMs?: number,
+    signal?: AbortSignal,
   ) => Promise<string>;
   private readonly resolveRealpath: (path: string) => Promise<string>;
   private readonly spawnPtyProcess: NonNullable<ZellijCliRuntimeAdapterOptions["spawnPty"]>;
@@ -147,18 +140,20 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
       env: this.runtimeEnvironment,
       timeoutMs: options.timeoutMs ?? TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
     });
-    this.runCommand = options.run
-      ? ((args, binaryPath) => binaryPath === undefined
-          ? options.run!(args)
-          : options.run!(args, binaryPath))
-      : ((args, binaryPath, timeoutMs) => {
-        if (!binaryPath || binaryPath === this.binaryPath) return currentGenerationRunner(args, timeoutMs);
+    const injectedRun = options.run;
+    this.runCommand = injectedRun
+      ? ((args, binaryPath, _timeoutMs, signal) => {
+        if (signal) return injectedRun(args, binaryPath, signal);
+        return binaryPath === undefined ? injectedRun(args) : injectedRun(args, binaryPath);
+      })
+      : ((args, binaryPath, timeoutMs, signal) => {
+        if (!binaryPath || binaryPath === this.binaryPath) return currentGenerationRunner(args, timeoutMs, signal);
         return createCommandRunner({
           binaryPath,
           cwd: this.homePath,
           env: this.runtimeEnvironment,
           timeoutMs: options.timeoutMs ?? TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS,
-        })(args, timeoutMs);
+        })(args, timeoutMs, signal);
       });
     this.resolveRealpath = options.resolveRealpath ?? nodeRealpath;
     this.spawnPtyProcess = options.spawnPty ?? ((args, spawnOptions) => {
@@ -230,7 +225,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     if (requested.length === 0) return {};
 
     const tabs = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-tabs", "--json"],
+      sessionName, "list-tabs",
       z.array(TabSchema).max(10_000),
       binaryPath,
       operationDeadline,
@@ -566,7 +561,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     }
     if (action.type === "focus") {
       const panes = await this.readStructuredJson(
-        ["--session", sessionName, "action", "list-panes", "--all", "--json"],
+        sessionName, "list-panes",
         z.array(PaneGeometrySchema).max(10_000),
         binaryPath,
       );
@@ -587,14 +582,14 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     const internalName = z.string().regex(TAB_NAME).parse(internalNameInput);
     const deadline = Date.now() + TERMINAL_RUNTIME_COMMAND_TIMEOUT_MS;
     const tabs = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-tabs", "--json"], ArchiveTabInventorySchema, binaryPath,
+      sessionName, "list-tabs", ArchiveTabInventorySchema, binaryPath,
       deadline,
     );
     const matches = tabs.filter((tab) => tab.name === internalName);
     if (matches.length === 0 && !expected) return undefined;
     if (matches.length > 1) throw new Error("Terminal tab identity is ambiguous");
     const panes = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-panes", "--all", "--json"], ArchivePaneInventorySchema, binaryPath,
+      sessionName, "list-panes", ArchivePaneInventorySchema, binaryPath,
       deadline,
     );
     return archivedTabRuntimeIdentity(tabs, panes, internalName, expected);
@@ -658,7 +653,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     if (internalNames.length === 0) return {};
     const requested = new Set(internalNames);
     const tabs = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-tabs", "--json"],
+      sessionName, "list-tabs",
       z.array(TabSchema).max(10_000),
       binaryPath,
       deadline,
@@ -666,7 +661,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     const requestedTabs = tabs.filter((tab) => requested.has(tab.name));
     if (requestedTabs.length === 0) return {};
     const panes = await this.readStructuredJson(
-      ["--session", sessionName, "action", "list-panes", "--all", "--json"],
+      sessionName, "list-panes",
       z.array(PaneSchema).max(10_000),
       binaryPath,
       deadline,
@@ -696,64 +691,18 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   }): Promise<ZellijObserver> {
     const { sessionName, binaryPath } = await this.resolveWorkspaceTarget(sessionNameInput);
     const paneIds = z.array(z.string().regex(PANE_ID)).min(1).max(10_000).parse(input.paneIds);
-    let eventChain = Promise.resolve();
-    let exited = false;
-    let closing = false;
-    let closePromise: Promise<void> | undefined;
     const args = ["--session", sessionName, "subscribe", "--pane-id", ...paneIds];
-    // `--scrollback` accepts an optional variadic value, so keep it last. If it
-    // precedes pane selectors clap can consume those selectors as values.
+    // Keep the optional variadic scrollback flag after the pane selectors.
     args.push("--format", "json", "--ansi", "--scrollback");
-    const onLine = (line: string) => {
-      if (closing) return;
-      if (Buffer.byteLength(line) > MAX_SUBSCRIPTION_LINE_BYTES) return;
-      const parsed = SubscribeEventSchema.safeParse(safeJson(line));
-      if (!parsed.success) {
-        console.error("[terminal-runtime] rejected invalid Zellij observer event", parsed.error.issues.map((issue) => issue.path.join(".")));
-        return;
-      }
-      eventChain = eventChain.then(async () => {
-        if (parsed.data.event === "pane_closed") {
-          input.onEvent({ type: "pane-closed", paneId: parsed.data.pane_id });
-          return;
-        }
-        const dump = await this.run([
-          "--session", sessionName, "action", "dump-screen", "--pane-id", parsed.data.pane_id, "--full", "--ansi",
-        ], binaryPath);
-        const ansi = decodeZellijScreenDump(dump, parsed.data.scrollback);
-        const fullLines = ansi.split(/\r?\n/);
-        const scrollback = parsed.data.scrollback ?? fullLines.slice(0, Math.max(0, fullLines.length - parsed.data.viewport.length));
-        input.onEvent({
-          type: "pane-update",
-          paneId: parsed.data.pane_id,
-          ansi,
-          viewport: parsed.data.viewport,
-          scrollback,
-        });
-      }).catch((error: unknown) => {
-        console.error("[terminal-runtime] Zellij observer update failed", error);
-      });
-    };
-    const onExit = (exitCode: number | null) => {
-      exited = true;
-      if (!closing && exitCode !== 0 && exitCode !== null) {
-        console.error("[terminal-runtime] Zellij observer exited unexpectedly", exitCode);
-      }
-    };
-    const process = binaryPath === this.binaryPath
-      ? this.spawnSubscriptionProcess(args, onLine, onExit)
-      : this.spawnSubscriptionProcess(args, onLine, onExit, binaryPath);
-    return {
-      get closed() { return closing || exited; },
-      close: () => {
-        closing = true;
-        closePromise ??= (async () => {
-          try { await process.close(); }
-          finally { await eventChain; }
-        })();
-        return closePromise;
-      },
-    };
+    return createZellijObserver({
+      onEvent: input.onEvent,
+      spawn: (onLine, onExit) => binaryPath === this.binaryPath
+        ? this.spawnSubscriptionProcess(args, onLine, onExit)
+        : this.spawnSubscriptionProcess(args, onLine, onExit, binaryPath),
+      dumpPane: (paneId, signal) => this.run([
+        "--session", sessionName, "action", "dump-screen", "--pane-id", paneId, "--full", "--ansi",
+      ], binaryPath, undefined, signal),
+    });
   }
 
   async renameTab(sessionNameInput: string, tabId: number, nameInput: string): Promise<void> {
@@ -874,32 +823,35 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     return canonicalCwd;
   }
 
-  private run(args: string[], binaryPath = this.binaryPath, timeoutMs?: number): Promise<string> {
-    return binaryPath === this.binaryPath
-      ? this.runCommand(args, undefined, timeoutMs)
-      : this.runCommand(args, binaryPath, timeoutMs);
+  private run(args: string[], binaryPath = this.binaryPath, timeoutMs?: number, signal?: AbortSignal): Promise<string> {
+    return this.runCommand(args, binaryPath === this.binaryPath ? undefined : binaryPath, timeoutMs, signal);
   }
 
   private async readStructuredJson<T>(
-    args: string[],
-    schema: z.ZodType<T>,
+    sessionName: string,
+    command: ZellijStructuredCommand,
+    schema: ZellijInventorySchema<T>,
     binaryPath = this.binaryPath,
     operationDeadline?: number,
   ): Promise<T> {
+    const args = ["--session", sessionName, "action", command];
+    if (command === "list-panes") args.push("--all");
+    args.push("--json");
     let lastError: unknown;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    for (let attempt = 1; attempt <= STRUCTURED_COMMAND_ATTEMPTS; attempt += 1) {
       try {
         const raw = await this.run(
           args,
           binaryPath,
           remainingCommandTimeout(operationDeadline),
         );
-        return parseZellijStructuredOutput(raw, schema);
+        return parseZellijStructuredOutput(raw, schema, command);
       } catch (error) {
         lastError = error;
-        // A caller's deadline bounds every retry, not only each command.
-        if (operationDeadline !== undefined && Date.now() >= operationDeadline) break;
-        await new Promise<void>((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+        const retryDelayMs = 50 * attempt;
+        if (attempt === STRUCTURED_COMMAND_ATTEMPTS) break;
+        if (operationDeadline !== undefined && Date.now() + retryDelayMs >= operationDeadline) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
       }
     }
     throw lastError instanceof Error ? lastError : new Error("Zellij structured command failed");
@@ -914,7 +866,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
     const requested = new Set(tabIds);
     for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
       const panes = await this.readStructuredJson(
-        ["--session", sessionName, "action", "list-panes", "--all", "--json"],
+        sessionName, "list-panes",
         z.array(PaneSchema).max(10_000),
         binaryPath,
         operationDeadline,
@@ -934,7 +886,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
   ): Promise<number> {
     for (let attempt = 0; attempt < STRUCTURED_READINESS_ATTEMPTS; attempt += 1) {
       const tabs = await this.readStructuredJson(
-        ["--session", sessionName, "action", "list-tabs", "--json"],
+        sessionName, "list-tabs",
         z.array(TabSchema).max(10_000),
         binaryPath,
         operationDeadline,
@@ -1021,15 +973,21 @@ function createCommandRunner(options: {
   cwd: string;
   env: Record<string, string>;
   timeoutMs: number;
-}): (args: string[], timeoutMs?: number) => Promise<string> {
-  return (args, timeoutMs) => new Promise((resolve, reject) => {
+}): (args: string[], timeoutMs?: number, signal?: AbortSignal) => Promise<string> {
+  return (args, timeoutMs, signal) => new Promise((resolve, reject) => {
     const child = nodeExecFile(options.binaryPath, args, {
       cwd: options.cwd,
       env: options.env,
-      timeout: timeoutMs ?? options.timeoutMs,
+      timeout: Math.min(timeoutMs ?? options.timeoutMs, options.timeoutMs),
+      killSignal: "SIGKILL",
+      signal,
       maxBuffer: MAX_COMMAND_OUTPUT_BYTES,
     }, (error, stdout, stderr) => {
       if (error) {
+        if (signal?.aborted) {
+          reject(signal.reason);
+          return;
+        }
         const failure = new Error("Terminal runtime command failed") as Error & { stderr?: string };
         const diagnostic = String(stderr);
         if (diagnostic) failure.stderr = diagnostic;
@@ -1082,51 +1040,3 @@ function isMissingZellijSessionFailure(error: unknown): boolean {
   const stderr = (error as Error & { stderr?: unknown }).stderr;
   return typeof stderr === "string" && /(?:no active zellij sessions found|\bsession\b.*\b(?:not found|does not exist)\b)/i.test(stderr);
 }
-
-function spawnLineProcess(
-  binaryPath: string,
-  args: string[],
-  cwd: string,
-  env: Record<string, string>,
-  onLine: (line: string) => void,
-  onExit: (exitCode: number | null) => void,
-): RuntimeSubscriptionProcess {
-  const child = spawnProcess(binaryPath, args, { cwd, env, stdio: ["ignore", "pipe", "ignore"] });
-  let buffer = "";
-  child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => {
-    buffer += chunk;
-    if (Buffer.byteLength(buffer) > MAX_SUBSCRIPTION_LINE_BYTES * 2) {
-      buffer = "";
-      return;
-    }
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) if (line) onLine(line);
-  });
-  child.once("exit", onExit);
-  return {
-    close: async () => {
-      if (child.exitCode !== null) return;
-      child.kill("SIGTERM");
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => { child.kill("SIGKILL"); resolve(); }, 2_000);
-        timer.unref();
-        child.once("exit", () => { clearTimeout(timer); resolve(); });
-      });
-    },
-  };
-}
-
-function safeJson(line: string): unknown {
-  try {
-    return JSON.parse(line);
-  } catch (error) {
-    console.warn(
-      "[terminal-runtime] rejected malformed Zellij observer JSON",
-      error instanceof Error ? error.name : "unknown_error",
-    );
-    return null;
-  }
-}
-

@@ -4,7 +4,7 @@ import { setAlternateTerminalSockets } from "../terminal/terminal-runtime";
 import {
   LOCAL_TERMINAL_SESSION_PREFIX, type LocalCreateFailure, type LocalTerminal, type LocalTerminalAgent, type LocalTerminalFact, type LocalTerminalUnavailable,
 } from "../../../../shared/local-terminals";
-import { createLocalTerminalSocket } from "./local-terminal-socket";
+import { LOCAL_TERMINAL_SOCKETS } from "./local-terminal-socket";
 import { useLocalTerminalFacts } from "./use-terminal-status";
 
 export type LocalTerminalsState =
@@ -43,7 +43,7 @@ export function useLocalTerminals() {
   }, [facts]);
 
   useEffect(() => {
-    setAlternateTerminalSockets({ prefix: LOCAL_TERMINAL_SESSION_PREFIX, create: createLocalTerminalSocket });
+    setAlternateTerminalSockets(LOCAL_TERMINAL_SOCKETS);
     return () => { setAlternateTerminalSockets(null); };
   }, []);
 

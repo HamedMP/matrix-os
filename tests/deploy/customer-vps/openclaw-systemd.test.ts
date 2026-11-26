@@ -99,10 +99,10 @@ describe("customer VPS OpenClaw runtime", () => {
   it("keeps the verified archive readable while dropping to the runtime user without PAM", async () => {
     const installer = await readFile(installerPath, "utf8");
 
-    expect(installer).toContain('chown "root:$MATRIX_RUNTIME_USER" "$tmp_dir" "$archive"');
+    expect(installer).toContain('chown "root:$MATRIX_RUNTIME_GROUP" "$tmp_dir" "$archive"');
     expect(installer).toContain('chmod 0750 "$tmp_dir"');
     expect(installer).toContain('chmod 0640 "$archive"');
-    expect(installer).toContain('setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups');
+    expect(installer).toContain('setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_GROUP" --init-groups');
     expect(installer).toContain('run_installer_as_runtime_user env \\');
   });
 

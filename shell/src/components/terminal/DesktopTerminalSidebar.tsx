@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { PlusIcon, SquareTerminalIcon, Trash2Icon } from "@/lib/hugeicons";
 import { ProjectSharing } from "@/components/projects/ProjectSharing";
 import { getShellVisualStatus, TERMINAL_STATUS_LABEL, SHELL_WAITING_STATUS_DOT_STYLE, type ShellSessionSummary } from "./terminal-session-state";
@@ -21,6 +22,7 @@ export function DesktopTerminalSidebar({
   onCreate,
   onOpen,
   onDelete,
+  extra,
 }: {
   sessions: ShellSessionSummary[];
   selectedName: string | null;
@@ -28,6 +30,8 @@ export function DesktopTerminalSidebar({
   onCreate: () => void;
   onOpen: (shell: ShellSessionSummary) => void;
   onDelete: (shell: ShellSessionSummary, anchor: HTMLButtonElement) => void;
+  /** Groups shown after the sessions, such as Herdr sessions. */
+  extra?: ReactNode;
 }) {
   // Same grouping as the Canvas sidebar. Project headers carry the project share
   // control, which Web Desktop could not reach at all (#1798). They appear only
@@ -124,6 +128,7 @@ export function DesktopTerminalSidebar({
           </li>
         )) : sessions.map(renderShell)}
       </ul>
+      {extra}
 
       <footer
         className="shrink-0 border-t p-3"

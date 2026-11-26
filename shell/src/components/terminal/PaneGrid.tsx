@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { TerminalPane } from "./TerminalPane";
+import { isHerdrRefKey } from "./herdr-shell-session";
 import type { PaneNode } from "@/stores/terminal-store";
 import type { Theme } from "@/hooks/useTheme";
 
@@ -19,9 +20,10 @@ interface PaneGridProps {
   canvasZoom?: number;
   unavailableSessionIds?: string[];
   onRecoverSession?: (sessionId: string, cwd: string) => Promise<boolean>;
+  onSessionEnded?: (sessionId: string) => void;
 }
 
-export function PaneGrid({ paneTree, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1, unavailableSessionIds = [], onRecoverSession }: PaneGridProps) {
+export function PaneGrid({ paneTree, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1, unavailableSessionIds = [], onRecoverSession, onSessionEnded }: PaneGridProps) {
   return (
     <div className="flex-1 min-h-0 min-w-0 overflow-hidden">
       <PaneNodeRenderer
@@ -38,6 +40,7 @@ export function PaneGrid({ paneTree, theme, focusedPaneId, focusRequestId = 0, o
         canvasZoom={canvasZoom}
         unavailableSessionIds={unavailableSessionIds}
         onRecoverSession={onRecoverSession}
+        onSessionEnded={onSessionEnded}
       />
     </div>
   );
@@ -57,9 +60,10 @@ interface PaneNodeRendererProps {
   canvasZoom?: number;
   unavailableSessionIds: string[];
   onRecoverSession?: (sessionId: string, cwd: string) => Promise<boolean>;
+  onSessionEnded?: (sessionId: string) => void;
 }
 
-function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1, unavailableSessionIds, onRecoverSession }: PaneNodeRendererProps) {
+function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1, unavailableSessionIds, onRecoverSession, onSessionEnded }: PaneNodeRendererProps) {
   if (node.type === "pane") {
     const focused = focusedPaneId === node.id;
     return (
@@ -74,7 +78,9 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFo
           position: "relative",
         }}
       >
-        {node.sessionId && unavailableSessionIds.includes(node.sessionId) ? (
+        {node.sessionId && unavailableSessionIds.includes(node.sessionId) && isHerdrRefKey(node.sessionId) ? (
+          <EndedHerdrSessionPane />
+        ) : node.sessionId && unavailableSessionIds.includes(node.sessionId) ? (
           <RecoverableSessionPane
             sessionId={node.sessionId}
             cwd={node.cwd}
@@ -94,6 +100,7 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFo
             compatMode={node.compatMode}
             onFocus={onFocusPane}
             onSessionAttached={onSessionAttached}
+            onSessionEnded={onSessionEnded}
             shouldCacheOnUnmount={shouldCachePane}
             shouldDestroyOnUnmount={shouldDestroyPane}
             allowRemoteResize={allowRemoteResize}
@@ -123,6 +130,7 @@ function PaneNodeRenderer({ node, theme, focusedPaneId, focusRequestId = 0, onFo
       canvasZoom={canvasZoom}
       unavailableSessionIds={unavailableSessionIds}
       onRecoverSession={onRecoverSession}
+      onSessionEnded={onSessionEnded}
     />
   );
 }
@@ -144,9 +152,10 @@ interface SplitContainerProps {
   canvasZoom?: number;
   unavailableSessionIds: string[];
   onRecoverSession?: (sessionId: string, cwd: string) => Promise<boolean>;
+  onSessionEnded?: (sessionId: string) => void;
 }
 
-function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1, unavailableSessionIds, onRecoverSession }: SplitContainerProps) {
+function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, focusRequestId = 0, onFocusPane, onSessionAttached, shouldCachePane, shouldDestroyPane, allowRemoteResize = true, suppressNativeKeyboard = false, canvasZoom = 1, unavailableSessionIds, onRecoverSession, onSessionEnded }: SplitContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // react-doctor-disable-next-line react-doctor/no-derived-useState -- local drag buffer, not a mirror of `ratio`: it is seeded from the prop, then diverges live as the user drags the split divider (setCurrentRatio in onMouseMove). It must NOT stay in sync with `ratio` or the divider would snap back mid-drag; it holds uncommitted pointer-driven layout state.
   const [currentRatio, setCurrentRatio] = useState(ratio);
@@ -204,6 +213,7 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, f
           canvasZoom={canvasZoom}
           unavailableSessionIds={unavailableSessionIds}
           onRecoverSession={onRecoverSession}
+          onSessionEnded={onSessionEnded}
         />
       </div>
       {/* react-doctor-disable-next-line react-doctor/no-static-element-interactions -- presentational pointer-only resize affordance: the 4px gutter starts a mouse/pointer drag to repan the split. It carries no control semantics, has no keyboard equivalent (panes auto-fit on resize), and adding an interactive role would require a non-trivial keyboard-resize behavior change out of scope for this pass. */}
@@ -227,7 +237,22 @@ function SplitContainer({ direction, ratio, left, right, theme, focusedPaneId, f
           canvasZoom={canvasZoom}
           unavailableSessionIds={unavailableSessionIds}
           onRecoverSession={onRecoverSession}
+          onSessionEnded={onSessionEnded}
         />
+      </div>
+    </div>
+  );
+}
+
+/** An ended Herdr terminal: herdr-core owns it, so Matrix offers no recovery. */
+function EndedHerdrSessionPane() {
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-background p-6 text-foreground">
+      <div className="flex max-w-sm flex-col items-center gap-3 text-center">
+        <div className="text-sm font-semibold">This Herdr session has ended</div>
+        <p className="m-0 text-xs text-muted-foreground">
+          Close this pane, or open another session from Herdr sessions in the sidebar.
+        </p>
       </div>
     </div>
   );

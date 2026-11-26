@@ -2,6 +2,7 @@ import type { Context, Hono } from "hono";
 import type { UpgradeWebSocket } from "hono/ws";
 import { z } from "zod/v4";
 import { TerminalTabIdSchema, TerminalWorkspaceIdSchema } from "@matrix-os/contracts";
+import { isHerdrTerminalRef } from "@matrix-os/contracts/herdr-terminals";
 import { readPreviewTerminalOwner } from "../auth.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { terminalRuntimeOwnerAccess } from "../shell/workspace-routes.js";
@@ -28,15 +29,23 @@ export function registerTerminalEventWebSocket(options: {
   upgradeWebSocket: UpgradeWebSocket;
   hub: TerminalEventHub;
   getPrincipal(context: Context): RequestPrincipal;
+  /** Signed preview delegation; defaults to the auth middleware's. */
+  getPreviewTerminalOwner?(context: Context): string | undefined;
   terminalOwnerIds: readonly string[];
 }): void {
+  const previewOwnerOf = options.getPreviewTerminalOwner ?? readPreviewTerminalOwner;
   options.app.get(TERMINAL_EVENTS_WS_PATH, options.upgradeWebSocket((c) => {
     let handle: TerminalEventSubscription | null = null;
     return {
       onOpen(_event, ws) {
         let access: ReturnType<typeof terminalRuntimeOwnerAccess>;
+        // Herdr terminals (spec 2701) are the owner's personal shells: a viewer
+        // admitted only through preview delegation never sees them.
+        let ownerItself = false;
         try {
-          access = terminalRuntimeOwnerAccess(options.getPrincipal(c), options.terminalOwnerIds, readPreviewTerminalOwner(c));
+          const principal = options.getPrincipal(c);
+          ownerItself = terminalRuntimeOwnerAccess(principal, options.terminalOwnerIds) === "allowed";
+          access = ownerItself ? "allowed" : terminalRuntimeOwnerAccess(principal, options.terminalOwnerIds, previewOwnerOf(c));
         } catch (error: unknown) {
           console.warn("[gateway] terminal events principal unavailable", error instanceof Error ? error.name : "unknown_error");
           access = "not_found";
@@ -54,6 +63,7 @@ export function registerTerminalEventWebSocket(options: {
               const raw = ws.raw as { bufferedAmount?: unknown } | undefined;
               return typeof raw?.bufferedAmount === "number" ? raw.bufferedAmount : 0;
             },
+            ...(ownerItself ? {} : { visible: (ref) => !isHerdrTerminalRef(ref) }),
           });
         } catch (error: unknown) {
           console.warn("[gateway] terminal events subscribe refused", error instanceof Error ? error.message : "unknown_error");

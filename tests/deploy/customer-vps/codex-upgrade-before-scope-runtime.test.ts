@@ -10,6 +10,8 @@ const updaterPath = "distro/customer-vps/host-bin/matrix-sync-agent";
 const stagePath = "scripts/stage-host-codex.sh";
 const runnerName = "matrix-codex";
 const archiveMember = "codex-x86_64-unknown-linux-musl";
+const hostName = "codex-code-mode-host";
+const hostArchiveMember = "codex-code-mode-host-x86_64-unknown-linux-musl";
 
 function shellFunction(source: string, name: string): string {
   const definition = source.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}`))?.[0];
@@ -33,11 +35,18 @@ it.each(["0.162.1", null])(
       const archive = join(root, "codex.tar.gz");
       execFileSync("tar", ["-czf", archive, "-C", root, archiveMember]);
       const digest = createHash("sha256").update(await readFile(archive)).digest("hex");
+      await writeFile(join(root, hostArchiveMember), "#!/bin/sh\necho 'code-mode-host'\n", { mode: 0o755 });
+      const hostArchive = join(root, "code-mode-host.tar.gz");
+      execFileSync("tar", ["-czf", hostArchive, "-C", root, hostArchiveMember]);
+      const hostDigest = createHash("sha256").update(await readFile(hostArchive)).digest("hex");
 
-      const rejected = spawnSync("bash", [stagePath, archive, "0".repeat(64), staged], { encoding: "utf8" });
-      expect(rejected.status).toBe(1);
-      await expect(readFile(join(staged, runnerName))).rejects.toHaveProperty("code", "ENOENT");
-      const packaged = spawnSync("bash", [stagePath, archive, digest, staged], { encoding: "utf8" });
+      for (const [codexDigest, sidecarDigest] of [["0".repeat(64), hostDigest], [digest, "0".repeat(64)]]) {
+        const rejected = spawnSync("bash", [stagePath, archive, codexDigest, hostArchive, sidecarDigest, staged], { encoding: "utf8" });
+        expect(rejected.status).toBe(1);
+        await expect(readFile(join(staged, runnerName))).rejects.toHaveProperty("code", "ENOENT");
+        await expect(readFile(join(staged, hostName))).rejects.toHaveProperty("code", "ENOENT");
+      }
+      const packaged = spawnSync("bash", [stagePath, archive, digest, hostArchive, hostDigest, staged], { encoding: "utf8" });
       expect(packaged.status, packaged.stderr).toBe(0);
 
       const predecessor = await readFile(predecessorPath, "utf8");
@@ -70,6 +79,8 @@ record_update_payload_directory "$TEST_ROOT/staged" "$BIN_DIR" bin
 install_host_bin_payload "$TEST_ROOT/staged"
 # The predecessor starts the incoming scope runtime after this host-bin step.
 test "$("$BIN_DIR/matrix-codex" --version)" = 'codex-cli 0.171.0'
+# Codex resolves its shell-tool sidecar next to the running executable.
+test "$("$BIN_DIR/codex-code-mode-host")" = 'code-mode-host'
 test "$("$TEST_ROOT/terminal-codex" --version)" = 'codex-cli 0.162.1'
 restore_update_payload_directory "$BIN_DIR" bin
 if [ -n "$PREVIOUS" ]; then
@@ -77,6 +88,7 @@ if [ -n "$PREVIOUS" ]; then
 else
   test ! -e "$BIN_DIR/matrix-codex"
 fi
+test ! -e "$BIN_DIR/codex-code-mode-host"
 test "$("$TEST_ROOT/terminal-codex" --version)" = 'codex-cli 0.162.1'
 `], {
         encoding: "utf8", timeout: 15_000,

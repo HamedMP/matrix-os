@@ -23,10 +23,15 @@ import type { GatewayConfig } from "./types.js";
 const PushRegisterBodySchema = z.object({
   token: z.string().trim().min(1).max(512),
   platform: z.string().trim().min(1).max(32),
+  identity: z.string().trim().min(1).max(512).optional(),
+  mode: z.enum(["enable", "refresh"]).optional(),
 }).strict();
-const PushUnregisterBodySchema = z.object({
+const PushStatusBodySchema = z.object({
   token: z.string().trim().min(1).max(512),
 }).strict();
+const PushUnregisterBodySchema = PushStatusBodySchema.extend({
+  deliveryToken: z.string().trim().min(1).max(512).optional(),
+});
 
 function pushStorageFailure(c: Context, err: unknown): Response {
   if (err instanceof PushTokenStorageUnavailableError) {
@@ -54,6 +59,8 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
   const { app, homePath, model, runningVersion, interactionLogger, pushAdapter,
     posthogErrorTracker, ownerTelemetryDistinctId, upgradeBodyLimit,
     logBestEffortFailure } = options;
+  const pushOwnerIds = [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID]
+    .filter((id): id is string => Boolean(id));
   // Native host services do not export build variables. Capture matching release
   // provenance once at registration; later installs cannot relabel this process.
   const installedAtStartup = readReleaseInfo();
@@ -207,6 +214,38 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
     }
   });
 
+  // Read-only POST keeps the device token out of URLs and access logs.
+  app.post("/api/push/status", bodyLimit({ maxSize: 4096 }), async (c) => {
+    let principal;
+    try {
+      principal = requireRequestPrincipal(c);
+    } catch (err: unknown) {
+      if (isRequestPrincipalError(err)) {
+        const mapped = mapRequestPrincipalError(err, "Push registration unavailable");
+        if (mapped.log) console.error("[push] Request principal misconfigured:", err.name);
+        return c.json(mapped.body, mapped.status);
+      }
+      throw err;
+    }
+    if (pushOwnerIds.length ? !pushOwnerIds.includes(principal.userId) : principal.source !== "dev-default") {
+      return c.json({ error: "Push registration unavailable" }, pushOwnerIds.length ? 403 : 503);
+    }
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch (err: unknown) {
+      if (!(err instanceof SyntaxError)) logBestEffortFailure("Failed to parse push status", err);
+      return c.json({ error: "Invalid push registration" }, 400);
+    }
+    const parsed = PushStatusBodySchema.safeParse(rawBody);
+    if (!parsed.success) return c.json({ error: "Invalid push registration" }, 400);
+    try {
+      return c.json(await pushAdapter.getRegistrationStatus(parsed.data.token, principal.userId));
+    } catch (err: unknown) {
+      return pushStorageFailure(c, err);
+    }
+  });
+
   app.post("/api/push/register", bodyLimit({ maxSize: 4096 }), async (c) => {
     let principal;
     try {
@@ -236,7 +275,19 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
     }
 
     try {
-      await pushAdapter.registerToken(parsed.data.token, parsed.data.platform, principal.userId);
+      if (parsed.data.mode === "refresh") {
+        if (pushOwnerIds.length ? !pushOwnerIds.includes(principal.userId) : principal.source !== "dev-default") {
+          return c.json({ error: "Push registration unavailable" }, pushOwnerIds.length ? 403 : 503);
+        }
+        const registered = await pushAdapter.refreshToken(parsed.data.token, parsed.data.platform, principal.userId, parsed.data.identity);
+        return c.json({ ok: true, registered });
+      }
+      if (parsed.data.mode === "enable") {
+        await pushAdapter.registerToken(parsed.data.token, parsed.data.platform, principal.userId, parsed.data.identity);
+      } else {
+        const registered = await pushAdapter.registerLegacyToken(parsed.data.token, parsed.data.platform, principal.userId, parsed.data.identity);
+        if (!registered) return c.json({ error: "Push registration unavailable" }, 409);
+      }
     } catch (err: unknown) {
       return pushStorageFailure(c, err);
     }
@@ -272,7 +323,8 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
     }
 
     try {
-      await pushAdapter.removeToken(parsed.data.token, principal.userId);
+      if (parsed.data.deliveryToken) await pushAdapter.removeToken(parsed.data.token, principal.userId, parsed.data.deliveryToken);
+      else await pushAdapter.removeToken(parsed.data.token, principal.userId);
     } catch (err: unknown) {
       return pushStorageFailure(c, err);
     }

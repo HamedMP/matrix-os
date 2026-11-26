@@ -7,6 +7,7 @@
  * that originated upstream (names, descriptions, schemas) stays data.
  */
 import type { CustomMcpApproval, CustomMcpServer } from "./types.js";
+import type { CoreConnectedApp } from "./core-connected-apps.js";
 
 export const CORE_MAX_TOOLS_PER_SERVER = 500;
 export const CORE_MAX_CATALOG_BYTES = 512 * 1024;
@@ -120,6 +121,22 @@ export function normalizeCoreCatalog(server: CustomMcpServer, service: string): 
     });
   }
   return { ok: true, catalog: { serverId: server.id, revision: server.revision, service, tools } };
+}
+
+/**
+ * A Connect Apps connection's catalog from its registry actions. Reads are
+ * `allow`; every write or destructive action is `always_ask`, so an external
+ * client always needs an owner decision in Matrix before it runs.
+ */
+export function connectedAppCatalog(app: CoreConnectedApp, service: string): CoreCatalog {
+  const tools: CoreTool[] = [];
+  for (const tool of app.tools.slice(0, CORE_MAX_TOOLS_PER_SERVER)) {
+    if (!isSafeCoreToolName(tool.name)) continue;
+    tools.push({ name: tool.name, qualifiedName: `${service}.${tool.name}`,
+      description: truncateUtf8(tool.description, CORE_MAX_DESCRIPTION_BYTES), inputSchema: tool.inputSchema,
+      policy: tool.risk === "read" ? "allow" : "always_ask" });
+  }
+  return { serverId: app.connectionId, revision: 1, service, tools };
 }
 
 interface CacheEntry { revision: number; service: string; expiresAt: number; result: CoreCatalogResult }
