@@ -93,8 +93,8 @@ const SCHEMA = `Reply with exactly one JSON object and nothing else. Pick one "i
   Suggest several times for a meeting to put on the calendar.
 {"intent":"draft_event","title":"...","date":DAY|null,"time":"HH:MM"|null,"durationMinutes":N|null,"window":WINDOW|null,"attendees":[PEOPLE],"attendeesFromEvent":"eN"|null,"recurrence":RECURRENCE|null,"location":"","description":"","onlineMeeting":false}
   Set up one new event or series. Example: "set up a weekly closing call with the deal team until the 30th".
-{"intent":"reschedule","event":"eN","date":DAY|null,"time":"HH:MM"|null,"window":WINDOW|null,"count":N|null}
-  Move an existing event. Example: "move my Thursday one-on-one to a slot we are both free".
+{"intent":"reschedule","event":"eN","date":DAY|null,"time":"HH:MM"|null,"window":WINDOW|null,"count":N|null,"durationMinutes":N|null,"attendees":[PEOPLE]}
+  Move an existing event. Example: "move my Thursday one-on-one to a slot we are both free". Give "durationMinutes" or "attendees" only when the owner asks to change them.
 {"intent":"clarify","question":"..."}
   Only when the request cannot be understood or names an event that is not listed.
 

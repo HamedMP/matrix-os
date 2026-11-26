@@ -66,6 +66,8 @@ export interface PeopleRef {
   attendees: string[];
   /** Prompt alias of an event (`e3`) whose attendees to use. */
   attendeesFromEvent: string | null;
+  /** True when the request named more people than `attendees` holds. */
+  attendeesCut?: boolean;
 }
 
 export interface AgendaIntent {
@@ -110,6 +112,8 @@ export interface RescheduleIntent {
   time: string | null;
   window: WindowRef | null;
   count: number | null;
+  /** True when the request also asked for a new length or new guests, which a move keeps. */
+  asksForChanges?: boolean;
 }
 
 export interface ClarifyIntent {

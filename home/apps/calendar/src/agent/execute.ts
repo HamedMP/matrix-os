@@ -7,6 +7,7 @@
  * give this module no way to create, change or delete an event.
  */
 import {
+  MAX_EVENT_ATTENDEES,
   eventDraftIssues,
   instantToMs,
   isValidRecurrence,
@@ -16,8 +17,9 @@ import {
 import { MS_PER_MINUTE, addDays, compareDayKeys, dayKeyAt, zonedInstant } from "../model/dates";
 import { parseProposals } from "../model/proposals";
 import { NO_CALENDAR_MESSAGE, defaultCalendar } from "../model/store-schedule";
-import { resolvePeople, searchAvailability } from "./availability";
-import { durationLabel, eventLabel, eventRef, plural, rangeLabel, slotRef, windowLabel } from "./describe";
+import { cappedAddresses, resolvePeople, searchAtTime, searchAvailability, startsAtTime, type ResolvedPeople } from "./availability";
+import { clockLabel, durationLabel, eventLabel, eventRef, firstOf, plural, rangeLabel, slotRef, windowLabel } from "./describe";
+import { MAX_INTENT_ATTENDEES } from "./parse-intent";
 import type { PeopleEntry } from "./prompt";
 import { endOfDayInstant, instantOnDay, parseWallTime, resolveDateRef, resolveWindow, todayKey } from "./relative-dates";
 import type {
@@ -28,6 +30,7 @@ import type {
   CalendarIntent,
   DraftEventIntent,
   FindSlotsIntent,
+  PeopleRef,
   ProposeTimesIntent,
   RecurrenceRef,
   RescheduleIntent,
@@ -43,6 +46,9 @@ export interface ExecuteOptions {
 }
 
 const DEFAULT_SLOT_COUNT = 5;
+const DEFAULT_RESCHEDULE_COUNT = 3;
+/** An agenda lists at most this many events; the answer still counts all of them. */
+export const MAX_AGENDA_EVENTS = 50;
 const DEFAULT_SEARCH: WindowRef = { type: "next_days", days: 7 };
 const UNCLEAR_WINDOW = "I could not work out which days you meant. Try naming them, for example \"this week\" or \"before Friday\".";
 const NOTHING_SENT = "Nothing is sent until you open it and send it yourself.";
@@ -55,8 +61,15 @@ function windowFor(ref: WindowRef | null, fallback: WindowRef, context: Calendar
   return resolveWindow(ref ?? fallback, context, { fromNow });
 }
 
-function nameNotes(unresolved: readonly string[]): string[] {
-  return unresolved.length > 0 ? [`I could not find an address for ${unresolved.join(", ")}. Add them by address to include them.`] : [];
+function leftOutNote(leftOut: number): string[] {
+  return leftOut > 0 ? [`An event can have at most ${MAX_EVENT_ATTENDEES} guests, so ${plural(leftOut, "person", "people")} ${leftOut === 1 ? "was" : "were"} left out.`] : [];
+}
+
+/** Everything the owner should know about the people a request named: unknown names, and anyone left out. */
+function peopleNotes(people: ResolvedPeople, ref: PeopleRef): string[] {
+  const notes = people.unresolved.length > 0 ? [`I could not find an address for ${people.unresolved.join(", ")}. Add them by address to include them.`] : [];
+  if (ref.attendeesCut) notes.push(`I used up to ${MAX_INTENT_ATTENDEES} of the people you named. Add the others in the draft.`);
+  return [...notes, ...leftOutNote(people.leftOut)];
 }
 
 async function agenda(intent: AgendaIntent, { context, deps }: ExecuteOptions): Promise<CalendarAgentAnswer> {
@@ -69,28 +82,34 @@ async function agenda(intent: AgendaIntent, { context, deps }: ExecuteOptions): 
     deps.log?.("agent: list events", error);
     return blank("error", "Could not read your calendar. Try again.");
   }
-  const sorted = [...events].sort((a, b) => instantToMs(a.start) - instantToMs(b.start)).slice(0, 50);
+  const sorted = [...events].sort((a, b) => instantToMs(a.start) - instantToMs(b.start));
+  const shown = sorted.slice(0, MAX_AGENDA_EVENTS);
   const label = windowLabel(window, context.timeZone);
+  // The count is the whole range; a shortened list says it is one.
+  const partial = shown.length < sorted.length ? ` Showing the first ${shown.length} of ${sorted.length}.` : "";
   const text = sorted.length === 0
     ? `Nothing on your calendar for ${label}.`
-    : `${plural(sorted.length, "event")} on your calendar for ${label}.`;
-  return { kind: "agenda", text, notes: [], events: sorted.map(eventRef), slots: [], window };
+    : `${plural(sorted.length, "event")} on your calendar for ${label}.${partial}`;
+  return { kind: "agenda", text, notes: [], events: shown.map(eventRef), slots: [], window };
 }
 
 async function slotsFor(
   intent: FindSlotsIntent | ProposeTimesIntent,
   options: ExecuteOptions,
-): Promise<{ window: ResolvedWindow; addresses: string[]; duration: number; slots: CalendarAgentAnswer["slots"]; notes: string[]; failed: boolean } | null> {
+): Promise<{ window: ResolvedWindow; addresses: string[]; duration: number; count: number; slots: CalendarAgentAnswer["slots"]; notes: string[]; failed: boolean } | null> {
   const { context, deps } = options;
   const window = windowFor(intent.window, DEFAULT_SEARCH, context, true);
   if (!window) return null;
   const people = resolvePeople(intent, context, options.people, options.aliases);
-  const addresses = people.addresses.length > 0 || intent.attendees.length > 0 || intent.attendeesFromEvent
-    ? people.addresses
-    : context.assistantAttendees.filter((address) => address !== context.ownerAddress).slice(0, 20);
+  const named = people.addresses.length > 0 || intent.attendees.length > 0 || intent.attendeesFromEvent;
+  // "We" with no names means the people already in the scheduling assistant, every one of them.
+  const assistant = named ? null : cappedAddresses(context.assistantAttendees.map((address) => address.trim().toLowerCase()), context.ownerAddress?.toLowerCase() ?? null);
+  const addresses = assistant ? assistant.addresses : people.addresses;
   const duration = intent.durationMinutes ?? context.defaultDurationMinutes;
-  const result = await searchAvailability({ addresses, window, durationMinutes: duration, count: intent.count ?? DEFAULT_SLOT_COUNT }, context, deps);
-  return { window, addresses, duration, slots: result.slots, notes: [...nameNotes(people.unresolved), ...result.notes], failed: result.failed };
+  const count = intent.count ?? DEFAULT_SLOT_COUNT;
+  const result = await searchAvailability({ addresses, window, durationMinutes: duration, count }, context, deps);
+  const notes = [...peopleNotes(people, intent), ...leftOutNote(assistant?.leftOut ?? 0), ...result.notes];
+  return { window, addresses, duration, count, slots: result.slots, notes, failed: result.failed };
 }
 
 async function findSlotsAnswer(intent: FindSlotsIntent, options: ExecuteOptions): Promise<CalendarAgentAnswer> {
@@ -101,7 +120,7 @@ async function findSlotsAnswer(intent: FindSlotsIntent, options: ExecuteOptions)
   const label = windowLabel(found.window, options.context.timeZone);
   const text = found.slots.length === 0
     ? `No ${durationLabel(found.duration)} slot where ${who} free in working hours, ${label}.`
-    : `${plural(found.slots.length, "time")} when ${who} free for ${durationLabel(found.duration)}, ${label}.`;
+    : `${firstOf(found.slots.length, found.count, "time")} when ${who} free for ${durationLabel(found.duration)}, ${label}.`;
   return { kind: "slots", text, notes: found.notes, events: [], slots: found.slots, window: found.window, attendees: found.addresses };
 }
 
@@ -151,7 +170,7 @@ async function draftAnswer(intent: DraftEventIntent, options: ExecuteOptions): P
   const calendar = defaultCalendar(context.calendars);
   if (!calendar) return blank("error", NO_CALENDAR_MESSAGE);
   const people = resolvePeople(intent, context, options.people, options.aliases);
-  const notes = nameNotes(people.unresolved);
+  const notes = peopleNotes(people, intent);
   const duration = intent.durationMinutes ?? context.defaultDurationMinutes;
   const day = intent.date ? resolveDateRef(intent.date, context) : null;
   if (intent.date && !day) return blank("clarify", UNCLEAR_WINDOW);
@@ -160,6 +179,20 @@ async function draftAnswer(intent: DraftEventIntent, options: ExecuteOptions): P
   let startMs: number | null = null;
   if (day && minute !== null) {
     startMs = instantToMs(instantOnDay(day, minute, context));
+  } else if (minute !== null && intent.window) {
+    // A time within a stretch of days: that exact time, on the first of those days everyone is free.
+    const window = windowFor(intent.window, DEFAULT_SEARCH, context, true);
+    if (!window) return blank("clarify", UNCLEAR_WINDOW);
+    const starts = startsAtTime(window, minute, context);
+    if (starts.length === 0) return blank("clarify", `${clockLabel(minute)} has passed on every day you named. Tell me the date.`);
+    const found = await searchAtTime({ addresses: people.addresses, window, minuteOfDay: minute, lengthMs: duration * MS_PER_MINUTE, count: 1 }, context, deps);
+    notes.push(...found.notes);
+    if (found.slots[0]) startMs = instantToMs(found.slots[0].start);
+    else {
+      startMs = starts[0];
+      // A failed read already says so; it is not a finding that nobody is free.
+      if (!found.failed) notes.push(`I found no day when everyone is free at ${clockLabel(minute)}, so check the time in the draft.`);
+    }
   } else if (minute !== null) {
     const today = todayKey(context);
     const todayAt = instantToMs(instantOnDay(today, minute, context));
@@ -214,11 +247,14 @@ async function rescheduleAnswer(intent: RescheduleIntent, options: ExecuteOption
   const slotFrom = (startMs: number) => slotRef(zonedInstant(startMs, context.timeZone), zonedInstant(startMs + lengthMs, context.timeZone));
   const ref = eventRef(event);
   const day = intent.date ? resolveDateRef(intent.date, context) : null;
+  if (intent.date && !day) return blank("clarify", UNCLEAR_WINDOW);
   const minute = parseWallTime(intent.time);
+  // A move keeps the event's length and guests; asking to change them is answered, not dropped.
+  const keeps = intent.asksForChanges ? [`Moving "${event.title}" keeps its length and guests. Change those in the draft.`] : [];
   if (day && minute !== null) {
     const slot = slotFrom(instantToMs(instantOnDay(day, minute, context)));
     return {
-      kind: "reschedule", eventId: event.id, durationMinutes: duration, events: [ref], slots: [slot], notes: [],
+      kind: "reschedule", eventId: event.id, durationMinutes: duration, events: [ref], slots: [slot], notes: keeps,
       text: `Move "${event.title}" to ${rangeLabel(slot.start, slot.end, context.timeZone)}? Open the draft to check and send the update. ${NOTHING_SENT}`,
     };
   }
@@ -226,14 +262,32 @@ async function rescheduleAnswer(intent: RescheduleIntent, options: ExecuteOption
     ? resolveWindow({ type: "day", date: { type: "date", date: day } }, context, { fromNow: true })
     : windowFor(intent.window, DEFAULT_SEARCH, context, true);
   if (!window) return blank("clarify", UNCLEAR_WINDOW);
+  const owner = context.ownerAddress?.toLowerCase() ?? null;
+  // Every guest is checked (the app reads them in batches), so "everyone is free" means everyone.
+  const guests = cappedAddresses(event.attendees.map((attendee) => attendee.address.trim().toLowerCase()), owner);
+  const addresses = guests.addresses;
+  const count = intent.count ?? DEFAULT_RESCHEDULE_COUNT;
+  const label = windowLabel(window, context.timeZone);
+  if (minute !== null) {
+    // A time with no date: that exact time on the days ahead, never another time of day.
+    const clock = clockLabel(minute);
+    const found = await searchAtTime(
+      { addresses, window, minuteOfDay: minute, lengthMs, count, excludeEventId: event.id, skipStartMs: instantToMs(event.start) },
+      context,
+      deps,
+    );
+    if (found.failed) return blank("error", "Could not read your calendar. Try again.", found.notes);
+    const notes = [...keeps, ...leftOutNote(guests.leftOut), ...found.notes];
+    const text = found.slots.length === 0
+      ? `No day when everyone on "${event.title}" is free at ${clock}, ${label}. Tell me the date to move it to.`
+      : `${firstOf(found.slots.length, count, "time")} to move "${event.title}" (${eventLabel(ref, context.timeZone)}) to ${clock} when everyone is free. Pick one to open the draft. ${NOTHING_SENT}`;
+    return { kind: "reschedule", eventId: event.id, durationMinutes: duration, events: [ref], slots: found.slots, notes, text };
+  }
   // Free time is searched inside working hours, whole minutes at a time; a longer event cannot fit, so the owner names the time.
   const searchMinutes = Math.max(1, Math.ceil(duration));
   if (searchMinutes > context.workingHours.endMinute - context.workingHours.startMinute) {
     return blank("clarify", `"${event.title}" lasts ${durationLabel(searchMinutes)}, longer than your working hours, so I cannot look for a free time for it. Tell me the date and time to move it to.`);
   }
-  const owner = context.ownerAddress?.toLowerCase() ?? null;
-  const addresses = [...new Set(event.attendees.map((attendee) => attendee.address.trim().toLowerCase()))].filter((address) => address !== owner).slice(0, 20);
-  const count = intent.count ?? 3;
   const found = await searchAvailability({ addresses, window, durationMinutes: searchMinutes, count: count + 1, excludeEventId: event.id }, context, deps);
   if (found.failed) return blank("error", "Could not read your calendar. Try again.", found.notes);
   // The event's current time is not a new time. A free slot of the rounded-up length holds the exact one.
@@ -242,9 +296,9 @@ async function rescheduleAnswer(intent: RescheduleIntent, options: ExecuteOption
     .slice(0, count)
     .map((slot) => slotFrom(instantToMs(slot.start)));
   const text = found.slots.length === 0
-    ? `No time when everyone on "${event.title}" is free, ${windowLabel(window, context.timeZone)}.`
-    : `${plural(found.slots.length, "time")} to move "${event.title}" (${eventLabel(ref, context.timeZone)}) when everyone is free. Pick one to open the draft. ${NOTHING_SENT}`;
-  return { kind: "reschedule", eventId: event.id, durationMinutes: duration, events: [ref], slots: found.slots, notes: found.notes, text };
+    ? `No time when everyone on "${event.title}" is free, ${label}.`
+    : `${firstOf(found.slots.length, count, "time")} to move "${event.title}" (${eventLabel(ref, context.timeZone)}) when everyone is free. Pick one to open the draft. ${NOTHING_SENT}`;
+  return { kind: "reschedule", eventId: event.id, durationMinutes: duration, events: [ref], slots: found.slots, notes: [...keeps, ...leftOutNote(guests.leftOut), ...found.notes], text };
 }
 
 /** Runs one intent. Never throws for provider failures; they become an "error" answer with a fixed sentence. */

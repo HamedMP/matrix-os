@@ -90,13 +90,20 @@ function wholeIn(value: unknown, minimum: number, maximum: number): number | nul
 function people(value: Record<string, unknown>, aliases: Readonly<Record<string, string>>): PeopleRef {
   const list = Array.isArray(value.attendees) ? value.attendees : [];
   const attendees = new Set<string>();
-  for (const item of list.slice(0, MAX_INTENT_ATTENDEES * 2)) {
+  let cut = false;
+  for (const item of list.slice(0, MAX_INTENT_ATTENDEES * 5)) {
     const raw = typeof item === "string" ? item : item && typeof item === "object" ? (item as { address?: unknown; name?: unknown }).address ?? (item as { name?: unknown }).name : null;
     const text = cleanText(raw, 254);
-    if (text) attendees.add(text);
-    if (attendees.size >= MAX_INTENT_ATTENDEES) break;
+    if (!text || attendees.has(text)) continue;
+    // A person past the cap is reported as left out, never dropped silently.
+    if (attendees.size >= MAX_INTENT_ATTENDEES) {
+      cut = true;
+      break;
+    }
+    attendees.add(text);
   }
-  return { attendees: [...attendees], attendeesFromEvent: alias(value.attendeesFromEvent, aliases) };
+  if (list.length > MAX_INTENT_ATTENDEES * 5) cut = true;
+  return { attendees: [...attendees], attendeesFromEvent: alias(value.attendeesFromEvent, aliases), ...(cut ? { attendeesCut: true } : {}) };
 }
 
 function alias(value: unknown, aliases: Readonly<Record<string, string>>): string | null {
@@ -181,6 +188,8 @@ export function validateIntent(raw: unknown, aliases: Readonly<Record<string, st
         time: parseWallTime(value.time) === null ? null : (value.time as string).trim(),
         window: parseWindowRef(value.window),
         count: count(value.count),
+        // A move keeps the event's length and guests; the answer says so when they were asked for.
+        ...(duration(value.durationMinutes) !== null || (Array.isArray(value.attendees) && value.attendees.length > 0) ? { asksForChanges: true } : {}),
       };
     }
     case "clarify": {

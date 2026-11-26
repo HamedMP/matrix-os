@@ -66,3 +66,13 @@ export function slotRef(start: IsoInstant, end: IsoInstant): SlotRef {
 export function plural(count: number, one: string, many = `${one}s`): string {
   return `${count} ${count === 1 ? one : many}`;
 }
+
+/** "3 times", or "The first 3 times" when the search stopped at `limit` and more may exist. */
+export function firstOf(count: number, limit: number, one: string, many = `${one}s`): string {
+  return count >= limit ? `The first ${plural(count, one, many)}` : plural(count, one, many);
+}
+
+/** "09:05" for a minute of the day. */
+export function clockLabel(minuteOfDay: number): string {
+  return `${String(Math.floor(minuteOfDay / 60)).padStart(2, "0")}:${String(minuteOfDay % 60).padStart(2, "0")}`;
+}
