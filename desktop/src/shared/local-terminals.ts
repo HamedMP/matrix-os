@@ -2,6 +2,14 @@
 // The renderer names terminals and sends keystrokes; it never sees the
 // herdr-core socket, its path, or raw JSON-RPC.
 import { z } from "zod/v4";
+import {
+  HC_TERMINAL_ADDRESS_PATTERN, HC_TERMINAL_ID_PATTERN, HC_TERMINAL_LIST_MAX, HC_TERMINAL_MAX_OUTPUT_CHARS, HcTerminalIdSchema, HcTerminalSchema,
+  HcTerminalStatusSchema, type HcTerminal, type HcTerminalStatus,
+} from "@matrix-os/herdr-core-client/terminal";
+
+export const LOCAL_TERMINAL_LIST_MAX = HC_TERMINAL_LIST_MAX;
+export const LOCAL_TERMINAL_MAX_OUTPUT_CHARS = HC_TERMINAL_MAX_OUTPUT_CHARS;
+export const LOCAL_TERMINAL_ID_PATTERN = HC_TERMINAL_ID_PATTERN;
 
 export const LOCAL_TERMINAL_VERSION = "0.1.19";
 
@@ -15,22 +23,17 @@ export function compareCoreVersions(left: string, right: string): number | null 
   return 0;
 }
 export const LOCAL_TERMINAL_SESSION_PREFIX = "local:";
-// Terminals are not count-capped. This bounds one listing, and matches the
-// most the core reports.
-export const LOCAL_TERMINAL_LIST_MAX = 1_000;
 const MAX_INPUT_CHARS = 65_536;
 /** The most output events one acknowledgement may cover; larger batches are split. */
 export const LOCAL_TERMINAL_MAX_ACK_COUNT = 4_096;
 const BYTE_STRING = /^[\u0000-\u00ff]*$/;
-export const LOCAL_TERMINAL_MAX_OUTPUT_CHARS = 262_144;
 
-export const LOCAL_TERMINAL_ID_PATTERN = /^t[0-9]{1,6}[a-z]{0,2}$/;
-export const LocalTerminalIdSchema = z.string().regex(LOCAL_TERMINAL_ID_PATTERN);
+export const LocalTerminalIdSchema = HcTerminalIdSchema;
 /**
  * A terminal this core reports, here (`t7`) or on a machine it added
  * (`vps/t7`); machine names follow herdr-core's terminal-name rules.
  */
-export const LOCAL_TERMINAL_ADDRESS_PATTERN = /^(?:[a-z0-9][a-z0-9._-]{0,31}\/)?t[0-9]{1,6}[a-z]{0,2}$/;
+export const LOCAL_TERMINAL_ADDRESS_PATTERN = HC_TERMINAL_ADDRESS_PATTERN;
 export const LocalTerminalAddressSchema = z.string().regex(LOCAL_TERMINAL_ADDRESS_PATTERN);
 /** Live and finished terminals one facts update may carry. */
 export const LOCAL_TERMINAL_FACTS_MAX = 2_000;
@@ -110,18 +113,11 @@ const Unavailable = z.enum(UNAVAILABLE);
 export type LocalTerminalUnavailable = z.infer<typeof Unavailable>;
 
 // What the program in the terminal reported about itself through OSC 7501
-// (herdr-core stores it as reported). Only the fixed vocabulary crosses IPC;
-// the program's message is separately bounded and sanitized by the host.
-export const LocalTerminalStatusSchema = z.enum(["idle", "working", "done", "blocked", "error"]);
-export type LocalTerminalStatus = z.infer<typeof LocalTerminalStatusSchema>;
-
-export const LocalTerminalSchema = z.strictObject({
-  id: LocalTerminalIdSchema,
-  title: z.string().max(256),
-  status: LocalTerminalStatusSchema.nullable(),
-  statusMessage: z.string().max(200).regex(/^[^\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/).optional(),
-});
-export type LocalTerminal = z.infer<typeof LocalTerminalSchema>;
+// (herdr-core stores it as reported). The shape is shared with the gateway.
+export const LocalTerminalStatusSchema = HcTerminalStatusSchema;
+export type LocalTerminalStatus = HcTerminalStatus;
+export const LocalTerminalSchema = HcTerminalSchema;
+export type LocalTerminal = HcTerminal;
 
 /**
  * One terminal's status facts from herdr-core's `events.subscribe` (spec 2706

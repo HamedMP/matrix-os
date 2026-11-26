@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
 import { fakeCore } from "./fixtures/fake-herdr-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { connectHc, HcCallError, HcProtocolError, HcVersionMismatchError } from "@desktop/main/local-terminals/hc-client";
-import { encodeFrame, HC_FRAME, HcFrameDecoder, HC_MAX_PAYLOAD } from "@desktop/main/local-terminals/hc-protocol";
+import { connectHc, HcCallError, HcProtocolError, HcVersionMismatchError } from "@matrix-os/herdr-core-client/client";
+import { encodeFrame, HC_FRAME, HcFrameDecoder, HC_MAX_PAYLOAD } from "@matrix-os/herdr-core-client/protocol";
 
 describe("herdr-core frame codec", () => {
   it("round-trips frames split at arbitrary byte boundaries", () => {

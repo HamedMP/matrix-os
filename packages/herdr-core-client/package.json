@@ -1,0 +1,34 @@
+{
+  "name": "@matrix-os/herdr-core-client",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Client for the herdr-core terminal protocol, shared by Electron Desktop and the gateway.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol.ts",
+    "./client": "./src/client.ts",
+    "./sessions": "./src/sessions.ts",
+    "./session-host": "./src/session-host.ts",
+    "./terminal": "./src/terminal.ts",
+    "./describe-error": "./src/describe-error.ts"
+  },
+  "imports": {
+    "#protocol": "./src/protocol.ts",
+    "#client": "./src/client.ts",
+    "#sessions": "./src/sessions.ts",
+    "#session-host": "./src/session-host.ts",
+    "#terminal": "./src/terminal.ts",
+    "#describe-error": "./src/describe-error.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.9.3"
+  }
+}
