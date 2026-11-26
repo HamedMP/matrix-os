@@ -111,6 +111,61 @@ describe("selection API", () => {
     box.remove();
   });
 
+  it("carries the remembered selection through rejecting a revision from a panel, so Bold reaches the selected word", async () => {
+    const [a] = await open();
+    m.session.apply([{ type: "insertText", at: at(a!, 0), text: "Dear " }], { track: true });
+    // "world" in "Dear Hello world", then focus moves to the Review panel.
+    select(m, at(a!, 11), at(a!, 16));
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+    document.getSelection()!.setBaseAndExtent(document.body, 0, document.body, 0);
+    document.dispatchEvent(new Event("selectionchange"));
+    m.session.rejectRevisions("all", { origin: "review" });
+    expect(document.activeElement).toBe(button);
+    expect(m.editor.getSelection()).toMatchObject({ start: at(a!, 6), end: at(a!, 11) });
+    expect(m.editor.getSnapshot().selection).toMatchObject({ start: at(a!, 6), end: at(a!, 11) });
+    expect(m.editor.format({ bold: true })).toBe(true);
+    expect(paragraph(m.doc, a!).runs.map((run) => [run.text, run.bold])).toEqual([
+      ["Hello ", false],
+      ["world", true],
+    ]);
+    button.remove();
+  });
+
+  it("puts the selection where the rejected text was when the owner selected it in the document", async () => {
+    const [a] = await open();
+    m.session.apply([{ type: "insertText", at: at(a!, 0), text: "Dear " }], { track: true });
+    select(m, at(a!, 11), at(a!, 16));
+    m.session.rejectRevisions("all", { origin: "agent" });
+    expect(m.editor.getSelection()).toMatchObject({ start: at(a!, 6), end: at(a!, 11) });
+    expect(m.editor.getSelectedText()).toBe("world");
+  });
+
+  it("drops a remembered selection whose place a change removed instead of keeping its old offsets", async () => {
+    m = await mount({ paragraphs: ["Hello world"] }, { tracking: true });
+    const [a] = bodyParagraphs(m.doc).map((block) => block.id);
+    m.session.apply([{ type: "splitParagraph", at: at(a!, 6) }]);
+    const second = bodyParagraphs(m.doc)[1]!.id;
+    select(m, at(second, 0), at(second, 5));
+    const button = document.createElement("button");
+    document.body.append(button);
+    button.focus();
+    document.getSelection()!.setBaseAndExtent(document.body, 0, document.body, 0);
+    document.dispatchEvent(new Event("selectionchange"));
+    const seen: Array<EditorSelection | null> = [];
+    const stop = m.editor.onSelectionChange((selection) => seen.push(selection));
+    m.session.rejectRevisions("all", { origin: "review" });
+    expect(m.editor.getSelection()).toBeNull();
+    expect(m.editor.getSnapshot().selection).toBeNull();
+    expect(seen.at(-1)).toBeNull();
+    // A toolbar command has nothing to act on rather than the wrong letters.
+    expect(m.editor.format({ bold: true })).toBe(false);
+    expect(paragraph(m.doc, a!).runs.every((run) => run.bold !== true)).toBe(true);
+    stop();
+    button.remove();
+  });
+
   it("publishes toolbar state: view mode, selection and the formatting at it", async () => {
     m = await mount({ markdown: "# Title\n\nPlain **bold** text" });
     const [title, body] = bodyParagraphs(m.doc);

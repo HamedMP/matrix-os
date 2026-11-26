@@ -16,6 +16,7 @@ import { sessionError, toSessionError } from "./errors";
 import { DEFAULT_UNDO_LIMIT, History } from "./history";
 import { fileName, isBridgePath, localFileName } from "./paths";
 import type { RecentFilesStore } from "./recent-files";
+import { trackSelectionThroughResolve } from "./resolve-selection";
 import { SaveController } from "./save-controller";
 import { EMPTY_STATE, SessionStore } from "./session-store";
 import type {
@@ -73,6 +74,8 @@ export class DocumentSession {
   private loadToken = 0;
   private savedState = 0;
   private savedTracking = false;
+  /** Grows with every change of the document and of Track changes, undo and redo included; never goes back. */
+  private changeSeq = 0;
   private disposed = false;
 
   constructor(options: DocumentSessionOptions) {
@@ -171,9 +174,10 @@ export class DocumentSession {
   /** Reads and opens a document. Unsaved changes of the current one are saved first. */
   async open(path: string, options: OpenOptions = {}): Promise<OpenResult> {
     if (!isBridgePath(path)) return this.openFailed(sessionError("invalid_request"));
+    const discarded = this.changeSeq;
     const token = await this.leaveCurrent(options);
     if (typeof token !== "number") return token;
-    return this.load(() => this.files.read(path), { path, name: fileName(path), source: "matrix" }, options, token);
+    return this.load(() => this.files.read(path), { path, name: fileName(path), source: "matrix" }, options, token, discarded);
   }
 
   /**
@@ -182,16 +186,21 @@ export class DocumentSession {
    * changes of the current document are saved first, as for `open`.
    */
   async openLocal(file: LocalFileInput, options: OpenOptions = {}): Promise<OpenResult> {
+    const discarded = this.changeSeq;
     const token = await this.leaveCurrent(options);
     if (typeof token !== "number") return token;
-    return this.load(async () => ({ bytes: file.bytes, version: null }), { path: null, name: localFileName(file.name), source: "local" }, options, token);
+    return this.load(async () => ({ bytes: file.bytes, version: null }), { path: null, name: localFileName(file.name), source: "local" }, options, token, discarded);
   }
 
-  /** Reads the file again and replaces the local document with it. Unsaved changes are dropped. */
+  /**
+   * Reads the file again and replaces the local document with it, dropping the
+   * unsaved changes made before the call. When more arrive while the file is
+   * read, nothing is replaced: the result is the error `edited_meanwhile`.
+   */
   async reload(): Promise<OpenResult> {
     const path = this.store.state.path;
     if (path === null) return { status: "error", error: sessionError("not_found") };
-    return this.load(() => this.files.read(path), { path, name: fileName(path), source: "matrix" }, { discardChanges: true }, ++this.loadToken);
+    return this.load(() => this.files.read(path), { path, name: fileName(path), source: "matrix" }, { discardChanges: true }, ++this.loadToken, this.changeSeq);
   }
 
   /** Starts an empty, unsaved document. */
@@ -261,7 +270,9 @@ export class DocumentSession {
   /**
    * Changes the document through its handle in a way `apply` does not cover,
    * as one undo step. `effect` names the blocks that changed; without it
-   * listeners refresh everything.
+   * listeners refresh everything. Positions cannot follow such a change, so
+   * the selection of the selection source is reported lost
+   * (`DocumentChange.selectionLost`).
    */
   mutate<T>(fn: (doc: DocxDocument) => T, options: SessionMutateOptions & { effect?: (result: T) => MutationEffect | null } = {}): T {
     return this.editor.mutate(fn, options);
@@ -269,12 +280,12 @@ export class DocumentSession {
 
   /** Accepts revisions as one undo step. Throws `stale_reference` for an unknown id. */
   acceptRevisions(ids: readonly RevisionId[] | "all", options: { origin?: string } = {}): ResolveRevisionsResult {
-    return this.resolve((doc) => doc.acceptRevisions(ids), options.origin);
+    return this.resolve((doc) => doc.acceptRevisions(ids), true, options.origin);
   }
 
   /** Rejects revisions as one undo step. */
   rejectRevisions(ids: readonly RevisionId[] | "all", options: { origin?: string } = {}): ResolveRevisionsResult {
-    return this.resolve((doc) => doc.rejectRevisions(ids), options.origin);
+    return this.resolve((doc) => doc.rejectRevisions(ids), false, options.origin);
   }
 
   /** Returns false when there is nothing to undo. */
@@ -295,6 +306,7 @@ export class DocumentSession {
   setTracking(enabled: boolean): void {
     if (this.store.state.tracking === enabled) return;
     this.history.sealMerge();
+    this.changeSeq++;
     this.store.patch({ tracking: enabled });
     this.syncTracking();
     this.store.patch({ dirty: this.isDirty() });
@@ -351,11 +363,13 @@ export class DocumentSession {
 
   // ---------------------------------------------------------------- internals
 
+  /** Reads and activates a document. With `discardChanges` only changes up to `discarded` (the mark when the owner asked) are dropped. */
   private async load(
     read: () => Promise<{ bytes: Uint8Array; version: string | null }>,
     file: { path: string | null; name: string; source: DocumentSource },
     options: OpenOptions,
     token: number,
+    discarded: number,
   ): Promise<OpenResult> {
     if (this.superseded(token)) return { status: "superseded" };
     this.store.patch({ status: "loading" });
@@ -373,6 +387,11 @@ export class DocumentSession {
       return this.openFailed(toSessionError(error));
     }
     if (this.superseded(token)) return { status: "superseded" };
+    if (this.doc !== null && options.discardChanges === true && this.changeSeq !== discarded) {
+      // Edited after the owner chose to drop the changes: those edits were not part of that choice.
+      this.store.patch({ status: "ready" });
+      return { status: "error", error: sessionError("edited_meanwhile") };
+    }
     if (this.doc !== null && this.isDirty() && options.discardChanges !== true) {
       // The current document was edited while the new one was being read.
       this.store.patch({ status: "ready" });
@@ -449,15 +468,22 @@ export class DocumentSession {
     if (file.path !== null) this.touchRecent(file.path);
   }
 
-  private resolve(run: (doc: DocxDocument) => ResolveRevisionsResult, origin: string | undefined): ResolveRevisionsResult {
+  private resolve(run: (doc: DocxDocument) => ResolveRevisionsResult, accept: boolean, origin: string | undefined): ResolveRevisionsResult {
     const doc = this.requireDocument();
     // Nothing to resolve: no undo step.
     if (doc.listRevisions().length === 0) return run(doc);
-    return this.editor.mutate(run, { kind: "resolve", origin, effect: (result) => result });
+    return this.editor.mutate(run, {
+      kind: "resolve",
+      origin,
+      effect: (result) => result,
+      // Removed revision text moves the selection like any other edit.
+      carrySelection: (selection) => trackSelectionThroughResolve(doc, selection, accept),
+    });
   }
 
   /** Publishes the state after a content change, tells listeners, and arms autosave. */
   private commit(change: DocumentChange): void {
+    this.changeSeq++;
     this.store.patch({ dirty: this.isDirty(), canUndo: this.history.canUndo, canRedo: this.history.canRedo, ...this.counts() });
     this.store.emit(change);
     this.saver.schedule();

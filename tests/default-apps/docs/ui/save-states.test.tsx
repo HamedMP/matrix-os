@@ -66,6 +66,23 @@ describe("Docs save states", () => {
     expect(saveState()).toBe("Saved");
   });
 
+  it("keeps typing done after Reload while the file is read, and says why it did not reload", async () => {
+    const bridge = installBridge({ "plan.docx": await docxFromParagraphs(["Plan"]) }, { pending: "plan.docx" });
+    renderApp();
+    const surface = await findSurface();
+    act(() => typeInto(surface, " mine"));
+    bridge.files.put("plan.docx", await docxFromParagraphs(["Theirs"]));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const banner = await screen.findByRole("alert");
+    const release = bridge.files.holdReads();
+    fireEvent.click(within(banner).getByRole("button", { name: /Reload/ }));
+    act(() => typeInto(surface, "!"));
+    await act(async () => release());
+    expect(await screen.findByText(/Your edits are still here/)).toBeTruthy();
+    expect((await findSurface()).textContent).toBe("Plan mine!");
+    expect(saveState()).toBe("Changed elsewhere");
+  });
+
   it("asks for a name when saving a new document", async () => {
     const bridge = installBridge({});
     renderApp();

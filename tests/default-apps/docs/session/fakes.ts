@@ -40,6 +40,8 @@ export interface FakeFiles {
   failNext(method: "read" | "write" | "stat", code: BridgeFileErrorCode): void;
   /** Every write waits for the returned release function to be called. */
   holdWrites(): () => void;
+  /** Every read waits for the returned release function to be called. */
+  holdReads(): () => void;
   readonly writes: Array<{ path: string; ifVersion: string | null; size: number }>;
   readonly reads: string[];
 }
@@ -49,6 +51,7 @@ export function createFakeFiles(initial: Record<string, Uint8Array> = {}): FakeF
   let counter = 0;
   const failures = new Map<string, BridgeFileErrorCode>();
   let gate: Promise<void> | null = null;
+  let readGate: Promise<void> | null = null;
   const nextVersion = () => `v${++counter}`;
   for (const [path, bytes] of Object.entries(initial)) store.set(path, { bytes, version: nextVersion() });
   const takeFailure = (method: string): void => {
@@ -62,6 +65,7 @@ export function createFakeFiles(initial: Record<string, Uint8Array> = {}): FakeF
     reads: [],
     async read(path) {
       files.reads.push(path);
+      if (readGate !== null) await readGate;
       takeFailure("read");
       const file = store.get(path);
       if (file === undefined) throw bridgeError("not_found");
@@ -100,6 +104,16 @@ export function createFakeFiles(initial: Record<string, Uint8Array> = {}): FakeF
       gate = new Promise<void>((resolve) => {
         release = () => {
           gate = null;
+          resolve();
+        };
+      });
+      return release;
+    },
+    holdReads() {
+      let release: () => void = () => undefined;
+      readGate = new Promise<void>((resolve) => {
+        release = () => {
+          readGate = null;
           resolve();
         };
       });

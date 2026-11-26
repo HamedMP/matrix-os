@@ -13,6 +13,7 @@ export function emptyChange(kind: DocumentChangeKind, origin: string | null): Do
     revisionIds: [],
     origin,
     selection: null,
+    selectionLost: false,
   };
 }
 
@@ -41,5 +42,6 @@ export function mergeChange(first: DocumentChange, second: DocumentChange): Docu
     revisionIds: union(first.revisionIds, second.revisionIds),
     origin: second.origin ?? first.origin,
     selection: second.selection,
+    selectionLost: second.selectionLost,
   };
 }

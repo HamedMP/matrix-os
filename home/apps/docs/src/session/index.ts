@@ -35,7 +35,10 @@
  *   settles after another document was opened does nothing to the session.
  * - Opening another document saves the current one first; when that is not
  *   possible the open is `blocked` and nothing is lost. Pass
- *   `{ discardChanges: true }` to drop the changes.
+ *   `{ discardChanges: true }` to drop the changes. Only the changes made
+ *   before the call are dropped: when the document changes while the new
+ *   file is read (the editor stays editable), it is kept and the result is
+ *   the error `edited_meanwhile`. `reload()` works the same way.
  * - A file that cannot be read or parsed is never written.
  *
  * Documents from the owner's computer (`openLocal`) have `source: "local"`:

@@ -219,11 +219,16 @@ export abstract class EditorBase {
       const document = this.session.document;
       if (carried !== null && this.composition.selection !== null && document !== null) {
         this.composition.selection = toSelection(ModelIndex.build(document.getView(), this.mode), carried.anchor, carried.focus);
+      } else if (change.selectionLost) {
+        // The place the composition goes is gone: its text is dropped rather than inserted at old offsets.
+        this.composition.selection = null;
       }
       return;
     }
     const live = this.applying ? null : this.liveSelection();
-    const before = this.applying ? null : (change.selection ?? live);
+    // A selection the change could not carry is dropped: the DOM still names the old text, so neither it nor the remembered offsets are kept.
+    const lost = !this.applying && change.selectionLost;
+    const before = this.applying || lost ? null : (change.selection ?? live);
     const structural = change.full || change.createdBlockIds.length > 0 || change.removedBlockIds.length > 0;
     const getBlock = (id: BlockId) => this.session.document?.getBlock(id) ?? null;
     // A table that now shows other rows changes what the index holds: build it again with the view.
@@ -232,6 +237,7 @@ export abstract class EditorBase {
     // When the browser selection is elsewhere, only the remembered one moves: writing the DOM selection would take focus.
     if (before !== null && live !== null) this.place(before.anchor, before.focus);
     else if (before !== null) this.remember(before.anchor, before.focus);
+    else if (lost) this.forget();
     this.publish();
   }
 
@@ -307,6 +313,16 @@ export abstract class EditorBase {
     const selection = this.validSelection(toSelection(this.index, anchor, focus));
     const changed = !sameSelection(selection, this.lastSelection);
     this.lastSelection = selection;
+    if (changed) this.announceSelection();
+  }
+
+  /** Drops the selection, in the DOM too when it is in the document, and tells listeners. */
+  protected forget(): void {
+    const dom = this.host?.ownerDocument.getSelection() ?? null;
+    if (dom !== null && dom.anchorNode !== null && this.host?.contains(dom.anchorNode) === true) dom.removeAllRanges();
+    const changed = this.lastSelection !== null;
+    this.lastSelection = null;
+    this.pendingFormat = null;
     if (changed) this.announceSelection();
   }
 

@@ -39,6 +39,8 @@ export type SessionErrorCode =
   | "unsupported_file"
   /** A document that is damaged. */
   | "corrupt_file"
+  /** The open document was edited while its replacement was read: it was kept, not replaced. */
+  | "edited_meanwhile"
   | "unknown";
 
 export interface SessionError {
@@ -135,6 +137,13 @@ export interface DocumentChange {
    * Null when unknown.
    */
   selection: SessionSelection | null;
+  /**
+   * True when the selection source had a selection that could not be carried
+   * through the change: its text is gone, or a custom mutation changed the
+   * document in a way positions cannot follow. Listeners drop that selection
+   * rather than keep its old offsets.
+   */
+  selectionLost: boolean;
 }
 
 export interface SessionApplyOptions {

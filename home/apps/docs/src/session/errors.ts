@@ -17,6 +17,7 @@ const MESSAGES: Record<SessionErrorCode, string> = {
   already_exists: "A file with this name already exists.",
   unsupported_file: "This file is not a Word document that Docs can open.",
   corrupt_file: "This document is damaged and could not be opened.",
+  edited_meanwhile: "New edits were made while the file was being read, so the document was not replaced. Your edits are still here.",
   unknown: "Something went wrong. Try again.",
 };
 

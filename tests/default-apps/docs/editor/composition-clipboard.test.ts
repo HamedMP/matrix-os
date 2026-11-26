@@ -146,6 +146,24 @@ describe("IME composition", () => {
     expect(paragraph(m.doc, a!).text).toBe("Helloü world");
   });
 
+  it("puts composed text where a rejected revision moved its place, and drops it when its place cannot be followed", async () => {
+    const [a] = await open(["Hello world"]);
+    m.session.apply([{ type: "insertText", at: at(a!, 0), text: "Dear " }], { track: true, author: OTHER });
+    caret(m, a!, 10);
+    composition("compositionstart", "");
+    m.session.rejectRevisions("all", { origin: "agent" });
+    composition("compositionend", "!");
+    expect(paragraph(m.doc, a!).text).toBe("Hello! world");
+
+    m.session.apply([{ type: "insertText", at: at(a!, 0), text: "Dear " }], { track: true, author: OTHER });
+    caret(m, a!, 11);
+    composition("compositionstart", "");
+    // A custom change positions cannot follow: the composed text is not inserted at the old offset.
+    m.session.mutate((doc) => doc.rejectRevisions("all"), { origin: "agent" });
+    composition("compositionend", "?");
+    expect(paragraph(m.doc, a!).text).toBe("Hello! world");
+  });
+
   it("repairs the DOM when an input got through outside a composition", async () => {
     const [a] = await open();
     caret(m, a!, 5);

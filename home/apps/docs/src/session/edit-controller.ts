@@ -86,6 +86,7 @@ export class EditController {
       revisionIds: result.revisionIds,
       origin: options.origin ?? null,
       selection: carried,
+      selectionLost: selection !== null && carried === null,
     };
     const publicResult: ApplyResult = { ...result, positions: result.positions.slice(0, own.length) };
     const touched =
@@ -133,17 +134,31 @@ export class EditController {
         selectionAfter: batch.selection,
         at: this.host.now().getTime(),
       });
-      this.host.commit({ ...batch.change, selection: batch.selection });
+      this.host.commit({ ...batch.change, selection: batch.selection, selectionLost: batch.selectionBefore !== null && batch.selection === null });
     }
     return value;
   }
 
-  mutate<T>(fn: (doc: DocxDocument) => T, options: SessionMutateOptions & { effect?: (result: T) => MutationEffect | null }): T {
+  /**
+   * Runs a custom change as one undo step. Positions cannot follow an
+   * arbitrary change, so the selection is lost unless `carrySelection` says
+   * where it goes: it is called with the selection before `fn` runs and
+   * returns the function that finds it afterwards (null when it is gone).
+   */
+  mutate<T>(
+    fn: (doc: DocxDocument) => T,
+    options: SessionMutateOptions & {
+      effect?: (result: T) => MutationEffect | null;
+      carrySelection?: (selection: SessionSelection) => (result: T) => SessionSelection | null;
+    },
+  ): T {
     const doc = this.host.requireDocument();
     const batch = this.batchState;
     const before = batch === null ? doc.snapshot() : null;
     const selection = batch !== null ? batch.selection : this.readSelection();
+    const find = selection === null || options.carrySelection === undefined ? null : options.carrySelection(selection);
     const result = fn(doc);
+    const carried = find === null ? null : this.carried(() => find(result));
     const effect = options.effect?.(result) ?? null;
     const change: DocumentChange = {
       ...emptyChange(options.kind ?? "edit", options.origin ?? null),
@@ -153,17 +168,19 @@ export class EditController {
       removedBlockIds: effect?.removedBlockIds ?? [],
       changedStoryIds: effect?.changedStoryIds ?? [],
       revisionIds: effect?.revisionIds ?? [],
+      selection: carried,
+      selectionLost: selection !== null && carried === null,
     };
     if (batch !== null) {
       batch.change = mergeChange(batch.change, change);
-      batch.selection = null;
+      batch.selection = carried;
       batch.touched = true;
       return result;
     }
     this.history.record({
       before: before as NonNullable<typeof before>,
       selectionBefore: selection,
-      selectionAfter: null,
+      selectionAfter: carried,
       at: this.host.now().getTime(),
     });
     this.host.commit(change);
@@ -178,6 +195,16 @@ export class EditController {
     this.host.syncTracking();
     this.host.commit({ ...emptyChange(direction, null), full: true, selection: step.selection });
     return true;
+  }
+
+  /** The selection a change carried, or null (lost) when finding it threw. */
+  private carried(find: () => SessionSelection | null): SessionSelection | null {
+    try {
+      return find();
+    } catch (error) {
+      this.host.log("docs: the selection could not be carried through the change", error);
+      return null;
+    }
   }
 
   private readSelection(): SessionSelection | null {
