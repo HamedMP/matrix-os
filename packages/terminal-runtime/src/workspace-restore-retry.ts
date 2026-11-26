@@ -1,10 +1,17 @@
-import { ZellijOutputError } from "./errors.js";
+import { TerminalRuntimeError, TerminalRuntimeStorageError, ZellijOutputError } from "./errors.js";
 
 const DEFAULT_BASE_MS = 30_000;
 const MAX_DELAY_MS = 10 * 60_000;
 const DEFAULT_MAX_ENTRIES = 1_024;
-/** Total time one background restore attempt may hold the workspace queue. */
-export const DEFAULT_RESTORE_RETRY_BUDGET_MS = 10_000;
+/** Time budget for one workspace reconciliation. */
+export const DEFAULT_RESTORE_BUDGET_MS = 10_000;
+
+export class WorkspaceRestoreTimeoutError extends TerminalRuntimeError {
+  constructor() {
+    super("unavailable", "Terminal restore attempt timed out");
+    this.name = "WorkspaceRestoreTimeoutError";
+  }
+}
 
 // Errors raised by a workspace's own Zellij session or native host. Only these
 // may be skipped at startup; store, config and other failures stay fatal.
@@ -21,7 +28,8 @@ export async function sessionScoped<T>(operation: () => Promise<T>): Promise<T> 
 }
 
 export function isSessionScopedRestoreFailure(error: unknown): boolean {
-  if (error instanceof ZellijOutputError) return true;
+  if (error instanceof TerminalRuntimeStorageError) return false;
+  if (error instanceof WorkspaceRestoreTimeoutError || error instanceof ZellijOutputError) return true;
   return typeof error === "object" && error !== null && sessionScopedFailures.has(error);
 }
 
@@ -98,15 +106,16 @@ export class WorkspaceRestoreRetries {
 }
 
 /** Log fields for a workspace restore failure: class and code, never raw output. */
-export function workspaceRestoreFailureFields(workspaceId: string, error: unknown): Record<string, string> {
-  const fields: Record<string, string> = {
+export function workspaceRestoreFailureFields(workspaceId: string, error: unknown): Record<string, string | readonly string[]> {
+  const fields: Record<string, string | readonly string[]> = {
     workspaceId,
     error: error instanceof Error ? error.name : "unknown_error",
   };
   if (error instanceof Error && "code" in error && typeof error.code === "string") fields.code = error.code;
   if (error instanceof ZellijOutputError) {
+    fields.command = error.command;
     fields.reason = error.reason;
-    fields.output = error.snippet;
+    if (error.invalidFields.length) fields.invalidFields = error.invalidFields;
   }
   return fields;
 }

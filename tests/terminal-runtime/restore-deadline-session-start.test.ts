@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,7 +9,10 @@ import {
   type ZellijRuntimeAdapter,
 } from "../../packages/terminal-runtime/src/runtime.js";
 import { createUserSystemdTerminalRuntime } from "../../packages/terminal-runtime/src/user-systemd-controller.js";
-import { createUserSystemdWorkspaceLifecycle } from "../../packages/terminal-runtime/src/user-systemd-workspace.js";
+import {
+  createUserSystemdWorkspaceLifecycle,
+  workspaceRuntimeId,
+} from "../../packages/terminal-runtime/src/user-systemd-workspace.js";
 import { TerminalWorkspaceStore } from "../../packages/terminal-runtime/src/workspace-store.js";
 import { ZellijCliRuntimeAdapter } from "../../packages/terminal-runtime/src/zellij-adapter.js";
 
@@ -23,6 +26,7 @@ afterEach(async () => {
 /** In-memory Zellij for the healthy workspace; it answers every call at once. */
 class HealthyZellij implements ZellijRuntimeAdapter {
   readonly sessions = new Map<string, Map<number, { name: string; paneId: string }>>();
+  readonly observers = new Map<string, ZellijObserver & { closed: boolean }>();
   private nextTabId = 1;
 
   async ensureSession(sessionName: string): Promise<void> {
@@ -49,8 +53,10 @@ class HealthyZellij implements ZellijRuntimeAdapter {
     return { write: async () => undefined, resize: async () => undefined, close: async () => undefined };
   }
 
-  async subscribeWorkspace(): Promise<ZellijObserver> {
-    return { close: async () => undefined };
+  async subscribeWorkspace(sessionName: string): Promise<ZellijObserver> {
+    const observer = { closed: false, close: async () => { observer.closed = true; } };
+    this.observers.set(sessionName, observer);
+    return observer;
   }
 }
 
@@ -82,6 +88,158 @@ async function exists(path: string): Promise<boolean> {
     throw error;
   }
 }
+
+describe("workspace restore on the production adapter paths", () => {
+  it.each(["startup", "workspace reopen", "observer recovery"] as const)(
+    "bounds a hung Zellij inventory during %s so a healthy workspace can attach",
+    async (trigger) => {
+      const homePath = await mkdtemp(join(tmpdir(), "matrix-restore-startup-"));
+      dirs.push(homePath);
+      const healthy = new HealthyZellij();
+      const store = new TerminalWorkspaceStore({ homePath });
+      const seed = new TerminalRuntime({ store, zellij: healthy });
+      const bad = await seed.ensureWorkspace();
+      const good = await seed.ensureWorkspace({ projectId: "good" });
+      const badTab = await seed.createTab(bad.id, { name: "bad", cwd: "" });
+      const goodTab = await seed.createTab(good.id, { name: "good", cwd: "projects/good" });
+      await seed.shutdown();
+
+      const badSession = (await store.getRuntimeWorkspace(bad.id))!.zellijSessionName;
+      const binaryPath = join(homePath, "zellij");
+      const inventoryStarted = join(homePath, "inventory-started");
+      await writeFile(binaryPath, [
+        "#!/bin/sh",
+        'if [ "$1" = "list-sessions" ]; then printf "%s\\n" "$TEST_ZELLIJ_SESSION"; exit 0; fi',
+        'if [ "$4" = "list-tabs" ]; then : > "$TEST_INVENTORY_STARTED"; exec /bin/sleep 3; fi',
+        "exit 1",
+        "",
+      ].join("\n"), { mode: 0o700 });
+      const production = new ZellijCliRuntimeAdapter({
+        homePath, binaryPath, timeoutMs: 800,
+        env: { TEST_ZELLIJ_SESSION: badSession, TEST_INVENTORY_STARTED: inventoryStarted },
+      });
+      await production.ensureSession(badSession);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      let stalled = trigger !== "observer recovery";
+      const runtime = new TerminalRuntime({
+        store,
+        zellij: routeSession(healthy, production, () => stalled ? badSession : ""),
+        restoreRetryBudgetMs: 600,
+        sweepIntervalMs: trigger === "observer recovery" ? 25 : undefined,
+      });
+      try {
+        const startedAt = Date.now();
+        let reopened: Promise<boolean> | undefined;
+        if (trigger === "startup") {
+          await runtime.restoreAll();
+        } else if (trigger === "workspace reopen") {
+          reopened = runtime.ensureWorkspace().then(() => true, () => false);
+        } else {
+          await runtime.restoreAll();
+          stalled = true;
+          healthy.observers.get(badSession)!.closed = true;
+        }
+        await vi.waitFor(async () => expect(await exists(inventoryStarted)).toBe(true));
+        stalled = false;
+        const viewer = await runtime.attach({ workspaceId: good.id, tabId: goodTab.id }, {
+          viewerId: "desktop",
+          send: () => undefined,
+        });
+        await viewer.detach();
+        expect(Date.now() - startedAt).toBeLessThan(2_000);
+        if (reopened) await expect(reopened).resolves.toBe(false);
+        expect(await store.getTab({ workspaceId: bad.id, tabId: badTab.id })).toMatchObject({ status: "running" });
+      } finally {
+        stalled = false;
+        await runtime.shutdown();
+      }
+    }, 15_000,
+  );
+
+  it("restores a healthy workspace when a different descriptor file is unreadable", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "matrix-restore-descriptor-"));
+    dirs.push(homePath);
+    const store = new TerminalWorkspaceStore({ homePath });
+    const bad = await store.ensureWorkspace();
+    const good = await store.ensureWorkspace({ projectId: "good" });
+    const badSession = (await store.getRuntimeWorkspace(bad.id))!.zellijSessionName;
+    const goodSession = (await store.getRuntimeWorkspace(good.id))!.zellijSessionName;
+    const runCommand = vi.fn(async (_command: string, _args: string[]) => ({ stdout: "", stderr: "" }));
+    const controller = createUserSystemdTerminalRuntime({
+      homePath,
+      generation: `gen_${"a".repeat(64)}`,
+      readinessProbe: async () => true,
+      runCommand,
+    });
+    const workspaceLifecycle = createUserSystemdWorkspaceLifecycle({ homePath, controller });
+    for (const session of [badSession, goodSession]) {
+      await workspaceLifecycle.ensureWorkspaceSession(session, { cols: 80, rows: 24 });
+    }
+    runCommand.mockClear();
+    const badRuntimeId = workspaceRuntimeId(badSession);
+    const goodRuntimeId = workspaceRuntimeId(goodSession);
+    const descriptorPath = join(homePath, "system", "terminal-runtimes", `${badRuntimeId}.json`);
+    const zellij = new ZellijCliRuntimeAdapter({ homePath, workspaceLifecycle });
+    const runtime = new TerminalRuntime({ store, zellij });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await chmod(descriptorPath, 0o000);
+    try {
+      await expect(runtime.restoreAll()).resolves.toBeUndefined();
+      expect(runCommand.mock.calls.map(([, args]) => args)).toEqual([
+        ["--user", "start", `matrix-zellij@${goodRuntimeId}.service`],
+      ]);
+      runCommand.mockClear();
+      await expect(controller.sweepOrphanedSessions()).rejects.toThrow("Terminal runtime unavailable");
+      expect(runCommand).not.toHaveBeenCalled();
+    } finally {
+      await chmod(descriptorPath, 0o600);
+      await runtime.shutdown();
+    }
+  });
+
+  it.each([
+    { root: "terminal-runtimes", kind: "file", message: "Terminal runtime storage unavailable" },
+    { root: "zellij/runtime-layouts", kind: "file", message: "Terminal runtime storage unavailable" },
+    { root: "terminal-runtimes", kind: "symlink", message: "Invalid terminal runtime request" },
+    { root: "terminal-runtimes", kind: "unreadable directory", message: "Terminal runtime storage unavailable" },
+  ])(
+    "fails startup when shared runtime storage at $root is a $kind",
+    async ({ root, kind, message }) => {
+      const homePath = await mkdtemp(join(tmpdir(), "matrix-restore-storage-"));
+      dirs.push(homePath);
+      const store = new TerminalWorkspaceStore({ homePath });
+      await store.ensureWorkspace();
+      await mkdir(join(homePath, "system", "zellij"), { recursive: true });
+      const blockedPath = join(homePath, "system", root);
+      if (kind === "symlink") {
+        await symlink(homePath, blockedPath);
+      } else if (kind === "unreadable directory") {
+        await mkdir(blockedPath, { mode: 0o100 });
+      } else {
+        await writeFile(blockedPath, "");
+      }
+      const runCommand = vi.fn(async () => ({ stdout: "", stderr: "" }));
+      const controller = createUserSystemdTerminalRuntime({
+        homePath,
+        generation: `gen_${"a".repeat(64)}`,
+        runCommand,
+      });
+      const zellij = new ZellijCliRuntimeAdapter({
+        homePath,
+        workspaceLifecycle: createUserSystemdWorkspaceLifecycle({ homePath, controller }),
+      });
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const runtime = new TerminalRuntime({ store, zellij });
+      try {
+        await expect(runtime.restoreAll()).rejects.toThrow(message);
+        expect(runCommand).not.toHaveBeenCalled();
+      } finally {
+        if (kind === "unreadable directory") await chmod(blockedPath, 0o700);
+        await runtime.shutdown();
+      }
+    },
+  );
+});
 
 describe("background restore deadline on the production session-start path", () => {
   it("ends a hung session start within the budget so a healthy attach is not held", async () => {
