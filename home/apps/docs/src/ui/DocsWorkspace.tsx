@@ -41,6 +41,16 @@ export interface WorkspaceFileCommands {
   saveAs(mode: "save" | "copy"): void;
 }
 
+/** The answer of a save or reload, or null (logged) when it threw instead of answering. */
+async function settled<T>(work: Promise<T>, action: string): Promise<T | null> {
+  try {
+    return await work;
+  } catch (error) {
+    console.warn(`docs: ${action} failed`, error instanceof Error ? error.name : error);
+    return null;
+  }
+}
+
 export interface DocsWorkspaceProps {
   session: DocumentSession;
   state: SessionState;
@@ -85,8 +95,9 @@ export function DocsWorkspace({ session, state, file, pickDocument }: DocsWorksp
       file.saveAs("save");
       return;
     }
-    const result = await session.save();
-    if (result.status === "downloaded") toast.show({ title: `Downloaded ${result.name}`, description: "The updated file is in this computer's downloads.", tone: "success" });
+    const result = await settled(session.save(), "save");
+    if (result === null) toast.show({ title: "The document could not be saved", description: "Try again.", tone: "danger" });
+    else if (result.status === "downloaded") toast.show({ title: `Downloaded ${result.name}`, description: "The updated file is in this computer's downloads.", tone: "success" });
     else if (result.status === "error") console.warn("docs: save failed", result.error.code);
   }, [session, file, toast]);
 
@@ -96,18 +107,21 @@ export function DocsWorkspace({ session, state, file, pickDocument }: DocsWorksp
       file.saveAs(current.source === "local" ? "copy" : "save");
       return;
     }
-    const result = await session.saveCopy();
-    if (result.status === "saved") toast.show({ title: "Saved a copy", description: `Now editing ${result.path}. The original file was not changed.`, tone: "success" });
+    const result = await settled(session.saveCopy(), "save a copy");
+    if (result === null) toast.show({ title: "The copy could not be saved", description: "Try again.", tone: "danger" });
+    else if (result.status === "saved") toast.show({ title: "Saved a copy", description: `Now editing ${result.path}. The original file was not changed.`, tone: "success" });
   }, [session, file, toast]);
 
   const downloadCopy = useCallback(async () => {
-    const result = await session.downloadCopy();
-    if (result.status === "error") toast.show({ title: "The download could not start", description: result.error.message, tone: "danger" });
+    const result = await settled(session.downloadCopy(), "download a copy");
+    if (result === null) toast.show({ title: "The download could not start", description: "Try again.", tone: "danger" });
+    else if (result.status === "error") toast.show({ title: "The download could not start", description: result.error.message, tone: "danger" });
   }, [session, toast]);
 
   const reload = useCallback(async () => {
-    const result = await session.reload();
-    if (result.status === "error") toast.show({ title: "The file could not be reloaded", description: result.error.message, tone: "danger" });
+    const result = await settled(session.reload(), "reload");
+    if (result === null) toast.show({ title: "The file could not be reloaded", description: "Try again.", tone: "danger" });
+    else if (result.status === "error") toast.show({ title: "The file could not be reloaded", description: result.error.message, tone: "danger" });
   }, [session, toast]);
 
   const exportAs = useCallback(

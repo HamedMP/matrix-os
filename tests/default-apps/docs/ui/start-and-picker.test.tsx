@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDocxFromMarkdown, openDocx, toPlainText } from "../../../../home/apps/_shared/office-engine/index";
 import { RecentFilesStore } from "../../../../home/apps/docs/src/session/index";
 import { templateMarkdown } from "../../../../home/apps/docs/src/ui/templates";
@@ -72,6 +72,33 @@ describe("Docs start screen", () => {
     const surface = await findSurface();
     expect(surface.textContent).toBe("Launch planShip it soon.");
     expect(titleText()).toContain("Launch plan");
+  });
+
+  it("says why Markdown too large to convert made no document, without a rejected promise", async () => {
+    installBridge({});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    try {
+      renderApp();
+      fireEvent.click(await screen.findByRole("button", { name: /New from Markdown/ }));
+      const dialog = await screen.findByRole("dialog", { name: /New from Markdown/ });
+      // Within the dialog's character limit, but more table rows than one document takes.
+      const table = `| A |\n| - |\n${"| x |\n".repeat(5_001)}`;
+      fireEvent.change(within(dialog).getByLabelText("Markdown"), { target: { value: table } });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("The document could not be created");
+      expect(alert.textContent).toContain("too large");
+      expect(alert.textContent).not.toMatch(/rows|Markdown table/);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(rejections).toEqual([]);
+      expect(screen.queryByRole("textbox", { name: "Document" })).toBeNull();
+    } finally {
+      process.off("unhandledRejection", onRejection);
+      warn.mockRestore();
+    }
   });
 
   it("browses the Matrix home on the start screen: folders and .docx only, and opens a document", async () => {

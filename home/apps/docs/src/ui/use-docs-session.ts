@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { MatrixOSBridge } from "../../../_shared/matrix-os";
 import { createDocxFromMarkdown } from "../../../_shared/office-engine/docx/index";
+import { isOfficeError } from "../../../_shared/office-engine/index";
 import { useToast, watchLeave } from "../../../_shared/office-ui";
 import { DocumentSession, type LocalFileInput, type OpenResult, type RecentFile, RecentFilesStore } from "../session/index";
 import { isDocxPath } from "./file-picker-model";
@@ -80,13 +81,20 @@ export function useRecentDocuments(recents: RecentFilesStore | null, documentKey
     async (path: string) => {
       if (recents === null) return;
       // The list shows what the store holds after the delete, so a failed delete keeps the entry.
-      await recents.remove(path);
-      setItems(await recents.list());
+      try {
+        await recents.remove(path);
+        setItems(await recents.list());
+      } catch (error) {
+        console.warn("[docs] forgetting a recent document failed", error instanceof Error ? error.name : error);
+      }
     },
     [recents],
   );
   return { items, loading, remove };
 }
+
+/** Shown in the unsaved-changes question when Save threw instead of answering. */
+export const SAVE_FAILED_MESSAGE = "The document could not be saved. Try again, or discard your changes.";
 
 export type BlockedReason = "unsaved_changes" | "conflict" | "save_failed";
 
@@ -129,6 +137,27 @@ export interface DocumentActionOptions {
 
 type Attempt = (discardChanges: boolean) => Promise<OpenResult>;
 
+/** What the owner is told when an action threw instead of answering; never the error's own text. */
+interface Failure {
+  title: string;
+  description: string;
+}
+
+const OPEN_FAILURE: Failure = { title: "The document could not be opened", description: "Try again, or choose another document." };
+const CLOSE_FAILURE: Failure = { title: "The document could not be closed", description: "Try again." };
+
+/** The failure of a new document; Markdown over the engine's limits says so. */
+function createFailure(error: unknown): Failure {
+  if (isOfficeError(error) && error.code === "limit_exceeded") {
+    return { title: "The document could not be created", description: "The Markdown is too large for one document. Split it into smaller documents." };
+  }
+  return { title: "The document could not be created", description: "Try again." };
+}
+
+type FailureOf = (error: unknown) => Failure;
+const openFailure: FailureOf = () => OPEN_FAILURE;
+const closeFailure: FailureOf = () => CLOSE_FAILURE;
+
 function titleFromMarkdown(markdown: string): string {
   const heading = /^#{1,6}\s+(.+)$/m.exec(markdown)?.[1]?.replace(/[*_`~[\]]/g, "").trim() ?? "";
   const safe = heading.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").slice(0, 80).trim();
@@ -137,17 +166,17 @@ function titleFromMarkdown(markdown: string): string {
 
 export function useDocumentActions(handles: SessionHandles | null, author: string, options: DocumentActionOptions): DocumentActions {
   const toast = useToast();
-  const [pending, setPending] = useState<(PendingLeave & { attempt: Attempt; path: string | null }) | null>(null);
+  const [pending, setPending] = useState<(PendingLeave & { attempt: Attempt; path: string | null; failure: FailureOf }) | null>(null);
   const session = handles?.session ?? null;
   const recents = handles?.recents ?? null;
   const { requestSaveAs } = options;
 
   const settle = useCallback(
-    (attempt: Attempt, path: string | null, result: OpenResult): void => {
+    (attempt: Attempt, path: string | null, failure: FailureOf, result: OpenResult): void => {
       if (session === null) return;
       if (result.status === "blocked") {
         const state = session.getState();
-        setPending({ reason: result.reason, name: state.name, local: state.source === "local", busy: false, error: null, attempt, path });
+        setPending({ reason: result.reason, name: state.name, local: state.source === "local", busy: false, error: null, attempt, path, failure });
         return;
       }
       if (result.status !== "error") return;
@@ -158,12 +187,28 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
     [session, recents, toast],
   );
 
-  const run = useCallback(
-    async (attempt: Attempt, path: string | null): Promise<void> => {
-      if (session === null) return;
-      settle(attempt, path, await attempt(false));
+  /** Runs an attempt and settles its answer. A throw (e.g. Markdown the engine refuses) is logged and shown as a fixed message. */
+  const attemptAndSettle = useCallback(
+    async (attempt: Attempt, path: string | null, failure: FailureOf, discardChanges: boolean): Promise<void> => {
+      let result: OpenResult;
+      try {
+        result = await attempt(discardChanges);
+      } catch (error) {
+        console.warn("[docs] replacing the document failed", error instanceof Error ? error.name : error);
+        toast.show({ ...failure(error), tone: "danger" });
+        return;
+      }
+      settle(attempt, path, failure, result);
     },
-    [session, settle],
+    [settle, toast],
+  );
+
+  const run = useCallback(
+    async (attempt: Attempt, path: string | null, failure: FailureOf): Promise<void> => {
+      if (session === null) return;
+      await attemptAndSettle(attempt, path, failure, false);
+    },
+    [session, attemptAndSettle],
   );
 
   const openPath = useCallback(
@@ -172,20 +217,20 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
         toast.show({ title: "Docs opens .docx documents", description: "Open this file with another app.", tone: "warning" });
         return;
       }
-      await run((discardChanges) => session!.open(path, { discardChanges }), path);
+      await run((discardChanges) => session!.open(path, { discardChanges }), path, openFailure);
     },
     [run, session, toast],
   );
 
-  const openLocalFile = useCallback((file: LocalFileInput) => run((discardChanges) => session!.openLocal(file, { discardChanges }), null), [run, session]);
+  const openLocalFile = useCallback((file: LocalFileInput) => run((discardChanges) => session!.openLocal(file, { discardChanges }), null, openFailure), [run, session]);
 
-  const newBlank = useCallback(() => run((discardChanges) => session!.createNew({ discardChanges }), null), [run, session]);
+  const newBlank = useCallback(() => run((discardChanges) => session!.createNew({ discardChanges }), null, createFailure), [run, session]);
 
   const newFromMarkdown = useCallback(
     async (markdown: string) => {
       const source = markdown.slice(0, MAX_MARKDOWN_LENGTH);
       const title = titleFromMarkdown(source);
-      await run((discardChanges) => session!.adopt(createDocxFromMarkdown(source, { title, author }), { name: title, discardChanges }), null);
+      await run((discardChanges) => session!.adopt(createDocxFromMarkdown(source, { title, author }), { name: title, discardChanges }), null, createFailure);
     },
     [run, session, author],
   );
@@ -198,7 +243,7 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
         await newBlank();
         return;
       }
-      await run((discardChanges) => session!.adopt(createDocxFromMarkdown(markdown, { title: template.name, author }), { name: template.name, discardChanges }), null);
+      await run((discardChanges) => session!.adopt(createDocxFromMarkdown(markdown, { title: template.name, author }), { name: template.name, discardChanges }), null, createFailure);
     },
     [run, session, author, newBlank],
   );
@@ -209,32 +254,38 @@ export function useDocumentActions(handles: SessionHandles | null, author: strin
     const state = session.getState();
     // Closing never saves on its own: the owner chooses Save, Discard or Cancel.
     if (state.dirty) {
-      setPending({ reason: state.conflict !== null ? "conflict" : "unsaved_changes", name: state.name, local: state.source === "local", busy: false, error: null, attempt, path: null });
+      setPending({ reason: state.conflict !== null ? "conflict" : "unsaved_changes", name: state.name, local: state.source === "local", busy: false, error: null, attempt, path: null, failure: closeFailure });
       return;
     }
-    await run(attempt, null);
+    await run(attempt, null, closeFailure);
   }, [session, run]);
 
   const savePending = useCallback(async () => {
     if (session === null || pending === null || pending.busy) return;
     const current = pending;
     setPending({ ...current, busy: true, error: null });
-    const outcome = await saveForLeave(session);
+    let outcome: Awaited<ReturnType<typeof saveForLeave>>;
+    try {
+      outcome = await saveForLeave(session);
+    } catch (error) {
+      console.warn("[docs] saving before leaving failed", error instanceof Error ? error.name : error);
+      outcome = { status: "failed", message: SAVE_FAILED_MESSAGE };
+    }
     if (outcome.status === "failed") {
       setPending({ ...current, busy: false, error: outcome.message });
       return;
     }
     setPending(null);
-    if (outcome.status === "needs-path") requestSaveAs(() => void run(current.attempt, current.path));
-    else await run(current.attempt, current.path);
+    if (outcome.status === "needs-path") requestSaveAs(() => void run(current.attempt, current.path, current.failure));
+    else await run(current.attempt, current.path, current.failure);
   }, [session, pending, requestSaveAs, run]);
 
   const discardPending = useCallback(() => {
     if (pending === null || pending.busy) return;
     const current = pending;
     setPending(null);
-    void current.attempt(true).then((result) => settle(current.attempt, current.path, result));
-  }, [pending, settle]);
+    void attemptAndSettle(current.attempt, current.path, current.failure, true);
+  }, [pending, attemptAndSettle]);
 
   const cancelPending = useCallback(() => setPending(null), []);
 

@@ -68,6 +68,10 @@ function SaveAsBody({ session, title = "Save document", description = "Choose wh
     let result: Awaited<ReturnType<DocumentSession["saveAs"]>>;
     try {
       result = await session.saveAs(path, { overwrite });
+    } catch (error) {
+      console.warn("docs: save as failed", error instanceof Error ? error.name : error);
+      setError("The document could not be saved. Try again.");
+      return;
     } finally {
       setBusy(false);
     }

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DocumentSession } from "../../../../home/apps/docs/src/session/index";
 import { docxFromParagraphs, findSurface, installBridge, renderApp, titleText, typeInto } from "./harness";
 
 afterEach(cleanup);
@@ -62,5 +63,35 @@ describe("Docs open requests", () => {
     expect(dialog.textContent).toMatch(/unsaved/i);
     fireEvent.click(within(dialog).getByRole("button", { name: /Discard/ }));
     await waitFor(async () => expect((await findSurface()).textContent).toBe("Second"));
+  });
+  it("shows a fixed message, not a rejected promise, when opening after Discard throws", async () => {
+    const bridge = installBridge({ "b.docx": await docxFromParagraphs(["Second"]) });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    const open = DocumentSession.prototype.open;
+    const spy = vi.spyOn(DocumentSession.prototype, "open").mockImplementation(function (this: DocumentSession, path, options) {
+      if (options?.discardChanges === true) return Promise.reject(new Error("bridge detail /home/matrix/secret"));
+      return open.call(this, path, options);
+    });
+    try {
+      renderApp();
+      fireEvent.click(await screen.findByRole("button", { name: /^Blank document/ }));
+      const surface = await findSurface();
+      act(() => typeInto(surface, "x"));
+      act(() => bridge.sendOpenRequest("b.docx"));
+      const dialog = await screen.findByRole("alertdialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: /Discard/ }));
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("The document could not be opened");
+      expect(alert.textContent).not.toMatch(/secret|bridge detail/);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(rejections).toEqual([]);
+    } finally {
+      spy.mockRestore();
+      process.off("unhandledRejection", onRejection);
+      warn.mockRestore();
+    }
   });
 });
