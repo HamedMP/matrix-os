@@ -29,9 +29,11 @@ function jsonResponse(body: unknown) {
 
 describe("SystemSection release refresh", () => {
   afterEach(() => {
+    // Restore spies first: a spy on a fake setTimeout would otherwise put the
+    // fake back after useRealTimers, and later timers would never fire.
+    vi.restoreAllMocks();
     vi.useRealTimers();
     cleanup();
-    vi.restoreAllMocks();
   });
 
   it("uses the persistent update channel instead of the bundle provenance channel", async () => {

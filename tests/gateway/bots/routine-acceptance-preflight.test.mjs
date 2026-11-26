@@ -82,7 +82,7 @@ test("compiler inventory includes source behind dist exports and extended config
 test("hosted CI executes both required node-test acceptance suites", async () => {
   const { readFile } = await import("node:fs/promises");
   const workflow = parseYaml(await readFile(".github/workflows/ci.yml", "utf8"));
-  const commands = workflow.jobs["funded-postgres"].steps.filter(step => step.if !== false)
+  const commands = workflow.jobs["routine-postgres"].steps.filter(step => step.if !== false)
     .flatMap(step => [...String(step.run ?? "").matchAll(/(?:^|\n)\s*node --test ([^\n#]+)/g)].map(match => match[1].trim().split(/\s+/)));
   for (const file of ["tests/gateway/bots/routine-acceptance-preflight.test.mjs", "tests/gateway/bots/routine-acceptance-capture.test.mjs"]) assert.ok(commands.some(args => args.includes(file)), `Missing actual node:test CI command: ${file}`);
 });

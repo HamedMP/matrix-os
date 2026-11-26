@@ -165,9 +165,18 @@ describe("required collaboration PostgreSQL workflow", () => {
     const fundedTestSteps = job.steps.filter((step: { run?: string }) => step.run?.includes("pnpm exec vitest run"));
     expect(fundedTestSteps.length).toBeGreaterThanOrEqual(6);
     expect(new Set(fundedTestSteps.map((step: { run?: string }) => step.run)).size).toBe(fundedTestSteps.length);
+    const routine = workflow.jobs["routine-postgres"];
+    const routineTestSteps = routine.steps.filter((step: { run?: string }) => step.run?.includes("pnpm exec vitest run"));
     for (const suite of ["deployed-v9-schema-postgres", "routine-fencing-postgres", "routine-process-postgres"]) {
-      expect(fundedTestSteps.filter((step: { run?: string }) => step.run?.includes(`tests/gateway/bots/${suite}.test.ts`))).toHaveLength(1);
+      expect(fundedTestSteps.some((step: { run?: string }) => step.run?.includes(`tests/gateway/bots/${suite}.test.ts`))).toBe(false);
+      expect(routineTestSteps.filter((step: { run?: string }) => step.run?.includes(`tests/gateway/bots/${suite}.test.ts`))).toHaveLength(1);
     }
+    expect(routine.needs).toBe(job.needs);
+    expect(routine.if).toBe(job.if);
+    expect(routine.services).toEqual(job.services);
+    expect(routine.env).toEqual(job.env);
+    expect(routine.steps.slice(0, 6)).toEqual(job.steps.slice(0, 6));
+    expect(workflow.jobs["ci-results"].needs).toContain("routine-postgres");
     expect(fundedTestSteps[5].run).toContain("tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism");
     expect(job.steps.find((step: { name?: string }) => step.name === "Build test prerequisites once").run).toBe("bun run test:prepare");
     const collaboration = workflow.jobs["collaboration-postgres"];

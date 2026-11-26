@@ -112,7 +112,8 @@ export function remainingPostgresInventory(root = process.cwd(), remainingFiles 
   const collaborationFiles = JSON.parse(readFileSync(path.join(root, 'scripts/ci/collaboration-postgres-files.json'), 'utf8'));
   validateFiles(collaborationFiles, sources, 'collaboration');
   const workflow = parseYaml(readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8'));
-  const steps = workflow?.jobs?.['funded-postgres']?.steps ?? [];
+  // Both hosted PostgreSQL lanes count: routine suites run beside the funded ones.
+  const steps = ['funded-postgres', 'routine-postgres'].flatMap(id => workflow?.jobs?.[id]?.steps ?? []);
   // Recognize canonical command lines, not a filename mentioned by echo/comment.
   // Dynamic shell selection is deliberately not evidence of a hosted assignment.
   const patterns = steps.filter(step => step.if !== false && !['false', '${{ false }}'].includes(step.if))
