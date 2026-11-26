@@ -5,6 +5,7 @@ import { createPreviewWindowReopener } from "./preview-pair-window";
 import { initializeDesktopPreview } from "./preview-pair-startup";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
 import { join, dirname } from "node:path";
+import { createHash } from "node:crypto";
 import { createFileDownloadService } from "./files/file-download-service";
 import { createOrganizationDriveTransferService } from "./files/organization-drive-transfer";
 import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization-drive-file-io";
@@ -70,6 +71,12 @@ import {registerAiUsageIpc} from "./ipc/ai-usage";
 import {createUsageSyncService} from "./usage-sync/service";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
+import { registerChatElectronPreview } from "./chat-electron-preview/register";
+import { createChatElectronPreviewTransport } from "./chat-electron-preview/transport";
+import { registerChatMacTerminal } from "./chat-mac-terminal/register";
+import { createDesktopPairing } from "./desktop-pairing";
+import { createMacActivity } from "./mac-activity/activity";
+import { createMacActivityQuit } from "./mac-activity/quit";
 import { fetchDesktopSupportIdentity } from "./support/support-identity-client";
 import { createLocalStore } from "./persistence/local-store";
 import { installShortcuts } from "./shortcuts/install-shortcuts";
@@ -156,6 +163,9 @@ let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
 let navigationCacheDrained = false;
 let drainingNavigationCache = false;
+let cancelDesktopPairing: (() => void) | undefined;
+let disposeDesktopPairing: (() => void) | undefined;
+let macActivityQuit: ReturnType<typeof createMacActivityQuit> | undefined;
 let planDiagnostics: ReturnType<typeof createPlanDiagnosticStore> | null = null;
 let planDiagnosticsDrained = false;
 let drainingPlanDiagnostics = false;
@@ -270,6 +280,7 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
     },
   });
 
+  macActivityQuit?.watchWindow(win);
   installMainRendererMediaPermissions(win.webContents.session, win.webContents, trustedRendererUrl);
 
   win.once("ready-to-show", () => win.show());
@@ -379,6 +390,9 @@ if (!gotLock) {
       }) : null;
 
       let invalidateAppCapabilities: (() => void) | undefined;
+      let cancelChatElectronPreview: (() => Promise<void>) | undefined;
+      let cancelChatMacTerminal: (() => Promise<void>) | undefined;
+      let refreshMacActivity: (() => void) | undefined;
       const auth = new AuthService({
         ...(previewContext ? { previewContext } : {}),
         authRedirectUri: channelIdentity.authRedirectUri,
@@ -389,6 +403,10 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          void cancelChatElectronPreview?.();
+          void cancelChatMacTerminal?.();
+          refreshMacActivity?.();
+          cancelDesktopPairing?.();
           invalidateAppCapabilities?.();
           nativeAppChatNavigation?.cancelAll();
           navigationCache?.observe(status);
@@ -408,6 +426,11 @@ if (!gotLock) {
         },
       });
       await auth.init();
+      const desktopPairing = process.platform === "darwin"
+        ? createDesktopPairing({ auth, safeStorage, userData, window: () => mainWindow })
+        : null;
+      cancelDesktopPairing = desktopPairing?.cancel;
+      disposeDesktopPairing = desktopPairing?.dispose;
       navigationCache = createNavigationCache({ dir: userData, getStatus: () => auth.getStatus() });
       registerNavigationCacheIpc(ipcMain, navigationCache, rawEvent => {
         const event = rawEvent as IpcMainInvokeEvent;
@@ -672,6 +695,7 @@ if (!gotLock) {
             trustedUrl: terminalRendererUrl,
             onLoadError: (error) => logMainError("failed to load Terminal window", error),
           });
+          macActivityQuit?.watchWindow(win);
           win.on("focus", () => {
             terminalMenu?.terminalWindowFocused(true);
             sendTerminalWindowEvent("window:focus-changed", { focused: true });
@@ -703,6 +727,47 @@ if (!gotLock) {
         terminalUrl: terminalRendererUrl,
       };
       const authorizeSender = createSenderPolicy(windowSenders);
+      const macVerificationAllowed = process.platform === "darwin" && !previewContext;
+      const macDeveloperBuild = macVerificationAllowed && !app.isPackaged;
+      const previewCheckout = process.env.MATRIX_ELECTRON_PREVIEW_CHECKOUT;
+      const macTerminalChecksAllowed = macDeveloperBuild && process.env.MATRIX_MAC_TERMINAL_CHECK === "1";
+      let macBackgroundChecksActive = false;
+      let showMacActivityMenu: ((backgroundActive: boolean, historyAvailable: boolean) => void) | undefined;
+      const getMacActivityScope = () => {
+        const status = auth.getStatus();
+        return status.signedIn && status.runtimeSlot === "primary"
+          ? createHash("sha256").update(JSON.stringify([status.platformHost, status.userId, status.runtimeSlot])).digest("hex")
+          : null;
+      };
+      const macActivity = macVerificationAllowed ? createMacActivity({
+        userData,
+        window: () => mainWindow ?? terminalWindowController.current(),
+        getScope: getMacActivityScope,
+        async stop() {
+          await Promise.all([chatElectronPreview.cancel("stopped"), macTerminalChecks.stopAll()]);
+        },
+      }) : null;
+      refreshMacActivity = () => {
+        macActivity?.refresh();
+        showMacActivityMenu?.(macBackgroundChecksActive, Boolean(macActivity && getMacActivityScope()));
+      };
+      const chatDeviceTransport = createChatElectronPreviewTransport(auth);
+      const acquireActionPairing = desktopPairing?.acquireActionPairing ?? (async () => null);
+      const chatElectronPreview = registerChatElectronPreview(ipcMain, {
+        allowed: macDeveloperBuild,
+        macVerificationAllowed,
+        checkout: previewCheckout,
+        userData,
+        electronPath: app.getPath("exe"),
+        auth,
+        transport: chatDeviceTransport,
+        acquireActionPairing,
+        acquireFullAccessPairing: desktopPairing?.acquireFullAccessPairing,
+        beginActivity: macActivity?.begin,
+        window: () => mainWindow ?? terminalWindowController.current(),
+        isTrustedSender: (event) => !macActivityQuit?.isFenced() && senderRole(windowSenders, event) === "main",
+      });
+      cancelChatElectronPreview = chatElectronPreview.cancel;
       const localRuntime = resolveLocalTerminalRuntime({
         isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, userData, home: homedir(), env: process.env,
       });
@@ -722,6 +787,34 @@ if (!gotLock) {
       });
       localTerminals = localTerminalHost;
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender);
+      const macTerminalChecks = registerChatMacTerminal(ipcMain, {
+        auth,
+        transport: chatDeviceTransport,
+        acquireActionPairing,
+        beginActivity: macActivity?.begin,
+        tryBackgroundPreview: chatElectronPreview.tryBackgroundPreview,
+        host: localTerminalHost,
+        allowed: macTerminalChecksAllowed,
+        window: () => mainWindow,
+        isTrustedSender: (event) => !macActivityQuit?.isFenced() && senderRole(windowSenders, event) === "main",
+        onBackgroundActiveChange(active) {
+          macBackgroundChecksActive = active;
+          refreshMacActivity?.();
+        },
+      });
+      cancelChatMacTerminal = macTerminalChecks.cancelAll;
+      if (macActivity) macActivityQuit = createMacActivityQuit({
+        async drain() {
+          try {
+            await Promise.all([chatElectronPreview.cancel(), macTerminalChecks.cancelAll()]);
+          } finally {
+            await macActivity.flush();
+          }
+        },
+        close: macActivity.close,
+        quit: () => app.quit(),
+        reportError: (error) => logMainError("Mac activity cleanup failed", error),
+      });
       // Both trusted windows host terminals, so both may read copied files.
       registerTerminalClipboardIpc(ipcMain, {
         clipboard,
@@ -765,6 +858,10 @@ if (!gotLock) {
           notification.show();
         },
         onRuntimeChanged: (slot) => {
+          cancelDesktopPairing?.();
+          void cancelChatElectronPreview?.();
+          void cancelChatMacTerminal?.();
+          refreshMacActivity?.();
           navigationCache?.observe(auth.getStatus());
           chatgptPlan?.cancelAll();
           chatgptPlan?.resume();
@@ -880,8 +977,15 @@ if (!gotLock) {
         });
         mainWindow = createWindow(fitWindowBoundsToWorkArea(requestedBounds, display.workArea));
         // A reloaded or crashed renderer must take held org links again before they are sent.
+        const releaseRenderer = () => {
+          sharedAppDeepLinks.rendererReset();
+          chatElectronPreview.clearFullAccessSelection();
+        };
         mainWindow.webContents.on("did-start-loading", () => sharedAppDeepLinks.rendererReset());
-        mainWindow.webContents.on("render-process-gone", () => sharedAppDeepLinks.rendererReset());
+        mainWindow.webContents.on("did-start-navigation", (details) => {
+          if (details.isMainFrame && !details.isSameDocument) chatElectronPreview.clearFullAccessSelection();
+        });
+        mainWindow.webContents.on("render-process-gone", releaseRenderer);
         mainWindow.on("resize", persistBounds);
         mainWindow.on("move", persistBounds);
         mainWindow.on("closed", () => {
@@ -890,7 +994,7 @@ if (!gotLock) {
           codingAgentThreadEvents.closeAll();
           nativeAppChatNavigation?.cancelAll();
           mainWindow = null;
-          sharedAppDeepLinks.rendererReset();
+          releaseRenderer();
         });
       };
 
@@ -926,7 +1030,24 @@ if (!gotLock) {
           void terminalWindowController.openOrFocus()
             .catch((error: unknown) => logMainError("failed to open Terminal window", error));
         },
+        ...(macTerminalChecksAllowed ? {
+          stopBackgroundMacChecks: () => { void macTerminalChecks.stopBackground(); },
+        } : {}),
+        ...(desktopPairing ? {
+          openMacPairing: () => {
+            void desktopPairing.open().catch((error: unknown) => logMainError("Mac pairing failed", error));
+          },
+        } : {}),
+        openMacVerification: chatElectronPreview.openVerification
+          ? () => {
+            void chatElectronPreview.openVerification?.().catch((error: unknown) => logMainError("Mac Verification setup failed", error));
+          } : undefined,
+        ...(macActivity ? {
+          openMacActivity: () => { void macActivity.showHistory(); },
+        } : {}),
       });
+      showMacActivityMenu = terminalMenu.updateMacActivity;
+      refreshMacActivity();
 
       void updater.check();
       updateCheckTimer = setInterval(() => {
@@ -947,8 +1068,11 @@ if (!gotLock) {
     });
 
   app.on("before-quit", (event) => {
+    cancelDesktopPairing?.();
     organizationDriveTransfers?.cancelAll();
     nativeAppChatNavigation?.cancelAll();
+    // Fence Mac activity before waiting for the renderer analytics flush.
+    if (macActivityQuit?.beforeQuit(event)) return;
     if (handleAnalyticsBeforeQuit?.(event)) return;
     if (!navigationCacheDrained && navigationCache) {
       event.preventDefault();
@@ -994,6 +1118,13 @@ if (!gotLock) {
       }
       return;
     }
+    handleUpdateBeforeQuit?.(event);
+    macActivityQuit?.allowWindowClose(event);
+  });
+
+  app.on("will-quit", () => {
+    disposeDesktopPairing?.();
+    macActivityQuit?.finish();
     if (updateCheckTimer) {
       clearInterval(updateCheckTimer);
       updateCheckTimer = null;
@@ -1009,7 +1140,6 @@ if (!gotLock) {
     // Detach only: the local core and its terminals outlive the app.
     localTerminals?.dispose();
     localTerminals = null;
-    handleUpdateBeforeQuit?.(event);
   });
 
   app.on("window-all-closed", () => {

@@ -82,7 +82,16 @@ describe("matrix-dev plugin", () => {
     const marketplace = await readJson("dev/.claude-plugin/marketplace.json");
     expect(marketplace.name).toBe("matrix-os-dev");
     expect(marketplace.plugins).toEqual([
-      expect.objectContaining({ name: "matrix-dev", source: "./matrix-dev" }),
+      expect.objectContaining({
+        name: "matrix-dev",
+        // Claude Code resolves a relative source from the repository root, not
+        // from dev/, so "./matrix-dev" pointed at a folder that does not exist.
+        source: {
+          source: "git-subdir",
+          url: "https://github.com/HamedMP/matrix-os.git",
+          path: "dev/matrix-dev",
+        },
+      }),
     ]);
 
     const customerMarketplace = await readJson(".claude-plugin/marketplace.json");
@@ -103,12 +112,12 @@ describe("matrix-dev plugin", () => {
   it("is registered for this repository with auto-update on", async () => {
     const settings = await readJson(".claude/settings.json");
     expect(settings.extraKnownMarketplaces["matrix-os-dev"]).toEqual({
+      // Fetching the one file works where a subdirectory path on a repository
+      // source did not: installs failed and marketplace updates reported the
+      // file missing (Claude Code 2.1.331).
       source: {
-        source: "github",
-        repo: "HamedMP/matrix-os",
-        path: "dev/.claude-plugin/marketplace.json",
-        // Without this, every engineer clones the whole monorepo to read one folder.
-        sparsePaths: ["dev"],
+        source: "url",
+        url: "https://raw.githubusercontent.com/HamedMP/matrix-os/main/dev/.claude-plugin/marketplace.json",
       },
       autoUpdate: true,
     });

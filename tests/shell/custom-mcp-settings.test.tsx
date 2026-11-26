@@ -4,6 +4,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CustomMcpServersPanel } from "../../shell/src/components/settings/sections/CustomMcpServersPanel";
 
+/** Connected MCP rows keep their tools collapsed; open every row before touching tool policy or diagnostics. */
+async function expandTools(): Promise<void> {
+  for (const toggle of await screen.findAllByRole("button", { name: /^\d+ tools? for / })) {
+    if (toggle.getAttribute("aria-expanded") !== "true") fireEvent.click(toggle);
+  }
+}
+
 describe("Canvas Custom MCP management", () => {
   afterEach(() => {
     cleanup();
@@ -65,7 +72,7 @@ describe("Canvas Custom MCP management", () => {
       return Response.json(server);
     });
     render(<CustomMcpServersPanel />);
-    const checkboxes = await screen.findAllByRole("checkbox");
+    const checkboxes = (await expandTools(), await screen.findAllByRole("checkbox"));
 
     fireEvent.click(checkboxes[0]!);
     fireEvent.click(checkboxes[1]!);
@@ -109,7 +116,7 @@ describe("Canvas Custom MCP management", () => {
     });
     render(<CustomMcpServersPanel />);
 
-    fireEvent.click((await screen.findAllByRole("checkbox"))[0]!);
+    fireEvent.click((await expandTools(), await screen.findAllByRole("checkbox"))[0]!);
 
     await waitFor(() => expect(patchBodies).toHaveLength(2));
     expect(patchBodies[1]).toMatchObject({
@@ -154,7 +161,7 @@ describe("Canvas Custom MCP management", () => {
     });
     render(<CustomMcpServersPanel />);
 
-    fireEvent.click((await screen.findAllByRole("checkbox"))[0]!);
+    fireEvent.click((await expandTools(), await screen.findAllByRole("checkbox"))[0]!);
     await waitFor(() => expect(patchBodies).toHaveLength(2));
     fireEvent.change(screen.getByLabelText("search approval"), { target: { value: "allow" } });
     releaseRetry();

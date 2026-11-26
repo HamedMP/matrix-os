@@ -12,14 +12,16 @@ describe("platform-owned shell assets", () => {
     vi.resetModules();
   });
 
-  it("adds a dedicated asset prefix only to the platform auth-shell build", async () => {
+  it("adds dedicated asset and action routing identifiers only to the platform auth-shell build", async () => {
     vi.stubEnv("MATRIX_PLATFORM_AUTH_SHELL", "1");
+    vi.stubEnv("NEXT_PUBLIC_MATRIX_BUILD_SHA", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     vi.stubEnv("POSTHOG_API_KEY", "");
     vi.stubEnv("POSTHOG_PROJECT_ID", "");
     vi.resetModules();
 
     const platformConfig = (await import("../../shell/next.config.ts")).default;
     expect(typeof platformConfig).toBe("object");
+    expect(platformConfig.deploymentId).toBe("__platform-shell-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     expect((platformConfig as { assetPrefix?: string }).assetPrefix).toBe("/__platform-shell");
     expect((platformConfig as { env?: Record<string, string> }).env?.NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX)
       .toBe("/__platform-shell");
@@ -28,6 +30,7 @@ describe("platform-owned shell assets", () => {
     vi.resetModules();
     const customerConfig = (await import("../../shell/next.config.ts")).default;
     expect((customerConfig as { assetPrefix?: string }).assetPrefix).toBeUndefined();
+    expect(customerConfig.deploymentId).toBeUndefined();
     expect((customerConfig as { env?: Record<string, string> }).env?.NEXT_PUBLIC_PLATFORM_SHELL_ASSET_PREFIX)
       .toBe("");
   });
@@ -38,7 +41,7 @@ describe("platform-owned shell assets", () => {
 
     expect(platformDockerfile).toContain("ENV MATRIX_PLATFORM_AUTH_SHELL=1");
     expect(platformDockerfile).toContain("ARG MATRIX_BUILD_SHA");
-    expect(platformDockerfile).toContain("NEXT_PUBLIC_MATRIX_BUILD_SHA=$MATRIX_BUILD_SHA");
+    expect(platformDockerfile.match(/^ENV NEXT_PUBLIC_MATRIX_BUILD_SHA=\$MATRIX_BUILD_SHA$/gm)).toHaveLength(2);
     expect(customerDockerfile).not.toContain("MATRIX_PLATFORM_AUTH_SHELL");
   });
 

@@ -406,38 +406,48 @@ describe("Chat canonical provider state", () => {
   });
 
   it("retains trust after a routine failure and forces the next read while settings trust is suspended", async () => {
-    let finishRoutine!: (response: Response) => void;
-    let finishSettings!: (response: Response) => void;
-    const routineRefresh = new Promise<Response>((resolve) => { finishRoutine = resolve; });
-    const settingsRefresh = new Promise<Response>((resolve) => { finishSettings = resolve; });
-    let catalogReads = 0;
-    const fetchMock = vi.fn<typeof fetch>(async () => {
-      catalogReads += 1;
-      if (catalogReads === 1 || catalogReads === 4) return Response.json(providerCatalog());
-      if (catalogReads === 2) return routineRefresh;
-      if (catalogReads === 3) return settingsRefresh;
-      throw new Error("Unexpected provider catalog read");
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    const initial = Promise.withResolvers<Response>();
+    const routine = Promise.withResolvers<Response>();
+    const settings = Promise.withResolvers<Response>();
+    const recovery = Promise.withResolvers<Response>();
+    const fetchCatalog = vi.fn<typeof fetch>(async () => { throw new Error("Unexpected provider catalog read"); })
+      .mockImplementationOnce(() => initial.promise)
+      .mockImplementationOnce(() => routine.promise)
+      .mockImplementationOnce(() => settings.promise)
+      .mockImplementationOnce(() => recovery.promise);
+    vi.stubGlobal("fetch", ((input, init) => {
+      const path = new URL(String(input), window.location.href).pathname;
+      // The shared WebSocket's credential retry can overlap this hook test.
+      if (!path.endsWith("/api/chat-providers")) return Promise.resolve(new Response(null, { status: 503 }));
+      return fetchCatalog(input, init);
+    }) satisfies typeof fetch);
     const { result } = renderHook(() => useChatProviderState());
-    await waitFor(() => expect(result.current.hasTrustedCatalog).toBe(true));
+    expect(fetchCatalog).toHaveBeenCalledTimes(1);
+    await act(async () => initial.resolve(Response.json(providerCatalog())));
+    expect(result.current.hasTrustedCatalog).toBe(true);
 
     act(() => window.dispatchEvent(new Event("focus")));
-    await waitFor(() => expect(catalogReads).toBe(2));
-    await act(async () => finishRoutine(new Response("{}", { status: 503 })));
-    await waitFor(() => expect(result.current.unavailable).toBe(true));
+    expect(fetchCatalog).toHaveBeenCalledTimes(2);
+    expect(String(fetchCatalog.mock.calls[1]?.[0])).not.toContain("refresh=true");
+    await act(async () => routine.resolve(new Response(null, { status: 503 })));
+    expect(result.current.unavailable).toBe(true);
     expect(result.current.hasTrustedCatalog).toBe(true);
 
     act(() => window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_CHANGED_EVENT)));
-    await waitFor(() => expect(catalogReads).toBe(3));
+    expect(fetchCatalog).toHaveBeenCalledTimes(3);
+    expect(String(fetchCatalog.mock.calls[2]?.[0])).toContain("refresh=true");
     expect(result.current.hasTrustedCatalog).toBe(false);
-    await act(async () => finishSettings(new Response("{}", { status: 503 })));
+    await act(async () => settings.resolve(new Response(null, { status: 503 })));
     expect(result.current.hasTrustedCatalog).toBe(false);
 
     act(() => window.dispatchEvent(new Event("focus")));
-    await waitFor(() => expect(catalogReads).toBe(4));
-    await waitFor(() => expect(result.current.hasTrustedCatalog).toBe(true));
-    expect(String(fetchMock.mock.calls[3]?.[0])).toContain("refresh=true");
+    expect(fetchCatalog).toHaveBeenCalledTimes(4);
+    expect(String(fetchCatalog.mock.calls[3]?.[0])).toContain("refresh=true");
+    expect(result.current.hasTrustedCatalog).toBe(false);
+    await act(async () => recovery.resolve(Response.json(providerCatalog())));
+    expect(result.current.hasTrustedCatalog).toBe(true);
+    expect(result.current.unavailable).toBe(false);
+    expect(fetchCatalog).toHaveBeenCalledTimes(4);
   });
 
   it("refreshes the canonical catalog after provider settings change", async () => {

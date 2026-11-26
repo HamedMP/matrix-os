@@ -525,6 +525,68 @@ class BrowserRuntimeTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.runtime.preflight()
 
+    def test_resource_preflight_accepts_a_nominal_2_gib_metal_vm(self):
+        # A Cloud Hypervisor guest booted with 2048 MiB (the free metal shape,
+        # growing by virtio-mem under pressure) reports MemTotal below 2 GiB
+        # because the kernel reserves memory. It must still qualify.
+        (self.root / 'etc/os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+        (self.root / 'proc').mkdir()
+        (self.root / 'proc/meminfo').write_text('MemTotal:        1995392 kB\n')
+        with patch.object(module.os, 'uname', return_value=type('System', (), {'machine': 'x86_64'})()), \
+                patch.object(module.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 8 * 1024 ** 3})()):
+            self.runtime.preflight()
+
+    def test_resource_preflight_names_the_missing_resource(self):
+        (self.root / 'etc/os-release').write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+        (self.root / 'proc').mkdir()
+        system = type('System', (), {'machine': 'x86_64'})()
+        (self.root / 'proc/meminfo').write_text('MemTotal: 1048576 kB\n')
+        with patch.object(module.os, 'uname', return_value=system), self.assertRaisesRegex(ValueError, '^Browser requires 2 GiB RAM$'):
+            self.runtime.preflight()
+        (self.root / 'proc/meminfo').write_text('MemTotal: 4194304 kB\n')
+        with patch.object(module.os, 'uname', return_value=system), \
+                patch.object(module.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 1024})()), \
+                self.assertRaisesRegex(ValueError, '^Browser requires 2 GiB free storage$'):
+            self.runtime.preflight()
+
+    def test_failure_reason_is_specific_but_never_leaks_values_or_paths(self):
+        import errno
+        import subprocess
+        reason = module.failure_reason
+        self.assertEqual(reason(ValueError('Browser requires 2 GiB RAM')), 'Browser requires 2 GiB RAM')
+        self.assertEqual(reason(ValueError('Customer Browser requires bound owner identity')),
+                         'Customer Browser requires bound owner identity')
+        # Library ValueErrors can carry input values: only the class is logged.
+        self.assertEqual(reason(ValueError("invalid literal for int() with base 10: 'user_secret'")), 'ValueError')
+        self.assertEqual(reason(FileNotFoundError(errno.ENOENT, 'No such file', '/home/matrix/home/private')),
+                         'FileNotFoundError ENOENT')
+        self.assertEqual(reason(subprocess.CalledProcessError(100, ['/usr/bin/apt-get', 'install', '-y', 'x'])),
+                         'CalledProcessError apt-get exit 100')
+        self.assertEqual(reason(subprocess.TimeoutExpired(['/usr/bin/curl', 'https://x.test/?token=abc'], 60)),
+                         'TimeoutExpired curl')
+        # A shell-string command names only its program, never its arguments.
+        self.assertEqual(reason(subprocess.CalledProcessError(1, '/usr/bin/systemctl restart x --token=abc')),
+                         'CalledProcessError systemctl exit 1')
+        self.assertEqual(reason(subprocess.CalledProcessError(1, '')), 'CalledProcessError exit 1')
+        self.assertEqual(reason(subprocess.TimeoutExpired(None, 5)), 'TimeoutExpired')
+
+    def test_main_logs_only_a_safe_line_for_unexpected_errors(self):
+        import subprocess
+        import sys
+        script = SOURCE.resolve()
+        program = (
+            "import runpy, sys\n"
+            "module = runpy.run_path(sys.argv[1], run_name='browser_runtime_entry')\n"
+            "def boom(arguments):\n"
+            "    raise KeyError('user_secret_value')\n"
+            "module['run_main'](['--status'], boom)\n"
+        )
+        result = subprocess.run([sys.executable, '-I', '-c', program, str(script)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr.strip(), 'Customer Browser setup failed: KeyError')
+        self.assertNotIn('user_secret_value', result.stderr + result.stdout)
+        self.assertNotIn('Traceback', result.stderr)
+
     def test_archive_checksum_must_match_protected_digest(self):
         self.runtime.prepare()
         archive = self.root / 'opt/matrix/bin/matrix-browser-runtime.tar.gz'

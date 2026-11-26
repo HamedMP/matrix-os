@@ -1,7 +1,8 @@
 "use client";
 
-import { Plug } from "lucide-react";
-import type { ReactNode } from "react";
+import * as Collapsible from "@radix-ui/react-collapsible";
+import { ChevronDown, Plug } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { McpServiceLogo } from "./McpServiceLogo.js";
 import { mcpTokens as t, toneColor, type McpStatusTone } from "./mcp-settings-tokens.js";
 import type { McpInventoryEntry } from "./remote-mcp-presets.js";
@@ -41,36 +42,68 @@ export function McpConnectionInventory({ entries, renderActions, renderDetails }
     );
   }
   return (
-    <ul aria-label="Your connections" className="space-y-2">
-      {entries.map(entry => {
-        const needsSignIn = entry.statusLabel === "Sign-in required";
-        return (
-        <li key={`${entry.kind}:${entry.id}`} className="rounded-2xl border"
-          style={needsSignIn
-            ? { borderColor: `color-mix(in srgb, ${t.warning} 40%, transparent)`, background: `color-mix(in srgb, ${t.warning} 8%, ${t.surface})` }
-            : { borderColor: t.border, background: t.surface }}>
-          <div className="flex flex-wrap items-center gap-3 p-4">
-            <McpServiceLogo presetId={entry.kind === "mcp" ? entry.presetId : undefined} name={entry.name} size={40} />
-            <div className="min-w-0 flex-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <p className="truncate text-sm font-medium" style={{ color: t.text }}>{entry.name}</p>
-                <McpStatusPill label={entry.statusLabel} />
-              </div>
-              <p className="mt-0.5 text-xs" style={{ color: t.muted }}>
-                {entry.kind === "mcp"
-                  ? needsSignIn ? "Finish signing in so agents and clients can use it." : "MCP server · available through your Matrix MCP"
-                  : `Connected app${entry.accountLabel ? ` · ${entry.accountLabel}` : ""} · managed in Connect Apps`}
-              </p>
-            </div>
-            {entry.kind === "mcp" && renderActions ? <div className="flex shrink-0 items-center gap-1.5">{renderActions(entry)}</div> : null}
-          </div>
-          {entry.kind === "mcp" && renderDetails ? (
-            <div className="border-t px-4 pb-4" style={{ borderColor: t.border }}>{renderDetails(entry)}</div>
-          ) : null}
-        </li>
-        );
-      })}
+    <ul aria-label="Connected services" className="space-y-2">
+      {entries.map(entry => (
+        <McpConnectionRow key={`${entry.kind}:${entry.id}`} entry={entry} renderActions={renderActions} renderDetails={renderDetails} />
+      ))}
     </ul>
+  );
+}
+
+function rowSubtitle(entry: McpInventoryEntry, needsSignIn: boolean): string {
+  if (entry.kind !== "mcp") return `Connected app${entry.accountLabel ? ` · ${entry.accountLabel}` : ""} · managed in Connect Apps`;
+  return needsSignIn ? "Finish signing in so agents and clients can use it." : "MCP server · available through your Matrix MCP";
+}
+
+function rowStyle(needsSignIn: boolean) {
+  return needsSignIn
+    ? { borderColor: `color-mix(in srgb, ${t.warning} 40%, transparent)`, background: `color-mix(in srgb, ${t.warning} 8%, ${t.surface})` }
+    : { borderColor: t.border, background: t.surface };
+}
+
+function toolCountLabel(count: number | undefined): string {
+  if (count === undefined) return "Tools";
+  return `${count} ${count === 1 ? "tool" : "tools"}`;
+}
+
+/** One compact connection row; an MCP server's tools and diagnostics stay collapsed until asked for. */
+function McpConnectionRow({ entry, renderActions, renderDetails }: { entry: McpInventoryEntry } & Pick<McpConnectionInventoryProps, "renderActions" | "renderDetails">) {
+  const [expanded, setExpanded] = useState(false);
+  const needsSignIn = entry.statusLabel === "Sign-in required";
+  const mcpEntry = entry.kind === "mcp" ? entry : null;
+  const showDetails = Boolean(mcpEntry && renderDetails);
+  const toolsLabel = toolCountLabel(mcpEntry?.toolCount);
+  return (
+    <li className="rounded-2xl border" style={rowStyle(needsSignIn)}>
+      <Collapsible.Root open={expanded} onOpenChange={setExpanded}>
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+          <McpServiceLogo presetId={mcpEntry?.presetId} name={entry.name} size={32} />
+          <div className="min-w-[10rem] flex-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <p className="truncate text-sm font-medium" style={{ color: t.text }}>{entry.name}</p>
+              <McpStatusPill label={entry.statusLabel} />
+            </div>
+            <p className="mt-0.5 text-xs" style={{ color: t.muted }}>{rowSubtitle(entry, needsSignIn)}</p>
+          </div>
+          {showDetails || (mcpEntry && renderActions) ? (
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              {showDetails ? (
+                <Collapsible.Trigger aria-label={`${toolsLabel} for ${entry.name}`}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium transition-colors hover:brightness-95 focus-visible:outline focus-visible:outline-2 disabled:opacity-50"
+                  style={{ color: t.secondary, background: t.sunken }}>
+                  {toolsLabel}
+                  <ChevronDown aria-hidden="true" size={14} className="transition-transform" style={{ transform: expanded ? "rotate(180deg)" : undefined }} />
+                </Collapsible.Trigger>
+              ) : null}
+              {mcpEntry && renderActions ? renderActions(mcpEntry) : null}
+            </div>
+          ) : null}
+        </div>
+        {mcpEntry && renderDetails ? (
+          <Collapsible.Content className="border-t px-4 pb-4" style={{ borderColor: t.border }}>{renderDetails(mcpEntry)}</Collapsible.Content>
+        ) : null}
+      </Collapsible.Root>
+    </li>
   );
 }
 

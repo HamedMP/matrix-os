@@ -6,7 +6,11 @@ import { AiUsagePanel } from "../../packages/ui/src/ai-usage/AiUsagePanel";
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
 });
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  // Let Radix restore focus before Vitest clears the jsdom globals.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
 it("opens the library listbox and changes the selected range using the keyboard", async () => {
   render(<AiUsagePanel />);
   const trigger = screen.getByRole("combobox", { name: "Date range" });

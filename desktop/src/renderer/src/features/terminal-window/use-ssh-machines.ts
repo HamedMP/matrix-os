@@ -67,7 +67,7 @@ export function useSshMachines() {
   const [coreBusy, setCoreBusy] = useState<string[]>([]);
   const [coreFailed, setCoreFailed] = useState<string[]>([]);
   const [coreChanged, setCoreChanged] = useState<string[]>([]);
-  // Machines whose core the app cannot update (a Windows target), from their last attempt.
+  // Machines whose update transport cannot be pinned, from their last attempt.
   const [coreUnsupported, setCoreUnsupported] = useState<string[]>([]);
 
   const remove = useCallback(async (name: string): Promise<boolean> => {

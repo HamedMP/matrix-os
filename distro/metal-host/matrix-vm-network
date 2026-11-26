@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Called by the cold-boot and restore units before Cloud Hypervisor opens the tap.
+set -euo pipefail
+
+[ "$#" = 6 ] || exit 2
+command="$1" tap="$2" bridge_name="$3" vm_user="$4" mac="$5" address="$6"
+[[ "$tap" =~ ^mxtap[0-9]{1,4}$ && "$bridge_name" =~ ^[a-zA-Z0-9_.-]{1,15}$ &&
+   "$vm_user" =~ ^[a-z_][a-z0-9_-]{0,30}$ && "$mac" =~ ^52:54:00:78:[0-9a-f]{2}:[0-9a-f]{2}$ &&
+   "$address" =~ ^10\.78\.[0-3]\.[0-9]{1,3}$ ]] || exit 2
+
+remove_tap() {
+  if ip link show dev "$tap" >/dev/null 2>&1; then ip link delete dev "$tap"; fi
+  if [ -n "$(ip neigh show to "$address" dev "$bridge_name" nud permanent)" ]; then
+    ip neigh del "$address" dev "$bridge_name"
+  fi
+}
+
+case "$command" in
+  start)
+    remove_tap
+    ip tuntap add dev "$tap" mode tap user "$vm_user" group "$vm_user"
+    ip link set dev "$tap" master "$bridge_name"
+    # Keep source learning and unknown unicast flooding off on tenant ports.
+    bridge link set dev "$tap" isolated on learning off flood off
+    tc qdisc add dev "$tap" handle ffff: ingress
+    tc filter add dev "$tap" parent ffff: protocol ip prio 10 flower skip_hw src_mac "$mac" src_ip "$address" \
+      action police rate 50mbit burst 512k conform-exceed drop/ok
+    tc filter add dev "$tap" parent ffff: protocol arp prio 20 flower skip_hw src_mac "$mac" arp_sha "$mac" arp_sip "$address" \
+      action police rate 1mbit burst 16k conform-exceed drop/ok
+    tc filter add dev "$tap" parent ffff: protocol all prio 30 flower skip_hw action drop
+    bridge fdb replace "$mac" dev "$tap" master static
+    ip link set dev "$tap" up
+    # Install last. Host ingress serves only addresses with this binding.
+    ip neigh replace "$address" lladdr "$mac" nud permanent dev "$bridge_name"
+    ;;
+  stop) remove_tap ;;
+  *) exit 2 ;;
+esac

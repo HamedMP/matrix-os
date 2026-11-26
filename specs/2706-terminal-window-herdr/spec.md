@@ -260,6 +260,19 @@ Added 2026-11-22 (Hamed):
   - each machine row shows its core version; an older one offers
     **Update core**; the Add form offers **Install core there** when the
     machine has no core or an incompatible one;
+  - updates require the selected core ID. A fresh private OpenSSH master owns
+    the identity read and every installer connection, including native Windows
+    SCP uploads. If the live ID is absent or different, nothing is written.
+    If the master disappears, `ProxyCommand=false` prevents a fresh dial; a
+    hostname change between verification and upload cannot redirect the update.
+    The master and temporary SSH/SCP shims are removed after success or failure.
+    Herdr's Unix discovery (`herdr-core` on PATH or in `~/.local/bin`, with `hc`
+    accepted too) and its native Windows path are supported. Tailscale's absolute
+    `via` command cannot join that master and is refused before writing.
+    Follow-up: [#3662](https://github.com/HamedMP/matrix-os/issues/3662), ENG-521.
+    Public docs deliverable: update the Terminal-window documentation in the
+    separate `FinnaAI/matrix-os-site` docs PR when this feature ships; no public
+    API or installer syntax changes here.
   - one install or update runs per machine at a time, with a 3-minute limit;
     a failure is logged in the main process and shown as a fixed message with
     Try again; the machine stays listed.

@@ -28,6 +28,7 @@ import { getCliTelemetry } from "./telemetry.js";
 import { resolveCliVersion } from "./version.js";
 
 const subCommands = {
+  mac: () => import("./commands/mac.js").then(module => module.macCommand),
   routines: () => import("./commands/routines.js").then(module => module.routinesCommand),
   login: loginCommand,
   setup: setupCommand,

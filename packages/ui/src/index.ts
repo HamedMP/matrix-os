@@ -36,6 +36,7 @@ export {
 export { GITHUB_DEVELOPER_DEVICE_URL } from "./integrations/GithubDeveloperSetupDialog.js";
 export { RemoteMcpPresetPicker, type RemoteMcpPresetPickerProps } from "./integrations/RemoteMcpPresetPicker.js";
 export { McpConnectionInventory, McpSectionHeading, McpStatusPill, type McpConnectionInventoryProps } from "./integrations/McpConnectionInventory.js";
+export { McpAddServicesSection, type McpAddServicesSectionProps } from "./integrations/McpAddServicesSection.js";
 export { MatrixMcpEndpointCard, type MatrixMcpEndpointCardProps } from "./integrations/MatrixMcpEndpointCard.js";
 export { DEFAULT_MATRIX_MCP_ENDPOINT, matrixMcpClientSetups, matrixMcpEndpointUrl, type MatrixMcpClientSetup } from "./integrations/matrix-mcp-endpoint.js";
 export { McpServiceLogo, McpServiceLogoStack, type McpServiceLogoProps } from "./integrations/McpServiceLogo.js";

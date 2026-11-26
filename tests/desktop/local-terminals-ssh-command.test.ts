@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { installVia, sshLoginArgv, sshProbeArgv, sshVia } from "@desktop/main/local-terminals/ssh-command";
-import { MachineCoreUnsupportedError, probeLiveCoreId } from "@desktop/main/local-terminals/machine-core";
-import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { installVia, sshLoginArgv, sshVia } from "@desktop/main/local-terminals/ssh-command";
 import { findTailscale, parseTailscaleStatus } from "@desktop/main/local-terminals/tailscale";
 import { SshOptionsSchema } from "@desktop/shared/local-terminals";
 
@@ -76,51 +71,4 @@ describe("tailnet peers", () => {
     expect(findTailscale((path) => path === "/usr/bin/tailscale")).toBe("/usr/bin/tailscale");
   });
 
-  // Nima, #3579: the update first reads the live core's id over the same route herdr-core dials.
-  it("probes the live core over the same ssh route, port, identity and jump host included", () => {
-    const argv = sshProbeArgv("me@box:2222", { identity: "~/.ssh/id_box", jump: "me@bastion" }, null);
-    expect(argv.slice(0, -1)).toEqual(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-p", "2222", "-i", "~/.ssh/id_box", "-J", "me@bastion", "--", "me@box"]);
-    expect(argv.at(-1)).toContain("server status --json");
-    expect(sshProbeArgv("ts-box", { tailscaleSsh: true }, "/usr/bin/tailscale").slice(0, 3)).toEqual(["/usr/bin/tailscale", "ssh", "ts-box"]);
-  });
-
-  it("reads the core id from the probe's output and refuses anything else", async () => {
-    const print = (text: string) => [process.execPath, "-e", `process.stdout.write(${JSON.stringify(text)})`];
-    await expect(probeLiveCoreId(print(JSON.stringify({ core: { id: "ab52e4c4061e4875f94cfa9b0150cbf3", name: "vps" } })))).resolves.toBe("ab52e4c4061e4875f94cfa9b0150cbf3");
-    await expect(probeLiveCoreId(print("hc: command not found"))).rejects.toThrow();
-    await expect(probeLiveCoreId(print(JSON.stringify({ core: { id: "../x" } })))).rejects.toThrow();
-  });
-
-  // Fault detected (Nima, #3579/#3662): the probe could ride the person's ControlMaster to the old host
-  // while herdr-core's updater dials afresh; it must open its own connection like the updater.
-  it("never reuses an ssh ControlMaster for the probe", () => {
-    const argv = sshProbeArgv("me@box", undefined, null);
-    const options = argv.slice(0, argv.indexOf("--"));
-    expect(options).toEqual(expect.arrayContaining(["-o", "ControlMaster=no"]));
-    expect(options.join(" ")).toContain("-o ControlPath=none");
-  });
-
-  // Fault detected (Nima, #3579/#3662): a core installed as herdr-core (no hc alias), as herdr-core
-  // itself finds it, made the probe fail and every update refuse.
-  it("finds the core as herdr-core on PATH or in ~/.local/bin, as herdr-core does", () => {
-    const home = mkdtempSync(join(tmpdir(), "mx-probe-"));
-    try {
-      mkdirSync(join(home, ".local/bin"), { recursive: true });
-      const core = join(home, ".local/bin/herdr-core");
-      writeFileSync(core, '#!/bin/sh\n[ "$1 $2 $3" = "server status --json" ] && printf \'{"core":{"id":"%s"}}\' cafe0123cafe0123cafe0123cafe0123\n');
-      chmodSync(core, 0o755);
-      const remote = sshProbeArgv("me@box", undefined, null).at(-1)!;
-      // The remote side as sshd runs it: the command line through the account's shell, no hc anywhere.
-      const out = execFileSync("/bin/sh", ["-c", remote], { env: { HOME: home, PATH: "/usr/bin:/bin" }, encoding: "utf8" });
-      expect(JSON.parse(out).core.id).toBe("cafe0123cafe0123cafe0123cafe0123");
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  // Fault detected (Nima, #3579/#3662): on a Windows target `sh -lc` failed and looked like any other failure.
-  it("says when the machine is a Windows target instead of failing obscurely", async () => {
-    const windows = [process.execPath, "-e", "process.stderr.write(\"'sh' is not recognized as an internal or external command,\\r\\noperable program or batch file.\\r\\n\"); process.exit(1)"];
-    await expect(probeLiveCoreId(windows)).rejects.toBeInstanceOf(MachineCoreUnsupportedError);
-  });
 });

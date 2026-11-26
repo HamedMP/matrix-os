@@ -36,7 +36,6 @@ import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { terminalTasksUnderPressure } from "@matrix-os/terminal-runtime/user-systemd-capacity";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { cors } from "hono/cors";
 import { existsSync, readFileSync } from "node:fs";
 import { appendFile as appendFileAsync } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -45,11 +44,11 @@ import { createJevGmailAccountLookup } from "./chat/jev-recipe-authority.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
+import { registerGatewayAccessMiddleware } from "./server/access-middleware.js";
 import { createGatewayAllowedOriginController } from "./server/browser-setup-origin.js";
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
 import { listApps } from "./apps.js";
-import { authMiddleware } from "./auth.js";
 import { createBackgroundAgentRuntime } from "./background-agent-runtime.js";
 import { withAsyncChatInput } from "./chat/async-input-adapter.js";
 import { createGatewayChatAdapters, startGatewayClaudeNativeRecovery, type GatewayNativeClaudeChatRuntime } from "./server/canonical-chat-adapters.js";
@@ -162,7 +161,6 @@ import { createProvisioner } from "./provisioner.js";
 import { getOptionalRequestPrincipal, requireRequestPrincipal } from "./request-principal.js";
 import { createCodexNativeKeyReadinessReader } from "./ai-providers/codex-native-key-readiness.js";
 import { createReviewStore } from "./review-store.js";
-import { securityHeadersMiddleware } from "./security/headers.js";
 import {
   createProviderLoginTerminalRegistry,
   createSessionRuntimeBridge,
@@ -181,6 +179,7 @@ import { createBotContinuationAdmitter } from "./bots/continuations.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
 import { createRuntimeDataImportRoutes } from "./startup/data-imports.js";
+import { createRuntimeDesktopPairingRoutes } from "./desktop-pairing/routes.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
@@ -251,7 +250,6 @@ import type { OsViewStateRepository } from "./os-view-state/repository.js";
 import { registerBridgeDataRoutes } from "./server/bridge-routes.js";
 import { registerCanvasGatewayRoutes } from "./server/canvas-gateway-routes.js";
 import { registerCodingAgentThreadWebSocketRoutes } from "./server/coding-agent-thread-ws-routes.js";
-import { registerRoutineDirectResourceFence } from "./chat/routine-direct-visibility.js";
 import { registerCollaborationChatRoutes } from "./server/collaboration-chat-routes.js";
 import { registerConversationHistoryRoutes } from "./server/conversation-history-routes.js";
 import { registerDeferredRuntimeRoutes } from "./server/deferred-runtime-routes.js";
@@ -1245,31 +1243,23 @@ export async function createGateway(config: GatewayConfig) {
     }
   });
 
-  // Dev-only escape hatch. Apps render in a null-origin sandboxed srcdoc iframe,
-  // so their /apps/{slug}/assets/* sub-resources are cross-site from origin
-  // "null" and a SameSite=Strict app-session cookie can never be delivered over
-  // plain-HTTP localhost — assets 401 and surface as CORS errors, so no app
-  // loads. When MATRIX_DEV_APP_AUTH_BYPASS=1, reflect the "null" origin and skip
-  // the app-session gate so apps load locally. NEVER set this in production
-  // (only docker-compose.dev.yml sets it).
+  // Only docker-compose.dev.yml enables this local development escape hatch.
   const APP_AUTH_DEV_BYPASS = process.env.MATRIX_DEV_APP_AUTH_BYPASS === "1";
   if (APP_AUTH_DEV_BYPASS) {
     console.warn(
       "[gateway] MATRIX_DEV_APP_AUTH_BYPASS=1 — null-origin CORS + app-session auth relaxed for LOCAL DEV ONLY. Never enable in production.",
     );
   }
-  app.use("*", cors({
-    origin: (origin) => {
-      if (APP_AUTH_DEV_BYPASS && origin === "null") return "null";
-      return allowedOriginController.resolve(origin);
+  registerGatewayAccessMiddleware(app, {
+    resolveAllowedOrigin: allowedOriginController.resolve,
+    devAppAuthBypass: APP_AUTH_DEV_BYPASS,
+    authToken: process.env.MATRIX_AUTH_TOKEN,
+    auth: {
+      resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
+      localTerminalAgentToken: () => localTerminalAgentToken?.token,
     },
-  }));
-  app.use("*", securityHeadersMiddleware());
-  app.use("*", authMiddleware(process.env.MATRIX_AUTH_TOKEN, {
-    resolveMatrixMcpRunContext: matrixMcpCapabilities.resolveRunContext,
-    localTerminalAgentToken: () => localTerminalAgentToken?.token,
-  }));
-  registerRoutineDirectResourceFence(app);
+  });
+  app.route("/api/desktop-pairing", await createRuntimeDesktopPairingRoutes({ ownerDatabase: kyselyInstance }));
   app.route("/api/speech", speechRuntime.routes);
   const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
     && (canonicalChatOrchestrator?.activeCount ?? 0) === 0

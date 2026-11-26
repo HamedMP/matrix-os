@@ -8,19 +8,23 @@ import { z } from "zod/v4";
 import {
   LOCAL_TERMINAL_PREVIEW_MAX_CHARS, SshTargetSchema, type LocalMachine, type LocalTerminalAgent, type LocalTerminalFact, type SshOptions,
 } from "../../shared/local-terminals";
-import { installVia, sshLoginArgv, sshProbeArgv, sshVia } from "./ssh-command";
+import { installVia, sshLoginArgv, sshVia } from "./ssh-command";
 import { createMachineSshStore, machineSshMatches } from "./machine-ssh-store";
 import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tailscale";
-import { createMachineCore, MachineCoreUnsupportedError, probeLiveCoreId, type MachineCoreResult, type MachineCoreRunner } from "./machine-core";
+import { createMachineCore, type MachineCoreResult, type MachineCoreRunner } from "./machine-core";
+import type { WithUpdateConnection } from "./machine-update-connection";
 import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
+import type { MacTerminalProbeAction } from "../../shared/mac-terminal-probe";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
-import { createHcSessions, TERMINAL_TITLE_LABEL, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
+import { createAttachmentSlots, createHcSessions, TERMINAL_TITLE_LABEL, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
 import {
   createLocalTerminalEvents, FINISHED_SEEN_LABEL, HERDR_SEEN_LABEL,
   type LocalTerminalEvents, type LocalTerminalEventsOptions,
 } from "./hc-events";
+import { prepareChatTerminalProbe } from "./chat-terminal-probe";
+import { openExistingTerminalReader } from "./existing-terminal";
 
 const SESSION = "mx";
 // The longest socket herdr-core creates is `<session>.holder.<8 hex>.sock`.
@@ -88,8 +92,8 @@ export interface LocalTerminalHostOptions {
   createEvents?: (options: LocalTerminalEventsOptions) => LocalTerminalEvents;
   /** Runs the bundled core's CLI (machine install and update); replaced in tests. */
   runCoreCli?: MachineCoreRunner;
-  /** Reads the live core's id over an ssh argv (tests replace it). */
-  probeCoreId?: (argv: readonly string[]) => Promise<string>;
+  /** Owns the verified update connection (tests replace it). */
+  withUpdateConnection?: WithUpdateConnection;
 }
 
 export class LocalTerminalUnknownError extends Error {
@@ -215,10 +219,10 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     return connecting;
   }
 
-  const sessions = createHcSessions({ ensure, slots: options.slots, now }, sink);
+  const slots = options.slots ?? createAttachmentSlots();
+  const sessions = createHcSessions({ ensure, slots, now }, sink);
   const machineSsh = createMachineSshStore(options.dataDir);
   // The app's own core on added machines, through the bundled core's CLI.
-  const probeCoreId = options.probeCoreId ?? probeLiveCoreId;
   const machineCore = createMachineCore({
     cli: async () => {
       try {
@@ -229,6 +233,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
       }
     },
     ...(options.runCoreCli ? { run: options.runCoreCli } : {}),
+    ...(options.withUpdateConnection ? { withUpdateConnection: options.withUpdateConnection } : {}),
   });
   // Add, install and remove of one machine name run one after another, so a remove and re-add of the
   // name can never land between an install and the save of its settings. Bounded: an entry lives only
@@ -475,21 +480,15 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
         // Re-read right before running: the machine under the name must still be the one picked.
         const current = (await shownMachines()).find((machine) => machine.name === input.name);
         if (!current || !sameMachine(current, input)) return { ok: false, reason: "changed" };
-        // herdr-core's update dials the name again, so the registry's id is not enough: read the live
-        // core's id over the same ssh route right before, and send nothing to a different core.
-        // (A repoint in the moment between this probe and herdr's own dial is not covered.)
-        if (current.coreId) {
-          let live: string;
-          try {
-            live = await probeCoreId(sshProbeArgv(current.target, current.ssh, current.ssh?.tailscaleSsh ? findTailscale() : null));
-          } catch (error: unknown) {
-            if (error instanceof MachineCoreUnsupportedError) return { ok: false, reason: "unsupported" };
-            console.warn("[local-terminals] live core id unreadable before update:", describeError(error));
-            return { ok: false, reason: "failed" };
-          }
-          if (live !== current.coreId) return { ok: false, reason: "changed" };
-        }
-        return machineCore.update(input.name);
+        // Never update blind, including old registrations without an ID. The
+        // connection owner proves it and pins every installer dial before writing.
+        if (!current.coreId) return { ok: false, reason: "changed" };
+        // Tailscale's CLI cannot join an OpenSSH master. Refuse rather than let
+        // its absolute `via` command escape the pinned transport.
+        if (current.ssh?.tailscaleSsh) return { ok: false, reason: "unsupported" };
+        return machineCore.update(input.name, {
+          coreId: current.coreId, ssh: sshLoginArgv(current.target, current.ssh, null),
+        });
       }).catch((error: unknown) => {
         if (error instanceof MachineQueueFullError) return { ok: false, reason: "busy" } as const;
         throw error;
@@ -511,6 +510,16 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     async remove(id: string): Promise<void> {
       const core = await ensure();
       await core.call("terminal.rm", { terminal: id });
+    },
+
+    // Main-process only. Do not expose this method as renderer terminal IPC.
+    prepareChatTerminalProbe: (action: MacTerminalProbeAction = "uname") => prepareChatTerminalProbe({
+      action, cwd: options.home, ensure, isCurrent: (core) => connection === core, run: sessions.run, slots,
+    }),
+
+    async openExistingTerminalReader() {
+      const core = await ensure();
+      return openExistingTerminalReader(core, () => connection === core);
     },
 
     kill: sessions.kill,

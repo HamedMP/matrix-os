@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Validate an installed host certificate, or bootstrap a missing smoke pair.
+set -euo pipefail
+
+die() { printf 'matrix-hostd-tls: %s\n' "$*" >&2; exit 1; }
+tls_dir="$1" host_name="$2" mode="${3:-}"
+cert="$tls_dir/cert.pem" key="$tls_dir/key.pem"
+
+if [ -e "$cert" ] || [ -e "$key" ] || [ -L "$cert" ] || [ -L "$key" ]; then
+  [[ -s "$cert" && -s "$key" ]] || die "install both a certificate and its key in $tls_dir"
+  openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1 || die "renew or replace the installed certificate in $cert"
+  cert_public="$(openssl x509 -in "$cert" -pubkey -noout)" || die "could not read the installed certificate"
+  key_public="$(openssl pkey -in "$key" -passin pass: -pubout 2>/dev/null)" || die "could not read the installed key"
+  [ "$cert_public" = "$key_public" ] || die "the installed certificate and key do not match"
+  exit 0
+fi
+
+[ "$mode" = --smoke ] || die "install a trusted certificate and key in $tls_dir, or use --smoke-tls on a smoke host"
+parent="$(dirname -- "$tls_dir")"
+[ -d "$parent" ] || install -d -m 0755 "$parent"
+stage="$(mktemp -d "$tls_dir.new.XXXXXX")"
+trap 'rm -rf -- "$stage"' EXIT
+openssl req -x509 -newkey rsa:3072 -nodes -days 90 -subj "/CN=$host_name" \
+  -addext "subjectAltName=DNS:$host_name" -keyout "$stage/key.pem" -out "$stage/cert.pem" 2>/dev/null
+chmod 0600 "$stage/key.pem"
+# Atomically install both files. A nonempty destination appearing during
+# generation makes the rename fail and its contents stay untouched.
+python3 -I - "$stage" "$tls_dir" <<'PY'
+import os
+import sys
+
+os.rename(sys.argv[1], sys.argv[2])
+PY
+printf 'changed\n'
