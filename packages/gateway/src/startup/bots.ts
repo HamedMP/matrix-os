@@ -1,3 +1,4 @@
+import { canProposeBotSettings } from "../chat/bot-settings-authority.js";
 import type { SlackBotPlatform } from "./slack-platform.js";
 import { retireRevokedSlackJobs } from "../slack/rule-revocation.js";
 import { createSlackRuleTools, type SlackRuleTools } from "../slack/rule-tools.js";
@@ -468,6 +469,7 @@ export async function startBots(options: {
     inputHistory,
     slackThreadContext: slackThreadContext?.prompt,
     slackSummaries: slackMentionSummaries,
+    settingsProposals: (ownerId, chatId, runId, agentId) => canProposeBotSettings(options.repository.kysely, { type: "personal", ownerId }, chatId, runId, agentId),
     slackRuleTools:Boolean(slackRules),
     homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),
@@ -509,6 +511,7 @@ export async function startBots(options: {
   const managed = createManagedPiRuntime({ routineCli: managedRoutineCli, routineSignal: binding => registry.inferenceSignal(binding), toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
+    proposeSettings: orchestrator.proposeSettings,
     homePath: options.homePath, slackRules, githubDeveloper, managedRoutine: { execute: managed.executeRoutine }, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateSource,
     submittedArtifact: (binding, args) => isManagedPiBinding(binding) ? managed.readSubmittedArtifact(binding, args) : orchestrator.readSubmittedArtifact(binding, args),

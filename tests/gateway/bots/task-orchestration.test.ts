@@ -55,6 +55,7 @@ afterEach(async () => { vi.unstubAllEnvs(); try { await destroy(); } finally { v
 function setup(options: {
   slackSummaries?: Parameters<typeof createBotTaskOrchestrator>[0]["slackSummaries"];
   homePath?: string;
+  settingsProposals?: Parameters<typeof createBotTaskOrchestrator>[0]["settingsProposals"];
   routineTools?: boolean;
   inputHistory?: Parameters<typeof createBotTaskOrchestrator>[0]["inputHistory"];
   slackThreadContext?: Parameters<typeof createBotTaskOrchestrator>[0]["slackThreadContext"];
@@ -115,7 +116,7 @@ function setup(options: {
   const transact = options.transact?.(baseTransact) ?? baseTransact;
   const interactions = createBotInteractionService({ transact });
   orchestrator = createBotTaskOrchestrator({
-    homePath: options.homePath, expectedOwnerId: OWNER, routineTools: options.routineTools,
+    homePath: options.homePath, expectedOwnerId: OWNER, routineTools: options.routineTools, settingsProposals: options.settingsProposals,
     assertSource: options.assertSource,
     inputHistory: options.inputHistory,
     slackThreadContext: options.slackThreadContext,
@@ -171,6 +172,34 @@ async function tasks() {
 }
 
 describe("bot turns through the matrix_bot adapter", () => {
+  it("exposes one scoped settings proposal to the model in the existing private Bot turn", async () => {
+    const { createBotToolDispatcher } = await import("../../../packages/gateway/src/bots/tool-dispatcher.js");
+    const patch = { instructions: "Read only this repository's approved patch." };
+    const provider = fauxProvider({ models: [{ id: "fixture", input: ["text"], contextWindow: 128_000, maxTokens: 8192 }] });
+    provider.setResponses([fauxAssistantMessage(fauxToolCall("propose_agent_settings", { patch }, { id: "edit_settings" }), { stopReason: "toolUse" })]);
+    const inference = vi.spyOn(provider.provider, "streamSimple");
+    const context = setup({ settingsProposals: async () => true, worker: async (input, events) => {
+      const binding = context.registry.lookupRun({ ...input, runId: input.command.runId })!;
+      const dispatcher = createBotToolDispatcher({ homePath: "/unused", proposeSettings: context.orchestrator.proposeSettings });
+      const command = runCommandFromSpec(input.command.runId, await context.orchestrator.runSource.loadRunSpec(binding), []);
+      return runBotTurn({ command, bridgeOrigin: "http://127.0.0.1:41000", route: { provider: provider.provider, model: provider.getModel() }, broker: {
+        loadSession: async () => ({ revision: 1, needsRecompaction: false, messages: [] }),
+        saveSession: async () => ({ revision: 2 }),
+        event: async event => { await events.publish(event.seq, event.event); },
+        tool: async (request, signal) => {
+          const result = await dispatcher.dispatch(binding, request, signal ?? new AbortController().signal);
+          await expect(dispatcher.dispatch(binding, request, signal ?? new AbortController().signal)).rejects.toThrow();
+          return result.result;
+        },
+      } });
+    } });
+    const events = await collect(context.adapter.start(turn()));
+    expect(inference).toHaveBeenCalledTimes(1);
+    expect(events.filter(e => e.type === "bot.draft.proposed")).toEqual([expect.objectContaining({ sessionId: BOT, baseDraftRevision: AGENT.revision, patch })]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "agent.activity", kind: "phase", activityId: "bot_settings_proposal", label: "Suggested changes", status: "completed" }));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
+  });
+
   it("enforces the trusted runtime generation ceiling through normal canonical Bot admission", async () => {
     vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", "12");
     const provider = fauxProvider({ models: [{ id: "faux-budget", input: ["text"], contextWindow: 128_000, maxTokens: 8192 }] });

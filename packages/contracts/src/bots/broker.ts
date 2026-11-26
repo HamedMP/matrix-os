@@ -1,3 +1,4 @@
+import { BotCreationDraftPatchSchema, BotSavedSettingsPatchSchema, BotSetupQuestionInputSchema } from "#bot-creation-draft";
 import { SlackRuleOperationSchema } from "#bots/slack-rules";
 import { RoutineCliOperationSchema } from "#bots/routine-cli";
 import { BotToolDisplaySchema } from "#bots/tool-display";
@@ -30,6 +31,8 @@ const textEncoder = new TextEncoder();
 
 /** M1 capabilities. Later milestones add handoffs and computer actions. */
 export const BotToolCapabilitySchema = z.enum([
+  "bot.creation.propose",
+  "bot.settings.propose",
   "slack.rules",
   "routine.cli",
   "routine.propose",
@@ -58,6 +61,8 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 }).strict();
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
+  capability("bot.creation.propose", z.union([z.object({ patch: BotCreationDraftPatchSchema }).strict(), BotSetupQuestionInputSchema])),
+  capability("bot.settings.propose", z.object({ patch: BotSavedSettingsPatchSchema }).strict()),
   capability("slack.rules", SlackRuleOperationSchema),
   capability("browser.action", SharedBrowserActionSchema),
   capability("github.developer", GithubDeveloperActionSchema),
@@ -141,6 +146,9 @@ export const BotToolResultSchema = z.discriminatedUnion("ok", [
   }).strict(),
   z.object({ ok: z.literal(false), code: BotToolErrorCodeSchema }).strict(),
 ]);
+
+/** Gateway-authored receipt for a proposal handled by the interactive setup client. */
+export const BOT_DRAFT_REVIEW_RECEIPT = { proposed: true, awaitOwnerReview: true } as const;
 
 /** Pi agent events projected for canonical Chat; model reasoning deltas are never forwarded. */
 export const BotEventSchema = z.object({

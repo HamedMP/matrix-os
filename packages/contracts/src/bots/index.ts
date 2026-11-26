@@ -1,5 +1,6 @@
 export * from "#bots/ids";
 export * from "#bots/bot";
+export * from "#bots/recipe-setup";
 export * from "#bots/grants";
 export * from "#bots/memory";
 export * from "#bots/tasks";

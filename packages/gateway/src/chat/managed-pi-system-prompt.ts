@@ -1,3 +1,4 @@
+import { botSetupPrompt } from "./bot-setup-prompt.js";
 import { BOT_SYSTEM_PROMPT_TOKEN_BUDGET, estimatePromptTokens } from "../bots/system-prompt.js";
 import { readOwnerSoul, ownerPersonalitySection, OwnerPersonalityError, type OwnerPersonalityConfig } from "../bots/owner-personality.js";
 import type { CanonicalProviderRunInput } from "./provider-adapter.js";
@@ -9,6 +10,7 @@ type PromptInput = Pick<CanonicalProviderRunInput, "owner" | "context" | "shared
 /** Called only after canonical managed Chat admission; never caches owner content. */
 export function createManagedPiSystemPrompt(config?: ManagedPiPersonalityConfig) {
   return async (input: PromptInput): Promise<string> => {
+    if (input.context?.botCreation) return botSetupPrompt(input.context.botCreation);
     if (!config?.runtimeOwnerId || input.owner.type !== "personal" || input.owner.ownerId !== config.runtimeOwnerId
       || input.sharedScopeId || input.context?.agent || input.context?.drives?.length) return MANAGED_PI_BASE_PROMPT;
     const soul = await readOwnerSoul(config.homePath);

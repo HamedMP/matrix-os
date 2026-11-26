@@ -1,3 +1,4 @@
+import { BotSetupQuestionSchema, BotDraftProposalSchema, ChatRunContextSchema } from "@matrix-os/contracts";
 import { BrowserApprovalLifecycleSchema, BrowserGrantViewSchema } from "@matrix-os/contracts";
 import { PlaintextToolPreviewSchema } from "./plaintext-tool-preview.js";
 import {
@@ -26,6 +27,8 @@ import { SealedAssistantCredentialSchema } from "./assistant-credential-crypto.j
 const SafeProviderRefSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 
 export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
+  BotDraftProposalSchema.extend({ type: z.literal("bot.draft.proposed") }).strict(),
+  BotSetupQuestionSchema.extend({ type: z.literal("bot.setup.question") }).strict(),
   z.object({
     type: z.literal("assistant.delta"),
     messageId: SafeProviderRefSchema.optional(),
@@ -239,6 +242,7 @@ export function parseCanonicalProviderRunInput<State>(
   if (input.nativeScheduled) z.object({ sourceRunId: CanonicalChatRunIdSchema,
     sessionId: z.string().min(1).max(512).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/), promptId: z.uuid() }).strict().parse(input.nativeScheduled);
   CanonicalOwnerScopeSchema.parse(input.owner);
+  if (input.context) ChatRunContextSchema.parse(input.context);
   CanonicalChatModelSelectionSchema.parse(input.selection);
   z.array(CanonicalChatMessagePartSchema).min(1).max(64).parse(input.parts);
   z.string().min(1).max(96 * 1024).parse(input.prompt);
