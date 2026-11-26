@@ -148,6 +148,7 @@ export function buildState(pkg: OpcPackage, sources: Sources, deps: WorkbookDeps
     calc: {
       edited: new Map(),
       edits: 0,
+      calcs: 0,
       pending: new Map(),
       all: false,
       onLoad: context.uncalculated === true || asksFullCalc(root),

@@ -15,7 +15,9 @@
  * value it has and counts as unchanged (`calc-clock.ts`). Calculated again
  * without a time, it takes the same path to the clock until something it read
  * on the way changes, so it is not calculated again by later runs, the ones
- * that take up a bounded calculation included, until then.
+ * that take up a bounded calculation included, until then. One that draws
+ * random numbers (RAND) is calculated again by a new calculation the caller
+ * asks for, as another draw may not need the time.
  */
 
 import type { CellProvider, FormulaScalar, FormulaValue, FunctionRegistry } from "../../api/formula.js";
@@ -258,6 +260,7 @@ export class Run {
       log.reads = null;
     }
     node.keptAt = this.state.calc.edits;
+    node.keptIn = this.state.calc.calcs;
     node.evalAt = this.seq;
     node.doneAt = this.seq;
   }
@@ -265,10 +268,13 @@ export class Run {
   /**
    * True for a formula an earlier run without a time kept that this run, also without one, would keep again:
    * only a change to a cell it read on the way to the clock makes it due. What a formula that picks its cells at
-   * run time read is not traced across edits, so any edit of the workbook since makes such a formula due.
+   * run time read is not traced across edits, so any edit of the workbook since makes such a formula due. A formula
+   * that draws random numbers may take another path when it draws again, so a new calculation the caller asks for
+   * calculates it again; the runs that take up the calculation that kept it do not.
    */
   private held(node: CalcNode): boolean {
     if (node.keptAt < 0 || this.clockless === null) return false;
+    if (this.forced && node.draws && node.keptIn !== this.state.calc.calcs) return false;
     return !node.dynamic || node.keptAt === this.state.calc.edits;
   }
 

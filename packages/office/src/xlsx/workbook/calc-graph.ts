@@ -6,6 +6,7 @@
 
 import type { FormulaAst, FunctionRegistry } from "../../api/formula.js";
 import type { CellRange } from "../../api/xlsx.js";
+import { needsTime } from "./calc-clock.js";
 import type { CellRec, NameRec, SheetModel, WorkbookState } from "./model.js";
 import { lookupName } from "./names.js";
 import { parseCached } from "./state.js";
@@ -33,6 +34,11 @@ export interface CalcNode {
   spill: CellRange | null;
   /** Calls a volatile function (NOW, RAND): calculated on every run the caller asks for. */
   volatile: boolean;
+  /**
+   * Calls a volatile function that does not need the time (RAND, RANDBETWEEN): calculated again, it may give
+   * another answer at the same time, so a path that reached the clock may not reach it again.
+   */
+  draws: boolean;
   /** Calls a function that picks its cells at run time (OFFSET, INDIRECT). */
   dynamic: boolean;
   /**
@@ -47,6 +53,8 @@ export interface CalcNode {
    * its calculation reached TODAY or NOW; -1 when its last calculation finished.
    */
   keptAt: number;
+  /** The `calc.calcs` of the workbook when {@link keptAt} was noted: the calculation that kept the value. */
+  keptIn: number;
   /** How many values the run had stored when this node was last calculated in it, before and after its own. */
   evalAt: number;
   doneAt: number;
@@ -183,6 +191,7 @@ function resizedRead(state: WorkbookState, node: FormulaAst, sheet: SheetModel):
 /** What the functions of a formula, and of the names it uses, ask of the calculation. */
 interface Traits {
   volatile: boolean;
+  draws: boolean;
   dynamic: boolean;
 }
 
@@ -192,7 +201,10 @@ function addTraits(state: WorkbookState, ast: FormulaAst, sheet: SheetModel, fun
     const node = stack.pop() as FormulaAst;
     if (node.type === "call") {
       if (DYNAMIC_FUNCTIONS.has(node.name) || resizedRead(state, node, sheet) === "unknown") traits.dynamic = true;
-      else if (functions.get(node.name)?.volatile === true) traits.volatile = true;
+      else if (functions.get(node.name)?.volatile === true) {
+        traits.volatile = true;
+        if (!needsTime(node.name)) traits.draws = true;
+      }
     } else if (node.type === "name" && depth >= MAX_NAME_DEPTH) {
       // `collectDeps` stops here too, so the cells of the rest of the chain are recorded while it runs.
       traits.dynamic = true;
@@ -349,7 +361,7 @@ export function buildGraph(state: WorkbookState): CalcGraph {
         if (cell.value !== null && callsUnknownFunction(state, ast, sheet)) continue;
         const deps: Dep[] = [];
         collectDeps(state, ast, sheet, 0, deps);
-        const traits: Traits = { volatile: false, dynamic: false };
+        const traits: Traits = { volatile: false, draws: false, dynamic: false };
         addTraits(state, ast, sheet, functions, 0, traits);
         const node: CalcNode = {
           sheet,
@@ -363,6 +375,7 @@ export function buildGraph(state: WorkbookState): CalcGraph {
           reads: null,
           readsAll: false,
           keptAt: -1,
+          keptIn: 0,
           evalAt: 0,
           doneAt: 0,
           turns: 0,

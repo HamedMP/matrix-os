@@ -8,7 +8,8 @@
  * edit, a move, a sheet or name change, or a bounded run.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Workbook } from "../../../../packages/office/src/api/xlsx.js";
 import { createXlsx, openXlsx, parseA1 } from "../../../../packages/office/src/xlsx/index.js";
 import { needsRecalc } from "../../../../packages/office/src/xlsx/workbook/calc.js";
 import { TRACE_LIMIT } from "../../../../packages/office/src/xlsx/workbook/model.js";
@@ -458,6 +459,55 @@ describe("a run without a clock", () => {
         46349, 46349, 6,
       ]);
     }, 120_000);
+  });
+
+  // Outcome protected: a date formula kept because a random draw sent it to the clock draws again in the next
+  // calculation the caller asks for, and gives its answer once the draw no longer needs the time, while the runs that
+  // take up the same bounded calculation do not draw it again. Fault detected: the kept formula held until an edit or
+  // a time, so its saved date stays frozen however often the caller recalculates.
+  describe("a date formula that reached the clock through a random draw", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    const DRAWS = ["IF(RAND()<0.5,TODAY(),42)", "IF(RANDBETWEEN(1,2)=1,TODAY(),42)", 'IF(RAND()<0.5,TODAY(),IF(TRUE,42,INDIRECT("A1")))'];
+
+    async function drawBook(...formulas: string[]): Promise<Workbook> {
+      const cells = formulas.map((formula, i) => fx(`${String.fromCharCode(66 + i)}1`, formula.replaceAll("<", "&lt;"), 46349)).join("");
+      return openXlsx(await buildXlsx({ sheets: [{ name: "S", rows: `<row r="1">${num("A1", 1)}${cells}</row>` }] }));
+    }
+
+    it.each(DRAWS)(
+      "draws %s again in a new calculation without a time",
+      async (formula) => {
+        const workbook = await drawBook(formula);
+        vi.spyOn(Math, "random").mockReturnValueOnce(0.1).mockReturnValueOnce(0.9);
+        expect(workbook.recalc().complete).toBe(true);
+        expect(valueAt(workbook, "S", "B1")).toBe(46349);
+        expect(workbook.recalc().complete).toBe(true);
+        expect(valueAt(workbook, "S", "B1")).toBe(42);
+      },
+    );
+
+    it.each(DRAWS)(
+      "does not draw %s again in the runs that take up the same bounded calculation",
+      async (formula) => {
+        const workbook = await drawBook(formula, formula);
+        const random = vi.spyOn(Math, "random").mockReturnValue(0.1);
+        expect(workbook.recalc({ maxCells: 1 }).complete).toBe(false);
+        expect(workbook.recalc({ maxCells: 1 }).complete).toBe(true);
+        expect(random).toHaveBeenCalledTimes(2);
+        expect(needsRecalc(stateOf(workbook))).toBe(false);
+        // A new calculation draws both again; the run that takes up its rest draws only the one it did not reach.
+        expect(workbook.recalc({ maxCells: 1 }).complete).toBe(false);
+        expect(workbook.recalc({ maxCells: 1 }).complete).toBe(true);
+        expect(random).toHaveBeenCalledTimes(4);
+        // The run save makes on its own leaves volatile formulas alone.
+        await workbook.save();
+        expect(random).toHaveBeenCalledTimes(4);
+        expect([valueAt(workbook, "S", "B1"), valueAt(workbook, "S", "C1")]).toEqual([46349, 46349]);
+      },
+    );
   });
 
   it("shows an error for a date formula that was never calculated", () => {

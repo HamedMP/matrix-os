@@ -16,6 +16,11 @@ import type { FunctionRegistry, RegisteredFunction } from "../../api/formula.js"
 /** Functions that need the time of the run. */
 const CLOCK_FUNCTIONS = ["NOW", "TODAY"] as const;
 
+/** True for a function that needs the time of the run. */
+export function needsTime(name: string): boolean {
+  return (CLOCK_FUNCTIONS as readonly string[]).includes(name.toUpperCase());
+}
+
 class NoClock extends Error {}
 
 /** Thrown by the functions that need the time in a run without one. */

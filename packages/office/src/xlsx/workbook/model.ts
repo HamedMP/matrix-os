@@ -184,6 +184,12 @@ export interface CalcState {
    * up the same bounded calculation do not calculate it again (`calc-run.ts`).
    */
   edits: number;
+  /**
+   * Counts the calculations started afresh; a run that takes up what a bounded one left belongs to the same
+   * calculation. A formula a run without a time keeps notes it, so a new calculation the caller asks for draws
+   * its random numbers again while the runs that take up the same one do not (`calc-run.ts`).
+   */
+  calcs: number;
   /** Everything must be calculated again (rows or columns moved, a sheet was removed). */
   all: boolean;
   /**

@@ -74,6 +74,7 @@ export function recalc(state: WorkbookState, options: RecalcOptions | undefined,
   if (calc.all) calc.pending.clear();
   // A run that takes up what a bounded one left does not start the volatile formulas over.
   const resumed = !isEmpty(calc.pending);
+  if (!resumed) calc.calcs++;
   const all = calc.all || editedCount > TRACE_LIMIT;
   const run = new Run(state, graph, order, options?.now ?? calc.lastNow, maxCells, explicit && !resumed, all);
   let complete = run.run();
