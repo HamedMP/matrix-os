@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type BigIntStats } from "node:fs";
 import { link, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { appFileVersion } from "@matrix-os/contracts/app-files";
@@ -42,6 +42,13 @@ async function resolvePath(resolver: () => Promise<string>): Promise<string> {
     if (error instanceof AppFileError) throw new OfficeDocumentError(error.code, error.reason ?? error.code);
     throw error;
   }
+}
+
+/** True when `after` is still the exact file `before` described: same inode, size, content and metadata times. */
+function sameFile(before: BigIntStats, after: BigIntStats | null): boolean {
+  return after !== null && after.isFile()
+    && after.dev === before.dev && after.ino === before.ino && after.size === before.size
+    && after.mtimeNs === before.mtimeNs && after.ctimeNs === before.ctimeNs;
 }
 
 async function removeTemp(path: string): Promise<void> {
@@ -125,7 +132,9 @@ export class OfficeFileStore {
    * edit was computed from; `null` means the file must not exist yet. The
    * compare, the temp write and the publish run inside the owner file
    * mutation guard, so a newer save is never overwritten, and inside the
-   * project write fence, like every owner file route.
+   * project write fence, like every owner file route. A replace re-checks the
+   * target just before the rename, so a copy another process saved during the
+   * temp write is a conflict rather than overwritten.
    */
   async commit(path: string, bytes: Uint8Array, expectedVersion: string | null): Promise<CommittedOfficeFile> {
     if (bytes.byteLength > this.options.maxFileBytes) throw new OfficeDocumentError("too_large", "result too large");
@@ -164,6 +173,14 @@ export class OfficeFileStore {
             throw error;
           }
         } else {
+          // The temp write and sync wait on the disk, and writers outside this
+          // process (the sync daemon) are not serialised with this one, so check
+          // the target again just before publishing and let their newer copy win.
+          // The short window between this check and the rename stays open until
+          // the gateway and the sync service share a write lock (issue #3735).
+          if (!current || !sameFile(current, await lstatOrNull(target, true))) {
+            throw new OfficeDocumentError("version_conflict", "file changed during write");
+          }
           await rename(temp, target);
           published = true;
         }
