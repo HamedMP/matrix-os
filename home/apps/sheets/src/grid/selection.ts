@@ -205,55 +205,79 @@ export function columnTouched(selection: Selection, col: number): boolean {
   return selection.ranges.some((range) => col >= range.start.col && col <= range.end.col);
 }
 
+/** Rows and columns that are off screen: hidden by a filter, or given no size. */
+export interface HiddenLines {
+  isRowHidden(row: number): boolean;
+  isColHidden(col: number): boolean;
+}
+
+const NOTHING_HIDDEN: HiddenLines = { isRowHidden: () => false, isColHidden: () => false };
+
 /**
  * Moves the active cell inside a selection of more than one cell, as Tab and
  * Enter do: `right` and `left` go through each range row by row, `down` and
- * `up` column by column, wrapping to the next range at the end. Cells hidden
- * inside a merged range are skipped. The ranges do not change.
+ * `up` column by column, wrapping to the next range at the end. Cells in
+ * hidden rows or columns, and cells hidden inside a merged range, are
+ * skipped, as one step outside a selection skips them. The active cell stays
+ * where it is when no other selected cell is on screen. The ranges do not
+ * change.
  */
 export function moveWithinSelection(
   selection: Selection,
   direction: "right" | "left" | "down" | "up",
   merges: readonly CellRange[] = [],
+  hidden: HiddenLines = NOTHING_HIDDEN,
 ): Selection {
   const ranges = selection.ranges;
+  if (ranges.length === 0) return selection;
   let index = ranges.findIndex((range) => rangeContains(range, selection.active.row, selection.active.col));
   if (index < 0) index = ranges.length - 1;
   const forward = direction === "right" || direction === "down";
+  const by = forward ? 1 : -1;
+  // `right` and `left` step along a row (the position is the column) and wrap to the next row (the line).
   const byRow = direction === "right" || direction === "left";
-  let { row, col } = selection.active;
+  const lineHidden = byRow ? hidden.isRowHidden : hidden.isColHidden;
+  const posHidden = byRow ? hidden.isColHidden : hidden.isRowHidden;
+  const lines = (range: CellRange): [number, number] => (byRow ? [range.start.row, range.end.row] : [range.start.col, range.end.col]);
+  const positions = (range: CellRange): [number, number] => (byRow ? [range.start.col, range.end.col] : [range.start.row, range.end.row]);
+  // Skips a run of hidden lines or positions; bounded by the range, so a long hidden run costs no guard step.
+  const skip = (from: number, isHidden: (index: number) => boolean, [first, last]: [number, number]): number | null => {
+    let at = from;
+    while (at >= first && at <= last && isHidden(at)) at += by;
+    return at >= first && at <= last ? at : null;
+  };
+  const firstIn = (range: CellRange): [number, number] | null => {
+    const [lineFirst, lineLast] = lines(range);
+    const [posFirst, posLast] = positions(range);
+    const line = skip(forward ? lineFirst : lineLast, lineHidden, [lineFirst, lineLast]);
+    const pos = skip(forward ? posFirst : posLast, posHidden, [posFirst, posLast]);
+    return line === null || pos === null ? null : [line, pos];
+  };
+  const nextIn = (range: CellRange, line: number, pos: number): [number, number] | null => {
+    const span = positions(range);
+    const along = lineHidden(line) ? null : skip(pos + by, posHidden, span);
+    if (along !== null) return [line, along];
+    const nextLine = skip(line + by, lineHidden, lines(range));
+    const first = skip(forward ? span[0] : span[1], posHidden, span);
+    return nextLine === null || first === null ? null : [nextLine, first];
+  };
+  let line = byRow ? selection.active.row : selection.active.col;
+  let pos = byRow ? selection.active.col : selection.active.row;
   const total = ranges.reduce((sum, range) => sum + Math.min(1_000_000, rangeRows(range) * rangeCols(range)), 0);
   for (let guard = 0; guard < Math.min(total, 10_000) + 1; guard++) {
-    const range = ranges[index] as SelRange;
-    if (byRow) {
-      col += forward ? 1 : -1;
-      if (col > range.end.col) {
-        col = range.start.col;
-        row += 1;
-      } else if (col < range.start.col) {
-        col = range.end.col;
-        row -= 1;
-      }
-    } else {
-      row += forward ? 1 : -1;
-      if (row > range.end.row) {
-        row = range.start.row;
-        col += 1;
-      } else if (row < range.start.row) {
-        row = range.end.row;
-        col -= 1;
-      }
-    }
-    if (!rangeContains(range, row, col)) {
+    let next = nextIn(ranges[index] as SelRange, line, pos);
+    for (let tried = 0; next === null && tried < ranges.length; tried++) {
       index = (index + (forward ? 1 : ranges.length - 1)) % ranges.length;
-      const next = ranges[index] as SelRange;
-      row = forward ? next.start.row : next.end.row;
-      col = forward ? next.start.col : next.end.col;
+      next = firstIn(ranges[index] as SelRange);
     }
+    if (next === null) return selection;
+    [line, pos] = next;
+    const row = byRow ? line : pos;
+    const col = byRow ? pos : line;
     const merge = mergeAt(merges, row, col);
     if (merge === null || (merge.start.row === row && merge.start.col === col)) break;
   }
-  return { ...selection, active: { row, col } };
+  return { ...selection, active: byRow ? { row: line, col: pos } : { row: pos, col: line } };
 }
 
 /** Cuts every range to the rows and columns in use, so that work on a whole column stays bounded. Ranges outside are dropped. */

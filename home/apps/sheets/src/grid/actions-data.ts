@@ -25,7 +25,7 @@ import { type FillDirection, type FillSource, fillFromEdge, fillTarget, planFill
 import { MIN_COLUMN_PX, MIN_ROW_PX, pxToColumnWidth, pxToRowHeight } from "./geometry";
 import { activeRange, columnFullySelected, rangeCols, rangeRows, rowFullySelected, selectCell } from "./selection";
 import { type FilterSpec, type SortKey, filterHiddenRows, planSort } from "./sort-filter";
-import { hiddenRows, visibleRuns } from "./visible-rows";
+import { hiddenRows, visibleFillDown, visibleRuns } from "./visible-rows";
 
 /** Most cells one fill, paste or sort writes. */
 export const MAX_ACTION_CELLS = 500_000;
@@ -153,12 +153,12 @@ function applyFill(ctx: GridContext, source: CellRange, target: CellRange, direc
   );
 }
 
-/** Ctrl+D and Ctrl+R: copies the first row down, or the first column to the right, through the selected range. */
+/** Ctrl+D and Ctrl+R: copies the first row down, or the first column to the right, through the selected range. Rows a filter hides are never the source. */
 export function fillSelection(ctx: GridContext, direction: "down" | "right"): void {
   const range = activeRange(ctx.selection);
   const bounded = range.kind === "cells" ? range : ctx.usedRanges([range])[0];
   if (bounded === undefined) return;
-  const plan = fillFromEdge(bounded, direction);
+  const plan = direction === "down" ? visibleFillDown(bounded, hiddenRows(ctx)) : fillFromEdge(bounded, direction);
   if (plan !== null) applyFill(ctx, plan.source, plan.target, direction, false);
 }
 
@@ -225,6 +225,8 @@ export function deleteRows(ctx: GridContext): void {
 export function insertColumns(ctx: GridContext, where: "before" | "after"): void {
   const range = activeRange(ctx.selection);
   if (range.kind === "rows" || range.kind === "all") return;
+  // The filter names its columns by position: a new column would point it at the wrong data.
+  dropFilter(ctx);
   report(ctx, ctx.session.insertColumns(ctx.sheet, where === "before" ? range.start.col : range.end.col + 1, rangeCols(range)));
 }
 
@@ -431,13 +433,16 @@ export function sortRange(ctx: GridContext, range: CellRange, keys: readonly Sor
     return false;
   }
   if (plan.length === 0) return true;
-  return report(
+  const sorted = report(
     ctx,
     session.transact("Sort", (tx) => {
       const write = createCellWriter(tx.workbook, sheet, (row, col) => session.raw(sheet, row, col).styleId);
       for (const entry of plan) write(entry.row, entry.col, entry.cell);
     }),
   );
+  // A sort moves records between rows: the filter hides again the rows that hold what it rejects.
+  if (sorted) refreshFilter(ctx);
+  return sorted;
 }
 
 /** Sorts the data around the active cell by the active cell's column. */

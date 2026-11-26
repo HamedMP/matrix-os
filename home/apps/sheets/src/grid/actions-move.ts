@@ -31,7 +31,7 @@ export function advance(ctx: GridContext, direction: Direction): void {
   const nav = ctx.navContext();
   const selection = ctx.selection;
   if (!isSingleCell(selection, nav.merges)) {
-    const next = moveWithinSelection(selection, direction, nav.merges);
+    const next = moveWithinSelection(selection, direction, nav.merges, nav);
     ctx.select(next, next.active);
     return;
   }

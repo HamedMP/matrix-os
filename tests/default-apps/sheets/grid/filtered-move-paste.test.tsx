@@ -2,7 +2,7 @@
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Workbook } from "../../../../home/apps/_shared/office-engine/index";
-import { type GridHarness, renderGrid } from "./harness";
+import { type GridHarness, editor, press, renderGrid } from "./harness";
 
 afterEach(cleanup);
 
@@ -68,6 +68,113 @@ describe("actions on a filtered range leave hidden rows alone", () => {
       h.controller.paste({ text: "10\n30", html: "" });
     });
     expect([value(h, 1, 1), value(h, 2, 1), value(h, 3, 1), value(h, 4, 1)]).toEqual([10, 2, 30, 4]);
+    h.unmount();
+  });
+});
+
+// Outcome: Enter and Tab inside a selected range stop only on rows the filter shows, so typing lands on
+// the next visible record. Fault: the active cell moves onto a hidden row and typing changes it unseen.
+describe("moving through a selected range on a filtered sheet", () => {
+  it("skips hidden rows with Enter and Shift+Enter, and typing lands on the visible record", async () => {
+    const h = await filteredEast();
+    act(() => h.controller.select({ start: { row: 1, col: 1 }, end: { row: 3, col: 1 } }));
+    press(h.grid, "Enter");
+    expect(h.controller.getSelection().active).toEqual({ row: 3, col: 1 });
+    press(h.grid, "Enter", { shiftKey: true });
+    expect(h.controller.getSelection().active).toEqual({ row: 1, col: 1 });
+    press(h.grid, "Enter", { shiftKey: true });
+    expect(h.controller.getSelection().active).toEqual({ row: 3, col: 1 });
+    act(() => h.controller.startEdit("30"));
+    press(editor(h.container)!, "Enter");
+    expect([value(h, 2, 1), value(h, 3, 1)]).toEqual([2, 30]);
+    expect(h.controller.getSelection().active).toEqual({ row: 1, col: 1 });
+    h.unmount();
+  });
+
+  it("skips hidden rows with Tab and Shift+Tab", async () => {
+    const h = await filteredEast();
+    act(() => h.controller.select({ start: { row: 1, col: 0 }, end: { row: 3, col: 1 } }));
+    const visits: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      press(h.grid, "Tab");
+      const { row, col } = h.controller.getSelection().active;
+      visits.push(`${row},${col}`);
+    }
+    expect(visits).toEqual(["1,1", "3,0", "3,1", "1,0"]);
+    press(h.grid, "Tab", { shiftKey: true });
+    expect(h.controller.getSelection().active).toEqual({ row: 3, col: 1 });
+    h.unmount();
+  });
+});
+
+// Outcome: after a sort the filter still shows exactly the records it matches. Fault: the hidden row
+// numbers stay where they were, so a rejected record shows and a matching one disappears.
+describe("sorting a filtered range", () => {
+  async function filteredUnsorted(): Promise<GridHarness> {
+    const h = await renderGrid((workbook: Workbook, sheet: string) => {
+      workbook.setRange(sheet, { row: 0, col: 0 }, [["Region", "Amount"], ["East", 3], ["West", 1], ["East", 2]]);
+    });
+    act(() => h.controller.filter({ range: { start: { row: 0, col: 0 }, end: { row: 3, col: 1 } }, criteria: [{ col: 0, values: ["East"] }] }));
+    return h;
+  }
+  const regionsShown = (h: GridHarness) => {
+    const hidden = new Set(h.controller.context.view.filter?.hidden ?? []);
+    return [1, 2, 3].filter((row) => !hidden.has(row)).map((row) => value(h, row, 0));
+  };
+
+  it("hides the rows the filter rejects after Sort, Undo and Redo", async () => {
+    const h = await filteredUnsorted();
+    expect(regionsShown(h)).toEqual(["East", "East"]);
+    act(() => {
+      h.controller.sortRange({ start: { row: 0, col: 0 }, end: { row: 3, col: 1 } }, [{ col: 1 }], true);
+    });
+    expect([value(h, 1, 1), value(h, 2, 1), value(h, 3, 1)]).toEqual([1, 2, 3]);
+    expect(h.controller.isFiltered).toBe(true);
+    expect(regionsShown(h)).toEqual(["East", "East"]);
+    act(() => {
+      h.controller.undo();
+    });
+    expect(regionsShown(h)).toEqual(["East", "East"]);
+    act(() => {
+      h.controller.redo();
+    });
+    expect(regionsShown(h)).toEqual(["East", "East"]);
+    h.unmount();
+  });
+
+  it("hides the rows the filter rejects after sorting by the active column", async () => {
+    const h = await filteredUnsorted();
+    act(() => h.controller.select({ start: { row: 0, col: 0 }, end: { row: 3, col: 1 } }));
+    act(() => h.controller.sort(true));
+    expect(value(h, 1, 0)).toBe("West");
+    expect(regionsShown(h)).toEqual(["East", "East"]);
+    h.unmount();
+  });
+
+  it("drops the filter when columns are inserted, as it does for the other changes that move its columns", async () => {
+    const h = await filteredUnsorted();
+    act(() => h.controller.select({ row: 0, col: 0 }));
+    act(() => h.controller.insertColumns("before"));
+    expect(h.controller.isFiltered).toBe(false);
+    h.unmount();
+  });
+});
+
+// Outcome: Ctrl+D never copies a record the filter hides. Fault: a hidden row is the copy source.
+describe("fill down on a filtered sheet", () => {
+  it("copies a single cell from the nearest visible row above it", async () => {
+    const h = await filteredEast();
+    act(() => h.controller.select({ row: 3, col: 1 }));
+    act(() => h.controller.fill("down"));
+    expect([value(h, 2, 1), value(h, 3, 1)]).toEqual([2, 1]);
+    h.unmount();
+  });
+
+  it("starts the copy at the first visible row of the selection", async () => {
+    const h = await filteredEast();
+    act(() => h.controller.select({ start: { row: 2, col: 1 }, end: { row: 4, col: 1 } }));
+    act(() => h.controller.fill("down"));
+    expect([value(h, 2, 1), value(h, 3, 1), value(h, 4, 1)]).toEqual([2, 1, 4]);
     h.unmount();
   });
 });

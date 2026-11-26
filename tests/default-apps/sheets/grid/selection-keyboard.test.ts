@@ -98,6 +98,39 @@ describe("selection model", () => {
     expect(visit("left", 2)).toEqual(["1,1", "1,0"]);
     expect(selection.ranges).toHaveLength(2);
   });
+
+  // Outcome: Tab and Enter inside a range stop only on cells that are on screen. Fault: the active cell
+  // lands in a hidden row or column, where typing changes a cell the owner cannot see.
+  it("skips hidden rows and columns when walking through the selected cells", () => {
+    const hidden = { isRowHidden: (row: number) => row === 1, isColHidden: (col: number) => col === 1 };
+    let selection = { ...extendTo(selectCell(cell(0, 0)), cell(2, 2)), active: cell(0, 0) };
+    const visit = (direction: "right" | "left" | "down" | "up", times: number) => {
+      const seen: string[] = [];
+      for (let i = 0; i < times; i++) {
+        selection = moveWithinSelection(selection, direction, [], hidden);
+        seen.push(`${selection.active.row},${selection.active.col}`);
+      }
+      return seen;
+    };
+    expect(visit("right", 4)).toEqual(["0,2", "2,0", "2,2", "0,0"]);
+    expect(visit("down", 4)).toEqual(["2,0", "0,2", "2,2", "0,0"]);
+    expect(visit("left", 2)).toEqual(["2,2", "2,0"]);
+    expect(visit("up", 2)).toEqual(["0,0", "2,2"]);
+  });
+
+  it("skips a long run of hidden rows in a whole-column selection without stopping on one", () => {
+    const hidden = { isRowHidden: (row: number) => row > 0 && row < 500_000, isColHidden: () => false };
+    const selection = { ...selectColumns(null, 0), active: cell(0, 0) };
+    expect(moveWithinSelection(selection, "down", [], hidden).active).toEqual(cell(500_000, 0));
+    expect(moveWithinSelection(selection, "up", [], hidden).active).toEqual(cell(MAX_ROWS - 1, 0));
+  });
+
+  it("stays put when every other selected cell is hidden", () => {
+    const hidden = { isRowHidden: (row: number) => row !== 0, isColHidden: (col: number) => col !== 0 };
+    const selection = { ...extendTo(selectCell(cell(0, 0)), cell(3, 3)), active: cell(0, 0) };
+    expect(moveWithinSelection(selection, "right", [], hidden).active).toEqual(cell(0, 0));
+    expect(moveWithinSelection(selection, "down", [], hidden).active).toEqual(cell(0, 0));
+  });
 });
 
 function context(rows: string[], overrides: Partial<NavContext> = {}): NavContext {

@@ -8,6 +8,7 @@
 
 import { MAX_ROWS, type CellRange, type SheetId } from "../session/engine";
 import type { GridContext } from "./context";
+import { fillFromEdge } from "./fill";
 
 /** The rows the active filter hides, or null when nothing is hidden. */
 export function hiddenRows(ctx: GridContext): ReadonlySet<number> | null {
@@ -54,4 +55,23 @@ export function visibleRuns(range: CellRange, hidden: ReadonlySet<number> | null
     }
   }
   return runs;
+}
+
+/**
+ * The rows Ctrl+D works on when a filter hides some: from the first to the
+ * last visible row of the range, and for one row, the visible row above it
+ * as the source. Null when no row of the range is visible or none above it.
+ */
+export function visibleFillDown(range: CellRange, hidden: ReadonlySet<number> | null): { source: CellRange; target: CellRange } | null {
+  if (hidden === null) return fillFromEdge(range, "down");
+  let first = range.start.row;
+  while (first <= range.end.row && hidden.has(first)) first++;
+  let last = range.end.row;
+  while (last >= first && hidden.has(last)) last--;
+  if (first > last) return null;
+  const rows = (start: number, end: number): CellRange => ({ start: { row: start, col: range.start.col }, end: { row: end, col: range.end.col } });
+  if (last > first) return { source: rows(first, first), target: rows(first + 1, last) };
+  let above = first - 1;
+  while (above >= 0 && hidden.has(above)) above--;
+  return above < 0 ? null : { source: rows(above, above), target: rows(first, first) };
 }
