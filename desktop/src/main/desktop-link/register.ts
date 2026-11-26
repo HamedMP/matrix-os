@@ -7,6 +7,7 @@ import { pairingDeviceNoun, type PairedLinkIdentity } from "../desktop-pairing";
 import type { MacActivityHandle } from "../mac-activity/activity";
 import type { LocalTerminalHost } from "../local-terminals/host";
 import { renderVisible, type DesktopLinkConsentRequest } from "./consent";
+import { registerDesktopLinkIpc } from "./ipc";
 import { createDesktopLinkPreferenceStore } from "./preferences";
 import { createDesktopLinkService, type DesktopLinkService, type DesktopLinkSocket } from "./service";
 
@@ -36,6 +37,12 @@ export interface DesktopLinkMainOptions {
   powerMonitor: PowerMonitorLike;
   /** Registers the quit hook: every link says goodbye and closes as the app quits. */
   quitting(listener: () => void): void;
+  /** The Terminal window's controls: status, switch on and off. */
+  ipc?: {
+    ipcMain: Parameters<typeof registerDesktopLinkIpc>[0];
+    authorizeSender: Parameters<typeof registerDesktopLinkIpc>[2];
+    emit: Parameters<typeof registerDesktopLinkIpc>[3];
+  };
   /** What the computer shows for this device; the macOS computer name when available. */
   deviceName?: string;
 }
@@ -115,6 +122,9 @@ export function startDesktopLink(options: DesktopLinkMainOptions): DesktopLinkSe
   });
   options.quitting(() => service.dispose());
   if (options.activity) bridgeDesktopLinkActivity(service, options.activity);
+  if (options.ipc) {
+    registerDesktopLinkIpc(options.ipc.ipcMain, service, options.ipc.authorizeSender, options.ipc.emit, () => options.pairing.open());
+  }
   const wake = () => service.wake();
   options.powerMonitor.on("resume", wake);
   options.powerMonitor.on("unlock-screen", wake);

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminals";
+import { desktopLinkWorkspaceId } from "@matrix-os/contracts/desktop-link";
 import { closeComputerTab, createComputerTab, listComputerTabs } from "../../desktop/src/renderer/src/features/terminal-window/computer-terminals";
 
 const WORKSPACE_ID = `tws_${"a".repeat(32)}`;
@@ -109,5 +110,65 @@ describe("Terminal window computer section", () => {
     expect(refKey).toBe(`${WORKSPACE_ID}:${created}`);
     expect(client.post).toHaveBeenCalledWith(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs`, { name: "Terminal", cwd: "" });
     expect(client.post.mock.calls.some(([path]) => String(path).includes(HERDR_TERMINAL_WORKSPACE_ID))).toBe(false);
+  });
+});
+
+describe("Terminal window: a computer's linked desktop (spec 2716)", () => {
+  const MAC = "a5".repeat(32);
+  const MACHINE = "4ab40e59-2f6e-4715-8d58-61b010b1cb14";
+  const DESKTOP_TAB = `tt_${"e".repeat(32)}`;
+  function client() {
+    return {
+      get: vi.fn(async () => ({ workspaces: [] })),
+      getText: vi.fn(async (path: string) => {
+        if (path === "/api/desktop-link/machines") return JSON.stringify({ machineId: MACHINE, machines: [{
+          deviceId: MAC, name: "Studio Mac", revision: 1, state: "online", lastSeenAt: null,
+        }] });
+        if (path === `/api/desktop-link/machines/${MAC}/terminals`) return JSON.stringify({ workspaceId: desktopLinkWorkspaceId(MAC), sessions: [{ id: "t1", tabId: DESKTOP_TAB, title: "zsh", status: null }] });
+        throw new Error("http 404");
+      }),
+    };
+  }
+
+  // Fault detected (review): the Electron Terminal window never showed a linked desktop's
+  // terminals, only the main window's Terminal did.
+  it("lists the desktop's terminals as their own group, opened by the desktop's ref", async () => {
+    const tabs = await listComputerTabs(client() as never);
+    expect(tabs).toEqual([{ refKey: `${desktopLinkWorkspaceId(MAC)}:${DESKTOP_TAB}`, name: "zsh", group: "Desktop · Studio Mac", ended: false }]);
+  });
+
+  it("leaves this device out of its own list", async () => {
+    expect(await listComputerTabs(client() as never, [MAC])).toEqual([]);
+  });
+});
+
+// Fault detected (Greptile on #3748): Close and Split on a linked desktop's pane used the
+// Matrix workspace routes, so Close left the desktop's program running and showed an error.
+describe("Terminal window linked desktop panes", () => {
+  const DEVICE = "e".repeat(64);
+  const DESKTOP_TAB = `tt_${"f".repeat(32)}`;
+  const desktopApi = () => ({
+    getText: vi.fn(async (path: string) => {
+      if (path === "/api/desktop-link/machines") {
+        return JSON.stringify({ machineId: "11111111-2222-4333-8444-555555555555", machines: [{ deviceId: DEVICE, name: "Laptop", revision: 1, state: "online", lastSeenAt: null }] });
+      }
+      return JSON.stringify({ deviceId: DEVICE, workspaceId: desktopLinkWorkspaceId(DEVICE), sessions: [{ id: "t9", tabId: DESKTOP_TAB, title: "claude", status: null }] });
+    }),
+    delete: vi.fn(async () => ({})),
+    post: vi.fn(async (path: string) => (path.endsWith("/ensure") ? { workspace: { id: WORKSPACE_ID } } : { tab: { id: TAB_ID, name: "Terminal" } })),
+  });
+
+  it("ends a desktop pane on the desktop, through its own route", async () => {
+    const client = desktopApi();
+    await closeComputerTab(client as never, { workspaceId: desktopLinkWorkspaceId(DEVICE), tabId: DESKTOP_TAB });
+    expect(client.delete).toHaveBeenCalledTimes(1);
+    expect(client.delete.mock.calls[0]![0]).toBe(`/api/desktop-link/machines/${DEVICE}/terminals/t9`);
+  });
+
+  it("opens a split beside a desktop pane in the computer's main workspace", async () => {
+    const client = desktopApi();
+    const refKey = await createComputerTab(client as never, "Terminal", { workspaceId: desktopLinkWorkspaceId(DEVICE), cwd: "~" });
+    expect(refKey).toBe(`${WORKSPACE_ID}:${TAB_ID}`);
+    expect(client.post.mock.calls.map((call) => call[0])).toEqual(["/api/terminal/workspaces/ensure", `/api/terminal/workspaces/${WORKSPACE_ID}/tabs`]);
   });
 });

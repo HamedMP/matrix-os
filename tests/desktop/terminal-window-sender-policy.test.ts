@@ -46,6 +46,8 @@ describe("IPC sender policy", () => {
       "local-terminal:ssh-login", "local-terminal:tailscale-peers", "local-terminal:machine-login",
       "local-terminal:machine-install", "local-terminal:machine-update",
       "local-terminal:read", "local-terminal:rename", "local-terminal:resize", "local-terminal:seen", "local-terminal:watch",
+      // Which computers may use this device (spec 2716).
+      "desktop-link:status", "desktop-link:enable", "desktop-link:pair", "desktop-link:disable", "desktop-link:this-device",
     ].sort();
     const { terminal, authorize, from } = setup();
     expect(allChannels.filter((channel) => authorize(from(terminal), channel)).sort()).toEqual(expected);
@@ -70,7 +72,7 @@ describe("IPC sender policy", () => {
 
   it("lets the Terminal window listen to exactly these events", () => {
     expect([...TERMINAL_WINDOW_EVENT_CHANNELS].sort()).toEqual(
-      ["auth:changed", "local-terminal:facts", "shortcuts:changed", "terminal-window:command", "window:focus-changed"],
+      ["auth:changed", "desktop-link:changed", "local-terminal:facts", "shortcuts:changed", "terminal-window:command", "window:focus-changed"],
     );
     for (const channel of TERMINAL_WINDOW_EVENT_CHANNELS) expect(Object.keys(EVENT_CHANNELS), channel).toContain(channel);
   });

@@ -791,7 +791,7 @@ if (!gotLock) {
       }, { ...streams.sink, facts: (terminals) => sendTerminalWindowEvent("local-terminal:facts", { terminals }) });
       streams.bind(localTerminalHost);
       localTerminals = localTerminalHost;
-      desktopLink = startDesktopLink({ userData, home: homedir(), appVersion: app.getVersion(), localTerminals: localTerminalHost, pairing: desktopPairing, showDialog: (request) => showMacActivityDialog(mainWindow, request), ...(macActivity ? { activity: (kind) => macActivity.begin(kind) } : {}), computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, quitting: (listener) => app.once("before-quit", listener) });
+      desktopLink = startDesktopLink({ userData, home: homedir(), appVersion: app.getVersion(), localTerminals: localTerminalHost, pairing: desktopPairing, showDialog: (request) => showMacActivityDialog(mainWindow, request), ...(macActivity ? { activity: (kind) => macActivity.begin(kind) } : {}), computerToken: (slot) => terminalCredentials.token(slot), powerMonitor, quitting: (listener) => app.once("before-quit", listener), ipc: { ipcMain, authorizeSender, emit: (channel, payload) => sendTerminalWindowEvent(channel, payload as never) } });
       { const restored = auth.getStatus(); desktopLink.seedAccount(restored.signedIn ? { signedIn: true, userId: restored.userId, handle: restored.handle } : { signedIn: false }); }
       registerLocalTerminalIpc(ipcMain, localTerminalHost, authorizeSender, streams);
       const macTerminalChecks = registerChatMacTerminal(ipcMain, {
@@ -1021,7 +1021,7 @@ if (!gotLock) {
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
       });
       terminalMenu = installAppMenu({
-        sendTerminalCommand: (command) => sendTerminalWindowEvent("terminal-window:command", command),
+        sendTerminalCommand: (command) => sendTerminalWindowEvent("terminal-window:command", command), stopDesktopLink: () => void desktopLink?.disableAll(),
         mainWindow: () => mainWindow,
         terminalWindow: () => terminalWindowController.current(),
         thirdPartyNoticesPath: localRuntime.noticesPath, shortcuts: shortcuts.service,

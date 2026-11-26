@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
-import { DesktopLinkRevisionSchema } from "@matrix-os/contracts/desktop-link";
+import { DesktopLinkDeviceIdSchema, DesktopLinkRevisionSchema } from "@matrix-os/contracts/desktop-link";
 
 const MAX_COMPUTERS = 20;
 const MAX_FILE_BYTES = 64 * 1024;
@@ -15,6 +15,8 @@ const ComputerSchema = z.strictObject({
   computerName: z.string().min(1).max(64),
   machineId: z.uuid(),
   revision: DesktopLinkRevisionSchema,
+  /** This device's device id there, so its own views can leave it out of the computer's desktop list. */
+  deviceId: DesktopLinkDeviceIdSchema.optional(),
 });
 const PreferencesSchema = z.strictObject({
   computers: z.record(z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/), ComputerSchema)
