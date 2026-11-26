@@ -180,15 +180,18 @@ export function buildPane(ctx: GridContext, layout: GridLayout, pane: PaneSpec, 
   const byRow = new Map<number, RowItem>();
   const window: CellRange = { start: { row: pane.rows.start, col: pane.cols.start }, end: { row: pane.rows.end, col: pane.cols.end } };
   const merges = info.mergedRanges.filter((merge) => rangesIntersect(merge, window));
+  // Hidden rows and columns are stepped over: a filter may hide thousands between two shown rows.
+  const shownRows = shownIndexes(rows, pane.rows);
+  const shownCols = shownIndexes(cols, pane.cols);
+  // The cells merges cover, among those on screen only: a merge may span a huge run of hidden rows and columns.
   const covered = new Set<number>();
-  const coverKey = (row: number, col: number): number => (row - window.start.row) * (window.end.col - window.start.col + 1) + (col - window.start.col);
+  const coverKey = (row: number, col: number): number => row * cols.count + col;
   for (const merge of merges) {
-    for (let row = Math.max(merge.start.row, window.start.row); row <= Math.min(merge.end.row, window.end.row); row++) {
-      for (let col = Math.max(merge.start.col, window.start.col); col <= Math.min(merge.end.col, window.end.col); col++) covered.add(coverKey(row, col));
-    }
+    const mergeRows = shownRows.filter((row) => row >= merge.start.row && row <= merge.end.row);
+    const mergeCols = shownCols.filter((col) => col >= merge.start.col && col <= merge.end.col);
+    for (const row of mergeRows) for (const col of mergeCols) covered.add(coverKey(row, col));
   }
-  const isCovered = (row: number, col: number): boolean =>
-    row >= window.start.row && row <= window.end.row && col >= window.start.col && col <= window.end.col && covered.has(coverKey(row, col));
+  const isCovered = (row: number, col: number): boolean => col < cols.count && covered.has(coverKey(row, col));
 
   const rowItem = (row: number): RowItem => {
     let item = byRow.get(row);
@@ -267,9 +270,7 @@ export function buildPane(ctx: GridContext, layout: GridLayout, pane: PaneSpec, 
   const lookBehindLimit = pane.id === "main" || pane.id === "top" ? Math.max(layout.viewport.frozenCols.end + 1, firstCol - OVERFLOW_LOOKBEHIND) : firstCol;
   const horizontal: number[] = [];
   const used = info.dimensions;
-  // Hidden rows and columns are stepped over: a filter may hide thousands between two shown rows.
-  const shownCols = shownIndexes(cols, pane.cols);
-  for (const row of shownIndexes(rows, pane.rows)) {
+  for (const row of shownRows) {
     const size = rows.sizeOf(row);
     horizontal.push(rows.offsetOf(row) - pane.offsetY + size - 1);
     const inUsedRows = used !== null && row >= used.start.row && row <= used.end.row;
