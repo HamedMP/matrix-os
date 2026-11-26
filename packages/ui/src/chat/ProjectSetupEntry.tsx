@@ -5,14 +5,12 @@ import { ProjectSetupProgress } from "./ProjectSetupProgress.js";
 
 export function ProjectSetupEntry({ onStart, pending = false }: { onStart: () => void; pending?: boolean }) {
   const [collapsed, setCollapsed] = useState(false);
-  if (collapsed)
-    return (
-      <div className="my-3">
-        <Action variant="primary" disabled={pending} onClick={onStart}>
-          Set up with Chat
-        </Action>
-      </div>
-    );
+  const startButton = (
+    <Action variant="primary" disabled={pending} onClick={onStart}>
+      Set up with Chat
+    </Action>
+  );
+  if (collapsed) return <div className="my-3">{startButton}</div>;
   return (
     <div
       className="my-3 min-w-0 space-y-5 rounded-xl border p-4 sm:p-5"
@@ -25,9 +23,7 @@ export function ProjectSetupEntry({ onStart, pending = false }: { onStart: () =>
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Action variant="primary" disabled={pending} onClick={onStart}>
-          Set up with Chat
-        </Action>
+        {startButton}
         <Action variant="ghost" disabled={pending} onClick={() => setCollapsed(true)}>
           Skip for now
         </Action>
