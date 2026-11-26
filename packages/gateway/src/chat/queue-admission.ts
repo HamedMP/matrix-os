@@ -97,7 +97,8 @@ export async function enqueueCanonicalQueuedTurn(options: {
       409,
     );
   }
-  const prepared = await options.agentContext?.prepare(options.owner, options.chatId, input);
+  const ownerInput = admittedOwnerHttpInput(options.principal, options.owner, options.provenance);
+  const prepared = await options.agentContext?.prepare(options.owner, options.chatId, input, ownerInput);
   const effective = { ...input, ...prepared };
   const catalog = await options.catalog.getCatalog(options.principal, effective.selection);
   const requirements = chatProviderRequirements({ ...effective, parts: prepared ? input.parts.filter((part) =>
@@ -169,7 +170,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
   }
   const context = routineCreationContext(input, prepared?.context);
   const enqueued = await options.repository.enqueueQueuedTurn(options.owner, {
-    ...admittedOwnerHttpInput(options.principal, options.owner, options.provenance),
+    ...ownerInput,
     chatId: options.chatId,
     baseRevision: input.baseRevision,
     queuedTurnId: `qturn_${randomUUID().replaceAll("-", "")}`,

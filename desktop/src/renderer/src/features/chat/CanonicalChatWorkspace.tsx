@@ -3,8 +3,10 @@ import { SourceChatRoutines } from "./SourceChatRoutines";
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
 import { useChatSubmissionError } from "./use-chat-submission-error";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
-import { canonicalChatExecutionControls } from "@matrix-os/contracts";
+import { BOT_CONNECTION_REQUEST_ACTIVITY_ID, BOT_SETTINGS_PROPOSAL_ACTIVITY_ID, canonicalChatExecutionControls } from "@matrix-os/contracts";
 import { chatAttachmentComposerPolicy } from "@matrix-os/ui";
+import { useIntegrations } from "../integrations/integrations-store";
+import { openAgentResourceSettings } from "../settings/open-provider-settings";
 import { openChatProviderSettings } from "./open-chat-provider-settings";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { projectContext } from "./canonical-project-context";
@@ -92,6 +94,12 @@ import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
+
+function subscribeToAgentConnectionChanges(refresh: () => void): () => void {
+  return useIntegrations.subscribe((current, previous) => {
+    if (current.connections !== previous.connections) refresh();
+  });
+}
 
 export function CanonicalChatWorkspace(props: ComponentProps<typeof CanonicalChatWorkspaceContent>) {
   return <BrowserPermissionReviewProvider><CanonicalChatWorkspaceContent {...props}/></BrowserPermissionReviewProvider>;
@@ -307,7 +315,7 @@ function CanonicalChatWorkspaceContent({
   const [submissionError, setSubmissionError] = useChatSubmissionError(draftScope, draftRevision, attachments.items.map(item => item.localId));
   const selection = botIdentityUnknown ? null : directBotId ? botPresentation ? { ...botPresentation.selection, options: botPresentation.selection.options ?? [], interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.permissionMode } : null : providerSelection;
   const botRouteAvailable = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : canonicalComposerSelectionIsAvailable(providerCatalog, selection));
-  const permissionResources = directBotId ? botExecution.consentResources : mentionResources;
+  const permissionResources = directBotId ? [...mentionResources, ...botExecution.consentResources] : mentionResources;
   const mentionPermission = useChatMentionPermission(routedComposerChatId ?? `new:${projectId ?? "global"}`, permissionResources,
     selection?.permissionMode ?? "supervised", draftRequestIdentity);
   const selectionAvailable = botRouteAvailable && (!botPresentation?.requiresFullAccess || mentionPermission.confirmed);
@@ -1011,7 +1019,9 @@ function CanonicalChatWorkspaceContent({
         {controller.detail && globalView === "conversation" ? (
           <>
             {!directBotId ? chatSharingAction : null}
-            <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id} visible={live && !inspectorExclusive}
+            <BotChatPanel onOpenResourceSettings={openAgentResourceSettings} subscribeToConnectionChanges={subscribeToAgentConnectionChanges}
+              connectionRunId={controller.detail.activities.findLast(item => item.type === "agent.activity" && item.activityId === BOT_CONNECTION_REQUEST_ACTIVITY_ID && item.status === "completed")?.runId}
+              settingsRunId={controller.detail.activities.findLast(item => item.type === "agent.activity" && item.activityId === BOT_SETTINGS_PROPOSAL_ACTIVITY_ID && item.status === "completed")?.runId} key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id} visible={live && !inspectorExclusive}
               client={client.agents} directBotId={directBotId} detailsContainer={frameDetailsContainer ?? botDetailsContainer} headerContainer={botHeaderContainer}
               headerActions={chatSharingAction}
               onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={botEventRevision}>

@@ -1,4 +1,4 @@
-import {hasCompanyDriveMaterial} from "../chat/drive-sharing-guard.js";
+import {hasAudienceRestrictedChatMaterial} from "../chat/drive-sharing-guard.js";
 import type { Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { toOutbox, type ChatOutboxEvent } from "../chat/records.js";
@@ -133,7 +133,7 @@ export async function reconcileProjectMembershipAtPublication(
       if (chat && (chat.owner_type !== input.ownerType || chat.owner_id !== input.ownerId)) {
         throw new ProjectMembershipTransitionError("conflict");
       }
-      if (await hasCompanyDriveMaterial(trx, child.resource_id)) throw new ProjectMembershipTransitionError("conflict");
+      if (await hasAudienceRestrictedChatMaterial(trx, child.resource_id)) throw new ProjectMembershipTransitionError("conflict");
     }
 
     const members = await trx.selectFrom("collaboration_members")

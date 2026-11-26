@@ -65,7 +65,8 @@ export async function assertPrivateRoutineRequest(executor: Executor, owner: Cha
 /** Managed Pi stores its transcript by owner and Chat; a setup Chat may resume only its own seed/session.
  * Called under the Chat row lock for direct and queued admissions before any content is written. */
 export async function assertPrivateChatAdmission(executor: Executor, owner: ChatOwner, chatId: string,
-  requestId: string, setup?: BotCreationSnapshot): Promise<void> {
+  requestId: string, setup?: BotCreationSnapshot, selectedChats = false): Promise<void> {
+  if (selectedChats && !await privateBotSourceChat(executor, owner, chatId)) throw new ChatConflictError(chatId, 0);
   await assertPrivateRoutineRequest(executor, owner, chatId, requestId);
   const history = executor.selectFrom("chat_runs").select("id").where("chat_id", "=", chatId);
   const incompatible = setup
@@ -94,9 +95,11 @@ export async function assertPrivateRoutineTurn(executor: Executor, owner: ChatOw
 /** Use the persisted turn, including retries whose run request ID changes. */
 export async function assertPrivateRoutineRun(executor: Executor, owner: ChatOwner, chatId: string, runId: string): Promise<void> {
   const run = await executor.selectFrom("chat_runs")
-    .select(["turn_id", sql<boolean>`context_snapshot->'botCreation' IS NOT NULL`.as("drafting")])
+    .select(["turn_id", sql<boolean>`context_snapshot ? 'botCreation'`.as("privateContext"),
+      sql<boolean>`context_snapshot ? 'botChatSources'`.as("selectedSource")])
     .where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirst();
-  if (run?.drafting && await hasNonPrivateChatScope(executor, owner, chatId)) throw new ChatConflictError(chatId, 0);
+  if (run?.selectedSource && !await privateBotSourceChat(executor, owner, chatId)) throw new ChatConflictError(chatId, 0);
+  if (run?.privateContext && await hasNonPrivateChatScope(executor, owner, chatId)) throw new ChatConflictError(chatId, 0);
   if (run) await assertPrivateRoutineTurn(executor, owner, chatId, run.turn_id);
 }
 

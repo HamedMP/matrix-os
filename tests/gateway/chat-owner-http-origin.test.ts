@@ -12,6 +12,14 @@ import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/p
 import { SlackPersonalService } from "../../packages/gateway/src/slack/personal-service.js";
 import { bootstrapSlackPersonalDatabase, SlackPersonalRepository, type SlackPersonalDatabase } from "../../packages/gateway/src/slack/personal-database.js";
 import type { RequestPrincipal } from "../../packages/gateway/src/request-principal.js";
+import { ChatAgentContext } from "../../packages/gateway/src/chat/agent-context.js";
+import { createBotSelectedChatReader } from "../../packages/gateway/src/chat/bot-selected-chat.js";
+import { bootstrapChatSharing } from "../../packages/gateway/src/chat/sharing.js";
+import { bootstrapBotDatabase, type OwnerBotDatabase } from "../../packages/gateway/src/bots/database.js";
+import { createBotBindingsRepository } from "../../packages/gateway/src/bots/repositories/bindings.js";
+import { withBotProviderInstance } from "../../packages/gateway/src/bots/provider-instance.js";
+import { MATRIX_BOT_SELECTION } from "../../packages/gateway/src/bots/selection.js";
+import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { ownerHttpInputProvenance } from "../../packages/gateway/src/chat/owner-http-input.js";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat.js";
 
@@ -90,6 +98,39 @@ describe("durable authenticated owner HTTP Chat input", () => {
   it.each(["dev-default", "configured-container"] as const)("allows ordinary %s Chat without granting rule authority even with a forged header", async source => {
     expect((await post(body("req_fallback"), "turns", { ...principal, source })).status).toBe(202);
     expect(await origin("chat_turns", "req_fallback")).toBe(false);
+  });
+  it("carries the owner's selected Chat from authenticated create and queue routes only", async () => {
+    await bootstrapCollaborationDatabase(repository.kysely as Kysely<OwnerCollaborationDatabase>);
+    await bootstrapChatSharing(repository.kysely);
+    const source = "chat_prior";
+    await repository.create(owner, { id: source, clientRequestId: "req_prior", title: "Orientation" });
+    const botId = "bot_ae0000000000000000000001";
+    const botDb = repository.kysely as Kysely<OwnerBotDatabase>;
+    await bootstrapBotDatabase(botDb);
+    const bindings = createBotBindingsRepository(botDb);
+    await bindings.bindDirect({ ownerId: owner.ownerId, botId, chatId, now: now.toISOString() });
+    deps.agentContext = new ChatAgentContext({ repository, selectedChats: createBotSelectedChatReader(repository),
+      enabled: () => true, botChats: { directBot: async (actor, id) => (await bindings.forChat({ ownerId: actor.ownerId, chatId: id }))[0]?.botId ?? null }, agents: { get: async () => ({
+        id: botId, name: "Onboarding", description: "", instructions: "Prepare a brief.", archived: false,
+        recipeRef: { recipeId: "personal-daily-brief", version: "1" }, selection: MATRIX_BOT_SELECTION,
+        revision: 1, createdAt: now.toISOString(), updatedAt: now.toISOString(),
+      }) } });
+    deps.catalog = withBotProviderInstance(deps.catalog);
+    deps.adapters = new CanonicalChatProviderRegistry([{ driverKind: "matrix_bot", stateSchemaVersion: 1,
+      parseState: value => value, serializeState: value => value, async *start() { throw new Error("Unexpected inference"); } }]);
+    const withPrior = (id: string, revision = 0) => ({ ...body(id, revision), selection: MATRIX_BOT_SELECTION,
+      parts: [{ type: "text", text: "Prepare the brief." }, { type: "resource_reference", resource: { kind: "chat", id: source, label: "Earlier Chat" } }] });
+    const fallback = { userId: owner.ownerId, source: "configured-container" as const };
+    expect((await post(withPrior("req_denied"), "turns", fallback)).ok).toBe(false);
+    const started = await post(withPrior("req_selected"));
+    expect(started.status).toBe(202);
+    const accepted = await started.json();
+    expect(accepted.run.context.botChatSources.sources).toMatchObject([{ chatId: source }]);
+    const revision = accepted.record.chat.revision;
+    expect((await post(withPrior("req_denied_queue", revision), "queued-turns", fallback)).ok).toBe(false);
+    const queued = await post(withPrior("req_selected_next", revision), "queued-turns", { ...principal, source: "platform-verified" });
+    expect(queued.status).toBe(201);
+    expect((await queued.json()).queuedTurn.context.botChatSources.sources).toMatchObject([{ chatId: source }]);
   });
   it("keeps internally admitted Slack/automation input unknown with no receipt dependency and cannot upgrade it on HTTP replay", async () => {
     const accepted = await internal();

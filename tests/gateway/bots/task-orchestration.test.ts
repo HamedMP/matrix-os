@@ -53,6 +53,7 @@ beforeEach(async () => {
 afterEach(async () => { vi.unstubAllEnvs(); try { await destroy(); } finally { vi.resetAllMocks(); vi.restoreAllMocks(); } });
 
 function setup(options: {
+  selectedChatReader?: Parameters<typeof createBotTaskOrchestrator>[0]["selectedChatReader"];
   slackSummaries?: Parameters<typeof createBotTaskOrchestrator>[0]["slackSummaries"];
   homePath?: string;
   settingsProposals?: Parameters<typeof createBotTaskOrchestrator>[0]["settingsProposals"];
@@ -119,6 +120,7 @@ function setup(options: {
     homePath: options.homePath, expectedOwnerId: OWNER, routineTools: options.routineTools, settingsProposals: options.settingsProposals,
     assertSource: options.assertSource,
     inputHistory: options.inputHistory,
+    selectedChatReader: options.selectedChatReader,
     slackThreadContext: options.slackThreadContext,
     slackSummaries: options.slackSummaries,
     bindings: createBotBindingsRepository(db),
@@ -343,6 +345,29 @@ describe("bot turns through the matrix_bot adapter", () => {
     const { adapter, admission, commands } = setup({ executorReady: async () => { throw new Error("Revoked"); } });
     await collect(adapter.start(turn())); expect(admission.admit).not.toHaveBeenCalled(); expect(commands).toEqual([]);
     expect(await tasks()).toEqual([expect.objectContaining({ status: "blocked", blocked_reason: "policy_denied" })]);
+  });
+
+  it("delivers a selected prior Chat only to the bound direct worker and rechecks binding removal before inference", async () => {
+    const selected = { botId: BOT, sources: [{ chatId: "chat_prior", throughSeq: 1, digest: "d".repeat(64) }] };
+    const read = fixtureMock(async () => "Current private excerpt");
+    const { adapter, orchestrator, registry, commands } = setup({
+      selectedChatReader: { prepare: async () => selected, read },
+      worker: async input => {
+        const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
+        const spec = await orchestrator.runSource.loadRunSpec(binding);
+        expect(spec.selectedChatReference).toBe("Current private excerpt");
+        expect(JSON.stringify(spec.turn)).not.toContain("Current private excerpt");
+        await createBotBindingsRepository(db).remove({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: AGENT.createdAt });
+        await expect(orchestrator.selectedChatReference(binding)).rejects.toThrow();
+        return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+      },
+    });
+    const events = await collect(adapter.start({ ...turn(), parts: [...turn().parts, { type: "resource_reference", resource: { kind: "chat", id: "chat_prior", label: "Prior Chat" } }], context: {
+      version: 1, requestHash: "f".repeat(64), chats: [], botChatSources: selected,
+    } }));
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(commands)).not.toContain("Current private excerpt");
   });
 
   it("loads the selected private bot’s current Slack reference only when the worker requests its spec", async () => {

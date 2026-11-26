@@ -138,6 +138,7 @@ export function createMatrixBotChatProviderAdapter(options: {
         handle = options.orchestrator.start({
         ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
         selection: scheduled?.selection??input.selection, text: scheduled?.text??messageText(input.parts), parts: scheduled ? [{type:"text",text:scheduled.text}] : input.parts, signal: input.signal,
+        ...(input.context?.botChatSources ? { selectedChats: input.context.botChatSources } : {}),
         ...(scheduled ? {backgroundTaskId:scheduled.backgroundTaskId} : {}),
         ...(summary ? {readonlySummary: true as const} : {}),
         });

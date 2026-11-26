@@ -4,7 +4,7 @@ import { z } from "zod/v4";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
 import { redactAssistantParts, redactSharedAssistantText } from "./safe-activity-projection.js";
-import { hasCompanyDriveMaterial } from "./drive-sharing-guard.js";
+import { hasAudienceRestrictedChatMaterial } from "./drive-sharing-guard.js";
 
 export { ShareSnapshotSchema, ShareTokenSchema } from "@matrix-os/contracts";
 import { ShareSnapshotSchema, ShareTokenSchema, type ShareSnapshot } from "@matrix-os/contracts";
@@ -35,7 +35,7 @@ function tokenHash(token: string) {
 
 async function readSnapshot(trx: Kysely<ChatDatabase>, chatId: string, title: string) {
   // Callers hold the Chat lock also used by admission and sharing transitions.
-  if (await hasCompanyDriveMaterial(trx, chatId)) throw new ChatSharingError("conflict");
+  if (await hasAudienceRestrictedChatMaterial(trx, chatId)) throw new ChatSharingError("conflict");
   const rows = await trx.selectFrom("chat_messages").select(["role", "parts"])
     .where("chat_id", "=", chatId).where("state", "=", "committed").where("role", "in", ["user", "assistant"])
     .orderBy("seq").limit(201).execute();
@@ -116,7 +116,7 @@ export class ChatSharing {
         .where("token_hash", "=", tokenHash(token)).where("expires_at", ">", new Date())
         .forShare("chats").executeTakeFirst();
       // Old immutable snapshots also fail closed once their source becomes drive-backed.
-      if (!row || await hasCompanyDriveMaterial(trx, row.chat_id)) return null;
+      if (!row || await hasAudienceRestrictedChatMaterial(trx, row.chat_id)) return null;
       const snapshot = ShareSnapshotSchema.parse(row.snapshot);
       return { ...snapshot, messages: snapshot.messages.map((message) => message.role === "assistant"
         ? { ...message, text: redactSharedAssistantText(message.text) }

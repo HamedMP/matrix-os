@@ -6,7 +6,7 @@ import {associateAdmittedDriveChat} from "./drive-project-database.js";
 import { releaseTerminalQueuedSteer } from "./queued-steer-cleanup.js";
 import {admittedContextReferenceParts} from "./context-reference-parts.js";
 import { chatContextRequestHash } from "./agent-context.js";
-import { hasAttestedCreationChoice, queuedRunContext, validateQueuedAgentDriver } from "./queued-context.js";
+import { hasPinnedTurnContext, queuedRunContext, validateQueuedAgentDriver } from "./queued-context.js";
 import { randomUUID } from "node:crypto";
 import {
   ChatRunContextSchema,
@@ -612,7 +612,7 @@ export class ChatQueueRepository {
       if (chat.lifecycle !== "active") {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
-      await assertPrivateChatAdmission(trx, owner, chatId, clientRequestId);
+      await assertPrivateChatAdmission(trx, owner, chatId, clientRequestId, undefined, Boolean(context?.botChatSources));
       if (chat.collaboration !== null) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
@@ -849,7 +849,7 @@ export class ChatQueueRepository {
         && JSON.stringify(existingParts) === JSON.stringify(parts)) {
         return { queuedTurn: toQueuedTurn(queued) };
       }
-      if (hasAttestedCreationChoice(queued.context_snapshot) || pendingSteer || queued.status !== "queued" || chat.lifecycle !== "active"
+      if (hasPinnedTurnContext(queued.context_snapshot) || pendingSteer || queued.status !== "queued" || chat.lifecycle !== "active"
         || Number(chat.revision) !== input.baseRevision) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }

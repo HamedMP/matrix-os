@@ -14,7 +14,7 @@ import {
   type ScopeRuntimeBrokerResult,
 } from "@matrix-os/scope-runtime/broker-protocol";
 import { z } from "zod/v4";
-import { boundedInferenceSseFrames, bufferInferenceOutput, guardInferenceStream, inferenceResponseText } from "./inference-stream.js";
+import { boundedInferenceSseFrames, bufferInferenceOutput, guardInferenceStream, inferenceResponseText, publishSelectedChatOutput } from "./inference-stream.js";
 import { forwardChatGptPlanInference } from "./chatgpt-plan-inference.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { FundedAiCredentialError, type MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
@@ -93,6 +93,8 @@ export interface BotInferenceDependencies {
   fetchImpl?: typeof fetch;
   /** Canonical owner/run/workspace authority is rechecked after funded queue waits. */
   revalidateBinding?: (binding: PiRuntimeBinding) => Promise<boolean>;
+  /** Recheck explicitly selected private input once at dispatch and buffered return, outside SSE frame guards. */
+  selectedInputGuard?: (binding: PiRuntimeBinding) => (() => Promise<boolean>) | undefined;
   /** Gateway-only diagnostic bound to the registry's exact run; not a worker claim. */
   onFundedFailure?: (binding: PiRuntimeBinding, reason: "insufficient_credit" | "budget_exceeded" | undefined) => void;
 }
@@ -178,6 +180,7 @@ export async function forwardBotInference(
   const isolated = deps.isolatedChat?.targets(binding) === true;
   if (isolated && !validIsolatedInference(request, binding)) return failure(request.requestId, "invalid_request");
   const lifecycle = deps.runSignal ? AbortSignal.any([deps.lifetime, deps.runSignal]) : deps.lifetime;
+  const selectedInputCurrent = deps.selectedInputGuard?.(binding);
   const readAuthorization = () => waitForInferenceAuthority(() => authorize(modelId), lifecycle);
   const bindingValid = () => !deps.revalidateBinding ? Promise.resolve(true)
     : ownerStream ? deps.revalidateBinding(binding)
@@ -222,7 +225,7 @@ export async function forwardBotInference(
       revalidate: async (candidate, signal) => await waitForInferenceAuthority(async () =>
         (!deps.revalidateBinding || await deps.revalidateBinding(candidate))
           && !signal.aborted && await authority.revalidate(candidate, signal), signal) === true,
-    }, signal: lifecycle,
+    }, signal: lifecycle, selectedInputCurrent,
       stillAuthorized: async () => { const current = await readAuthorization(); return !lifecycle.aborted && current?.allowed === true && current.accessSourceId === "matrix_chatgpt_plan" && current.allowedModelIds.includes(modelId); } });
   }
   // Borrowed native profiles remain task-executor-only; never substitute them for the explicit paired-device source.
@@ -285,7 +288,7 @@ export async function forwardBotInference(
         if (signal.aborted || !await stillAuthorized()) return false;
         if (isolated && (!await deps.isolatedChat!.consume(binding) || signal.aborted || !await stillAuthorized())) return false;
         if (binding.readonlySummary && (!deps.consumeReadonlyInference || !await deps.consumeReadonlyInference(binding) || signal.aborted || !await stillAuthorized())) return false;
-        return true;
+        return !selectedInputCurrent || await selectedInputCurrent() && !signal.aborted;
       });
       if (!permitted) return "denied";
       // Owner streams bound time-to-headers here; body reads have an independent idle limit.
@@ -352,11 +355,13 @@ export async function forwardBotInference(
         signal: responseSignal, authorized, abort: () => streamLifetime.abort(),
       });
       return { version: 1, requestId: request.requestId, ok: true, status: response.status,
-        headers: safeResponseHeaders(response, 'inference'), body: frames };
+        headers: safeResponseHeaders(response, 'inference'),
+        body: selectedInputCurrent ? publishSelectedChatOutput(frames, selectedInputCurrent, lifecycle) : frames };
     }
     const body = await readBoundedBody(response, INFERENCE_RESPONSE_BODY_MAX_BYTES);
     if (binding.anthropicApi && (lifecycle.aborted || await anthropicValid() !== true
       || await bindingValid() !== true || !await stillAuthorized())) return failure(request.requestId, "action_denied");
+    if (selectedInputCurrent && (lifecycle.aborted || !await waitForInferenceAuthority(selectedInputCurrent, lifecycle))) return failure(request.requestId, "action_denied");
     const result = ScopeRuntimeBrokerResponseSchema.parse({
       version: 1,
       requestId: request.requestId,

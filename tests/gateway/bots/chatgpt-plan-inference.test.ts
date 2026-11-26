@@ -47,6 +47,13 @@ function fixture(response = completed) {
     return { authority, registry, fetchImpl, resolveCredentials, fundedAdmission, send, deps };
 }
 describe('own-registration ChatGPT plan Pi broker', () => {
+    it("withholds selected private Chat text before dispatch to the paired account", async () => {
+        const f = fixture();
+        const authorize = (modelId: string) => f.registry.authorize({ ...binding, action: "inference.responses", modelId });
+        const result = await forwardBotInference(frame(), binding, authorize, { ...f.deps, selectedInputGuard: () => async () => false } as never);
+        expect(result).toMatchObject({ ok: false, error: "action_denied" });
+        expect(f.authority.infer).not.toHaveBeenCalled();
+    });
     it('awaits live asynchronous authorization for paired-account inference', async () => {
         const f = fixture();
         const authorize = async (modelId: string) => f.registry.authorize({ ...binding, action: 'inference.responses', modelId });
