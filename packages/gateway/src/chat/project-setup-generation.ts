@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
-import { canonicalAssistantOutputMessages, CanonicalChatExecutionRootRefSchema, type CanonicalChatModelSelection, type ProjectSetupDraft } from "@matrix-os/contracts";
+import { canonicalAssistantOutputMessages, CanonicalChatExecutionRootRefSchema, ChatRunContextSchema, type CanonicalChatModelSelection, type ProjectSetupDraft } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
-import { toMessage } from "./records.js";
+import { parseJson, toMessage } from "./records.js";
 import type { CanonicalChatOrchestrator } from "./orchestrator.js";
 import type { ChatProviderCatalogService } from "./provider-catalog.js";
 import { PROJECT_SETUP_DRAFTING } from "./turn-admission.js";
-import { applyProjectSetupGeneration, applyProjectSetupInterview, projectSetupGenerationPrompt, projectSetupInterviewPrompt, ProjectSetupError } from "./project-setup-state.js";
+import { applyProjectSetupGeneration, applyProjectSetupInterview, projectSetupGenerationPrompt, projectSetupInterviewPrompt, projectSetupProposedMarkdown, ProjectSetupError } from "./project-setup-state.js";
 import { supportsProjectSetupInterviewProvider, type ProjectSetupInterviewContext } from "./project-setup-interview-context.js";
 
 export interface ProjectSetupGenerationDependencies {
@@ -33,13 +33,14 @@ function ownedSetupRuns(repository: ChatRepository, owner: ChatOwner, draft: Pro
 
 function validateSetupRun(run: { context_snapshot: unknown; execution_root: unknown; execution_root_fingerprint: string | null },
   draft: ProjectSetupDraft, sourceRevision: number | undefined, executionRootFingerprint: string) {
-  const context = typeof run.context_snapshot === "string" ? JSON.parse(run.context_snapshot) : run.context_snapshot;
-  const root = CanonicalChatExecutionRootRefSchema.safeParse(typeof run.execution_root === "string" ? JSON.parse(run.execution_root) : run.execution_root);
+  const context = ChatRunContextSchema.safeParse(parseJson<unknown>(run.context_snapshot));
+  const setup = context.success ? context.data.projectSetupDraft : undefined;
+  const root = CanonicalChatExecutionRootRefSchema.safeParse(parseJson<unknown>(run.execution_root));
   if (!root.success || root.data.kind !== "project" || root.data.projectId !== draft.projectId
     || run.execution_root_fingerprint !== executionRootFingerprint || sourceRevision === undefined
-    || !context || typeof context !== "object" || !("projectSetupDraft" in context)
-    || (context.projectSetupDraft as { revision?: unknown })?.revision !== sourceRevision
-    || Boolean(draft.interview) !== ((context.projectSetupDraft as { mode?: unknown })?.mode === "interview")) throw new ProjectSetupError("conflict");
+    || !setup || setup.revision !== sourceRevision
+    || Boolean(draft.interview) !== (setup.mode === "interview")) throw new ProjectSetupError("conflict");
+  return setup;
 }
 
 async function findSetupAdmission(repository: ChatRepository, owner: ChatOwner, draft: ProjectSetupDraft, requestId: string,
@@ -81,14 +82,15 @@ export async function generateProjectSetup(deps: ProjectSetupGenerationDependenc
     const record = await deps.repository.get(owner, draft.chatId);
     if (!record || record.projectId !== draft.projectId) throw new ProjectSetupError("not_found");
     if (record.activeRun) throw new ProjectSetupError("busy");
-    const prompt = draft.interview && interviewContext
+    const interview = draft.interview && interviewContext
       ? projectSetupInterviewPrompt(draft, interviewContext, await interviewTranscript(deps.repository, draft)) : undefined;
     const response = await deps.orchestrator.admitTurn(principal, owner, draft.chatId, {
       clientRequestId: admissionId(draft, requestId),
       baseRevision: record.chat.revision,
-      parts: [{ type: "text", text: prompt ? "Project setup interview." : projectSetupGenerationPrompt(draft) }], selection,
+      parts: [{ type: "text", text: interview ? "Project setup interview." : projectSetupGenerationPrompt(draft) }], selection,
       interactionMode, permissionMode: "supervised", executionRoot: { kind: "project", projectId: draft.projectId },
-    }, { [PROJECT_SETUP_DRAFTING]: prompt ? { revision: draft.revision, mode: "interview", prompt } : { revision: draft.revision } });
+    }, { [PROJECT_SETUP_DRAFTING]: interview
+      ? { revision: draft.revision, mode: "interview", ...interview } : { revision: draft.revision } });
     return { status: "running", runId: response.run.id, sourceRevision: draft.revision };
   } catch (error: unknown) {
     // The same request may have won admission on another process with newer inventory.
@@ -128,7 +130,7 @@ export async function syncProjectSetupResult(repository: ChatRepository, owner: 
   if (!runId || draft.generation?.status !== "running") return { draft };
   const run = await ownedSetupRuns(repository, owner, draft).where("runs.id", "=", runId).executeTakeFirst();
   if (!run) throw new ProjectSetupError("not_found");
-  validateSetupRun(run, draft, draft.generation.sourceRevision, executionRootFingerprint);
+  const setup = validateSetupRun(run, draft, draft.generation.sourceRevision, executionRootFingerprint);
   if (["failed", "aborted"].includes(run.status)) return { draft: { ...draft, generation: { ...draft.generation, status: "failed" } } };
   if (run.status !== "completed") return { draft };
   // The run may have completed after the request's unlocked inventory preflight.
@@ -141,7 +143,9 @@ export async function syncProjectSetupResult(repository: ChatRepository, owner: 
     const text = result?.parts.flatMap(part => part.type === "text" ? [part.text] : []).join("") ?? "";
     if (!draft.interview) return { draft: applyProjectSetupGeneration(draft, text) };
     if (!interviewResult?.context) throw new ProjectSetupError("unavailable");
-    return applyProjectSetupInterview(draft, text, interviewResult.context);
+    // Older in-flight runs have no durable evidence that the model saw the files.
+    const withheldMarkdown = setup.withheldMarkdown ?? projectSetupProposedMarkdown(draft).map(file => file.kind);
+    return applyProjectSetupInterview(draft, text, interviewResult.context, withheldMarkdown);
   }
   catch (error: unknown) {
     if (!(error instanceof SyntaxError || error instanceof ProjectSetupError || (error instanceof Error && error.name === "ZodError"))) throw error;

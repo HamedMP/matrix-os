@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import { link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { ProjectSetupStartRequestSchema } from "@matrix-os/contracts";
+import { ChatRunContextSchema, ProjectSetupStartRequestSchema } from "@matrix-os/contracts";
 import { openProjectSetupWorkspace } from "../../packages/gateway/src/chat/project-setup-workspace.js";
 import { registerCustomMcpGatewayRoutes } from "../../packages/gateway/src/integrations/custom-mcp/gateway-routes.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -123,17 +124,17 @@ it("clears a previously generated Skill when the owner corrects the proposal", (
   expect(revised.proposals).toEqual([]);
 });
 
-it("supplies complete pending file drafts and the latest correction to the interview", () => {
+it.each(["pending", "failed", "conflict"] as const)("supplies complete %s drafts and the latest correction to the interview", status => {
   const context = { project: { name: "Portfolio" }, skills: [], instructionFiles: [], mcpServices: [] };
   const draft = beginProjectSetupInterview(initialProjectSetup("chat_archive", "archive", "Illustrations", "msg_setup"));
   const guidance = "# Project guidance\n" + "Preserve the release notes and shipped defaults.\n".repeat(35) + "Ask before publishing.\n";
   const skill = "---\nname: release-check\ndescription: Review a release\n---\n" + "Check the diff and summarize test results.\n".repeat(35) + "Keep dated review notes.\n";
   draft.proposals = [
-    { path: "AGENTS.md", content: guidance, status: "pending" },
-    { path: ".agents/skills/release-check/SKILL.md", content: skill, status: "pending" },
+    { path: "AGENTS.md", content: guidance, status },
+    { path: ".agents/skills/release-check/SKILL.md", content: skill, status },
   ];
   const correction = { role: "user" as const, text: "Only change release recipients to the design team." };
-  const data = JSON.parse(projectSetupInterviewPrompt(draft, context, [correction]).split("\n").at(-1)!);
+  const data = JSON.parse(projectSetupInterviewPrompt(draft, context, [correction]).prompt.split("\n").at(-1)!);
   expect(data.reviewedDraft).toEqual(draft.proposals.map(({ path, content }) => ({ path, content })));
   expect(data.transcript).toEqual([correction]);
 
@@ -141,7 +142,7 @@ it("supplies complete pending file drafts and the latest correction to the inter
   // answer still reaches the Agent, and the full file stays in Review.
   draft.proposals[0]!.content = '"\\'.repeat(30_000);
   const latest = { ...correction, text: "修正".repeat(2048) };
-  const bounded = projectSetupInterviewPrompt(draft, context, [correction, latest]);
+  const { prompt: bounded } = projectSetupInterviewPrompt(draft, context, [correction, latest]);
   expect(Buffer.byteLength(bounded)).toBeLessThanOrEqual(58 * 1024);
   const projected = JSON.parse(bounded.split("\n").at(-1)!);
   expect(projected.transcript.at(-1)).toEqual(latest);
@@ -158,7 +159,7 @@ it("retains accepted answer requirements after their original turns leave the in
   draft.answers.guidance = "Preserve existing translation keys. ".repeat(40) + "Ask before publishing.";
   draft.answers.skillInstructions = "Check the changelog for every release. ".repeat(40) + "Keep dated review notes.";
   const history = Array.from({ length: 12 }, (_, index) => ({ role: "user" as const, text: `Follow-up reply ${index}` }));
-  const data = JSON.parse(projectSetupInterviewPrompt(draft, context, history).split("\n").at(-1)!);
+  const data = JSON.parse(projectSetupInterviewPrompt(draft, context, history).prompt.split("\n").at(-1)!);
   expect(data.interpretedAnswers).toEqual(draft.answers);
   expect(data.transcript).toEqual(history);
 });
@@ -166,7 +167,7 @@ it("retains accepted answer requirements after their original turns leave the in
 it("asks for a short actionable reply and accepts complete legacy answers and details", () => {
   const context = { project: { name: "Illustration archive" }, skills: [], instructionFiles: [], mcpServices: [] };
   const draft = beginProjectSetupInterview(initialProjectSetup("chat_archive", "archive", "Illustrations", "msg_setup"));
-  const prompt = projectSetupInterviewPrompt(draft, context, []);
+  const { prompt } = projectSetupInterviewPrompt(draft, context, []);
   expect(prompt).toContain("one short primary question");
   expect(prompt).toContain("32 characters");
   expect(prompt).toContain("Save longer explanations for Review");
@@ -303,7 +304,22 @@ describe("admitted project setup generation", () => {
       expect(storeRequest).not.toContain(accepted);
     } finally { await orchestrator.close(); }
   });
-  it("admits and retries a Japanese correction on a full accepted draft without losing reviewed Markdown", async () => {
+  it.each([
+    { variant: "a renamed Skill and a valid guidance change", protect: "skill", skill: { name: "new-release", description: "Release notes", instructions: "Publish now" },
+      guidance: "# Ask before publishing", editInReview: true },
+    { variant: "a same-name Skill replacement", protect: "skill", skill: { name: "review-release", description: "Release notes", instructions: "Publish now" } },
+    { variant: "an explicit Skill removal", protect: "skill", skill: null },
+    { variant: "a replacement after a partial Save failed", protect: "skill", partialSave: "failed",
+      skill: { name: "new-release", description: "Release notes", instructions: "Publish now" } },
+    { variant: "a replacement after a partial Save found a conflict", protect: "skill", partialSave: "conflict",
+      skill: { name: "new-release", description: "Release notes", instructions: "Publish now" } },
+    { variant: "a nullable Skill answer outside Review", protect: "skill", focus: "skill", answerPatch: { skillInstructions: null } },
+    { variant: "an omitted guidance draft and its requirements", protect: "guidance", guidance: null,
+      answerPatch: { purpose: null, guidance: "Publish now" }, skill: { name: "updated-release", description: "Release notes", instructions: "Ask before publishing" } },
+    { variant: "an older in-flight attempt without omission metadata", protect: "skill", skill: null, guidance: null, legacy: true },
+    { variant: "a normal update with every draft included", protect: "none",
+      skill: { name: "updated-release", description: "Release notes", instructions: "Ask before publishing" } },
+  ] as const)("admits and retries a Japanese correction, then protects drafts from $variant", async scenario => {
     const selection = { instanceId: "pi_default", model: "gpt-5.6-sol" };
     const available = catalog();
     available.instances[0]!.driverKind = "matrix_pi";
@@ -319,8 +335,20 @@ describe("admitted project setup generation", () => {
       skillInstructions: "公開確認".repeat(1000),
     };
     const correction = "公開前に必ず確認してください。";
-    const review = { guidance: "# 作業方針\n" + "確認項目".repeat(1500),
-      skill: { name: "review-release", description: "公開手順", instructions: "確認手順".repeat(1250) } };
+    const partialSave = "partialSave" in scenario ? scenario.partialSave : undefined;
+    const originalSkillPath = ".agents/skills/review-release/SKILL.md";
+    const conflictingContent = "The project owner created a file during review.";
+    const audit = "Keep the owner-reviewed audit log.";
+    const review = {
+      guidance: "# 作業方針\n" + "確認項目".repeat(scenario.protect === "guidance" ? 1900 : 1500),
+      skill: { name: "review-release", description: "公開手順",
+        instructions: "確認手順".repeat(partialSave ? 1900 : scenario.protect === "skill" ? 1250 : 20) + "\n" + audit },
+    };
+    const replacement = "guidance" in scenario ? scenario.guidance : undefined;
+    const skillUpdate = "skill" in scenario ? scenario.skill : undefined;
+    const allowed = scenario.protect === "none";
+    const reply = allowed ? "I updated the Skill." : "I replaced or removed the reviewed draft.";
+    const details = allowed ? "The reviewed Skill asks before publishing." : "The previous draft will not be saved.";
     const start = vi.fn(async function* (_input: CanonicalProviderRunInput) {
       if (start.mock.calls.length === 3) {
         yield { type: "run.completed" as const, outcome: "failed" as const };
@@ -330,7 +358,11 @@ describe("admitted project setup generation", () => {
         { reply: "何を確認しますか？", focus: "guidance", suggestions: [], answers },
         { reply: "保存する内容を確認してください。", focus: "review", suggestions: [], review },
         undefined,
-        { reply: "公開前に確認します。", focus: "review", suggestions: [], review: {} },
+        {
+          reply, details, focus: "focus" in scenario ? scenario.focus : "review", suggestions: ["Review the changes"],
+          answers: "answerPatch" in scenario ? scenario.answerPatch : undefined,
+          review: "focus" in scenario ? undefined : { guidance: replacement, skill: skillUpdate },
+        },
       ][start.mock.calls.length - 1];
       const encoded = JSON.stringify(output);
       for (let offset = 0; offset < encoded.length; offset += 3_000) {
@@ -342,18 +374,27 @@ describe("admitted project setup generation", () => {
       repository, catalog: catalogs, executionRoots: roots,
       adapters: new CanonicalChatProviderRegistry([{ ...adapter(start), driverKind: "matrix_pi" }]),
     });
-    const create = vi.fn(async (_path: string, _content: string) => {});
-    const service = new ProjectSetupService({
+    const files = new Map<string, string>();
+    let failSkillWrite = partialSave === "failed";
+    const create = vi.fn(async (path: string, content: string) => {
+      if (path === originalSkillPath && failSkillWrite) {
+        failSkillWrite = false;
+        throw Object.assign(new Error("Transient project write failure"), { code: "EIO" });
+      }
+      files.set(path, content);
+    });
+    const options: ConstructorParameters<typeof ProjectSetupService>[0] = {
       repository, homePath: "/tmp/project-setup-tests", executionRoots: roots,
       generation: { repository, orchestrator, catalog: catalogs },
       openWorkspace: async () => ({
         fingerprint: "b".repeat(64), executionRootFingerprint, projectSlug: "project_a", create,
-        close: async () => {}, revalidate: async () => {}, read: async () => null,
+        close: async () => {}, revalidate: async () => {}, read: async path => files.get(path) ?? null,
         interviewContext: async () => ({ project: { name: "作品管理" }, instructionFiles: [], skills: [], mcpServices: [] }),
       }),
-    });
+    };
+    const service = new ProjectSetupService(options);
     const update = (draft: NonNullable<Awaited<ReturnType<typeof service.start>>["draft"]>, name: string,
-      action: Parameters<typeof service.update>[3]["action"]) => service.update(principal, owner, draft.chatId, {
+      action: Parameters<typeof service.update>[3]["action"], currentService = service) => currentService.update(principal, owner, draft.chatId, {
       baseRevision: draft.revision, clientRequestId: `req_${name}`, action,
     });
     const sync = async (draft: Parameters<typeof update>[0], name: string) => {
@@ -370,17 +411,49 @@ describe("admitted project setup generation", () => {
       expect(full.draft?.step).toBe("review");
       expect(full.draft?.proposals[0]?.content).toBe(review.guidance);
       expect(full.draft?.proposals.at(-1)?.content).toContain(review.skill.instructions);
-      const corrected = await update(full.draft!, "correct_full", { type: "interview_answer", text: correction, selection });
+      let beforeCorrection = full.draft!;
+      if (partialSave) {
+        if (partialSave === "conflict") files.set(originalSkillPath, conflictingContent);
+        const attempted = await update(beforeCorrection, "partial_save", { type: "save" });
+        expect(attempted.draft?.step).toBe("review");
+        expect(attempted.draft?.proposals.map(file => file.status)).toEqual(["saved", "saved", partialSave]);
+        beforeCorrection = attempted.draft!;
+        create.mockClear();
+      }
+      const corrected = await update(beforeCorrection, "correct_full", { type: "interview_answer", text: correction, selection });
       expect(corrected.draft?.generation?.status).toBe("running");
       const failed = await sync(corrected.draft!, "correction_failed");
       expect(failed.draft?.generation?.status).toBe("failed");
-      expect(failed.draft?.proposals).toEqual(full.draft?.proposals);
+      expect(failed.draft?.proposals).toEqual(beforeCorrection.proposals);
       const retried = await update(failed.draft!, "retry_full", { type: "interview_retry", selection });
       expect(retried.draft?.generation?.status).toBe("running");
-      const reviewed = await sync(retried.draft!, "review_corrected");
+      await orchestrator.drain();
+      const runId = retried.draft!.generation!.runId!;
+      const run = await repository.kysely.selectFrom("chat_runs").select("context_snapshot").where("id", "=", runId).executeTakeFirstOrThrow();
+      if ("legacy" in scenario) {
+        const context = ChatRunContextSchema.parse(run.context_snapshot);
+        delete context.projectSetupDraft!.withheldMarkdown;
+        await repository.kysely.updateTable("chat_runs").set({ context_snapshot: jsonb(context) }).where("id", "=", runId).execute();
+      }
+      const restarted = new ProjectSetupService({ ...options, generation: undefined });
+      const reviewed = await update(retried.draft!, "review_corrected", { type: "sync_generation" }, restarted);
       expect(reviewed.draft?.generation?.status).toBe("completed");
+      if (scenario.protect === "skill") {
+        expect.soft(reviewed.draft?.skill?.name).toBe("review-release");
+        expect.soft(reviewed.draft?.skill?.content).toContain(audit);
+      }
+      expect(reviewed.draft?.step).toBe("review");
       expect(reviewed.draft?.answers).toEqual(answers);
-      expect(reviewed.draft?.proposals).toEqual(full.draft?.proposals);
+      expect(reviewed.draft?.interview?.suggestions).toEqual(allowed ? ["Review the changes"] : []);
+      const protectedDraft = "legacy" in scenario ? "AGENTS.md and your Skill"
+        : scenario.protect === "guidance" ? "AGENTS.md" : "your Skill";
+      const page = await repository.getDetailPage(owner, reviewed.draft!.chatId, { limit: 20 });
+      const nextStep = partialSave === "conflict" ? "Check the file status in Review before saving." : "You can edit the Markdown in Review.";
+      expect(page?.messages.find(message => message.id === reviewed.draft?.currentQuestionMessageId)?.parts).toEqual([
+        { type: "text", text: allowed ? `${reply}\n\n${details}` : `I kept ${protectedDraft}. ${nextStep}` },
+      ]);
+      if (!allowed) expect(JSON.stringify(page?.messages)).not.toContain(details);
+      expect(run.context_snapshot).toMatchObject({ projectSetupDraft: { mode: "interview", withheldMarkdown: allowed ? [] : [scenario.protect] } });
       expect(start).toHaveBeenCalledTimes(4);
       const prompt = start.mock.calls.at(-1)![0].prompt;
       expect(prompt).toBe(start.mock.calls[2]![0].prompt);
@@ -388,12 +461,41 @@ describe("admitted project setup generation", () => {
       const modelInput = JSON.parse(prompt.split("\n").at(-1)!);
       expect(modelInput.transcript.at(-1)).toEqual({ role: "user", text: correction });
       expect(modelInput.interpretedAnswers).toEqual(answers);
+      const originalSkill = full.draft!.proposals.at(-1)!;
       expect(modelInput.reviewedDraft).toEqual([
-        { path: "AGENTS.md", content: review.guidance }, { path: ".agents/skills/review-release/SKILL.md" },
+        ...(partialSave ? [] : [{ path: "AGENTS.md", ...(scenario.protect === "guidance" ? {} : { content: review.guidance }) }]),
+        { path: originalSkill.path, ...(scenario.protect === "skill" ? {} : { content: originalSkill.content }) },
       ]);
-      const saved = await update(reviewed.draft!, "save_full", { type: "save" });
-      expect(saved.draft?.step).toBe("saved");
-      expect(create.mock.calls).toEqual(full.draft!.proposals.map(file => [file.path, file.content]));
+      expect(reviewed.draft?.proposals.slice(0, 2)).toMatchObject([
+        { path: "AGENTS.md", content: replacement ?? review.guidance, status: partialSave ? "already_present" : "pending" },
+        { path: "CLAUDE.md", content: "@AGENTS.md\n", status: partialSave ? "already_present" : "pending" },
+      ]);
+      if (scenario.protect === "skill") {
+        expect(reviewed.draft?.skill).toEqual(full.draft?.skill);
+        expect(reviewed.draft?.proposals.at(-1)).toMatchObject({
+          path: originalSkill.path, content: originalSkill.content, status: partialSave === "conflict" ? "conflict" : "pending",
+          expectedHash: partialSave === "conflict" ? createHash("sha256").update(conflictingContent).digest("hex") : originalSkill.expectedHash,
+        });
+        expect(originalSkill.content).toContain(audit);
+      } else {
+        expect(reviewed.draft?.skill).toMatchObject({ name: "updated-release" });
+      }
+      let draftToSave = reviewed.draft!;
+      if ("editInReview" in scenario) {
+        const edited = originalSkill.content + "Preserve this owner edit.";
+        draftToSave = (await update(draftToSave, "edit_full", { type: "review_file", path: originalSkill.path, content: edited })).draft!;
+        expect(draftToSave.proposals.at(-1)?.content).toBe(edited);
+      }
+      const saved = await update(draftToSave, "save_full", { type: "save" });
+      if (partialSave === "conflict") {
+        expect(saved.draft?.step).toBe("review");
+        expect(saved.draft?.proposals.at(-1)?.status).toBe("conflict");
+        expect(files.get(originalSkillPath)).toBe(conflictingContent);
+        expect(create).not.toHaveBeenCalled();
+      } else {
+        expect(saved.draft?.step).toBe("saved");
+        expect(create.mock.calls).toEqual(draftToSave.proposals.filter(file => file.status === "pending").map(file => [file.path, file.content]));
+      }
     } finally { await orchestrator.close(); }
   });
   it("starts a fresh restricted run instead of resuming a broader native session and binds its result", async () => {

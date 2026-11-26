@@ -8,7 +8,7 @@ import {
   CanonicalChatRunSchema, CanonicalChatTurnAdmissionResponseSchema,
   type CanonicalCreateChatTurnRequest, type CanonicalChatMessage, type CanonicalChatRun,
   type CanonicalChatTurnAdmissionResponse,
-  canonicalExecutionRootProjectId,
+  canonicalExecutionRootProjectId, type ProjectSetupMarkdownKind,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { ChatOwner } from "./records.js";
@@ -51,7 +51,10 @@ export interface TurnAdmissionOptions {
 export const PROJECT_SETUP_DRAFTING = Symbol("project-setup-drafting");
 
 export interface CanonicalTurnProvenance {
-  [PROJECT_SETUP_DRAFTING]?: { revision: number; mode?: never } | { revision: number; mode: "interview"; prompt: string };
+  [PROJECT_SETUP_DRAFTING]?: { revision: number; mode?: never } | {
+    revision: number; mode: "interview"; prompt: string;
+    withheldMarkdown: ProjectSetupMarkdownKind[];
+  };
   [ROUTINE_DIRECT_DISPATCH]?: RoutineDirectDispatch;
   routineCreationProof?: string;
   previewTurnProof?: string;
@@ -221,7 +224,8 @@ async function admitTimedTurn(
     } catch (error: unknown) { return mapRepositoryError(error); }
     if (setup) {
       sessionContext = { version: 1, requestHash, chats: [], ...sessionContext,
-        projectSetupDraft: { revision: setup.revision, ...(interview ? { mode: "interview" } : {}) } };
+        projectSetupDraft: { revision: setup.revision,
+          ...(interview ? { mode: "interview", withheldMarkdown: interview.withheldMarkdown } : {}) } };
     }
     const adapterState = resumeState === undefined ? undefined : {
       schemaVersion: adapter.stateSchemaVersion,
