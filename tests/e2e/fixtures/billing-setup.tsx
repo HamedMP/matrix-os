@@ -19,6 +19,9 @@ export function useUser() {
 export function usePathname() { return window.location.pathname; }
 export function useSearchParams() { return new URLSearchParams(window.location.search); }
 export function useRouter() { return { replace: () => undefined }; }
+export const RedirectType = { push: "push", replace: "replace" } as const;
+// No billing design scenario reaches a server redirect; fail loudly if one starts to.
+export function redirect(path: string): never { throw new Error(`Unexpected redirect to ${path}`); }
 export function Image({ fill, priority: _priority, unoptimized: _unoptimized, ...props }: Record<string, unknown>) {
   return <img {...props} style={fill ? { position: "absolute", inset: 0, width: "100%", height: "100%" } : undefined} />;
 }
