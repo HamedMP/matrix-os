@@ -72,7 +72,7 @@ export function useChatComposerDraft(scope: string, identity: unknown, retryBind
     ...draft,
     addAttachments: (files: readonly File[]) => {
       if (!files.length || files.length > ATTACHMENT_COUNT_LIMIT) return;
-      const additions = files.map(file => ({ file, id: crypto.randomUUID() }));
+      const additions = files.map(file => ({ file, id: randomUUID() }));
       updateAttachments(current => current.length + additions.length <= ATTACHMENT_COUNT_LIMIT ? [...current, ...additions] : current);
     },
     removeAttachment: (id: string) => updateAttachments(current =>

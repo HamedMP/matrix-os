@@ -387,10 +387,13 @@ it.each([false, true])("carries follow-up attachments into the Chat when its fir
   expect(composerValue()).toBe("");
   await waitFor(() => expect(reads.admission).toBe(1));
   if (typed) fireEvent.change(pendingEditor, { target: { value: "Follow-up while sending" } });
+  // Adding a file should work when the browser only exposes getRandomValues.
+  vi.stubGlobal("crypto", { getRandomValues: webcrypto.getRandomValues.bind(webcrypto) });
   fireEvent.change(screen.getByLabelText("Attach files", { selector: "input" }), {
     target: { files: [new File(["notes"], "follow-up-notes.txt", { type: "text/plain" })] },
   });
   await screen.findByRole("button", { name: "Remove follow-up-notes.txt" });
+  vi.stubGlobal("crypto", webcrypto);
   admission.release();
 
   await waitFor(() => expect(screen.getByTestId("selected-chat").textContent).toBe(chat.id));

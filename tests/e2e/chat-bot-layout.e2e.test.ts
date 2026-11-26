@@ -35,11 +35,10 @@ async function fixture(width: number, surface = "electron"): Promise<Page> {
   await page.route("**/*", route => route.abort());
   const html = `<!doctype html><html data-surface="${surface}"><style>${css}:root{--bg-surface:#fff;--bg-sunken:#eef0ed;--bg-hover:#eef0ed;--text-primary:#183c2c;--text-secondary:#657061;--text-tertiary:#76806f;--border-subtle:#dce0d9;--border-default:#dce0d9;--border-xsoft:#e7eae3;--accent:#294d38;--radius-xl:16px}body{font:14px Arial;margin:16px}#fixture-column{max-width:100%}</style><div id="root"></div></html>`;
   if (surface === "web") {
-    // The draft hook uses crypto.randomUUID, which requires a secure context.
-    // Fulfill only this synthetic document over HTTPS in memory so
-    // every API, image, font or other request stays aborted.
-    await page.route("https://matrix-layout.test/", route => route.fulfill({ contentType: "text/html", body: html }));
-    await page.goto("https://matrix-layout.test/");
+    // Web API clients require an origin. Fulfill only this synthetic document
+    // in memory; every API, image, font or other request stays aborted.
+    await page.route("http://matrix-layout.test/", route => route.fulfill({ contentType: "text/html", body: html }));
+    await page.goto("http://matrix-layout.test/");
   } else await page.setContent(html);
   const errors: string[] = [];
   page.on("pageerror", error => errors.push(error.message));
