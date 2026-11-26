@@ -104,7 +104,7 @@ function markEdited(state: WorkbookState, sheet: SheetModel, row: number, col: n
   edited.add(cellKey(row, col));
   if (edited.size > TRACE_LIMIT) {
     const marks = calc.edited;
-    noteClockInputs(state, (node) => readsAny(node, marks));
+    noteClockInputs(state, (node) => readsAny(state, node, marks));
     calc.all = true;
     calc.edited.clear();
   }

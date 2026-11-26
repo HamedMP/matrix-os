@@ -221,7 +221,7 @@ export class Run {
    */
   private keepsDate(node: CalcNode): boolean {
     if (!node.clock || this.now !== null || node.cell.value === null || node.circular) return false;
-    return !this.state.calc.clockInputs.has(node.cell) && !readsAny(node, this.sink);
+    return !this.state.calc.clockInputs.has(node.cell) && !readsAny(this.state, node, this.sink);
   }
 
   /**
@@ -232,7 +232,7 @@ export class Run {
     const hits = new Set<CalcNode>();
     for (let i = from; i < this.order.length; i++) {
       const node = this.order[i] as CalcNode;
-      if (node.clock && readsAny(node, this.sink)) hits.add(node);
+      if (node.clock && readsAny(this.state, node, this.sink)) hits.add(node);
     }
     if (hits.size > 0) noteClockInputs(this.state, (node) => hits.has(node));
   }

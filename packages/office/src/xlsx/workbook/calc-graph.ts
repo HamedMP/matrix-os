@@ -183,6 +183,15 @@ function resizedRead(state: WorkbookState, node: FormulaAst, sheet: SheetModel):
   };
 }
 
+/**
+ * True for a call that picks its cells at run time: OFFSET, INDIRECT, or a
+ * SUMIF or AVERAGEIF whose sum range is sized only then. The cells it reads
+ * are not in {@link collectDeps}.
+ */
+export function picksCells(state: WorkbookState, node: FormulaAst, sheet: SheetModel): boolean {
+  return node.type === "call" && (DYNAMIC_FUNCTIONS.has(node.name) || resizedRead(state, node, sheet) === "unknown");
+}
+
 /** What the functions of a formula, and of the names it uses, ask of the calculation. */
 interface Traits {
   volatile: boolean;
@@ -195,7 +204,7 @@ function addTraits(state: WorkbookState, ast: FormulaAst, sheet: SheetModel, fun
   while (stack.length > 0) {
     const node = stack.pop() as FormulaAst;
     if (node.type === "call") {
-      if (DYNAMIC_FUNCTIONS.has(node.name) || resizedRead(state, node, sheet) === "unknown") traits.dynamic = true;
+      if (picksCells(state, node, sheet)) traits.dynamic = true;
       else if (functions.get(node.name)?.volatile === true) traits.volatile = true;
       if (CLOCK_FUNCTIONS.has(node.name)) traits.clock = true;
     } else if (node.type === "name" && depth >= MAX_NAME_DEPTH) {

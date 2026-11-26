@@ -73,7 +73,7 @@ export function recalc(state: WorkbookState, options: RecalcOptions | undefined,
   if (blocked.length > 0) {
     complete = false;
     // The marks are dropped below: a blocked formula that needs a time is noted if what it reads changed.
-    const hits = new Set(blocked.filter((node) => node.clock && readsAny(node, calc.edited)));
+    const hits = new Set(blocked.filter((node) => node.clock && readsAny(state, node, calc.edited)));
     if (hits.size > 0) noteClockInputs(state, (node) => hits.has(node));
     for (const node of blocked) addTo(calc.pending, node.sheet, cellKey(node.row, node.col));
   }

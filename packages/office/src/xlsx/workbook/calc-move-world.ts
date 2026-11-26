@@ -13,7 +13,7 @@
 import type { CellProvider, FormulaAst, FormulaError, FormulaScalar, FunctionRegistry, RangeBounds } from "../../api/formula.js";
 import { MAX_COLS, MAX_ROWS } from "./a1.js";
 import { CLOCK_FUNCTIONS } from "./calc-graph.js";
-import { makeProvider } from "./calc-provider.js";
+import { type ReadLog, makeProvider } from "./calc-provider.js";
 import { errorValue } from "./calc-values.js";
 import type { SheetModel, WorkbookState } from "./model.js";
 import { lookupName } from "./names.js";
@@ -70,9 +70,9 @@ function holdsFormula(state: WorkbookState, bounds: RangeBounds): boolean {
   return false;
 }
 
-/** The workbook's provider, refusing reads past the budget and noting in `meter` that it did. */
-export function meteredProvider(state: WorkbookState, budget: ArgumentBudget, meter: Meter): CellProvider {
-  const inner = makeProvider(state, { reads: null, overflow: false });
+/** The workbook's provider, refusing reads past the budget and noting in `meter` that it did; `log` lists what it read. */
+export function meteredProvider(state: WorkbookState, budget: ArgumentBudget, meter: Meter, log: ReadLog = { reads: null, overflow: false }): CellProvider {
+  const inner = makeProvider(state, log);
   const spend = (count: number): boolean => {
     if (meter.over || count > budget.cells) {
       meter.over = true;

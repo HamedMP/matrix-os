@@ -16,6 +16,7 @@
 
 import type { CellRange } from "../../api/xlsx.js";
 import { type CalcGraph, type CalcNode, type Dep, buildGraph, collectDeps } from "./calc-graph.js";
+import { resolveReads } from "./calc-reads.js";
 import { type CellRec, type SheetModel, type WorkbookState, cellKey } from "./model.js";
 import { type StructuralOp, moveSpan } from "./refs-rewrite.js";
 
@@ -66,25 +67,29 @@ export function touches(dep: Dep, changed: CellSets): boolean {
  * True when a cell the formula reads, a cell of the range it fills or a cell
  * it read at run time last time satisfies `hit`. Its own cell alone does not
  * count: a formula typed into it has no value yet and is calculated anyway.
+ * A formula that needs a time and has no record of what it read at run time
+ * is given one first (`calc-reads.ts`).
  */
-function readsWhere(node: CalcNode, hit: (dep: Dep) => boolean): boolean {
+function readsWhere(state: WorkbookState, node: CalcNode, hit: (dep: Dep) => boolean): boolean {
   for (const dep of node.deps) if (hit(dep)) return true;
   if (fillsRange(node) && hit(spillDep(node))) return true;
-  if (!node.dynamic || node.reads === null) return false;
+  if (!node.dynamic) return false;
+  resolveReads(state, node);
+  if (node.reads === null) return false;
   if (node.readsAll) return true;
   for (const dep of node.reads) if (hit(dep)) return true;
   return false;
 }
 
 /** True when the formula reads, or fills, a cell in `sets`. See {@link readsWhere}. */
-export function readsAny(node: CalcNode, sets: CellSets): boolean {
+export function readsAny(state: WorkbookState, node: CalcNode, sets: CellSets): boolean {
   if (isEmpty(sets)) return false;
-  return readsWhere(node, (dep) => touches(dep, sets));
+  return readsWhere(state, node, (dep) => touches(dep, sets));
 }
 
 /** True when the formula reads, or fills, a cell of `sheet`. */
-export function readsSheet(node: CalcNode, sheet: SheetModel): boolean {
-  return readsWhere(node, (dep) => dep.sheet === sheet);
+export function readsSheet(state: WorkbookState, node: CalcNode, sheet: SheetModel): boolean {
+  return readsWhere(state, node, (dep) => dep.sheet === sheet);
 }
 
 /**
@@ -92,8 +97,8 @@ export function readsSheet(node: CalcNode, sheet: SheetModel): boolean {
  * reads, beyond moving them: a range that loses cells or gains new ones, or a
  * reference to a deleted cell. A range that only moves reads the same cells.
  */
-export function readsAcrossMove(node: CalcNode, sheet: SheetModel, op: StructuralOp): boolean {
-  return readsWhere(node, (dep) => {
+export function readsAcrossMove(state: WorkbookState, node: CalcNode, sheet: SheetModel, op: StructuralOp): boolean {
+  return readsWhere(state, node, (dep) => {
     if (dep.sheet !== sheet) return false;
     const low = op.axis === "row" ? dep.r1 : dep.c1;
     const high = op.axis === "row" ? dep.r2 : dep.c2;

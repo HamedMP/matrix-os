@@ -216,7 +216,7 @@ export function applyStructuralOp(state: WorkbookState, sheet: SheetModel, op: S
   // reference is, or picks cells by position, may get another answer: formulas that need a time and do
   // either are noted, while the graph still has the references as they were.
   const readsPosition = positionsAcrossMove(state, sheet, op);
-  noteClockInputs(state, (node) => readsAcrossMove(node, sheet, op) || readsPosition(node));
+  noteClockInputs(state, (node) => readsAcrossMove(state, node, sheet, op) || readsPosition(node));
   moveEdits(state, sheet, op);
   moveCells(state, sheet, op);
   // Array formulas moved with their cells, or went with deleted ones.

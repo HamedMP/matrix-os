@@ -31,10 +31,11 @@
  * has no time here), gives several values INDIRECT would take one by one, or
  * needs more cells than the move's budget. An unresolved formula is
  * judged by the cells the last calculation read. A formula that has not been
- * calculated since it was opened has no such record, and it is calculated
- * again: keeping its date could keep a value the moved formula no longer
- * gives, while calculating it without a time costs at most the date it would
- * have kept.
+ * calculated since it was opened is first given a record of what it reads
+ * now (`calc-reads.ts`); when even that cannot be worked out, it is
+ * calculated again: keeping its date could keep a value the moved formula no
+ * longer gives, while calculating it without a time costs at most the date it
+ * would have kept.
  */
 
 import type { CallNode, FormulaAst, FormulaScalar, FormulaValue, RangeBounds } from "../../api/formula.js";
@@ -44,6 +45,7 @@ import { isArray, isError, toScalar } from "../formula/coerce.js";
 import { boolArg, intArg, textArg } from "../formula/functions/text/args.js";
 import { type CalcNode, type Dep, MAX_NAME_DEPTH, collectDeps, functionsOf, pushChildren } from "./calc-graph.js";
 import { type ArgumentBudget, type Meter, clockNoting, meteredProvider, providerAfterMove, treeAfterMove } from "./calc-move-world.js";
+import { resolveReads } from "./calc-reads.js";
 import type { SheetModel, WorkbookState } from "./model.js";
 import { lookupName } from "./names.js";
 import { type StructuralOp, movePoint, moveSpan } from "./refs-rewrite.js";
@@ -395,7 +397,8 @@ class PositionWalk {
  * time from an address that still cannot be worked out are judged by the
  * cells the last calculation read: any of them that does not follow the move
  * alike, or more than were kept, counts as changed. Without a last
- * calculation such a formula counts as changed (see the file comment).
+ * calculation they are judged by what it reads now, and without that either
+ * the formula counts as changed (see the file comment).
  */
 export function positionsAcrossMove(state: WorkbookState, sheet: SheetModel, op: StructuralOp): (node: CalcNode) => boolean {
   const budget: ArgumentBudget = { cells: MOVE_ARGUMENT_CELLS };
@@ -406,7 +409,8 @@ export function positionsAcrossMove(state: WorkbookState, sheet: SheetModel, op:
     const found = walk.found;
     if (found.changed) return true;
     if (!found.unresolved) return false;
-    // Unresolved: only the last calculation's reads can show it unaffected.
+    // Unresolved: only the cells it read (last time, or now when it has no record) can show it unaffected.
+    resolveReads(state, node);
     if (node.readsAll || node.reads === null) return true;
     for (const read of node.reads) {
       // A cell the formula names follows the move like the reference does.

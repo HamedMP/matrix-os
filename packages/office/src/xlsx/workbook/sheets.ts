@@ -163,7 +163,7 @@ export function removeSheet(state: WorkbookState, sheet: SheetModel): void {
   // something else once it is gone; they are noted while the graph still has the sheet.
   noteClockInputs(
     state,
-    (node) => readsSheet(node, sheet) || (node.cell.formula !== null && rewriteForRemoval(node.cell.formula, key) !== node.cell.formula),
+    (node) => readsSheet(state, node, sheet) || (node.cell.formula !== null && rewriteForRemoval(node.cell.formula, key) !== node.cell.formula),
     sheet,
   );
   const position = state.sheets.indexOf(sheet);
