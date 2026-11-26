@@ -61,6 +61,22 @@ export const SlackChannelMetadataSchema = z.object({
   name: z.string().min(1).max(80).regex(/^[^\s\p{C}#<>&]+$/u),
 }).strict();
 export type SlackChannelMetadata = z.infer<typeof SlackChannelMetadataSchema>;
+/** Discovery reveals only the runtime's existing grant, never a caller-selected source. */
+export const SlackThreadContextEnrollmentRequestSchema = PrivateThread;
+export type SlackThreadContextEnrollmentRequest = z.infer<typeof SlackThreadContextEnrollmentRequestSchema>;
+export const SlackThreadContextEnrollmentSchema = z.object({
+  access: SlackThreadContextAccessSchema,
+  appId: Provenance.shape.appId, teamId: Provenance.shape.teamId, channel: SlackChannelMetadataSchema,
+  channelId: SlackChannelMetadataSchema.shape.id, scope: z.enum(["thread", "channel"]), threadTs: Timestamp.optional(),
+}).strict().refine(value => value.channel.id === value.channelId
+  && (value.scope === "thread" ? value.threadTs !== undefined : value.threadTs === undefined), { message: "Enrollment scope mismatch" });
+export type SlackThreadContextEnrollment = z.infer<typeof SlackThreadContextEnrollmentSchema>;
+export const SlackThreadContextEnrollmentResponseSchema = z.discriminatedUnion("available", [
+  z.object({ available: z.literal(false) }).strict(),
+  SlackThreadContextEnrollmentSchema.safeExtend({ available: z.literal(true) }).strict(),
+]);
+export type SlackThreadContextEnrollmentResponse = z.infer<typeof SlackThreadContextEnrollmentResponseSchema>;
+
 export const SlackThreadContextAccessRequestSchema = SlackThreadContextAccessSchema.extend({
   includeChannelMetadata: z.literal(true).optional(),
   summary: SlackMentionSummarySourceSchema.optional(),

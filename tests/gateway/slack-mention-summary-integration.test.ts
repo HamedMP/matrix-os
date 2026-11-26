@@ -91,6 +91,7 @@ it.each(["provider-partial", "message-budget", "trigger-truncation", "complete"]
   expect(actual).toContain("Root context");
   expect(actual).toContain("review this change");
   expect(actual).toContain("partial");
+  expect(actual).toContain("Omit internal IDs, raw timestamps, rule revisions and coverage flags.");
   expect(actual).not.toContain('"proof"');
   const modelMessages = runtime.modelRequests[0]!.messages as Array<{ content: string | Array<{type:string;text?:string}> }>;
   const modelText = modelMessages.flatMap(message => typeof message.content === "string" ? [message.content] : message.content.flatMap(block => block.text ? [block.text] : [])).join("\n");

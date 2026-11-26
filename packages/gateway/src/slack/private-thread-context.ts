@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { sql, type Kysely, type Transaction } from "kysely";
-import { SlackThreadContextAccessResponseSchema, type SlackThreadContextAccess, type SlackThreadContextAccessResponse, type SlackThreadContextEnvelope } from "@matrix-os/contracts/slack-bridge";
+import { SlackThreadContextEnrollmentResponseSchema, type SlackThreadContextEnrollmentRequest, type SlackThreadContextEnrollmentResponse, SlackThreadContextAccessResponseSchema, type SlackThreadContextAccess, type SlackThreadContextAccessResponse, type SlackThreadContextEnvelope } from "@matrix-os/contracts/slack-bridge";
 import type { OwnerBotDatabase } from "../bots/database.js";
 import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
 
@@ -22,6 +22,7 @@ export type PrivateSlackThreadContext = Awaited<ReturnType<typeof createPrivateS
 export async function createPrivateSlackThreadContext(options: {
   db: Kysely<OwnerBotDatabase>; ownerId: string; runtimeId: string;
   authorize(input: SlackThreadContextAccess, signal: AbortSignal): Promise<boolean | SlackThreadContextAccessResponse>;
+  discoverEnrollment?(input: SlackThreadContextEnrollmentRequest, signal: AbortSignal): Promise<SlackThreadContextEnrollmentResponse>;
   botAvailable?(target: Target): Promise<boolean>;
   onReceive?(envelope: SlackThreadContextEnvelope, trx: Transaction<OwnerBotDatabase>): Promise<void>;
 }) {
@@ -76,6 +77,21 @@ export async function createPrivateSlackThreadContext(options: {
       });
     },
     async enrollment(target: Target & {signal:AbortSignal}) {
+      if (options.discoverEnrollment) {
+        if (target.signal.aborted || await options.botAvailable?.(target) === false || !await isCurrent(target) || target.signal.aborted) return undefined;
+        const request = { ownerId: target.ownerId, botId: target.botId, chatId: target.chatId, runtimeId: options.runtimeId };
+        try {
+          const parsed = SlackThreadContextEnrollmentResponseSchema.safeParse(await options.discoverEnrollment(request, target.signal));
+          if (!parsed.success || !parsed.data.available || target.signal.aborted
+            || Object.entries(request).some(([key, expected]) => parsed.data.available && parsed.data.access[key as keyof typeof request] !== expected)
+            || await options.botAvailable?.(target) === false || !await isCurrent(target) || target.signal.aborted) return undefined;
+          const { access, appId, teamId, channel, scope, threadTs } = parsed.data;
+          return { access, appId, teamId, channel, scope, ...(threadTs ? { threadTs } : {}) };
+        } catch (error) {
+          if (!target.signal.aborted) console.warn("[slack-owner] enrollment unavailable", error instanceof Error ? error.name : "UnknownError");
+          return undefined;
+        }
+      }
       if(target.signal.aborted||!await isCurrent(target)||await options.botAvailable?.(target)===false)return undefined;
       const row=await db.selectFrom("slack_private_thread_context").select(["grant_id","app_id","team_id","channel_id"])
         .where("owner_id","=",target.ownerId).where("chat_id","=",target.chatId).where("bot_id","=",target.botId)

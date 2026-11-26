@@ -1,7 +1,6 @@
 import { canonicalChatApprovals, canonicalChatInputs, canonicalAssistantOutputMessages, canonicalAssistantOutputRootId } from "@matrix-os/contracts";
 import type { CanonicalChatMessage, CanonicalChatRun, CanonicalChatRunActivity, CanonicalChatTurn } from "@matrix-os/contracts";
-import { routineReceiptMessage } from "@matrix-os/ui";
-import { chatAgentAttribution } from "@matrix-os/ui";
+import { chatAgentAttribution, routineReceiptMessage, slackRuleReceiptMessage } from "@matrix-os/ui";
 import { nativeScheduledMessage } from "@matrix-os/ui/chat-scheduled-message";
 import type { ConversationTurnPresentation, ConversationWorkPresentation } from "../../components/conversation/presentation";
 import { historicalChatPresentation } from "./historical-chat-presentation";
@@ -181,10 +180,17 @@ export function canonicalChatPresentation(input: {
   });
   const orphans = input.messages.filter(message => !message.turnId && message.parts.some(part => part.type === "import_provenance"));
   if (orphans.length) views.push(historicalChatPresentation(orphans, `history:${orphans[0]!.id}`));
-  for(const message of input.messages){
-    const receipt=routineReceiptMessage(message,input.record?.chat.id);if(!receipt)continue;
-    const timestamp=Date.parse(message.createdAt);
-    views.push({id:message.id,startedAt:timestamp,endedAt:timestamp,active:false,work:[],routineReceipt:{receipt,text:message.parts.filter(part=>part.type==="text").map(part=>part.text).join("\n")}});
+  for (const message of input.messages) {
+    const chatId = input.record?.chat.id;
+    const receipt = routineReceiptMessage(message, chatId);
+    const slackReceipt = slackRuleReceiptMessage(message, chatId);
+    if (!receipt && !slackReceipt) continue;
+    const timestamp = Date.parse(message.createdAt);
+    views.push({ id: message.id, startedAt: timestamp, endedAt: timestamp, active: false, work: [],
+      ...(receipt ? { routineReceipt: { receipt, text: message.parts.filter(part => part.type === "text").map(part => part.text).join("\n") } } : {}),
+      ...(slackReceipt ? { final: { kind: "notice", id: message.id, phase: "final", tone: "neutral", label: slackReceipt.title,
+        markdown: slackReceipt.detail ?? "", timestamp } } : {}),
+    });
   }
   const seqFor = (view: ConversationTurnPresentation) => {
     const turn = input.turns.find(turn => turn.id === view.id);

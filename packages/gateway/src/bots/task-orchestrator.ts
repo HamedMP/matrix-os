@@ -1,4 +1,4 @@
-import { SLACK_SUMMARY_SYSTEM, type SlackSummaryRunAuthority } from "./slack-summary-run.js";
+import { isRoutedSlackInstruction, readonlySlackSystemPrompt, type SlackSummaryRunAuthority } from "./slack-summary-run.js";
 import type { BotInputHistoryReader } from "./historical-input.js";
 import { createBotWorkerDrain } from "./worker-drain.js";
 import { BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
@@ -90,6 +90,7 @@ export interface BotTurnHandle {
 }
 
 interface ActiveRun {
+  routedOutput?: string;
   readonlySummary?: true;
   ownerId: string;
   chatId: string;
@@ -463,7 +464,7 @@ export function createBotTaskOrchestrator(deps: {
         ? recipe.instructions : agent.instructions;
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: input.readonlySummary ? SLACK_SUMMARY_SYSTEM : buildBotSystemPrompt({ botName: agent.name, instructions, recipe, memory, ownerSoul, reservedSuffix: !group && deps.routineExecution ? input.backgroundTaskId ? ROUTINE_OCCURRENCE_CONTEXT_SUFFIX : deps.routineExecution.describeChatPhase ? ROUTINE_CHAT_CONTEXT_RESERVATION : undefined : undefined, audience: group ? "group" : "personal", now: new Date(now()) }),
+        systemPrompt: input.readonlySummary ? readonlySlackSystemPrompt(input.text) : buildBotSystemPrompt({ botName: agent.name, instructions, recipe, memory, ownerSoul, reservedSuffix: !group && deps.routineExecution ? input.backgroundTaskId ? ROUTINE_OCCURRENCE_CONTEXT_SUFFIX : deps.routineExecution.describeChatPhase ? ROUTINE_CHAT_CONTEXT_RESERVATION : undefined : undefined, audience: group ? "group" : "personal", now: new Date(now()) }),
         capabilities,
         limits: isolatedModel || input.readonlySummary ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         turn: { kind: "prompt", text: run.inputs.prompt(input.text), ...(run.inputs.imageCount ? { imageCount: run.inputs.imageCount } : {}) },
@@ -543,6 +544,11 @@ export function createBotTaskOrchestrator(deps: {
       const outcome = reply.ok ? BotRunOutcomeSchema.safeParse(reply.reply) : undefined;
       if (!outcome?.success || outcome.data.runId !== input.runId) return await settle(task, "failed");
       if (await deps.routineProposals?.recover({ ownerId: task.ownerId, taskId: task.taskId, chatId: task.chatId, runId: input.runId })) return { status: "waiting_person" };
+      if (run.routedOutput !== undefined && outcome.data.status === "completed") {
+        const output = await deps.slackSummaries?.routedResult?.(binding,run.routedOutput);
+        if (!output || run.stopping || run.signal.aborted) return await settle(task, "failed");
+        run.queue.push({ kind: "event", event: { type:"assistant_delta", text:output } });
+      }
       return await settle(task, outcome.data.status, outcome.data.blockedReason);
     } catch (error: unknown) {
       if (!run.stopping) console.warn("[bots] bot run failed:", error instanceof Error ? error.name : "UnknownError");
@@ -622,6 +628,11 @@ export function createBotTaskOrchestrator(deps: {
         await deps.assertSource?.(binding, run.signal);
         if (active.get(binding.runId) !== run || run.stopping || run.finished) throw new BotBrokerActionError("stale_generation");
       }
+      if (run.routedOutput !== undefined && event.event.type === "assistant_delta") {
+        if (run.routedOutput.length + event.event.text.length > 16_384) throw new BotBrokerActionError("denied");
+        run.routedOutput += event.event.text;
+        return;
+      }
       run.queue.push({ kind: "event", event: event.event });
     },
   };
@@ -653,6 +664,7 @@ export function createBotTaskOrchestrator(deps: {
       if (active.has(input.runId) || active.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new BotTurnError("capacity_exceeded");
       const prelaunch = new AbortController();
       const run: ActiveRun = { ...(input.readonlySummary ? { readonlySummary: true as const } : {}), ownerId: input.ownerId, chatId: input.chatId, prelaunch, signal: AbortSignal.any([input.signal, prelaunch.signal]), setupAbort: prelaunch, queue: createCanonicalCliEventQueue<BotTurnEvent>(MAX_QUEUED_EVENTS) };
+      if (input.readonlySummary && isRoutedSlackInstruction(input.text)) run.routedOutput = "";
       active.set(input.runId, run);
       const onAbort = () => {
         void stopRuntime(run, input.runId, "cancelled").catch((error: unknown) => {

@@ -1,5 +1,5 @@
 import { canonicalChatToolActivities, canonicalChatInputs, canonicalChatApprovals, canonicalChatTerminalNotices, canonicalAssistantOutputMessages, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
-import { routineReceiptMessage } from "@matrix-os/ui";
+import { routineReceiptMessage, slackRuleReceiptMessage } from "@matrix-os/ui";
 import type { ChatMessage } from "./chat";
 import { projectCanonicalMessages } from "./canonical-chat-client";
 import { nativeScheduledMessage } from "@matrix-os/ui/chat-scheduled-message";
@@ -16,6 +16,8 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
     if (scheduled) message.scheduledMessage = scheduled;
     const receipt = source && routineReceiptMessage(source, detail.record?.chat.id);
     if (receipt) message.routineReceipt = receipt;
+    const slackReceipt = source && slackRuleReceiptMessage(source, detail.record?.chat.id);
+    if (slackReceipt) message.slackRuleReceipt = slackReceipt;
     const context = source?.turnId ? contextsByTurn[source.turnId] : undefined;
     if (source?.role === "user" && context) message.metadata = { ...message.metadata, chatRunContext: context };
     const turn=detail.turns.find(turn=>turn.inputMessageId===source?.id&&turn.chatId===source.chatId);

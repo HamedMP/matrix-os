@@ -63,6 +63,8 @@ Gateway must not serve traffic until restore/fresh decision completes.
 
 ## Registration Callback
 
+Core gateway and authenticated terminal health gate registration; optional developer-tool installation does not. See [registration readiness](registration-readiness.md) for executable contracts and tests.
+
 After boot and restore/fresh completion, the host calls:
 
 ```http

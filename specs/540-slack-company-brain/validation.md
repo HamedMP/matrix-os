@@ -223,3 +223,14 @@ the existing platform. A 300-second rollback guard restores the original host
 environment unless the gateway restarts healthy and enrolls with the isolated
 preview backend. Direct replies still require a configured provider on that preview
 home; no successful model reply is claimed until a fresh DM is answered.
+
+### Fresh enrollment discovery source grid
+
+| Contract | Source / evidence |
+| --- | --- |
+| Runtime credential, strict selector-free discovery, current grant + provider metadata | `packages/platform/src/slack/thread-context.ts`; `SlackThreadContextEnrollment*` schemas in `packages/contracts/src/slack-bridge.ts`; `tests/gateway/slack-enrollment.test.ts` uses actual PostgreSQL/Hono/client and synthetic provider data. |
+| No event prerequisite; configured callback denies authoritatively without cache fallback | `packages/gateway/src/startup/slack-owner-client.ts`, `startup/bots.ts`, `slack/private-thread-context.ts`; zero-row native inventory, stale-cache denial and private-binding/cancellation race tests. |
+| Thread scope remains exact; no permission or source writer added | `slack/enrolled-read-source.ts` projects discovered scope and rejects non-enrolled reads; existing platform grant fences remain authoritative. |
+| Owner rule before first source event; then signed automatic work | `tests/gateway/slack-owner-rule-integration.test.ts` starts with zero context rows, uses the existing owner-HTTP native tool path, then signs a synthetic new qualifying event and verifies deduplication, one restricted English private result and no Slack output. |
+
+These are local synthetic provider/model checks. They do not claim a deployed discovery endpoint, fresh real owner setup, live Slack event acceptance, or current-head CI. Discovery itself creates no context, rule, Run, message or job.

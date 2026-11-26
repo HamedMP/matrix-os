@@ -8,6 +8,41 @@ import { EMAIL_TRIAGE_LABELS } from "@matrix-os/contracts";
 import { formatJevInboxPresentation } from "../../packages/gateway/src/jev/inbox-presentation";
 
 describe("tool detail presentation across OS surfaces", () => {
+  it("keeps only Slack rule progress when replaying a saved rule tool trace", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const run = snapshot.runs[0]!;
+    run.driverKind = "matrix_bot";
+    const chat = { ...snapshot.chat };
+    delete chat.providerBinding;
+    delete chat.activeRun;
+    delete chat.project;
+    const base = { chatId: chat.id, runId: run.id, occurredAt: run.createdAt };
+    const activities: CanonicalChatRunActivity[] = [
+      { ...base, id: "activity_rule", activityId: "call_rule", type: "agent.activity",
+        kind: "dynamic_tool", label: "Managing Slack summary rules", status: "completed" },
+      { ...base, id: "result_rule", toolCallId: "call_rule", type: "tool.output", truncated: false,
+        text: 'Tool: slack_summary_rules\n\nOutput:\n{"saved":true,"receipt":{"ruleId":"srule_fixture","revision":5}}' },
+      { ...base, id: "activity_other", activityId: "call_other", type: "agent.activity",
+        kind: "dynamic_tool", label: "Reading a file", status: "completed" },
+      { ...base, id: "result_other", toolCallId: "call_other", type: "tool.output", truncated: false,
+        text: "Ordinary tool output remains available." },
+    ];
+    const detail = CanonicalChatDetailResponseSchema.parse({ record: { chat }, messages: snapshot.messages,
+      turns: snapshot.turns, runs: snapshot.runs, activities, queuedTurns: [] });
+    const surfaces = {
+      "Electron Desktop": canonicalChatPresentation(detail).flatMap(turn => turn.work).flatMap(work => work.kind === "activity-group" ? work.activities : []),
+      "Web": projectCanonicalTranscript(detail).flatMap(message => message.toolDisplay ? [message.toolDisplay] : []),
+    };
+    for (const [surface, entries] of Object.entries(surfaces)) {
+      const ruleActivity = entries.find(entry => entry.label === "Managing Slack summary rules");
+      expect(ruleActivity, surface).toMatchObject({ kind: "phase", state: "completed" });
+      expect(ruleActivity, surface).not.toHaveProperty("detail");
+      expect(ruleActivity, surface).not.toHaveProperty("preview");
+      expect(entries.find(entry => entry.label === "Reading a file")?.detail, surface).toBe("Ordinary tool output remains available.");
+    }
+    expect(detail.activities[1]).toMatchObject({ text: expect.stringContaining("srule_fixture") });
+  });
+
   it.each([false, true])("preserves broker-owned read-only Inbox proposals across shared projections (reload=%s)", reloaded => {
     const summary = formatJevInboxPresentation({ kind: "proposal", readonly: true, verified: true,
       threadId: "thread_fixture", messageCount: 4, labels: [EMAIL_TRIAGE_LABELS.coldOutreach],

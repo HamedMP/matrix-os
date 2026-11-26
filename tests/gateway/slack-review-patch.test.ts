@@ -5,6 +5,7 @@ import type { PipedreamConnectClient } from "../../packages/gateway/src/integrat
 import { requireRequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { expect, it, vi } from "vitest";
 import { createBotIntegrationClient, createLocalIntegrationTransport, type BotIntegrationTransport } from "../../packages/gateway/src/bots/integration-client.js";
+import { reviewedPatchResult } from "../../packages/gateway/src/slack/agent-route-jobs.js";
 import { mentionsPullReview, parseSlackReviewRequest, readRoutedReviewPatch } from "../../packages/gateway/src/slack/review-patch.js";
 
 const head = "a".repeat(40);
@@ -117,4 +118,11 @@ it("accepts an explicitly assigned public repository with the same immutable ide
 it("preserves a complete unified patch including its optional final newline", async () => {
   const patch = file.patch + "\n";
   await expect(harness([pull, [{...file, patch}], pull]).run()).resolves.toMatchObject({ files:[{filename:file.filename,patch}] });
+});
+
+it("accepts a file-specific verdict quoting part of a long changed line, withholding unrelated quotations", async () => {
+  const patch = "@@ -1 +1 @@\n-The old behavior was silent.\n+When workspace access expires, reopen the owner consent flow before retrying the job.";
+  const proof = await harness([pull, [{ ...file, patch }], pull]).run();
+  expect(reviewedPatchResult(proof, 'docs/sample.md now says "reopen the owner consent flow". This addresses the expired-access case.')).toContain(head);
+  expect(reviewedPatchResult(proof, 'docs/sample.md now says "publish all records".')).toBeNull();
 });

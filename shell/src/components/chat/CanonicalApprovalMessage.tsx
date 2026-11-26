@@ -79,7 +79,12 @@ export function CanonicalApprovalMessage({
   const [failed, setFailed] = useState<{ runId: string; approvalId: string } | null>(null);
   const approval = canonicalApproval(message);
   if (!approval) {
-    return <div className="rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">{message.content}</div>;
+    const notice = message.slackRuleReceipt;
+    return (
+      <div className="min-w-0 max-w-full rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+        {notice ? <><p className="font-medium">{notice.title}</p>{notice.detail ? <p>{notice.detail}</p> : null}</> : message.content}
+      </div>
+    );
   }
   if (approval.pending && RoutineActionIdSchema.safeParse(approval.approvalId).success) return <CanonicalRoutineActionMessage challengeId={approval.approvalId}/>;
   if (approval.browserApproval) return <BrowserPermissionCard chatId={chatId} approval={approval as CanonicalChatApprovalView} submitting={submitting} client={browserPermissions} onOpenPermissionMode={onOpenPermissionMode}

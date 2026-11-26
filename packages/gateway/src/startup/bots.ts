@@ -1,3 +1,4 @@
+import type { SlackBotPlatform } from "./slack-platform.js";
 import { retireRevokedSlackJobs } from "../slack/rule-revocation.js";
 import { createSlackRuleTools, type SlackRuleTools } from "../slack/rule-tools.js";
 import { createEnrolledSlackReadSource, type EnrolledSlackReadSource } from "../slack/enrolled-read-source.js";
@@ -172,6 +173,8 @@ export interface BotServices extends RoutineOriginStartup {
 }
 
 export async function startBots(options: {
+  /** null explicitly disables Slack; undefined preserves legacy callers. */
+  slackPlatform?: SlackBotPlatform | null;
   routineCliTransport?: { binPath: string; endpoint: string };
   routineActionPlatform?: { platformUrl: string; token: string; handle: string; machineId: string; runtimeSlot: string };
   toolOutputKey?: Buffer;
@@ -271,9 +274,11 @@ export async function startBots(options: {
   const transact = createBotStateTransactions(options.repository);
   const routineApprovals=createBotRoutineApprovals({db,transact,source:chatgptPlanPeers,now:options.now,definitionRevision:async(ownerId,botId)=>{const agent=await options.agents.get({type:"personal",ownerId},botId);if(!agent?.recipeRef || agent.archived) throw new BotStateError("not_found");return agent.revision;}});
   const routines=createBotRoutineExecution({db,transact,approvals:routineApprovals,available:()=>Boolean(options.host?.available),now:options.now});
-  const enrolledPlatform = options.routineActionPlatform;
+  const enrolledPlatform = options.slackPlatform === undefined ? options.routineActionPlatform : options.slackPlatform;
   const enrolledPreview = enrolledPlatform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(enrolledPlatform.runtimeSlot) && enrolledPlatform.handle === enrolledPlatform.runtimeSlot;
-  const integrationClient = options.integrations || enrolledPreview
+  const corePlatform = options.routineActionPlatform;
+  const corePreview = corePlatform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(corePlatform.runtimeSlot) && corePlatform.handle === corePlatform.runtimeSlot;
+  const integrationClient = options.integrations || corePreview || enrolledPreview
     ? createBotIntegrationClient(options.integrations ?? (async () => new Response(null, {status:503}))) : undefined;
   let enrolledSlack: EnrolledSlackReadSource | undefined;
   const integrationTools = integrationClient
@@ -433,7 +438,7 @@ export async function startBots(options: {
   let slackThreadContext: PrivateSlackThreadContext | undefined;
   let slackMentionSummaries: SlackMentionSummaries | undefined;
   let slackRules: SlackRuleTools | undefined;
-  const platform = options.routineActionPlatform;
+  const platform = enrolledPlatform;
   if (platform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(platform.runtimeSlot) && platform.handle === platform.runtimeSlot) {
     try {
       const slackClient = createSlackOwnerClient(platform);
@@ -444,6 +449,7 @@ export async function startBots(options: {
       slackMentionSummaries = await createSlackMentionSummaries({ db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess, readThread: slackClient.readSummaryThread, botAvailable });
       slackThreadContext = await createPrivateSlackThreadContext({
         db, ownerId: options.runtimeOwnerId, runtimeId: platform.machineId, authorize: slackClient.readThreadContextAccess,
+        discoverEnrollment: slackClient.discoverThreadEnrollment,
         onReceive: slackMentionSummaries.receive,
         botAvailable: async target => {
           const bot = await options.agents.get({ type: "personal", ownerId: target.ownerId }, target.botId);

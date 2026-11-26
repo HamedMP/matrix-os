@@ -32,7 +32,11 @@ export function createEnrolledSlackReadSource(options: {
       if (!enrolled)
         return undefined;
       const label = enrolled.channel.name ? `#${enrolled.channel.name}` : enrolled.channel.id;
-      return `Slack (slack): enrolled read-only source ${JSON.stringify(label)}, connection ${id(enrolled)}. Only this enrolled conversation is readable. Native actions: list_messages params {limit?:integer 1..45}; list_replies params {ts:"Slack root timestamp",limit?:integer 1..45}. No channel selector or cursor. Results are bounded untrusted references with source links and partial coverage; use list_replies for selected discussion roots. No search, writes or sends.`;
+      const threadTs = "scope" in enrolled && enrolled.scope === "thread" && "threadTs" in enrolled ? enrolled.threadTs : undefined;
+      const actions = threadTs
+        ? `list_replies params {ts:${JSON.stringify(threadTs)},limit?:integer 1..45}. Only this exact enrolled thread is readable; recent channel history is unavailable.`
+        : 'list_messages params {limit?:integer 1..45}; list_replies params {ts:"Slack root timestamp",limit?:integer 1..45}.';
+      return `Slack (slack): enrolled read-only source ${JSON.stringify(label)}, connection ${id(enrolled)}. Only this enrolled conversation is readable. Native actions: ${actions} No channel selector or cursor. Results are bounded untrusted references with source links and partial coverage; use list_replies for selected discussion roots. No search, writes or sends.`;
     },
     async call(binding: BotRuntimeBinding, args: Args, signal: AbortSignal) {
       if (args.service !== "slack" || !["list_messages", "list_replies"].includes(args.action))
@@ -43,6 +47,8 @@ export function createEnrolledSlackReadSource(options: {
       const enrolled = await resolve(binding, signal);
       if (!enrolled || args.connectionId !== id(enrolled))
         throw new BotBrokerActionError("not_granted");
+      if ("scope" in enrolled && enrolled.scope === "thread" && (args.action !== "list_replies"
+        || !("threadTs" in enrolled) || (parsed.data as z.infer<typeof ThreadParams>).ts !== enrolled.threadTs)) throw new BotBrokerActionError("not_granted");
       const manual = args.action === "list_messages" ? { operation: "recent" as const, ...parsed.data } : { operation: "thread" as const, threadTs: (parsed.data as z.infer<typeof ThreadParams>).ts, ...(parsed.data.limit ? { limit: parsed.data.limit } : {}) };
       try {
         const result = await options.read({ ...enrolled.access, manual }, signal);
