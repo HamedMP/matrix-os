@@ -1,13 +1,13 @@
 /**
  * A date formula that picks its cells at run time (OFFSET, INDIRECT) and has
  * not been calculated since its workbook was opened has no record of the
- * cells it read. A run without a time keeps its date only when what it would
- * read now did not change.
+ * cells it read. A run without a time calculates it and keeps its date only
+ * when the calculation reaches the clock.
  */
 
 import { describe, expect, it } from "vitest";
 import { createXlsx, openXlsx, parseA1 } from "../../../../packages/office/src/xlsx/index.js";
-import { err, valueAt } from "./helpers.js";
+import { valueAt } from "./helpers.js";
 
 const NOW = "2026-11-23T10:00:00Z";
 const DATE = 46349;
@@ -30,8 +30,8 @@ describe("a freshly opened date formula that picks its cells at run time", () =>
     ["IF(OFFSET(S!A1,4,0)=5,TODAY(),42)", "S", 42],
     // An edit of a sheet it does not read keeps the date.
     ['IF(INDIRECT("S!A5")=5,TODAY(),42)', "U", DATE],
-    // Where it reads depends on the clock, so it may read any cell: any edit counts.
-    ['IF(INDIRECT("S!A"&IF(TODAY()>0,5,6))=5,TODAY(),42)', "U", err("#N/A")],
+    // Where it reads depends on the clock, so its answer does too: it keeps the date.
+    ['IF(INDIRECT("S!A"&IF(TODAY()>0,5,6))=5,TODAY(),42)', "U", DATE],
   ] as const)("judges %s after an edit on %s by the cells it reads now", async (formula, edited, expected) => {
     const workbook = await openXlsx(await savedBook(formula));
     const sheet = workbook.getSheetByName(edited)!.id;

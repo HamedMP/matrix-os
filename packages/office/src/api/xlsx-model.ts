@@ -179,7 +179,10 @@ export interface ChangedCell extends SheetCellRef {
 }
 
 export interface RecalcOptions {
-  /** ISO 8601 time for NOW and TODAY, supplied by the caller. */
+  /**
+   * ISO 8601 time for NOW and TODAY, supplied by the caller. Without one (in this call or an earlier one),
+   * a formula with a value whose calculation reaches NOW or TODAY keeps that value.
+   */
   now?: string;
   /** Maximum number of formula cells to evaluate. Default 200 000. */
   maxCells?: number;

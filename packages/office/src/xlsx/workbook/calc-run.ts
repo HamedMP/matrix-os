@@ -10,14 +10,17 @@
  *
  * A bound that stops a run leaves the formulas it did not reach marked as
  * pending; the next run starts with those and does not redo the others.
+ *
+ * Without a time, a formula whose calculation reaches TODAY or NOW keeps the
+ * value it has and counts as unchanged (`calc-clock.ts`).
  */
 
 import type { CellProvider, FormulaScalar, FormulaValue, FunctionRegistry } from "../../api/formula.js";
 import type { CellRange, CellValue, ChangedCell, SheetCellRef } from "../../api/xlsx.js";
 import { isOfficeError } from "../../errors.js";
 import { formatValue } from "../format/index.js";
-import { type CalcGraph, type CalcNode, functionsOf } from "./calc-graph.js";
-import { type CellSets, addTo, fillsRange, isEmpty, noteClockInputs, readsAny, touches } from "./calc-inputs.js";
+import { NO_CLOCK, clocklessFunctions } from "./calc-clock.js";
+import { type CalcGraph, type CalcNode, type Dep, functionsOf } from "./calc-graph.js";
 import { type ReadLog, makeProvider } from "./calc-provider.js";
 import { arrayCellValue, errorValue, toCellValue } from "./calc-values.js";
 import { ensureRow, findCell } from "./cells.js";
@@ -28,10 +31,48 @@ export { TRACE_LIMIT } from "./model.js";
 /** How often formulas that pick their cells at run time are calculated again before they count as circular. */
 const MAX_ROUNDS = 32;
 
+type CellSets = Map<SheetModel, Set<number>>;
+
 /** The last time a cell was stored in a run, and the entry that reports it. */
 interface StoreMark {
   seq: number;
   entry: ChangedCell;
+}
+
+/** True for an array formula that fills cells besides its own. */
+function fillsRange(node: CalcNode): boolean {
+  const spill = node.spill;
+  return spill !== null && (spill.end.row > spill.start.row || spill.end.col > spill.start.col);
+}
+
+function touches(dep: Dep, changed: CellSets): boolean {
+  const set = changed.get(dep.sheet);
+  if (set === undefined || set.size === 0) return false;
+  const area = (dep.r2 - dep.r1 + 1) * (dep.c2 - dep.c1 + 1);
+  if (area <= set.size) {
+    for (let r = dep.r1; r <= dep.r2; r++) for (let c = dep.c1; c <= dep.c2; c++) if (set.has(cellKey(r, c))) return true;
+    return false;
+  }
+  for (const key of set) {
+    const col = key % 16384;
+    const row = (key - col) / 16384;
+    if (row >= dep.r1 && row <= dep.r2 && col >= dep.c1 && col <= dep.c2) return true;
+  }
+  return false;
+}
+
+export function isEmpty(sets: CellSets): boolean {
+  for (const set of sets.values()) if (set.size > 0) return false;
+  return true;
+}
+
+export function addTo(sets: CellSets, sheet: SheetModel, key: number): void {
+  let set = sets.get(sheet);
+  if (set === undefined) {
+    set = new Set();
+    sets.set(sheet, set);
+  }
+  set.add(key);
 }
 
 /** One calculation of a workbook. */
@@ -48,6 +89,14 @@ export class Run {
   private readonly log: ReadLog = { reads: null, overflow: false };
   private readonly provider: CellProvider;
   private readonly functions: FunctionRegistry;
+  /** Without a time: the functions with TODAY and NOW stopping a calculation. */
+  private readonly clockless: FunctionRegistry | null;
+  /**
+   * Formulas that pick their cells at run time whose last calculation here reached the clock. What they read
+   * until then judges them for the rest of the run; after it, as they did not read everything, they are
+   * calculated again by every run. At most one entry per node of the graph.
+   */
+  private readonly stopped = new Set<CalcNode>();
   private readonly format: (value: FormulaScalar, code: string) => string;
 
   constructor(
@@ -64,6 +113,7 @@ export class Run {
     this.marks = graph.dynamic.length > 0 ? new Map() : null;
     this.provider = makeProvider(state, this.log);
     this.functions = functionsOf(state) as FunctionRegistry;
+    this.clockless = now === null ? clocklessFunctions(this.functions) : null;
     const date1904 = state.date1904;
     this.format = (value, code) => formatValue(value, code, { date1904 });
     for (const node of graph.dynamic) {
@@ -159,12 +209,14 @@ export class Run {
       log.reads = [];
       log.overflow = false;
     }
+    // A formula without a value has nothing to keep: TODAY and NOW give #N/A in it.
+    const keeps = this.clockless !== null && node.cell.value !== null;
     let value: CellValue;
     let result: FormulaValue = null;
     try {
       result = (formula as NonNullable<typeof formula>).evaluate(node.ast, {
         provider: this.provider,
-        functions: this.functions,
+        functions: keeps ? (this.clockless as FunctionRegistry) : this.functions,
         sheet: node.sheet.name,
         row: node.row,
         col: node.col,
@@ -174,6 +226,10 @@ export class Run {
       });
       value = spill === null ? toCellValue(result, node) : arrayCellValue(result, 0, 0);
     } catch (error) {
+      if (error === NO_CLOCK) {
+        this.keep(node);
+        return true;
+      }
       // The engine reports calculation problems as values; a typed failure (a bound, say) becomes one too.
       if (!isOfficeError(error)) {
         log.reads = null;
@@ -186,10 +242,27 @@ export class Run {
       node.reads = log.reads;
       node.readsAll = log.overflow;
       log.reads = null;
+      this.stopped.delete(node);
     }
-    if (node.clock) this.state.calc.clockInputs.delete(node.cell);
     this.put(node, value, result, false);
     return true;
+  }
+
+  /**
+   * Leaves a formula whose calculation reached the clock with the value it has, stored nowhere, so the formulas
+   * that read it see no change. Until a cell it read before the clock changes, its calculation takes the same
+   * path to the clock again.
+   */
+  private keep(node: CalcNode): void {
+    const log = this.log;
+    if (node.dynamic) {
+      node.reads = log.reads;
+      node.readsAll = log.overflow;
+      log.reads = null;
+      this.stopped.add(node);
+    }
+    node.evalAt = this.seq;
+    node.doneAt = this.seq;
   }
 
   /** True when the node, a cell its formula names or a cell of the range it fills is in `sets`. */
@@ -211,30 +284,6 @@ export class Run {
     if (node.readsAll) return !isEmpty(sets);
     for (const dep of node.reads) if (touches(dep, sets)) return true;
     return false;
-  }
-
-  /**
-   * True for a formula that needs a time and keeps the value it has in a run without one: none of the
-   * cells it reads was edited or stored since, and no change the marks do not show was noted for it.
-   * Its own cell does not count: a rewrite of its reference text is no edit, and a formula typed into
-   * it has no value and is calculated anyway.
-   */
-  private keepsDate(node: CalcNode): boolean {
-    if (!node.clock || this.now !== null || node.cell.value === null || node.circular) return false;
-    return !this.state.calc.clockInputs.has(node.cell) && !readsAny(this.state, node, this.sink);
-  }
-
-  /**
-   * Notes the formulas that need a time from `from` on whose inputs are among the cells changed so far,
-   * before a bound leaves them pending: the marks are dropped when the run ends.
-   */
-  private noteDeferredClocks(from: number): void {
-    const hits = new Set<CalcNode>();
-    for (let i = from; i < this.order.length; i++) {
-      const node = this.order[i] as CalcNode;
-      if (node.clock && readsAny(this.state, node, this.sink)) hits.add(node);
-    }
-    if (hits.size > 0) noteClockInputs(this.state, (node) => hits.has(node));
   }
 
   /** True when a cell the node read was stored after the node was calculated. */
@@ -270,7 +319,6 @@ export class Run {
    * may reach, taking each such node as changed. With `everything`, all of them.
    */
   private defer(from: number, everything: boolean): void {
-    this.noteDeferredClocks(from);
     const pending = this.state.calc.pending;
     const sink = this.sink;
     for (let i = from; i < this.order.length; i++) {
@@ -304,11 +352,6 @@ export class Run {
       const waited = waiting !== undefined && waiting.has(key);
       const due = this.all || node.circular || waited || (this.forced && (node.volatile || node.dynamic)) || (node.dynamic && node.reads === null) || this.touched(node, sink);
       if (!due) continue;
-      // Without a time, a formula that needs one keeps the value it has unless what it reads changed.
-      if (this.keepsDate(node)) {
-        if (waited) waiting.delete(key);
-        continue;
-      }
       if (!this.evaluate(node)) {
         this.defer(i, this.all);
         return false;
@@ -366,6 +409,7 @@ export class Run {
 
   run(): boolean {
     const complete = this.first() && (this.marks === null || this.settle());
+    for (const node of this.stopped) node.reads = null;
     if (this.marks !== null) {
       // A cell that came back to the value it had is not a change.
       let kept = 0;

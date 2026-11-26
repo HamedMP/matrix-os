@@ -6,7 +6,6 @@ import { formatValue } from "../format/index.js";
 import { arrayRangeAt, invalidateArrayRanges } from "./arrays.js";
 import { cellMarkupText } from "./cell-markup.js";
 import { arrayFormulaRange, callsUnknownFunction } from "./calc-graph.js";
-import { noteClockInputs, readsAny } from "./calc-inputs.js";
 import type { CellMutation, RawCell } from "./internals.js";
 import {
   type CellRec,
@@ -88,14 +87,10 @@ function markupBefore(state: WorkbookState, sheet: SheetModel, cell: CellRec): (
   return () => (source.el === null ? null : cellMarkupText(state.strings, attachSheet(sheet).doc.root, source));
 }
 
-/**
- * Notes an edit of a cell's content for the next run. Edits are marked one by one even when the run
- * calculates everything, because formulas that need a time are calculated without one only when what
- * they read changed. Past the trace limit the run calculates everything anyway and the marks are
- * dropped, after the formulas that need a time and read one of them are noted.
- */
 function markEdited(state: WorkbookState, sheet: SheetModel, row: number, col: number): void {
   const calc = state.calc;
+  // The next run calculates everything: the edit needs no mark of its own.
+  if (calc.all) return;
   let edited = calc.edited.get(sheet);
   if (edited === undefined) {
     edited = new Set();
@@ -103,8 +98,7 @@ function markEdited(state: WorkbookState, sheet: SheetModel, row: number, col: n
   }
   edited.add(cellKey(row, col));
   if (edited.size > TRACE_LIMIT) {
-    const marks = calc.edited;
-    noteClockInputs(state, (node) => readsAny(state, node, marks));
+    // A run calculates everything past this many edits anyway; the marks are dropped instead of kept.
     calc.all = true;
     calc.edited.clear();
   }
@@ -182,11 +176,9 @@ export function writeCell(
   if (contentChanged) {
     // The header cell of a table and the name of its column are one thing to other software.
     renameTableColumn(sheet, row, col, next.value);
-    // A rewrite of reference text keeps what the formula reads; what it moved or removed is noted by its caller.
-    if (reason !== "rewrite") markEdited(state, sheet, row, col);
+    markEdited(state, sheet, row, col);
     if (formulaChanged) {
-      // A formula without a value is calculated by the next run anyway; one written with a value may need a time.
-      invalidateGraph(state, next.formula === null || next.value === null);
+      invalidateGraph(state);
       dropCalcChain(state);
     }
   }

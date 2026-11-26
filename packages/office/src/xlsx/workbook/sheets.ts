@@ -6,7 +6,6 @@ import { OfficeError } from "../../errors.js";
 import { relativeTargetFor } from "../../opc/index.js";
 import { appendChild, createElement, getAttr, insertBefore, lookupPrefix, parseXml, remove, setAttr } from "../../xml/index.js";
 import { MAX_COLS } from "./a1.js";
-import { noteClockInputs, readsSheet } from "./calc-inputs.js";
 import { writeCell } from "./cells.js";
 import { rewriteFeatureFormulas } from "./feature-formulas.js";
 import type { SheetModel, WorkbookState } from "./model.js";
@@ -159,13 +158,6 @@ export function removeSheet(state: WorkbookState, sheet: SheetModel): void {
     throw new OfficeError("invalid_operation", "the last visible sheet cannot be removed");
   }
   const key = sheet.name.toLowerCase();
-  // Formulas that need a time and read the sheet, directly, through a name or by its name, read
-  // something else once it is gone; they are noted while the graph still has the sheet.
-  noteClockInputs(
-    state,
-    (node) => readsSheet(state, node, sheet) || (node.cell.formula !== null && rewriteForRemoval(node.cell.formula, key) !== node.cell.formula),
-    sheet,
-  );
   const position = state.sheets.indexOf(sheet);
   state.sheets.splice(position, 1);
   state.sheetsById.delete(sheet.id);

@@ -10,10 +10,8 @@ import type { XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import { getAttr, remove, setAttr, setTextContent, textContent } from "../../xml/index.js";
 import { MAX_COLS, MAX_ROWS, formatA1Range, tryParseA1Range } from "./a1.js";
-import { noteClockInputs, readsAcrossMove } from "./calc-inputs.js";
-import { positionsAcrossMove } from "./calc-positions.js";
 import { checkNotesForStructure, moveNotes } from "./notes.js";
-import { type CellRec, type ColumnRun, DIRTY_CONTENT, type RowRec, type SheetModel, type WorkbookState, cellKey } from "./model.js";
+import { type CellRec, type ColumnRun, DIRTY_CONTENT, type RowRec, type SheetModel, type WorkbookState } from "./model.js";
 import { type StructuralOp, movePoint, moveSpan, rewriteForStructure } from "./refs-rewrite.js";
 import { rewriteAllFormulas } from "./sheets.js";
 import { attachSheet } from "./sheet-read.js";
@@ -98,24 +96,6 @@ function moveCells(state: WorkbookState, sheet: SheetModel, op: StructuralOp): v
       row.dirty = true;
     }
   }
-}
-
-/**
- * Moves the edit marks of the sheet with the cells they name; the mark of a deleted cell goes with the
- * cell. Formulas that need a time are calculated without one only when what they read changed, and
- * moving the references of the sheet with its cells keeps what they read.
- */
-function moveEdits(state: WorkbookState, sheet: SheetModel, op: StructuralOp): void {
-  const marks = state.calc.edited.get(sheet);
-  if (marks === undefined) return;
-  const moved = new Set<number>();
-  for (const key of marks) {
-    const col = key % 16384;
-    const row = (key - col) / 16384;
-    const target = op.axis === "row" ? movePoint(row, op) : movePoint(col, op);
-    if (target >= 0) moved.add(op.axis === "row" ? cellKey(target, col) : cellKey(row, target));
-  }
-  state.calc.edited.set(sheet, moved);
 }
 
 function moveColumns(sheet: SheetModel, op: StructuralOp): void {
@@ -212,12 +192,6 @@ export function applyStructuralOp(state: WorkbookState, sheet: SheetModel, op: S
   // A table cannot be cut apart; this throws before anything moves.
   checkTablesForStructure(sheet, op);
   checkNotesForStructure(sheet);
-  // A range that loses or gains cells reads other cells than it did, and a formula that asks where a
-  // reference is, or picks cells by position, may get another answer: formulas that need a time and do
-  // either are noted, while the graph still has the references as they were.
-  const readsPosition = positionsAcrossMove(state, sheet, op);
-  noteClockInputs(state, (node) => readsAcrossMove(state, node, sheet, op) || readsPosition(node));
-  moveEdits(state, sheet, op);
   moveCells(state, sheet, op);
   // Array formulas moved with their cells, or went with deleted ones.
   invalidateArrayRanges(sheet);
@@ -238,6 +212,7 @@ export function applyStructuralOp(state: WorkbookState, sheet: SheetModel, op: S
   sheet.dimensions = undefined;
   const key = sheet.name.toLowerCase();
   rewriteAllFormulas(state, (text, owner) => rewriteForStructure(text, owner === sheet, key, op), null);
+  state.calc.edited.delete(sheet);
   state.calc.all = true;
   invalidateGraph(state);
   dropCalcChain(state);

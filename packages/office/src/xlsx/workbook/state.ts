@@ -80,14 +80,9 @@ export function dropCalcChain(state: WorkbookState): void {
   state.pkg.removePart(chain.part);
 }
 
-/**
- * Forgets the dependency graph; the next calculation rebuilds it. `clocksStay` is for a write of one formula cell
- * that leaves it without a value: the formulas that need a time and hold a
- * value, kept in `calc.clocks`, are still what they were.
- */
-export function invalidateGraph(state: WorkbookState, clocksStay = false): void {
+/** Forgets the dependency graph; the next calculation rebuilds it. */
+export function invalidateGraph(state: WorkbookState): void {
   state.calc.graph = null;
-  if (!clocksStay) state.calc.clocks = null;
 }
 
 export function sameValue(a: CellValue, b: CellValue): boolean {

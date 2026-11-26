@@ -24,8 +24,6 @@ export interface CalcNode {
   row: number;
   col: number;
   cell: CellRec;
-  /** The formula text the node was built from. */
-  formula: string;
   ast: FormulaAst;
   deps: Dep[];
   /**
@@ -37,8 +35,6 @@ export interface CalcNode {
   volatile: boolean;
   /** Calls a function that picks its cells at run time (OFFSET, INDIRECT). */
   dynamic: boolean;
-  /** Calls a function that needs the time of the run (NOW, TODAY). */
-  clock: boolean;
   /**
    * For a dynamic node: the rectangles its last calculation read, or null
    * before the first one. At most `MAX_READS`; beyond that {@link readsAll} is set.
@@ -70,16 +66,12 @@ export interface CalcGraph {
   spills: CalcNode[];
   /** The nodes that pick their cells at run time. */
   dynamic: CalcNode[];
-  /** The nodes that need the time of the run. */
-  clock: CalcNode[];
   /** Nodes with their precedents first; null until computed. */
   order: CalcNode[] | null;
 }
 
 /** Functions whose result depends on cells their arguments do not name. */
 const DYNAMIC_FUNCTIONS: ReadonlySet<string> = new Set(["OFFSET", "INDIRECT"]);
-/** Functions that need the time of the run. */
-export const CLOCK_FUNCTIONS: ReadonlySet<string> = new Set(["NOW", "TODAY"]);
 /**
  * Functions that use where a reference points and never the values there.
  * A reference given to one of them directly is not read: `ROW(A1)` in A1 is
@@ -99,7 +91,7 @@ const LAST_COL = 16_383;
  * built. A formula that reaches deeper is treated like one that picks its
  * cells at run time: the cells its calculation reads are recorded then.
  */
-export const MAX_NAME_DEPTH = 8;
+const MAX_NAME_DEPTH = 8;
 /** Largest range one array formula fills; a larger one keeps its stored values. */
 export const MAX_ARRAY_FORMULA_CELLS = 100_000;
 
@@ -120,7 +112,7 @@ export function arrayFormulaRange(cell: CellRec, row: number, col: number): Cell
 }
 
 /** The nodes inside `node`, for a walk with an explicit stack. */
-export function pushChildren(node: FormulaAst, stack: FormulaAst[]): void {
+function pushChildren(node: FormulaAst, stack: FormulaAst[]): void {
   switch (node.type) {
     case "call":
       for (const arg of node.args) stack.push(arg);
@@ -183,20 +175,10 @@ function resizedRead(state: WorkbookState, node: FormulaAst, sheet: SheetModel):
   };
 }
 
-/**
- * True for a call that picks its cells at run time: OFFSET, INDIRECT, or a
- * SUMIF or AVERAGEIF whose sum range is sized only then. The cells it reads
- * are not in {@link collectDeps}.
- */
-export function picksCells(state: WorkbookState, node: FormulaAst, sheet: SheetModel): boolean {
-  return node.type === "call" && (DYNAMIC_FUNCTIONS.has(node.name) || resizedRead(state, node, sheet) === "unknown");
-}
-
 /** What the functions of a formula, and of the names it uses, ask of the calculation. */
 interface Traits {
   volatile: boolean;
   dynamic: boolean;
-  clock: boolean;
 }
 
 function addTraits(state: WorkbookState, ast: FormulaAst, sheet: SheetModel, functions: FunctionRegistry, depth: number, traits: Traits): void {
@@ -204,9 +186,8 @@ function addTraits(state: WorkbookState, ast: FormulaAst, sheet: SheetModel, fun
   while (stack.length > 0) {
     const node = stack.pop() as FormulaAst;
     if (node.type === "call") {
-      if (picksCells(state, node, sheet)) traits.dynamic = true;
+      if (DYNAMIC_FUNCTIONS.has(node.name) || resizedRead(state, node, sheet) === "unknown") traits.dynamic = true;
       else if (functions.get(node.name)?.volatile === true) traits.volatile = true;
-      if (CLOCK_FUNCTIONS.has(node.name)) traits.clock = true;
     } else if (node.type === "name" && depth >= MAX_NAME_DEPTH) {
       // `collectDeps` stops here too, so the cells of the rest of the chain are recorded while it runs.
       traits.dynamic = true;
@@ -345,11 +326,10 @@ export function collectDeps(state: WorkbookState, ast: FormulaAst, sheet: SheetM
 export function buildGraph(state: WorkbookState): CalcGraph {
   const nodes: CalcNode[] = [];
   const functions = functionsOf(state);
-  if (functions === null) return { nodes, columns: new Map(), spills: [], dynamic: [], clock: [], order: null };
+  if (functions === null) return { nodes, columns: new Map(), spills: [], dynamic: [], order: null };
   const columns = new Map<SheetModel, Map<number, CalcNode[]>>();
   const spills: CalcNode[] = [];
   const dynamic: CalcNode[] = [];
-  const clock: CalcNode[] = [];
   for (const sheet of state.sheets) {
     const byColumn = new Map<number, CalcNode[]>();
     for (const row of sheet.rows.values()) {
@@ -364,14 +344,13 @@ export function buildGraph(state: WorkbookState): CalcGraph {
         if (cell.value !== null && callsUnknownFunction(state, ast, sheet)) continue;
         const deps: Dep[] = [];
         collectDeps(state, ast, sheet, 0, deps);
-        const traits: Traits = { volatile: false, dynamic: false, clock: false };
+        const traits: Traits = { volatile: false, dynamic: false };
         addTraits(state, ast, sheet, functions, 0, traits);
         const node: CalcNode = {
           sheet,
           row: row.index,
           col,
           cell,
-          formula: cell.formula,
           ast,
           deps,
           spill,
@@ -389,7 +368,6 @@ export function buildGraph(state: WorkbookState): CalcGraph {
         };
         nodes.push(node);
         if (node.dynamic) dynamic.push(node);
-        if (node.clock) clock.push(node);
         if (spill !== null && (spill.end.row > spill.start.row || spill.end.col > spill.start.col)) spills.push(node);
         const list = byColumn.get(col);
         if (list === undefined) byColumn.set(col, [node]);
@@ -399,5 +377,5 @@ export function buildGraph(state: WorkbookState): CalcGraph {
     for (const list of byColumn.values()) list.sort((a, b) => a.row - b.row);
     if (byColumn.size > 0) columns.set(sheet, byColumn);
   }
-  return { nodes, columns, spills, dynamic, clock, order: null };
+  return { nodes, columns, spills, dynamic, order: null };
 }
