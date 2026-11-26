@@ -83,6 +83,8 @@ import { createBotConnections, type BotConnections } from "../bots/connections.j
 import type { BotContinuationAdmitter } from "../bots/continuations.js";
 import { createBotStateTransactions } from "../bots/events.js";
 import { createBotGrantService, type BotGrantService } from "../bots/grants-service.js";
+import { createBotResourceGrantService, type BotResourceGrantService } from "../bots/resource-grant-service.js";
+import { createBotResourceCandidates, readBotResourceGitHubReviewConfig } from "../bots/resource-grant-candidates.js";
 import { createBotIntegrationClient, type BotIntegrationTransport } from "../bots/integration-client.js";
 import { createBotIntegrationTools } from "../bots/integration-tools.js";
 import { createBotInteractionService, type BotInteractionService } from "../bots/interactions.js";
@@ -160,6 +162,7 @@ export interface BotServices extends RoutineOriginStartup {
   interactions: BotInteractionService;
   memory: BotMemoryService;
   grants: BotGrantService;
+  resourceGrants: BotResourceGrantService;
   botChats: BotChatLookup;
   tasks(ownerId: string, chatId: string): Promise<import("@matrix-os/contracts").BotTaskSummary[]>;
   /** Present only when the scope runtime can run bot workloads. */
@@ -241,8 +244,12 @@ export async function startBots(options: {
   const revalidateNativeSource = createBotSourceRevalidator({ lifetime: lifetime.signal, revalidateDefinition: (binding,executor) => procedures.revalidate(binding,executor),
     ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}) });
   const revalidateSource:typeof revalidateNativeSource=async(binding,signal,executor)=>{if(!isManagedPiBinding(binding) && binding.requestClass==="background") await routines.assertBinding(binding,executor);await revalidateNativeSource(binding,signal,executor);};
+  const isActiveManagedAgent = async (ownerId: string, botId: string) => {
+    const agent = await options.agents.get({ type: "personal", ownerId }, botId);
+    return Boolean(agent?.recipeRef && !agent.archived);
+  };
   const providerConnections = createBotProviderConnections({ ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, ownerId: options.runtimeOwnerId ?? '', computerId: options.computerId ?? '',
-    agentExists: async (ownerId, botId) => { const agent = await options.agents.get({ type: 'personal', ownerId }, botId); return Boolean(agent?.recipeRef && !agent.archived); },
+    agentExists: isActiveManagedAgent,
     observeClaude: options.nativeProfileGuard && options.host?.available ? createClaudeTaskObserver({ homePath: options.homePath, providers: options.providers })
       : async () => ({ available: false, reason: 'unsupported_runtime' }),
   });
@@ -315,6 +322,10 @@ export async function startBots(options: {
   };
   const memory = createBotMemoryService({ transact });
   const grants = createBotGrantService({ transact });
+  const resourceGrants = createBotResourceGrantService({ transact, now, isActiveManagedAgent, providers: createBotResourceCandidates({
+    client: options.integrations ? integrationClient : undefined,
+    githubReview: readBotResourceGitHubReviewConfig(process.env), runtimeOwnerId: options.runtimeOwnerId,
+  }) });
   // Overdue questions are expired and announced; passes never overlap and stop on close.
   let sweeping: Promise<unknown> | undefined;
   const sweep = setInterval(() => {
@@ -342,7 +353,7 @@ export async function startBots(options: {
     routineOriginRuntime.routineOrigin?.start();
     return {
       ...routineOriginRuntime,
-      recipes, instantiation, recovery, interactions, memory, grants, authority, botChats, tasks, routineDestination, startConnectionReconciler, providerConnections, chatgptPlanPeers, routines,
+      recipes, instantiation, recovery, interactions, memory, grants, resourceGrants, authority, botChats, tasks, routineDestination, startConnectionReconciler, providerConnections, chatgptPlanPeers, routines,
       async close() {
         await routineOriginRuntime.routineOrigin?.close();
         await routines.stop();
@@ -584,6 +595,7 @@ export async function startBots(options: {
     interactions,
     memory,
     grants,
+    resourceGrants,
     authority,
     providerConnections,
     chatgptPlanPeers,

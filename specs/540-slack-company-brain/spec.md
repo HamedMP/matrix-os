@@ -34,6 +34,14 @@ The four real setup Runs recorded at `a947d2c3` are the historical baseline. For
 
 Existing connectors, scheduled routines, approval interactions, stop controls and task status have separate acceptance work. Use a scoped account to verify read access and revocation; observe a scheduled Run, approve or deny a requested action, stop pending work, and follow its final status in Chat. Keep the source, permission, Run and resulting delivery distinguishable in the evidence. Failed live qualification is recorded against the specific path.
 
+### Owner-private PR Reviewer
+
+The owner creates a named Agent through the existing setup chat and explicitly chooses Create. In its private Chat, **Details → Apps** lets the owner select and revoke an approved read-only source. The owner can reopen the Agent to see the saved scope. Setup, recipe text and model output carry no grant authority.
+
+- **P0 — exact source assignment.** Allow at most one Slack channel and one GitHub repository per reviewer. The gateway takes the current private Agent and Chat binding from owner state and resolves a server-supplied candidate again on confirmation. Resource assignments have their own revisions and do not satisfy connected-account tools. In Dev, repository discovery is limited to the operator-approved stable GitHub repository ID and name on the owner's current connection. A Slack candidate requires an independently qualified test-channel installation, membership and callback. The existing summary enrollment remains bound to its original source and private Chat.
+- **P1 — automatic private review.** Admit one signed test-channel message from an approved sender and match its PR URL against the registered repository. Verify both current assignments, read bounded diff data at exact commits, and persist the source and a file-specific English verdict in the originating private Chat. Recheck the active revisions before admitting work and publishing the result. Keep reviewer handoff and Slack-thread replies separate. The existing private-summary Run remains tool-free.
+- **Live acceptance.** Record Create, the persisted source assignments, one automatic Slack-triggered Run, the exact diff read, and the reopened result on one pinned Dev build. Then pause the rule and verify no jobs remain active. A fixture or a separate summary recording supports only its own step.
+
 ### P2 follow-up commitments
 
 These items remain in the ENG-85 product backlog after first-use qualification. Each has an observable completion check for the eventual delivery.

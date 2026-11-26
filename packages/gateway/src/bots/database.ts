@@ -153,6 +153,22 @@ export interface BotGrantsTable {
   updated_at: Timestamp;
 }
 
+export interface BotResourceGrantsTable {
+  grant_id: string;
+  candidate_id: string;
+  owner_id: string;
+  bot_id: string;
+  chat_id: string;
+  binding_created_at: Timestamp;
+  kind: import("@matrix-os/contracts").BotResourceGrantKind;
+  label: string;
+  connection_id: string;
+  scope: Json<unknown>;
+  revision: Revision;
+  revoked_at: NullableTimestamp;
+  created_at: Timestamp;
+}
+
 export interface BotApprovalsTable {
   approval_id: string;
   owner_id: string;
@@ -269,6 +285,7 @@ export interface BotDatabase {
   bot_interactions: BotInteractionsTable;
   bot_connect_requests: BotConnectRequestsTable;
   bot_grants: BotGrantsTable;
+  bot_resource_grants: BotResourceGrantsTable;
   bot_approvals: BotApprovalsTable;
   bot_memory_items: BotMemoryItemsTable;
 }
@@ -296,6 +313,7 @@ function assertOrdered(migrations: readonly BotMigration[]): void {
 }
 
 const previewBaseVersion = RETAINED_ROUTINE_PREVIEW_VERSIONS[0].version - 1;
+const previewCompleteVersion = RETAINED_ROUTINE_PREVIEW_VERSIONS[RETAINED_ROUTINE_PREVIEW_VERSIONS.length - 1].version;
 
 /** Called under the migration lock before any pending DDL can run. */
 async function assertCompatibleSchema(db: Transaction<OwnerBotDatabase>, migrations: readonly BotMigration[]): Promise<boolean> {
@@ -350,6 +368,10 @@ export async function bootstrapBotDatabase(
       const existing = await trx.selectFrom("bot_schema_migrations")
         .select("version").where("version", "=", migration.version).executeTakeFirst();
       if (existing) return false;
+      if (migrations === BOT_MIGRATIONS && migration.version > previewCompleteVersion
+        && !await hasRetainedRoutinePreviewSchema(trx)) {
+        throw new BotSchemaError("newer_schema");
+      }
       await migration.up(trx);
       await trx.insertInto("bot_schema_migrations").values({ version: migration.version, name: migration.name }).execute();
       return true;

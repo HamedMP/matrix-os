@@ -1,3 +1,4 @@
+import { migrateBotResourceGrantsV20 } from "./resource-grants-migration.js";
 import { migrateSlackRulesV19 } from "./slack-rules-migration.js";
 import { migrateRoutineChatOriginV16 } from "./routine-chat-origin-migration.js";
 import { migrateRoutineCliProposalsV15 } from "./routine-cli-proposal-migration.js";
@@ -383,4 +384,5 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 17, name: "routine_direct_chat", up: migrateRoutineDirectChatV17 },
   { version: 18, name: "bot_chat_binding_history_index", up: migrateBotChatBindingHistoryIndexV18 },
   { version: 19, name: "slack_summary_rules", up: migrateSlackRulesV19 },
+  { version: 20, name: "bot_resource_grants", up: migrateBotResourceGrantsV20 },
 ];

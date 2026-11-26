@@ -10,6 +10,7 @@ import { AgentModelField } from '../AgentEditor.js';
 import { MatrixBotModelField, matrixBotSelectableModelChoices, botModelChoiceMatchesSelection } from './MatrixBotModelField.js';
 import { BotTaskStatus } from "./BotTaskStatus.js";
 import { BotAuthorityPanel } from './BotAuthorityPanel.js';
+import { BotResourceGrantsPanel } from './BotResourceGrantsPanel.js';
 import type { BotClient } from './client.js';
 
 export function BotDetailsPanel({ chatId, agent, agentId, authority, bots, catalog, catalogLoading, pending, onModelChange, onClose, onChanged, onEdit, tasks = [], onSetup, onRefreshCatalog, hosted = false }: {
@@ -29,6 +30,9 @@ export function BotDetailsPanel({ chatId, agent, agentId, authority, bots, catal
     if (selection && (isAutomaticBotSelection(selection)
       || matrixBotSelectableModelChoices(models, catalog).some(choice => botModelChoiceMatchesSelection(choice, selection)))) onModelChange(selection);
   };
+  const scopedApps = agent?.recipeRef && !agent.archived && bots.resourceGrants
+    ? <BotResourceGrantsPanel key={agentId} agentId={agentId} client={bots.resourceGrants}/>
+    : undefined;
   const modelDetails = <section className='grid gap-2'><h4 className='text-xs font-semibold'>Runs on</h4><p className='text-xs' style={chatAgentMutedStyle}>{agent ? botExecutionPresentation(agent, catalog).modelLabel : "Checking bot model…"}</p>
       {agent && !agent.recipeRef ? <AgentModelField id={`custom-bot-model-${agentId}`} selected={agent.selection} pending={pending || Boolean(catalogLoading) || !catalog} models={models} hermesOnly={Boolean(agent.recipe?.skills.includes("matrix-jev-email-triage"))} onSetup={onSetup} change={value => { if (value.selection) onModelChange(value.selection); }}/> : agent ? <MatrixBotModelField key={`${agentId}:${authoritativeKey}`} botClient={bots} label='Bot model' selection={draftCurrent ? modelDraft.selection : agent.selection} models={models} catalog={catalog} catalogLoading={catalogLoading} pending={pending || !catalog} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} onChange={changeRecipeModel}/> : <p role="status" className="text-xs" style={chatAgentMutedStyle}>Bot model is unavailable. <button type="button" className={chatAgentButtonClass} onClick={onChanged}>Retry bot details</button></p>}
       {agent?.recipeRef ? <BotTaskExecutorControl client={bots} agentId={agentId} pending={pending} onSetup={onSetup}/> : null}
@@ -43,6 +47,6 @@ export function BotDetailsPanel({ chatId, agent, agentId, authority, bots, catal
     <section className='grid gap-2'><div className='flex items-center justify-between'><h4 className='text-xs font-semibold'>Instructions</h4><button type='button' className='text-xs underline underline-offset-2' disabled={!agent} onClick={() => { setModelDraft(null); onEdit(); }}>Edit bot</button></div><p className='whitespace-pre-wrap text-sm leading-6'>{agent?.instructions ?? "Bot instructions are unavailable."}</p></section>
     {chatId ? <RoutineDestinationSection client={bots.routineDestination ?? null} botId={agentId} chatId={chatId} eligible={Boolean(agent?.recipeRef && !agent.archived)}/> : null}
     {tasks.length ? <details className="text-xs"><summary className="cursor-pointer font-semibold">Task history</summary><ul className="mt-2 grid gap-2">{tasks.map(task => <li key={task.taskId}><BotTaskStatus task={task}/><time className="text-xs" style={chatAgentMutedStyle} dateTime={task.updatedAt}>{new Date(task.updatedAt).toLocaleString()}</time></li>)}</ul></details> : null}
-    {agent && !agent.recipeRef ? <><p className='text-xs' style={chatAgentMutedStyle}>This bot uses its saved runtime and request permissions. Recipe task, app access and memory controls are unavailable for this bot.</p>{modelDetails}</> : authority ? <BotAuthorityPanel compact title="Apps" beforeMemory={modelDetails} view={authority} onRevoke={grantId=>bots.revoke(agentId,grantId)} onMemory={(itemId, action, input)=>bots.memory(agentId,itemId,action,input)} onChanged={onChanged}/> : <><p role='status' className='text-xs' style={chatAgentMutedStyle}>Loading access and memory…</p>{modelDetails}</>}
+    {agent && !agent.recipeRef ? <><p className='text-xs' style={chatAgentMutedStyle}>This bot uses its saved runtime and request permissions. Recipe task, app access and memory controls are unavailable for this bot.</p>{modelDetails}</> : authority ? <BotAuthorityPanel compact title="Apps" scopedApps={scopedApps} beforeMemory={modelDetails} view={authority} onRevoke={grantId=>bots.revoke(agentId,grantId)} onMemory={(itemId, action, input)=>bots.memory(agentId,itemId,action,input)} onChanged={onChanged}/> : <><p role='status' className='text-xs' style={chatAgentMutedStyle}>Loading access and memory…</p>{modelDetails}</>}
   </aside>;
 }

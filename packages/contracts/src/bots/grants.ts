@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 import { canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema } from "#contract-primitives";
-import { BotGrantIdSchema, BotIntegrationServiceSchema } from "#bots/ids";
+import { BotBaseRevisionSchema, BotGrantIdSchema, BotIntegrationServiceSchema, BotRevisionSchema } from "#bots/ids";
 
 export const BotEffectSchema = z.enum(["read", "write", "send", "label"]);
 
@@ -44,3 +44,35 @@ export function botIntegrationAccessCopy(service: string, effects: readonly BotE
 export type BotAudience = z.infer<typeof BotAudienceSchema>;
 export type BotGrant = z.infer<typeof BotGrantSchema>;
 export type RevokeBotGrantResponse = z.infer<typeof RevokeBotGrantResponseSchema>;
+
+export const BotResourceGrantKindSchema = z.enum(["slack_channel", "github_repository"]);
+export const BotResourceGrantCandidateIdSchema = z.string().regex(/^source_[a-f0-9]{48}$/);
+export const BotResourceGrantIdSchema = z.string().regex(/^rgr_[a-f0-9]{32}$/);
+
+export const BotResourceGrantCandidateSchema = z.strictObject({
+  id: BotResourceGrantCandidateIdSchema,
+  kind: BotResourceGrantKindSchema,
+  label: canonicalSafeLabel(256, 1024),
+});
+
+export const BotResourceGrantSchema = BotResourceGrantCandidateSchema.extend({
+  id: BotResourceGrantIdSchema,
+  revision: BotRevisionSchema,
+});
+
+export const BotResourceGrantListSchema = z.strictObject({
+  candidates: z.array(BotResourceGrantCandidateSchema).max(32),
+  grants: z.array(BotResourceGrantSchema).max(2),
+});
+
+export const BotResourceGrantCreateSchema = z.strictObject({ candidateId: BotResourceGrantCandidateIdSchema });
+export const BotResourceGrantCreateResponseSchema = z.strictObject({ grant: BotResourceGrantSchema });
+export const BotResourceGrantRevokeSchema = z.strictObject({ baseRevision: BotBaseRevisionSchema });
+export const BotResourceGrantRevokeResponseSchema = z.strictObject({
+  grantId: BotResourceGrantIdSchema,
+  revokedAt: IsoTimestampSchema,
+});
+
+export type BotResourceGrant = z.infer<typeof BotResourceGrantSchema>;
+export type BotResourceGrantList = z.infer<typeof BotResourceGrantListSchema>;
+export type BotResourceGrantKind = z.infer<typeof BotResourceGrantKindSchema>;

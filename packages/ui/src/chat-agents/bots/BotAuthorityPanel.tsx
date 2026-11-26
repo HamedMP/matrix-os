@@ -3,8 +3,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { RememberedItemPart } from "./RememberedItemPart.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 
-export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged, compact = false, title = "What this bot can access", beforeMemory }: {
-  compact?: boolean; title?: string; beforeMemory?: ReactNode; view: BotAuthorityView;
+export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged, compact = false, title = "What this bot can access", scopedApps, beforeMemory }: {
+  compact?: boolean; title?: string; scopedApps?: ReactNode; beforeMemory?: ReactNode; view: BotAuthorityView;
   onRevoke: (grantId: string) => Promise<unknown>;
   onMemory: (itemId: string, action: "confirm" | "forget", input: BotMemoryMutationRequest) => Promise<unknown>;
   onChanged?: () => void;
@@ -51,8 +51,9 @@ export function BotAuthorityPanel({ view, onRevoke, onMemory, onChanged, compact
                 )) };
               }); }}>Revoke</button>
         </div>)}
-      </div>) : <p className="text-sm" style={chatAgentMutedStyle}>No integration access recorded.</p>}
+      </div>) : <p className="text-sm" style={chatAgentMutedStyle}>{scopedApps ? "No connected-account grants." : "No integration access recorded."}</p>}
     </div>
+    {scopedApps}
     {beforeMemory}
     <div className="grid gap-3"><h4 className="text-sm font-semibold">Remembered</h4>
       {current.memory.items.length ? current.memory.items.map((item) => <div key={item.itemId} className="grid gap-2 rounded-xl border p-3">

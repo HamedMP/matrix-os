@@ -6,6 +6,8 @@ import {createBotConnectionClient, type BotConnectionClient} from "./provider-co
 import {
   BotChatBindingResponseSchema, BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotInteractionSchema,
   BotMemoryItemIdSchema, BotMemoryMutationRequestSchema, BotMemoryMutationResponseSchema,
+  BotResourceGrantCreateResponseSchema, BotResourceGrantCreateSchema, BotResourceGrantIdSchema,
+  BotResourceGrantListSchema, BotResourceGrantRevokeResponseSchema, BotResourceGrantRevokeSchema,
   BotRecipeRefSchema, BotRecipeSetupContextSchema, BotRecipeListResponseSchema, BotTaskListResponseSchema, CanonicalChatIdSchema, ChatAgentIdSchema,
   InstantiateBotRequestSchema, InstantiateBotResponseSchema, ResolveBotInteractionRequestSchema,
   ResolveBotInteractionResponseSchema, RevokeBotGrantResponseSchema,
@@ -18,6 +20,7 @@ import { safeHttpStatus } from "../safe-http-status.js";
 import { botCreationFailureReason, type BotCreationFailureReason } from "../creation-error.js";
 
 import { createBotRoutineClient, type BotRoutineClient } from "./routine-client.js";
+import type { BotResourceGrantsClient } from "./BotResourceGrantsPanel.js";
 
 type BotRequest = (path: string, method: "GET" | "POST" | "DELETE", body?: unknown, options?: RoutineOriginRequestOptions) => Promise<unknown>;
 
@@ -50,6 +53,7 @@ export interface BotClient extends Partial<BotConnectionClient> {
   routineOrigin?: RoutineOriginClient;
   routines?: BotRoutineClient;
   routineDestination?: RoutineDestinationClient;
+  resourceGrants?: BotResourceGrantsClient;
   ensureDirectChat(agentId: string): Promise<string | null>;
   directChat(agentId: string): Promise<string | null>;
   directBot(chatId: string): Promise<string | null>;
@@ -76,6 +80,7 @@ export function createBotClient(request: BotRequest): BotClient {
     }
   };
   const agentPath = (agentId: string) => `/api/chat-agents/${encodeURIComponent(ChatAgentIdSchema.parse(agentId))}`;
+  const resourcePath = (agentId: string) => `${agentPath(agentId)}/resource-grants`;
   const chatPath = (chatId: string) => `/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(chatId))}`;
   return {
     routineOrigin: createRoutineOriginClient(request),
@@ -85,6 +90,14 @@ export function createBotClient(request: BotRequest): BotClient {
       reset: (input, signal) => call(`${ROUTINE_DESTINATION_PATH}/reset`, "POST", RoutineDestinationViewSchema, RoutineCliResetTargetSchema.parse(input), signal),
     },
     ...createBotConnectionClient((path, method, body) => request(path, method, body)),
+    resourceGrants: {
+      list: (agentId) => call(resourcePath(agentId), "GET", BotResourceGrantListSchema),
+      grant: (agentId, candidateId) => call(resourcePath(agentId), "POST", BotResourceGrantCreateResponseSchema,
+        BotResourceGrantCreateSchema.parse({ candidateId })),
+      revoke: (agentId, grantId, baseRevision) => call(
+        `${resourcePath(agentId)}/${encodeURIComponent(BotResourceGrantIdSchema.parse(grantId))}`,
+        "DELETE", BotResourceGrantRevokeResponseSchema, BotResourceGrantRevokeSchema.parse({ baseRevision })),
+    },
     routines: createBotRoutineClient((path, method, body) => call(path, method, z.unknown(), body)),
     ensureDirectChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "POST", BotChatBindingResponseSchema, {})).chatId,
     directChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "GET", BotChatBindingResponseSchema)).chatId,
