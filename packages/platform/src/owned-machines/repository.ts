@@ -373,10 +373,11 @@ export async function recordOwnedHeartbeat(db: PlatformDB, input: {
       await trx.executor.updateTable('owned_machine_links')
         .set({ last_heartbeat_at: input.now, agent_version: input.agentVersion })
         .where('machine_id', '=', input.machineId).execute();
-      if (link.machine.status === 'enrolling') {
-        await trx.executor.updateTable('user_machines').set({ status: 'running', last_seen_at: input.now.toISOString() })
-          .where('machine_id', '=', input.machineId).where('status', '=', 'enrolling').execute();
-      }
+      // Routing reads liveness from user_machines so the substrate stays synchronous.
+      await trx.executor.updateTable('user_machines').set({
+        status: sql`CASE WHEN status = 'enrolling' THEN 'running' ELSE status END`,
+        last_seen_at: input.now.toISOString(),
+      }).where('machine_id', '=', input.machineId).where('deleted_at', 'is', null).execute();
     }
     return (await getOwnedMachineLink(trx, input.machineId));
   });
@@ -431,6 +432,7 @@ export async function revokeOwnedMachine(db: PlatformDB, input: {
       tunnel_claim_id: null,
     }).where('machine_id', '=', input.machineId).execute();
     const machine = await trx.executor.updateTable('user_machines').set({
+      private_address: null,
       status: 'deleted',
       deleted_at: input.now.toISOString(),
       runtime_token_epoch: sql`runtime_token_epoch + 1`,
@@ -513,14 +515,24 @@ export async function recordOwnedTunnelCreated(db: PlatformDB, input: {
 }
 
 export async function markOwnedTunnelReady(db: PlatformDB, machineId: string, claim: OwnedTunnelClaim): Promise<boolean> {
-  await db.ready;
-  const result = await db.executor.updateTable('owned_machine_links')
-    .set({ tunnel_state: 'ready', tunnel_attempts: 0, tunnel_claim_id: null })
-    .where('machine_id', '=', machineId).where('tunnel_state', '=', 'pending').where('revoked_at', 'is', null)
-    .where('tunnel_id', 'is not', null)
-    .where('tunnel_claim_id', '=', claim.claimId).where('tunnel_next_attempt_at', '>', claim.now)
-    .returning('machine_id').executeTakeFirst();
-  return Boolean(result);
+  return db.transaction(async (trx) => {
+    const result = await trx.executor.updateTable('owned_machine_links')
+      .set({ tunnel_state: 'ready', tunnel_attempts: 0, tunnel_claim_id: null })
+      .where('machine_id', '=', machineId).where('tunnel_state', '=', 'pending').where('revoked_at', 'is', null)
+      .where('tunnel_id', 'is not', null)
+      .where('tunnel_claim_id', '=', claim.claimId).where('tunnel_next_attempt_at', '>', claim.now)
+      .returning(['machine_id', 'tunnel_hostname']).executeTakeFirst();
+    if (!result?.tunnel_hostname) return false;
+    await trx.executor.updateTable('user_machines').set({ private_address: result.tunnel_hostname })
+      .where('machine_id', '=', machineId).where('deleted_at', 'is', null).execute();
+    return true;
+  });
+}
+
+async function clearOwnedRoutingAddress(db: PlatformDB, machineIds: readonly string[]): Promise<void> {
+  if (machineIds.length === 0) return;
+  await db.executor.updateTable('user_machines').set({ private_address: null })
+    .where('machine_id', 'in', machineIds).where('substrate', '=', 'owned').execute();
 }
 
 export async function markOwnedTunnelDeleted(db: PlatformDB, machineId: string, claim: OwnedTunnelClaim): Promise<void> {
@@ -552,7 +564,7 @@ export async function deferOwnedTunnelWork(db: PlatformDB, input: {
 export async function queueStaleOwnedTunnelReclaim(db: PlatformDB, input: {
   offlineBefore: Date; now: Date; limit: number;
 }): Promise<number> {
-  await db.ready;
+  return db.transaction(async (trx) => {
   const result = await sql<{ machine_id: string }>`
     UPDATE owned_machine_links SET tunnel_state = 'deleting', tunnel_attempts = 0, tunnel_next_attempt_at = ${input.now},
       tunnel_claim_id = NULL
@@ -564,8 +576,10 @@ export async function queueStaleOwnedTunnelReclaim(db: PlatformDB, input: {
       FOR UPDATE SKIP LOCKED
     )
     RETURNING machine_id
-  `.execute(db.executor);
+  `.execute(trx.executor);
+  await clearOwnedRoutingAddress(trx, result.rows.map((row) => row.machine_id));
   return result.rows.length;
+  });
 }
 
 export async function requestOwnedTunnelReissue(db: PlatformDB, machineId: string, now: Date): Promise<boolean> {

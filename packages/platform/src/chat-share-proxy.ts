@@ -1,10 +1,13 @@
 import { ShareSnapshotSchema, shareHtml } from "@matrix-os/contracts";
 import type { Context } from "hono";
-import type { Agent } from "undici";
+import type { Agent, Dispatcher } from "undici";
 import { getActiveUserMachineByHandle, type PlatformDB } from "./db.js";
 import { canRouteMachineOnPreviewHost } from "./customer-vps-preview.js";
 import { buildCustomerVpsProxyUrl, isCustomerVpsProxyMachineRoutable } from "./profile-routing.js";
 import { createBoundedRateLimiter, runtimeSelectionSourceKey } from "./request-admission.js";
+import { buildRuntimeAuthToken } from "./platform-token.js";
+import { applyUpstreamCredentials, dispatcherForUpstream } from "./substrates/upstream-transport.js";
+import type { SubstrateRegistry } from "./substrates/registry.js";
 
 const SHARE_ROUTE = /^\/shared\/chat\/([a-z0-9][a-z0-9-]{0,62})\/([A-Za-z0-9_-]{1,64})\/([a-f0-9]{64})$/;
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
@@ -23,7 +26,8 @@ export function parseChatShareRoute(path: string) {
   return match ? { handle: match[1]!, runtimeSlot: match[2]!, token: match[3]! } : null;
 }
 
-export async function proxyChatShare(c: Context, db: PlatformDB, dispatcher: Agent, edgeSecret?: string, host = "") {
+export async function proxyChatShare(c: Context, db: PlatformDB, dispatcher: Agent, edgeSecret?: string, host = "",
+  owned?: { substrates: SubstrateRegistry; platformSecret: string }) {
   c.header("Cache-Control", "no-store");
   c.header("CDN-Cache-Control", "no-store");
   c.header("Referrer-Policy", "no-referrer");
@@ -39,14 +43,33 @@ export async function proxyChatShare(c: Context, db: PlatformDB, dispatcher: Age
   sourceFlights.set(source, (sourceFlights.get(source) ?? 0) + 1);
   try {
     const machine = await getActiveUserMachineByHandle(db, route.handle, route.runtimeSlot);
-    if (!machine || !canRouteMachineOnPreviewHost(host, machine)
-      || !isCustomerVpsProxyMachineRoutable(machine)) return c.text("Shared Chat unavailable", 404);
-    // Address comes from the operator-controlled machine registry, never a request URL.
-    const url = buildCustomerVpsProxyUrl(machine, `/api/share/chats/${route.token}`, "");
+    if (!machine || !canRouteMachineOnPreviewHost(host, machine)) return c.text("Shared Chat unavailable", 404);
+    const sharePath = `/api/share/chats/${route.token}`;
+    const headers: Record<string, string> = { accept: "application/json" };
+    let url: string | null;
+    let requestHeaders: Record<string, string> | Headers = headers;
+    let upstreamDispatcher: Dispatcher = dispatcher;
+    if (machine.substrate === "owned") {
+      // Spec 2707: the snapshot comes through the tunnel; the platform still renders it.
+      const resolution = owned?.substrates.resolveUpstream(machine, { path: sharePath });
+      if (!owned || !resolution || resolution.kind !== "upstream") return c.text("This chat is unavailable right now", 503);
+      url = resolution.upstream.url;
+      // Same transport as session routing: platform-only credentials and TLS verified under the tunnel name.
+      const ownedHeaders = new Headers(headers);
+      applyUpstreamCredentials(ownedHeaders, resolution.upstream);
+      ownedHeaders.set("authorization", `Bearer ${buildRuntimeAuthToken(machine, owned.platformSecret)}`);
+      requestHeaders = ownedHeaders;
+      upstreamDispatcher = dispatcherForUpstream(resolution.upstream, dispatcher);
+    } else {
+      if (!isCustomerVpsProxyMachineRoutable(machine)) return c.text("Shared Chat unavailable", 404);
+      // Address comes from the operator-controlled machine registry, never a request URL.
+      url = buildCustomerVpsProxyUrl(machine, sharePath, "");
+    }
     if (!url) return c.text("Shared Chat unavailable", 404);
     const response = await fetch(url, {
-      method: "GET", headers: { accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(10_000), dispatcher,
-    } as RequestInit & { dispatcher: Agent });
+      method: "GET", headers: requestHeaders, redirect: "error", signal: AbortSignal.timeout(10_000),
+      dispatcher: upstreamDispatcher,
+    } as RequestInit & { dispatcher: Dispatcher });
     if (!response.ok || !response.body) {
       await response.body?.cancel();
       return c.text("Shared Chat unavailable", response.status === 404 ? 404 : 503);

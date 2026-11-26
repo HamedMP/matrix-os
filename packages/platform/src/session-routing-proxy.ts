@@ -28,6 +28,9 @@ const SENSITIVE_PROXY_HEADERS = new Set([
   'x-matrix-routine-creation-proof',
   'x-matrix-routine-full-access-proof',
   'x-matrix-preview-drive-turn-proof',
+  // Spec 2707: owned-machine origin credentials are platform-only.
+  'cf-access-client-id',
+  'cf-access-client-secret',
 ]);
 
 export function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void {

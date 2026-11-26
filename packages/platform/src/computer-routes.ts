@@ -2,6 +2,7 @@ import { createBoundedRateLimiter, runtimeSelectionSourceKey } from './request-a
 import { EDGE_SECRET_HEADER } from './session-routing-proxy.js';
 import {
   MatrixComputerListSchema,
+  OWNED_MACHINE_HEARTBEAT_FRESH_MS,
   MatrixComputerSchema,
   RuntimeSelectionRequestSchema,
   RuntimeSelectionResponseSchema,
@@ -10,6 +11,7 @@ import {
   type MatrixComputerVersionLabel,
 } from '@matrix-os/contracts';
 import { Hono, type Context } from 'hono';
+import { z } from 'zod/v4';
 import { bodyLimit } from 'hono/body-limit';
 
 import type { ClerkAuth } from './clerk-auth.js';
@@ -33,6 +35,8 @@ import { issueSyncJwt } from './sync-jwt.js';
 import { isAppDomainHost, isCodeDomainHost } from './ws-upgrade.js';
 
 const COMPUTER_LIST_LIMIT = 20;
+/** Spec 2707: owned computers are opt-in so released clients keep their strict list. */
+const ComputerListQuerySchema = z.object({ include: z.literal('owned').optional() });
 const COMPUTER_QUERY_LIMIT = COMPUTER_LIST_LIMIT + 1;
 const COMPUTER_CAPABILITIES = ['matrixComputerInventoryV1'] as const;
 const RUNTIME_SELECTION_BODY_LIMIT = 1024;
@@ -56,7 +60,28 @@ function computerVersionLabel(imageVersion: string | null): MatrixComputerVersio
   return releaseDate ? `v${releaseDate}` as MatrixComputerVersionLabel : 'Version pending';
 }
 
-export function projectComputer(machine: UserRuntimeComputerRecord): MatrixComputer | null {
+function ownedComputerAvailability(machine: UserRuntimeComputerRecord, now: number): MatrixComputerAvailability {
+  if (machine.status === 'enrolling') return 'starting';
+  const seen = machine.lastSeenAt ? Date.parse(machine.lastSeenAt) : Number.NaN;
+  const online = machine.status === 'running' && Boolean(machine.privateAddress)
+    && Number.isFinite(seen) && now - seen <= OWNED_MACHINE_HEARTBEAT_FRESH_MS;
+  return online ? 'available' : 'unavailable';
+}
+
+export function projectComputer(machine: UserRuntimeComputerRecord, now = Date.now()): MatrixComputer | null {
+  if (machine.provisioningClass === 'owned') {
+    const parsed = MatrixComputerSchema.safeParse({
+      handle: machine.handle,
+      runtimeSlot: machine.runtimeSlot,
+      label: 'Own Computer',
+      availability: ownedComputerAvailability(machine, now),
+      kind: 'owned',
+      versionLabel: computerVersionLabel(machine.imageVersion),
+      gatewayPath: `/vm/${machine.handle}?runtime=${machine.runtimeSlot}`,
+      capabilities: COMPUTER_CAPABILITIES,
+    });
+    return parsed.success ? parsed.data : null;
+  }
   // The existing wire category is presentation only; private machine access
   // remains owner-only through accessibleUserMachinePredicate, not shared-preview rules.
   const preview = machine.provisioningClass === 'private-preview' || isPreviewMachine(machine);
@@ -139,6 +164,11 @@ export function createComputerRoutes(opts: {
   }
 
   routes.get('/api/auth/computers', async (c) => {
+    const query = ComputerListQuerySchema.safeParse({ include: c.req.query('include') });
+    if (!query.success) {
+      opts.applyNoStoreHeaders(c);
+      return c.json({ error: 'Invalid request' }, 400);
+    }
     if (!opts.platformJwtSecret && !opts.clerkAuth) {
       opts.applyNoStoreHeaders(c);
       return c.json({ error: 'Computers unavailable' }, 503);
@@ -174,6 +204,7 @@ export function createComputerRoutes(opts: {
         identity.userId,
         COMPUTER_QUERY_LIMIT,
         requestedSelectedSlot ?? undefined,
+        { includeOwned: query.data.include === 'owned' },
       );
       const projected = records.flatMap((record) => {
         const computer = projectComputer(record);

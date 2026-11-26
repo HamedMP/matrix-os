@@ -1,3 +1,4 @@
+import type { SubstrateRegistry } from '../substrates/registry.js';
 import type { Hono } from 'hono';
 import type { Agent } from 'undici';
 import { sql } from 'kysely';
@@ -44,6 +45,7 @@ export function registerSiteRoutes(app: Hono<any>, options: {
     captureEvent?: SiteTelemetryCapture;
     emailReadiness?: SiteEmailReadiness;
     clerkAuth?: ClerkAuth;
+    substrates?: SubstrateRegistry;
 }) {
     if (!app || !options?.db || !options.platformSecret)
         throw new Error('Sites registration requires application, database, and platform secret');

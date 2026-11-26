@@ -30,7 +30,9 @@ export function createMcpRuntimeContext(options: {
     const records = await listUserRuntimeComputersByClerkId(db, principal.userId, 21, selectedSlot);
     const computers = records.flatMap(record => {
       const projected = projectComputer(record);
-      return projected ? [projected] : [];
+      // The published MCP contract predates owned computers; they are never listed there.
+      if (!projected || projected.kind === 'owned' || projected.label === 'Own Computer') return [];
+      return [projected as MatrixMcpComputerList['items'][number]];
     });
     return { items: computers.slice(0, 20), limit: 20, hasMore: computers.length > 20, selectedSlot: null };
   }

@@ -22,7 +22,7 @@ export async function assertCurrentPublishingRuntime(trx: PlatformDB, owner: Sit
     .select(['handle', 'runtime_slot', 'runtime_token_epoch', 'access_clerk_user_ids'])
     .where('machine_id', '=', owner.machineId).where('clerk_user_id', '=', owner.ownerId)
     .where('status', '=', 'running').where('activation_state', '=', 'authorized').where('deleted_at', 'is', null)
-    .where('provisioning_class', '=', 'customer').forUpdate().executeTakeFirst();
+    .where('provisioning_class', 'in', ['customer', 'owned']).forUpdate().executeTakeFirst();
   const authenticated = owner.authenticatedRuntime;
   if (!machine || machine.access_clerk_user_ids.length !== 0 || (authenticated && (
     machine.handle !== authenticated.handle || machine.runtime_slot !== authenticated.runtimeSlot

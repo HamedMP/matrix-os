@@ -39,6 +39,9 @@ import type { SubstrateRegistry } from './substrates/registry.js';
 import { noteOwnerReachedRuntime, prefersJsonWakeResponse, prepareOnDemandUpstream, takesOnDemandPath, wakeRefusalResponse } from './substrates/substrate-wake.js';
 import { sendWithAsleepRetry } from './substrates/runtime-asleep.js';
 import { applyUpstreamCredentials, dispatcherForUpstream, stripUpstreamCredentials } from './substrates/upstream-transport.js';
+import { buildRuntimeUserProof } from './runtime-auth.js';
+import { buildRuntimeAuthToken } from './platform-token.js';
+import { isOwnedTunnelDown, ownedOfflineResponse } from './owned-machines/offline-page.js';
 import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
@@ -441,7 +444,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // a future refactor can't accidentally proxy them into a user container.
     const reqPath = c.req.path;
     if (isAppDomain && parseChatShareRoute(reqPath)) {
-      return proxyChatShare(c, db, customerVpsProxyDispatcher, appEnv.EDGE_ROUTER_SECRET, host);
+      return proxyChatShare(c, db, customerVpsProxyDispatcher, appEnv.EDGE_ROUTER_SECRET, host,
+        platformSecret ? { substrates, platformSecret } : undefined);
     }
     if (isAppDomain && reqPath === '/service-worker.js') {
       return appDomainServiceWorkerResponse();
@@ -529,6 +533,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       const { upstream: webhookUpstream } = resolution;
       const targetUrl = webhookUpstream.url;
+      const ownedUpstream = runningMachine.substrate === 'owned';
 
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
@@ -536,13 +541,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           headers.set(key, value);
         }
       }
-      headers.set('host', 'app.matrix-os.com');
+      headers.set('host', ownedUpstream ? webhookUpstream.hostHeader : 'app.matrix-os.com');
       headers.set('x-forwarded-host', host);
       headers.set('x-forwarded-proto', 'https');
       headers.set('accept-encoding', 'identity');
       headers.set('connection', 'close');
       if (platformSecret) {
-        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(handle, platformSecret)}`);
+        headers.set('authorization', `Bearer ${buildRuntimeAuthToken(runningMachine, platformSecret)}`);
       }
       applyUpstreamCredentials(headers, webhookUpstream);
 
@@ -789,6 +794,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         return runtimeSubstrateUnavailableResponse(c, applyNoStoreHeaders);
       }
       if (resolution.kind === 'not_routable') {
+        if (machine.substrate === 'owned' && machine.status !== 'enrolling') {
+          return ownedOfflineResponse(c, explicitVmRoute.upstreamPath, machine.lastSeenAt);
+        }
         if (isGatewayPath) {
           applyNoStoreHeaders(c);
           return c.json({
@@ -835,10 +843,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       // runtime credential. The gateway authorizes this exact stream path by
       // validating its opaque token against the live native-app session.
       if (platformSecret && !explicitVmRouteHasNativeAppStreamCapability) {
-        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(machine.handle, platformSecret)}`);
+        headers.set('authorization', `Bearer ${buildRuntimeAuthToken(machine, platformSecret)}`);
         if (identity.userId) {
           headers.set('x-platform-user-id', identity.userId);
-          headers.set('x-platform-verified', buildPlatformUserProof(machine.handle, identity.userId, platformSecret));
+          headers.set('x-platform-verified', buildRuntimeUserProof(machine, identity.userId, platformSecret));
           const previewTerminalAccess = buildPreviewTerminalAccess({ machine, actorId: identity.userId,
             path: explicitVmRoute.upstreamPath, platformSecret });
           if (previewTerminalAccess) headers.set(PREVIEW_TERMINAL_ACCESS_HEADER, previewTerminalAccess);
@@ -865,6 +873,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         if (upstream.status >= 500) logAppDomainUpstreamFailure('runtime', c, upstream.status, machine.handle);
         noteOwnerReachedRuntime(db, machine, identity);
 
+        if (isOwnedTunnelDown(machine, upstream.status)) {
+          await upstream.body?.cancel();
+          return ownedOfflineResponse(c, explicitVmRoute.upstreamPath, machine.lastSeenAt);
+        }
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         stripUpstreamCredentials(responseHeaders, resolution.upstream);
         scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
@@ -883,6 +895,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         });
       } catch (err: unknown) {
         logRouteError('app-domain explicit vps proxy', err);
+        if (machine.substrate === 'owned') return ownedOfflineResponse(c, explicitVmRoute.upstreamPath, machine.lastSeenAt);
         return c.json({ error: 'VPS unreachable' }, 502);
       }
     }
@@ -987,7 +1000,12 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         return runtimeSubstrateUnavailableResponse(c, applyNoStoreHeaders);
       }
       if (resolution.kind === 'not_routable') {
+        if (runningMachine.substrate === 'owned') return ownedOfflineResponse(c, path, runningMachine.lastSeenAt);
         return c.json({ error: 'VPS unreachable' }, 502);
+      }
+      if (isCodeDomain && runningMachine.substrate === 'owned') {
+        applyNoStoreHeaders(c);
+        return c.text('The code editor is not available for this computer yet', 404);
       }
       const { url: targetUrl, hostHeader } = resolution.upstream;
       const approvalProof = await authenticatedApprovalProxyProofs({ request: c.req.raw,
@@ -1001,7 +1019,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         ? buildCodeDomainProxyHeaders(
             c.req.header(),
             host,
-            platformSecret ? buildPlatformVerificationToken(runningMachine.handle, platformSecret) : undefined,
+            platformSecret ? buildRuntimeAuthToken(runningMachine, platformSecret) : undefined,
           )
         : buildForwardedProxyHeaders(c.req.header());
       if (!isCodeDomain) {
@@ -1023,13 +1041,13 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         // No `connection: close`: the customer VPS pool reuses warm TLS connections.
       }
       if (platformSecret) {
-        headers.set('authorization', `Bearer ${buildPlatformVerificationToken(runningMachine.handle, platformSecret)}`);
+        headers.set('authorization', `Bearer ${buildRuntimeAuthToken(runningMachine, platformSecret)}`);
         const platformUserId =
           identity.source === 'static-route' ? runningMachine.clerkUserId : identity.userId;
         if (platformUserId) {
           headers.set('x-platform-user-id', platformUserId);
           if (identity.source !== 'mobile-session' && identity.source !== 'static-route') {
-            headers.set('x-platform-verified', buildPlatformUserProof(runningMachine.handle, platformUserId, platformSecret));
+            headers.set('x-platform-verified', buildRuntimeUserProof(runningMachine, platformUserId, platformSecret));
             const previewTerminalAccess = buildPreviewTerminalAccess({ machine: runningMachine,
               actorId: platformUserId, path, platformSecret });
             if (previewTerminalAccess) headers.set(PREVIEW_TERMINAL_ACCESS_HEADER, previewTerminalAccess);
@@ -1067,6 +1085,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           });
         }
 
+        if (isOwnedTunnelDown(runningMachine, upstream.status)) {
+          await upstream.body?.cancel();
+          return ownedOfflineResponse(c, path, runningMachine.lastSeenAt);
+        }
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
         stripUpstreamCredentials(responseHeaders, resolution.upstream);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
@@ -1116,6 +1138,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         });
       } catch (err: unknown) {
         logRouteError(isCodeDomain ? 'code-domain vps proxy' : 'app-domain vps proxy', err);
+        if (runningMachine.substrate === 'owned') return ownedOfflineResponse(c, path, runningMachine.lastSeenAt);
         return c.json({ error: 'VPS unreachable' }, 502);
       }
     }

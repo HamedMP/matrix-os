@@ -23,6 +23,10 @@ export interface RoutableMachine {
   metalVmId?: string | null;
   /** Metal substrate: the selected machine generation. */
   generation?: number;
+  /** Owned machines: the opaque tunnel origin hostname, set only while a tunnel is ready. */
+  privateAddress?: string | null;
+  /** Owned machines: the last heartbeat, which decides online versus offline. */
+  lastSeenAt?: string | null;
 }
 
 export interface RuntimeUpstreamTarget {
@@ -35,7 +39,7 @@ export interface RuntimeUpstream {
   url: string;
   hostHeader: string;
   tlsServerName?: string;
-  /** Extra request headers the upstream requires, such as host ingress auth. Never forwarded from the client. */
+  /** Platform-only request headers the upstream requires, such as host ingress auth or origin access credentials. Never forwarded from the client. */
   headers?: Readonly<Record<string, string>>;
   /**
    * PEM of an extra CA to trust, in addition to the system roots, when
@@ -45,7 +49,7 @@ export interface RuntimeUpstream {
   extraCaPem?: string;
 }
 
-export type EnsureRunningFailureCode = 'start_timeout' | 'provider_unavailable' | 'needs_recovery';
+export type EnsureRunningFailureCode = 'start_timeout' | 'provider_unavailable' | 'needs_recovery' | 'offline';
 
 export type EnsureRunningResult =
   | { state: 'running' }
