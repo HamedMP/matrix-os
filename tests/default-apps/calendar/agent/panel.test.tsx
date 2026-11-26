@@ -16,7 +16,7 @@ const ACCOUNT = { id: "google:me@example.com", provider: "google" as const, addr
 const ME = { address: "me@example.com", name: "Me", response: "accepted" as const, organizer: true };
 const WRITES = ["createEvent", "updateEvent", "deleteEvent", "respond"];
 
-async function setup(reply: (prompt: string) => string) {
+async function setup(reply: (prompt: string) => string | Promise<string>) {
   const provider = new FakeCalendarProvider([calendarInfo("work", { primary: true })]);
   provider.events = [
     event({ id: "work/deal", calendarId: "work", title: "Deal team sync", start: "2026-11-24T16:00:00Z", end: "2026-11-24T17:00:00Z",
@@ -34,8 +34,8 @@ async function setup(reply: (prompt: string) => string) {
   await store.init();
   const generate = vi.fn(async (prompt: string) => reply(prompt));
   const onHighlight = vi.fn<(target: CalendarHighlight) => void>();
-  render(<CalendarAgentPanel store={store} generate={generate} getFreeBusy={(a, s, e) => provider.getFreeBusy(a, s, e)} onHighlight={onHighlight} now={() => NOW} />);
-  return { store, provider, generate, onHighlight };
+  const view = render(<CalendarAgentPanel store={store} generate={generate} getFreeBusy={(a, s, e) => provider.getFreeBusy(a, s, e)} onHighlight={onHighlight} now={() => NOW} />);
+  return { store, provider, generate, onHighlight, view };
 }
 
 function aliasFor(prompt: string, title: string): string {
@@ -116,6 +116,38 @@ describe("CalendarAgentPanel", () => {
     expect(Date.parse(draft?.draft.start ?? "")).toBe(Date.parse(target.start));
     expect(Date.parse(draft?.draft.end ?? "")).toBe(Date.parse(target.end));
     expect(provider.calls.filter((call) => WRITES.includes(call.method))).toEqual([]);
+  });
+
+  // Outcome: closing the assistant while it is answering drops that answer; nothing it suggested lands on the grid later.
+  // Fault: the pending answer still passes the request check and replaces the grid's proposals after the panel is gone.
+  it("drops a pending answer when the panel closes, so it never places proposals afterwards", async () => {
+    let answer: (reply: string) => void = () => undefined;
+    const { store, generate, view } = await setup(() => new Promise<string>((resolve) => {
+      answer = resolve;
+    }));
+    ask("propose two times for a kickoff with Ana");
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    view.unmount();
+    answer(JSON.stringify({ intent: "propose_times", title: "Kickoff", attendees: ["ana@example.com"], durationMinutes: 60, count: 2 }));
+    // Let the agent finish its calendar reads and settle.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(store.getSnapshot().proposals).toEqual([]);
+  });
+
+  // Outcome: the grid stays where the owner left it when the assistant closes before it has read the calendar.
+  // Fault: the closed request still reads its window and moves the grid to that window's first day.
+  it("leaves the grid where it is when a request finishes after the panel closed", async () => {
+    let answer: (reply: string) => void = () => undefined;
+    const { store, generate, view } = await setup(() => new Promise<string>((resolve) => {
+      answer = resolve;
+    }));
+    store.setView("day");
+    ask("what is on next month");
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    view.unmount();
+    answer(JSON.stringify({ intent: "agenda", window: { type: "day", date: { type: "date", date: "2026-12-15" } } }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(store.getSnapshot().range.anchor).toBe("2026-11-23");
   });
 
   it("shows a fixed message when the model fails, then keeps working", async () => {

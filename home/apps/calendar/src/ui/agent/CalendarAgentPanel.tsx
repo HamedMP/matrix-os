@@ -9,7 +9,7 @@
  * grid as agent proposals. Nothing here saves an event or sends an invite:
  * that stays an explicit click in the composer.
  */
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AgentPanel, type AgentResult, type AgentStatusLine } from "../../../../_shared/office-ui";
 import { runCalendarAgent, type CalendarAgentAnswer, type CalendarAgentDeps, type SlotRef } from "../../agent";
 import { instantToMs } from "../../../../_shared/office-accounts/types/calendar";
@@ -71,13 +71,22 @@ export function CalendarAgentPanel({ store, generate, getFreeBusy, onHighlight, 
   const token = useRef(0);
   const counter = useRef(0);
 
-  const deps = useMemo(() => createStoreAgentDeps(store, { generate, getFreeBusy }), [store, generate, getFreeBusy]);
+  // Closing the panel ends the request in flight: it must not move the grid or
+  // place proposals after the owner left.
+  useEffect(() => {
+    const requests = token;
+    return () => {
+      requests.current += 1;
+    };
+  }, []);
 
   const submit = useCallback(async (request: string) => {
     const current = ++token.current;
     setBusy(true);
     setNotice(null);
     try {
+      // This request's reads leave the grid alone once it is stopped or the panel closes.
+      const deps = createStoreAgentDeps(store, { generate, getFreeBusy, isActive: () => current === token.current });
       const answer = await runCalendarAgent(request, agentContext(store.getSnapshot(), now()), deps);
       if (current !== token.current) return;
       const proposals = answer.kind === "proposals" ? placeProposals(store, answer.proposals) : [];
@@ -88,7 +97,7 @@ export function CalendarAgentPanel({ store, generate, getFreeBusy, onHighlight, 
       // A newer request (or Stop) owns the flag once the token has moved on.
       if (current === token.current) setBusy(false);
     }
-  }, [deps, now, store]);
+  }, [generate, getFreeBusy, now, store]);
 
   const cancel = useCallback(() => {
     token.current += 1;

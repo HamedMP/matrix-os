@@ -57,6 +57,8 @@ export interface StoreAgentOptions {
   /** Free-busy straight from a provider; defaults to the store's provider lookup. */
   getFreeBusy?: CalendarAgentDeps["getFreeBusy"];
   log?: (action: string, error: unknown) => void;
+  /** False once the request was stopped or its panel closed; the grid is then left where it is. Default: always true. */
+  isActive?: () => boolean;
 }
 
 export function createStoreAgentDeps(store: CalendarStore, options: StoreAgentOptions = {}): CalendarAgentDeps {
@@ -68,7 +70,7 @@ export function createStoreAgentDeps(store: CalendarStore, options: StoreAgentOp
       const events = await store.readEvents(start, end);
       // The grid then shows the window's first day, so the answer is what the owner sees.
       const state = store.getSnapshot();
-      if (!covers(state, start, end)) store.goToDate(dayKeyAt(instantToMs(start), state.timeZone));
+      if ((options.isActive?.() ?? true) && !covers(state, start, end)) store.goToDate(dayKeyAt(instantToMs(start), state.timeZone));
       return events;
     },
     getFreeBusy(addresses, start, end) {
