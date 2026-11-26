@@ -1,3 +1,4 @@
+import { assertHerdrMcpReady, createCodexTerminalMcpBootstrap, codexTerminalMcpThreadConfig, codexTerminalMcpChildEnvironment, CODEX_TERMINAL_MCP_INSTRUCTIONS } from './codex-terminal-mcp.mjs';
 import { createCodexRoutineChannel, CODEX_ROUTINE_TOOL } from "./codex-routine-channel.mjs";
 import { NativeReferenceSchema, ApprovalRequestSchema, InputRequestSchema, ToolLifecycleTypeSchema, ItemLifecycleSchema, RpcResponseSchema, RpcErrorSchema, ToolOutputDeltaSchema, AgentDeltaSchema, TokenUsageUpdatedSchema, TurnCompletedSchema } from "./codex-app-server-protocol.mjs";
 import { CodexControlSchema as ControlSchema } from "./codex-control-protocol.mjs";
@@ -127,6 +128,8 @@ try {
   fail("Codex Browser startup is unavailable.");
 }
 let currentBrowserLease;
+const matrixMcpBootstrap = createCodexTerminalMcpBootstrap(config.matrixMcpAttemptId);
+let currentMatrixMcpLease;
 let nativeSession;
 let nativeGeneration, routineFeatureThread = false;
 const routines = createCodexRoutineChannel({ enabled: config.routinePrivate, initialTurn: () => PendingTurnSchema.parse({ prompt: config.prompt, model: config.model, modelOptions: [
@@ -934,7 +937,11 @@ async function applyControl(control) {
     return same ? { ok: true, replayed: true } : { ok: false };
   }
   await verifyNativeCodexHumanControl(control, verifyNativeSubscription, request);
-  if (control.type === "browser_bind") {
+  if (control.type === "matrix_mcp_bind") {
+    if (!await matrixMcpBootstrap.bind({ attemptId: control.attemptId, token: control.token, gatewayPort: control.gatewayPort, launcher: control.launcher })) return { ok: false };
+  } else if (control.type === "matrix_mcp_start") {
+    if (!matrixMcpBootstrap.release(control.attemptId)) return { ok: false };
+  } else if (control.type === "browser_bind") {
     const { type: _type, clientRequestId: _request, ...lease } = control;
     if (!await browserBootstrap.bind(lease)) return { ok: false };
   } else if (control.type === "browser_start") {
@@ -1083,7 +1090,7 @@ function decodeTurnFrame(line) {
     const decoded = new TextDecoder("utf8", { fatal: true }).decode(bytes);
     return prefix === TURN_FRAME_V1_PREFIX
       ? PendingTurnSchema.safeParse({ prompt: decoded, modelOptions: [] }).data
-      : PendingTurnSchema.safeParse(JSON.parse(decoded)).data;
+      : PendingTurnSchema.omit({ matrixMcp: true }).safeParse(JSON.parse(decoded)).data;
   } catch (_error) {
     return undefined;
   }
@@ -1141,6 +1148,7 @@ function stop() {
   stopping = true;
   startupController.abort();
   browserBootstrap.fail();
+  matrixMcpBootstrap.fail();
   input.close();
   wakeTurn?.();
   wakeTurn = undefined;
@@ -1260,7 +1268,7 @@ async function runTurn(threadId, turn) {
 process.once("SIGTERM", () => { userStopped = true; stop(); });
 process.once("SIGINT", () => { userStopped = true; stop(); });
 
-async function startNativeSession(lease) {
+async function startNativeSession(lease, matrixMcp) {
   if (!await providerVersionVerified) {
     process.stderr.write("Codex provider version is not verified.\n");
     throw new Error("provider_version_unverified");
@@ -1271,7 +1279,7 @@ async function startNativeSession(lease) {
   if (lease) await browserTokenFile?.write(lease.token);
   else await browserTokenFile?.clear();
   nativeSession = await startCodexNativeProviderSession({ command, args: commandArgs,
-    cwd: process.cwd(), env: codexBrowserChildEnvironment(process.env, lease, browserTokenFile?.path), signal: startupController.signal,
+    cwd: process.cwd(), env: codexTerminalMcpChildEnvironment(codexBrowserChildEnvironment(process.env, lease, browserTokenFile?.path), matrixMcp), signal: startupController.signal,
     onChild(value) {
       routines.end();
       nativeGeneration = randomUUID();
@@ -1298,10 +1306,10 @@ async function startNativeSession(lease) {
   const threadParams = {
     ...(resumeId ? { threadId: resumeId, excludeTurns: true } : routines.canRegister() ? { dynamicTools: [CODEX_ROUTINE_TOOL] } : {}), model: config.model,
     ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
-    developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS + (lease ? "\n\n" + CODEX_BROWSER_INSTRUCTIONS : ""),
+    developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS + (lease ? "\n\n" + CODEX_BROWSER_INSTRUCTIONS : "") + (matrixMcp ? "\n\n" + CODEX_TERMINAL_MCP_INSTRUCTIONS : ""),
     serviceTier: config.serviceTier, cwd: process.cwd(), approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox, runtimeWorkspaceRoots: config.writableRoots, experimentalRawEvents: false,
-    config: codexBrowserThreadConfig(lease, { tokenFile: Boolean(browserTokenFile) }),
+    config: { ...codexBrowserThreadConfig(lease, { tokenFile: Boolean(browserTokenFile) }), ...codexTerminalMcpThreadConfig(matrixMcp) },
   };
   // The account proof and thread/start (or resume) run concurrently: opening a
   // thread only loads local state and starts MCP servers; no model request or
@@ -1335,6 +1343,8 @@ async function startNativeSession(lease) {
   nativeThreadId = identity;
   sendTiming.mark(resumeId ? "thread_resume" : "thread_start", threadStartedAt, turnIndex);
   if (lease) await assertBrowserMcpReady(identity, turnIndex);
+  if (matrixMcp) await assertHerdrMcpReady(request, identity);
+  currentMatrixMcpLease = matrixMcp;
   currentBrowserLease = lease;
   await persist({ type: "thread.started", thread_id: identity });
 }
@@ -1370,12 +1380,13 @@ try {
   sendTiming.mark("native_proof_setup", proofSetupStartedAt, 1);
   const initialRoutineTurn = await routines.initial(startupController.signal);
   const leaseStartedAt = sendTiming.now();
-  const initialBrowser = await browserBootstrap.waitLease(startupController.signal);
+  const [initialBrowser, initialMcp] = await Promise.all([browserBootstrap.waitLease(startupController.signal), matrixMcpBootstrap.waitLease(startupController.signal)]);
   sendTiming.mark("browser_lease_wait", leaseStartedAt, 1);
-  await startNativeSession(initialBrowser);
+  await startNativeSession(initialBrowser, initialMcp);
+  matrixMcpBootstrap.markReady();
   browserBootstrap.markReady();
   const releaseStartedAt = sendTiming.now();
-  await browserBootstrap.waitRelease(startupController.signal);
+  await Promise.all([browserBootstrap.waitRelease(startupController.signal), matrixMcpBootstrap.waitRelease(startupController.signal)]);
   sendTiming.mark("browser_release_wait", releaseStartedAt, 1);
   let turn = initialRoutineTurn ?? PendingTurnSchema.parse({
     prompt: config.prompt,
@@ -1389,17 +1400,17 @@ try {
   while (turn && !stopping) {
     pendingAdmittedTurn = true;
     sendTiming.beginTurn(terminalEventCount + 1, turn.clientRequestId);
-    if (!firstTurn && (currentBrowserLease || turn.browser)) {
+    if (!firstTurn && (currentBrowserLease || turn.browser || currentMatrixMcpLease || turn.matrixMcp)) {
       renewingNativeTurn = true;
       try {
-        if (canRenewCodexBrowserInPlace(currentBrowserLease, turn.browser, browserTokenFile)) {
+        if (!turn.matrixMcp && !currentMatrixMcpLease && canRenewCodexBrowserInPlace(currentBrowserLease, turn.browser, browserTokenFile)) {
           await renewBrowserInPlace(turn.browser, terminalEventCount + 1);
         } else {
           // Attaching or detaching Browser changes the MCP config: restart once.
           const closeStartedAt = sendTiming.now();
           await nativeSession.close(); startupController.signal.throwIfAborted();
           sendTiming.mark("previous_session_close", closeStartedAt, terminalEventCount + 1);
-          await startNativeSession(turn.browser ?? undefined);
+          await startNativeSession(turn.browser ?? undefined, turn.matrixMcp ?? undefined);
         }
       } finally {
         renewingNativeTurn = false;
@@ -1443,6 +1454,7 @@ try {
   if (activeTurn || terminalEventCount === 0) exitCode = 1;
 } catch (error) {
   browserBootstrap.fail();
+  matrixMcpBootstrap.fail();
   exitCode = 1;
   if (error instanceof ProviderStartupCleanupUnconfirmed) {
     // Keep the runner/thread supervised and non-terminal while its exact child

@@ -1,3 +1,5 @@
+import { hasDirectHerdrOwner } from "./herdr-owner-ingress.js";
+import { selectedHerdrTerminal } from "./codex-mcp-run-scope.js";
 import { ROUTINE_CREATION_PROOF_HEADER, ROUTINE_FULL_ACCESS_PROOF_HEADER } from "@matrix-os/contracts";
 import { isRoutineDirectResourcePath } from "./routine-direct-visibility.js";
 import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
@@ -669,12 +671,17 @@ export function createCanonicalChatRoutes(options: {
       const parsed = CanonicalCreateChatTurnRequestSchema.safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
       const principal = options.getPrincipal(context);
+      const herdrSelected = Boolean(selectedHerdrTerminal(parsed.data.parts));
+      if (herdrSelected && !hasDirectHerdrOwner(context, principal)) {
+        return context.json({ error: { code: "authorization_failed", safeMessage: "Terminal control requires a verified owner request.", retryable: false } }, 403);
+      }
       const result = await options.service.admitTurn(
         principal,
         ownerFromPrincipal(principal),
         chatId,
         parsed.data,
-        { routineCreationProof: context.req.header(ROUTINE_CREATION_PROOF_HEADER),
+        { ...(herdrSelected ? { directOwnerTurn: true as const } : {}),
+          routineCreationProof: context.req.header(ROUTINE_CREATION_PROOF_HEADER),
           previewTurnProof: context.req.header("x-matrix-preview-drive-turn-proof"),
           routineFullAccessProof: context.req.header(ROUTINE_FULL_ACCESS_PROOF_HEADER) },
       );

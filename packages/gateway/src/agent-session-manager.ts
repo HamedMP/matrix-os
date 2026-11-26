@@ -1,3 +1,4 @@
+import { nativeCodexMcpExecution } from "./chat/codex-mcp-run-scope.js";
 import { launchPreparedWorkspaceTerminal, retainWorkspaceTerminalPrincipal, workspaceTerminalPrincipal, type WorkspaceTerminalLaunch } from "./terminal/workspace-launch.js";
 import { recordChatSendStage, startChatSendStage, timeChatSendStage } from "./chat/send-timing.js";
 import { nativeCodexRoutineAdmission } from "./chat/codex-routine-source.js";
@@ -471,6 +472,8 @@ export function createAgentSessionManager(options: {
       let coreMcp: ReturnType<NonNullable<typeof options.issueMatrixCoreMcp>> = null;
       const launchBuildStartedAt = startChatSendStage();
       try {
+        const matrixMcp = request.kind === "agent" && request.agent === "codex" && request.runtimePreference === "background"
+          ? nativeCodexMcpExecution(request.ownerId ?? "") : undefined;
         const browser = request.agent === "codex" ? nativeBrowserExecution(request.ownerId ?? "") : undefined;
         const routineSource = request.agent === "codex" && request.runtimePreference === "background" ? nativeCodexRoutineAdmission(request.ownerId ?? "") : undefined;
         coreMcp = request.kind === "agent" && request.agent === "codex" && request.ownerId
@@ -491,6 +494,7 @@ export function createAgentSessionManager(options: {
             approvalPolicy: toAgentApprovalPolicy(request.approvalPolicy),
             ...(request.agent === "codex"
               ? { providerEventPath: codexProviderEventPath(homePath, sessionId),
+                ...(matrixMcp ? { codexMatrixMcpAttemptId: matrixMcp.attemptId } : {}),
                 ...(browser ? { codexBrowserAttemptId: browser.attemptId } : {}),
                 ...(routineSource ? { codexRoutinePrivate: true } : {}) }
               : {}),

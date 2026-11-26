@@ -1,3 +1,4 @@
+import { HerdrChatControlAction, type HerdrControlContext, type HerdrControlDraft } from "./HerdrChatControlAction";
 import type { ReactNode } from "react";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { type StageChatWorktreeDraft, useChatElectronPreview } from "./ChatElectronPreview";
@@ -6,7 +7,7 @@ import { useChatMacTerminalProbe } from "./ChatMacTerminalProbe";
 import type { MacVerificationDraft } from "./ChatMacVerification";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
 
-export function ChatWorktreeActions({ active, editingQueuedTurn, actorId, detail, onDraft, onDiscardDraft, permissionMode, children }: {
+export function ChatWorktreeActions({ active, editingQueuedTurn, actorId, detail, onDraft, onDiscardDraft, permissionMode, herdr, children }: {
   active: boolean;
   editingQueuedTurn?: boolean;
   actorId: string | null;
@@ -14,7 +15,8 @@ export function ChatWorktreeActions({ active, editingQueuedTurn, actorId, detail
   permissionMode?: string;
   onDraft?: StageChatWorktreeDraft;
   onDiscardDraft: (text: string) => void;
-  children: (actions: readonly ComposerMentionAction[], verification?: MacVerificationDraft) => ReactNode;
+  herdr?: HerdrControlContext;
+  children: (actions: readonly ComposerMentionAction[], verification?: MacVerificationDraft, herdr?: HerdrControlDraft) => ReactNode;
 }) {
   const preview = useChatElectronPreview({ active, editingQueuedTurn, actorId, detail, onDraft, permissionMode });
   const terminal = useChatMacTerminalProbe({
@@ -34,7 +36,9 @@ export function ChatWorktreeActions({ active, editingQueuedTurn, actorId, detail
       {preview.feedback}
       {terminal.feedback}
       {watch.feedback}
-      {children(actions, preview.verificationDraft)}
+      <HerdrChatControlAction control={preview.verificationDraft ? undefined : herdr}>
+        {(action, draft) => children(action ? [...actions, action] : actions, preview.verificationDraft, draft)}
+      </HerdrChatControlAction>
     </>
   );
 }
