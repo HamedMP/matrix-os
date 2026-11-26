@@ -1,16 +1,12 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronDown, LoaderCircle, Monitor, RefreshCw } from "@renderer/lib/hugeicons";
+import { matrixComputerAvailabilityLabel } from "@matrix-os/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { useRuntimeComputers } from "../../stores/runtime-computers";
 import { useUi } from "../../stores/ui";
 
-const STATUS_LABEL = {
-  available: "Available",
-  starting: "Starting",
-  unavailable: "Unavailable",
-} as const;
 
 function fallbackComputerLabel(slot: string): string {
   if (slot === "primary") return "Main Computer";
@@ -58,10 +54,12 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
   const inventoryLoading = loadStatus === "loading" && current === null;
   const visiblyUnavailable = loadStatus === "error" || current?.availability === "unavailable";
   const visiblyStarting = current?.availability === "starting";
+  // Shared copy: owned computers read "offline"/"connecting", hosted ones "unavailable"/"starting".
+  const currentState = current ? matrixComputerAvailabilityLabel(current).toLowerCase() : "unavailable";
   const visibleLabel = visiblyUnavailable
-    ? `${baseVisibleLabel} unavailable`
+    ? `${baseVisibleLabel} ${currentState}`
     : visiblyStarting
-      ? `${baseVisibleLabel} starting…`
+      ? `${baseVisibleLabel} ${currentState}…`
       : inventoryLoading
         ? "Loading computers…"
         : baseVisibleLabel;
@@ -70,9 +68,9 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
     : inventoryLoading
       ? "Loading computers"
       : visiblyStarting
-        ? `Change computer, currently ${currentLabel}, starting`
+        ? `Change computer, currently ${currentLabel}, ${currentState}`
         : current?.availability === "unavailable"
-          ? `Change computer, currently ${currentLabel}, unavailable`
+          ? `Change computer, currently ${currentLabel}, ${currentState}`
           : `Change computer, currently ${currentLabel}`;
   const switchComputer = async (runtimeSlotValue: string) => {
     const computer = computers.find((candidate) => candidate.runtimeSlot === runtimeSlotValue);
@@ -171,7 +169,7 @@ export default function RuntimeComputerMenu({ collapsed }: { collapsed: boolean 
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-xs font-medium" style={{ color: "var(--text-primary)" }}>{computer.label}</span>
                       <span className="block truncate text-[10px]" style={{ color: "var(--text-tertiary)" }}>
-                        {selected ? "Current" : STATUS_LABEL[computer.availability]} · {computer.handle}
+                        {selected ? "Current" : matrixComputerAvailabilityLabel(computer)} · {computer.handle}
                       </span>
                     </span>
                     <span className="flex w-4 items-center justify-center">

@@ -10,6 +10,7 @@
 @source "../../../packages/ui/src/chat-agents";
 @source "../../../packages/ui/src/collaboration";
 @source "../../../packages/ui/src/share";
+@source "../../../packages/ui/src/owned-computers";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@clerk/ui/themes/shadcn.css";

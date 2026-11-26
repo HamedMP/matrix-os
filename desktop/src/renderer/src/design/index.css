@@ -11,6 +11,7 @@
 @source "../../../../../packages/ui/src/share";
 @source "../../../../../packages/ui/src/terminal-status-sidebar";
 @source "../../../../../packages/ui/src/terminal-agents";
+@source "../../../../../packages/ui/src/owned-computers";
 @import "@fontsource/inter/400.css";
 @import "@fontsource/inter/500.css";
 @import "@fontsource/instrument-sans/400.css";

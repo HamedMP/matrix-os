@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { DropdownMenu as Menu } from "radix-ui";
 import { z } from "zod/v4";
-import { MatrixComputerListSchema, MatrixComputerRuntimeSlotSchema, type MatrixComputerList } from "@matrix-os/contracts";
+import { MatrixComputerListSchema, MatrixComputerRuntimeSlotSchema, matrixComputerAvailabilityLabel, type MatrixComputerList } from "@matrix-os/contracts";
 import { DesktopActivityInbox, DesktopTopBarActions } from "@matrix-os/ui";
 import { CheckIcon, ChevronDownIcon, MonitorIcon, RefreshCwIcon } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -13,6 +13,7 @@ import { useTerminalAgentEvents } from "@/stores/terminal-agent-events";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { UserButton } from "../UserButton";
 import { GettingStartedPopover, type GettingStartedDestination } from "../onboarding/GettingStartedPopover";
+import { subscribeComputersChanged } from "@/lib/computers-changed";
 
 export type WebDesktopSettingsSection = "appearance" | "billing" | "integrations" | "agents-providers" | "organization";
 interface WebDesktopControlsProps {
@@ -55,7 +56,7 @@ async function loadWebComputers(gateway: string, signal: AbortSignal) {
     if (!response.ok) throw new Error("Computer inventory unavailable");
     return response.json();
   }
-  const [list, context] = await Promise.all([read("/api/auth/computers"), read(`${gateway}/api/system/info`)]);
+  const [list, context] = await Promise.all([read("/api/auth/computers?include=owned"), read(`${gateway}/api/system/info`)]);
   const inventory = MatrixComputerListSchema.parse(list);
   const slot = ComputerContextSchema.parse(context).runtime.runtimeSlot;
   // Installed runtime identity wins over the account's stored primary selection.
@@ -91,6 +92,7 @@ function ScopedComputerMenu({ gateway }: { gateway: string }) {
   const label = current?.label ?? (state.status === "loading" ? "Loading computers…" : state.status === "ready" ? "Current computer" : "Computer unavailable");
   const triggerLabel = state.status === "loading" ? "Loading computers" : state.status === "error" ? "Computer list unavailable" : `Change computer, currently ${label}`;
   const requestRefresh = useCallback(() => { setState({ status: "loading", inventory: null, slot: null }); setRefresh(value => value + 1); }, []);
+  useEffect(() => subscribeComputersChanged(requestRefresh), [requestRefresh]);
   return <Menu.Root open={open} onOpenChange={setOpen}><Menu.Trigger asChild>
     <button type="button" aria-label={triggerLabel} className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-[13px] hover:bg-foreground/5 focus-visible:outline-2 focus-visible:outline-primary">
       <MonitorIcon className="size-3.5 shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1 truncate">{label}</span><ChevronDownIcon className="size-3 shrink-0" aria-hidden="true" />
@@ -101,7 +103,7 @@ function ScopedComputerMenu({ gateway }: { gateway: string }) {
     {state.status === "error" ? <p role="alert" className="p-2 text-xs">Your computer list is unavailable. Try refreshing.</p> : null}
     {state.inventory?.items.map(computer => {
       const selected = computer.runtimeSlot === state.slot;
-      const contents = <><MonitorIcon className="size-3.5 shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1"><span className="block truncate">{computer.label}</span><span className="block text-[11px] text-muted-foreground">{selected ? "Current" : computer.availability === "available" ? "Available" : computer.availability === "starting" ? "Starting" : "Unavailable"} · {computer.handle}</span></span>{selected ? <CheckIcon className="size-3.5" aria-hidden="true" /> : null}</>;
+      const contents = <><MonitorIcon className="size-3.5 shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1"><span className="block truncate">{computer.label}</span><span className="block text-[11px] text-muted-foreground">{selected ? "Current" : matrixComputerAvailabilityLabel(computer)} · {computer.handle}</span></span>{selected ? <CheckIcon className="size-3.5" aria-hidden="true" /> : null}</>;
       return computer.availability === "available" && !selected
         ? /* react-doctor-disable-next-line react-doctor/nextjs-no-a-element -- Switching computers deliberately reloads the document to discard the previous owner/runtime connection, sockets and state. Next client navigation would retain that context. */
           <Menu.Item key={computer.runtimeSlot} asChild><a href={computer.gatewayPath} className={rowClass}>{contents}</a></Menu.Item>

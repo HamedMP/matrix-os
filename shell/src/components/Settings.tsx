@@ -34,6 +34,7 @@ import { SystemSection } from "./settings/sections/SystemSection";
 import { AiUsageSection } from "./settings/sections/AiUsageSection";
 import { ChatImportSection } from "./settings/sections/ChatImportSection";
 import { BillingSection } from "./settings/sections/BillingSection";
+import { ComputersSection } from "./settings/sections/ComputersSection";
 import type { ComputerSetupSelection } from "./settings/sections/BillingPanel";
 import { useMatrixBillingAccess } from "@/hooks/useMatrixBillingAccess";
 import { UserButton as AccountButton } from "./UserButton";
@@ -67,6 +68,7 @@ const sections = [
   { id: "identity-personality", label: "Identity & personality", icon: UserIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "billing", label: "Billing", icon: CreditCardIcon },
+  { id: "computers", label: "Computers", icon: MonitorIcon },
   { id: "cron", label: "Cron", icon: ClockIcon },
   { id: "system", label: "System", icon: MonitorIcon },
 ] as const;
@@ -429,6 +431,7 @@ function SettingsFrame({
                 <DefaultInstallsStep {...onboardingDefaultInstalls} />
               ) : null}
               {activeSection === "plugins" && <PluginsSection />}
+              {activeSection === "computers" && <ComputersSection />}
               {activeSection === "system" && <SystemSection billingActive={billingActive !== false} />}
             </main>
             {showMobileAccountFooter && <SettingsAccountFooter />}

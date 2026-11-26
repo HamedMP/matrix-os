@@ -1,7 +1,7 @@
 "use client";
 
 import { BrandCard, Eyebrow } from "@matrix-os/brand";
-import type { MatrixComputer } from "@matrix-os/contracts";
+import { matrixComputerAvailabilityLabel, type MatrixComputer } from "@matrix-os/contracts";
 import {
   ArrowLeftIcon,
   CheckCircle2Icon,
@@ -152,15 +152,22 @@ const COMPUTER_TONES = [
 
 function computerIdentity(computer: MatrixComputer): { emoji: string; tone: string } {
   if (computer.kind === "preview") return { emoji: "🧪", tone: "bg-[#E8E8E1]" };
+  if (computer.kind === "owned") return { emoji: "💻", tone: "bg-[#E2E6EA]" };
   if (computer.runtimeSlot === "primary") return { emoji: "🐇", tone: "bg-[#F4E4CF]" };
   const index = [...computer.runtimeSlot].reduce((total, character) => total + character.codePointAt(0)!, 0) % COMPUTER_EMOJIS.length;
   return { emoji: COMPUTER_EMOJIS[index]!, tone: COMPUTER_TONES[index]! };
 }
 
+function computerProfileStatus(computer: MatrixComputer): string {
+  if (computer.availability === "available") return "Ready";
+  if (computer.kind === "owned") return matrixComputerAvailabilityLabel(computer);
+  return computer.availability === "starting" ? "Building" : "Unavailable";
+}
+
 function ComputerProfile({ computer, current }: { computer: MatrixComputer; current: boolean }) {
   const title = computer.runtimeSlot === "primary" ? "Main Computer" : runtimeSlotTitle(computer.runtimeSlot);
   const available = computer.availability === "available";
-  const status = available ? "Ready" : computer.availability === "starting" ? "Building" : "Unavailable";
+  const status = computerProfileStatus(computer);
   const identity = computerIdentity(computer);
 
   return (

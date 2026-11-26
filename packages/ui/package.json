@@ -49,7 +49,8 @@
     "./routine-action": "./src/routine-action/index.ts",
     "./terminal-launch": "./src/terminal/agent-launch.ts",
     "./routine-origin": "./src/chat/routine-origin.ts",
-    "./random-uuid": "./src/random-uuid.ts"
+    "./random-uuid": "./src/random-uuid.ts",
+    "./owned-computers": "./src/owned-computers/index.ts"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.3.0",

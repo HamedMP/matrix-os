@@ -250,7 +250,7 @@ function parseJourneyState(value: unknown): JourneyState | null {
 
 async function readOverview(): Promise<{ inventory: MatrixComputerList; billing: BillingStatus }> {
   const [computerResult, billingResult] = await Promise.all([
-    fetchJson("/api/auth/computers"),
+    fetchJson("/api/auth/computers?include=owned"),
     fetchJson("/billing/status"),
   ]);
   if (!computerResult.response.ok || !billingResult.response.ok) throw new Error("overview_unavailable");

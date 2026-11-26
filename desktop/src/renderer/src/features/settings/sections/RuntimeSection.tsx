@@ -1,18 +1,14 @@
 import { Check, LoaderCircle, Monitor, RefreshCw } from "@renderer/lib/hugeicons";
-import { useEffect } from "react";
+import { useMemo, useEffect } from "react";
+import { OwnedComputersPanel, type OwnedComputersTransport } from "@matrix-os/ui/owned-computers";
 import {
+  matrixComputerAvailabilityLabel,
   type MatrixComputer,
 } from "@matrix-os/contracts";
 import { Button } from "../../../design/primitives";
 import { useConnection } from "../../../stores/connection";
 import { useRuntimeComputers } from "../../../stores/runtime-computers";
 import { Card, Empty, SettingsSectionHeader } from "./section-kit";
-
-const STATUS_LABEL: Record<MatrixComputer["availability"], string> = {
-  available: "Available",
-  starting: "Starting",
-  unavailable: "Unavailable",
-};
 
 function ComputerCard({
   computer,
@@ -29,7 +25,7 @@ function ComputerCard({
   const buttonLabel = selected
     ? "Current computer"
     : unavailable
-      ? `${computer.label} is ${computer.availability}`
+      ? `${computer.label} is ${matrixComputerAvailabilityLabel(computer).toLowerCase()}`
       : `Use ${computer.label}`;
 
   return (
@@ -60,7 +56,7 @@ function ComputerCard({
           <div className="flex items-center gap-2 text-xs" style={{ color: "var(--text-tertiary)" }}>
             <span className="truncate">{computer.handle}</span>
             <span aria-hidden="true">·</span>
-            <span>{STATUS_LABEL[computer.availability]}</span>
+            <span>{matrixComputerAvailabilityLabel(computer)}</span>
           </div>
         </div>
       </div>
@@ -94,6 +90,18 @@ export default function RuntimeSection() {
   // The inventory response's selectedSlot reflects the credential in use; the
   // persisted profile slot is only a fallback until the first refresh lands.
   const selectedSlot = serverSelectedSlot ?? runtimeSlot;
+  const api = useConnection((state) => state.api);
+  const userId = useConnection((state) => state.userId);
+  // Owned computers are account-scoped platform routes; never add a runtime selector.
+  const ownedTransport = useMemo<OwnedComputersTransport | null>(() => {
+    if (!api) return null;
+    const platform = api.forRuntime("primary");
+    return {
+      get: (path) => platform.get<unknown>(path, { maxBytes: 16_384 }),
+      patch: (path, body) => platform.patch<unknown>(path, body, { maxBytes: 4_096 }),
+      remove: async (path) => { await platform.delete<unknown>(path, undefined, { omitErrorBody: true }); },
+    };
+  }, [api]);
 
   useEffect(() => {
     void refresh();
@@ -160,6 +168,13 @@ export default function RuntimeSection() {
             Couldn&apos;t switch computers. Try again.
           </p>
         ) : null}
+      </Card>
+      <Card>
+        {ownedTransport ? (
+          <OwnedComputersPanel scope={JSON.stringify([userId, authGeneration, platformHost])} transport={ownedTransport} onChanged={() => { void refresh({ force: true }); }} />
+        ) : (
+          <Empty text="Sign in to manage your own computers." />
+        )}
       </Card>
     </>
   );

@@ -112,7 +112,7 @@ describe("Settings panel", () => {
     const nav = screen.getByRole("navigation", { name: "Settings sections" });
     expect(within(nav).getAllByRole("button").map((button) => button.textContent)).toEqual([
       "Agents & providers", "Connect Apps", "Messaging", "AI usage", "Import chats", "Appearance", "Organization",
-      "Identity & personality", "Billing", "System",
+      "Identity & personality", "Billing", "Computers", "System",
     ]);
     expect(screen.getByRole("button", { name: "Agents & providers" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByText("Agents and providers settings").isConnected).toBe(true);
