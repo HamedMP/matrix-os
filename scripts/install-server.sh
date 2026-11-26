@@ -40,6 +40,8 @@ INSTALL_TMP_SUM=""
 INSTALL_PHASE="init"
 INSTALL_COMPLETED=0
 INSTALL_FAILURE_CAPTURED=0
+MATRIX_CONNECT="${MATRIX_CONNECT:-0}"
+MATRIX_PLATFORM_URL="${MATRIX_PLATFORM_URL:-https://app.matrix-os.com}"
 # 0: no public-to-private switch running; 1: switching (a failed exit restores
 # public); 2: private access verified.
 PRIVATE_CUTOVER=0
@@ -323,6 +325,9 @@ Usage: curl -fsSL https://matrix-os.com/install-server.sh | sudo bash -s -- [opt
   --authkey-file <path>    Root-only file with a Tailscale/Headscale auth key; deleted after use
   --join <url>             Pair with an existing Matrix computer (from Settings > System > Add a machine)
   --join-code <code>       One-time join code shown next to --join
+  --connect                After installing, connect this computer to your Matrix
+                           account (free, managed from app.matrix-os.com)
+  --platform-url <url>     Matrix platform to connect to (default https://app.matrix-os.com)
   -h, --help               Show this help
 
 With no terminal attached the defaults apply and nothing waits for input.
@@ -348,6 +353,9 @@ parse_args() {
       --join=*) OPT_JOIN_URL="${1#*=}"; shift ;;
       --join-code) [ "$#" -ge 2 ] || fail "--join-code needs a value"; OPT_JOIN_CODE="$2"; shift 2 ;;
       --join-code=*) OPT_JOIN_CODE="${1#*=}"; shift ;;
+      --connect) MATRIX_CONNECT=1; shift ;;
+      --platform-url) [ "$#" -ge 2 ] || fail "--platform-url needs a value"; MATRIX_PLATFORM_URL="$2"; shift 2 ;;
+      --platform-url=*) MATRIX_PLATFORM_URL="${1#*=}"; shift ;;
       -h|--help) usage; exit 0 ;;
       *) fail "unknown option: $1 (see --help)" ;;
     esac
@@ -1385,6 +1393,12 @@ configure_browser() {
 }
 
 validate_config() {
+  case "$MATRIX_CONNECT" in
+    0|1) ;;
+    *) fail "MATRIX_CONNECT must be 0 or 1" ;;
+  esac
+  [[ "$MATRIX_PLATFORM_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]] \
+    || fail "--platform-url must be an https origin"
   case "$DEFAULT_CHANNEL" in
     ""|*[!A-Za-z0-9._-]*) fail "MATRIX_CHANNEL contains unsupported characters" ;;
   esac
@@ -2274,6 +2288,26 @@ process.stdout.write(`${primary.name || parsed.hostname}\n`);
 EOF
 }
 
+connect_machine() {
+  if [ -f /etc/matrix/owned-machine.env ]; then
+    # Reinstall of a connected computer: keep its platform credentials.
+    section "Keeping your Matrix account connection"
+    run_required "installing the Matrix connector" /opt/matrix/bin/matrix-install-connect
+    run_required "refreshing the Matrix connection" /usr/local/bin/matrix-connect refresh
+    return 0
+  fi
+  [ "$MATRIX_CONNECT" = "1" ] || return 0
+  section "Connecting to your Matrix account"
+  run_required "installing the Matrix connector" /opt/matrix/bin/matrix-install-connect
+  local status=0
+  /usr/local/bin/matrix-connect enroll --platform "$MATRIX_PLATFORM_URL" || status=$?
+  case "$status" in
+    0) ok "Connected to your Matrix account" ;;
+    2) warn "connection was not approved in time; run: sudo matrix-connect enroll" ;;
+    *) warn "could not reach Matrix; run later: sudo matrix-connect enroll" ;;
+  esac
+}
+
 main() {
   INSTALL_PHASE="preflight"
   parse_args "$@"
@@ -2319,6 +2353,8 @@ main() {
   end_private_cutover
   INSTALL_PHASE="pairing"
   pair_with_primary
+  INSTALL_PHASE="connect"
+  connect_machine
   INSTALL_PHASE="complete"
   INSTALL_COMPLETED=1
   capture_install_telemetry "matrix_manual_install_completed" "completed" 0

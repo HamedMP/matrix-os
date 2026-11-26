@@ -1,0 +1,25 @@
+[Unit]
+Description=Matrix OS owned machine heartbeat (spec 2707)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/matrix/owned-machine.env
+
+[Service]
+Type=simple
+ExecStart=/usr/local/libexec/matrix-connect/node /usr/local/libexec/matrix-connect/matrix-connect.mjs heartbeat
+Restart=on-failure
+RestartSec=10
+# Exit 4: the platform revoked this machine. Do not restart into a revoked credential.
+SuccessExitStatus=4
+RestartPreventExitStatus=4
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
+ReadWritePaths=/etc/matrix /var/lib/matrix-connect
+StateDirectory=matrix-connect
+StateDirectoryMode=0700
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Spec 2707: install the owned-machine connector outside the owner-writable
+# app and Node trees. matrix-connect runs as root, so its interpreter, script
+# and the tunnel binary must be root-owned and not writable by the matrix user.
+set -Eeuo pipefail
+
+CLOUDFLARED_VERSION="2025.11.1"
+CLOUDFLARED_SHA256_AMD64="991dffd8889ee9f0147b6b48933da9e4407e68ea8c6d984f55fa2d3db4bb431d"
+CLOUDFLARED_SHA256_ARM64="9979dc152097a29b6de4d1ef13e2f1821c67a6f096f88cc18f0fd25106305d3a"
+LIBEXEC="${MATRIX_CONNECT_LIBEXEC:-/usr/local/libexec/matrix-connect}"
+BIN_SRC="${MATRIX_CONNECT_BIN_SRC:-/opt/matrix/bin}"
+NODE_SRC="${MATRIX_CONNECT_NODE_SRC:-/opt/matrix/runtime/node/bin/node}"
+UNIT_SRC="${MATRIX_CONNECT_UNIT_SRC:-/opt/matrix/systemd}"
+UNIT_DST="${MATRIX_CONNECT_UNIT_DST:-/etc/systemd/system}"
+WRAPPER="${MATRIX_CONNECT_WRAPPER:-/usr/local/bin/matrix-connect}"
+CLOUDFLARED_URL_BASE="${MATRIX_CLOUDFLARED_URL_BASE:-https://github.com/cloudflare/cloudflared/releases/download}"
+
+fail() { printf 'matrix-install-connect: %s\n' "$1" >&2; exit 1; }
+
+cloudflared_asset() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf 'amd64 %s\n' "$CLOUDFLARED_SHA256_AMD64" ;;
+    aarch64|arm64) printf 'arm64 %s\n' "$CLOUDFLARED_SHA256_ARM64" ;;
+    *) fail "unsupported architecture" ;;
+  esac
+}
+
+# Unfinished downloads and wrappers are removed on any exit.
+PENDING_TMP=""
+cleanup_pending() { [ -z "$PENDING_TMP" ] || rm -f "$PENDING_TMP"; }
+trap cleanup_pending EXIT
+
+install_cloudflared() {
+  local arch expected actual tmp
+  read -r arch expected < <(cloudflared_asset)
+  if [ -x "$LIBEXEC/cloudflared" ]; then
+    actual="$(sha256sum "$LIBEXEC/cloudflared" | awk '{print $1}')"
+    [ "$actual" = "$expected" ] && return 0
+  fi
+  tmp="$(mktemp "$LIBEXEC/.cloudflared.XXXXXX")"
+  PENDING_TMP="$tmp"
+  if ! curl --fail --silent --show-error --location --proto '=https' --connect-timeout 10 --max-time 30 \
+    "$CLOUDFLARED_URL_BASE/$CLOUDFLARED_VERSION/cloudflared-linux-$arch" -o "$tmp"; then
+    rm -f "$tmp"
+    fail "cloudflared download failed"
+  fi
+  actual="$(sha256sum "$tmp" | awk '{print $1}')"
+  if [ "$actual" != "$expected" ]; then
+    rm -f "$tmp"
+    fail "cloudflared checksum mismatch"
+  fi
+  chmod 0755 "$tmp"
+  mv -f "$tmp" "$LIBEXEC/cloudflared"
+  PENDING_TMP=""
+}
+
+main() {
+  [ -f "$BIN_SRC/matrix-connect.mjs" ] || fail "matrix-connect.mjs missing from the host bundle"
+  [ -x "$NODE_SRC" ] || fail "Node runtime missing"
+  install -d -o root -g root -m 0755 "$LIBEXEC"
+  install -o root -g root -m 0755 "$NODE_SRC" "$LIBEXEC/node"
+  install -o root -g root -m 0644 "$BIN_SRC/matrix-connect.mjs" "$LIBEXEC/matrix-connect.mjs"
+  install_cloudflared
+  install -d -o root -g root -m 0700 /etc/matrix
+  for unit in matrix-connect.service matrix-cloudflared.service; do
+    install -o root -g root -m 0644 "$UNIT_SRC/$unit" "$UNIT_DST/$unit"
+  done
+  install -d -o root -g root -m 0755 "$(dirname "$WRAPPER")"
+  PENDING_TMP="$WRAPPER.tmp"
+  printf '#!/bin/sh\nexec %s/node %s/matrix-connect.mjs "$@"\n' "$LIBEXEC" "$LIBEXEC" >"$WRAPPER.tmp"
+  chmod 0755 "$WRAPPER.tmp"
+  mv -f "$WRAPPER.tmp" "$WRAPPER"
+  PENDING_TMP=""
+  if [ "${MATRIX_CONNECT_SKIP_SYSTEMCTL:-0}" != "1" ]; then
+    systemctl daemon-reload
+  fi
+}
+
+main "$@"

@@ -58,6 +58,16 @@ export function registerBrowserSetupRoutes(app: Hono, options: BrowserSetupOptio
 export function resolveBrowserSetupOwner(env: NodeJS.ProcessEnv): string | undefined {
   const owner = env.MATRIX_CLERK_USER_ID;
   const slot = env.MATRIX_RUNTIME_SLOT;
+  // Spec 2707: a self-hosted computer connected to a Matrix account carries its platform
+  // machine id, Clerk owner and owned-<8 hex> slot, and only with the exact owned substrate.
+  if (env.MATRIX_SELF_HOSTED !== undefined && env.MATRIX_SUBSTRATE === "owned") {
+    if (env.MATRIX_SELF_HOSTED !== "1" || !/^owned-[0-9a-f]{8}$/.test(slot ?? "")
+      || !/^[a-z][a-z0-9-]{0,62}$/.test(env.MATRIX_HANDLE ?? "")
+      || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(env.MATRIX_MACHINE_ID ?? "")
+      || !/^user_[A-Za-z0-9]{1,128}$/.test(owner ?? "")
+      || (env.MATRIX_USER_ID !== undefined && env.MATRIX_USER_ID !== owner)) return undefined;
+    return owner;
+  }
   // Self-host (spec 2701): the installer writes self-host-<handle> ids instead of Clerk ids.
   if (env.MATRIX_SELF_HOSTED !== undefined) {
     const selfHostId = /^self-host-[A-Za-z0-9_-]{1,64}$/;

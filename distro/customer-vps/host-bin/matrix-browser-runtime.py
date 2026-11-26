@@ -242,7 +242,7 @@ class Runtime:
         for line in text.splitlines():
             if line.startswith(('MATRIX_MACHINE_ID=', 'MATRIX_HANDLE=', 'MATRIX_RUNTIME_SLOT=', 'MATRIX_CLERK_USER_ID=',
                                 'MATRIX_USER_ID=', 'MATRIX_BROWSER_LAB=', 'MATRIX_BROWSER_LAB_VIEWER_AUTH=', 'MATRIX_BROWSER_DEV_SETUP=',
-                                'MATRIX_SELF_HOSTED=', 'MATRIX_BROWSER_ACCOUNT=')):
+                                'MATRIX_SELF_HOSTED=', 'MATRIX_BROWSER_ACCOUNT=', 'MATRIX_SUBSTRATE=')):
                 key, value = line.split('=', 1)
                 if key in values:
                     raise ValueError('Duplicate Browser host configuration')
@@ -254,9 +254,17 @@ class Runtime:
         # Self-host (spec 2701) has no Clerk or platform machine id; the installer writes
         # self-host-<handle> for both. The flag must be exact and the Clerk shape is then refused.
         self_hosted = 'MATRIX_SELF_HOSTED' in values
-        machine_pattern = r'self-host-[A-Za-z0-9_-]{1,64}' if self_hosted else r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
-        owner_pattern = r'self-host-[A-Za-z0-9_-]{1,64}' if self_hosted else r'user_[A-Za-z0-9]{1,128}'
-        if ((self_hosted and (values['MATRIX_SELF_HOSTED'] != '1' or slot != 'primary'))
+        # Spec 2707: a connected self-hosted computer carries its platform machine id, Clerk
+        # owner and owned-<8 hex> slot instead, and only with the exact owned substrate.
+        connected = self_hosted and values.get('MATRIX_SUBSTRATE') == 'owned'
+        if values.get('MATRIX_SUBSTRATE') == 'owned' and not connected:
+            raise ValueError('Customer Browser requires bound owner identity')
+        standalone = self_hosted and not connected
+        machine_pattern = r'self-host-[A-Za-z0-9_-]{1,64}' if standalone else r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
+        owner_pattern = r'self-host-[A-Za-z0-9_-]{1,64}' if standalone else r'user_[A-Za-z0-9]{1,128}'
+        if connected:
+            eligible_slot = re.fullmatch(r'owned-[0-9a-f]{8}', slot or '') is not None
+        if ((self_hosted and (values['MATRIX_SELF_HOSTED'] != '1' or (standalone and slot != 'primary')))
             or not re.fullmatch(machine_pattern, values.get('MATRIX_MACHINE_ID', ''))
             or not re.fullmatch(r'[a-z][a-z0-9-]{0,62}', values.get('MATRIX_HANDLE', ''))
             or values['MATRIX_HANDLE'].startswith(('pv-', 'pr-')) or not eligible_slot
