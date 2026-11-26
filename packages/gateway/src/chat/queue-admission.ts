@@ -1,3 +1,4 @@
+import { admittedOwnerHttpInput } from "./owner-http-input.js";
 import { routineCreationContext } from "./routine-creation-policy.js";
 import { chatContextRequestHash, type ChatAgentContext } from "./agent-context.js";
 import { randomUUID } from "node:crypto";
@@ -167,6 +168,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
   }
   const context = routineCreationContext(input, prepared?.context);
   const enqueued = await options.repository.enqueueQueuedTurn(options.owner, {
+    ...admittedOwnerHttpInput(options.principal, options.owner, options.provenance),
     chatId: options.chatId,
     baseRevision: input.baseRevision,
     queuedTurnId: `qturn_${randomUUID().replaceAll("-", "")}`,

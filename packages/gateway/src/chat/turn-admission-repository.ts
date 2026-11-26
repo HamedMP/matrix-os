@@ -1,3 +1,4 @@
+import { hasOwnerHttpInput } from "./owner-http-input.js";
 import { assertPrivateRoutineRequest } from "./private-routine-authority.js";
 import { createHash } from "node:crypto";
 import { verifyClaudeNativeRecoveryGeneration, type ClaudeNativeRecoveryAdmissionFence } from "./claude-native-recovery-store.js";
@@ -146,6 +147,7 @@ async function admitOwnedChatTurn(deps: TurnAdmissionDependencies, ownerInput: C
         }).execute();
       }
       await trx.insertInto("chat_turns").values({
+        owner_http_input: !source && hasOwnerHttpInput(owner, input, message.actorId),
         id: turn.id,
         chat_id: input.chatId,
         client_request_id: turn.clientRequestId,

@@ -1,3 +1,4 @@
+import { hasOwnerHttpInput, promotedOwnerHttpInput, type OwnerHttpInputProvenance } from "./owner-http-input.js";
 import { assertPrivateRoutineRequest, hasNonPrivateChatScope, cancelNonPrivateRoutineQueue } from "./private-routine-authority.js";
 import { listQueuedChatCandidates } from "./queued-chat-candidates.js";
 import {associateAdmittedDriveChat} from "./drive-project-database.js";
@@ -66,7 +67,7 @@ const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for
 const SAFE_PROVIDER_ACCESS_SOURCE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 const PROVIDER_ROUTE_GENERATION = /^[a-f0-9]{64}$/;
 
-export interface EnqueueQueuedTurnInput {
+export interface EnqueueQueuedTurnInput extends OwnerHttpInputProvenance {
   requestHash?: string;
   chatId: string;
   baseRevision: number;
@@ -629,6 +630,7 @@ export class ChatQueueRepository {
       if (queueDepth >= MAX_QUEUED_TURNS) throw new ChatBusyError(chatId);
       const position = queueDepth + 1;
       const inserted = await trx.insertInto("chat_queued_turns").values({
+        owner_http_input: hasOwnerHttpInput(owner, input, owner.ownerId),
         id: queuedTurnId,
         chat_id: chatId,
         client_request_id: clientRequestId,
@@ -856,6 +858,9 @@ export class ChatQueueRepository {
       }
       const updated = await trx.updateTable("chat_queued_turns").set({
         parts: jsonb(parts),
+        // The original HTTP receipt authorizes only its admitted parts. Any
+        // replacement requires a fresh owner instruction, including HTTP edits.
+        owner_http_input: false,
         updated_at: updatedAt,
       }).where("id", "=", queuedTurnId)
         .where("chat_id", "=", chatId)
@@ -1200,6 +1205,7 @@ export class ChatQueueRepository {
         }).execute();
       }
       await trx.insertInto("chat_turns").values({
+        owner_http_input: chat.collaboration === null && promotedOwnerHttpInput(owner, row),
         id: turn.id,
         chat_id: chatId,
         client_request_id: turn.clientRequestId,
