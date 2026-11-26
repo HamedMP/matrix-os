@@ -613,7 +613,7 @@ running on the desktop keep running; only the computer's access ends.
 | Pairing changes during a link action | Registry re-reads pairing before each stream and capture; a mismatch closes the link `4403` |
 | Slow viewer | herdr-core credit flow control stalls only that viewer's channel (credit returns only as the viewer's own socket drains, as in 2701's `herdr/ws.ts`); a browser viewer socket over its cap is closed alone |
 | Slow or stuck link | The link's own WebSocket queue (shared by every channel) over 8 MiB on either end closes the whole link (`1008`); the desktop reconnects with backoff and viewers re-attach. Credit flow control keeps a healthy link far below this |
-| Malformed or denied frames | Denied calls get errors; malformed JSON or a frame > cap closes the link (`1008`) |
+| Malformed or denied frames | Denied calls get errors; malformed JSON or a frame over its cap (checked as the header arrives) ends the stream; a frame on a channel the computer was not given closes the link |
 | Paired, link never opens | Desktops group shows "Paired desktop · offline"; Remove still works |
 
 ### Deadlines
@@ -622,7 +622,9 @@ running on the desktop keep running; only the computer's access ends.
 | --- | --- | --- |
 | Upgrade → admission complete | 10 s | Close `4401` |
 | herdr-core handshake over the link | 10 s | Close, retry with backoff |
-| Each core call | 10 s (`terminal.wait`/`run --wait` use their own timeout + 10 s) | Call rejected `desktop_offline` |
+| Each core call over the link | 75 s, from arrival (it may wait for the owner's approval, 60 s); a start queued behind others is never sent once its 75 s have passed, and the core gets only the time left | Call rejected `desktop_offline` |
+| Owner's native approval | 60 s from the request's arrival | Counted as Don't Allow |
+| Clients that may trigger an approval (shell, Electron, `matrix shell machine`) | 90 s | Error shown |
 | Ping without pong | 45 s | Link closed |
 | Link admission challenge | 10 s (admission deadline) | Close `4401` |
 | HTTP calls from Electron | `AbortSignal.timeout(10_000)`, `redirect: "error"` | Error state in UI |
