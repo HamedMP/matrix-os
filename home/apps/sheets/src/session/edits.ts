@@ -12,6 +12,7 @@ import {
   type CellStyle,
   type CellStylePatch,
   type CellValue,
+  type DefinedName,
   type FrozenPanes,
   MAX_COLS,
   MAX_ROWS,
@@ -43,6 +44,8 @@ export interface Transaction {
   unmergeCells(sheet: SheetId, range: CellRange): void;
   setFrozenPanes(sheet: SheetId, frozen: FrozenPanes): void;
   renameSheet(sheet: SheetId, name: string): void;
+  /** Changes the text of existing defined names, kept for undo. */
+  setDefinedNames(names: readonly DefinedName[]): void;
 }
 
 /**

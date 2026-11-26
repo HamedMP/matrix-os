@@ -257,9 +257,9 @@ function pasteMove(ctx: GridContext, clip: InternalClip): boolean {
     ctx.notice(MOVE_TOO_LARGE);
     return false;
   }
-  // The move empties the cut cells, fills the target and rewrites the formulas that follow them: all in one step.
+  // The move empties the cut cells, fills the target and rewrites the formulas and names that follow them: all in one step.
   const landing: CellRange = { start: target, end: { row: target.row + height - 1, col: target.col + width - 1 } };
-  const changed = 2 * height * width - (clip.sheet === sheet ? overlap(clip.range, landing) : 0) + plan.others.length;
+  const changed = 2 * height * width - (clip.sheet === sheet ? overlap(clip.range, landing) : 0) + plan.others.length + plan.names.length;
   if (changed > MAX_ACTION_CELLS) {
     ctx.notice(TOO_MANY);
     return false;
@@ -285,6 +285,7 @@ function pasteMove(ctx: GridContext, clip: InternalClip): boolean {
       }
       // Formulas elsewhere that read the moved cells now point at their new place.
       for (const other of plan.others) tx.workbook.setFormula(other.sheet, { row: other.row, col: other.col }, other.formula);
+      tx.setDefinedNames(plan.names);
     }),
   );
   if (!ok) return false;

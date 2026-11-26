@@ -1,14 +1,15 @@
 /**
- * Cut and paste is a move: formulas anywhere in the workbook that read the
- * moved cells follow them, references inside the moved block move with it,
- * and references to cells the paste overwrote become `#REF!`.
+ * Cut and paste is a move: formulas and defined names anywhere in the
+ * workbook that read the moved cells follow them, references inside the
+ * moved block move with it, and references to cells the paste overwrote
+ * become `#REF!`.
  *
- * {@link planMove} reads every formula once, before anything changes, and
- * returns the new formula text of each cell that needs one. The caller
+ * {@link planMove} reads every formula and name once, before anything
+ * changes, and returns the new text of each one that needs it. The caller
  * writes them in the same undo step as the move itself.
  */
 
-import { type CellRange, type SheetId, type Workbook, formula as formulaEngine, getWorkbookInternals, isOfficeError } from "../session/engine";
+import { type CellRange, type DefinedName, type SheetId, type Workbook, formula as formulaEngine, getWorkbookInternals, isOfficeError } from "../session/engine";
 import { forEachStoredCell } from "../session/stored-cells";
 
 /** Most stored cells read to find the formulas a move changes. */
@@ -32,6 +33,8 @@ export interface MovePlan {
   moved: Map<string, string>;
   /** Formulas outside the block and outside the destination that change. */
   others: FormulaRewrite[];
+  /** Defined names that change, as they read after the move. */
+  names: DefinedName[];
 }
 
 function inside(range: CellRange, row: number, col: number): boolean {
@@ -88,5 +91,12 @@ export function planMove(workbook: Workbook, sourceSheet: SheetId, source: CellR
     });
     if (!complete) return null;
   }
-  return { moved, others };
+  // A name local to a sheet reads its unqualified references there; a workbook name has no sheet of its own, as in the engine's structural edits.
+  const names: DefinedName[] = [];
+  for (const definition of workbook.listDefinedNames()) {
+    const home = definition.scope === null ? "" : name(definition.scope);
+    const refersTo = rewrite(definition.refersTo, change, home, home);
+    if (refersTo !== definition.refersTo) names.push({ ...definition, refersTo });
+  }
+  return { moved, others, names };
 }

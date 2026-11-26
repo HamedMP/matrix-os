@@ -335,6 +335,28 @@ export class Recorder {
     open.steps.push({ kind: "rename", sheet, before, after: name });
   }
 
+  /** Changes the text of existing defined names inside the open transaction, keeping each as it was. */
+  names(definitions: readonly DefinedName[]): void {
+    const open = this.requireOpen();
+    const current = this.workbook.listDefinedNames();
+    const same = (a: DefinedName, b: DefinedName): boolean => a.scope === b.scope && a.name.toLowerCase() === b.name.toLowerCase();
+    const before: DefinedName[] = [];
+    const after: DefinedName[] = [];
+    for (const definition of definitions) {
+      const was = current.find((entry) => same(entry, definition));
+      // Undo puts back a name the edit changed; one the edit added has nothing to go back to.
+      if (was === undefined) throw new Error("only existing names can be changed in a transaction");
+      if (was.refersTo === definition.refersTo) continue;
+      before.push({ ...was });
+      after.push({ ...definition });
+    }
+    if (after.length === 0) return;
+    this.flushCells(open);
+    // The step goes in first: when a write fails part way, a rollback still puts back the names already changed.
+    open.steps.push({ kind: "names", before, after });
+    for (const definition of after) this.workbook.setDefinedName(definition);
+  }
+
   /** True when an entry cannot be replayed now: one of its sheets has pending changes, which block structural edits. */
   private blocked(entry: HistoryEntry): boolean {
     for (const sheet of structuralSheets(entry)) {
@@ -378,5 +400,6 @@ export function transactionFor(recorder: Recorder, workbook: Workbook): Transact
     unmergeCells: (sheet, range) => recorder.merges(sheet, () => workbook.unmergeCells(sheet, range)),
     setFrozenPanes: (sheet, frozen) => recorder.frozen(sheet, frozen),
     renameSheet: (sheet, name) => recorder.rename(sheet, name),
+    setDefinedNames: (names) => recorder.names(names),
   };
 }

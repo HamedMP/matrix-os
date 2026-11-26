@@ -83,6 +83,8 @@ export type HistoryStep =
   | { kind: "merges"; sheet: SheetId; before: CellRange[]; after: CellRange[] }
   | { kind: "frozen"; sheet: SheetId; before: FrozenPanes; after: FrozenPanes }
   | { kind: "rename"; sheet: SheetId; before: string; after: string }
+  /** Defined names an edit changed, as they were before it and after it. */
+  | { kind: "names"; before: DefinedName[]; after: DefinedName[] }
   /** Proposed changes the edit accepted by writing over their cells; first in its entry. See `./implicit-accept.ts`. */
   | { kind: "accepted"; changes: CellChange[] };
 
@@ -105,6 +107,7 @@ function stepWeight(step: HistoryStep): number {
   if (step.kind === "axis" && !step.insert) return step.band.cells.length + step.band.rewrites.length + featureWeight(step.band.features) + 1;
   if (step.kind === "axis") return rewrittenWeight(step.rewritten) + featureWeight(step.features) + 1;
   if (step.kind === "accepted") return step.changes.length;
+  if (step.kind === "names") return step.before.length + step.after.length;
   return 1;
 }
 
@@ -297,6 +300,9 @@ export function applyStep(internals: WorkbookInternals, step: HistoryStep, forwa
       return;
     case "rename":
       workbook.renameSheet(step.sheet, forward ? step.after : step.before);
+      return;
+    case "names":
+      restoreNames(workbook, forward ? step.after : step.before);
       return;
   }
 }
