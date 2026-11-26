@@ -92,10 +92,14 @@ export async function statAppFile(homePath: string, path: string): Promise<AppFi
   return { path, size: Number(info.size), modifiedAt: modifiedAtFromMs(info.mtimeMs), version: appFileVersion(info.size, info.mtimeNs) };
 }
 
-/** Reads through one no-follow descriptor so the checked file is the read file. */
+/**
+ * Reads through one no-follow descriptor so the checked file is the read file.
+ * O_NONBLOCK keeps a named pipe from holding the open until a writer appears;
+ * the descriptor check then refuses it.
+ */
 export async function readAppFile(homePath: string, path: string): Promise<AppFileReadReply> {
   const target = await resolveExistingAppFilePath(homePath, path);
-  const handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const before = await handle.stat({ bigint: true });
     if (!before.isFile()) throw new AppFileError("invalid_request", "not a file");

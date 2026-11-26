@@ -1,5 +1,8 @@
-import { mkdir, readFile, stat, truncate, utimes, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { constants } from "node:fs";
+import { mkdir, open, readFile, stat, truncate, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   APP_FILE_MAX_BYTES, AppFileListReplySchema, AppFileReadReplySchema, AppFileStatReplySchema, appFileVersion, decodeAppFileBase64,
@@ -11,6 +14,31 @@ let harness: AppFileHarness | null = null;
 afterEach(async () => { await harness?.cleanup(); harness = null; });
 
 const DOCX_FIXTURE = join(__dirname, "../../office/fixtures/basic.docx");
+
+/** Makes a named pipe with the system `mkfifo`, or returns false where there is none. */
+async function makeFifo(path: string): Promise<boolean> {
+  if (process.platform === "win32") return false;
+  try { await promisify(execFile)("mkfifo", [path]); return true; }
+  catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/** Opens the pipe's write end once, which releases a reader stuck in a blocking open. */
+async function releaseFifoReaders(path: string): Promise<void> {
+  try { await (await open(path, constants.O_WRONLY | constants.O_NONBLOCK)).close(); }
+  catch (error: unknown) {
+    // ENXIO: no reader is waiting, so nothing is stuck.
+    if ((error as NodeJS.ErrnoException).code !== "ENXIO") throw error;
+  }
+}
+
+function withinMs<T>(work: Promise<T>, ms: number): Promise<T | "timed out"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"timed out">((done) => { timer = setTimeout(() => done("timed out"), ms); });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
 
 describe("files.list", () => {
   it("lists directories first, then files by name, with sizes and ISO times", async () => {
@@ -111,6 +139,31 @@ describe("files.stat and files.read", () => {
       const response = await harness.post({ kind, path: "folder" });
       expect(response.status).toBe(400);
       expect(await errorCode(response)).toBe("invalid_request");
+    }
+  });
+});
+
+describe("named pipes", () => {
+  it("answers read, stat and write on a named pipe promptly with invalid_request instead of waiting for a writer", async (context) => {
+    harness = await createHarness();
+    const fifo = join(harness.home, "pipe.docx");
+    if (!await makeFifo(fifo)) { context.skip(); return; }
+    try {
+      for (const input of [
+        { kind: "files.read", path: "pipe.docx" },
+        { kind: "files.stat", path: "pipe.docx" },
+        { kind: "files.write", path: "pipe.docx", contentBase64: "", ifVersion: null },
+      ]) {
+        const response = await withinMs(harness.post(input), 2_000);
+        expect(response, input.kind).not.toBe("timed out");
+        if (response === "timed out") continue;
+        expect(response.status, input.kind).toBe(400);
+        expect(await errorCode(response), input.kind).toBe("invalid_request");
+      }
+      const listing = AppFileListReplySchema.parse(await (await harness.post({ kind: "files.list", dir: "" })).json());
+      expect(listing.entries.map((entry) => entry.name)).not.toContain("pipe.docx");
+    } finally {
+      await releaseFifoReaders(fifo);
     }
   });
 });
