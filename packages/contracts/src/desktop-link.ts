@@ -134,15 +134,12 @@ export function desktopLinkProofMessage(input: DesktopLinkProof & { revision: nu
 // --- What the desktop exposes -------------------------------------------------
 
 /**
- * herdr-core methods that may cross the link from the computer to the desktop.
- * Both ends enforce this list: the gateway never sends anything else and the
- * desktop refuses anything else before its core sees it.
+ * herdr-core methods that may cross the link from the computer to the desktop:
+ * what the computer's Herdr session host calls, and nothing else. The desktop's
+ * guard refuses every other method, and every parameter these do not need,
+ * before its core sees them; the core's handshake offers only these.
  */
 export const DESKTOP_LINK_METHODS = [
-  "hello",
-  "terminal.list", "terminal.get", "terminal.read", "terminal.wait", "events.subscribe",
-  "terminal.run", "terminal.attach", "terminal.send", "terminal.keys", "terminal.interrupt",
-  "terminal.kill", "terminal.rm", "terminal.label",
-  "terminal.put", "terminal.put_begin", "terminal.put_chunk", "terminal.put_finish", "terminal.put_abort",
+  "terminal.list", "terminal.run", "terminal.attach", "terminal.kill",
 ] as const;
 export type DesktopLinkMethod = (typeof DESKTOP_LINK_METHODS)[number];
