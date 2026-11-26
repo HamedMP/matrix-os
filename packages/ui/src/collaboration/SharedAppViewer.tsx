@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod/v4";
 
+import { Button } from "../Button.js";
 import {
   SharedAppTransportError,
   type SharedAppFailureCode,
@@ -248,7 +249,7 @@ function ViewOnlyNotice({ visible, onDismiss }: { visible: boolean; onDismiss: (
   if (!visible) return null;
   return <div role="status" className="absolute inset-x-3 bottom-3 flex items-center gap-3 rounded-xl border bg-[var(--bg-primary)] px-4 py-3 text-sm shadow-lg">
     <span className="min-w-0 flex-1">This app is view-only. Ask the owner to make it collaborative.</span>
-    <button type="button" className="rounded-lg border px-2 py-1 text-xs" onClick={onDismiss}>Dismiss</button>
+    <Button type="button" variant="secondary" size="sm" onClick={onDismiss}>Dismiss</Button>
   </div>;
 }
 
