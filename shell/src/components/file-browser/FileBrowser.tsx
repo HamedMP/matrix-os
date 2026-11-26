@@ -113,9 +113,11 @@ function FileBrowserForAuthority({ windowId, mobile = false, active, identity, g
   };
   // Files with a default app open there when the app can read them (not a
   // protected subtree, within the app read cap); an explicit preview mode and
-  // every other file keep Preview.
+  // every other file keep Preview. Mobile keeps Preview for every file: it
+  // shows its own foreground stack, not desktop windows, and does not ship
+  // the default apps.
   const openFile = (path: string, options?: Omit<Parameters<typeof openFileTab>[1], "authority">) => {
-    if (options?.mode || !canOpenWithDefaultApp(path, listedSize(path))) { openInPreview(path, options); return; }
+    if (mobile || options?.mode || !canOpenWithDefaultApp(path, listedSize(path))) { openInPreview(path, options); return; }
     void openFileWithDefaultApp(path, { gatewayUrl }).then((result) => {
       if (result.status === "opened") return;
       if (result.status === "no-default-app") { openInPreview(path, options); return; }

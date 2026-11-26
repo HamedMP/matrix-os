@@ -92,9 +92,9 @@ function stubGateway(answer: (request: SentRequest) => Response | Promise<Respon
   return sent;
 }
 
-async function openFromBrowser(path: string) {
+async function openFromBrowser(path: string, { mobile = false }: { mobile?: boolean } = {}) {
   await act(async () => {
-    render(<FileBrowser windowId="win-files" />);
+    render(<FileBrowser windowId="win-files" mobile={mobile} />);
     await Promise.resolve();
   });
   await act(async () => {
@@ -184,6 +184,20 @@ describe("Files open-with routing", () => {
     expect(windowManager.openWindow).not.toHaveBeenCalledWith("Sheets", expect.anything(), expect.anything());
     expect(screen.getByRole("alert").textContent).toBe("Sheets could not open data.csv. It opened in Preview instead.");
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // Web Mobile shows its own foreground stack, not desktop windows, and this
+  // stack does not ship Docs or Sheets there: every file keeps Preview.
+  it.each([
+    ["Documents/Report.docx"], ["Documents/Budget.XLSX"], ["Documents/data.csv"],
+  ])("opens %s in Preview on mobile without writing an open request", async (path) => {
+    const sent = stubGateway(() => Response.json({ ok: true }));
+    await openFromBrowser(path, { mobile: true });
+    expect(sent).toHaveLength(0);
+    expect(preview.openFile).toHaveBeenCalledExactlyOnceWith(path, { authority: expect.any(String) });
+    expect(windowManager.openWindow).toHaveBeenCalledExactlyOnceWith("Preview", "__preview-window__", 0);
+    expect(windowManager.openWindow).not.toHaveBeenCalledWith(expect.stringMatching(/^(Docs|Sheets)$/), expect.anything(), expect.anything());
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
