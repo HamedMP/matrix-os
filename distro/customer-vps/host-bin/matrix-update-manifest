@@ -120,7 +120,11 @@ check_for_update() {
   write_prepared_update_marker "$manifest" || return 1
 
   if [ "$severity" = "security" ] || [ "$update_type" = "auto" ]; then
-    if [ -f "$AUTO_APPLY_FAILED_MARKER" ] && [ "$(cat "$AUTO_APPLY_FAILED_MARKER" 2>/dev/null)" = "$remote_version" ]; then
+    # Spec 2707: the owner of an owned computer can turn automatic updates off;
+    # matrix-connect keeps this marker in step with that setting.
+    if [ -e "${MATRIX_AUTO_UPDATES_DISABLED_MARKER:-/etc/matrix/auto-updates-disabled}" ]; then
+      log "Automatic updates are off for this computer; $remote_version is ready (run matrix-update to apply)"
+    elif [ -f "$AUTO_APPLY_FAILED_MARKER" ] && [ "$(cat "$AUTO_APPLY_FAILED_MARKER" 2>/dev/null)" = "$remote_version" ]; then
       log "Skipping auto-apply for $remote_version — previous attempt failed (use .update-now to retry)"
     else
       log "Auto-apply update $remote_version (severity=${severity:-normal}, updateType=${update_type:-manual})"

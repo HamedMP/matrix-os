@@ -282,6 +282,27 @@ describe("matrix-connect", () => {
     }
   });
 
+  it("keeps the automatic-updates opt-out marker in step with the owner's setting", async () => {
+    let auto = false;
+    const { server, url } = await startServer((req, _body, res) => {
+      if (req.url === "/api/machines/heartbeat") {
+        return json(res, 200, { status: "ok", tunnel: "ok", autoSecurityUpdates: auto, backupsEnabled: false });
+      }
+      return json(res, 404, {});
+    });
+    const marker = join(dir, "etc/auto-updates-disabled");
+    try {
+      await connectFiles(url);
+      expect((await run(["heartbeat"], { ...env, MATRIX_CONNECT_MAX_BEATS: "1" })).code).toBe(0);
+      expect(await readFile(marker, "utf8")).toContain("off");
+      auto = true;
+      expect((await run(["heartbeat"], { ...env, MATRIX_CONNECT_MAX_BEATS: "1" })).code).toBe(0);
+      await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      server.close();
+    }
+  });
+
   it("keeps retrying a pending reissue after the platform reports the tunnel ok", async () => {
     let tunnelCalls = 0;
     let beats = 0;
@@ -337,8 +358,11 @@ describe("matrix-connect", () => {
 
   it("disconnects, removing secrets even when the platform is unreachable", async () => {
     await connectFiles("http://127.0.0.1:9");
+    // A disconnected computer goes back to normal automatic updates.
+    await writeFile(join(dir, "etc/auto-updates-disabled"), "off\n");
     const result = await run(["disconnect"], env);
     expect(result.code).toBe(0);
+    await expect(stat(join(dir, "etc/auto-updates-disabled"))).rejects.toThrow();
     await expect(stat(join(dir, "etc/owned-machine.env"))).rejects.toThrow();
     await expect(stat(join(dir, "etc/cloudflared.token"))).rejects.toThrow();
   });

@@ -42,6 +42,8 @@ export function paths(env = process.env) {
   return {
     machineEnv: join(etc, 'owned-machine.env'),
     tunnelToken: join(etc, 'cloudflared.token'),
+    // Readable by the update poller (matrix-sync-agent), which skips auto-apply while it exists.
+    autoUpdatesDisabled: join(etc, 'auto-updates-disabled'),
     hostEnv: env.MATRIX_CONNECT_HOST_ENV ?? '/opt/matrix/env/host.env',
     envDir: env.MATRIX_CONNECT_ENV_DIR ?? '/opt/matrix/env',
     state: join(env.MATRIX_CONNECT_STATE_DIR ?? '/var/lib/matrix-connect', 'state.json'),
@@ -597,11 +599,14 @@ export async function heartbeatOnce(env = process.env, p = paths(env)) {
       warn(`tunnel reissue failed (${errorName(err)})`);
     }
   }
+  const autoSecurityUpdates = Boolean(result.json.autoSecurityUpdates);
+  if (autoSecurityUpdates) await rm(p.autoUpdatesDisabled, { force: true });
+  else await writeFileAtomic(p.autoUpdatesDisabled, 'off\n', { mode: 0o644, owner: { uid: 0, gid: 0 } });
   await writeState(p, {
     ...state,
     pendingTunnelReissue,
     lastHeartbeat: { at: new Date().toISOString(), result: 'ok' },
-    autoSecurityUpdates: Boolean(result.json.autoSecurityUpdates),
+    autoSecurityUpdates,
     backupsEnabled: Boolean(result.json.backupsEnabled),
   });
   return 'ok';
@@ -642,6 +647,7 @@ export async function disconnect(env = process.env) {
   await systemctl(['disable', '--now', ...UNITS], env);
   await rm(p.machineEnv, { force: true });
   await rm(p.tunnelToken, { force: true });
+  await rm(p.autoUpdatesDisabled, { force: true });
   await rm(p.nginxEnabled, { force: true });
   await systemctl(['reload-or-restart', 'nginx'], env);
   await writeState(p, { ...state, disconnectedAt: new Date().toISOString() });
