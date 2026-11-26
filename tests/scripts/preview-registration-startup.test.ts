@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { parse } from "yaml";
 
 describe("first-boot registration scheduling", () => {
-  it("starts selected tool installers while registration waits for their readiness", () => {
+  it("registers the healthy core before selected tool installers start independently", () => {
     const temp = mkdtempSync(join(tmpdir(), "matrix-registration-order-"));
     try {
       const document = parse(readFileSync("distro/customer-vps/cloud-init.yaml", "utf8")) as { runcmd: string[] };
@@ -60,6 +60,8 @@ case "$*" in
       *--now*|start*) run_registration ;;
     esac ;;
   start*matrix-developer-tools.service*)
+    # Optional installers must not be needed to finalize the healthy core.
+    [ -f "$MATRIX_REGISTER_FLAG" ] || exit 33
     printf 'pi\\n' > "$MATRIX_BOOT_TEST_ROOT/installed-tools"
     printf '#!/usr/bin/env bash\\nexit 0\\n' > "$MATRIX_BOOT_TEST_ROOT/pi"
     chmod 755 "$MATRIX_BOOT_TEST_ROOT/pi"
@@ -95,7 +97,7 @@ esac
       expect(boot.status, boot.stderr).toBe(0);
       const calls = readFileSync(env.MATRIX_BOOT_TEST_CALLS, "utf8");
       expect(calls).toContain("start --no-block matrix-developer-tools.service");
-      expect(readFileSync(env.MATRIX_BOOT_TEST_ATTEMPTS, "utf8")).toBe("75\n0\n");
+      expect(readFileSync(env.MATRIX_BOOT_TEST_ATTEMPTS, "utf8")).toBe("0\n");
       expect(readFileSync(env.MATRIX_BOOT_TEST_POSTS, "utf8")).toBe("POST\n");
       expect(existsSync(env.MATRIX_REGISTER_FLAG)).toBe(true);
       expect(existsSync(env.MATRIX_BOOT_TEST_PENDING)).toBe(false);

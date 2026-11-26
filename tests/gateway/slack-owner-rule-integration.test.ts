@@ -1,7 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, expect, it, vi } from "vitest";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import type { SlackThreadContextEnvelope } from "@matrix-os/contracts/slack-bridge";
 import { createSlackApp } from "../../packages/platform/src/slack/wiring.js";
 import type { SlackDatabase } from "../../packages/platform/src/slack/database.js";
@@ -38,13 +38,11 @@ it.each(["new_message", "owner_mention"] as const)("owner Chat rule %s drives si
     const client = createSlackOwnerClient({ platformUrl: config.publicBaseUrl, handle: "pr-3482", token, fetchImpl: async (url, init) => platform.routes.fetch(new Request(url, init)) });
     const summaries = await createSlackMentionSummaries({ db: fixture.db, ownerId, runtimeId, authorize: client.readThreadContextAccess, readThread: client.readSummaryThread });
     cleanup.push(summaries.close);
-    const context = await createPrivateSlackThreadContext({ db: fixture.db, ownerId, runtimeId, authorize: client.readThreadContextAccess, onReceive: summaries.receive });
+    const context = await createPrivateSlackThreadContext({ db: fixture.db, ownerId, runtimeId, authorize: client.readThreadContextAccess, discoverEnrollment: client.discoverThreadEnrollment, onReceive: summaries.receive });
     const bridge = registerOwnerSlack({ app: gateway, ownerId, token, context, summaries, startDrain: false, authority: { authorize: async () => { throw Error("No collaboration"); } } });
     cleanup.push(bridge.close);
     const push = async (eventId: string, ts: string, text: string) => { const body = JSON.stringify({ type: "event_callback", api_app_id: appId, team_id: teamId, event_id: eventId, event: { type: "message", channel_type: "channel", channel: channelId, user: "U456", thread_ts: root, ts, text } }); const timestamp = String(Math.floor(date.getTime() / 1000)); const signature = createHmac("sha256", config.signingSecret).update(`v0:${timestamp}:${body}`).digest("hex"); return platform.routes.request("/webhooks/slack/events", { method: "POST", body, headers: { "x-slack-request-timestamp": timestamp, "x-slack-signature": `v0=${signature}` } }); };
-    expect((await push("EvSeed", root, "Existing source enrollment, no policy")).status).toBe(200);
-    await summaries.drain();
-    expect(await fixture.db.selectFrom("chat_runs").select("id").execute()).toHaveLength(0);
+    expect(Number((await sql<{count:string}>`SELECT count(*) AS count FROM slack_private_thread_context`.execute(fixture.db)).rows[0]!.count)).toBe(0);
     const harness = await ownerRuleHarness({ fixture, enrollment: { access: { ownerId, botId, chatId, runtimeId, grantId }, appId, teamId, channel: { id: channelId, name: "tech" } }, context, now: () => new Date(date.getTime() - 1000) });
     const instruction = trigger === "new_message" ? "From now on summarize every new message in #tech immediately in English, focus on release risks. Do not reply in Slack." : "Whenever teammates mention me in #tech, summarize immediately in English, focus on release risks. Do not reply in Slack.";
     const binding = await harness.turn(instruction);

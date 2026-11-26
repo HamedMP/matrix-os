@@ -172,6 +172,7 @@ import type { ScopeRuntimeHost } from "./scope-runtime-host/index.js";
 import { startScopeRuntimeHost } from "./startup/scope-runtime-host.js";
 import { startBots, type BotServices } from "./startup/bots.js";
 import { createCompanyBotSetup } from "./startup/slack-company.js";
+import { resolveSlackPlatform } from "./startup/slack-platform.js";
 import { startOwnerSlack } from "./startup/slack-owner.js";
 import { withBotProviderInstance } from "./bots/provider-instance.js";
 import { createLocalIntegrationTransport, createPlatformIntegrationTransport } from "./bots/integration-client.js";
@@ -395,6 +396,7 @@ export async function createGateway(config: GatewayConfig) {
   const readinessCache = new ReadinessStatusCache<ReadinessResponse>({ maxEntries: 512, ttlMs: 10_000 });
   const internalPlatformUrl = process.env.PLATFORM_INTERNAL_URL;
   const internalPlatformToken = process.env.UPGRADE_TOKEN;
+  const slackPlatform = resolveSlackPlatform(process.env);
   const internalHandle = process.env.MATRIX_HANDLE;
   const previewDriveClient = process.env.MATRIX_PREVIEW_RUNTIME === "true"
     && internalPlatformUrl && internalPlatformToken && internalHandle
@@ -1565,6 +1567,7 @@ export async function createGateway(config: GatewayConfig) {
     const routineCliTransport = { binPath: fileURLToPath(new URL("../bin/matrix.mjs", import.meta.resolve("@finnaai/matrix"))),
       endpoint: `http://127.0.0.1:${port}/api/routine-cli/execute` };
     botServices = await startBots({
+      slackPlatform: slackPlatform.botConnection,
       routineCliTransport,
       toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
@@ -1718,8 +1721,7 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   slackRuntime = await startOwnerSlack({
-    app, ownerId: process.env.MATRIX_USER_ID?.trim(), token: internalPlatformToken,
-    platformUrl: internalPlatformUrl, handle: internalHandle, repository: chatRepository,
+    app, ownerId: process.env.MATRIX_USER_ID?.trim(), ...slackPlatform.connection, repository: chatRepository,
     orchestrator: canonicalChatOrchestrator, executionRoots: canonicalChatExecutionRoots,
     collaboration: gatewayCollaboration, bots: botServices,
   });

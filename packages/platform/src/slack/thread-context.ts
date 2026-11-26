@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import {
+  SlackThreadContextEnrollmentRequestSchema, SlackThreadContextEnrollmentResponseSchema,
   SlackThreadContextAccessSchema, SlackThreadContextAccessRequestSchema, SlackChannelMetadataSchema, SlackThreadContextEnvelopeSchema, type SlackThreadContextEnvelope,
   SlackMentionSummaryRuleSchema, type SlackMentionSummaryRule,
 } from "@matrix-os/contracts/slack-bridge";
@@ -100,6 +101,29 @@ export function createSlackThreadContext(options: SlackAppRouteOptions) {
     const slack=await readSlackAccess(installation,signal);
     return slack&&await hasOwnerAuthority()?{installation,channel:slack.channel}:null;
   }
+  routes.post("/internal/slack/thread-context/enrollment", bodyLimit({ maxSize: 4096, onError: c => c.json({ error: "Request too large" }, 413) }), async c => {
+    c.header("Cache-Control", "no-store");
+    const runtime = await options.authenticateRuntime?.(c);
+    if (!runtime) return c.json({ error: "Unauthorized" }, 401);
+    let value: unknown;
+    try { value = await c.req.json(); }
+    catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      return c.json({ error: "Invalid request" }, 400);
+    }
+    const request = SlackThreadContextEnrollmentRequestSchema.safeParse(value);
+    if (!request.success) return c.json({ error: "Invalid request" }, 400);
+    if (Object.entries(request.data).some(([key, expected]) => access[key as keyof typeof access] !== expected)) return c.json({ available: false });
+    const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(1500)]);
+    const authority = await authorizeEnrollment(access, runtime, signal);
+    signal.throwIfAborted();
+    if (!authority?.channel) return c.json({ available: false });
+    // Runtime reincarnation and owner authority may change while Slack responds.
+    const current = await options.authenticateRuntime?.(c);
+    if (!current || current.ownerId !== grant.ownerId || current.runtimeId !== grant.runtimeId || !await hasOwnerAuthority()) return c.json({ available: false });
+    signal.throwIfAborted();
+    return c.json(SlackThreadContextEnrollmentResponseSchema.parse({ available: true, access, appId: grant.appId, teamId: grant.teamId, channelId: grant.channelId, scope: grant.scope ?? "thread", ...(grant.scope !== "channel" ? { threadTs: grant.threadTs } : {}), channel: authority.channel }));
+  });
   return {
     routes,
     readEnrolledContext: createSlackEnrolledContextReader(options,grant,authorizeEnrollment),
