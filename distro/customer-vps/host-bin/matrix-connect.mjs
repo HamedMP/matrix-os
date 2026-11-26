@@ -39,13 +39,15 @@ export const EXIT = { ok: 0, usage: 1, denied: 2, unavailable: 3, revoked: 4 };
 
 export function paths(env = process.env) {
   const etc = env.MATRIX_CONNECT_ETC_DIR ?? '/etc/matrix';
+  const envDir = env.MATRIX_CONNECT_ENV_DIR ?? '/opt/matrix/env';
   return {
     machineEnv: join(etc, 'owned-machine.env'),
     tunnelToken: join(etc, 'cloudflared.token'),
-    // Readable by the update poller (matrix-sync-agent), which skips auto-apply while it exists.
-    autoUpdatesDisabled: join(etc, 'auto-updates-disabled'),
+    // Next to host.env so the update poller (matrix-sync-agent, group matrix) can read it;
+    // /etc/matrix is root-only. The poller skips auto-apply while it exists.
+    autoUpdatesDisabled: join(envDir, 'auto-updates-disabled'),
     hostEnv: env.MATRIX_CONNECT_HOST_ENV ?? '/opt/matrix/env/host.env',
-    envDir: env.MATRIX_CONNECT_ENV_DIR ?? '/opt/matrix/env',
+    envDir,
     state: join(env.MATRIX_CONNECT_STATE_DIR ?? '/var/lib/matrix-connect', 'state.json'),
     nginxSite: env.MATRIX_CONNECT_NGINX_SITE ?? '/etc/nginx/sites-available/matrix-owned-tunnel',
     nginxEnabled: env.MATRIX_CONNECT_NGINX_ENABLED ?? '/etc/nginx/sites-enabled/matrix-owned-tunnel',
@@ -605,7 +607,10 @@ export async function heartbeatOnce(env = process.env, p = paths(env)) {
   }
   const autoSecurityUpdates = Boolean(result.json.autoSecurityUpdates);
   if (autoSecurityUpdates) await rm(p.autoUpdatesDisabled, { force: true });
-  else await writeFileAtomic(p.autoUpdatesDisabled, 'off\n', { mode: 0o644, owner: { uid: 0, gid: 0 } });
+  else {
+    const gid = await isRoot() ? await matrixGroup() : null;
+    await writeFileAtomic(p.autoUpdatesDisabled, 'off\n', { mode: 0o640, owner: gid === null ? undefined : { uid: 0, gid } });
+  }
   await writeState(p, {
     ...state,
     pendingTunnelReissue,

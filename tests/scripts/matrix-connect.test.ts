@@ -298,7 +298,9 @@ describe("matrix-connect", () => {
       }
       return json(res, 404, {});
     });
-    const marker = join(dir, "etc/auto-updates-disabled");
+    // Next to host.env, which the update poller (matrix-sync-agent, group matrix) already reads;
+    // /etc/matrix is root-only.
+    const marker = join(dir, "env/auto-updates-disabled");
     try {
       await connectFiles(url);
       expect((await run(["heartbeat"], { ...env, MATRIX_CONNECT_MAX_BEATS: "1" })).code).toBe(0);
@@ -367,10 +369,11 @@ describe("matrix-connect", () => {
   it("disconnects, removing secrets even when the platform is unreachable", async () => {
     await connectFiles("http://127.0.0.1:9");
     // A disconnected computer goes back to normal automatic updates.
-    await writeFile(join(dir, "etc/auto-updates-disabled"), "off\n");
+    await mkdir(join(dir, "env"), { recursive: true });
+    await writeFile(join(dir, "env/auto-updates-disabled"), "off\n");
     const result = await run(["disconnect"], env);
     expect(result.code).toBe(0);
-    await expect(stat(join(dir, "etc/auto-updates-disabled"))).rejects.toThrow();
+    await expect(stat(join(dir, "env/auto-updates-disabled"))).rejects.toThrow();
     await expect(stat(join(dir, "etc/owned-machine.env"))).rejects.toThrow();
     await expect(stat(join(dir, "etc/cloudflared.token"))).rejects.toThrow();
   });

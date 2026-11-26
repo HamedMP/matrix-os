@@ -48,3 +48,12 @@ it("prepares but does not auto-apply a security release when the owner turned au
   expect(existsSync(join(dir, "applied"))).toBe(false);
   expect(result.stdout).toContain("Automatic updates are off");
 });
+
+it("reads the opt-out from the same file matrix-connect writes, outside root-only /etc/matrix", async () => {
+  const { readFileSync } = await import("node:fs");
+  const updater = readFileSync(library, "utf8");
+  const connector = readFileSync(resolve("distro/customer-vps/host-bin/matrix-connect.mjs"), "utf8");
+  expect(updater).toContain("${MATRIX_AUTO_UPDATES_DISABLED_MARKER:-/opt/matrix/env/auto-updates-disabled}");
+  expect(connector).toContain("autoUpdatesDisabled: join(envDir, 'auto-updates-disabled')");
+  expect(connector).toContain("envDir = env.MATRIX_CONNECT_ENV_DIR ?? '/opt/matrix/env'");
+});
