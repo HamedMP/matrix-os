@@ -108,11 +108,12 @@ export function isListableChild(homePath: string, childRelativePath: string): bo
 
 /**
  * The location the collaboration fence matches against project roots for an
- * app write or mkdir. It is the lexical location and touches no disk, so
- * consulting the fence never blocks the gateway; a path through a symlink is
- * fenced by its spelling, which only refuses more. The filesystem checks run
- * asynchronously inside the held admission, when the operation resolves the
- * path. Denied subtrees stay unfenced so they keep answering not found.
+ * app write or mkdir: the lexical location under the configured home. It
+ * touches no disk; the admission moves it into the home's real location,
+ * resolved asynchronously, where project roots are matched too. A path
+ * through a symlink inside home is refused by the operation's own async
+ * checks inside the held admission. Denied subtrees stay unfenced so they
+ * keep answering not found.
  */
 export function appFileFenceTarget(homePath: string, relativePath: string): string | null {
   if (isDeniedFileApiPath(homePath, relativePath)) return null;

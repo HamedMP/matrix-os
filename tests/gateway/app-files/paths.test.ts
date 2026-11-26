@@ -178,6 +178,90 @@ describe("app file path security", () => {
     expect(syncFsCalls.filter((call) => call.includes(home) && !call.includes(`${home}/apps`))).toEqual([]);
   });
 
+  // Fault: with the configured home reached through a link, folder projects
+  // record their real root while the fence matched the home's spelling, so a
+  // save into a shared folder project skipped the fence and was written.
+  it("fences a home reached through a link as it fences the unlinked home", async () => {
+    harness = await createHarness();
+    const realHome = harness.home;
+    const outsideDir = await mkdtemp(join(tmpdir(), "app-files-outside-"));
+    onTestFinished(() => rm(outsideDir, { recursive: true, force: true }));
+    const linkedHome = join(outsideDir, "home-link");
+    await symlink(realHome, linkedHome);
+    await mkdir(join(realHome, "Documents"));
+    await mkdir(join(realHome, "projects/acme"), { recursive: true });
+    await mkdir(join(realHome, "projects/private"), { recursive: true });
+    const hostFor = (homePath: string) => {
+      const entered: string[] = [];
+      const projects = [
+        // A folder project records its real root; a scratch project its root under the configured home.
+        { id: "proj_folder", localPath: join(realHome, "Documents") },
+        { id: "proj_scratch", localPath: join(homePath, "projects/acme") },
+        { id: "proj_private", localPath: join(homePath, "projects/private") },
+      ];
+      const admission = createGatewayAppFileProjectPathAdmission({
+        homePath,
+        projects: { listManagedProjects: async () => ({ projects }) } as never,
+        projectOperationAdmission: {
+          async withLegacyAdmission(input, operation) {
+            if (input.projectId !== "proj_private") throw new ProjectFenceError("scope_required");
+            entered.push(input.projectId);
+            return operation();
+          },
+        },
+      });
+      const app = new Hono();
+      app.use("*", async (context, next) => {
+        context.set("authContextReady" as never, true as never);
+        context.set("platformUserId" as never, "owner" as never);
+        await next();
+      });
+      registerBridgeFileRoutes(app, { homePath, env: { MATRIX_USER_ID: "owner", NODE_ENV: "production" }, ...(admission ? { projectPathAdmission: admission } : {}) });
+      return {
+        entered,
+        post: (input: unknown) => app.request(APP_FILES_BRIDGE_PATH, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ app: "docs", input }),
+        }),
+      };
+    };
+    for (const homePath of [realHome, linkedHome]) {
+      const host = hostFor(homePath);
+      syncFsCalls.length = 0;
+      const responses = await Promise.all([
+        host.post({ kind: "files.write", path: "Documents/plan.docx", contentBase64: bytes, ifVersion: null }),
+        host.post({ kind: "files.mkdir", path: "Documents/drafts" }),
+        host.post({ kind: "files.write", path: "projects/acme/plan.docx", contentBase64: bytes, ifVersion: null }),
+        host.post({ kind: "files.write", path: "projects/private/plan.docx", contentBase64: bytes, ifVersion: null }),
+      ]);
+      expect(responses.map((response) => response.status), homePath).toEqual([403, 403, 403, 200]);
+      expect(host.entered, homePath).toEqual(["proj_private"]);
+      expect(syncFsCalls.filter((call) => call.includes(realHome) || call.includes(linkedHome)), homePath).toEqual([]);
+      await rm(join(realHome, "projects/private/plan.docx"));
+    }
+    await expect(lstat(join(realHome, "Documents/plan.docx"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(join(realHome, "Documents/drafts"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(lstat(join(realHome, "projects/acme/plan.docx"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  // Fault: a home whose real location cannot be resolved must not leave the
+  // write unfenced; it is refused before anything is written.
+  it("refuses a fenced write when the home's real location cannot be resolved", async () => {
+    harness = await createHarness();
+    const outsideDir = await mkdtemp(join(tmpdir(), "app-files-outside-"));
+    onTestFinished(() => rm(outsideDir, { recursive: true, force: true }));
+    const danglingHome = join(outsideDir, "gone-home");
+    await symlink(join(outsideDir, "missing"), danglingHome);
+    const operation = vi.fn(async () => "ran");
+    const admission = createGatewayAppFileProjectPathAdmission({
+      homePath: danglingHome,
+      projects: { listManagedProjects: async () => ({ projects: [] }) } as never,
+      projectOperationAdmission: { withLegacyAdmission: async (_input, next) => next() },
+    });
+    await expect(admission?.withPaths({ ownerType: "personal", ownerId: "owner", paths: ["Documents/a.docx"], kind: "write" }, operation))
+      .rejects.toBeInstanceOf(ProjectFenceError);
+    expect(operation).not.toHaveBeenCalled();
+  });
+
   it("serves a home that is itself reached through a link", async () => {
     harness = await createHarness();
     const outsideDir = await mkdtemp(join(tmpdir(), "app-files-outside-"));

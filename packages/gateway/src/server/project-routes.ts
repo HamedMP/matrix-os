@@ -6,6 +6,7 @@ import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
 import { createCodingAgentProjectMutationService } from "../coding-agents/project-mutations.js";
 import { createCodingAgentRoutes, type CodingAgentRouteDeps } from "../coding-agents/routes.js";
 import type { LegacyProjectOperationAdmission } from "../collaboration/project-fence.js";
+import { resolveRealHomeLocation } from "../collaboration/home-location.js";
 import { createLegacyProjectPathAdmission, type LegacyProjectPathAdmission } from "../collaboration/project-path-admission.js";
 import { appFileFenceTarget } from "../app-files/paths.js";
 import type { FilePreviewService } from "../file-preview-service.js";
@@ -51,7 +52,9 @@ interface ProjectFileOptions {
 /**
  * The write fence over the owner's managed projects, or undefined without a
  * collaboration database. Shared by the owner file routes and the app file
- * bridge, so both refuse the same writes.
+ * bridge, so both refuse the same writes. Paths are matched in the home's
+ * real location, where folder projects record their roots, so a home
+ * reached through a link is fenced like the unlinked home.
  */
 export function createGatewayProjectPathAdmission(
   options: Pick<ProjectFileOptions, "homePath" | "projects" | "projectOperationAdmission">,
@@ -62,6 +65,7 @@ export function createGatewayProjectPathAdmission(
   return createLegacyProjectPathAdmission({
     homePath,
     projectOperationAdmission,
+    resolveHomeLocation: resolveRealHomeLocation,
     ...(resolveTarget ? { resolveTarget } : {}),
     listOwnerProjects: async (ownerType, ownerId) => {
       const result = await projects.listManagedProjects({

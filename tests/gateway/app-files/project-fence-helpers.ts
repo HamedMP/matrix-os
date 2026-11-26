@@ -1,4 +1,5 @@
 import { appFileFenceTarget } from "../../../packages/gateway/src/app-files/paths";
+import { resolveRealHomeLocation } from "../../../packages/gateway/src/collaboration/home-location";
 import { ProjectFenceError } from "../../../packages/gateway/src/collaboration/project-fence";
 import {
   createLegacyProjectPathAdmission, type LegacyProjectPathAdmission,
@@ -38,8 +39,9 @@ export function createTestProjectAdmission(homePath: string, projects: readonly 
     failInventory: false,
     admission: createLegacyProjectPathAdmission({
       homePath,
-      // The resolver the gateway gives the app file bridge.
+      // The resolvers the gateway gives the app file bridge.
       resolveTarget: appFileFenceTarget,
+      resolveHomeLocation: resolveRealHomeLocation,
       listOwnerProjects: async (_ownerType, ownerId) => {
         if (state.failInventory) throw new Error("inventory offline");
         return projects.filter((project) => project.ownerId === ownerId).map(({ id, localPath }) => ({ id, localPath }));
