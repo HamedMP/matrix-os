@@ -77,6 +77,40 @@ describe("selection API", () => {
     button.remove();
   });
 
+  it("carries the remembered selection through someone else's edit while focus is in a panel, without taking focus", async () => {
+    const [a, b] = await open();
+    // "world" is selected, then the owner types in a side panel.
+    select(m, at(a!, 6), at(a!, 11));
+    const box = document.createElement("textarea");
+    document.body.append(box);
+    box.focus();
+    document.getSelection()!.setBaseAndExtent(document.body, 0, document.body, 0);
+    document.dispatchEvent(new Event("selectionchange"));
+    const seen: Array<EditorSelection | null> = [];
+    const stop = m.editor.onSelectionChange((selection) => seen.push(selection));
+    // The Assistant inserts text before the remembered selection.
+    m.session.apply([{ type: "insertText", at: at(a!, 0), text: "Well. " }], { origin: "agent" });
+    expect(document.activeElement).toBe(box);
+    expect(m.content.contains(document.getSelection()!.anchorNode)).toBe(false);
+    expect(m.editor.getSelection()).toMatchObject({ start: at(a!, 12), end: at(a!, 17) });
+    expect(m.editor.getSnapshot().selection).toMatchObject({ start: at(a!, 12), end: at(a!, 17) });
+    expect(seen.at(-1)).toMatchObject({ start: at(a!, 12), end: at(a!, 17) });
+    // The next toolbar command formats the words that moved, not the old offsets.
+    expect(m.editor.format({ bold: true })).toBe(true);
+    expect(paragraph(m.doc, a!).runs.map((run) => [run.text, run.bold])).toEqual([
+      ["Well. Hello ", false],
+      ["world", true],
+    ]);
+    // An edit in another paragraph leaves it where it is.
+    box.focus();
+    document.getSelection()!.setBaseAndExtent(document.body, 0, document.body, 0);
+    m.session.apply([{ type: "insertText", at: at(b!, 0), text: "!" }], { origin: "agent" });
+    expect(m.editor.getSelection()).toMatchObject({ start: at(a!, 12), end: at(a!, 17) });
+    expect(document.activeElement).toBe(box);
+    stop();
+    box.remove();
+  });
+
   it("publishes toolbar state: view mode, selection and the formatting at it", async () => {
     m = await mount({ markdown: "# Title\n\nPlain **bold** text" });
     const [title, body] = bodyParagraphs(m.doc);

@@ -76,7 +76,8 @@ export abstract class EditorBase {
     this.cleanups.push(this.session.onChange((change) => this.onSessionChange(change)));
     this.session.setSelectionSource(() => {
       // While composing, the DOM holds the browser's uncommitted text: the place the composition goes is the one to carry through edits.
-      const selection = this.composition !== null ? this.composition.selection : this.liveSelection();
+      // With the browser selection outside the document (a panel or a toolbar), the remembered one is carried.
+      const selection = this.composition !== null ? this.composition.selection : this.getSelection();
       return selection === null ? null : { anchor: selection.anchor, focus: selection.focus };
     });
     this.cleanups.push(() => {
@@ -217,15 +218,20 @@ export abstract class EditorBase {
       const carried = change.selection;
       const document = this.session.document;
       if (carried !== null && this.composition.selection !== null && document !== null) {
-        this.composition.selection = toSelection(ModelIndex.build(document.getView()), carried.anchor, carried.focus);
+        this.composition.selection = toSelection(ModelIndex.build(document.getView(), this.mode), carried.anchor, carried.focus);
       }
       return;
     }
-    const before = this.applying ? null : (change.selection ?? this.liveSelection());
+    const live = this.applying ? null : this.liveSelection();
+    const before = this.applying ? null : (change.selection ?? live);
     const structural = change.full || change.createdBlockIds.length > 0 || change.removedBlockIds.length > 0;
-    if (structural || !this.view.refresh(change.changedBlockIds, (id) => this.session.document?.getBlock(id) ?? null)) this.renderAll();
+    const getBlock = (id: BlockId) => this.session.document?.getBlock(id) ?? null;
+    // A table that now shows other rows changes what the index holds: build it again with the view.
+    if (structural || !this.view.refresh(change.changedBlockIds, getBlock) || this.index.tableLayoutChanged(change.changedBlockIds, getBlock)) this.renderAll();
     // The owner's selection stays where it was while someone else edits, and returns after undo and redo.
-    if (before !== null) this.place(before.anchor, before.focus);
+    // When the browser selection is elsewhere, only the remembered one moves: writing the DOM selection would take focus.
+    if (before !== null && live !== null) this.place(before.anchor, before.focus);
+    else if (before !== null) this.remember(before.anchor, before.focus);
     this.publish();
   }
 
@@ -234,7 +240,7 @@ export abstract class EditorBase {
     const view = this.view;
     if (view === null) return;
     const model = this.session.document?.getView() ?? null;
-    this.index = model === null ? ModelIndex.empty() : ModelIndex.build(model);
+    this.index = model === null ? ModelIndex.empty() : ModelIndex.build(model, this.mode);
     this.highlights.rebuild(this.index);
     view.setSpans(this.highlights.spans);
     view.setEditable(this.isEditable());
@@ -294,6 +300,14 @@ export abstract class EditorBase {
     this.publish();
     if (changed) this.announceSelection();
     return true;
+  }
+
+  /** Records a selection without touching the DOM selection, for when the browser's is outside the document. */
+  protected remember(anchor: TextPosition, focus: TextPosition): void {
+    const selection = this.validSelection(toSelection(this.index, anchor, focus));
+    const changed = !sameSelection(selection, this.lastSelection);
+    this.lastSelection = selection;
+    if (changed) this.announceSelection();
   }
 
   protected announceSelection(): void {

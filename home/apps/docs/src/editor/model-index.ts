@@ -1,11 +1,18 @@
 /**
  * The block structure of a document view, indexed for the editor: paragraphs
  * in document order, the container each one is in (a story or a table cell)
- * and its neighbours there. Built from the engine's view; rebuilt whenever
- * blocks are created or removed.
+ * and its neighbours there. Built from the engine's view for one view mode;
+ * rebuilt whenever blocks are created or removed and when the mode changes.
+ *
+ * Only what the mode shows is indexed: the paragraphs of a table row the mode
+ * hides (a pending row deletion in `final`, a pending row insertion in
+ * `original`) and of a cell covered by a vertical merge are left out, so no
+ * selection, edit or formatting range reaches them.
  */
 
-import type { BlockId, DocxBlock, DocxStory, DocxView, StoryId, StoryKind, TextPosition, TextRange } from "../../../_shared/office-engine/index";
+import type { BlockId, DocxBlock, DocxStory, DocxView, StoryId, StoryKind, TableBlock, TextPosition, TextRange } from "../../../_shared/office-engine/index";
+import type { ViewMode } from "./types";
+import { markRemoved, rowVisible, runVisible } from "./visibility";
 
 export interface BlockRef {
   id: BlockId;
@@ -35,9 +42,16 @@ export class ModelIndex {
   private readonly byId = new Map<BlockId, ParagraphEntry>();
   private readonly containers = new Map<string, BlockRef[]>();
   private readonly tables = new Set<BlockId>();
+  /** Tables that hold something the mode hides: deleting or formatting one whole would reach it. */
+  private readonly hidingTables = new Set<BlockId>();
+  /** What the mode shows of each table's rows and cells, to tell when an edit changed it. */
+  private readonly tableLayouts = new Map<BlockId, string>();
+  private mode: ViewMode = "markup";
 
-  static build(view: DocxView): ModelIndex {
+  /** `mode` is the view the index is for; the default, `markup`, shows every row. */
+  static build(view: DocxView, mode: ViewMode = "markup"): ModelIndex {
     const index = new ModelIndex();
+    index.mode = mode;
     for (const story of storiesInOrder(view)) index.addContainer(story.id, story.blocks, story, null);
     return index;
   }
@@ -65,11 +79,59 @@ export class ModelIndex {
         this.byId.set(block.id, entry);
       } else if (block.type === "table") {
         this.tables.add(block.id);
+        if (this.hidesContent(block)) this.hidingTables.add(block.id);
+        this.tableLayouts.set(block.id, this.layoutOf(block));
         block.rows.forEach((row, rowAt) => {
-          row.cells.forEach((cell, cellAt) => this.addContainer(`${block.id}/${rowAt}/${cellAt}`, cell.blocks, story, block.id));
+          if (!rowVisible(row, this.mode)) return;
+          row.cells.forEach((cell, cellAt) => {
+            if (!cell.mergedAbove) this.addContainer(`${block.id}/${rowAt}/${cellAt}`, cell.blocks, story, block.id);
+          });
         });
       }
     });
+  }
+
+  /** True when the mode hides a row of the table, a covered cell's text, or text or a paragraph mark in it. */
+  private hidesContent(table: TableBlock): boolean {
+    const hides = (blocks: readonly DocxBlock[]): boolean =>
+      blocks.some((block) => {
+        if (block.type === "table") return this.hidesContent(block);
+        if (block.type !== "paragraph") return false;
+        return markRemoved(block, this.mode) || block.runs.some((run) => !runVisible(run, this.mode));
+      });
+    return table.rows.some(
+      (row) =>
+        !rowVisible(row, this.mode) ||
+        row.cells.some((cell) => (cell.mergedAbove ? cell.blocks.some((block) => block.type !== "paragraph" || block.text !== "") : hides(cell.blocks))),
+    );
+  }
+
+  private layoutOf(table: TableBlock): string {
+    const rows = table.rows.map((row) => {
+      if (!rowVisible(row, this.mode)) return "-";
+      return row.cells.map((cell) => (cell.mergedAbove ? "m" : cell.blocks.map((block) => (block.type === "table" ? `[${this.layoutOf(block)}]` : block.id)).join(" "))).join(",");
+    });
+    return `${this.hidesContent(table) ? "h" : ""}${rows.join("|")}`;
+  }
+
+  /**
+   * True when one of the given tables now shows other rows or cells in the
+   * mode, or starts or stops hiding something, than when the index was built:
+   * the index must then be built again, although no block came or went.
+   */
+  tableLayoutChanged(ids: readonly BlockId[], getBlock: (id: BlockId) => DocxBlock | null): boolean {
+    return ids.some((id) => {
+      const before = this.tableLayouts.get(id);
+      if (before === undefined) return false;
+      const block = getBlock(id);
+      return block === null || block.type !== "table" || this.layoutOf(block) !== before;
+    });
+  }
+
+  /** True when a table between two blocks of one container hides something from the mode. */
+  private hidingTableBetween(containerKey: string, from: number, to: number): boolean {
+    const refs = this.containers.get(containerKey) ?? [];
+    return refs.slice(from + 1, to).some((ref) => ref.type === "table" && this.hidingTables.has(ref.id));
   }
 
   entry(id: BlockId): ParagraphEntry | null {
@@ -118,9 +180,11 @@ export class ModelIndex {
   /**
    * Splits a range into the ranges the engine accepts: both ends in the same
    * paragraph or in sibling paragraphs. A range within one container is
-   * returned whole (blocks between its ends, tables included, belong to it).
-   * A range that crosses containers, such as from the body into a table cell,
-   * becomes one range per run of sibling paragraphs.
+   * returned whole (blocks between its ends, tables included, belong to it),
+   * unless a table between its ends holds something the mode hides. Such a
+   * range, and one that crosses containers (from the body into a table cell),
+   * becomes one range per run of sibling paragraphs: the tables between keep
+   * their structure, and only the cells the mode shows are covered.
    *
    * `lengthOf` gives the markup text length of a paragraph.
    */
@@ -128,7 +192,7 @@ export class ModelIndex {
     const first = this.byId.get(range.start.blockId);
     const last = this.byId.get(range.end.blockId);
     if (first === undefined || last === undefined || this.compare(range.start, range.end) >= 0) return [];
-    if (first.containerKey === last.containerKey) return [range];
+    if (first.containerKey === last.containerKey && !this.hidingTableBetween(first.containerKey, first.indexInContainer, last.indexInContainer)) return [range];
     const ranges: TextRange[] = [];
     let group: ParagraphEntry[] = [];
     const flush = (): void => {
