@@ -1,4 +1,4 @@
-import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, SiteSlugAvailabilitySchema, type SiteSlugAvailability, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse, SiteEmailInvitationsCapabilitySchema, type SiteEmailInvitationsCapability, SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationRequestSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema, SiteIdSchema, type SiteEmailInvitationPage } from "@matrix-os/contracts";
+import { SITE_PUBLISH_CLIENT_TIMEOUT_MS, SitePublishRequestSchema, SiteMetadataSchema, SitePublishingSchema, SiteRecordSchema, SiteSubmissionsResponseSchema, SiteSlugAvailabilitySchema, type SiteSlugAvailability, type SiteRecord, type SitePublishing, type SiteSubmission, type SiteSubmissionsResponse, SiteEmailInvitationsCapabilitySchema, type SiteEmailInvitationsCapability, SiteEmailInvitationCreateRequestSchema, SiteEmailInvitationCreateResponseSchema, SiteEmailInvitationMutationRequestSchema, SiteEmailInvitationMutationResponseSchema, SiteEmailInvitationPageSchema, SiteInvitationAuditPageSchema, SiteIdSchema, type SiteEmailInvitationPage, SiteSocialSettingsSchema, SiteSocialUpdateSchema, type SiteSocialSettings, type SiteSocialUpdate } from "@matrix-os/contracts";
 import type { z } from "zod/v4";
 
 type SiteEmailInvitationCreateResponse = z.infer<typeof SiteEmailInvitationCreateResponseSchema>;
@@ -28,6 +28,9 @@ export interface SiteClient {
   deleteSubmission(app: string, id: string, signal: AbortSignal): Promise<void>;
   /** Friendly-path check for the share popover; `taken` comes from the platform alias registry. */
   slugAvailability(app: string, slug: string, signal: AbortSignal): Promise<SiteSlugAvailability>;
+  /** Link-preview overrides for the public page (separate from the site record). */
+  social(app: string, signal: AbortSignal): Promise<SiteSocialSettings>;
+  updateSocial(app: string, value: SiteSocialUpdate, signal: AbortSignal): Promise<SiteSocialSettings>;
 }
 export interface SiteTransport {
   get<T>(path: string, options?: { signal: AbortSignal; timeoutMs?: number }): Promise<T>;
@@ -90,5 +93,7 @@ export function createSiteClient(transport: SiteTransport): SiteClient {
     exportSubmissions: (app, cursor, signal) => transport.getBlob(`${sitePath(app)}/submissions/export?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, { signal }),
     deleteSubmission: async (app, id, signal) => { await transport.delete(`${sitePath(app)}/submissions/${encodeURIComponent(id)}`, undefined, { signal }); },
     slugAvailability: async (app, slug, signal) => SiteSlugAvailabilitySchema.parse(await transport.get(`${sitePath(app)}/slug-availability?${new URLSearchParams({ slug })}`, { signal })),
+    social: async (app, signal) => SiteSocialSettingsSchema.parse(await transport.get(`${sitePath(app)}/social`, { signal })),
+    updateSocial: async (app, value, signal) => SiteSocialSettingsSchema.parse(await transport.patch(`${sitePath(app)}/social`, SiteSocialUpdateSchema.parse(value), { signal })),
   };
 }

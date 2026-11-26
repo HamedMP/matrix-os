@@ -1,6 +1,6 @@
 "use client";
 import { useState, type RefObject } from "react";
-import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
+import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, useShareController, SocialPreviewSection } from "@matrix-os/ui/share";
 import { SHELL_Z_INDEX } from "../../lib/shell-layering";
 import { Button } from "../ui/button";
 import { AppSiteSharePopover } from "./AppSiteSharePopover";
@@ -65,7 +65,7 @@ export function AppSiteButton({
           organization={organization.slot}
           // Shown for apps with forms, or while responses saved by an earlier version remain.
           submissions={share.site
-            ? <SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} formsDeclared={share.site.config.forms.length > 0} /> : null}
+            ? <><SocialPreviewSection appSlug={appSlug} client={webSiteClient} site={share.site} /><SiteSubmissionsSection appSlug={appSlug} client={webSiteClient} formsDeclared={share.site.config.forms.length > 0} /></> : null}
         />
       ) : null}
     </AppSiteSharePopover>

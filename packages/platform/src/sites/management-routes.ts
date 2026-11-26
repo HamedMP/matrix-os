@@ -109,6 +109,18 @@ export function createSiteManagementRoutes(options: {
         return denied(c); const input = SiteRollbackSchema.safeParse(await c.req.json().catch((error: unknown) => { if (error instanceof SyntaxError)
         return null; throw error; })); if (!input.success)
         throw new SiteError('invalid_request'); return siteResponse(c, await options.service.rollback(identity, input.data.versionId, input.data.baseRevision)); });
+    // Link-preview overrides; a separate resource so SiteRecord stays unchanged for older clients.
+    app.get('/:appSlug/social', async c => {
+        const identity = await owner(c); if (!identity) return denied(c);
+        return c.json(await options.service.social(identity));
+    });
+    app.patch('/:appSlug/social', bodyLimit({ maxSize: 8192, onError: c => c.json({ error: 'Site unavailable' }, 413) }), async c => {
+        const identity = await owner(c); if (!identity) return denied(c);
+        const input = await c.req.json().catch((error: unknown) => {
+            if (error instanceof SyntaxError) return null; throw error;
+        });
+        return c.json(await options.service.updateSocial(identity, input));
+    });
     app.get('/:appSlug/access-links', async c => {
         const identity = await owner(c, 'paging'); if (!identity) return denied(c);
         const query = SiteAccessLinksQuerySchema.safeParse({

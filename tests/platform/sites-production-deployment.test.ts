@@ -102,7 +102,7 @@ afterEach(() => {
 });
 
 describe('production Matrix.page deployment contract', () => {
-  it('requires generation 3 and every independent readiness signal before enabling email access', async () => {
+  it('requires the email-invitation schema and every independent readiness signal before enabling email access', async () => {
     const { db } = await createTestPlatformDb();
     try {
       const all: SiteEmailReadiness = { edgeExchange: true, clerkInline: true, lifecycleWebhook: true, mailDelivery: true };
@@ -117,6 +117,17 @@ describe('production Matrix.page deployment contract', () => {
       expect(await readSiteEmailCapability(db,configured,all)).toBe(true);
       for(const missing of ['SITES_EDGE_SECRET','CLERK_SECRET_KEY','NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY','ACCOUNT_DELETION_SECRET'])
         expect(await readSiteEmailCapability(db,{...configured,[missing]:''},all),missing).toBe(false);
+      // The schema that introduced invitations stays capable after a rollback to it.
+      await sql`UPDATE platform_schema_revisions SET generation = 3, fingerprint = 'public-app-sites-email-invitations-v3' WHERE scope = 'sites'`.execute(db.executor);
+      expect(await readSiteEmailCapability(db, configured, all)).toBe(true);
+      // Earlier preview deployments already wrote generation 4. Startup keeps
+      // that history, and this revision must continue accepting invitations.
+      await sql`UPDATE platform_schema_revisions SET generation = 4, fingerprint = 'public-app-sites-social-previews-v4' WHERE scope = 'sites'`.execute(db.executor);
+      expect(await readSiteEmailCapability(db, configured, all)).toBe(true);
+      await sql`UPDATE platform_schema_revisions SET generation = 3, fingerprint = 'public-app-sites-email-invitations-v3' WHERE scope = 'sites'`.execute(db.executor);
+      // A branch that claimed generation 3 without the invitation migration is not.
+      await sql`UPDATE platform_schema_revisions SET fingerprint = 'public-app-sites-social-previews-v3' WHERE scope = 'sites'`.execute(db.executor);
+      expect(await readSiteEmailCapability(db, configured, all)).toBe(false);
       await sql`UPDATE platform_schema_revisions SET generation = 2 WHERE scope = 'sites'`.execute(db.executor);
       expect(await readSiteEmailCapability(db, configured, all)).toBe(false);
     } finally { await destroyTestPlatformDb(db); }

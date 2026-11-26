@@ -1,4 +1,4 @@
-import type { SiteRecord } from '@matrix-os/contracts';
+import { SiteSocialImagePathSchema, type SiteRecord } from '@matrix-os/contracts';
 import { desktopFonts, desktopPalette } from '@matrix-os/brand/tokens';
 import { emailAuthPageContext, EMAIL_SESSION_SCRIPT } from './email-auth-page.js';
 import { frameDataBridge, pageDataHandler } from './renderer-data-bridge.js';
@@ -59,9 +59,27 @@ button.addEventListener('click',async()=>{const match=readClaim();if(!match||but
  catch(claimError){console.warn('[sites] claim failed',claimError instanceof TypeError?'TypeError':claimError instanceof Error?'Error':'UnknownError');button.disabled=false;error.textContent='This access link is unavailable.'}});
 </script></body></html>`;
 }
-export function sitePage(site: SiteRecord): string {
+/** Owner overrides; null fields fall back to the site title/description or no image. */
+export interface SiteSocialPreview { title: string | null; description: string | null; imagePath: string | null }
+/** Link-preview tags for public pages only; link-gated pages expose nothing new. */
+function socialTags(site: SiteRecord, social: SiteSocialPreview | undefined): string {
+    if (!social || site.accessMode !== 'public') return '';
+    const title = social.title ?? site.title;
+    const description = social.description ?? site.description;
+    const imagePath = social.imagePath && site.activeVersion && SiteSocialImagePathSchema.safeParse(social.imagePath).success ? social.imagePath : null;
+    const tags: [string, string, string][] = [
+        ['property', 'og:type', 'website'], ['property', 'og:site_name', 'Matrix OS'],
+        ['property', 'og:title', title], ['property', 'og:url', site.url],
+        ...(description ? [['property', 'og:description', description] as [string, string, string]] : []),
+        ...(imagePath ? [['property', 'og:image', `https://matrix.page/${site.id}/assets/${site.activeVersion}/${imagePath}`],
+            ['property', 'og:image:alt', title]] as [string, string, string][] : []),
+        ['name', 'twitter:card', imagePath ? 'summary_large_image' : 'summary'],
+    ];
+    return tags.map(([attribute, key, value]) => `<meta ${attribute}="${key}" content="${escape(value)}">`).join('');
+}
+export function sitePage(site: SiteRecord, social?: SiteSocialPreview): string {
     const reference = site.id;
-    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(site.title)}</title><meta name="description" content="${escape(site.description)}"><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}body{background:#fff}</style></head><body><iframe title="${escape(site.title)}" sandbox="${SANDBOX}" referrerpolicy="no-referrer" src="/${reference}/frame"></iframe><script>
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(site.title)}</title><meta name="description" content="${escape(site.description)}">${socialTags(site, social)}<style>html,body,iframe{margin:0;width:100%;height:100%;border:0}body{background:#fff}</style></head><body><iframe title="${escape(site.title)}" sandbox="${SANDBOX}" referrerpolicy="no-referrer" src="/${reference}/frame"></iframe><script>
 const frame=document.querySelector('iframe');let inFlight=false;${pageDataHandler(site)}
 window.addEventListener('message',async(event)=>{
  if(event.source!==frame.contentWindow||event.origin!=='null'||event.ports.length!==1)return;

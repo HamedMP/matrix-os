@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AppSiteSharePopover } from "../../../../../../shell/src/components/app-sites/AppSiteSharePopover";
 import { appDisplayName, ownerInitial } from "../../../../../../shell/src/components/app-sites/share-identity";
 import { SiteSubmissionsSection } from "../../../../../../shell/src/components/app-sites/SiteSubmissionsSection";
-import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
+import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, useShareController, SocialPreviewSection } from "@matrix-os/ui/share";
 import { createDesktopSiteClient } from "./site-client";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { Button } from "../../design/primitives";
@@ -66,9 +66,8 @@ export function DesktopAppSiteButton({
           ownerInitial={ownerInitial(email ?? userId)}
           onClose={() => setOpen(false)}
           organization={organization.slot}
-          // Shown for apps with forms, or while responses saved by an earlier version remain.
           submissions={share.site
-            ? <SiteSubmissionsSection appSlug={appSlug} client={client} formsDeclared={share.site.config.forms.length > 0} /> : null}
+            ? <><SocialPreviewSection appSlug={appSlug} client={client} site={share.site} /><SiteSubmissionsSection appSlug={appSlug} client={client} formsDeclared={share.site.config.forms.length > 0} /></> : null}
         />
       ) : null}
     </AppSiteSharePopover>

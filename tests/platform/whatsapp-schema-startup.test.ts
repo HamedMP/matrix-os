@@ -91,6 +91,8 @@ describe('WhatsApp schema startup', () => {
         { scope: 'funded-probe-cache', ...FUNDED_PROBE_CACHE_REVISION },
         { scope: 'preview-pairs', generation: 5, fingerprint: 'collaboration-preview-pair-publisher-v5' },
         { scope: 'sites', ...SITES_SCHEMA_REVISION },
+        { scope: 'sites-public-data', generation: 1, fingerprint: 'public-app-sites-public-data-opt-in-v1' },
+        { scope: 'sites-social', generation: 1, fingerprint: 'public-app-sites-social-previews-v1' },
         { scope: 'whatsapp', ...WHATSAPP_SCHEMA_REVISION },
       ]);
       await runPlatformStartupMigrations(db);

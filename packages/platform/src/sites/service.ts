@@ -5,8 +5,9 @@ import {
     SiteAccessLinkSummarySchema, SiteAccessLinksQuerySchema,
     SiteAccessLinksResponseSchema,
     SiteDeploymentSchema, SiteIdSchema, SiteMetadataSchema, SiteRecordSchema, SitePublishingSchema,
+    SITE_SOCIAL_IMAGE_TYPES, SiteSocialImagePathSchema, SiteSocialSettingsSchema, SiteSocialUpdateSchema,
     SiteSlugAvailabilityQuerySchema, SiteSlugAvailabilitySchema, classifySiteSlug, siteSlugSuggestionCandidates,
-    type SiteAccessLinkSummary, type SiteRecord, type SiteSlugAvailability,
+    type SiteAccessLinkSummary, type SiteRecord, type SiteSlugAvailability, type SiteSocialSettings,
 } from '@matrix-os/contracts';
 import type { PlatformDB } from '../db.js';
 import type { CustomerVpsObjectStore } from '../customer-vps-r2.js';
@@ -42,6 +43,22 @@ async function project(db: PlatformDB, row: Selectable<SitesTable>, emailCapabil
         activeVersion: row.active_version, publicData: row.access_mode === 'public' && row.public_data_enabled_at != null,
         versions: versions.map(v => ({ id: v.id, createdAt: v.created_at })), config: active?.config ?? SitePublishingSchema.parse({}),
         ...(emailCapability ? { capabilities: { privateEmailInvitations: await emailCapability() } } : {}) });
+}
+/**
+ * Raster image paths in a build. Postgres expands the file list and returns
+ * only matching paths; the full `files` value is never sent to the platform.
+ */
+async function socialImageOptions(db: PlatformDB, siteId: string, versionId: string | null): Promise<string[]> {
+    if (!versionId) return [];
+    const result = await sql<{ path: string }>`SELECT entry->>'path' AS path
+        FROM public_site_versions v CROSS JOIN LATERAL jsonb_array_elements(v.files) AS entry
+        WHERE v.id = ${versionId} AND v.site_id = ${siteId} AND entry->>'contentType' IN (${sql.join([...SITE_SOCIAL_IMAGE_TYPES])})
+        ORDER BY 1 LIMIT 200`.execute(db.executor);
+    return result.rows.map(row => row.path).filter(path => SiteSocialImagePathSchema.safeParse(path).success);
+}
+function socialSettings(row: Selectable<SitesTable>, imageOptions: string[]): SiteSocialSettings {
+    return SiteSocialSettingsSchema.parse({ title: row.social_title, description: row.social_description,
+        imagePath: row.social_image_path, imageOptions });
 }
 function accessLinkSummary(row: import('./types.js').SiteAccessLinksTable, now = Date.now()): SiteAccessLinkSummary {
     const expired = Date.parse(row.claimed_at ? row.session_expires_at! : row.claim_expires_at) <= now;
@@ -276,6 +293,58 @@ export function createSitesService(options: {
             { previous_access_mode: previousAccessMode!, access_mode: result.accessMode }, owner.ownerId);
         return result;
     }
+    async function social(owner: SiteOwner) {
+        await db.ready;
+        const row = await ownership(db, owner).executeTakeFirst();
+        if (!row) throw new SiteError('not_found');
+        return socialSettings(row, await socialImageOptions(db, row.id, row.active_version));
+    }
+    /**
+     * Preview overrides are presentation-only, so they do not bump the site
+     * revision (an open Share popover keeps working). Last write wins; the row
+     * lock orders the image check against concurrent redeploys.
+     */
+    async function updateSocial(owner: SiteOwner, input: unknown) {
+        const parsed = SiteSocialUpdateSchema.safeParse(input);
+        if (!parsed.success) throw new SiteError('invalid_request');
+        const request = parsed.data;
+        return managementAdmission(owner.ownerId, () => withSiteOwnerAdmission(db, owner.ownerId, async (trx) => {
+            await sql `SET LOCAL lock_timeout = '10s'`.execute(trx.executor);
+            await sql `SET LOCAL statement_timeout = '10s'`.execute(trx.executor);
+            await assertCurrentPublishingRuntime(trx, owner);
+            const row = await ownership(trx, owner).forUpdate().executeTakeFirst();
+            if (!row) throw new SiteError('not_found');
+            const imageOptions = await socialImageOptions(trx, row.id, row.active_version);
+            // Keeping the already-saved image is allowed even if a redeploy dropped it;
+            // renders omit it until a build restores the file.
+            if (request.imagePath !== null && request.imagePath !== row.social_image_path
+                && !imageOptions.includes(request.imagePath)) throw new SiteError('invalid_request');
+            const next = await trx.executor.updateTable('public_sites').set({ social_title: request.title,
+                social_description: request.description, social_image_path: request.imagePath })
+                .where('id', '=', row.id).returningAll().executeTakeFirstOrThrow();
+            return socialSettings(next, imageOptions);
+        }, env));
+    }
+    /** Visibility, overrides and active-build image membership share one PostgreSQL snapshot. */
+    async function publicSocial(site: SiteRecord) {
+        const result = await sql<{ social_title: string | null; social_description: string | null; social_image_path: string | null; image_present: boolean }>`
+            SELECT s.social_title, s.social_description, s.social_image_path,
+                EXISTS (SELECT 1 FROM public_site_versions v
+                    CROSS JOIN LATERAL jsonb_array_elements(v.files) AS entry
+                    WHERE v.id = s.active_version AND v.site_id = s.id
+                        AND entry->>'path' = s.social_image_path
+                        AND entry->>'contentType' IN (${sql.join([...SITE_SOCIAL_IMAGE_TYPES])})) AS image_present
+            FROM public_sites s WHERE s.id = ${site.id}
+                AND s.status = 'published' AND s.access_mode = 'public'
+                AND s.revision = ${site.revision}
+                AND s.active_version IS NOT DISTINCT FROM ${site.activeVersion}`.execute(db.executor);
+        const row = result.rows[0];
+        // Reject the entire stale render, including fallback HTML metadata.
+        if (!row) throw new SiteError('not_found');
+        const imagePath = row.image_present && SiteSocialImagePathSchema.safeParse(row.social_image_path).success
+            ? row.social_image_path : null;
+        return { title: row.social_title, description: row.social_description, imagePath };
+    }
     async function unpublish(owner: SiteOwner, revision?: number) {
         const result = await mutate(owner, revision, async (trx, row) => {
             await trx.executor.deleteFrom('public_site_access_links').where('site_id', '=', row.id).execute();
@@ -498,6 +567,6 @@ export function createSitesService(options: {
         return result;
     }
     return { get, resolve, authorize, deploy, patch, unpublish, rollback, asset, privateFrame, admitted,
-        listAccessLinks, createAccessLink, revokeAccessLink, claimAccessLink, slugAvailability };
+        listAccessLinks, createAccessLink, revokeAccessLink, claimAccessLink, slugAvailability, social, updateSocial, publicSocial };
 }
 export type SitesService = ReturnType<typeof createSitesService>;
