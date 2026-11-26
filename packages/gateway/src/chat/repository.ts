@@ -80,6 +80,7 @@ import {
   type ChatRecord,
 } from "./records.js";
 import { ChatRunLifecycleRepository } from "./run-lifecycle-repository.js";
+import { ChatRecoveredArtifactRepository } from "./recovered-artifact-repository.js";
 import type { SealedAssistantCredential } from "./assistant-credential-crypto.js";
 import {
   reconcileProviderBindings,
@@ -423,6 +424,7 @@ export class ChatRepository {
   private readonly transactionScoped: boolean;
   private readonly detail: ChatDetailRepository;
   private readonly runLifecycle: ChatRunLifecycleRepository;
+  private readonly recoveredArtifacts: ChatRecoveredArtifactRepository;
   private readonly queue: ChatQueueRepository;
   private readonly steering: ChatSteeringRepository;
   private readonly outboxDelivery: ChatOutboxDelivery;
@@ -458,6 +460,13 @@ export class ChatRepository {
         revision,
         eventType,
         payload,
+      ),
+    );
+    this.recoveredArtifacts = new ChatRecoveredArtifactRepository(
+      this.kysely,
+      (fn) => this.transact(fn),
+      (executor, owner, chatId, revision, eventType, payload) => this.appendOutbox(
+        executor, owner, chatId, revision, eventType, payload,
       ),
     );
     this.queue = new ChatQueueRepository(
@@ -1565,6 +1574,17 @@ export class ChatRepository {
     input: Parameters<ChatRunLifecycleRepository["appendAssistantAttachment"]>[1],
   ) {
     return this.runLifecycle.appendAssistantAttachment(ownerInput, input);
+  }
+
+  async listFinishedCodexRuns(input: Parameters<ChatRecoveredArtifactRepository["listFinishedCodexRuns"]>[0]) {
+    return this.recoveredArtifacts.listFinishedCodexRuns(input);
+  }
+
+  async attachRecoveredArtifact(
+    ownerInput: ChatOwner,
+    input: Parameters<ChatRecoveredArtifactRepository["attachToFinalReply"]>[1],
+  ) {
+    return this.recoveredArtifacts.attachToFinalReply(ownerInput, input);
   }
 
   async finishRun(ownerInput: ChatOwner, input: {
