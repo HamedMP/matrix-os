@@ -1,4 +1,5 @@
 import { retryCustomerVpsProviderDeletions } from "./customer-vps-provider-deletions.js";
+import { changeMetalBillingState } from './substrates/metal-billing-runtime.js';
 import { enqueueMetalVmDeletion } from "./substrates/metal-vm-deletions.js";
 import type { UserMachineRecord } from './db.js';
 import {
@@ -238,6 +239,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
       if (current.status === 'suspended') return;
+      if (current.substrate === 'metal') {
+        return changeMetalBillingState(deps, current, 'suspended', shouldContinue);
+      }
       if (current.hetznerServerId === null) {
         throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot suspend');
       }
@@ -308,6 +312,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
       if (current.status === 'running') return;
+      if (current.substrate === 'metal') {
+        return changeMetalBillingState(deps, current, 'running', shouldContinue);
+      }
       if (current.hetznerServerId === null) {
         throw new CustomerVpsError(409, 'invalid_state', 'Machine cannot resume');
       }

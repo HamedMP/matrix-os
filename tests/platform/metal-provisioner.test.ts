@@ -740,6 +740,34 @@ describe('metal provisioner', () => {
     expect(drained).toBe(true);
   });
 
+  it('leaves teardowns above the background limit in the durable queue', async () => {
+    const host = await addHost('host-a', { memoryAvailableMiB: 60_000 });
+    const pending: Array<() => void> = [];
+    const drainMachineDeletions = vi.fn(() => new Promise<void>((resolve) => { pending.push(resolve); }));
+    const later = createMetalProvisioner({
+      db, hosts: createMetalHostsRepository(db.kysely), clientFor: () => host.client, goldenVersion: GOLDEN,
+      config: createTestConfig(), cloudInitTemplate: template, now: () => NOW, drainMachineDeletions, log: () => undefined,
+    });
+
+    try {
+      for (let index = 0; index < 257; index++) {
+        const id = `expired${index}`;
+        await insertUserMachine(db, {
+          machineId: id, clerkUserId: `user_${id}`, handle: id, status: 'provisioning', substrate: 'metal',
+          metalHostId: 'host-a', imageVersion: GOLDEN, provisionedAt: '2026-11-21T08:00:00.000Z',
+          registrationTokenExpiresAt: '2026-11-21T09:00:00.000Z',
+        });
+        expect(await later.failExpiredProvisioning(`user_${id}`, 'primary')).toBe('failed');
+      }
+      expect(drainMachineDeletions).toHaveBeenCalledTimes(256);
+      expect(await db.executor.selectFrom('metal_vm_deletions').select('machine_id')
+        .where('machine_id', '=', 'expired256').executeTakeFirst()).toEqual({ machine_id: 'expired256' });
+    } finally {
+      for (const release of pending) release();
+      await later.drain();
+    }
+  }, 20_000);
+
   it('fails a metal row whose registration window expired and queues its destroy', async () => {
     await addHost('host-a', { memoryAvailableMiB: 60_000 });
     await provisioner().provision({ clerkUserId: 'user_metal', handle: 'alice', tier: 'free' });

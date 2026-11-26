@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import {
+  MATRIX_FREE_PLAN_SLUG,
   MATRIX_HOSTED_BILLING_PLAN_SLUGS,
   MATRIX_HOSTED_BILLING_REGION_SLUGS,
   type MatrixHostedBillingPlanSlug,
@@ -7,10 +8,11 @@ import {
 import { IsoTimestampSchema } from "#contract-primitives";
 
 export const MatrixBillingPublicEntitlementSchema = z.object({
-  source: z.enum(["stripe", "override"]),
+  source: z.enum(["stripe", "override", "free"]),
   planSlug: z.union([
     z.enum(MATRIX_HOSTED_BILLING_PLAN_SLUGS),
     z.literal("internal"),
+    z.literal(MATRIX_FREE_PLAN_SLUG),
   ]),
   status: z.enum([
     "active",

@@ -154,6 +154,8 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string,
         (SELECT denial_id FROM collaboration_denials WHERE actor_id = ${owner})`.execute(trx.executor);
       await sql`DELETE FROM collaboration_denials WHERE actor_id = ${owner}`.execute(trx.executor);
     }
+    // Free plan invites (spec 2691) name the owner; consumed ones too.
+    await trx.executor.deleteFrom('free_tier_invites').where('clerk_user_id', '=', owner).execute();
     if (await hasTable(trx, 'slack_employee_links')) {
       await sql`DELETE FROM slack_employee_links WHERE actor_id = ${owner}`.execute(trx.executor);
     }

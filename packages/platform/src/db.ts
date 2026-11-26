@@ -20,6 +20,7 @@ import { mapUserMachine, type UserMachineProvisioningClass } from './database/us
 import { z } from 'zod/v4';
 import type { SubstrateKind } from '@matrix-os/contracts';
 import type {
+  BillingEntitlementPlanSlug,
   BillingEntitlementSource,
   BillingEntitlementStatus,
   MatrixBillingInterval,
@@ -863,6 +864,7 @@ export interface PlatformDatabase {
   user_machines: UserMachinesTable;
   metal_hosts: import('./database/migrations/metal-hosts.js').MetalHostsTable;
   metal_vm_deletions: import('./database/migrations/metal-hosts.js').MetalVmDeletionsTable;
+  free_tier_invites: import('./free-tier/invites.js').FreeTierInvitesTable;
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
@@ -1173,7 +1175,7 @@ export interface NewBillingCustomer {
 export interface BillingEntitlementRecord {
   clerkUserId: string;
   source: BillingEntitlementSource;
-  planSlug: MatrixBillingPlanSlug | 'internal';
+  planSlug: BillingEntitlementPlanSlug;
   status: BillingEntitlementStatus;
   maxRuntimeSlots: number;
   includedRuntimeSlots: number;

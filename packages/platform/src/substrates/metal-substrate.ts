@@ -267,6 +267,11 @@ export function createMetalSubstrate(deps: MetalSubstrateDeps): OnDemandRuntimeS
       }
     },
 
+    async powerOff(ref, signal) {
+      const located = await locate(ref, signal);
+      return located.ok && (await located.client.stop(located.vmId, signal)).state === 'stopped';
+    },
+
     async stop(ref, signal): Promise<StopRuntimeResult> {
       try {
         const located = await locate(ref, signal);

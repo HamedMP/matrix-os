@@ -139,6 +139,8 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
         expect(blocked.status, step.name).toBe(1);
         expect(blocked.args, step.name).toEqual([]);
       }
+      // The metal pass singleton's real lock-contention case runs only here.
+      expect(valid.commands.some(command => command.includes("tests/platform/metal-singleton.test.ts"))).toBe(true);
       for (const suite of ["deployed-v9-schema-postgres", "routine-fencing-postgres", "routine-process-postgres"]) {
         expect(valid.commands.some(command => command.includes(`tests/gateway/bots/${suite}.test.ts`))).toBe(true);
       }
