@@ -35,6 +35,11 @@ export async function openLocalSheetSession(deps: SessionDeps, name: string, byt
   return new SheetSession(deps, loaded, { path: null, format, version: null }, { name: clean, source: "local" });
 }
 
+/** True while proposed changes wait for review: a CSV or TSV file has no place for them, so they would land as ordinary values. */
+export function reviewPending(session: SheetSession): boolean {
+  return session.workbook.listChanges().length > 0;
+}
+
 /** `mark` is the session's `editMark()` when the export started: the file holds the edits up to it. */
 export type ExportedFile = { ok: true; name: string; bytes: Uint8Array; mimeType: string; mark: number } | SessionFailure;
 
@@ -45,7 +50,7 @@ export type ExportedFile = { ok: true; name: string; bytes: Uint8Array; mimeType
  */
 export async function exportSessionFile(session: SheetSession, format: SheetFileFormat = session.getState().format): Promise<ExportedFile> {
   const state = session.getState();
-  if (format !== "xlsx" && session.workbook.listChanges().length > 0) return failure(new SheetSessionError("review_pending"));
+  if (format !== "xlsx" && reviewPending(session)) return failure(new SheetSessionError("review_pending"));
   const stem = state.name.replace(/\.(xlsx|csv|tsv)$/i, "") || "Workbook";
   const mark = session.editMark();
   try {

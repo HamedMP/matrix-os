@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { createXlsx, openXlsx } from "../../../../home/apps/_shared/office-engine/index";
 import { runProposal } from "../../../../home/apps/sheets/src/agent";
 import { SessionHost, exportSessionFile, openLocalSheetSession, openSheetSession } from "../../../../home/apps/sheets/src/session";
-import { saveDocument } from "../../../../home/apps/sheets/src/ui/file-actions";
+import { CSV_REVIEW_MESSAGE, downloadActiveSheetCsv, saveDocument } from "../../../../home/apps/sheets/src/ui/file-actions";
 import { encode, harness, sampleXlsx, settle } from "./fakes";
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -93,6 +93,42 @@ describe("a workbook opened from this computer", () => {
     const copy = await exportSessionFile(session, "xlsx");
     if (!copy.ok) throw new Error("export failed");
     expect((await openXlsx(copy.bytes)).listChanges()).toHaveLength(1);
+  });
+
+  it("does not put suggested changes into a Download as CSV file, and points to review or an .xlsx copy", async () => {
+    const h = harness();
+    const session = await openLocalSheetSession(h.deps, "data.csv", encode("name,amount\nA,10\n"));
+    const sheet = session.getState().activeSheetId;
+    runProposal(session, "Raise A", "2026-11-23T10:00:00.000Z", [], (workbook) => workbook.setCell(sheet, { row: 1, col: 1 }, 999));
+    const downloads: string[] = [];
+    const notes: Array<[string, string | undefined]> = [];
+
+    const done = downloadActiveSheetCsv(session, (name) => downloads.push(name), (message, tone) => notes.push([message, tone]));
+
+    expect(done).toBe(false);
+    expect(downloads).toEqual([]);
+    expect(notes).toEqual([[CSV_REVIEW_MESSAGE, "warning"]]);
+    expect(CSV_REVIEW_MESSAGE).toMatch(/Accept or reject/);
+    expect(CSV_REVIEW_MESSAGE).toMatch(/\.xlsx/);
+  });
+
+  it("reports a sheet too large for CSV with a fixed message instead of failing silently", async () => {
+    const h = harness();
+    const session = await openLocalSheetSession(h.deps, "data.csv", encode("name,amount\nA,10\n"));
+    const sheet = session.getState().activeSheetId;
+    // Two cells far apart: the used area is over the 20 million positions a CSV export allows.
+    expect(session.setCellInput(sheet, { row: 1_000_000, col: 30 }, "far").ok).toBe(true);
+    const downloads: string[] = [];
+    const notes: Array<[string, string | undefined]> = [];
+
+    let done: boolean | undefined;
+    expect(() => {
+      done = downloadActiveSheetCsv(session, (name) => downloads.push(name), (message, tone) => notes.push([message, tone]));
+    }).not.toThrow();
+
+    expect(done).toBe(false);
+    expect(downloads).toEqual([]);
+    expect(notes).toEqual([["This sheet is too large to download as CSV. Download a copy as .xlsx instead.", "danger"]]);
   });
 
   it("becomes a normal Matrix document once a copy is saved to Matrix", async () => {

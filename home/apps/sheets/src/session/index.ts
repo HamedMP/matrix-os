@@ -61,7 +61,7 @@
 
 export { SheetSession } from "./session";
 export { createSheetSession, openSheetSession } from "./open";
-export { exportSessionFile, openLocalSheetSession } from "./local";
+export { exportSessionFile, openLocalSheetSession, reviewPending } from "./local";
 export type { ExportedFile } from "./local";
 export { SessionHost } from "./host";
 export type { EditorCommit, HostCloseResult, HostOpenResult, HostState } from "./host";

@@ -1,7 +1,7 @@
 /** Save, save as, save a copy and CSV download, with messages safe to show. */
 import type { SheetGridController } from "../grid";
-import { exportSessionFile, fileName, formatOfPath, isValidFilePath } from "../session";
-import { toCsv } from "../session/engine";
+import { exportSessionFile, fileName, formatOfPath, isValidFilePath, reviewPending } from "../session";
+import { isOfficeError, toCsv } from "../session/engine";
 import type { SheetSession } from "../session/session";
 import type { SaveOutcome, SheetFileFormat } from "../session/types";
 import { logFailure } from "./bridge";
@@ -137,13 +137,34 @@ export function csvOfActiveSheet(session: SheetSession): { name: string; text: s
   return { name: `${name}.csv`, text: toCsv(session.workbook, state.activeSheetId) };
 }
 
-/** Downloads the active sheet as CSV, with a byte-order mark so spreadsheet programs read it as UTF-8. */
+export const CSV_REVIEW_MESSAGE =
+  "A CSV file cannot keep the assistant's suggested changes. Accept or reject them in Review first, or download a copy as .xlsx to keep reviewing later.";
+const CSV_TOO_LARGE = "This sheet is too large to download as CSV. Download a copy as .xlsx instead.";
+const CSV_FAILED = "The sheet could not be turned into CSV. Your edits are still here.";
+
+/**
+ * Downloads the active sheet as CSV, with a byte-order mark so spreadsheet
+ * programs read it as UTF-8. Refused while proposed changes wait for review:
+ * the file would hold them as ordinary values. False when nothing was downloaded.
+ */
 export function downloadActiveSheetCsv(session: SheetSession, download: Download, notify: Notify): boolean {
-  const csv = csvOfActiveSheet(session);
-  const body = new TextEncoder().encode(csv.text);
-  const bytes = new Uint8Array(body.length + 3);
-  bytes.set([0xef, 0xbb, 0xbf], 0);
-  bytes.set(body, 3);
+  if (reviewPending(session)) {
+    notify(CSV_REVIEW_MESSAGE, "warning");
+    return false;
+  }
+  let csv: { name: string; text: string };
+  let bytes: Uint8Array;
+  try {
+    csv = csvOfActiveSheet(session);
+    const body = new TextEncoder().encode(csv.text);
+    bytes = new Uint8Array(body.length + 3);
+    bytes.set([0xef, 0xbb, 0xbf], 0);
+    bytes.set(body, 3);
+  } catch (error: unknown) {
+    logFailure("csv export failed", error);
+    notify(isOfficeError(error) && error.code === "limit_exceeded" ? CSV_TOO_LARGE : CSV_FAILED, "danger");
+    return false;
+  }
   try {
     download(csv.name, bytes, "text/csv");
     return true;
