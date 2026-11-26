@@ -286,9 +286,10 @@ export class ReviewController {
   /**
    * Runs the review command bound to a key press. True when one ran; the
    * caller then cancels the event. In a read-only view only next and
-   * previous run.
+   * previous run. `actions.comment` replaces `requestComment` for the comment
+   * key, for a shell that has to show the comment box first.
    */
-  handleShortcut(event: ShortcutEvent): boolean {
+  handleShortcut(event: ShortcutEvent, actions: { comment?: () => void } = {}): boolean {
     const command = matchReviewShortcut(event);
     if (command === null || this.session.document === null) return false;
     if (command === "next") this.next();
@@ -300,7 +301,8 @@ export class ReviewController {
     } else if (command === "reject") {
       if (this.currentId !== null) this.reject();
       else this.rejectSelection();
-    } else this.requestComment();
+    } else if (actions.comment !== undefined) actions.comment();
+    else this.requestComment();
     return true;
   }
 

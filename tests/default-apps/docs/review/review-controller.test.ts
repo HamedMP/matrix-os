@@ -227,6 +227,11 @@ describe("ReviewController accept and reject", () => {
     const before = review.getSnapshot().composeRequest;
     expect(review.handleShortcut(keys("KeyM"))).toBe(true);
     expect(review.getSnapshot().composeRequest).toBe(before + 1);
+    // A shell that can hide the comment box opens it through its own action instead.
+    const comment = vi.fn();
+    expect(review.handleShortcut(keys("KeyM"), { comment })).toBe(true);
+    expect(comment).toHaveBeenCalledTimes(1);
+    expect(review.getSnapshot().composeRequest).toBe(before + 1);
     expect(review.handleShortcut({ ...keys("KeyN"), ctrlKey: true })).toBe(false);
     expect(review.handleShortcut({ ...keys("KeyN"), altKey: false })).toBe(false);
   });
@@ -245,6 +250,9 @@ describe("ReviewController accept and reject", () => {
     expect(review.handleShortcut(keys("KeyA"))).toBe(false);
     expect(review.handleShortcut(keys("KeyR"))).toBe(false);
     expect(review.handleShortcut(keys("KeyM"))).toBe(false);
+    const comment = vi.fn();
+    expect(review.handleShortcut(keys("KeyM"), { comment })).toBe(false);
+    expect(comment).not.toHaveBeenCalled();
     expect(review.getSnapshot().composeRequest).toBe(composeBefore);
     const readOnly = { ok: false, reason: "read_only" };
     expect(review.accept()).toEqual(readOnly);

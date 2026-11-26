@@ -15,6 +15,8 @@ interface LayerProps {
   controller: ReviewController | null;
   container: HTMLElement | null;
   readOnly: boolean;
+  /** The workspace's New comment action: it opens the Review tab and focuses the comment box. */
+  onRequestComment?: () => void;
 }
 
 /**
@@ -22,8 +24,8 @@ interface LayerProps {
  * the controller itself refuses every change, so the shortcuts keep only
  * next and previous.
  */
-export function ReviewDocumentLayer({ controller, container, readOnly }: LayerProps) {
-  useReviewShortcuts(controller);
+export function ReviewDocumentLayer({ controller, container, readOnly, onRequestComment }: LayerProps) {
+  useReviewShortcuts(controller, { onComment: onRequestComment });
   useCommentClicks(controller, container);
   if (controller === null) return null;
   return <RevisionHoverCard controller={controller} container={container} disabled={readOnly} />;

@@ -3,7 +3,7 @@
  * snapshot as state, the keyboard shortcuts, and clicks on commented text.
  */
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { DocumentEditorController } from "../../editor/types";
 import { ReviewController, type ReviewSnapshot, threadOfComment } from "../../review/index";
 import type { DocumentSession } from "../../session/index";
@@ -34,12 +34,28 @@ export function useReviewSnapshot(controller: ReviewController): ReviewSnapshot 
   return useSyncExternalStore(controller.subscribe, controller.getSnapshot);
 }
 
+export interface ReviewShortcutOptions {
+  /** Where to listen. Default: the window. */
+  target?: HTMLElement | Window | null;
+  /**
+   * Runs for the comment key instead of `controller.requestComment()`, which
+   * only reaches a comment box already on screen. A shell that can hide the
+   * box (a closed side panel, another tab) opens it here.
+   */
+  onComment?: () => void;
+}
+
 /**
  * Alt+Shift+N/P/A/R/M anywhere in the window (or in `target`): next,
  * previous, accept, reject, comment. Listens in the capture phase so the
  * editor never turns the key into text.
  */
-export function useReviewShortcuts(controller: ReviewController | null, target?: HTMLElement | Window | null): void {
+export function useReviewShortcuts(controller: ReviewController | null, { target, onComment }: ReviewShortcutOptions = {}): void {
+  // Read when the key is pressed, so a new callback each render does not re-subscribe.
+  const comment = useRef(onComment);
+  useEffect(() => {
+    comment.current = onComment;
+  }, [onComment]);
   useEffect(() => {
     if (controller === null) return undefined;
     const element = target === undefined ? window : target;
@@ -47,7 +63,7 @@ export function useReviewShortcuts(controller: ReviewController | null, target?:
     const onKeyDown = (event: Event) => {
       const key = event as KeyboardEvent;
       if (key.defaultPrevented || key.isComposing) return;
-      if (controller.handleShortcut(key)) {
+      if (controller.handleShortcut(key, { comment: comment.current })) {
         key.preventDefault();
         key.stopPropagation();
       }

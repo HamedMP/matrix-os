@@ -259,7 +259,7 @@ export function DocsWorkspace({ session, state, file, pickDocument }: DocsWorksp
         <div ref={setPane} className="docs-pane" style={{ "--docs-zoom": zoom / 100 } as CSSProperties}>
           <DocumentEditor session={session} ref={setEditor} viewMode={viewMode} ariaLabel="Document" />
           <ReferenceLayer key={state.documentKey} session={session} editor={editor} docVersion={derivedVersion} container={pane} />
-          <ReviewDocumentLayer controller={review} container={pane} readOnly={readOnly} />
+          <ReviewDocumentLayer controller={review} container={pane} readOnly={readOnly} onRequestComment={controls.requestComment} />
         </div>
       </AppFrame>
     </div>

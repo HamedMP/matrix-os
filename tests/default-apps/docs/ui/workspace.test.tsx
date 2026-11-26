@@ -277,6 +277,31 @@ describe("Docs ribbon and status bar", () => {
     expect(await screen.findByRole("group", { name: "Assistant mode" }, { timeout: 5000 })).toBeTruthy();
   });
 
+  it("opens Review and focuses the comment box from Alt+Shift+M with the side panel closed or on another tab", async () => {
+    const { surface } = await openContract();
+    const press = () => {
+      const event = new KeyboardEvent("keydown", { code: "KeyM", key: "M", altKey: true, shiftKey: true, bubbles: true, cancelable: true });
+      act(() => {
+        surface.dispatchEvent(event);
+      });
+      return event;
+    };
+    const side = () => screen.queryByRole("complementary", { name: "Review, assistant and compare" });
+    expect(side()).toBeNull();
+    expect(press().defaultPrevented).toBe(true);
+    const box = await screen.findByRole("textbox", { name: /comment/i }, { timeout: 3000 });
+    await waitFor(() => expect(document.activeElement).toBe(box));
+    expect(within(side()!).getByRole("tab", { name: /^Review/ }).getAttribute("aria-selected")).toBe("true");
+
+    fireEvent.click(within(side()!).getByRole("tab", { name: /Compare/ }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: /comment/i })).toBeNull());
+    surface.focus();
+    press();
+    const again = await screen.findByRole("textbox", { name: /comment/i }, { timeout: 3000 });
+    await waitFor(() => expect(document.activeElement).toBe(again));
+    expect(within(side()!).getByRole("tab", { name: /^Review/ }).getAttribute("aria-selected")).toBe("true");
+  });
+
   it("keeps the assistant conversation while its tab is hidden or the side panel is closed", async () => {
     await openContract();
     (window as unknown as { MatrixOS: { ai: { generate: unknown } } }).MatrixOS.ai.generate = async () => ({ text: "A short contract." });

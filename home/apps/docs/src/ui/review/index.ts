@@ -29,5 +29,5 @@ export { CommentsPanel, type CommentsPanelProps } from "./CommentsPanel";
 export { RevisionHoverCard, HOVER_HIDE_DELAY_MS, HOVER_SHOW_DELAY_MS, type RevisionHoverCardProps } from "./RevisionHoverCard";
 export { ReviewFilters, type ReviewFiltersProps } from "./ReviewFilters";
 export { RevisionList, type RevisionListProps } from "./RevisionList";
-export { useCommentClicks, useEditorSurface, useReviewController, useReviewShortcuts, useReviewSnapshot } from "./use-review";
+export { type ReviewShortcutOptions, useCommentClicks, useEditorSurface, useReviewController, useReviewShortcuts, useReviewSnapshot } from "./use-review";
 export { hoverTargetOf, placeCard } from "./hover-target";
