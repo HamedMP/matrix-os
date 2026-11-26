@@ -90,6 +90,29 @@ export async function* guardInferenceStream(source: AsyncIterable<string>, optio
   }
 }
 
+/** Batch small provider frames for selected private inputs so source revalidation occurs at
+ * publication, without rereading the selected Chat for every token. Other streams keep their latency. */
+export async function* publishSelectedChatOutput(source: AsyncIterable<string>, current: () => Promise<boolean>,
+  signal: AbortSignal): AsyncGenerator<string> {
+  let pending = "", bytes = 0;
+  const allowed = async () => {
+    signal.throwIfAborted();
+    if (!await current()) throw new Error("Selected Chat unavailable");
+    signal.throwIfAborted();
+  };
+  for await (const piece of source) {
+    // The source already emits bounded broker chunks. Never retain more than two chunks.
+    pending += piece;
+    bytes += Buffer.byteLength(piece);
+    if (bytes >= INFERENCE_RESPONSE_CHUNK_MAX_BYTES) {
+      for (const chunk of inferenceChunks(pending)) { await allowed(); yield chunk; }
+      pending = "";
+      bytes = 0;
+    }
+  }
+  if (pending) { await allowed(); yield pending; }
+}
+
 /** Buffer only a single complete SSE event; total stream volume is unbounded.
  * A reserved terminal frame shares the same parser-memory allowance. */
 export async function* boundedInferenceSseFrames(source: AsyncIterable<string>, reservedBytes: () => number = () => 0): AsyncGenerator<string> {

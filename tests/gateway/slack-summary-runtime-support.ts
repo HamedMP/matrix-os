@@ -13,7 +13,8 @@ import { createBotBindingsRepository } from "../../packages/gateway/src/bots/rep
 import { createBotSessionsRepository } from "../../packages/gateway/src/bots/repositories/sessions.js";
 import { createBotCheckpointsRepository } from "../../packages/gateway/src/bots/repositories/checkpoints.js";
 import { createBotStateTransactions } from "../../packages/gateway/src/bots/events.js";
-import { BotRuntimeRegistry } from "../../packages/gateway/src/bots/runtime-registry.js";
+import { createBotProcedureResolver } from "../../packages/gateway/src/bots/custom-procedure.js";
+import { BotRuntimeRegistry, isManagedPiBinding } from "../../packages/gateway/src/bots/runtime-registry.js";
 import { createBotRecipeCatalog } from "../../packages/gateway/src/bots/recipe-catalog.js";
 import { createBotBrokerActions } from "../../packages/gateway/src/bots/broker-actions.js";
 import { createSlackSummarySubmitter, type SlackMentionSummaries } from "../../packages/gateway/src/slack/mention-summary.js";
@@ -29,10 +30,15 @@ const sse = (text: string) => [
   ["message_delta", { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 30 } }],
   ["message_stop", { type: "message_stop" }],
 ].map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join("");
-/** Real canonical admission, bot adapter, Pi loop and broker; only host allocation and provider HTTP are fixtures. */
-export async function summaryRuntime(db: Kysely<OwnerBotDatabase>, summaries: SlackMentionSummaries, ownerId: string, botId: string, reply = SUMMARY_REPLY) {
+/** Canonical queue, Bot adapter, Pi loop and broker with a fixture model route, host and SSE response. */
+export async function summaryRuntime(db: Kysely<OwnerBotDatabase>, summaries: SlackMentionSummaries, ownerId: string, botId: string, reply = SUMMARY_REPLY,
+  savedDefinition?: Pick<Parameters<typeof createBotProcedureResolver>[0], "agents" | "customRecipes">) {
   const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
   const registry = new BotRuntimeRegistry();
+  const recipes = createBotRecipeCatalog();
+  const procedures = savedDefinition && createBotProcedureResolver({
+    db, recipes, agents: savedDefinition.agents, customRecipes: savedDefinition.customRecipes,
+  });
   const lifetime = new AbortController();
   const modelRequests: Array<Record<string, unknown>> = [];
   let tasks: ReturnType<typeof createBotTaskOrchestrator>;
@@ -41,7 +47,11 @@ export async function summaryRuntime(db: Kysely<OwnerBotDatabase>, summaries: Sl
     runs: { loadRunSpec: binding => tasks.runSource.loadRunSpec(binding), readImageChunk: async () => { throw new Error("No images"); } },
     events: { publish: (binding, event) => tasks.eventSink.publish(binding, event) },
     tools: { effectClass: () => "write", dispatch: async () => { throw new Error("Unexpected tool"); } },
-    inference: { homePath: "/synthetic", lifetime: lifetime.signal, revalidateBinding: binding => summaries.assertAuthorized(binding), consumeReadonlyInference: binding => summaries.consumeInference(binding),
+    inference: { homePath: "/synthetic", lifetime: lifetime.signal, revalidateBinding: async binding => {
+      if (isManagedPiBinding(binding) || !await summaries.assertAuthorized(binding)) return false;
+      await procedures?.revalidate(binding);
+      return true;
+    }, consumeReadonlyInference: binding => summaries.consumeInference(binding),
       resolveCredentials: async () => ({ env: { ANTHROPIC_AUTH_TOKEN: "synthetic", ANTHROPIC_BASE_URL: "https://relay.invalid" } }),
       fetchImpl: async (_url, init) => { modelRequests.push(JSON.parse(String(init?.body))); return new Response(sse(reply), { headers: { "content-type": "text/event-stream" } }); } },
   });
@@ -66,7 +76,9 @@ export async function summaryRuntime(db: Kysely<OwnerBotDatabase>, summaries: Sl
   const address = server.address();
   if (!address || typeof address === "string")
     throw new Error("No bridge");
-  const admission = { admit: async (input: Parameters<typeof registry.bind>[0]) => {
+  const admission: Parameters<typeof createBotTaskOrchestrator>[0]["admission"] = {
+    admit: async ({ group, ...input }) => {
+      if (group) throw new Error("Private Slack summary fixture received a group admission");
       runtimeHandle = `runtime_${randomUUID().replaceAll("-", "")}`;
       runId = input.runId;
       registry.bind({ ...input, runtimeHandle, executionGeneration: "1", rootFingerprint: "f".repeat(64) });
@@ -82,8 +94,8 @@ export async function summaryRuntime(db: Kysely<OwnerBotDatabase>, summaries: Sl
     return result.result as never;
   };
   tasks = createBotTaskOrchestrator({ expectedOwnerId: ownerId, slackSummaries: summaries, bindings: createBotBindingsRepository(db), transact: createBotStateTransactions(repository),
-    agents: { get: async () => ({ id: botId, name: "Personal Assistant", description: "", instructions: "Unrelated instruction", archived: false, selection: MATRIX_BOT_SELECTION, recipeRef: { recipeId: "personal-assistant", version: "2026-09-30.1" }, revision: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) },
-    recipes: createBotRecipeCatalog(), resolveRoute: async () => ({ route: { api: "anthropic-messages", modelId: "claude-sonnet-5", input: ["text"], contextWindow: 200000, maxOutputTokens: 8192 }, accessSourceId: "matrix_included" }), admission, registry,
+    agents: savedDefinition?.agents ?? { get: async () => ({ id: botId, name: "Personal Assistant", description: "", instructions: "Unrelated instruction", archived: false, selection: MATRIX_BOT_SELECTION, recipeRef: { recipeId: "personal-assistant", version: "2026-09-30.1" }, revision: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }) },
+    recipes, resolveProcedure: procedures?.resolve, resolveRoute: async () => ({ route: { api: "anthropic-messages", modelId: "claude-sonnet-5", input: ["text"], contextWindow: 200000, maxOutputTokens: 8192 }, accessSourceId: "matrix_included" }), admission, registry,
     client: { runBot: async (input) => {
         const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
         if (!binding.readonlySummary && ordinaryWait) {

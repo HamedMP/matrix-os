@@ -25,6 +25,7 @@ import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/c
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
 import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, createAgentProviderCatalogSource, useChatAgentsNavigation, useCloseAgentsOnDraftRequest, type ChatAgentClient } from "@matrix-os/ui";
+import { BOT_SETTINGS_PROPOSAL_ACTIVITY_ID } from "@matrix-os/contracts";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
@@ -260,7 +261,7 @@ function ChatAppContent({
   const projectHome = !mobile && !sessionId && !collaborationView && focusedProject
     && (!onSetChatProject || chatProjectId === focusedProject.id) ? focusedProject : undefined;
   const agentsNavigation = useChatAgentsNavigation();
-  const resourceSettings = useContext(WebProjectAgentContextNavigation)?.openMcpSettings;
+  const resourceSettings = useContext(WebProjectAgentContextNavigation)?.openAgentResourceSettings;
   useCloseAgentsOnDraftRequest(composerDraftRequest?.id);
   const summaryClient = agentSummaryClient ?? agentClient;
   const [localUnreadOnly, setUnreadOnly] = useState(false);
@@ -428,9 +429,12 @@ function ChatAppContent({
     }
     if (directBotId) {
       if (!botPresentation || !botPresentation.available) return Promise.resolve(false);
+      const resources = botPresentation.kind === "custom"
+        ? [...(mentionOptions?.resources ?? []), ...botExecution.consentResources]
+        : mentionOptions?.resources;
       return onSubmit(text, files, { displayText: text, instanceId: botPresentation.selection.instanceId, model: botPresentation.selection.model,
         interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.kind === "custom" ? mentionOptions?.permissionMode ?? botPresentation.permissionMode : "default", modelOptions: botPresentation.selection.options ?? [],
-        ...((botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources)?.length ? { resources: botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources } : {}),
+        ...(resources?.length ? { resources } : {}),
         ...(mentionOptions?.clientRequestId ? { clientRequestId: mentionOptions.clientRequestId } : {}),
         ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
       });
@@ -731,7 +735,7 @@ function ChatAppContent({
             onOpenApp={onOpenSharedApp}
             onSessionMetadata={handleSharedMetadata} headerContainer={collaborationHeaderContainer} />
         ) : <>
-        <BotChatPanel key={JSON.stringify([authorityKey, sessionId])} chatId={sessionId} client={agentClient} directBotId={directBotId} visible={visible} detailsContainer={botDetailsContainer}
+        <BotChatPanel settingsRunId={messages.findLast(item => item.toolDisplay?.id === BOT_SETTINGS_PROPOSAL_ACTIVITY_ID && item.toolDisplay.state === "completed")?.requestId} key={JSON.stringify([authorityKey, sessionId])} chatId={sessionId} client={agentClient} directBotId={directBotId} visible={visible} detailsContainer={botDetailsContainer}
           headerLeading={<>
             {sidebarToggle}
             {!sidebarOpen ? <Button variant="ghost" size="icon" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={onNewChat} title="New chat"><PlusIcon className="size-4" /></Button> : null}

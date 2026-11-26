@@ -72,7 +72,15 @@ export async function ownerRuleHarness(options?: {
     }
     const dispatcher = createBotToolDispatcher({ homePath: "/synthetic", slackRules: tools });
     const call = async (binding: BotRuntimeBinding, args: SlackRuleOperation) => {
-        const tool = createBotTools({ capabilities: ["slack.rules"], state: { waitingForPerson: false, effectUnknown: false }, broker: { tool: async (request, signal) => (await dispatcher.dispatch(binding, request, signal ?? AbortSignal.timeout(5000))).result } as never })[0]!;
+        const unexpected = async (): Promise<never> => { throw new Error("Unexpected session or event call in the rule tool fixture"); };
+        const tool = createBotTools({
+            capabilities: ["slack.rules"],
+            state: { waitingForPerson: false, effectUnknown: false },
+            broker: {
+                tool: async (request, signal) => (await dispatcher.dispatch(binding, request, signal ?? AbortSignal.timeout(5000))).result,
+                loadSession: unexpected, saveSession: unexpected, event: unexpected,
+            },
+        })[0]!;
         const result = await tool.execute("call_rule", args, AbortSignal.timeout(5000));
         return JSON.parse(result.content.map(item => item.type === "text" ? item.text : "").join(""));
     };

@@ -19,6 +19,32 @@ const binding: ManagedPiRuntimeBinding = {
 const authorization = { allowed: true, accessSourceId: "matrix_included", allowedModelIds: [model], allowedEgressOrigins: [] } as const;
 
 describe("trusted funded broker diagnostics", () => {
+  it("holds small selected-source stream frames until their live source is rechecked before delivery", async () => {
+    let valid = true;
+    const response = await forwardBotInference({ ...request, responseMode: "stream" }, binding, () => authorization, {
+      selectedInputGuard: () => async () => valid, lifetime: new AbortController().signal, homePath: "/tmp",
+      fetchImpl: async () => new Response("data: private response\n\n", { headers: { "Content-Type": "text/event-stream" } }),
+      resolveCredentials: async () => ({ env: { ANTHROPIC_AUTH_TOKEN: "test", ANTHROPIC_BASE_URL: "https://relay.example.com" } }),
+    });
+    if (!response.ok || typeof response.body === "string") throw new Error("Expected a broker stream");
+    valid = false;
+    const received: string[] = [];
+    await expect(async () => { for await (const text of response.body) received.push(text); }).rejects.toThrow("Selected Chat unavailable");
+    expect(received).toEqual([]);
+  });
+  it.each(["dispatch", "return"])("withholds a selected private Chat when its source changes at %s", async stage => {
+    let valid = stage !== "dispatch";
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      valid = false;
+      return new Response("private", { status: 200 });
+    });
+    const result = await forwardBotInference(request, binding, () => authorization, {
+      selectedInputGuard: () => async () => valid, lifetime: new AbortController().signal, homePath: "/tmp", fetchImpl,
+      resolveCredentials: async () => ({ env: { ANTHROPIC_AUTH_TOKEN: "test", ANTHROPIC_BASE_URL: "https://relay.example.com" } }),
+    });
+    expect(result).toMatchObject({ ok: false, error: "action_denied" });
+    expect(fetchImpl).toHaveBeenCalledTimes(stage === "dispatch" ? 0 : 1);
+  });
   it.each(["insufficient_credit", "budget_exceeded"])("records %s for the exact binding without retry or upstream text", async (reason) => {
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response("SECRET DATABASE PATH", { status: 403, headers: { "x-matrix-funded-error": reason } }));
     const onFundedFailure = vi.fn(); const queue = createFundedAdmissionQueue();

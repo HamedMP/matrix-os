@@ -71,6 +71,7 @@ export function runCommandFromSpec(runId: string, spec: BotRunSpec, images: read
     capabilities: spec.capabilities,
     limits: spec.limits,
     ...(spec.isolatedTurn ? { isolatedTurn: spec.isolatedTurn } : {}),
+    ...(spec.selectedChatReference ? { selectedChatReference: spec.selectedChatReference } : {}),
     ...(spec.slackThreadReference ? { slackThreadReference: spec.slackThreadReference } : {}),
     turn,
   });

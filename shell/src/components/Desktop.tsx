@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import type { AgentSetupResource } from "@matrix-os/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { appKeys, appsQueryOptions, hydrateAppIconUrls, type ApiAppEntry } from "@/api/apps";
 import { useCatalogAppShortcuts } from "@/hooks/useCatalogAppShortcuts";
@@ -831,7 +832,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreenWindowId, wmExitFullscreen]);
 
-  const openWebSettings = useCallback((section: WebDesktopSettingsSection) => {
+  const openWebSettings = useCallback((section: WebDesktopSettingsSection | "skills") => {
     openSettings(section);
     setTaskBoardOpen(false);
   }, [openSettings]);
@@ -840,6 +841,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     openFiles: () => openAppOrFocus("__file-browser__", "Files"),
     openPreview: () => openAppOrFocus("__preview-window__", "Preview"),
     openMcpSettings: () => openWebSettings("integrations"),
+    openAgentResourceSettings: (resource: AgentSetupResource) => openWebSettings(resource === "skills" ? "skills" : "integrations"),
   }), [openAppOrFocus, openWebSettings]);
   const openGettingStartedWork = useGettingStartedDestination(chat, openAppOrFocus);
 

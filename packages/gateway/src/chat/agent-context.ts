@@ -1,3 +1,7 @@
+import { hasOwnerHttpInput, type OwnerHttpInputProvenance } from "./owner-http-input.js";
+import { transcript } from "./context-transcript.js";
+export { transcript } from "./context-transcript.js";
+import type { BotSelectedChatReader } from "./bot-selected-chat.js";
 import { recipeSetupContext } from "../bots/recipe-setup-context.js";
 import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import { isManagedCustomBot } from "@matrix-os/contracts";
@@ -7,7 +11,7 @@ import { BotRouteError } from "../bots/route-resolver.js";
 import { createHash } from "node:crypto";
 import {
   CanonicalChatIdSchema, CanonicalCreateChatTurnRequestSchema, ChatRunContextSchema, canonicalChatTurnRequestIdentity,
-  type CanonicalChatMessage, type CanonicalCreateChatTurnRequest,
+  type CanonicalCreateChatTurnRequest,
   type ChatContextSnapshot, type ChatRunContext,
   type ChatAgent, type OrganizationDriveContextReference,
 } from "@matrix-os/contracts";
@@ -44,24 +48,6 @@ export function chatContextRequestHash<T extends Pick<CanonicalCreateChatTurnReq
   return createHash("sha256").update(canonicalChatTurnRequestIdentity(input)).digest("hex");
 }
 
-export function transcript(messages: CanonicalChatMessage[], limit: number): { text: string; truncated: boolean } {
-  const lines = messages.filter((message) => message.state === "committed"
-    && (message.role === "user" || message.role === "assistant"))
-    .flatMap((message) => {
-      const text = message.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
-      return text ? [`${message.role === "user" ? "User" : "Assistant"}: ${text}`] : [];
-    });
-  const text = lines.join("\n\n");
-  const bytes = Buffer.from(text);
-  let offset = Math.max(0, bytes.length - limit);
-  // Start at a UTF-8 code point boundary without inventing replacement characters.
-  while (offset < bytes.length && (bytes[offset] & 0xc0) === 0x80) offset += 1;
-  return {
-    text: bytes.length > limit ? bytes.subarray(offset).toString("utf8") : text,
-    truncated: bytes.length > limit,
-  };
-}
-
 export class ChatAgentContext {
   constructor(private readonly options: {
     repository: Pick<ChatRepository, "get" | "getDetailPage">;
@@ -72,6 +58,7 @@ export class ChatAgentContext {
     assertChatReferenceAllowed?: (owner: ChatOwner, chatId: string) => Promise<void>;
     admitJevWorkflow?: (owner: ChatOwner, agent: ChatAgent) => Promise<void>;
     botChats?: BotChatLookup;
+    selectedChats?: BotSelectedChatReader;
   }) {}
 
   private async snapshot(owner: ChatOwner, chatId: string, limit: number): Promise<ChatContextSnapshot> {
@@ -122,7 +109,7 @@ export class ChatAgentContext {
     }
   }
 
-  async prepare(owner: ChatOwner, chatId: string, inputValue: CanonicalCreateChatTurnRequest) {
+  async prepare(owner: ChatOwner, chatId: string, inputValue: CanonicalCreateChatTurnRequest, ownerInput: OwnerHttpInputProvenance = {}) {
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
     const references = input.parts.flatMap((part) => part.type === "resource_reference" ? [part.resource] : []);
     // A recipe bot's direct chat always runs that bot, whatever the client selected. Its
@@ -143,7 +130,11 @@ export class ChatAgentContext {
     if (directBotId) {
       const bot = await this.agent(owner, directBotId);
       const agentReferences = references.filter(reference => reference.kind === "agent");
-      if (references.some(reference => reference.kind === "chat") || agentReferences.length > 1
+      const selectedChatIds = references.filter(reference => reference.kind === "chat").map(reference => reference.id);
+      if (selectedChatIds.length && !hasOwnerHttpInput(owner, ownerInput, owner.ownerId)) {
+        throw new ChatAgentContextError("context_unavailable");
+      }
+      if ((selectedChatIds.length && (!bot.recipeRef || !this.options.selectedChats || !this.options.enabled() || input.executionRoot || input.routineCreation)) || agentReferences.length > 1
         || agentReferences.some(reference => reference.id !== bot.id || reference.revision !== String(bot.revision))
         || (bot.recipeRef && agentReferences.length)
         || (!bot.recipeRef && input.permissionMode === "full_access" && !agentReferences.length)) {
@@ -162,7 +153,9 @@ export class ChatAgentContext {
           if (error instanceof BotRouteError) throw new ChatAgentContextError("model_unavailable");
           throw error;
         }
-        return { selection: coordinator ? { ...coordinator, instanceId: MATRIX_BOT_INSTANCE_ID } : MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" };
+        const selected = selectedChatIds.length ? await this.options.selectedChats!.prepare(owner, chatId, bot.id, selectedChatIds) : undefined;
+        return { ...(selected ? { context: ChatRunContextSchema.parse({ version: 1, requestHash: chatContextRequestHash(input), chats: [], botChatSources: selected }) } : {}),
+          selection: coordinator ? { ...coordinator, instanceId: MATRIX_BOT_INSTANCE_ID } : MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" };
       }
     }
     // Only a bot's own chat can run the bot runtime.
@@ -241,6 +234,11 @@ export class ChatAgentContext {
   async revalidate(owner: ChatOwner, chatId: string, context?: ChatRunContext): Promise<void> {
     const boundId = await this.options.botChats?.directBot(owner, chatId);
     if (!context) return;
+    if (context.botChatSources) {
+      if (!this.options.enabled() || boundId !== context.botChatSources.botId || !this.options.selectedChats) throw new ChatAgentContextError("context_unavailable");
+      await this.options.selectedChats.read(owner, chatId, context.botChatSources);
+      return;
+    }
     if (context.botCreation) return this.assertDraftChat(owner, chatId, boundId);
     if ((context.agent || context.chats.length || context.drives?.length) && !this.options.enabled()) throw new ChatAgentContextError("feature_disabled");
     if (context.agent) {

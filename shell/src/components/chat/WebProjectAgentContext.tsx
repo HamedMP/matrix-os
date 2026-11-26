@@ -1,7 +1,7 @@
 "use client";
 
 import { PROJECT_SKILL_FILE_MAX_BYTES, ProjectAgentConfigFileSchema } from "@matrix-os/contracts";
-import { ProjectAgentContextPanel } from "@matrix-os/ui";
+import { ProjectAgentContextPanel, type AgentSetupResource } from "@matrix-os/ui";
 import {
   PROJECT_AGENT_CONTEXT_FILE_ERROR,
   PROJECT_AGENT_CONTEXT_OPEN_FILE_ERROR,
@@ -24,6 +24,7 @@ export const WebProjectAgentContextNavigation = createContext<{
   openFiles: () => void;
   openPreview?: () => void;
   openMcpSettings: () => void;
+  openAgentResourceSettings?: (resource: AgentSetupResource) => void;
 } | null>(null);
 
 async function readText(response: Response, maxBytes: number, preserveBom = false): Promise<string> {

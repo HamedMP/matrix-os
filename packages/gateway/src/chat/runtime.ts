@@ -1,3 +1,4 @@
+import { createBotSelectedChatReader } from "./bot-selected-chat.js";
 import { CanonicalChatOrchestrator } from "./orchestrator.js";
 import { ChatAgentStore } from "./agent-store.js";
 import { ChatAgentContext } from "./agent-context.js";
@@ -26,6 +27,7 @@ export async function createCanonicalChatRuntime(options: Omit<ConstructorParame
   const agents = options.agents ?? new ChatAgentStore({ homePath: options.homePath, db: options.repository.kysely });
   if (!options.agents) await agents.bootstrap();
   const context = new ChatAgentContext({
+    selectedChats: createBotSelectedChatReader(options.repository),
     repository: options.repository, agents, recipes, enabled: options.enabled ?? (() => true),
     admitJevWorkflow: options.admitJevWorkflow,
     drives: options.drives,

@@ -1,4 +1,5 @@
 import { canProposeBotSettings } from "../chat/bot-settings-authority.js";
+import { createBotSelectedChatReader } from "../chat/bot-selected-chat.js";
 import type { SlackBotPlatform } from "./slack-platform.js";
 import { retireRevokedSlackJobs } from "../slack/rule-revocation.js";
 import { createSlackRuleTools, type SlackRuleTools } from "../slack/rule-tools.js";
@@ -466,6 +467,7 @@ export async function startBots(options: {
   const orchestrator = createBotTaskOrchestrator({
     routineProposals: routineCli?.proposals,
     ...(chatgptPlanPeers ? { resolveRoutineProposalRoute: (ownerId: string, model: string) => chatgptPlanPeers.resolveRoutineProposal(ownerId, model) } : {}),
+    selectedChatReader: createBotSelectedChatReader(options.repository),
     inputHistory,
     slackThreadContext: slackThreadContext?.prompt,
     slackSummaries: slackMentionSummaries,
@@ -553,6 +555,13 @@ export async function startBots(options: {
       homePath: options.homePath,
       onFundedFailure: (binding, reason) => managed.recordFundedFailure(binding, reason),
       consumeReadonlyInference: async binding => !isManagedPiBinding(binding) && Boolean(await slackMentionSummaries?.consumeInference(binding)),
+      selectedInputGuard: binding => {
+        if (isManagedPiBinding(binding) || !orchestrator.hasSelectedChats(binding.runId)) return undefined;
+        return async () => {
+          try { return await orchestrator.selectedChatReference(binding) !== undefined; }
+          catch (error: unknown) { console.warn("[bots] Selected Chat unavailable", error instanceof Error ? error.name : "UnknownError"); return false; }
+        };
+      },
       revalidateBinding: async (binding) => {
         if (binding.readonlySummary && (isManagedPiBinding(binding) || !await slackMentionSummaries?.assertAuthorized(binding))) return false;
         if (!isManagedPiBinding(binding)) {

@@ -3,12 +3,13 @@ import { ScopeRuntimeBrokerResponseSchema, type ScopeRuntimeBotInferenceRequest,
 import type { PiRuntimeBinding } from './runtime-registry.js';
 import type { ChatGptPlanAuthority } from './chatgpt-plan.js';
 import { chatGptPlanWire, assertChatGptPlanCompleted } from './chatgpt-plan-wire.js';
-import { guardInferenceStream, validateChatGptStream } from './inference-stream.js';
+import { guardInferenceStream, validateChatGptStream, publishSelectedChatOutput } from './inference-stream.js';
 const refused = (requestId: string, error: 'action_denied' | 'invalid_request' | 'provider_unavailable' | 'response_too_large'): ScopeRuntimeBrokerResponse => ScopeRuntimeBrokerResponseSchema.parse({ version: 1, requestId, ok: false, error });
 export async function forwardChatGptPlanInference(request: ScopeRuntimeBotInferenceRequest, binding: PiRuntimeBinding, deps: {
     authority: ChatGptPlanAuthority;
     signal: AbortSignal;
     stillAuthorized(): boolean | Promise<boolean>;
+    selectedInputCurrent?(): Promise<boolean>;
 }): Promise<ScopeRuntimeBrokerResult> {
     if (!binding.subscription || binding.accessSourceId !== 'matrix_chatgpt_plan' || request.action !== 'inference.responses'
         || request.path !== '/v1/responses')
@@ -64,6 +65,7 @@ export async function forwardChatGptPlanInference(request: ScopeRuntimeBotInfere
             return refused(request.requestId, 'action_denied');
         if (!await authorized())
             return refused(request.requestId, 'action_denied');
+        if (deps.selectedInputCurrent && (!await waitFor(deps.selectedInputCurrent()) || signal.aborted)) return refused(request.requestId, "action_denied");
         if (request.responseMode === 'stream') {
             if (!deps.authority.inferStream) return refused(request.requestId, 'provider_unavailable');
             const response = await waitFor(deps.authority.inferStream(binding, body, signal));
@@ -86,11 +88,12 @@ export async function forwardChatGptPlanInference(request: ScopeRuntimeBotInfere
                 }
             }
             handedOff = true;
+            const frames = guardInferenceStream(validateChatGptStream(progress(), binding.route.modelId, authorized), {
+                signal, authorized, abort: finish,
+            });
             return { version: 1, requestId: request.requestId, ok: true, status: response.status,
                 headers: { 'content-type': 'text/event-stream' },
-                body: guardInferenceStream(validateChatGptStream(progress(), binding.route.modelId, authorized), {
-                    signal, authorized, abort: finish,
-                }) };
+                body: deps.selectedInputCurrent ? publishSelectedChatOutput(frames, deps.selectedInputCurrent, deps.signal) : frames };
         }
         const response = await deps.authority.infer(binding, body, signal);
         if (response.status !== 200 || response.headers['content-type'] !== 'text/event-stream')
@@ -99,6 +102,7 @@ export async function forwardChatGptPlanInference(request: ScopeRuntimeBotInfere
         if (Buffer.byteLength(result, 'utf8') > INFERENCE_RESPONSE_BODY_MAX_BYTES)
             return refused(request.requestId, 'response_too_large');
         assertChatGptPlanCompleted(result, binding.route.modelId);
+        if (deps.selectedInputCurrent && (!await waitFor(deps.selectedInputCurrent()) || signal.aborted)) return refused(request.requestId, "action_denied");
         if (!await authorized())
             return refused(request.requestId, 'action_denied');
         return ScopeRuntimeBrokerResponseSchema.parse({ version: 1, requestId: request.requestId, ok: true,
