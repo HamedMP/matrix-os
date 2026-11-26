@@ -9,6 +9,7 @@ import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
   FUNDED_AI_READINESS_TIMEOUTS,
+  isFundedCloudflarePreviewCohortModel,
   isFundedCloudflarePreviewModel,
   AiProviderDriverViewSchema,
   type AiAccessSourceView,
@@ -456,7 +457,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
     );
     const discoveredFundedModelIds = funded?.discoverableModelIds ?? funded?.allowedModelIds ?? [];
     const catalog = buildBundledModelCatalog()
-      .filter(model => !isFundedCloudflarePreviewModel(model.id) || discoveredFundedModelIds.includes(model.id));
+      .filter(model => !isFundedCloudflarePreviewModel(model.id)
+        || isFundedCloudflarePreviewCohortModel(model.id) && discoveredFundedModelIds.includes(model.id));
     const observeFundedSource = (sourceId: string) => fundedSourceObservation(
       eligibleModelsForSource(sourceId, catalog).map(model => model.id), matrixReadiness, funded,
     );

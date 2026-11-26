@@ -12,7 +12,7 @@
  * are never selected.
  */
 import type { AiProviderSnapshotV3, BotModelRoute, CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { BotModelRouteSchema, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
+import { BotModelRouteSchema, isFundedThirdPartyPreviewModel, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import type { BotCredentialAccessSourceId } from "./credentials.js";
 import { FUNDED_PREVIEW_CHAT_ROUTES, MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
 
@@ -50,7 +50,7 @@ function fresh(staleAfter: string | null, now: number): boolean {
 }
 
 function routeFor(snapshot: AiProviderSnapshotV3, entry: (typeof SOURCES_IN_ORDER)[number], modelId: string | null, now: number): ResolvedBotRoute | undefined {
-  if (modelId === null) return undefined;
+  if (modelId === null || isFundedThirdPartyPreviewModel(modelId)) return undefined;
   const source = snapshot.accessSources.find((candidate) => candidate.id === entry.id);
   if (!source || source.state !== "ready" || !fresh(source.staleAfter, now) || !source.eligibleModelIds.includes(modelId)) return undefined;
   const model = snapshot.models.find((candidate) => candidate.id === modelId);

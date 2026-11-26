@@ -36,11 +36,14 @@ export const FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS = [
   ALIBABA_QWEN_37_PLUS_MODEL_ID,
 ] as const;
 
+// This allowlist is also the upstream dispatch boundary. Keep third-party
+// IDs in the catalog for saved references, but only admit a route once its
+// upstream transport and credentials are verified to enforce zero retention.
 export const FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS = [
   "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
   "@cf/zai-org/glm-5.3",
   "@cf/qwen/qwen3.8-27b",
-  ...FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS,
+  INKLING_2_SMALL_MODEL_ID,
 ] as const;
 
 export type FundedCloudflarePreviewModelId = typeof FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS[number];

@@ -23,6 +23,7 @@ import {
   FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS,
   isFundedCloudflarePreviewCohortModel,
   isFundedCloudflarePreviewModel,
+  isFundedThirdPartyPreviewModel,
   matchesFundedCloudflarePreviewBinding,
   type FundedAiIdentity,
   JEV_MODEL_ID,
@@ -677,6 +678,7 @@ export function createAiFundedRelayRoutes(options: {
     const request = FundedAiAuthorizationRequestSchema.safeParse(await readStrictJson(c));
     if (!request.success) return c.json(safeError("invalid_request"), 400);
     try {
+      if (isFundedThirdPartyPreviewModel(request.data.modelId)) return c.json(safeError("model_not_allowed"), 403);
       return c.json(await options.repository.authorize(request.data), 200);
     } catch (error) {
       return policyErrorResponse(c, error);
@@ -686,6 +688,7 @@ export function createAiFundedRelayRoutes(options: {
     const request = FundedAiPolicyCheckRequestSchema.safeParse(await readStrictJson(c));
     if (!request.success) return c.json(safeError("invalid_request"), 400);
     try {
+      if (isFundedThirdPartyPreviewModel(request.data.modelId)) return c.json(safeError("model_not_allowed"), 403);
       return c.json(await options.repository.checkPolicy(request.data), 200);
     } catch (error) {
       return policyErrorResponse(c, error);

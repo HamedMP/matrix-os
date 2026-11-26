@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  AiModelDescriptorViewSchema, FUNDED_PRICING_CATALOG, MANAGED_WORKERS_AI_MODEL_IDS,
+  AiModelDescriptorViewSchema, AiProviderSnapshotV3Schema, FUNDED_PRICING_CATALOG, MANAGED_WORKERS_AI_MODEL_IDS,
   isManagedFundedOpenAiModel, retiredManagedWorkersAiModel, type AiProviderReadiness,
 } from "@matrix-os/contracts";
 import { buildBundledModelCatalog } from "../../packages/gateway/src/ai-providers/model-catalog.js";
@@ -137,33 +137,53 @@ describe("Cloudflare Preview managed catalog", () => {
       input: 320, output: 1280, cached: 64, cacheWrite5m: 320, cacheWrite1h: 320 });
   });
 
+  it("keeps third-party models out of the picker even when a previous readiness receipt lists them", async () => {
+    const previouslyReady = [deepSeekV41, glmFull, qwenWorkers, inkling, gemini, kimi, qwen];
+    const snapshot = await observe(fresh, previouslyReady, previouslyReady);
+    const [managed] = managedPiChatInstances(snapshot, +now);
+    expect(managed?.models.filter(model => model.availability === "available").map(model => model.id).sort())
+      .toEqual([deepSeekV41, glmFull, qwenWorkers, inkling].sort());
+    expect(managed?.models.filter(model => [gemini, kimi, qwen].includes(model.id))).toEqual([]);
+  });
+
+  it("rejects saved third-party selections against a previous full provider snapshot", async () => {
+    const freshSnapshot = await observe(fresh, [deepSeekV41], [deepSeekV41]);
+    const [managed] = managedPiChatInstances(freshSnapshot, +now);
+    const workerSource = freshSnapshot.accessSources.find(source => source.id === "matrix_cloudflare")!;
+    const previousModels = buildBundledModelCatalog().filter(model => [gemini, kimi, qwen].includes(model.id));
+    const previousSnapshot = AiProviderSnapshotV3Schema.parse({
+      ...freshSnapshot,
+      models: [...freshSnapshot.models, ...previousModels],
+      accessSources: [...freshSnapshot.accessSources, ...previousModels.map(model => ({
+        ...workerSource,
+        id: model.eligibleAccessSourceIds[0], vendor: model.vendor,
+        eligibleModelIds: [model.id], discoverableModelIds: [model.id],
+      }))],
+    });
+    for (const model of [gemini, kimi, qwen]) {
+      expect(() => resolveManagedPiRoute(previousSnapshot, { instanceId: managed!.id, model }, +now))
+        .toThrow("model_unavailable");
+    }
+    expect(managedPiChatInstances(previousSnapshot, +now)[0]?.models
+      .filter(model => model.availability === "available").map(model => model.id)).toEqual([deepSeekV41]);
+  });
+
   it("offers the Cloudflare Preview models only after exact scoped readiness, keeping DeepSeek first and full GLM available", async () => {
-    const ready = [deepSeekV41, glmFull, qwenWorkers, inkling, gemini, kimi, qwen];
+    const ready = [deepSeekV41, glmFull, qwenWorkers, inkling];
     const discovered = await observe(fresh, ready, ready);
-    expect(discovered.accessSources.find(source => source.id === "matrix_moonshot_preview"))
-      .toMatchObject({ state: "ready", vendor: "moonshotai", eligibleModelIds: [kimi] });
-    expect(discovered.accessSources.find(source => source.id === "matrix_google_preview"))
-      .toMatchObject({ state: "ready", vendor: "google", eligibleModelIds: [gemini] });
-    expect(discovered.accessSources.find(source => source.id === "matrix_alibaba_preview"))
-      .toMatchObject({ state: "ready", vendor: "alibaba", eligibleModelIds: [qwen] });
     const [managed] = managedPiChatInstances(discovered, +now);
     expect(managed?.defaultSelection?.model).toBe(deepSeekV41);
     for (const model of ready) {
       expect(managed?.models).toContainEqual(expect.objectContaining({ id: model, availability: "available" }));
     }
-    for (const model of [gemini, kimi, qwen]) {
-      expect(resolveManagedPiRoute(discovered, { instanceId: managed!.id, model }, +now))
-        .toMatchObject({ route: { modelId: model, api: "openai-completions", input: ["text"], maxOutputTokens: 2_048 },
-          accessSourceId: "matrix_included" });
-    }
     for (const model of [deepSeekV41, glmFull, qwenWorkers, inkling]) {
       expect(resolveManagedPiRoute(discovered, { instanceId: managed!.id, model }, +now).route.maxOutputTokens).toBe(8_192);
     }
 
-    const unready = await observe(fresh, ready.filter(model => model !== kimi), ready);
+    const unready = await observe(fresh, ready.filter(model => model !== inkling), ready);
     expect(managedPiChatInstances(unready, +now)[0]?.models)
-      .toContainEqual(expect.objectContaining({ id: kimi, availability: "unavailable" }));
-    expect(() => resolveManagedPiRoute(unready, { instanceId: managed!.id, model: kimi }, +now))
+      .toContainEqual(expect.objectContaining({ id: inkling, availability: "unavailable" }));
+    expect(() => resolveManagedPiRoute(unready, { instanceId: managed!.id, model: inkling }, +now))
       .toThrow("model_unavailable");
 
     const ordinary = await observe(fresh, [deepSeekV41, glmFull], [deepSeekV41, glmFull]);

@@ -1,4 +1,4 @@
-import { isFundedCloudflarePreviewCohortModel, isManagedFundedOpenAiModel } from "@matrix-os/contracts";
+import { isFundedCloudflarePreviewCohortModel, isFundedThirdPartyPreviewModel, isManagedFundedOpenAiModel } from "@matrix-os/contracts";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
 import { Hono } from "hono";
 import { timingSafeEqual } from "node:crypto";
@@ -50,7 +50,8 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
     }
     const model = c.req.query("model");
     if ((!model || !isManagedFundedOpenAiModel(model)) && model !== FUNDED_SONNET) return c.json({ ready: false }, 400);
-    if (config.cloudflarePreview && !isFundedCloudflarePreviewCohortModel(model)) return c.json({ ready: false }, 400);
+    if (isFundedThirdPartyPreviewModel(model)
+      || config.cloudflarePreview && !isFundedCloudflarePreviewCohortModel(model)) return c.json({ ready: false }, 400);
     const initial = await relay.pricingReviewsFor(model, c.req.raw.signal);
     if (!initial || !isFundedModelPriceCurrent(model, now(), initial)) {
       return c.json({ ready: false }, 503);

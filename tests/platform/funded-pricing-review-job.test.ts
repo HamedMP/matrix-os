@@ -134,7 +134,7 @@ describe("official funded pricing verification", () => {
     }
   });
 
-  it("limits the configured Preview reviewer to its seven routes", async () => {
+  it("limits the configured Preview reviewer to the verified Workers routes", async () => {
     const fetchFn = sourceFetch();
     const rows = await readOfficialFundedPreviewPricing({ fetchFn, signal: new AbortController().signal });
     expect(Object.keys(rows)).toEqual(FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS);

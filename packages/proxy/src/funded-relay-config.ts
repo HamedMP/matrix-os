@@ -1,12 +1,6 @@
 import {
-  ALIBABA_QWEN_37_PLUS_MODEL_ID,
-  ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS,
-  GOOGLE_GEMINI_38_FLASH_MODEL_ID,
-  GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS,
-  MOONSHOT_KIMI_K31_PRO_MODEL_ID,
-  MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS,
   isFundedCloudflarePreviewCohortModel,
-  isFundedThirdPartyPreviewModel,
+  isManagedWorkersAiModel,
   loadFundedCloudflarePreviewBinding,
   type FundedAiIdentity,
 } from "@matrix-os/contracts";
@@ -258,18 +252,10 @@ export function resolveFundedRelayConfig(
   };
 }
 
-const GATEWAY_ID = /^[a-zA-Z0-9_-]{1,64}$/;
 const WORKERS_TOKEN = /^[A-Za-z0-9._~-]{32,4096}$/;
 const ACCOUNT_ID = /^[a-f0-9]{32}$/;
-const PREVIEW_MODELS = {
-  [GOOGLE_GEMINI_38_FLASH_MODEL_ID]: { alias: undefined, maxOutputTokens: GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS },
-  [MOONSHOT_KIMI_K31_PRO_MODEL_ID]: { alias: "kimi-k3.1-pro", maxOutputTokens: MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS },
-  [ALIBABA_QWEN_37_PLUS_MODEL_ID]: { alias: "qwen3.7-plus", maxOutputTokens: ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS },
-} as const;
-
 export interface FundedCloudflarePreview extends FundedAiIdentity {
   accountId: string;
-  gatewayId: string;
   token: string;
 }
 
@@ -280,42 +266,36 @@ function resolveFundedCloudflarePreview(
   usesReviewedReservations: boolean,
 ): FundedCloudflarePreview | undefined {
   const binding = loadFundedCloudflarePreviewBinding(env);
-  const gatewayId = env.MATRIX_FUNDED_AI_CLOUDFLARE_PREVIEW_GATEWAY_ID;
-  if (!binding && gatewayId === undefined) return undefined;
-  if (!binding || !gatewayId || !GATEWAY_ID.test(gatewayId) || !workersAiToken
-    || !WORKERS_TOKEN.test(workersAiToken) || !usesReviewedReservations) {
-    throw new Error("Cloudflare Preview requires an exact binding, a Gateway ID, a Workers AI token, usage reservations, and the pricing registry");
+  if (!binding) {
+    // A previous Preview deployment can still carry this marker. Require its
+    // binding rather than accidentally booting an unscoped Preview process.
+    if (env.MATRIX_FUNDED_AI_CLOUDFLARE_PREVIEW_GATEWAY_ID !== undefined) {
+      throw new Error("Cloudflare Preview requires an exact binding");
+    }
+    return undefined;
+  }
+  if (!workersAiToken || !WORKERS_TOKEN.test(workersAiToken) || !usesReviewedReservations) {
+    throw new Error("Cloudflare Preview requires a Workers AI token, usage reservations, and the pricing registry");
   }
   // The ordinary Relay validates the official HTTPS gateway URL first.
   const accountId = new URL(gatewayBaseUrl).pathname.split("/")[2] ?? "";
   if (!ACCOUNT_ID.test(accountId)) throw new Error("Invalid Cloudflare Preview account");
-  return { ...binding, accountId, gatewayId, token: workersAiToken };
-}
-
-export function fundedCloudflarePreviewModel(modelId: string) {
-  return isFundedThirdPartyPreviewModel(modelId) ? PREVIEW_MODELS[modelId] : undefined;
+  return { ...binding, accountId, token: workersAiToken };
 }
 
 export function fundedCloudflarePreviewUpstream(
   config: FundedCloudflarePreview,
   modelId: string,
 ): { target: string; headers: Headers } {
-  if (!isFundedCloudflarePreviewCohortModel(modelId) || !ACCOUNT_ID.test(config.accountId) || !GATEWAY_ID.test(config.gatewayId)
-    || !WORKERS_TOKEN.test(config.token)) {
+  if (!isManagedWorkersAiModel(modelId) || !isFundedCloudflarePreviewCohortModel(modelId)
+    || !ACCOUNT_ID.test(config.accountId) || !WORKERS_TOKEN.test(config.token)) {
     throw new Error("Invalid funded Cloudflare Preview config");
   }
-  const usesGateway = isFundedThirdPartyPreviewModel(modelId);
-  const path = usesGateway ? "v1/chat/completions" : `run/${modelId}`;
   return {
-    target: `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/ai/${path}`,
+    target: `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/ai/run/${modelId}`,
     headers: new Headers({
       authorization: `Bearer ${config.token}`,
       "content-type": "application/json",
-      ...(usesGateway ? {
-        "cf-aig-gateway-id": config.gatewayId,
-        "cf-aig-skip-cache": "true",
-        "cf-aig-collect-log-payload": "false",
-      } : {}),
     }),
   };
 }

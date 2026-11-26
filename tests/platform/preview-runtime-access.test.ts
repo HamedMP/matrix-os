@@ -10,7 +10,7 @@ import {
   MOONSHOT_KIMI_K31_PRO_MODEL_ID,
 } from "@matrix-os/contracts";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
-import { createAiFundedRuntimeRoutes } from "../../packages/platform/src/ai-funded-policy-routes.js";
+import { createAiFundedRelayRoutes, createAiFundedRuntimeRoutes } from "../../packages/platform/src/ai-funded-policy-routes.js";
 import {
   initializePreviewRuntimeAccess,
   loadPreviewRuntimeAccessConfig,
@@ -430,9 +430,10 @@ describe("bounded Preview runtime access", () => {
     provisioningClass, mismatch, candidatesReady,
   }) => {
     const workerModel = "@cf/zai-org/glm-5.3";
-    const candidates = [INKLING_2_SMALL_MODEL_ID, MOONSHOT_KIMI_K31_PRO_MODEL_ID,
+    const withheld = [MOONSHOT_KIMI_K31_PRO_MODEL_ID,
       GOOGLE_GEMINI_38_FLASH_MODEL_ID, ALIBABA_QWEN_37_PLUS_MODEL_ID] as const;
-    const allowedModelIds = [workerModel, ...candidates];
+    const allowedModelIds = [workerModel, INKLING_2_SMALL_MODEL_ID];
+    const staleModels = [...allowedModelIds, ...withheld];
     const ordinaryModels = [modelId, workerModel];
     const runtimeSlot = provisioningClass === "private-preview" ? "pv-2383-deadbeef" : identity.runtimeSlot;
     const runtimeIdentity = { ...identity, runtimeSlot };
@@ -444,12 +445,34 @@ describe("bounded Preview runtime access", () => {
       handle: runtimeSlot, runtime_slot: runtimeSlot, confirmed_bundle_version: "preview-build",
       source_pr: provisioningClass === "private-preview" ? 2383 : null })
       .where("machine_id", "=", machineId).execute();
-    await db.executor.updateTable("ai_funded_global_policy").set({ allowed_model_ids: JSON.stringify([modelId, ...allowedModelIds]) })
+    await db.executor.updateTable("ai_funded_global_policy").set({ allowed_model_ids: JSON.stringify([modelId, ...staleModels]) })
       .where("policy_id", "=", "default").execute();
     await initializePreviewRuntimeAccess({ db, repository, config: { ...enabledConfig(), cloudflareBinding },
       request: { ...runtimeIdentity, expectedRuntimeTokenEpoch: 1 }, now: () => new Date(clock) });
     expect((await repository.getRuntimePolicy(runtimeIdentity))?.allowedModelIds)
       .toEqual(candidatesReady ? allowedModelIds : ordinaryModels);
+
+    if (candidatesReady) {
+      await repository.setRuntimePolicy({ identity: runtimeIdentity, expectedRevision: 1, enabled: true,
+        allowedModelIds: staleModels, expiresAt: "2026-10-20T11:00:00.000Z", monthlyBudgetMicrousd: 1_000 });
+      const { credential } = await repository.issueRuntimeCredential(runtimeIdentity);
+      const relayControlToken = "r".repeat(32);
+      const relay = createAiFundedRelayRoutes({ relayControlToken, repository });
+      for (const blockedModel of withheld) {
+        for (const [route, fields] of [["check", {}],
+          ["authorize", { requestId: `stale_preview_${blockedModel.split("/")[0]}`, maxCostMicrousd: 1 }]] as const) {
+          const response = await relay.request(`/${route}`, { method: "POST",
+            headers: { authorization: `Bearer ${relayControlToken}`, "content-type": "application/json" },
+            body: JSON.stringify({ credential: credential.token, modelId: blockedModel, ...fields }),
+          });
+          expect(response.status, `${route} ${blockedModel}`).toBe(403);
+          expect(await response.json()).toMatchObject({ error: { code: "model_not_allowed" } });
+        }
+      }
+      expect((await repository.getRuntimeFundingSummary(runtimeIdentity)).funding).toMatchObject({
+        previewQuota: { requestsUsed: 0, requestsRemaining: 2 },
+      });
+    }
 
     const previewRuntimeSecret = "p".repeat(32);
     const token = buildPlatformRuntimeVerificationToken({ handle: runtimeSlot, machineId, runtimeSlot }, previewRuntimeSecret, 1);

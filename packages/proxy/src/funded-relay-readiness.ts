@@ -1,15 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { z } from "zod/v4";
 import { FUNDED_AI_READINESS_TIMEOUTS, isFundedCloudflarePreviewCohortModel, isFundedCloudflarePreviewModel, isManagedWorkersAiModel, isManagedWorkersAiResponseModel } from "@matrix-os/contracts";
-import { fundedCloudflarePreviewModel, fundedCloudflarePreviewUpstream, type FundedRelayConfig } from "./funded-relay-config.js";
+import { fundedCloudflarePreviewUpstream, type FundedRelayConfig } from "./funded-relay-config.js";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
 
 export const FUNDED_SONNET = "anthropic/claude-sonnet-5";
 const MAX_PROBE_BODY_BYTES = 64 * 1024;
-const PreviewProbeResponse = z.object({
-  model: z.string(),
-  choices: z.array(z.object({ message: z.object({ content: z.string().trim().pipe(z.literal("OK")) }) })).length(1),
-});
 
 async function boundedJson(response: Response): Promise<unknown> {
   const reader = response.body?.getReader();
@@ -48,7 +43,6 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
   };
   const preview = config.reservationMode === "usage" ? config.cloudflarePreview : undefined;
   if (preview ? !isFundedCloudflarePreviewCohortModel(modelId) : isFundedCloudflarePreviewModel(modelId)) return false;
-  const previewModel = preview ? fundedCloudflarePreviewModel(modelId) : undefined;
   let url: string;
   let headers: Record<string, string>;
   let body: string;
@@ -64,8 +58,7 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
       return finish("transport_error");
     }
     // An inexpensive, smaller probe could hide a real prepaid-credit admission failure.
-    body = serializeFundedOpenAiRequest({ model: modelId, messages: [{ role: "user", content: "Reply exactly OK." }],
-      ...(previewModel ? { max_tokens: previewModel.maxOutputTokens } : {}) }).body;
+    body = serializeFundedOpenAiRequest({ model: modelId, messages: [{ role: "user", content: "Reply exactly OK." }] }).body;
   } else if (isManagedWorkersAiModel(modelId) && config.workersAiToken && config.reservationMode === "usage") {
     const target = workersAiTarget(config.gatewayBaseUrl, modelId);
     url = target.url;
@@ -105,11 +98,6 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
     if (modelId === FUNDED_SONNET) return finish("type" in responseBody && responseBody.type === "message"
       && "model" in responseBody && responseBody.model === "claude-sonnet-5"
       && "content" in responseBody && Array.isArray(responseBody.content) ? "ready" : "invalid_response", response.status);
-    if (previewModel) {
-      const reply = PreviewProbeResponse.safeParse(responseBody);
-      return finish(reply.success && (reply.data.model === modelId || reply.data.model === previewModel.alias)
-        ? "ready" : "invalid_response", response.status);
-    }
     const envelope = responseBody as { success?: unknown; result?: unknown };
     if ("success" in envelope && envelope.success !== true) return finish("invalid_response", response.status);
     const result = envelope.success === true ? envelope.result : responseBody;

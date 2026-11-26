@@ -7,9 +7,9 @@ import type { FundedPricingReviews } from "./funded-pricing-review.js";
 import { createHmac, randomUUID } from "node:crypto";
 import {
   FundedAiClaimKeySchema,
-  GOOGLE_GEMINI_38_FLASH_MODEL_ID,
   isFundedCloudflarePreviewCohortModel,
   isFundedCloudflarePreviewModel,
+  isFundedThirdPartyPreviewModel,
   matchesFundedCloudflarePreviewBinding,
   isManagedFundedOpenAiModel,
   FundedAiPolicyCheckRequestSchema,
@@ -23,7 +23,7 @@ import { z } from "zod/v4";
 import { isFundedProxyApiKey } from "./auth.js";
 import { AdmissionController, type AdmissionLease } from "./funded-relay-admission.js";
 import { refundFundedCapacityAttempt } from "./funded-relay-capacity.js";
-import { COUNT_TOKENS_BODY_LIMIT_BYTES, fundedCloudflarePreviewModel, fundedCloudflarePreviewUpstream,
+import { COUNT_TOKENS_BODY_LIMIT_BYTES, fundedCloudflarePreviewUpstream,
   type FundedRelayConfig } from "./funded-relay-config.js";
 import {
   cloudflareJevTarget,
@@ -34,7 +34,6 @@ import {
 import { JEV_READINESS_PATH, jevProbeControlAuthorized, fixedJevProbeRequest, assertJevProbeSettlement } from "./funded-relay-jev-probe.js";
 import { estimateWorstCaseMicrousd, isFundedModelPriceCurrent, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
-import { normalizeFundedGeminiResponse, normalizeFundedOpenAiResponse } from "./funded-relay-openai-response.js";
 import { normalizeWorkersAiResponse } from "./funded-relay-workers-response.js";
 import {
   createFundedPlatformClient,
@@ -385,7 +384,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const isPreviewModel = isFundedCloudflarePreviewModel(model.nativeModelId);
     const preview = config.cloudflarePreview;
-    if (preview && !isFundedCloudflarePreviewCohortModel(model.nativeModelId)) {
+    if (isFundedThirdPartyPreviewModel(model.nativeModelId)
+      || preview && !isFundedCloudflarePreviewCohortModel(model.nativeModelId)) {
       return errorResponse(c, 403, "permission_error", "This model is not enabled");
     }
     const openAiRouteConfigured = isPreviewModel ? preview !== undefined : config.workersAiToken !== undefined;
@@ -411,7 +411,6 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     if (preview && !matchesFundedCloudflarePreviewBinding(preview, identity)) {
       return errorResponse(c, 403, "permission_error", "This model is not enabled");
     }
-    const previewModel = preview ? fundedCloudflarePreviewModel(model.nativeModelId) : undefined;
     const reviews = pricingRegistry
       ? await pricingReviewsFor(model.canonicalModelId, state.lifetimeSignal) : config.pricingReviews;
     if (reviews === null) return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
@@ -611,11 +610,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       const fetched = terminal.response(await fetchImpl(generationUrl, generationInit));
       let upstream = fetched;
       if (isOpenAi && fetched.ok) {
-        if (previewModel && model.nativeModelId === GOOGLE_GEMINI_38_FLASH_MODEL_ID) {
-          upstream = normalizeFundedGeminiResponse(fetched, config.maxResponseBytes);
-        } else if (previewModel) upstream = normalizeFundedOpenAiResponse(fetched, { modelId: model.nativeModelId,
-          maxBytes: config.maxResponseBytes, upstreamModelAlias: previewModel.alias });
-        else upstream = normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes);
+        upstream = normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes);
       }
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
