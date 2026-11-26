@@ -193,13 +193,48 @@ describe("lifecycle status", () => {
     }
   });
 
-  it("ignores scheduled times in the past", async () => {
+  it("marks the schedule incomplete while an overdue cron job masks a future one", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const homePath = mkdtempSync(join(tmpdir(), "lifecycle-overdue-cron-"));
+    const store = createCronStore(join(homePath, "cron.json"));
+    const onTrigger = vi.fn();
+    const service = createCronService({ store, onTrigger });
+    const overdueAt = new Date(NOW.getTime() - 60_000).toISOString();
+    const futureAt = new Date(NOW.getTime() + HOUR).toISOString();
+    try {
+      store.save([overdueAt, futureAt].map((at, index) => ({
+        id: `reminder-${index}`, name: "Reminder", message: "Check in",
+        createdAt: overdueAt, schedule: { type: "once", at },
+      })));
+      service.start();
+      const sources = { cron: service, now: () => NOW };
+      expect(onTrigger).not.toHaveBeenCalled();
+      expect(service.nextRunAt()?.toISOString()).toBe(overdueAt);
+      expect(RuntimeLifecycleStatusSchema.parse(await readLifecycleStatus(sources))).toEqual({
+        busy: false, busyReasons: [], nextScheduledAt: null, scheduleComplete: false,
+      });
+
+      service.removeJob("reminder-0");
+      expect(RuntimeLifecycleStatusSchema.parse(await readLifecycleStatus(sources))).toEqual({
+        busy: false, busyReasons: [], nextScheduledAt: futureAt, scheduleComplete: true,
+      });
+    } finally {
+      service.stop();
+      vi.useRealTimers();
+      rmSync(homePath, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores routine times in the past without marking the schedule incomplete", async () => {
+    const futureAt = new Date(NOW.getTime() + 2 * HOUR);
     const status = await readLifecycleStatus({
-      cron: { nextRunAt: () => new Date(NOW.getTime() - 60_000) },
-      routines: { hasActiveFire: async () => false, nextFireAt: async () => new Date(NOW.getTime() + 2 * HOUR) },
+      cron: { nextRunAt: () => futureAt },
+      routines: { hasActiveFire: async () => false, nextFireAt: async () => new Date(NOW.getTime() - 60_000) },
       now: () => NOW,
     });
-    expect(status.nextScheduledAt).toBe(new Date(NOW.getTime() + 2 * HOUR).toISOString());
+    expect(status.nextScheduledAt).toBe(futureAt.toISOString());
+    expect(status.scheduleComplete).toBe(true);
   });
 });
 

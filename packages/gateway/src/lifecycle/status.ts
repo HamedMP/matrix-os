@@ -207,17 +207,22 @@ export async function readLifecycleStatus(sources: LifecycleSources): Promise<Ru
   });
   if (unknown) busyReasons.push("unknown");
 
-  let scheduleFailed = false;
+  let scheduleIncomplete = false;
   let earliest: number | null = null;
   scheduleResults.forEach((result, index) => {
+    const [name] = scheduleChecks[index]!;
     if (result.status === "rejected") {
-      scheduleFailed = true;
-      logSourceFailure(scheduleChecks[index]![0], result.reason);
+      scheduleIncomplete = true;
+      logSourceFailure(name, result.reason);
       return;
     }
     const at = result.value?.getTime();
-    // Past times are either firing now or held (for example awaiting review); neither is a wake time.
-    if (at === undefined || !Number.isFinite(at) || at <= now.getTime()) return;
+    if (at === undefined || !Number.isFinite(at)) return;
+    if (at <= now.getTime()) {
+      // A due cron job can hide later deadlines until the scheduler handles it.
+      if (name === "cron") scheduleIncomplete = true;
+      return;
+    }
     if (earliest === null || at < earliest) earliest = at;
   });
 
@@ -226,6 +231,6 @@ export async function readLifecycleStatus(sources: LifecycleSources): Promise<Ru
     busyReasons,
     nextScheduledAt: earliest === null ? null : new Date(earliest).toISOString(),
     // A partial minimum could fall after a job that was not read, so the caller must not suspend on it.
-    scheduleComplete: !scheduleFailed,
+    scheduleComplete: !scheduleIncomplete,
   };
 }
