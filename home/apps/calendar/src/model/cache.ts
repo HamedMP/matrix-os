@@ -67,7 +67,7 @@ function sortEvents(events: CalendarEvent[]): CalendarEvent[] {
 }
 
 /** True when the event shows in the half-open range in every zone, so a complete reply for it must list it. */
-function certainlyOverlaps(event: CalendarEvent, startMs: number, endMs: number): boolean {
+export function certainlyOverlaps(event: CalendarEvent, startMs: number, endMs: number): boolean {
   const slack = event.allDay ? ALL_DAY_SLACK_MS : 0;
   const eventStart = instantToMs(event.start) + slack;
   const eventEnd = Math.max(instantToMs(event.end), instantToMs(event.start) + 1) - slack;
@@ -197,16 +197,19 @@ export function rangeComplete(cache: EventCache, calendarIds: readonly string[],
   });
 }
 
-/** Drops every entry, or only those of the given calendars. */
-export function invalidate(cache: EventCache, calendarIds?: readonly string[]): EventCache {
-  if (!calendarIds) return emptyCache();
-  const drop = new Set(calendarIds);
+/**
+ * Marks every entry stale, so each range is fetched again when shown. The
+ * entries and their events stay until a newer reply replaces them: a reload
+ * that fails leaves what was shown, and a write that settles meanwhile still
+ * finds the entries it belongs in.
+ */
+export function markStale(cache: EventCache): EventCache {
   const entries: Record<string, EventCacheEntry> = {};
   for (const key of cache.order) {
     const entry = cache.entries[key];
-    if (entry && !drop.has(entry.calendarId)) entries[key] = entry;
+    if (entry) entries[key] = entry.stale ? entry : { ...entry, stale: true };
   }
-  return { entries, order: cache.order.filter((key) => key in entries) };
+  return { entries, order: cache.order };
 }
 
 /**

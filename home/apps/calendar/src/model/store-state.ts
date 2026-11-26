@@ -34,8 +34,14 @@ export interface PendingWrite {
   eventId: string;
   /** What the grid shows meanwhile; null for a delete. */
   optimistic: CalendarEvent | null;
-  /** What to put back if the write fails; null for a create. */
+  /**
+   * What to put back if the write fails; null for a create, or once a read
+   * asked while the write was out no longer listed the event. A read asked
+   * after the write began replaces it with what the provider then held.
+   */
   previous: CalendarEvent | null;
+  /** Sequence number of the read `previous` was last taken from; 0 for the copy cached when the write began. */
+  previousRead: number;
 }
 
 export interface AssistantState {

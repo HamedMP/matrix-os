@@ -14,13 +14,15 @@ import {
   type InviteOptions,
   type RespondOptions,
 } from "../../../_shared/office-accounts/types/calendar";
-import { eventOverlaps, findCachedEvent, replaceEvent, type EventCache } from "./cache";
+import { MAX_EVENTS_PER_ENTRY, certainlyOverlaps, eventOverlaps, findCachedEvent, replaceEvent, type EventCache } from "./cache";
 import { applyEventChanges, eventFromDraft, draftChanges } from "./drafts";
 import type { CalendarConnection, CalendarState, PendingWrite, StoreContext } from "./store-state";
 import { zonedInstant } from "./dates";
 
 export const READ_ONLY_MESSAGE = "This calendar is read-only.";
 export const NOT_FOUND_MESSAGE = "This event is no longer available.";
+/** Shown when a write is asked for an event whose earlier write the provider has not confirmed yet. */
+export const EVENT_SAVING_MESSAGE = "This event is still being saved. Try again when it is done.";
 
 /** At most this many confirmed writes are kept for reads still out; a read that outlives them fails instead of answering. */
 export const MAX_CONFIRMED_WRITES = 200;
@@ -95,11 +97,64 @@ export function withConfirmedWrites(
   return next;
 }
 
+/** One calendar's events in a read reply, with confirmed writes put on top. */
+export interface ReadReply {
+  calendarId: string;
+  startMs: number;
+  endMs: number;
+  events: readonly CalendarEvent[];
+}
+
+/**
+ * Pending writes whose rollback copy is brought up to date by a read. Only a
+ * read asked while a write was out (`askedDuring` holds its write id) shows
+ * the event as the provider held it after the write began, so only such a
+ * read replaces `previous`, and of several the one asked last (`readSeq`)
+ * wins, whatever order they answer in. A complete reply that should list the
+ * event and does not means it is gone, so a failed write does not bring it
+ * back. Creates have nothing to restore.
+ */
+export function rebasePending(
+  pending: PendingWrite[],
+  replies: readonly ReadReply[],
+  readSeq: number,
+  askedDuring: readonly string[],
+): PendingWrite[] {
+  let changed = false;
+  const asked = new Set(askedDuring);
+  const next = pending.map((write) => {
+    if (write.kind === "create" || write.previousRead >= readSeq || !asked.has(write.id)) return write;
+    let found: CalendarEvent | undefined;
+    for (const reply of replies) {
+      found = reply.events.find((event) => event.id === write.eventId);
+      if (found) break;
+    }
+    const gone = !found && write.previous !== null && replies.some((reply) => reply.calendarId === write.previous?.calendarId
+      && reply.events.length <= MAX_EVENTS_PER_ENTRY
+      && certainlyOverlaps(write.previous, reply.startMs, reply.endMs));
+    if (!found && !gone) return write;
+    changed = true;
+    return { ...write, previous: found ?? null, previousRead: readSeq };
+  });
+  return changed ? next : pending;
+}
+
 /** Puts every pending write back on top of the cache, so a reload cannot undo an unconfirmed change. */
 export function reapplyPending(cache: EventCache, pending: readonly PendingWrite[]): EventCache {
   let next = cache;
   for (const write of pending) next = replaceEvent(next, write.eventId, write.optimistic);
   return next;
+}
+
+/**
+ * True, with the reason shown, when the event already has an unconfirmed
+ * write. Writes to one event run one at a time, so a rollback can never put
+ * back a copy older than a later write the provider confirmed.
+ */
+function busyWithWrite(ctx: StoreContext, eventId: string): boolean {
+  if (!ctx.get().pending.some((write) => write.eventId === eventId)) return false;
+  ctx.set((current) => ({ ...current, mutationError: EVENT_SAVING_MESSAGE }));
+  return true;
 }
 
 function connectionForCalendar(ctx: StoreContext, state: CalendarState, calendarId: string, needsWrite: boolean): CalendarConnection | string {
@@ -123,8 +178,10 @@ function settle(ctx: StoreContext, log: WriteLog, write: PendingWrite, outcome: 
   ctx.set((state) => {
     const pending = state.pending.filter((item) => item.id !== write.id);
     if ("error" in outcome) {
-      // Roll back: drop the optimistic event and restore what was there before.
-      const restored = reapplyPending(replaceEvent(state.cache, write.eventId, write.previous), pending);
+      // Roll back: drop the optimistic event and restore the newest copy known
+      // from before it (a read asked meanwhile may have updated it).
+      const previous = (state.pending.find((item) => item.id === write.id) ?? write).previous;
+      const restored = reapplyPending(replaceEvent(state.cache, write.eventId, previous), pending);
       return { ...state, pending, cache: restored, mutationError: outcome.error };
     }
     let cache = replaceEvent(state.cache, write.eventId, outcome.confirmed);
@@ -133,8 +190,12 @@ function settle(ctx: StoreContext, log: WriteLog, write: PendingWrite, outcome: 
   });
 }
 
+/**
+ * A write to an existing event (including saving its edit draft) is refused,
+ * with `EVENT_SAVING_MESSAGE`, while that event has an unconfirmed write.
+ */
 export interface WriteActions {
-  /** Creates the open draft. Returns true once the provider confirms. */
+  /** Creates the open draft, or saves the open edit draft. Returns true once the provider confirms. */
   saveDraft(options: InviteOptions): Promise<boolean>;
   updateEvent(eventId: string, changes: EventChanges, options: InviteOptions): Promise<boolean>;
   /** Moves an event to a new start (drag on the grid), keeping its length. */
@@ -162,7 +223,7 @@ export function createWriteActions(ctx: StoreContext, hooks: { log: WriteLog; on
     }
     const draft = draftState.draft;
     const tempId = ctx.nextId("pending");
-    const write: PendingWrite = { id: ctx.nextId("write"), kind: "create", eventId: tempId, optimistic: eventFromDraft(draft, tempId), previous: null };
+    const write: PendingWrite = { id: ctx.nextId("write"), kind: "create", eventId: tempId, optimistic: eventFromDraft(draft, tempId), previous: null, previousRead: 0 };
     ctx.set((current) => (current.draft ? { ...current, draft: { ...current.draft, status: "saving", error: null } } : current));
     begin(ctx, write);
     try {
@@ -182,6 +243,7 @@ export function createWriteActions(ctx: StoreContext, hooks: { log: WriteLog; on
   }
 
   async function updateExisting(eventId: string, changes: EventChanges, options: InviteOptions): Promise<boolean> {
+    if (busyWithWrite(ctx, eventId)) return false;
     const state = ctx.get();
     const previous = findCachedEvent(state.cache, eventId);
     if (!previous) {
@@ -194,7 +256,7 @@ export function createWriteActions(ctx: StoreContext, hooks: { log: WriteLog; on
       return false;
     }
     if (Object.keys(changes).length === 0) return true;
-    const write: PendingWrite = { id: ctx.nextId("write"), kind: "update", eventId, optimistic: applyEventChanges(previous, changes), previous };
+    const write: PendingWrite = { id: ctx.nextId("write"), kind: "update", eventId, optimistic: applyEventChanges(previous, changes), previous, previousRead: 0 };
     begin(ctx, write);
     try {
       const updated = await connection.provider.updateEvent(eventId, changes, { sendInvites: options.sendInvites === true });
@@ -231,6 +293,7 @@ export function createWriteActions(ctx: StoreContext, hooks: { log: WriteLog; on
     updateEvent: updateExisting,
 
     async moveEvent(eventId, startMs, options) {
+      if (busyWithWrite(ctx, eventId)) return false;
       const event = findCachedEvent(ctx.get().cache, eventId);
       if (!event) {
         ctx.set((current) => ({ ...current, mutationError: NOT_FOUND_MESSAGE }));
@@ -247,6 +310,7 @@ export function createWriteActions(ctx: StoreContext, hooks: { log: WriteLog; on
     },
 
     async deleteEvent(eventId, options) {
+      if (busyWithWrite(ctx, eventId)) return false;
       const state = ctx.get();
       const previous = findCachedEvent(state.cache, eventId);
       if (!previous) {
@@ -258,7 +322,7 @@ export function createWriteActions(ctx: StoreContext, hooks: { log: WriteLog; on
         ctx.set((current) => ({ ...current, mutationError: connection }));
         return false;
       }
-      const write: PendingWrite = { id: ctx.nextId("write"), kind: "delete", eventId, optimistic: null, previous };
+      const write: PendingWrite = { id: ctx.nextId("write"), kind: "delete", eventId, optimistic: null, previous, previousRead: 0 };
       begin(ctx, write);
       try {
         await connection.provider.deleteEvent(eventId, { sendInvites: options.sendInvites === true });
@@ -271,6 +335,7 @@ export function createWriteActions(ctx: StoreContext, hooks: { log: WriteLog; on
     },
 
     async respond(eventId, response, options) {
+      if (busyWithWrite(ctx, eventId)) return false;
       const state = ctx.get();
       const previous = findCachedEvent(state.cache, eventId);
       if (!previous) {
@@ -290,7 +355,7 @@ export function createWriteActions(ctx: StoreContext, hooks: { log: WriteLog; on
         myResponse: response,
         attendees: previous.attendees.map((attendee) => (owner && attendee.address.toLowerCase() === owner ? { ...attendee, response } : attendee)),
       };
-      const write: PendingWrite = { id: ctx.nextId("write"), kind: "respond", eventId, optimistic, previous };
+      const write: PendingWrite = { id: ctx.nextId("write"), kind: "respond", eventId, optimistic, previous, previousRead: 0 };
       begin(ctx, write);
       try {
         await connection.provider.respond(eventId, response, options);

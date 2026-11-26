@@ -15,7 +15,7 @@ import {
   type CalendarInfo,
   type IsoInstant,
 } from "../../../_shared/office-accounts/types/calendar";
-import { cacheKey, eventsInRange, freshEntry, invalidate, putEntry, rangeComplete, touchEntries, type EventCache } from "./cache";
+import { cacheKey, eventsInRange, freshEntry, markStale, putEntry, rangeComplete, touchEntries, type EventCache } from "./cache";
 import { dayKeyAt, isDayKey, resolveTimeZone, type DayKey } from "./dates";
 import {
   DEFAULT_PREFERENCES,
@@ -40,7 +40,16 @@ import {
   type CalendarState,
   type StoreContext,
 } from "./store-state";
-import { createWriteActions, createWriteLog, reapplyPending, withConfirmedWrites, type ConfirmedWrite, type WriteActions } from "./store-writes";
+import {
+  createWriteActions,
+  createWriteLog,
+  reapplyPending,
+  rebasePending,
+  withConfirmedWrites,
+  type ConfirmedWrite,
+  type ReadReply,
+  type WriteActions,
+} from "./store-writes";
 
 export const MAX_SUBSCRIBERS = 64;
 const MS_PER_DAY = 86_400_000;
@@ -74,7 +83,10 @@ export interface CalendarStore extends WriteActions, ScheduleActions {
    * of answering in part, when any calendar cannot be read.
    */
   readEvents(start: IsoInstant, end: IsoInstant): Promise<CalendarEvent[]>;
-  /** Drops the cache and reloads. */
+  /**
+   * Reads the shown range again and marks every other cached range to be read
+   * again when shown. What is cached stays until a newer reply replaces it.
+   */
   refresh(): Promise<void>;
   setView(view: CalendarView): void;
   goToDate(day: DayKey): void;
@@ -131,6 +143,8 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
   const listeners: Array<() => void> = [];
   let idCounter = 0;
   let eventsToken = 0;
+  /** Numbers event reads in the order they are asked. */
+  let readSeq = 0;
   let saveQueue: Promise<void> = Promise.resolve();
   let inflight: { key: string; promise: Promise<void> } | null = null;
 
@@ -210,8 +224,15 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     results: PromiseSettledResult<{ calendarIds: string[]; events: CalendarEvent[] }>[];
     /** When the reply was asked for, so a later reply for an overlapping range wins. */
     askedAt: number;
-    /** Writes confirmed while the read was out; null when too many were to keep track of. */
-    confirmed: ConfirmedWrite[] | null;
+    /**
+     * The write log's mark for this read. It is ended in the same step that
+     * stores the reply, so no write can be confirmed in between and missed.
+     */
+    mark: number;
+    /** This read's place in the order reads were asked. */
+    seq: number;
+    /** Ids of the writes that were out when the read was asked. */
+    askedDuring: string[];
   }
 
   /** One `listEvents` call per account for the given calendars and range. */
@@ -219,6 +240,8 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     const byAccount: Record<string, string[]> = {};
     for (const calendar of calendars) (byAccount[calendar.accountId] ??= []).push(calendar.id);
     const askedAt = now();
+    const seq = ++readSeq;
+    const askedDuring = state.pending.map((write) => write.id);
     const mark = writeLog.beginRead();
     const results = await Promise.allSettled(Object.entries(byAccount).map(async ([accountId, calendarIds]) => {
       const connection = ctx.connectionFor(accountId);
@@ -226,24 +249,40 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
       const events = await connection.provider.listEvents({ calendarIds, start, end });
       return { calendarIds, events };
     }));
-    return { results, askedAt, confirmed: writeLog.endRead(mark) };
+    return { results, askedAt, mark, seq, askedDuring };
   }
 
   /**
-   * The cache with every fulfilled result stored for the range, writes
-   * confirmed meanwhile put on top; the first failure, reported, as a fixed sentence.
-   * The visible calendars' entries for the shown range and for this range are
-   * never evicted to make room.
+   * The state with every fulfilled result stored for the range, writes
+   * confirmed meanwhile put on top, unconfirmed writes put back, and their
+   * rollback copies brought up to date; plus the first failure, reported, as
+   * a fixed sentence. The visible calendars' entries for the shown range and
+   * for this range are never evicted to make room.
    */
-  function storeResults(current: CalendarState, fetched: Fetched, start: IsoInstant, end: IsoInstant, action: string): { cache: EventCache; error: string | null } {
+  function withResults(current: CalendarState, fetched: Fetched, start: IsoInstant, end: IsoInstant, action: string): { state: CalendarState; error: string | null } {
+    // Writes confirmed while the read was out; null when too many were to keep track of.
+    const confirmed = writeLog.endRead(fetched.mark);
+    const stored = storeResults(current, fetched, confirmed, start, end, action);
+    const pending = rebasePending(current.pending, stored.replies, fetched.seq, fetched.askedDuring);
+    return { state: { ...current, pending, cache: reapplyPending(stored.cache, pending) }, error: stored.error };
+  }
+
+  function storeResults(
+    current: CalendarState,
+    fetched: Fetched,
+    confirmed: ConfirmedWrite[] | null,
+    start: IsoInstant,
+    end: IsoInstant,
+    action: string,
+  ): { cache: EventCache; replies: ReadReply[]; error: string | null } {
     const cache = current.cache;
     const keep = [...visibleKeys(current, current.range.start, current.range.end), ...visibleKeys(current, start, end)];
-    const { confirmed } = fetched;
     if (confirmed === null) {
       // The reply may predate writes no longer on record; storing it could undo them.
-      return { cache, error: ctx.report(action, new ProviderError("failed")) };
+      return { cache, replies: [], error: ctx.report(action, new ProviderError("failed")) };
     }
     let error: string | null = null;
+    const replies: ReadReply[] = [];
     let nextCache = cache;
     const startMs = instantToMs(start);
     const endMs = instantToMs(end);
@@ -255,9 +294,10 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
       for (const calendarId of result.value.calendarIds) {
         const events = withConfirmedWrites(result.value.events.filter((event) => event.calendarId === calendarId), confirmed, calendarId, startMs, endMs);
         nextCache = putEntry(nextCache, { calendarId, start, end, events, fetchedAt: fetched.askedAt }, { keep });
+        replies.push({ calendarId, startMs, endMs, events });
       }
     }
-    return { cache: nextCache, error };
+    return { cache: nextCache, replies, error };
   }
 
   async function runLoadEvents(loadOptions: { force?: boolean }): Promise<void> {
@@ -277,10 +317,9 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     ctx.set((current) => ({ ...current, eventsStatus: "loading", eventsError: null, proposals: withoutAssistantProposals(current.proposals) }));
     const fetched = await fetchEvents(missing, range.start, range.end);
     ctx.set((current) => {
-      const stored = storeResults(current, fetched, range.start, range.end, "load events");
-      const nextCache = reapplyPending(stored.cache, current.pending);
-      if (token !== eventsToken) return { ...current, cache: nextCache };
-      return { ...current, cache: nextCache, eventsStatus: stored.error ? "error" : "ready", eventsError: stored.error };
+      const { state: next, error } = withResults(current, fetched, range.start, range.end, "load events");
+      if (token !== eventsToken) return next;
+      return { ...next, eventsStatus: error ? "error" : "ready", eventsError: error };
     });
   }
 
@@ -298,9 +337,9 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
       const fetched = await fetchEvents(missing, start, end);
       let error: string | null = null;
       ctx.set((current) => {
-        const stored = storeResults(current, fetched, start, end, "read events");
-        error = stored.error;
-        return { ...current, cache: reapplyPending(stored.cache, current.pending) };
+        const result = withResults(current, fetched, start, end, "read events");
+        error = result.error;
+        return result.state;
       });
       if (error !== null) throw new ProviderError("failed");
     }
@@ -387,7 +426,7 @@ export function createCalendarStore(options: CalendarStoreOptions): CalendarStor
     readEvents,
 
     async refresh() {
-      ctx.set((current) => ({ ...current, cache: reapplyPending(invalidate(current.cache), current.pending) }));
+      ctx.set((current) => ({ ...current, cache: markStale(current.cache) }));
       await loadEvents({ force: true });
     },
 
