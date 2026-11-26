@@ -411,10 +411,8 @@ describe("desktop integrations settings section", () => {
     await waitFor(() => expect(screen.getByText("GitHub")).not.toBeNull());
     fireEvent.click(screen.getByTestId("integration-connect-gmail"));
 
-    const waiting = await screen.findByRole("status");
-    expect(waiting.textContent).toContain("finish the sign-in in your browser");
-    const actions = screen.getByRole("group", { name: "Sign-in actions", exact: true });
-    fireEvent.click(within(actions).getByRole("button", { name: /I've connected/i }));
+    await waitFor(() => expect(screen.getByText(/waiting for/i)).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /I've connected/i }));
 
     await waitFor(() => expect(screen.getByText("Personal")).not.toBeNull());
     expect(api.post).toHaveBeenCalledWith("/api/integrations/sync", {});

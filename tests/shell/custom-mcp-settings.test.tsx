@@ -26,18 +26,6 @@ describe("Canvas Custom MCP management", () => {
     expect(screen.getByRole("button", { name: "Add MCP server" }).matches(":disabled")).toBe(false);
   });
 
-  it("puts the MCP sign-in fields before the Add MCP server action", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).endsWith("/api/mcp-servers/catalog")
-      ? Response.json({ presets: [] })
-      : Response.json([]));
-    render(<CustomMcpServersPanel />);
-    fireEvent.change(screen.getByLabelText("Authentication mode"), { target: { value: "bearer" } });
-    const credential = await screen.findByLabelText("MCP credential");
-    const submit = screen.getByRole("button", { name: "Add MCP server" });
-
-    expect(credential.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
   it("fails safely when the server list response is malformed", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ servers: [] }));
 

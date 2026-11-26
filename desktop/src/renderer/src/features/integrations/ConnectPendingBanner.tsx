@@ -18,32 +18,26 @@ export function ConnectPendingBanner({
 }) {
   return (
     <div
-      className="mt-4 grid min-w-0 gap-3 rounded-xl border p-4"
+      className="mt-4 flex flex-col gap-2 rounded-xl border p-4"
       style={{ background: "var(--bg-surface)", borderColor: "var(--border-subtle)" }}
     >
-      <div role="status" className="grid gap-2">
-        <div className="flex items-start gap-2">
-          <span className="mt-1.5 flex shrink-0" aria-hidden="true">
-            <StatusDot color="var(--status-waiting)" pulse />
-          </span>
-          <p className="min-w-0 text-sm" style={{ color: "var(--text-primary)" }}>
-            Waiting for {serviceName} to connect — finish the sign-in in your browser.
-          </p>
-        </div>
-        {manualNote ? (
-          <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-            {manualNote}
-          </p>
-        ) : null}
-      </div>
-      <div role="group" aria-label="Sign-in actions" className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" className="min-h-9 max-[520px]:min-h-11" onClick={onConfirm} disabled={manualBusy}>
+      <div className="flex items-center gap-2">
+        <StatusDot color="var(--status-waiting)" pulse />
+        <p className="flex-1 text-sm" style={{ color: "var(--text-primary)" }}>
+          Waiting for {serviceName} to connect — finish the sign-in in your browser.
+        </p>
+        <Button onClick={onConfirm} disabled={manualBusy}>
           {manualBusy ? "Checking..." : "I've connected"}
         </Button>
-        <Button variant="ghost" className="min-h-9 max-[520px]:min-h-11" onClick={onCancel} disabled={manualBusy}>
+        <Button variant="ghost" onClick={onCancel} disabled={manualBusy}>
           Cancel
         </Button>
       </div>
+      {manualNote ? (
+        <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+          {manualNote}
+        </p>
+      ) : null}
     </div>
   );
 }

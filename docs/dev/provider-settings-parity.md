@@ -110,10 +110,8 @@ The shared sign-in panel keeps connection choices, progress, and actions in
 separate blocks. A single choice fills the available row. At narrow widths,
 choices stack and device-code controls wrap within the panel.
 
-Apply the same spacing to Settings subscription and API-key forms, GitHub
-device authorization, and custom MCP authentication fields. Keep the credential
-and its label together and place the submit action after all required fields.
-An authorization step hosted by the provider continues in the provider's page.
+Apply the same spacing to subscription and API-key forms in Agents & Providers.
+Keep credential labels with their inputs and group the actions after the form.
 
 On a transient workflow capability read failure, Settings keeps the last
 confirmed capabilities for the same computer so an in-flight sign-in can

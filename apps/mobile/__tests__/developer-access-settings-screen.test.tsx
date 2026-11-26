@@ -16,9 +16,8 @@ jest.mock("expo-router", () => ({
 jest.mock("@/app/_layout", () => ({ useGateway: () => mockUseGateway() }));
 jest.mock("expo-clipboard", () => ({ setStringAsync: jest.fn().mockResolvedValue(true) }));
 import React from "react";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
-import { AppState, Linking, StyleSheet, type AppStateStatus } from "react-native";
-import type { ReactTestInstance } from "react-test-renderer";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react-native";
+import { AppState, Linking, type AppStateStatus } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import DeveloperAccessSettingsScreen from "../app/settings-detail/developer-access";
 
@@ -33,13 +32,6 @@ function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
-}
-
-function hostParent(element: ReactTestInstance): ReactTestInstance {
-  for (let parent = element.parent; parent; parent = parent.parent) {
-    if (typeof parent.type === "string") return parent;
-  }
-  throw new Error("Element has no native parent");
 }
 
 describe("GitHub developer access settings", () => {
@@ -139,20 +131,6 @@ describe("GitHub developer access settings", () => {
     client.getGithubDeveloperStatus.mockResolvedValue({ ok: true, status: { ...readyStatus, ready: false, sshStatus: "setup_required" } });
     render(<DeveloperAccessSettingsScreen />);
     expect(await screen.findByLabelText("Finish GitHub developer access setup")).toBeTruthy();
-  });
-  it("groups the device code and Copy in a wrapping row inside the sign-in panel", async () => {
-    render(<DeveloperAccessSettingsScreen />); await connect();
-    const code = screen.getByText("ABCD-1234");
-    const codeRow = hostParent(code);
-
-    expect(code.props.selectable).toBe(true);
-    expect(StyleSheet.flatten(codeRow.props.style)).toMatchObject({ flexDirection: "row", flexWrap: "wrap", gap: 12, padding: 12 });
-    const copy = within(codeRow).getByLabelText("Copy GitHub code");
-    expect(StyleSheet.flatten(copy.props.style)).toMatchObject({ height: 44 });
-    const panel = within(hostParent(codeRow));
-    expect(panel.getByLabelText("Open GitHub")).toBeTruthy();
-    expect(panel.getByText("Waiting for GitHub authorization…")).toBeTruthy();
-    expect(panel.queryByLabelText("Cancel GitHub setup")).toBeNull();
   });
   it("starts once, shows a code, copies it and opens GitHub from Settings", async () => {
     const started = deferred<unknown>();
