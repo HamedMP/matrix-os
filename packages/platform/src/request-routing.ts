@@ -3,6 +3,7 @@ import { slackLinkReturnTarget } from "./slack/link-return.js";
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 
 export const PLATFORM_SHELL_ASSET_PREFIX = '/__platform-shell';
+const PLATFORM_SHELL_DEPLOYMENT_PREFIX = `${PLATFORM_SHELL_ASSET_PREFIX.slice(1)}-`;
 const MAX_SIGNUP_BILLING_HANDOFF_URL_LENGTH = 4_096;
 
 const PLATFORM_SHELL_PUBLIC_ASSET_PATHS = [
@@ -243,6 +244,14 @@ function isRuntimeDataPath(path: string): boolean {
   );
 }
 
+function isAuthShellPagePath(path: string): boolean {
+  return !isRuntimeDataPath(path) &&
+    !path.startsWith('/vps') &&
+    !path.startsWith('/internal/') &&
+    !path.startsWith('/billing/') &&
+    path !== '/metrics';
+}
+
 export function shouldProxyShellForBillingGate(input: {
   isAppDomain: boolean;
   method: string;
@@ -269,12 +278,23 @@ export function shouldProxyAuthShellForUnroutedUser(input: {
         input.path === '/sign-in' || input.path.startsWith('/sign-in/')
         || input.path === '/sign-up' || input.path.startsWith('/sign-up/')
       ))) &&
-    !isRuntimeDataPath(input.path) &&
-    !input.path.startsWith('/vps') &&
-    !input.path.startsWith('/internal/') &&
-    !input.path.startsWith('/billing/') &&
-    input.path !== '/metrics'
+    isAuthShellPagePath(input.path)
   );
+}
+
+/** Next sends its build's deployment ID on actions. The auth shell still authenticates the request. */
+export function isPlatformShellServerAction(input: {
+  method: string;
+  path: string;
+  actionId?: string;
+  deploymentId?: string;
+}): boolean {
+  const { path } = input;
+  return input.method === 'POST'
+    && Boolean(input.actionId)
+    && input.deploymentId?.startsWith(PLATFORM_SHELL_DEPLOYMENT_PREFIX) === true
+    && isAuthShellPagePath(path)
+    && !/^\/(?:vm|gateway|api|files|icons|modules)(?:\/|$)/.test(path);
 }
 
 export function buildBillingSetupPath(rawUrl: string, runtimeSlot?: string): string {

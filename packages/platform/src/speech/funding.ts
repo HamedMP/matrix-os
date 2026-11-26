@@ -7,7 +7,7 @@ import type { Transaction } from "kysely";
 import { sql } from "kysely";
 import { z } from "zod/v4";
 import type { PlatformDatabase } from "../db.js";
-import { recordUsageFunding } from "../ai-funded-metering-helpers.js";
+import { advanceMonthWindow, recordUsageFunding } from "../ai-funded-metering-helpers.js";
 import { AiFundedPolicyError } from "../ai-funded-policy-errors.js";
 import {
   debitAttributedPromotionalGrants,
@@ -226,9 +226,7 @@ export function createAiFundedSpeechFundingPort(options: {
           .where("runtime_slot", "=", input.identity.runtimeSlot)
           .forUpdate().executeTakeFirst()
         : await trx.updateTable("ai_funded_runtime_balances").set({
-          month_period_start: periodStart,
-          month_spent_microusd: sql<number>`CASE WHEN month_period_start = ${periodStart} THEN month_spent_microusd ELSE 0 END`,
-          month_reserved_microusd: sql<number>`CASE WHEN month_period_start = ${periodStart} THEN month_reserved_microusd ELSE 0 END`,
+          ...advanceMonthWindow(periodStart),
           updated_at: checkedAt,
         }).where("machine_id", "=", input.identity.machineId)
           .where("owner_id", "=", input.identity.ownerId)
@@ -239,6 +237,7 @@ export function createAiFundedSpeechFundingPort(options: {
         allowance?.monthly_budget_microusd ?? runtime?.monthly_budget_microusd,
       );
       const reserved = reset;
+      const reservationPeriod = allowance?.period_start ?? reserved.month_period_start;
       const availability = await fundingSourceAvailability(trx, input.identity, reserved, checkedAt, sourcePolicy);
       if (Math.min(availability.availableMicrousd, exactInteger(reserved.credit_balance_microusd)
         - exactInteger(reserved.reserved_microusd) - exactInteger(reserved.funding_shortfall_microusd)) <= 0
@@ -253,7 +252,7 @@ export function createAiFundedSpeechFundingPort(options: {
           .where("owner_id", "=", input.identity.ownerId)
           .where("runtime_slot", "=", input.identity.runtimeSlot)
           .where("enabled", "=", true)
-          .where("period_start", "=", periodStart)
+          .where("period_start", "=", reservationPeriod)
           .where(sql<boolean>`${monthlyBudget} - period_spent_microusd - period_reserved_microusd >= ${input.maximumCostMicrousd}`)
           .returning("machine_id").executeTakeFirst();
         if (!speechReserved) throw new SpeechFundingError("allowance_exhausted");
@@ -270,7 +269,7 @@ export function createAiFundedSpeechFundingPort(options: {
           ...(allowance ? { fundingPolicy: "speech_monthly_v1" } : {}),
           reservation: { billingMode: "usage", billingPolicy: "postpaid", reservedMicrousd: 0, maxCostMicrousd: input.maximumCostMicrousd },
           allowanceReservedMicrousd: allowance ? input.maximumCostMicrousd : 0,
-          allowancePeriodStart: allowance ? periodStart : null,
+          allowancePeriodStart: allowance ? reservationPeriod : null,
         }),
         settlement_response: null,
         finalization_mode: null,
@@ -286,7 +285,8 @@ export function createAiFundedSpeechFundingPort(options: {
         promotional_reserved_microusd: 0,
         addon_reserved_microusd: 0,
         actual_microusd: null,
-        period_start: periodStart,
+        // The committed allowance or runtime window can be newer than this clock.
+        period_start: reservationPeriod,
         status: "reserved",
         created_at: checkedAt,
         started_at: null,

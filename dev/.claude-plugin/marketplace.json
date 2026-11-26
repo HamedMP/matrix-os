@@ -5,7 +5,11 @@
   "plugins": [
     {
       "name": "matrix-dev",
-      "source": "./matrix-dev",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/HamedMP/matrix-os.git",
+        "path": "dev/matrix-dev"
+      },
       "description": "Matrix OS engineering workflow: PR loop, stack reviews, releases, daily updates, and chat wrap-up",
       "category": "development"
     }
