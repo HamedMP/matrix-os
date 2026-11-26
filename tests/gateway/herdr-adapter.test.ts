@@ -9,8 +9,8 @@ import { createFakeHerdrCore } from "./fixtures/fake-herdr-core-server.js";
 const adapters: HerdrAdapter[] = [];
 afterEach(async () => { await Promise.all(adapters.splice(0).map((adapter) => adapter.close())); });
 
-function setup(options: { version?: string; open?: () => Promise<never> } = {}) {
-  const core = createFakeHerdrCore({ version: options.version });
+function setup(options: { version?: string; open?: () => Promise<never>; machines?: unknown[] } = {}) {
+  const core = createFakeHerdrCore({ version: options.version, machines: options.machines });
   let clock = 1_000_000;
   const adapter = createHerdrAdapter({
     open: options.open ?? (async () => core.connect()),
@@ -41,6 +41,30 @@ describe("herdr adapter discovery", () => {
         { id: "t2", tabId: herdrTabId("t2"), title: "build", status: null },
       ],
     });
+  });
+
+  it("groups current terminals by the connected machine without exposing a remote as a local target", async () => {
+    const { core, adapter } = setup({ machines: [
+      { name: "mac", state: "connected", target: "private ssh address" },
+      { name: "other", state: "connecting" }, { name: "empty", state: "connected" },
+    ] });
+    core.add("t1", { title: "preview build" });
+    core.add("mac/t1", { title: "desktop build", identity: { cwd: "/private", created_ms: 2, pid: 3 } });
+    core.add("other/t2");
+    core.add("unknown/t2");
+
+    expect(await adapter.discoverTerminals()).toEqual({ machines: [
+      { id: "gateway", name: "Current Matrix computer", online: true, terminals: [
+        { id: "t1", title: "preview build", status: null },
+      ] },
+      { id: "herdr:mac", name: "mac", online: true, terminals: [
+        { id: "t1", title: "desktop build", status: null },
+      ] },
+      { id: "herdr:other", name: "other", online: false, terminals: [] },
+      { id: "herdr:empty", name: "empty", online: true, terminals: [] },
+    ] });
+    expect((await adapter.listForChatControl()).sessions.map(s => s.id)).toEqual(["t1"]);
+    expect(core.calls.every(call => call.method === "terminal.list")).toBe(true);
   });
 
   it("caches a listing for two seconds, then asks the core again", async () => {

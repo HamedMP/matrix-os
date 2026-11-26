@@ -37,6 +37,19 @@ const ListedTerminalSchema = z.object({
   labels: z.record(z.string(), z.string()).nullable().optional().catch(null),
   argv: z.array(z.string()).max(4_096).nullable().optional().catch(null),
 });
+// terminal.list includes remote lines and machine presence in the same snapshot.
+const DiscoverySchema = ListedSchema.extend({ machines: z.array(z.unknown()).max(1_000).optional() });
+const DiscoveryTerminalSchema = ListedTerminalSchema.extend({ address: z.string().regex(LOCAL_TERMINAL_ADDRESS_PATTERN) });
+const MachinePresenceSchema = z.object({
+  name: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,31}$/), state: z.string().max(32),
+});
+export interface DiscoveredMachine {
+  id: string;
+  name: string;
+  online: boolean;
+  terminals: Array<Pick<LocalTerminal, "id" | "title" | "status">>;
+}
+
 /** The label `hc run --label where=…` sets; Herdr shows it as the terminal's place. */
 const WHERE_LABEL = "where";
 /** The label a rename sets; it wins over the program's own title. */
@@ -61,6 +74,35 @@ export function safeTerminalTitle(...candidates: Array<string | null | undefined
     if (title) return title;
   }
   return "Terminal";
+}
+
+function terminalTitle(terminal: z.infer<typeof ListedTerminalSchema>): string {
+  return safeTerminalTitle(terminal.labels?.[TERMINAL_TITLE_LABEL], terminal.title, terminal.name,
+    terminal.labels?.[WHERE_LABEL], programName(terminal.argv?.[0]));
+}
+
+/** Discovery does not add addresses to any local control or attachment registry. */
+export function discoverHerdrMachines(reply: unknown): { machines: DiscoveredMachine[] } {
+  const snapshot = DiscoverySchema.parse(reply);
+  const local: DiscoveredMachine = { id: "gateway", name: "Current Matrix computer", online: true, terminals: [] };
+  const remotes = new Map<string, DiscoveredMachine>();
+  for (const raw of snapshot.machines ?? []) {
+    const machine = MachinePresenceSchema.safeParse(raw);
+    if (!machine.success) continue;
+    const { name, state } = machine.data;
+    remotes.set(name, { id: `herdr:${name}`, name, online: state === "connected", terminals: [] });
+  }
+  for (const raw of snapshot.terminals) {
+    const row = DiscoveryTerminalSchema.safeParse(raw);
+    if (!row.success || row.data.state !== "live") continue;
+    const address = row.data.address;
+    const separator = address.indexOf("/");
+    const machine = separator < 0 ? local : remotes.get(address.slice(0, separator));
+    if (!machine?.online) continue;
+    const status = LocalTerminalStatusSchema.safeParse(row.data.status?.state);
+    machine.terminals.push({ id: address.slice(separator + 1), title: terminalTitle(row.data), status: status.success ? status.data : null });
+  }
+  return { machines: [local, ...remotes.values()] };
 }
 
 /**
@@ -166,10 +208,7 @@ export function createHcSessions(options: {
         id: terminal.data.address,
         // Terminals started from Herdr often carry no title of their own; its
         // where label, then the program's name, tell them apart.
-        title: safeTerminalTitle(
-          terminal.data.labels?.[TERMINAL_TITLE_LABEL], terminal.data.title, terminal.data.name,
-          terminal.data.labels?.[WHERE_LABEL], programName(terminal.data.argv?.[0]),
-        ),
+        title: terminalTitle(terminal.data),
         status: state.success ? state.data : null,
         ...(state.success && terminal.data.status?.msg ? { statusMessage: safeStatusMessage(terminal.data.status.msg) } : {}),
       }, ...(identity.success ? { identity: identity.data } : {}) });

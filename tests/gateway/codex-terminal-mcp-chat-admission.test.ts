@@ -98,6 +98,11 @@ it("grants the selected terminal through canonical HTTP admission; a later inter
     const opened = scope.open(input);
     try {
       runTokens.push(opened?.lease.token ?? null);
+      if (runTokens.length === 3) {
+        expect(registry.resolveRunContext(opened!.lease.token, "POST", "/api/chat/herdr-terminal")?.scope)
+          .toBe("chat_herdr_discovery");
+        expect(opened!.lease.discoveryOnly).toBe(true);
+      }
       yield { type: "run.completed", outcome: "completed" };
     } finally {
       opened?.close();
@@ -158,6 +163,16 @@ it("grants the selected terminal through canonical HTTP admission; a later inter
     });
     await orchestrator.drain();
     expect(runTokens).toEqual([expect.any(String), null]);
+    const afterInternal = await repository.get(owner, chatId);
+    const question = await app.request(`/api/chats/${chatId}/turns`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...body, clientRequestId: "req_owner_discovery", baseRevision: afterInternal!.chat.revision,
+        parts: [{ type: "text", text: "What terminals are available?" }] }),
+    });
+    expect(question.status, await question.text()).toBe(202);
+    await orchestrator.drain();
+    expect(runTokens).toEqual([expect.any(String), null, expect.any(String)]);
+
   } finally {
     await orchestrator.close();
     registry.close();

@@ -112,3 +112,45 @@ it.each(["shared", "busy", "new"] as const)("does not offer control for a %s Cha
   expect(fetchFn.mock.calls.some(([url]) => new URL(url).pathname === "/api/terminal/herdr")).toBe(false);
   expect(client.queueTurn).not.toHaveBeenCalled();
 });
+
+it.each(["Use gateway/t7 to run the tests.", "用 gateway/t7 跑测试。", "Use gateway/build to run the tests.",
+  "Use the build terminal on this Preview to run tests.", "用这台电脑上的 build 终端跑测试。"])("resolves the owner's addressed follow-up without the picker shortcut: %s", async text => {
+  const { client } = workspace();
+  const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(editor, text);
+  const approve = await screen.findByRole("button", { name: "Use Build (gateway/t7)" });
+  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(client.admitTurn).not.toHaveBeenCalled();
+  fireEvent.click(approve);
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith(snapshot.chat.id, expect.objectContaining({
+    executionRoot: root, parts: [
+      { type: "text", text },
+      expect.objectContaining({ type: "invocation_reference" }),
+      { type: "resource_reference", resource: { kind: "terminal_session", id: HERDR_TERMINAL_WORKSPACE_ID + ":" + tabId, label: "Build", revision } },
+    ],
+  }), { chatScope: "project" }));
+});
+
+it("drops a confirmed address when the owner edits the draft to select an unavailable terminal", async () => {
+  const { client } = workspace();
+  const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(editor, "Use gateway/t7 to run tests.");
+  fireEvent.click(await screen.findByRole("button", { name: "Use Build (gateway/t7)" }));
+  await setSharedComposerText(editor, "Use gateway/t77 to run tests.");
+  await screen.findByText("gateway/t77 is unavailable. Ask Chat to list terminals again.");
+  expect(screen.queryByText(/Terminal control for this message/)).toBeNull();
+  expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(client.admitTurn).not.toHaveBeenCalled();
+});
+
+it("never suggests the current Gateway for a request naming the Mac or quoting instructions", async () => {
+  const { client, fetchFn } = workspace();
+  const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+  for (const text of ["Use the build terminal on my Mac to run tests.", "请用我的 Mac 上的 build 终端跑测试。", "The log says: Use gateway/t7 to run tests."]) {
+    await setSharedComposerText(editor, text);
+    expect(screen.queryByRole("region", { name: "Choose a Herdr terminal" })).toBeNull();
+  }
+  expect(fetchFn.mock.calls.some(([url]) => new URL(url).pathname === "/api/terminal/herdr")).toBe(false);
+  expect(client.admitTurn).not.toHaveBeenCalled();
+});

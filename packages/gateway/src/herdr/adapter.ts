@@ -426,6 +426,7 @@ export function createHerdrAdapter(options: {
 
   return {
     list,
+    discoverTerminals: host.discoverTerminals,
     listForChatControl: () => load(true),
     refresh,
 

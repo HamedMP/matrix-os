@@ -27,7 +27,7 @@ export interface IntegrationsMcpServerOptions {
   toolSurface?: IntegrationsMcpToolSurface;
 }
 
-export const IntegrationsMcpToolSurfaceSchema = z.enum(["chat-herdr", "full", "custom-mcp-call", "custom-mcp-discovery", "chat-call", "chat-discovery", "preview-drive-call", "jev-inbox-preview", "custom-mcp-call-drive", "custom-mcp-discovery-drive", "chat-call-drive", "chat-discovery-drive", "custom-mcp-call-integrations", "custom-mcp-discovery-integrations", "custom-mcp-call-integrations-drive", "custom-mcp-discovery-integrations-drive"]);
+export const IntegrationsMcpToolSurfaceSchema = z.enum(["chat-herdr-discovery", "chat-herdr", "full", "custom-mcp-call", "custom-mcp-discovery", "chat-call", "chat-discovery", "preview-drive-call", "jev-inbox-preview", "custom-mcp-call-drive", "custom-mcp-discovery-drive", "chat-call-drive", "chat-discovery-drive", "custom-mcp-call-integrations", "custom-mcp-discovery-integrations", "custom-mcp-call-integrations-drive", "custom-mcp-discovery-integrations-drive"]);
 export type IntegrationsMcpToolSurface = z.infer<typeof IntegrationsMcpToolSurfaceSchema>;
 
 const serviceSchema = z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/);
@@ -51,9 +51,10 @@ export function createIntegrationsMcpServer(
 ): McpServer {
   const fetcher = options.fetcher;
   const surface = IntegrationsMcpToolSurfaceSchema.parse(options.toolSurface ?? "full");
-  if (surface === "chat-herdr") {
-    const server = new McpServer({ name: "matrix-herdr", version: "1.0.0" }, { instructions: HERDR_TOOL_INSTRUCTIONS });
-    registerHerdrTerminalTools(server, fetcher);
+  if (surface === "chat-herdr" || surface === "chat-herdr-discovery") {
+    const discoveryOnly = surface === "chat-herdr-discovery";
+    const server = new McpServer({ name: "matrix-herdr", version: "1.0.0" }, { instructions: discoveryOnly ? "Use terminal_discover for computer and terminal questions. Summarize counts; expand only as requested." : HERDR_TOOL_INSTRUCTIONS });
+    registerHerdrTerminalTools(server, fetcher, discoveryOnly);
     return server;
   }
   const full = surface === "full";

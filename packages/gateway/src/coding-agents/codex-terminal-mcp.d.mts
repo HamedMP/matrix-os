@@ -1,13 +1,16 @@
 import type { z } from "zod/v4";
 export const CODEX_TERMINAL_MCP_TOOLS: string[];
 export const CODEX_TERMINAL_MCP_INSTRUCTIONS: string;
+export const CODEX_DISCOVERY_INSTRUCTIONS: string;
 export const CodexTerminalMcpLeaseSchema: z.ZodObject<{
+  discoveryOnly: z.ZodOptional<z.ZodLiteral<true>>;
   attemptId: z.ZodString;
   token: z.ZodString;
   gatewayPort: z.ZodNumber;
   launcher: z.ZodLiteral<"/opt/matrix/bin/matrix-integrations-mcp">;
 }>;
 export const CodexTerminalMcpBindSchema: z.ZodObject<{
+  discoveryOnly: z.ZodOptional<z.ZodLiteral<true>>;
   attemptId: z.ZodString;
   token: z.ZodString;
   gatewayPort: z.ZodNumber;

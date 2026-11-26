@@ -25,3 +25,31 @@ it("requires the owner to choose a versioned session before granting control for
     { type: "resource_reference", resource: { kind: "terminal_session", id: HERDR_TERMINAL_WORKSPACE_ID + ":" + tabId, revision, label: "Local tests" } },
   ]);
 });
+
+it("hides the previous owner's match immediately when the selection inventory changes", async () => {
+  const pick = vi.fn();
+  const first = async () => new Response(JSON.stringify({ available: true, status: "ready", sessions: [
+    { id: "t1", tabId, revision, title: "Local tests", status: "idle" },
+  ] }));
+  const { rerender } = render(<HerdrControlPicker requestedTarget="t1" request={first} onSelect={pick} onCancel={() => {}} />);
+  await screen.findByRole("button", { name: "Use Local tests (gateway/t1)" });
+  rerender(<HerdrControlPicker requestedTarget="t1" request={async () => new Response(null, { status: 403 })}
+    onSelect={pick} onCancel={() => {}} />);
+  expect(screen.queryByRole("button", { name: "Use Local tests (gateway/t1)" })).toBeNull();
+  await screen.findByText("gateway/t1 is unavailable. Ask Chat to list terminals again.");
+  expect(pick).not.toHaveBeenCalled();
+});
+
+it("asks which exact terminal to attach when two live targets share a requested name", async () => {
+  const pick = vi.fn();
+  const request = async () => new Response(JSON.stringify({ available: true, status: "ready", sessions: [
+    { id: "t4", title: "Build", tabId, revision, status: "idle" },
+    { id: "t9", title: "Build", tabId: "tt_" + "2".repeat(32), revision: "f".repeat(64), status: "working" },
+  ] }));
+  render(<HerdrControlPicker requestedTarget="build" request={request} onSelect={pick} onCancel={() => {}} />);
+  const second = await screen.findByRole("button", { name: "Use Build (gateway/t9)" });
+  expect(screen.getByRole("button", { name: "Use Build (gateway/t4)" })).toBeTruthy();
+  expect(pick).not.toHaveBeenCalled();
+  fireEvent.click(second);
+  expect(pick).toHaveBeenCalledWith(expect.objectContaining({ revision: "f".repeat(64) }), "t9");
+});

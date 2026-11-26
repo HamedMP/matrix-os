@@ -55,3 +55,10 @@ export function isHerdrTerminalRef(ref: { workspaceId: string } | null | undefin
 export function shouldShowHerdrSessions(list: HerdrSessionList | null | undefined): boolean {
   return list?.available === true && list.sessions.length > 0;
 }
+
+/** Read-only owner Chat discovery; a machine ID is never permission to execute. */
+export const HerdrDiscoveryQuerySchema = z.strictObject({
+  machine: z.string().regex(/^(?:gateway|herdr:[a-z0-9_.-]{1,32})$/).optional(),
+  query: z.string().trim().min(1).max(100).optional(),
+  offset: z.number().int().min(0).max(4096).optional(),
+});

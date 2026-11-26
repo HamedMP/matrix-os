@@ -19,7 +19,7 @@ type FakeSocket = EventEmitter & HcSocket & { destroyed: boolean };
  * A stateful in-memory herdr-core speaking the documented protocol over any
  * number of connections: handshake, terminal.list|attach|kill, stream frames.
  */
-export function createFakeHerdrCore(options: { version?: string; methods?: string[]; features?: string[] } = {}) {
+export function createFakeHerdrCore(options: { version?: string; methods?: string[]; features?: string[]; machines?: unknown[] } = {}) {
   const terminals = new Map<string, FakeTerminal>();
   const viewers: Viewer[] = [];
   const sockets: FakeSocket[] = [];
@@ -37,7 +37,7 @@ export function createFakeHerdrCore(options: { version?: string; methods?: strin
     calls.push({ method: call.method, params: call.params });
     if (call.method === "terminal.list") {
       if (listFailure) { reply(socket, call.id, { error: { code: -1, message: "x", data: { kind: listFailure } } }); return; }
-      reply(socket, call.id, { result: { terminals: [...terminals.entries()].map(([address, terminal]) => ({
+      reply(socket, call.id, { result: { machines: options.machines, terminals: [...terminals.entries()].map(([address, terminal]) => ({
         address, state: "live", title: terminal.title, status: terminal.status, ...terminal.identity,
       })) } });
       return;

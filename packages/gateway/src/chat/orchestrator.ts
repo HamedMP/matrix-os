@@ -649,6 +649,7 @@ export class CanonicalChatOrchestrator {
         }),
         parts: message.parts,
         ...(run.ownerSubmittedHerdrTurn ? { ownerSubmittedHerdrTurn: true as const } : {}),
+        ...(run.ownerSubmittedHerdrDiscovery ? { ownerSubmittedHerdrDiscovery: true as const } : {}),
         selection: run.selection,
         interactionMode: run.interactionMode,
         permissionMode: run.permissionMode,

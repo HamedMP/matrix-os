@@ -1,3 +1,4 @@
+import { discoverChatTerminals, HerdrDiscoveryActionSchema } from "./herdr-discovery.js";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -14,7 +15,7 @@ const Action = z.discriminatedUnion("action", [
 ]);
 
 export function createHerdrChatTerminalRoute(
-  adapter: Pick<HerdrAdapter, "bindChatTerminal"> | null, inputActivity: TerminalInputActivity,
+  adapter: Pick<HerdrAdapter, "bindChatTerminal"> & Partial<Pick<HerdrAdapter, "discoverTerminals">> | null, inputActivity: TerminalInputActivity,
 ) {
   const app = new Hono();
   // A revocable run grant owns its single binding; simultaneous tool calls share the admission.
@@ -23,13 +24,27 @@ export function createHerdrChatTerminalRoute(
     c.header("Cache-Control", "no-store");
     const run = c.get(MATRIX_MCP_RUN_CONTEXT_KEY as never) as MatrixMcpRunContext | undefined;
     const target = run?.herdr;
-    if (run?.scope !== "chat_herdr" || !target || target.signal.aborted) return c.json({ error: "forbidden" }, 403);
+    const discovery = run?.scope === "chat_herdr_discovery";
+    if (!discovery && (run?.scope !== "chat_herdr" || !target || target.signal.aborted)) return c.json({ error: "forbidden" }, 403);
     if (!adapter) return c.json({ error: "terminal_unavailable" }, 503);
     if (new URL(c.req.url).search || c.req.header("content-type")?.split(";")[0] !== "application/json") {
       return c.json({ error: "invalid_request" }, 400);
     }
     try {
-      const parsed = Action.safeParse(await c.req.json());
+      const body = await c.req.json();
+      if (discovery) {
+        if (body?.action !== "discover") return c.json({ error: "forbidden" }, 403);
+        const parsed = HerdrDiscoveryActionSchema.safeParse(body);
+        if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
+        if (!adapter.discoverTerminals) return c.json({ error: "terminal_unavailable" }, 503);
+        const signal = run.herdrDiscoverySignal;
+        if (!signal || signal.aborted) return c.json({ error: "forbidden" }, 403);
+        const result = await discoverChatTerminals({ discoverTerminals: adapter.discoverTerminals }, parsed.data);
+        if (signal.aborted) return c.json({ error: "forbidden" }, 403);
+        return c.json(result);
+      }
+      if (!target || !run) return c.json({ error: "forbidden" }, 403);
+      const parsed = Action.safeParse(body);
       if (!parsed.success) return c.json({ error: "invalid_request" }, 400);
       const action = parsed.data;
       let binding = bindings.get(target.signal);
@@ -57,7 +72,7 @@ export function createHerdrChatTerminalRoute(
       if (error instanceof SyntaxError || error instanceof z.ZodError) return c.json({ error: "invalid_request" }, 400);
       if (error instanceof TerminalAgentVerbError && error.code === "blocked") return c.json({ error: "user_input_required" }, 409);
       console.warn("[chat-herdr] Terminal operation unavailable", error instanceof Error ? error.name : "unknown_error");
-      return c.json({ error: "terminal_unavailable" }, 409);
+      return c.json({ error: "terminal_unavailable" }, discovery ? 503 : 409);
     }
   });
   return app;

@@ -672,7 +672,8 @@ export function createCanonicalChatRoutes(options: {
       if (!parsed.success) return validationError(context);
       const principal = options.getPrincipal(context);
       const herdrSelected = Boolean(selectedHerdrTerminal(parsed.data.parts));
-      if (herdrSelected && !hasDirectHerdrOwner(context, principal)) {
+      const directOwner = hasDirectHerdrOwner(context, principal);
+      if (herdrSelected && !directOwner) {
         return context.json({ error: { code: "authorization_failed", safeMessage: "Terminal control requires a verified owner request.", retryable: false } }, 403);
       }
       const result = await options.service.admitTurn(
@@ -680,7 +681,7 @@ export function createCanonicalChatRoutes(options: {
         ownerFromPrincipal(principal),
         chatId,
         parsed.data,
-        { ...(herdrSelected ? { directOwnerTurn: true as const } : {}),
+        { ...(directOwner ? { directOwnerTurn: true as const } : {}),
           routineCreationProof: context.req.header(ROUTINE_CREATION_PROOF_HEADER),
           previewTurnProof: context.req.header("x-matrix-preview-drive-turn-proof"),
           routineFullAccessProof: context.req.header(ROUTINE_FULL_ACCESS_PROOF_HEADER) },

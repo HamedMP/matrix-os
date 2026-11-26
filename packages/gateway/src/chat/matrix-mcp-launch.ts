@@ -36,7 +36,7 @@ export const MATRIX_COMPANY_DRIVE_TOOLS = [
   "mcp__matrix-integrations__read_company_drive_file",
 ] as const;
 
-export type MatrixMcpRunScope = "chat_herdr" | "discovery" | "call" | "integration_read" | "chat_call" | "chat_discovery" | "preview_drive_call";
+export type MatrixMcpRunScope = "chat_herdr_discovery" | "chat_herdr" | "discovery" | "call" | "integration_read" | "chat_call" | "chat_discovery" | "preview_drive_call";
 
 export interface PreviewDriveRunContext {
   chatId: string; runId: string; runGrant: string;
@@ -47,6 +47,7 @@ export interface MatrixMcpRunContext {
   actorId: string;
   runId: string;
   scope: MatrixMcpRunScope;
+  herdrDiscoverySignal?: AbortSignal;
   herdr?: HerdrChatTarget & { signal: AbortSignal };
   consumeIntegrationRequest?: ReturnType<typeof createIntegrationToolAuthority>["consumeIntegrationRequest"];
   previewDrive?: PreviewDriveRunContext;
@@ -168,7 +169,7 @@ function digest(token: string): string {
 }
 
 function permitted(method: string, path: string, scope: MatrixMcpRunScope, integrationRead = false): boolean {
-  if (scope === "chat_herdr") return method === "POST" && path === HERDR_CHAT_ROUTE;
+  if (scope === "chat_herdr" || scope === "chat_herdr_discovery") return method === "POST" && path === HERDR_CHAT_ROUTE;
   if (integrationRead && ((method === "GET" && (path === "/api/integrations" || path === "/api/integrations/agent-catalog"))
     || (method === "POST" && path === "/api/integrations/read-call"))) return true;
   if (scope === "preview_drive_call") return (method === "GET" && (path === "/api/integrations" || path === "/api/integrations/agent-catalog"))
@@ -193,10 +194,11 @@ export function createMatrixMcpCapabilityRegistry(options: {
   configuredOwnerId?: string;
   previewRuntime?: boolean;
   privatePreviewHerdrOwner?: string | null;
+  herdrDiscoveryAvailable?: boolean;
   now?: () => number;
 }): MatrixMcpCapabilityRegistry {
   const active = new Map<string, { actorId: string; runId: string; scope: MatrixMcpRunScope; driveContext?: boolean; integrationRead?: boolean; expiresAt: number;
-    herdr?: MatrixMcpRunContext["herdr"];
+    herdr?: MatrixMcpRunContext["herdr"]; herdrDiscoverySignal?: AbortSignal;
     authority?: ReturnType<typeof createIntegrationToolAuthority>; previewDrive?: PreviewDriveRunContext;
     onRevoke?: () => void }>();
   const previewRuns = new Map<string, { actorId: string; chatId: string; runGrant: string; expiresAt: number;
@@ -223,6 +225,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
         && (path === "/api/chat-drive-context/search" || path === "/api/chat-drive-context/read")))
       ? { actorId: grant.actorId, runId: grant.runId, scope: grant.scope,
         ...(grant.herdr ? { herdr: grant.herdr } : {}),
+        ...(grant.herdrDiscoverySignal ? { herdrDiscoverySignal: grant.herdrDiscoverySignal } : {}),
         ...(grant.driveContext ? { driveContext: true } : {}),
         ...(grant.integrationRead ? { integrationRead: true } : {}),
         ...(grant.authority && !grant.previewDrive ? { consumeIntegrationRequest: grant.authority.consumeIntegrationRequest } : {}),
@@ -260,13 +263,14 @@ export function createMatrixMcpCapabilityRegistry(options: {
         || (input.integrationRead !== undefined && typeof input.integrationRead !== "boolean")
         || (input.integrationRead === true && !["call", "discovery", "integration_read"].includes(input.scope))) return null;
       sweep();
-      if (input.scope === "chat_herdr") {
+      if (input.scope === "chat_herdr" || input.scope === "chat_herdr_discovery") {
+        if (input.scope === "chat_herdr_discovery" && options.herdrDiscoveryAvailable === false) return null;
         const preview = options.previewRuntime || options.privatePreviewHerdrOwner !== undefined;
-        if ((preview && options.privatePreviewHerdrOwner !== input.owner.ownerId) || !input.fullAccess || input.driveContext || input.integrationRead
+        if ((preview && options.privatePreviewHerdrOwner !== input.owner.ownerId) || input.driveContext || input.integrationRead
           || input.owner.type !== "personal" || input.owner.ownerId !== options.configuredOwnerId
           || !SAFE_PRINCIPAL_USER_ID.test(input.owner.ownerId) || active.size >= MAX_ACTIVE) return null;
         const target = HerdrChatTargetSchema.safeParse(input.herdr);
-        if (!target.success) return null;
+        if (input.scope === "chat_herdr" ? !input.fullAccess || !target.success : input.herdr !== undefined || input.fullAccess) return null;
         const token = randomBytes(32).toString("hex");
         const key = digest(token);
         const controller = new AbortController();
@@ -274,7 +278,7 @@ export function createMatrixMcpCapabilityRegistry(options: {
         const expiry = setTimeout(revoke, LIFETIME_MS);
         expiry.unref();
         active.set(key, { actorId: input.owner.ownerId, runId: input.runId, scope: input.scope,
-          expiresAt: now() + LIFETIME_MS, herdr: { ...target.data, signal: controller.signal }, onRevoke: revoke });
+          expiresAt: now() + LIFETIME_MS, ...(target.success ? { herdr: { ...target.data, signal: controller.signal } } : { herdrDiscoverySignal: controller.signal }), onRevoke: revoke });
         return { token, revoke };
       }
       if (input.herdr !== undefined) return null;

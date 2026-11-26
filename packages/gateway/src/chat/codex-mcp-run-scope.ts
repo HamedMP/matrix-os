@@ -36,7 +36,7 @@ export function selectedHerdrTerminal(parts: CanonicalProviderRunInput["parts"])
 }
 
 /** Ephemeral direct HTTP admission. This property is never saved or forwarded from request JSON. */
-export type HerdrDispatchRun = CanonicalChatRun & { ownerSubmittedHerdrTurn?: true };
+export type HerdrDispatchRun = CanonicalChatRun & { ownerSubmittedHerdrTurn?: true; ownerSubmittedHerdrDiscovery?: true };
 export function withOwnerHerdrAdmission(
   run: CanonicalChatRun,
   message: CanonicalChatMessage,
@@ -53,11 +53,12 @@ export function withOwnerHerdrAdmission(
     message.state !== "committed" ||
     message.purpose !== "ai_request" ||
     message.chatId !== run.chatId ||
-    message.turnId !== run.turnId ||
-    !selectedHerdrTerminal(message.parts)
+    message.turnId !== run.turnId
   )
     return run;
-  return { ...run, ownerSubmittedHerdrTurn: true };
+  return selectedHerdrTerminal(message.parts)
+    ? { ...run, ownerSubmittedHerdrTurn: true }
+    : { ...run, ownerSubmittedHerdrDiscovery: true };
 }
 
 const executions = new AsyncLocalStorage<{
@@ -91,10 +92,9 @@ export function createCodexMcpRunScope(
     open(input: CanonicalProviderRunInput) {
       if (
         !options ||
-        !input.ownerSubmittedHerdrTurn ||
+        (!input.ownerSubmittedHerdrTurn && !input.ownerSubmittedHerdrDiscovery) ||
         input.owner.type !== "personal" ||
         input.sharedScopeId ||
-        input.permissionMode !== "full_access" ||
         input.nativeScheduled ||
         input.continuationId ||
         input.interactionMode !== "default" ||
@@ -103,18 +103,24 @@ export function createCodexMcpRunScope(
       )
         return undefined;
       const target = selectedHerdrTerminal(input.parts);
-      if (!target) return undefined;
+      const discoveryOnly = !target && input.ownerSubmittedHerdrDiscovery === true;
+      if (!discoveryOnly && (!target || !input.ownerSubmittedHerdrTurn || input.permissionMode !== "full_access")) return undefined;
       if (input.signal.aborted || active.size >= 64 || active.has(input.runId)) {
+        if (discoveryOnly) return undefined;
         throw new Error("Matrix MCP run unavailable");
       }
       const capability = options.issuer.issue({
         owner: input.owner,
         runId: input.runId,
-        scope: "chat_herdr",
-        fullAccess: true,
-        herdr: { chatId: input.chatId, worktreeId: input.worktreeId, executionRoot: input.executionRoot, ...target },
+        ...(target ? {
+          scope: "chat_herdr" as const, fullAccess: true,
+          herdr: { chatId: input.chatId, worktreeId: input.worktreeId, executionRoot: input.executionRoot, ...target },
+        } : { scope: "chat_herdr_discovery" as const }),
       });
-      if (!capability) throw new Error("Matrix MCP run unavailable");
+      if (!capability) {
+        if (discoveryOnly) return undefined;
+        throw new Error("Matrix MCP run unavailable");
+      }
       let closed = false;
       let lease: CodexTerminalMcpLease;
       try {
@@ -123,6 +129,7 @@ export function createCodexMcpRunScope(
           token: capability.token,
           gatewayPort: options.gatewayPort,
           launcher: MATRIX_MCP_LAUNCHER,
+          ...(discoveryOnly ? { discoveryOnly: true } : {}),
         });
       } catch (error: unknown) {
         capability.revoke();

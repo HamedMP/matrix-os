@@ -6,6 +6,7 @@ import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminal
 import { authMiddleware } from "../../packages/gateway/src/auth.js";
 import { requireRequestPrincipal } from "../../packages/gateway/src/request-principal.js";
 import { hasDirectHerdrOwner } from "../../packages/gateway/src/chat/herdr-owner-ingress.js";
+import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
 import { createGatewayMatrixMcpCapabilities } from "../../packages/gateway/src/startup/matrix-mcp-capabilities.js";
 
 const handle = "pv-123-13572468";
@@ -101,5 +102,36 @@ it("cannot transfer an existing grant to a replacement Gateway or use it after e
   } finally {
     current.close();
     replacement.close();
+  }
+});
+
+it("offers discovery only to the provisioned private Preview owner, independently of terminal write access", () => {
+  const owner = { type: "personal", ownerId: "owner_discovery" };
+  const ask = { runId: "run_discovery", owner, scope: "chat_herdr_discovery" as const };
+  for (const eligible of [undefined, null, "some_other_owner"]) {
+    const registry = createMatrixMcpCapabilityRegistry({
+      configuredOwnerId: owner.ownerId, previewRuntime: true, privatePreviewHerdrOwner: eligible,
+    });
+    expect(registry.issue(ask)).toBeNull();
+    registry.close();
+  }
+  const registry = createMatrixMcpCapabilityRegistry({
+    configuredOwnerId: owner.ownerId, previewRuntime: true, privatePreviewHerdrOwner: owner.ownerId,
+  });
+  const grant = registry.issue(ask)!;
+  expect(registry.resolveRunContext(grant.token, "POST", "/api/chat/herdr-terminal")?.herdr).toBeUndefined();
+  expect(registry.resolve(grant.token, "GET", "/api/terminal/herdr")).toBeNull();
+  expect(registry.issue({ ...ask, fullAccess: true })).toBeNull();
+  expect(registry.issue({ ...ask, owner: { type: "org", ownerId: owner.ownerId } })).toBeNull();
+  registry.close();
+});
+
+it("keeps ordinary private turns independent of Herdr bootstrap when no adapter is configured", () => {
+  const ask = { runId: "run_check", owner: { type: "personal", ownerId: owner }, scope: "chat_herdr_discovery" as const };
+  const { registry } = createGatewayMatrixMcpCapabilities(host, false);
+  try {
+    expect(registry.issue(ask)).toBeNull();
+  } finally {
+    registry.close();
   }
 });

@@ -41,11 +41,12 @@ async function stop(child: ChildProcess) {
   child.kill("SIGTERM");
   await closed;
 }
-it.each(["healthy", "catalog_failed", "catalog_extra", "browser_and_terminal"])(
+it.each(["healthy", "catalog_failed", "catalog_extra", "browser_and_terminal", "discovery_only"])(
   "native runner binds private MCP, checks catalog before inference and rotates per run (%s)",
   async (mode) => {
     const bad = mode === "catalog_failed" || mode === "catalog_extra",
-      combined = mode === "browser_and_terminal";
+      combined = mode === "browser_and_terminal",
+      discovery = mode === "discovery_only";
     const home = await mkdtemp("/tmp/mx-terminal-mcp-"),
       trace = join(home, "trace.jsonl"),
       fake = join(home, "native.mjs");
@@ -67,6 +68,7 @@ else if(m.method==='turn/start'){await log({event:'turn',pid:process.pid});reply
       event = codexProviderEventPath(home, "sess_terminal_native"),
       lease = {
         attemptId,
+        ...(discovery ? { discoveryOnly: true as const } : {}),
         token: "a".repeat(64),
         gatewayPort: 4000,
         launcher: "/opt/matrix/bin/matrix-integrations-mcp" as const,
@@ -167,12 +169,14 @@ else if(m.method==='turn/start'){await log({event:'turn',pid:process.pid});reply
       expect(spawns.every((row) => row.coreGrant === "synthetic-core-grant")).toBe(true);
       expect(threads.map((row) => row.event)).toEqual(["thread/start", "thread/resume", "thread/resume"]);
       expect(threads[1].params!.threadId).toBe("native-terminal-thread");
-      expect(threads[0].params!.config["mcp_servers.matrix-herdr"].enabled_tools).toEqual(tools);
+      for (const thread of threads.slice(0, 2)) {
+        expect(thread.params!.config["mcp_servers.matrix-herdr"].enabled_tools).toEqual(discovery ? ["terminal_discover"] : tools);
+      }
       expect(threads[2].params!.config["mcp_servers.matrix-herdr"].enabled).toBe(false);
       expect(records.filter((row) => row.event === "catalog" || row.event === "turn").map((row) => row.event)).toEqual(
         combined
           ? ["catalog", "catalog", "turn", "catalog", "turn", "turn"]
-          : ["catalog", "turn", "catalog", "turn", "turn"],
+          : discovery ? ["turn", "turn", "turn"] : ["catalog", "turn", "catalog", "turn", "turn"],
       );
       const persisted =
         JSON.stringify(threads) + (await readFile(event, "utf8")) + Buffer.from(config, "base64").toString();

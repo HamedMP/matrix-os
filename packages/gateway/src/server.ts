@@ -324,7 +324,6 @@ export async function createGateway(config: GatewayConfig) {
   const allowedOriginController = createGatewayAllowedOriginController(process.env);
 
   const app = new Hono();
-  const { registry: matrixMcpCapabilities, issueCoreMcpRunCapability } = createGatewayMatrixMcpCapabilities(process.env);
   const posthogErrorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-gateway",
   });
@@ -338,6 +337,7 @@ export async function createGateway(config: GatewayConfig) {
   // then must still be able to run shutdown.
   let terminalAgentServices: TerminalAgentServices | null = null;
   const herdrSessions = createHerdrSessionsFromEnv(process.env); // Owner's herdr-core (spec 2701); null unless MATRIX_HERDR=on.
+  const { registry: matrixMcpCapabilities, issueCoreMcpRunCapability } = createGatewayMatrixMcpCapabilities(process.env, Boolean(herdrSessions));
   let herdrViewers: ReturnType<typeof registerTerminalSockets> | null = null;
   // Lets `matrix shell …` inside this machine's terminals call the gateway (spec 2692).
   let localTerminalAgentToken: LocalTerminalAgentToken | null = null;

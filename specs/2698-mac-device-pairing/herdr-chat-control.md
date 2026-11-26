@@ -2,7 +2,19 @@
 
 [ENG-495](https://linear.app/matrix-os/issue/ENG-495) · [Herdr sessions](../2701-herdr-self-host/spec.md)
 
-## Entry point
+## Conversation goal
+
+A user can ask a private Chat “Which computers are online?”, “Which terminals are open on my Mac?” or “List all my connected terminals.” Chat answers in the conversation. The last question groups terminals by computer. Each answer names the computer from the user's perspective (for example, the paired Mac or the Preview VPS), the terminal name and ID, and the worktree when known. The user can follow up with “Use the build terminal on my Mac and run the tests.” A slash command or composer picker can remain a shortcut.
+
+Discovery is read-only. Show terminals from the current Matrix computer, the paired desktop and authorized reachable Herdr remotes using their actual connection state. A failed inventory is reported for that computer alongside successful inventories. An online computer with no open terminals is a distinct result. The same numeric terminal ID can exist on several computers. When “use t1” matches multiple computers, ask which one before sending input. Recheck the selected device, session revision, worktree and permissions at execution time. If the target disconnected, report that in Chat. Never silently switch computers. A follow-up may remember the user's selection for reference, subject to the existing per-run authorization.
+
+Acceptance requires an ordinary question in the originating Chat with no prior picker selection. List the Preview and paired Mac, list each one's terminals, then select the Mac terminal by name and run a focused test in the requested checkout. Confirm the output on the physical Mac PTY and the matching exit status and result in the original Chat. Include the ambiguous-ID and disconnected-target cases.
+
+The current candidate exposes a read-only catalog to a directly submitted private Codex worktree turn. Ask an ordinary question to discover the current Matrix computer and the remotes its Herdr Core actually reports. The first page includes at most five computers. A computer with up to three live terminals can include their names immediately; a busier computer returns a count. Subsequent questions can filter or page through five terminal names at a time. An offline remote has an unknown count. A missing desktop link cannot establish whether the physical Mac itself is online.
+
+For example, ask “Which computers are online?”, then “Show me the build terminals on this Preview.” The discovery tool returns qualified addresses such as `gateway/t1`. In Electron, “Use gateway/t1 to run the tests” resolves a current terminal in the composer for explicit selection. Only a selected and admitted turn can operate it. Remote inventory by itself does not provide remote control. A paired Mac independent of the current core still depends on an admitted desktop link.
+
+## Control shortcuts
 
 In Electron, open a private Codex Chat on an isolated worktree, choose Full Access, then type `@herdr` or `/herdr-terminal-control` in the composer. Select a live terminal started in this worktree. Send the task with that selection. Each user turn selects its own target. A selection gives that turn permission to read the screen, submit text and interrupt the foreground task as the terminal's owner. Its launch directory identifies the worktree. Programs in the terminal retain their normal OS permissions.
 

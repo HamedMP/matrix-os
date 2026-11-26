@@ -52,3 +52,33 @@ it("exposes only the selected terminal through the real MCP and authenticated Ga
     expect(terminal.send.mock.calls).toEqual([["run tests"]]);
   } finally { registry.close(); await client.close(); await server.close(); }
 });
+
+it("only publishes the read-only inventory tool to an unselected private Chat, using its run-scoped route", async () => {
+  const owner = { type: "personal", ownerId: "user_owner" };
+  const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
+  const grant = registry.issue({ owner, runId: "run_list", scope: "chat_herdr_discovery" })!;
+  const app = new Hono().use("*", authMiddleware("host-fixture", { resolveMatrixMcpRunContext: registry.resolveRunContext }));
+  const discoverTerminals = vi.fn(async () => ({ machines: [
+    { id: "gateway", name: "This computer", online: true, terminals: [{ id: "t1", title: "build", status: null }] },
+    { id: "herdr:laptop", name: "Laptop", online: false, terminals: [] },
+  ] }));
+  app.route(HERDR_CHAT_ROUTE, createHerdrChatTerminalRoute({ discoverTerminals, bindChatTerminal: vi.fn() }, createTerminalInputActivity()));
+  vi.stubEnv("MATRIX_AGENT_INTEGRATIONS_TOKEN", grant.token);
+  vi.stubEnv("GATEWAY_URL", "http://127.0.0.1:4000");
+  const server = createIntegrationsMcpServer({ toolSurface: "chat-herdr-discovery", fetcher: async (url, init) => app.request(url, init) });
+  const client = new Client({ name: "test-inventory", version: "1" });
+  const [left, right] = InMemoryTransport.createLinkedPair();
+  try {
+    await Promise.all([server.connect(left), client.connect(right)]);
+    expect((await client.listTools()).tools.map(t => t.name)).toEqual(["terminal_discover"]);
+    const invoke = (args: Record<string, unknown>) => client.callTool({ name: "terminal_discover", arguments: args });
+    const text = (result: Awaited<ReturnType<typeof invoke>>) => JSON.stringify(result.content);
+    expect(text(await invoke({}))).toContain("gateway/t1");
+    expect(text(await invoke({ machine: "herdr:laptop" }))).toContain("offline");
+    expect(text(await invoke({ machine: "herdr:missing" }))).toContain("not_listed");
+    expect((await invoke({ machine: "../route" })).isError).toBe(true);
+    grant.revoke();
+    expect((await invoke({})).isError).toBe(true);
+    expect(discoverTerminals).toHaveBeenCalledTimes(3);
+  } finally { registry.close(); await client.close(); await server.close(); }
+});

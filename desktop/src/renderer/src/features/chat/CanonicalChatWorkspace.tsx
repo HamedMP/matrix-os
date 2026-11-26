@@ -95,7 +95,7 @@ import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 import { chatElectronPreviewWorktree, isChatElectronPreviewDraft, type StageChatWorktreeDraft } from "./ChatElectronPreview";
 import { canSendBackgroundMacCheck, isMacTerminalProbeDraft } from "./ChatMacTerminalProbe";
 import { herdrControlParts } from "@matrix-os/ui/herdr-sessions";
-import type { HerdrControlDraft } from "./HerdrChatControlAction";
+import { requestedHerdrTerminal, type HerdrControlDraft } from "./HerdrChatControlAction";
 import { ChatWorktreeActions } from "./ChatWorktreeActions";
 import { isMacVerificationReceiptRun } from "../../../../shared/chat-electron-preview";
 import { MATCHING_MAC_BUILD } from "../../../../shared/chat-electron-preview-ipc";
@@ -173,6 +173,7 @@ function CanonicalChatWorkspaceContent({
   const authGeneration = useConnection((state) => state.authGeneration);
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const computerName = useConnection((state) => state.handle);
   const subscribeConnection = useCallback((notify: () => void) => {
     const source = eventSource as Partial<CanonicalChatEventSource> | undefined;
     const subscription = source?.subscribeConnectionState?.(notify);
@@ -508,7 +509,10 @@ function CanonicalChatWorkspaceContent({
     && providerSelectionScopeReady && selectionAvailable && selection?.interactionMode === "default"
     && mentionPermission.permissionMode === "full_access" && selection.permissionMode === "full_access"
     && providerCatalog.instances.find(instance => instance.id === selection.instanceId)?.driverKind === "codex"
-    && chatWorktree ? { api, authGeneration, runtimeSlot, scope: JSON.stringify([admissionIdentity, draftRequestIdentity, chatWorktree.projectId, chatWorktree.worktreeId]) } : undefined;
+    && chatWorktree ? {
+      api, authGeneration, runtimeSlot, computerName: computerName ?? undefined, requestedTarget: requestedHerdrTerminal(draft),
+      scope: JSON.stringify([admissionIdentity, draftRequestIdentity, chatWorktree.projectId, chatWorktree.worktreeId]),
+    } : undefined;
   const existingFilesScope = slashRecord && controller.detail ? resolveWorkFilesScope(controller.detail, projects) : null;
   const draftAttachmentProject = !routedComposerChatId
     ? projects.find(project => project.id === draftProjectId || project.slug === draftProjectId)
@@ -1042,6 +1046,7 @@ function CanonicalChatWorkspaceContent({
         onAgentMention={botMention.select}
         mentionActions={mentionActions}
         onSubmit={(submission) => {
+          if (herdrControl?.requestedTarget && !herdr) return;
           if (!editingQueuedTurn && activeRun && pendingChatReply()) {
             setSubmissionError("Wait for the active run before retrying this message.");
             return;
@@ -1052,7 +1057,7 @@ function CanonicalChatWorkspaceContent({
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
         disabled={controller.status === "loading" || uploadingAttachments}
-        canSubmit={Boolean(selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && (
+        canSubmit={Boolean((!herdrControl?.requestedTarget || herdr) && selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && (
           draft.trim() || referenceTokens.length > 0 || attachments.items.length > 0
         ))}
         catalog={providerCatalog}

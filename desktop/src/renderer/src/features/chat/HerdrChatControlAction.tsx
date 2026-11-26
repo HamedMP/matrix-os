@@ -11,12 +11,27 @@ export interface HerdrControlContext {
   scope: string;
   authGeneration: number;
   runtimeSlot: string;
+  requestedTarget?: string;
+  computerName?: string;
 }
 
 export interface HerdrControlDraft {
   target: CanonicalChatResourceReference;
   isCurrent(): boolean;
   accepted(): void;
+}
+
+// The address returned by discovery is an untrusted suggestion until the owner
+// selects its freshly resolved process for this one message.
+export function requestedHerdrTerminal(text: string): string | undefined {
+  const draft = text.trimStart();
+  const explicit = /^(?:please\s+)?(?:use\s+|select\s+|(?:请)?(?:使用|用)\s*)`?gateway\/([\p{L}\p{N}_-]{1,64})`?(?=$|[\s,.:，。、：])/iu.exec(draft);
+  if (explicit) return explicit[1];
+  // Match a short, explicit selection on *this* computer. Other phrasing is
+  // handled by the agent's read-only discovery tools, which return addresses.
+  const named = /^(?:please\s+)?use (?:the )?([\p{L}\p{N}_-][\p{L}\p{N} _.-]{0,63}?) terminal on this (?:computer|preview)\b/iu.exec(draft)
+    ?? /^(?:请)?(?:使用|用)\s*(?:这台电脑|当前电脑|当前预览)上的\s*([\p{L}\p{N}_-][\p{L}\p{N} _.-]{0,63}?)\s*终端/u.exec(draft);
+  return named?.[1]?.trim();
 }
 
 /** Keep the editor mounted when settings change, while discarding the previous terminal choice. */
@@ -31,9 +46,15 @@ export function HerdrChatControlAction({ control, children }: {
   const request = useMemo(() => api && generation !== undefined && slot
     ? herdrSessionsRequest(api.forSession({ authGeneration: generation, runtimeSlot: slot })) : null, [api, generation, slot]);
   const identity = useMemo(() => request && scope ? { request, scope } : null, [request, scope]);
-  const [choice, setChoice] = useState<{ identity: NonNullable<typeof identity>; target: CanonicalChatResourceReference | null } | null>(null);
-  if (choice && choice.identity !== identity) setChoice(null);
-  const currentChoice = choice?.identity === identity ? choice : null;
+  const requestedTarget = control?.requestedTarget;
+  const [choice, setChoice] = useState<{
+    identity: NonNullable<typeof identity>;
+    target: CanonicalChatResourceReference | null;
+    requestedTarget?: string;
+    address?: string;
+  } | null>(null);
+  const currentChoice = choice && choice.identity === identity && choice.requestedTarget === requestedTarget ? choice : null;
+  if (choice && !currentChoice) setChoice(null);
   const target = currentChoice?.target ?? null;
   const current = useRef(target);
   useLayoutEffect(() => {
@@ -43,13 +64,15 @@ export function HerdrChatControlAction({ control, children }: {
   const action: ComposerMentionAction = {
     kind: "herdr", label: "Control a Herdr terminal", keywords: "herdr terminal control",
     slashCommand: herdrControlCommand.descriptorId, consumeTrigger: true,
-    select: () => { if (identity) setChoice({ identity, target: null }); },
+    select: () => { if (identity) setChoice({ identity, target: null, requestedTarget }); },
   };
   return <>
-    {identity && currentChoice && !target && <HerdrControlPicker request={identity.request} onCancel={() => setChoice(null)}
-      onSelect={value => setChoice({ identity, target: value })} />}
+    {identity && (currentChoice || requestedTarget) && !target && <HerdrControlPicker key={JSON.stringify([identity.scope, requestedTarget])}
+      request={identity.request} requestedTarget={requestedTarget} computerName={control?.computerName}
+      onCancel={() => setChoice(null)}
+      onSelect={(value, address) => setChoice({ identity, target: value, requestedTarget, address })} />}
     {target && <div className="flex items-center gap-2 px-2 pb-1 text-sm">
-      <span role="status">Terminal control for this message · {target.label}</span>
+      <span role="status">Terminal control for this message · {target.label}{currentChoice?.address ? ` (gateway/${currentChoice.address})` : ""}</span>
       <Button type="button" variant="ghost" size="sm" onClick={() => setChoice(null)}>Remove</Button>
     </div>}
     {children(identity ? action : undefined, target ? {

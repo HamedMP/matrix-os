@@ -1,4 +1,4 @@
-import { assertHerdrMcpReady, createCodexTerminalMcpBootstrap, codexTerminalMcpThreadConfig, codexTerminalMcpChildEnvironment, CODEX_TERMINAL_MCP_INSTRUCTIONS } from './codex-terminal-mcp.mjs';
+import { assertHerdrMcpReady, createCodexTerminalMcpBootstrap, codexTerminalMcpThreadConfig, codexTerminalMcpChildEnvironment, CODEX_TERMINAL_MCP_INSTRUCTIONS, CODEX_DISCOVERY_INSTRUCTIONS } from './codex-terminal-mcp.mjs';
 import { createCodexRoutineChannel, CODEX_ROUTINE_TOOL } from "./codex-routine-channel.mjs";
 import { NativeReferenceSchema, ApprovalRequestSchema, InputRequestSchema, ToolLifecycleTypeSchema, ItemLifecycleSchema, RpcResponseSchema, RpcErrorSchema, ToolOutputDeltaSchema, AgentDeltaSchema, TokenUsageUpdatedSchema, TurnCompletedSchema } from "./codex-app-server-protocol.mjs";
 import { CodexControlSchema as ControlSchema } from "./codex-control-protocol.mjs";
@@ -938,7 +938,8 @@ async function applyControl(control) {
   }
   await verifyNativeCodexHumanControl(control, verifyNativeSubscription, request);
   if (control.type === "matrix_mcp_bind") {
-    if (!await matrixMcpBootstrap.bind({ attemptId: control.attemptId, token: control.token, gatewayPort: control.gatewayPort, launcher: control.launcher })) return { ok: false };
+    const { type: _type, clientRequestId: _request, ...lease } = control;
+    if (!await matrixMcpBootstrap.bind(lease)) return { ok: false };
   } else if (control.type === "matrix_mcp_start") {
     if (!matrixMcpBootstrap.release(control.attemptId)) return { ok: false };
   } else if (control.type === "browser_bind") {
@@ -1306,7 +1307,7 @@ async function startNativeSession(lease, matrixMcp) {
   const threadParams = {
     ...(resumeId ? { threadId: resumeId, excludeTurns: true } : routines.canRegister() ? { dynamicTools: [CODEX_ROUTINE_TOOL] } : {}), model: config.model,
     ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
-    developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS + (lease ? "\n\n" + CODEX_BROWSER_INSTRUCTIONS : "") + (matrixMcp ? "\n\n" + CODEX_TERMINAL_MCP_INSTRUCTIONS : ""),
+    developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS + (lease ? "\n\n" + CODEX_BROWSER_INSTRUCTIONS : "") + (matrixMcp ? "\n\n" + (matrixMcp.discoveryOnly ? CODEX_DISCOVERY_INSTRUCTIONS : CODEX_TERMINAL_MCP_INSTRUCTIONS) : ""),
     serviceTier: config.serviceTier, cwd: process.cwd(), approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox, runtimeWorkspaceRoots: config.writableRoots, experimentalRawEvents: false,
     config: { ...codexBrowserThreadConfig(lease, { tokenFile: Boolean(browserTokenFile) }), ...codexTerminalMcpThreadConfig(matrixMcp) },
@@ -1343,7 +1344,7 @@ async function startNativeSession(lease, matrixMcp) {
   nativeThreadId = identity;
   sendTiming.mark(resumeId ? "thread_resume" : "thread_start", threadStartedAt, turnIndex);
   if (lease) await assertBrowserMcpReady(identity, turnIndex);
-  if (matrixMcp) await assertHerdrMcpReady(request, identity);
+  if (matrixMcp && !matrixMcp.discoveryOnly) await assertHerdrMcpReady(request, identity);
   currentMatrixMcpLease = matrixMcp;
   currentBrowserLease = lease;
   await persist({ type: "thread.started", thread_id: identity });
