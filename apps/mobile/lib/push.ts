@@ -205,7 +205,8 @@ async function pushIdentity(currentDelivery?: string): Promise<string> {
   return token;
 }
 
-export async function isPushNotificationsEnabled(input: PushRegistrationSession): Promise<boolean> {
+/** null requires a deliberate per-computer choice; cached identity is not consent. */
+export async function isPushNotificationsEnabled(input: PushRegistrationSession): Promise<boolean | null> {
   const token = await pushIdentity();
   return fetchPushRegistrationStatus({ ...input, expoPushToken: token });
 }

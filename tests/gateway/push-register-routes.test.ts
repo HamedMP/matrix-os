@@ -93,9 +93,9 @@ describe("POST/DELETE /api/push/register", () => {
         expect(response.status).toBe(200);
         return response.json();
       };
-      expect(await status()).toEqual({ enabled: false, registered: false });
+      expect(await status()).toEqual({ enabled: null, registered: false });
       await push.registerToken("ExponentPushToken[phone]", "ios", "owner_b");
-      expect(await status()).toEqual({ enabled: false, registered: false });
+      expect(await status()).toEqual({ enabled: null, registered: false });
       await push.registerToken("ExponentPushToken[phone]", "ios", "owner_a");
       expect(await status()).toEqual({ enabled: true, registered: true });
       now += 31 * 24 * 60 * 60 * 1000;

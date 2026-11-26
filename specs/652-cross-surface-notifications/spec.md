@@ -115,7 +115,9 @@ A4 implementation notes (ENG-453, 2026-11-20):
   scoped to their original target. Other computers may continue sending.
 - Consent lifecycle correction: enabled state comes from the selected owner's
   durable `notification_push_consents` record, separate from expiring delivery
-  rows. `POST /api/push/status` returns only `{enabled, registered}` booleans.
+  rows. `POST /api/push/status` returns `{enabled, registered}`: enabled is true,
+  false for a retained opt-out, or null when consent history is unknown;
+  registered is a boolean.
   The owner-only read has a strict private-identity body, 4 KiB limit and generic
   errors; identities never enter URLs, logs or responses. Missing support or
   storage is unavailable, never assumed off.
@@ -143,8 +145,27 @@ A4 implementation notes (ENG-453, 2026-11-20):
   when needed and revokes both imported aliases and the retained identity.
   A legacy identity already removed before migration is not sufficient proof for
   a particular computer. Remembered phone records are capped at 64 per owner;
-  capacity eviction removes linked delivery and defaults off. Ordinary cleanup
+  capacity eviction removes linked delivery and requires a new explicit choice.
+  Ordinary cleanup
   never evicts consent.
+- Pre-migration cleanup correction (2026-11-26): if the old gateway's sweep
+  erased delivery before migration 4, neither the remaining global phone cache
+  nor its OS permission proves consent for this computer. Preserve unknown
+  history separately from explicit off. Foreground does not request permission
+  or register an unknown phone; it offers **Review settings** once for the named
+  computer. That action is fenced against account/computer changes. The existing
+  Notifications screen explains that the choice needs confirmation and offers
+  **Enable for this computer** or **Keep off for this computer**. Only explicit
+  enable sends `mode=enable`; keeping off records the durable per-computer
+  tombstone. Known off stays silent and off. Unavailable status remains an error,
+  never an inferred recovery offer or a grant.
+- Production regressions reconstruct v1, run its delivery-only TTL cleanup
+  before the production v4 bootstrap, observe unknown without a new consent row,
+  and exercise both explicit decisions. A second computer for the same owner
+  remains off in its separate production store. Mounted mobile recovery checks
+  use real settings/foreground helpers and HTTP parsing, including late scopes.
+  Fresh iOS captures of the new review offer and choices are required; earlier
+  unchanged-UI captures do not qualify this recovery UI.
 - Migration: a missing cached Expo identity is not an opt-out. With existing OS
   permission, recover the identity and query registration without requesting
   permission or enrolling any computer. When recovery is unavailable, show
@@ -587,7 +608,7 @@ There are no inbound webhooks. Expo receipts are polled.
 | Endpoint | Release | Caller | Auth | Validation and limits |
 | --- | --- | --- | --- | --- |
 | `POST/DELETE /api/push/register` | existing; persisted in A2; removed in C5 | Native Mobile | Owner principal | Existing Zod schema; `bodyLimit` 4 KiB (add it to DELETE if missing) |
-| `POST /api/push/status` | A5 review correction | Native Mobile settings/foreground | Verified owner principal | Read-only POST; strict retained-identity body (1–512 chars), 4 KiB limit; only enabled/registered booleans, generic errors |
+| `POST /api/push/status` | A5 review correction | Native Mobile settings/foreground | Verified owner principal | Read-only POST; strict retained-identity body (1–512 chars), 4 KiB limit; enabled true/false/null and registered boolean only, generic errors |
 | `POST /api/push/register` with `mode=refresh` | A5 consent correction | Native Mobile foreground | Verified runtime owner; server consent must already be on | Strict bounded identity/token/platform fields, 4 KiB limit; conditional transaction cannot grant consent |
 | `PATCH /api/chats/:chatId/read-state` | existing; used by mobile from A7 | Native Mobile | Owner principal | Existing |
 | `GET /api/notifications` | A10 | Owner clients | Owner principal | Zod query: `state` ∈ {open}, `limit` 1–100, opaque cursor ≤ 200 chars |

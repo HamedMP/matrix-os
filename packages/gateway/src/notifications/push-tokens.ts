@@ -9,7 +9,8 @@ import type { NotificationDatabase } from "./schema.js";
 import { trimPushConsents } from "./push-consent-schema.js";
 export { MAX_PUSH_CONSENTS_PER_OWNER } from "./push-consent-schema.js";
 
-export interface PushRegistrationStatus { enabled: boolean; registered: boolean }
+/** null means no retained consent evidence, not a confirmed opt-out. */
+export interface PushRegistrationStatus { enabled: boolean | null; registered: boolean }
 type Registration = { token: string; identity?: string; platform: string; ownerId: string; seenAt: Date; maxPerOwner: number };
 
 export interface PushTokenStore {
@@ -145,7 +146,7 @@ export function createPushTokenStore(db: Kysely<NotificationDatabase>): PushToke
       )`.as("registered")]).where("owner_id", "=", ownerId)
         .where((eb) => eb.or([eb("identity", "=", identity), eb("delivery_token", "=", identity)]))
         .orderBy("enabled", "asc").executeTakeFirst();
-      return row ?? { enabled: false, registered: false };
+      return row ?? { enabled: null, registered: false };
     },
 
     async removeDeviceTokens(tokens) {

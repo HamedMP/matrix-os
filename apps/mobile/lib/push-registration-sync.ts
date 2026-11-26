@@ -8,7 +8,7 @@ import {
   type PushRegistrationSession,
 } from "@/lib/push";
 
-export type PushRegistrationResult = "off" | "registered" | "denied";
+export type PushRegistrationResult = "off" | "registered" | "denied" | "confirmation-required";
 
 // The tail of the push changes waiting to run. It never rejects.
 let pushChanges: Promise<unknown> = Promise.resolve();
@@ -62,7 +62,11 @@ function notifyPushTurnedOff(scopeKey: string | undefined) {
  */
 export function syncPushRegistration(session: PushRegistrationSession, isCurrent = () => true): Promise<PushRegistrationResult> {
   return queuePushChange(async () => {
-    if (!isCurrent() || !(await isPushNotificationsEnabled(session)) || !isCurrent()) return "off";
+    if (!isCurrent()) return "off";
+    const enabled = await isPushNotificationsEnabled(session);
+    if (!isCurrent()) return "off";
+    if (enabled === null) return "confirmation-required";
+    if (!enabled) return "off";
 
     await ensureNotificationChannels();
     const existing = await Notifications.getPermissionsAsync();

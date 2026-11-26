@@ -31,7 +31,7 @@ describe("phone consent and expiring delivery registration", () => {
   });
   const register = () => request("/api/push/register", { token: IDENTITY, platform: "ios" });
   const refresh = (token = IDENTITY) => request("/api/push/register", { token, platform: "ios", identity: IDENTITY, mode: "refresh" });
-  async function status(expected: { enabled: boolean; registered: boolean }, identity = IDENTITY) {
+  async function status(expected: { enabled: boolean | null; registered: boolean }, identity = IDENTITY) {
     const response = await request("/api/push/status", { token: identity });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(expected);
@@ -156,9 +156,9 @@ describe("phone consent and expiring delivery registration", () => {
   });
 
   it("does not infer consent for a new computer from a cached identity alone", async () => {
-    await status({ enabled: false, registered: false });
+    await status({ enabled: null, registered: false });
     expect(await (await refresh()).json()).toEqual({ ok: true, registered: false });
-    await status({ enabled: false, registered: false });
+    await status({ enabled: null, registered: false });
   });
 
   it("migrates real legacy rows, including expired rows, without enrolling missing or foreign identities", async () => {
@@ -176,9 +176,54 @@ describe("phone consent and expiring delivery registration", () => {
     await push.sweepExpiredTokens();
 
     await status({ enabled: true, registered: false });
-    await status({ enabled: false, registered: false }, "ExponentPushToken[foreign]");
-    await status({ enabled: false, registered: false }, "ExponentPushToken[unknown]");
+    await status({ enabled: null, registered: false }, "ExponentPushToken[foreign]");
+    await status({ enabled: null, registered: false }, "ExponentPushToken[unknown]");
     expect(await (await refresh()).json()).toEqual({ ok: true, registered: true });
+  });
+
+  it.each(["enable", "keep off"] as const)("requires an explicit %s decision after old cleanup before migration", async (choice) => {
+    // Reconstruct the production v1 schema, then run the actual delivery-only
+    // sweep BEFORE bootstrap can record consent. The erased row cannot prove
+    // whether a retained phone cache meant opt-in or an old per-computer off.
+    await db.schema.dropTable("notification_push_consents").execute();
+    await db.schema.dropTable("notification_push_consent_owners").execute();
+    await sql`ALTER TABLE notification_push_tokens DROP COLUMN identity`.execute(db);
+    await db.deleteFrom("notification_schema_migrations").where("version", "=", 4).execute();
+    const old = new Date(now - 31 * DAY);
+    await db.insertInto("notification_push_tokens").values({
+      token: IDENTITY, owner_id: "owner_a", platform: "ios", created_at: old, last_seen_at: old,
+    }).execute();
+    await push.sweepExpiredTokens();
+    expect(await db.selectFrom("notification_push_tokens").select("token").execute()).toEqual([]);
+    expect(await bootstrapNotificationDatabase(db)).toEqual({ applied: [4] });
+
+    await status({ enabled: null, registered: false });
+    expect(await (await refresh()).json()).toEqual({ ok: true, registered: false });
+    expect(await db.selectFrom("notification_push_consents").select("identity").execute()).toEqual([]);
+
+    // A second computer owns a separate database for the same owner/phone.
+    const pgB = await createTestPGlite();
+    const dbB = new Kysely<NotificationDatabase>({ dialect: pgB.dialect });
+    const pushB = createPushAdapter({ tokens: createPushTokenStore(dbB), ownerId: "owner_a", now: () => now });
+    try {
+      await bootstrapNotificationDatabase(dbB);
+      const appB = mount(pushB);
+      const onB = (path: string, body: unknown, method = "POST") => appB.request(path, {
+        method, headers: { Authorization: `Bearer ${AUTH}`, "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      expect((await onB("/api/push/register", { token: IDENTITY }, "DELETE")).status).toBe(200);
+      const response = choice === "enable"
+        ? await request("/api/push/register", { token: DELIVERY, identity: IDENTITY, platform: "ios", mode: "enable" })
+        : await request("/api/push/register", { token: IDENTITY }, "DELETE");
+      expect(response.status).toBe(200);
+      await status({ enabled: choice === "enable", registered: choice === "enable" });
+      await bootstrapNotificationDatabase(db);
+      expect(await (await refresh(DELIVERY)).json()).toEqual({ ok: true, registered: choice === "enable" });
+      await status({ enabled: choice === "enable", registered: choice === "enable" });
+      expect(await (await onB("/api/push/status", { token: IDENTITY })).json()).toEqual({ enabled: false, registered: false });
+      expect(await (await onB("/api/push/register", { token: DELIVERY, identity: IDENTITY, platform: "ios", mode: "refresh" })).json())
+        .toEqual({ ok: true, registered: false });
+    } finally { pushB.dispose(); await dbB.destroy(); }
   });
 
   it("does not overwrite explicit off during an idempotent legacy backfill", async () => {
@@ -228,7 +273,7 @@ describe("phone consent and expiring delivery registration", () => {
     }).execute();
     expect(await bootstrapNotificationDatabase(db)).toEqual({ applied: [] });
     await status({ enabled: false, registered: false });
-    await status({ enabled: false, registered: false }, DELIVERY);
+    await status({ enabled: null, registered: false }, DELIVERY);
     const send = vi.spyOn(globalThis, "fetch");
     await push.send({ channelId: "push", chatId: "coding-agents", ownerId: "owner_a", text: "Approval needed" });
     expect(send).not.toHaveBeenCalled();
@@ -276,7 +321,7 @@ describe("phone consent and expiring delivery registration", () => {
       token: IDENTITY, owner_id: "owner_a", platform: "ios", created_at: new Date(now), last_seen_at: new Date(now),
     }).execute();
     await bootstrapNotificationDatabase(db);
-    await status({ enabled: false, registered: false });
+    await status({ enabled: null, registered: false });
     expect(await (await refresh()).json()).toEqual({ ok: true, registered: false });
   });
 
@@ -300,7 +345,7 @@ describe("phone consent and expiring delivery registration", () => {
     }
     const remembered = await db.selectFrom("notification_push_consents").select("identity").execute();
     expect(remembered).toHaveLength(MAX_PUSH_CONSENTS_PER_OWNER);
-    await status({ enabled: false, registered: false }, "ExponentPushToken[phone-0]");
+    await status({ enabled: null, registered: false }, "ExponentPushToken[phone-0]");
     expect(await push.refreshToken("ExponentPushToken[phone-0]", "ios", "owner_a")).toBe(false);
   });
 });

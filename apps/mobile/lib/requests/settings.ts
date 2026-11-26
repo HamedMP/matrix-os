@@ -17,7 +17,7 @@ export const MobileSystemInfoSchema = z.looseObject({
 });
 
 const OkResponseSchema = z.looseObject({ ok: z.literal(true) });
-const PushRegistrationStatusSchema = z.strictObject({ enabled: z.boolean(), registered: z.boolean() });
+const PushRegistrationStatusSchema = z.strictObject({ enabled: z.boolean().nullable(), registered: z.boolean() });
 const PushRefreshResponseSchema = z.strictObject({ ok: z.literal(true), registered: z.boolean() });
 const BillingPortalSchema = z.object({ url: z.url() }).strict();
 
@@ -103,7 +103,7 @@ export async function fetchPushRegistrationStatus(input: {
   clerkToken: string;
   gatewayUrl: string;
   expoPushToken: string;
-}): Promise<boolean> {
+}): Promise<boolean | null> {
   const response = await fetchAuthenticatedJson({
     url: buildGatewayRequestUrl(input.gatewayUrl, "/api/push/status"),
     token: input.clerkToken,

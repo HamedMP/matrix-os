@@ -7,7 +7,7 @@ import { disablePushNotifications, enablePushNotifications, isPushNotificationsE
 import { queuePushChange, subscribePushTurnedOff } from "@/lib/push-registration-sync";
 
 type Scope = { active: boolean; computer: NotificationComputer };
-type PushState = { scope: Scope; enabled: boolean | null; target: boolean | null; error: boolean; identityUnavailable?: boolean };
+type PushState = { scope: Scope; enabled: boolean | null; target: boolean | null; error: boolean; identityUnavailable?: boolean; consentUnknown?: boolean };
 
 export function DevicePushSettings({ computer }: { computer: NotificationComputer }) {
   const scope = useMemo<Scope>(() => ({ active: true, computer }), [computer]);
@@ -35,7 +35,7 @@ export function DevicePushSettings({ computer }: { computer: NotificationCompute
     change({ scope, enabled: null, target: null, error: false });
     try {
       const enabled = await readStatus();
-      if (active()) change({ scope, enabled, target: null, error: false });
+      if (active()) change({ scope, enabled, target: null, error: false, consentUnknown: enabled === null && computer.client !== null });
     } catch (error: unknown) {
       console.warn("[mobile] Push status unavailable", error instanceof Error ? error.name : "unknown");
       if (active()) change({ scope, enabled: null, target: null, error: true, identityUnavailable: error instanceof PushIdentityUnavailableError });
@@ -47,15 +47,15 @@ export function DevicePushSettings({ computer }: { computer: NotificationCompute
     scope.active = true;
     void reload();
     const unsubscribe = subscribePushTurnedOff((key) => {
-      if (active() && key === computer.key) change((value) => ({ ...value, enabled: false }));
+      if (active() && key === computer.key) change((value) => ({ ...value, enabled: false, consentUnknown: false }));
     });
     return () => { scope.active = false; unsubscribe(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
   async function toggle(enabled: boolean) {
-    if (!computer.client || (current.enabled === null && !(enabled && current.identityUnavailable)) || pending.current === scope) return;
+    if (!active() || !computer.client || (current.enabled === null && !(current.consentUnknown || enabled && current.identityUnavailable)) || pending.current === scope) return;
     pending.current = scope;
-    change({ scope, enabled: current.enabled, target: enabled, error: false });
+    change({ ...current, scope, target: enabled, error: false });
     try {
       await queuePushChange(async () => {
         if (!active()) return;
@@ -70,29 +70,52 @@ export function DevicePushSettings({ computer }: { computer: NotificationCompute
       console.warn("[mobile] Push setting failed", error instanceof Error ? error.name : "unknown");
       let enabled: boolean | null = null;
       let identityUnavailable = false;
+      let consentUnknown = false;
       try {
         enabled = await readStatus();
+        consentUnknown = enabled === null;
       } catch (statusError: unknown) {
         console.warn("[mobile] Push reconciliation unavailable", statusError instanceof Error ? statusError.name : "unknown");
         identityUnavailable = statusError instanceof PushIdentityUnavailableError;
       }
-      if (active()) change({ scope, enabled, target: null, error: true, identityUnavailable });
+      if (active()) change({ scope, enabled, target: null, error: true, identityUnavailable, consentUnknown });
     } finally {
       if (pending.current === scope) pending.current = null;
     }
   }
+  return <DevicePushControls connected={computer.client !== null} current={current}
+    toggle={(enabled) => void toggle(enabled)} reload={() => void reload()} />;
+}
+
+type PushControlProps = { current: Omit<PushState, "scope">; toggle: (enabled: boolean) => void; reload: () => void };
+
+function DevicePushControls({ connected, current, toggle, reload }: PushControlProps & { connected: boolean }) {
   return <>
     <SettingsSwitchRow card title="Push notifications"
-      detail={computer.client ? "Allow this phone to receive notifications from this computer" : "Connect a computer to enable"}
+      detail={connected ? "Allow this phone to receive notifications from this computer" : "Connect a computer to enable"}
       value={current.target ?? current.enabled ?? false}
-      disabled={!computer.client || current.enabled === null || current.target !== null}
+      disabled={!connected || current.enabled === null || current.target !== null}
       onValueChange={(enabled) => void toggle(enabled)} />
-    {computer.client && current.enabled === null && !current.error ? <>
+    {connected && current.enabled === null && !current.error && !current.consentUnknown ? <>
       <Spacer size="md" /><Text tone="subtle">Checking this computer’s push registration…</Text>
     </> : null}
-    {current.error ? <>
+    {connected && current.consentUnknown ? <>
+      <Spacer size="md" /><Text accessibilityRole="alert">Your notification choice for this computer needs confirmation.</Text>
+      <Spacer size="md" /><Button label="Enable for this computer" variant="outline" loading={current.target === true}
+        disabled={current.target !== null} onPress={() => void toggle(true)} />
+      <Spacer size="md" /><Button label="Keep off for this computer" variant="text" loading={current.target === false}
+        disabled={current.target !== null} onPress={() => void toggle(false)} />
+    </> : null}
+    {current.error ? <DevicePushError current={current} toggle={toggle} reload={reload} /> : null}
+  </>;
+}
+
+function DevicePushError({ current, toggle, reload }: PushControlProps) {
+  return <>
       <Spacer size="md" />
-      <Text accessibilityRole="alert">{current.identityUnavailable
+      <Text accessibilityRole="alert">{current.consentUnknown
+        ? "Couldn’t save this computer’s notification choice. Try again."
+        : current.identityUnavailable
         ? "This phone’s push registration is unknown. Enable notifications or check permissions to continue."
         : current.enabled === null
         ? "Couldn’t load this computer’s push registration. Update this computer or try again."
@@ -104,6 +127,5 @@ export function DevicePushSettings({ computer }: { computer: NotificationCompute
           console.warn("[mobile] Notification permissions unavailable", error instanceof Error ? error.name : "unknown");
         });
       }} />
-    </> : null}
   </>;
 }
