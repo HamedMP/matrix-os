@@ -64,7 +64,7 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
     let passthrough = false;
     const result = await transact(async tx => {
       // Untainted unknown/shared/organization chats keep their pre-pilot writes; taint keeps the strict path.
-      if (await untaintedOutsideGoogleProvenance(tx, key.owner, key.chatId, now)) {
+      if (await untaintedOutsideGoogleProvenance<ChatDatabase>(tx, key.owner, key.chatId, now)) {
         // Skipping Google checks never skips cancellation: an aborted call must not write or release.
         passthrough = true; check(signal); const written = await content(tx); check(signal); return written;
       }

@@ -81,7 +81,7 @@ export function createGoogleContextSnapshotAdapter(db: Kysely<ChatDatabase>, opt
     let passthrough = false;
     const result = await transact(async tx => {
       // Untainted unknown/shared/organization chats keep their pre-pilot writes; taint keeps the strict path.
-      if (await untaintedOutsideGoogleProvenance(tx, owner, chatId, now)) {
+      if (await untaintedOutsideGoogleProvenance<ChatDatabase>(tx, owner, chatId, now)) {
         // Skipping Google checks never skips cancellation: an aborted call must not write or release.
         passthrough = true; check(signal); const written = await content(tx); check(signal); return written;
       }
