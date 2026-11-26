@@ -7,6 +7,7 @@
  * skipped and counted.
  */
 import { editTextOf } from "../grid/actions-edit";
+import { usesDate1904 } from "../session/date-system";
 import type { SessionCellEdit } from "../session/edits";
 import type { Cell, SheetId } from "../session/engine";
 import type { SheetSession } from "../session/session";
@@ -48,7 +49,8 @@ function contains(haystack: string, options: FindOptions): boolean {
 }
 
 function editText(reader: Reader, cell: Cell): string {
-  return editTextOf(cell, reader.workbook.getStyle(cell.styleId).numberFormat);
+  const workbook = reader.workbook;
+  return editTextOf(cell, workbook.getStyle(cell.styleId).numberFormat, usesDate1904(workbook));
 }
 
 /** The text a search compares for a cell. */

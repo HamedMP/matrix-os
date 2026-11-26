@@ -1,4 +1,5 @@
 import { type KeyboardEvent, type ReactNode, useState } from "react";
+import { usesDate1904 } from "../session/date-system";
 import { formatA1, isOfficeError, parseSheetRange } from "../session/engine";
 import { editTextOf, startEdit, updateEditCaret, updateEditText } from "./actions-edit";
 import { goToRange } from "./actions-move";
@@ -30,7 +31,8 @@ export function FormulaBar({ ctx, edit, readOnly, listId, activeOptionId, onKey,
   const sheet = ctx.sheet;
   const active = ctx.selection.active;
   const cell = ctx.cell(sheet, active.row, active.col);
-  const shown = edit !== null ? edit.text : editTextOf(cell, ctx.session.workbook.getStyle(cell.styleId).numberFormat);
+  const workbook = ctx.session.workbook;
+  const shown = edit !== null ? edit.text : editTextOf(cell, workbook.getStyle(cell.styleId).numberFormat, usesDate1904(workbook));
   const inBar = edit !== null && edit.target === "bar";
 
   const go = (text: string): void => {

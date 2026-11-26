@@ -4,6 +4,7 @@
  */
 
 import { type Cell, type CellAddress, type CellRange, type SheetId, xlsx } from "../session/engine";
+import { usesDate1904 } from "../session/date-system";
 import { advance } from "./actions-move";
 import type { GridContext } from "./context";
 import {
@@ -30,8 +31,10 @@ const LOOKS_TYPED = /^(?:[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?%?|\d{4}-\d{2}
  * The text to edit for a cell: the formula with `=`, or the value written so
  * that typing it back gives the same value (a percentage as `25%`, a date as
  * `2026-01-31`, text that would read as a number with a leading `'`).
+ * `date1904` is the workbook's date system (`usesDate1904`): a date is the
+ * serial read in that system, as typing the text back reads it.
  */
-export function editTextOf(cell: Pick<Cell, "value" | "formula">, numberFormat: string): string {
+export function editTextOf(cell: Pick<Cell, "value" | "formula">, numberFormat: string, date1904: boolean): string {
   if (cell.formula !== null) return `=${cell.formula}`;
   const value = cell.value;
   if (value === null) return "";
@@ -42,7 +45,7 @@ export function editTextOf(cell: Pick<Cell, "value" | "formula">, numberFormat: 
   }
   if (numberFormat.includes("%")) return `${Number((value * 100).toPrecision(15))}%`;
   if (xlsx.isDateFormat(numberFormat)) {
-    const iso = xlsx.serialToIso(value);
+    const iso = xlsx.serialToIso(value, date1904);
     if (iso !== null) return iso.replace("T", " ");
   }
   return String(value);
@@ -78,7 +81,8 @@ export function startEdit(ctx: GridContext, initial: string | null, target: "cel
   const merge = mergeAt(ctx.info().mergedRanges, active.row, active.col);
   const cell = merge === null ? active : merge.start;
   const current = ctx.cell(sheet, cell.row, cell.col);
-  const existing = editTextOf(current, ctx.session.workbook.getStyle(current.styleId).numberFormat);
+  const workbook = ctx.session.workbook;
+  const existing = editTextOf(current, workbook.getStyle(current.styleId).numberFormat, usesDate1904(workbook));
   const text = initial ?? existing;
   ctx.reveal(cell);
   ctx.store.set({ edit: blankEdit(sheet, cell, text, existing, initial === null ? "edit" : "enter", target), menu: null, notice: null });

@@ -60,5 +60,7 @@ export type {
 } from "../../../_shared/office-engine/index";
 
 export { getWorkbookInternals } from "../../../_shared/office-engine/xlsx/internal";
+export { boolAttr, kid } from "../../../_shared/office-engine/xlsx/workbook/xml-util";
+export { getAttr } from "../../../_shared/office-engine/xml/index";
 export { scanCsv, sniffDelimiter } from "../../../_shared/office-engine/xlsx/csv/index";
 export type { CellMutation, RawCell, WorkbookInternals } from "../../../_shared/office-engine/xlsx/internal";
