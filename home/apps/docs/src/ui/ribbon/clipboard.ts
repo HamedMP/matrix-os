@@ -8,13 +8,28 @@
  * cut in this document is kept, and Paste inserts it ("own"), so the three
  * commands keep working inside the document; the caller says that text from
  * other apps needs the keyboard shortcut.
+ *
+ * A paste inserts at most `MAX_PASTE_CHARACTERS`; larger text is refused
+ * whole ("too-large"), never cut short. So a Cut never deletes more than a
+ * paste can put back: a larger selection is copied and stays where it is.
  */
 
 import type { TextPosition } from "../../../../_shared/office-engine/index";
-import { type DocumentEditorController, parsePlainText } from "../../editor/index";
+import { type DocumentEditorController, MAX_PASTE_CHARACTERS, PASTE_TOO_LARGE, parsePlainText, pasteFits } from "../../editor/index";
 
-/** `own`: kept or pasted inside this document only. `blocked`: nothing could be pasted. */
-export type ClipboardOutcome = "done" | "nothing" | "own" | "blocked";
+/**
+ * `own`: kept or pasted inside this document only. `blocked`: nothing could be pasted.
+ * `too-large`: a paste larger than one paste inserts changed nothing, or a cut that large only copied.
+ */
+export type ClipboardOutcome = "done" | "nothing" | "own" | "blocked" | "too-large";
+
+/** What to tell the owner about a paste, or a cut, refused as too large. */
+export function clipboardRefusedNotice(kind: "paste" | "cut"): { title: string; description: string } {
+  const limit = MAX_PASTE_CHARACTERS.toLocaleString("en-US");
+  return kind === "paste"
+    ? { title: "Too much text to paste", description: `Paste at most ${limit} characters at a time. The document is unchanged.` }
+    : { title: "Copied, not cut", description: `Cut takes at most ${limit} characters, so the text can be pasted back. The text stays in the document.` };
+}
 
 /** The text last copied or cut in each open document. */
 const ownCopies = new WeakMap<DocumentEditorController, string>();
@@ -48,6 +63,11 @@ const samePosition = (a: TextPosition, b: TextPosition) => a.blockId === b.block
 export async function copySelection(editor: DocumentEditorController, cut: boolean, env: ClipboardEnv = defaultEnv()): Promise<ClipboardOutcome> {
   const selection = editor.getSelection();
   if (selection === null || selection.collapsed) return "nothing";
+  // A selection a paste cannot put back whole is copied, never cut.
+  if (cut && !pasteFits(editor.getSelectedText())) {
+    const copied = await copySelection(editor, false, env);
+    return copied === "nothing" ? copied : PASTE_TOO_LARGE;
+  }
   editor.setSelection({ anchor: selection.anchor, focus: selection.focus }, { focus: true });
   noteCopied(editor);
   try {
@@ -104,7 +124,10 @@ export async function pasteText(editor: DocumentEditorController, env: Clipboard
   editor.focus();
   // The paste command Ctrl+V runs: one undo step, each line break starts a paragraph, and the caret
   // is carried through the engine from line to line instead of read back from the page in between.
-  const changed = editor.paste(parsePlainText(text));
+  const content = parsePlainText(text);
+  // Too large to insert whole: nothing is pasted, rather than just its start.
+  if (content === PASTE_TOO_LARGE) return content;
+  const changed = editor.paste(content);
   if (!changed) return "nothing";
   return system === null ? "own" : "done";
 }

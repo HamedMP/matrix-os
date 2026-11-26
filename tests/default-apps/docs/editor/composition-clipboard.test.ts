@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MAX_PASTE_CHARACTERS } from "../../../../home/apps/docs/src/editor/paste";
 import { type Mounted, OTHER, OWNER, at, beforeInput, bodyParagraphs, caret, caretOf, domCaret, finalText, mount, originalText, paragraph, select } from "./helpers";
 
 let m: Mounted;
@@ -227,6 +228,38 @@ describe("clipboard", () => {
     expect(cut.written).toEqual({ "text/plain": "world\nSecond" });
     expect(finalText(m)).toBe("Hello  paragraph\n");
     expect(caretOf(m)).toEqual(at(a!, 6));
+  });
+
+  it("refuses a paste larger than it can insert whole, before changing the document", async () => {
+    const refused = vi.fn();
+    m = await mount({ paragraphs: ["Hello world"] }, { onClipboardRefused: refused });
+    const [a] = bodyParagraphs(m.doc).map((block) => block.id);
+    select(m, at(a!, 0), at(a!, 5));
+    const big = "x".repeat(MAX_PASTE_CHARACTERS + 1);
+    expect(clipboardEvent("paste", { "text/plain": big }).event.defaultPrevented).toBe(true);
+    clipboardEvent("paste", { "text/html": `<p><b>${big}</b></p>` });
+    beforeInput(m, "insertFromPaste", { transfer: { "text/plain": big } });
+    expect(finalText(m)).toBe("Hello world\n");
+    expect(m.session.getState().canUndo).toBe(false);
+    expect(refused.mock.calls).toEqual([["paste"], ["paste"], ["paste"]]);
+  });
+
+  it("copies a selection too large to paste back but does not cut it", async () => {
+    const refused = vi.fn();
+    const long = "y".repeat(MAX_PASTE_CHARACTERS - 1);
+    m = await mount({ paragraphs: [long, "tail"] }, { onClipboardRefused: refused });
+    const [a, b] = bodyParagraphs(m.doc).map((block) => block.id);
+    select(m, at(a!, 0), at(b!, 2));
+    const cut = clipboardEvent("cut");
+    expect(cut.event.defaultPrevented).toBe(true);
+    expect(cut.written["text/plain"]).toBe(`${long}\nta`);
+    expect(finalText(m)).toBe(`${long}\ntail\n`);
+    expect(refused.mock.calls).toEqual([["cut"]]);
+    // A selection that a paste can put back whole is still cut.
+    select(m, at(a!, 0), at(b!, 0));
+    expect(clipboardEvent("cut").written["text/plain"]).toBe(`${long}\n`);
+    expect(finalText(m)).toBe("tail\n");
+    expect(refused).toHaveBeenCalledTimes(1);
   });
 
   it("does not paste or cut while read-only", async () => {

@@ -95,6 +95,12 @@ export interface DocumentEditorOptions {
   ariaLabel?: string;
   /** Called for Ctrl/Cmd+click on a link with a safe address. Default: open it in a new window. */
   onOpenLink?: (href: string) => void;
+  /**
+   * Called when a paste, or the delete of a cut, was refused because the text
+   * is larger than one paste inserts (`MAX_PASTE_CHARACTERS`). The document is
+   * unchanged; a refused cut still copied the text.
+   */
+  onClipboardRefused?: (kind: "paste" | "cut") => void;
   /** Receives problems that were handled (an edit the engine refused, a failed listener). */
   log?: (message: string, error: unknown) => void;
 }

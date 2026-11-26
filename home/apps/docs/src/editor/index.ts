@@ -98,8 +98,8 @@ export { AUTHOR_COLOR_COUNT, authorColorSlot } from "./authors";
 export { MAX_HIGHLIGHTS_PER_LAYER, MAX_HIGHLIGHT_LAYERS } from "./highlights";
 export { ModelIndex } from "./model-index";
 export { domFromOffset, positionFromDom } from "./position-map";
-export { parsePlainText, readClipboard } from "./paste";
-export type { PasteContent, PasteSegment } from "./paste";
+export { MAX_PASTE_CHARACTERS, PASTE_TOO_LARGE, parsePlainText, pasteFits, readClipboard } from "./paste";
+export type { PasteContent, PasteSegment, PasteTooLarge } from "./paste";
 export type {
   ActiveFormat,
   DocumentEditorController,

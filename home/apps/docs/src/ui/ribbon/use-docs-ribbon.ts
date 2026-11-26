@@ -12,7 +12,7 @@ import type { ResolveOutcome, ReviewController, ReviewSnapshot } from "../../rev
 import type { DocumentSession, SessionState } from "../../session/index";
 import type { AssistantRequestId, DocsPanelId } from "../panel-types";
 import { caretFormat, documentStyles } from "./caret-format";
-import { type ClipboardOutcome, copySelection, noteCopied, pasteText } from "./clipboard";
+import { type ClipboardOutcome, clipboardRefusedNotice, copySelection, noteCopied, pasteText } from "./clipboard";
 import { buildDocsRibbon } from "./index";
 import { styleChoices } from "./styles-model";
 import type { DocsRibbonActions, DocsRibbonState } from "./types";
@@ -112,7 +112,8 @@ export function useDocsRibbon(input: UseDocsRibbonInput): RibbonTab[] {
   };
 
   const clipboardResult = (outcome: ClipboardOutcome, key: string, verb: string) => {
-    if (outcome === "blocked") toast.show({ title: `${verb} with ${key}`, description: `This window cannot use the clipboard directly. Press ${key} in the document.`, tone: "info" });
+    if (outcome === "too-large") toast.show({ ...clipboardRefusedNotice(verb === "Paste" ? "paste" : "cut"), tone: "warning" });
+    else if (outcome === "blocked") toast.show({ title: `${verb} with ${key}`, description: `This window cannot use the clipboard directly. Press ${key} in the document.`, tone: "info" });
     else if (outcome === "own" && verb === "Paste") toast.show({ title: "Pasted the text last copied in this document", description: `For text copied in another app, press ${key}.`, tone: "info" });
     else if (outcome === "own") toast.show({ title: `${verb === "Cut" ? "Cut" : "Copied"} for pasting in this document`, description: `To paste in another app, press ${key} instead.`, tone: "info" });
   };

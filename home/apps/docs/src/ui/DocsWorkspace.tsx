@@ -21,6 +21,7 @@ import type { AssistantRequest, AssistantRequestId, DocsPanelId } from "./panel-
 import { ReferenceLayer } from "./ReferenceLayer";
 import { useReviewController } from "./review/index";
 import { ReviewDocumentLayer } from "./ReviewIntegration";
+import { clipboardRefusedNotice } from "./ribbon/clipboard";
 import { type FileControls, type WorkspaceControls, useDocsRibbon } from "./ribbon/use-docs-ribbon";
 import { SidePanels } from "./SidePanels";
 
@@ -257,7 +258,13 @@ export function DocsWorkspace({ session, state, file, pickDocument }: DocsWorksp
         statusBar={<StatusBar session={session} state={state} docVersion={derivedVersion} />}
       >
         <div ref={setPane} className="docs-pane" style={{ "--docs-zoom": zoom / 100 } as CSSProperties}>
-          <DocumentEditor session={session} ref={setEditor} viewMode={viewMode} ariaLabel="Document" />
+          <DocumentEditor
+            session={session}
+            ref={setEditor}
+            viewMode={viewMode}
+            ariaLabel="Document"
+            onClipboardRefused={(kind) => toast.show({ ...clipboardRefusedNotice(kind), tone: "warning" })}
+          />
           <ReferenceLayer key={state.documentKey} session={session} editor={editor} docVersion={derivedVersion} container={pane} />
           <ReviewDocumentLayer controller={review} container={pane} readOnly={readOnly} onRequestComment={controls.requestComment} />
         </div>

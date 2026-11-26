@@ -125,6 +125,11 @@ export class EditorCore extends EditorBase implements DocumentEditorController, 
     return this.run((selection) => commands.paste(this.commandHost(), selection, content));
   }
 
+  clipboardRefused(kind: "paste" | "cut"): void {
+    this.log(`docs: the ${kind} was refused: the text is larger than one paste inserts`, null);
+    this.options.onClipboardRefused?.(kind);
+  }
+
   toggleFormat(name: ToggleFormat): boolean {
     return this.format(name);
   }

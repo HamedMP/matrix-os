@@ -9,19 +9,20 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { DocumentEditorController, PasteContent } from "../../../../home/apps/docs/src/editor/index";
+import { MAX_PASTE_CHARACTERS } from "../../../../home/apps/docs/src/editor/paste";
 import { copySelection, noteCopied, pasteText } from "../../../../home/apps/docs/src/ui/ribbon/clipboard";
 import { createDocx } from "../../../../home/apps/_shared/office-engine/index";
 import { at as position, bodyParagraphs, caret, caretOf, mount, select } from "../editor/helpers";
 
 const at = (offset: number) => ({ blockId: "b1", offset });
 
-function fakeEditor(collapsed = false) {
+function fakeEditor(collapsed = false, selected = "Hello") {
   const inserted: string[] = [];
   const editor = {
     session: { getState: () => ({ documentKey: 1 }), onChange: () => () => undefined },
     getSelection: () => ({ anchor: at(0), focus: at(5), start: at(0), end: at(5), collapsed, backward: false }),
     setSelection: vi.fn(() => true),
-    getSelectedText: () => "Hello",
+    getSelectedText: () => selected,
     deleteSelection: vi.fn(() => true),
     focus: vi.fn(),
     // Records the pasted paragraphs, with "¶" for each paragraph break.
@@ -98,6 +99,32 @@ describe("ribbon clipboard", () => {
     expect(await pasteText(editor, { clipboard: { readText: async () => Promise.reject(new Error("denied")), writeText: vi.fn() } })).toBe("blocked");
     expect(await pasteText(editor, { clipboard: null })).toBe("blocked");
     warn.mockRestore();
+  });
+
+  it("copies a selection too large to paste back instead of cutting it", async () => {
+    const big = "x".repeat(MAX_PASTE_CHARACTERS + 1);
+    const { editor, raw } = fakeEditor(false, big);
+    const execCommand = vi.fn(() => true);
+    expect(await copySelection(editor, true, { execCommand, clipboard: null })).toBe("too-large");
+    // The browser runs a copy, not a cut, so the editor's cut handler never deletes either.
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(execCommand).not.toHaveBeenCalledWith("cut");
+    const writeText = vi.fn(async () => undefined);
+    expect(await copySelection(editor, true, { execCommand: () => false, clipboard: { writeText, readText: vi.fn() } })).toBe("too-large");
+    expect(writeText).toHaveBeenCalledWith(big);
+    expect(raw.deleteSelection).not.toHaveBeenCalled();
+  });
+
+  it("refuses to paste text larger than it can insert whole, and leaves the document alone", async () => {
+    const big = "x".repeat(MAX_PASTE_CHARACTERS + 1);
+    const { editor, raw } = fakeEditor();
+    expect(await pasteText(editor, { clipboard: { readText: async () => big, writeText: vi.fn() } })).toBe("too-large");
+    // The same for a large text copied in this document while the clipboard was refused.
+    const own = fakeEditor(false, big);
+    noteCopied(own.editor);
+    expect(await pasteText(own.editor, { clipboard: null })).toBe("too-large");
+    expect(raw.paste).not.toHaveBeenCalled();
+    expect(own.raw.paste).not.toHaveBeenCalled();
   });
 
   /** A clipboard whose write waits until the test lets it finish. */

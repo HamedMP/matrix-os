@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ParagraphBlock } from "../../../../home/apps/_shared/office-engine/index";
 import { createDocx, openDocx } from "../../../../home/apps/_shared/office-engine/index";
 import { ModelIndex, readClipboard } from "../../../../home/apps/docs/src/editor/index";
-import { cleanText, parseHtml, parsePlainText } from "../../../../home/apps/docs/src/editor/paste";
+import { MAX_PASTE_CHARACTERS, cleanText, parseHtml, parsePlainText } from "../../../../home/apps/docs/src/editor/paste";
 import { clipToVisible, stepSpans, visibleBounds, visibleSpans } from "../../../../home/apps/docs/src/editor/visibility";
 import { OTHER, at, bodyParagraphs, bodyTables, cellParagraphs, fixtureBytes } from "./helpers";
 
@@ -50,6 +50,25 @@ describe("clipboard parsing", () => {
     expect(texts(readClipboard(source({ "text/html": "<p>only html</p>" }))!.paragraphs)).toEqual(["only html"]);
     const broken = { getData: () => { throw new Error("denied"); } };
     expect(readClipboard(broken)).toBeNull();
+  });
+});
+
+describe("clipboard size", () => {
+  const big = "x".repeat(MAX_PASTE_CHARACTERS + 1);
+
+  it("refuses text larger than a paste can insert whole, instead of keeping only its start", () => {
+    expect(parsePlainText(big)).toBe("too-large");
+    expect(parseHtml(`<p><b>${big}</b></p>`)).toBe("too-large");
+    expect(readClipboard(source({ "text/plain": big }))).toBe("too-large");
+    expect(readClipboard(source({ "text/html": `<p><i>${big}</i></p>` }))).toBe("too-large");
+    // Formatted HTML that is too large falls back to plain text that fits.
+    expect(readClipboard(source({ "text/plain": "short", "text/html": `<p><i>${big}</i></p>` }))).toEqual(parsePlainText("short"));
+  });
+
+  it("accepts text right at the limit whole", () => {
+    const fits = parsePlainText(`${"y".repeat(MAX_PASTE_CHARACTERS - 2)}\nz`);
+    expect(fits).not.toBe("too-large");
+    expect(texts((fits as Exclude<typeof fits, "too-large">).paragraphs).map((line) => line.length)).toEqual([MAX_PASTE_CHARACTERS - 2, 1]);
   });
 });
 

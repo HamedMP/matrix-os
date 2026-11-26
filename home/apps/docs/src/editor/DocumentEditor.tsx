@@ -22,17 +22,19 @@ export interface DocumentEditorProps {
   ref?: Ref<DocumentEditorController>;
   /** Called once per mount with the controller. */
   onReady?: (controller: DocumentEditorController) => void;
+  /** Called when a paste, or the delete of a cut, was refused as larger than one paste inserts. */
+  onClipboardRefused?: (kind: "paste" | "cut") => void;
   onSelectionChange?: (selection: EditorSelection | null) => void;
   /** Called for Ctrl/Cmd+click on a link. Default: open it in a new window. */
   onOpenLink?: (href: string) => void;
 }
 
 export function DocumentEditor(props: DocumentEditorProps) {
-  const { session, viewMode, readOnly = false, className, ariaLabel, ref, onReady, onSelectionChange, onOpenLink } = props;
+  const { session, viewMode, readOnly = false, className, ariaLabel, ref, onReady, onSelectionChange, onOpenLink, onClipboardRefused } = props;
   const host = useRef<HTMLDivElement>(null);
-  const callbacks = useRef({ onReady, onSelectionChange, onOpenLink });
+  const callbacks = useRef({ onReady, onSelectionChange, onOpenLink, onClipboardRefused });
   useEffect(() => {
-    callbacks.current = { onReady, onSelectionChange, onOpenLink };
+    callbacks.current = { onReady, onSelectionChange, onOpenLink, onClipboardRefused };
   });
 
   const initial = useRef({ viewMode, readOnly });
@@ -47,6 +49,7 @@ export function DocumentEditor(props: DocumentEditorProps) {
         if (open !== undefined) open(href);
         else window.open(href, "_blank", "noopener,noreferrer");
       },
+      onClipboardRefused: (kind) => callbacks.current.onClipboardRefused?.(kind),
     };
     return new EditorCore(session, options);
     // The accessible name is read once per editor; a new session makes a new editor.

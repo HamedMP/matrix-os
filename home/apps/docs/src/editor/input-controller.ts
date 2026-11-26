@@ -11,7 +11,7 @@
  * the engine.
  */
 
-import { type PasteContent, readClipboard } from "./paste";
+import { PASTE_TOO_LARGE, type PasteContent, pasteFits, readClipboard } from "./paste";
 import { SKIP } from "./render-paragraph";
 import type { EditorSelection, ToggleFormat } from "./types";
 import type { StepUnit } from "./visibility";
@@ -28,6 +28,8 @@ export interface InputTarget {
   deleteStep(direction: "backward" | "forward", unit: StepUnit, reported?: EditorSelection | null): boolean;
   deleteSelection(): boolean;
   paste(content: PasteContent): boolean;
+  /** A paste, or the delete of a cut, was refused because the text is larger than one paste inserts. */
+  clipboardRefused(kind: "paste" | "cut"): void;
   toggleFormat(name: ToggleFormat): boolean;
   undo(): boolean;
   redo(): boolean;
@@ -201,7 +203,9 @@ export class InputController {
 
   private pasteFrom(source: { getData(type: string): string } | null | undefined): void {
     const content = readClipboard(source);
-    if (content !== null) this.target.paste(content);
+    // Too large to insert whole: nothing is pasted, rather than just its start.
+    if (content === PASTE_TOO_LARGE) this.target.clipboardRefused("paste");
+    else if (content !== null) this.target.paste(content);
   }
 
   private onPaste(event: ClipboardEvent): void {
@@ -214,7 +218,10 @@ export class InputController {
     if (text === "" || event.clipboardData === null) return;
     event.preventDefault();
     event.clipboardData.setData("text/plain", text);
-    if (cut && this.target.isEditable()) this.target.deleteSelection();
+    if (!cut || !this.target.isEditable()) return;
+    // A cut deletes only what a paste can put back whole; a larger selection is copied and stays.
+    if (pasteFits(text)) this.target.deleteSelection();
+    else this.target.clipboardRefused("cut");
   }
 
   private onMouseDown(event: MouseEvent): void {

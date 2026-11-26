@@ -24,8 +24,23 @@ export interface ClipboardSource {
   getData(type: string): string;
 }
 
+/**
+ * The most text one paste inserts. Larger clipboard text is refused whole,
+ * never cut short, and a Cut never deletes more than this (see `pasteFits`),
+ * so whatever is cut can be pasted back.
+ */
 export const MAX_PASTE_CHARACTERS = 1_000_000;
-const MAX_PASTE_HTML = 4_000_000;
+/** Clipboard text or HTML longer than this is not even read. */
+const MAX_PASTE_SOURCE = 4_000_000;
+
+/** What a paste is refused with when its text is larger than `MAX_PASTE_CHARACTERS`. */
+export const PASTE_TOO_LARGE = "too-large";
+export type PasteTooLarge = typeof PASTE_TOO_LARGE;
+
+/** True when a paste can insert `text` (such as a selection about to be cut) whole. */
+export function pasteFits(text: string): boolean {
+  return text.length <= MAX_PASTE_CHARACTERS;
+}
 
 const BLOCK_TAGS: ReadonlySet<string> = new Set(["P", "DIV", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "TR", "BLOCKQUOTE", "PRE", "UL", "OL", "TABLE", "SECTION", "ARTICLE", "HEADER", "FOOTER", "DD", "DT"]);
 const SKIPPED_TAGS: ReadonlySet<string> = new Set(["SCRIPT", "STYLE", "HEAD", "META", "TITLE", "LINK", "TEMPLATE", "NOSCRIPT", "IFRAME", "OBJECT", "SVG", "MATH"]);
@@ -38,8 +53,12 @@ export function cleanText(text: string): string {
   return text.replace(/\r\n?/g, "\n").replace(/[\u0000-\u0008\u000B-\u001F\u007F￼]/g, "");
 }
 
-export function parsePlainText(text: string): PasteContent {
-  const lines = cleanText(text.slice(0, MAX_PASTE_CHARACTERS)).split("\n");
+/** The paragraphs of plain text, or `too-large` when the cleaned text does not fit in one paste. */
+export function parsePlainText(text: string): PasteContent | PasteTooLarge {
+  if (text.length > MAX_PASTE_SOURCE) return PASTE_TOO_LARGE;
+  const clean = cleanText(text);
+  if (!pasteFits(clean)) return PASTE_TOO_LARGE;
+  const lines = clean.split("\n");
   return {
     paragraphs: lines.map((line) => (line === "" ? [] : [{ text: line, bold: false, italic: false, underline: false }])),
     formatted: false,
@@ -73,12 +92,19 @@ function hidden(element: Element): boolean {
   return style !== undefined && (style.display === "none" || style.visibility === "hidden");
 }
 
-export function parseHtml(html: string): PasteContent | null {
-  if (typeof DOMParser === "undefined" || html.length > MAX_PASTE_HTML) return null;
+/**
+ * The paragraphs of HTML. Null when it has no text or there is no DOM parser;
+ * `too-large` when it is too long to read or its text does not fit in one
+ * paste.
+ */
+export function parseHtml(html: string): PasteContent | PasteTooLarge | null {
+  if (typeof DOMParser === "undefined") return null;
+  if (html.length > MAX_PASTE_SOURCE) return PASTE_TOO_LARGE;
   const parsed = new DOMParser().parseFromString(html, "text/html");
   const paragraphs: PasteSegment[][] = [[]];
   let formatted = false;
   let budget = MAX_PASTE_CHARACTERS;
+  let overflow = false;
   let breakPending = false;
   const current = (): PasteSegment[] => paragraphs[paragraphs.length - 1] as PasteSegment[];
   const startParagraph = (): void => {
@@ -91,8 +117,12 @@ export function parseHtml(html: string): PasteContent | null {
     if (breakPending && text.trim() !== "") startParagraph();
     const line = current();
     if (line.length === 0 && !preformatted) text = text.replace(/^ +/, "");
-    if (text === "" || budget <= 0) return;
-    text = text.slice(0, budget);
+    if (text === "" || overflow) return;
+    if (text.length > budget) {
+      // Never paste just the start: the whole paste is refused.
+      overflow = true;
+      return;
+    }
     budget -= text.length;
     const last = line[line.length - 1];
     if (last !== undefined && last.bold === format.bold && last.italic === format.italic && last.underline === format.underline) last.text += text;
@@ -104,7 +134,7 @@ export function parseHtml(html: string): PasteContent | null {
       addText(node.nodeValue ?? "", format, preformatted);
       return;
     }
-    if (node.nodeType !== 1) return;
+    if (node.nodeType !== 1 || overflow) return;
     const element = node as Element;
     const tag = element.tagName.toUpperCase();
     if (SKIPPED_TAGS.has(tag) || hidden(element)) return;
@@ -120,6 +150,7 @@ export function parseHtml(html: string): PasteContent | null {
     if (block) breakPending = current().length > 0 || breakPending;
   };
   walk(parsed.body, { bold: false, italic: false, underline: false }, false);
+  if (overflow) return PASTE_TOO_LARGE;
   for (const line of paragraphs) {
     const last = line[line.length - 1];
     if (last !== undefined) last.text = last.text.replace(/ +$/, "");
@@ -132,9 +163,10 @@ export function parseHtml(html: string): PasteContent | null {
 /**
  * What a paste should insert. Formatted HTML wins when it carries bold,
  * italic or underline; otherwise the plain text is used, which keeps line
- * structure best. Null when the clipboard has no text.
+ * structure best. Null when the clipboard has no text; `too-large` when its
+ * text does not fit in one paste, so nothing is inserted at all.
  */
-export function readClipboard(source: ClipboardSource | null | undefined): PasteContent | null {
+export function readClipboard(source: ClipboardSource | null | undefined): PasteContent | PasteTooLarge | null {
   if (source === null || source === undefined) return null;
   let html = "";
   let plain = "";
@@ -148,7 +180,10 @@ export function readClipboard(source: ClipboardSource | null | undefined): Paste
   }
   if (html !== "") {
     const rich = parseHtml(html);
-    if (rich !== null && (rich.formatted || plain === "")) return rich;
+    // HTML too large to paste falls back to the plain text, which may fit.
+    if (rich === PASTE_TOO_LARGE) {
+      if (plain === "") return rich;
+    } else if (rich !== null && (rich.formatted || plain === "")) return rich;
   }
   return plain === "" ? null : parsePlainText(plain);
 }
