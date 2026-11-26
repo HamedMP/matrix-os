@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createRegistry } from "../../../../../packages/office/src/xlsx/formula/registry.js";
 import { registerA } from "../../../../../packages/office/src/xlsx/formula/functions/register-a.js";
-import { check, setup, type Case } from "./setup.js";
+import { isArray } from "../../../../../packages/office/src/xlsx/formula/coerce.js";
+import { check, err, setup, type Case } from "./setup.js";
 
 const { value, run } = setup();
 
@@ -153,6 +154,22 @@ describe("array behaviour", () => {
     });
     expect(run('SWITCH(2,{1,2},"hit","miss")')).toMatchObject({ kind: "array", values: [["miss", "hit"]] });
     expect(run('SWITCH({1,2},1,{"x","y"},"z")')).toMatchObject({ kind: "array", values: [["x", "z"]] });
+  });
+  it.each([
+    // A1:A5 read once (5) plus the 5-cell result.
+    ["SWITCH(2,A1:A5,1,0)", 10],
+    // A1 (1), A1:A5 (5) and the result (5): the scalar candidate before the array is not read again.
+    ['SWITCH(99,A1,"x",A1:A5,1,0)', 11],
+    // The subject A1:A5 (5) plus the result (5).
+    ["SWITCH(A1:A5,10,1,0)", 10],
+    // IF: the condition's range (5) and comparison (5), then the result (5).
+    ["IF(A1:A5>15,1,0)", 15],
+    // IFERROR and IFNA: the value's range (5) plus the result (5); the scalar fallback costs nothing.
+    ["IFERROR(A1:A5,0)", 10],
+    ["IFNA(E1:E5,0)", 10],
+  ] as const)("reads each argument of %s once against maxCells", (text, cells) => {
+    expect(isArray(setup({ maxCells: cells }).run(text))).toBe(true);
+    expect(setup({ maxCells: cells - 1 }).run(text)).toEqual(err("#NUM!"));
   });
 });
 

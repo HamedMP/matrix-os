@@ -222,6 +222,13 @@ describe("lookup functions", () => {
     expect(provider.reads.some((read) => read.startsWith("Other"))).toBe(false);
   });
 
+  it("reads each CHOOSE choice once against maxCells", () => {
+    // The selector (2), each choice once (5 + 5), then the 5 by 2 result (10).
+    const text = "CHOOSE({1,2},A1:A5,C1:C5)";
+    expect(setup({ maxCells: 22 }).run(text)).toMatchObject({ kind: "array", rows: 5, cols: 2 });
+    expect(setup({ maxCells: 21 }).run(text)).toEqual(err("#NUM!"));
+  });
+
   it("looks up in a whole column without reading past the used rows", () => {
     expect(value("VLOOKUP(5,A:C,2,FALSE)")).toBe("date");
     expect(value("MATCH(8,A:A,0)")).toBe(5);

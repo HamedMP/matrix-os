@@ -72,21 +72,32 @@ function switchScalars(s: readonly FormulaScalar[]): FormulaScalar {
   return (s.length - 1) % 2 === 1 ? (s[s.length - 1] as FormulaScalar) : ERR.NA;
 }
 
-/** SWITCH element by element, once the expression or a value to match is an array: every argument is evaluated. */
-function switchArrays(subject: FormulaValue, args: readonly FormulaAst[], context: FunctionContext): FormulaValue {
-  const values = [subject, ...args.slice(1).map((node) => context.evaluate(node))];
+/**
+ * SWITCH element by element, once the expression or a value to match is an
+ * array: every argument is evaluated. `known` holds the arguments already
+ * evaluated, by position (undefined where not yet), so none is read twice
+ * against `maxCells`.
+ */
+function switchArrays(
+  known: readonly (FormulaValue | undefined)[],
+  args: readonly FormulaAst[],
+  context: FunctionContext,
+): FormulaValue {
+  const values = args.map((node, i) => (known[i] !== undefined ? (known[i] as FormulaValue) : context.evaluate(node)));
   return broadcast(values, switchScalars);
 }
 
 function switchFunction(args: readonly FormulaAst[], context: FunctionContext): FormulaValue {
   const evaluated = context.evaluate(args[0] as FormulaAst);
-  if (isArray(evaluated) && cellCount(evaluated) > 1) return switchArrays(evaluated, args, context);
+  const known: (FormulaValue | undefined)[] = [evaluated];
+  if (isArray(evaluated) && cellCount(evaluated) > 1) return switchArrays(known, args, context);
   const subject = toScalar(evaluated);
   if (isError(subject)) return subject;
   const pairs = Math.floor((args.length - 1) / 2);
   for (let i = 0; i < pairs; i += 1) {
     const value = context.evaluate(args[1 + i * 2] as FormulaAst);
-    if (isArray(value) && cellCount(value) > 1) return switchArrays(evaluated, args, context);
+    known[1 + i * 2] = value;
+    if (isArray(value) && cellCount(value) > 1) return switchArrays(known, args, context);
     const candidate = toScalar(value);
     if (isError(candidate)) return candidate;
     if (valuesEqual(subject, candidate)) return context.evaluate(args[2 + i * 2] as FormulaAst);
