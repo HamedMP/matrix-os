@@ -93,17 +93,21 @@ export async function readRuntimeAsleep(response: Response): Promise<{ asleep: t
 }
 
 /**
- * Records the VM as suspended with one compare-and-set on the status and
- * generation the request routed with, then reads the record back.
+ * Records suspension only while the routing snapshot still matches.
+ * A scheduled wake can change the wake timestamps while status stays running.
  */
 export async function markRuntimeAsleep(db: PlatformDB, machine: UserMachineRecord): Promise<UserMachineRecord | undefined> {
   await db.ready;
+  const nextWakeAt = machine.nextWakeAt === null ? null : new Date(machine.nextWakeAt);
+  const awakeSince = machine.awakeSince === null ? null : new Date(machine.awakeSince);
   await db.executor.updateTable('user_machines')
     .set({ status: ASLEEP_STATUS })
     .where('machine_id', '=', machine.machineId)
     .where('generation', '=', machine.generation)
     .where('status', '=', machine.status)
     .where('deleted_at', 'is', null)
+    .where('next_wake_at', nextWakeAt === null ? 'is' : '=', nextWakeAt)
+    .where('awake_since', awakeSince === null ? 'is' : '=', awakeSince)
     .execute();
   const current = await getUserMachine(db, machine.machineId);
   return current && !current.deletedAt && current.generation === machine.generation ? current : undefined;
