@@ -53,8 +53,11 @@
  *   `toggleFormat("bold" | "italic" | "underline")`, `fill("down" | "right")`,
  *   `undo()`, `redo()`.
  * - Editing: `isEditing`, `startEdit(initial?)`, `commitEdit()`,
- *   `cancelEdit()`. Call `commitEdit()` before an action that reads the
- *   workbook (save, send to the agent) so that text still in the editor counts.
+ *   `cancelEdit()`, `afterEdit(command)`. Call `commitEdit()` before an action
+ *   that reads the workbook (save, send to the agent) so that text still in the
+ *   editor counts; run a toolbar or menu command that changes cells or the sheet
+ *   through `afterEdit`, which stores that text first and skips the command when
+ *   the editor refuses it.
  * - Clipboard for toolbar buttons: `copy()`, `cut()` return
  *   `{ text, html }`; `paste({ text, html })`.
  * - Structure: `insertRows(where?)`, `deleteRows()`, `insertColumns(where?)`,

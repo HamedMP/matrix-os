@@ -278,3 +278,52 @@ describe("Sheets right panel", () => {
     expect(screen.queryByRole("complementary")).toBeNull();
   });
 });
+
+describe("Sheets panels and tabs with text in the cell editor", () => {
+  function typeInCell(app: Awaited<ReturnType<typeof renderWithWorkbook>>, text: string): HTMLTextAreaElement {
+    const grid = gridOf(app.container);
+    act(() => grid.focus());
+    fireEvent.keyDown(grid, { key: "x" });
+    const input = app.container.querySelector<HTMLTextAreaElement>(".sg-input--cell textarea")!;
+    fireEvent.change(input, { target: { value: text } });
+    return input;
+  }
+
+  it("replaces only after the text being typed is stored, and not while the editor refuses it", async () => {
+    const app = await renderWithWorkbook("Budget.xlsx", (workbook, sheet) => {
+      workbook.setRange(sheet, { row: 0, col: 0 }, [["pear"], ["apple"]]);
+    });
+    const session = app.session();
+    const sheet = session.getState().activeSheetId;
+    const input = typeInCell(app, "=1+*");
+    fireEvent.keyDown(window, { key: "h", ctrlKey: true });
+    fireEvent.change(screen.getByRole("searchbox", { name: "Find" }), { target: { value: "apple" } });
+    fireEvent.change(screen.getByLabelText("Replace with"), { target: { value: "cherry" } });
+    fireEvent.click(screen.getByRole("button", { name: "Replace all" }));
+    expect(session.cell(sheet, 1, 0).value).toBe("apple");
+    expect(input.value).toBe("=1+*");
+
+    // A1 is being typed over with the word the bar looks for: it is stored first, then replaced too.
+    fireEvent.change(input, { target: { value: "apple" } });
+    fireEvent.click(screen.getByRole("button", { name: "Replace all" }));
+    expect(app.container.querySelector(".sg-input--cell textarea")).toBeNull();
+    expect([session.cell(sheet, 0, 0).value, session.cell(sheet, 1, 0).value]).toEqual(["cherry", "cherry"]);
+  });
+
+  it("adds a sheet only after the text being typed is stored", async () => {
+    const app = await renderWithWorkbook();
+    const session = app.session();
+    const sheet = session.getState().activeSheetId;
+    const input = typeInCell(app, "=1+*");
+    fireEvent.click(screen.getByRole("button", { name: "Add sheet" }));
+    await flush();
+    expect(session.sheets()).toHaveLength(1);
+    expect(input.value).toBe("=1+*");
+
+    fireEvent.change(input, { target: { value: "typed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add sheet" }));
+    await flush();
+    expect(session.sheets()).toHaveLength(2);
+    expect(session.cell(sheet, 0, 0).value).toBe("typed");
+  });
+});

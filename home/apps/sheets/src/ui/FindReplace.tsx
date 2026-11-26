@@ -59,7 +59,7 @@ export function FindReplace({ session, controller, selection, revision, showRepl
     if (target !== undefined) controller.select({ row: target.row, col: target.col });
   };
 
-  const replaceOne = (): void => {
+  const replaceCurrent = (): void => {
     const target = current >= 0 ? matches[current] : undefined;
     if (target === undefined) {
       go(false);
@@ -79,7 +79,7 @@ export function FindReplace({ session, controller, selection, revision, showRepl
     go(false);
   };
 
-  const replaceAll = (): void => {
+  const replaceEvery = (): void => {
     const plan = planReplaceAll(session, sheet, options, replacement);
     if (plan.edits.length === 0) {
       onMessage(plan.skipped > 0 ? "The matching cells show formula results, which cannot be replaced." : "No cells match.", "info");
@@ -93,6 +93,10 @@ export function FindReplace({ session, controller, selection, revision, showRepl
     const skipped = plan.skipped > 0 ? ` ${plan.skipped} formula ${plan.skipped === 1 ? "result was" : "results were"} left as they are.` : "";
     onMessage(`Replaced in ${plan.edits.length} ${plan.edits.length === 1 ? "cell" : "cells"}.${skipped}`, "success");
   };
+
+  // Replacing changes cells: the text still in the cell editor goes in first, and a refused one stops it.
+  const replaceOne = (): void => void controller.afterEdit(replaceCurrent);
+  const replaceAll = (): void => void controller.afterEdit(replaceEvery);
 
   const count = query === "" ? "" : matches.length === 0 ? "No matches" : `${current >= 0 ? current + 1 : "-"} of ${matches.length}${found.truncated ? "+" : ""}`;
 

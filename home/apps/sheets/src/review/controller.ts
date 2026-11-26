@@ -30,6 +30,8 @@ export interface ReviewGrid {
   scrollTo(cell: CellAddress, sheet?: SheetId): void;
   decorate(layer: string, decorations: readonly CellDecoration[]): void;
   clearDecorations(layer?: string): void;
+  /** Runs a change of cells once the text still in the cell editor is stored; false when the editor refused it. */
+  afterEdit?(command: () => void): boolean;
 }
 
 export interface ReviewState {
@@ -53,6 +55,8 @@ export type ReviewActionResult = { ok: true; resolved: number } | { ok: false; m
 const STALE_NOTICE = "Some changes stay pending because their cells were edited since they were proposed. Accept them to keep the current content.";
 const GONE_NOTICE = "That change is no longer pending. The list has been refreshed.";
 const FAILED_NOTICE = "The change could not be resolved. Try again.";
+/** Returned, not shown: the cell editor shows why it refused its text. */
+const EDITING_NOTICE = "Finish the cell being edited first.";
 
 export class SheetReviewController {
   private grid: ReviewGrid | null;
@@ -226,7 +230,18 @@ export class SheetReviewController {
     return target;
   }
 
+  /** Resolving changes cells: the text still in the cell editor goes in first, and a refused one stops it. */
   private resolve(target: ReviewTarget, accept: boolean): ReviewActionResult {
+    const grid = this.grid;
+    if (grid === null || grid.afterEdit === undefined) return this.resolveNow(target, accept);
+    let outcome: ReviewActionResult = { ok: false, message: EDITING_NOTICE };
+    grid.afterEdit(() => {
+      outcome = this.resolveNow(target, accept);
+    });
+    return outcome;
+  }
+
+  private resolveNow(target: ReviewTarget, accept: boolean): ReviewActionResult {
     if (this.disposed) return { ok: false, message: FAILED_NOTICE };
     const ids = this.idsFor(target);
     if (ids !== "all" && ids.length === 0) return { ok: true, resolved: 0 };

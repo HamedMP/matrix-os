@@ -80,7 +80,35 @@ export interface SheetCommandContext {
 const MIN_FONT_PT = 1;
 const MAX_FONT_PT = 409;
 
+/**
+ * Commands that leave the text in the cell editor alone: they open a panel or
+ * a dialog, change the view, step between changes, or add to the text being
+ * typed. Every other command stores that text first (see `createSheetCommands`).
+ */
+const LEAVES_EDITOR: ReadonlySet<SheetCommandId> = new Set<SheetCommandId>([
+  "insert-function", "find", "replace",
+  "review-panel", "review-markup", "change-previous", "change-next",
+  "formula-bar", "gridlines", "assistant-panel",
+]);
+
+/**
+ * The handlers of every command. A command that changes cells or the sheet
+ * first stores the text still in the cell editor and does nothing when the
+ * editor refuses it: run with the editor open, a row deletion would move
+ * another cell under the editor's address, and the pending text would then
+ * overwrite it.
+ */
 export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
+  const handlers = sheetCommandHandlers(ctx);
+  const commands = {} as SheetCommands;
+  for (const id of SHEET_COMMAND_IDS) {
+    const handler = handlers[id];
+    commands[id] = LEAVES_EDITOR.has(id) ? handler : (arg) => void ctx.controller.afterEdit(() => handler(arg));
+  }
+  return commands;
+}
+
+function sheetCommandHandlers(ctx: SheetCommandContext): SheetCommands {
   const { controller, notify } = ctx;
   const session = controller.session;
   const align = ctx.style.alignment;
@@ -107,8 +135,6 @@ export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
     });
   };
   const withSelection = (action: (selection: NonNullable<ReturnType<typeof selectionFromGrid>>) => void) => () => {
-    // A refused formula keeps the editor open with its message; the action would read the old content.
-    if (!controller.commitEdit()) return;
     const selection = selectionFromGrid(controller);
     if (selection === null) return;
     ctx.openPanel("assistant");
@@ -218,7 +244,6 @@ export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
     },
     "trace-clear": () => run(() => controller.clearDecorations(TRACE_LAYER)),
     recalculate: () => {
-      if (!controller.commitEdit()) return;
       session.recalculate();
       notify(session.getState().calcComplete ? "Recalculated every formula." : "Recalculated as far as the limits allow; some values may be out of date.", "info");
       done();
@@ -230,12 +255,8 @@ export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
     "sort-asc": () => run(() => controller.sort(false)),
     "sort-desc": () => run(() => controller.sort(true)),
     "filter-toggle": () => run(() => (controller.isFiltered ? controller.filter(null) : controller.filterByValue())),
-    "remove-duplicates": () => {
-      if (!controller.commitEdit()) return;
-      report(removeDuplicateRows(controller));
-    },
+    "remove-duplicates": () => report(removeDuplicateRows(controller)),
     "text-to-columns": (id) => {
-      if (!controller.commitEdit()) return;
       if (SPLIT_DELIMITERS.some((entry) => entry.id === id)) report(splitTextToColumns(controller, id as SplitDelimiterId));
     },
 
@@ -258,7 +279,6 @@ export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
     "assistant-explain": withSelection((selection) => void ctx.assistant.explain(selection)),
     "assistant-trace": withSelection((selection) => void ctx.assistant.trace(selection)),
     "assistant-check": () => {
-      if (!controller.commitEdit()) return;
       ctx.openPanel("assistant");
       void ctx.assistant.check();
     },

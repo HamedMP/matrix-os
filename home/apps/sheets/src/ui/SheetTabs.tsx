@@ -18,7 +18,14 @@ export interface SheetTabsProps {
   onLookChange: (look: TabLook) => void;
   onFailure: (message: string) => void;
   readOnly?: boolean;
+  /** Runs a change of the sheets once the text still in the cell editor is stored; false when the editor refused it. */
+  afterEdit?: (command: () => void) => boolean;
 }
+
+const runNow = (command: () => void): boolean => {
+  command();
+  return true;
+};
 
 function menuItems(index: number, count: number, look: TabLook, id: SheetId): DropdownItem[] {
   return [
@@ -31,7 +38,7 @@ function menuItems(index: number, count: number, look: TabLook, id: SheetId): Dr
   ];
 }
 
-export function SheetTabs({ session, activeSheetId, revision, look, onLookChange, onFailure, readOnly = false }: SheetTabsProps) {
+export function SheetTabs({ session, activeSheetId, revision, look, onLookChange, onFailure, readOnly = false, afterEdit = runNow }: SheetTabsProps) {
   const [renaming, setRenaming] = useState<{ id: SheetId; text: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<SheetInfo | null>(null);
   const dragging = useRef<SheetId | null>(null);
@@ -48,8 +55,11 @@ export function SheetTabs({ session, activeSheetId, revision, look, onLookChange
     const current = sheets.find((sheet) => sheet.id === renaming.id);
     setRenaming(null);
     if (current === undefined || text === "" || text === current.name) return;
-    const result = session.renameSheet(renaming.id, text);
-    if (!result.ok) onFailure(result.message);
+    const id = renaming.id;
+    afterEdit(() => {
+      const result = session.renameSheet(id, text);
+      if (!result.ok) onFailure(result.message);
+    });
   };
 
   const onMenu = (sheet: SheetInfo, index: number, action: string): void => {
@@ -64,16 +74,20 @@ export function SheetTabs({ session, activeSheetId, revision, look, onLookChange
   };
 
   const add = (): void => {
-    const result = session.addSheet();
-    if (!result.ok) onFailure(result.message);
+    afterEdit(() => {
+      const result = session.addSheet();
+      if (!result.ok) onFailure(result.message);
+    });
   };
 
   const remove = (): void => {
     const sheet = confirmDelete;
     setConfirmDelete(null);
     if (sheet === null) return;
-    const result = session.removeSheet(sheet.id);
-    if (!result.ok) onFailure(result.message);
+    afterEdit(() => {
+      const result = session.removeSheet(sheet.id);
+      if (!result.ok) onFailure(result.message);
+    });
   };
 
   const onTabKey = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createSheetGridController } from "../../../../home/apps/sheets/src/grid";
 import { MARKUP_LAYER, SheetReviewController } from "../../../../home/apps/sheets/src/review";
 import { FakeGrid, openModel, proposeOnModel } from "./fixture";
 
@@ -124,5 +125,30 @@ describe("SheetReviewController", () => {
     expect(review.getState().notice).toMatch(/no longer/i);
     expect(review.getState().total).toBe(3);
     review.dispose();
+  });
+  it("stores the text in the cell editor before it resolves changes, and resolves none while the editor refuses it", async () => {
+    const model = await openModel();
+    const { session, sheets } = model;
+    proposeOnModel(model);
+    const grid = createSheetGridController(session);
+    const review = new SheetReviewController(session, grid);
+    session.setActiveSheet(sheets.assumptions);
+    grid.select({ row: 2, col: 1 });
+    grid.startEdit("=1+*");
+    expect(review.accept("all")).toMatchObject({ ok: false });
+    expect(review.getState().total).toBe(3);
+    expect(grid.isEditing).toBe(true);
+
+    // The owner types over a proposed cell: the typed value goes in, then the change is resolved over it.
+    grid.cancelEdit();
+    grid.startEdit("0.07");
+    expect(review.reject("all").ok).toBe(true);
+    expect(grid.isEditing).toBe(false);
+    const resolved = session.cell(sheets.assumptions, 2, 1).value;
+    // Nothing is left in the editor to write over the resolved cell.
+    expect(grid.commitEdit()).toBe(true);
+    expect(session.cell(sheets.assumptions, 2, 1).value).toBe(resolved);
+    review.dispose();
+    grid.dispose();
   });
 });

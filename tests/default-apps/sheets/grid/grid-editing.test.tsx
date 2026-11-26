@@ -382,4 +382,34 @@ describe("SheetGrid editing", () => {
     expect(liveText(container)).toMatch(/^A2/);
     expect(cellElement(container, 1, 0)).not.toBeNull();
   });
+
+  it("stores the text being typed before a context menu entry moves rows, and stops the entry when the text is refused", async () => {
+    const { session, sheet, grid, container, controller } = await renderGrid();
+    const pickEntry = (label: string) => fireEvent.click([...container.querySelectorAll<HTMLElement>("[role='menuitem']")].find((item) => item.textContent === label)!);
+    click(grid, 1, 0);
+    press(grid, "7");
+    type(editor(container)!, "77");
+    fireEvent.contextMenu(grid, at(1, 0));
+    pickEntry("Delete rows");
+    expect(editor(container)).toBeNull();
+    // The typed text went into A2 first; the row then went away and A3 moved up, untouched.
+    expect(session.cell(sheet, 1, 0).value).toBe(3);
+    session.undo();
+    expect(session.cell(sheet, 1, 0).value).toBe(77);
+
+    // Text that does not parse keeps the editor open with its message, and no menu opens to act on the cells.
+    click(grid, 1, 0);
+    press(grid, "=");
+    type(editor(container)!, "=1+*");
+    fireEvent.contextMenu(grid, at(1, 0));
+    expect(container.querySelector("[role='menu']")).toBeNull();
+    expect(editor(container)!.value).toBe("=1+*");
+    // Opening the editor closes a menu that is shown, so no entry can run under an open editor.
+    act(() => controller.cancelEdit());
+    fireEvent.contextMenu(grid, at(1, 0));
+    act(() => controller.startEdit("typed"));
+    expect(container.querySelector("[role='menu']")).toBeNull();
+    expect(session.cell(sheet, 1, 0).value).toBe(77);
+    expect(session.cell(sheet, 2, 0).value).toBe(3);
+  });
 });

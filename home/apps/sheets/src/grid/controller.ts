@@ -25,7 +25,7 @@ import {
   styleSelection,
   toggleFormat,
 } from "./actions-data";
-import { cancelEdit, commitEdit, startEdit } from "./actions-edit";
+import { afterEditCommitted, cancelEdit, commitEdit, startEdit } from "./actions-edit";
 import { goToRange } from "./actions-move";
 import { GridContext } from "./context";
 import type { CellDecoration } from "./decorations";
@@ -205,6 +205,15 @@ export class SheetGridController {
   /** Stores the text being edited. False when it was refused and the editor stays open. */
   commitEdit(): boolean {
     return commitEdit(this.context, null);
+  }
+
+  /**
+   * Runs `command` once the editor's text is stored. False, without running
+   * it, when the editor refused the text. Every toolbar and menu command that
+   * changes cells or the sheet goes through it.
+   */
+  afterEdit(command: () => void): boolean {
+    return afterEditCommitted(this.context, command);
   }
 
   cancelEdit(): void {

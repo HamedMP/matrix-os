@@ -100,6 +100,7 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", files
   const notify: Notify = useCallback((message, tone = "info") => {
     toast.show({ title: message, tone });
   }, [toast]);
+  const afterEdit = useCallback((command: () => void) => controller.afterEdit(command), [controller]);
 
   const save = useCallback(() => {
     // Text the editor refused stays there with its message; saving now would leave it out.
@@ -215,7 +216,7 @@ export function Workbench({ session, tabLooks, ai, aiAccess = "available", files
           <SheetGrid session={session} controller={controller} showFormulaBar={view.formulaBar} label={`${state.name}, ${session.sheet(state.activeSheetId).name}`} />
           {view.formulaBar && <NameBox controller={controller} selection={selection} revision={revision} onFailure={(message) => notify(message, "warning")} />}
         </div>
-        <SheetTabs session={session} activeSheetId={state.activeSheetId} revision={revision} look={look} onLookChange={setLook} onFailure={(message) => notify(message, "warning")} />
+        <SheetTabs session={session} activeSheetId={state.activeSheetId} revision={revision} look={look} onLookChange={setLook} onFailure={(message) => notify(message, "warning")} afterEdit={afterEdit} />
       </div>
     </AppFrame>
   );

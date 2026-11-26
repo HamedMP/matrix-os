@@ -156,6 +156,18 @@ export function commitEdit(ctx: GridContext, move: Direction | null): boolean {
   return true;
 }
 
+/**
+ * Runs a command that changes cells or the sheet once the text still in the
+ * cell editor is stored, so that the editor never writes to a cell the
+ * command moved or changed. Returns false, without running the command, when
+ * the editor refused its text: it stays open with its message.
+ */
+export function afterEditCommitted(ctx: GridContext, command: () => void): boolean {
+  if (!commitEdit(ctx, null)) return false;
+  command();
+  return true;
+}
+
 export function cancelEdit(ctx: GridContext): void {
   const edit = ctx.store.getState().edit;
   if (edit === null) return;
