@@ -325,7 +325,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 
   const loadList=useCallback(async()=>{if (!isCurrent()) return; refreshUnread(); await navigation.store?.refresh();},[navigation.store, refreshUnread, isCurrent]);
 
-  const loadDetail = useCallback(async (chatId: string) => {
+  const loadDetail = useCallback(async (chatId: string, onFailure?: (error: unknown) => void) => {
     if (!isCurrent()) return null;
     const generation = ++detailRequestGeneration.current;
     try {
@@ -356,6 +356,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       }
       console.warn("[canonical-chat] Shell detail unavailable:", error instanceof Error ? error.name : "UnknownError");
       setDetailError({ scope: navigationIdentity, chatId, notFound: error instanceof CanonicalShellChatRequestError && error.status === 404 });
+      onFailure?.(error);
       return null;
     }
   }, [client, navigationIdentity, isCurrent]);
@@ -387,9 +388,16 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   }, [eventSource]);
 
   useEffect(() => {
-    const selectedRefresh = createCanonicalChatRefresh(async () => (
-      !activeChatId || Boolean(await loadDetail(activeChatId))
-    ));
+    const selectedRefresh = createCanonicalChatRefresh(async () => {
+      if (!activeChatId || !isCurrent() || activeChatIdRef.current !== activeChatId) return true;
+      let retry = true;
+      const snapshot = await loadDetail(activeChatId, error => {
+        if (error instanceof CanonicalShellChatRequestError && error.status >= 400 && error.status < 500) {
+          retry = error.status === 408 || error.status === 429;
+        }
+      });
+      return Boolean(snapshot) || !retry;
+    });
     const subscription = eventSource.subscribe((event) => {
       if (!isCurrent()) return;
       if (isChatMembershipEvent(event)) setChatChangeRevision((revision) => (revision + 1) % 1_000_000);
@@ -427,11 +435,14 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       }
 
     });
+    // Subscribe first. Admission may have missed events received in the draft view.
+    if (activeChatId) selectedRefresh.schedule();
+    else setDetail(null);
     return () => {
       subscription.dispose();
       selectedRefresh.dispose();
     };
-  }, [activeChatId, eventSource, loadDetail, loadList, setRecords, refreshUnread, navigation.store, isCurrent]);
+  }, [activeChatId, eventSource, loadDetail, setRecords, refreshUnread, navigation.store, isCurrent]);
 
   useEffect(() => {
     let cancelled = false;
@@ -464,16 +475,6 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [loadDetail, navigation.store]);
-
-  useEffect(() => {
-    if (!activeChatId) {
-      setDetail(null);
-      return;
-    }
-    // A send that just opened its new Chat already holds the admitted detail.
-    if (detailRef.current?.record.chat.id === activeChatId) return;
-    void loadDetail(activeChatId);
-  }, [activeChatId, loadDetail]);
 
   useEffect(() => {
     if (!activeChatId || !detail?.record.activeRun || eventConnectionState === "open") return;
@@ -658,8 +659,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         turnAdmitted = true;
         if (draftSendAttempt.current?.clientRequestId === draftRequestId) draftSendAttempt.current = null;
         mentionRequests.accepted(requestScope, admitted.turn.clientRequestId);
-        // Confirmation may already have opened a new Chat; it still takes the
-        // admitted detail so the transcript needs no extra read.
+        // Seed the transcript immediately, including when confirmation already opened it.
         if (canSelectAdmittedChat() || activeChatIdRef.current === record.chat.id) {
           activeChatIdRef.current = record.chat.id;
           setActiveChatId(record.chat.id);
@@ -675,15 +675,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             setDetail(next);
           }
         }
-        // A live event stream carries the list and detail changes this send
-        // causes; re-read only when it cannot. A new Chat still reads once
-        // unless admission returned its full detail: a fast run's events may
-        // have passed while it was unselected.
+        // New Chats catch up in the selection effect. Existing Chats need a
+        // post-send read only if the live stream can't carry the changes.
         if (eventSource.connectionState() !== "open") {
           await loadList();
-          if (activeChatIdRef.current === record.chat.id) await loadDetail(record.chat.id);
-        } else if (sourceChatId === undefined && !admitted.recoveredDetail && activeChatIdRef.current === record.chat.id) {
-          await loadDetail(record.chat.id);
+          if (sourceChatId !== undefined && activeChatIdRef.current === record.chat.id) await loadDetail(record.chat.id);
         }
         return isCurrent();
       } catch (error: unknown) {
