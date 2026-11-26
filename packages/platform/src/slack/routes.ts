@@ -243,7 +243,7 @@ export function createSlackAppRoutes(options: SlackAppRouteOptions): Hono & { sh
   });
   app.route("/", createSlackReplyRoutes(options));
   app.route("/", createSlackReactionRoutes(options));
-  app.route("/", createSlackContextRoutes(options, threadContext.readPrivateThread));
+  app.route("/", createSlackContextRoutes(options, threadContext.readPrivateThread, threadContext.readEnrolledContext));
   app.route("/", threadContext.routes);
   app.route("/", createSlackLinkPage(options));
   return Object.assign(app, { async shutdownSlack() { closed = true; await Promise.allSettled([...activeEvents]); } });

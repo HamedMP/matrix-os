@@ -80,6 +80,25 @@ export const SlackPrivateThreadContextResponseSchema = z.discriminatedUnion("ava
 ]);
 export type SlackPrivateThreadContextResponse = z.infer<typeof SlackPrivateThreadContextResponseSchema>;
 
+/** Explicit owner-initiated reads never borrow automatic mention authority. */
+export const SlackEnrolledContextRequestSchema = SlackThreadContextAccessSchema.extend({
+  manual: z.discriminatedUnion("operation", [
+    z.object({ operation: z.literal("recent"), limit: z.number().int().min(1).max(45).optional() }).strict(),
+    z.object({ operation: z.literal("thread"), threadTs: Timestamp, limit: z.number().int().min(1).max(45).optional() }).strict(),
+  ]),
+}).strict();
+export type SlackEnrolledContextRequest = z.infer<typeof SlackEnrolledContextRequestSchema>;
+export const SlackEnrolledContextResponseSchema = z.discriminatedUnion("available", [
+  z.object({ available: z.literal(false), untrusted: z.literal(true) }).strict(),
+  z.object({ available: z.literal(true), untrusted: z.literal(true), partial: z.boolean(), recipientUserId: Provenance.shape.userId,
+    source: z.object({appId:Provenance.shape.appId,teamId:Provenance.shape.teamId,channelId:z.string().regex(/^C[A-Z0-9]{2,63}$/),channelName:SlackChannelMetadataSchema.shape.name.optional()}).strict(),
+    operation:z.enum(["recent","thread"]), fetchedAt:z.iso.datetime(),
+    messages:z.array(z.object({user:Provenance.shape.userId.optional(),ts:Timestamp,thread_ts:Timestamp.optional(),text:z.string().max(40_000).optional(),
+      reply_count:z.number().int().nonnegative().max(1_000_000).optional(),latest_reply:Timestamp.optional(),url:z.url({protocol:/^https$/}).max(512)}).strict()).max(45),
+  }).strict(),
+]);
+export type SlackEnrolledContextResponse = z.infer<typeof SlackEnrolledContextResponseSchema>;
+
 const AuthorizationIdentity = { ownerId: Actor, organizationId: Organization, actorId: Actor, scopeId: z.uuid() };
 export const SlackBridgePublicationSchema = z.object({ ...AuthorizationIdentity, action: z.literal("publish_reply"),
   appId: SlackBridgeEnvelopeSchema.shape.event.shape.appId, teamId: SlackBridgeEnvelopeSchema.shape.event.shape.teamId,

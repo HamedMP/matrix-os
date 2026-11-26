@@ -1,3 +1,4 @@
+import { createEnrolledSlackReadSource, type EnrolledSlackReadSource } from "../slack/enrolled-read-source.js";
 import { createSlackMentionSummaries, type SlackMentionSummaries } from "../slack/mention-summary.js";
 import { bootstrapCollaborationDatabase } from "../collaboration/database.js";
 import { createRoutineOriginStartup, type RoutineOriginStartup } from "./routine-origin.js";
@@ -261,9 +262,13 @@ export async function startBots(options: {
   const transact = createBotStateTransactions(options.repository);
   const routineApprovals=createBotRoutineApprovals({db,transact,source:chatgptPlanPeers,now:options.now,definitionRevision:async(ownerId,botId)=>{const agent=await options.agents.get({type:"personal",ownerId},botId);if(!agent?.recipeRef || agent.archived) throw new BotStateError("not_found");return agent.revision;}});
   const routines=createBotRoutineExecution({db,transact,approvals:routineApprovals,available:()=>Boolean(options.host?.available),now:options.now});
-  const integrationClient = options.integrations ? createBotIntegrationClient(options.integrations) : undefined;
+  const enrolledPlatform = options.routineActionPlatform;
+  const enrolledPreview = enrolledPlatform && options.runtimeOwnerId && /^pr-[1-9][0-9]{0,8}$/.test(enrolledPlatform.runtimeSlot) && enrolledPlatform.handle === enrolledPlatform.runtimeSlot;
+  const integrationClient = options.integrations || enrolledPreview
+    ? createBotIntegrationClient(options.integrations ?? (async () => new Response(null, {status:503}))) : undefined;
+  let enrolledSlack: EnrolledSlackReadSource | undefined;
   const integrationTools = integrationClient
-    ? createBotIntegrationTools({ client: integrationClient, homePath: options.homePath, transact, recipes, resolveProcedure, agents: options.agents, assertSource: revalidateSource,
+    ? createBotIntegrationTools({ client: integrationClient, enrolledSlack: { owns:id=>id.startsWith("slack_enrolled_"), inventory:(binding,signal)=>enrolledSlack?.inventory(binding,signal)??Promise.resolve(undefined), call:(binding,args,signal)=>{ if(!enrolledSlack)throw new BotStateError("not_found");return enrolledSlack.call(binding,args,signal); } }, homePath: options.homePath, transact, recipes, resolveProcedure, agents: options.agents, assertSource: revalidateSource,
       assertSharedAttachmentSource: createSharedAttachmentSource({ roots: options.executionRoots, group: options.group }) })
     : undefined;
   const connections = integrationClient && integrationTools
@@ -431,6 +436,7 @@ export async function startBots(options: {
           return Boolean(bot?.recipeRef && !bot.archived);
         },
       });
+      enrolledSlack = createEnrolledSlackReadSource({ context: slackThreadContext, read: slackClient.readEnrolledContext });
     } catch (error) {
       console.warn("[bots] Slack thread context unavailable", error instanceof Error ? error.name : "UnknownError");
     }

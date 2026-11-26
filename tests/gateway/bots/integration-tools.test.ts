@@ -29,7 +29,7 @@ import { createBotTasksRepository } from "../../../packages/gateway/src/bots/rep
 import type { BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
-import { BOT, OTHER_OWNER, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
+import { BOT, OTHER_OWNER, OWNER, createBotStateDatabase, createRealBotStateDatabase, insertChat } from "./bot-state-support.js";
 
 const CHAT = "chat_integrations1";
 const AT = "2026-09-28T09:00:00.000Z";
@@ -52,7 +52,7 @@ let connected: BotIntegrationConnection[];
 let toolClock: Date;
 
 beforeEach(async () => {
-  ({ db, destroy } = await createBotStateDatabase());
+  ({ db, destroy } = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase()));
   await insertChat(db, CHAT);
   await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: AT });
   const task = await createBotTasksRepository(db).create({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: AT });
@@ -273,7 +273,7 @@ describe("bot integration tools", () => {
     }] });
     const rows = await pending();
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ interaction_id: first!.interaction_id, status: "expired", revision: 2 });
+    expect({ ...rows[0], revision: Number(rows[0]!.revision) }).toMatchObject({ interaction_id: first!.interaction_id, status: "expired", revision: 2 });
     expect(rows[1]).toMatchObject({ kind: "account_choice", status: "pending" });
   });
 

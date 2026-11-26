@@ -77,6 +77,7 @@ function serviceName(service: string): string {
 
 export function createBotIntegrationTools(deps: {
   client: BotIntegrationClient;
+  enrolledSlack?: import("../slack/enrolled-read-source.js").EnrolledSlackReadSource;
   homePath?: string;
   transact: BotStateTransactions;
   recipes: BotRecipeCatalog;
@@ -257,7 +258,10 @@ export function createBotIntegrationTools(deps: {
       }
       if (args.service) integrations = integrations.filter((entry) => entry.service === args.service);
       if (integrations.length === 0) return text("This bot has no connected services for this task.");
-      const connected = await inventory(binding.ownerId, signal);
+      const enrolled = integrations.some(entry=>entry.service==="slack"&&entry.effects.includes("read")) ? await deps.enrolledSlack?.inventory(binding,AbortSignal.any([AbortSignal.timeout(10_000),...(signal?[signal]:[])])) : undefined;
+      let connected:BotIntegrationConnection[];
+      try { connected=await inventory(binding.ownerId,signal); }
+      catch(error){ if(!enrolled)throw error; return text(enrolled); }
       const grants = await deps.transact(binding.ownerId, (tx) => createBotGrantsRepository(tx.db).listLive({
         ownerId: binding.ownerId, botId: binding.botId, audience: audienceFor(binding), now: now().toISOString(),
       }, tx.db));
@@ -276,7 +280,7 @@ export function createBotIntegrationTools(deps: {
             .executeTakeFirst()));
           if (declined) { skippedDeclined = true; continue; }
         }
-        if (!usable && !binding.group && (required || args.service)) {
+        if (!usable && !binding.group && !(service === "slack" && enrolled) && (required || args.service)) {
           return text(await deps.transact(binding.ownerId, (tx) => requestAccess(tx, binding, service, effects, connected)));
         }
         available.push(entry);
@@ -290,15 +294,22 @@ export function createBotIntegrationTools(deps: {
           return `${serviceName(service)} (${service}): ${granted.map((grant) =>
             `account "${grant.accountLabel}", connection ${grant.connectionId}, allowed: ${grant.effects.join(", ")}`).join("; ")}`;
         }
+        if (service === "slack" && enrolled) return "Slack account connections: no additional granted account; use the enrolled read-only source above.";
         const count = connected.filter((connection) => connection.service === service).length;
         return `${serviceName(service)} (${service}): ${!binding.group && count > 0 ? "connected, but this bot has no access yet" : "not connected"}`;
       });
+      if (enrolled) lines.unshift(enrolled);
       if (skippedDeclined) lines.push("The owner did not give access to another service in this task. Continue without it and do not ask again.");
       return text(lines.join("\n"));
     },
 
     /** `integration.call`: one action on a granted account. */
     async call(binding: BotRuntimeBinding, args: CallArgs, signal?: AbortSignal): Promise<BotToolResult> {
+      if(deps.enrolledSlack?.owns(args.connectionId)){
+        if(!(await declaredEffects(binding.ownerId,binding.botId,"slack")).includes("read"))throw new BotBrokerActionError("denied");
+        await qualifySource(binding,signal);
+        return deps.enrolledSlack.call(binding,args,AbortSignal.any([AbortSignal.timeout(15_000),...(signal?[signal]:[])]));
+      }
       const attachment = binding.group && args.service === "gmail" && args.action === "get_attachment"
         ? parseSharedGmailAttachmentParams(args.params) : undefined;
       if (attachment && !deps.assertSharedAttachmentSource) throw new BotBrokerActionError("unavailable");
