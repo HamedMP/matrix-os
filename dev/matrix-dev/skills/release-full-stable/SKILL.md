@@ -26,7 +26,7 @@ replace their safety rules.
 
 | Lane | Full-release outcome |
 | --- | --- |
-| Release modal | Approved, validated JSON is merged before builds start |
+| Release modal | Approved, validated JSON covers the invocation-time release cutoff and is merged before the Desktop build starts |
 | Platform | Relevant production platform changes are deployed and verified, or explicitly `not needed` |
 | Host bundle | A reviewed canary is promoted as the exact stable version |
 | Fleet | An explicitly approved exact-version rollout is observed across the eligible fleet |
@@ -59,9 +59,15 @@ final approval immediately before the rollout.
 
 ## 1. Establish the release range and versions
 
-Fetch `origin/main` and tags. Record:
+Fetch `origin/main` and tags. Immediately record the current `origin/main` as
+`RELEASE_CONTENT_SHA`. This is the immutable content cutoff for the run: the
+notes cover changes through that SHA only. Exclude the release-notes PR itself
+from the user-facing range and hidden PR audit. Later merges do not silently
+expand this release.
 
-- current `origin/main` SHA and its same-SHA CI run;
+Record:
+
+- `RELEASE_CONTENT_SHA` and its same-SHA CI run;
 - current stable host version, commit, timestamp, and rollback version;
 - current Desktop stable version/tag, source commit, and rollback version;
 - latest production platform source SHA and run;
@@ -78,8 +84,9 @@ modal. The agent leads the writing; the human makes product decisions.
 
 ### Editorial collaboration contract
 
-1. Read the merged PR titles, bodies, `## User-facing` notes, labels, and changed
-   surfaces. Separate user value from implementation detail.
+1. Read the titles, bodies, `## User-facing` notes, labels, and changed surfaces
+   for PRs merged through `RELEASE_CONTENT_SHA`. Separate user value from
+   implementation detail. Do not include the release-notes PR itself.
 2. Present a **complete recommended draft** first: version, title, short title,
    summary, ordered highlights, smaller items, art/tone choices, and the hidden
    PR audit. Make it polished enough that approval can be a simple yes.
@@ -101,43 +108,48 @@ Show the final draft plus the hidden list and reasons. Obtain **explicit
 approval before committing** the JSON. Copy approval authorizes only the notes
 PR, not a release.
 
-## 3. Land the release-notes PR and lock the release commit
+## 3. Land the release-notes PR without blocking non-Desktop lanes
 
 Follow the repository's Linear, worktree, PR, review, and merge rules. Validate
 the JSON and preview the modal in light and dark themes when runtime access is
-available. Do not start any release build until the approved notes PR is merged
-to `main`; the JSON is bundled at build time.
+available. Open the approved notes PR and recommend “merge release-notes PR ASAP”
+to reviewers. Do not make its pending review a global release gate.
+Platform, Host, and Fleet lanes may proceed against `RELEASE_CONTENT_SHA` with
+their normal approval gates while the notes PR is pending.
 
-After merge, fetch again and choose the exact release SHA. If `main` moved after
-the approved triage, inspect every new PR:
+Desktop is different because the JSON is bundled at build time. It must wait
+for the approved notes PR to merge. After merge, fetch again and record the
+exact notes-bearing `main` commit as `DESKTOP_SHA`. Prove that
+`RELEASE_CONTENT_SHA` is its ancestor and inspect every intervening commit.
+The notes PR remains excluded from its own release story. Any other intervening
+commit must be demonstrably irrelevant to the Desktop artifact and user
+behavior and must be listed in the report; otherwise stop the Desktop lane
+rather than silently shipping changes beyond the cutoff. Require same-SHA
+`CI Results` to be green for both SHAs before their corresponding mutations.
 
-- if it has user-visible behavior, update the JSON through another reviewed PR
-  and obtain renewed copy approval;
-- if it is internal only, add it to the hidden audit where applicable and
-  explain why the approved story is unchanged.
-
-Do not silently release new user-visible changes absent from the modal. Record
-the exact SHA and require its `CI Results` to be green. If a later dispatch pin
-rejects because `main` moved, return here instead of dropping the pin.
+Use `RELEASE_CONTENT_SHA` wherever the Platform, Host, and Fleet instructions
+refer to the locked release SHA. Use `DESKTOP_SHA` only for Desktop publication.
+If a dispatch pin rejects because `main` moved, return to the affected lane
+instead of dropping the pin.
 
 ## 4. Qualify the platform lane
 
 Read the **authoritative serving source SHA** from the Cloud Run revision that
 currently receives production traffic, as described by `release-platform`.
 The latest successful workflow run is supporting evidence, not proof of what is
-serving. Fetch that commit and establish its relationship to the locked release
-SHA before using path filters:
+serving. Fetch that commit and establish its relationship to
+`RELEASE_CONTENT_SHA` before using path filters:
 
 ```bash
-git merge-base --is-ancestor "$PLATFORM_SHA" "$SHA"
-git diff --name-only "$PLATFORM_SHA..$SHA"
+git merge-base --is-ancestor "$PLATFORM_SHA" "$RELEASE_CONTENT_SHA"
+git diff --name-only "$PLATFORM_SHA..$RELEASE_CONTENT_SHA"
 ```
 
 If the serving SHA is unavailable, is not verified main provenance, or is not
-an ancestor of the locked SHA, stop and qualify the platform explicitly. Do not
-infer compatibility from timestamps, run order, or a green workflow. Inspect
-every commit and changed file from the serving SHA through the locked release
-SHA against the **current** `on.push.paths` filters in
+an ancestor of `RELEASE_CONTENT_SHA`, stop and qualify the platform explicitly.
+Do not infer compatibility from timestamps, run order, or a green workflow. Inspect
+every commit and changed file from the serving SHA through
+`RELEASE_CONTENT_SHA` against the **current** `on.push.paths` filters in
 `.github/workflows/platform-cloud-run.yml`. This whole gap matters: checking
 only the host or Desktop release range can miss an earlier skipped or failed
 platform deployment.
@@ -167,13 +179,13 @@ depend on it. A host release never substitutes for a platform deployment.
 
 ## 5. Release the host bundle
 
-Use `release-matrix-stable` against the locked SHA:
+Use `release-matrix-stable` against `RELEASE_CONTENT_SHA`:
 
 1. Derive the host's plain-text changelog from the same approved editorial
    story, adapting it to the Settings update surface rather than copying JSON.
 2. Ask before cutting the canary.
 3. Verify workflow `headSha`, canary `gitCommit`, bundle checksum, and version
-   all point to the locked SHA.
+   all point to `RELEASE_CONTENT_SHA`.
 4. Ask before deploying the canary to a reviewed disposable or named VPS.
 5. Verify installed provenance, services, local health, and the changed user
    journeys on that VPS.
@@ -245,15 +257,18 @@ alone.
 
 ## 7. Publish and verify Desktop stable
 
-Confirm `release-notes/<version>.json` exists in the locked SHA, validates for
-`stable`, and matches the exact approved version. Confirm the immutable
+Desktop publication must wait for the approved release-notes PR to merge
+because its JSON is bundled into the application. Confirm
+`release-notes/<version>.json` exists in `DESKTOP_SHA`, validates for `stable`,
+and matches the exact approved version. Confirm the immutable
 `desktop-v<version>` tag and release do not already exist.
 
-Show the version, source SHA, and release-modal title, then ask before Desktop
-publication. Prefer the immutable tag path so the approved commit cannot move:
+Show the version, `DESKTOP_SHA`, `RELEASE_CONTENT_SHA`, and release-modal title,
+then ask before Desktop publication. Prefer the immutable tag path so the
+approved commit cannot move:
 
 ```bash
-git tag "desktop-v<VERSION>" "$SHA"
+git tag "desktop-v<VERSION>" "$DESKTOP_SHA"
 git push origin "desktop-v<VERSION>"
 ```
 
@@ -292,6 +307,11 @@ Lead with whether the full release is qualified. Use one compact table with:
 | Fleet rollout | installed/eligible | done/partial/blocked | local time | reports and Loki |
 | Desktop stable | Desktop version + SHA | done/failed | local time | release and feeds |
 | Golden snapshot | host version | ready/failed/pending | local time | snapshot status |
+
+When the notes PR made the source commits differ, report both `RELEASE_CONTENT_SHA`
+and `DESKTOP_SHA`; do not present them as one shared release SHA. Name any
+commits between them and why they did not expand the invocation-time content
+cutoff.
 
 Convert timestamps with the `Europe/Berlin` timezone and label the actual
 abbreviation (`CET` or `CEST`) for that date. Include approval decisions,

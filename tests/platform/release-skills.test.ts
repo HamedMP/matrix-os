@@ -148,6 +148,28 @@ describe('release skills', () => {
     expect(skill).toContain('Desktop stable');
   });
 
+  it('locks the release content before notes without blocking host lanes on the notes PR', () => {
+    const skill = read('.agents/skills/release-full-stable/SKILL.md');
+    const locking = skill.slice(
+      skill.indexOf('## 1. Establish the release range and versions'),
+      skill.indexOf('## 4. Qualify the platform lane'),
+    );
+    const desktop = skill.slice(
+      skill.indexOf('## 7. Publish and verify Desktop stable'),
+      skill.indexOf('## 8. Golden snapshot and final verification'),
+    );
+
+    expect(locking).toContain('RELEASE_CONTENT_SHA');
+    expect(locking).toMatch(/notes cover changes through that SHA only/i);
+    expect(locking).toMatch(/exclude(?:s|d)? (?:the )?release-notes PR itself/i);
+    expect(locking).toMatch(/merge (?:the )?release-notes PR ASAP/i);
+    expect(locking).toMatch(/Platform, Host, and Fleet lanes may proceed/i);
+    expect(locking).not.toContain('Do not start any release build until the approved notes PR is merged');
+    expect(desktop).toMatch(/must wait for the approved release-notes PR to merge/i);
+    expect(desktop).toContain('DESKTOP_SHA');
+    expect(skill).toMatch(/report both `RELEASE_CONTENT_SHA`\s+and `DESKTOP_SHA`/i);
+  });
+
   it('fails the full-release platform gate closed against the actual serving source', () => {
     const skill = read('.agents/skills/release-full-stable/SKILL.md');
     const platform = skill.slice(
@@ -157,7 +179,7 @@ describe('release skills', () => {
 
     expect(platform).toContain('authoritative serving source SHA');
     expect(platform).toContain('git merge-base --is-ancestor');
-    expect(platform).toMatch(/serving SHA\s+through the locked release\s+SHA/);
+    expect(platform).toMatch(/serving SHA\s+through\s+`RELEASE_CONTENT_SHA`/);
     expect(platform).toContain('dependency ledger');
     expect(platform).toContain('Do not mark Platform `not needed`');
     expect(platform).not.toContain(
