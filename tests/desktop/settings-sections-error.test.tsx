@@ -11,6 +11,10 @@ import {
 } from "../../desktop/src/renderer/src/lib/query-client";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 
+// The private network panel has its own suite (tests/ui/private-network-*.test.ts*);
+// keep these update-focused fakes free of its extra requests.
+vi.mock("../../desktop/src/renderer/src/features/settings/sections/PrivateNetworkSection", () => ({ default: () => null }));
+
 let queryClient: ReturnType<typeof createDesktopQueryClient>;
 
 function renderSection(Component: React.ComponentType) {

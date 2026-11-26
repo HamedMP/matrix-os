@@ -5,6 +5,7 @@ import { useConnection } from "../../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../../stores/runtime-generation";
 import { AlertTriangle, ArrowUpCircleIcon, LoaderCircle, RefreshCw } from "../../../lib/hugeicons";
 import { Card, Empty, Row, SettingsSectionHeader } from "./section-kit";
+import PrivateNetworkSection from "./PrivateNetworkSection";
 
 const RELEASE_CHANNELS = ["stable", "canary", "beta", "dev"] as const;
 type ReleaseChannel = typeof RELEASE_CHANNELS[number];
@@ -322,6 +323,8 @@ export default function SystemSection() {
           })}
         </div>}
       </Card>
+
+      <PrivateNetworkSection />
     </>
   );
 }
