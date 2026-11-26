@@ -321,6 +321,24 @@ it("does not report a same-named noncatalog Linear server as connected", async (
   expect(screen.queryByText("Linear is connected on this computer.")).toBeNull();
 });
 
+it("checks the full selected custom MCP name even when another service shares its prefix", async () => {
+  const prefix = "Release engineering checklist ".padEnd(99, "x");
+  const service = `${prefix}A`;
+  const other = { id: "mcp_other", name: `${prefix}B`, status: "ready", enabled: true };
+  const get = vi.fn(async () => [other]);
+  render(<ProjectSetupControls
+    setup={controller(undefined, { ...draft, mcp: { state: "pending", service } })}
+    transport={{ get, post: vi.fn(), patch: vi.fn() }}
+    onOpenMcpSettings={vi.fn()}
+  />);
+  await waitFor(() => expect(get).toHaveBeenCalledOnce());
+  const connected = `${service} is connected on this computer.`;
+  expect(screen.queryByText(connected)).toBeNull();
+  get.mockResolvedValue([other, { id: "mcp_selected", name: service, status: "ready", enabled: true }]);
+  fireEvent.click(screen.getByRole("button", { name: "Check connection" }));
+  expect(await screen.findByText(connected)).toBeTruthy();
+});
+
 it("projects only the exact setup generation run into a normal assistant reply", () => {
   expect(projectSetupGenerationText(draft, "run_unrelated")).toBeNull();
   expect(projectSetupGenerationText(draft, "run_draft")).toBe(

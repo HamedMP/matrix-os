@@ -10,12 +10,14 @@ const markdown = z.string().min(1).max(PROJECT_SKILL_FILE_MAX_BYTES)
 const revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 export const PROJECT_SETUP_PRIMARY_REPLY_LENGTH = 100;
 export const PROJECT_SETUP_COMPACT_ANSWER_LENGTH = 32;
+export const PROJECT_SETUP_MCP_NAME_MAX_LENGTH = 100;
+const mcpServiceName = z.string().trim().min(1).max(PROJECT_SETUP_MCP_NAME_MAX_LENGTH);
 
 export const ProjectSetupInterviewFocusSchema = z.enum(["intent", "guidance", "skill", "mcp", "review"]);
 export const ProjectSetupInterviewSchema = z.object({
   focus: ProjectSetupInterviewFocusSchema,
   suggestions: z.array(z.string().trim().min(1).max(160)).max(3),
-  recommendedService: z.string().trim().min(1).max(80).optional(),
+  recommendedService: mcpServiceName.optional(),
   mcpHandoff: z.literal(true).optional(),
 }).strict();
 export type ProjectSetupInterview = z.infer<typeof ProjectSetupInterviewSchema>;
@@ -45,7 +47,7 @@ export const ProjectSetupDraftSchema = z.object({
     source: z.literal("user").optional(),
   }).strict().optional(),
   proposals: z.array(ProjectSetupFileSchema).max(3),
-  mcp: z.object({ state: z.enum(["not_requested", "pending", "skipped"]), service: z.string().trim().min(1).max(80).optional() }).strict(),
+  mcp: z.object({ state: z.enum(["not_requested", "pending", "skipped"]), service: mcpServiceName.optional() }).strict(),
   generation: z.object({ runId: z.string().max(160).optional(), sourceRevision: revision.optional(), status: z.enum(["pending", "running", "completed", "failed", "unavailable"]) }).strict().optional(),
   interview: ProjectSetupInterviewSchema.optional(),
   updatedAt: z.iso.datetime({ offset: true }),
@@ -58,7 +60,7 @@ export const ProjectSetupActionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("stage_skill"), content: markdown, selection: CanonicalChatModelSelectionSchema.optional() }).strict(),
   z.object({
     type: z.literal("choose_mcp"), choice: z.enum(["connect", "skip"]),
-    service: z.string().trim().min(1).max(80).optional(), selection: CanonicalChatModelSelectionSchema.optional(),
+    service: mcpServiceName.optional(), selection: CanonicalChatModelSelectionSchema.optional(),
   }).strict(),
   z.object({ type: z.literal("revise"), field: z.enum(["purpose", "guidance", "skillInstructions"]), text: answer }).strict(),
   z.object({ type: z.literal("review_file"), path: ProjectAgentConfigFileSchema, content: markdown }).strict(),

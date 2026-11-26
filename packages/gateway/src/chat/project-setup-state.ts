@@ -1,4 +1,4 @@
-import { PROJECT_SETUP_COMPACT_ANSWER_LENGTH, PROJECT_SETUP_PRIMARY_REPLY_LENGTH, ProjectSetupDraftSchema, ProjectSetupInterviewSchema, type ProjectSetupAction, type ProjectSetupDraft, type ProjectSetupFile, type ProjectSetupInterview, type ProjectSetupMarkdownKind } from "@matrix-os/contracts";
+import { PROJECT_SETUP_COMPACT_ANSWER_LENGTH, PROJECT_SETUP_MCP_NAME_MAX_LENGTH, PROJECT_SETUP_PRIMARY_REPLY_LENGTH, ProjectSetupDraftSchema, ProjectSetupInterviewSchema, type ProjectSetupAction, type ProjectSetupDraft, type ProjectSetupFile, type ProjectSetupInterview, type ProjectSetupMarkdownKind } from "@matrix-os/contracts";
 import { parseDocument } from "yaml";
 import { z } from "zod/v4";
 import type { ProjectSetupInterviewContext } from "./project-setup-interview-context.js";
@@ -68,7 +68,10 @@ export function transitionProjectSetup(current: ProjectSetupDraft, action: Proje
         draft.step = "mcp";
         acknowledgement = "I’ll draft the skill from those steps when we review your setup.";
       }
-      else if (draft.step === "mcp") { draft.mcp = { state: "pending", service: action.text.slice(0, 80) }; draft.step = "review"; }
+      else if (draft.step === "mcp") {
+        if (action.text.length > PROJECT_SETUP_MCP_NAME_MAX_LENGTH) throw new ProjectSetupError("invalid");
+        draft.mcp = { state: "pending", service: action.text }; draft.step = "review";
+      }
       else throw new ProjectSetupError("invalid");
       break;
     case "choose_skill":

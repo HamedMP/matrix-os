@@ -1,7 +1,7 @@
 import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { MATRIX_MCP_RUN_CONTEXT_KEY } from "../../chat/matrix-mcp-launch.js";
-import { isPrivatePreviewHandle } from "@matrix-os/contracts";
+import { isPrivatePreviewHandle, PROJECT_SETUP_MCP_NAME_MAX_LENGTH } from "@matrix-os/contracts";
 import { startCustomMcpProjectionSync } from "./projection-bootstrap.js";
 import { createCustomMcpProjectionRoutes } from "./projection-routes.js";
 import { CustomMcpProjectionStore } from "./projection-store.js";
@@ -118,8 +118,9 @@ function endpointKey(value: string): string | undefined {
 }
 
 function safeName(name: string): string | undefined {
-  const safe = redactSharedAssistantText(name).replace(/[\p{Cc}\p{Cf}]/gu, " ").trim().slice(0, 80);
-  return safe || undefined;
+  const safe = redactSharedAssistantText(name).replace(/[\p{Cc}\p{Cf}]/gu, " ").trim();
+  // The Settings check uses the full name. A truncated name can identify another server.
+  return safe && safe.length <= PROJECT_SETUP_MCP_NAME_MAX_LENGTH ? safe : undefined;
 }
 
 /** Query the current computer's existing Settings broker, with the same handle and machine proof.

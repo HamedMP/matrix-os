@@ -3,7 +3,7 @@ import { link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
-import { ChatRunContextSchema, ProjectSetupStartRequestSchema } from "@matrix-os/contracts";
+import { ChatRunContextSchema, ProjectSetupActionSchema, ProjectSetupDraftSchema, ProjectSetupStartRequestSchema } from "@matrix-os/contracts";
 import { openProjectSetupWorkspace } from "../../packages/gateway/src/chat/project-setup-workspace.js";
 import { registerCustomMcpGatewayRoutes } from "../../packages/gateway/src/integrations/custom-mcp/gateway-routes.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,7 +17,7 @@ import { SideChatRepository } from "../../packages/gateway/src/chat/side-chat-re
 import { bootstrapChatSharing, ChatSharing } from "../../packages/gateway/src/chat/sharing.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry, type CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
-import { applyProjectSetupInterview, beginProjectSetupInterview, initialProjectSetup, projectSetupInterviewPrompt, transitionProjectSetupInterview } from "../../packages/gateway/src/chat/project-setup-state.js";
+import { applyProjectSetupInterview, beginProjectSetupInterview, initialProjectSetup, projectSetupInterviewPrompt, transitionProjectSetup, transitionProjectSetupInterview } from "../../packages/gateway/src/chat/project-setup-state.js";
 import { generateProjectSetup, syncProjectSetupGeneration } from "../../packages/gateway/src/chat/project-setup-generation.js";
 import { ProjectSetupService } from "../../packages/gateway/src/chat/project-setup-service.js";
 import { createChatExecutionRootResolver, type ChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
@@ -772,6 +772,38 @@ describe("project setup context", () => {
       for (const [, options] of fetcher.mock.calls) {
         expect(options).toMatchObject({ method: "GET", redirect: "error", signal: expect.any(AbortSignal) });
       }
+    } finally { registration.stop(); }
+  });
+
+  it("keeps a long custom MCP name exact from Settings inventory through the setup handoff", async () => {
+    const prefix = "Release engineering checklist ".padEnd(99, "x");
+    const service = `${prefix}A`;
+    const otherService = `${prefix}B`;
+    const fetcher = vi.fn<typeof fetch>(async request => Response.json(String(request).endsWith("/catalog")
+      ? { presets: [] }
+      : [
+        { name: service, url: "https://first.example.com/mcp", enabled: true, status: "ready" },
+        { name: otherService, url: "https://second.example.com/mcp", enabled: true, status: "auth_required" },
+        { name: `${service} overflow`, url: "https://third.example.com/mcp", enabled: true, status: "ready" },
+      ]));
+    const registration = registerCustomMcpGatewayRoutes(new Hono(), {
+      homePath: tmpdir(), clerkUserId: owner.ownerId, fetchInterviewInventory: fetcher,
+      platformProxy: { internalPlatformUrl: "https://platform.example.com", handle: "workspace-dev", token: "machine-token", request: vi.fn() },
+    });
+    try {
+      const mcpServices = await registration.listProjectSetupMcpServices(owner);
+      expect(mcpServices).toEqual([{ name: service, connection: "connected" }, { name: otherService, connection: "authorization_required" }]);
+      const draft = beginProjectSetupInterview(initialProjectSetup("chat_mcp", "project_a", "Release notes", "msg_setup"));
+      const recommended = applyProjectSetupInterview(draft, JSON.stringify({
+        reply: "Would you like to use the release checklist service?", focus: "mcp", suggestions: [], recommendedService: service,
+      }), { project: { name: "Release notes" }, instructionFiles: [], skills: [], mcpServices }).draft;
+      expect(recommended.interview?.recommendedService).toBe(service);
+      const choose = ProjectSetupActionSchema.parse({ type: "choose_mcp", choice: "connect", service });
+      expect(ProjectSetupDraftSchema.parse(transitionProjectSetupInterview(recommended, choose).draft).mcp)
+        .toEqual({ state: "pending", service });
+      const legacy = { ...initialProjectSetup("chat_mcp_legacy", "project_a", "Release notes", "msg_setup"), step: "mcp" as const };
+      expect(transitionProjectSetup(legacy, { type: "answer", text: service }).draft.mcp).toEqual({ state: "pending", service });
+      expect(() => transitionProjectSetup(legacy, { type: "answer", text: `${service} overflow` })).toThrow();
     } finally { registration.stop(); }
   });
 });
