@@ -15,6 +15,7 @@ import {
   type CellChange,
   type CellMutation,
   type CellRange,
+  type DefinedName,
   type FrozenPanes,
   type RawCell,
   type SheetId,
@@ -31,6 +32,7 @@ import {
   History,
   type HistoryEntry,
   type HistoryStep,
+  type Rewritten,
   type SheetFeatures,
   applyEntry,
   structuralSheets,
@@ -45,6 +47,11 @@ interface OpenTransaction {
   cells: Map<string, CellDelta>;
   /** True when the transaction changed more cells than the history keeps. */
   overflow: boolean;
+}
+
+/** The names in `before` that `after` no longer holds as they were. */
+function changedNames(before: readonly DefinedName[], after: readonly DefinedName[]): DefinedName[] {
+  return before.filter((name) => !after.some((now) => now.name === name.name && now.scope === name.scope && now.refersTo === name.refersTo));
 }
 
 function sameRaw(a: RawCell, b: RawCell): boolean {
@@ -182,6 +189,19 @@ export class Recorder {
     }
   }
 
+  /** Runs a structural edit and keeps the formulas and names it rewrote. */
+  private rewriting(edit: () => void): Rewritten {
+    const names = this.workbook.listDefinedNames();
+    const rewrites: CellDelta[] = [];
+    this.rewrites = rewrites;
+    try {
+      edit();
+    } finally {
+      this.rewrites = undefined;
+    }
+    return { rewrites, names: changedNames(names, this.workbook.listDefinedNames()) };
+  }
+
   private captureBand(open: OpenTransaction, sheet: SheetId, axis: "row" | "col", index: number, count: number): Omit<DeletedBand, "rewrites"> {
     const info = this.workbook.getSheet(sheet);
     const cells: BandCell[] = [];
@@ -214,14 +234,13 @@ export class Recorder {
     this.flushCells(open);
     const workbook = this.workbook;
     if (insert) {
-      this.rewrites = null;
-      try {
+      // Deleting the rows again does not mend what the insertion broke or clipped: keep it to put back.
+      const features = this.captureFeatures(open, sheet, axis, index, count);
+      const rewritten = this.rewriting(() => {
         if (axis === "row") workbook.insertRows(sheet, index, count);
         else workbook.insertColumns(sheet, index, count);
-      } finally {
-        this.rewrites = undefined;
-      }
-      open.steps.push({ kind: "axis", sheet, axis, index, count, insert: true });
+      });
+      open.steps.push({ kind: "axis", sheet, axis, index, count, insert: true, rewritten, features });
       return;
     }
     const band = this.captureBand(open, sheet, axis, index, count);

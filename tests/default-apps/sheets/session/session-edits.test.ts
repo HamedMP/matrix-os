@@ -127,6 +127,54 @@ describe("sheet session editing", () => {
     expect(session.cell(sheet, 0, 1).formula).toBe("SUM(A1:A5)");
   });
 
+  // Outcome: undoing an insertion puts back the formulas and names it broke, exactly as they were.
+  // Fault: the insertion turned references to the last row or column into #REF! and undo deleted
+  // the inserted rows without restoring them, so the broken formulas were saved.
+  it("restores formulas and names an insertion pushed off the sheet when it is undone", async () => {
+    const { session, sheet } = await open();
+    const other = session.addSheet("Other").sheet!;
+    session.setCellInput(sheet, { row: 0, col: 2 }, "=A1048576");
+    session.setCellInput(sheet, { row: 1, col: 2 }, "=XFD1");
+    session.setCellInput(other, { row: 0, col: 0 }, "=Sheet1!A1048576");
+    const named = session.transact("Name", (tx) => tx.workbook.setDefinedName({ name: "Last", refersTo: "Sheet1!$A$1048576", scope: null }));
+    expect(named).toEqual({ ok: true });
+    const names = session.workbook.listDefinedNames();
+
+    expect(session.insertRows(sheet, 0, 1)).toEqual({ ok: true });
+    expect(session.cell(sheet, 1, 2).formula).not.toBe("A1048576");
+    expect(session.undo()).toEqual({ ok: true });
+    expect(session.cell(sheet, 0, 2).formula).toBe("A1048576");
+    expect(session.cell(other, 0, 0).formula).toBe("Sheet1!A1048576");
+    expect(session.workbook.listDefinedNames()).toEqual(names);
+    expect(session.redo()).toEqual({ ok: true });
+    expect(session.cell(sheet, 1, 2).formula).not.toBe("A1048576");
+    session.undo();
+
+    expect(session.insertColumns(sheet, 0, 1)).toEqual({ ok: true });
+    expect(session.undo()).toEqual({ ok: true });
+    expect(session.cell(sheet, 1, 2).formula).toBe("XFD1");
+    expect(session.cell(sheet, 0, 2).formula).toBe("A1048576");
+    expect(session.workbook.listDefinedNames()).toEqual(names);
+  });
+
+  it("restores whole-column rules an insertion clipped when it is undone", async () => {
+    const features =
+      '<conditionalFormatting sqref="A1:A1048576"><cfRule type="expression" priority="1"><formula>A1&gt;1</formula></cfRule></conditionalFormatting>' +
+      '<dataValidations count="1"><dataValidation type="whole" sqref="B1:B1048576"><formula1>0</formula1><formula2>9</formula2></dataValidation></dataValidations>';
+    const h = harness();
+    h.files.put("Rules.xlsx", await buildXlsx({ sheets: [{ name: "Sheet1", rows: '<row r="1"><c r="A1"><v>1</v></c></row>', after: features }] }));
+    const session = await openSheetSession(h.deps, "Rules.xlsx");
+    const sheet = session.getState().activeSheetId;
+    const featureText = async (): Promise<string> => {
+      const pkg = await opc.openPackage(await session.workbook.save());
+      return /<conditionalFormatting.*<\/dataValidations>/.exec(await pkg.getPartText("/xl/worksheets/sheet1.xml"))?.[0] ?? "";
+    };
+    const before = await featureText();
+    expect(session.insertRows(sheet, 0, 1)).toEqual({ ok: true });
+    expect(session.undo()).toEqual({ ok: true });
+    expect(await featureText()).toBe(before);
+  });
+
   it("restores the validation rules, links, conditional formats and hidden flags of deleted rows on undo", async () => {
     const features =
       '<conditionalFormatting sqref="A3"><cfRule type="expression" priority="1"><formula>A3&gt;1</formula></cfRule></conditionalFormatting>' +

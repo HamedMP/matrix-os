@@ -41,6 +41,18 @@ export interface DeletedBand {
   features: SheetFeatures | null;
 }
 
+/**
+ * What an insertion rewrote besides moving cells, kept to put it back
+ * exactly: deleting the rows again does not restore a reference the
+ * insertion broke (`=A1048576` is `#REF!` once a row went in above it).
+ */
+export interface Rewritten {
+  /** Formulas the engine rewrote, at the position each cell has after the edit. */
+  rewrites: CellDelta[];
+  /** Defined names the edit changed, as they were before it. */
+  names: DefinedName[];
+}
+
 /** Characters of kept feature markup that weigh as much as one cell record. */
 const FEATURE_CHARS_PER_CELL = 32;
 
@@ -55,7 +67,17 @@ export function featureWeight(features: SheetFeatures | null): number {
 
 export type HistoryStep =
   | { kind: "cells"; deltas: CellDelta[] }
-  | { kind: "axis"; sheet: SheetId; axis: "row" | "col"; index: number; count: number; insert: true }
+  | {
+      kind: "axis";
+      sheet: SheetId;
+      axis: "row" | "col";
+      index: number;
+      count: number;
+      insert: true;
+      rewritten: Rewritten;
+      /** Rules, links, notes, tables and hidden flags before the insertion; null when the sheet had none. */
+      features: SheetFeatures | null;
+    }
   | { kind: "axis"; sheet: SheetId; axis: "row" | "col"; index: number; count: number; insert: false; band: DeletedBand }
   | { kind: "size"; sheet: SheetId; axis: "row" | "col"; changes: Array<{ index: number; before: number | null; after: number | null }> }
   | { kind: "merges"; sheet: SheetId; before: CellRange[]; after: CellRange[] }
@@ -74,9 +96,14 @@ export const MAX_HISTORY_ENTRIES = 200;
 /** Most cell records kept over all entries of a stack; the oldest entries go first. */
 export const MAX_HISTORY_CELLS = 1_000_000;
 
+function rewrittenWeight(rewritten: Rewritten): number {
+  return rewritten.rewrites.length + rewritten.names.length;
+}
+
 function stepWeight(step: HistoryStep): number {
   if (step.kind === "cells") return step.deltas.length;
   if (step.kind === "axis" && !step.insert) return step.band.cells.length + step.band.rewrites.length + featureWeight(step.band.features) + 1;
+  if (step.kind === "axis") return rewrittenWeight(step.rewritten) + featureWeight(step.features) + 1;
   if (step.kind === "accepted") return step.changes.length;
   return 1;
 }
@@ -180,6 +207,26 @@ function restoreNames(workbook: Workbook, names: readonly DefinedName[]): void {
   }
 }
 
+/**
+ * Undoes an insertion: deletes the inserted rows or columns, then puts back
+ * the formulas, names and sheet features the insertion rewrote.
+ */
+function removeInserted(internals: WorkbookInternals, step: Extract<HistoryStep, { kind: "axis"; insert: true }>): void {
+  const { workbook } = internals;
+  const { sheet, axis, index, count, rewritten, features } = step;
+  applyAxis(workbook, sheet, axis, index, count, false);
+  for (const delta of rewritten.rewrites) {
+    let { row, col } = delta;
+    if (delta.sheet === sheet) {
+      if (axis === "row" && row >= index + count) row -= count;
+      if (axis === "col" && col >= index + count) col -= count;
+    }
+    internals.writeRawCell(delta.sheet, { row, col }, delta.before);
+  }
+  restoreNames(workbook, rewritten.names);
+  if (features !== null && internals.readableSheetFeatures(features)) internals.restoreSheetFeatures(sheet, features);
+}
+
 function applyAxis(workbook: Workbook, sheet: SheetId, axis: "row" | "col", index: number, count: number, insert: boolean): void {
   if (axis === "row") {
     if (insert) workbook.insertRows(sheet, index, count);
@@ -228,7 +275,10 @@ export function applyStep(internals: WorkbookInternals, step: HistoryStep, forwa
       }
       return;
     case "axis":
-      if (step.insert) applyAxis(workbook, step.sheet, step.axis, step.index, step.count, forward);
+      if (step.insert) {
+        if (forward) applyAxis(workbook, step.sheet, step.axis, step.index, step.count, true);
+        else removeInserted(internals, step);
+      }
       else if (forward) applyAxis(workbook, step.sheet, step.axis, step.index, step.count, false);
       else restoreBand(internals, step);
       return;
