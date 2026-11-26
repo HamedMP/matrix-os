@@ -38,6 +38,15 @@ describe("an assistant card after the owner typed inside its insertion", () => {
     expect(finalText(doc).trim()).toBe("The cat quiXXckly sat.");
   });
 
+  it("one-by-one review resolves the whole change after Enter moved a half into a new paragraph", async () => {
+    const { session, doc, store, first, cat } = await twoCardsInOneMinute();
+    session.apply([{ type: "splitParagraph", at: { blockId: first, offset: "The cat qui".length } }], { track: true, author: OWNER, origin: "editor" });
+    expect(store.startReview(cat)).not.toBeNull();
+    expect(store.resolveCurrent("reject")).toBeNull();
+    expect(store.pending(cat)).toEqual([]);
+    expect(finalText(doc)).not.toContain("ckly");
+  });
+
   it("one-by-one review resolves the whole change, split halves included", async () => {
     const { doc, store, cardId } = await proposedQuickly();
     expect(store.startReview(cardId)).not.toBeNull();
@@ -87,5 +96,60 @@ describe("two assistant cards of the same minute", () => {
     session.redo();
     expect(store.pending(cat)).toHaveLength(2);
     expect(store.pending(dog)).toHaveLength(1);
+  });
+});
+
+/** One card with two separate edits in one paragraph. */
+async function twoEditsInOneParagraph() {
+  const session = await sessionWith(["The cat sat on the mat."]);
+  const doc = session.document!;
+  const blockId = doc.getView().body.blocks[0]!.id;
+  const model = scripted(
+    envelope([
+      { op: "replaceText", blockId, find: "cat sat", replace: "cat quickly sat" },
+      { op: "replaceText", blockId, find: "the mat", replace: "the soft mat" },
+    ]),
+  );
+  const store = new AssistantStore({ session, generate: model.generate, getSelection: () => null, log: () => undefined });
+  session.onChange((change) => store.documentChanged(change));
+  await store.submit("Add two words");
+  const card = store.getState().cards.find((entry) => entry.type === "edit");
+  if (card === undefined || card.type !== "edit") throw new Error("no edit card");
+  expect(card.changes).toHaveLength(2);
+  expect(finalText(doc).trim()).toBe("The cat quickly sat on the soft mat.");
+  // The owner types inside the second insertion: the engine splits it in two.
+  const offset = "The cat quickly sat on the so".length;
+  session.apply([{ type: "insertText", at: { blockId, offset }, text: "XX" }], { track: true, author: OWNER, origin: "editor" });
+  expect(finalText(doc).trim()).toBe("The cat quickly sat on the soXXft mat.");
+  const assistant = () => doc.listRevisions().filter((revision) => revision.author !== OWNER);
+  return { doc, store, cardId: card.id, assistant };
+}
+
+describe("a card with two edits in one paragraph after the owner typed inside the second", () => {
+  it("rejecting the first change one by one leaves every piece of the second pending", async () => {
+    const { doc, store, cardId, assistant } = await twoEditsInOneParagraph();
+    const second = assistant().filter((revision) => revision.text.includes("so") || revision.text.includes("ft"));
+    expect(store.startReview(cardId)?.after).toBe("quickly");
+    const next = store.resolveCurrent("reject");
+    expect(finalText(doc).trim()).toBe("The cat sat on the soXXft mat.");
+    expect(assistant().map((revision) => revision.id).sort()).toEqual(second.map((revision) => revision.id).sort());
+    expect(next?.after).toBe("soft");
+    expect(store.view(cardId)).toMatchObject({ status: "proposed", rejected: 1 });
+    // The second change still resolves whole, both halves.
+    expect(store.resolveCurrent("reject")).toBeNull();
+    expect(assistant()).toEqual([]);
+    expect(finalText(doc).trim()).toBe("The cat sat on the XXmat.");
+  });
+
+  it("accepting the first change one by one leaves every piece of the second pending", async () => {
+    const { doc, store, cardId, assistant } = await twoEditsInOneParagraph();
+    const before = assistant().length;
+    store.startReview(cardId);
+    store.resolveCurrent("accept");
+    expect(assistant()).toHaveLength(before - 1);
+    expect(finalText(doc).trim()).toBe("The cat quickly sat on the soXXft mat.");
+    expect(store.pendingChanges(cardId).map((change) => change.after)).toEqual(["soft"]);
+    store.resolveCurrent("accept");
+    expect(assistant()).toEqual([]);
   });
 });

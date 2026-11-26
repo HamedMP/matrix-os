@@ -5,10 +5,11 @@
  * revision later: when the owner types inside an assistant insertion (or
  * presses Enter in it), the part after the caret becomes a new revision with
  * a new id, the same kind, author and date. The store compares the pending
- * revisions before and after each change and gives every such piece to the
- * card that owns the revision it was split off (`splitPieces`). Author and
- * date alone cannot tell two cards apart: requests finished in the same
- * minute share both.
+ * revisions before and after each change and ties every such piece to the
+ * original revision it was split off, and so to that revision's card and
+ * listed change (`splitPieces`). Author and date alone cannot tell two cards
+ * apart, and the paragraph cannot tell two changes apart: requests finished
+ * in the same minute share both, and one card can edit a paragraph twice.
  */
 
 import type { ChangeSummaryItem } from "../../agent/index";
@@ -29,50 +30,61 @@ function splitOff(parent: Revision, current: Revision, piece: Revision): boolean
   );
 }
 
+/** Where a revision comes from: the card that owns it, and the original revision of that card it is (part of). */
+export interface Lineage {
+  card: string;
+  origin: string;
+}
+
 /**
- * The revisions that a change split off revisions a card owns, with that
- * card: new in `after`, and part of a revision of `before` that is still
- * there but lost the piece's text. A piece whose possible parents belong to
- * different cards, or to none, is left out.
+ * The revisions that a change split off revisions a card owns, with their
+ * lineage: new in `after`, and part of a revision of `before` that is still
+ * there but lost the piece's text. A piece split off a piece keeps the
+ * original revision of the first. A piece whose possible parents come from
+ * different original revisions, or from none a card owns, is left out.
  */
-export function splitPieces(before: readonly Revision[], after: readonly Revision[], ownerOf: (revisionId: string) => string | undefined): Map<string, string> {
+export function splitPieces(before: readonly Revision[], after: readonly Revision[], lineageOf: (revisionId: string) => Lineage | undefined): Map<string, Lineage> {
   const previous = new Map(before.map((revision) => [revision.id, revision]));
   const current = new Map(after.map((revision) => [revision.id, revision]));
-  const pieces = new Map<string, string>();
+  const pieces = new Map<string, Lineage>();
   for (const piece of after) {
     if (previous.has(piece.id) || piece.text === "") continue;
-    const owners = new Set<string | undefined>();
+    const origins = new Map<string | undefined, Lineage | undefined>();
     for (const parent of before) {
       const now = current.get(parent.id);
-      if (now !== undefined && splitOff(parent, now, piece)) owners.add(ownerOf(parent.id));
+      if (now === undefined || !splitOff(parent, now, piece)) continue;
+      const lineage = lineageOf(parent.id);
+      origins.set(lineage?.origin, lineage);
     }
-    const [owner] = owners;
-    if (owners.size === 1 && owner !== undefined) pieces.set(piece.id, owner);
+    const [lineage] = origins.values();
+    if (origins.size === 1 && lineage !== undefined) pieces.set(piece.id, lineage);
   }
   return pieces;
 }
 
-/** The card with the pieces `found` gives it added to its own (the same object when there are none). */
-export function withPieces<T extends { id: string; pieces?: string[] }>(card: T, found: ReadonlyMap<string, string>): T {
-  const known = new Set(card.pieces ?? []);
-  const added = [...found].filter(([id, owner]) => owner === card.id && !known.has(id)).map(([id]) => id);
-  return added.length === 0 ? card : { ...card, pieces: [...known, ...added].slice(-MAX_CARD_PIECES) };
+/** The card with the pieces `found` ties to it added to its own, by original revision (the same object when there are none). */
+export function withPieces<T extends { id: string; pieces?: Readonly<Record<string, string>> }>(card: T, found: ReadonlyMap<string, Lineage>): T {
+  const known = card.pieces ?? {};
+  const added = [...found].filter(([id, lineage]) => lineage.card === card.id && !Object.hasOwn(known, id)).map(([id, lineage]) => [id, lineage.origin] as const);
+  if (added.length === 0) return card;
+  return { ...card, pieces: Object.fromEntries([...Object.entries(known), ...added].slice(-MAX_CARD_PIECES)) };
 }
 
 /** The card's revisions still pending: its own ids and the pieces split off them that no other card names as its own. */
-export function cardRevisions(revisions: readonly Revision[], ids: readonly string[], pieces: readonly string[], claimed: ReadonlySet<string>): Revision[] {
+export function cardRevisions(revisions: readonly Revision[], ids: readonly string[], pieces: Readonly<Record<string, string>>, claimed: ReadonlySet<string>): Revision[] {
   const own = new Set(ids);
-  const split = new Set(pieces);
-  return revisions.filter((revision) => own.has(revision.id) || (split.has(revision.id) && !claimed.has(revision.id)));
+  return revisions.filter((revision) => own.has(revision.id) || (Object.hasOwn(pieces, revision.id) && !claimed.has(revision.id)));
 }
 
 /**
- * The pending revisions that make up one listed change: its own ids, and the
- * split pieces in the same paragraph that no other listed change names.
+ * The pending revisions of the card (`pending`) that make up one listed
+ * change: its own ids, and the pieces split off them (`pieces` maps a piece
+ * to its original revision). A piece of another change of the same paragraph
+ * is never part of it.
  */
-export function changeRevisions(pending: readonly Revision[], changeIds: readonly string[], blockId: string, listed: ReadonlySet<string>): string[] {
+export function changeRevisions(pending: readonly Revision[], changeIds: readonly string[], pieces: Readonly<Record<string, string>>): string[] {
   const own = new Set(changeIds);
-  return pending.filter((revision) => own.has(revision.id) || (!listed.has(revision.id) && revision.blockIds.includes(blockId))).map((revision) => revision.id);
+  return pending.filter((revision) => own.has(revision.id) || (Object.hasOwn(pieces, revision.id) && own.has(pieces[revision.id] as string))).map((revision) => revision.id);
 }
 
 // ---------------------------------------------------------------- outcomes

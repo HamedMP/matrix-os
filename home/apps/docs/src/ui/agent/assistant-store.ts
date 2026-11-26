@@ -37,6 +37,7 @@ import type { Revision, TextRange } from "../../../../_shared/office-engine/inde
 import {
   type CardView,
   type ChangeOutcome,
+  type Lineage,
   WHOLE_CARD,
   cardRevisions,
   changeKey,
@@ -86,8 +87,12 @@ export type AssistantCard =
        * outlives the resolution it describes.
        */
       resolutions: Readonly<Record<string, ChangeOutcome>>;
-      /** Revisions the document split off this card's revisions later (the owner typed inside one). */
-      pieces?: string[];
+      /**
+       * Revisions the document split off this card's revisions later (the
+       * owner typed inside one), each with the original revision of the card
+       * it came from, so it stays with that revision's change.
+       */
+      pieces?: Readonly<Record<string, string>>;
     }
   | { id: string; type: "answer"; title: string; documentKey: number; segments: AnswerSegment[]; notes: string[] };
 
@@ -271,8 +276,7 @@ export class AssistantStore {
     const card = this.card(cardId);
     if (card?.type !== "edit") return [];
     const pending = this.pendingRevisions(cardId);
-    const listed = new Set(card.changes.flatMap((change) => change.revisionIds));
-    return card.changes.filter((change) => changeRevisions(pending, change.revisionIds, change.blockId, listed).length > 0);
+    return card.changes.filter((change) => changeRevisions(pending, change.revisionIds, card.pieces ?? {}).length > 0);
   }
 
   startReview(cardId: string): ChangeSummaryItem | null {
@@ -305,8 +309,8 @@ export class AssistantStore {
     const current = changes[Math.min(review.index, changes.length - 1)];
     if (current === undefined) return this.endReview();
     const card = this.card(review.cardId);
-    const listed = new Set(card?.type === "edit" ? card.changes.flatMap((change) => change.revisionIds) : []);
-    this.resolve(review.cardId, changeRevisions(this.pendingRevisions(review.cardId), current.revisionIds, current.blockId, listed), action, [changeKey(current)]);
+    const pieces = card?.type === "edit" ? (card.pieces ?? {}) : {};
+    this.resolve(review.cardId, changeRevisions(this.pendingRevisions(review.cardId), current.revisionIds, pieces), action, [changeKey(current)]);
     const left = this.pendingChanges(review.cardId);
     if (left.length === 0) return this.endReview();
     const index = Math.min(review.index, left.length - 1);
@@ -373,18 +377,22 @@ export class AssistantStore {
     for (const other of this.state.cards) {
       if (other.type === "edit" && other.id !== cardId && other.documentKey === documentKey) for (const id of other.revisionIds) claimed.add(id);
     }
-    return cardRevisions(doc.listRevisions(), card.revisionIds, card.pieces ?? [], claimed);
+    return cardRevisions(doc.listRevisions(), card.revisionIds, card.pieces ?? {}, claimed);
   }
 
-  /** Gives each revision the last change split off a card's revision to that card. */
+  /** Ties each revision the last change split off a card's revision to that card and to the original revision it came from. */
   private trackSplits(): void {
     const doc = this.options.session.document;
     const edits = this.state.cards.filter((card): card is EditCard => card.type === "edit" && card.documentKey === this.documentKey);
     if (doc === null || edits.length === 0) return;
     const before = this.seen;
     this.seen = doc.listRevisions();
-    const owners = new Map(edits.flatMap((card) => [...card.revisionIds, ...(card.pieces ?? [])].map((id) => [id, card.id] as const)));
-    const found = splitPieces(before, this.seen, (id) => owners.get(id));
+    const lineages = new Map<string, Lineage>();
+    for (const card of edits) {
+      for (const id of card.revisionIds) lineages.set(id, { card: card.id, origin: id });
+      for (const [id, origin] of Object.entries(card.pieces ?? {})) lineages.set(id, { card: card.id, origin });
+    }
+    const found = splitPieces(before, this.seen, (id) => lineages.get(id));
     if (found.size > 0) this.patch({ cards: this.state.cards.map((card) => (card.type === "edit" ? withPieces(card, found) : card)) });
   }
 
