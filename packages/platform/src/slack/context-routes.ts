@@ -29,7 +29,7 @@ export function createSlackContextRoutes(options: SlackAppRouteOptions, readPriv
       const result=await readEnrolledContext(parsed.data,runtime,AbortSignal.any([c.req.raw.signal,AbortSignal.timeout(8_000)]));
       return result?c.json(result):c.json({error:"Forbidden"},403);
     }
-    if (request !== null && typeof request === "object" && Object.hasOwn(request, "summary")) {
+    if (request !== null && typeof request === "object" && (Object.hasOwn(request, "summary") || Object.hasOwn(request, "source"))) {
       const privateRequest = SlackPrivateThreadContextRequestSchema.safeParse(request);
       if (!privateRequest.success) return c.json({ error: "Invalid request" }, 422);
       if (!readPrivateThread) return c.json({ error: "Forbidden" }, 403);

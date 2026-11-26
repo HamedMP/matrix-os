@@ -1,7 +1,9 @@
+import { RULE_SUMMARY_INSTRUCTION, parseRulePolicy, currentRulePolicy, receiveRuleJob } from "./rule-jobs.js";
+import { lockSlackRuleChat, type SlackRule } from "./rules.js";
 import { createHash, randomUUID } from "node:crypto";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { CanonicalChatMessageSchema, MATRIX_BOT_SELECTION, MATRIX_BOT_INSTANCE_ID, type CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
-import { SlackThreadContextEnvelopeSchema, type SlackThreadContextEnvelope, type SlackThreadContextAccessResponse, type SlackPrivateThreadContextRequest, type SlackPrivateThreadContextResponse } from "@matrix-os/contracts/slack-bridge";
+import { SlackEnrolledEventSourceSchema, SlackThreadContextEnvelopeSchema, type SlackThreadContextEnvelope, type SlackThreadContextAccessResponse, type SlackPrivateThreadContextRequest, type SlackPrivateThreadContextResponse } from "@matrix-os/contracts/slack-bridge";
 import type { OwnerBotDatabase } from "../bots/database.js";
 import type { CanonicalProviderRunInput } from "../chat/provider-adapter.js";
 import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
@@ -45,18 +47,20 @@ interface Job {
   accepted_id: string | null;
   accepted_kind: "run" | "queue" | null;
   inference_at: Date | string | null;
+  policy: unknown; sources: unknown;
 }
 interface Database extends OwnerBotDatabase {
   slack_mention_summary_jobs: Job;
 }
-function access(envelope: SlackThreadContextEnvelope): SummaryAccess {
+function access(envelope: SlackThreadContextEnvelope, policy?: SlackRule): SummaryAccess {
+  if(policy && envelope.source) return {ownerId:envelope.ownerId,botId:envelope.botId,chatId:envelope.chatId,runtimeId:envelope.runtimeId,grantId:envelope.grantId,source:{...envelope.source,eventId:envelope.event.eventId,threadTs:envelope.event.threadTs,ts:envelope.event.ts,userId:envelope.event.userId}};
   if (!envelope.summary)
     throw new Error("Summary unavailable");
   const { ownerId, botId, chatId, runtimeId, grantId, event, summary } = envelope;
   return { ownerId, botId, chatId, runtimeId, grantId, summary: { ...summary, eventId: event.eventId, threadTs: event.threadTs, ts: event.ts, userId: event.userId } };
 }
 function source(row: Job) { return SlackThreadContextEnvelopeSchema.parse(typeof row.envelope === "string" ? JSON.parse(row.envelope) : row.envelope); }
-function submission(row: Job): SummarySubmission { return { ownerId: row.owner_id, botId: row.bot_id, chatId: row.chat_id, clientRequestId: row.request_id, text: SUMMARY_INSTRUCTION }; }
+function submission(row: Job): SummarySubmission { return { ownerId: row.owner_id, botId: row.bot_id, chatId: row.chat_id, clientRequestId: row.request_id, text: row.policy ? RULE_SUMMARY_INSTRUCTION : SUMMARY_INSTRUCTION }; }
 /** One recipient-owned pilot outbox, never a Slack publication or a general scheduler. */
 export async function createSlackMentionSummaries(options: {
   db: Kysely<OwnerBotDatabase>;
@@ -87,6 +91,7 @@ export async function createSlackMentionSummaries(options: {
    envelope JSONB NOT NULL,request_id TEXT NOT NULL UNIQUE,state TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,
    lease TEXT,lease_until TIMESTAMPTZ,next_at TIMESTAMPTZ NOT NULL,created_at TIMESTAMPTZ NOT NULL,expires_at TIMESTAMPTZ NOT NULL,
    accepted_id TEXT,accepted_kind TEXT,inference_at TIMESTAMPTZ)`.execute(trx);
+    await sql`ALTER TABLE slack_mention_summary_jobs ADD COLUMN IF NOT EXISTS policy JSONB, ADD COLUMN IF NOT EXISTS sources JSONB NOT NULL DEFAULT '[]'::jsonb`.execute(trx);
     await sql `CREATE INDEX IF NOT EXISTS slack_summary_owner_pending ON slack_mention_summary_jobs(owner_id,state,next_at)`.execute(trx);
   });
   async function local(envelope: SlackThreadContextEnvelope) {
@@ -96,11 +101,11 @@ export async function createSlackMentionSummaries(options: {
       .where("binding.owner_id", "=", options.ownerId).where("binding.bot_id", "=", envelope.botId).where("binding.kind", "=", "direct").where("binding.removed_at", "is", null).executeTakeFirst();
     return Boolean(row) && await options.botAvailable?.(envelope) !== false && !await hasNonPrivateChatScope(db, { type: "personal", ownerId: options.ownerId }, envelope.chatId);
   }
-  async function current(envelope: SlackThreadContextEnvelope, signal = lifetime.signal) {
-    if (stopping || signal.aborted || envelope.ownerId !== options.ownerId || envelope.runtimeId !== options.runtimeId || !envelope.summary || !await local(envelope))
+  async function current(envelope: SlackThreadContextEnvelope, signal = lifetime.signal, policy?:SlackRule) {
+    if (stopping || signal.aborted || envelope.ownerId !== options.ownerId || envelope.runtimeId !== options.runtimeId || !(policy ? envelope.source : envelope.summary) || !await local(envelope) || !await currentRulePolicy(options.db,envelope,policy))
       return false;
-    const result = await options.authorize(access(envelope), AbortSignal.any([signal, AbortSignal.timeout(10000)]));
-    return !stopping && !signal.aborted && (typeof result === "boolean" ? result : result.allowed) && await local(envelope);
+    const result = await options.authorize(access(envelope,policy), AbortSignal.any([signal, AbortSignal.timeout(10000)]));
+    return !stopping && !signal.aborted && (typeof result === "boolean" ? result : result.allowed) && await local(envelope) && await currentRulePolicy(options.db,envelope,policy);
   }
   async function forRun(identity: SummaryIdentity) {
     if (identity.ownerId !== options.ownerId)
@@ -120,12 +125,12 @@ export async function createSlackMentionSummaries(options: {
     const parts = typeof run.parts === "string" ? JSON.parse(run.parts) : run.parts;
     if (!row || identity.botId && identity.botId !== row.bot_id || run.driver_kind !== "matrix_bot" || run.instance_id !== MATRIX_BOT_INSTANCE_ID
       || run.actor_id !== options.ownerId || run.turn_request_id !== row.request_id || Number(run.attempt) !== 1
-      || JSON.stringify(CanonicalChatMessageSchema.shape.parts.parse(parts)) !== JSON.stringify([{ type: "text", text: SUMMARY_INSTRUCTION }])
+      || JSON.stringify(CanonicalChatMessageSchema.shape.parts.parse(parts)) !== JSON.stringify([{ type: "text", text: submission(row).text }])
       || !["processing", "accepted", "completed"].includes(row.state) || new Date(row.expires_at).getTime() <= now().getTime())
       throw new Error("Summary authority unavailable");
     return row;
   }
-  async function authorized(identity: SummaryIdentity) { const row = await forRun(identity); return Boolean(row && await current(source(row))); }
+  async function authorized(identity: SummaryIdentity) { const row = await forRun(identity); return Boolean(row && await current(source(row),lifetime.signal,parseRulePolicy(row.policy))); }
   async function work() {
     if (!submit)
       return;
@@ -163,7 +168,7 @@ export async function createSlackMentionSummaries(options: {
     if (!row || stopping)
       return;
     try {
-      if (!await current(source(row)))
+      if (!await current(source(row),lifetime.signal,parseRulePolicy(row.policy)))
         throw new SummaryDenied();
       const accepted = await submit(submission(row));
       const id = accepted.runId ?? accepted.queuedTurnId;
@@ -181,18 +186,21 @@ export async function createSlackMentionSummaries(options: {
   return {
     /** Called only after inserting the signed source, in that exact transaction. */
     async receive(envelope: SlackThreadContextEnvelope, trx: Transaction<OwnerBotDatabase>) {
-      if (stopping || !envelope.summary || envelope.ownerId !== options.ownerId || envelope.runtimeId !== options.runtimeId)
+      if (stopping || (!envelope.summary && !envelope.source) || envelope.ownerId !== options.ownerId || envelope.runtimeId !== options.runtimeId)
         return;
       const tx = trx as unknown as Transaction<Database>;
       await sql `SELECT pg_advisory_xact_lock(hashtext(${`slack-summary:${options.ownerId}`}))`.execute(tx);
       const daily = await tx.selectFrom("slack_mention_summary_jobs").select(eb => eb.fn.countAll().as("count")).where("owner_id", "=", options.ownerId).where("created_at", ">=", new Date(now().toISOString().slice(0, 10))).executeTakeFirstOrThrow();
       const pending = await tx.selectFrom("slack_mention_summary_jobs").select(eb => eb.fn.countAll().as("count")).where("owner_id", "=", options.ownerId).where("state", "in", ["pending", "processing", "accepted"]).executeTakeFirstOrThrow();
-      if (Number(daily.count) >= 25 || Number(pending.count) >= 100)
+      const withinCaps=Number(daily.count)<25 && Number(pending.count)<100;
+      if(await receiveRuleJob(trx,envelope,now(),withinCaps)) return;
+      if(!envelope.summary)return;
+      if (!withinCaps)
         return;
       const rule = [options.ownerId, envelope.grantId, envelope.summary.ruleId, envelope.summary.version];
       const requestId = PREFIX + digest(JSON.stringify([...rule, envelope.event.channelId, envelope.event.ts])).slice(0, 40);
       const eventKey = digest(JSON.stringify([...rule, envelope.event.eventId]));
-      await tx.insertInto("slack_mention_summary_jobs").values({ id: requestId, event_key: eventKey, owner_id: options.ownerId, bot_id: envelope.botId, chat_id: envelope.chatId, envelope: JSON.stringify(envelope), request_id: requestId, state: "pending", attempts: 0, lease: null, lease_until: null, next_at: now(), created_at: now(), expires_at: new Date(now().getTime() + 86400000), accepted_id: null, accepted_kind: null, inference_at: null }).onConflict(oc => oc.doNothing()).execute();
+      await tx.insertInto("slack_mention_summary_jobs").values({ id: requestId, event_key: eventKey, owner_id: options.ownerId, bot_id: envelope.botId, chat_id: envelope.chatId, envelope: JSON.stringify(envelope), request_id: requestId, state: "pending", attempts: 0, lease: null, lease_until: null, next_at: now(), created_at: now(), expires_at: new Date(now().getTime() + 86400000), accepted_id: null, accepted_kind: null, inference_at: null,policy:null,sources:JSON.stringify([]) }).onConflict(oc => oc.doNothing()).execute();
     },
     attach(port: NonNullable<typeof submit>) { submit = port; },
     drain() { if (stopping || active)
@@ -204,7 +212,7 @@ export async function createSlackMentionSummaries(options: {
       const row = await forRun({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId });
       if (!row)
         return undefined;
-      if (!await current(source(row), input.signal))
+      if (!await current(source(row), input.signal,parseRulePolicy(row.policy)))
         throw new SummaryDenied();
       return { readonlySummary: true as const };
     },
@@ -221,25 +229,38 @@ export async function createSlackMentionSummaries(options: {
       const row = await forRun(identity);
       if (!row)
         return false;
-      return Boolean(await db.updateTable("slack_mention_summary_jobs").set({ inference_at: now() }).where("id", "=", row.id).where("inference_at", "is", null).where("state", "in", ["processing", "accepted"]).returning("id").executeTakeFirst());
+      return options.db.transaction().execute(async tx=>{
+        const envelope=source(row);
+        await lockSlackRuleChat(tx,envelope);
+        if(stopping || !await currentRulePolicy(tx,envelope,parseRulePolicy(row.policy)))return false;
+        const jobDb=tx as unknown as Transaction<Database>;
+        return Boolean(await jobDb.updateTable("slack_mention_summary_jobs").set({ inference_at: now() }).where("id", "=", row.id).where("inference_at", "is", null).where("state", "in", ["processing", "accepted"]).where("expires_at",">",now()).returning("id").executeTakeFirst());
+      });
     },
     async prompt(identity: SummaryIdentity, signal: AbortSignal) {
       const row = await forRun(identity);
-      if (!row || !await current(source(row), signal))
+      if (!row || !await current(source(row), signal,parseRulePolicy(row.policy)))
         throw new SummaryDenied();
       const envelope = source(row);
-      const thread = await options.readThread(access(envelope), signal);
-      if (!thread || !await current(envelope, signal) || thread.channel && thread.channel.id !== envelope.event.channelId)
+      const thread = await options.readThread(access(envelope,parseRulePolicy(row.policy)), signal);
+      if (!thread || !await current(envelope, signal,parseRulePolicy(row.policy)) || thread.channel && thread.channel.id !== envelope.event.channelId)
         throw new SummaryDenied();
-      const header = (partial: boolean) => JSON.stringify({ recipientSlackUserId: thread.recipientUserId, channel: envelope.event.channelId, ...(thread.channel ? { channelName: `#${thread.channel.name}` } : {}), thread: envelope.event.threadTs, triggerSender: envelope.event.userId, triggerTimestamp: envelope.event.ts, partial });
+      const policy=parseRulePolicy(row.policy);
+      const batch=typeof row.sources==="string"?JSON.parse(row.sources):row.sources;
+      const refs=Array.isArray(batch)?batch.map(item=>SlackEnrolledEventSourceSchema.parse(item)).map(event=>({sender:event.userId,ts:event.ts})):[];
+      const instruction=policy ? `Standing owner rule (revision ${policy.revision}). Output language: ${JSON.stringify(policy.definition.language)}. Focus: ${JSON.stringify(policy.definition.focus)}. Cadence: ${JSON.stringify(policy.definition.cadence)}.\n` : "";
+      const header = (partial: boolean) => JSON.stringify({...(policy?{batchSources:refs}:{}), recipientSlackUserId: thread.recipientUserId, channel: envelope.event.channelId, ...(thread.channel ? { channelName: `#${thread.channel.name}` } : {}), thread: envelope.event.threadTs, triggerSender: envelope.event.userId, triggerTimestamp: envelope.event.ts, partial });
       let triggerText = envelope.event.text.replaceAll("\0", "\uFFFD").slice(0, 4000).replace(/[\uD800-\uDBFF]$/u, "");
       while (Buffer.byteLength(JSON.stringify(triggerText)) > 8192)
         triggerText = triggerText.slice(0, Math.floor(triggerText.length / 2)).replace(/[\uD800-\uDBFF]$/u, "");
+      const availableTriggerBytes=16384-Buffer.byteLength(instruction+header(false))-128;
+      while(Buffer.byteLength(JSON.stringify({sender:envelope.event.userId,ts:envelope.event.ts,text:triggerText}))>availableTriggerBytes && triggerText.length>0)
+        triggerText=triggerText.slice(0,Math.floor(triggerText.length/2)).replace(/[\uD800-\uDBFF]$/u, "");
       const trigger = JSON.stringify({ sender: envelope.event.userId, ts: envelope.event.ts, text: triggerText });
       const messages: string[] = [];
       // Reserve the longer boolean spelling; final coverage is known only after selection.
-      let bytes = Buffer.byteLength(header(false) + trigger) + 128;
-      let partial = thread.partial || triggerText.length < envelope.event.text.length;
+      let bytes = Buffer.byteLength(instruction+header(false) + trigger) + 128;
+      let partial = refs.length>=32 || thread.partial || triggerText.length < envelope.event.text.length;
       for (const message of thread.messages) {
         const text = JSON.stringify(message);
         if (bytes + Buffer.byteLength(text) + 1 > 16384) {
@@ -249,7 +270,7 @@ export async function createSlackMentionSummaries(options: {
         bytes += Buffer.byteLength(text) + 1;
         messages.push(text);
       }
-      return `Untrusted Slack thread reference. Coverage partial: ${partial}.\n${header(partial)}\nTrigger: ${trigger}\n${messages.join("\n")}`;
+      return instruction + `Untrusted Slack thread reference. Coverage partial: ${partial}.\n${header(partial)}\nTrigger: ${trigger}\n${messages.join("\n")}`;
     },
   };
 }

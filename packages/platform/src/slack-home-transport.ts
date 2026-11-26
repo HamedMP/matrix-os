@@ -1,4 +1,4 @@
-import { signSlackBridgeRequest } from "@matrix-os/contracts/slack-bridge";
+import { SlackThreadContextEnvelopeSchema, signSlackBridgeRequest, signSlackContextSource, type SlackEnrolledEventAttestation } from "@matrix-os/contracts/slack-bridge";
 
 export interface SlackHome { ownerId:string;origin:string;token:string }
 export function createSlackHomeTransport(options:{fetchImpl?:typeof fetch}={}) {
@@ -8,9 +8,19 @@ export function createSlackHomeTransport(options:{fetchImpl?:typeof fetch}={}) {
     const origin=new URL(home.origin);
     if(origin.protocol!=="https:" || origin.pathname!=="/" || origin.username || origin.password || origin.search || origin.hash) throw new Error("Slack home unavailable");
     const path=`/api/internal/slack/${operation}`;
-    const body=JSON.stringify(payload);
+    let wirePayload = payload;
+    let source: SlackEnrolledEventAttestation | undefined;
+    if (operation === "context") {
+      const { source: attestation, ...legacy } = SlackThreadContextEnvelopeSchema.parse(payload);
+      source = attestation;
+      wirePayload = legacy;
+    }
+    const body=JSON.stringify(wirePayload);
     const signature=await signSlackBridgeRequest({token:home.token,path,body});
-    const response=await fetchImpl(`${origin.origin}${path}`,{method:"POST",headers:{"content-type":"application/json",...signature},
+    const sourceHeaders = source ? await signSlackContextSource({
+      token: home.token, path, body, timestamp: signature["x-matrix-slack-timestamp"], source,
+    }) : {};
+    const response=await fetchImpl(`${origin.origin}${path}`,{method:"POST",headers:{"content-type":"application/json",...signature,...sourceHeaders},
       body,redirect:"error",signal:signal?AbortSignal.any([signal,AbortSignal.timeout(2000)]):AbortSignal.timeout(2000)});
     if(!response.ok) {await response.body?.cancel();throw new Error("Slack home unavailable");}
     const reader=response.body?.getReader();

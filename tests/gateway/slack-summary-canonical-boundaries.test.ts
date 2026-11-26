@@ -3,13 +3,16 @@ import { sql, type Kysely } from "kysely";
 import { createProjectChatAssignmentCoordinator } from "../../packages/gateway/src/collaboration/project-chat-assignment.js";
 import type { OwnerCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import { createPrivateSlackThreadContext } from "../../packages/gateway/src/slack/private-thread-context.js";
+import { createSlackMentionSummaries, SUMMARY_INSTRUCTION } from "../../packages/gateway/src/slack/mention-summary.js";
 import { ChatConflictError } from "../../packages/gateway/src/chat/errors.js";
 import { admitCanonicalRetry } from "../../packages/gateway/src/chat/retry-admission.js";
 import { createBotStateDatabase, createRealBotStateDatabase, insertChat, NOW, OWNER } from "./bots/bot-state-support.js";
 
 const owner = { type: "personal" as const, ownerId: OWNER };
 const chatId = "chat_summary_boundary";
-const requestId = `req_slack_summary_${"a".repeat(40)}`;
+let requestId: string;
+let summaries: Awaited<ReturnType<typeof createSlackMentionSummaries>>;
 const selection = { instanceId: "matrix_bot_default", model: "auto" };
 const snapshot = { revision: "fixture", rootChat: true, attachments: [], resources: [], tools: [], approvals: false,
   userInput: false, resume: false, cancellation: true, steering: "same_run" as const, worktrees: "none" as const,
@@ -21,15 +24,35 @@ beforeEach(async () => {
   fixture = await (process.env.MATRIX_TEST_POSTGRES_URL ? createRealBotStateDatabase() : createBotStateDatabase());
   repository = new ChatRepository(fixture.db);
   await insertChat(fixture.db, chatId);
+  const botId = "bot_0123456789abcdef", runtimeId = "preview_boundary";
+  await fixture.db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: botId, chat_id: chatId,
+    kind: "direct", created_at: NOW, removed_at: null }).execute();
+  summaries = await createSlackMentionSummaries({ db: fixture.db, ownerId: OWNER, runtimeId,
+    authorize: async () => true, readThread: async () => null });
+  const context = await createPrivateSlackThreadContext({ db: fixture.db, ownerId: OWNER, runtimeId,
+    authorize: async () => true, onReceive: summaries.receive });
+  // Use real source/job admission, rather than inventing a privileged request ID with no durable authority.
+  expect(await context.receive({ ownerId: OWNER, chatId, botId, runtimeId, grantId: "a".repeat(64),
+    summary: { ruleId: "owner-mentions", version: 1, proof: "b".repeat(64) },
+    event: { appId: "A123", teamId: "T123", channelId: "C123", threadTs: "1795000000.000001",
+      ts: "1795000001.000001", eventId: "EvBoundary", userId: "U456", text: "<@U123> review this change" },
+  })).toBe(true);
+  const jobs = await sql<{ request_id: string; policy: unknown; state: string }>`SELECT request_id,policy,state FROM slack_mention_summary_jobs`.execute(fixture.db);
+  expect(jobs.rows).toHaveLength(1);
+  expect(jobs.rows[0]).toMatchObject({ policy: null, state: "pending" });
+  requestId = jobs.rows[0]!.request_id;
+  // Seed the worker claim that precedes canonical admission; pending jobs cannot authorize publication.
+  await sql`UPDATE slack_mention_summary_jobs SET state='processing',attempts=1,lease='boundary_fixture',
+    lease_until=now()+interval '30 seconds' WHERE request_id=${requestId}`.execute(fixture.db);
 });
-afterEach(async () => { await fixture.destroy(); });
+afterEach(async () => { await summaries?.close(); await fixture.destroy(); });
 
 async function admit(clientRequestId = "req_foreground") {
   const current = (await repository.get(owner, chatId))!.chat;
   await repository.admitTurn(owner, {
     chatId, baseRevision: current.revision,
     message: { id: "msg_boundary", chatId, turnId: "cturn_boundary", seq: current.messageCount + 1, role: "user",
-      state: "committed", actorId: OWNER, parts: [{ type: "text", text: "Fixture request" }], createdAt: NOW },
+      state: "committed", actorId: OWNER, parts: [{ type: "text", text: clientRequestId === requestId ? SUMMARY_INSTRUCTION : "Fixture request" }], createdAt: NOW },
     turn: { id: "cturn_boundary", chatId, clientRequestId, baseMessageSeq: current.messageCount, inputMessageId: "msg_boundary",
       status: "accepted", createdAt: NOW, updatedAt: NOW },
     run: { id: "run_boundary", chatId, turnId: "cturn_boundary", attempt: 1, driverKind: "matrix_bot",
@@ -43,7 +66,7 @@ async function enqueue() {
   return repository.enqueueQueuedTurn(owner, {
     chatId, baseRevision: (await repository.get(owner, chatId))!.chat.revision,
     queuedTurnId: "qturn_summary_boundary", clientRequestId: requestId,
-    parts: [{ type: "text", text: "Fixed summary instruction" }], driverKind: "matrix_bot", selection,
+    parts: [{ type: "text", text: SUMMARY_INSTRUCTION }], driverKind: "matrix_bot", selection,
     interactionMode: "default", permissionMode: "default", createdAt: NOW, capabilitySnapshot: snapshot,
   });
 }
@@ -83,7 +106,7 @@ it("refuses a historical summary steer acknowledgement while preserving failure 
   const input = await steeringInput();
   await fixture.db.insertInto("chat_run_steers").values({ id: input.steerId, chat_id: chatId, run_id: input.runId,
     turn_id: input.expectedTurnId, client_request_id: input.clientRequestId, message_id: input.messageId,
-    queued_turn_id: input.queuedTurnId, parts: JSON.stringify([{ type: "text", text: "Fixed summary instruction" }]),
+    queued_turn_id: input.queuedTurnId, parts: JSON.stringify([{ type: "text", text: SUMMARY_INSTRUCTION }]),
     status: "pending", created_at: NOW, updated_at: NOW }).execute();
   await expect(repository.beginQueuedTurnSteer(owner, input)).rejects.toBeInstanceOf(ChatConflictError);
   await expect(repository.acceptQueuedTurnSteer(owner, { ...input, acceptedAt: NOW })).rejects.toBeInstanceOf(ChatConflictError);
@@ -99,7 +122,7 @@ it("denies replacing the fixed queued summary instruction", async () => {
     parts: [{ type: "text", text: "Run a different task" }], updatedAt: NOW,
   })).rejects.toBeInstanceOf(ChatConflictError);
   expect((await fixture.db.selectFrom("chat_queued_turns").select("parts").executeTakeFirstOrThrow()).parts)
-    .toEqual([{ type: "text", text: "Fixed summary instruction" }]);
+    .toEqual([{ type: "text", text: SUMMARY_INSTRUCTION }]);
 });
 
 it("cancels a summary queue after historical publication before committing its input", async () => {

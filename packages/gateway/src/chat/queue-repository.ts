@@ -1,3 +1,4 @@
+import { slackRulePublicationCurrent } from "../slack/rule-publication.js";
 import { hasOwnerHttpInput, promotedOwnerHttpInput, type OwnerHttpInputProvenance } from "./owner-http-input.js";
 import { assertPrivateRoutineRequest, hasNonPrivateChatScope, cancelNonPrivateRoutineQueue } from "./private-routine-authority.js";
 import { listQueuedChatCandidates } from "./queued-chat-candidates.js";
@@ -1056,7 +1057,7 @@ export class ChatQueueRepository {
         .executeTakeFirst();
       if (!candidate) return null;
       if ((candidate.client_request_id.startsWith("req_routine_") || candidate.client_request_id.startsWith("req_slack_summary_")) && (owner.type !== "personal"
-        || chat.collaboration !== null || await hasNonPrivateChatScope(trx, owner, chatId))) {
+        || chat.collaboration !== null || await hasNonPrivateChatScope(trx, owner, chatId) || !await slackRulePublicationCurrent(trx,owner.ownerId,chatId,candidate.client_request_id))) {
         const revision = await cancelNonPrivateRoutineQueue(trx, { chatId, queuedTurnId: candidate.id,
           position: Number(candidate.position), baseRevision: Number(chat.revision), at: claimedAt });
         await this.appendOutbox(trx, owner, chatId, revision, "queue.cancelled", { queuedTurnId: candidate.id, position: Number(candidate.position) });
