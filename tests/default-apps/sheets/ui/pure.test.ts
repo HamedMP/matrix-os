@@ -148,6 +148,20 @@ describe("importing pasted rows", () => {
     expect(parsePastedTable("name,amount\nTea,=1+1\n")).toEqual({ ok: true, rows: [["name", "amount"], ["Tea", "'=1+1"]] });
   });
 
+  // Outcome: a pasted field longer than a cell holds is refused, not imported cut short.
+  // Fault: the CSV reader cut such a field to 32,767 characters and the import reported success.
+  it("refuses a field longer than a cell holds instead of cutting it", () => {
+    const long = "x".repeat(32_768);
+    expect(parsePastedTable(`a,${long}\n`)).toEqual({ ok: false, message: "A pasted field is longer than a cell holds (32,767 characters)." });
+    expect(parsePastedTable(`a,${"x".repeat(32_767)}\n`)).toMatchObject({ ok: true });
+  });
+
+  it("keeps rows, empty fields between filled ones, and the delimiter the text uses", () => {
+    expect(parsePastedTable("\ufeffa;b\n\n;c;\n\n")).toEqual({ ok: true, rows: [["a", "b"], [], ["", "c"]] });
+    expect(parsePastedTable("\n\n")).toEqual({ ok: false, message: "Paste some rows first." });
+    expect(parsePastedTable(",,\n,\n")).toEqual({ ok: false, message: "No rows were found in the pasted text." });
+  });
+
   it("refuses a paste whose rows span more positions than it reads, without reading them", () => {
     // One wide row over many short ones: few cells, but a table of rows x widest row.
     const text = `${"a,".repeat(9_999)}a\n${"x\n".repeat(Math.ceil(MAX_IMPORT_AREA / 10_000))}`;

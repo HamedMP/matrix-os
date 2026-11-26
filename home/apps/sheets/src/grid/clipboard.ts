@@ -50,7 +50,7 @@ export interface ParsedTable {
   sourceRows?: Array<number | null>;
   /** For each cell copied from Sheets without a formula, its stored value; otherwise undefined. */
   values?: Array<Array<ClipboardValue | undefined>>;
-  /** Set when the table covers more than {@link MAX_PASTE_CELLS} cells; it is then read no further and its rows are empty. */
+  /** Set when the table is beyond a paste's limits (cells, rows, columns or length); it is then read no further and its rows are empty. */
   tooLarge?: true;
 }
 
@@ -81,20 +81,32 @@ export function serializeTsv(rows: ReadonlyArray<ReadonlyArray<string>>): string
 /**
  * Reads tab-separated text as spreadsheets write it: quoted fields may hold
  * tabs and line breaks, `""` is a quote, any line ending is accepted and one
- * trailing line break is ignored.
+ * trailing line break is ignored. Null when the text is longer than
+ * {@link MAX_PASTE_CHARS} or holds more than {@link MAX_PASTE_ROWS} rows or a
+ * row of more than {@link MAX_PASTE_COLS} fields: such a table is refused
+ * whole, never read in part.
  */
-export function parseTsv(text: string): string[][] {
-  const source = text.length > MAX_PASTE_CHARS ? text.slice(0, MAX_PASTE_CHARS) : text;
+export function parseTsv(text: string): string[][] | null {
+  if (text.length > MAX_PASTE_CHARS) return null;
+  const source = text;
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
   let i = 0;
   const length = source.length;
-  const endRow = (): void => {
-    if (row.length < MAX_PASTE_COLS) row.push(field);
+  /** Adds the field to the row; false when the row is wider than a paste reads. */
+  const pushField = (): boolean => {
+    if (row.length >= MAX_PASTE_COLS) return false;
+    row.push(field);
     field = "";
+    return true;
+  };
+  /** Ends the row; false when the table is taller than a paste reads. */
+  const endRow = (): boolean => {
+    if (!pushField() || rows.length >= MAX_PASTE_ROWS) return false;
     rows.push(row);
     row = [];
+    return true;
   };
   while (i < length) {
     const ch = source[i] as string;
@@ -130,21 +142,19 @@ export function parseTsv(text: string): string[][] {
       continue;
     }
     if (ch === "\t") {
-      if (row.length < MAX_PASTE_COLS) row.push(field);
-      field = "";
+      if (!pushField()) return null;
       i++;
       continue;
     }
     if (ch === "\r" || ch === "\n") {
-      if (rows.length >= MAX_PASTE_ROWS) return rows;
-      endRow();
+      if (!endRow()) return null;
       i += ch === "\r" && source[i + 1] === "\n" ? 2 : 1;
       continue;
     }
     field += ch;
     i++;
   }
-  if (field !== "" || row.length > 0) endRow();
+  if ((field !== "" || row.length > 0) && !endRow()) return null;
   return rows;
 }
 
@@ -224,18 +234,21 @@ function cellText(cell: Element): string {
   return text.replace(/ /g, " ").replace(/[ \t]*\n[ \t]*/g, "\n").replace(/[ \t]{2,}/g, " ").trim();
 }
 
-function span(cell: Element, name: string, max: number): number {
+function span(cell: Element, name: string): number {
   const value = Number(cell.getAttribute(name));
-  return Number.isInteger(value) && value > 1 ? Math.min(value, max) : 1;
+  return Number.isInteger(value) && value > 1 ? value : 1;
 }
 
 /**
  * Reads the first table of an HTML clipboard fragment. Cells spanning rows or
  * columns put their text in the first cell and leave the others empty.
- * Returns null when there is no table or no HTML parser.
+ * Returns null when there is no table or no HTML parser. A table beyond the
+ * row, column, cell or length limits comes back `tooLarge`, never in part.
  */
 export function parseHtmlTable(html: string): ParsedTable | null {
-  if (typeof DOMParser === "undefined" || html.length > MAX_PASTE_CHARS) return null;
+  if (typeof DOMParser === "undefined") return null;
+  // Too long to parse: a table in it is refused rather than pasted from the plain text without its formulas.
+  if (html.length > MAX_PASTE_CHARS) return /<table[\s>]/i.test(html) ? tooLargeTable() : null;
   let document: Document;
   try {
     document = new DOMParser().parseFromString(html, "text/html");
@@ -258,7 +271,8 @@ export function parseHtmlTable(html: string): ParsedTable | null {
   const fits = (columns: number): boolean => (rows.length + 1) * Math.max(width, columns) <= MAX_PASTE_CELLS;
   for (const tr of Array.from(table.querySelectorAll("tr"))) {
     if (tr.closest("table") !== table) continue;
-    if (rows.length >= MAX_PASTE_ROWS) break;
+    // More rows than a paste reads: the table is refused, not cut.
+    if (rows.length >= MAX_PASTE_ROWS) return tooLargeTable();
     // Checked before a row is added: a row of a wide table, even an empty one, is padded to its width.
     if (!fits(0)) return tooLargeTable();
     const row: string[] = [];
@@ -280,15 +294,15 @@ export function parseHtmlTable(html: string): ParsedTable | null {
       const tag = cell.tagName.toLowerCase();
       if (tag !== "td" && tag !== "th") continue;
       if (!skipHeld()) return tooLargeTable();
-      if (col >= MAX_PASTE_COLS) break;
+      if (col >= MAX_PASTE_COLS) return tooLargeTable();
       const formula = cell.getAttribute("data-sheets-formula");
       const text = cellText(cell);
       const value = formula === null || formula === "" ? readValue(cell) : undefined;
       if (value !== undefined) typed = true;
-      const colSpan = span(cell, "colspan", MAX_PASTE_COLS - col);
-      const rowSpan = span(cell, "rowspan", MAX_PASTE_ROWS);
-      // The span is checked before it is expanded into cells.
-      if (!fits(col + colSpan)) return tooLargeTable();
+      const colSpan = span(cell, "colspan");
+      const rowSpan = Math.min(span(cell, "rowspan"), MAX_PASTE_ROWS);
+      // The span is checked before it is expanded into cells; one wider than a paste reads refuses the table.
+      if (col + colSpan > MAX_PASTE_COLS || !fits(col + colSpan)) return tooLargeTable();
       for (let k = 0; k < colSpan; k++) {
         const first = k === 0;
         row[col] = first ? (formula !== null && formula !== "" ? `=${formula}` : text) : "";
@@ -330,6 +344,7 @@ export function readClipboard(data: { html?: string | null; text?: string | null
   }
   if (typeof data.text === "string" && data.text !== "") {
     const rows = parseTsv(data.text);
+    if (rows === null) return tooLargeTable();
     if (rows.length === 0) return null;
     const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
     if (rows.length * width > MAX_PASTE_CELLS) return tooLargeTable();

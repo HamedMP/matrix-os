@@ -60,4 +60,5 @@ export type {
 } from "../../../_shared/office-engine/index";
 
 export { getWorkbookInternals } from "../../../_shared/office-engine/xlsx/internal";
+export { scanCsv, sniffDelimiter } from "../../../_shared/office-engine/xlsx/csv/index";
 export type { CellMutation, RawCell, WorkbookInternals } from "../../../_shared/office-engine/xlsx/internal";

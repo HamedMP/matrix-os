@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { parseHtmlTable, parseTsv, readClipboard, serializeHtmlTable, serializeTsv } from "../../../../home/apps/sheets/src/grid/clipboard";
+import { MAX_PASTE_CHARS, MAX_PASTE_COLS, MAX_PASTE_ROWS, parseHtmlTable, parseTsv, readClipboard, serializeHtmlTable, serializeTsv } from "../../../../home/apps/sheets/src/grid/clipboard";
 import { type FillSource, adjustFormula, createFiller, fillFromEdge, fillTarget, planFill } from "../../../../home/apps/sheets/src/grid/fill";
 import { compareValues, distinctValues, filterHiddenRows, planSort, sortOrder } from "../../../../home/apps/sheets/src/grid/sort-filter";
 
@@ -79,6 +79,37 @@ describe("HTML table clipboard", () => {
     expect(readClipboard({ html: wide, text: "x" })?.tooLarge).toBe(true);
     expect(readClipboard({ text: `${"\t".repeat(1999)}x\n${"\n".repeat(999)}` })?.tooLarge).toBe(true);
     expect(parseHtmlTable(`<table><tr><td colspan="3">x</td></tr><tr><td>1</td></tr></table>`)?.rows).toEqual([["x", "", ""], ["1", "", ""]]);
+  });
+
+  // Outcome: a paste beyond the row, column or length limits is refused whole, never pasted in part.
+  // Fault: the parsers dropped fields past the column limit, rows past the row limit and text past the
+  // length limit, and the rest pasted as if it were the whole table.
+  it("refuses a table beyond the row, column or length limits instead of pasting part of it", () => {
+    const wideRow = Array.from({ length: MAX_PASTE_COLS + 1 }, (_, i) => String(i)).join("\t");
+    expect(parseTsv(wideRow)).toBeNull();
+    expect(readClipboard({ text: wideRow })?.tooLarge).toBe(true);
+    expect(parseTsv(Array.from({ length: MAX_PASTE_COLS }, () => "x").join("\t"))?.[0]).toHaveLength(MAX_PASTE_COLS);
+
+    const tall = "1\n".repeat(MAX_PASTE_ROWS + 1);
+    expect(parseTsv(tall)).toBeNull();
+    expect(readClipboard({ text: tall })?.tooLarge).toBe(true);
+    expect(parseTsv("1\n".repeat(MAX_PASTE_ROWS))).toHaveLength(MAX_PASTE_ROWS);
+
+    const long = `a\t${"b".repeat(MAX_PASTE_CHARS)}`;
+    expect(parseTsv(long)).toBeNull();
+    expect(readClipboard({ text: long })?.tooLarge).toBe(true);
+
+    const wideHtml = `<table><tr>${"<td>x</td>".repeat(MAX_PASTE_COLS + 1)}</tr></table>`;
+    expect(parseHtmlTable(wideHtml)?.tooLarge).toBe(true);
+    const wideSpan = `<table><tr><td>a</td><td colspan="${MAX_PASTE_COLS}">x</td></tr></table>`;
+    expect(parseHtmlTable(wideSpan)?.tooLarge).toBe(true);
+    const tallHtml = `<table>${"<tr><td>1</td></tr>".repeat(MAX_PASTE_ROWS + 1)}</table>`;
+    expect(parseHtmlTable(tallHtml)?.tooLarge).toBe(true);
+    expect(readClipboard({ html: wideHtml, text: "x" })?.tooLarge).toBe(true);
+    // HTML too long to parse: its table is refused, not pasted from the text without its formulas.
+    const padding = " ".repeat(MAX_PASTE_CHARS);
+    expect(readClipboard({ html: `<table><tr><td data-sheets-formula="A1">1</td></tr></table>${padding}`, text: "1" })?.tooLarge).toBe(true);
+    expect(readClipboard({ html: `<p>x</p>${padding}`, text: "a\tb" })?.rows).toEqual([["a", "b"]]);
   });
 
   it("prefers the table and falls back to text", () => {
