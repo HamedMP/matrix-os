@@ -198,7 +198,7 @@ describe("the model sheet", () => {
   });
 
   it("keeps a saved model the catalog no longer lists, checked and out of reach, beside a deliberate replacement", () => {
-    const missing = { ...SONNET, model: GLM.model };
+    const missing = { ...SONNET, model: "@cf/zai-org/glm-5.3" };
     const change = renderPicker(catalogOf(matrixInstance()), missing);
 
     expect(triggerValue()).toBe(`Matrix AI · ${missing.model} · unavailable`);
@@ -207,6 +207,22 @@ describe("the model sheet", () => {
     const saved = models().getByRole("button", { name: `${missing.model}, Matrix AI · unavailable` });
     expect(saved.props.accessibilityState).toMatchObject({ selected: true, disabled: true });
     fireEvent.press(saved);
+    expect(change).not.toHaveBeenCalled();
+
+    fireEvent.press(models().getByRole("button", { name: "Sonnet 5, Matrix AI" }));
+    expect(change).toHaveBeenCalledWith(SONNET);
+  });
+
+  it("keeps the retired model on the saved Chat trigger and asks the user to choose a current model", () => {
+    const gptOss = "@cf/openai/gpt-oss-120b";
+    const change = renderPicker(catalogOf(matrixInstance([
+      [SONNET.model, "Sonnet 5"],
+      [gptOss, "GPT-OSS 120B", "unavailable"],
+    ])), GLM);
+
+    expect(triggerValue()).toBe("Matrix AI · GLM 5.3 Flash · unavailable");
+    openSheet();
+    expect(modelNames()).toEqual(["Sonnet 5, Matrix AI", "GPT-OSS 120B, Matrix AI · Model unavailable"]);
     expect(change).not.toHaveBeenCalled();
 
     fireEvent.press(models().getByRole("button", { name: "Sonnet 5, Matrix AI" }));

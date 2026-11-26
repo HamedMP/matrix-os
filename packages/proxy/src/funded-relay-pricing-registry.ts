@@ -10,6 +10,7 @@ export function createFundedPricingRegistry(options: Pick<ReturnType<typeof crea
   "readPricingReviews" | "reportPricingRouteFailure"> & {
   now: () => Date;
   shutdown: AbortSignal;
+  reportPaymentFailure?: boolean;
 }) {
   let cached: { readAt: number; reviews: readonly FundedAiPricingReview[] } | undefined;
   let refreshing: Promise<boolean> | undefined;
@@ -57,7 +58,8 @@ export function createFundedPricingRegistry(options: Pick<ReturnType<typeof crea
   }
 
   function reportFailure(modelId: string, version: string, status: number, signal: AbortSignal): void {
-    if (status < 500 || status >= 600 || signal.aborted || options.shutdown.aborted
+    const routeFailure = (status >= 500 && status < 600) || (status === 402 && options.reportPaymentFailure);
+    if (!routeFailure || signal.aborted || options.shutdown.aborted
       || !Object.hasOwn(FUNDED_PRICING_VERSIONS, modelId)) return;
     const canonicalModelId = modelId as FundedPricingReview["canonicalModelId"];
     if (version !== FUNDED_PRICING_VERSIONS[canonicalModelId]) return;

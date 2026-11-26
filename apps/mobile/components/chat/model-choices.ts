@@ -3,6 +3,8 @@ import {
   canonicalProviderFundingState,
   canonicalProviderModelCanBeSelected,
   canonicalProviderModelRouteLabel,
+  MATRIX_PI_CHAT_INSTANCE_ID,
+  retiredManagedWorkersAiModel,
   type CanonicalChatModelSelection,
   type CanonicalProviderCatalog,
 } from "@matrix-os/contracts";
@@ -108,6 +110,9 @@ function savedSelection(catalog: Catalog, selection: Selection) {
   const available = runnable && selection !== null && selectionBindingCurrent(instance, selection);
   const selectable = listed && canonicalProviderModelCanBeSelected(instance, model.id)
     && selection !== null && selectionBindingCurrent(instance, selection);
+  const retiredModel = selection?.instanceId === MATRIX_PI_CHAT_INSTANCE_ID
+    ? retiredManagedWorkersAiModel(selection.model)
+    : undefined;
   return {
     key: selection ? modelKey(selection.instanceId, selection.model) : null,
     instance,
@@ -116,7 +121,8 @@ function savedSelection(catalog: Catalog, selection: Selection) {
     selectable,
     /** The model can run, but not as saved: choosing it again names the account it runs through now. */
     rebind: runnable && !available,
-    modelLabel: model?.displayName ?? selection?.model ?? "Models unavailable",
+    retiredModel,
+    modelLabel: model?.displayName ?? retiredModel?.displayName ?? selection?.model ?? "Models unavailable",
     // A saved model whose credit is held is listed as held instead.
     state: available || (listed && creditReserved(instance)) ? null : catalog ? "unavailable" : "checking",
   };
@@ -127,7 +133,7 @@ function savedSelection(catalog: Catalog, selection: Selection) {
  * its identity is not lost, but it cannot be chosen.
  */
 function lostChoice(saved: ReturnType<typeof savedSelection>, engineId: string, listed: ModelChoice[]): ModelChoice[] {
-  if (!saved.key || !saved.instance || !saved.state) return [];
+  if (!saved.key || !saved.instance || !saved.state || saved.retiredModel) return [];
   if (engineIdOf(saved.instance) !== engineId || listed.some((model) => model.key === saved.key)) return [];
   return [{
     key: saved.key,

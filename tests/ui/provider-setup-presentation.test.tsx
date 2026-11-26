@@ -216,6 +216,41 @@ describe("provider setup presentation", () => {
     expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({ route: { kind: "configurable", providerId: "anthropic", modelId: "sonnet" } }));
   });
 
+  it("prompts for a new model when the saved Cloudflare model is retired", () => {
+    const value = fundedSnapshot();
+    const retiredId = "@cf/zai-org/glm-5.3-flash";
+    const replacementId = "@cf/zai-org/glm-5.3";
+    const harness = value.harnesses[0]!;
+    const sourceId = "matrix_cloudflare";
+    value.modelProviders = [{ id: "cloudflare", displayName: "Cloudflare Workers AI", models: [
+      { id: retiredId, displayName: "GLM 5.3 Flash", enabled: false },
+      { id: replacementId, displayName: "GLM 5.3", enabled: true },
+    ] }];
+    value.accessSources = [{ ...value.accessSources[0]!, id: sourceId, providerId: "cloudflare",
+      eligibleModelIds: [replacementId] }];
+    value.gatewayPolicy = { ...value.gatewayPolicy!, accessSourceId: sourceId, allowedModelIds: [replacementId] };
+    harness.accessSourceId = sourceId;
+    harness.route = { kind: "configurable", providerId: "cloudflare", modelId: retiredId };
+    harness.routeAvailability = "catalog_unavailable";
+    const onMutate = vi.fn();
+    render(<HarnessEditor snapshot={value} harness={harness} disabled={false}
+      canUpdate={false} canSetRoute canSelectSource={false} canSelectAccount={false}
+      onMutate={onMutate} onRefresh={vi.fn()} />);
+
+    const model = screen.getByRole("combobox", { name: "Model" });
+    expect(model).toHaveValue("");
+    expect(within(model).getByRole("option", { name: "Choose an available model" })).toBeDisabled();
+    expect(within(model).queryByRole("option", { name: "GLM 5.3 Flash" })).not.toBeInTheDocument();
+    expect(onMutate).not.toHaveBeenCalled();
+
+    fireEvent.change(model, { target: { value: replacementId } });
+    expect(onMutate).toHaveBeenCalledWith(expect.objectContaining({
+      type: "set_route",
+      route: { kind: "configurable", providerId: "cloudflare", modelId: replacementId },
+      accessSourceId: sourceId,
+    }));
+  });
+
   it("keeps exactly one visible Terminal setup action for a missing agent", async () => {
     const value = snapshot();
     value.harnessCatalog = [{ harness: "pi", displayName: "Pi", installState: "missing", available: true, runnable: false, setupAction: "install", safeReason: "not_installed" }];

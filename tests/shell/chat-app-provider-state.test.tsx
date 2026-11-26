@@ -728,6 +728,54 @@ it("retains a saved native Codex choice during checking rather than choosing ano
   expect(result.current.selectionStatus).toBe("Checking Codex access…");
 });
 
+it("remembers the last explicit Matrix AI model for new Web chats while isolating bound chat controls", async () => {
+  const source = providerCatalog();
+  const base = source.instances[0]!;
+  const instanceId = "matrix_pi_default";
+  const deepSeek = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+  const glm = "@cf/zai-org/glm-5.3";
+  const catalog = CanonicalProviderCatalogSchema.parse({
+    revision: source.revision,
+    drivers: [{ kind: "matrix_pi", displayName: "Pi", adapterVersion: "1.0.0", capabilityClass: "system_agent" }],
+    instances: [{
+      ...base, id: instanceId, driverKind: "matrix_pi", displayName: "Matrix AI", connectionLabel: "Matrix AI",
+      connectionState: "ready", defaultSelection: { instanceId, model: deepSeek },
+      models: [
+        { ...base.models[0]!, id: deepSeek, displayName: "DeepSeek V4.1 Flash" },
+        { ...base.models[0]!, id: glm, displayName: "GLM 5.3" },
+      ],
+    }],
+  });
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(catalog)));
+  const props = { messages: [], busy: false, connected: true, conversations: [], onNewChat: vi.fn(), onSwitchConversation: vi.fn(), onSubmit: vi.fn() };
+  const picker = () => screen.getByRole("button", { name: "Choose model and provider" });
+  const permission = () => screen.getByRole("button", { name: "Permission mode" });
+  const reasoning = () => screen.getByRole("button", { name: "Reasoning" });
+  const view = render(<ChatApp {...props} sessionId="chat_glm" providerSelection={{ instanceId, model: glm }} boundProviderInstanceId={instanceId} />);
+  await waitFor(() => expect(picker()).toHaveAttribute("data-model", glm));
+  view.rerender(<ChatApp {...props} />);
+  expect(picker()).toHaveAttribute("data-model", deepSeek);
+
+  view.rerender(<ChatApp {...props} sessionId="chat_deepseek" providerSelection={{ instanceId, model: deepSeek }} boundProviderInstanceId={instanceId} />);
+  fireEvent.click(permission());
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: "Full Access" }));
+  fireEvent.click(reasoning());
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
+  fireEvent.click(picker());
+  fireEvent.click(await screen.findByRole("option", { name: "GLM 5.3 via Matrix AI" }));
+  expect(picker()).toHaveAttribute("data-model", glm);
+  expect(permission()).toHaveTextContent("Full Access");
+  expect(reasoning()).toHaveTextContent("High");
+
+  view.rerender(<ChatApp {...props} />);
+  expect(picker()).toHaveAttribute("data-model", glm);
+  expect(permission()).toHaveTextContent("Supervised");
+  expect(reasoning()).toHaveTextContent("Low");
+  view.unmount();
+  render(<ChatApp {...props} />);
+  await waitFor(() => expect(picker()).toHaveAttribute("data-model", glm));
+});
+
 it.each([false, true])("keeps explicitly chosen unavailable Matrix models selectable and saved without enabling Web send (mobile=%s)", async mobile => {
   const catalog = providerCatalog(true, true);
   const base = catalog.instances[0]!;

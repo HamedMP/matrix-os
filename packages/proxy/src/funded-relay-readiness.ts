@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
-import type { FundedRelayConfig } from "./funded-relay-config.js";
-import { isManagedWorkersAiModel, isManagedWorkersAiResponseModel } from "@matrix-os/contracts";
+import { FUNDED_AI_READINESS_TIMEOUTS, isFundedCloudflarePreviewCohortModel, isFundedCloudflarePreviewModel, isManagedWorkersAiModel, isManagedWorkersAiResponseModel } from "@matrix-os/contracts";
+import { fundedCloudflarePreviewUpstream, type FundedRelayConfig } from "./funded-relay-config.js";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
 
 export const FUNDED_SONNET = "anthropic/claude-sonnet-5";
@@ -42,10 +41,25 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
       ...(upstreamStatus !== undefined ? { upstreamStatus } : {}), elapsedMs: Math.max(0, Date.now() - startedAt) }));
     return outcome === "ready";
   };
+  const preview = config.reservationMode === "usage" ? config.cloudflarePreview : undefined;
+  if (preview ? !isFundedCloudflarePreviewCohortModel(modelId) : isFundedCloudflarePreviewModel(modelId)) return false;
   let url: string;
   let headers: Record<string, string>;
   let body: string;
-  if (isManagedWorkersAiModel(modelId) && config.workersAiToken && config.reservationMode === "usage") {
+  if (preview) {
+    try {
+      const upstream = fundedCloudflarePreviewUpstream(preview, modelId);
+      url = upstream.target;
+      headers = Object.fromEntries(upstream.headers);
+    } catch (error) {
+      console.warn("[funded-ai] Cloudflare Preview readiness route misconfigured", {
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+      return finish("transport_error");
+    }
+    // An inexpensive, smaller probe could hide a real prepaid-credit admission failure.
+    body = serializeFundedOpenAiRequest({ model: modelId, messages: [{ role: "user", content: "Reply exactly OK." }] }).body;
+  } else if (isManagedWorkersAiModel(modelId) && config.workersAiToken && config.reservationMode === "usage") {
     const target = workersAiTarget(config.gatewayBaseUrl, modelId);
     url = target.url;
     headers = {
@@ -71,9 +85,10 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
   // A scale-to-zero relay can suspend idle socket cleanup. Close standalone
   // probes so the next health request cannot reuse a socket that expired while
   // the process was idle; paid inference keeps its existing transport policy.
-  headers.connection = "close";
+  const signal = AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayUpstreamProbeMs);
   try {
-    const response = await fetchFn(url, { method: "POST", headers, body, redirect: "error", signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.relayUpstreamProbeMs) });
+    headers.connection = "close";
+    const response = await fetchFn(url, { method: "POST", headers, body, redirect: "error", signal });
     if (!response.ok) {
       await response.body?.cancel();
       return finish("upstream_http", response.status);

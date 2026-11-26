@@ -650,3 +650,41 @@ Final broad UI and synthetic Electron fixtures exercise the combined delivered s
 - Codex API-key Connect holds one profile lease across prior native-auth capture, staged native CLI completion, replacement, fresh Settings observation, and revision-fenced enablement. A rejected Settings observation/CAS must restore exact prior auth bytes and safe original file mode, or original absence. Secrets must stay in bounded owner-only files/buffers and never enter argv, logs, Settings DTOs or exports.
 - Prior auth capture rejects symlinks, non-regular/multiply-linked files, files above 64 KiB, wrong-owner files, and group/other-accessible modes. Restoration is fenced by parent and installed-file identity; it never overwrites a concurrently changed target. Zero the bounded in-memory copy after capture.
 - A failed restoration retains both the durable marker and the single private 0700 staged recovery directory inside the hard-excluded native `.codex` directory, including its bounded owner-only prior-auth backup. Automatic expiry or cleanup must not discard that backup or unlock the profile. Explicit operator recovery must verify the native writer is drained and inspect/reconcile the exact auth identity before restoring/removing the backup and releasing its matching marker. Successful commit or proven restoration removes ordinary staged files after native-process drain.
+
+## Cloudflare-funded models in a Private Preview
+
+The scoped Preview uses Workers AI Standard for DeepSeek V4.1 Flash, full GLM
+5.3, Qwen 3.8 27B, and Inkling 2 Small. Each route requires a current price review,
+positive route health, an affordable reservation, and provider usage for exact
+settlement.
+
+Third-party Preview model IDs remain recognized for saved references and pricing
+records. Kimi K3.1 Pro, Gemini 3.8 Flash, and Qwen 3.7 Plus are ineligible for
+discovery as available models, readiness probes, funding, and inference. Reject
+them before creating a reservation or sending request content upstream, including
+when a previously issued policy or saved route still lists one of these IDs.
+
+Cloudflare Gateway payload logging and upstream zero data retention (ZDR) are
+separate controls. Cloudflare's Kimi and Qwen model pages do not document ZDR
+support. Its Gemini model page lists support, but the Preview REST path has no
+verified guarantee of enforcing ZDR with Cloudflare-managed credentials. Any
+future third-party route must establish that guarantee for the exact transport,
+model, and credential mode. It must request `cf-aig-zdr: true` and
+`cf-aig-collect-log-payload: false` and reject dispatch when either protection
+cannot be enforced. See [Cloudflare Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/#zero-data-retention-zdr).
+
+The isolated Platform and Relay bind this catalog to the same owner, machine,
+and runtime slot. Platform also checks the machine's Private Preview
+provisioning class. The existing signed runtime token authenticates funding
+summary and credential issuance. The existing Relay control token protects
+readiness. Chat requests use the scoped funded credential, and the reserve and
+settle calls use the isolated Platform ledger. There are no new routes or
+database tables.
+
+Qualification uses the exact PR host bundle and isolated Platform and Relay from
+the same commit. Test real replies and exact debits for the four Workers AI
+models. Test stale third-party selections against Gateway, Platform, and Relay,
+and verify that the rejected requests make no upstream call or debit. DeepSeek
+remains the first-use default, and the last explicit Web model selection carries
+into new chats. Deployment and customer enablement require a separate release
+decision.

@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import { FundedAiGlobalPolicySchema, IsoTimestampSchema, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
+import {
+  FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS, FundedAiGlobalPolicySchema, IsoTimestampSchema, MANAGED_WORKERS_AI_MODEL_IDS,
+  loadFundedCloudflarePreviewBinding, matchesFundedCloudflarePreviewBinding,
+  type FundedAiIdentity,
+} from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { AiFundedPolicyRepository } from "./ai-funded-policy-repository.js";
 import { withAccountDeletionOwnerLock } from "./account-deletion/admission.js";
@@ -56,6 +60,7 @@ export type PreviewRuntimeAccessConfig = { enabled: false } | {
   aiRequestLimit: number;
   speechRequestLimit: number;
   maxConcurrency: 1;
+  cloudflareBinding?: FundedAiIdentity;
 };
 
 function bounded(raw: string | undefined, fallback: number, minimum: number, maximum: number): number {
@@ -67,7 +72,11 @@ function bounded(raw: string | undefined, fallback: number, minimum: number, max
 }
 
 export function loadPreviewRuntimeAccessConfig(env: NodeJS.ProcessEnv): PreviewRuntimeAccessConfig {
-  if (env.MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED !== "true") return { enabled: false };
+  const cloudflareBinding = loadFundedCloudflarePreviewBinding(env);
+  if (env.MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED !== "true") {
+    if (cloudflareBinding) throw new Error("Cloudflare funded Preview requires Preview runtime access");
+    return { enabled: false };
+  }
   const runtimeSecret = env.MATRIX_PREVIEW_RUNTIME_SECRET ?? "";
   if (runtimeSecret.length < 32 || runtimeSecret === env.PLATFORM_SECRET) {
     throw new Error("Preview runtime access is misconfigured");
@@ -81,6 +90,7 @@ export function loadPreviewRuntimeAccessConfig(env: NodeJS.ProcessEnv): PreviewR
     aiRequestLimit: bounded(env.MATRIX_PREVIEW_AI_REQUEST_LIMIT, 25, 1, 100),
     speechRequestLimit: bounded(env.MATRIX_PREVIEW_SPEECH_REQUEST_LIMIT, 25, 1, 100),
     maxConcurrency,
+    ...(cloudflareBinding ? { cloudflareBinding } : {}),
   };
 }
 
@@ -142,6 +152,8 @@ export async function initializePreviewRuntimeAccess(options: {
       || machine.status !== "running" || machine.activation_state !== "authorized" || machine.deleted_at !== null) {
       throw new PreviewRuntimeAccessError("ineligible");
     }
+    const allowCloudflare = machine.provisioning_class === "private-preview"
+      && matchesFundedCloudflarePreviewBinding(config.cloudflareBinding, request);
     const existing = await trx.executor.selectFrom("preview_runtime_allocations").selectAll()
       .where("machine_id", "=", request.machineId).forUpdate().executeTakeFirst();
     if (existing) {
@@ -151,11 +163,11 @@ export async function initializePreviewRuntimeAccess(options: {
       }
       if (existing.expires_at > at) return previewAllocationSummary(existing);
       // Renewal still requires funded AI to be globally on with an allowed model.
-      await lockAllowedPreviewModels(trx);
+      await lockAllowedPreviewModels(trx, allowCloudflare);
       return renewExpiredPreviewAllocation({ trx, repository: options.repository, config, request,
         existing, at, expiresAt });
     }
-    const allowedModels = await lockAllowedPreviewModels(trx);
+    const allowedModels = await lockAllowedPreviewModels(trx, allowCloudflare);
     const conflicting = await trx.executor.selectFrom("ai_funded_runtime_policies").selectAll()
       .where("machine_id", "=", request.machineId).forUpdate().executeTakeFirst();
     if (conflicting) throw new PreviewRuntimeAccessError("policy_conflict");
@@ -192,12 +204,13 @@ export async function initializePreviewRuntimeAccess(options: {
   });
 }
 
-async function lockAllowedPreviewModels(trx: PlatformDB): Promise<string[]> {
+async function lockAllowedPreviewModels(trx: PlatformDB, allowCloudflare: boolean): Promise<string[]> {
   const globalRow = await trx.executor.selectFrom("ai_funded_global_policy").selectAll()
     .where("policy_id", "=", "default").forUpdate().executeTakeFirstOrThrow();
   const global = FundedAiGlobalPolicySchema.parse({ enabled: globalRow.enabled, revision: globalRow.revision,
     allowedModelIds: JSON.parse(globalRow.allowed_model_ids) as unknown, updatedAt: globalRow.updated_at });
-  const allowedModels = ORDINARY_MODELS.filter(model => global.allowedModelIds.includes(model));
+  const models = allowCloudflare ? FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS : ORDINARY_MODELS;
+  const allowedModels = models.filter(model => global.allowedModelIds.includes(model));
   if (!global.enabled || allowedModels.length === 0) throw new PreviewRuntimeAccessError("unavailable");
   return allowedModels;
 }

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { FUNDED_PRICING_CATALOG, type FundedAiPricingReview } from "@matrix-os/contracts";
+import {
+  ALIBABA_QWEN_37_PLUS_MODEL_ID, FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS, FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS,
+  FUNDED_PRICING_CATALOG,
+  GOOGLE_GEMINI_38_FLASH_MODEL_ID, MOONSHOT_KIMI_K31_PRO_MODEL_ID, currentFundedAiPricingReview,
+  type FundedAiPricingReview,
+} from "@matrix-os/contracts";
 import {
   runFundedPricingReview,
   runFundedPricingWatchdog,
@@ -9,6 +14,7 @@ import {
 import {
   FUNDED_PRICING_SOURCE_URLS,
   readOfficialFundedPricing,
+  readOfficialFundedPreviewPricing,
   type OfficialPricingObservation,
 } from "../../packages/platform/src/funded-pricing-review-job-sources.js";
 
@@ -94,6 +100,47 @@ describe("official funded pricing verification", () => {
     expect(result[deepseek]).toMatchObject({ kind: "match", retiredAt: null });
   });
 
+  it.each([
+    { id: GOOGLE_GEMINI_38_FLASH_MODEL_ID, input: "0.75", output: "3.75", cache: "0.075" },
+    { id: MOONSHOT_KIMI_K31_PRO_MODEL_ID, input: "2.00", output: "10.00", cache: "0.20" },
+    { id: ALIBABA_QWEN_37_PLUS_MODEL_ID, input: "0.32", output: "1.28", cache: "0.064" },
+  ])("requires exact Cloudflare route and complete rates for $id", async ({ id, input, output, cache }) => {
+    const sourceUrl = `https://developers.cloudflare.com/ai/models/${id}/index.md`;
+    const prices = `<li>Input (per 1M tokens)$${input}</li><li>Cached input (per 1M tokens)$${cache}</li><li>Output (per 1M tokens)$${output}</li>`;
+    const published = `Model ID\n\n\`${id}\` Copy\n\n| Pricing | <ul>${prices}</ul> |\n`;
+    const catalog = { [id]: FUNDED_PRICING_CATALOG[id]! };
+    const assess = (text: string) => readOfficialFundedPricing({
+      catalog, signal: new AbortController().signal,
+      fetchFn: vi.fn(async (url) => {
+        expect(url).toBe(sourceUrl);
+        return new Response(text);
+      }),
+    });
+    expect((await assess(published))[id]).toMatchObject({ kind: "match", sourceUrl, retiredAt: null });
+    expect((await assess(published.replace(`$${cache}</li>`, "$0.80</li>")))[id]?.kind).toBe("changed");
+    expect((await assess(published.replace(id, "google/wrong-route")))[id]?.kind).toBe("inconclusive");
+    expect((await assess(published.replace(`<li>Cached input (per 1M tokens)$${cache}</li>`, "")))[id]?.kind).toBe("inconclusive");
+    expect((await assess(published.replace("</ul>", `<li>Cache creation (per 1M tokens)$${input}</li></ul>`)))[id]?.kind)
+      .toBe("changed");
+    expect((await assess(`${published}\nThis model is deprecated.`))[id]?.kind).toBe("inconclusive");
+  });
+
+  it("does not fetch or consider the Cloudflare Preview models by default", async () => {
+    const fetchFn = sourceFetch();
+    const rows = await readOfficialFundedPricing({ fetchFn, signal: new AbortController().signal });
+    for (const id of FUNDED_CLOUDFLARE_PREVIEW_MODEL_IDS) {
+      expect(rows).not.toHaveProperty([id]);
+      expect(fetchFn.mock.calls.some(([url]) => String(url).includes(id))).toBe(false);
+    }
+  });
+
+  it("limits the configured Preview reviewer to the verified Workers routes", async () => {
+    const fetchFn = sourceFetch();
+    const rows = await readOfficialFundedPreviewPricing({ fetchFn, signal: new AbortController().signal });
+    expect(Object.keys(rows)).toEqual(FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS);
+    expect(fetchFn.mock.calls.some(([url]) => String(url) === FUNDED_PRICING_SOURCE_URLS.sonnet)).toBe(false);
+  });
+
   it("requires model-specific cache evidence and reads the provider retirement deadline", async () => {
     const fetchFn = sourceFetch();
     const result = await readOfficialFundedPricing({ fetchFn, signal: new AbortController().signal, catalog });
@@ -107,6 +154,29 @@ describe("official funded pricing verification", () => {
     for (const call of fetchFn.mock.calls) {
       expect(String(call[0])).toMatch(/^https:\/\/(developers.cloudflare.com|platform.claude.com)\//);
     }
+  });
+
+  it("renews verified rates when changelog metadata precedes the title", async () => {
+    const notice = [
+      "---",
+      "agent:",
+      '  search: "https://developers.cloudflare.com/.well-known/search?q={query}"',
+      "title: Workers AI Changelog",
+      "image: https://developers.cloudflare.com/og-changelog.png",
+      "---",
+      changelog.split("\n").slice(1).join("\n"),
+    ].join("\n");
+    const result = await readOfficialFundedPricing({
+      fetchFn: sourceFetch(pricing, notice),
+      signal: new AbortController().signal,
+      catalog: { ...catalog, [deepseek]: FUNDED_PRICING_CATALOG[deepseek] },
+    });
+    expect(result).toMatchObject({
+      [glm]: { kind: "match", retiredAt: "2026-11-20T00:00:00.000Z" },
+      [deepseek]: { kind: "match", retiredAt: null },
+      [qwen]: { kind: "match", retiredAt: null },
+      [gemma]: { kind: "inconclusive", sourceDigest: null },
+    });
   });
 
   it("blocks confirmed rate changes but refuses duplicate or malformed evidence", async () => {
@@ -191,6 +261,53 @@ describe("funded pricing review job", () => {
     expect(opts.linear.resolve).toHaveBeenCalledWith(qwen, signal);
     expect(store.finish).toHaveBeenCalledWith("review", "lease-1", now, true);
   });
+
+  it.each([
+    { validThrough: undefined, description: "new approval" },
+    { validThrough: "2027-01-06T00:00:00.000Z", description: "legacy approval outside the renewal window" },
+  ])("caps the Gemini $description at the introductory pricing deadline", async ({ validThrough }) => {
+    const modelId = GOOGLE_GEMINI_38_FLASH_MODEL_ID;
+    const clock = new Date("2026-12-15T00:00:00.000Z");
+    const deadline = "2026-12-31T23:59:59.999Z";
+    const store = jobStore(validThrough ? [{
+      ...existing(modelId, 0), reviewedAt: "2026-12-07T00:00:00.000Z", validThrough,
+    }] : []);
+    const opts = options(store);
+    await runFundedPricingReview({
+      ...opts, now: () => clock, readOfficial: async () => ({ [modelId]: observation("match") }),
+    }, signal);
+    expect(store.save).toHaveBeenCalledWith(expect.objectContaining({
+      modelId, reviewedAt: clock.toISOString(), validThrough: deadline, blockedAt: null,
+    }), "lease-1");
+    expect(opts.linear.notify).toHaveBeenCalledWith(expect.objectContaining({
+      key: modelId, deadline, description: expect.stringContaining("introductory pricing"),
+    }), signal);
+    const [review] = vi.mocked(store.save).mock.calls[0]!;
+    expect(currentFundedAiPricingReview(review, clock)).toBe(true);
+    expect(currentFundedAiPricingReview(review, new Date(deadline))).toBe(false);
+  });
+
+  it.each(["2026-12-31T23:59:59.999Z", "2027-01-01T00:00:00.000Z"])(
+    "never re-attests Gemini after introduction ends at %s even if posted prices have not changed", async (time) => {
+      const modelId = GOOGLE_GEMINI_38_FLASH_MODEL_ID;
+      const invalid = { ...existing(modelId, 0), reviewedAt: "2026-12-07T00:00:00.000Z",
+        validThrough: "2027-01-06T00:00:00.000Z" };
+      const clock = new Date(time);
+      const store = jobStore([invalid]);
+      const opts = options(store);
+      expect(currentFundedAiPricingReview(invalid, new Date("2026-12-15T00:00:00.000Z"))).toBe(false);
+      expect(currentFundedAiPricingReview(invalid, clock)).toBe(false);
+      await runFundedPricingReview({
+        ...opts, now: () => clock, readOfficial: async () => ({ [modelId]: observation("match") }),
+      }, signal);
+      expect(store.save).not.toHaveBeenCalled();
+      expect(opts.linear.notify).toHaveBeenCalledWith(expect.objectContaining({
+        key: modelId, deadline: "2026-12-31T23:59:59.999Z", priority: 1,
+        description: expect.stringContaining("introductory pricing has expired"),
+      }), signal);
+      expect(opts.linear.resolve).not.toHaveBeenCalledWith(modelId, signal);
+    },
+  );
 
   it("fences a changed price immediately while preserving the existing deadline", async () => {
     const old = existing(glm, 6);

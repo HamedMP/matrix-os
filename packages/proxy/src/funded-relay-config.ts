@@ -1,3 +1,9 @@
+import {
+  isFundedCloudflarePreviewCohortModel,
+  isManagedWorkersAiModel,
+  loadFundedCloudflarePreviewBinding,
+  type FundedAiIdentity,
+} from "@matrix-os/contracts";
 import { readFundedPricingReviews, type FundedPricingReviews } from "./funded-pricing-review.js";
 
 import { readJevPricingReview, type JevPricingReview } from "./jev-pricing-review.js";
@@ -33,6 +39,7 @@ export interface FundedRelayConfig {
   jevPricingReview?: Readonly<JevPricingReview>;
   reservationMode: "cloudflare-count" | "usage";
   workersAiToken?: string;
+  cloudflarePreview?: FundedCloudflarePreview;
   platformBaseUrl: string;
   relayControlToken: string;
   metadataSecret: string;
@@ -178,11 +185,16 @@ export function resolveFundedRelayConfig(
     !== [gatewayToken, relayControlToken, metadataSecret].filter(Boolean).length) {
     throw new Error("Funded AI relay credentials must be distinct");
   }
+  const pricingRegistryEnabled = readEnabled(env.MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED, "MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED");
+  const cloudflarePreview = resolveFundedCloudflarePreview(
+    env, gatewayBaseUrl, workersAiToken, reservationMode === "usage" && pricingRegistryEnabled,
+  );
   return {
     gatewayBaseUrl,
     gatewayToken,
     pricingReviews: readFundedPricingReviews(env),
-    pricingRegistryEnabled: readEnabled(env.MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED, "MATRIX_FUNDED_AI_PRICING_REGISTRY_ENABLED"),
+    pricingRegistryEnabled,
+    ...(cloudflarePreview ? { cloudflarePreview } : {}),
     jevPricingReview: readJevPricingReview(env),
     jevMaxCostMicrousd: readInteger(
       env, "MATRIX_JEV_MAX_COST_MICROUSD", DEFAULT_JEV_MAX_COST_MICROUSD, 1, 1_000_000,
@@ -237,5 +249,53 @@ export function resolveFundedRelayConfig(
     settlementTtlMs: readInteger(
       env, "MATRIX_FUNDED_AI_SETTLEMENT_TTL_MS", DEFAULT_SETTLEMENT_TTL_MS, 60_000, 30 * 60_000,
     ),
+  };
+}
+
+const WORKERS_TOKEN = /^[A-Za-z0-9._~-]{32,4096}$/;
+const ACCOUNT_ID = /^[a-f0-9]{32}$/;
+export interface FundedCloudflarePreview extends FundedAiIdentity {
+  accountId: string;
+  token: string;
+}
+
+function resolveFundedCloudflarePreview(
+  env: NodeJS.ProcessEnv,
+  gatewayBaseUrl: string,
+  workersAiToken: string | undefined,
+  usesReviewedReservations: boolean,
+): FundedCloudflarePreview | undefined {
+  const binding = loadFundedCloudflarePreviewBinding(env);
+  if (!binding) {
+    // A previous Preview deployment can still carry this marker. Require its
+    // binding rather than accidentally booting an unscoped Preview process.
+    if (env.MATRIX_FUNDED_AI_CLOUDFLARE_PREVIEW_GATEWAY_ID !== undefined) {
+      throw new Error("Cloudflare Preview requires an exact binding");
+    }
+    return undefined;
+  }
+  if (!workersAiToken || !WORKERS_TOKEN.test(workersAiToken) || !usesReviewedReservations) {
+    throw new Error("Cloudflare Preview requires a Workers AI token, usage reservations, and the pricing registry");
+  }
+  // The ordinary Relay validates the official HTTPS gateway URL first.
+  const accountId = new URL(gatewayBaseUrl).pathname.split("/")[2] ?? "";
+  if (!ACCOUNT_ID.test(accountId)) throw new Error("Invalid Cloudflare Preview account");
+  return { ...binding, accountId, token: workersAiToken };
+}
+
+export function fundedCloudflarePreviewUpstream(
+  config: FundedCloudflarePreview,
+  modelId: string,
+): { target: string; headers: Headers } {
+  if (!isManagedWorkersAiModel(modelId) || !isFundedCloudflarePreviewCohortModel(modelId)
+    || !ACCOUNT_ID.test(config.accountId) || !WORKERS_TOKEN.test(config.token)) {
+    throw new Error("Invalid funded Cloudflare Preview config");
+  }
+  return {
+    target: `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/ai/run/${modelId}`,
+    headers: new Headers({
+      authorization: `Bearer ${config.token}`,
+      "content-type": "application/json",
+    }),
   };
 }
