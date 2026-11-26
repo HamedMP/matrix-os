@@ -6,8 +6,8 @@ export interface CronServiceConfig {
   store: CronStore;
   onTrigger: (job: CronJob) => void;
   /**
-   * Startup catch-up runs and due one-shots wait for this to settle (for example channel adapters
-   * starting), so a reminder is not sent into a channel that cannot deliver it yet.
+   * Scheduled dispatch waits for this to settle (for example channel adapters starting).
+   * Work due during startup is caught up once alongside missed occurrences.
    */
   catchUpAfter?: Promise<unknown>;
 }
@@ -117,6 +117,27 @@ export function createCronService(config: CronServiceConfig): CronService {
     }
   }
 
+  function expectedRunAt(jobId: string): number | null {
+    return timers.get(jobId)?.nextAt ?? cronTasks.get(jobId)?.nextAt ?? null;
+  }
+
+  function runStartupCatchUp(now: number): void {
+    for (const job of store.list()) {
+      const nextAt = expectedRunAt(job.id);
+      const due = nextAt !== null && nextAt <= now;
+      if (job.schedule.type === "once") {
+        const timer = timers.get(job.id);
+        if (due && timer) runOnce(job, timer);
+        continue;
+      }
+
+      if (!due && !missedSinceLastRun(job, now)) continue;
+      // Replace a timer already due so its queued callback cannot dispatch the same run.
+      if (due) scheduleJob(job);
+      runJob(job);
+    }
+  }
+
   /**
    * Periodic check. Normally it runs, once, any job more than the grace period past its expected
    * occurrence. When the wall clock advanced well beyond the monotonic clock since the last check
@@ -124,6 +145,7 @@ export function createCronService(config: CronServiceConfig): CronService {
    * rescheduled from now at once: upcoming occurrences fire on time and overdue ones run once.
    */
   function checkSchedules(): void {
+    if (!catchUpGateOpen) return;
     const wall = Date.now();
     const mono = performance.now();
     const jumped = wall - lastCheckWall - (mono - lastCheckMono) > CRON_CLOCK_JUMP_TOLERANCE_MS;
@@ -132,11 +154,11 @@ export function createCronService(config: CronServiceConfig): CronService {
     const overdueBefore = jumped ? wall : wall - CRON_CATCH_UP_GRACE_MS;
 
     for (const job of store.list()) {
-      const timer = timers.get(job.id);
-      const nextAt = timer?.nextAt ?? cronTasks.get(job.id)?.nextAt ?? null;
+      const nextAt = expectedRunAt(job.id);
       const overdue = nextAt !== null && nextAt <= overdueBefore;
       if (!overdue && !jumped) continue;
       if (job.schedule.type === "once") {
+        const timer = timers.get(job.id);
         if (overdue && timer) runOnce(job, timer);
         else scheduleJob(job);
         continue;
@@ -163,7 +185,7 @@ export function createCronService(config: CronServiceConfig): CronService {
         const afterLastRun = (epochMs(job.lastRunAt) ?? Number.NaN) + intervalMs;
         const firstAt = intervalFirstAt ?? (afterLastRun > now ? afterLastRun : now + intervalMs);
         const tick = (): void => {
-          if (timers.get(job.id) !== entry) return;
+          if (!catchUpGateOpen || timers.get(job.id) !== entry) return;
           entry.nextAt = Date.now() + intervalMs;
           runJob(job);
         };
@@ -196,7 +218,7 @@ export function createCronService(config: CronServiceConfig): CronService {
           task: cron.schedule(job.schedule.cron, () => {
             // node-cron runs this from a queued inner timeout that task.stop() does not cancel,
             // so a callback from a task replaced by a reschedule must not run the job again.
-            if (cronTasks.get(job.id) !== entry) return;
+            if (!catchUpGateOpen || cronTasks.get(job.id) !== entry) return;
             entry.nextAt = epochMs(entry.task.getNextRun());
             runJob(job);
           }),
@@ -230,29 +252,16 @@ export function createCronService(config: CronServiceConfig): CronService {
       generation += 1;
       const startGeneration = generation;
       const now = Date.now();
-      const missed: CronJob[] = [];
       // Re-read cron.json: the gateway restarts the service when another writer changes it.
       store.load();
-      for (const job of store.list()) {
-        scheduleJob(job);
-        // At most one catch-up run per job, however many occurrences were missed.
-        if (missedSinceLastRun(job, now)) missed.push(job);
-      }
+      for (const job of store.list()) scheduleJob(job);
       if (catchUpGateOpen || !catchUpGate) {
-        for (const job of missed) runJob(job);
+        for (const job of store.list()) {
+          if (missedSinceLastRun(job, now)) runJob(job);
+        }
       } else {
         void catchUpGate.then(() => {
-          if (generation !== startGeneration) return;
-          // Re-read: a job removed or already run since start must not run again.
-          const nowAfter = Date.now();
-          for (const job of store.list()) {
-            if (job.schedule.type === "once") {
-              const entry = timers.get(job.id);
-              if (entry && entry.nextAt <= nowAfter) runOnce(job, entry);
-            } else if (missed.some((m) => m.id === job.id) && missedSinceLastRun(job, nowAfter)) {
-              runJob(job);
-            }
-          }
+          if (generation === startGeneration) runStartupCatchUp(Date.now());
         });
       }
       lastCheckWall = Date.now();

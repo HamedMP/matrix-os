@@ -119,6 +119,42 @@ describe("cron catch-up of missed runs", () => {
     await Promise.all(recordRun.mock.results.map((result) => result.value));
   });
 
+  it.each([
+    { type: "interval", intervalMs: 1_000 },
+    { type: "cron", cron: "* * * * *" },
+  ] satisfies CronJob["schedule"][])("delivers a $type reminder once after startup even when its timer came due earlier", async (schedule) => {
+    vi.setSystemTime(new Date("2026-11-21T12:29:59.000Z"));
+    const lastRunAt = "2026-11-21T12:25:00.000Z";
+    const jobs = [
+      makeJob({ id: "missed-before-startup", schedule, lastRunAt }),
+      makeJob({ id: "first-run-during-startup", schedule }),
+    ];
+    store = createCronStore(storePath);
+    store.save(jobs);
+    const recordRun = vi.spyOn(store, "recordRun");
+    const channelsReady = Promise.withResolvers<void>();
+    service = createCronService({ store, onTrigger, catchUpAfter: channelsReady.promise });
+    service.start();
+
+    try {
+      await vi.advanceTimersByTimeAsync(1_100);
+      expect(onTrigger).not.toHaveBeenCalled();
+      expect(store.list()).toEqual(jobs);
+
+      channelsReady.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(triggersFor(onTrigger, "missed-before-startup")).toBe(1);
+      expect(triggersFor(onTrigger, "first-run-during-startup")).toBe(1);
+      expect(recordRun).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(900);
+      expect(onTrigger).toHaveBeenCalledTimes(2);
+    } finally {
+      service.stop();
+      await Promise.all(recordRun.mock.results.map((result) => result.value));
+    }
+  });
+
   it("drops a deferred startup catch-up when the service stopped before the channels started", async () => {
     vi.setSystemTime(new Date("2026-11-21T12:30:00.000Z"));
     createCronStore(storePath).save([makeJob({ lastRunAt: "2026-11-21T11:00:00.010Z" })]);
