@@ -1,3 +1,4 @@
+import { createSlackEnrolledContextReader } from "./enrolled-context.js";
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -40,7 +41,7 @@ export type SlackThreadContextOptions = {
 
 export function createSlackThreadContext(options: SlackAppRouteOptions) {
   const routes = new Hono();
-  if (!options.contextGrant || options.contextGrant.appId !== options.config.appId) return { routes, receive: undefined, readPrivateThread: undefined };
+  if (!options.contextGrant || options.contextGrant.appId !== options.config.appId) return { routes, receive: undefined, readPrivateThread: undefined, readEnrolledContext: undefined };
   const grant = GrantSchema.parse(options.contextGrant);
   const grantId = createHash("sha256").update(JSON.stringify(grant)).digest("hex");
   const access = { grantId, ownerId: grant.ownerId, botId: grant.botId, chatId: grant.chatId, runtimeId: grant.runtimeId };
@@ -90,16 +91,19 @@ export function createSlackThreadContext(options: SlackAppRouteOptions) {
     return c.json({ allowed, ...(allowed && request.data.includeChannelMetadata && slack?.channel ? { channel: slack.channel } : {}) });
   });
 
+  async function authorizeEnrollment(request: import("@matrix-os/contracts/slack-bridge").SlackThreadContextAccess, runtime: import("./types.js").SlackRuntimeIdentity, signal: AbortSignal) {
+    if(runtime.ownerId!==grant.ownerId||runtime.runtimeId!==grant.runtimeId||Object.entries(access).some(([key,expected])=>request[key as keyof typeof access]!==expected))return null;
+    const installation=await options.repository.getInstallation(grant.appId,grant.teamId);
+    if(!installation||!validInstallation(installation)||!await hasOwnerAuthority())return null;
+    const slack=await readSlackAccess(installation,signal);
+    return slack&&await hasOwnerAuthority()?{installation,channel:slack.channel}:null;
+  }
   return {
     routes,
-    readPrivateThread: createSlackPrivateThreadReader(options, grant, async (request, runtime, signal) => {
-      if (runtime.ownerId !== grant.ownerId || runtime.runtimeId !== grant.runtimeId
-        || Object.entries(access).some(([key, expected]) => request[key as keyof typeof access] !== expected)
-        || !validSlackMentionSource(options.config.signingSecret, grant, rule, request.summary)) return null;
-      const installation = await options.repository.getInstallation(grant.appId, grant.teamId);
-      if (!installation || !validInstallation(installation) || !await hasOwnerAuthority()) return null;
-      const slack = await readSlackAccess(installation, signal);
-      return slack && await hasOwnerAuthority() ? { installation, channel: slack.channel } : null;
+    readEnrolledContext: createSlackEnrolledContextReader(options,grant,authorizeEnrollment),
+    readPrivateThread: createSlackPrivateThreadReader(options, grant, async (request,runtime,signal)=>{
+      if(!validSlackMentionSource(options.config.signingSecret,grant,rule,request.summary))return null;
+      return authorizeEnrollment(request,runtime,signal);
     }),
     async receive(event: Record<string, unknown>, body: string, installation: SlackInstallation, signal: AbortSignal): Promise<200 | 409 | 503> {
       if (!options.dispatchContext || !validInstallation(installation) || event.channelId !== grant.channelId

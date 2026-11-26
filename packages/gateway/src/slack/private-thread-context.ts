@@ -73,6 +73,19 @@ export async function createPrivateSlackThreadContext(options: {
         return true;
       });
     },
+    async enrollment(target: Target & {signal:AbortSignal}) {
+      if(target.signal.aborted||!await isCurrent(target)||await options.botAvailable?.(target)===false)return undefined;
+      const row=await db.selectFrom("slack_private_thread_context").select(["grant_id","app_id","team_id","channel_id"])
+        .where("owner_id","=",target.ownerId).where("chat_id","=",target.chatId).where("bot_id","=",target.botId)
+        .orderBy("received_at","desc").orderBy("grant_id","desc").orderBy("message_ts","desc").limit(1).executeTakeFirst();
+      if(!row)return undefined;
+      const access={ownerId:target.ownerId,botId:target.botId,chatId:target.chatId,runtimeId:options.runtimeId,grantId:row.grant_id};
+      const result=await options.authorize(access,target.signal);
+      const parsed=SlackThreadContextAccessResponseSchema.safeParse(typeof result==="boolean"?{allowed:result}:result);
+      if(!parsed.success||!parsed.data.allowed||target.signal.aborted||!await isCurrent(target)||await options.botAvailable?.(target)===false)return undefined;
+      if(parsed.data.channel&&parsed.data.channel.id!==row.channel_id)return undefined;
+      return {access,appId:row.app_id,teamId:row.team_id,channel:{id:row.channel_id,...(parsed.data.channel?{name:parsed.data.channel.name}:{})}};
+    },
     async prompt(target: Target & { signal: AbortSignal }) {
       if (target.signal.aborted || !await isCurrent(target) || await options.botAvailable?.(target) === false) return undefined;
       const rows = await db.selectFrom("slack_private_thread_context").selectAll().where("owner_id", "=", target.ownerId)

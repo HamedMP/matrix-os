@@ -18,6 +18,10 @@ import { createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recip
 import { createBotOperationReconciler } from "../../../packages/gateway/src/bots/reconciliation.js";
 import { createBotBindingsRepository } from "../../../packages/gateway/src/bots/repositories/bindings.js";
 import { createBotOperationsRepository } from "../../../packages/gateway/src/bots/repositories/operations.js";
+import { createChatAgentRoutes } from "../../../packages/gateway/src/chat/agent-routes.js";
+import { ChatAgentContext } from "../../../packages/gateway/src/chat/agent-context.js";
+import { createBotProcedureResolver } from "../../../packages/gateway/src/bots/custom-procedure.js";
+import { createChatAgentRecipeResolver } from "../../../packages/gateway/src/chat/agent-recipe.js";
 import { MATRIX_BOT_SELECTION } from "../../../packages/gateway/src/bots/selection.js";
 import { managedCustomOperationRequestId } from "../../../packages/gateway/src/bots/custom-creation-authority.js";
 import { OWNER, createBotStateDatabase, createRealBotStateDatabase } from "./bot-state-support.js";
@@ -56,6 +60,7 @@ function setup(overrides: {
 } = {}) {
   return createBotInstantiation({
     db,
+    customRecipes: createChatAgentRecipeResolver({ skillsRoot: home, services: [{ id: "slack", name: "Slack" }] }),
     validateSelection: overrides.validateSelection,
     chats: overrides.chats ?? chats,
     agents: {
@@ -107,6 +112,64 @@ describe("bot instantiation", () => {
     expect(events.filter((event) => event.event_type === "bot.created")).toEqual([
       { event_type: "bot.created", payload: { agentId: created.agent.id, chatId: created.chatId, revision: 1 } },
     ]);
+  });
+
+  it("reopens the confirmed setup on its native recipe and replays only the same draft", async () => {
+    const service = setup();
+    const configuration = { description: "Support notes", instructions: "Write a short support digest.",
+      recipe: { skills: [], integrations: [{ service: "slack" }], output: "Three bullets." } };
+    const input = request({ configuration });
+    const created = await service.instantiate(OWNER, input);
+    const saved = (await agents.get(scope, created.agent.id))!;
+    expect(saved).toMatchObject({ ...configuration, recipeRef: WRITING });
+    const catalog = createBotRecipeCatalog();
+    const procedure = await createBotProcedureResolver({ agents, db, recipes: catalog,
+      customRecipes: createChatAgentRecipeResolver({ skillsRoot: home, services: [{ id: "slack", name: "Slack" }] }) }).resolve(OWNER, saved);
+    expect(procedure).toMatchObject({ ...WRITING, output: "Three bullets." });
+    expect(procedure.integrations).toContainEqual({ service: "slack", required: false, effects: ["read"] });
+    expect(procedure.instructions).toContain(configuration.instructions);
+    expect(procedure.capabilities).toEqual(expect.arrayContaining(catalog.resolve(WRITING).capabilities));
+    await expect(service.instantiate(OWNER, input)).resolves.toMatchObject({ chatId: created.chatId, operation: "replayed" });
+    await expect(service.instantiate(OWNER, request({ configuration: { ...configuration, instructions: "Another draft" } })))
+      .rejects.toMatchObject({ code: "conflict" });
+    expect(await agents.count(scope)).toBe(1);
+  });
+
+  it("updates supplemental recipe intent only at Save and keeps stricter native effects when reopened", async () => {
+    const recipes = createBotRecipeCatalog();
+    const ref = { recipeId: "jev-inbox-triage", version: "2026-10-06.1" };
+    const created = await setup().instantiate(OWNER, request({ recipe: ref }));
+    const customRecipes = createChatAgentRecipeResolver({ skillsRoot: home,
+      services: [{ id: "gmail", name: "Gmail" }, { id: "slack", name: "Slack" }] });
+    const app = createChatAgentRoutes({ agents, repository: chats, botRecipes: recipes, recipes: customRecipes,
+      context: new ChatAgentContext({ agents, repository: chats, recipes: customRecipes, enabled: () => true }),
+      enabled: () => true, getPrincipal: () => ({ userId: OWNER, source: "jwt" }), catalog: { getCatalog: vi.fn() },
+    });
+    const path = "/api/chat-agents/" + created.agent.id;
+    const save = (body: unknown) => app.request(path, { method: "PATCH", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+    const recipe = { skills: [], integrations: [{ service: "gmail" }, { service: "slack" }], output: "Short report." };
+    expect((await save({ baseRevision: 1, recipe, instructions: "Write in English." })).status).toBe(200);
+    expect((await save({ baseRevision: 1, instructions: "Stale edit" })).status).toBe(409);
+    const saved = (await agents.get(scope, created.agent.id))!;
+    expect(saved).toMatchObject({ revision: 2, recipeRef: ref, recipe, instructions: "Write in English." });
+    const resolver = createBotProcedureResolver({ db, agents, recipes, customRecipes });
+    expect((await resolver.resolve(OWNER, saved)).integrations).toEqual([
+      ...recipes.resolve(ref).integrations, { service: "slack", effects: ["read"], required: false },
+    ]);
+    expect((await save({ baseRevision: 2, recipe: null })).status).toBe(200);
+    const removed = (await agents.get(scope, saved.id))!;
+    expect(removed.recipe).toBeUndefined();
+    expect((await resolver.resolve(OWNER, removed)).integrations).toEqual(recipes.resolve(ref).integrations);
+    const oversized = await save({ baseRevision: removed.revision, instructions: "学".repeat(7200) });
+    expect(oversized.status).toBe(400);
+    expect((await agents.get(scope, saved.id))?.revision).toBe(removed.revision);
+  });
+
+  it("rejects a legacy binding skill on a native setup before reserving any creation", async () => {
+    await expect(setup().instantiate(OWNER, request({ configuration: { description: "", instructions: "Test",
+      recipe: { skills: ["matrix-jev-email-triage"], integrations: [], output: "Summary" } } })))
+      .rejects.toMatchObject({ code: "invalid_request", reason: "unsupported_skill" });
+    expect(await operation()).toBeUndefined();
   });
 
   it("reads a creation request's reserved bot, payload and whether it finished", async () => {

@@ -20,7 +20,8 @@ import { revokeHermesJevCapabilitiesForAgent } from "./hermes-integration-capabi
 import type { ChatRepository } from "./repository.js";
 import { validateChatProviderSelection, type ChatProviderCatalogService } from "./provider-catalog.js";
 import type { ManagedCustomRecovery } from "../bots/managed-custom-recovery.js";
-import { ManagedCustomDefinitionError, resolveManagedCustomDefinition } from "../bots/custom-definition.js";
+import { configuredCatalogProcedure, ManagedCustomDefinitionError, resolveManagedCustomDefinition } from "../bots/custom-definition.js";
+import type { BotRecipeCatalog } from "../bots/recipe-catalog.js";
 
 const ListSchema = z.object({ includeManagedCustomRecoveries: z.literal("true").optional() }).strict();
 
@@ -40,6 +41,7 @@ export function createChatAgentRoutes(options: {
   repository?: ChatRepository;
   context?: ChatAgentContext;
   recipes?: ChatAgentRecipeResolver;
+  botRecipes?: BotRecipeCatalog;
   enabled(): boolean;
   catalog: Pick<ChatProviderCatalogService, "getCatalog">;
   getPrincipal(context: Context): RequestPrincipal;
@@ -154,6 +156,13 @@ export function createChatAgentRoutes(options: {
       || input.instructions !== undefined && input.instructions !== current.instructions
       || recipeChanged || selectionChanged || input.archived === false)) {
       await resolveManagedCustomDefinition({ ...current, ...input,
+        recipe: input.recipe === null ? undefined : input.recipe ?? current.recipe }, options.recipes);
+    }
+    // Save uses the runtime prompt budget even when the draft has no supplemental resources.
+    const instructionsChanged = input.instructions !== undefined && input.instructions !== current.instructions;
+    if (!managed && current.recipeRef && (input.recipe || instructionsChanged)) {
+      if (!options.botRecipes) throw new Error("Bot recipe catalog unavailable");
+      await configuredCatalogProcedure(options.botRecipes.resolve(current.recipeRef), { ...current, ...input,
         recipe: input.recipe === null ? undefined : input.recipe ?? current.recipe }, options.recipes);
     }
     if (input.selection && [MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID].includes(input.selection.instanceId)) return c.json({ error: "Choose an available Agent model." }, 400);

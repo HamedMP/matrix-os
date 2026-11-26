@@ -1,6 +1,6 @@
 import type { SummaryAccess } from "../slack/mention-summary.js";
 import { z } from "zod/v4";
-import { SlackPrivateThreadContextResponseSchema, SlackThreadContextAccessResponseSchema, type SlackBridgeEnvelope, type SlackThreadContextAccess } from "@matrix-os/contracts/slack-bridge";
+import { SlackEnrolledContextRequestSchema, SlackEnrolledContextResponseSchema, type SlackEnrolledContextRequest, SlackPrivateThreadContextResponseSchema, SlackThreadContextAccessResponseSchema, type SlackBridgeEnvelope, type SlackThreadContextAccess } from "@matrix-os/contracts/slack-bridge";
 
 const ContextSchema=z.object({available:z.literal(true),untrusted:z.literal(true),partial:z.boolean(),messages:z.array(z.object({
   user:z.string().max(80).optional(),ts:z.string().max(32),thread_ts:z.string().max(32).optional(),text:z.string().max(16_384).optional(),
@@ -30,6 +30,13 @@ export function createSlackOwnerClient(options:{platformUrl:string;handle:string
     return{status:response.status,body,retryAfterMs:undefined};
   }
   return{
+    async readEnrolledContext(input: SlackEnrolledContextRequest, signal: AbortSignal) {
+      const request = SlackEnrolledContextRequestSchema.parse(input);
+      const response = await rpc("/internal/slack/context", request, signal, 10_000, 24 * 1024);
+      const parsed = SlackEnrolledContextResponseSchema.safeParse(response.body);
+      if (response.status !== 200 || !parsed.success || !parsed.data.available) throw new Error("Slack read unavailable");
+      return parsed.data;
+    },
     async readSummaryThread(access: SummaryAccess, signal: AbortSignal) {
       const response = await rpc("/internal/slack/context", access, signal, 30_000, 24*1024);
       const parsed = SlackPrivateThreadContextResponseSchema.safeParse(response.body);

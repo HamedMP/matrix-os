@@ -38,7 +38,7 @@ import { BotStateError, type BotExecutor } from "./repositories/shared.js";
 import { MATRIX_BOT_SELECTION } from "./selection.js";
 import { ROUTINE_DIRECT_CHAT_RECIPE_REF } from "./routine-direct-chat-identity.js";
 import { isManagedCustomOperationRequestId, isManagedCustomRecoveryRequestId, managedCustomOperationRequestId } from "./custom-creation-authority.js";
-import { ManagedCustomDefinitionError, resolveManagedCustomDefinition } from "./custom-definition.js";
+import { configuredCatalogProcedure, ManagedCustomDefinitionError, resolveManagedCustomDefinition } from "./custom-definition.js";
 import type { ChatAgentRecipeResolver } from "../chat/agent-recipe.js";
 
 export type BotInstantiationErrorCode = "invalid_request" | "conflict" | "rate_limited" | "unavailable";
@@ -73,10 +73,11 @@ export function botAvatarSeed(botId: string): string {
 }
 
 /** Hash of the normalized creation request; a retry with another payload is a conflict. */
-export function instantiationPayloadHash(request: Pick<InstantiateBotRequest, "recipe" | "name" | "selection">): string {
+export function instantiationPayloadHash(request: Pick<InstantiateBotRequest, "recipe" | "name" | "selection" | "configuration">): string {
   return createHash("sha256").update(JSON.stringify({
     recipe: { recipeId: request.recipe.recipeId, version: request.recipe.version },
     name: request.name ?? null,
+    ...(request.configuration ? { configuration: request.configuration } : {}),
     ...(request.selection ? { selection: request.selection } : {}),
   })).digest("hex");
 }
@@ -251,8 +252,16 @@ export function createBotInstantiation(deps: {
       let recipe;
       try {
         if (!custom && request.recipe.recipeId === MANAGED_CUSTOM_BOT_RECIPE_REF.recipeId) throw new BotInstantiationError("invalid_request");
-        recipe = custom ? { ...MANAGED_CUSTOM_BOT_RECIPE_REF, name: custom.name, description: custom.description, instructions: custom.instructions } : deps.recipes.resolve(request.recipe);
+        if (custom) {
+          recipe = { ...MANAGED_CUSTOM_BOT_RECIPE_REF, name: custom.name, description: custom.description, instructions: custom.instructions };
+        } else {
+          recipe = deps.recipes.resolve(request.recipe);
+          if (request.configuration) {
+            await configuredCatalogProcedure(recipe, { name: request.name ?? recipe.name, ...request.configuration }, deps.customRecipes);
+          }
+        }
       } catch (error: unknown) {
+        if (error instanceof ManagedCustomDefinitionError) throw new BotInstantiationError("invalid_request", error.code);
         if (!(error instanceof BotRecipeCatalogError)) throw error;
         if (!existing) throw new BotInstantiationError("invalid_request");
         // An unfinished creation of a now-retired recipe finishes only from its saved definition.
@@ -288,12 +297,12 @@ export function createBotInstantiation(deps: {
           createHash: payloadHash,
           fields: {
             name: request.name ?? recipe.name,
-            description: recipe.description,
-            instructions: recipe.instructions,
+            description: request.configuration?.description ?? recipe.description,
+            instructions: request.configuration?.instructions ?? recipe.instructions,
             selection: request.selection ?? MATRIX_BOT_SELECTION,
           },
           recipeRef: { recipeId: recipe.recipeId, version: recipe.version },
-          ...(custom?.recipe ? { recipe: custom.recipe } : {}),
+          recipe: custom?.recipe ?? request.configuration?.recipe,
         })
         : () => deps.agents.get(scope, operation.botId);
       try {
