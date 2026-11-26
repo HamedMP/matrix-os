@@ -69,6 +69,15 @@ describe("tracked cell insertions and deletions", () => {
     expect(toHtml(doc, { mode: "markup", fragment: true })).toContain("Price");
   });
 
+  it("reads one table in a view with only the cells the view keeps", () => {
+    const doc = build({ body: COLUMNS });
+    const table = doc.getView().body.blocks[0]!;
+    expect(doc.getPlainText({ blockId: table.id, view: "final" })).toBe("Item\tQty\nWidget\t4\n");
+    expect(doc.getPlainText({ blockId: table.id, view: "original" })).toBe("Item\tPrice\nWidget\t9.99\n");
+    expect(doc.getPlainText({ blockId: table.id, view: "markup" })).toBe("Item\tPrice\tQty\nWidget\t9.99\t4\n");
+    expect(() => doc.getPlainText({ blockId: "b999" })).toThrow(expect.objectContaining({ code: "stale_reference" }));
+  });
+
   it("resolves the deletion and the insertion separately", async () => {
     const doc = build({ body: COLUMNS });
     const [deletion, insertion] = doc.listRevisions();

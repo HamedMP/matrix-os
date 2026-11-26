@@ -47,7 +47,14 @@ export interface DocxSnapshot {
 export interface PlainTextOptions {
   /** Default: the whole body story. */
   range?: TextRange;
-  /** A story other than the body. Ignored when `range` is given. */
+  /**
+   * One block, top-level or in a table cell, as the text of its story
+   * writes it: a paragraph ends with `\n`, and a table lists the rows and
+   * cells the view keeps (a table with none left reads as an empty string).
+   * Ignored when `range` is given; an unknown id throws `stale_reference`.
+   */
+  blockId?: BlockId;
+  /** A story other than the body. Ignored when `range` or `blockId` is given. */
   storyId?: StoryId;
   /** Default `final`. */
   view?: DocxTextView;

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { stat } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   DocumentAddCommentReplySchema, DocumentCompareReplySchema, DocumentCreateReplySchema, DocumentDescribeReplySchema,
@@ -73,6 +73,42 @@ describe("POST /api/office/documents/read-text", () => {
     const blockIds = DocumentDescribeReplySchema.parse(await json(await h.post("/documents/describe", { path }))).blockIds;
     const body = DocumentReadTextReplySchema.parse(await json(await h.post("/documents/read-text", { path, blockIds })));
     expect(body.blocks.map((block) => block.text)).toEqual(["Line one\n", "Second"]);
+  });
+});
+
+// Fault detected: a table read walked every row of the model, so a tracked deleted row was read as part of the
+// final table and a tracked inserted row as part of the original one.
+describe("POST /api/office/documents/read-text of a table with tracked rows", () => {
+  async function trackedTable(): Promise<{ path: string; tableId: string }> {
+    const path = await h.copyFixture("table.docx");
+    const doc = await h.docx(path);
+    const table = doc.getView().body.blocks.find((block) => block.type === "table");
+    if (!table) throw new Error("fixture has no table");
+    const tracked = { track: true, author: AGENT, date: FIXED_NOW.toISOString() };
+    doc.applyOps([{ type: "deleteTableRow", tableId: table.id, rowIndex: 1 }], tracked);
+    doc.applyOps([{ type: "insertTableRow", tableId: table.id, rowIndex: 2, cells: ["Review", "Cy", "1,000", "2,000"] }], tracked);
+    await writeFile(join(h.home, path), await doc.save());
+    return { path, tableId: table.id };
+  }
+
+  async function tableText(view: "final" | "original"): Promise<string> {
+    const { path, tableId } = await trackedTable();
+    const body = DocumentReadTextReplySchema.parse(await json(await h.post("/documents/read-text", { path, blockIds: [tableId], view })));
+    return body.blocks[0]!.text;
+  }
+
+  it("leaves the deleted row out of the final view and keeps the inserted one", async () => {
+    const text = await tableText("final");
+    expect(text).not.toContain("Phase");
+    expect(text).toContain("Review\tCy\t1,000\t2,000");
+    expect(text.split("\n")).not.toContain("\t\t\t");
+  });
+
+  it("leaves the inserted row out of the original view and keeps the deleted one", async () => {
+    const text = await tableText("original");
+    expect(text).toContain("Phase\tOwner\tQ1\tQ2");
+    expect(text).not.toContain("Review");
+    expect(text.split("\n")).not.toContain("\t\t\t");
   });
 });
 

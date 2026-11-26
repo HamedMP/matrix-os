@@ -47,19 +47,14 @@ export function describeDocument(document: DocxDocument, options: { maxChars: nu
   };
 }
 
-function paragraphText(document: DocxDocument, blockId: string, length: number, view: DocxTextView): string {
-  const range: TextRange = { start: { blockId, offset: 0 }, end: { blockId, offset: length } };
-  return document.getPlainText({ range, view });
-}
-
-function blockText(document: DocxDocument, block: DocxBlock, view: DocxTextView): string {
-  if (block.type === "paragraph") return paragraphText(document, block.id, block.text.length, view);
-  if (block.type === "table") {
-    return block.rows
-      .map((row) => row.cells.map((cell) => cell.blocks.map((inner) => blockText(document, inner, view)).join(" ")).join("\t"))
-      .join("\n");
-  }
-  return "";
+/**
+ * The text of one block in a view, from the engine: a table keeps only the
+ * rows and cells the view keeps. The engine ends a paragraph and every table
+ * row with `\n`; that last separator is not part of the block.
+ */
+function blockText(document: DocxDocument, blockId: string, view: DocxTextView): string {
+  const text = document.getPlainText({ blockId, view });
+  return text.endsWith("\n") ? text.slice(0, -1) : text;
 }
 
 export function readDocumentText(
@@ -84,7 +79,7 @@ export function readDocumentText(
     const block = document.getBlock(blockId);
     if (!block) { missingBlockIds.push(blockId); continue; }
     if (truncated) continue;
-    blocks.push({ blockId, type: block.type, text: take(blockText(document, block, request.view)) });
+    blocks.push({ blockId, type: block.type, text: take(blockText(document, blockId, request.view)) });
   }
   return { blocks, missingBlockIds, text: blocks.map((block) => block.text).join("\n"), truncated };
 }
