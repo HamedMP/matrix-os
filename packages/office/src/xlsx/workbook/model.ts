@@ -176,9 +176,15 @@ export const TRACE_LIMIT = 2000;
 export interface CalcState {
   /**
    * Cells edited since the last calculation, per sheet, as `row * 16384 + col`. A sheet holds at most
-   * {@link TRACE_LIMIT} + 1 of them: past that `all` is set and the marks are dropped.
+   * {@link TRACE_LIMIT} + 1 of them: past that `all` is set and the marks are folded into {@link folded}.
    */
   edited: Map<SheetModel, Set<number>>;
+  /**
+   * Per sheet, the smallest range around edits since the last calculation that are no longer marked one
+   * by one in {@link edited}. One range per sheet. `all` calculates every formula anyway; the range is for
+   * formulas that need a time in a run without one, which are calculated only when what they read changed.
+   */
+  folded: Map<SheetModel, CellRange>;
   /** Everything must be calculated again (rows or columns moved, a sheet was removed). */
   all: boolean;
   /**

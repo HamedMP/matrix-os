@@ -163,6 +163,7 @@ export function removeSheet(state: WorkbookState, sheet: SheetModel): void {
   state.sheetsById.delete(sheet.id);
   state.sheetsByKey.delete(key);
   state.calc.edited.delete(sheet);
+  state.calc.folded.delete(sheet);
   for (const row of sheet.rows.values()) {
     for (const cell of row.cells.values()) if (cell.value !== null || cell.formula !== null) state.cellCount--;
   }

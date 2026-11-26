@@ -8,6 +8,7 @@ import { cellMarkupText } from "./cell-markup.js";
 import { arrayFormulaRange, callsUnknownFunction } from "./calc-graph.js";
 import type { CellMutation, RawCell } from "./internals.js";
 import {
+  type CalcState,
   type CellRec,
   DIRTY_CONTENT,
   DIRTY_EDIT,
@@ -87,10 +88,31 @@ function markupBefore(state: WorkbookState, sheet: SheetModel, cell: CellRec): (
   return () => (source.el === null ? null : cellMarkupText(state.strings, attachSheet(sheet).doc.root, source));
 }
 
+/** Widens the folded range of a sheet to take in the marked cells. */
+function foldMarks(calc: CalcState, sheet: SheetModel, marks: ReadonlySet<number>): void {
+  if (marks.size === 0) return;
+  const range = calc.folded.get(sheet);
+  let r1 = range?.start.row ?? Number.POSITIVE_INFINITY;
+  let c1 = range?.start.col ?? Number.POSITIVE_INFINITY;
+  let r2 = range?.end.row ?? -1;
+  let c2 = range?.end.col ?? -1;
+  for (const key of marks) {
+    const col = key % 16384;
+    const row = (key - col) / 16384;
+    if (row < r1) r1 = row;
+    if (row > r2) r2 = row;
+    if (col < c1) c1 = col;
+    if (col > c2) c2 = col;
+  }
+  calc.folded.set(sheet, { start: { row: r1, col: c1 }, end: { row: r2, col: c2 } });
+}
+
+/**
+ * Notes an edit for the next run. Edits are marked one by one even when the run calculates everything,
+ * because formulas that need a time are calculated without one only when what they read changed.
+ */
 function markEdited(state: WorkbookState, sheet: SheetModel, row: number, col: number): void {
   const calc = state.calc;
-  // The next run calculates everything: the edit needs no mark of its own.
-  if (calc.all) return;
   let edited = calc.edited.get(sheet);
   if (edited === undefined) {
     edited = new Set();
@@ -98,8 +120,9 @@ function markEdited(state: WorkbookState, sheet: SheetModel, row: number, col: n
   }
   edited.add(cellKey(row, col));
   if (edited.size > TRACE_LIMIT) {
-    // A run calculates everything past this many edits anyway; the marks are dropped instead of kept.
+    // A run calculates everything past this many edits anyway; the marks are folded into one range per sheet.
     calc.all = true;
+    for (const [owner, marks] of calc.edited) foldMarks(calc, owner, marks);
     calc.edited.clear();
   }
 }

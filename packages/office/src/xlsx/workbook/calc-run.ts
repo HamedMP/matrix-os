@@ -57,6 +57,11 @@ function touches(dep: Dep, changed: CellSets): boolean {
   return false;
 }
 
+function overlaps(dep: Dep, ranges: ReadonlyMap<SheetModel, CellRange>): boolean {
+  const range = ranges.get(dep.sheet);
+  return range !== undefined && dep.r1 <= range.end.row && dep.r2 >= range.start.row && dep.c1 <= range.end.col && dep.c2 >= range.start.col;
+}
+
 export function isEmpty(sets: CellSets): boolean {
   for (const set of sets.values()) if (set.size > 0) return false;
   return true;
@@ -249,6 +254,24 @@ export class Run {
     return false;
   }
 
+  /**
+   * True when the node reads into the range around edits no longer marked one by one. The node's own
+   * cell does not count: a formula typed into it has no value yet, and so is calculated anyway.
+   */
+  private readsFolded(node: CalcNode): boolean {
+    const folded = this.state.calc.folded;
+    if (folded.size === 0) return false;
+    for (const dep of node.deps) if (overlaps(dep, folded)) return true;
+    if (fillsRange(node)) {
+      const spill = node.spill as CellRange;
+      if (overlaps({ sheet: node.sheet, r1: spill.start.row, c1: spill.start.col, r2: spill.end.row, c2: spill.end.col }, folded)) return true;
+    }
+    if (!node.dynamic || node.reads === null) return false;
+    if (node.readsAll) return true;
+    for (const dep of node.reads) if (overlaps(dep, folded)) return true;
+    return false;
+  }
+
   /** True when a cell the node read was stored after the node was calculated. */
   private isStale(node: CalcNode): boolean {
     const marks = this.marks;
@@ -323,7 +346,7 @@ export class Run {
       // Without a time, a formula that needs one keeps the value it has unless what it reads changed.
       if (node.clock && this.now === null && node.cell.value !== null && !node.circular) {
         if (touched === null) touched = this.touched(node, sink);
-        if (!touched) {
+        if (!touched && !this.readsFolded(node)) {
           if (waited) waiting.delete(key);
           continue;
         }

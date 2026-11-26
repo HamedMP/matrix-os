@@ -20,7 +20,7 @@ const DEFAULT_MAX_CELLS = 200_000;
 
 /** True when the workbook has edits that formulas have not seen yet, or formulas a bounded run left. */
 export function needsRecalc(state: WorkbookState): boolean {
-  if (state.calc.all) return true;
+  if (state.calc.all || state.calc.folded.size > 0) return true;
   for (const edited of state.calc.edited.values()) if (edited.size > 0) return true;
   for (const pending of state.calc.pending.values()) if (pending.size > 0) return true;
   return false;
@@ -49,6 +49,7 @@ export function recalc(state: WorkbookState, options: RecalcOptions | undefined,
   if (options?.now !== undefined) calc.lastNow = options.now;
   if (state.formula === null) {
     calc.edited.clear();
+    calc.folded.clear();
     calc.pending.clear();
     calc.all = false;
     return { changed: [], circular: [], complete: true };
@@ -82,6 +83,7 @@ export function recalc(state: WorkbookState, options: RecalcOptions | undefined,
     for (const node of blocked) addTo(calc.pending, node.sheet, cellKey(node.row, node.col));
   }
   calc.edited.clear();
+  calc.folded.clear();
   calc.all = false;
   if (complete) calc.pending.clear();
   return { changed: run.changed, circular: run.circular, complete };

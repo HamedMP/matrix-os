@@ -340,6 +340,56 @@ describe("a run without a clock", () => {
     expect(valueAt(reopened, "S", "B2")).toBe(mode === "reject" ? 2 : 4);
   });
 
+  // Outcome protected: a date formula whose input changed is calculated again, however many cells were edited or
+  // whatever else made the run calculate everything, while date formulas that read none of the edits keep their dates.
+  // Fault detected: edits that are no longer held one by one (past the trace limit, after a sheet is added, across a
+  // row insert) being invisible to the date formulas a run without a clock leaves alone.
+  describe("after edits that are not held one by one", () => {
+    async function inputBook(): Promise<Uint8Array> {
+      const workbook = createXlsx({ sheetNames: ["S"] });
+      const sheet = workbook.listSheets()[0]!.id;
+      workbook.setCell(sheet, parseA1("A1"), 1);
+      workbook.setFormula(sheet, parseA1("B1"), "IF(A1=1,TODAY(),42)");
+      workbook.setCell(sheet, parseA1("F1"), 1);
+      workbook.setFormula(sheet, parseA1("G1"), "IF(F1=1,TODAY(),42)");
+      workbook.recalc({ now: NOW });
+      return workbook.save();
+    }
+
+    function editMany(workbook: Awaited<ReturnType<typeof openXlsx>>, sheet: string): void {
+      for (let row = 0; row <= TRACE_LIMIT + 100; row++) workbook.setCell(sheet, { row, col: 3 }, row);
+    }
+
+    it.each(["before", "after"] as const)("recalculates a date formula whose input was edited %s the trace limit tripped", async (when) => {
+      const workbook = await openXlsx(await inputBook());
+      const sheet = workbook.listSheets()[0]!.id;
+      if (when === "before") workbook.setCell(sheet, parseA1("A1"), 2);
+      editMany(workbook, sheet);
+      if (when === "after") workbook.setCell(sheet, parseA1("A1"), 2);
+      const reopened = await openXlsx(await workbook.save());
+      expect([valueAt(reopened, "S", "B1"), valueAt(reopened, "S", "G1")]).toEqual([42, 46349]);
+    });
+
+    it("recalculates a date formula whose input was edited after a sheet was added", async () => {
+      const workbook = await openXlsx(await inputBook());
+      const sheet = workbook.listSheets()[0]!.id;
+      workbook.addSheet("T");
+      workbook.setCell(sheet, parseA1("A1"), 2);
+      const reopened = await openXlsx(await workbook.save());
+      expect([valueAt(reopened, "S", "B1"), valueAt(reopened, "S", "G1")]).toEqual([42, 46349]);
+    });
+
+    it.each(["a few", "many"] as const)("recalculates a date formula whose input was edited before rows moved, with %s edits", async (edits) => {
+      const workbook = await openXlsx(await inputBook());
+      const sheet = workbook.listSheets()[0]!.id;
+      workbook.setCell(sheet, parseA1("A1"), 2);
+      if (edits === "many") editMany(workbook, sheet);
+      workbook.insertRows(sheet, 0, 1);
+      const reopened = await openXlsx(await workbook.save());
+      expect([valueAt(reopened, "S", "B2"), valueAt(reopened, "S", "G2")]).toEqual([42, 46349]);
+    });
+  });
+
   it("shows an error for a date formula that was never calculated", () => {
     const workbook = createXlsx({ sheetNames: ["S"] });
     const sheet = workbook.listSheets()[0]!.id;

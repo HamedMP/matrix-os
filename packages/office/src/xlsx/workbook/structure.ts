@@ -6,12 +6,13 @@
  * table apart is refused.
  */
 
+import type { CellRange } from "../../api/xlsx.js";
 import type { XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import { getAttr, remove, setAttr, setTextContent, textContent } from "../../xml/index.js";
 import { MAX_COLS, MAX_ROWS, formatA1Range, tryParseA1Range } from "./a1.js";
 import { checkNotesForStructure, moveNotes } from "./notes.js";
-import { type CellRec, type ColumnRun, DIRTY_CONTENT, type RowRec, type SheetModel, type WorkbookState } from "./model.js";
+import { type CellRec, type ColumnRun, DIRTY_CONTENT, type RowRec, type SheetModel, type WorkbookState, cellKey } from "./model.js";
 import { type StructuralOp, movePoint, moveSpan, rewriteForStructure } from "./refs-rewrite.js";
 import { rewriteAllFormulas } from "./sheets.js";
 import { attachSheet } from "./sheet-read.js";
@@ -96,6 +97,48 @@ function moveCells(state: WorkbookState, sheet: SheetModel, op: StructuralOp): v
       row.dirty = true;
     }
   }
+}
+
+/** Edits of a sheet not yet calculated: the marked cells and the folded range. */
+interface SheetEdits {
+  marks: Set<number> | undefined;
+  range: CellRange | undefined;
+}
+
+/**
+ * Takes the edits of the sheet not yet calculated out of the workbook, moved with the cells they name.
+ * An edit of a deleted cell goes with the cell.
+ */
+function takeEdits(state: WorkbookState, sheet: SheetModel, op: StructuralOp): SheetEdits {
+  const calc = state.calc;
+  const marks = calc.edited.get(sheet);
+  const range = calc.folded.get(sheet);
+  calc.edited.delete(sheet);
+  calc.folded.delete(sheet);
+  let moved: Set<number> | undefined;
+  if (marks !== undefined) {
+    moved = new Set();
+    for (const key of marks) {
+      const col = key % 16384;
+      const row = (key - col) / 16384;
+      const target = op.axis === "row" ? movePoint(row, op) : movePoint(col, op);
+      if (target >= 0) moved.add(op.axis === "row" ? cellKey(target, col) : cellKey(row, target));
+    }
+  }
+  return { marks: moved, range: range === undefined ? undefined : (moveRange(range, op) ?? undefined) };
+}
+
+/**
+ * Puts the taken edits back in place of the marks the rewrite of the sheet's own formulas left: moving
+ * the references of the sheet with its cells keeps what they mean, and formulas that need a time are
+ * calculated without one only when what they read changed.
+ */
+function putEdits(state: WorkbookState, sheet: SheetModel, edits: SheetEdits): void {
+  const calc = state.calc;
+  if (edits.marks === undefined) calc.edited.delete(sheet);
+  else calc.edited.set(sheet, edits.marks);
+  if (edits.range === undefined) calc.folded.delete(sheet);
+  else calc.folded.set(sheet, edits.range);
 }
 
 function moveColumns(sheet: SheetModel, op: StructuralOp): void {
@@ -211,8 +254,9 @@ export function applyStructuralOp(state: WorkbookState, sheet: SheetModel, op: S
   sheet.dirty = true;
   sheet.dimensions = undefined;
   const key = sheet.name.toLowerCase();
+  const edits = takeEdits(state, sheet, op);
   rewriteAllFormulas(state, (text, owner) => rewriteForStructure(text, owner === sheet, key, op), null);
-  state.calc.edited.delete(sheet);
+  putEdits(state, sheet, edits);
   state.calc.all = true;
   invalidateGraph(state);
   dropCalcChain(state);
