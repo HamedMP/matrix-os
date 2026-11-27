@@ -11,18 +11,35 @@ import { renameElement } from "./xml-util.js";
 export const MAX_INSERT_LENGTH = 4_000_000;
 
 /**
- * Checks text given to an insert operation: a string in which the only
- * control characters are tab and line feed.
+ * Refuses text that a document cannot hold as written: control characters
+ * other than tab and line feed, U+FFFE, U+FFFF and unpaired surrogates. XML
+ * cannot carry the last three, so the writer would drop them on save and the
+ * saved document would read back differently from the edited one.
  */
-export function requireInsertableText(value: unknown, what = "text"): asserts value is string {
-  if (typeof value !== "string") throw new OfficeError("invalid_argument", `${what} must be a string`);
-  if (value.length > MAX_INSERT_LENGTH) throw new OfficeError("limit_exceeded", `${what} is too long`);
+export function requireWritableText(value: string, what: string): void {
   for (let at = 0; at < value.length; at++) {
     const code = value.charCodeAt(at);
     if (code < 0x20 && code !== 0x09 && code !== 0x0a) {
       throw new OfficeError("invalid_argument", `${what} contains a control character`, { details: { offset: at } });
     }
+    if (code === 0xfffe || code === 0xffff) {
+      throw new OfficeError("invalid_argument", `${what} contains a character XML cannot hold`, { details: { offset: at } });
+    }
+    if (code >= 0xd800 && code <= 0xdfff) {
+      const next = code <= 0xdbff ? value.charCodeAt(at + 1) : Number.NaN;
+      if (!(next >= 0xdc00 && next <= 0xdfff)) {
+        throw new OfficeError("invalid_argument", `${what} contains an unpaired surrogate`, { details: { offset: at } });
+      }
+      at++;
+    }
   }
+}
+
+/** Checks text given to an insert operation: a string of bounded length that {@link requireWritableText} accepts. */
+export function requireInsertableText(value: unknown, what = "text"): asserts value is string {
+  if (typeof value !== "string") throw new OfficeError("invalid_argument", `${what} must be a string`);
+  if (value.length > MAX_INSERT_LENGTH) throw new OfficeError("limit_exceeded", `${what} is too long`);
+  requireWritableText(value, what);
 }
 
 function needsPreserve(text: string): boolean {

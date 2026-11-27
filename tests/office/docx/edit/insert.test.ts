@@ -237,3 +237,34 @@ describe("insertText, validation", () => {
     expect(attempt({ type: "typeFaster" })).toBe("invalid_argument");
   });
 });
+
+describe("text that XML cannot hold", () => {
+  // Each would stay in the model but be dropped by the writer, so the saved document would read back differently.
+  const unwritable = ["a￾b", "a￿b", "a\uD800b", "a\uDC00b", "end\uD83D", "a\u000Bb", "a\u001Fb"];
+
+  it.each(unwritable)("insertText, replaceRange and a new paragraph refuse %j", (value) => {
+    const { doc, id } = one(p(r("Hello")));
+    const before = blockXml(doc, id);
+    const ops = [
+      { type: "insertText", at: { blockId: id, offset: 0 }, text: value },
+      { type: "replaceRange", range: { start: { blockId: id, offset: 0 }, end: { blockId: id, offset: 5 } }, text: value },
+      { type: "insertParagraphAfter", blockId: id, text: value },
+    ];
+    for (const op of ops) {
+      let failure: unknown = null;
+      try {
+        doc.applyOps([op as never], DIRECT);
+      } catch (error) {
+        failure = error;
+      }
+      expect(isOfficeError(failure) ? failure.code : failure).toBe("invalid_argument");
+      expect(blockXml(doc, id)).toBe(before);
+    }
+  });
+
+  it("still accepts a surrogate pair, tab and line feed, and saves them as written", async () => {
+    const { doc, id } = one(p(r("Hello")));
+    doc.applyOps([{ type: "insertText", at: { blockId: id, offset: 5 }, text: " \u{1F600}\tok\nnext" }], DIRECT);
+    expect(text(await reopen(doc))).toBe(text(doc));
+  });
+});

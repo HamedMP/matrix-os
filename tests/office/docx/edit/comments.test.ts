@@ -129,6 +129,9 @@ describe("addComment", () => {
     expect(code(doc, { type: "addComment", range: range(id, 2, id, 2), text: "x" })).toBe("invalid_argument");
     expect(code(doc, { type: "addComment", range: range(id, 0, id, 4), text: 7 })).toBe("invalid_argument");
     expect(code(doc, { type: "addComment", range: range(id, 0, id, 4), text: "a\u0000b" })).toBe("invalid_argument");
+    for (const value of ["a\uFFFEb", "a\uFFFFb", "a\uD800b", "a\uDC00b"]) {
+      expect(code(doc, { type: "addComment", range: range(id, 0, id, 4), text: value })).toBe("invalid_argument");
+    }
     expect(code(doc, { type: "addComment", range: range(id, 0, id, 99), text: "x" })).toBe("stale_reference");
     expect(bodyXml(doc)).toEqual(before);
     expect(doc.listComments()).toEqual([]);

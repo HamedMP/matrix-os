@@ -12,7 +12,7 @@ import type { XmlElement } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import { appendChild, createElement, insertAfter, lookupNamespace, setAttr } from "../../xml/index.js";
 import { type EditContext, type ResolvedRange, touch } from "../edit/context.js";
-import { textNodes } from "../edit/text.js";
+import { requireWritableText, textNodes } from "../edit/text.js";
 import { elementParent, insertAt } from "../edit/xml-util.js";
 import type { DocxIndex, TextPoint } from "../internal.js";
 import { attr, closest, commentElements, expandChildren, listComments, splitRunAt } from "../internal.js";
@@ -26,12 +26,7 @@ const MAX_COMMENT_LENGTH = 100_000;
 export function requireCommentText(value: unknown): asserts value is string {
   if (typeof value !== "string") throw new OfficeError("invalid_argument", "comment text must be a string");
   if (value.length > MAX_COMMENT_LENGTH) throw new OfficeError("limit_exceeded", "comment text is too long");
-  for (let at = 0; at < value.length; at++) {
-    const code = value.charCodeAt(at);
-    if (code < 0x20 && code !== 0x09 && code !== 0x0a) {
-      throw new OfficeError("invalid_argument", "comment text contains a control character", { details: { offset: at } });
-    }
-  }
+  requireWritableText(value, "comment text");
 }
 
 function hasStyle(index: DocxIndex, styleId: string): boolean {
