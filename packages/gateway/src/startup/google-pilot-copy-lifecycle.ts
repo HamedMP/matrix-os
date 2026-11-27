@@ -417,73 +417,97 @@ export async function createGooglePilotCopyLifecycle(options: {
     }
     let accountCursor = '';
     let chatCursor = '';
+    async function sweepAccounts() {
+        // Resume accepted commands even before source expiry. Ignore superseded revisions
+        // and keep the cursor moving across accounts with unavailable stop proof.
+        // Use the durable request links to skip retry backoff without taking execution admission.
+        const linked = sql`FROM google_copy_purge_links l
+            JOIN google_copy_purge_jobs j ON j.id=l.job_id AND j.owner_id=p.owner_id
+            JOIN google_copy_registry c ON c.id=j.copy_id AND c.owner_id=j.owner_id
+            WHERE p.result->'requestIds' ? l.request_id::text`;
+        const latestIncomplete = sql`p.owner_id=${options.ownerId} AND NOT p.complete
+          AND (p.result IS NULL OR EXISTS(SELECT 1 ${linked} AND (${dueForProof}))
+            OR NOT EXISTS(SELECT 1 ${linked} AND j.state<>'deleted'))
+          AND NOT EXISTS (
+            SELECT 1 FROM google_pilot_purge_commands newer WHERE newer.owner_id=p.owner_id
+            AND newer.command_id=p.command_id AND newer.revision>p.revision)`;
+        const accounts = await boundedProvenanceTransaction(db, tx => sql<{ account_id: string }>`
+            SELECT account_id FROM (SELECT DISTINCT p.account_id::text AS account_id
+              FROM google_pilot_purge_commands p WHERE ${latestIncomplete}) due
+            ORDER BY (account_id>${accountCursor}) DESC,account_id LIMIT 10`.execute(tx));
+        for (const { account_id } of accounts.rows) {
+            check();
+            accountCursor = account_id;
+            try {
+                const existing = await boundedProvenanceTransaction(db, tx => sql<{ input: unknown }>`SELECT p.input FROM google_pilot_purge_commands p
+                  WHERE p.account_id=${account_id}::uuid AND ${latestIncomplete} ORDER BY p.created_at LIMIT 1`.execute(tx));
+                check();
+                if (existing.rows[0]) await purge(commandSchema.parse(existing.rows[0].input));
+            } catch (error: unknown) {
+                check();
+                console.warn('[google-data] Account copy cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' });
+            }
+        }
+    }
+
+    async function sweepChats() {
+        // Page markers before checking copy eligibility so each sweep evaluates at most ten Chats.
+        // Keep backoff and ambiguous bindings out of execution admission.
+        const markerChat = sql`m.chat_id`;
+        const chats = await boundedProvenanceTransaction(db, tx => sql<{ chat_id: string; due: boolean }>`
+            WITH page AS MATERIALIZED (
+                SELECT m.chat_id,m.state FROM google_context_markers m
+                WHERE m.owner_id=${options.ownerId} AND m.state<>'deleted' AND ${googleContextRetentionExpired}
+                ORDER BY (m.chat_id>${chatCursor}) DESC,m.chat_id LIMIT 10
+            )
+            SELECT m.chat_id, (m.state='active' OR NOT EXISTS (
+                SELECT 1 FROM google_copy_registry c WHERE c.owner_id=${options.ownerId} AND c.state<>'deleted'
+                AND ${copyBoundToChat(markerChat)}
+            ) OR EXISTS (
+                SELECT 1 FROM google_copy_registry c LEFT JOIN google_copy_purge_jobs j ON j.copy_id=c.id AND j.owner_id=c.owner_id
+                WHERE c.owner_id=${options.ownerId} AND ${copyDue} AND ${copyBoundOnlyToChat(markerChat)}
+            )) AS due
+            FROM page m ORDER BY (m.chat_id>${chatCursor}) DESC,m.chat_id`.execute(tx));
+        for (const { chat_id, due } of chats.rows) {
+            check();
+            chatCursor = chat_id;
+            if (!due) continue;
+            try { await expireChat(chat_id); }
+            catch (error: unknown) {
+                check();
+                console.warn('[google-data] Chat copy cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' });
+            }
+        }
+    }
+
+    async function sweepExpiredCopies() {
+        // A registered copy can expire before its Chat or lack a surviving Chat binding.
+        const expiredCopies = sql`c.retention_deadline<=clock_timestamp() OR EXISTS (
+            SELECT 1 FROM google_context_sources s WHERE s.owner_id=c.owner_id AND s.expires_at<=clock_timestamp()
+            AND c.origins @> jsonb_build_array(jsonb_build_object('connectionId',s.origin_id)))`;
+        const due = await boundedProvenanceTransaction(db, tx => sql`
+            SELECT 1 FROM google_copy_registry c LEFT JOIN google_copy_purge_jobs j ON j.copy_id=c.id AND j.owner_id=c.owner_id
+            WHERE c.owner_id=${options.ownerId} AND (${expiredCopies})
+            AND ${copyDue} LIMIT 1`.execute(tx));
+        check();
+        if (due.rows.length) await withAdmission(() => processCopies(expiredCopies, true));
+    }
+
+    async function sweepDiscovery(work: () => Promise<void>, message: string) {
+        try { await work(); }
+        catch (error: unknown) {
+            check();
+            console.warn(message, { errorClass: error instanceof Error ? 'Error' : 'UnknownError' });
+        }
+    }
+
     async function sweep() {
         if (closed || active)
             return;
-        // Resume accepted commands even before source expiry. Ignore superseded revisions
-        // and keep the cursor moving across accounts with unavailable stop proof.
         try {
-            // Use the durable request links to skip retry backoff without taking execution admission.
-            const linked = sql`FROM google_copy_purge_links l
-                JOIN google_copy_purge_jobs j ON j.id=l.job_id AND j.owner_id=p.owner_id
-                JOIN google_copy_registry c ON c.id=j.copy_id AND c.owner_id=j.owner_id
-                WHERE p.result->'requestIds' ? l.request_id::text`;
-            const latestIncomplete = sql`p.owner_id=${options.ownerId} AND NOT p.complete
-              AND (p.result IS NULL OR EXISTS(SELECT 1 ${linked} AND (${dueForProof}))
-                OR NOT EXISTS(SELECT 1 ${linked} AND j.state<>'deleted'))
-              AND NOT EXISTS (
-                SELECT 1 FROM google_pilot_purge_commands newer WHERE newer.owner_id=p.owner_id
-                AND newer.command_id=p.command_id AND newer.revision>p.revision)`;
-            const accounts = await boundedProvenanceTransaction(db, tx => sql<{ account_id: string }>`
-                SELECT account_id FROM (SELECT DISTINCT p.account_id::text AS account_id
-                  FROM google_pilot_purge_commands p WHERE ${latestIncomplete}) due
-                ORDER BY (account_id>${accountCursor}) DESC,account_id LIMIT 10`.execute(tx));
-            for (const { account_id } of accounts.rows) {
-                check();
-                accountCursor = account_id;
-                try {
-                    const existing = await boundedProvenanceTransaction(db, tx => sql<{ input: unknown }>`SELECT p.input FROM google_pilot_purge_commands p
-                      WHERE p.account_id=${account_id}::uuid AND ${latestIncomplete} ORDER BY p.created_at LIMIT 1`.execute(tx));
-                    check();
-                    if (existing.rows[0]) await purge(commandSchema.parse(existing.rows[0].input));
-                } catch (error: unknown) {
-                    check();
-                    console.warn('[google-data] Account copy cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' });
-                }
-            }
-            // First expiry must close the marker. After that, only ready work or an empty
-            // Chat needing finalization should take the global execution gate.
-            const markerChat = sql`m.chat_id`;
-            const chats = await boundedProvenanceTransaction(db, tx => sql<{ chat_id: string }>`
-                SELECT m.chat_id FROM google_context_markers m WHERE m.owner_id=${options.ownerId} AND m.state<>'deleted'
-                AND ${googleContextRetentionExpired}
-                AND (m.state='active' OR NOT EXISTS (
-                    SELECT 1 FROM google_copy_registry c WHERE c.owner_id=m.owner_id AND c.state<>'deleted'
-                    AND ${copyBoundToChat(markerChat)}
-                ) OR EXISTS (
-                    SELECT 1 FROM google_copy_registry c LEFT JOIN google_copy_purge_jobs j ON j.copy_id=c.id AND j.owner_id=c.owner_id
-                    WHERE c.owner_id=m.owner_id AND ${copyDue} AND ${copyBoundOnlyToChat(markerChat)}
-                ))
-                ORDER BY (m.chat_id>${chatCursor}) DESC,m.chat_id LIMIT 10`.execute(tx));
-            for (const { chat_id } of chats.rows) {
-                check();
-                chatCursor = chat_id;
-                try { await expireChat(chat_id); }
-                catch (error: unknown) {
-                    check();
-                    console.warn('[google-data] Chat copy cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' });
-                }
-            }
-            // A registered copy can expire before its Chat or lack a surviving Chat binding.
-            const expiredCopies = sql`c.retention_deadline<=clock_timestamp() OR EXISTS (
-                SELECT 1 FROM google_context_sources s WHERE s.owner_id=c.owner_id AND s.expires_at<=clock_timestamp()
-                AND c.origins @> jsonb_build_array(jsonb_build_object('connectionId',s.origin_id)))`;
-            const due = await boundedProvenanceTransaction(db, tx => sql`
-                SELECT 1 FROM google_copy_registry c LEFT JOIN google_copy_purge_jobs j ON j.copy_id=c.id AND j.owner_id=c.owner_id
-                WHERE c.owner_id=${options.ownerId} AND (${expiredCopies})
-                AND ${copyDue} LIMIT 1`.execute(tx));
-            check();
-            if (due.rows.length) await withAdmission(() => processCopies(expiredCopies, true));
+            await sweepDiscovery(sweepAccounts, '[google-data] Account copy discovery unavailable');
+            await sweepDiscovery(sweepChats, '[google-data] Chat expiry discovery unavailable');
+            await sweepExpiredCopies();
         } finally {
             // Independent bounded maintenance still runs after account or lookup failures. A closed
             // lifecycle starts no new work; close drains any maintenance already in progress.

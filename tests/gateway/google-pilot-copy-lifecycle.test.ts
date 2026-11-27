@@ -478,6 +478,37 @@ describe('durable exact-owner pilot copy cleanup', () => {
         expect(f.stop).toHaveBeenCalledOnce();
         expect(JSON.stringify(await f.repository.getDetailPage(owner,'chat_one',{limit:20}))).not.toContain('synthetic Google-derived result');
     });
+    it.runIf(Boolean(process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL)).each([
+        'google_context_markers',
+        'google_pilot_purge_commands',
+    ])('expires an unrelated copy when expiry discovery is blocked on %s', async table => {
+        const f = await fixture(true);
+        await sql`UPDATE google_copy_registry SET retention_deadline=now()-interval '1 second'
+            WHERE entity_ref='cm_msg_assistant_one'`.execute(f.repository.kysely);
+        let acquired!: () => void;
+        let release!: () => void;
+        const lockAcquired = new Promise<void>(resolve => { acquired = resolve; });
+        const holdLock = new Promise<void>(resolve => { release = resolve; });
+        const blocker = f.repository.kysely.transaction().execute(async tx => {
+            await sql`LOCK TABLE ${sql.id(table)} IN ACCESS EXCLUSIVE MODE`.execute(tx);
+            acquired();
+            await holdLock;
+        });
+        try {
+            await Promise.race([blocker, lockAcquired]);
+            lifecycle!.start();
+            await vi.waitFor(async () => {
+                expect(await f.history.googleCopies!.provenance.inspect(owner.ownerId, 'derived', 'cm_msg_assistant_one'))
+                    .toMatchObject({ state: 'deleted' });
+            }, { timeout: 5000, interval: 50 });
+            expect(f.stop).toHaveBeenCalledOnce();
+        } finally {
+            release();
+            await blocker;
+            await lifecycle!.close();
+        }
+        expect((await f.contexts.inspect(owner.ownerId, 'chat_one'))?.availability).toBe('available');
+    }, 12000);
     it('expires an individual copy while retaining its live Chat and source', async () => {
         const f = await fixture(true);
         await sql`UPDATE google_copy_registry SET retention_deadline=now()-interval '1 second' WHERE entity_ref='cm_msg_assistant_one'`.execute(f.repository.kysely);

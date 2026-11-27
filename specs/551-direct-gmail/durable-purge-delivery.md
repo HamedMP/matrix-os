@@ -37,7 +37,9 @@ Whole-account deletion erases Google metadata only after the existing verified r
 
 Tests reproduce revocation rollback on failed queue persistence; replacement/profile/expiry/owner erasure handoffs; owner/machine/lease isolation; stale ACK and exact replay; unknown target refusal; concurrent snapshot/cleanup lock order; real native/Pipedream grant mutation composition; incomplete-receipt refusal and deferred transport/body cancellation shutdown. Production runtime pin selection, actual OAuth/provider calls, Linux stop proof, full final CI and five-surface captures remain separate qualification gates.
 
-The expiry sweep checks for due copy work before taking execution admission.
-For closed markers it still finalizes Chats with no remaining bound copies.
-Copies waiting in retry backoff leave admission open until a later sweep can
-process them.
+The expiry sweep pages expired Chat markers before checking for due copy work.
+Closed markers with no remaining bound copies still qualify for finalization.
+Copies waiting in retry backoff leave execution admission open until a later
+sweep can process them. Account and Chat discovery failures are retried on a
+later sweep, while independently expired copies can still be erased in the
+current pass.
