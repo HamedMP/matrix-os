@@ -1,0 +1,19 @@
+Numbered and bulleted lists
+Multi-level list (1 / 1.1 / (a)):
+Scope of work
+Discovery workshops
+Stakeholder interviews
+Current-state process maps
+Implementation
+Acceptance
+Acceptance criteria
+Sign-off by the owner
+Bulleted list:
+Coffee
+Tea
+Green tea
+Water
+A second numbered list that restarts at 1:
+Collect feedback
+Group feedback by theme
+Publish the summary

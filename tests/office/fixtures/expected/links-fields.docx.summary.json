@@ -1,0 +1,60 @@
+{
+  "file": "links-fields.docx",
+  "valid": true,
+  "errors": [],
+  "parts": 17,
+  "document": {
+    "bodyParagraphs": 9,
+    "allParagraphs": 9,
+    "tables": 0,
+    "numberedParagraphs": 0,
+    "paragraphStyles": {
+      "Heading1": 3,
+      "TOC1": 2
+    },
+    "hyperlinks": 2,
+    "bookmarks": [
+      "_Ref_Definitions",
+      "_Toc1001",
+      "_Toc1002"
+    ],
+    "fields": [
+      "TOC \\o \"1-3\" \\h \\z \\u",
+      "REF _Ref_Definitions \\h",
+      "PAGEREF _Ref_Definitions \\h",
+      "DATE \\@ \"d MMMM yyyy\""
+    ],
+    "footnoteReferences": 0,
+    "characters": 261,
+    "pythonDocx": {
+      "paragraphs": 9,
+      "tables": 0,
+      "sections": 1,
+      "headings": [
+        "Contents",
+        "Introduction",
+        "Definitions"
+      ]
+    }
+  },
+  "revisions": {
+    "total": 0,
+    "byKind": {},
+    "byAuthor": {},
+    "byAuthorKind": {},
+    "paragraphMarkRevisions": 0,
+    "missingAuthor": 0,
+    "duplicateIds": []
+  },
+  "comments": {
+    "count": 0,
+    "replies": 0,
+    "authors": [],
+    "referencedIds": [],
+    "unreferencedIds": [],
+    "danglingReferences": []
+  },
+  "footnotes": 0,
+  "headers": 0,
+  "footers": 0
+}

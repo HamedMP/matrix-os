@@ -1,0 +1,76 @@
+[
+  {
+    "op": "replace",
+    "key": "date",
+    "old": "15 January 2027",
+    "new": "22 January 2027"
+  },
+  {
+    "op": "replace",
+    "key": "c2.1",
+    "old": "24 months",
+    "new": "36 months"
+  },
+  {
+    "op": "replace",
+    "key": "c2.2",
+    "old": "90 days’",
+    "new": "60 days’"
+  },
+  {
+    "op": "replace",
+    "key": "c4.1",
+    "old": "99.5%",
+    "new": "99.9%"
+  },
+  {
+    "op": "replace",
+    "key": "c5.1",
+    "old": "£18,500",
+    "new": "£19,250"
+  },
+  {
+    "op": "replace",
+    "key": "c5.2",
+    "old": "within 30 days",
+    "new": "within 45 days"
+  },
+  {
+    "op": "insert_after",
+    "key": "c7.3",
+    "block": [
+      "c7.4",
+      "clause",
+      "7.4",
+      "The Supplier shall ensure that its subcontractors are bound by confidentiality obligations no less protective than this clause 7."
+    ]
+  },
+  {
+    "op": "replace",
+    "key": "c8.2",
+    "old": "125%",
+    "new": "100%"
+  },
+  {
+    "op": "replace",
+    "key": "c9.1",
+    "old": "£2,000,000 for each claim during the Term and for 3 years",
+    "new": "£5,000,000 for each claim during the Term and for 6 years"
+  },
+  {
+    "op": "replace",
+    "key": "c10.2a",
+    "old": "within 30 days",
+    "new": "within 21 days"
+  },
+  {
+    "op": "delete_sentence",
+    "key": "c11.1",
+    "old": " The Supplier shall process personal data only on the documented instructions of the Customer."
+  },
+  {
+    "op": "move_after",
+    "key": "dServiceLevels",
+    "after": "dServices"
+  }
+]

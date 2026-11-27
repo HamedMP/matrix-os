@@ -11,7 +11,7 @@ const configs = [
   'packages/observability/tsconfig.json', 'packages/integrations-mcp/tsconfig.json',
   'packages/gateway/tsconfig.json', 'packages/platform/tsconfig.typecheck.json',
   'packages/proxy/tsconfig.json', 'packages/hostd/tsconfig.json', 'packages/edge-router/tsconfig.json',
-  'packages/pr-evidence-worker/tsconfig.json',
+  'packages/pr-evidence-worker/tsconfig.json', 'packages/office/tsconfig.json',
   'desktop/tsconfig.json', 'desktop/tsconfig.node.json',
 ];
 
@@ -41,6 +41,9 @@ describe('native standalone typecheck', () => {
     expect(JSON.parse(readFileSync(join(root, 'desktop/tsconfig.json'), 'utf8')).compilerOptions.types).toEqual([]);
     expect(JSON.parse(readFileSync(join(root, 'packages/edge-router/tsconfig.json'), 'utf8')).compilerOptions.types).toEqual(['@cloudflare/workers-types']);
     expect(JSON.parse(readFileSync(join(root, 'packages/pr-evidence-worker/tsconfig.json'), 'utf8')).compilerOptions.types).toEqual(['@cloudflare/workers-types']);
+    const office = JSON.parse(readFileSync(join(root, 'packages/office/tsconfig.json'), 'utf8')).compilerOptions;
+    expect(office.types).toEqual([]);
+    expect(office.lib).toEqual(['ES2022', 'WebWorker']);
   });
 
   it('offers the same projects through each package’s legacy compiler for parity checks', async () => {

@@ -1,0 +1,65 @@
+{
+  "file": "contract.docx",
+  "valid": true,
+  "errors": [],
+  "parts": 18,
+  "document": {
+    "bodyParagraphs": 77,
+    "allParagraphs": 77,
+    "tables": 0,
+    "numberedParagraphs": 0,
+    "paragraphStyles": {
+      "Heading1": 16,
+      "Title": 1
+    },
+    "hyperlinks": 0,
+    "bookmarks": [],
+    "fields": [],
+    "footnoteReferences": 0,
+    "characters": 7726,
+    "pythonDocx": {
+      "paragraphs": 77,
+      "tables": 0,
+      "sections": 1,
+      "headings": [
+        "SERVICES AGREEMENT",
+        "Parties",
+        "Background",
+        "1. Definitions and interpretation",
+        "2. Term",
+        "3. Services",
+        "4. Service levels",
+        "5. Charges and payment",
+        "6. Intellectual property",
+        "7. Confidentiality",
+        "8. Limitation of liability",
+        "9. Insurance",
+        "10. Termination",
+        "11. Data protection",
+        "12. General",
+        "Signatures",
+        "Schedule 1 – Service description"
+      ]
+    }
+  },
+  "revisions": {
+    "total": 0,
+    "byKind": {},
+    "byAuthor": {},
+    "byAuthorKind": {},
+    "paragraphMarkRevisions": 0,
+    "missingAuthor": 0,
+    "duplicateIds": []
+  },
+  "comments": {
+    "count": 0,
+    "replies": 0,
+    "authors": [],
+    "referencedIds": [],
+    "unreferencedIds": [],
+    "danglingReferences": []
+  },
+  "footnotes": 0,
+  "headers": 0,
+  "footers": 1
+}

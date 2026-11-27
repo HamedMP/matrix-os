@@ -1,0 +1,10 @@
+Tracked Changes Sample
+The supplier shall deliver the revised report within fifteen business days.
+Payment terms are net thirty days.
+Fees are fixed for the initial term. Thereafter fees may rise by up to three percent.
+A new confidentiality obligation applies.
+Governing law: England and Wales.
+Item	Qty
+Widgets	10
+This paragraph will be moved to the end.
+End of sample.
