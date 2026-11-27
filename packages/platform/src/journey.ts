@@ -1,3 +1,5 @@
+import { neverRegistered } from './substrates/metal-registration-window.js';
+import { takesOnDemandPath } from './substrates/substrate-wake.js';
 import { randomUUID } from 'node:crypto';
 import {
   appendJourneyEvent,
@@ -74,6 +76,12 @@ export interface JourneyDerivationInputs {
   appOrigin: string;
   /** Optional readiness annotation supplied by a caller (Phase C); omitted in Phase B. */
   readiness?: JourneyReadinessAnnotation;
+  /**
+   * The owner can take the free plan (spec 2691): invited or already admitted,
+   * with no paid entitlement and no non-metal runtime in the slot. They skip
+   * plans and checkout and build their free metal runtime instead.
+   */
+  freePlanEligible?: boolean;
 }
 
 function plansUrl(appOrigin: string): string {
@@ -125,9 +133,14 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
     maxProvisionAttempts,
     appOrigin,
   } = inputs;
-  const access = getRuntimeAccessDecision(entitlement, now);
+  // A free entitlement allows only a metal runtime, so the decision names the slot's runtime.
+  const access = getRuntimeAccessDecision(entitlement, now, liveMachine?.substrate);
 
-  if (!access.runtimeProxyAllowed) {
+  // Free eligibility already excludes a current paid checkout that is still settling.
+  const freePlan = Boolean(inputs.freePlanEligible)
+    && (!liveMachine || liveMachine.substrate === 'metal');
+
+  if (!access.runtimeProxyAllowed && !freePlan) {
     // Billing branch. Settling only applies pre-activation; a lapsed entitlement
     // falls straight through to plan_required.
     if (isPreActivationEntitlement(entitlement) && checkoutAttempt) {
@@ -155,6 +168,15 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
   }
 
   // Entitled branch.
+  if (!liveMachine && freePlan && !access.runtimeProxyAllowed) {
+    // Free VMs take no install choices, so clients that cannot show them
+    // (Native Mobile) start the build directly; the web shows its usual step.
+    return {
+      phase: 'install_choices_required',
+      detail: 'Set up your free Matrix computer.',
+      nextAction: { kind: 'start_provision' },
+    };
+  }
   if (!liveMachine) {
     if (prebillingIntent) {
       if (prebillingIntent.state === 'preparation_failed') {
@@ -179,6 +201,25 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
     };
   }
 
+  // The authenticated runtime route wakes a provisioned metal VM. Let clients
+  // reach that route instead of polling a journey response that cannot wake it.
+  if (liveMachine.status === 'running'
+    || (liveMachine.substrate === 'metal' && liveMachine.metalVmId && takesOnDemandPath(liveMachine))) {
+    if (!firstRun) {
+      return {
+        phase: 'first_run',
+        detail: 'Finish setting up your Matrix computer.',
+        nextAction: { kind: 'begin_first_run' },
+      };
+    }
+    return {
+      phase: 'ready',
+      detail: 'Your Matrix computer is ready.',
+      nextAction: { kind: 'open_shell', url: shellUrl(appOrigin) },
+      ...(inputs.readiness ? { readiness: inputs.readiness } : {}),
+    };
+  }
+
   switch (liveMachine.status) {
     case 'provisioning':
     case 'recovering':
@@ -198,7 +239,12 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
         progress: { stage: deriveProvisioningStage(liveMachine), startedAt: liveMachine.provisionedAt },
       };
     case 'failed': {
-      const retryable = liveMachine.attempt < maxProvisionAttempts;
+      // A computer that once ran is not retried from onboarding: the retry
+      // would retire its server. Only a first build that never registered is.
+      // A failed free metal row's attempt count binds only the next free build;
+      // an owner now on a paid plan rebuilds on the paid path with its own count.
+      const paidRebuild = liveMachine.substrate === 'metal' && entitlement?.source !== 'free' && access.runtimeProxyAllowed;
+      const retryable = (paidRebuild || liveMachine.attempt < maxProvisionAttempts) && neverRegistered(liveMachine);
       return {
         phase: 'provisioning_failed',
         detail: retryable
@@ -208,20 +254,6 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
         failure: { retryable, attempt: liveMachine.attempt },
       };
     }
-    case 'running':
-      if (!firstRun) {
-        return {
-          phase: 'first_run',
-          detail: 'Finish setting up your Matrix computer.',
-          nextAction: { kind: 'begin_first_run' },
-        };
-      }
-      return {
-        phase: 'ready',
-        detail: 'Your Matrix computer is ready.',
-        nextAction: { kind: 'open_shell', url: shellUrl(appOrigin) },
-        ...(inputs.readiness ? { readiness: inputs.readiness } : {}),
-      };
     default:
       // Unknown/terminal status (e.g. deleted shouldn't appear here): treat as start.
       return {
@@ -243,6 +275,8 @@ export interface LoadJourneyDeps {
   readiness?: JourneyReadinessAnnotation;
   /** Records a telemetry event when the phase changes. Defaults to true. */
   recordTransition?: boolean;
+  /** Free-plan eligibility (spec 2691); absent when the free tier is not configured. */
+  resolveFreePlanEligibility?: (clerkUserId: string, runtimeSlot: string) => Promise<boolean>;
 }
 
 /**
@@ -260,6 +294,12 @@ export async function loadJourney(clerkUserId: string, deps: LoadJourneyDeps): P
     getOnboardingFirstRun(deps.db, clerkUserId),
   ]);
 
+  // Only owners without paid access are asked; a paid journey never consults the free tier.
+  const freePlanEligible = deps.resolveFreePlanEligibility
+    && !getRuntimeAccessDecision(entitlement, now, liveMachine?.substrate).runtimeProxyAllowed
+    ? await deps.resolveFreePlanEligibility(clerkUserId, deps.runtimeSlot ?? 'primary')
+    : false;
+
   const state = deriveJourneyPhase({
     entitlement,
     checkoutAttempt: checkoutAttempt ?? null,
@@ -271,6 +311,7 @@ export async function loadJourney(clerkUserId: string, deps: LoadJourneyDeps): P
     maxProvisionAttempts: deps.maxProvisionAttempts,
     appOrigin: deps.appOrigin,
     readiness: deps.readiness,
+    freePlanEligible,
   });
 
   if (deps.recordTransition !== false) {

@@ -51,7 +51,7 @@ describe("remaining real PostgreSQL qualification", () => {
   it("assigns routine integration only with its dedicated config, mapped URL and bounded selection", () => {
     const file = "tests/gateway/bots/routine-cli-example.postgres.integration.ts";
     const { root, write } = fixture({ [file]: "process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;" });
-    const command = "pnpm exec vitest run --config vitest.routine-cli-integration.config.ts tests/gateway/bots/routine-cli-*.postgres.integration.ts --maxWorkers=1 --no-file-parallelism";
+    const command = "pnpm exec vitest run --config vitest.routine-cli-integration.config.ts tests/gateway/bots/routine-cli-*.postgres.integration.ts --maxWorkers=3";
     const assign = (run = command, mapping = "${{ env.MATRIX_TEST_POSTGRES_URL }}", condition = "true") => write(".github/workflows/ci.yml",
       `jobs:\n  funded-postgres:\n    steps:\n      - run: pnpm exec vitest run ${funded}\n      - if: ${condition}\n        env:\n          MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL: '${mapping}'\n        run: ${run}\n`);
     for (const [run, mapping, condition] of [
@@ -60,7 +60,8 @@ describe("remaining real PostgreSQL qualification", () => {
       [command, "postgresql://unreviewed.example/test", undefined],
       [command, "", undefined],
       [command, undefined, "false"],
-      [command.replace(" --maxWorkers=1", ""), undefined, undefined],
+      [command.replace(" --maxWorkers=3", ""), undefined, undefined],
+      [command.replace("--maxWorkers=3", "--maxWorkers=8"), undefined, undefined],
       [command.replace("routine-cli-*", "*"), undefined, undefined],
     ]) {
       assign(run, mapping, condition);
@@ -68,6 +69,10 @@ describe("remaining real PostgreSQL qualification", () => {
     }
     assign();
     expect(remainingPostgresInventory(root, [remaining]).requirements.map(row => row.file)).toContain(file);
+    // The routine suites run in their own hosted lane beside funded-postgres.
+    write(".github/workflows/ci.yml", `jobs:\n  funded-postgres:\n    steps:\n      - run: pnpm exec vitest run ${funded}\n  routine-postgres:\n    steps:\n      - env:\n          MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL: '\${{ env.MATRIX_TEST_POSTGRES_URL }}'\n        run: ${command}\n`);
+    expect(remainingPostgresInventory(root, [remaining]).requirements.map(row => row.file)).toContain(file);
+    assign();
     expect(() => remainingPostgresInventory(root, [file, remaining].sort())).toThrow(/already assigned.*routine-cli-example/i);
     write("tests/gateway/bots/routine-cli-new.postgres.integration.ts", "process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL;");
     expect(remainingPostgresInventory(root, [remaining]).requirements).toHaveLength(5);

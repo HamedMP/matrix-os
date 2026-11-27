@@ -1,8 +1,12 @@
 import type { ChannelAdapter, ChannelConfig, ChannelMessage, ChannelReply } from "./types.js";
 import { z } from "zod/v4";
 import { MatrixComputerHandleSchema } from "@matrix-os/contracts";
-import type { PushTokenStore } from "../notifications/push-tokens.js";
+import type { PushRegistrationStatus, PushTokenStore } from "../notifications/push-tokens.js";
 import { SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
+import { AttentionPushSchema, AttentionPhoneDataSchema, type AttentionPush } from "../notifications/copy.js";
+import type { PushDeliveryReceipts } from "../notifications/delivery-receipts.js";
+import { NotificationDeferredError } from "../notifications/copy.js";
+import { createHash } from "node:crypto";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -24,6 +28,7 @@ export class PushTokenStorageUnavailableError extends Error {
 }
 
 export interface PushAdapterOptions {
+  attentionReceipts?: PushDeliveryReceipts;
   /** Owner Postgres token storage, resolved once at startup; null when the owner database is missing. */
   tokens: PushTokenStore | null;
   /** This computer's MATRIX_HANDLE. Every push names it so the phone can switch to this computer. */
@@ -40,8 +45,12 @@ export interface PushAdapterOptions {
 }
 
 export interface PushAdapter extends ChannelAdapter {
-  registerToken(token: string, platform: string, ownerId: string): Promise<void>;
-  removeToken(token: string, ownerId: string): Promise<void>;
+  sendAttention(notification: AttentionPush): Promise<void>;
+  registerToken(token: string, platform: string, ownerId: string, identity?: string): Promise<void>;
+  registerLegacyToken(token: string, platform: string, ownerId: string, identity?: string): Promise<boolean>;
+  refreshToken(token: string, platform: string, ownerId: string, identity?: string): Promise<boolean>;
+  removeToken(token: string, ownerId: string, deliveryToken?: string): Promise<void>;
+  getRegistrationStatus(identity: string, ownerId: string): Promise<PushRegistrationStatus>;
   /** Deletes tokens unseen for the TTL. Runs hourly until `dispose()`. */
   sweepExpiredTokens(): Promise<number>;
   dispose(): void;
@@ -162,7 +171,7 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
     }
   }
 
-  async function sendPush(store: PushTokenStore, pushTokens: string[], body: string, data: Record<string, unknown>): Promise<void> {
+  async function sendPush(store: PushTokenStore, pushTokens: string[], body: string, data: Record<string, unknown>, attention?: AttentionPush): Promise<void> {
     const messages = pushTokens.map((token) => ({
       to: token,
       title: "Matrix OS",
@@ -170,6 +179,9 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
       sound: "default" as const,
       data,
       channelId: "default",
+      ...(attention ? { title: attention.title, sound: attention.sound ? "default" : null,
+        channelId: "attention", interruptionLevel: attention.timeSensitive ? "time-sensitive" : "active",
+        collapseId: attention.id, priority: "high", ttl: Math.max(0, Math.floor((Date.parse(attention.expiresAt) - now()) / 1000)) } : {}),
     }));
 
     const res = await fetch(EXPO_PUSH_URL, {
@@ -183,6 +195,7 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
     });
 
     if (!res.ok) {
+      if (attention) throw new Error("Push transport unavailable");
       console.warn(`[push] Expo push request failed with HTTP ${res.status}`);
       return;
     }
@@ -191,17 +204,52 @@ export function createPushAdapter(options: PushAdapterOptions): PushAdapter {
       return null;
     });
     await removeUnregisteredDevices(store, pushTokens, tickets);
+    if (attention) {
+      const parsed = ExpoTicketsSchema.safeParse(tickets);
+      if (!parsed.success || parsed.data.data.length !== pushTokens.length) throw new Error("Push transport unavailable");
+      const accepted = pushTokens.filter((_, index) => parsed.data.data[index]!.status === "ok");
+      // Persist known accepts before retrying any rejected device; tokens themselves never enter the journal.
+      await options.attentionReceipts?.remember(attention.id, attention.ownerId, accepted.map(token => createHash("sha256").update(token).digest("hex")));
+      if (parsed.data.data.some(ticket => ticket.status !== "ok" && ticket.details?.error !== "DeviceNotRegistered")) throw new Error("Push transport unavailable");
+    }
   }
 
   return {
     id: "push",
 
-    async registerToken(token: string, platform: string, ownerId: string) {
-      await requireTokens().register({ token, platform, ownerId, seenAt: new Date(now()), maxPerOwner: maxRegisteredTokens });
+    async sendAttention(input) {
+      const notification = AttentionPushSchema.parse(input);
+      const data = AttentionPhoneDataSchema.parse({ v: 1, notificationId: notification.id, handle, target: notification.target });
+      if (computerOwnerId !== notification.ownerId) throw new Error("Push owner unavailable");
+      if (Date.parse(notification.expiresAt) <= now()) return;
+      if (isRateLimited()) throw new NotificationDeferredError(sendTimestamps[0]! + RATE_LIMIT_WINDOW_MS + 1);
+      const store = requireTokens();
+      const delivered = await options.attentionReceipts?.delivered(notification.id, notification.ownerId) ?? [];
+      const recipients = (await store.listRecent({ ownerId: notification.ownerId, seenSince: tokenCutoff(), limit: maxFanoutTokens }))
+        .filter(token => !delivered.includes(createHash("sha256").update(token).digest("hex")));
+      if (!recipients.length) return;
+      sendTimestamps.push(now());
+      await sendPush(store, recipients, notification.body, data, notification);
     },
 
-    async removeToken(token: string, ownerId: string) {
-      await requireTokens().remove({ token, ownerId });
+    async registerToken(token: string, platform: string, ownerId: string, identity = token) {
+      await requireTokens().register({ token, identity, platform, ownerId, seenAt: new Date(now()), maxPerOwner: maxRegisteredTokens });
+    },
+
+    async registerLegacyToken(token: string, platform: string, ownerId: string, identity = token) {
+      return requireTokens().registerLegacy({ token, identity, platform, ownerId, seenAt: new Date(now()), maxPerOwner: maxRegisteredTokens });
+    },
+
+    async refreshToken(token: string, platform: string, ownerId: string, identity = token) {
+      return requireTokens().refresh({ token, identity, platform, ownerId, seenAt: new Date(now()), maxPerOwner: maxRegisteredTokens });
+    },
+
+    async removeToken(token: string, ownerId: string, deliveryToken?: string) {
+      await requireTokens().remove({ token, ownerId, ...(deliveryToken ? { deliveryToken } : {}), seenAt: new Date(now()) });
+    },
+
+    async getRegistrationStatus(identity: string, ownerId: string) {
+      return requireTokens().status({ identity, ownerId, seenSince: tokenCutoff() });
     },
 
     sweepExpiredTokens,

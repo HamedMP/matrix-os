@@ -16,7 +16,7 @@ import { CODEX_APP_SERVER_CONTRACT, verifiedCodexWorkspaceVersion } from "./codi
 import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_CORE_MCP_CALL_TOOLS, MATRIX_CORE_MCP_DISCOVERY_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, MATRIX_MCP_RUN_TOKEN_ENV, codexMatrixMcpConfigArgs, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
 import { MATRIX_INTEGRATION_DISCOVERY_TOOLS, MATRIX_INTEGRATION_ACTION_TOOLS } from "./chat/integration-tool-authority.js";
 import { INTEGRATION_READ_GUIDANCE } from "./chat/integration-read-guidance.js";
-import { buildMatrixAgentOrientation } from "../../contracts/matrix-agent-orientation.mjs";
+import { buildClaudeChatOrientation, buildMatrixAgentOrientation } from "../../contracts/matrix-agent-orientation.mjs";
 
 export const SupportedAgentSchema = z.enum(["claude", "codex", "opencode", "pi"]);
 export type SupportedAgent = z.infer<typeof SupportedAgentSchema>;
@@ -356,6 +356,13 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
   const effectiveMcpScope = input.matrixCustomMcpScope === "preview_drive_call" ? "preview_drive_call"
     : input.matrixCustomMcpScope?.startsWith("chat_") ? discoveryOnly ? "chat_discovery" : "chat_call"
     : discoveryOnly ? "discovery" : "call";
+  const orientationScope = input.matrixCustomMcp && effectiveMcpScope !== "preview_drive_call"
+    ? discoveryOnly ? "discovery" : "call" : "none";
+  const chatLaunch = effectiveMcpScope === "chat_call" || effectiveMcpScope === "chat_discovery" || effectiveMcpScope === "preview_drive_call";
+  const orientation = chatLaunch ? buildClaudeChatOrientation(orientationScope)
+    : buildMatrixAgentOrientation({ surface: "claude", customMcpScope: orientationScope });
+  const integrationReadGuidance = input.matrixCustomMcp && input.matrixIntegrationRead && !chatLaunch
+    ? `\n\n${INTEGRATION_READ_GUIDANCE}` : "";
   return [
     "--setting-sources",
     "",
@@ -364,10 +371,7 @@ function claudeLaunchArgs(input: AgentLaunchInput): string[] {
     "--permission-mode",
     permissionMode,
     "--strict-mcp-config",
-    ...(input.runtimeHome ? ["--append-system-prompt", buildMatrixAgentOrientation({
-      surface: "claude", customMcpScope: input.matrixCustomMcp && effectiveMcpScope !== "preview_drive_call"
-        ? discoveryOnly ? "discovery" : "call" : "none",
-    }) + (input.matrixCustomMcp && input.matrixIntegrationRead && (effectiveMcpScope === "call" || effectiveMcpScope === "discovery") ? `\n\n${INTEGRATION_READ_GUIDANCE}` : "")] : []),
+    ...(input.runtimeHome ? ["--append-system-prompt", orientation + integrationReadGuidance] : []),
     ...(input.matrixCustomMcp ? ["--mcp-config", matrixMcpConfig(effectiveMcpScope, input.matrixDriveContext, input.matrixIntegrationRead)] : []),
     "--no-chrome",
     ...(input.model ? ["--model", input.model] : []),

@@ -4,6 +4,7 @@ import type { ZellijObserver, ZellijObserverEvent } from "./runtime.js";
 import { decodeZellijScreenDump } from "./zellij-screen-dump.js";
 
 const MAX_SUBSCRIPTION_LINE_BYTES = 1024 * 1024;
+const FINAL_SCREEN_DUMP_TIMEOUT_MS = 1_000;
 export const ZELLIJ_PANE_ID = /^terminal_[0-9]+$/;
 
 const SubscribeEventSchema = z.discriminatedUnion("event", [
@@ -16,6 +17,7 @@ const SubscribeEventSchema = z.discriminatedUnion("event", [
   }).strict(),
   z.object({ event: z.literal("pane_closed"), pane_id: z.string().regex(ZELLIJ_PANE_ID) }).strict(),
 ]);
+type PaneUpdate = Extract<z.infer<typeof SubscribeEventSchema>, { event: "pane_update" }>;
 
 export interface RuntimeSubscriptionProcess {
   close(): Promise<void>;
@@ -34,6 +36,29 @@ export function createZellijObserver(input: {
   let exited = false;
   let closing = false;
   let closePromise: Promise<void> | undefined;
+  let activeUpdate: PaneUpdate | undefined;
+  let finalPaneId: string | undefined;
+  let finalUpdate: PaneUpdate | undefined;
+  const publishUpdate = (event: PaneUpdate, ansi: string) => {
+    const fullLines = ansi.split(/\r?\n/);
+    const scrollback = event.scrollback ?? fullLines.slice(0, Math.max(0, fullLines.length - event.viewport.length));
+    input.onEvent({ type: "pane-update", paneId: event.pane_id, ansi, viewport: event.viewport, scrollback });
+  };
+  const captureUpdate = async (event: PaneUpdate, signal: AbortSignal) => {
+    const dump = await input.dumpPane(event.pane_id, signal);
+    signal.throwIfAborted();
+    publishUpdate(event, decodeZellijScreenDump(dump, event.scrollback));
+  };
+  const captureFinalUpdate = async (event: PaneUpdate) => {
+    try {
+      await captureUpdate(event, AbortSignal.timeout(FINAL_SCREEN_DUMP_TIMEOUT_MS));
+    } catch (error) {
+      console.warn("[terminal-runtime] final Zellij screen dump unavailable", error instanceof Error ? error.name : "unknown_error");
+      // Complete subscription rows can still preserve the command's output.
+      // Without history, keep the previous checkpoint instead of truncating it.
+      if (event.scrollback) publishUpdate(event, [...event.scrollback, ...event.viewport].join("\r\n"));
+    }
+  };
   const onLine = (line: string) => {
     if (closing || Buffer.byteLength(line) > MAX_SUBSCRIPTION_LINE_BYTES) return;
     const parsed = SubscribeEventSchema.safeParse(safeJson(line));
@@ -47,19 +72,13 @@ export function createZellijObserver(input: {
         input.onEvent({ type: "pane-closed", paneId: event.pane_id });
         return;
       }
-      if (snapshots.signal.aborted) return;
-      const dump = await input.dumpPane(event.pane_id, snapshots.signal);
-      if (snapshots.signal.aborted) return;
-      const ansi = decodeZellijScreenDump(dump, event.scrollback);
-      const fullLines = ansi.split(/\r?\n/);
-      const scrollback = event.scrollback ?? fullLines.slice(0, Math.max(0, fullLines.length - event.viewport.length));
-      input.onEvent({
-        type: "pane-update",
-        paneId: event.pane_id,
-        ansi,
-        viewport: event.viewport,
-        scrollback,
-      });
+      if (snapshots.signal.aborted) {
+        if (event.pane_id === finalPaneId) finalUpdate = event;
+        return;
+      }
+      activeUpdate = event;
+      try { await captureUpdate(event, snapshots.signal); }
+      finally { activeUpdate = undefined; }
     }).catch((error: unknown) => {
       if (!snapshots.signal.aborted || error !== snapshots.signal.reason) {
         console.error("[terminal-runtime] Zellij observer update failed", error);
@@ -74,14 +93,21 @@ export function createZellijObserver(input: {
   });
   return {
     get closed() { return closing || exited; },
-    close: ({ discardPendingSnapshots = false } = {}) => {
+    close: ({ discardPendingSnapshots = false, finalPaneId: endedPaneId } = {}) => {
       closing = true;
       // Replacing an observer can discard redundant snapshots. Drain
       // pane-close events already received so terminal exits stay durable.
-      if (discardPendingSnapshots) snapshots.abort();
+      if (discardPendingSnapshots && !snapshots.signal.aborted) {
+        finalPaneId = endedPaneId;
+        if (activeUpdate?.pane_id === finalPaneId) finalUpdate = activeUpdate;
+        snapshots.abort();
+      }
       closePromise ??= (async () => {
         try { await process.close(); }
-        finally { await eventChain; }
+        finally {
+          await eventChain;
+          if (finalUpdate) await captureFinalUpdate(finalUpdate);
+        }
       })();
       return closePromise;
     },

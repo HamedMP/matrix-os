@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { FocusedWebProject } from "../../shell/src/components/chat/FocusedWebProject";
 import { WebProjectHome } from "../../shell/src/components/chat/WebProjectHome";
 import { WebProjectAgentContextNavigation } from "../../shell/src/components/chat/WebProjectAgentContext";
+import { useWebProjectSetup } from "../../shell/src/components/chat/useWebProjectSetup";
 import { useFileBrowser } from "../../shell/src/hooks/useFileBrowser";
 import { resetWindowManagerLayoutPersistenceForTests, useWindowManager } from "../../shell/src/hooks/useWindowManager";
 import { usePreviewWindow } from "../../shell/src/hooks/usePreviewWindow";
@@ -40,6 +41,50 @@ afterEach(() => {
   usePreviewWindow.setState(usePreviewWindow.getInitialState());
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+it("keeps an unapplied Skill edit when applying guidance moves Web review to a different message", async () => {
+  const project = { id: "proj_france", slug: "france", name: "France" };
+  const skillPath = ".agents/skills/release/SKILL.md";
+  const original = {
+    chatId: "chat_setup", projectId: project.id, revision: 1, step: "review",
+    currentQuestionMessageId: "msg_review", answers: { purpose: "Release notes", guidance: "Review changes" },
+    proposals: [
+      { path: "AGENTS.md", content: "# Original guidance", status: "pending" },
+      { path: skillPath, content: "# Original skill", status: "pending" },
+    ],
+    mcp: { state: "skipped" }, generation: { runId: "run_draft", status: "completed" },
+    updatedAt: "2026-11-22T12:00:00.000Z",
+  };
+  const fetch = vi.fn(async (_url: string, init?: RequestInit) => Response.json({ draft: init?.method === "PATCH"
+    ? { ...original, revision: 2, generation: undefined, proposals: [{ ...original.proposals[0], content: "# Edited guidance" }, original.proposals[1]] }
+    : original }));
+  vi.stubGlobal("fetch", fetch);
+  function Workspace({ scope = "owner" }: { scope?: string }) {
+    const setup = useWebProjectSetup({ project, chatId: original.chatId, scope, gatewayUrl: window.location.origin,
+      eligible: true, openChat: vi.fn(), messages: [
+        { id: "msg_review", role: "assistant" }, { id: "msg_generated", role: "assistant", requestId: "run_draft" },
+      ] });
+    return <div key={setup.messageId} data-testid="review-message" data-message-id={setup.messageId}>{setup.controls?.()}</div>;
+  }
+  const view = render(<Workspace />);
+  const guidance = await screen.findByRole("region", { name: "Review AGENTS.md" });
+  const skill = screen.getByRole("region", { name: `Review ${skillPath}` });
+  const edit = (region: HTMLElement, value: string) => {
+    fireEvent.click(within(region).getByRole("button", { name: "Edit Markdown" }));
+    fireEvent.change(within(region).getByRole("textbox"), { target: { value } });
+  };
+  expect(screen.getByTestId("review-message")).toHaveProperty("dataset", expect.objectContaining({ messageId: "msg_generated" }));
+  edit(guidance, "# Edited guidance");
+  edit(skill, "# Unapplied skill");
+  fireEvent.click(within(guidance).getByRole("button", { name: "Apply draft changes" }));
+  await waitFor(() => expect(screen.getByTestId("review-message").dataset.messageId).toBe("msg_review"));
+  expect(screen.getByRole("textbox", { name: `Markdown for ${skillPath}` })).toHaveProperty("value", "# Unapplied skill");
+  expect(within(screen.getByRole("region", { name: "Review AGENTS.md" })).queryByRole("button", { name: "Apply draft changes" })).toBeNull();
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(true);
+  view.rerender(<Workspace scope="another owner" />);
+  await waitFor(() => expect(screen.getByTestId("review-message").dataset.messageId).toBe("msg_generated"));
+  expect(screen.queryByDisplayValue("# Unapplied skill")).toBeNull();
 });
 
 it("reads declarations only after opening Agent context for the selected project", async () => {
@@ -84,6 +129,7 @@ it("opens a cold Files window at the project folder", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Open MCP settings" }));
   expect(openMcpSettings).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   fireEvent.click(screen.getByRole("button", { name: "Open project files" }));
   await waitFor(() => expect(useFileBrowser.getState().currentPath).toBe("Projects/france"));
   expect(await screen.findByText("project-notes.md")).toBeTruthy();
@@ -140,6 +186,7 @@ it("hands keyboard focus to the requested Preview tab each time a project file i
   render(<ShellFixture />);
   fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
   fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   const open = await screen.findByRole("button", { name: "Open AGENTS.md" });
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -185,6 +232,7 @@ it.each(["Files", "Agent configuration"] as const)("keeps one draft when a proje
   render(<ShellFixture />);
   fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
   fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   const openProjectFile = await screen.findByRole("button", { name: "Open AGENTS.md" });
   fireEvent.click(screen.getByRole("button", { name: "Open project files" }));
   const file = await screen.findByRole("gridcell", { name: "AGENTS.md" });
@@ -291,6 +339,7 @@ it.each([false, true])("drops a file action when the project changes before reso
   const { rerender } = render(renderProject("proj_france", "france"));
   fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
   fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   fireEvent.click(await screen.findByRole("button", { name: create ? "Create AGENTS.md" : "Open AGENTS.md" }));
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
   rerender(renderProject("proj_japan", "japan"));

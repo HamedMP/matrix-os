@@ -66,8 +66,8 @@ export function HerdrChatControlAction({ control, children }: {
     return () => { current.current = null; };
   }, [target]);
   const action: ComposerMentionAction = {
-    kind: "herdr", label: "Control a Herdr terminal", keywords: "herdr terminal control",
-    slashCommand: herdrControlCommand.descriptorId, consumeTrigger: true,
+    label: "Control a Herdr terminal", keywords: "herdr terminal control",
+    slashCommand: herdrControlCommand.descriptorId,
     select: () => { if (identity) setChoice({ identity, target: null, requestedTarget }); },
   };
   const choosing = Boolean(identity && (currentChoice || requestedTarget) && !target && !currentChoice?.dismissed);

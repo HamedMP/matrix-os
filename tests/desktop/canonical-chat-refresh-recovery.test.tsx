@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
+import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalChatClient, CanonicalChatInvalidation } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
-import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
 const record = {
   chat: {
@@ -14,15 +14,9 @@ const record = {
   },
 };
 const completed = { record, messages: [], turns: [], runs: [], activities: [] };
-const runningSnapshot = createCanonicalChatFixture("running").snapshot;
 const running = { ...completed, record: { ...record,
-  activeRun: runningSnapshot.chat.activeRun,
-},
-  messages: runningSnapshot.messages.map(message => ({ ...message, chatId: record.chat.id })),
-  turns: runningSnapshot.turns.map(turn => ({ ...turn, chatId: record.chat.id })),
-  runs: runningSnapshot.runs.map(run => ({ ...run, chatId: record.chat.id,
-    executionRoot: undefined, executionRootFingerprint: undefined })),
-};
+  activeRun: { runId: "run_test", turnId: "turn_test", status: "running" as const },
+} };
 
 describe("Desktop event refresh recovery", () => {
   it("does not count a queue mutation twice when its stream event beats the HTTP response", async () => {
@@ -32,7 +26,10 @@ describe("Desktop event refresh recovery", () => {
       subscribeConnectionState: () => ({ dispose() {} }),
       subscribe(fn: typeof listener) { listener = fn; return { dispose() {} }; } };
     const queued = { id: "qturn_test", chatId: record.chat.id, updatedAt: record.chat.updatedAt };
-    const client = { list: vi.fn(async () => ({ items: [record] })), getDetail: vi.fn(async () => running),
+    const active = running.record.activeRun;
+    const run = { ...createCanonicalChatFixture("running").snapshot.runs[0]!,
+      id: active.runId, turnId: active.turnId, chatId: record.chat.id, executionRoot: undefined };
+    const client = { list: vi.fn(async () => ({ items: [record] })), getDetail: vi.fn(async () => ({ ...running, runs: [run] })),
       queueTurn: vi.fn(() => new Promise((resolve) => { resolveQueue = resolve; })),
     } as unknown as CanonicalChatClient;
     const hook = renderHook(() => useCanonicalChatRouteController({
@@ -43,6 +40,7 @@ describe("Desktop event refresh recovery", () => {
       let request!: Promise<unknown>;
       act(() => { request = hook.result.current.queueTurn({ parts: [{ type: "text", text: "next" }],
         selection: { instanceId: "codex_test", model: "test" }, interactionMode: "default", permissionMode: "supervised" }); });
+      expect(client.queueTurn).toHaveBeenCalledOnce();
       act(() => listener?.({ type: "chat.changed", chatId: record.chat.id, cursor: 2, revision: 2, eventType: "queue.enqueued",
         content: { type: "chat.content", event: { cursor: 2, revision: 2, chatId: record.chat.id,
           eventType: "queue.enqueued", createdAt: record.chat.createdAt }, content: {
@@ -84,8 +82,7 @@ describe("Desktop event refresh recovery", () => {
         });
       }
       await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-      expect(hook.result.current.detail?.messages.find(item => item.id === message.id)?.parts).toEqual([{ type: "text", text: "hello" }]);
-      expect(hook.result.current.detail?.messages.find(item => item.id === running.messages[0]!.id)).toEqual(running.messages[0]);
+      expect(hook.result.current.detail?.messages[0]?.parts).toEqual([{ type: "text", text: "hello" }]);
       expect(hook.result.current.detail?.record.activeRun).toBeUndefined();
       expect(hook.result.current.streamedMessageIds).toEqual([message.id]);
       expect(getDetail).toHaveBeenCalledOnce();

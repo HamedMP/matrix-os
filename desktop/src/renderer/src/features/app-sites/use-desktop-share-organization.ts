@@ -12,8 +12,8 @@ import { useDesktopOrganizations } from "../collaboration/useDesktopOrganization
 const openChats = () => { useDesktopSurfaces.getState().activateSurface(openChatIndex()); };
 
 /** Electron Desktop wiring for the shared Organization tab (spec 2693 phase 2). */
-export function useDesktopShareOrganization({ appSlug, appName, api, buildEpoch }: {
-  appSlug: string; appName: string; api: ApiClient | null; buildEpoch: number;
+export function useDesktopShareOrganization({ appSlug, appName, api, buildEpoch, allowNewSharing = true }: {
+  appSlug: string; appName: string; api: ApiClient | null; buildEpoch: number; allowNewSharing?: boolean;
 }) {
   const listing = useDesktopOrganizations();
   const activeOrganizationId = useConnection((state) => state.organizationStatus === "member" ? state.organizationId : null);
@@ -22,7 +22,7 @@ export function useDesktopShareOrganization({ appSlug, appName, api, buildEpoch 
     ? listing.organizations.map(({ organizationId, name, memberCount }) => ({ organizationId, name, memberCount }))
     : listing.state === "failed" ? [] : null, [listing]);
   return useShareOrganization({
-    appSlug, appName, organizations, buildEpoch,
+    appSlug, appName, organizations, buildEpoch, allowNewSharing,
     preferredOrganizationId: activeOrganizationId,
     collaborationApi: api,
     fileApi: api,

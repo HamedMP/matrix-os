@@ -321,8 +321,9 @@ export function createBotBrokerActions(deps: {
       const request = parsed.data;
       const binding = deps.registry.lookupRun(request);
       if (!binding) return refusal(request.requestId, "stale_generation");
+      const setupDraft = isManagedPiBinding(binding) && binding.projectSetupDraft !== undefined;
       const sessions = isManagedPiBinding(binding) ? deps.managedSessions : deps.sessions;
-      if (!sessions) return refusal(request.requestId, "not_granted");
+      if (!sessions && !setupDraft) return refusal(request.requestId, "not_granted");
       // Shared evidence is freshly admitted per run; never resume a prior run's
       // source text after that evidence was erased or its audience changed.
       const key = { ownerId: binding.ownerId, ...(!isManagedPiBinding(binding) ? { botId: binding.botId } : {}), chatId: binding.chatId,
@@ -336,10 +337,18 @@ export function createBotBrokerActions(deps: {
           case "bot.input.image":
             return success(request.requestId, BotImageChunkSchema.parse(await deps.runs.readImageChunk(binding, request.image)));
           case "bot.session.load": {
+            if (setupDraft) return success(request.requestId, { revision: 0, messages: [], needsRecompaction: false });
             const snapshot = isManagedPiBinding(binding) ? await deps.managedSessions!.load(key) : await deps.sessions.load({ ...key, botId: binding.botId });
             return success(request.requestId, { revision: snapshot.revision, messages: snapshot.messages, needsRecompaction: snapshot.needsRecompaction });
           }
           case "bot.session.save": {
+            if (setupDraft) {
+              // This bounded, validated final checkpoint is acknowledged and discarded.
+              // Canonical Chat owns the answer; broader managed sessions remain intact.
+              if (request.session.baseRevision !== 0) return refusal(request.requestId, "stale_generation");
+              if (request.session.compactedThroughSeq !== undefined || request.session.recompactionHandled) return refusal(request.requestId, "invalid_arguments");
+              return success(request.requestId, { revision: 1 });
+            }
             const fields = {
               ...key,
               baseRevision: request.session.baseRevision,

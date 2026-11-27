@@ -28,6 +28,12 @@ export async function captureChatContent(
   const runId = typeof payload.runId === "string" ? payload.runId : record.activeRun?.runId;
   const run = runId ? await db.selectFrom("chat_runs").selectAll()
     .where("chat_id", "=", chatId).where("id", "=", runId).executeTakeFirst() : undefined;
+  const canonicalRun = run ? toRun(run) : undefined;
+  // Interview prompts and provider payloads stay in internal storage. The
+  // validated reply is published by the separate canonical discussion event.
+  if (canonicalRun?.context?.projectSetupDraft?.mode === "interview") {
+    return CanonicalChatContentSchema.parse({ record });
+  }
   const turn = run ? await db.selectFrom("chat_turns").selectAll()
     .where("chat_id", "=", chatId).where("id", "=", run.turn_id).executeTakeFirst() : undefined;
   const hot = eventType === "run.activity";
@@ -48,7 +54,7 @@ export async function captureChatContent(
     ? await db.selectFrom("chat_terminal_bindings").select("session_id")
       .where("chat_id", "=", chatId).orderBy("bound_at", "desc").limit(100).execute() : undefined;
   return CanonicalChatContentSchema.parse({
-    record, messages: messages.reverse().map(toMessage), turns: turn ? [toTurn(turn)] : [], runs: run ? [toRun(run)] : [], activities,
+    record, messages: messages.reverse().map(toMessage), turns: turn ? [toTurn(turn)] : [], runs: canonicalRun ? [canonicalRun] : [], activities,
     ...(payload.removedActivityIds ? { removedActivityIds: payload.removedActivityIds } : {}),
     ...(queues ? { queuedTurns: queues.map(toQueuedTurn) } : {}),
     ...(terminals ? { terminalSessionIds: terminals.reverse().map((t) => t.session_id) } : {}),

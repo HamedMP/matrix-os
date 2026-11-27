@@ -13,7 +13,7 @@ if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !existsSync(main)) {
 }
 const evidencePath = process.env.MATRIX_APP_ORG_EVIDENCE_DIR;
 const build = {
-  appId: "pomodoro", catalogId: "30000000-0000-4000-8000-000000000001",
+  appId: "team-tracker", catalogId: "30000000-0000-4000-8000-000000000001",
   registrationIncarnation: "a".repeat(64), manifestVersion: "1.0.0", buildId: "b".repeat(64),
   manifestDigest: "c".repeat(64), schemaDigest: "d".repeat(64), assetDigest: "e".repeat(64),
   bridgeContractVersion: "matrix-app-bridge-v1", runtimeAbi: "matrix-runtime-v1",
@@ -44,7 +44,7 @@ describe.skipIf(!existsSync(main))("Electron owner app organization sharing", ()
         memberCount: 3, aiSubmission: "members", membershipEpoch: 1,
       }], members: {}, invitations: {} },
       appSharing: {
-        appId: "pomodoro", organizationId: "org_matrix", registrationIncarnation: build.registrationIncarnation,
+        appId: "team-tracker", organizationId: "org_matrix", registrationIncarnation: build.registrationIncarnation,
         readiness,
         activeShare: { ...shareBase, state: "active", shareRevision: "3", bindingRevision: "4", updatedAt: "2026-11-12T12:00:00.000Z" },
         stoppedShare: { ...shareBase, state: "stopped", shareRevision: "4", bindingRevision: "5", updatedAt: "2026-11-12T12:01:00.000Z" },
@@ -61,7 +61,7 @@ describe.skipIf(!existsSync(main))("Electron owner app organization sharing", ()
     });
     page = await app.firstWindow();
     page.on("request", (request) => {
-      if (request.url().includes("/api/apps/pomodoro/site") && request.method() !== "GET") {
+      if (request.url().includes("/api/apps/team-tracker/site") && request.method() !== "GET") {
         publicationMutations.push(request.method());
       }
     });
@@ -78,7 +78,8 @@ describe.skipIf(!existsSync(main))("Electron owner app organization sharing", ()
 
   it("keeps the native app behind one owner popover and never publishes when sharing", async () => {
     await page.getByRole("button", { name: "Open App Launcher" }).click();
-    await page.getByText("Pomodoro", { exact: true }).last().click();
+    // Org sharing starts only on apps the owner built; default apps like Pomodoro are stop-only.
+    await page.getByText("Team Tracker", { exact: true }).last().click();
     const trigger = page.getByRole("button", { name: "Share", exact: true });
     await trigger.waitFor();
     await trigger.click();

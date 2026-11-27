@@ -1,4 +1,10 @@
-import { MANAGED_WORKERS_AI_MODELS, MANAGED_WORKERS_AI_MODEL_IDS, type AiModelDescriptorView } from "@matrix-os/contracts";
+import {
+  ALIBABA_QWEN_37_PLUS_MODEL_ID, ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS,
+  GOOGLE_GEMINI_38_FLASH_MODEL_ID, GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS,
+  MANAGED_WORKERS_AI_MODELS, MANAGED_WORKERS_AI_MODEL_IDS,
+  MOONSHOT_KIMI_K31_PRO_MODEL_ID, MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS, retiredManagedWorkersAiModel,
+  type AiModelDescriptorView,
+} from "@matrix-os/contracts";
 import {
   KERNEL_EFFORTS,
   KERNEL_MODELS,
@@ -17,6 +23,18 @@ export const OWNER_ANTHROPIC_MODEL_IDS = [
   ...LEGACY_KERNEL_MODEL_IDS,
 ] as const;
 export const OWNER_OPENAI_MODEL_IDS = ["provider-default"] as const;
+
+export const FUNDED_PREVIEW_CHAT_ROUTES = [
+  { modelId: GOOGLE_GEMINI_38_FLASH_MODEL_ID, sourceId: "matrix_google_preview", vendor: "google",
+    displayName: "Gemini 3.8 Flash", disclosureKey: "matrix-cloudflare-google",
+    maxOutputTokens: GOOGLE_GEMINI_38_FLASH_PREVIEW_MAX_OUTPUT_TOKENS },
+  { modelId: MOONSHOT_KIMI_K31_PRO_MODEL_ID, sourceId: "matrix_moonshot_preview", vendor: "moonshotai",
+    displayName: "Kimi K3.1 Pro", disclosureKey: "matrix-cloudflare-moonshot",
+    maxOutputTokens: MOONSHOT_KIMI_K31_PRO_PREVIEW_MAX_OUTPUT_TOKENS },
+  { modelId: ALIBABA_QWEN_37_PLUS_MODEL_ID, sourceId: "matrix_alibaba_preview", vendor: "alibaba",
+    displayName: "Qwen 3.7 Plus", disclosureKey: "matrix-cloudflare-alibaba",
+    maxOutputTokens: ALIBABA_QWEN_37_PLUS_PREVIEW_MAX_OUTPUT_TOKENS },
+] as const;
 
 const CURRENT_STATUS = new Map<string, "current">(
   KERNEL_MODELS.map((model) => [model.id, "current"]),
@@ -64,7 +82,8 @@ export function buildBundledModelCatalog(): AiModelDescriptorView[] {
   return [
     ...MANAGED_WORKERS_AI_MODELS.map((model): AiModelDescriptorView => ({
       id: model.id, vendor: "cloudflare", displayName: model.displayName,
-      status: "current", capabilities: ["tools", ...(model.reasoning ? ["reasoning" as const] : []),
+      status: retiredManagedWorkersAiModel(model.id) ? "retired" : "current",
+      capabilities: ["tools", ...(model.reasoning ? ["reasoning" as const] : []),
         ...(model.vision ? ["vision" as const] : []), "long_context"],
       // Managed harnesses do not expose per-model effort controls yet.
       effortControls: [], eligibleAccessSourceIds: ["matrix_cloudflare"],
@@ -72,6 +91,18 @@ export function buildBundledModelCatalog(): AiModelDescriptorView[] {
       aliases: [], catalogVersion: AI_PROVIDER_CATALOG_VERSION,
     })),
     ...anthropicModels,
+    ...FUNDED_PREVIEW_CHAT_ROUTES.map(({ modelId, sourceId, vendor, displayName, disclosureKey }): AiModelDescriptorView => ({
+      id: modelId,
+      vendor,
+      displayName,
+      status: "preview",
+      capabilities: ["tools", "reasoning", "long_context"],
+      effortControls: [],
+      eligibleAccessSourceIds: [sourceId],
+      dataPolicies: [{ accessSourceId: sourceId, route: "matrix_relay", disclosureKey }],
+      aliases: [],
+      catalogVersion: AI_PROVIDER_CATALOG_VERSION,
+    })),
     {
       id: OWNER_OPENAI_MODEL_IDS[0],
       vendor: "openai",
@@ -95,5 +126,5 @@ export function eligibleModelsForSource(
   sourceId: string,
   catalog: readonly AiModelDescriptorView[],
 ): AiModelDescriptorView[] {
-  return catalog.filter((model) => model.eligibleAccessSourceIds.includes(sourceId));
+  return catalog.filter((model) => model.status !== "retired" && model.eligibleAccessSourceIds.includes(sourceId));
 }

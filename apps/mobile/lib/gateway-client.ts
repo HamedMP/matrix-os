@@ -1,3 +1,6 @@
+import { notificationPreferencesRequest } from "@/lib/notification-preferences-client";
+import { formatAuthorizationHeader } from "@/lib/authorization";
+import type { NotificationPreferences } from "@matrix-os/contracts/notifications";
 import { encodeAppSlugPath } from "@/lib/app-slugs";
 import {
   isSafeSessionId,
@@ -1013,6 +1016,14 @@ export class GatewayClient {
     }
   }
 
+  getNotificationPreferences() {
+    return notificationPreferencesRequest((path, init) => this.fetchGateway(path, init));
+  }
+
+  updateNotificationPreferences(preferences: NotificationPreferences) {
+    return notificationPreferencesRequest((path, init) => this.fetchGateway(path, init), preferences);
+  }
+
   async getCodingAgentNotificationPreferences(): Promise<CodingAgentNotificationPreferencesResult> {
     try {
       const res = await this.fetchGateway("/api/coding-agents/notification-preferences");
@@ -1675,12 +1686,6 @@ export function createTimeoutSignal(timeoutMs: number): AbortSignal | undefined 
   const controller = new AbortController();
   setTimeout(() => controller.abort(), timeoutMs);
   return controller.signal;
-}
-
-function formatAuthorizationHeader(token: string | undefined): string | undefined {
-  if (!token) return undefined;
-  if (/^(Basic|Bearer)\s+/i.test(token)) return token;
-  return `Bearer ${token}`;
 }
 
 export function assertSecureTokenTransport(baseUrl: string): void {

@@ -18,7 +18,7 @@ function readPort(env: NodeJS.ProcessEnv): number {
 
 const port = readPort(process.env);
 const service = createFundedRelayService(requireFundedRelayServiceConfig(process.env));
-const server = serve({ fetch: service.app.fetch, port }, () => {
+const server = serve({ fetch: service.app.fetch, hostname: process.env.MATRIX_BIND_HOST, port }, () => {
   console.log(`[funded-ai-relay] Listening on :${port}`);
 });
 configureProxyServerTimeouts(server);

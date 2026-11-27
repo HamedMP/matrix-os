@@ -1,12 +1,12 @@
 import { shellChatAttachmentPolicy } from "../../shell/src/components/chat/attachment-policy.js";
 // @vitest-environment jsdom
-import React,{useState} from "react";
+import React,{useLayoutEffect} from "react";
 import {act,cleanup,fireEvent,render,screen,waitFor} from "@testing-library/react";
 import {afterEach,expect,it,vi} from "vitest";
 import type { ProjectChatSlashScope } from "@matrix-os/ui";
 import {ChatInput} from "../../shell/src/components/chat/ChatInput.js";
 import type {CanonicalProviderInstanceDescriptor} from "@matrix-os/contracts";
-import type {ChatComposerDraft} from "../../shell/src/components/chat/useChatComposerDraft.js";
+import {useChatComposerDraft} from "../../shell/src/components/chat/useChatComposerDraft.js";
 import {createCanonicalProviderCatalogFixture} from "../contracts/fixtures/canonical-chat.js";
 vi.mock("../../shell/src/components/chat/ChatMentionPicker.js",()=>({ChatMentionPicker:()=>null}));
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -15,15 +15,16 @@ const instance:CanonicalProviderInstanceDescriptor={...createCanonicalProviderCa
  {id:"research",displayName:"Research",description:"Research sources",invocation:"/research"},
 ]};
 const capture={isSupported:()=>false,start:vi.fn()};
-function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/",attachmentPolicy,projectSlash,isCurrentAuthority,busy=false}: {
+function Harness({selected=instance,scope="one",loading=false,submit=vi.fn(),initial="/",attachmentPolicy,projectSlash,isCurrentAuthority,busy=false,bot=false,setupAnswer=false}: {
  selected?:CanonicalProviderInstanceDescriptor;scope?:string;loading?:boolean;submit?:(text:string)=>void;initial?:string;attachmentPolicy?:(files:readonly File[])=>string|null;
- projectSlash?:ProjectChatSlashScope;isCurrentAuthority?:()=>boolean;busy?:boolean;
+ projectSlash?:ProjectChatSlashScope;isCurrentAuthority?:()=>boolean;busy?:boolean;bot?:boolean;setupAnswer?:boolean;
 }) {
- const [text,setText]=useState(initial);
- const composer={text,setText,resources:[],setResources:vi.fn(),setDraft:vi.fn(),clear:vi.fn(),requestId:"req_web_slash"} as unknown as ChatComposerDraft;
- return <ChatInput composer={composer} scope={scope} permissionMode="supervised" connected busy={busy} attachmentsEnabled
+ const composer=useChatComposerDraft(scope,"owner");
+ const {setText}=composer;
+ useLayoutEffect(()=>{setText(initial);},[setText,initial]);
+ return <ChatInput composer={composer} scope={scope} permissionMode={bot ? "default" : "supervised"} connected busy={busy} attachmentsEnabled={!bot} setupAnswer={setupAnswer}
   activeRunId={busy ? "run_web_slash" : undefined} onAbortCurrent={busy ? () => undefined : undefined}
-  onSubmit={submit} attachmentPolicy={attachmentPolicy} slashInstance={selected} slashCatalogLoading={loading} projectSlash={projectSlash} isCurrentAuthority={isCurrentAuthority} speechCaptureAdapter={capture}/>;
+  onSubmit={submit} attachmentPolicy={attachmentPolicy} slashInstance={bot ? undefined : selected} slashCatalogLoading={loading} projectSlash={projectSlash} isCurrentAuthority={isCurrentAuthority} speechCaptureAdapter={capture}/>;
 }
 it("uses only selected runtime descriptors and inserts the selected Skill without submitting",()=>{
  const submit=vi.fn();render(<Harness submit={submit}/>);
@@ -56,8 +57,7 @@ it("does not borrow previous runtime or ordinary provider Skills for a Bot Chat"
  view.rerender(<Harness selected={empty}/>);expect(screen.queryByRole("option")).toBeNull();
  expect(screen.getByRole("status").textContent).toBe("No skills or commands are available for this model.");
  // The Bot Chat host supplies no ordinary-provider descriptor.
- view.rerender(<ChatInput composer={{text:"/",setText:vi.fn(),resources:[],setResources:vi.fn(),requestId:"req_bot"} as unknown as ChatComposerDraft}
- scope="bot" permissionMode="default" connected busy={false} attachmentsEnabled={false} onSubmit={vi.fn()} speechCaptureAdapter={capture}/>);
+ view.rerender(<Harness key="bot" scope="bot" bot />);
  expect(screen.queryByRole("option")).toBeNull();expect(screen.getByRole("status").textContent).toBe("Skills and commands are unavailable in this Chat.");
 });
 it("clears dismissed status on a new Chat scope and avoids stale options while loading",()=>{
@@ -172,6 +172,18 @@ const projectScope = (projectId: string, name: string): ProjectChatSlashScope =>
   scope: "test-runtime", projectId, read: vi.fn(async () => inventory(name)),
 });
 
+it("accepts a literal typed setup answer without waiting for provider Skills or attaching project context", async () => {
+  const submit = vi.fn();
+  const projectSlash = projectScope("proj_one", "review");
+  const answer = "Build a playbook for /review";
+  render(<Harness setupAnswer loading projectSlash={projectSlash} initial={answer} submit={submit} />);
+
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(projectSlash.read).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByRole("textbox", { name: "Message chat" }), { key: "Enter" });
+  await waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith(answer, undefined, { resources: [] }));
+});
+
 it("selects a project skill separately from the message and only passes its relative path on Send", async () => {
   const projectSlash = projectScope("proj_one", "review");
   const submit = vi.fn();
@@ -187,6 +199,42 @@ it("selects a project skill separately from the message and only passes its rela
   fireEvent.keyDown(input, { key: "Enter" });
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
   expect(submit.mock.calls[0]?.[0]).toContain(reviewSkillPath);
+});
+
+it("keeps a seeded draft's project skill when a pending send is rejected and retried", async () => {
+  const rejectedSend = Promise.withResolvers<boolean>();
+  const submit = vi.fn<React.ComponentProps<typeof ChatInput>["onSubmit"]>()
+    .mockImplementationOnce((_text, _files, options) => {
+      options?.onShown?.();
+      return rejectedSend.promise;
+    })
+    .mockImplementationOnce(async (_text, _files, options) => {
+      options?.onShown?.();
+      return true;
+    });
+  const projectSlash = projectScope("proj_one", "review");
+  function SeededComposer() {
+    const composer = useChatComposerDraft("new:1", "test-runtime");
+    return <ChatInput composer={composer} scope="new:1" permissionMode="supervised" connected busy={false}
+      attachmentsEnabled={false} onSubmit={submit} slashInstance={instance} projectSlash={projectSlash}
+      draftRequest={{ id: 1, text: "Review this /" }} speechCaptureAdapter={capture} />;
+  }
+
+  render(<SeededComposer />);
+  fireEvent.click(await screen.findByRole("option", { name: /review/i }));
+  const editor = screen.getByRole("textbox", { name: "Message chat" }) as HTMLTextAreaElement;
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(editor.value).toBe("");
+  expect(submit.mock.calls[0]?.[0]).toContain(reviewSkillPath);
+
+  await act(async () => { rejectedSend.resolve(false); });
+  expect(editor.value).toBe("Review this ");
+  expect(screen.getByRole("button", { name: "Remove skill review" })).toBeTruthy();
+
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2));
+  expect(submit.mock.calls[1]?.[0]).toContain(reviewSkillPath);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Remove skill review" })).toBeNull());
 });
 
 it("offers Queue next for a project skill alone during an active run", async () => {

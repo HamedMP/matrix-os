@@ -2,6 +2,7 @@ import { migrateAccountDeletion } from './migrations/account-deletion.js';
 import type { PlatformMigrationExecutor } from './migration-types.js';
 import { migrateIdentity } from './migrations/identity.js';
 import { migrateUserMachines } from './migrations/user-machines.js';
+import { migrateMetalHosts } from './migrations/metal-hosts.js';
 import { migrateAiFunded } from './migrations/ai-funded.js';
 import { migrateAiCreditHistory } from './migrations/ai-credit-history.js';
 import { migrateSpeech } from './migrations/speech.js';
@@ -14,6 +15,9 @@ import { migrateGoldenSnapshots } from './migrations/golden-snapshots.js';
 import { migrateProviderDeletion } from './migrations/provider-deletion.js';
 import { migrateDirectoryAndSocial } from './migrations/directory-and-social.js';
 import { migratePreviewDrive } from './migrations/preview-drive.js';
+import { migrateFreeTier } from './migrations/free-tier.js';
+import { migrateMetalSleep } from './migrations/metal-sleep.js';
+import { migrateFreeFunding } from './migrations/free-funding.js';
 
 export interface PlatformMigrationStep {
   readonly name: string;
@@ -28,6 +32,7 @@ export interface PlatformMigrationStep {
  */
 export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'identity', run: migrateIdentity },
+  { name: 'metal-hosts', run: migrateMetalHosts },
   { name: 'user-machines', run: migrateUserMachines },
   { name: 'ai-funded', run: migrateAiFunded },
   { name: 'ai-credit-history', run: migrateAiCreditHistory },
@@ -42,6 +47,9 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'directory-and-social', run: migrateDirectoryAndSocial },
   { name: 'preview-drive', run: migratePreviewDrive },
   { name: 'account-deletion', run: migrateAccountDeletion },
+  { name: 'free-tier', run: migrateFreeTier },
+  { name: 'metal-sleep', run: migrateMetalSleep },
+  { name: 'free-funding', run: migrateFreeFunding },
 ];
 
 export async function migratePlatformSchema(db: PlatformMigrationExecutor): Promise<void> {

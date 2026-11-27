@@ -1,4 +1,4 @@
-import { BrowserPermissionCard, useRoutineMessageState, routineMessageTimeline, RoutineOccurrenceMessage, RoutineMessageReadNotice, type RoutineOccurrence } from "@matrix-os/ui";
+import { PROJECT_SETUP_COLUMN_CLASS, BrowserPermissionCard, useRoutineMessageState, routineMessageTimeline, RoutineOccurrenceMessage, RoutineMessageReadNotice, type RoutineOccurrence } from "@matrix-os/ui";
 import { ConversationNotice } from "./notice";
 import { RoutineReceipt, BotRunMessageBody, BotUnassignedMessageBody, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
@@ -26,6 +26,13 @@ import type {
 } from "./presentation";
 import { supervisedToolApproval, type SupervisedToolApproval } from "@matrix-os/contracts";
 import { offeredApprovalAction, offeredBrowserApprovalAction } from "./approval-actions";
+
+type ProjectSetupTranscript = {
+  messageId?: string | null;
+  note: ReactNode;
+  controls: ((replyText?: string) => ReactNode) | null;
+  compactReply: boolean;
+};
 
 function formatTurnDuration(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000));
@@ -298,6 +305,7 @@ function ConversationTurn({
   onToggle,
   scheduled,
   scheduledEvents=[],
+  projectSetup,
 }: {
   turn: ConversationTurnPresentation;
   callbacks: ConversationPresentationCallbacks;
@@ -306,6 +314,7 @@ function ConversationTurn({
   onToggle: () => void;
   scheduled?: RoutineOccurrence;
   scheduledEvents?:RoutineOccurrence[];
+  projectSetup?: ProjectSetupTranscript;
 }) {
   const rootKind = turn.executionRoot?.kind;
   const rootProjectId = turn.executionRoot && turn.executionRoot.kind !== "bot_workspace" ? turn.executionRoot.projectId : undefined;
@@ -330,12 +339,18 @@ function ConversationTurn({
   if(turn.routineReceipt)return <RoutineReceipt {...turn.routineReceipt} sourceChatId={callbacks.browserChatId} onOpenChat={callbacks.openChat}/>;
   const hasWork = turn.work.length > 0;
   const timeline = turn.timeline;
+  const setupReply = projectSetup?.messageId
+    && (projectSetup.messageId === turn.final?.id || projectSetup.messageId === turn.user?.id)
+    ? projectSetup : undefined;
+  const compactReply = setupReply?.controls && setupReply.compactReply && !scheduledEvents.length
+    && turn.final?.kind === "message" && turn.final.role === "assistant" && turn.final.id === setupReply.messageId
+    ? turn.final.markdown : undefined;
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} scheduled={scheduled}/> : null}
       <ChatContextReceipt context={turn.runContext} />
       <div data-agent-message-body={turn.id} className="min-w-0">
-      {hasWork || turn.final || turn.active ? (
+      {hasWork || turn.active || (turn.final && (!projectSetup || !!turn.runIds?.length)) ? (
         <TurnReceipt
           startedAt={turn.startedAt}
           endedAt={turn.endedAt}
@@ -365,11 +380,12 @@ function ConversationTurn({
       {!timeline ? turn.userFollowups?.map((message) => (
         <UserMessage key={message.id} message={message} callbacks={scopedCallbacks} />
       )) : null}
-      {turn.final ? (
+      {setupReply?.note}
+      {turn.final && compactReply === undefined ? (
         <PresentationItem
           item={turn.final}
           callbacks={scopedCallbacks}
-          showMetadata={!turn.active}
+          showMetadata={!turn.active && !setupReply}
           streaming={turn.active}
           animateOnMount={
             turn.active && !initialFinalIds.has(turn.final.id)
@@ -377,6 +393,9 @@ function ConversationTurn({
           }
         />
       ) : null}</>}
+      {setupReply?.controls ? (
+        <div className={compactReply === undefined ? "mt-2.5" : undefined}>{setupReply.controls(compactReply)}</div>
+      ) : null}
       <BotRunMessageBody runIds={turn.runIds ?? []} requestIds={pendingRequestIds}/>
       </div>
     </>
@@ -405,12 +424,14 @@ export function ConversationTranscript({
   beforeTurns,
   renderAfterTurn,
   afterTurns,
+  projectSetup,
 }: {
   turns: ConversationTurnPresentation[];
   callbacks: ConversationPresentationCallbacks;
   beforeTurns?: ReactNode;
   renderAfterTurn?: (turnId: string) => ReactNode;
   afterTurns?: ReactNode;
+  projectSetup?: ProjectSetupTranscript;
 }) {
   const routines=useRoutineMessageState();
   const [initialFinalIds] = useState(() => new Set(
@@ -438,7 +459,7 @@ export function ConversationTranscript({
   });
   return (
     <Conversation>
-      <ConversationContent className="justify-end pt-8 sm:pt-12">
+      <ConversationContent className={projectSetup ? `${PROJECT_SETUP_COLUMN_CLASS} justify-start gap-4 py-4 sm:px-4 lg:px-4` : "justify-end pt-8 sm:pt-12"}>
         {beforeTurns}
         {rows.map(row => row.kind === "occurrence" ? <RoutineOccurrenceMessage key={`scheduled:${row.occurrence.fire.fireId}`} occurrence={row.occurrence}/> : (
           <Fragment key={row.value.turn.id}>
@@ -449,6 +470,7 @@ export function ConversationTranscript({
               visibility={row.value.visibility}
               scheduled={row.occurrence}
               scheduledEvents={nested[visibleTurns.indexOf(row.value)]}
+              projectSetup={projectSetup}
               onToggle={() => toggleTurn(row.value.turn.id)}
             />
             {renderAfterTurn?.(row.value.turn.id)}
@@ -457,6 +479,11 @@ export function ConversationTranscript({
         <BotUnassignedMessageBody runIds={turns.flatMap(turn => turn.runIds ?? [])}
           requestIds={visibleTurns.flatMap(({ visibility }) => visibility.pendingRequestIds)}/>
         <RoutineMessageReadNotice/>
+        {projectSetup?.controls && !turns.some(turn => turn.final?.id === projectSetup.messageId || turn.user?.id === projectSetup.messageId) ? (
+          <p role="status" className="text-sm text-[var(--text-secondary)]">
+            {turns.length === 0 ? "Preparing the first question…" : "Updating project setup…"}
+          </p>
+        ) : null}
         {afterTurns}
       </ConversationContent>
     </Conversation>

@@ -18,6 +18,7 @@ import {
 import type { StripeBillingClient } from './billing-routes.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { projectCardTrialOffer } from './billing/trial-policy.js';
+import { entitlementForSlot } from './free-tier/free-entitlement.js';
 
 const BillingStatusQuerySchema = z.object({
   runtimeSlot: RuntimeSlotSchema.optional(),
@@ -35,6 +36,7 @@ export function createBillingStatusHandler(options: {
   resolveClerkUserId: (c: Context) => Promise<string | null>;
   resolvePublicRecurringPrice: (db: PlatformDB, stripe: StripeBillingClient, subscription: BillingSubscriptionRecord, now: Date) => Promise<MatrixBillingPublicEntitlement['recurringPrice']>;
   resolveRuntimePlacement: (location: string | null | undefined) => (typeof MATRIX_HOSTED_BILLING_REGIONS)[number] | null;
+  resolveFreePlanEligibility?: (clerkUserId: string, runtimeSlot: string) => Promise<boolean>;
 }): Handler {
   const { env, now, cardTrialDays } = options;
   return async (c) => {
@@ -55,7 +57,7 @@ export function createBillingStatusHandler(options: {
         currentTime.toISOString(),
       );
       if (query.data.runtimeSlot) {
-        stripeEntitlement = selectedSubscription
+        stripeEntitlement = entitlementForSlot(stripeEntitlement, runtimeSlot, selectedSubscription
           ? deriveStripeEntitlement({
             clerkUserId: selectedSubscription.clerkUserId,
             stripeCustomerId: selectedSubscription.stripeCustomerId,
@@ -72,14 +74,27 @@ export function createBillingStatusHandler(options: {
             runtimeCatalog: loadRuntimeCatalog(env),
             now: currentTime,
           })
-          : null;
+          : null, currentTime);
       }
       const entitlement = computeEffectiveEntitlement({
         stripeEntitlement,
         override: parseBillingOverrideRecord(state.override),
         now: currentTime,
       });
-      const access = getRuntimeAccessDecision(entitlement, currentTime);
+      const machine = await getActiveUserMachineByClerkId(
+        options.db,
+        clerkUserId,
+        runtimeSlot,
+      );
+      // A free entitlement allows only a metal runtime, so the decision names the selected runtime's substrate.
+      const paidOrFreeAccess = getRuntimeAccessDecision(entitlement, currentTime, machine?.substrate);
+      // Free plan on metal (spec 2691): an owner who can take the free plan has
+      // access, so every client gate (BillingGate, native apps) lets them through
+      // to the journey instead of paid plans. Paid statuses are never consulted.
+      const access = !paidOrFreeAccess.runtimeProxyAllowed && options.resolveFreePlanEligibility
+        && await options.resolveFreePlanEligibility(clerkUserId, runtimeSlot)
+        ? { runtimeProxyAllowed: true, reason: 'active' as const, gracePeriodEndsAt: null }
+        : paidOrFreeAccess;
       const trialsEnabledForSlot = env.MATRIX_CARD_TRIALS_ENABLED === 'true'
         && runtimeSlot === 'primary';
       const activeAttempt = await getActiveCheckoutAttempt(options.db, clerkUserId, runtimeSlot);
@@ -114,11 +129,6 @@ export function createBillingStatusHandler(options: {
           currentTime,
         )
         : null;
-      const machine = await getActiveUserMachineByClerkId(
-        options.db,
-        clerkUserId,
-        runtimeSlot,
-      );
       const placement = options.resolveRuntimePlacement(machine?.location);
       const response = MatrixBillingStatusSchema.safeParse({
         entitlement: entitlement

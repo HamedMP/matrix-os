@@ -32,7 +32,7 @@ This spec replaces all of that with one gateway-owned router. It is delivered as
 | A2 | Push tokens survive restarts | gateway | host bundle | none | Pushes keep working after gateway updates and restarts, and name the computer they came from |
 | A3 | One native build | `apps/mobile` | TestFlight, Play | none | Android receives pushes. Channels, background push and the Time Sensitive capability are in place for later releases. |
 | A4 | Notification preferences API | gateway, `packages/contracts` | host bundle | none | none on its own |
-| A5 | Notifications screen | `apps/mobile` | EAS Update | A4 | The owner controls kinds, phone timing, previews and Time Sensitive delivery before any new kind of push arrives |
+| A5 | Notifications screen | `apps/mobile` + gateway registration status | Host bundle (status API), then EAS Update | A4 | The owner controls kinds, phone timing, previews and Time Sensitive delivery before any new kind of push arrives |
 | A6 | Approvals and questions from every chat | gateway | host bundle | A2, A5 | Every canonical chat notifies when it needs the owner, not only Codex, Pi and OpenCode threads, and a gateway crash cannot lose the alert |
 | A7 | Reading on the phone counts as read | `apps/mobile` | EAS Update | none | Reading a chat on the phone advances the same read cursor as the computers |
 | A8 | Replies and failures, only if still unread | gateway | host bundle | A6, A7 | A push when a reply finishes, unless the owner already read it anywhere |
@@ -105,6 +105,136 @@ A4 implementation notes (ENG-453, 2026-11-20):
 
 **A5 · Notifications screen** (`apps/mobile/app/settings-detail/notifications.tsx`): kinds, phone timing, previews and Time Sensitive (iOS only). It reads and writes through the gateway client with no local copy. The existing "Push notifications" switch in App settings links to it. Evidence: Native Mobile.
 
+#### A5 implementation notes (ENG-453)
+
+- Teammate P1 follow-up (2026-11-25): the phone push switch is explicitly **per
+  computer**. Show its name and use one resolved target for preferences, device
+  registration and foreground refresh. An explicit saved preview/runtime wins
+  over the platform active selection; a bare cloud URL resolves the active
+  computer once and pins its gateway path. Late account/computer responses stay
+  scoped to their original target. Other computers may continue sending.
+- Consent lifecycle correction: enabled state comes from the selected owner's
+  durable `notification_push_consents` record, separate from expiring delivery
+  rows. `POST /api/push/status` returns `{enabled, registered}`: enabled is true,
+  false for a retained opt-out, or null when consent history is unknown;
+  registered is a boolean.
+  The owner-only read has a strict private-identity body, 4 KiB limit and generic
+  errors; identities never enter URLs, logs or responses. Missing support or
+  storage is unavailable, never assumed off.
+- Explicit enable records consent and delivery in one owner-locked transaction.
+  It sends `mode=enable`. A request without a mode is an ambiguous older-client
+  registration: it can refresh known on consent, but cannot replace any known
+  off alias or import an unknown token after this owner's opt-out history. Such
+  attempts receive a generic 409 and need an updated client's explicit enable.
+  Explicit opt-out retains an off tombstone and removes every delivery token
+  linked to that phone on this computer. TTL sweep and `DeviceNotRegistered`
+  remove delivery only. Foreground uses conditional `mode=refresh`, which checks
+  on-consent under the same lock and cannot grant consent after a stale read.
+  A stable private phone identity is retained separately from the current Expo
+  delivery token, so rotation does not strand consent or leave stale fanout.
+- Additive schema migration 4 reserves versions 2/3 for A6. It seeds consent from
+  actual legacy owner delivery rows, including expired rows, without resetting
+  an existing off record. Every bootstrap also reconciles legacy rows written by
+  an older gateway after migration 4, retaining known delivery aliases. The
+  exclusive schema lock and delivery-table lock serialize reconciliation with
+  current consent changes and older delivery writers. An owner-level guard
+  survives phone eviction: after any explicit opt-out, unknown legacy rotations
+  fail closed because the old protocol cannot prove which phone they represent.
+  Known enabled identities still recover through conditional refresh; explicit
+  enable remains available. Opt-out includes a distinct cached delivery alias
+  when needed and revokes both imported aliases and the retained identity.
+  A legacy identity already removed before migration is not sufficient proof for
+  a particular computer. Remembered phone records are capped at 64 per owner;
+  capacity eviction removes linked delivery and requires a new explicit choice.
+  Ordinary cleanup
+  never evicts consent.
+- Pre-migration cleanup correction (2026-11-26): if the old gateway's sweep
+  erased delivery before migration 4, neither the remaining global phone cache
+  nor its OS permission proves consent for this computer. Preserve unknown
+  history separately from explicit off. Foreground does not request permission
+  or register an unknown phone; it offers **Review settings** once for the named
+  computer. That action is fenced against account/computer changes. The existing
+  Notifications screen explains that the choice needs confirmation and offers
+  **Enable for this computer** or **Keep off for this computer**. Only explicit
+  enable sends `mode=enable`; keeping off records the durable per-computer
+  tombstone. Known off stays silent and off. Unavailable status remains an error,
+  never an inferred recovery offer or a grant.
+- Production regressions reconstruct v1, run its delivery-only TTL cleanup
+  before the production v4 bootstrap, observe unknown without a new consent row,
+  and exercise both explicit decisions. A second computer for the same owner
+  remains off in its separate production store. Mounted mobile recovery checks
+  use real settings/foreground helpers and HTTP parsing, including late scopes.
+  Fresh iOS captures of the new review offer and choices are required; earlier
+  unchanged-UI captures do not qualify this recovery UI.
+- Migration: a missing cached Expo identity is not an opt-out. With existing OS
+  permission, recover the identity and query registration without requesting
+  permission or enrolling any computer. When recovery is unavailable, show
+  unknown with retry/permissions and an explicit enable action, never a
+  confirmed off state. Cache identity before registration writes so a failed
+  cache write cannot strand a newly registered phone.
+- Regression checks exercise disagreeing selectors, two-computer opt-out plus
+  foreground refresh, actual owner isolation and expiry in gateway/Postgres,
+  request failures and stale scopes. New native iOS captures must qualify the
+  changed binding/copy/opt-out scenarios. Captures at `5ac410b1` qualify those
+  unchanged UI states, not the later consent cleanup correction. Amin explicitly
+  waived new captures for this non-UI fix and required a quick iOS verification;
+  coordinate a short lease with A7 before touching its preserved signed-in
+  client/runtime, then restore its exact selection. Android remains paused.
+
+- App settings → Push notifications opens Notifications. The explicit device
+  switch uses the existing serialized push registration helpers and revocation
+  subscription; owner preference changes never opt a phone into push.
+- A4's strict full document stays transient in Native Mobile. Save adopts the
+  confirmed revision. Failed saves retain edits; a 409 loads the latest version
+  separately and requires **Use latest** or **Keep my changes**, followed by Save.
+  Reapplying changes preserves unrelated edits from the other surface.
+- Client/account/computer changes invalidate old requests and clear the visible
+  draft. Android omits Time Sensitive while preserving its saved value; away-after
+  and device management remain deferred to B2 and B4.
+- Product copy distinguishes today's four coding-agent kind switches from timing
+  and content choices saved for later delivery updates. A1 routing and the
+  legacy completion dedupe are unchanged; A3 foreground refresh now respects
+  the selected computer's durable consent, independently of delivery cleanup.
+- API parsing and draft logic live in focused helpers. The large GatewayClient
+  adds thin delegates only; the private retained identity uses existing
+  SecureStore and adds no native dependency.
+- Historical validation before the consent lifecycle correction: all 301 mobile suites / 3,798 tests pass
+  in-band with normal exit; five focused mobile suites / 51 tests and four
+  gateway/auth suites / 49 tests pass. Mobile and all nine root typecheck
+  projects pass. Changed-file lint has no errors; React Doctor reports no
+  issues. Canonical mobile lint retains five baseline errors in four unchanged
+  files; broader root limitations are recorded on [PR #3520](https://github.com/HamedMP/matrix-os/pull/3520).
+- Consent lifecycle correction validation: all 301 mobile suites / 3,802 tests,
+  127 prepared gateway/auth tests, mobile typecheck and all nine root typecheck
+  projects pass. Changed-file lint has no errors (nine existing test-file
+  warnings); React Doctor finds no issues. Regression red/green checks cover
+  real TTL/Expo cleanup, conditional refresh after off, rotation, rollback,
+  post-v4 legacy writes, off protection after capacity eviction, and old mobile
+  automatic registration versus deliberate new-protocol enable. Quick iOS
+  verification awaits a newly coordinated device window; no new native capture
+  or remote delivery qualification is claimed by these automated checks.
+- Historical native iOS screenshots and recordings of the `9c9ed155` runtime
+  are attached to PR #3520: navigation, load/edit/save/reopen, failed-save retention
+  and retry, and real 409 recovery using the production A4 owner-file API in a
+  disposable self-hosted fixture. Cloud push registration/delivery is not claimed.
+  Amin explicitly waived Android evidence for this PR on 2026-11-25: "skip android.
+  ios is enough". Do not build/test/capture Android or run both native platforms
+  concurrently; the original logged-in Android app/data remain untouched.
+- Design/product review of settings copy and native parity is recommended.
+  Other OS views receive no UI changes: the new gateway status API serves Native
+  Mobile registration checks only. Reviewer approval of this release-specific
+  N/A rationale remains required.
+- Public documentation remains a separate deliverable in `FinnaAI/matrix-os-site`,
+  tracked by ENG-453. Repository access remains unavailable on 2026-11-25; access
+  has been requested and paste-ready text is in the A5 handoff. That deliverable
+  is not claimed complete and does not block independent review of A5.
+
+| Starting state | Action | Completion / recovery | Authority | Surface and automated boundary |
+| --- | --- | --- | --- | --- |
+| Owner on a connected computer | Edit kinds, durations, phone mode and content; Save; reopen | Confirmed values reload; Android retains hidden Time Sensitive | A4 owner API; full revisioned document | Native Mobile iOS/Android; real screen/controller/client with mocked HTTP and native sheet host |
+| Owner has unsaved edits | Save fails or another surface wins | Draft stays visible; 409 requires explicit recovery, preserving unrelated remote edits | Server revision remains authoritative | Native Mobile; settings-screen integration |
+| Selected computer opted in, delivery expired, or consent unknown | Explicitly enable/disable, retry status, or foreground sync | Same target as preferences; automatic cleanup recovers delivery; explicit opt-out stays off; stale scope ignored | Owner Postgres consent separate from delivery plus OS permission; retained private identity is never consent | Native Mobile; production screen/sync and real SQL cleanup, migration, rotation, opt-out and conditional refresh regressions |
+
 **A6 · Approvals and questions from every chat** (new `packages/gateway/src/notifications/`)
 - Router core: the `notification_events` and `notification_attempts` tables, the bounded queue, dedupe, and the transport interface. The first transport is `expo-direct`, which wraps today's push channel.
 - Compose `router.onChatEvent` into `onCommittedEvent` (see Integration wiring). Route `run.activity` rows that contain `approval.requested`, `input.requested` or `interaction.requested`.
@@ -114,9 +244,25 @@ A4 implementation notes (ENG-453, 2026-11-20):
 - Kinds and content come from the A4 preferences.
 - Done when: an approval in a Claude chat pushes once after 15 s, an approval answered within 15 s pushes nothing, a Codex approval inside a canonical chat pushes once, and a gateway killed between the chat commit and the enqueue still pushes exactly once after restart. Evidence: Native Mobile.
 
+A6 implementation notes (ENG-453, 2026-11-25):
+- Code base: A4 `aec31707dbccad5c5ce3aece105fc872fdf07c67`; A5 is a release prerequisite, with no additional gateway code dependency. No A7/A8/A9 or presence behavior is included.
+- Owner schema v2 records the backlog cutoff. Committed activity references drive the bounded queue; the source query rechecks real approval outcomes, submitted/resolved inputs, run status, request expiry, ownership and deleted/hidden chats. Bot interactions use their durable pending state and designated responder.
+- Claims start at most four sends together, so waiting batches cannot outlive the 60-second claim lease. A claim token fences late completions. Overflow uses generic-copy durable inserts with up to four concurrent writes; the durable source journal and bounded reconciler recover any larger burst. No request body or tool argument is retained in queue memory or push data.
+- The legacy bridge checks both the saved thread binding and the accepted canonical run identity: the first coding-thread event can precede saving its binding. The kill switch leaves standalone legacy delivery available.
+- Approval push copy remains generic even with previews enabled: existing approval titles can contain tool arguments. Only question titles are eligible for opt-in previews. Additive schema v3 journals accepted device-token hashes, so partial-send retries and restarts exclude known successful recipients; local capacity deferrals do not consume provider attempts. Successful sends may commit outcomes during the bounded shutdown drain. A reopened question is looked up by stable request identity, not its original activity row.
+- Qualification uses the real committed event stream, scheduler, owner database, preferences file, channel startup and thread store; only the Expo HTTP boundary is intercepted. The same delivery/recovery assertions run on real PostgreSQL in CI. Live Native Mobile iOS/Android captures remain a separate readiness requirement; tests do not establish Expo/APNs/FCM receipt.
+- Separate public-site documentation remains coordinator-owned for the A8 rollout: explain the 15-second pending-request grace, generic default copy, opt-in previews/Time Sensitive, owner/computer scope, post-migration crash recovery, and the kill switch. Direct delivery can repeat after a mid-send crash until C4's relay dedupe. Do not document reply/failure pushes, presence, or dismissal as A6 behavior. Site repository access remains unavailable; no documentation PR is claimed complete.
+
 **A7 · Reading on the phone counts as read** (`apps/mobile/components/chat/*`)
 - When a chat is on screen with the app in the foreground, call `PATCH /api/chats/:chatId/read-state` with `{ type: "mark_read", throughSeq, baseVersion }`. Follow spec 123: advance only through committed assistant messages delivered to the view, debounce to one call per 2 s, and never override a manual unread mark during the visit.
 - Done when: reading on the phone clears the unread state shown on Electron and web. Evidence: Native Mobile plus one Electron Desktop capture of the cleared state.
+
+A7 implementation notes (ENG-453):
+- Ordinary, project and agent chat views share the existing versioned read-state request. A two-second coalescing window takes the newest committed assistant sequence delivered to the view; partial messages, outgoing messages and unseen later replies cannot advance it. The side panel, backgrounding and navigation pause unsent work.
+- Visits are keyed by account, computer and chat. Read operations serialize across mounted routes and remounts through the session's React Query mutation scope; operations are not persisted or queued for offline replay. Streaming updates replace the eligible request during token lookup without cancelling that lookup; a real visibility pause advances its generation so foregrounding cannot revive obsolete work. Late results cannot update another visit. Failed acknowledgements retry on a newer snapshot or a later visit, without a retry loop.
+- A manual unread mark received during a visit remains until the owner leaves/reopens or explicitly marks read elsewhere. Foregrounding or closing the side panel alone cannot clear it. The server's version check remains the final authority for concurrent manual marks.
+- Hook regressions cover visibility, batching, serialization, remounts, failures and manual-mark recovery. A production mobile HTTP producer → gateway routes → owner database → SSE test also checks the desktop client's subsequent read and stale-read/foreign-owner denial. The wire test proves emission and parsing, not the live desktop event-to-cache consumer; live captures qualify that boundary separately.
+- This release advances shared unread state only. Reply/failure push suppression remains A8, standalone-thread routing A9, and phone dismissal/badges A11. Separate public-site documentation remains coordinated with the A8 rollout in `FinnaAI/matrix-os-site`. Android runtime validation and any resulting fixes are explicitly deferred by the requester to a separate later PR.
 
 **A8 · Replies and failures, only if still unread** (gateway)
 - Route `run.completed` and `run.failed`.
@@ -478,6 +624,8 @@ There are no inbound webhooks. Expo receipts are polled.
 | Endpoint | Release | Caller | Auth | Validation and limits |
 | --- | --- | --- | --- | --- |
 | `POST/DELETE /api/push/register` | existing; persisted in A2; removed in C5 | Native Mobile | Owner principal | Existing Zod schema; `bodyLimit` 4 KiB (add it to DELETE if missing) |
+| `POST /api/push/status` | A5 review correction | Native Mobile settings/foreground | Verified owner principal | Read-only POST; strict retained-identity body (1–512 chars), 4 KiB limit; enabled true/false/null and registered boolean only, generic errors |
+| `POST /api/push/register` with `mode=refresh` | A5 consent correction | Native Mobile foreground | Verified runtime owner; server consent must already be on | Strict bounded identity/token/platform fields, 4 KiB limit; conditional transaction cannot grant consent |
 | `PATCH /api/chats/:chatId/read-state` | existing; used by mobile from A7 | Native Mobile | Owner principal | Existing |
 | `GET /api/notifications` | A10 | Owner clients | Owner principal | Zod query: `state` ∈ {open}, `limit` 1–100, opaque cursor ≤ 200 chars |
 | `POST /api/notifications/:id/opened` | A10 | Native Mobile cold start | Owner principal | `bodyLimit` 1 KiB, uuid param, owner-scoped update |
@@ -538,7 +686,7 @@ Startup order:
 2. Resolve the transport. A6 uses `expo-direct`, which wraps the existing push channel. From C4, `MATRIX_NOTIFICATIONS_TRANSPORT=relay` with `PLATFORM_INTERNAL_URL` set selects the relay. An unresolved transport fails startup rather than failing at call time.
 3. Create `NotificationRouter({ db, preferences, presence, transport, clock, logger })`. Before B1, `presence` is a null registry that always reports "unknown". Record `startedAt` for the 30 s grace.
 4. In `createGatewayChatEventStream` (`chat/gateway-event-stream.ts`), pass `onCommittedEvent: composeSinks(createChatFailureRecorder(options), router.onChatEvent)`. `ChatOutboxDelivery` allows one sink, so compose the functions rather than register a second sink. `composeSinks` calls each sink in its own try/catch and logs failures, so a router error never breaks telemetry or chat delivery. The router sink is synchronous and only enqueues.
-5. From A9, register `router.onThreadEvent` with the thread store's `registerEventSink`. Before A9, and whenever the kill switch is on (router off), register the legacy attention bridge instead; while the router is on, the bridge skips threads bound to a canonical run. This branch is removed in A10.
+5. From A9, register `router.onThreadEvent` with the thread store's `registerEventSink`. Before A9, and whenever the kill switch is on (router off), register the legacy attention bridge instead; while the router is on, the bridge skips approval/input events for threads bound to a canonical run. Completion and failure pushes keep using the bridge until the router handles those kinds. This branch is removed in A10.
 6. Mount routes as each release adds them. Start the scheduler (2 s tick), the reconciler (once at startup, then every 30 s) and the hourly retention sweep.
 
 Shutdown:
@@ -582,6 +730,7 @@ Shutdown:
 | Crash between commit and enqueue | Approvals and questions: the reconciler finds the pending request at startup, or within 30 s, and inserts its event; the dedupe key keeps it to one push. Replies and failures: accepted loss, so that one event does not notify. |
 | Router queue full (> 1,000 pending) | The newest reply and failure events are dropped, with a counter and a log. An approval or question evicts the oldest queued reply. If no queued reply is left to evict, it is written straight to `notification_events` as `open` with the generic copy for its kind (as with `showPreview: false`) and `ON CONFLICT (owner_id, dedupe_key) DO NOTHING`, instead of being queued. The scheduler's per-tick pickup then runs the ladder for it. Memory stays capped at 1,000 items, and no approval or question is dropped. |
 | Concurrent resolve and push | Conditional updates. A push for a resolved row is skipped, and a resolve after a push triggers `dismiss`. |
+| Question answer still in flight at the grace deadline (A6) | Keep the same owner/request journal row open and defer to the next scheduler tick without consuming a transport attempt. A failed delivery can reopen the request and push once; a terminal input outcome or finished run resolves it without a push. |
 | Two gateway processes overlap during a restart | `FOR UPDATE SKIP LOCKED` plus conditional updates |
 | Interim false push (Track A) | The owner is at their desk in another app and does not read within the wait. Accepted until B2. Owners can raise `replyDelaySeconds` or turn replies off. |
 | Mobile read marking fails (A7) | The read cursor does not advance, so a reply may still push. The failure is logged and retried on the next view. |
@@ -646,6 +795,8 @@ No temp files are created. Every timer is cleared on every exit path and on shut
 - **A6 and A8 integration test:** start the real wiring (event stream with composed sinks, router, scheduler, fake transport) against a test owner database.
   - Commit `approval.requested`: one transport call after 15 s.
   - Commit `approval.resolved` first: no call.
+  - Tick while a question answer is submitted but still in flight: no call and the same event stays open across router restart. Fail delivery and reopen the request: one call. Answer, cancel, expire, or finish the run instead: no call and the event resolves.
+  - Canonical Codex, Pi, and OpenCode threads: the bridge suppresses approval/input duplicates but retains enabled completion/failure pushes and honors disabled terminal preferences.
   - Kill the scheduler between claim and send: the reclaim produces exactly one call.
   - Commit an approval and kill the gateway before the router enqueues it: after restart the reconciler inserts it, and the transport is called once.
   - Throw inside the router: failure telemetry still records `run.failed`.

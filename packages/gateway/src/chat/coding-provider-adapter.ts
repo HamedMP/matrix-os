@@ -81,7 +81,9 @@ function principal(ownerId: string) {
 function permissions(
   permissionMode: string,
   providerId: "codex" | "claude" | "opencode" | "pi",
+  setupDraft = false,
 ): Pick<CreateAgentThreadRequest, "approvalPolicy" | "sandboxMode"> {
+  if (setupDraft) return { approvalPolicy: "never", sandboxMode: "read_only" };
   if (providerId === "pi" || providerId === "opencode") {
     if (permissionMode !== "supervised") {
       throw new Error(`Unsupported ${providerId === "pi" ? "Pi" : "OpenCode"} permission mode`);
@@ -582,7 +584,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           mode,
           model: input.selection.model,
           modelOptions: chatModelOptions(input, options.providerId),
-          ...permissions(input.permissionMode, options.providerId),
+          ...permissions(input.permissionMode, options.providerId, Boolean(input.context?.projectSetupDraft)),
           attachments: attachments(input),
           clientRequestId: requestId,
         }));
@@ -654,7 +656,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           attachments: attachments(input),
           model: input.selection.model,
           modelOptions: chatModelOptions(input, options.providerId),
-          ...permissions(input.permissionMode, options.providerId),
+          ...permissions(input.permissionMode, options.providerId, Boolean(input.context?.projectSetupDraft)),
           clientRequestId: requestId,
         }));
         admittedTurnId = accepted.turnId;

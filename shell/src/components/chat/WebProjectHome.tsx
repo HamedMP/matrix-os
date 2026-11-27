@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { ProjectConversationList, useMinuteClock, type ChatAgentClient } from "@matrix-os/ui";
+import { ProjectConversationList, useMinuteClock, ProjectSetupEntry, type ChatAgentClient } from "@matrix-os/ui";
 import { FolderOpen } from "@/lib/hugeicons";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { WebProjectAgentContext } from "./WebProjectAgentContext";
@@ -11,7 +11,7 @@ import type { WebProject } from "./web-projects";
 const NO_CONVERSATIONS: readonly RenameableConversation[] = [];
 
 /** Web Desktop project home, matching Electron Desktop: slim header, agent configuration, one row per Chat. */
-export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, historyRefreshKey, historyRunStatusChange, knownChatIds, botClient, onSelectChat, active = true }: {
+export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthority, conversations = NO_CONVERSATIONS, historyIncomplete = false, historyRefreshKey, historyRunStatusChange, knownChatIds, botClient, onSelectChat, active = true, onStartSetup, setupPending, setupError }: {
   project: WebProject;
   gatewayUrl: string;
   identity: string;
@@ -30,6 +30,9 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
   botClient?: ChatAgentClient;
   onSelectChat?: (chatId: string) => void;
   active?: boolean;
+  onStartSetup?: () => void;
+  setupPending?: boolean;
+  setupError?: string | null;
 }) {
   const nowMs = useMinuteClock(active);
   const listed = useMemo(() => conversations.flatMap((chat) => chat.canonicalRecord ? [chat.canonicalRecord] : []), [conversations]);
@@ -47,7 +50,9 @@ export function WebProjectHome({ project, gatewayUrl, identity, isCurrentAuthori
             {project.name}
           </h1>
         </div>
-        <WebProjectAgentContext project={project} gatewayUrl={gatewayUrl} identity={identity} isCurrentAuthority={isCurrentAuthority} />
+        {setupError ? <p role="alert" className="my-2 text-xs">{setupError}</p> : null}
+        {onStartSetup ? <ProjectSetupEntry onStart={onStartSetup} pending={setupPending} /> : null}
+        <WebProjectAgentContext onSetupWithChat={onStartSetup} project={project} gatewayUrl={gatewayUrl} identity={identity} isCurrentAuthority={isCurrentAuthority} />
         {/* No snippet: the navigation projection carries no message excerpt, only the title. */}
         <ProjectConversationList projectName={project.name} records={history.records} status={status} nowMs={nowMs}
           onRetry={history.retry} truncated={history.capped}

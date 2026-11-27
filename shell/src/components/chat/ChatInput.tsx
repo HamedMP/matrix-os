@@ -1,10 +1,10 @@
 "use client";
 import { randomUUID } from "@matrix-os/ui/random-uuid";
 import { MAX_AGENT_ATTACHMENT_BYTES, mergeTrySuggestion, type CanonicalProviderInstanceDescriptor, type TrySuggestionDraft } from "@matrix-os/contracts";
-import { matchChatSlashToken, ProjectSkillDraftChips, useProjectSkillDraft, type ProjectChatSlashScope } from "@matrix-os/ui";
+import { createComposerSendHandoff, matchChatSlashToken, ProjectSkillDraftChips, useProjectSkillDraft, type ProjectChatSlashScope } from "@matrix-os/ui";
 import { ChatSlashPicker } from "./ChatSlashPicker";
 import { MatrixAttachmentPicker } from "./MatrixAttachmentPicker";
-import { ATTACHMENT_COUNT_LIMIT, useMatrixAttachment } from "./use-matrix-attachment";
+import { useMatrixAttachment } from "./use-matrix-attachment";
 import { hasMatrixFileDrag, takeMatrixFileDrag } from "@/lib/matrix-file-drag";
 import { usePreviewWindow } from "@/hooks/usePreviewWindow";
 import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
@@ -20,14 +20,14 @@ import {
 } from "@matrix-os/ui";
 
 import { useState, useRef, useEffect, useLayoutEffect } from "react";
-import { Attachments, useAttachments } from "@/components/ai-elements/attachments";
-import type { ChatSubmitOptions } from "@/hooks/useChatState";
+import { Attachments } from "@/components/ai-elements/attachments";
+import { ATTACHMENT_COUNT_LIMIT, encodeChatAttachments } from "@/components/ai-elements/attachments-utils";
 import { ChatMentionControls, useChatMentionPermission, useBotMentionNavigation, type ChatAgentClient } from "@matrix-os/ui";
-import { ChatMentionTokens } from "./ChatInputExtras";
+import { ChatMentionTokens, FailedChatMessage } from "./ChatInputExtras";
 import { handleChatInputKey } from "./chat-input-keyboard";
 import { chatInputPlaceholder, canSendChatInput } from "./chat-input-placeholder";
 import { ChatMentionPicker } from "./ChatMentionPicker";
-import type { ChatComposerDraft } from "./useChatComposerDraft";
+import type { ChatComposerDraft, FailedChatSend, WebChatSubmitOptions } from "./useChatComposerDraft";
 import {
   BrowserSpeechClientError,
   createBrowserSpeechClient,
@@ -37,6 +37,9 @@ import {
   createWebPcmSpeechCaptureAdapter,
   PlatformSpeechRecorderError,
 } from "@/lib/platform-speech-recorder";
+
+type ChatSendFiles = Array<{ name: string; type: string; data: string }>;
+
 export function ChatInput({
   composer, agentClient, scope, permissionMode, onOpenBotMention, slashInstance, slashCatalogLoading = false, projectSlash, isCurrentAuthority,
   connected,
@@ -55,6 +58,7 @@ export function ChatInput({
   speechClient,
   speechCaptureAdapter,
   placeholder = "Reply to chat…",
+  setupAnswer = false,
   leadingControls,
   toolbarControls,
   queue,
@@ -72,7 +76,7 @@ export function ChatInput({
   busy: boolean;
   activeRunId?: string;
   onAbortCurrent?: () => void;
-  onSubmit: (text: string, files?: Array<{ name: string; type: string; data: string }>, options?: ChatSubmitOptions) => void | Promise<boolean>;
+  onSubmit: (text: string, files?: ChatSendFiles, options?: WebChatSubmitOptions) => void | Promise<boolean>;
   autoFocus?: boolean;
   draftRequest?: ChatAgentDraftRequest | null;
   onDraftConsumed?: (id: number) => void;
@@ -88,6 +92,7 @@ export function ChatInput({
   speechClient?: BrowserSpeechClient;
   speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
   placeholder?: string;
+  setupAnswer?: boolean;
   /** Controls after attach (+), such as the project picker, like Electron Desktop. */
   leadingControls?: React.ReactNode;
   /** Model, effort and access pickers, rendered before Send/Stop like Electron Desktop. */
@@ -95,7 +100,7 @@ export function ChatInput({
   /** Queued turns, attached above the prompt card. */
   queue?: React.ReactNode;
 }) {
-  const { text: input, setText: setInput, setDraft, resources } = composer;
+  const { text: input, setText: setInput, setDraft, resources, failedSend, clearFailedSend } = composer;
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dismissedQuery, setDismissedQuery] = useState<string | null>(null);
@@ -103,17 +108,17 @@ export function ChatInput({
   const [slashDismissal, setSlashDismissal] = useState<string|null>(null);
   const skillBinding = JSON.stringify([scope, composer.permissionIdentity, projectSlash?.scope, projectSlash?.projectId, Boolean(projectSlash?.read), slashInstance?.id]);
   const projectSkillDraft = useProjectSkillDraft(skillBinding);
-  const slashToken = matchChatSlashToken(input,cursor);
+  const slashToken = setupAnswer ? null : matchChatSlashToken(input,cursor);
   const slashKey = JSON.stringify([skillBinding, input, slashToken?.start]);
   const slashQuery = slashToken && slashDismissal !== slashKey ? slashToken.query : null;
   const slashListRef = useRef<HTMLDivElement|null>(null);
   const slashAnchorRef = useRef<HTMLDivElement|null>(null);
-  const queryMatch = /(?:^|\s)@([^\s@]*)$/.exec(input);
+  const queryMatch = setupAnswer ? null : /(?:^|\s)@([^\s@]*)$/.exec(input);
   const query = queryMatch && dismissedQuery !== input ? queryMatch[1]! : null;
   const permissionResources = botConsentResources.length ? botConsentResources : resources;
   const permission = useChatMentionPermission(scope, permissionResources, permissionMode, composer.permissionIdentity);
   const referenceCount = resources.length + projectSkillDraft.paths.length;
-  const mayQueue = referenceCount > 0;
+  const mayQueue = !setupAnswer && referenceCount > 0;
   const canAbort = Boolean(activeRunId && onAbortCurrent);
 
 
@@ -125,7 +130,7 @@ export function ChatInput({
   const consumedDraftRequest = useRef<number | null>(null);
   // The last merged suggestion, to tell an untouched suggestion from the owner's own words.
   const mergedDraft = useRef<TrySuggestionDraft | null>(null);
-  const { attachments, addFiles, removeFile, getBase64Files } = useAttachments();
+  const { attachments, addAttachments, removeAttachment } = composer;
   const fileAuthority = usePreviewWindow(state => state.draftAuthority);
   const [matrixPickerOpen, setMatrixPickerOpen] = useState(false);
   const matrixAttachment = useMatrixAttachment({
@@ -136,7 +141,7 @@ export function ChatInput({
     isCurrentAuthority,
     policy: attachmentPolicy,
     scope: JSON.stringify([scope, composer.permissionIdentity]),
-    onAdd: file => addFiles([file]),
+    onAdd: file => addAttachments([file]),
   });
   const currentComposer = useRef({ composer, scope });
   useLayoutEffect(() => { currentComposer.current = { composer, scope }; }, [composer, scope]);
@@ -157,8 +162,41 @@ export function ChatInput({
   });
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
   const contextEnabled = driveContextEnabled && !botContext;
-  const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
-  const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: referenceCount, text: input, attachments: attachments.length });
+  const blockedDriveContext = !setupAnswer && resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
+  const canSend = (setupAnswer || !failedSend) && (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: setupAnswer ? 0 : referenceCount, text: input, attachments: setupAnswer ? 0 : attachments.length });
+  const canRetry = !setupAnswer && failedSend && !speechBusy && !matrixAttachment.pending
+    && permissionMode === failedSend.permissionMode
+    && (attachmentsEnabled || !failedSend.files.length)
+    && (contextEnabled || !failedSend.options.resources.some(resource => resource.kind === "organization_drive"))
+    && (!failedSend.options.projectSkillProjectId || (
+      projectSlash?.projectId === failedSend.options.projectSkillProjectId && projectSlash.read
+      && projectSlash.scope === failedSend.projectScope && slashInstance?.id === failedSend.harnessId
+    ))
+    && canSendChatInput({ connected, sending, busy, references: failedSend.options.resources.length + Number(Boolean(failedSend.options.projectSkillProjectId)), text: failedSend.prompt, attachments: failedSend.files.length });
+
+  const retryFailedSend = async () => {
+    if (!failedSend || !canRetry || !(isCurrentAuthority?.() ?? true)) return;
+    const attachmentError = attachmentPolicy?.(failedSend.files);
+    if (attachmentError) { setError(attachmentError); return; }
+    const requestId = failedSend.options.clientRequestId;
+    setSending(true);
+    setError(null);
+    try {
+      const files = failedSend.files.length ? await encodeChatAttachments(failedSend.files) : undefined;
+      const accepted = await onSubmit(failedSend.prompt, files, {
+        ...failedSend.options,
+        retrySubmission: failedSend.submission,
+        onAccepted: chatId => {
+          if (chatId) composer.moveDraft(chatId);
+          clearFailedSend(requestId);
+        },
+      });
+      if (accepted !== false) clearFailedSend(requestId);
+    } catch (failure: unknown) {
+      console.warn("[chat] Message retry failed:", failure instanceof Error ? failure.name : "UnknownError");
+    }
+    setSending(false);
+  };
 
   useEffect(() => {
     if (inputRef.current !== input) setCursor(input.length);
@@ -176,9 +214,9 @@ export function ChatInput({
     if (!element) return;
     element.style.height = "0px";
     const contentHeight = element.scrollHeight;
-    element.style.height = `${Math.min(Math.max(contentHeight, 40), 220)}px`;
+    element.style.height = `${Math.min(Math.max(contentHeight, setupAnswer ? 24 : 40), 220)}px`;
     element.style.overflowY = contentHeight > 220 ? "auto" : "hidden";
-  }, [input]);
+  }, [input, setupAnswer]);
 
   useEffect(() => {
     // react-doctor-disable-next-line react-doctor/no-event-handler -- focusing a DOM ref when the composer mounts or autoFocus turns on is a legitimate effect, not a user-event side effect that belongs in a parent handler
@@ -203,60 +241,107 @@ export function ChatInput({
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!canSend) return;
-    const attachmentError = attachmentPolicy?.(attachments.map(item => item.file));
+    const attachmentError = !setupAnswer && attachmentPolicy?.(attachments.map(item => item.file));
     if (attachmentError) { setError(attachmentError); return; }
     const text = input.trim();
-    const projectSkillProjectId = projectSkillDraft.paths.length ? projectSlash?.projectId : undefined;
-    const currentSkillScope = () => projectSkillDraft.isCurrent()
-      && currentComposer.current.composer.requestId === composer.requestId
-      && (isCurrentAuthority?.() ?? true);
+    const projectSkillProjectId = !setupAnswer && projectSkillDraft.paths.length ? projectSlash?.projectId : undefined;
+    const preserveSkillSelection = Boolean(projectSkillProjectId && composer.permissionIdentity);
+    let draftCleared = false;
+    const sameDraft = () => currentComposer.current.scope === scope
+      && (draftCleared || currentComposer.current.composer.requestId === composer.requestId);
+    const currentSkillScope = () => projectSkillDraft.isCurrent() && sameDraft() && (isCurrentAuthority?.() ?? true);
     if (projectSkillProjectId && !currentSkillScope()) return;
     setSending(true);
     setError(null);
     const submittedIds = attachments.map(item => item.id);
-    let acknowledged = false;
-    const acknowledge = () => {
-      if (acknowledged || currentComposer.current.scope !== scope || currentComposer.current.composer.requestId !== composer.requestId) return;
-      if (projectSkillProjectId && !currentSkillScope()) return;
-      acknowledged = true; permission.confirm(false); composer.clear();
-      projectSkillDraft.clear();
-      for (const id of submittedIds) removeFile(id);
+    const submittedDraft = { text: composer.text, resources: composer.resources, attachments,
+      requestId: composer.requestId, permissionIdentity: composer.permissionIdentity };
+    const submissionOptions = {
+      resources, clientRequestId: composer.requestId || randomUUID(), permissionMode: permission.permissionMode,
+      ...(projectSkillProjectId ? { projectSkillProjectId } : {}),
     };
+    let retry: FailedChatSend | undefined;
+    const settleSubmission = () => {
+      permission.confirm(false);
+      projectSkillDraft.clear();
+    };
+    // The draft leaves the composer when its message shows, and comes back if the send is not admitted.
+    const handoff = createComposerSendHandoff({
+      clear: () => {
+        if (!sameDraft() || (projectSkillProjectId && !currentSkillScope())) return false;
+        draftCleared = true;
+        composer.clear({ retainIdentity: preserveSkillSelection, sentAttachmentIds: submittedIds });
+        return true;
+      },
+      restore: () => {
+        draftCleared = false;
+        if (!retry) return;
+        const keepForRetry = Boolean(retry.unconfirmed || retry.files.length || (projectSkillProjectId && !projectSkillDraft.isCurrent()));
+        composer.restore(submittedDraft, retry, keepForRetry);
+        if (keepForRetry || composer.hasNewerDraft(submittedDraft)) projectSkillDraft.clear();
+      },
+      settle: cleared => {
+        clearFailedSend(submissionOptions.clientRequestId);
+        if (cleared) {
+          if (preserveSkillSelection) composer.clear();
+          if (currentComposer.current.scope === scope) settleSubmission();
+          return;
+        }
+        if (!sameDraft() || (projectSkillProjectId && !currentSkillScope())) return;
+        composer.clear({ sentAttachmentIds: submittedIds }); settleSubmission();
+      },
+    });
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower try/finally yet; the finally is required to release the submission guard on every failure.
     try {
-      const files = attachments.length ? await getBase64Files() : undefined;
+      if (setupAnswer) {
+        if ((await onSubmit(text, undefined, { resources: [] })) !== false && sameDraft()) composer.clear();
+        return;
+      }
+      const attachedFiles = attachments.map(({ file }) => file);
+      const files = attachedFiles.length ? await encodeChatAttachments(attachedFiles) : undefined;
       if (projectSkillProjectId && !currentSkillScope()) return;
       const prompt = projectSkillDraft.prompt(text || (files?.length ? `Attached ${files.length} file(s)` : ""));
+      const submitted: FailedChatSend = { text, prompt, files: attachedFiles, options: submissionOptions,
+        projectScope: projectSlash?.scope, harnessId: slashInstance?.id, permissionMode };
+      retry = submitted;
       const accepted = await onSubmit(prompt, files, {
-        resources, clientRequestId: composer.requestId || randomUUID(), permissionMode: permission.permissionMode, onAccepted: acknowledge,
-        ...(projectSkillProjectId ? { projectSkillProjectId } : {}),
+        ...submissionOptions,
+        onPrepared: submission => { submitted.submission = submission; },
+        onAdmissionUnconfirmed: () => { submitted.unconfirmed = true; },
+        onAccepted: chatId => {
+          handoff.accepted();
+          if (chatId) composer.moveDraft(chatId);
+        },
+        onShown: handoff.shown,
       });
-      if (accepted !== false) acknowledge();
+      if (accepted !== false) handoff.accepted(); else handoff.rejected();
     } catch (failure: unknown) {
-      if (projectSkillProjectId && !currentSkillScope()) return;
+      const current = !projectSkillProjectId || currentSkillScope();
+      handoff.rejected();
+      if (!current) return;
       console.warn("[chat] Message submission failed:", failure instanceof Error ? failure.name : "UnknownError");
       setError("Message could not be sent. Try again.");
     } finally { setSending(false); }
   };
 
-  const editorPlaceholder = connected ? placeholder : chatInputPlaceholder({ transcribing: false, recording: false, connected, unavailable: unavailablePlaceholder });
+  const editorPlaceholder = connected || setupAnswer ? placeholder : chatInputPlaceholder({ transcribing: false, recording: false, connected, unavailable: unavailablePlaceholder });
 
-  function addDroppedFiles(list: FileList) {
+  function addFilesFromInput(list: FileList, validateSize = true) {
     if (list.length + attachments.length > ATTACHMENT_COUNT_LIMIT) {
       setError(`A message carries up to ${ATTACHMENT_COUNT_LIMIT} attachments.`);
       return;
     }
     const files = Array.from(list);
-    if (files.some(file => file.size > MAX_AGENT_ATTACHMENT_BYTES)) {
+    if (validateSize && files.some(file => file.size > MAX_AGENT_ATTACHMENT_BYTES)) {
       setError("A file exceeds the attachment size limit.");
       return;
     }
     setError(null);
-    addFiles(files);
+    addAttachments(files);
   }
 
   return (
-    <div className="matrix-chat-composer @container/chat-composer relative flex flex-col gap-2" data-slot="chat-composer"
+    <div className="matrix-chat-composer @container/chat-composer relative flex flex-col gap-2" data-slot="chat-composer" data-project-setup-answer={setupAnswer || undefined}
       onDragOver={event => {
         if (event.dataTransfer && (hasMatrixFileDrag(event.dataTransfer) || event.dataTransfer.types?.includes("Files"))) {
           event.preventDefault();
@@ -276,12 +361,12 @@ export function ChatInput({
             setError(null);
             void matrixAttachment.attach(path);
           } else if (matrixGatewayUrl) setError("Drag the file from the active Matrix Files window.");
-        } else addDroppedFiles(transfer.files);
+        } else addFilesFromInput(transfer.files);
       }}
       onPaste={event => {
         if (!attachmentsEnabled || !connected || sending || !event.clipboardData?.files?.length) return;
         if (!event.clipboardData.getData("text/plain")) event.preventDefault();
-        addDroppedFiles(event.clipboardData.files);
+        addFilesFromInput(event.clipboardData.files);
       }}>
       <ChatMentionPicker listRef={mentionListRef} onDismiss={() => { setDismissedQuery(input); textareaRef.current?.focus(); }} client={agentClient} scope={scope} query={query} resources={resources} onSelect={(resource) => {
         const text = input.replace(/@[^\s@]*$/, "");
@@ -297,6 +382,8 @@ export function ChatInput({
       {botMention.pending ? <p role="status" className="text-xs">Opening bot Chat…</p> : null}
       {botMention.error || botMention.notice ? <p role="alert" className="text-xs">{botMention.error || botMention.notice}</p> : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
+      {!setupAnswer && failedSend ? <FailedChatMessage text={failedSend.text} canRetry={Boolean(canRetry)} sending={sending} unconfirmed={failedSend.unconfirmed}
+        onRetry={() => void retryFailedSend()} onDiscard={() => clearFailedSend(failedSend.options.clientRequestId)} /> : null}
       {!matrixPickerOpen && matrixAttachment.error ? <p role="alert" className="text-xs text-destructive">{matrixAttachment.error}</p> : null}
       {!matrixPickerOpen && matrixAttachment.pending ? <p role="status" className="text-xs">Reading Matrix file…</p> : null}
       {matrixGatewayUrl && matrixPickerOpen ? <MatrixAttachmentPicker gatewayUrl={matrixGatewayUrl}
@@ -336,7 +423,8 @@ export function ChatInput({
           hidden
           aria-label="Attach files"
           onChange={(event) => {
-            if (event.target.files?.length) addFiles(event.target.files);
+            // Keep picker selections editable so submit can explain any provider size limit.
+            if (attachmentsEnabled && event.target.files?.length) addFilesFromInput(event.target.files, false);
             event.target.value = "";
           }}
         />
@@ -354,7 +442,7 @@ export function ChatInput({
             <div data-slot="composer-context-row" className="flex min-w-0 flex-col gap-2 px-4 pt-3">
               <ProjectSkillDraftChips paths={projectSkillDraft.paths} onRemove={projectSkillDraft.remove} />
               <ChatMentionTokens resources={resources} onRemove={(resource) => composer.setResources(resources.filter((item) => item !== resource))} />
-              <Attachments attachments={attachments} onRemove={removeFile} />
+              <Attachments attachments={attachments} onRemove={removeAttachment} />
             </div>
           ) : null}
           editor={(
@@ -378,7 +466,7 @@ export function ChatInput({
                   handleChatInputKey(event, { query, mentionListRef, onDismiss: () => setDismissedQuery(input), onSubmit: () => void handleSubmit() });
                 }}
                 placeholder={editorPlaceholder}
-                rows={2}
+                rows={setupAnswer ? 1 : 2}
                 className="block max-h-[220px] min-h-10 w-full resize-none border-0 bg-transparent p-0 text-[14px] leading-[20px] text-[var(--text-primary)] shadow-none outline-none placeholder:text-[var(--text-tertiary)] focus-visible:outline-none focus-visible:ring-0"
               />
             </div>

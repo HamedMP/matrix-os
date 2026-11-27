@@ -37,6 +37,7 @@ describe("ProjectLanding", () => {
       expect(await screen.findByText("release-check")).toBeTruthy();
       expect(request).toHaveBeenCalledWith("https://fixture.test/api/projects/project_alpha_id/agent-context", expect.objectContaining({ method: "GET" }));
       fireEvent.click(screen.getByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
       expect(screen.getByRole("button", { name: "Open AGENTS.md" })).toBeTruthy();
       fireEvent.click(screen.getByRole("button", { name: "Open project files" }));
       expect(actions.showInFiles).toHaveBeenCalledExactlyOnceWith(true);
@@ -67,6 +68,7 @@ describe("ProjectLanding", () => {
       render(<ProjectLanding project={project}><textarea aria-label="Project draft" /></ProjectLanding>);
       fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
       fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
       const edit = await screen.findByRole("button", { name: "Open AGENTS.md" });
       expect(request).toHaveBeenCalledTimes(1);
       expect(useDesktopEditor.getState().paths).toEqual(editor.paths);
@@ -98,6 +100,7 @@ describe("ProjectLanding", () => {
       render(<ProjectLanding project={project}><textarea aria-label="Project draft" /></ProjectLanding>);
       fireEvent.click(screen.getByRole("button", { name: "Agent configuration" }));
       fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
       const create = await screen.findByRole("button", { name: "Create AGENTS.md" });
       expect(request).toHaveBeenCalledTimes(1);
       fireEvent.click(create);

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createCustomMcpRoutes } from "../../packages/gateway/src/integrations/custom-mcp/routes.js";
 import type { CustomMcpBroker } from "../../packages/gateway/src/integrations/custom-mcp/broker.js";
 import { RegisteredMcpOAuthClients } from "../../packages/gateway/src/integrations/custom-mcp/catalog-presets.js";
+import { buildGatewayUrl } from "../../desktop/src/renderer/src/lib/api";
 
 function broker() {
   return {
@@ -92,9 +93,18 @@ describe("Custom MCP catalog presets at the HTTP boundary", () => {
   const catalog = RegisteredMcpOAuthClients.fromEnv({ MCP_OAUTH_GITHUB_CLIENT_ID: "gh", MCP_OAUTH_GITHUB_CLIENT_SECRET: "gh-secret-value" });
   const json = (body: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
+  it("loads Linear from Electron Settings on an additional computer", async () => {
+    const app = createCustomMcpRoutes({ broker: broker(), resolveUserId: async () => "owner", catalog });
+    const url = new URL(buildGatewayUrl("https://app.matrix-os.com", "/api/mcp-servers/catalog", "dev"));
+    const response = await app.request(url.pathname.slice("/api/mcp-servers".length) + url.search);
+    expect(response.status).toBe(200);
+    expect((await response.json()).presets).toContainEqual(expect.objectContaining({ id: "linear" }));
+  });
+
   it("lists connectable presets for a signed-in owner with validated filters", async () => {
     const app = createCustomMcpRoutes({ broker: broker(), resolveUserId: async () => "owner", catalog });
-    const response = await app.request("/catalog?department=engineering");
+    const url = new URL(buildGatewayUrl("https://app.matrix-os.com", "/api/mcp-servers/catalog?department=engineering", "dev"));
+    const response = await app.request(url.pathname.slice("/api/mcp-servers".length) + url.search);
     expect(response.status).toBe(200);
     const body = await response.json() as { presets: Array<{ id: string; departments: string[] }> };
     expect(body.presets.map(preset => preset.id)).toEqual(expect.arrayContaining(["github", "linear"]));

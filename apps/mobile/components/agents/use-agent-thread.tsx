@@ -18,6 +18,7 @@ import { supportedAttachmentKinds } from "@/lib/chat-attachments";
 import { chatDraftKey } from "@/lib/chat-drafts";
 import { useBotChat } from "@/lib/queries/use-bot-chat";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
+import { useMarkChatRead } from "@/lib/queries/use-mark-chat-read";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { useComposerSpeech } from "@/lib/speech/use-composer-speech";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
@@ -65,6 +66,7 @@ export function useAgentThread({ agent, chatId, showRoutineHistory = false, read
   const { isSignedIn, userId } = useAuth();
   const warmSessionToken = useSessionTokenWarmup();
   const { detail, computer, refresh, isError: chatReadFailed, reload: reloadChat } = useCanonicalChatDetail(chatId);
+  useMarkChatRead(chatReadFailed ? null : detail, chatId);
   const gatewayUrl = computer ? `${HOSTED_GATEWAY_URL}${computer.gatewayPath}` : null;
   // Only an agent made from a template has a status to read.
   const botChat = useBotChat(agent && !agent.recipeRef ? null : chatId, gatewayUrl);

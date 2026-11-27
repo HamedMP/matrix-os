@@ -33,7 +33,7 @@ vi.mock("../../desktop/src/renderer/src/features/settings/SettingsView", () => (
 vi.mock("../../desktop/src/renderer/src/features/work/HostedWorkSidebar", () => ({ HostedWorkSidebar: () => null, HOSTED_WORK_SIDEBAR_WIDTH: 248 }));
 vi.mock("../../desktop/src/renderer/src/features/terminal/DesktopSharedTerminal", () => ({ DesktopSharedTerminal: () => null }));
 
-function ParentSurface({ presentation, mode, shown = true, tab = { id: "notes", kind: "app", title: "Notes", slug: "notes", closable: true } }: { presentation: "desktop" | "canvas"; mode: DesktopSurfaceMode; shown?: boolean; tab?: Tab }) {
+function ParentSurface({ presentation, mode, shown = true, tab = { id: "team-tracker", kind: "app", title: "Team Tracker", slug: "team-tracker", closable: true } }: { presentation: "desktop" | "canvas"; mode: DesktopSurfaceMode; shown?: boolean; tab?: Tab }) {
   // MissionControl derives this same input from the real renderer overlay lease.
   const overlayOpen = useUi(state => state.rendererOverlayCount > 0);
   return <DesktopSurfaceFrame

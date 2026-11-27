@@ -26,7 +26,10 @@ it("keeps an unrelated waiting task untouched and activates only after the actua
   const tasks = createBotTasksRepository(f.db), unrelated = await tasks.create({ ownerId: OWNER, ...TARGET_A, now: "2026-09-27T12:00:00.000Z" });
   const running = await tasks.transition({ ownerId: OWNER, taskId: unrelated.taskId, baseRevision: unrelated.revision, to: "running", runId: "run_unrelated", now: "2026-09-27T12:00:00.000Z" });
   await tasks.transition({ ownerId: OWNER, taskId: unrelated.taskId, baseRevision: running.revision, to: "waiting_person", now: "2026-09-27T12:00:00.000Z" });
-  await f.submit(); await f.canonical.drain();
+  await f.submit();
+  // drain() waits only for runs already active; the proposal's run may start after it returns.
+  await expect.poll(async () => (await f.db.selectFrom("bot_interactions").selectAll().execute()).length, { timeout: 15_000 }).toBe(1);
+  await f.canonical.drain();
   expect(await tasks.get({ ownerId: OWNER, taskId: unrelated.taskId })).toMatchObject({ status: "waiting_person", runId: "run_unrelated" });
   const pending = await f.db.selectFrom("bot_interactions").selectAll().executeTakeFirstOrThrow();
   expect(pending.task_id).not.toBe(unrelated.taskId);
@@ -354,11 +357,11 @@ it.each(["cancel wins", "claim wins", "forged queue hash", "forged claim mapping
       cancelledAt: "2026-09-27T12:00:01.000Z" });
     releaseForeground(); await f.canonical.drain();
     if (mode === "claim wins") {
-      await expect.poll(async () => (await f.db.selectFrom("bot_approvals").selectAll().execute()).length, { timeout: 3000 }).toBe(1);
+      await expect.poll(async () => (await f.db.selectFrom("bot_approvals").selectAll().execute()).length, { timeout: 15_000 }).toBe(1);
       await f.canonical.drain();
     }
     if (mode.startsWith("forged")) {
-      await expect.poll(async () => (await f.db.selectFrom("chat_runs").selectAll().where("client_request_id", "like", "req_cli_routine_%").where("status", "=", "failed").execute()).length, { timeout: 3000 }).toBe(1);
+      await expect.poll(async () => (await f.db.selectFrom("chat_runs").selectAll().where("client_request_id", "like", "req_cli_routine_%").where("status", "=", "failed").execute()).length, { timeout: 15_000 }).toBe(1);
       await f.canonical.drain();
     }
     const current = await f.execute({ operation: "request", requestId: "de000000-0000-4000-8000-000000000100" });

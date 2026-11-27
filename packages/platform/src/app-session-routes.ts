@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
+  MATRIX_FREE_PLAN_SLUG,
   MATRIX_HOSTED_BILLING_PLAN_SLUGS,
   MATRIX_HOSTED_BILLING_REGIONS,
   MATRIX_HOSTED_BILLING_REGION_SLUGS,
@@ -25,6 +26,8 @@ import {
   resolveProvisioningDeveloperTools,
 } from './developer-tools.js';
 import { getActivePrebillingIntent } from './prebilling-provisioning-store.js';
+import type { FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
+import { provisionFreeRuntimeForRequest } from './free-tier/provision-free-route.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import {
   normalizePostAuthRedirectPath,
@@ -52,13 +55,21 @@ const AppSessionExchangeBodySchema = z.object({
 const AppSessionProvisionBodySchema = z.object({
   runtime: RuntimeSlotSchema.optional().default('primary'),
   developerTools: DeveloperToolsSchema.optional(),
-  planSlug: z.enum(MATRIX_HOSTED_BILLING_PLAN_SLUGS).optional(),
+  planSlug: z.union([z.enum(MATRIX_HOSTED_BILLING_PLAN_SLUGS), z.literal(MATRIX_FREE_PLAN_SLUG)]).optional(),
   regionSlug: z.enum(MATRIX_HOSTED_BILLING_REGION_SLUGS).optional(),
   // Temporary compatibility for already-deployed shell bundles. New clients
   // send planSlug + regionSlug and never select provider infrastructure.
   serverType: HetznerServerTypeSchema.optional(),
   location: HetznerLocationSchema.optional(),
 }).strict().superRefine((value, ctx) => {
+  if (value.planSlug === MATRIX_FREE_PLAN_SLUG) {
+    // The free plan selects no region, machine, or tools, and always uses the primary slot.
+    const extra: string[] = (['regionSlug', 'serverType', 'location', 'developerTools'] as const)
+      .filter((key) => value[key] !== undefined);
+    if (value.runtime !== 'primary') extra.push('runtime');
+    for (const key of extra) ctx.addIssue({ code: 'custom', message: 'Not allowed for the free plan', path: [key] });
+    return;
+  }
   if ((value.planSlug === undefined) !== (value.regionSlug === undefined)) {
     ctx.addIssue({
       code: 'custom',
@@ -118,6 +129,8 @@ export function createAppSessionRoutes(opts: {
     runtimeSlot: string;
   }) => Promise<AppDomainIdentity | null>;
   getGatewayUrlForHandle: (handle: string) => string;
+  /** Free plan on metal (spec 2691); absent when the free tier or metal is not configured. */
+  freeRuntimeProvisioner?: FreeRuntimeProvisioner;
 }) {
   const routes = new Hono();
 
@@ -162,7 +175,7 @@ export function createAppSessionRoutes(opts: {
       opts.applyNoStoreHeaders(c);
       return c.json({ error: 'Unauthorized' }, 401);
     }
-    if (!opts.customerVpsService) {
+    if (!opts.customerVpsService && !opts.freeRuntimeProvisioner) {
       opts.applyNoStoreHeaders(c);
       return c.json({ error: 'Provisioning unavailable', code: 'provisioning_unavailable' }, 503);
     }
@@ -194,8 +207,28 @@ export function createAppSessionRoutes(opts: {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
+    const { planSlug } = parsed.data;
+    const freeDeps = {
+      db: opts.db,
+      appEnv: opts.appEnv,
+      provisioner: opts.freeRuntimeProvisioner,
+      selectProvisionIdentityForClerkUser: opts.selectProvisionIdentityForClerkUser,
+      ensureProvisionedPlatformUser: opts.ensureProvisionedPlatformUser,
+    };
+    if (planSlug === MATRIX_FREE_PLAN_SLUG) {
+      opts.applyNoStoreHeaders(c);
+      try {
+        return await provisionFreeRuntimeForRequest(c, result.userId, freeDeps)
+          ?? c.json({ error: 'Free plan unavailable', code: 'free_tier_unavailable' }, 503);
+      } catch (err: unknown) {
+        return opts.jsonCustomerVpsError(c, err, '/api/auth/provision-runtime');
+      }
+    }
+
     try {
-      if (opts.stripeBillingEntitlementsEnabled(opts.appEnv)) {
+      // Free enrollment uses the same entitlement and admission checks even
+      // when the deployment does not have Stripe configured.
+      if (opts.stripeBillingEntitlementsEnabled(opts.appEnv) || opts.freeRuntimeProvisioner) {
         const now = new Date();
         const entitlement = await opts.resolveEffectiveBillingEntitlement(
           opts.db,
@@ -206,6 +239,15 @@ export function createAppSessionRoutes(opts: {
         );
         const access = getRuntimeAccessDecision(entitlement, now);
         if (!access.runtimeProxyAllowed) {
+          // A request that names no plan from an owner on the free plan (invited,
+          // or already admitted) gets their free metal runtime instead of checkout.
+          if (planSlug === undefined && parsed.data.runtime === 'primary') {
+            const free = await provisionFreeRuntimeForRequest(c, result.userId, freeDeps, { implicit: true });
+            if (free) {
+              opts.applyNoStoreHeaders(c);
+              return free;
+            }
+          }
           opts.applyNoStoreHeaders(c);
           return opts.jsonCustomerVpsError(
             c,
@@ -213,6 +255,12 @@ export function createAppSessionRoutes(opts: {
             '/api/auth/provision-runtime',
           );
         }
+      }
+
+      const customerVpsService = opts.customerVpsService;
+      if (!customerVpsService) {
+        opts.applyNoStoreHeaders(c);
+        return c.json({ error: 'Provisioning unavailable', code: 'provisioning_unavailable' }, 503);
       }
 
       const prebillingIntent = await getActivePrebillingIntent(
@@ -256,8 +304,8 @@ export function createAppSessionRoutes(opts: {
       const settlingCheckoutRegion = checkoutAttempt?.regionSlug
         ? MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.slug === checkoutAttempt.regionSlug)
         : undefined;
-      const requestedProfile = parsed.data.planSlug && parsed.data.regionSlug
-        ? resolveMatrixMachineProfile(parsed.data.planSlug, parsed.data.regionSlug)
+      const requestedProfile = planSlug && parsed.data.regionSlug
+        ? resolveMatrixMachineProfile(planSlug, parsed.data.regionSlug)
         : undefined;
       const requestedRegion = parsed.data.regionSlug
         ? MATRIX_HOSTED_BILLING_REGIONS.find((region) => region.slug === parsed.data.regionSlug)
@@ -268,7 +316,7 @@ export function createAppSessionRoutes(opts: {
       );
       const serverType = checkoutAttempt?.serverType ?? requestedProfile?.serverType ?? parsed.data.serverType;
       const location = settlingCheckoutRegion?.location ?? requestedRegion?.location ?? parsed.data.location;
-      const provisioned = await opts.customerVpsService.provision(
+      const provisioned = await customerVpsService.provision(
         {
           handle: identity.handle,
           clerkUserId: result.userId,

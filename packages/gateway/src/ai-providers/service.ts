@@ -9,6 +9,8 @@ import {
   AiProviderReadinessSchema,
   AiProviderSnapshotV3Schema,
   FUNDED_AI_READINESS_TIMEOUTS,
+  isFundedCloudflarePreviewCohortModel,
+  isFundedCloudflarePreviewModel,
   AiProviderDriverViewSchema,
   type AiAccessSourceView,
   type AiProviderAccountView,
@@ -27,6 +29,7 @@ import {
   AI_PROVIDER_CATALOG_VERSION,
   buildBundledModelCatalog,
   eligibleModelsForSource,
+  FUNDED_PREVIEW_CHAT_ROUTES,
   OWNER_OPENAI_MODEL_IDS,
 } from "./model-catalog.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
@@ -452,7 +455,10 @@ export class AiProviderService implements AiProviderSnapshotReader {
       "matrix",
       now,
     );
-    const catalog = buildBundledModelCatalog();
+    const discoveredFundedModelIds = funded?.discoverableModelIds ?? funded?.allowedModelIds ?? [];
+    const catalog = buildBundledModelCatalog()
+      .filter(model => !isFundedCloudflarePreviewModel(model.id)
+        || isFundedCloudflarePreviewCohortModel(model.id) && discoveredFundedModelIds.includes(model.id));
     const observeFundedSource = (sourceId: string) => fundedSourceObservation(
       eligibleModelsForSource(sourceId, catalog).map(model => model.id), matrixReadiness, funded,
     );
@@ -460,6 +466,13 @@ export class AiProviderService implements AiProviderSnapshotReader {
       matrix_cloudflare: observeFundedSource("matrix_cloudflare"),
       matrix_included: observeFundedSource("matrix_included"),
     };
+    const previewSources = FUNDED_PREVIEW_CHAT_ROUTES.flatMap(({ sourceId, vendor }) => {
+      const { eligibleModelIds, discoverableModelIds, readiness } = observeFundedSource(sourceId);
+      return discoverableModelIds.length === 0 ? [] : [sourceFromReadiness({
+        id: sourceId, displayName: "Matrix AI", fundingKind: "matrix_included", vendor, accountLabel: "Included",
+        eligibleModelIds, discoverableModelIds, policyVersion: AI_PROVIDER_CATALOG_VERSION,
+      }, readiness)];
+    });
 
     const accessSources: AiAccessSourceView[] = [
       sourceFromReadiness({
@@ -469,6 +482,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         discoverableModelIds: fundedSources.matrix_cloudflare.discoverableModelIds,
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, fundedSources.matrix_cloudflare.readiness),
+      ...previewSources,
       sourceFromReadiness({
         id: "matrix_included",
         displayName: "Matrix AI",

@@ -14,6 +14,7 @@ const clerkState = vi.hoisted(() => ({
 }));
 const navigationState = vi.hoisted(() => ({
   replace: vi.fn(),
+  redirect: vi.fn(),
 }));
 const addComputerRender = vi.hoisted(() => vi.fn());
 
@@ -79,12 +80,30 @@ async function loadBillingGate() {
 }
 
 vi.mock("next/navigation", () => ({
+  RedirectType: { push: "push", replace: "replace" },
+  redirect: (...args: unknown[]) => {
+    navigationState.redirect(...args);
+    throw new Error("NEXT_REDIRECT");
+  },
   usePathname: () => window.location.pathname,
   useRouter: () => ({
     replace: navigationState.replace,
   }),
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
+
+function computerList(slots: string[]) {
+  const items = slots.map((slot) => ({
+    handle: "owner",
+    runtimeSlot: slot,
+    label: slot === "primary" ? "Main Computer" : "Additional Computer",
+    availability: "available",
+    kind: "customer",
+    gatewayPath: slot === "primary" ? "/vm/owner" : `/vm/owner?runtime=${slot}`,
+    capabilities: [],
+  }));
+  return { items, hasMore: false, limit: 20, selectedSlot: null };
+}
 
 describe("BillingGate", () => {
   beforeEach(async () => {
@@ -110,6 +129,7 @@ describe("BillingGate", () => {
     window.history.replaceState({}, "", "/");
     window.sessionStorage.clear();
     navigationState.replace.mockReset();
+    navigationState.redirect.mockReset();
     addComputerRender.mockReset();
     vi.restoreAllMocks();
   });
@@ -160,6 +180,93 @@ describe("BillingGate", () => {
     expect(await screen.findByTestId("add-computer-onboarding")).toBeTruthy();
     expect(screen.queryByText("Matrix workspace")).toBeNull();
     expect(addComputerRender).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends an owner whose first build failed back to its retry instead of the add-computer flow", async () => {
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/?billing=setup&handoff=add-computer");
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const body = url.startsWith("/api/journey")
+        ? {
+            phase: "provisioning_failed",
+            detail: "Setting up your computer ran into a problem.",
+            nextAction: { kind: "retry_provision" },
+            failure: { retryable: true, attempt: 1 },
+          }
+        : url.startsWith("/api/auth/computers")
+          ? computerList(["primary"])
+          : { access: { runtimeProxyAllowed: true, reason: "active" } };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.resetModules();
+
+    // Next handles the thrown redirect in an error boundary outside this component.
+    class RedirectBoundary extends React.Component<React.PropsWithChildren> {
+      state = { redirected: false };
+      static getDerivedStateFromError(error: Error) {
+        if (error.message !== "NEXT_REDIRECT") throw error;
+        return { redirected: true };
+      }
+      render() {
+        return this.state.redirected ? null : this.props.children;
+      }
+    }
+    const caught = vi.fn();
+    const { BillingGate } = await loadBillingGate();
+    render(
+      <RedirectBoundary>
+        <BillingGate platformSessionActive>
+          <div>Matrix workspace</div>
+        </BillingGate>
+      </RedirectBoundary>,
+      { onCaughtError: caught },
+    );
+
+    await waitFor(() => expect(navigationState.redirect).toHaveBeenCalledWith("/", "replace"));
+    expect(caught).toHaveBeenCalledWith(expect.objectContaining({ message: "NEXT_REDIRECT" }), expect.anything());
+    expect(screen.queryByTestId("add-computer-onboarding")).toBeNull();
+    expect(addComputerRender).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["owns another computer", ["primary", "studio"], false],
+    ["has a saved add-computer flow (checkout return)", ["primary"], true],
+  ] as const)("keeps the add-computer flow for an owner whose primary failed but who %s", async (_name, slots, draft) => {
+    vi.unstubAllEnvs();
+    window.history.replaceState({}, "", "/?billing=setup&handoff=add-computer");
+    window.sessionStorage.clear();
+    if (draft) window.sessionStorage.setItem("matrix:add-computer-draft:v2", JSON.stringify({ name: "Studio", slot: "studio" }));
+    clerkState.isLoaded = true;
+    clerkState.isSignedIn = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const body = url.startsWith("/api/journey")
+        ? {
+            phase: "provisioning_failed",
+            detail: "Setting up your computer ran into a problem.",
+            nextAction: { kind: "retry_provision" },
+            failure: { retryable: true, attempt: 1 },
+          }
+        : url.startsWith("/api/auth/computers")
+          ? computerList([...slots])
+          : { access: { runtimeProxyAllowed: true, reason: "active" } };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.resetModules();
+
+    const { BillingGate } = await loadBillingGate();
+    render(
+      <BillingGate platformSessionActive>
+        <div>Matrix workspace</div>
+      </BillingGate>,
+    );
+
+    expect(await screen.findByTestId("add-computer-onboarding")).toBeTruthy();
+    expect(navigationState.redirect).not.toHaveBeenCalled();
+    window.sessionStorage.clear();
   });
 
   it("keeps the full signup handoff visible while marked billing status resolves", async () => {

@@ -740,6 +740,71 @@ it("only submits a selected skill to its bound project and requests that checkou
   });
 });
 
+it("keeps the selected Chat's checkout pending while its first detail loads", async () => {
+  const source = { ...record("chat_source", "Previous chat"), projectId: "proj_one" };
+  const destination = { ...record("chat_opening", "Project setup"), projectId: "proj_one" };
+  const detailResponse = Promise.withResolvers<Response>();
+  const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/api/chats?")) return Response.json({ items: [source] });
+    if (url.includes("/api/chats/chat_source?")) return Response.json({
+      ...detail("chat_source", "Previous chat"), record: source,
+    });
+    if (url.includes("/api/chats/chat_opening?")) return detailResponse.promise;
+    throw new Error(`Unexpected request: ${url} ${init?.method ?? "GET"}`);
+  });
+  stubLegacyChatFetch(fetchFn);
+  const { result } = renderHook(() => useCanonicalChatState());
+  await waitFor(() => expect(result.current.messages[0]?.content).toBe("Previous chat"));
+
+  act(() => result.current.switchConversation("chat_opening"));
+  try {
+    expect(result.current.sessionId).toBe("chat_opening");
+    expect(result.current.messages).toEqual([]);
+    expect(result.current.chatFileScope).toEqual({ kind: "unavailable" });
+    expect(result.current.projectSkillRootAvailable).toBe("pending");
+    await act(async () => {
+      expect(await result.current.submitMessage("Use the selected skill.", undefined, {
+        instanceId: "pi_default", model: "anthropic:claude-sonnet-5", interactionMode: "default", permissionMode: "supervised",
+        projectSkillProjectId: "proj_one",
+      })).toBe(false);
+    });
+    expect(fetchFn.mock.calls.some(([url, init]) => init?.method === "POST" && /\/(?:queued-)?turns$/.test(url))).toBe(false);
+  } finally {
+    await act(async () => {
+      detailResponse.resolve(Response.json({
+        ...detail("chat_opening", "Project setup"), record: destination,
+      }));
+    });
+  }
+  await waitFor(() => expect(result.current.messages[0]?.content).toBe("Project setup"));
+  expect(result.current.projectSkillRootAvailable).toBe(true);
+});
+
+it("keeps an unresolved streamed run root distinct from a different checkout", async () => {
+  const { snapshot } = createCanonicalChatFixture("running");
+  const { project, providerBinding: _binding, activeRun, ...chat } = snapshot.chat;
+  const projectId = project!.projectId;
+  const current = { chat, projectId, activeRun };
+  const fetchFn = vi.fn(async (url: string) => {
+    if (url.includes("/api/chats?")) return Response.json({ items: [current] });
+    if (url.includes(`/api/chats/${chat.id}?`)) return Response.json({
+      record: current, messages: snapshot.messages, turns: snapshot.turns, activities: [], runs: [],
+    });
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  stubLegacyChatFetch(fetchFn);
+  const { result } = renderHook(() => useCanonicalChatState());
+  await waitFor(() => expect(result.current.messages.length).toBeGreaterThan(0));
+  expect(result.current.projectSkillRootAvailable).toBe("pending");
+  await act(async () => {
+    expect(await result.current.submitMessage("Use the selected skill.", undefined, {
+      instanceId: "codex_fixture", model: "gpt-5.6-sol", interactionMode: "default", permissionMode: "supervised",
+      projectSkillProjectId: projectId,
+    })).toBe(false);
+  });
+  expect(fetchFn.mock.calls.some(([url]) => /\/(?:queued-)?turns$/.test(url))).toBe(false);
+});
+
 it.each(["primary checkout", "other project", "worktree"] as const)(
   "queues a skill-only draft only for the active run's primary checkout (%s)",
   async (scope) => {
@@ -802,7 +867,7 @@ it.each(["primary checkout", "other project", "worktree"] as const)(
   },
 );
 
-it("withholds primary checkout skills after a worktree run", async () => {
+it.each(["worktree", "foreign project"] as const)("withholds primary checkout skills after a %s run", async scope => {
   const { snapshot } = createCanonicalChatFixture("completed");
   const { project, providerBinding: _binding, activeRun: _active, ...chat } = snapshot.chat;
   const projectId = project!.projectId;
@@ -811,7 +876,9 @@ it("withholds primary checkout skills after a worktree run", async () => {
     if (url.includes("/api/chats?")) return Response.json({ items: [current] });
     if (url.includes(`/api/chats/${chat.id}?`)) return Response.json({
       record: current, messages: snapshot.messages, turns: snapshot.turns, activities: snapshot.activities,
-      runs: snapshot.runs.map(run => ({ ...run, executionRoot: { kind: "worktree", projectId, worktreeId: "worktree_one" } })),
+      runs: snapshot.runs.map(run => ({ ...run, executionRoot: scope === "worktree"
+        ? { kind: "worktree", projectId, worktreeId: "worktree_one" }
+        : { kind: "project", projectId: "proj_foreign" } })),
     });
     throw new Error(`Unexpected request: ${url}`);
   });

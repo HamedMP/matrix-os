@@ -5,10 +5,11 @@ import { Platform } from "react-native";
 import { z } from "zod/v4";
 import { CanonicalChatIdSchema, MatrixComputerHandleSchema, ThreadIdSchema } from "@matrix-os/contracts";
 
-import { updatePushRegistration } from "@/lib/requests/settings";
+import { fetchPushRegistrationStatus, refreshPushRegistration, updatePushRegistration } from "@/lib/requests/settings";
 import { ensureNotificationChannels } from "@/lib/notification-channels";
 
 const PUSH_TOKEN_KEY = "matrix_os_expo_push_token";
+const PUSH_IDENTITY_KEY = "matrix_os_push_identity";
 
 export const NotificationTargetSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("chat"), chatId: CanonicalChatIdSchema }),
@@ -164,47 +165,96 @@ export function addNotificationResponseListener(
   return Notifications.addNotificationResponseReceivedListener(handler);
 }
 
-export async function isPushNotificationsEnabled(): Promise<boolean> {
-  return Boolean(await SecureStore.getItemAsync(PUSH_TOKEN_KEY));
-}
-
-export async function enablePushNotifications(input: {
+export interface PushRegistrationSession {
   clerkToken: string;
   gatewayUrl: string;
-}): Promise<void> {
+  /** Client-only account/computer identity for stale-response and event guards. */
+  scopeKey?: string;
+}
+
+export class PushIdentityUnavailableError extends Error {
+  constructor() {
+    super("Push registration identity unavailable.");
+    this.name = "PushIdentityUnavailableError";
+  }
+}
+
+async function readExpoPushIdentity(): Promise<string> {
+  const projectId = Constants.easConfig?.projectId
+    ?? (Constants.expoConfig?.extra?.eas as { projectId?: string } | undefined)?.projectId;
+  return (await expoPushToken(projectId ? { projectId } : undefined)).data;
+}
+
+async function pushIdentity(currentDelivery?: string): Promise<string> {
+  const identity = await SecureStore.getItemAsync(PUSH_IDENTITY_KEY);
+  if (identity) return identity;
+  const cached = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
+  const retained = cached ?? currentDelivery;
+  if (retained) {
+    await SecureStore.setItemAsync(PUSH_IDENTITY_KEY, retained);
+    return retained;
+  }
+  // Older opt-out deleted the shared cache while other computers could still
+  // have this phone registered. A cache miss is not proof of revocation.
+  const permission = await Notifications.getPermissionsAsync();
+  if (!permission.granted) throw new PushIdentityUnavailableError();
+  await ensureNotificationChannels();
+  const token = await readExpoPushIdentity();
+  await SecureStore.setItemAsync(PUSH_IDENTITY_KEY, token);
+  await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
+  return token;
+}
+
+/** null requires a deliberate per-computer choice; cached identity is not consent. */
+export async function isPushNotificationsEnabled(input: PushRegistrationSession): Promise<boolean | null> {
+  const token = await pushIdentity();
+  return fetchPushRegistrationStatus({ ...input, expoPushToken: token });
+}
+
+export async function enablePushNotifications(input: PushRegistrationSession): Promise<void> {
   await ensureNotificationChannels();
   const existing = await Notifications.getPermissionsAsync();
   const permission = existing.granted ? existing : await Notifications.requestPermissionsAsync();
   if (!permission.granted) throw new Error("Push notification permission was not granted.");
 
-  const projectId = Constants.easConfig?.projectId
-    ?? (Constants.expoConfig?.extra?.eas as { projectId?: string } | undefined)?.projectId;
-  const token = (await expoPushToken(
-    projectId ? { projectId } : undefined,
-  )).data;
+  const token = await readExpoPushIdentity();
+  const identity = await pushIdentity(token);
 
+  // A saved identity is not opt-in. Persist it before the remote write so a
+  // lost response or storage failure cannot leave an unidentifiable device row.
+  await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
   await updatePushRegistration({
     clerkToken: input.clerkToken,
     gatewayUrl: input.gatewayUrl,
     expoPushToken: token,
+    identity,
     platform: Platform.OS,
     enabled: true,
   });
-  await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
 }
 
-export async function disablePushNotifications(input: {
-  clerkToken: string;
-  gatewayUrl: string;
-}): Promise<void> {
-  const token = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
-  if (!token) return;
+/** Refresh delivery for an existing consent; the server makes the final check. */
+export async function refreshPushNotifications(input: PushRegistrationSession, isCurrent = () => true): Promise<boolean> {
+  const identity = await pushIdentity();
+  if (!isCurrent()) return false;
+  const token = await readExpoPushIdentity();
+  if (!isCurrent()) return false;
+  await SecureStore.setItemAsync(PUSH_TOKEN_KEY, token);
+  if (!isCurrent()) return false;
+  return refreshPushRegistration({ ...input, identity, expoPushToken: token, platform: Platform.OS });
+}
+
+export async function disablePushNotifications(input: PushRegistrationSession): Promise<void> {
+  const token = await pushIdentity();
+  const cached = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
   await updatePushRegistration({
     clerkToken: input.clerkToken,
     gatewayUrl: input.gatewayUrl,
     expoPushToken: token,
     platform: Platform.OS,
     enabled: false,
+    ...(cached && cached !== token ? { deliveryToken: cached } : {}),
   });
-  await SecureStore.deleteItemAsync(PUSH_TOKEN_KEY);
+  // The identity is shared across computers, but this gateway records the
+  // explicit opt-out and removes all delivery tokens linked to it.
 }

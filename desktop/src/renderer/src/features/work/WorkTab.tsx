@@ -1,4 +1,4 @@
-import { ChatInspectorResizeHandle as ResizeHandle } from "@matrix-os/ui";
+import { ChatInspectorResizeHandle as ResizeHandle, ProjectSetupLaunchProvider } from "@matrix-os/ui";
 import { type WorkLayout, type NarrowWorkPane, type WorkResponsiveState, workLayoutForWidth, effectiveNarrowPane, resizeWork, NAVIGATION_WIDTH, MIN_INSPECTOR_WIDTH, MAX_INSPECTOR_WIDTH, DEFAULT_INSPECTOR_WIDTH, MIN_CHAT_WIDTH, COLLAPSE_RESIZE_THRESHOLD } from "./work-responsive-layout";
 import { chatImportSourceVersionUrl } from "@matrix-os/ui";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
@@ -304,7 +304,7 @@ function WorkTabContent({
     ) setDraftTerminalLaunch(null);
   }, [draftTerminalLaunch, initialChatId, initialChatTitle]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     activeTitleRecordRef.current = null;
     setEditingChatTitle(false);
     setRenamingChatTitle(false);
@@ -504,7 +504,7 @@ function WorkTabContent({
     }
     openGlobalDraft();
   }, [initialChatId, layout, openGlobalDraft, showChat]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!activeTitleRecordRef.current) setActiveChatTitle(initialChatTitle ?? "Chat");
   }, [initialChatId, initialChatTitle, client]);
   const applyRenamedChat = useCallback((incoming: CanonicalChatRecord) => {
@@ -678,7 +678,7 @@ function WorkTabContent({
   const projectChats = projectSlug ? <ProjectChatsView projectId={projectSlug} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView} eventSource={eventSource ?? undefined} externalNavigation renderInspector={canonicalInspector} inspectorExclusive={inspectorExclusive} allowLegacyFallback={false}
     sharedHeaderContainer={sharedHeaderContainer} onSharedChatMetadata={updateSharedChatMetadata} /> : null;
   const projectCenter = selectedProject
-    ? <ProjectLanding project={selectedProject} client={client ?? undefined} eventSource={eventSource ?? undefined} active={active} onSelectChat={record => selectRailChat(record, selectedProject)} showMetadata={!initialChatId && initialChatView !== "draft"}>{projectChats}</ProjectLanding>
+    ? <ProjectSetupLaunchProvider key={`${selectedProject.id}:${api?.baseUrl}:${runtimeSlot}:${authGeneration}`}><ProjectLanding project={selectedProject} client={client ?? undefined} eventSource={eventSource ?? undefined} active={active} onSelectChat={record => selectRailChat(record, selectedProject)} showMetadata={!initialChatId && initialChatView !== "draft"}>{projectChats}</ProjectLanding></ProjectSetupLaunchProvider>
     : projectChats;
   const content = route === "chat"
     ? <ChatTab tabId={tabId} active={active} visible={visible} initialChatId={initialChatId} initialView={initialChatView}

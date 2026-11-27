@@ -511,6 +511,20 @@ jobs:
           funded_ai_secret_bindings=""
           if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
+            # Pin the reviewed preview funded-AI pair (spec 2691) only when the deployed public origin
+            # (guests' PLATFORM_INTERNAL_URL) and the relay are both reviewed. Any other preview, such as a
+            # per-PR origin or a collaboration pair, keeps the production pair. Production never pins.
+            # BEGIN funded-preview-pin (tests/platform/managed-feature-activation-metal.test.ts runs this block)
+            preview_funded_relay='https://matrix-ai-relay-preview-jqxkjdhtkq-ey.a.run.app'
+            preview_funded_platforms='https://preview.matrix-os.com https://metal-preview.matrix-os.com https://matrix-platform-preview-jqxkjdhtkq-ey.a.run.app'
+            funded_preview_pin=""
+            for preview_funded_platform in $preview_funded_platforms; do
+              if [ "${PREVIEW_PUBLIC_URL%/}" = "$preview_funded_platform" ] && [ "${MATRIX_FUNDED_AI_RELAY_URL%/}" = "$preview_funded_relay" ]; then
+                funded_preview_pin="|MATRIX_FUNDED_AI_PREVIEW_PIN=1"
+              fi
+            done
+            # END funded-preview-pin
+            funded_ai_env_bindings="${funded_ai_env_bindings}${funded_preview_pin}"
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT}|MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT}"
             funded_ai_secret_bindings=",AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret:latest"
           fi

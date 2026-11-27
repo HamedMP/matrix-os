@@ -167,6 +167,11 @@
   background-color: var(--model-choice-hover);
 }
 
+.matrix-chat-model-option:disabled {
+  /* Override Electron's global disabled control fill. */
+  background-color: transparent !important;
+}
+
 .matrix-chat-model-search:focus-visible,
 .matrix-chat-model-option:focus-visible {
   outline: 2px solid var(--model-choice-focus);

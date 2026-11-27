@@ -8,7 +8,7 @@ import type {
   ProviderModelProvider,
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
-import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
+import { isSupportedGenericHarnessCredentialRoute, retiredManagedWorkersAiModel } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { gatewayPolicyAllowsModel } from "./utils.js";
 
@@ -79,6 +79,8 @@ export function HarnessEditor({
   }
   const provider = providerFor(snapshot, harness);
   const model = provider?.models.find((candidate) => candidate.id === harness.route.modelId) ?? null;
+  const savedModelRetired = harness.route.providerId === "cloudflare" && model?.enabled !== true
+    && retiredManagedWorkersAiModel(harness.route.modelId) !== undefined;
   const accessSource = snapshot.accessSources.find((source) => source.id === harness.accessSourceId) ?? null;
   useLocalObservationExpiry([accessSource?.localObservation?.staleAfter, harness.localObservation?.staleAfter]);
   const savedSourceUnsupported = accessSource !== null && !isSupportedGenericHarnessCredentialRoute(harness, accessSource);
@@ -172,12 +174,13 @@ export function HarnessEditor({
             <span>Model</span>
             {canSetRoute && mutableRoute ? <select
               aria-label="Model"
-              value={harness.route.modelId}
+              value={savedModelRetired ? "" : harness.route.modelId}
               disabled={disabled || !canSetRoute || !mutableRoute}
               title={!canSetRoute ? "Changing the model route is not available" : undefined}
               onChange={(event) => changeModel(event.target.value)}
             >
-              {model === null ? (
+              {savedModelRetired ? <option value="" disabled>Choose an available model</option> : null}
+              {!savedModelRetired && model === null ? (
                 <option value={harness.route.modelId}>{unavailableRouteLabel(harness.route.modelId)} · Unavailable</option>
               ) : null}
               {provider?.models

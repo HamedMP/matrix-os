@@ -37,6 +37,8 @@ export interface ShareOrganizationHost {
   /** Opens Matrix Chats on a NEW chat and sends `prompt` as its first message. */
   startChat: (prompt: string) => Promise<boolean>;
   openChat: () => void;
+  /** False for Matrix default apps: an existing org share can be stopped, never started. */
+  allowNewSharing?: boolean;
   /** Absolute org link for Copy; `hints` are display-only names for the hand-off page. */
   orgLink: (share: CollaborativeAppShare, hints: { app: string; org: string }) => string | null;
 }
@@ -53,7 +55,9 @@ export function useShareOrganization(host: ShareOrganizationHost): { slot: Share
     buildEpoch: host.buildEpoch,
     manageShare: enabled,
   });
-  const handoff = useCollaborativeHandoff({ appSlug: host.appSlug, api: enabled ? host.fileApi : null });
+  // A stop-only app never reads the Chats setup record, so a setup that finishes
+  // (even one started before the app became stop-only) cannot create a new share.
+  const handoff = useCollaborativeHandoff({ appSlug: host.appSlug, api: enabled && host.allowNewSharing !== false ? host.fileApi : null });
   const organizations = host.organizations ?? [];
   const [chosenId, setChosenId] = useState<string | null>(null);
   const flow = useOrganizationShareFlow({
@@ -65,6 +69,8 @@ export function useShareOrganization(host: ShareOrganizationHost): { slot: Share
     },
   });
   if (!enabled) return { slot: null, shared: false };
+  // A stop-only app shows the Organization tab only while it is shared.
+  if (host.allowNewSharing === false && !flow.shared) return { slot: null, shared: false };
   const selected = selectOrganization(organizations, [
     flow.shared ? sharing.share?.organizationId : null, flow.runningOrganizationId, chosenId, host.preferredOrganizationId,
   ]);

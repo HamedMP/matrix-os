@@ -24,6 +24,13 @@ export const REMAINING_POSTGRES_FILES = [
   'tests/gateway/jev-repository-postgres.test.ts',
   'tests/gateway/sites-bootstrap-postgres.test.ts',
   'tests/gateway/slack-pi-integration.test.ts',
+  'tests/platform/ai-funded-metal-free-runtime.test.ts',
+  'tests/platform/free-funded-policy.test.ts',
+  'tests/platform/free-prepaid-unknown-usage.test.ts',
+  'tests/platform/free-tier-invites-postgres.test.ts',
+  'tests/platform/free-tier-metal.test.ts',
+  'tests/platform/free-tier-postgres-helper.test.ts',
+  'tests/platform/metal-hosts-migration.test.ts',
   'tests/platform/sites-email-invitations-postgres.test.ts',
   'tests/platform/sites-invitation-delivery.test.ts',
   'tests/platform/sites-postgres.test.ts',
@@ -105,7 +112,8 @@ export function remainingPostgresInventory(root = process.cwd(), remainingFiles 
   const collaborationFiles = JSON.parse(readFileSync(path.join(root, 'scripts/ci/collaboration-postgres-files.json'), 'utf8'));
   validateFiles(collaborationFiles, sources, 'collaboration');
   const workflow = parseYaml(readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8'));
-  const steps = workflow?.jobs?.['funded-postgres']?.steps ?? [];
+  // Both hosted PostgreSQL lanes count: routine suites run beside the funded ones.
+  const steps = ['funded-postgres', 'routine-postgres'].flatMap(id => workflow?.jobs?.[id]?.steps ?? []);
   // Recognize canonical command lines, not a filename mentioned by echo/comment.
   // Dynamic shell selection is deliberately not evidence of a hosted assignment.
   const patterns = steps.filter(step => step.if !== false && !['false', '${{ false }}'].includes(step.if))
@@ -115,7 +123,7 @@ export function remainingPostgresInventory(root = process.cwd(), remainingFiles 
         const unitPatterns = [...command.matchAll(/(?:^|\s)(tests\/[a-zA-Z0-9_./*?-]+\.test\.tsx?)(?=\s|$)/g)].map(value => value[1]);
         // Integration files are excluded by the default config. Count only this
         // dedicated real-DB lane with its explicit URL mapping and worker bounds.
-        const routine = command.match(/^--config vitest\.routine-cli-integration\.config\.ts (tests\/gateway\/bots\/routine-cli-[a-z0-9*-]+\.postgres\.integration\.ts) --maxWorkers=1 --no-file-parallelism$/);
+        const routine = command.match(/^--config vitest\.routine-cli-integration\.config\.ts (tests\/gateway\/bots\/routine-cli-[a-z0-9*-]+\.postgres\.integration\.ts) --maxWorkers=[1-4]$/);
         return routine && step.env?.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL === '${{ env.MATRIX_TEST_POSTGRES_URL }}'
           ? [...unitPatterns, routine[1]] : unitPatterns;
       }));

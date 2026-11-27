@@ -97,6 +97,8 @@ export interface BotRuntimeBinding {
 
 export interface ManagedPiRuntimeBinding extends Omit<BotRuntimeBinding, "botId" | "taskId"> {
   kind: "managed_chat";
+  /** Server-validated no-tools setup source; never supplied by the worker. */
+  projectSetupDraft?: { revision: number; fingerprint: string; mode?: "interview" };
   workspace: { kind: "chat_workspace" } | import("../chat/execution-root.js").ChatExecutionRootProvenance;
 }
 export type PiRuntimeBinding = BotRuntimeBinding | ManagedPiRuntimeBinding;
@@ -147,6 +149,8 @@ const BindingSchema = z.object({
 
 const ManagedBindingSchema = BindingSchema.omit({ botId: true, taskId: true }).extend({
   kind: z.literal("managed_chat"),
+  projectSetupDraft: z.object({ revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/), mode: z.literal("interview").optional() }).strict().optional(),
   workspace: z.union([
     z.object({ kind: z.literal("chat_workspace") }).strict(),
     z.object({ ref: z.union([
@@ -193,6 +197,9 @@ export class BotRuntimeRegistry {
     if (!parsed.success || !isManagedPiBinding(parsed.data) && parsed.data.capabilities.includes("routine.cli") || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
       || parsed.data.subscription && parsed.data.route.api !== "openai-responses"
       || parsed.data.anthropicApi && (parsed.data.accessSourceId !== "owner_anthropic_key" || parsed.data.route.api !== "anthropic-messages" || parsed.data.subscription)) throw new BotRuntimeRegistryError("invalid_binding");
+    if (isManagedPiBinding(parsed.data) && parsed.data.projectSetupDraft
+      && (parsed.data.capabilities.length !== 0 || parsed.data.group !== undefined || parsed.data.requestClass !== "interactive"
+        || !("ref" in parsed.data.workspace) || parsed.data.workspace.ref.kind !== "project")) throw new BotRuntimeRegistryError("invalid_binding");
     this.sweep();
     if (!this.entries.has(parsed.data.runtimeHandle) && this.entries.size >= this.capacity) {
       throw new BotRuntimeRegistryError("capacity_exceeded");

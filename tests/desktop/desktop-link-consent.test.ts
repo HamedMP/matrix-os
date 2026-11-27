@@ -283,26 +283,3 @@ describe("desktop link consent", () => {
     expect(opened[1]! - opened[0]!).toBeGreaterThanOrEqual(45);
   });
 });
-
-describe("desktop link in Mac Activity", () => {
-  it("shows one entry while the link is on, through reconnects, and records how it ended", async () => {
-    const { bridgeDesktopLinkActivity } = await import("../../desktop/src/main/desktop-link/register");
-    let emit: (status: { slot: string; computerName: string; state: string }) => void = () => {};
-    const service = { onStatus: (listener: typeof emit) => { emit = listener; return () => {}; } };
-    const handles: Array<{ update: ReturnType<typeof vi.fn>; finish: ReturnType<typeof vi.fn> }> = [];
-    const begin = vi.fn(() => { const handle = { update: vi.fn(), finish: vi.fn() }; handles.push(handle); return handle; });
-    bridgeDesktopLinkActivity(service as never, begin);
-    const status = (state: string) => emit({ slot: "primary", computerName: "matrix-demo", state });
-    status("connecting");
-    status("on");
-    status("offline");
-    status("on");
-    expect(begin).toHaveBeenCalledTimes(1);
-    expect(begin).toHaveBeenCalledWith("desktop-link");
-    status("removed");
-    expect(handles[0]!.finish).toHaveBeenCalledWith("revoked");
-    status("on");
-    status("off");
-    expect(handles[1]!.finish).toHaveBeenCalledWith("stopped");
-  });
-});

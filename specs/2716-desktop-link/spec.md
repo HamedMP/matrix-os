@@ -41,6 +41,8 @@ desktop.
 
 ## One system with 2698 (Hamed, 2026-11-25)
 
+The following records the original design. For the combined ENG-602 and ENG-495 candidate, the [post-rollback enrollment contract](../2719-revert-mac-chat/spec.md#desktop-link-enrollment-after-the-rollback) supersedes the legacy verification and Mac Activity behavior described here.
+
 2698 (ENG-495, merged on main) and this spec are one system. 2698 owns who a
 desktop is and what the owner allowed; this spec owns how the computer reaches it.
 

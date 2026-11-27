@@ -6,10 +6,10 @@ import type { ChatAgentDraftRequest } from "../../packages/ui/src/index.js";
 import { ChatInput } from "../../shell/src/components/chat/ChatInput.js";
 import { useChatComposerDraft } from "../../shell/src/components/chat/useChatComposerDraft.js";
 
-function Composer({ request, onSubmit = vi.fn() }: { request: ChatAgentDraftRequest | null; onSubmit?: React.ComponentProps<typeof ChatInput>["onSubmit"] }) {
+function Composer({ request, onSubmit = vi.fn(), setupAnswer = false }: { request: ChatAgentDraftRequest | null; onSubmit?: React.ComponentProps<typeof ChatInput>["onSubmit"]; setupAnswer?: boolean }) {
   const composer = useChatComposerDraft("new", "owner-1");
   return <ChatInput composer={composer} scope="new" permissionMode="supervised" connected busy={false}
-    onSubmit={onSubmit} attachmentsEnabled={false} draftRequest={request} onDraftConsumed={vi.fn()} />;
+    onSubmit={onSubmit} setupAnswer={setupAnswer} attachmentsEnabled={false} draftRequest={request} onDraftConsumed={vi.fn()} />;
 }
 
 const value = () => (screen.getByPlaceholderText("Reply to chat…") as HTMLTextAreaElement).value;
@@ -17,6 +17,16 @@ const value = () => (screen.getByPlaceholderText("Reply to chat…") as HTMLText
 afterEach(cleanup);
 
 describe("chat input draft requests", () => {
+  it("submits an onboarding answer with a slash as text instead of opening a command", async () => {
+    const onSubmit = vi.fn(async () => true);
+    render(<Composer request={null} onSubmit={onSubmit} setupAnswer />);
+    const input = screen.getByRole("textbox", { name: "Message chat" });
+    const answer = "Document the /release";
+    fireEvent.change(input, { target: { value: answer, selectionStart: answer.length } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(answer, undefined, expect.any(Object)));
+  });
+
   it.each([false, true])("acknowledges a late Web send only for its unchanged draft (edited=%s)", async edited => {
     let acknowledged: (() => void) | undefined;
     const onSubmit = vi.fn(async (_text, _files, options) => { acknowledged = options?.onAccepted; return false; });

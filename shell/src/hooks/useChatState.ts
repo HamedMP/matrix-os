@@ -66,7 +66,7 @@ export interface ChatState {
   chatProjectId?: string;
   /** Verified active/latest-run scope; unavailable must never fall back to main. */
   chatFileScope?: import("@matrix-os/contracts").CanonicalChatFileScope;
-  projectSkillRootAvailable?: boolean;
+  projectSkillRootAvailable?: boolean | "pending";
   /** Picks the project for a new Chat or moves the open Chat; resolves false when it was not saved. */
   setChatProject?: (projectId: string | null) => Promise<boolean>;
   messages: ChatMessage[];
@@ -119,7 +119,12 @@ export interface ChatState {
 }
 
 export interface ChatSubmitOptions {
-  onAccepted?: () => void;
+  /** Receives the new Chat ID when admission will open it from this draft. */
+  onAccepted?: (openedChatId?: string) => void;
+  /** The pending message is visible in the transcript; the composer may let the draft go. */
+  onShown?: () => void;
+  /** The gateway might have accepted the send even though acknowledgement was unavailable. */
+  onAdmissionUnconfirmed?: () => void;
   resources?: CanonicalChatResourceReference[];
   clientRequestId?: string;
   displayText?: string;

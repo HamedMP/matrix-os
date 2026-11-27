@@ -1,6 +1,6 @@
 import { createHash, createHmac, generateKeyPairSync, sign } from "node:crypto";
 import {
-  desktopPairingActionProofMessage, desktopPairingProofMessage, DesktopPairingChallengeSchema,
+  desktopPairingProofMessage, DesktopPairingChallengeSchema,
 } from "@matrix-os/contracts";
 import { Hono } from "hono";
 import { SignJWT } from "jose";
@@ -35,10 +35,6 @@ function testDevice() {
           ownerId, machineId: challenge.machineId, deviceId, revision: challenge.revision, nonce: challenge.nonce,
         })), keys.privateKey).toString("base64url"),
       };
-    },
-    authorizeAction(challenge: { machineId: string; revision: number; nonce: string }, ownerId = owner) {
-      const message = desktopPairingActionProofMessage({ ...challenge, ownerId, deviceId });
-      return { nonce: challenge.nonce, signature: sign(null, Buffer.from(message), keys.privateKey).toString("base64url") };
     },
   };
 }
@@ -107,9 +103,9 @@ describe("Desktop pairing routes behind Gateway authentication", () => {
   }
 
   async function challenge(
-    request: Awaited<ReturnType<typeof gateway>>, deviceId: string, revision = 0, endpoint = "/challenge",
+    request: Awaited<ReturnType<typeof gateway>>, deviceId: string, revision = 0,
   ) {
-    const response = await request(endpoint, "POST", { deviceId, revision });
+    const response = await request("/challenge", "POST", { deviceId, revision });
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     return DesktopPairingChallengeSchema.parse(await response.json());
@@ -262,83 +258,12 @@ describe("Desktop pairing routes behind Gateway authentication", () => {
     expect((await request(`/${"a".repeat(64)}`, "DELETE", { revision: 0, extra: "x".repeat(8000) })).status).toBe(413);
   });
 
-  it("requires the verified owner and exact registered pairing to issue an action challenge", async () => {
-    const mac = testDevice();
+  it("keeps device enrollment available without exposing the retired Mac Chat action endpoints", async () => {
     const request = await gateway();
-    const candidate = { deviceId: mac.deviceId, revision: 0 };
-    expect((await request("/action-challenge", "POST", candidate, platformOwnerHeaders("other_owner"))).status).toBe(403);
-    expect((await request("/action-challenge", "POST", candidate, { authorization: "Bearer scoped-harness-token" })).status).toBe(403);
-    expect((await request("/action-challenge", "POST", candidate)).status).toBe(409);
+    const mac = testDevice();
     const enrollment = await challenge(request, mac.deviceId);
     expect((await request("/pair", "POST", mac.complete(enrollment))).status).toBe(200);
-    expect((await request("/action-challenge", "POST", candidate)).status).toBe(409);
-    expect((await request("/action-challenge", "POST", { ...candidate, revision: 1, deviceId: testDevice().deviceId })).status).toBe(409);
-
-    const action = await challenge(request, mac.deviceId, 1, "/action-challenge");
-    const proof = mac.authorizeAction(action);
-    expect((await request("/verify-action", "POST", { ...proof, publicKey: mac.complete(action).publicKey })).status).toBe(400);
-    expect((await request("/verify-action", "POST", proof, platformOwnerHeaders("other_owner"))).status).toBe(403);
-    expect((await request("/verify-action", "POST", { ...proof, signature: "x".repeat(8000) })).status).toBe(413);
-    const concurrent = await Promise.all([
-      request("/verify-action", "POST", proof), request("/verify-action", "POST", proof),
-    ]);
-    expect(concurrent.map(response => response.status).sort()).toEqual([200, 409]);
-    const verified = concurrent.find(response => response.ok)!;
-    expect(verified.headers.get("cache-control")).toBe("no-store");
-    await expect(verified.json()).resolves.toEqual({ machineId, deviceId: mac.deviceId, revision: 1 });
-  });
-
-  it("separates enrollment from action signing and consumes a rejected action proof", async () => {
-    const mac = testDevice();
-    const request = await gateway();
-    const enrollment = await challenge(request, mac.deviceId);
-    expect((await request("/verify-action", "POST", mac.authorizeAction(enrollment))).status).toBe(409);
-    expect((await request("/pair", "POST", mac.complete(enrollment))).status).toBe(200);
-
-    const action = await challenge(request, mac.deviceId, 1, "/action-challenge");
-    const pairProof = mac.complete(action);
-    expect((await request("/pair", "POST", pairProof)).status).toBe(409);
-    expect((await request("/verify-action", "POST", { nonce: action.nonce, signature: pairProof.signature })).status).toBe(409);
-    expect((await request("/verify-action", "POST", mac.authorizeAction(action))).status).toBe(409);
-
-    const wrongKey = await challenge(request, mac.deviceId, 1, "/action-challenge");
-    expect((await request("/verify-action", "POST", testDevice().authorizeAction(wrongKey))).status).toBe(409);
-    expect((await request("/verify-action", "POST", mac.authorizeAction(wrongKey))).status).toBe(409);
-  });
-
-  it("expires action challenges and rejects them after restart, revocation, or re-pair", async () => {
-    const mac = testDevice();
-    const request = await gateway();
-    expect((await request("/pair", "POST", mac.complete(await challenge(request, mac.deviceId)))).status).toBe(200);
-
-    const expiring = await challenge(request, mac.deviceId, 1, "/action-challenge");
-    const expiringProof = mac.authorizeAction(expiring);
-    const elsewhere = await gateway({ MATRIX_MACHINE_ID: secondMachine });
-    expect((await elsewhere("/verify-action", "POST", expiringProof)).status).toBe(409);
-    const restarted = await gateway();
-    expect((await restarted("/verify-action", "POST", expiringProof)).status).toBe(409);
-    now = expiring.expiresAt;
-    expect((await request("/verify-action", "POST", expiringProof)).status).toBe(409);
-
-    const revoked = await challenge(request, mac.deviceId, 1, "/action-challenge");
-    const superseded = await challenge(request, mac.deviceId, 1, "/action-challenge");
-    expect((await request(`/${mac.deviceId}`, "DELETE", { revision: 1 },
-      revocationHeaders(machineId, mac.deviceId, 1))).status).toBe(200);
-    expect((await request("/verify-action", "POST", mac.authorizeAction(revoked))).status).toBe(409);
-    expect((await request("/pair", "POST", mac.complete(await challenge(request, mac.deviceId, 2)))).status).toBe(200);
-    expect((await request("/verify-action", "POST", mac.authorizeAction(superseded))).status).toBe(409);
-    const current = await challenge(request, mac.deviceId, 3, "/action-challenge");
-    expect((await request("/verify-action", "POST", mac.authorizeAction(current))).status).toBe(200);
-  });
-
-  it("bounds action challenges and verifies the newest pending challenge when full", async () => {
-    const mac = testDevice();
-    const request = await gateway();
-    expect((await request("/pair", "POST", mac.complete(await challenge(request, mac.deviceId)))).status).toBe(200);
-    const oldest = await challenge(request, mac.deviceId, 1, "/action-challenge");
-    for (let index = 0; index < 15; index++) await challenge(request, mac.deviceId, 1, "/action-challenge");
-    const current = await challenge(request, mac.deviceId, 1, "/action-challenge");
-    expect((await request("/verify-action", "POST", mac.authorizeAction(oldest))).status).toBe(409);
-    expect((await request("/verify-action", "POST", mac.authorizeAction(current))).status).toBe(200);
+    expect((await request("/action-challenge", "POST", { deviceId: mac.deviceId, revision: 1 })).status).toBe(404);
+    expect((await request("/verify-action", "POST", {})).status).toBe(404);
   });
 });

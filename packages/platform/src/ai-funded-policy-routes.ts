@@ -20,6 +20,12 @@ import {
   FUNDED_AI_LEGACY_READINESS_MODEL_IDS,
   FUNDED_AI_READINESS_CATALOG,
   FUNDED_AI_READINESS_TIMEOUTS,
+  FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS,
+  isFundedCloudflarePreviewCohortModel,
+  isFundedCloudflarePreviewModel,
+  isFundedThirdPartyPreviewModel,
+  matchesFundedCloudflarePreviewBinding,
+  type FundedAiIdentity,
   JEV_MODEL_ID,
   FundedAiSettlementRequestSchema,
   FundedAiStartRequestSchema,
@@ -156,12 +162,17 @@ function runtimeVerificationToken(options: {
 
 async function authenticatedRuntimeMachine(
   c: Context,
-  options: { db: PlatformDB; platformSecret: string; previewRuntimeSecret?: string; now?: () => Date },
+  options: { db: PlatformDB; platformSecret: string; previewRuntimeSecret?: string;
+    cloudflareBinding?: FundedAiIdentity; now?: () => Date },
   runtimeSlot: string,
 ): Promise<Awaited<ReturnType<typeof getRunningUserMachineByHandle>> | undefined> {
   const handle = HandleSchema.parse(c.req.param("handle"));
   const machine = await getRunningUserMachineByHandle(options.db, handle, runtimeSlot);
   if (!machine) return undefined;
+  if (options.cloudflareBinding && (machine.provisioningClass !== "private-preview"
+    || !matchesFundedCloudflarePreviewBinding(options.cloudflareBinding, {
+      ownerId: machine.clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
+    }))) return undefined;
   let runtimeSecret = options.platformSecret;
   if (isBoundedPreviewProvisioningClass(machine.provisioningClass)) {
     const allocation = await readActivePreviewRuntimeAccess(options.db, {
@@ -176,7 +187,7 @@ async function authenticatedRuntimeMachine(
   return timingSafeTokenEquals(token, expected) ? machine : undefined;
 }
 
-function safeError(code: FundedAiSafeError["error"]["code"]): FundedAiSafeError {
+function safeError(code: Exclude<FundedAiSafeError["error"]["code"], "busy">): FundedAiSafeError {
   const message = {
     unauthorized: "Unauthorized",
     access_disabled: "Matrix-funded AI is unavailable",
@@ -203,6 +214,13 @@ function policyErrorResponse(c: Context, error: unknown) {
     if (error.code === "rate_limited") {
       return c.json(error.reason ? { error: { ...safeError("rate_limited").error, reason: error.reason } } : safeError("rate_limited"), 429);
     }
+    if (error.code === "busy" && error.retry) {
+      c.header("Retry-After", String(error.retry.afterSeconds));
+      return c.json(FundedAiSafeErrorSchema.parse({
+        error: { code: "busy", message: "Matrix AI is busy; try again later", retryAt: error.retry.at },
+      }), 503);
+    }
+    if (error.code === "busy") return c.json(safeError("unavailable"), 503);
     if (error.code === "revision_conflict") return c.json(safeError("revision_conflict"), 409);
     if (error.code === "idempotency_conflict") return c.json(safeError("idempotency_conflict"), 409);
     if (error.code === "reservation_expired") return c.json(safeError("reservation_expired"), 409);
@@ -241,6 +259,7 @@ export function createAiFundedRuntimeRoutes(options: {
   topUpEnabled?: boolean;
   promotionalGrant?: AiFundedPromotionalGrantConfig;
   routeProbes?: FundedModelProbeService;
+  cloudflareBinding?: FundedAiIdentity;
   isolatedChat?: IsolatedChatEnvelope;
   now?: () => Date;
 }) {
@@ -321,11 +340,13 @@ export function createAiFundedRuntimeRoutes(options: {
       }
       const schema = body.data.includeChatAvailability
         ? FundedAiRuntimeChatFundingSummaryResponseSchema : FundedAiRuntimeFundingSummaryResponseSchema;
+      const allowedModelIds = summary.policy.allowedModelIds.filter(options.cloudflareBinding
+        ? isFundedCloudflarePreviewCohortModel : model => !isFundedCloudflarePreviewModel(model));
       return c.json(schema.parse({
         contractVersion: 1,
         funding: { ...summary.funding,
           topUpEnabled: machine.provisioningClass === "customer" && options.topUpEnabled === true },
-        policy: summary.policy,
+        policy: { ...summary.policy, allowedModelIds },
         ...(body.data.includeChatAvailability ? { chatAvailability: summary.chatAvailability } : {}),
       }), 200);
     } catch (error) {
@@ -378,11 +399,15 @@ export function createAiFundedRuntimeRoutes(options: {
       const first = await read();
       const firstNow = now().getTime();
       const expandedCatalog = c.req.header(FUNDED_AI_READINESS_CATALOG.header) === FUNDED_AI_READINESS_CATALOG.version;
-      const aggregateModels = expandedCatalog ? FUNDED_PROBE_MODELS : FUNDED_AI_LEGACY_READINESS_MODEL_IDS;
+      const aggregateModels = !expandedCatalog ? FUNDED_AI_LEGACY_READINESS_MODEL_IDS
+        : options.cloudflareBinding ? FUNDED_CLOUDFLARE_PREVIEW_COHORT_MODEL_IDS : FUNDED_PROBE_MODELS;
+      const requestedModels = body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : aggregateModels;
       const eligible = first.policy.enabled && Date.parse(first.policy.checkedAt) <= firstNow
         && Date.parse(first.policy.staleAfter) > firstNow && first.funding.remainingBudgetMicrousd > 0
-        ? (body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : aggregateModels)
-          .filter((model) => first.policy.allowedModelIds.includes(model) && (!cacheOnly || model === phase!.modelId)) : [];
+        ? requestedModels.filter(model => first.policy.allowedModelIds.includes(model)
+          && (!options.cloudflareBinding || isFundedCloudflarePreviewCohortModel(model))
+          && (!cacheOnly || model === phase!.modelId))
+          .slice(0, FUNDED_AI_READINESS_CATALOG.maxModels) : [];
       if (Date.now() >= deadlineAtMs) throw new Error("Funded route readiness timed out");
       stage = "model_health";
       const observations = options.routeProbes
@@ -660,6 +685,7 @@ export function createAiFundedRelayRoutes(options: {
     const request = FundedAiAuthorizationRequestSchema.safeParse(await readStrictJson(c));
     if (!request.success) return c.json(safeError("invalid_request"), 400);
     try {
+      if (isFundedThirdPartyPreviewModel(request.data.modelId)) return c.json(safeError("model_not_allowed"), 403);
       return c.json(await options.repository.authorize(request.data), 200);
     } catch (error) {
       return policyErrorResponse(c, error);
@@ -669,6 +695,7 @@ export function createAiFundedRelayRoutes(options: {
     const request = FundedAiPolicyCheckRequestSchema.safeParse(await readStrictJson(c));
     if (!request.success) return c.json(safeError("invalid_request"), 400);
     try {
+      if (isFundedThirdPartyPreviewModel(request.data.modelId)) return c.json(safeError("model_not_allowed"), 403);
       return c.json(await options.repository.checkPolicy(request.data), 200);
     } catch (error) {
       return policyErrorResponse(c, error);

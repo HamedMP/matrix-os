@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import {
-  DesktopPairingActionProofSchema, DesktopPairingChallengeRequestSchema, DesktopPairingChallengeSchema, DesktopPairingCompleteSchema,
+  DesktopPairingChallengeRequestSchema, DesktopPairingChallengeSchema, DesktopPairingCompleteSchema,
   DesktopPairingDeviceIdSchema, DesktopPairingRevokeSchema, DesktopPairingStateSchema,
-  desktopPairingActionProofMessage, desktopPairingProofMessage, desktopPairingRevisionTag,
+  desktopPairingProofMessage, desktopPairingRevisionTag,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -116,7 +116,6 @@ export async function createRuntimeDesktopPairingRoutes(options: {
     }
   };
   const enrollmentChallenges = createChallengeStore(machineId, now);
-  const actionChallenges = createChallengeStore(machineId, now);
   const invalid = (c: Context) => c.json({ error: "invalid_request" }, 400);
   const conflict = (c: Context) => c.json({ error: "pairing_conflict" }, 409);
 
@@ -138,24 +137,6 @@ export async function createRuntimeDesktopPairingRoutes(options: {
     if (!state) return conflict(c);
     changed(state);
     return c.json(DesktopPairingStateSchema.parse(state));
-  });
-  app.post("/action-challenge", mutationLimit, async c => {
-    const request = await parseBody(c, DesktopPairingChallengeRequestSchema);
-    if (!request) return invalid(c);
-    const state = await repository.read();
-    if (state.deviceId !== request.deviceId || state.revision !== request.revision) return conflict(c);
-    return c.json(actionChallenges.issue(request));
-  });
-  app.post("/verify-action", mutationLimit, async c => {
-    const proof = await parseBody(c, DesktopPairingActionProofSchema);
-    if (!proof) return invalid(c);
-    const challenge = actionChallenges.consume(proof.nonce);
-    if (!challenge) return conflict(c);
-    const { deviceId, revision } = challenge;
-    const publicKey = await repository.readRegisteredKey(deviceId, revision);
-    if (!publicKey || challenge.expiresAt <= now() || !verifyDeviceProof(deviceId, publicKey, proof.signature,
-      desktopPairingActionProofMessage({ ...challenge, ownerId }))) return conflict(c);
-    return c.json(DesktopPairingStateSchema.parse({ machineId, deviceId, revision }));
   });
   app.delete("/:deviceId", mutationLimit, async c => {
     const device = DesktopPairingDeviceIdSchema.safeParse(c.req.param("deviceId"));

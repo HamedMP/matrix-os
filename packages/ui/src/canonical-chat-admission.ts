@@ -1,6 +1,7 @@
 import { randomUUID } from "./random-uuid.js";
 import { CanonicalCreateChatTurnRequestSchema, CanonicalChatTurnAdmissionResponseSchema, type CanonicalChatDetailResponse, type CanonicalChatRecord,
   type CanonicalChatTurnAdmissionResponse, type CanonicalCreateChatTurnRequest } from "@matrix-os/contracts";
+import type { CanonicalChatClientAdmission } from "./canonical-chat-admission-recovery.js";
 
 export const CHAT_ADMISSION_UNCONFIRMED = "Message status is unconfirmed. You can retry safely.";
 export class ChatAdmissionUnconfirmed extends Error {
@@ -10,13 +11,11 @@ type Input = Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevis
 const InputSchema = CanonicalCreateChatTurnRequestSchema.omit({ clientRequestId: true, baseRevision: true });
 export interface ChatAdmissionAttempt {
   identity: unknown; scope: string; payload: string; sourcePayload?: string; seed?: string; id: string;
-  draftKey?: string;
-  requestedExecutionRoot?: Input["executionRoot"];
   record?: CanonicalChatRecord; request?: CanonicalCreateChatTurnRequest;
   accepted?: CanonicalChatTurnAdmissionResponse;
   uncertain?: boolean;
   notify?: () => void;
-  confirmed?: (receipt: CanonicalChatTurnAdmissionResponse) => void;
+  confirmed?: () => void;
   resolve: (value: CanonicalChatTurnAdmissionResponse) => void;
   receipt: Promise<CanonicalChatTurnAdmissionResponse>;
   inFlight?: Promise<CanonicalChatTurnAdmissionResponse>;
@@ -27,8 +26,13 @@ export interface ChatAdmissionAttempt {
   lastRead: number;
 }
 
-/** Only an exact durable turn plus its linked user message and run proves admission. */
-function receipt(attempt: ChatAdmissionAttempt, detail: CanonicalChatDetailResponse) {
+/**
+ * Only an exact durable turn plus its linked user message and run proves
+ * admission. The confirming read's full detail travels with the receipt: it can
+ * be newer than the admission (a fast run may already have replied), and a
+ * detail rebuilt from the receipt alone would drop that transcript.
+ */
+function receipt(attempt: ChatAdmissionAttempt, detail: CanonicalChatDetailResponse): CanonicalChatClientAdmission | undefined {
   if (detail.record.chat.id !== attempt.record?.chat.id) return;
   const turn = detail.turns.find(item => item.chatId === detail.record.chat.id && item.clientRequestId === attempt.id);
   if (!turn) return;
@@ -36,7 +40,7 @@ function receipt(attempt: ChatAdmissionAttempt, detail: CanonicalChatDetailRespo
   const run = detail.runs.find(item => item.turnId === turn.id && item.attempt === 1);
   if (!message || !run) return;
   const parsed = CanonicalChatTurnAdmissionResponseSchema.safeParse({ record: detail.record, turn, message, run, admission: "already_accepted" });
-  return parsed.success ? parsed.data : undefined;
+  return parsed.success ? { ...parsed.data, recoveredDetail: detail } : undefined;
 }
 
 /** Unknown entries never expire/evict into a new request id. Explicit calls alone may POST. */
@@ -51,7 +55,7 @@ export function createCanonicalChatAdmissionTracker() {
     {
       const callbacks = [
         (attempt.canAcknowledge?.() ?? attempt.isCurrent?.()) ? attempt.notify : undefined,
-        attempt.isCurrent?.() ? () => attempt.confirmed?.(accepted) : undefined,
+        attempt.isCurrent?.() ? attempt.confirmed : undefined,
       ];
       for (const callback of callbacks) {
         try { callback?.(); }
@@ -77,47 +81,30 @@ export function createCanonicalChatAdmissionTracker() {
     }).finally(() => { attempt.reading = undefined; });
     return attempt.reading;
   };
-  const matchesPayload = (item: ChatAdmissionAttempt, identity: unknown, scope: string, payload: string) =>
-    item.identity === identity && item.scope === scope && (item.sourcePayload ?? item.payload) === payload;
   return {
-    /** Omitting the seed checks for the payload across unresolved requests. */
-    hasUnresolved(identity: unknown, scope: string, input: Input, seed?: string) {
-      const payload = JSON.stringify(InputSchema.parse(input));
-      return attempts.some(item => matchesPayload(item, identity, scope, payload) && (seed === undefined || item.seed === seed));
-    },
-    pendingDraft(identity: unknown, scope: string, draftKey: string) {
-      const attempt = attempts.find(item => item.identity === identity && item.scope === scope && item.draftKey === draftKey);
-      if (!attempt?.seed || !attempt.request) return null;
-      return {
-        requestId: attempt.seed,
-        requestedExecutionRoot: attempt.requestedExecutionRoot,
-        matches(input: Input) {
-          return matchesPayload(attempt, identity, scope, JSON.stringify(InputSchema.parse(input)));
-        },
-      };
-    },
-    prepare(identity: unknown, scope: string, value: Input, seed?: string, options?: {
-      resolveInput?: (input: Input) => Input;
-      draftKey?: string;
-    }): ChatAdmissionAttempt {
+    prepare(identity: unknown, scope: string, value: Input, seed?: string, resolveInput?: (input: Input) => Input): ChatAdmissionAttempt {
       const input = InputSchema.parse(value);
       if (seed !== undefined) CanonicalCreateChatTurnRequestSchema.shape.clientRequestId.parse(seed);
       const sourcePayload = JSON.stringify(input);
-      const previous = attempts.find(item => matchesPayload(item, identity, scope, sourcePayload) && item.seed === seed);
+      const previous = attempts.find(item => item.identity === identity && item.scope === scope
+        && (item.sourcePayload ?? item.payload) === sourcePayload && item.seed === seed);
       if (previous) return previous;
       if (attempts.length >= 100) throw new ChatAdmissionUnconfirmed();
-      // Resolve the derived checkout only for a new attempt. Replays use the
-      // request already bound to the unchanged composer input.
-      const payload = options?.resolveInput ? JSON.stringify(InputSchema.parse(options.resolveInput(input))) : sourcePayload;
+      // An uncertain admission retries the same request even if Chat state has changed.
+      const payload = resolveInput ? JSON.stringify(resolveInput(input)) : sourcePayload;
       let resolve!: ChatAdmissionAttempt["resolve"];
       const promise = new Promise<CanonicalChatTurnAdmissionResponse>(value => { resolve = value; });
-      const attempt: ChatAdmissionAttempt = { identity, scope, payload, seed, draftKey: options?.draftKey,
-        requestedExecutionRoot: input.executionRoot,
-        ...(sourcePayload === payload ? {} : { sourcePayload }),
+      const attempt: ChatAdmissionAttempt = { identity, scope, payload, seed,
+        ...(payload === sourcePayload ? {} : { sourcePayload }),
         id: seed && !attempts.some(item => item.identity === identity && item.scope === scope && item.id === seed)
           ? seed : `req_${randomUUID().replaceAll("-", "")}`, resolve, receipt: promise, lastRead: 0 };
       attempts.push(attempt);
       return attempt;
+    },
+    hasUnresolved(identity: unknown, scope: string, value?: Input) {
+      const payload = value === undefined ? undefined : JSON.stringify(InputSchema.parse(value));
+      return attempts.some(item => item.identity === identity && item.scope === scope
+        && (payload === undefined || (item.sourcePayload ?? item.payload) === payload));
     },
     bind(attempt: ChatAdmissionAttempt, record: CanonicalChatRecord) {
       attempt.record ??= record;
@@ -135,7 +122,7 @@ export function createCanonicalChatAdmissionTracker() {
       current: () => CanonicalChatDetailResponse | null;
       isCurrent: () => boolean; onAccepted: () => void;
       canAcknowledge?: () => boolean;
-      onConfirmed?: (receipt: CanonicalChatTurnAdmissionResponse) => void; onRejected?: () => void;
+      onConfirmed?: () => void; onRejected?: () => void;
       definitive: (error: unknown) => boolean;
     }) {
       if (attempt.accepted) return Promise.resolve(attempt.accepted);

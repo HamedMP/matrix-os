@@ -1,5 +1,3 @@
-// Ed25519 proofs from a desktop's pairing key (2698), shared by the pairing
-// routes and the desktop link's admission (2716).
 import { createHash, createPublicKey, verify } from "node:crypto";
 
 /** True only for a valid Ed25519 signature by the key whose SHA-256 is `deviceId`. */

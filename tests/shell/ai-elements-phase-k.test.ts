@@ -48,7 +48,6 @@ describe("T2101: attachments", () => {
     expect(mod.AttachmentItem).toBeDefined();
     expect(mod.AttachmentPreview).toBeDefined();
     expect(mod.AttachmentButton).toBeDefined();
-    expect(mod.useAttachments).toBeDefined();
   });
 
   it("fileToBase64 is exported as a function", async () => {

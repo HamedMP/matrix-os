@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AppSiteSharePopover } from "../../../../../../shell/src/components/app-sites/AppSiteSharePopover";
 import { appDisplayName, ownerInitial } from "../../../../../../shell/src/components/app-sites/share-identity";
 import { SiteSubmissionsSection } from "../../../../../../shell/src/components/app-sites/SiteSubmissionsSection";
-import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, useShareController } from "@matrix-os/ui/share";
+import { SharePanel, ShareTriggerLabel, createSiteEmailInvitationAdapter, isShareableAppSlug, shareEntryVisible, useShareController } from "@matrix-os/ui/share";
 import { createDesktopSiteClient } from "./site-client";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { Button } from "../../design/primitives";
@@ -38,8 +38,15 @@ export function DesktopAppSiteButton({
   const collaborationApi = useMemo(() => api?.forRuntime(runtimeSlot) ?? null,
     [api, runtimeSlot, authGeneration]);
   const name = appDisplayName(appSlug, appName);
-  const share = useShareController({ appSlug, appName: name, client, emailInvites });
-  const organization = useDesktopShareOrganization({ appSlug, appName: name, api: collaborationApi, buildEpoch });
+  // Matrix default apps can only stop sharing that already exists.
+  const allowNewSharing = isShareableAppSlug(appSlug);
+  const share = useShareController({ appSlug, appName: name, client, emailInvites, allowNewSharing });
+  const organization = useDesktopShareOrganization({ appSlug, appName: name, api: collaborationApi, buildEpoch, allowNewSharing });
+  if (!shareEntryVisible(allowNewSharing, share, organization.shared, open)) {
+    // Closing releases the renderer overlay lease held while the popover was open.
+    if (open) setOpen(false);
+    return null;
+  }
   return (
     <AppSiteSharePopover
       onOpenChange={(next) => { if (next) share.refresh(); setOpen(next); }}

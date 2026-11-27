@@ -163,6 +163,7 @@ interface SettingsProps {
     loading: boolean;
     error: string | null;
     collectAcquisitionSource?: boolean;
+    freePlan?: boolean;
   };
   onOpenAgentTerminal?: (action: TerminalLaunchAction) => void;
   onOpenProviderTerminalSession?: (sessionId: string) => void;

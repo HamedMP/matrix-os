@@ -8,7 +8,7 @@ import type { CanonicalProviderRunInput } from "./provider-adapter.js";
 export interface ClaudeSessionSource {
   fingerprint: string;
   schedulingAllowed: boolean;
-  legacy?: { fingerprint: string; args: string[] };
+  legacy?: { fingerprint: string; args: string[] }[];
 }
 
 function stableArgs(args: string[]): string[] {
@@ -64,10 +64,10 @@ export async function resolveClaudeSessionSource(options: {
     source: env.ANTHROPIC_API_KEY ? "owner_key" : "owner_native", principal,
   })).digest("hex");
   const schedulingAllowed = eligible && principal !== null;
-  const legacyArgs = schedulingAllowed && !input.context?.drives?.length ? legacyClaudeChatArgs(options.args) : undefined;
+  const legacyArgs = schedulingAllowed && !input.context?.drives?.length ? legacyClaudeChatArgs(options.args) : [];
   return {
     schedulingAllowed,
     fingerprint: fingerprint(options.args),
-    ...(legacyArgs ? { legacy: { fingerprint: fingerprint(legacyArgs), args: legacyArgs } } : {}),
+    ...(legacyArgs.length ? { legacy: legacyArgs.map(args => ({ fingerprint: fingerprint(args), args })) } : {}),
   };
 }

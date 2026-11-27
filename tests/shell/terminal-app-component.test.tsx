@@ -2,7 +2,7 @@
 
 import { desktopLinkWorkspaceId } from "@matrix-os/contracts/desktop-link";
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@clerk/nextjs", () => { const getToken = async () => null; return { useAuth: () => ({ getToken, userId: "fixture-owner", sessionId: "fixture-session" }) }; });
@@ -171,6 +171,9 @@ describe("TerminalApp workspace contract", () => {
   });
 
   afterEach(() => {
+    // Unmount while this test's fetch stub and fake timers are still installed,
+    // so unmount work cannot reach the next test's stub.
+    cleanup();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -930,11 +933,11 @@ describe("TerminalApp workspace contract", () => {
     view.unmount();
     await settle();
 
-    expect(vi.mocked(fetch).mock.calls.some(([input]) => (
-      String(input).includes("/api/terminal/layout")
-      || String(input).includes("/api/terminal/window-layouts")
-      || String(input).includes("/api/terminal/sessions")
-    ))).toBe(false);
+    expect(vi.mocked(fetch).mock.calls.map(([input]) => String(input)).filter(url => (
+      url.includes("/api/terminal/layout")
+      || url.includes("/api/terminal/window-layouts")
+      || url.includes("/api/terminal/sessions")
+    ))).toEqual([]);
     expect(vi.mocked(fetch).mock.calls).toContainEqual([
       expect.stringContaining(`/api/terminal/workspaces/${WORKSPACE_ID}/tabs/${SECOND_TAB_ID}`),
       expect.objectContaining({ method: "DELETE", keepalive: true }),

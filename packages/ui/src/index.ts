@@ -123,8 +123,16 @@ export type {
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
-export { withPendingCanonicalTurn, type PendingCanonicalTurn } from "./canonical-chat-pending-turn.js";
+export { pendingCanonicalTurnMessage, pendingCanonicalTurnRows, withPendingCanonicalTurn, type PendingCanonicalTurn } from "./canonical-chat-pending-turn.js";
+export {
+  canonicalTranscriptWithPendingSend,
+  nextPendingCanonicalSend,
+  optimisticCanonicalSendParts,
+  type PendingCanonicalSend,
+  type PendingCanonicalSendTranscript,
+} from "./canonical-chat-pending-send.js";
 export { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "./canonical-chat-admission.js";
+export { createComposerSendHandoff } from "./canonical-chat-composer-handoff.js";
 export { recoverCanonicalChatAdmission, type CanonicalChatClientAdmission } from "./canonical-chat-admission-recovery.js";
 export { useCanonicalChatStopRecovery } from "./use-canonical-chat-stop-recovery.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
@@ -415,3 +423,11 @@ export { DiscordIcon } from "./discord-icon.js";
 export { AgentLogo } from "./agent-logo.js";
 export { isAgentLogoKind, type AgentLogoKind } from "./agent-logo-kind.js";
 export { archiveRestoreLocation } from "./chat/ArchivedChatsPage.js";
+
+export { useProjectSetup, type ProjectSetupController, type ProjectSetupTransport } from "./chat/use-project-setup.js";
+export { ProjectSetupEntry, ProjectSetupIntroduction, ProjectSetupControls } from "./chat/ProjectSetupControls.js";
+export { PROJECT_SETUP_COLUMN_CLASS, PROJECT_SETUP_COMPOSER_CLASS, ProjectSetupProgress, ProjectSetupAcceptedNote, projectSetupAnswerPlaceholder } from "./chat/ProjectSetupProgress.js";
+export { ProjectSetupLaunchProvider, useProjectSetupLaunch } from "./chat/ProjectSetupLaunch.js";
+export { projectSetupGenerationText, projectSetupGenerationResultId, projectSetupControlsMessageId, projectSetupDetailPresentation } from "./chat/project-setup-presentation.js";
+
+export { useProjectSetupMarkdownEdits, type ProjectSetupMarkdownState } from "./chat/ProjectSetupMarkdown.js";

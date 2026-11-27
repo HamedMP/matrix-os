@@ -1,10 +1,13 @@
 import {
+  MATRIX_FREE_PLAN_SLUG,
   MATRIX_HOSTED_BILLING_PLANS,
   MATRIX_HOSTED_BILLING_REGIONS,
   MATRIX_HOSTED_BILLING_REGION_SLUGS,
   MATRIX_HOSTED_MACHINE_PROFILES,
   type MatrixBillingPublicEntitlement,
+  type MatrixFreePlanSlug,
   type MatrixHostedBillingRegionSlug,
+  type SubstrateKind,
 } from '@matrix-os/contracts';
 
 export const BILLING_GRACE_PERIOD_MS = 3 * 24 * 60 * 60 * 1000;
@@ -12,7 +15,8 @@ export const BILLING_GRACE_PERIOD_MS = 3 * 24 * 60 * 60 * 1000;
 export type MatrixBillingPlanSlug = 'matrix_starter' | 'matrix_builder' | 'matrix_max';
 export type MatrixBillingInterval = 'monthly' | 'annual';
 export type RuntimeCatalogSku = 'starter' | 'builder' | 'max';
-export type BillingEntitlementSource = 'stripe' | 'override';
+export type BillingEntitlementSource = 'stripe' | 'override' | 'free';
+export type BillingEntitlementPlanSlug = MatrixBillingPlanSlug | 'internal' | MatrixFreePlanSlug;
 export type BillingEntitlementStatus =
   | 'active'
   | 'trialing'
@@ -84,7 +88,7 @@ export interface StripeSubscriptionProjection {
 export interface BillingEntitlement {
   clerkUserId: string;
   source: BillingEntitlementSource;
-  planSlug: MatrixBillingPlanSlug | 'internal';
+  planSlug: BillingEntitlementPlanSlug;
   status: BillingEntitlementStatus;
   maxRuntimeSlots: number;
   includedRuntimeSlots: number;
@@ -150,6 +154,7 @@ export function projectPublicBillingEntitlement(
   details: PublicBillingEntitlementDetails = {},
 ): MatrixBillingPublicEntitlement {
   const entitledPlan = entitlement.source === 'stripe' && entitlement.planSlug !== 'internal'
+    && entitlement.planSlug !== MATRIX_FREE_PLAN_SLUG
     ? getPlanDefinition(entitlement.planSlug)
     : undefined;
   const allowedServerTypes = new Set(entitlement.allowedServerTypes.map((serverType) => serverType.toLowerCase()));
@@ -460,11 +465,21 @@ function getGracePeriodEnd(
   return null;
 }
 
+/**
+ * `substrate` names the runtime being decided. A free entitlement allows only
+ * a metal runtime (spec 2691), so a caller that names no substrate is denied.
+ */
 export function getRuntimeAccessDecision(
   entitlement: BillingEntitlement | null | undefined,
   now: Date,
+  substrate?: SubstrateKind,
 ): RuntimeAccessDecision {
   if (!entitlement) return { runtimeProxyAllowed: false, reason: 'no_entitlement' };
+  if (entitlement.source === 'free') {
+    return substrate === 'metal' && entitlement.status === 'active'
+      ? { runtimeProxyAllowed: true, reason: 'active', gracePeriodEndsAt: null }
+      : { runtimeProxyAllowed: false, reason: 'no_entitlement' };
+  }
   if (
     entitlement.trialEndsAt
     && !entitlement.trialConvertedAt
@@ -542,6 +557,7 @@ export function parseBillingEntitlementRecord(record: {
   if (!isEntitlementSource(record.source) || !isPlanSlug(record.planSlug) || !isEntitlementStatus(record.status)) {
     return null;
   }
+  if ((record.source === 'free') !== (record.planSlug === MATRIX_FREE_PLAN_SLUG)) return null;
   return {
     ...record,
     source: record.source,
@@ -567,7 +583,7 @@ export function parseBillingOverrideRecord(record: {
   createdAt: string;
 } | null | undefined): BillingEntitlementOverride | null {
   if (!record) return null;
-  if (!isPlanSlug(record.planSlug) || record.status !== 'active') {
+  if (!isPlanSlug(record.planSlug) || record.planSlug === MATRIX_FREE_PLAN_SLUG || record.status !== 'active') {
     return null;
   }
   return {
@@ -611,11 +627,12 @@ export function computeEffectiveEntitlement(input: {
 }
 
 function isEntitlementSource(value: string): value is BillingEntitlementSource {
-  return value === 'stripe' || value === 'override';
+  return value === 'stripe' || value === 'override' || value === 'free';
 }
 
 function isPlanSlug(value: string): value is BillingEntitlement['planSlug'] {
-  return value === 'matrix_starter' || value === 'matrix_builder' || value === 'matrix_max' || value === 'internal';
+  return value === 'matrix_starter' || value === 'matrix_builder' || value === 'matrix_max' || value === 'internal'
+    || value === MATRIX_FREE_PLAN_SLUG;
 }
 
 function isEntitlementStatus(value: string): value is BillingEntitlementStatus {

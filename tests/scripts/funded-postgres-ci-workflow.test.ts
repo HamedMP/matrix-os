@@ -23,14 +23,15 @@ describe("funded settlement real PostgreSQL CI", () => {
     expect(command).toContain("tests/platform/ai-funded-recovery-migration.test.ts");
     expect(command).toContain("--maxWorkers=1");
     expect(workflow().jobs["ci-results"]?.needs).toContain("funded-postgres");
+    expect(workflow().jobs["ci-results"]?.needs).toContain("routine-postgres");
   });
-  it.each(["failure", "cancelled", "skipped"])("blocks the aggregate for source changes if Postgres is %s", result => {
+  it.each(["FUNDED_POSTGRES_RESULT", "ROUTINE_POSTGRES_RESULT"].flatMap(job => ["failure", "cancelled", "skipped"].map(result => [job, result])))("blocks the aggregate for source changes if %s is %s", (job, result) => {
     const step = workflow().jobs["ci-results"]!.steps!.find(step => step.name === "Summarize required CI jobs")!;
     const dir = mkdtempSync(join(tmpdir(), "funded-ci-gate-"));
     try {
       const env = { ...process.env, GITHUB_STEP_SUMMARY: join(dir, "summary.md"), SHOULD_RUN: "true" };
       for (const name of Object.keys(step.env!)) Object.assign(env, { [name]: name === "SHOULD_RUN" ? "true" : "success" });
-      Object.assign(env, { FUNDED_POSTGRES_RESULT: result });
+      Object.assign(env, { [job]: result });
       expect(spawnSync("bash", ["-c", step.run!], { env, encoding: "utf8", timeout: 5_000 }).status).toBe(1);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });

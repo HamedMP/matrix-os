@@ -10,7 +10,7 @@ import { INVOKE_CHANNELS } from "../../../desktop/src/shared/ipc-contract";
 // preferences, selection hook and picker run unchanged in the real Electron app.
 const profile = process.env.MATRIX_MODEL_READINESS_FIXTURE_DATA!;
 app.setPath("userData", profile);
-const ids = ["claude-sonnet-5", "cloudflare:@cf/zai-org/glm-5.3-flash"];
+const ids = ["claude-sonnet-5", "@cf/zai-org/glm-5.3"];
 function catalog(readyModel: string | null) {
   return CanonicalProviderCatalogSchema.parse({
     revision: `readiness-${readyModel === ids[0] ? "sonnet" : readyModel ? "glm" : "outage"}`,
@@ -20,7 +20,7 @@ function catalog(readyModel: string | null) {
       availability: readyModel ? "available" : "unavailable", connectionState: readyModel ? "ready" : "unavailable",
       ...(!readyModel ? { unavailabilityReason: "runtime_unavailable" } : {}),
       workspaceRequirement: "project_optional", catalogRevision: `readiness-${readyModel === ids[0] ? "sonnet" : readyModel ? "glm" : "outage"}`,
-      models: ids.map((id, index) => ({ id, displayName: index ? "GLM 5.3 Flash" : "Claude Sonnet 5",
+      models: ids.map((id, index) => ({ id, displayName: index ? "GLM 5.3" : "Claude Sonnet 5",
         availability: id === readyModel ? "available" : "unavailable", capabilities: ["reasoning", "tools"], supportsVision: false, supportsToolUse: true })),
       options: [], skills: [], commands: [], setupActions: [{ id: "settings", kind: "open_settings", label: "Agents & providers" }],
       supports: { rootChat: true, resume: false, cancellation: true, steering: "same_run", attachments: ["file", "image"], tools: [], approvals: true,

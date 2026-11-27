@@ -69,6 +69,16 @@ describe("canonical Chat content reducer", () => {
   it("requests recovery for missing content instead of silently producing a broken transcript", () => {
     expect(applyCanonicalChatContent(initial, frame(3, 5, " world"))).toBeNull();
   });
+  it("applies Chat metadata edits with unchanged message count without a snapshot request", () => {
+    const update = frame(2, 0, "");
+    const next = applyCanonicalChatContent(initial, {
+      ...update,
+      event: { ...update.event, eventType: "chat.updated" },
+      content: { record: { chat: { ...initial.record.chat, revision: 2, title: "Renamed" } }, messages: [] },
+    });
+    expect(next?.record.chat.title).toBe("Renamed");
+    expect(next?.messages).toEqual([]);
+  });
   it("ignores another Chat and snapshots already newer than a replayed event", () => {
     expect(applyCanonicalChatContent(initial, { ...frame(2, 0, "hello"), event: {
       ...frame(2, 0, "hello").event, chatId: "chat_other",

@@ -1,0 +1,107 @@
+{
+  "version": "0.1.32",
+  "channel": "stable",
+  "date": "2026-11-26",
+  "locale": "en",
+  "title": "Your Mac, right in Chat",
+  "shortTitle": "Mac from Chat",
+  "summary": "Pair your Mac once, verify supported work from a private Chat, and get results back in the same conversation. Terminals are faster, and Connect Apps is easier to navigate.",
+  "highlights": [
+    {
+      "tag": "New",
+      "title": "Verify work on your Mac from Chat",
+      "body": "Run approved terminal checks or verify supported Electron changes from a private worktree Chat. Results return to the same conversation, and the Mac menu bar lets you follow or stop active work.",
+      "surfaces": [
+        "electron-desktop"
+      ],
+      "art": "sync",
+      "tone": "teal",
+      "prs": [
+        3455,
+        3457,
+        3460,
+        3468,
+        3471,
+        3483,
+        3484,
+        3475,
+        3486,
+        3489
+      ]
+    },
+    {
+      "tag": "Improved",
+      "title": "Connect Apps, organized",
+      "body": "Connected tools, available connections and the app gallery now appear in clearer groups. Connect Apps is also available through Matrix Core when you need it in Chat.",
+      "surfaces": [
+        "web-desktop",
+        "electron-desktop"
+      ],
+      "art": "sparkle",
+      "tone": "sand",
+      "prs": [
+        3704,
+        3705
+      ]
+    },
+    {
+      "tag": "Improved",
+      "title": "Terminals that keep up",
+      "body": "Terminal windows switch and stream faster. Slow or unreadable workspace recovery no longer holds up your other terminals.",
+      "surfaces": [
+        "web-desktop",
+        "electron-desktop"
+      ],
+      "art": "terminal",
+      "tone": "ink",
+      "prs": [
+        3536,
+        3663
+      ]
+    }
+  ],
+  "items": [
+    {
+      "kind": "fixed",
+      "text": "Managed Codex sessions can use code mode reliably."
+    },
+    {
+      "kind": "fixed",
+      "text": "Sign-in actions stay in the correct browser tab when more than one Matrix page is open."
+    },
+    {
+      "kind": "fixed",
+      "text": "Funded AI requests no longer get stuck when a new month begins."
+    },
+    {
+      "kind": "improved",
+      "text": "Browser works on standard 2 GB Matrix computers and reports setup problems more clearly."
+    },
+    {
+      "kind": "fixed",
+      "text": "SSH connection updates verify the same computer before saving changes."
+    }
+  ],
+  "hidden": [
+    3737,
+    3550,
+    3548,
+    3533,
+    3532,
+    3531,
+    3530,
+    3529,
+    3527,
+    3736,
+    3672,
+    3671,
+    3670,
+    3669,
+    3668,
+    3667,
+    3711,
+    3519,
+    3687,
+    3699
+  ]
+}

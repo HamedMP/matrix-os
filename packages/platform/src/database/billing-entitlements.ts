@@ -12,6 +12,9 @@ import type {
   NewBillingWebhookEvent,
   PlatformDB,
 } from '../db.js';
+import { getRuntimeAccessDecision } from '../billing.js';
+import { restorePaidModelDefaults } from '../customer-ordinary-model-policy.js';
+import { FREE_RUNTIME_SLOT, grantsNoPaidRights } from '../free-tier/free-entitlement.js';
 import {
   mapBillingEntitlement,
   mapBillingOverride,
@@ -20,14 +23,29 @@ import {
   toBillingOverrideRow,
   toBillingWebhookEventRow,
 } from './billing-records.js';
+import { getBillingSubscriptionByStripeId } from './billing.js';
 
 /** Extracted verbatim from packages/platform/src/db.ts (S01 / T007): billing entitlement, override and webhook event queries. */
 
+/**
+ * A Stripe projection replaces the stored entitlement when it is not older,
+ * except that one granting no paid rights never replaces a stored free
+ * entitlement: a former paid owner on the free plan keeps it while their
+ * ended subscription keeps sending updates. A live primary subscription may
+ * replace it. Other slots keep their own Stripe subscription records.
+ */
 export async function upsertBillingEntitlement(db: PlatformDB, record: NewBillingEntitlement): Promise<void> {
   return withAccountDeletionOwnerLock(db, record.clerkUserId, async (trx, admission) => {
     if (!admission.newWorkAllowed) return;
     const row = toBillingEntitlementRow(record);
-    await trx.executor
+    const updatedAt = new Date(record.updatedAt);
+    const subscription = record.source === 'stripe' && record.stripeSubscriptionId
+      ? await getBillingSubscriptionByStripeId(trx, record.stripeSubscriptionId) : undefined;
+    const isOtherSlot = subscription?.clerkUserId === record.clerkUserId
+      && subscription.runtimeSlot !== FREE_RUNTIME_SLOT;
+    const keepsFree = record.source === 'stripe'
+      && (isOtherSlot || grantsNoPaidRights(record, updatedAt));
+    const applied = await trx.executor
       .insertInto('billing_entitlements')
       .values(row)
       .onConflict((oc) => oc.column('clerk_user_id').doUpdateSet({
@@ -50,8 +68,14 @@ export async function upsertBillingEntitlement(db: PlatformDB, record: NewBillin
         effective_from: row.effective_from,
         effective_until: row.effective_until,
         updated_at: row.updated_at,
-      }).where('billing_entitlements.updated_at', '<=', row.updated_at))
-      .execute();
+      }).where((eb) => eb.and([
+        eb('billing_entitlements.updated_at', '<=', row.updated_at),
+        ...(keepsFree ? [eb('billing_entitlements.source', '!=', 'free')] : []),
+      ])))
+      .returning('clerk_user_id').executeTakeFirst();
+    if (applied && record.source === 'stripe' && getRuntimeAccessDecision(record, updatedAt).runtimeProxyAllowed) {
+      await restorePaidModelDefaults(trx, record.clerkUserId, record.updatedAt);
+    }
   });
 }
 

@@ -25,6 +25,8 @@ export interface CodingAgentAttentionNotificationPreferences {
 }
 
 export interface CodingAgentAttentionNotificationsOptions {
+  /** A6 owns canonical approval/input pushes; terminal notifications stay on this bridge. */
+  isCanonicalThread?: (ownerId: string, threadId: string) => Promise<boolean>;
   threads: CodingAgentThreadStore;
   send: (reply: ChannelReply) => Promise<void>;
   preferences?: CodingAgentAttentionNotificationPreferences;
@@ -79,6 +81,7 @@ export function buildCodingAgentAttentionNotification(input: {
 }
 
 export function registerCodingAgentAttentionNotifications(options: CodingAgentAttentionNotificationsOptions): { dispose(): void } {
+  let disposed = false;
   const seenAtByKey = new Map<string, number>();
   const now = options.now ?? (() => Date.now());
   const dedupeWindowMs = Math.max(1_000, Math.min(options.dedupeWindowMs ?? DEFAULT_DEDUPE_WINDOW_MS, 10 * 60 * 1000));
@@ -108,36 +111,50 @@ export function registerCodingAgentAttentionNotifications(options: CodingAgentAt
   }
 
   const subscription = options.threads.registerEventSink(({ ownerId, threadId, events }) => {
-    const kind = notificationKindFor(events);
-    if (!kind) return;
-    const notification = buildCodingAgentAttentionNotification({ ownerId, threadId, events });
-    if (!notification) return;
-    const safeNotification = notification;
-    const dedupeKey = `${ownerId}:${threadId}:${kind}`;
+    if (disposed || !notificationKindFor(events)) return;
+    function notify(eligibleEvents: AgentThreadEvent[]): void {
+      const kind = notificationKindFor(eligibleEvents);
+      if (!kind) return;
+      const notification = buildCodingAgentAttentionNotification({ ownerId, threadId, events: eligibleEvents });
+      if (!notification) return;
+      const safeNotification = notification;
+      const dedupeKey = `${ownerId}:${threadId}:${kind}`;
 
-    function sendIfEligible(): void {
-      if (!remember(dedupeKey, now())) return;
-      void options.send(safeNotification).catch((err: unknown) => {
-        logCodingAgentWarning("attention notification failed", err);
-      });
+      function sendIfEligible(): void {
+        if (disposed) return;
+        if (!remember(dedupeKey, now())) return;
+        void options.send(safeNotification).catch((err: unknown) => {
+          logCodingAgentWarning("attention notification failed", err);
+        });
+      }
+
+      if (options.preferences) {
+        void Promise.resolve(options.preferences.isAttentionPushEnabled({ ownerId, threadId, kind }))
+          .then((enabled) => {
+            if (!enabled) return;
+            sendIfEligible();
+          })
+          .catch((err: unknown) => {
+            logCodingAgentWarning("attention notification preference check failed", err);
+          });
+        return;
+      }
+
+      sendIfEligible();
     }
 
-    if (options.preferences) {
-      void Promise.resolve(options.preferences.isAttentionPushEnabled({ ownerId, threadId, kind }))
-        .then((enabled) => {
-          if (!enabled) return;
-          sendIfEligible();
-        })
-        .catch((err: unknown) => {
-          logCodingAgentWarning("attention notification preference check failed", err);
-        });
+    if (options.isCanonicalThread) {
+      void options.isCanonicalThread(ownerId, threadId).then(canonical => {
+        // Select the legacy kind only after removing events owned by the router.
+        notify(canonical ? events.filter(event => event.type !== "approval.requested" && event.type !== "user_input.requested") : events);
+      }).catch((err: unknown) => logCodingAgentWarning("canonical notification ownership check failed", err));
       return;
     }
-
-    sendIfEligible();
+    notify(events);
   });
   return {
     dispose() {
+      disposed = true;
       seenAtByKey.clear();
       subscription.dispose();
     },

@@ -20,6 +20,7 @@ import { mapUserMachine, type UserMachineProvisioningClass } from './database/us
 import { z } from 'zod/v4';
 import type { SubstrateKind } from '@matrix-os/contracts';
 import type {
+  BillingEntitlementPlanSlug,
   BillingEntitlementSource,
   BillingEntitlementStatus,
   MatrixBillingInterval,
@@ -108,6 +109,13 @@ export interface UserMachinesTable {
   private_address: Generated<string | null>;
   last_activity_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   started_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  metal_host_id: Generated<string | null>;
+  metal_vm_id: Generated<string | null>;
+  next_wake_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  awake_since: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  idle_guard_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  sleep_checked_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  wake_failures: Generated<number>;
 }
 
 export interface AiFundedGlobalPolicyTable {
@@ -124,6 +132,7 @@ export interface AiFundedRuntimePoliciesTable {
   runtime_slot: string;
   enabled: boolean;
   allowed_model_ids: string;
+  uses_free_model_default: Generated<boolean>;
   monthly_budget_microusd: number;
   expires_at: string | null;
   next_issue_at: string;
@@ -175,6 +184,8 @@ export interface AiFundedPriorityClaimsTable {
 }
 
 export interface AiFundedUsageReservationsTable {
+  /** The free plan funded this reservation (spec 2691), recorded at creation. */
+  free_funded: Generated<boolean>;
   terminal_outcome: Generated<string | null>;
   charge_waiver: Generated<string | null>;
   customer_charge_release: Generated<string | null>;
@@ -859,6 +870,9 @@ export interface PlatformDatabase {
   users: UsersTable;
   containers: ContainersTable;
   user_machines: UserMachinesTable;
+  metal_hosts: import('./database/migrations/metal-hosts.js').MetalHostsTable;
+  metal_vm_deletions: import('./database/migrations/metal-hosts.js').MetalVmDeletionsTable;
+  free_tier_invites: import('./free-tier/invites.js').FreeTierInvitesTable;
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
@@ -1041,6 +1055,16 @@ export interface UserMachineRecord {
   privateAddress: string | null;
   lastActivityAt: string | null;
   startedAt: string | null;
+  /** Metal substrate host (metal_hosts.id); null for every other substrate. */
+  metalHostId: string | null;
+  /** hostd VM id on that host; null until the VM is created. */
+  metalVmId: string | null;
+  /** Metal sleep: when the sleeper must wake this sleeping runtime; null when nothing is scheduled. */
+  nextWakeAt: string | null;
+  /** Metal sleep: when the runtime last became running. */
+  awakeSince: string | null;
+  /** Metal sleep: when the 6 h idle guard last suspended a runtime that still reported work. */
+  idleGuardAt: string | null;
 }
 
 export type BillingCheckoutAttemptStatus = 'creating' | 'open' | 'paid' | 'expired' | 'abandoned';
@@ -1165,7 +1189,7 @@ export interface NewBillingCustomer {
 export interface BillingEntitlementRecord {
   clerkUserId: string;
   source: BillingEntitlementSource;
-  planSlug: MatrixBillingPlanSlug | 'internal';
+  planSlug: BillingEntitlementPlanSlug;
   status: BillingEntitlementStatus;
   maxRuntimeSlots: number;
   includedRuntimeSlots: number;
@@ -1346,6 +1370,11 @@ export interface NewUserMachine {
   privateAddress?: string | null;
   lastActivityAt?: string | null;
   startedAt?: string | null;
+  metalHostId?: string | null;
+  metalVmId?: string | null;
+  nextWakeAt?: string | null;
+  awakeSince?: string | null;
+  idleGuardAt?: string | null;
 }
 
 export interface NewProviderDeletionQueueRecord {

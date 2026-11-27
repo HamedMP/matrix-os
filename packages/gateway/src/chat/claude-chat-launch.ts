@@ -179,7 +179,7 @@ export async function prepareClaudeNativeRecovery(options: {
   signal.throwIfAborted();
   if (!source.schedulingAllowed) return null;
   const matching = source.fingerprint === recovery.expectedSourceFingerprint ? { args, fingerprint: source.fingerprint }
-    : source.legacy?.fingerprint === recovery.expectedSourceFingerprint ? source.legacy : undefined;
+    : source.legacy?.find(candidate => candidate.fingerprint === recovery.expectedSourceFingerprint);
   if (!matching) return null;
   return { command, args: matching.args, cwd: launch.cwd, env, sourceFingerprint: matching.fingerprint, sessionId: recovery.sessionId };
 }

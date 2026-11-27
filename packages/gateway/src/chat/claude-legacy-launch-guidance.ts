@@ -1,4 +1,5 @@
 import {
+  buildClaudeChatOrientation,
   buildMatrixAgentOrientation,
   MATRIX_SHARED_BROWSER_LAUNCH_POINTER,
 } from "../../../contracts/matrix-agent-orientation.mjs";
@@ -25,20 +26,22 @@ const BROWSER_SUFFIX = "\n\n" + MATRIX_SHARED_BROWSER_LAUNCH_POINTER;
 
 // Recognize only exact gateway-owned Chat prompts. All other launch arguments
 // stay current and must still match the saved lifecycle fingerprint.
-export function legacyClaudeChatArgs(args: string[]): string[] | undefined {
+export function legacyClaudeChatArgs(args: string[]): string[][] {
   const promptIndex = args.indexOf("--append-system-prompt");
   const prompt = promptIndex < 0 ? undefined : args[promptIndex + 1];
-  if (!prompt) return undefined;
+  if (!prompt) return [];
   const browser = prompt.endsWith(BROWSER_SUFFIX);
   const orientation = browser ? prompt.slice(0, -BROWSER_SUFFIX.length) : prompt;
-  for (const scope of ["none", "call", "discovery"] as const) {
-    if (orientation !== buildMatrixAgentOrientation({ surface: "claude", customMcpScope: scope })) continue;
-    const legacy = [...ORIENTATION, SCHEDULING];
-    if (SCOPED_GUIDANCE[scope]) legacy.push(SCOPED_GUIDANCE[scope]);
-    if (browser) legacy.push(BROWSER);
+  const scope = (["none", "call", "discovery"] as const).find(scope => orientation === buildClaudeChatOrientation(scope));
+  if (!scope) return [];
+
+  const eng567 = buildMatrixAgentOrientation({ surface: "claude", customMcpScope: scope }) + (browser ? BROWSER_SUFFIX : "");
+  const original = [...ORIENTATION, SCHEDULING];
+  if (SCOPED_GUIDANCE[scope]) original.push(SCOPED_GUIDANCE[scope]);
+  if (browser) original.push(BROWSER);
+  return [eng567, original.join("\n\n")].map(previous => {
     const reconstructed = [...args];
-    reconstructed[promptIndex + 1] = legacy.join("\n\n");
+    reconstructed[promptIndex + 1] = previous;
     return reconstructed;
-  }
-  return undefined;
+  });
 }

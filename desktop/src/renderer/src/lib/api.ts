@@ -19,6 +19,8 @@ export function buildGatewayUrl(baseUrl: string, path: string, runtimeSlot: stri
     && /^\/api\/mcp-servers(?:[/?]|$)/.test(path)) {
     return `${base}/vm/${runtimeSlot}${path}`;
   }
+  // The platform catalog accepts only catalog filters. The selected computer's bearer already carries its runtime.
+  if (/^\/api\/mcp-servers\/catalog(?:\?|$)/.test(path)) return `${base}${path}`;
   if (runtimeSlot === "primary") return `${base}${path}`;
   const sep = path.includes("?") ? "&" : "?";
   return `${base}${path}${sep}runtime=${encodeURIComponent(runtimeSlot)}`;

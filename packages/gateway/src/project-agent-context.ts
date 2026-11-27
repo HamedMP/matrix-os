@@ -161,7 +161,8 @@ async function scanMcp(
 }
 
 /** Read only known repository sources relative to a held checkout directory. */
-export async function readProjectAgentContext(root: PinnedDirectory): Promise<ProjectAgentContext> {
+export async function readProjectAgentContext(root: PinnedDirectory,
+  options: { includeConfig?: boolean } = {}): Promise<ProjectAgentContext> {
   const configFiles: NonNullable<ProjectAgentContext["configFiles"]> = [];
   const result: ProjectAgentContext = { configFiles, instructions: [], skills: [], mcpServers: [], incompleteSources: [] };
   async function scan(source: ProjectAgentContextSource, inspect: () => Promise<boolean>) {
@@ -181,7 +182,7 @@ export async function readProjectAgentContext(root: PinnedDirectory): Promise<Pr
     });
   }
   for (const source of ProjectSkillSourceSchema.options) await scan(source, () => scanSkills(root, source, result));
-  for (const source of ProjectAgentConfigPathSchema.options) {
+  for (const source of options.includeConfig !== false ? ProjectAgentConfigPathSchema.options : []) {
     await scan(source, async () => {
       if (source !== ".claude/settings.json") return scanMcp(root, source, result);
       if (await projectAgentConfigFileExists(root, source)) configFiles.push(source);

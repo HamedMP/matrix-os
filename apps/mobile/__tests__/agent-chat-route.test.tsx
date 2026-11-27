@@ -29,6 +29,8 @@ jest.mock("@/lib/queries/use-active-gateway", () => ({
   useActiveGateway: () => ({ ready: true, isComputerError: false, userId: "user_a", computerKey: "preview", session: mockGatewaySession }),
 }));
 jest.mock("@/lib/queries/use-agents", () => mockRoute.agentsModule());
+const mockMarkRead = jest.fn();
+jest.mock("@/lib/queries/use-mark-chat-read", () => ({ useMarkChatRead: (...args: unknown[]) => mockMarkRead(...args) }));
 jest.mock("@/lib/queries/use-agent-statuses", () => mockRoute.agentStatusesModule());
 jest.mock("@/lib/queries/use-canonical-chat-detail", () => mockRoute.chatDetailModule());
 jest.mock("@/lib/queries/use-bot-chat", () => mockRoute.botChatModule());
@@ -59,6 +61,10 @@ describe("agent chat route", () => {
   afterEach(cleanup);
 
   describe("opening the chat", () => {
+    it("acknowledges the agent's delivered canonical chat rather than the Chats tab selection", () => {
+      render(<AgentChatRoute />);
+      expect(mockMarkRead).toHaveBeenLastCalledWith(state.detail, "chat_research");
+    });
     it("reads the agent's own chat by the id its status already carries", () => {
       render(<AgentChatRoute />);
 

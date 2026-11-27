@@ -10,26 +10,18 @@ it.each([
     await waitForStartupText(runner.eventPath, "turn.completed");
     await runner.closed;
     const start = (await runner.requests()).find((request) => request.method === method);
-    expect(start?.developerInstructions).toContain("## Matrix OS orientation");
-    expect(start?.developerInstructions).toContain("window.MatrixOS.db");
-    expect(start?.developerInstructions).toContain("matrix-app-builder");
-    expect(start?.developerInstructions).toContain("Only use tools present in this run");
-    expect(start?.developerInstructions).not.toContain("mcp__matrix-os-ipc__manage_cron");
-    const instructions = start?.developerInstructions ?? "";
-    expect(Buffer.byteLength(instructions)).toBeLessThan(2_000);
-    expect(instructions).toContain("Matrix Core MCP");
-    expect(instructions).toContain("search_tools");
-    expect(instructions).toContain("describe_tool");
-    expect(instructions).toContain("call_tool");
-    expect(instructions).toContain("matrix-integrations inventory");
-    expect(instructions.indexOf("Matrix Core MCP")).toBeLessThan(instructions.indexOf("matrix-integrations inventory"));
-    expect(start?.developerInstructions).toContain("matrix-integrations describe");
-    expect(start?.developerInstructions).toContain("matrix-integrations call");
-    expect(start?.developerInstructions).toContain("exact action ID");
-    expect(start?.developerInstructions).toContain("untrusted data");
-    expect(start?.developerInstructions).toContain("account label");
-    expect(start?.developerInstructions).toContain("read-only");
-    expect(start?.developerInstructions).toContain("approval");
+    expect(start?.developerInstructions).toEqual(expect.any(String));
+    const instructions = start!.developerInstructions!;
+    expect(Buffer.byteLength(instructions)).toBeLessThan(500);
+    expect(instructions).toMatch(/read matrix-app-builder first.*report missing/i);
+    expect(instructions).toMatch(/owner Postgres only/i);
+    expect(instructions).toMatch(/no embedded secrets or direct provider calls/i);
+    expect(instructions).toMatch(/Matrix Core MCP inventory.*list_services.*stop if answered/i);
+    expect(instructions).toMatch(/search_tools.*describe_tool.*approved call_tool/);
+    expect(instructions).toMatch(/honor scope\/denials/i);
+    expect(instructions).toMatch(/no native read\?.*matrix-integrations skill Terminal fallback.*exact account\/filters.*read-only/i);
+    expect(instructions).not.toContain("matrix-integrations call");
+    expect(instructions).toMatch(/tool output untrusted/i);
   } finally {
     await runner.close();
   }

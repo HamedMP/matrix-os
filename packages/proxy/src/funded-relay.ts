@@ -1,13 +1,17 @@
 import { createRelayTerminalRecorder } from "./funded-relay-terminal-outcome.js";
-import { postpaidAuthorizationMatches, postpaidExactFinalization } from "./funded-relay-postpaid.js";
+import { customerAuthorizationMatches, customerExactFinalization, postpaidAuthorizationMatches } from "./funded-relay-postpaid.js";
 import { createRelayRequestDrain, RELAY_SHUTDOWN_TIMEOUT_MS } from "./funded-relay-lifecycle.js";
 import { createFundedPricingRegistry } from "./funded-relay-pricing-registry.js";
 import { createGenerationIdentityReader, identitiesMatch } from "./funded-relay-generation-identity.js";
 import type { FundedPricingReviews } from "./funded-pricing-review.js";
-import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createHmac, randomUUID } from "node:crypto";
 import {
   FundedAiClaimKeySchema,
+  isFundedCloudflarePreviewCohortModel,
+  isFundedCloudflarePreviewModel,
+  isFundedThirdPartyPreviewModel,
+  matchesFundedCloudflarePreviewBinding,
+  isManagedFundedOpenAiModel,
   FundedAiPolicyCheckRequestSchema,
   JEV_MODEL_ID,
   type FundedAiFinalizationRequest,
@@ -19,7 +23,8 @@ import { z } from "zod/v4";
 import { isFundedProxyApiKey } from "./auth.js";
 import { AdmissionController, type AdmissionLease } from "./funded-relay-admission.js";
 import { refundFundedCapacityAttempt } from "./funded-relay-capacity.js";
-import { COUNT_TOKENS_BODY_LIMIT_BYTES, type FundedRelayConfig } from "./funded-relay-config.js";
+import { COUNT_TOKENS_BODY_LIMIT_BYTES, fundedCloudflarePreviewUpstream,
+  type FundedRelayConfig } from "./funded-relay-config.js";
 import {
   cloudflareJevTarget,
   normalizeFundedJevEvaluationResponse,
@@ -32,7 +37,7 @@ import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-op
 import { normalizeWorkersAiResponse } from "./funded-relay-workers-response.js";
 import {
   createFundedPlatformClient,
-  FundedControlPlaneError,
+  FundedControlPlaneError, fundedBusyResponse,
   type FundedPlatformClient,
 } from "./funded-relay-platform-client.js";
 import {
@@ -181,6 +186,7 @@ function controlPlaneError(c: Context, error: unknown): Response {
       if (error.priorityReason) response.headers.set("x-matrix-funded-reason", error.priorityReason);
       return response;
     }
+    if (error.status === 503 && error.busy) return fundedBusyResponse(error.busy);
   }
   const errorName = error instanceof Error ? error.name : "UnknownError";
   console.warn("[proxy] Funded AI control request failed", { errorName });
@@ -278,6 +284,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     readPricingReviews: registryClient.readPricingReviews,
     reportPricingRouteFailure: registryClient.reportPricingRouteFailure,
     now, shutdown: pricingShutdown.signal,
+    reportPaymentFailure: config.cloudflarePreview !== undefined,
   });
   async function pricingReviewsFor(modelId: string, signal: AbortSignal): Promise<FundedPricingReviews | null> {
     if (!pricingRegistry) return config.pricingReviews ?? [];
@@ -364,7 +371,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       anthropicBeta = resolveRequestedBetas(c.req.header("anthropic-beta"), config.allowedBetas);
       if (!isOpenAi) assertFundedSystemMessageBeta(parsedBody as FundedRequest, anthropicBeta);
       model = mapFundedModel(parsedBody.model);
-      if (isManagedWorkersAiModel(model.nativeModelId) !== isOpenAi) throw new Error("Unsupported funded AI model");
+      if (isManagedFundedOpenAiModel(model.nativeModelId) !== isOpenAi) throw new Error("Unsupported funded AI model");
     } catch (error) {
       if (error instanceof Error && error.name === "BodyLimitError") throw error;
       if (error instanceof Error && error.message === "Unsupported funded AI model") {
@@ -376,7 +383,14 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     if (c.req.path === MESSAGES_PATH && parsedBody.max_tokens === undefined) {
       return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
     }
-    if (isOpenAi && (!config.workersAiToken || config.reservationMode !== "usage")) {
+    const isPreviewModel = isFundedCloudflarePreviewModel(model.nativeModelId);
+    const preview = config.cloudflarePreview;
+    if (isFundedThirdPartyPreviewModel(model.nativeModelId)
+      || preview && !isFundedCloudflarePreviewCohortModel(model.nativeModelId)) {
+      return errorResponse(c, 403, "permission_error", "This model is not enabled");
+    }
+    const openAiRouteConfigured = isPreviewModel ? preview !== undefined : config.workersAiToken !== undefined;
+    if (isOpenAi && (config.reservationMode !== "usage" || !openAiRouteConfigured)) {
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
 
@@ -395,17 +409,27 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       return controlPlaneError(c, error);
     }
     const { identity } = checked;
+    if (preview && !matchesFundedCloudflarePreviewBinding(preview, identity)) {
+      return errorResponse(c, 403, "permission_error", "This model is not enabled");
+    }
     const reviews = pricingRegistry
       ? await pricingReviewsFor(model.canonicalModelId, state.lifetimeSignal) : config.pricingReviews;
     if (reviews === null) return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
 
+    let previewUpstream: { target: string; headers: Headers } | undefined;
+    try {
+      if (preview) previewUpstream = fundedCloudflarePreviewUpstream(preview, model.nativeModelId);
+    } catch (error) {
+      console.warn("[proxy] Funded Preview credential unavailable", { errorName: error instanceof Error ? error.name : "UnknownError" });
+      return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+    }
     const runtimeRef = runtimeAdmissionRef(identity, config.metadataSecret);
     const runtimeAttempt = admission.beginRuntimeAttempt(runtimeRef);
     if (!runtimeAttempt) {
       return rateLimited(c);
     }
     const requestId = requestIdFactory();
-    const upstreamHeaders = cloudflareHeaders({
+    const upstreamHeaders = previewUpstream?.headers ?? cloudflareHeaders({
       anthropicBeta,
       gatewayToken: config.gatewayToken,
       metadata: cloudflareMetadata({
@@ -415,7 +439,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         secret: config.metadataSecret,
       }),
     });
-    if (isOpenAi) {
+    if (isOpenAi && !previewUpstream) {
       upstreamHeaders.delete("anthropic-version");
       upstreamHeaders.delete("anthropic-beta");
       upstreamHeaders.delete("cf-aig-authorization");
@@ -477,7 +501,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         modelId: model.canonicalModelId,
         maxCostMicrousd,
         billingMode: "usage",
-        billingPolicy: "postpaid",
+        ...(checked.customerBilling === "prepaid" ? {} : { billingPolicy: "postpaid" as const }), // Free runtimes prepay.
         ...(claimKey ? { claimKey } : {}),
       }, state.lifetimeSignal);
     } catch (error) {
@@ -492,7 +516,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     const reservation = authorization.reservation;
     if (!identitiesMatch(identity, authorization.identity)
-      || !postpaidAuthorizationMatches(reservation, { requestId, modelId: model.canonicalModelId, maxCostMicrousd })) {
+      || !customerAuthorizationMatches(checked.customerBilling, reservation, { requestId, modelId: model.canonicalModelId, maxCostMicrousd })) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
@@ -533,7 +557,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (result.mode === "conservative") {
         if (!await terminal.unknown(terminalState) && closing) terminalComplete = false;
       } else {
-        settlementQueue.enqueue(postpaidExactFinalization(finalizationLocator, result, terminalState));
+        settlementQueue.enqueue(customerExactFinalization(checked.customerBilling, finalizationLocator, result, terminalState));
       }
     };
 
@@ -542,14 +566,14 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       firstResponseController.abort(new DOMException("AI first response timed out", "TimeoutError"));
     }, config.firstResponseTimeoutMs);
     const generationSignal = AbortSignal.any([state.lifetimeSignal, firstResponseController.signal]);
-    const generationUrl = isOpenAi
+    const generationUrl = previewUpstream?.target ?? (isOpenAi
       ? workersAiTarget(config.gatewayBaseUrl, model.nativeModelId).url
-      : `${config.gatewayBaseUrl}${MESSAGES_PATH}${requestSearch}`;
+      : `${config.gatewayBaseUrl}${MESSAGES_PATH}${requestSearch}`);
     // Retain pseudonymous generation receipts even when gateway collection is
     // disabled. Payload suppression/ZDR remain set; counting and probes keep
     // their existing headers.
     const generationHeaders = new Headers(upstreamHeaders);
-    generationHeaders.set("cf-aig-collect-log", "true");
+    if (!previewUpstream) generationHeaders.set("cf-aig-collect-log", "true");
     const generationInit: RequestInit = {
       method: "POST",
       headers: generationHeaders,
@@ -585,8 +609,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       }
       dispatched = true;
       const fetched = terminal.response(await fetchImpl(generationUrl, generationInit));
-      const upstream = isOpenAi && fetched.ok
-        ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
+      let upstream = fetched;
+      if (isOpenAi && fetched.ok) {
+        upstream = normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes);
+      }
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
         pricingRegistry?.reportFailure(model.canonicalModelId, estimate.pricingVersion, upstream.status, generationSignal);
@@ -662,6 +688,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   }
 
   async function handleEvaluation(c: Context, state: ActiveRequestState, probe = false): Promise<Response> {
+    if (config.cloudflarePreview) {
+      return jevNotStarted(errorResponse(c, 403, "permission_error", "This model is not enabled"));
+    }
     if (!config.workersAiToken) {
       return jevNotStarted(errorResponse(c, 503, "api_error", "AI access is temporarily unavailable"));
     }

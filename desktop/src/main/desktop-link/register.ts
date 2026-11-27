@@ -4,7 +4,6 @@
 // quit. Inert until this device is paired with the primary computer.
 import { hostname, release } from "node:os";
 import { pairingDeviceNoun, type PairedLinkIdentity } from "../desktop-pairing";
-import type { MacActivityHandle } from "../mac-activity/activity";
 import type { LocalTerminalHost } from "../local-terminals/host";
 import { renderVisible, type DesktopLinkConsentRequest } from "./consent";
 import { localTerminalCoreSocket, localTerminalRuntimeDir } from "../local-terminals/runtime";
@@ -29,17 +28,13 @@ export interface DesktopLinkMainOptions {
     linkFullAccess(identity: PairedLinkIdentity): Promise<boolean>;
     open(): Promise<void>;
   };
-  /** 2698's activity indicator, where it runs: the link shows there while it is on, with Stop. */
-  activity?: (kind: "desktop-link") => MacActivityHandle | undefined;
-  /** A native dialog on this desktop (2698's), for the owner's approvals; closes when `signal` aborts. */
+  /** Local owner consent. Close the prompt when the link request is aborted. */
   showDialog(request: {
     type: "question"; title: string; message: string; detail: string; buttons: string[]; defaultId: number; cancelId: number;
     signal: AbortSignal;
   }): Promise<{ response: number }>;
   computerToken(slot: string): Promise<string | null>;
   powerMonitor: PowerMonitorLike;
-  /** Registers the quit hook: every link says goodbye and closes as the app quits. */
-  quitting(listener: () => void): void;
   /** The Terminal window's controls: status, switch on and off. */
   ipc?: {
     ipcMain: Parameters<typeof registerDesktopLinkIpc>[0];
@@ -77,29 +72,6 @@ export function desktopLinkApproval(computerName: string, request: DesktopLinkCo
   }
 }
 
-/**
- * One activity entry while the link to the paired computer is on: running,
- * then stopped, revoked (pairing removed) or failed when it ends. Reconnecting
- * after a drop keeps the same entry.
- */
-export function bridgeDesktopLinkActivity(
-  service: Pick<DesktopLinkService, "onStatus">,
-  begin: (kind: "desktop-link") => MacActivityHandle | undefined,
-): () => void {
-  let entry: MacActivityHandle | undefined;
-  return service.onStatus((status) => {
-    if (status.slot !== "primary") return;
-    if (status.state === "on") {
-      entry ??= begin("desktop-link");
-      entry?.update("running");
-      return;
-    }
-    if (status.state === "connecting" || status.state === "offline") return;
-    entry?.finish(status.state === "removed" ? "revoked" : status.state === "error" ? "failed" : "stopped");
-    entry = undefined;
-  });
-}
-
 export function startDesktopLink(options: DesktopLinkMainOptions): DesktopLinkService {
   const platform = process.platform;
   const service = createDesktopLinkService({
@@ -127,8 +99,6 @@ export function startDesktopLink(options: DesktopLinkMainOptions): DesktopLinkSe
     // Electron main's WebSocket (Node's) takes headers, so the bearer never sits in a URL.
     createSocket: (url, headers) => new WebSocket(url, { headers } as unknown as string[]) as unknown as DesktopLinkSocket,
   });
-  options.quitting(() => service.dispose());
-  if (options.activity) bridgeDesktopLinkActivity(service, options.activity);
   if (options.ipc) {
     registerDesktopLinkIpc(options.ipc.ipcMain, service, options.ipc.authorizeSender, options.ipc.emit, () => options.pairing.open());
   }

@@ -17,11 +17,6 @@ const SavedKey = z.strictObject({
   scope: ScopeId,
   privateKey: z.string().regex(/^[A-Za-z0-9_-]{64}$/),
 });
-const SavedChatFullAccess = DesktopPairingStateSchema.extend({
-  scope: ScopeId,
-  deviceId: DesktopPairingDeviceIdSchema,
-  capability: z.literal("mac-verification"),
-});
 /** The owner's Full Access for the desktop link on this device (spec 2716, D2), bound to one pairing. */
 const SavedLinkFullAccess = DesktopPairingStateSchema.extend({
   scope: ScopeId,
@@ -64,7 +59,7 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
   function files(scope: KeyScope) {
     const id = createHash("sha256").update(JSON.stringify([scope.ownerId, scope.origin])).digest("hex");
     return {
-      id, keyPath: join(directory, `device-${id}.bin`), fullAccessPath: join(directory, `chat-full-access-${id}.bin`),
+      id, keyPath: join(directory, `device-${id}.bin`),
       linkFullAccessPath: join(directory, `desktop-link-full-access-${id}.bin`),
     };
   }
@@ -199,29 +194,6 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
     }
   }
 
-  async function hasChatFullAccess(scope: KeyScope, state: PairingState) {
-    if (!state.deviceId) return false;
-    const { id, fullAccessPath } = files(scope);
-    const record = await readEncryptedRecord(fullAccessPath);
-    if (record === null) return false;
-    const saved = SavedChatFullAccess.parse(record);
-    return saved.scope === id && matchingPairingState(state, saved);
-  }
-
-  async function allowChatFullAccess(scope: KeyScope, state: PairingState, signal: AbortSignal, assertCurrent: () => void) {
-    const { id, fullAccessPath } = files(scope);
-    const saved = SavedChatFullAccess.parse({ ...state, scope: id, capability: "mac-verification" });
-    await publishEncryptedRecord(fullAccessPath, saved, signal, temporary => {
-      assertCurrent();
-      return rename(temporary, fullAccessPath);
-    });
-  }
-
-  async function revokeChatFullAccess(scope: KeyScope) {
-    if (!await inspectDirectory()) return;
-    await rm(files(scope).fullAccessPath, { force: true });
-  }
-
   async function hasLinkFullAccess(scope: KeyScope, state: PairingState) {
     if (!state.deviceId) return false;
     const { id, linkFullAccessPath } = files(scope);
@@ -248,9 +220,6 @@ export function createPairingKeyStore(userData: string, safeStorage: PairingSafe
   return {
     load,
     loadOrCreate,
-    hasChatFullAccess,
-    allowChatFullAccess,
-    revokeChatFullAccess,
     hasLinkFullAccess,
     allowLinkFullAccess,
     revokeLinkFullAccess,

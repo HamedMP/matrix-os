@@ -31,6 +31,15 @@ it("records a safe failure category and stage without shipping the exception tex
 });
 afterEach(async () => { stream?.shutdown(); await repository.kysely.destroy(); });
 
+it("keeps failure telemetry and durable completion when the notification sink throws", async () => {
+  const capture = vi.fn();
+  stream = createGatewayChatEventStream({ repository, capture, onChatEvent: () => { throw new Error("router unavailable"); } });
+  const ids = await runningChat();
+  await repository.finishRun(owner, { ...ids, outcome: "failed", completedAt: "2026-09-09T00:00:02.000Z" });
+  expect(capture).toHaveBeenCalledWith("matrix_agent_run_failed", expect.objectContaining({ distinctId: owner.ownerId }));
+  expect((await repository.exportChat(owner, ids.chatId))?.runs[0]?.status).toBe("failed");
+});
+
 async function runningChat() {
   const { snapshot } = createCanonicalChatFixture("running");
   const chatId = snapshot.chat.id;

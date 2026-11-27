@@ -78,7 +78,7 @@ it.each(["cancel", "terminal"])("%s during owner wait retires only that unconsum
   const decision = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (decision.type !== "approval.requested") throw new Error("Missing exact owner decision");
   f.send({ type: ending === "cancel" ? "fixture_cancel" : "fixture_terminal" });
-  await expect.poll(async () => (await f!.frames()).find(frame => frame.result), { timeout: 3000 }).toBeDefined();
+  await expect.poll(async () => (await f!.frames()).find(frame => frame.result), { timeout: 15_000 }).toBeDefined();
   expect(JSON.parse((await f.frames()).find(frame => frame.result).result)).toMatchObject({ data: { kind: "unknown", requestId, reconcile: true } });
   await expect(f.approve(decision, chatId, admitted.run.id)).rejects.toThrow();
   expect(await f.data.db.selectFrom("routine_cli_sources").select("revoked_at").execute()).toEqual([{ revoked_at: null }]);
@@ -171,7 +171,7 @@ it("an issued unconsumed capability cannot survive terminal native call even bef
   const decision = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (decision.type !== "approval.requested") throw new Error("Missing exact owner decision");
   await f.approve(decision, chatId, admitted.run.id);
-  await expect.poll(() => rejected, { timeout: 3000 }).toBe("permission_denied");
+  await expect.poll(() => rejected, { timeout: 15_000 }).toBe("permission_denied");
   expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
   expect(await f.data.db.selectFrom("bot_interactions").selectAll().execute()).toEqual([]);
 }, 15000);

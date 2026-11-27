@@ -29,8 +29,9 @@ export function parseNullableProviderActionId(value: number | string | null): nu
   return NullableProviderActionIdSchema.parse(value);
 }
 
-function toIsoTimestamp(value: Date | string | null): string | null {
-  if (value === null) return null;
+// Absent columns (a row read before its migration ran) map to null, like the other nullable fields.
+function toIsoTimestamp(value: Date | string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
   return (value instanceof Date ? value : new Date(value)).toISOString();
 }
 
@@ -82,6 +83,11 @@ export function mapUserMachine(row: Selectable<UserMachinesTable>): UserMachineR
     privateAddress: row.private_address,
     lastActivityAt: toIsoTimestamp(row.last_activity_at),
     startedAt: toIsoTimestamp(row.started_at),
+    metalHostId: row.metal_host_id,
+    metalVmId: row.metal_vm_id,
+    nextWakeAt: toIsoTimestamp(row.next_wake_at),
+    awakeSince: toIsoTimestamp(row.awake_since),
+    idleGuardAt: toIsoTimestamp(row.idle_guard_at),
   };
 }
 
@@ -131,6 +137,11 @@ export function toUserMachineRow(record: NewUserMachine): Insertable<UserMachine
     private_address: record.privateAddress ?? null,
     last_activity_at: record.lastActivityAt ?? null,
     started_at: record.startedAt ?? null,
+    metal_host_id: record.metalHostId ?? null,
+    metal_vm_id: record.metalVmId ?? null,
+    next_wake_at: record.nextWakeAt ?? null,
+    awake_since: record.awakeSince ?? null,
+    idle_guard_at: record.idleGuardAt ?? null,
   };
 }
 
@@ -180,6 +191,11 @@ export function toUserMachineUpdate(values: Partial<NewUserMachine>): Updateable
   if (values.privateAddress !== undefined) update.private_address = values.privateAddress;
   if (values.lastActivityAt !== undefined) update.last_activity_at = values.lastActivityAt;
   if (values.startedAt !== undefined) update.started_at = values.startedAt;
+  if (values.metalHostId !== undefined) update.metal_host_id = values.metalHostId;
+  if (values.metalVmId !== undefined) update.metal_vm_id = values.metalVmId;
+  if (values.nextWakeAt !== undefined) update.next_wake_at = values.nextWakeAt;
+  if (values.awakeSince !== undefined) update.awake_since = values.awakeSince;
+  if (values.idleGuardAt !== undefined) update.idle_guard_at = values.idleGuardAt;
   return update;
 }
 

@@ -42,7 +42,9 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const DEFAULT_BILLING_POLL_INTERVAL_MS = 3_000;
 const DEFAULT_JOURNEY_POLL_INTERVAL_MS = 3_000;
 const BILLING_PROJECTION_WAIT_MS = 2 * 60_000;
-export const ADD_COMPUTER_DRAFT_KEY = "matrix:add-computer-draft:v2";
+import { ADD_COMPUTER_DRAFT_KEY } from "./add-computer-draft";
+
+export { ADD_COMPUTER_DRAFT_KEY };
 
 type BillingStatus = Pick<MatrixBillingStatus, "entitlement" | "access">;
 

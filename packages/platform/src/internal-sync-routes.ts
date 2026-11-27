@@ -286,11 +286,48 @@ async function parseJsonBody(c: { req: { json: () => Promise<unknown> } }): Prom
   }
 }
 
-export function createInternalSyncRoutes(opts: {
+const SYNC_STORAGE_UNAVAILABLE = { error: "Sync storage unavailable" } as const;
+
+/**
+ * The sync routes a platform serves, whether or not it has owner sync storage.
+ * They are mounted whenever runtime credentials can be verified: an unmounted
+ * route falls through to session routing, which refuses the guest's machine
+ * credential with a misleading 401 and aborts its restore gate. Without
+ * storage, a preview platform that cannot provision Hetzner VPSes answers that
+ * no backup exists (it holds none);
+ * any other deployment fails closed with 503 so a misconfigured production
+ * platform can never tell an owner with backups to start empty.
+ */
+export function createConfiguredInternalSyncRoutes(opts: {
   db: PlatformDB;
-  r2: R2Client;
+  r2: R2Client | null;
   platformSecret: string;
   r2PrefixRoot: string;
+  env: NodeJS.ProcessEnv;
+}): Hono<any> | undefined {
+  if (!opts.platformSecret) return undefined;
+  // The same waiver as checkCustomerVpsPrimaryStorageEnv: only a preview that
+  // cannot provision Hetzner VPSes may run without owner sync storage.
+  const preview = opts.env.PLATFORM_PREVIEW === "true";
+  const hetzner = Boolean(opts.env.HETZNER_API_TOKEN?.trim());
+  const absentStorage = preview && !hetzner ? "empty" : "unavailable";
+  if (!opts.r2) {
+    const log = preview && !hetzner ? console.warn : console.error;
+    log(`[internal-sync] owner sync storage is not configured; sync routes answer as ${absentStorage}`);
+  }
+  return createInternalSyncRoutes({
+    db: opts.db, r2: opts.r2, platformSecret: opts.platformSecret, r2PrefixRoot: opts.r2PrefixRoot, absentStorage,
+  });
+}
+
+export function createInternalSyncRoutes(opts: {
+  db: PlatformDB;
+  /** Null when the deployment has no owner sync storage; see createConfiguredInternalSyncRoutes. */
+  r2: R2Client | null;
+  platformSecret: string;
+  r2PrefixRoot: string;
+  /** How routes answer without storage: `empty` only for preview platforms. Defaults to `unavailable`. */
+  absentStorage?: "empty" | "unavailable";
 }): Hono<any> {
   const app = new Hono<{ Variables: {
     internalSyncUserId: string;
@@ -347,6 +384,20 @@ export function createInternalSyncRoutes(opts: {
 
   app.use("*", createStorageDeletionAdmissionMiddleware(opts.db));
 
+  if (!opts.r2) {
+    const empty = opts.absentStorage === "empty";
+    app.post("/system/exists", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), async (c) => {
+      const parsed = SystemStorageKeyInputSchema.safeParse(await parseJsonBody(c));
+      if (!parsed.success || systemStorageAccess(parsed.data.key, c.get("internalSyncScope").runtimeSlot) === null) {
+        return c.json({ error: "Validation error" }, 400);
+      }
+      return empty ? c.json({ exists: false }) : c.json(SYNC_STORAGE_UNAVAILABLE, 503);
+    });
+    app.all("*", bodyLimit({ maxSize: INTERNAL_SYNC_BODY_LIMIT }), (c) => c.json(SYNC_STORAGE_UNAVAILABLE, 503));
+    return app;
+  }
+  const r2 = opts.r2;
+
   function requireAllowedKey(
     c: { get: (key: "internalSyncScope") => SyncScope; json: (body: unknown, status?: number) => Response },
     key: string,
@@ -365,7 +416,7 @@ export function createInternalSyncRoutes(opts: {
     }
     const allowed = requireAllowedKey(c, parsed.key);
     if (allowed instanceof Response) return allowed;
-    const url = await opts.r2.getPresignedGetUrl(parsed.key, parsed.expiresIn);
+    const url = await r2.getPresignedGetUrl(parsed.key, parsed.expiresIn);
     return c.json({ url });
   });
 
@@ -376,7 +427,7 @@ export function createInternalSyncRoutes(opts: {
     }
     const allowed = requireAllowedKey(c, parsed.key);
     if (allowed instanceof Response) return allowed;
-    const url = await opts.r2.getPresignedPutUrl(
+    const url = await r2.getPresignedPutUrl(
       parsed.key,
       parsed.size,
       parsed.expiresIn,
@@ -393,7 +444,7 @@ export function createInternalSyncRoutes(opts: {
       return c.json({ error: "Validation error" }, 400);
     }
     try {
-      const result = await opts.r2.headObject(
+      const result = await r2.headObject(
         systemStorageKey(c, opts.r2PrefixRoot, parsed.data.key),
         { signal: AbortSignal.timeout(10_000) },
       );
@@ -412,7 +463,7 @@ export function createInternalSyncRoutes(opts: {
     ) === null) {
       return c.json({ error: "Validation error" }, 400);
     }
-    const url = await opts.r2.getPresignedGetUrl(
+    const url = await r2.getPresignedGetUrl(
       systemStorageKey(c, opts.r2PrefixRoot, parsed.data.key),
       SYSTEM_STORAGE_PRESIGN_TTL_SECONDS,
     );
@@ -430,7 +481,7 @@ export function createInternalSyncRoutes(opts: {
     ) !== "write") {
       return c.json({ error: "Forbidden key" }, 403);
     }
-    const url = await opts.r2.getPresignedPutUrl(
+    const url = await r2.getPresignedPutUrl(
       systemStorageKey(c, opts.r2PrefixRoot, parsed.data.key),
       parsed.data.size,
       SYSTEM_STORAGE_PRESIGN_TTL_SECONDS,
@@ -444,7 +495,7 @@ export function createInternalSyncRoutes(opts: {
       return c.json({ error: "Validation error" }, 400);
     }
     try {
-      const uploadId = await opts.r2.createMultipartUpload(
+      const uploadId = await r2.createMultipartUpload(
         systemStorageKey(c, opts.r2PrefixRoot, parsed.key),
       );
       return c.json({ uploadId });
@@ -459,7 +510,7 @@ export function createInternalSyncRoutes(opts: {
     if (!parsed || systemStorageAccess(parsed.key, c.get("internalSyncScope").runtimeSlot) !== "write") {
       return c.json({ error: "Validation error" }, 400);
     }
-    const url = await opts.r2.getPresignedPartUrl(
+    const url = await r2.getPresignedPartUrl(
       systemStorageKey(c, opts.r2PrefixRoot, parsed.key),
       parsed.uploadId,
       parsed.partNumber,
@@ -477,7 +528,7 @@ export function createInternalSyncRoutes(opts: {
         return c.json({ error: "Validation error" }, 400);
       }
       try {
-        const result = await opts.r2.completeMultipartUpload(
+        const result = await r2.completeMultipartUpload(
           systemStorageKey(c, opts.r2PrefixRoot, parsed.key),
           parsed.uploadId,
           parsed.parts,
@@ -496,7 +547,7 @@ export function createInternalSyncRoutes(opts: {
       return c.json({ error: "Validation error" }, 400);
     }
     try {
-      await opts.r2.abortMultipartUpload(
+      await r2.abortMultipartUpload(
         systemStorageKey(c, opts.r2PrefixRoot, parsed.key),
         parsed.uploadId,
       );
@@ -515,10 +566,10 @@ export function createInternalSyncRoutes(opts: {
       if (allowed instanceof Response) return allowed;
       try {
         if (path === "/object/head") {
-          const result = await opts.r2.headObject(parsed.data.key);
+          const result = await r2.headObject(parsed.data.key);
           return c.json({ exists: result.exists });
         }
-        const uploads = await opts.r2.listMultipartUploads(parsed.data.key);
+        const uploads = await r2.listMultipartUploads(parsed.data.key);
         if (uploads.length > 10 || uploads.some(upload => upload.key !== parsed.data.key || !upload.uploadId || upload.uploadId.length > 1024)) {
           throw new Error("Unsafe recovery result");
         }
@@ -537,7 +588,7 @@ export function createInternalSyncRoutes(opts: {
     }
     const allowed = requireAllowedKey(c, parsed.key);
     if (allowed instanceof Response) return allowed;
-    const uploadId = await opts.r2.createMultipartUpload(parsed.key);
+    const uploadId = await r2.createMultipartUpload(parsed.key);
     return c.json({ uploadId });
   });
 
@@ -548,7 +599,7 @@ export function createInternalSyncRoutes(opts: {
     }
     const allowed = requireAllowedKey(c, parsed.key);
     if (allowed instanceof Response) return allowed;
-    const url = await opts.r2.getPresignedPartUrl(
+    const url = await r2.getPresignedPartUrl(
       parsed.key,
       parsed.uploadId,
       parsed.partNumber,
@@ -568,7 +619,7 @@ export function createInternalSyncRoutes(opts: {
       const allowed = requireAllowedKey(c, parsed.key);
       if (allowed instanceof Response) return allowed;
       try {
-        const result = await opts.r2.completeMultipartUpload(
+        const result = await r2.completeMultipartUpload(
           parsed.key,
           parsed.uploadId,
           parsed.parts,
@@ -595,7 +646,7 @@ export function createInternalSyncRoutes(opts: {
     const allowed = requireAllowedKey(c, parsed.key);
     if (allowed instanceof Response) return allowed;
     try {
-      await opts.r2.abortMultipartUpload(parsed.key, parsed.uploadId);
+      await r2.abortMultipartUpload(parsed.key, parsed.uploadId);
       return c.json({ ok: true });
     } catch (err: unknown) {
       console.error(
@@ -614,7 +665,7 @@ export function createInternalSyncRoutes(opts: {
     const allowed = requireAllowedKey(c, key);
     if (allowed instanceof Response) return allowed;
     try {
-      const result = await opts.r2.getObject(key, { signal: AbortSignal.timeout(120_000) });
+      const result = await r2.getObject(key, { signal: AbortSignal.timeout(120_000) });
       if (!result.body) {
         return c.body(null, 404);
       }
@@ -656,8 +707,8 @@ export function createInternalSyncRoutes(opts: {
     const contentLength = declared && /^\d{1,12}$/.test(declared) ? Number(declared) : undefined;
     const result = contentLength !== undefined && c.req.raw.body
       && contentLength <= INTERNAL_SYNC_OBJECT_BODY_LIMIT
-      ? await opts.r2.putObject(key, c.req.raw.body, { contentLength })
-      : await opts.r2.putObject(key, new Uint8Array(await c.req.arrayBuffer()));
+      ? await r2.putObject(key, c.req.raw.body, { contentLength })
+      : await r2.putObject(key, new Uint8Array(await c.req.arrayBuffer()));
     return c.json({ etag: result.etag ?? null });
   });
 
@@ -668,7 +719,7 @@ export function createInternalSyncRoutes(opts: {
     }
     const allowed = requireAllowedKey(c, key);
     if (allowed instanceof Response) return allowed;
-    await opts.r2.deleteObject(key);
+    await r2.deleteObject(key);
     return c.json({ ok: true });
   });
 

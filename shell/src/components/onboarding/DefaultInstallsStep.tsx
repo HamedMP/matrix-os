@@ -33,6 +33,32 @@ const acquisitionSourceOptions = [
 
 type AcquisitionSource = typeof acquisitionSourceOptions[number]["id"];
 
+/**
+ * What the install step calls the machine being built. Paid computers are
+ * VPSes; free computers are VMs on Matrix metal hosts, so they are just "your
+ * computer" (spec 2691).
+ */
+const INSTALL_TARGET_COPY = {
+  vps: {
+    footer: "You can install or sign into agents anytime from the terminal’s + menu after the VPS is ready.",
+    buildLabel: "Build VPS",
+  },
+  computer: {
+    footer: "You can install or sign into agents anytime from the terminal’s + menu after your computer is ready.",
+    buildLabel: "Set up",
+  },
+} as const;
+
+type InstallTarget = keyof typeof INSTALL_TARGET_COPY;
+
+/**
+ * Free computers always preinstall these two agents: the free disk is sized
+ * for them (spec 2691, ENG-520), so the free install step shows them read-only.
+ */
+const FREE_PREINSTALLED_TOOL_IDS: readonly DeveloperToolId[] = ["claude-code", "codex"];
+const FREE_PREINSTALLS_NOTE =
+  "Claude Code and Codex come preinstalled on your free computer. You can install OpenCode or Pi later from the Terminal’s + menu.";
+
 function isTextEntryTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) {
@@ -336,17 +362,44 @@ export function DeveloperToolsSelector({
   );
 }
 
+/** The free plan's fixed preinstalls, shown read-only in place of the selector. */
+function FreePreinstallsNote() {
+  const tools = developerToolOptions.filter((tool) => FREE_PREINSTALLED_TOOL_IDS.includes(tool.id));
+  return (
+    <section className="max-w-3xl rounded-2xl border border-border/70 bg-background/55 p-3 sm:p-4">
+      <div className="mb-3 flex items-center gap-4 px-1">
+        <h4 className="shrink-0 text-sm font-semibold text-deep">Developer tools</h4>
+        <ul aria-label="Preinstalled coding agents" className="flex flex-wrap items-center gap-3">
+          {tools.map((tool) => (
+            <li key={tool.id} className="flex items-center gap-2 text-sm text-deep">
+              <DeveloperToolLogo logoPath={tool.logoPath} />
+              {tool.label}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <p className="px-1 text-xs text-forest/65">{FREE_PREINSTALLS_NOTE}</p>
+    </section>
+  );
+}
+
 export function DefaultInstallsStep({
   onBuild,
   loading = false,
   error = null,
   collectAcquisitionSource = false,
+  freePlan = false,
 }: {
+  /** Called with the selected tools; on the free plan, with its fixed preinstalls. */
   onBuild: (tools: DeveloperToolId[]) => void;
   loading?: boolean;
   error?: string | null;
   collectAcquisitionSource?: boolean;
+  /** The owner is building their free metal computer, not a paid VPS. */
+  freePlan?: boolean;
 }) {
+  const target: InstallTarget = freePlan ? "computer" : "vps";
+  const copy = INSTALL_TARGET_COPY[target];
   const [step, setStep] = useState<"acquisition" | "installs">(
     collectAcquisitionSource ? "acquisition" : "installs",
   );
@@ -358,8 +411,9 @@ export function DefaultInstallsStep({
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- stable identity is required by the global keydown effect below while the closure must refresh when the selected snapshot changes.
   const buildWithSelectedTools = useCallback((): void => {
-    if (!loading) onBuild([...selectedTools]);
-  }, [loading, onBuild, selectedTools]);
+    if (loading) return;
+    onBuild(freePlan ? [...FREE_PREINSTALLED_TOOL_IDS] : [...selectedTools]);
+  }, [freePlan, loading, onBuild, selectedTools]);
 
   useEffect(() => {
     if (step !== "installs") return;
@@ -367,7 +421,7 @@ export function DefaultInstallsStep({
     function handleKeyDown(event: KeyboardEvent): void {
       if (event.metaKey || event.ctrlKey || event.altKey || event.repeat || isTextEntryTarget(event.target)) return;
       const toolIndex = Number(event.key) - 1;
-      const tool = developerToolOptions[toolIndex];
+      const tool = freePlan ? undefined : developerToolOptions[toolIndex];
       if (tool) {
         event.preventDefault();
         toggleTool(tool.id);
@@ -381,7 +435,7 @@ export function DefaultInstallsStep({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [buildWithSelectedTools, loading, step, toggleTool]);
+  }, [buildWithSelectedTools, freePlan, loading, step, toggleTool]);
 
   if (step === "acquisition") {
     return <AcquisitionSourceStep onContinue={() => setStep("installs")} />;
@@ -392,11 +446,15 @@ export function DefaultInstallsStep({
       <header>
         <h2 className="text-lg font-semibold text-foreground">Default installs</h2>
         <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-          Choose the coding agents Matrix should preinstall. You can select any combination, including none.
+          {freePlan
+            ? "Matrix preinstalls coding agents on your free computer."
+            : "Choose the coding agents Matrix should preinstall. You can select any combination, including none."}
         </p>
       </header>
 
-      <DeveloperToolsSelector selectedTools={selectedTools} onToggle={toggleTool} />
+      {freePlan
+        ? <FreePreinstallsNote />
+        : <DeveloperToolsSelector selectedTools={selectedTools} onToggle={toggleTool} />}
 
       {error ? (
         <p className="rounded-xl border border-ember/25 bg-ember/10 px-3 py-2 text-sm text-deep" role="alert">
@@ -406,11 +464,11 @@ export function DefaultInstallsStep({
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-forest/55">
-          You can install or sign into agents anytime from the terminal’s + menu after the VPS is ready.
+          {copy.footer}
         </p>
         <button
           type="button"
-          aria-label="Build VPS"
+          aria-label={copy.buildLabel}
           onClick={buildWithSelectedTools}
           disabled={loading}
           aria-busy={loading}
@@ -421,7 +479,7 @@ export function DefaultInstallsStep({
           ) : (
             <ServerIcon className="size-4" aria-hidden="true" />
           )}
-          <span>Build VPS</span>
+          <span>{copy.buildLabel}</span>
           <kbd className="rounded-md border border-white/15 bg-white/10 px-1.5 py-0.5 font-mono text-[10px] font-medium text-white/75">
             Enter ↵
           </kbd>

@@ -36,6 +36,9 @@ import { canClerkUserAccessMachine, canRouteMachineOnPreviewHost, previewHandleF
 import { issueSyncJwt } from './sync-jwt.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
+import { noteOwnerReachedRuntime, prefersJsonWakeResponse, prepareOnDemandUpstream, takesOnDemandPath, wakeRefusalResponse } from './substrates/substrate-wake.js';
+import { sendWithAsleepRetry } from './substrates/runtime-asleep.js';
+import { applyUpstreamCredentials, dispatcherForUpstream, stripUpstreamCredentials } from './substrates/upstream-transport.js';
 import {
   buildPlatformVerificationToken,
   timingSafeTokenEquals,
@@ -119,6 +122,7 @@ import {
 } from './container-endpoint.js';
 import { scopeExplicitVmAppSessionCookie } from './session-routing-cookie-rewrite.js';
 import { logAppDomainUpstreamFailure } from './app-domain-upstream-log.js';
+import { isFailedRuntimeBuild } from './substrates/metal-registration-window.js';
 
 export function isPlatformRuntimeShellPath(path: string): boolean {
   return path === '/runtime' || path === '/onboarding/computer';
@@ -523,7 +527,8 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       if (resolution.kind !== 'upstream') {
         return c.json({ error: 'VPS unreachable' }, 502);
       }
-      const targetUrl = resolution.upstream.url;
+      const { upstream: webhookUpstream } = resolution;
+      const targetUrl = webhookUpstream.url;
 
       const headers = new Headers();
       for (const [key, value] of Object.entries(c.req.header())) {
@@ -539,6 +544,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       if (platformSecret) {
         headers.set('authorization', `Bearer ${buildPlatformVerificationToken(handle, platformSecret)}`);
       }
+      applyUpstreamCredentials(headers, webhookUpstream);
 
       try {
         const upstream = await fetch(targetUrl, {
@@ -547,13 +553,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           redirect: 'manual',
           signal: AbortSignal.timeout(proxyTimeoutMs),
           body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
-          dispatcher: customerVpsProxyDispatcher,
+          dispatcher: dispatcherForUpstream(webhookUpstream, customerVpsProxyDispatcher),
         } as RequestInit & { dispatcher: Agent });
-
-        return new Response(upstream.body, {
-          status: upstream.status,
-          headers: sanitizeProxyResponseHeaders(upstream.headers),
-        });
+        const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        stripUpstreamCredentials(responseHeaders, webhookUpstream);
+        return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
       } catch (err: unknown) {
         logRouteError('app-domain voice webhook proxy', err);
         return c.json({ error: 'VPS unreachable' }, 502);
@@ -734,7 +738,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.text('Unauthorized', 401);
       }
-      const machine = await getActiveUserMachineByHandle(
+      let machine = await getActiveUserMachineByHandle(
         db,
         explicitVmRoute.handle,
         explicitVmRoute.runtimeSlot ?? (
@@ -774,6 +778,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
+      const explicitWakeJson = prefersJsonWakeResponse(c.req.header('accept'), isAppDomainGatewayPath(explicitVmRoute.upstreamPath));
+      const explicitWake = await prepareOnDemandUpstream({ c, db, substrates, machine, identity, applyNoStoreHeaders,
+        respondWithJson: explicitWakeJson });
+      if (explicitWake.kind === 'respond') return explicitWake.response;
+      machine = explicitWake.machine;
       const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
       const resolution = substrates.resolveUpstream(machine, { path: explicitVmRoute.upstreamPath, queryString: qs });
       if (resolution.kind === 'substrate_unavailable') {
@@ -838,20 +847,26 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       if (shouldMarkNativeAppSession(identity, authHeader, cookieHeader, platformJwtSecret)) {
         headers.set(NATIVE_APP_SESSION_PROXY_HEADER, '1');
       }
+      applyUpstreamCredentials(headers, resolution.upstream);
 
       try {
-        const upstream = await fetchRuntimeProxy(targetUrl, {
+        const explicitBody = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
+        const sent = await sendWithAsleepRetry({ db, substrates, machine, identity, send: () => fetchRuntimeProxy(targetUrl, {
           signal: c.req.raw.signal,
           method: c.req.method,
           headers,
           redirect: 'manual',
-          body: ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob(),
-          dispatcher: customerVpsProxyDispatcher,
+          body: explicitBody,
+          dispatcher: dispatcherForUpstream(resolution.upstream, customerVpsProxyDispatcher),
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
-        shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath));
+        shouldReleaseRuntimeProxyTimeout(c.req.method, explicitVmRoute.upstreamPath)) });
+        if (sent.kind === 'refuse') return wakeRefusalResponse(c, sent.decision, explicitWakeJson, applyNoStoreHeaders);
+        const upstream = sent.response;
         if (upstream.status >= 500) logAppDomainUpstreamFailure('runtime', c, upstream.status, machine.handle);
+        noteOwnerReachedRuntime(db, machine, identity);
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        stripUpstreamCredentials(responseHeaders, resolution.upstream);
         scopeExplicitVmAppSessionCookie(responseHeaders, explicitVmRoute);
         applySandboxedAppAssetCorsHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.header('origin'));
         applyAppDomainRuntimeAssetCacheHeaders(responseHeaders, explicitVmRoute.upstreamPath, c.req.url);
@@ -903,8 +918,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       : await getRunningUserMachineByHandle(db, identity.handle);
     if (!runningMachine && identity.userId) {
       requestedActiveMachine = await getAccessibleActiveUserMachineByClerkId(db, identity.userId, runtimeSlot);
-      if (requestedActiveMachine
-        && substrates.resolveUpstream(requestedActiveMachine, { path }).kind === 'upstream') {
+      // A sleeping on-demand runtime still takes the proxy path: the owner's request wakes it there.
+      if (requestedActiveMachine && (takesOnDemandPath(requestedActiveMachine)
+        || substrates.resolveUpstream(requestedActiveMachine, { path }).kind === 'upstream')) {
         runningMachine = requestedActiveMachine;
       } else if (!requestedActiveMachine) {
         const handleMachine = await getRunningUserMachineByHandle(db, identity.handle);
@@ -961,6 +977,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         applyNoStoreHeaders(c);
         return c.json({ error: 'Paid beta access required' }, 402);
       }
+      const sessionWakeJson = prefersJsonWakeResponse(c.req.header('accept'), isGatewayPath || isCodeDomain);
+      const sessionWake = await prepareOnDemandUpstream({ c, db, substrates, machine: runningMachine, identity, applyNoStoreHeaders,
+        respondWithJson: sessionWakeJson });
+      if (sessionWake.kind === 'respond') return sessionWake.response;
+      runningMachine = sessionWake.machine;
       const resolution = substrates.resolveUpstream(runningMachine, { path, queryString: qs });
       if (resolution.kind === 'substrate_unavailable') {
         return runtimeSubstrateUnavailableResponse(c, applyNoStoreHeaders);
@@ -1018,20 +1039,24 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       if (isAppDomain && shouldMarkNativeAppSession(identity, authHeader, cookieHeader, platformJwtSecret)) {
         headers.set(NATIVE_APP_SESSION_PROXY_HEADER, '1');
       }
+      applyUpstreamCredentials(headers, resolution.upstream);
 
       try {
-        const upstream = await fetchRuntimeProxy(targetUrl, {
+        const sent = await sendWithAsleepRetry({ db, substrates, machine: runningMachine, identity, send: () => fetchRuntimeProxy(targetUrl, {
           signal: c.req.raw.signal,
           method: c.req.method,
           headers,
           redirect: 'manual',
           body,
-          dispatcher: customerVpsProxyDispatcher,
+          dispatcher: dispatcherForUpstream(resolution.upstream, customerVpsProxyDispatcher),
         } as RequestInit & { dispatcher: Agent }, proxyTimeoutMs,
-        shouldReleaseRuntimeProxyTimeout(c.req.method, path));
+        shouldReleaseRuntimeProxyTimeout(c.req.method, path)) });
+        if (sent.kind === 'refuse') return wakeRefusalResponse(c, sent.decision, sessionWakeJson, applyNoStoreHeaders);
+        const upstream = sent.response;
         if (isAppDomain && upstream.status >= 500) {
           logAppDomainUpstreamFailure('runtime', c, upstream.status, runningMachine.handle);
         }
+        noteOwnerReachedRuntime(db, runningMachine, identity);
         if (isCodeDomain && upstream.status >= 500) {
           logCodeDomainUpstreamFailure({
             handle: runningMachine.handle,
@@ -1043,6 +1068,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         }
 
         const responseHeaders = sanitizeProxyResponseHeaders(upstream.headers);
+        stripUpstreamCredentials(responseHeaders, resolution.upstream);
         applySandboxedAppAssetCorsHeaders(responseHeaders, path, c.req.header('origin'));
         if ((identity.source === 'static-route' || isCookieRoutedShellAsset) && isAppDomainStaticAssetPath(path)) {
           applyCookieRoutedShellAssetCacheHeaders(responseHeaders);
@@ -1129,6 +1155,16 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
           error: 'VPS provisioning',
           status: activeMachine.status,
         }, 503);
+      }
+      // A failed build never boots: the onboarding shell shows provisioning_failed
+      // with its retry, which the boot page would make unreachable forever.
+      // Primary only: the onboarding shell reads and retries the primary journey.
+      if (
+        activeMachine.runtimeSlot === 'primary' &&
+        isFailedRuntimeBuild(activeMachine, new Date()) &&
+        shouldProxyAuthShellForUnroutedUser({ isAppDomain, method: c.req.method, path })
+      ) {
+        return proxyAuthShell(c, host);
       }
       applyNoStoreHeaders(c);
       return c.html(getVpsBootPage({ status: activeMachine.status }), 503);

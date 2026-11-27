@@ -24,6 +24,7 @@ export const WebProjectAgentContextNavigation = createContext<{
   openFiles: () => void;
   openPreview?: () => void;
   openMcpSettings: () => void;
+  mcpSettingsOpen?: boolean;
 } | null>(null);
 
 async function readText(response: Response, maxBytes: number, preserveBom = false): Promise<string> {
@@ -74,6 +75,7 @@ interface WebProjectAgentContextProps {
   identity: string;
   project: WebProject;
   isCurrentAuthority?: () => boolean;
+  onSetupWithChat?: () => void;
 }
 
 export function WebProjectAgentContext(props: WebProjectAgentContextProps) {
@@ -83,7 +85,7 @@ export function WebProjectAgentContext(props: WebProjectAgentContextProps) {
   }}</ShellFileAuthority>;
 }
 
-function WebProjectAgentContextScoped({ gatewayUrl, project, isCurrentAuthority, shellGateway, authority, scope }: WebProjectAgentContextProps & {
+function WebProjectAgentContextScoped({ gatewayUrl, project, isCurrentAuthority, shellGateway, authority, scope, onSetupWithChat }: WebProjectAgentContextProps & {
   shellGateway: string;
   authority: string;
   scope: string;
@@ -165,7 +167,7 @@ function WebProjectAgentContextScoped({ gatewayUrl, project, isCurrentAuthority,
     }
   };
 
-  return <ProjectAgentContextPanel scope={scope} projectId={project.id} read={read}
+  return <ProjectAgentContextPanel onSetupWithChat={onSetupWithChat} scope={scope} projectId={project.id} read={read}
     onOpenFiles={navigation && currentShell ? () => { void openFiles(); } : undefined}
     onOpenFile={navigation?.openPreview && currentShell ? file => { void openFiles(file); } : undefined}
     onCreateFile={navigation?.openPreview && currentShell ? openFiles : undefined}
@@ -174,3 +176,5 @@ function WebProjectAgentContextScoped({ gatewayUrl, project, isCurrentAuthority,
     filesPending={filesPending} filesError={filesError}
     onOpenMcpSettings={navigation && currentShell ? navigation.openMcpSettings : undefined} />;
 }
+
+export { readJson as readWebProjectJson, readText as readWebProjectText, request as requestWebProjectContext };

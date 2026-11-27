@@ -57,6 +57,7 @@ import {
 } from "./safe-activity-projection.js";
 import { projectClaudeToolPreview, claudeActivity, canonicalClaudeActivityEvent, type ClaudeActivity } from "./claude-tool-preview.js";
 import { createAssistantCredentialEmitter } from "./assistant-credential-emitter.js";
+import { runClaudeProjectSetupInterview } from "./claude-project-setup-interview.js";
 
 export type { ClaudeNativeRecoveryLaunchInput, ClaudeNativeRecoveryLaunchPlan } from "./claude-chat-launch.js";
 
@@ -116,6 +117,12 @@ export function createClaudeChatProviderAdapter(options: {
   previewDriveClient?: Pick<PreviewDrivePlatformClient, "grantAction">;
   customMcpApprovalClient?: CustomMcpApprovalClient;
 }): ClaudeChatProviderAdapter {
+  async function resolveCredentialLaunch(input: Pick<CanonicalProviderRunInput, "runId" | "selection">): Promise<KernelCredentialLaunch> {
+    if (options.resolveCredentialLaunch) return options.resolveCredentialLaunch({ runId: input.runId, instanceId: input.selection.instanceId });
+    return { env: options.resolveCredentialEnv ? await options.resolveCredentialEnv()
+      : (await buildKernelCredentialLaunch(options.homePath, process.env, undefined, undefined, { requestClass: "interactive" })).env };
+  }
+
   const activeRuns = new Map<string, {
     ownerId: string;
     ownerType: CanonicalProviderRunInput["owner"]["type"];
@@ -148,7 +155,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
     const cwd = input.executionRoot ?? options.homePath;
-    const selectedPermission = claudeChatPermissionMode(input.permissionMode, input.interactionMode);
+    const selectedPermission = claudeChatPermissionMode(input.permissionMode, input.context?.projectSetupDraft ? "review" : input.interactionMode);
     const fullAccess = selectedPermission === "bypassPermissions";
     // Presentation is projected from the exact scope requested at issuance.
     // A presentation selector never authorizes a Gateway request.
@@ -191,16 +198,7 @@ export function createClaudeChatProviderAdapter(options: {
       });
       if (browserRun) configureClaudeSharedBrowser(launch, browserRun);
       finishClaudeChatLaunch(launch, resumeState?.canonicalHistoryRequired ? undefined : resumeState?.sessionId);
-      credentialLaunch = options.resolveCredentialLaunch
-        ? await options.resolveCredentialLaunch({ runId: input.runId, instanceId: input.selection.instanceId })
-        : {
-            env: await (
-              options.resolveCredentialEnv
-              ?? (() => buildKernelCredentialLaunch(options.homePath, process.env, undefined, undefined, {
-                requestClass: "interactive",
-              }).then((value) => value.env))
-            )(),
-          };
+      credentialLaunch = await resolveCredentialLaunch(input);
       if (approvalClient) {
         try {
           const registered = await approvalClient.registerRun(input.runId);
@@ -703,7 +701,7 @@ export function createClaudeChatProviderAdapter(options: {
         });
         return await options.nativeSessions!.runTurn({ ...transport, command: protocol.command, ...remainingLifetime(),
           input, creationPolicy, sourceFingerprint: source.fingerprint, schedulingAllowed: source.schedulingAllowed,
-          legacySourceFingerprint: source.legacy?.fingerprint,
+          legacySourceFingerprints: source.legacy?.map(candidate => candidate.fingerprint),
           requireProtectedSession: resumeState?.canonicalHistoryRequired,
           onProtectedSession(sessionId) { protectedSessionId = sessionId; observeSessionState(sessionId); },
         });
@@ -922,6 +920,12 @@ export function createClaudeChatProviderAdapter(options: {
   }
   async function* guardedExecute(input: CanonicalProviderRunInput<ClaudeChatState>, resume: boolean) {
     try {
+      if (input.context?.projectSetupDraft?.mode === "interview") {
+        if (resume) throw new Error("Project setup interview cannot resume a native session");
+        yield* runClaudeProjectSetupInterview(input, { homePath: options.homePath, spawnFn: options.spawnFn,
+          resolveCredentials: () => resolveCredentialLaunch(input) });
+        return;
+      }
       const state = resume ? ClaudeChatStateSchema.parse(input.resumeState) : undefined;
       if ((state?.canonicalHistoryRequired || input.nativeScheduled) && !options.nativeSessions) throw new Error("Native session unavailable");
       yield* execute(input, state);

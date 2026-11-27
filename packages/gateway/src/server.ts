@@ -1,3 +1,4 @@
+import { withCapabilityLookupTimeout } from "./server/capability-lookup-timeout.js";
 import { createTerminalLaunchRuntime } from "./terminal/launch-runtime.js";
 import { fileURLToPath } from "node:url";
 import { startUsageHistory } from "./ai-usage/history-service.js";
@@ -423,20 +424,6 @@ export async function createGateway(config: GatewayConfig) {
   });
   let internalIntegrationBaseUrl: string | null = null;
   const PLATFORM_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const CAPABILITY_LOOKUP_TIMEOUT_MS = 10_000;
-  async function withCapabilityLookupTimeout<T>(operation: () => Promise<T>): Promise<T> {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        operation(),
-        new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => reject(new Error("capability lookup timed out")), CAPABILITY_LOOKUP_TIMEOUT_MS);
-        }),
-      ]);
-    } finally {
-      if (timeout) clearTimeout(timeout);
-    }
-  }
   async function getConnectedCapabilityIds(ownerId: string): Promise<string[]> {
     if (platformDb) {
       try {
@@ -1141,10 +1128,10 @@ export async function createGateway(config: GatewayConfig) {
   });
 
   const configPath = join(homePath, "system/config.json");
-  const { channelManager, pushAdapter, codingAgentAttentionNotifications } = initializeGatewayChannels({
+  const { channelManager, pushAdapter, closeChannels } = initializeGatewayChannels({
     homePath, configPath, dispatcher, conversations, codingAgentThreadStore,
     codingAgentNotificationPreferenceStore, finalizeWithSummary, logBestEffortFailure, channelStt: speechRuntime.channelStt,
-    pushTokens: ownerDatabaseServices?.pushTokens ?? null,
+    pushTokens: ownerDatabaseServices?.pushTokens ?? null, notificationServices: ownerDatabaseServices,
   });
 
   // Cron service -- scheduled tasks from ~/system/cron.json
@@ -1783,7 +1770,7 @@ export async function createGateway(config: GatewayConfig) {
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
     credentialKey: toolOutputKey, runtimeOwnerIds: terminalRuntimeOwnerIds,
-    collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots,
+    collaborationFailClosedReason, canonicalChatOrchestrator, canonicalChatExecutionRoots, listProjectSetupMcpServices: customMcp.listProjectSetupMcpServices,
     canonicalChatCollaborationGuard, projectOwnerToolOutput, canonicalChatRuntime,
     canonicalChatProviderCatalog, aiProviderService, botServices,
     providerSettingsStore: createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity),
@@ -1953,8 +1940,7 @@ export async function createGateway(config: GatewayConfig) {
       await codingAgentTurnLifecycle.shutdown();
       await codexEventBridge?.shutdown();
       codingAgentThreadStream?.shutdown();
-      codingAgentAttentionNotifications?.dispose();
-      pushAdapter.dispose();
+      await closeChannels();
       codingAgentSessionStopReconciler.dispose();
       drainReconnectableAbortEntries(reconnectableAbortControllers);
       if (canvasCleanupTimer) clearInterval(canvasCleanupTimer);

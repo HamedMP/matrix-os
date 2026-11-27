@@ -4,7 +4,7 @@ import { z } from "zod/v4";
 import { CanonicalChatIdSchema, CanonicalChatRequestIdSchema, CanonicalOwnerScopeSchema } from "@matrix-os/contracts";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
-import { messageSearchText, toMessage } from "./records.js";
+import { messageSearchText, toMessage, visibleChatMessagePredicate } from "./records.js";
 import { redactAssistantCredentials } from "./safe-activity-projection.js";
 
 export const SideChatTextSchema = z.string().trim().min(1).max(8_000);
@@ -80,6 +80,7 @@ export class SideChatRepository {
       // Read the newest committed main messages immediately before generation.
       const mainRows = await this.db.selectFrom("chat_messages").selectAll().where("chat_id", "=", chatId)
         .where("state", "=", "committed").where("role", "in", ["user", "assistant"])
+        .where(visibleChatMessagePredicate())
         .orderBy("seq", "desc").limit(50).execute();
       const sideRows = await this.db.selectFrom("chat_side_messages").select(["role", "content"])
         .where("thread_id", "=", thread.id).orderBy("seq", "desc").limit(40).execute();

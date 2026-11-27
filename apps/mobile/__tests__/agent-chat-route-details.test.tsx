@@ -24,6 +24,7 @@ jest.mock("@/lib/queries/use-active-gateway", () => ({
   useActiveGateway: () => ({ ready: true, isComputerError: false }),
 }));
 jest.mock("@/lib/queries/use-agents", () => mockRoute.agentsModule());
+jest.mock("@/lib/queries/use-mark-chat-read", () => ({ useMarkChatRead: jest.fn() }));
 jest.mock("@/lib/queries/use-agent-statuses", () => mockRoute.agentStatusesModule());
 jest.mock("@/lib/queries/use-canonical-chat-detail", () => mockRoute.chatDetailModule());
 jest.mock("@/lib/queries/use-bot-chat", () => mockRoute.botChatModule());

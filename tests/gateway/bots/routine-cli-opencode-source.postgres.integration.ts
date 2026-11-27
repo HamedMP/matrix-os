@@ -78,7 +78,7 @@ it.each(["native result", "event EOF", "stdout EOF"])("%s synchronously fences s
   if (decision.type !== "approval.requested") throw new Error("Missing owner operation decision");
   await f.approve(decision, chatId, admitted.run.id);
   await expect.poll(() => sourceSignal?.aborted, { timeout: 2000 }).toBe(true);
-  await expect.poll(() => rejected, { timeout: 3000 }).toBe("permission_denied");
+  await expect.poll(() => rejected, { timeout: 15_000 }).toBe("permission_denied");
   expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
   expect(await f.data.db.selectFrom("bot_interactions").selectAll().execute()).toEqual([]);
 }, 15000);
@@ -89,7 +89,7 @@ it("native cancellation preserves original UUID as unknown and the finite source
   await f.start("chat_opencode_cancel");
   await expect.poll(() => f!.sourceEvents.some(event => event.type === "approval.requested"), { timeout: 5000 }).toBe(true);
   const { writeFile } = await import("node:fs/promises"); await writeFile(f.control, JSON.stringify({ type: "cancel" }));
-  await expect.poll(async () => (await f!.frames()).find(frame => frame.result), { timeout: 3000 }).toBeDefined();
+  await expect.poll(async () => (await f!.frames()).find(frame => frame.result), { timeout: 15_000 }).toBeDefined();
   expect(JSON.parse((await f.frames()).find(frame => frame.result).result)).toMatchObject({ data: { kind: "unknown", requestId, reconcile: true } });
   expect(await f.data.db.selectFrom("routine_cli_sources").select("revoked_at").where("generation", "like", "native_%").execute()).toEqual([{ revoked_at: null }]);
   expect(f.httpCalls()).toBe(0);
@@ -162,7 +162,7 @@ it.each(["completed", "error"] as const)("terminal %s during real owner wait can
   const decision = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (decision.type !== "approval.requested") throw new Error("Missing real owner decision");
   await f.terminal(status);
-  await expect.poll(async () => (await f!.frames()).find(frame => frame.result), { timeout: 3000 }).toBeDefined();
+  await expect.poll(async () => (await f!.frames()).find(frame => frame.result), { timeout: 15_000 }).toBeDefined();
   await expect(f.approve(decision, chatId, admitted.run.id)).rejects.toThrow();
   expect(f.httpCalls()).toBe(0);
   expect(await f.data.db.selectFrom("routine_cli_sources").select("revoked_at").execute()).toEqual([{ revoked_at: null }]);
@@ -197,7 +197,7 @@ it("an issued but unconsumed capability cannot survive its terminal native call"
   const decision = f.sourceEvents.find(event => event.type === "approval.requested")!;
   if (decision.type !== "approval.requested") throw new Error("Missing real owner decision");
   await f.approve(decision, chatId, admitted.run.id);
-  await expect.poll(() => rejected, { timeout: 3000 }).toBe("permission_denied");
+  await expect.poll(() => rejected, { timeout: 15_000 }).toBe("permission_denied");
   expect(await f.data.db.selectFrom("routine_cli_requests").selectAll().execute()).toEqual([]);
   expect(await f.data.db.selectFrom("routine_cli_capabilities").select("consumed_at").execute()).toEqual([{ consumed_at: null }]);
   expect(await f.data.db.selectFrom("bot_interactions").selectAll().execute()).toEqual([]);

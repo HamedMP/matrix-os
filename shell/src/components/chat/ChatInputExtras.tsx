@@ -20,3 +20,18 @@ export function ChatMentionTokens({ resources, onRemove }: {
     <span className="min-w-0 truncate" title={resource.label}>@{resource.label}</span><button type="button" aria-label={`Remove ${resource.label}`} className="shrink-0 rounded px-1 focus-visible:ring-2" onClick={() => onRemove(resource)}>×</button>
   </span>)}</div>;
 }
+
+export function FailedChatMessage({ text, canRetry, sending, unconfirmed, onRetry, onDiscard }: {
+  text: string;
+  canRetry: boolean;
+  sending: boolean;
+  unconfirmed?: boolean;
+  onRetry(): void;
+  onDiscard(): void;
+}) {
+  return <div className="flex items-center gap-2 rounded-lg border px-2 py-1">
+    <p role="status" className="min-w-0 flex-1 truncate text-xs">{unconfirmed ? "Send status unconfirmed" : "Message failed"}{text ? `: ${text}` : ""}</p>
+    <Button type="button" size="sm" variant="outline" disabled={!canRetry} onClick={onRetry}>Retry message</Button>
+    <Button type="button" size="sm" variant="ghost" disabled={sending} onClick={onDiscard}>{unconfirmed ? "Dismiss retry" : "Discard failed message"}</Button>
+  </div>;
+}

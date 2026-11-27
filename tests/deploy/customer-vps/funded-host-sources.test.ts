@@ -18,6 +18,7 @@ describe("portable protected funded host contracts", () => {
   it("executes absent-epoch atomicity and rollback contracts", () => execute("funded-host-epoch.test.py"));
   it("executes archive and transport cases", () => execute("funded-host-component.test.py", "ComponentTests"));
   it("rejects missing or skipped root evidence", () => execute("funded-host-root-runner.test.py"));
+  it("keeps reconcile production-only: refuses preview and mixed funded pairs", () => execute("funded-host-reconcile-pairs.test.py"));
 });
 
 describe.skipIf(!disposableRootLinux)("protected funded host root contracts (explicit disposable Linux only)", () => {

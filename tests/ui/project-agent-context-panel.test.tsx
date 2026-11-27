@@ -109,6 +109,7 @@ it("explains why the project has no starter config files to create", async () =>
     onCreateFile={onCreateFile} onOpenFile={onOpenFile} />);
   open();
   fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   const config = within(screen.getByRole("region", { name: "Config files" }));
   expect(config.getByText("The starter config files already exist. Open a file to edit it.")).toBeTruthy();
   expect(config.queryByRole("button", { name: /^Create / })).toBeNull();
@@ -146,6 +147,7 @@ it("routes actions in each settings section to the exact declared project file",
   fireEvent.click(mcp.getByRole("button", { name: "Open MCP settings" }));
 
   fireEvent.click(screen.getByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   const config = within(screen.getByRole("region", { name: "Config files" }));
   fireEvent.click(config.getByRole("button", { name: "Open AGENTS.md" }));
   fireEvent.click(config.getByRole("button", { name: "Open .claude/settings.json" }));
@@ -170,6 +172,7 @@ it("keeps project setup actions visible when empty and distinguishes an unreadab
   expect(mcp.queryByText(/No project MCP config files found/)).toBeNull();
   expect(mcp.getByRole("button", { name: "Open MCP config in Files" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   const config = within(screen.getByRole("region", { name: "Config files" }));
   expect(config.getByRole("button", { name: "Open project files" })).toBeTruthy();
 });
@@ -226,6 +229,7 @@ it("uses empty MCP and instruction templates and keeps a safe error on an unsucc
   expect(onCreateFile).toHaveBeenCalledWith(".mcp.json", '{"mcpServers":{}}\n');
   expect(screen.queryByRole("button", { name: "Create .mcp.json" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   fireEvent.click(screen.getByRole("button", { name: "Create AGENTS.md" }));
   expect((await screen.findByRole("alert")).textContent).toMatch(/could not be created/i);
   expect(onCreateFile).toHaveBeenCalledWith("AGENTS.md", "# Project instructions\n");
@@ -242,6 +246,7 @@ it("uses the Files fallback when an older gateway only supplies metadata", async
   fireEvent.click(screen.getByRole("button", { name: "MCP" }));
   expect(screen.queryByRole("button", { name: "Create .mcp.json" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Config files" }));
+  fireEvent.click(screen.getByText("Advanced"));
   expect(screen.queryByRole("button", { name: "Create AGENTS.md" })).toBeNull();
 });
 
@@ -435,4 +440,18 @@ it.each([
   await selectSkillAction("New skill");
   expect(screen.getByRole("textbox", { name: "Skill name" })).toHaveProperty("value", "");
   expect(props.onCreateFile).not.toHaveBeenCalled();
+});
+
+it("presents one guidance action and keeps independent files under Advanced", async () => {
+  const onOpenFile = vi.fn();
+  render(<ProjectAgentContextPanel scope="owner" projectId="project_a" read={async () => ({ ...empty, configFiles: [], instructions: ["AGENTS.md", "CLAUDE.md"] })} onOpenFile={onOpenFile} />);
+  open();
+  fireEvent.click(await screen.findByRole("button", { name: "Config files" }));
+  expect(screen.getByText("Guidance for AI in your project")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Open guidance" }));
+  expect(onOpenFile).toHaveBeenCalledWith("AGENTS.md");
+  expect(screen.getByRole("button", { name: "Open CLAUDE.md" }).closest("details")?.open).toBe(false);
+  fireEvent.click(screen.getByText("Advanced"));
+  fireEvent.click(screen.getByRole("button", { name: "Open CLAUDE.md" }));
+  expect(onOpenFile).toHaveBeenLastCalledWith("CLAUDE.md");
 });

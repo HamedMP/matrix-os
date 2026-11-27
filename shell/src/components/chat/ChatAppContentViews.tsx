@@ -26,6 +26,7 @@ export function EmptyState({
   composerKey,
   onSubmit,
   connected,
+  pending,
   mobile,
   composerDraftRequest,
   onComposerDraftConsumed,
@@ -58,6 +59,7 @@ export function EmptyState({
   composerKey: string;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
+  pending: boolean;
   mobile: boolean;
   composerDraftRequest?: ChatAgentDraftRequest | null;
   onComposerDraftConsumed?: (id: number) => void;
@@ -71,7 +73,7 @@ export function EmptyState({
       key={composerKey}
       {...composerProps}
       connected={connected && providerReady}
-      busy={false}
+      busy={pending}
       onSubmit={onSubmit}
       autoFocus={!mobile && !projectHome}
       placeholder="How can I help you today?"

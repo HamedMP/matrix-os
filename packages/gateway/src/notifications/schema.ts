@@ -3,13 +3,30 @@
  * adds the tables it first needs as a new version: A2 adds push tokens.
  */
 import { sql, type ColumnType, type Kysely, type Transaction } from "kysely";
+import { createAttentionTables, type NotificationEventsTable, type NotificationAttemptsTable } from "./events-schema.js";
+import { createPushConsentSchema, reconcileLegacyPushTokens } from "./push-consent-schema.js";
 
 export interface NotificationPushTokensTable {
   token: string;
   owner_id: string;
+  identity: ColumnType<string | null, string | null | undefined, string | null>;
   platform: string;
   created_at: ColumnType<Date, Date, never>;
   last_seen_at: ColumnType<Date, Date, Date>;
+}
+
+interface NotificationPushConsentsTable {
+  identity: string;
+  owner_id: string;
+  delivery_token: string;
+  enabled: boolean;
+  updated_at: ColumnType<Date, Date, Date>;
+}
+
+interface NotificationPushConsentOwnersTable {
+  owner_id: string;
+  legacy_import_blocked: boolean;
+  updated_at: ColumnType<Date, Date, Date>;
 }
 
 interface NotificationSchemaMigrationsTable {
@@ -19,7 +36,11 @@ interface NotificationSchemaMigrationsTable {
 }
 
 export interface NotificationDatabase {
+  notification_events: NotificationEventsTable;
+  notification_attempts: NotificationAttemptsTable;
   notification_push_tokens: NotificationPushTokensTable;
+  notification_push_consents: NotificationPushConsentsTable;
+  notification_push_consent_owners: NotificationPushConsentOwnersTable;
   notification_schema_migrations: NotificationSchemaMigrationsTable;
 }
 
@@ -30,6 +51,7 @@ interface NotificationMigration {
 }
 
 const NOTIFICATION_MIGRATIONS: readonly NotificationMigration[] = [
+  // Keep versions ordered: the timestamp of v2 is the recovery/backlog cutoff.
   {
     version: 1,
     name: "push_tokens",
@@ -51,6 +73,20 @@ const NOTIFICATION_MIGRATIONS: readonly NotificationMigration[] = [
         CREATE INDEX IF NOT EXISTS idx_notification_push_tokens_seen
         ON notification_push_tokens(last_seen_at)
       `.execute(trx);
+    },
+  },
+  { version: 2, name: "canonical_attention", up: createAttentionTables },
+  { version: 3, name: "attention_device_receipts", async up(trx) {
+    await sql`CREATE UNIQUE INDEX notification_attempts_device_sent ON notification_attempts(event_id,device_id)
+      WHERE outcome='sent' AND device_id IS NOT NULL`.execute(trx);
+  } },
+  // A6 owns versions 2/3 (attention/outbox receipts); this additive migration
+  // depends only on v1 and is safe before or after those independent tables.
+  {
+    version: 4,
+    name: "push_consent",
+    async up(trx) {
+      await createPushConsentSchema(trx);
     },
   },
 ];
@@ -83,6 +119,9 @@ export async function bootstrapNotificationDatabase(db: Kysely<NotificationDatab
         .values({ version: migration.version, name: migration.name }).execute();
       applied.push(migration.version);
     }
+    // An older gateway may have written legacy rows after version 4. The
+    // ledger guards DDL, not reconciliation of those later delivery writes.
+    await reconcileLegacyPushTokens(trx);
     return { applied };
   });
 }

@@ -1,4 +1,5 @@
 import { resolveManagedPiRoute, MANAGED_PI_INSTANCE_ID, BotRouteError } from "../bots/route-resolver.js";
+import { FUNDED_PREVIEW_CHAT_ROUTES } from "../ai-providers/model-catalog.js";
 import type {
   AiProviderSnapshotV3,
   CanonicalChatSkillDescriptor,
@@ -6,6 +7,7 @@ import type {
 } from "@matrix-os/contracts";
 
 const DEFAULT_MANAGED_CHAT_MODEL_ID = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+const MANAGED_CHAT_SOURCE_IDS = ["matrix_included", "matrix_cloudflare", ...FUNDED_PREVIEW_CHAT_ROUTES.map(route => route.sourceId)];
 
 /** Project funded readiness from V3; model discovery must never acquire a credential. */
 export function managedChatInstances(
@@ -89,7 +91,7 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
   });
   const defaultModel = eligible.find((model) => model.id === DEFAULT_MANAGED_CHAT_MODEL_ID) ?? eligible[0];
   const available = defaultModel !== undefined;
-  const sources = snapshot.accessSources.filter(source => ["matrix_included", "matrix_cloudflare"].includes(source.id)
+  const sources = snapshot.accessSources.filter(source => MANAGED_CHAT_SOURCE_IDS.includes(source.id)
     && source.fundingKind === "matrix_included"
     && source.checkedAt !== null && Date.parse(source.checkedAt) <= now
     && source.staleAfter !== null && Date.parse(source.staleAfter) > now);

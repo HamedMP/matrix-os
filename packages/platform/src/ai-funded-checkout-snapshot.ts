@@ -7,6 +7,8 @@ import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { exactInteger, fundingSummary, intersectModels, parseModels, utcMonthStart } from "./ai-funded-metering-helpers.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
+import { FREE_MANAGED_MODEL_ID } from "./free-tier/funded-policy.js";
+import { freeMetalMachine } from "./free-tier/free-runtime.js";
 
 type CheckoutRow = {
   clerk_user_id: string; machine_runtime_slot: string; machine_runtime_token_epoch: number;
@@ -21,6 +23,7 @@ type CheckoutRow = {
   preview_owner_id: string | null; preview_runtime_slot: string | null; preview_runtime_token_epoch: number | null;
   preview_ai_request_limit: unknown | null; preview_ai_requests_used: unknown | null;
   preview_max_concurrency: unknown | null; preview_expires_at: string | null;
+  free_runtime: boolean;
 };
 
 /** Checkout reads current owner/policy/budget without admission's balancing
@@ -33,6 +36,8 @@ export async function readCheckoutFundingSnapshot(input: {
   deadlineAtMs: number;
   includeChatAvailability?: true;
   projectExpiredCredit?: true;
+  /** False when free runtimes have no daily ceiling, so every free admission is refused. */
+  freeFundingConfigured?: boolean;
 }) {
   const { db, identity, checked, deadlineAtMs } = input;
   const checkedAt = checked.toISOString();
@@ -66,7 +71,8 @@ export async function readCheckoutFundingSnapshot(input: {
         preview.ai_request_limit as preview_ai_request_limit,
         preview.ai_requests_used as preview_ai_requests_used,
         preview.max_concurrency as preview_max_concurrency,
-        preview.expires_at as preview_expires_at
+        preview.expires_at as preview_expires_at,
+        ${freeMetalMachine('machine.machine_id')} as free_runtime
       from user_machines as machine
       join ai_funded_runtime_policies as runtime on runtime.machine_id = machine.machine_id
       join ai_funded_runtime_balances as balance on balance.machine_id = runtime.machine_id
@@ -99,15 +105,20 @@ export async function readCheckoutFundingSnapshot(input: {
           expiresAt: row.preview_expires_at,
         }
       : undefined;
+    // A free metal runtime reads under its admission's model rule. This read-only snapshot never grants
+    // its monthly allowance; the first runtime funding read or admission of the month does.
+    const free = row.free_runtime === true;
     if (row.machine_provisioning_class !== "customer" && !preview) {
       throw new AiFundedPolicyError("access_disabled");
     }
     const monthlyBudgetMicrousd = exactInteger(row.monthly_budget_microusd);
     const previewRequestsAvailable = preview === undefined || preview.requestsUsed < preview.requestLimit;
-    const enabled = row.global_enabled && row.runtime_enabled && previewRequestsAvailable
+    const fundable = previewRequestsAvailable && (!free || input.freeFundingConfigured === true);
+    const enabled = row.global_enabled && row.runtime_enabled && fundable
       && (row.expires_at === null || Date.parse(row.expires_at) > checked.getTime());
     const allowedModelIds = enabled
       ? intersectModels(parseModels(row.global_allowed_model_ids), parseModels(row.runtime_allowed_model_ids))
+        .filter((model) => !free || model === FREE_MANAGED_MODEL_ID)
       : [];
     const currentBalance = input.projectExpiredCredit
       ? await projectExpiredPromotionalCredit(trx.executor, identity, row, checkedAt) : row;
@@ -128,9 +139,9 @@ export async function readCheckoutFundingSnapshot(input: {
     const sources = input.includeChatAvailability ? await fundingSourceAvailability(trx.executor, identity, balance, checkedAt, { readOnly: true }) : undefined;
     if (Date.now() >= deadlineAtMs) throw new Error("Checkout funding read timed out");
     const chatAvailability = sources ? FundedAiChatAvailabilitySchema.parse({ contractVersion: 1, asOf: checkedAt,
-      eligibleBalanceMicrousd: previewRequestsAvailable
+      eligibleBalanceMicrousd: fundable
         ? Math.min(sources.ceilingMicrousd, Math.max(0, funding.creditBalanceMicrousd - (funding.fundingShortfallMicrousd ?? 0))) : 0,
-      availableBalanceMicrousd: previewRequestsAvailable
+      availableBalanceMicrousd: fundable
         ? Math.min(sources.availableMicrousd, funding.remainingBalanceMicrousd) : 0,
     }) : undefined;
     return {

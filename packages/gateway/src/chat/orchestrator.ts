@@ -14,7 +14,8 @@ import { contextForChatSession, SESSION_HISTORY_MESSAGE_LIMIT, withChatSessionHi
 import { admitCanonicalRetry } from "./retry-admission.js";
 import { createOrderedRunControls } from "./ordered-run-controls.js";
 import { admitCanonicalTurn } from "./turn-admission.js";
-import { chatContextRequestHash, contextPrompt, type ChatAgentContext } from "./agent-context.js";
+import { supportsProjectSetupInterviewProvider } from "./project-setup-interview-context.js";
+import { chatContextMessages, chatContextRequestHash, contextPrompt, type ChatAgentContext } from "./agent-context.js";
 import { promptFor } from "./orchestration-input.js";
 import { submitCanonicalInput } from "./input-control.js";
 import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
@@ -619,6 +620,8 @@ export class CanonicalChatOrchestrator {
     let failureStage: ChatRunFailureDiagnostic["stage"] = "preparation";
     let browserRegistration: ReturnType<BrowserApprovalControl["registerRun"]> | undefined;
     try {
+      if (run.context?.projectSetupDraft?.mode === "interview"
+        && (!promptOverride || !supportsProjectSetupInterviewProvider(run.driverKind))) throw new Error("Project setup interview unavailable");
       if (!sharedScopeId) {
         await this.assertPersonalExecutionAllowed(owner, run.chatId);
         await this.options.agentContext?.revalidate(owner, run.chatId, run.context);
@@ -665,7 +668,8 @@ export class CanonicalChatOrchestrator {
             if (!detail || detail.record.chat.lifecycle !== "active" || detail.record.chat.collaboration
               || detail.record.activeRun?.runId !== run.id || detail.record.activeRun.turnId !== run.turnId) throw new Error("Steering context unavailable");
             // Include the original admitted input and only committed steering from this Turn.
-            const messages = [message, ...detail.messages.filter(item => item.seq < message.seq
+            const prior = chatContextMessages(detail.messages, detail.runs);
+            const messages = [message, ...prior.filter(item => item.seq < message.seq
               || (item.seq > message.seq && item.turnId === run.turnId && item.role === "user" && item.state === "committed"))]
               .sort((left, right) => left.seq - right.seq);
             return withChatSessionHistory({ chatId: run.chatId, title: detail.record.chat.title,
@@ -677,8 +681,10 @@ export class CanonicalChatOrchestrator {
         onCleanupUnconfirmed: () => { cleanupUnconfirmed = true; },
         onCleanupConfirmed: () => { cleanupUnconfirmed = false; },
       };
-      browserRegistration = registerBrowserApprovalRun(this.options.browserApprovals, input, run.driverKind,
-        async event => { await this.persistActivities(owner, run, [CanonicalProviderRunEventSchema.parse(event)]); });
+      if (input.context?.projectSetupDraft?.mode !== "interview") {
+        browserRegistration = registerBrowserApprovalRun(this.options.browserApprovals, input, run.driverKind,
+          async event => { await this.persistActivities(owner, run, [CanonicalProviderRunEventSchema.parse(event)]); });
+      }
       const preview = run.driverKind === "matrix_pi" || run.driverKind === "matrix_bot"
         ? createMatrixAssistantOutput() : createBoundedAssistantPreview();
       let responseCharacterCount = 0;

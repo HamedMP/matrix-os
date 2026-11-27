@@ -129,10 +129,23 @@ export function jsonb(value: unknown): RawBuilder<unknown> {
   return sql`${JSON.stringify(value)}::jsonb`;
 }
 
+/** Private interview turns are excluded from the transcript and its read state. */
+export function visibleChatMessagePredicate(alias = "chat_messages"): RawBuilder<boolean> {
+  const chatId = sql.ref<string>(`${alias}.chat_id`);
+  const turnId = sql.ref<string>(`${alias}.turn_id`);
+  return sql<boolean>`NOT EXISTS (
+    SELECT 1 FROM chat_runs AS interview_run
+    WHERE interview_run.chat_id = ${chatId}
+      AND interview_run.turn_id = ${turnId}
+      AND interview_run.context_snapshot #>> '{projectSetupDraft,mode}' = 'interview'
+  )`;
+}
+
 /** Stored server receipts count as incoming; user text/metadata never does. */
 export function incomingChatMessagePredicate(alias = "chat_messages"): RawBuilder<boolean> {
   const role = sql.ref<string>(`${alias}.role`), parts = sql.ref(`${alias}.parts`), state = sql.ref<string>(`${alias}.state`);
-  return sql<boolean>`${state}='committed' AND (${role}='assistant' OR (${role}='system' AND ${parts} @> '[{"type":"routine_receipt","engine":"matrix"}]'::jsonb))`;
+  return sql<boolean>`${state}='committed' AND (${role}='assistant' OR (${role}='system' AND ${parts} @> '[{"type":"routine_receipt","engine":"matrix"}]'::jsonb))
+    AND ${visibleChatMessagePredicate(alias)}`;
 }
 
 export function messageSearchText(message: CanonicalChatMessage): string {

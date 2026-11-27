@@ -1503,16 +1503,25 @@ jobs:
 
       - name: Deploy dedicated platform worker
         if: ${{ github.event_name == 'push' || inputs.promote }}
+        env:
+          # Off until enabled: 'true' runs the worker as PLATFORM_ROLE=worker
+          # (background workers only, health endpoint only; spec 2691 metal
+          # sleeper, reaper and drainer included).
+          PLATFORM_WORKER_ROLE_ENABLED: ${{ vars.PLATFORM_WORKER_ROLE_ENABLED || 'false' }}
         run: |
           set -euo pipefail
           worker_service="${CLOUD_RUN_SERVICE}-worker"
           worker_manifest="$(mktemp --suffix=.yaml)"
           trap 'rm -f "$worker_manifest"' EXIT
+          role_flag=()
+          if [ "$PLATFORM_WORKER_ROLE_ENABLED" = "true" ]; then
+            role_flag=(--role-worker)
+          fi
           gcloud run revisions describe "$CANDIDATE_REVISION" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --format=json \
-            | node scripts/render-platform-worker-service.mjs "$worker_service" > "$worker_manifest"
+            | node scripts/render-platform-worker-service.mjs "$worker_service" "${role_flag[@]}" > "$worker_manifest"
           if gcloud run services describe "$worker_service" \
             --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json >/dev/null 2>&1; then
             existing_iam="$(gcloud run services get-iam-policy "$worker_service" \
@@ -1531,6 +1540,8 @@ jobs:
 
       - name: Verify dedicated platform worker
         if: ${{ github.event_name == 'push' || inputs.promote }}
+        env:
+          PLATFORM_WORKER_ROLE_ENABLED: ${{ vars.PLATFORM_WORKER_ROLE_ENABLED || 'false' }}
         run: |
           set -euo pipefail
           worker_json="$(gcloud run services describe "$CLOUD_RUN_WORKER_SERVICE" \
@@ -1552,6 +1563,14 @@ jobs:
              [ "$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].image // empty')" != "$IMAGE_DIGEST" ] || \
              [ "$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].env[]? | select(.name == "PLATFORM_BACKGROUND_WORKERS_ENABLED") | .value // empty')" != "true" ]; then
             echo "Dedicated platform worker revision does not match the verified candidate image and worker contract." >&2
+            exit 1
+          fi
+          worker_role="$(printf '%s\n' "$revision_json" | jq -r '[.spec.containers[0].env[]? | select(.name == "PLATFORM_ROLE") | .value] | first // empty')"
+          expected_role=""
+          if [ "$PLATFORM_WORKER_ROLE_ENABLED" = "true" ]; then expected_role="worker"; fi
+          if [ "$worker_role" != "$expected_role" ] || \
+             [ -n "$(printf '%s\n' "$revision_json" | jq -r '.spec.containers[0].env[]? | select(.name == "PLATFORM_WORKER_SCOPE") | .value')" ]; then
+            echo "Dedicated platform worker role does not match PLATFORM_WORKER_ROLE_ENABLED, or it is scoped." >&2
             exit 1
           fi
           worker_iam="$(gcloud run services get-iam-policy "$CLOUD_RUN_WORKER_SERVICE" \

@@ -1,3 +1,4 @@
+import { appendProjectSetupTranscript, type SetupTranscriptMessage } from "./project-setup-transcript.js";
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { publicChatIdPredicate } from "./routine-direct-visibility.js";
@@ -71,6 +72,7 @@ import {
   toOutbox,
   toRun,
   toTurn,
+  visibleChatMessagePredicate,
   type ChatExport,
   type ChatLegacyImportRecord,
   type ChatMigrationRecord,
@@ -531,11 +533,17 @@ export class ChatRepository {
     return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery)));
   }
 
+  /** Known setup transitions append within the same owner-database transaction. */
+  async appendProjectSetupMessages(owner: ChatOwner, chatId: string, entries: SetupTranscriptMessage[]): Promise<string | undefined> {
+    return this.transact(trx => appendProjectSetupTranscript(trx, owner, chatId, entries,
+      (revision, content) => this.appendOutbox(trx, owner, chatId, revision, "chat.updated", {}, undefined, content)));
+  }
+
   /** Server-only source projection, committed independently of canonical target work. */
   async appendRoutineReceipt(ownerId: string, input: AppendRoutineReceiptInput) {
     return this.transact(trx => appendRoutineReceiptWithin(trx, ownerId, input,
       (executor, owner, revision, message) => this.appendOutbox(
-        executor, owner, message.chatId, revision, "chat.updated", { messageId: message.id, seq: message.seq }, undefined, message,
+        executor, owner, message.chatId, revision, "chat.updated", { messageId: message.id, seq: message.seq }, undefined, { messages: [message] },
       )));
   }
 
@@ -583,7 +591,7 @@ export class ChatRepository {
     eventType: ChatOutboxEventType,
     payload: Record<string, unknown> = {},
     collaborationProjection?: CanonicalChatCollaboration,
-    committedReceipt?: CanonicalChatMessage,
+    committedContent?: Pick<CanonicalChatContent, "messages" | "turns">,
   ): Promise<void> {
     if (typeof payload.runId === "string") {
       const queuedRun = await executor.selectFrom("chat_queued_turns")
@@ -625,10 +633,10 @@ export class ChatRepository {
     const getRecord = (projectionOwner: ChatOwner, projectionChatId: string) =>
       hydrateRecord(executor, projectionOwner, projectionChatId, collaborationProjection);
     let captured: CanonicalChatContent | undefined;
-    if (committedReceipt) {
-      // Receipt messages have no foreground Run or turn. Publish the exact append.
+    if (committedContent) {
+      // Deterministic Chat appends have no Run to drive ordinary content capture.
       const record = await getRecord(owner, chatId);
-      if (record) captured = CanonicalChatContentSchema.parse({ record, messages: [committedReceipt] });
+      if (record) captured = CanonicalChatContentSchema.parse({ record, ...committedContent });
     } else {
       captured = await captureChatContent(executor, owner, chatId, eventType, payload, getRecord);
     }
@@ -1089,7 +1097,8 @@ export class ChatRepository {
       const throughSeq = record.chat.chat.messageCount;
       const rows = await trx.selectFrom("chat_messages").selectAll()
         .where("chat_id", "=", chatId).where("seq", "<=", throughSeq).where("state", "=", "committed")
-        .where("role", "in", ["user", "assistant"]).orderBy("seq", "desc").limit(SESSION_HISTORY_MESSAGE_LIMIT).execute();
+        .where("role", "in", ["user", "assistant"]).where(visibleChatMessagePredicate())
+        .orderBy("seq", "desc").limit(SESSION_HISTORY_MESSAGE_LIMIT).execute();
       return { ...record, history: { chatId, throughSeq, messages: rows.reverse().map(toMessage) } };
     });
   }

@@ -137,7 +137,7 @@ export function ProjectSkillActions({ filesPending, onCreate, loadInstalledSkill
   );
 }
 
-function InstalledSkillForm({ busy, load, onSubmit, children }: {
+export function InstalledSkillForm({ busy, load, onSubmit, children }: {
   busy: boolean;
   load: NonNullable<ProjectSkillSourceActions["loadInstalledSkills"]>;
   onSubmit: (skill: ProjectInstalledSkill) => void;
@@ -234,7 +234,7 @@ function NewSkillForm({ busy, draft, onChange, onSubmit, children }: {
   );
 }
 
-function ImportSkillForm({ busy, onSubmit, children }: {
+export function ImportSkillForm({ busy, onSubmit, children }: {
   busy: boolean;
   onSubmit: (file: File) => void;
   children: ReactNode;

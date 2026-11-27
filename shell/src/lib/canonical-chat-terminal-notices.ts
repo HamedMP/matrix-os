@@ -1,12 +1,12 @@
 import { canonicalChatToolActivities, canonicalChatInputs, canonicalChatApprovals, canonicalChatTerminalNotices, canonicalAssistantOutputMessages, type CanonicalChatDetailResponse } from "@matrix-os/contracts";
-import { routineReceiptMessage } from "@matrix-os/ui";
+import { projectSetupDetailPresentation, routineReceiptMessage } from "@matrix-os/ui";
 import type { ChatMessage } from "./chat";
 import { projectCanonicalMessages } from "./canonical-chat-client";
 import { nativeScheduledMessage } from "@matrix-os/ui/chat-scheduled-message";
 
 /** Keep terminal outcomes attached to their turn, using only safe fixed copy. */
 export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse): ChatMessage[] {
-  detail = { ...detail, messages: canonicalAssistantOutputMessages(detail.messages) };
+  detail = projectSetupDetailPresentation({ ...detail, messages: canonicalAssistantOutputMessages(detail.messages) }, null);
   const messages = projectCanonicalMessages(detail.messages);
   const contextsByTurn = Object.fromEntries(detail.runs.filter((run) => run.context).map((run) => [run.turnId, run.context]));
   const sourceById = Object.fromEntries(detail.messages.map((message) => [message.id, message]));

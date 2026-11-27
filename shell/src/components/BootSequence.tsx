@@ -39,7 +39,7 @@ function isRetryableAppSessionStatus(status: number): boolean {
 }
 
 const STAGE_LABEL: Record<string, string> = {
-  creating_server: "Creating your server",
+  creating_server: "Creating your Matrix computer",
   booting: "Booting your computer",
   registering: "Connecting your computer",
   finalizing: "Finishing setup",
@@ -333,7 +333,8 @@ function BootSequenceInner({
     };
   }, [provisioningOutcomeAmbiguous, state?.phase]);
 
-  async function startProvision(developerTools: DeveloperToolId[]): Promise<void> {
+  /** The free plan names no tools: the platform preinstalls its fixed set. */
+  async function startProvision(developerTools?: DeveloperToolId[]): Promise<void> {
     setWorking(true);
     setInstallError(null);
     const finishProvision = (error: string | null = null): void => {
@@ -465,6 +466,27 @@ function BootSequenceInner({
         </BootShell>
       );
     case "install_choices_required":
+      // The free plan takes no install choices (its preinstalls are fixed): the
+      // journey asks for a direct start, which a device sign-in (passive path)
+      // must still be able to make.
+      if (passivePostCheckout && !provisioningOutcomeAmbiguous && state.nextAction.kind === "start_provision") {
+        return (
+          <BootShell activeStep="computer">
+            <h1 className="text-lg font-medium text-forest">Set up your Matrix computer</h1>
+            <p className="max-w-sm text-sm">{state.detail}</p>
+            {installError ? <p className="max-w-sm text-sm text-ember">{installError}</p> : null}
+            <button
+              type="button"
+              disabled={working}
+              onClick={() => void startProvision()}
+              className="inline-flex items-center gap-2 rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-60"
+              style={{ backgroundColor: c.deep, color: lightFg, padding: "0.5rem 1rem" }}
+            >
+              {working ? <Spinner /> : null} Set up
+            </button>
+          </BootShell>
+        );
+      }
       if (passivePostCheckout || provisioningOutcomeAmbiguous) {
         return (
           <BootShell activeStep="computer">
@@ -486,8 +508,10 @@ function BootSequenceInner({
             loading: working,
             error: installError,
             collectAcquisitionSource: true,
+            freePlan: state.nextAction.kind === "start_provision",
+            // The free plan's preinstalls are fixed server-side, so its request names no tools.
             onBuild: (tools) => {
-              void startProvision(tools);
+              void startProvision(state.nextAction.kind === "start_provision" ? undefined : tools);
             },
           }}
         />

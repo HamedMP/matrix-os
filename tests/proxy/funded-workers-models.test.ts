@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { FundedAiRouteReadinessReceiptSchema, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "../../packages/proxy/src/funded-relay-openai-request.js";
-import { mapFundedModel, estimateWorstCaseMicrousd, priceActualUsageMicrousd } from "../../packages/proxy/src/funded-relay-model.js";
+import { mapFundedModel, estimateWorstCaseMicrousd, maximumFundedInputTokens, priceActualUsageMicrousd } from "../../packages/proxy/src/funded-relay-model.js";
 import { readFundedPricingReviews } from "../../packages/proxy/src/funded-pricing-review.js";
 
 const additions = [
@@ -59,6 +59,42 @@ describe("reviewed Workers AI additions",()=>{
   expect(priceActualUsageMicrousd({ canonicalModelId: deepSeekV41, pricingVersion: deepSeekV41Version,
    usage: { inputTokens: 1_000, outputTokens: 1_000, cacheReadTokens: 1_000, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 },
   })).toBe(1_506);
+ });
+ it("routes Inkling 2 Small with bounded tool calls and its own expiring price review", () => {
+  const model = "@cf/thinkingmachines/inkling-2-small";
+  const pricingVersion = "cloudflare-2026-11-25-inkling-2-small";
+  const reviewedAt = "2026-11-25T00:00:00.000Z";
+  const validThrough = "2026-11-26T00:00:00.000Z";
+  const tools = [{ type: "function", function: {
+   name: "read_file", parameters: { type: "object", properties: { path: { type: "string" } } },
+  } }];
+  expect(mapFundedModel(model)).toEqual({ canonicalModelId: model, nativeModelId: model });
+  expect(maximumFundedInputTokens(model)).toBe(1_048_576);
+  expect(workersAiTarget(gateway, model)).toEqual({
+   gatewayId: "test",
+   url: `https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/${model}`,
+  });
+  const body = JSON.parse(serializeFundedOpenAiRequest({
+   model, messages, max_tokens: 128, tools, tool_choice: "auto", stream: true,
+  }).body);
+  expect(body).toMatchObject({ model, reasoning_effort: "low", max_completion_tokens: 128,
+   tools, tool_choice: "auto", stream_options: { include_usage: true }, store: false });
+  expect(body.max_tokens).toBeUndefined();
+
+  const estimate = { canonicalModelId: model, inputTokens: 100, maxOutputTokens: 100,
+   now: new Date("2026-11-25T12:00:00.000Z") };
+  expect(() => estimateWorstCaseMicrousd(estimate)).toThrow(/expired/);
+  const pricingReviews = readFundedPricingReviews({
+   MATRIX_FUNDED_INKLING_2_SMALL_PRICING_REVIEW_VERSION: pricingVersion,
+   MATRIX_FUNDED_INKLING_2_SMALL_PRICING_REVIEWED_AT: reviewedAt,
+   MATRIX_FUNDED_INKLING_2_SMALL_PRICING_VALID_THROUGH: validThrough,
+  });
+  expect(estimateWorstCaseMicrousd({ ...estimate, pricingReviews })).toEqual({
+   amountMicrousd: 156, pricingVersion, pricingValidThrough: validThrough,
+  });
+  expect(priceActualUsageMicrousd({ canonicalModelId: model, pricingVersion,
+   usage: { inputTokens: 1_000, outputTokens: 1_000, cacheReadTokens: 1_000, cacheWrite5mTokens: 0, cacheWrite1hTokens: 0 },
+  })).toBe(1_400);
  });
  it("validates effort against the selected model rather than a global enum",()=>{
   expect(()=>serializeFundedOpenAiRequest({model:'@cf/zai-org/glm-5.3',messages,reasoning_effort:'none'})).toThrow();

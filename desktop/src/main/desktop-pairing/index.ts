@@ -1,8 +1,7 @@
 import { sign, type KeyObject } from "node:crypto";
 import { desktopPairingProofMessage } from "@matrix-os/contracts";
 import type { BaseWindow } from "electron";
-import { showMacActivityDialog } from "../mac-activity/dialog";
-import { createMacActionPairing, type MacActionPairing } from "./action";
+import { showDesktopLinkDialog } from "./dialog";
 import { createPairingKeyStore, type KeyScope, type PairingSafeStorage } from "./key-store";
 import { createPairingTransport, matchingPairingState, type PairingAuth, type PairingState } from "./transport";
 
@@ -12,8 +11,9 @@ interface DesktopPairingOptions {
   userData: string;
   window: () => BaseWindow | null;
   fetchFn?: typeof fetch;
-  /** Which device this is; macOS also offers Chat Full Access for Mac Verification. */
   platform?: NodeJS.Platform;
+  /** The local Desktop Link consumer is installed and can act on this grant. */
+  desktopLinkAvailable?: boolean;
   /** After a pairing commits: the desktop link (spec 2716) connects. */
   onPaired?(): void;
   /** As the owner confirms Disconnect, before the request: the desktop link closes first. */
@@ -40,33 +40,13 @@ const REVOKE_LINK_FULL_ACCESS = "Revoke Desktop Link Full Access";
 
 export function createDesktopPairing(options: DesktopPairingOptions) {
   const keys = createPairingKeyStore(options.userData, options.safeStorage);
-  const platform = options.platform ?? process.platform;
-  const noun = pairingDeviceNoun(platform);
-  // Chat Full Access is for Mac Verification, which only macOS runs.
-  const offersFullAccess = platform === "darwin";
+  const noun = pairingDeviceNoun(options.platform ?? process.platform);
   const fetchFn = options.fetchFn ?? fetch;
-  let pendingRevocation: KeyScope | undefined;
-  let consentGeneration = 0;
-  async function hasChatFullAccess(scope: KeyScope, state: PairingState) {
-    if (pendingRevocation) return false;
-    const generation = consentGeneration;
-    try {
-      return await keys.hasChatFullAccess(scope, state) && !pendingRevocation && generation === consentGeneration;
-    } catch (error: unknown) {
-      console.warn("[desktop-pairing] Chat Full Access consent unavailable", error instanceof Error ? error.name : "Error");
-      return false;
-    }
-  }
-  const actions = createMacActionPairing({ auth: options.auth, keys, fetchFn, hasChatFullAccess });
   let active: AbortController | undefined;
   let disconnecting = false;
-  const acquireActionPairing: MacActionPairing = async (operation, signal) =>
-    disconnecting ? null : actions.acquire(operation, signal);
-  const acquireFullAccessPairing: MacActionPairing = async (operation, signal) =>
-    disconnecting || pendingRevocation ? null : actions.acquireFullAccess(operation, signal);
 
   function show(message: string, signal: AbortSignal, detail?: string) {
-    return showMacActivityDialog(options.window(), {
+    return showDesktopLinkDialog(options.window(), {
       title: "Matrix", type: "info", message, detail, buttons: ["OK"], signal,
     });
   }
@@ -88,37 +68,25 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
     }
 
     const paired = state.deviceId !== null;
-    const fullAccess = paired && await hasChatFullAccess(scope, state);
-    transport.assertCurrent();
-    const retryRevocation = pendingRevocation?.origin === origin && pendingRevocation.ownerId === ownerId;
-    const fullAccessDetail = !offersFullAccess
-      ? `Your Matrix computer can then reach this ${noun} over its desktop link. You can disconnect at any time.`
-      : pendingRevocation
-        ? "Chat Full Access is blocked on this Mac while a previous revocation needs attention."
-        : "Chats set to Full Access can run Mac Verification on this Mac without asking each time. You can revoke this permission in Mac Pairing.";
     const inventoryDetail = " While Desktop Link is on, your private Chat can list computer names and connection states from this desktop.";
     const buttons = paired ? ["Done", `Disconnect This ${noun}`] : ["Cancel", `Pair This ${noun}`];
-    if (!offersFullAccess) {
-      // No Full Access choice off macOS.
-    } else if (retryRevocation) buttons.push("Retry Chat Full Access Revocation");
-    else if (!pendingRevocation) buttons.push(paired
-      ? fullAccess ? "Revoke Chat Full Access" : "Allow Chat Full Access"
-      : "Pair and Allow Chat Full Access");
-    // Desktop link Full Access (spec 2716, D2): starts, screenshots and other terminals without asking each time.
-    const linkFullAccess = paired && await hasLinkFullAccess(scope, state);
+    const linkAvailable = options.desktopLinkAvailable === true;
+    const linkFullAccess = paired && linkAvailable && await hasLinkFullAccess(scope, state);
     transport.assertCurrent();
-    if (paired) buttons.push(linkFullAccess ? REVOKE_LINK_FULL_ACCESS : ALLOW_LINK_FULL_ACCESS);
+    if (paired && linkAvailable) buttons.push(linkFullAccess ? REVOKE_LINK_FULL_ACCESS : ALLOW_LINK_FULL_ACCESS);
     const linkDetail = linkFullAccess
-      ? " Desktop Link Full Access is allowed: your computer starts terminals, opens your other terminals and takes screenshots here without asking."
+      ? " Desktop Link Full Access lets your computer start terminals, open your other terminals and take screenshots here without asking."
       : " Your computer asks here before it starts a terminal, opens one you started, or takes a screenshot."
         + " Full Access would let anything running on your computer, its agents included, do that without asking.";
-    const { response } = await showMacActivityDialog(options.window(), {
+    const { response } = await showDesktopLinkDialog(options.window(), {
       title: "Matrix",
       type: "question",
       message: paired ? `This ${noun} is paired.` : `Pair this ${noun}?`,
-      detail: paired
-        ? `Paired with ${origin}. ${fullAccess ? "Chat Full Access is allowed. " : ""}${fullAccessDetail}${linkDetail}${inventoryDetail}`
-        : `Pair this ${noun} with ${origin}. ${fullAccessDetail}${inventoryDetail}`,
+      detail: !linkAvailable
+        ? `Pairing identifies this ${noun} to ${origin}. You can disconnect at any time.`
+        : paired
+        ? `Paired with ${origin}. You can disconnect at any time.${linkDetail}${inventoryDetail}`
+        : `Pair this ${noun} with ${origin}. Your Matrix computer can then reach this ${noun} over its desktop link.${inventoryDetail}`,
       buttons,
       defaultId: 0,
       cancelId: 0,
@@ -136,28 +104,7 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
       await show("Desktop Link Full Access is revoked.", signal, "Your computer asks here again before each start or screenshot.");
       return;
     }
-    if ((response !== 1 && response !== 2) || !buttons[response]) return;
-    if (response === 2 && (fullAccess || retryRevocation)) {
-      pendingRevocation = scope;
-      consentGeneration += 1;
-      actions.revokeFullAccess();
-      try {
-        await keys.revokeChatFullAccess(scope);
-      } catch (error: unknown) {
-        console.warn("[desktop-pairing] could not revoke Chat Full Access", error instanceof Error ? error.name : "Error");
-        await show("Chat Full Access could not be revoked.", signal, "Try again in Mac Pairing or disconnect this Mac.");
-        return;
-      }
-      pendingRevocation = undefined;
-      await show("Chat Full Access is revoked.", signal);
-      return;
-    }
-    if (paired && response === 2) {
-      if (!matchingPairingState(await transport.read(), state)) throw new Error("Pairing changed during approval");
-      await keys.allowChatFullAccess(scope, state, signal, transport.assertCurrent);
-      await show("Chat Full Access is allowed for Mac Verification.", signal);
-      return;
-    }
+    if (response !== 1) return;
 
     const verifyMutation = async (mutate: () => Promise<PairingState>, deviceId: string | null) => {
       const expected = { ...state, deviceId, revision: state.revision + 1 };
@@ -176,12 +123,10 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
     const deviceId = state.deviceId;
     if (deviceId !== null) {
       disconnecting = true;
-      actions.revokeAll();
       notify(options.onDisconnecting);
       try {
         if (!matchingPairingState(await transport.read(), state)) throw new Error("Pairing changed during approval");
         await verifyMutation(() => transport.revoke({ ...state, deviceId }), null);
-        if (retryRevocation) pendingRevocation = undefined;
       } finally {
         disconnecting = false;
       }
@@ -198,22 +143,11 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
     const proof = desktopPairingProofMessage({ ownerId, machineId: state.machineId, deviceId: key.deviceId,
       revision: state.revision, nonce: challenge.nonce });
     const signature = sign(null, Buffer.from(proof), key.privateKey).toString("base64url");
-    const enrolled = await verifyMutation(
+    await verifyMutation(
       () => transport.pair({ nonce: challenge.nonce, publicKey: key.publicKey, signature }),
       key.deviceId,
     );
     notify(options.onPaired);
-    if (response === 2) {
-      try {
-        await keys.allowChatFullAccess(scope, enrolled, signal, transport.assertCurrent);
-      } catch (error: unknown) {
-        if (signal.aborted) throw error;
-        transport.assertCurrent();
-        console.warn("[desktop-pairing] could not save Chat Full Access", error instanceof Error ? error.name : "Error");
-        await show(`This ${noun} is paired.`, signal, "Chat Full Access could not be saved. Try again in Mac Pairing.");
-        return;
-      }
-    }
     await show(`This ${noun} is paired.`, signal);
   }
 
@@ -257,7 +191,6 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
 
   function cancel() {
     active?.abort();
-    actions.revokeAll();
   }
 
   return {
@@ -272,7 +205,7 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
         console.warn("[desktop-pairing] request failed", error instanceof Error ? error.name : "Error");
         try {
           await show(`${noun[0]!.toUpperCase()}${noun.slice(1)} pairing could not be confirmed.`, operation.signal,
-            `Open ${platform === "darwin" ? "Mac Pairing" : `Pair This ${noun}`} again to check the current state.`);
+            "Open device pairing again to check the current state.");
         } catch (dialogError: unknown) {
           if (!operation.signal.aborted) {
             console.warn("[desktop-pairing] could not open dialog", dialogError instanceof Error ? dialogError.name : "Error");
@@ -282,8 +215,6 @@ export function createDesktopPairing(options: DesktopPairingOptions) {
         active = undefined;
       }
     },
-    acquireActionPairing,
-    acquireFullAccessPairing,
     linkIdentity,
     /** Whether the owner allowed desktop link Full Access at the pairing the link proves. */
     linkFullAccess: (identity: PairedLinkIdentity) => hasLinkFullAccess(

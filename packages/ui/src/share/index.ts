@@ -7,6 +7,7 @@ export {
 } from "./email-invitations";
 export { createSiteEmailInvitationAdapter, type SiteEmailInvitationClient } from "./site-email-invitations";
 export * from "./share-model";
+export { isShareableAppSlug, MATRIX_DEFAULT_APP_SLUGS } from "./default-apps";
 export type { ShareSiteClient } from "./share-site-client";
 export { useShareOrganization, collaborativeChatPrompt, MAKE_COLLABORATIVE_SKILL, type ShareOrganizationHost } from "./use-share-organization";
 export { organizationColor, organizationInitial, membersLabel, type ShareOrganization } from "./organization-identity";

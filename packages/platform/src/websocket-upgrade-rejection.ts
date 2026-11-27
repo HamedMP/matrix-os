@@ -22,7 +22,12 @@ const rejecting = new WeakSet<Duplex>();
  * platform instance out of service. Use it for every refusal made before an upstream has
  * answered. A second refusal of the same socket is ignored, so it cannot cut the first short.
  */
-export function rejectWebSocketUpgrade(socket: Duplex, status: WebSocketUpgradeRejectionStatus): void {
+export function rejectWebSocketUpgrade(
+  socket: Duplex,
+  status: WebSocketUpgradeRejectionStatus,
+  /** Optional Retry-After and small JSON body, e.g. so clients can tell a waking runtime from other 503s. */
+  detail: { retryAfter?: string; jsonBody?: string } = {},
+): void {
   if (socket.destroyed || rejecting.has(socket)) return;
   if (!socket.writable) {
     socket.destroy();
@@ -33,8 +38,11 @@ export function rejectWebSocketUpgrade(socket: Duplex, status: WebSocketUpgradeR
     console.warn('[platform] websocket upgrade rejection write failed:', describeError(err));
     socket.destroy();
   });
+  const body = detail.jsonBody ?? '';
+  const extra = (detail.retryAfter ? `Retry-After: ${detail.retryAfter}\r\n` : '')
+    + (body ? 'Content-Type: application/json\r\nCache-Control: no-store\r\n' : '');
   socket.end(
-    `HTTP/1.1 ${status} ${UPGRADE_REJECTION_STATUS_TEXT[status]}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+    `HTTP/1.1 ${status} ${UPGRADE_REJECTION_STATUS_TEXT[status]}\r\nConnection: close\r\n${extra}Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
     () => socket.destroy(),
   );
 }
