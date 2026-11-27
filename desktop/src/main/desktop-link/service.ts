@@ -14,6 +14,7 @@ import type { HcSocket } from "@matrix-os/herdr-core-client/client";
 import type { PairedLinkIdentity } from "../desktop-pairing";
 import { createDesktopLinkConsent, type DesktopLinkConsent, type DesktopLinkConsentRequest } from "./consent";
 import { createDesktopLinkGuard, DesktopLinkGuardError, type DesktopLinkGuard } from "./guard";
+import type { ComputerInventory } from "./herdr-inventory";
 import type { DesktopLinkPreferences, DesktopLinkPreferenceStore } from "./preferences";
 
 export const DESKTOP_LINK_PING_MS = 15_000;
@@ -59,6 +60,7 @@ export interface DesktopLinkServiceOptions {
   };
   /** A new raw stream to this app's private herdr-core. */
   openCore(): Promise<HcSocket>;
+  readInventory?(ownerId: string): Promise<ComputerInventory | undefined>;
   preferences: DesktopLinkPreferenceStore;
   home: string;
   deviceName: string;
@@ -98,6 +100,8 @@ const OPEN_WINDOW_MS = 10_000;
 interface Link {
   /** Rotated at every WebSocket admission; kept across idle core stream closures. */
   selectionKey?: Buffer;
+  inventoryPong?: () => void;
+  proofSent?: boolean;
   slot: string;
   computerName: string;
   state: DesktopLinkState;
@@ -118,8 +122,9 @@ interface Link {
 /** Only the primary computer pairs with a desktop (2698). */
 const PRIMARY = "primary";
 
-function urlFor(origin: string, slot: string): string {
+function urlFor(origin: string, slot: string, inventory: boolean): string {
   const url = new URL(DESKTOP_LINK_PATH, origin);
+  if (inventory) url.searchParams.set("herdrInventory", "1");
   url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
   if (slot !== "primary") url.searchParams.set("runtime", slot);
   return url.toString();
@@ -294,6 +299,34 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
     });
   }
 
+  /** Bound to this admission. Slow reads cannot publish after Stop, replacement or account change. */
+  function startInventory(link: Link, ownerId: string, read: NonNullable<DesktopLinkServiceOptions["readInventory"]>): void {
+    const socket = link.socket;
+    let lastRead = -Infinity;
+    let reading = false;
+    let lastSnapshot = -Infinity;
+    let snapshot: ComputerInventory | undefined;
+    const pong = () => {
+      if (link.socket !== socket || !link.admitted) return;
+      const current = now() - lastSnapshot < DESKTOP_LINK_STALE_MS ? snapshot : undefined;
+      sendText(link, {
+        t: "pong",
+        ...(current ? { herdrMachines: current.machines } : {}),
+        ...(current?.partial || !current ? { herdrMachinesPartial: true } : {}),
+      });
+    };
+    link.inventoryPong = () => {
+      if (reading || now() - lastRead < DESKTOP_LINK_PING_MS) { pong(); return; }
+      lastRead = now();
+      reading = true;
+      void read(ownerId).then((result) => { snapshot = result; lastSnapshot = lastRead; }).catch((error: unknown) => {
+        log(`inventory read failed: ${error instanceof Error ? error.name : "UnknownError"}`);
+        snapshot = undefined;
+      }).finally(() => { reading = false; pong(); });
+    };
+    link.inventoryPong();
+  }
+
   function onControl(link: Link, identity: PairedLinkIdentity, text: string): void {
     if (Buffer.byteLength(text) > DESKTOP_LINK_CONTROL_MAX_BYTES) { hangUp(link, DESKTOP_LINK_CLOSE.policy); scheduleRetry(link); return; }
     let raw: unknown;
@@ -305,15 +338,17 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
     }
     if (!link.admitted) {
       // Before admission the gateway sends exactly a challenge, then `ready`.
-      if (DesktopLinkServerFrameSchema.safeParse(raw).data?.t === "ready") {
+      const ready = DesktopLinkServerFrameSchema.safeParse(raw).data;
+      if (ready?.t === "ready" && link.proofSent) {
         link.selectionKey = randomBytes(32);
         link.admitted = true;
         link.failures = 0;
         setState(link, "on");
+        if (ready.herdrInventory && options.readInventory) startInventory(link, identity.ownerId, options.readInventory);
         return;
       }
       const challenge = DesktopLinkChallengeFrameSchema.safeParse(raw);
-      if (!challenge.success || challenge.data.machineId !== identity.machineId) {
+      if (!challenge.success || link.proofSent || challenge.data.machineId !== identity.machineId) {
         hangUp(link, DESKTOP_LINK_CLOSE.policy);
         setState(link, "error");
         return;
@@ -322,13 +357,17 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
       const signature = sign(null, Buffer.from(desktopLinkProofMessage({
         ownerId, machineId, deviceId, revision, nonce: challenge.data.nonce,
       })), identity.privateKey).toString("base64url");
+      link.proofSent = true;
       sendText(link, { t: "proof", name: options.deviceName, deviceId, revision, signature, app: options.app });
       return;
     }
     const frame = DesktopLinkServerFrameSchema.safeParse(raw);
     if (!frame.success) { hangUp(link, DESKTOP_LINK_CLOSE.policy); scheduleRetry(link); return; }
     switch (frame.data.t) {
-      case "ping": sendText(link, { t: "pong" }); return;
+      case "ping":
+        if (link.inventoryPong) link.inventoryPong();
+        else sendText(link, { t: "pong" });
+        return;
       case "pong": return;
       case "open": {
         // Each stream is a new connection to the core: at most a few a second.
@@ -371,10 +410,12 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
     // A new pairing revision (or another device's key) starts consent over.
     if (link.identity && (link.identity.revision !== identity.revision || link.identity.deviceId !== identity.deviceId)) link.consent.reset();
     link.identity = identity;
-    const socket = options.createSocket(urlFor(identity.origin, link.slot), { Authorization: `Bearer ${token}` });
+    const socket = options.createSocket(urlFor(identity.origin, link.slot, !!options.readInventory), { Authorization: `Bearer ${token}` });
     socket.binaryType = "arraybuffer";
     link.socket = socket;
     link.admitted = false;
+    link.inventoryPong = undefined;
+    link.proofSent = false;
     link.lastSeen = now();
     socket.onmessage = (event) => {
       if (link.socket !== socket) return;

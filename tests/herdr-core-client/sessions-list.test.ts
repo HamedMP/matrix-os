@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HcConnection } from "@matrix-os/herdr-core-client/client";
-import { createAttachmentSlots, createHcSessions } from "@matrix-os/herdr-core-client/sessions";
+import { createAttachmentSlots, createHcSessions, discoverHerdrMachines } from "@matrix-os/herdr-core-client/sessions";
 
 // Spec 2701: terminals started from the Herdr app or `hc run` carry no title of
 // their own. Found on a live VPS: every one showed as "Terminal", so a person
@@ -65,4 +65,12 @@ describe("herdr-core terminal starts", () => {
     expect(sent.map((call) => call.params.name)).toEqual(["first", "third"]);
     expect(sent[1]!.timeoutMs).toBe(20_000);
   });
+});
+
+
+it("preserves the reachability of a specific gateway route without inferring the machine is powered off", () => {
+  const { machines } = discoverHerdrMachines({ terminals: [], machines: [
+    { name: "hel1", state: "connected" }, { name: "main", state: "unreachable" }, { name: "peer", state: "connecting" },
+  ] });
+  expect(machines.slice(1).map(machine => machine.state)).toEqual(["connected", "unreachable", "unknown"]);
 });

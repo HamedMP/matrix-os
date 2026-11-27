@@ -145,8 +145,10 @@ export function dialMac(base: string, mac: ReturnType<typeof testMac>, options: 
   /** The owner's consent the guard asks (spec 2716, D2); none means nothing is asked. */
   consent?: import("../../../desktop/src/main/desktop-link/consent").DesktopLinkConsent;
   staleBytes?: boolean;
+  herdrInventory?: boolean;
 }) {
-  const socket = new WebSocket(`ws://${base}/ws/desktop-link`, { headers: options.headers ?? ownerHeaders() });
+  const path = options.herdrInventory ? "/ws/desktop-link?herdrInventory=1" : "/ws/desktop-link";
+  const socket = new WebSocket(`ws://${base}${path}`, { headers: options.headers ?? ownerHeaders() });
   const control: Array<Record<string, unknown>> = [];
   let closeCode: number | null = null;
   let upgradeStatus: number | null = null;

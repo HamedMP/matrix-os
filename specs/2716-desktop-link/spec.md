@@ -563,7 +563,9 @@ the desktop without SSH or Tailscale.
 
 ### Using a linked terminal from a private Codex Chat
 
-The owner can ask which computers are online, list one computer’s terminals, or search by name. The Chat queries current inventory and returns a short page. Device names and terminal titles help people choose. They can repeat, and do not grant control.
+The owner can ask which computers are online, list one computer’s terminals, or search by name. The Chat queries current inventory and returns a short page. The default machine list includes registered computers even when their connection is unavailable. `machineQuery` searches computer names case-insensitively before pagination; `onlineOnly` limits results to positive observations. A live desktop link may also report the owner's Matrix Terminal sidebar computers and names and states from Herdr on that desktop. For these entries Chat identifies the source and reporting desktop. A failed SSH route does not establish the state of another route to the same host. An incomplete source is flagged; the reported total covers received entries. Terminal counts remain unknown until a terminal inventory is available.
+
+Reported names and states are for discovery. A terminal action requires an executable address and the existing owner, run and process checks. Device names and terminal titles help people choose. They can repeat, and do not grant control.
 
 In Desktop Chat, select **Control a Herdr terminal**, pick the computer and terminal, and write the task in your own words. A selected Full Access turn carries a terminal resource with its workspace, tab and process revision. The Mac still applies its device consent rules. Read, send and interrupt use that selection for the lifetime of the run. If the process ends, the pairing is revoked or the selected connection changes, select the terminal again. A reused address on another computer never takes over the selection.
 

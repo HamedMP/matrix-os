@@ -38,6 +38,28 @@ describe("Pairing is the desktop link's admission (2698)", () => {
     await link.ready();
   });
 
+  it("negotiates inventory only with the opted-in paired Desktop and drops it on reconnect", async () => {
+    const { http, base, registry } = await gateway();
+    const mac = testMac();
+    await pair(http, mac);
+    const legacy = dialMac(base, mac, { revision: 1 });
+    await legacy.ready();
+    expect(legacy.control.find((frame) => frame.t === "ready")).toEqual({ t: "ready" });
+    const modern = dialMac(base, mac, { revision: 1, herdrInventory: true });
+    await modern.ready();
+    expect(modern.control.find((frame) => frame.t === "ready")).toEqual({ t: "ready", herdrInventory: true });
+    const rows = [{ name: "dev.build", state: "unknown" }];
+    modern.socket.send(JSON.stringify({ t: "pong", herdrMachines: rows, herdrMachinesPartial: true }));
+    await modern.until(() => registry?.linked()[0]?.herdrMachinesPartial === true);
+    expect((await registry?.chatLease(mac.deviceId))?.herdrMachines()).toEqual(rows);
+    const next = dialMac(base, mac, { revision: 1 });
+    await next.ready();
+    expect(registry?.linked()[0]?.herdrMachines).toBeUndefined();
+    next.socket.send(JSON.stringify({ t: "pong", herdrMachines: rows }));
+    await next.closed();
+    expect(next.closeCode()).toBe(DESKTOP_LINK_CLOSE.policy);
+  });
+
   // Fault detected: a disconnect (or Remove on the computer) left a live link
   // working until it dropped by itself, so a revoked desktop kept running terminals.
   it("ends the live link the moment the pairing is disconnected, and refuses it after", async () => {

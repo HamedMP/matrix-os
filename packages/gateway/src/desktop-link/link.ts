@@ -4,10 +4,17 @@
 import { EventEmitter } from "node:events";
 import type { HcSocket } from "@matrix-os/herdr-core-client/client";
 import { HerdrTransportError } from "@matrix-os/herdr-core-client/session-host";
-import { DESKTOP_LINK_CLOSE, type DesktopLinkClientFrame, type DesktopLinkServerFrame } from "@matrix-os/contracts/desktop-link";
+import { DESKTOP_LINK_CLOSE, type DesktopLinkClientFrame, type DesktopLinkHerdrMachine, type DesktopLinkServerFrame } from "@matrix-os/contracts/desktop-link";
 
 /** A link that queued more than this for the desktop is not keeping up: closed, not buffered. */
 export const DESKTOP_LINK_MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+
+// Other terminal traffic can keep a socket live long after its inventory expired.
+const INVENTORY_TTL_MS = 45_000;
+interface DesktopInventory {
+  herdrMachines?: DesktopLinkHerdrMachine[];
+  herdrMachinesPartial?: true;
+}
 
 export interface DesktopLinkTransport {
   sendText(text: string): void;
@@ -27,6 +34,7 @@ export interface DesktopLink {
   readonly info: DesktopLinkInfo;
   readonly closed: boolean;
   lastSeen(): number;
+  inventory(): DesktopInventory | undefined;
   /** A fresh core stream to the desktop's private herdr-core. Ends any stream still open. */
   openStream(): Promise<HcSocket>;
   /** From the WebSocket: a text frame already validated, or a binary frame. */
@@ -63,6 +71,7 @@ class LinkStream extends EventEmitter implements HcSocket {
 export function createDesktopLink(options: {
   info: DesktopLinkInfo;
   transport: DesktopLinkTransport;
+  herdrInventory?: boolean;
   now?: () => number;
   log?: (message: string) => void;
 }): DesktopLink {
@@ -72,6 +81,7 @@ export function createDesktopLink(options: {
   let nextStream = 1;
   let stream: LinkStream | null = null;
   let closed = false;
+  let inventory: { snapshot: DesktopInventory; at: number } | undefined;
 
   function sendFrame(frame: DesktopLinkServerFrame): void {
     if (closed) return;
@@ -88,6 +98,7 @@ export function createDesktopLink(options: {
     info: options.info,
     get closed() { return closed; },
     lastSeen: () => seen,
+    inventory: () => !closed && inventory && now() - inventory.at <= INVENTORY_TTL_MS ? inventory.snapshot : undefined,
     openStream() {
       if (closed) return Promise.reject(new HerdrTransportError("unavailable"));
       if (stream) {
@@ -115,7 +126,21 @@ export function createDesktopLink(options: {
       return Promise.resolve(opened);
     },
     receiveControl(frame) {
+      if (closed) return;
       seen = now();
+      if (frame.t === "pong") {
+        if (frame.herdrMachines || frame.herdrMachinesPartial) {
+          if (!options.herdrInventory) {
+            link.close(DESKTOP_LINK_CLOSE.policy);
+            return;
+          }
+          const { t: _pong, ...snapshot } = frame;
+          inventory = { snapshot, at: seen };
+        } else {
+          inventory = undefined;
+        }
+        return;
+      }
       if (frame.t === "ping") { sendFrame({ t: "pong" }); return; }
       if (frame.t === "opened") { if (stream?.id === frame.stream) stream.confirmed = true; return; }
       if (frame.t === "end") { if (stream?.id === frame.stream) endStream(); return; }
@@ -132,6 +157,7 @@ export function createDesktopLink(options: {
     closedBy() {
       if (closed) return;
       closed = true;
+      inventory = undefined;
       endStream(new HerdrTransportError("unavailable"));
     },
     close(code) {

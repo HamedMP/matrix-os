@@ -74,11 +74,13 @@ it("only publishes the read-only inventory tool to an unselected private Chat, u
     const invoke = (args: Record<string, unknown>) => client.callTool({ name: "terminal_discover", arguments: args });
     const text = (result: Awaited<ReturnType<typeof invoke>>) => JSON.stringify(result.content);
     expect(text(await invoke({}))).toContain("gateway/t1");
+    expect(text(await invoke({ machineQuery: "LaPtOp" }))).toContain("Laptop");
+    expect(text(await invoke({ onlineOnly: true }))).not.toContain("Laptop");
     expect(text(await invoke({ machine: "herdr:laptop" }))).toContain("offline");
     expect(text(await invoke({ machine: "herdr:missing" }))).toContain("not_listed");
     expect((await invoke({ machine: "../route" })).isError).toBe(true);
     grant.revoke();
     expect((await invoke({})).isError).toBe(true);
-    expect(discoverTerminals).toHaveBeenCalledTimes(3);
+    expect(discoverTerminals).toHaveBeenCalledTimes(5);
   } finally { registry.close(); await client.close(); await server.close(); }
 });

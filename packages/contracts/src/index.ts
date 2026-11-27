@@ -1,9 +1,9 @@
 export * from "#notifications";
 export * from "#messaging-origin";
 export * from "#preview-pair";
-import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
+import { MatrixComputerHandleSchema, MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 export * from "#browser-chat-approval";
-export { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
+export { MatrixComputerHandleSchema, MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 export { APP_CAPABILITY_CHANNEL, APP_CAPABILITY_TIMEOUT_MS, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES, APP_BRIDGE_STORED_VALUE_PREFIX, appRuntimeSlugFromIdentity, appIntegrationReplyBytes, appCapabilityReplyBytes, AppIdentitySchema, AppCapabilityInputSchema, AppCapabilityRequestSchema, AppConnectedServiceSchema, AppCapabilitiesSchema, AppServiceDescriptionSchema, createAppCapabilityClient } from "#app-capabilities";
 export type { AppCapabilityInput, AppCapabilities, AppServiceDescription } from "#app-capabilities";
 export * from "#sites";
@@ -334,10 +334,6 @@ export const AgentProfileSummarySchema = z.object({
 
 export type AgentProfileSummary = z.infer<typeof AgentProfileSummarySchema>;
 
-export const MatrixComputerHandleSchema = z.string()
-  .min(2)
-  .max(63)
-  .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "Invalid Matrix computer handle");
 export const MatrixComputerAvailabilitySchema = z.enum(["available", "starting", "unavailable"]);
 export const MatrixComputerKindSchema = z.enum(["customer", "preview"]);
 export const MatrixComputerLabelSchema = z.enum(["Main Computer", "Preview Computer", "Additional Computer"]);

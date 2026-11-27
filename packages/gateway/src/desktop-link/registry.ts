@@ -3,7 +3,7 @@
 // keeps one adapter, which opens core streams over whichever link is current,
 // so viewers re-attach after a reconnect without the adapter being rebuilt.
 import { HerdrTransportError } from "@matrix-os/herdr-core-client/session-host";
-import { DESKTOP_LINK_CALL_TIMEOUT_MS, DESKTOP_LINK_CLOSE, DESKTOP_LINK_MAX_DEVICES } from "@matrix-os/contracts/desktop-link";
+import { DESKTOP_LINK_CALL_TIMEOUT_MS, DESKTOP_LINK_CLOSE, DESKTOP_LINK_MAX_DEVICES, type DesktopLinkHerdrMachine } from "@matrix-os/contracts/desktop-link";
 import { createHerdrAdapter, type HerdrAdapter } from "../herdr/adapter.js";
 import type { DesktopLink } from "./link.js";
 
@@ -44,6 +44,7 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
   const runs = new Map<string, number[]>();
   // Set by the routes (the registry is built before the owner database is known).
   let pairing = options.pairing;
+  let readName: ((deviceId: string, revision: number) => Promise<string | null>) | undefined;
   let seen = options.seen;
   function heard(link: DesktopLink): void {
     try {
@@ -168,12 +169,33 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
       const link = links.get(deviceId);
       return link !== undefined && !link.closed;
     },
+    /** Only the current owner pairing can supply an offline desktop's name. */
+    async pairedOffline() {
+      if (!pairing || draining) return null;
+      const state = await pairing();
+      const { deviceId, revision } = state;
+      if (!deviceId) return null;
+      const isCurrent = () => {
+        const link = links.get(deviceId);
+        return !draining && (!link || link.closed) && (!latest || latest.revision < revision ||
+          (latest.revision === revision && latest.deviceId === deviceId));
+      };
+      if (!isCurrent()) return null;
+      const name = await readName?.(deviceId, revision) ?? "Paired desktop";
+      const checked = await pairing();
+      if (checked.deviceId !== deviceId || checked.revision !== revision || !isCurrent()) return null;
+      return { deviceId, name, current: isCurrent };
+    },
     /** Pin a Chat operation to this live link, including a fresh read of the owner's pairing. */
     async chatLease(deviceId: string) {
       const link = await current(deviceId);
       if (!link) return null;
+      const isCurrent = () => links.get(deviceId) === link && !link.closed;
       return {
-        current: () => links.get(deviceId) === link && !link.closed,
+        name: link.info.name,
+        current: isCurrent,
+        herdrMachines: () => isCurrent() ? link.inventory()?.herdrMachines : undefined,
+        herdrMachinesPartial: () => isCurrent() ? link.inventory()?.herdrMachinesPartial : undefined,
         validate: async () => await current(deviceId) === link,
       };
     },
@@ -199,7 +221,10 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
     /** True once shutdown began: new links are refused. */
     draining: () => draining,
     /** Where the current pairing is read from (2698's owner table). */
-    usePairing(read: () => Promise<{ deviceId: string | null; revision: number }>): void { pairing = read; },
+    usePairing(read: NonNullable<DesktopLinkRegistryOptions["pairing"]>, name?: typeof readName): void {
+      pairing = read;
+      readName = name;
+    },
     /**
      * One more terminal started on this device by the computer: at most 10 a
      * minute per desktop, shared by the routes and the kernel.
@@ -219,9 +244,9 @@ export function createDesktopLinkRegistry(options: DesktopLinkRegistryOptions = 
       return true;
     },
     /** Every linked device's id, name and adapter, for terminal verbs and the kernel. */
-    linked(): Array<{ deviceId: string; name: string; adapter: HerdrAdapter }> {
+    linked(): Array<{ deviceId: string; name: string; adapter: HerdrAdapter; herdrMachines?: DesktopLinkHerdrMachine[]; herdrMachinesPartial?: true }> {
       return [...links.values()].filter((link) => !link.closed).map((link) => ({
-        deviceId: link.info.deviceId, name: link.info.name, adapter: adapterFor(link.info.deviceId),
+        deviceId: link.info.deviceId, name: link.info.name, adapter: adapterFor(link.info.deviceId), ...link.inventory(),
       }));
     },
     sweep,

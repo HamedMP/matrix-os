@@ -7,6 +7,8 @@ import { pairingDeviceNoun, type PairedLinkIdentity } from "../desktop-pairing";
 import type { MacActivityHandle } from "../mac-activity/activity";
 import type { LocalTerminalHost } from "../local-terminals/host";
 import { renderVisible, type DesktopLinkConsentRequest } from "./consent";
+import { localTerminalCoreSocket, localTerminalRuntimeDir } from "../local-terminals/runtime";
+import { collectDesktopInventory, standardHerdrSocket, type ReadMatrixInventory } from "./herdr-inventory";
 import { registerDesktopLinkIpc } from "./ipc";
 import { createDesktopLinkPreferenceStore } from "./preferences";
 import { createDesktopLinkService, type DesktopLinkService, type DesktopLinkSocket } from "./service";
@@ -19,6 +21,7 @@ export interface DesktopLinkMainOptions {
   userData: string;
   home: string;
   appVersion: string;
+  matrixInventory?: ReadMatrixInventory;
   localTerminals: Pick<LocalTerminalHost, "openStream">;
   /** 2698's pairing: the link proves this device's pairing key at the current revision. */
   pairing: {
@@ -113,6 +116,10 @@ export function startDesktopLink(options: DesktopLinkMainOptions): DesktopLinkSe
       fullAccess: (identity) => options.pairing.linkFullAccess(identity),
     },
     openCore: () => options.localTerminals.openStream(),
+    readInventory: platform === "darwin" ? (ownerId) => collectDesktopInventory({
+      privateCore: localTerminalCoreSocket(localTerminalRuntimeDir(options.userData, options.home)),
+      defaultCore: standardHerdrSocket(process.env, options.home),
+    }, ownerId, options.matrixInventory) : undefined,
     preferences: createDesktopLinkPreferenceStore(options.userData),
     home: options.home,
     deviceName: (options.deviceName ?? hostname().replace(/\.local$/, "")).slice(0, 64) || "desktop",

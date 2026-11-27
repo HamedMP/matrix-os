@@ -25,10 +25,10 @@ import {
 } from "./hc-events";
 import { prepareChatTerminalProbe } from "./chat-terminal-probe";
 import { openExistingTerminalReader } from "./existing-terminal";
+import { LOCAL_TERMINAL_SESSION, localTerminalCoreSocket } from "./runtime";
 
-const SESSION = "mx";
 // The longest socket herdr-core creates is `<session>.holder.<8 hex>.sock`.
-const LONGEST_SOCKET_NAME = `${SESSION}.holder.00000000.sock`;
+const LONGEST_SOCKET_NAME = `${LOCAL_TERMINAL_SESSION}.holder.00000000.sock`;
 const SOCKET_PATH_LIMIT = 100;
 const START_TIMEOUT_MS = 5_000;
 const RESTART_WINDOW_MS = 5 * 60_000;
@@ -130,7 +130,7 @@ export class MachineQueueFullError extends Error {
 
 export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink: LocalTerminalHostSink) {
   const now = options.now ?? Date.now;
-  const socketPath = join(options.runtimeDir, "herdr-core", `${SESSION}.sock`);
+  const socketPath = localTerminalCoreSocket(options.runtimeDir);
   const starts: number[] = [];
   let connection: HcConnection | null = null;
   let connecting: Promise<HcConnection> | null = null;
@@ -140,7 +140,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   function coreEnv(): Record<string, string> {
     return {
       ...localShellEnv(options.env),
-      HC_SESSION: SESSION,
+      HC_SESSION: LOCAL_TERMINAL_SESSION,
       XDG_STATE_HOME: join(options.dataDir, "state"),
       XDG_CONFIG_HOME: join(options.dataDir, "config"),
       XDG_RUNTIME_DIR: options.runtimeDir,
