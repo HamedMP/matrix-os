@@ -23,6 +23,23 @@ function clipboardWithUriList(uriList: string | null, extraTypes: string[] = ["t
   };
 }
 const uriListFor = (paths: string[]) => paths.map((path) => pathToFileURL(path).href).join("\r\n");
+const FINDER_LIST = 'electron application/osclipboard;format="NSFilenamesPboardType"';
+const escapeXml = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
+const finderPlist = (paths: string[]) =>
+  `<?xml version="1.0"?><plist version="1.0"><array>${paths.map((path) => `<string>${escapeXml(path)}</string>`).join("")}</array></plist>`;
+// Electron 45 on macOS: a multi-file Finder copy exposes only the first file as
+// text/uri-list; the raw NSFilenamesPboardType property list carries every file.
+function finderClipboard(paths: string[], rawList: Blob | null = new Blob([finderPlist(paths)])) {
+  const types = ["text/uri-list", ...(rawList ? [FINDER_LIST] : []), "text/plain"];
+  const getType = vi.fn(async (type: string) => {
+    if (type === "text/uri-list") return new Blob([pathToFileURL(paths[0]!).href]);
+    if (type === FINDER_LIST && rawList) return rawList;
+    throw new DOMException("missing", "NotFoundError");
+  });
+  return { has: vi.fn(async (mime: string) => types.includes(mime)), read: vi.fn(async () => [{ types, getType }]), getType };
+}
+const parseXmlPlist = async (bytes: Uint8Array) =>
+  [...new TextDecoder().decode(bytes).matchAll(/<string>([^<]*)<\/string>/g)].map((match) => match[1]!.replaceAll("&lt;", "<").replaceAll("&amp;", "&"));
 
 describe.runIf(process.platform !== "win32")("native Terminal file clipboard", () => {
   it("reads all copied Finder files as original bytes, without returning local paths", async () => {
@@ -36,6 +53,60 @@ describe.runIf(process.platform !== "win32")("native Terminal file clipboard", (
       { name: "说明 & notes.txt", mimeType: "application/octet-stream", dataBase64: Buffer.from("Unicode λ").toString("base64") },
     ] });
     expect(JSON.stringify(result)).not.toContain(directory);
+  });
+
+  it("pastes every file of a multi-file Finder copy from the native file list, not just the first URI", async () => {
+    const one = join(directory, "one.txt");
+    const two = join(directory, "two words.txt");
+    await writeFile(one, "first");
+    await writeFile(two, "second");
+    const clipboard = finderClipboard([one, two]);
+    expect(await readTerminalClipboardFiles(clipboard, "darwin", parseXmlPlist)).toMatchObject({ status: "files", files: [
+      { name: "one.txt", dataBase64: Buffer.from("first").toString("base64") },
+      { name: "two words.txt", dataBase64: Buffer.from("second").toString("base64") },
+    ] });
+    expect(clipboard.getType).not.toHaveBeenCalledWith("text/uri-list");
+  });
+
+  it("rejects an oversized native file list before parsing it", async () => {
+    const parse = vi.fn(parseXmlPlist);
+    const clipboard = finderClipboard([join(directory, "a.txt")], new Blob([Buffer.alloc(64 * 1024 + 1, 0x61)]));
+    expect(await readTerminalClipboardFiles(clipboard, "darwin", parse)).toEqual({ status: "error", error: "file_unavailable" });
+    expect(parse).not.toHaveBeenCalled();
+  });
+
+  it("returns an error for a malformed native file list instead of falling back to the first URI", async () => {
+    const file = join(directory, "a.txt");
+    await writeFile(file, "a");
+    for (const parsed of [{ not: "an array" }, [], ["relative/path.txt"], [`${file}\nsecond`], [42]]) {
+      expect(await readTerminalClipboardFiles(finderClipboard([file]), "darwin", async () => parsed))
+        .toEqual({ status: "error", error: "file_unavailable" });
+    }
+  });
+
+  it("caps the native file list at eight files before opening any file", async () => {
+    const paths = Array.from({ length: 9 }, (_, i) => join(directory, `${i}.txt`));
+    expect(await readTerminalClipboardFiles(finderClipboard(paths), "darwin", parseXmlPlist))
+      .toEqual({ status: "error", error: "too_many_files" });
+  });
+
+  it.runIf(process.platform === "darwin")("parses XML and binary Finder property lists with plutil", async () => {
+    const one = join(directory, "one.txt");
+    const two = join(directory, "说明 & notes.txt");
+    await writeFile(one, "first");
+    await writeFile(two, "Unicode λ");
+    expect(await readTerminalClipboardFiles(finderClipboard([one, two]), "darwin"))
+      .toMatchObject({ status: "files", files: [{ name: "one.txt" }, { name: "说明 & notes.txt" }] });
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const { readFile } = await import("node:fs/promises");
+    const plist = join(directory, "paths.plist");
+    await writeFile(plist, finderPlist([one, two]));
+    await promisify(execFile)("/usr/bin/plutil", ["-convert", "binary1", plist]);
+    expect(await readTerminalClipboardFiles(finderClipboard([one, two], new Blob([await readFile(plist)])), "darwin"))
+      .toMatchObject({ status: "files", files: [{ name: "one.txt" }, { name: "说明 & notes.txt" }] });
+    expect(await readTerminalClipboardFiles(finderClipboard([one], new Blob(["not plist"])), "darwin"))
+      .toEqual({ status: "error", error: "file_unavailable" });
   });
 
   it("accepts a single file URI, LF separators, RFC 2483 comments and a trailing newline", async () => {
