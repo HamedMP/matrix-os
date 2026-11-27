@@ -21,7 +21,6 @@ import { createSessionRuntimeBridge } from "./session-runtime-bridge.js";
 import { TerminalRuntimeSocketClient } from "@matrix-os/terminal-runtime";
 import { approveReview, createReviewLoopRecord, startNextReviewRound, stopReview } from "./review-loop.js";
 import { createReviewStore } from "./review-store.js";
-import { createTaskManager } from "./task-manager.js";
 import { createPreviewManager } from "./preview-manager.js";
 import { createWorkspaceEventStore } from "./workspace-events.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, ownerScopeFromPrincipal, requireRequestPrincipal } from "./request-principal.js";
@@ -46,7 +45,6 @@ type AgentSessionManager = ReturnType<typeof createAgentSessionManager>;
 type AgentSandbox = ReturnType<typeof createAgentSandbox>;
 type SessionRuntimeBridge = ReturnType<typeof createSessionRuntimeBridge>;
 type ReviewStore = ReturnType<typeof createReviewStore>;
-type TaskManager = ReturnType<typeof createTaskManager>;
 type PreviewManager = ReturnType<typeof createPreviewManager>;
 type WorkspaceEventStore = ReturnType<typeof createWorkspaceEventStore>;
 type ProjectLifecycleService = ReturnType<typeof createProjectLifecycleService>;
@@ -172,20 +170,6 @@ const CreateReviewSchema = z.object({
   verificationCommands: z.array(z.string().min(1).max(500)).max(20).default([]),
 });
 
-const CreateTaskSchema = z.object({
-  title: z.string().min(1).max(200),
-  description: z.string().max(10_000).optional(),
-  status: z.enum(["todo", "running", "waiting", "blocked", "complete", "archived"]).optional(),
-  priority: z.enum(["low", "normal", "high", "urgent"]).optional(),
-  order: z.number().finite().optional(),
-  parentTaskId: z.string().min(1).max(128).optional(),
-  dueAt: z.string().min(1).max(64).optional(),
-  linkedSessionId: z.string().min(1).max(128).optional(),
-  linkedWorktreeId: z.string().min(1).max(128).optional(),
-  previewIds: z.array(z.string().min(1).max(128)).max(20).optional(),
-});
-
-const UpdateTaskSchema = CreateTaskSchema.partial();
 
 const CreatePreviewSchema = z.object({
   taskId: z.string().min(1).max(128).optional(),
@@ -245,7 +229,6 @@ export function createWorkspaceRoutes(options: {
   terminalRuntime?: TerminalRuntimeSocketClient;
   sessionRuntimeBridge?: SessionRuntimeBridge;
   reviewStore?: ReviewStore;
-  taskManager?: TaskManager;
   previewManager?: PreviewManager;
   eventStore?: WorkspaceEventStore;
   eventPublisher?: WorkspaceEventPublisher;
@@ -282,7 +265,6 @@ export function createWorkspaceRoutes(options: {
   const agentSandbox = options.agentSandbox ?? createAgentSandbox({ homePath: options.homePath });
   const sessionRuntimeBridge = options.sessionRuntimeBridge ?? createSessionRuntimeBridge();
   const reviewStore = options.reviewStore ?? createReviewStore({ homePath: options.homePath });
-  const taskManager = options.taskManager ?? createTaskManager({ homePath: options.homePath });
   const previewManager = options.previewManager ?? createPreviewManager({ homePath: options.homePath });
   const eventStore = options.eventStore ?? createWorkspaceEventStore({ homePath: options.homePath });
   const eventPublisher = options.eventPublisher ?? createWorkspaceEventPublisher({ eventStore });
@@ -662,86 +644,6 @@ export function createWorkspaceRoutes(options: {
         confirmDirtyDelete,
         ownerScope,
       }),
-    });
-    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
-    const result = admitted.value;
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ ok: true });
-  });
-
-  app.post("/api/projects/:slug/tasks", limited, async (c) => {
-    const body = await parseJson(c, CreateTaskSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const projectSlug = c.req.param("slug");
-    let ownerScope: OwnerScope;
-    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const admitted = await withLegacyProjectOperation({
-      ownerScope,
-      projectSlug,
-      kind: "write",
-      operation: async () => {
-        const result = await taskManager.createTask(projectSlug, body.value, ownerScope);
-        if (result.ok) await eventPublisher.publishTaskCreated(result.task);
-        return result;
-      },
-    });
-    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
-    const result = admitted.value;
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ task: result.task }, status(result.status ?? 201));
-  });
-
-  app.get("/api/projects/:slug/tasks", async (c) => {
-    let ownerScope: OwnerScope;
-    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const limitRaw = c.req.query("limit");
-    const result = await taskManager.listTasks(c.req.param("slug"), {
-      includeArchived: c.req.query("includeArchived") === "true",
-      limit: limitRaw ? Number.parseInt(limitRaw, 10) : undefined,
-      cursor: c.req.query("cursor"),
-    }, ownerScope);
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ tasks: result.tasks, nextCursor: result.nextCursor });
-  });
-
-  app.patch("/api/projects/:slug/tasks/:taskId", limited, async (c) => {
-    const body = await parseJson(c, UpdateTaskSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const projectSlug = c.req.param("slug");
-    let ownerScope: OwnerScope;
-    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const admitted = await withLegacyProjectOperation({
-      ownerScope,
-      projectSlug,
-      kind: "write",
-      operation: async () => {
-        const result = await taskManager.updateTask(projectSlug, c.req.param("taskId"), body.value, ownerScope);
-        if (result.ok) await eventPublisher.publishTaskUpdated(result.task);
-        return result;
-      },
-    });
-    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
-    const result = admitted.value;
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json({ task: result.task });
-  });
-
-  app.delete("/api/projects/:slug/tasks/:taskId", limited, async (c) => {
-    const body = await parseJson(c, EmptyObjectSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    const projectSlug = c.req.param("slug");
-    const taskId = c.req.param("taskId");
-    let ownerScope: OwnerScope;
-    try { ownerScope = getOwnerScope(c); } catch (err: unknown) { return principalError(c, err); }
-    const admitted = await withLegacyProjectOperation({
-      ownerScope,
-      projectSlug,
-      kind: "write",
-      operation: async () => {
-        const result = await taskManager.deleteTask(projectSlug, taskId, ownerScope);
-        if (result.ok) await eventPublisher.publishTaskDeleted(projectSlug, taskId);
-        return result;
-      },
     });
     if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
     const result = admitted.value;

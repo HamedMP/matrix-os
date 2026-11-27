@@ -47,11 +47,10 @@ describe("workspace event publisher", () => {
     };
     const publisher = createWorkspaceEventPublisher({ eventStore });
 
-    await publisher.publishTaskCreated({
-      id: "task_abc123",
-      projectSlug: "repo",
-      title: "Fix auth",
-      status: "running",
+    await publisher.publish({
+      type: "task.created",
+      scope: { projectSlug: "repo", taskId: "task_abc123" },
+      payload: { title: "Fix auth", status: "running" },
     });
     await publisher.publishPreviewUpdated({
       id: "prev_abc123",
@@ -146,7 +145,7 @@ describe("workspace event publisher", () => {
     };
     const publisher = createWorkspaceEventPublisher({ eventStore });
 
-    await expect(publisher.publishTaskDeleted("repo", "task_abc123")).resolves.toBeUndefined();
+    await expect(publisher.publish({ type: "task.deleted", scope: { projectSlug: "repo", taskId: "task_abc123" }, payload: {} })).resolves.toBeUndefined();
 
     expect(warn).toHaveBeenCalledWith("[workspace-event-publisher] Failed to publish workspace event:", "invalid_event_scope");
   });
@@ -160,7 +159,7 @@ describe("workspace event publisher", () => {
     };
     const publisher = createWorkspaceEventPublisher({ eventStore });
 
-    await expect(publisher.publishTaskDeleted("repo", "task_abc123")).resolves.toBeUndefined();
+    await expect(publisher.publish({ type: "task.deleted", scope: { projectSlug: "repo", taskId: "task_abc123" }, payload: {} })).resolves.toBeUndefined();
 
     expect(warn).toHaveBeenCalledWith("[workspace-event-publisher] Unexpected workspace event publish error:", "disk full");
   });
