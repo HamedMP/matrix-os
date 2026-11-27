@@ -120,3 +120,42 @@ describe("ContentTypeTable", () => {
     expect(table.defaultFor("rels")).toBe("application/vnd.openxmlformats-package.relationships+xml");
   });
 });
+
+describe("text that XML cannot carry", () => {
+  const FORBIDDEN = [
+    ["a C0 control", "a\u0001b"],
+    ["a form feed", "a\u000Cb"],
+    ["U+FFFE", "a￾b"],
+    ["U+FFFF", "a￿b"],
+    ["a lone high surrogate", "a\uD800b"],
+    ["a lone low surrogate", "a\uDC00b"],
+  ] as const;
+
+  it.each(FORBIDDEN)("a relationship type or target with %s is refused", (_label, text) => {
+    const set = RelationshipSet.parse(utf8(DOCUMENT_RELS_XML));
+    const before = set.list();
+    expect(codeOf(() => set.add({ type: `urn:${text}`, target: "x.xml" }))).toBe("invalid_argument");
+    expect(codeOf(() => set.add({ type: "urn:t", target: `https://example.com/${text}`, targetMode: "External" }))).toBe(
+      "invalid_argument",
+    );
+    expect(set.list()).toEqual(before);
+  });
+
+  it.each(FORBIDDEN)("a content type or extension with %s is refused", (_label, text) => {
+    const table = ContentTypeTable.parse(utf8(CONTENT_TYPES_XML));
+    const before = table.snapshot();
+    expect(codeOf(() => table.setDefault("bin", `application/${text}`))).toBe("invalid_argument");
+    expect(codeOf(() => table.setDefault(`b${text}`, "application/x-b"))).toBe("invalid_argument");
+    expect(codeOf(() => table.assign("/word/a.bin", `application/${text}`))).toBe("invalid_argument");
+    expect(table.snapshot()).toEqual(before);
+  });
+
+  it("keeps tab, line breaks and characters outside the basic plane, which round-trip", () => {
+    const set = RelationshipSet.parse(utf8(DOCUMENT_RELS_XML));
+    set.add({ type: "urn:t\tx", target: "media/\u{1F600}\r\n.png" });
+    expect(RelationshipSet.parse(set.serialize()).list()).toEqual(set.list());
+    const table = ContentTypeTable.minimal();
+    table.setDefault("emoji", "application/x-\u{1F600}");
+    expect(ContentTypeTable.parse(table.serialize()).snapshot()).toEqual(table.snapshot());
+  });
+});

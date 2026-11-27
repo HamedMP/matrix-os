@@ -8,6 +8,7 @@ import { isOfficeError } from "../errors.js";
 import { encodeUtf8 } from "./bytes.js";
 import { assertSafeEntryName } from "./entry-names.js";
 import { fault } from "./errors.js";
+import { isXmlText } from "./xml-lite.js";
 
 export const PACKAGE_ROOT = "/";
 export const CONTENT_TYPES_PART = "/[Content_Types].xml";
@@ -73,12 +74,11 @@ export function normalizePartName(name: string): string {
 
 /** Longest entry name a ZIP header can record, in UTF-8 bytes. */
 const MAX_ENTRY_NAME_BYTES = 0xffff;
-const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 /**
  * Refuses a new part name whose ZIP entry the reader would reject, so a
  * package that saves always opens again: a drive prefix, a control character,
- * text that has no UTF-8 form, or a name too long for a ZIP header.
+ * text that has no UTF-8 form or no XML form, or a name too long for a ZIP header.
  */
 export function assertStorablePartName(partName: string): void {
   const entryName = normalizePartName(partName).slice(1);
@@ -90,8 +90,9 @@ export function assertStorablePartName(partName: string): void {
     }
     throw error;
   }
-  if (UNPAIRED_SURROGATE.test(entryName)) {
-    throw fault("invalid_part_name", "part name is not valid Unicode text");
+  // The name is written into [Content_Types].xml and relationship targets.
+  if (!isXmlText(entryName)) {
+    throw fault("invalid_part_name", "part name is not text XML can hold");
   }
   if (encodeUtf8(entryName).length > MAX_ENTRY_NAME_BYTES) {
     throw fault("invalid_part_name", "part name is too long for a ZIP entry");

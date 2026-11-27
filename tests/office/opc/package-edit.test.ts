@@ -479,3 +479,17 @@ describe("save snapshots", () => {
     expect(two.getRelationshipsByType("/word/document.xml", IMAGE_REL)).toHaveLength(2);
   });
 });
+
+describe("edits that a saved package could not reopen", () => {
+  it("refuses forbidden characters at the mutation, so save never writes them", async () => {
+    const pkg = await openPackage(handmadeDocx());
+    const external = { type: IMAGE_REL, target: "https://example.com/\u0001", targetMode: "External" } as const;
+    await expect(async () => pkg.addRelationship("/word/document.xml", external)).rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(async () => pkg.setDefaultContentType("bin", "application/￾")).rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(async () => pkg.setPart("/word/a.bin", "x", "application/\uD800")).rejects.toMatchObject({ code: "invalid_argument" });
+    await expect(async () => pkg.setPart("/word/a￿.xml", "<a/>")).rejects.toMatchObject({ code: "invalid_argument" });
+    expect(pkg.hasPart("/word/a.bin")).toBe(false);
+    const reopened = await openPackage(await pkg.save());
+    expect(reopened.getRelationshipsByType("/word/document.xml", IMAGE_REL)).toHaveLength(1);
+  });
+});

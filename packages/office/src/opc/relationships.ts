@@ -3,7 +3,7 @@
 import type { NewRelationship, Relationship } from "../api/opc.js";
 import { encodeUtf8 } from "./bytes.js";
 import { fault } from "./errors.js";
-import { decodeXmlBytes, escapeXmlAttribute, scanStartTags } from "./xml-lite.js";
+import { assertXmlText, decodeXmlBytes, escapeXmlAttribute, scanStartTags } from "./xml-lite.js";
 
 export const RELATIONSHIPS_NAMESPACE = "http://schemas.openxmlformats.org/package/2006/relationships";
 
@@ -85,6 +85,8 @@ export class RelationshipSet {
     if (typeof relationship.target !== "string" || relationship.target === "") {
       throw fault("invalid_value", "relationship target is empty");
     }
+    assertXmlText(relationship.type, "relationship type");
+    assertXmlText(relationship.target, "relationship target");
     const targetMode = relationship.targetMode ?? "Internal";
     if (targetMode !== "Internal" && targetMode !== "External") {
       throw fault("invalid_value", "relationship target mode must be Internal or External");

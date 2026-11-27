@@ -7,7 +7,7 @@ import type { ContentTypeDefault, ContentTypeOverride, ContentTypes, PartName } 
 import { encodeUtf8 } from "./bytes.js";
 import { asPackageDamage, fault } from "./errors.js";
 import { normalizePartName, partExtension, partNameKey } from "./part-names.js";
-import { decodeXmlBytes, escapeXmlAttribute, scanStartTags } from "./xml-lite.js";
+import { assertXmlText, decodeXmlBytes, escapeXmlAttribute, isXmlText, scanStartTags } from "./xml-lite.js";
 
 export const CONTENT_TYPES_NAMESPACE = "http://schemas.openxmlformats.org/package/2006/content-types";
 export const CONTENT_TYPE_RELATIONSHIPS = "application/vnd.openxmlformats-package.relationships+xml";
@@ -17,7 +17,7 @@ const XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 function normalizeExtension(extension: string): string {
   const bare = extension.startsWith(".") ? extension.slice(1) : extension;
-  if (bare === "" || /[/\\\s]/.test(bare)) {
+  if (bare === "" || /[/\\\s]/.test(bare) || !isXmlText(bare)) {
     throw fault("invalid_value", "content type extension is empty or malformed");
   }
   return bare.toLowerCase();
@@ -27,6 +27,7 @@ function requireContentType(contentType: string): string {
   if (typeof contentType !== "string" || contentType.trim() === "") {
     throw fault("invalid_value", "content type is empty");
   }
+  assertXmlText(contentType, "content type");
   return contentType;
 }
 

@@ -8,6 +8,7 @@
 
 import type { XmlChildNode, XmlDocument, XmlElement } from "../api/xml.js";
 import { isOfficeError } from "../errors.js";
+import { FORBIDDEN_CHARS } from "../xml/chars.js";
 import { localName } from "../xml/names.js";
 import { parseXml } from "../xml/parser.js";
 import { fault } from "./errors.js";
@@ -43,6 +44,24 @@ export function decodeXmlBytes(bytes: Uint8Array): string {
       throw fault("invalid_text", "part is not valid UTF-8 or UTF-16 text", undefined, error);
     }
     throw error;
+  }
+}
+
+const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/**
+ * True when `value` can be written into an XML document: no control character
+ * other than tab, line feed and carriage return, no U+FFFE or U+FFFF, and no
+ * unpaired surrogate. Escaping cannot help with any of these.
+ */
+export function isXmlText(value: string): boolean {
+  return !FORBIDDEN_CHARS.test(value) && !UNPAIRED_SURROGATE.test(value);
+}
+
+/** Refuses a caller value that the strict parser would reject once written, so a saved package reopens. */
+export function assertXmlText(value: string, what: string): void {
+  if (!isXmlText(value)) {
+    throw fault("invalid_value", `${what} contains a character XML cannot hold`);
   }
 }
 
