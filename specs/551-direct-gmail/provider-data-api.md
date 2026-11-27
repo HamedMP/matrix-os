@@ -19,13 +19,15 @@ The signed digest binds the account, profile, purpose, revisions, data kinds
 and expiry. The consent transaction's revision check prevents accepting the
 same decision again.
 
-On Hosted Computer routes, the Platform edge issues a separate revocation
-proof from the verified personal owner's current session before replacing its
-credentials. The proof lasts up to 30 seconds and binds the DELETE to the
-selected Computer, owner and Gmail account. The Gateway relays it only for
-that operation. The Platform verifies it behind machine and owner delegation
-checks. The consent registry consumes the nonce in the same transaction as
-revocation and purge enqueueing, so replay cannot revoke a later grant.
+On Hosted Computer routes, the Platform edge issues a proof from the verified
+personal owner's current session before replacing its credentials. It checks
+the forwarded query after removing Platform routing parameters, including the
+Additional Computer slot selector. Grant and revocation proofs expire within
+30 seconds and bind the selected Computer and owner to the exact submitted
+grant body or the revoked account. The Gateway relays each proof on its own
+operation. Platform verifies it behind machine and signed owner-delegation
+checks. A grant consumes the expected consent revision. Revocation consumes
+its nonce in the same transaction as revocation and purge enqueueing.
 
 These routes expose neither credentials, fingerprints, private endpoint/account mappings nor raw provider errors. Responses are not cached. The host must supply verified owner resolution and connection ownership; metadata permission does not imply collection, bot grants or write approval.
 

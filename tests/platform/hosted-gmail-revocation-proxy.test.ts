@@ -9,7 +9,8 @@ import { createGoogleDataOwnerRoutes } from '../../packages/gateway/src/google-d
 import { createGoogleDataRepository } from '../../packages/gateway/src/google-data/repository.js';
 import { proxyIntegrationRequest } from '../../packages/gateway/src/integrations/platform-proxy.js';
 import { registerDeferredRuntimeRoutes } from '../../packages/gateway/src/server/deferred-runtime-routes.js';
-import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
+import { projectComputer } from '../../packages/platform/src/computer-routes.js';
+import { getActiveUserMachineByHandle, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createApp } from '../../packages/platform/src/main.js';
 import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { issueSyncJwt } from '../../packages/platform/src/sync-jwt.js';
@@ -36,9 +37,9 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-it('revokes as a verified Hosted Computer owner through both proxies and consumes the proof once', async () => {
+it.each(['primary', 'studio'])('records and revokes owner consent through the %s Computer route', async slot => {
   for (const [key, value] of Object.entries({
-    MATRIX_CLERK_USER_ID: ownerId, MATRIX_USER_ID: ownerId, MATRIX_RUNTIME_SLOT: 'primary',
+    MATRIX_CLERK_USER_ID: ownerId, MATRIX_USER_ID: ownerId, MATRIX_RUNTIME_SLOT: slot,
     MATRIX_HANDLE: handle, MATRIX_AUTH_TOKEN: machineToken, PLATFORM_JWT_SECRET: JWT_SECRET,
     NODE_ENV: 'production',
   })) vi.stubEnv(key, value);
@@ -48,6 +49,16 @@ it('revokes as a verified Hosted Computer owner through both proxies and consume
     provisioningClass: 'customer', status: 'running', hetznerServerId: 4242,
     publicIPv4: '203.0.113.20', imageVersion: 'dev', provisionedAt: '2026-11-01T00:00:00.000Z',
   });
+  await insertUserMachine(db, {
+    machineId: 'gmail-revocation-studio', clerkUserId: ownerId, handle, runtimeSlot: 'studio',
+    provisioningClass: 'customer', status: 'running', hetznerServerId: 4243,
+    publicIPv4: '203.0.113.21', imageVersion: 'dev', provisionedAt: '2026-11-01T00:00:00.000Z',
+  });
+  const machine = await getActiveUserMachineByHandle(db, handle, slot);
+  expect(machine).toBeDefined();
+  const computer = projectComputer(machine!);
+  expect(computer?.runtimeSlot).toBe(slot);
+  const route = new URL(computer!.gatewayPath, 'https://app.matrix-os.com');
   const repository = createGoogleDataRepository(db.kysely, { now: () => now });
   await repository.migrate();
   const profile = await repository.reviewProfile({ ...profileInput(), ownerId }, 0);
@@ -58,7 +69,7 @@ it('revokes as a verified Hosted Computer owner through both proxies and consume
   })).consent;
   const platform = createApp({
     db, platformSecret, orchestrator: stubOrchestrator(),
-    internalIntegrationRoutes: createGoogleDataOwnerRoutes({ repository, authority: createGoogleDataAuthority(repository),
+    internalIntegrationRoutes: createGoogleDataOwnerRoutes({ now: () => now, repository, authority: createGoogleDataAuthority(repository),
       resolveOwner: async c => c.get('internalContainerClerkUserId') ?? null,
       ownsGoogleAccount: async (actor, account) => actor === ownerId && account === accountId }),
   });
@@ -80,14 +91,16 @@ it('revokes as a verified Hosted Computer owner through both proxies and consume
     await runtime.processManager.shutdownAll();
   };
   const gatewayHop = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
-    expect(new URL(String(url)).hostname).toBe('203.0.113.20');
+    const upstream = new URL(String(url));
+    expect(upstream.hostname).toBe(slot === 'primary' ? '203.0.113.20' : '203.0.113.21');
+    expect(upstream.searchParams.has('runtime')).toBe(false);
     return gateway.request(String(url), init);
   });
   const issueSession = async (sessionProvenance?: 'clerk-browser' | 'clerk-device') => (await issueSyncJwt({
     secret: JWT_SECRET, clerkUserId: ownerId, handle, runtimeSlot: 'primary', sessionProvenance,
     gatewayUrl: `https://app.matrix-os.com/vm/${handle}`,
   })).token;
-  const revoke = (headers: Record<string, string>) => platform.request(`/vm/${handle}/api/integrations${revokePath}`, {
+  const revoke = (headers: Record<string, string>) => platform.request(`${route.pathname}/api/integrations${revokePath}${route.search}`, {
     method: 'DELETE', headers: { host: 'app.matrix-os.com', ...headers },
   });
 
@@ -120,4 +133,34 @@ it('revokes as a verified Hosted Computer owner through both proxies and consume
   const second = await revoke({ authorization: `Bearer ${await issueSession('clerk-device')}` });
   expect(second.status).toBe(200);
   expect(await currentConsent()).toMatchObject({ status: 'revoked', revision: 4 });
+
+  const { ownerId: _owner, googleAccountId: connectionId, ...input } = consent;
+  const body = JSON.stringify({ ...input, connectionId, accepted: true, expectedConsentRevision: 4 });
+  const grantPath = `${route.pathname}/api/integrations/gmail/processing-consents`;
+  const auth = { authorization: `Bearer ${await issueSession('clerk-device')}`, 'content-type': 'application/json' };
+  const grant = await platform.request(`${grantPath}${route.search}`, {
+    method: 'POST', headers: { host: 'app.matrix-os.com', ...auth }, body,
+  });
+  expect(grant.status).toBe(200);
+  expect(await currentConsent()).toMatchObject({ status: 'active', revision: 5 });
+  const grantHeaders = new Headers(platformHop.mock.calls.at(-1)?.[1]?.headers);
+  expect(grantHeaders.get('x-matrix-google-owner-authorization')).toBeNull();
+  const repeatGrant = (payload: string) => platform.request(`${internalBase}/gmail/processing-consents`, {
+    method: 'POST', headers: grantHeaders, body: payload,
+  });
+  expect((await repeatGrant(JSON.stringify({ ...input, connectionId, accepted: true, expectedConsentRevision: 5 }))).status).toBe(403);
+  expect((await repeatGrant(body)).status).toBe(409);
+  const nextGrant = JSON.stringify({ ...input, connectionId, accepted: true, expectedConsentRevision: 5 });
+  const routingGrant = await platform.request(`${grantPath}${route.search}`, {
+    method: 'POST', headers: { host: 'app.matrix-os.com', ...auth, authorization: `Bearer ${await issueSession()}` },
+    body: nextGrant,
+  });
+  expect(routingGrant.status).toBe(403);
+  const extraQuery = new URL(`${grantPath}${route.search}`, route);
+  extraQuery.searchParams.set('unrecognized', 'fixture');
+  const queryGrant = await platform.request(extraQuery.toString(), {
+    method: 'POST', headers: { host: 'app.matrix-os.com', ...auth }, body: nextGrant,
+  });
+  expect(queryGrant.status).toBe(403);
+  expect(await currentConsent()).toMatchObject({ status: 'active', revision: 5 });
 }, 45_000);

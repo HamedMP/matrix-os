@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { GMAIL_HOSTED_REVOCATION_PROOF_HEADER } from "@matrix-os/contracts";
+import { GMAIL_HOSTED_GRANT_PROOF_HEADER, GMAIL_HOSTED_REVOCATION_PROOF_HEADER } from "@matrix-os/contracts";
 import { MATRIX_MCP_RUN_CONTEXT_KEY, type MatrixMcpRunContext } from "../../chat/matrix-mcp-launch.js";
 import { INTEGRATION_READ_SCOPE_HEADER } from "../scope-provenance.js";
 
@@ -15,6 +15,7 @@ export function integrationProxyHeaders(context: Context, routePrefix: string): 
       && normalized !== INTEGRATION_READ_SCOPE_HEADER
       && normalized !== "x-matrix-google-owner-authorization"
       && normalized !== GMAIL_HOSTED_REVOCATION_PROOF_HEADER
+      && normalized !== GMAIL_HOSTED_GRANT_PROOF_HEADER
       && normalized !== "x-matrix-custom-mcp-approval-proof" && value) headers.set(key, value);
   }
   if (routePrefix === "/api/mcp-servers") {

@@ -1,9 +1,11 @@
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
-import { GMAIL_HOSTED_REVOCATION_PROOF_HEADER, gmailConsentRevocationAccount, type GmailHostedRevocationReceipt } from '@matrix-os/contracts';
+import { GMAIL_HOSTED_GRANT_PROOF_HEADER, GMAIL_HOSTED_REVOCATION_PROOF_HEADER, gmailConsentRevocationAccount,
+  isGmailConsentGrant, type GmailHostedRevocationReceipt } from '@matrix-os/contracts';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { verifyGmailOwnerApprovalProof } from './custom-mcp-approval-proof.js';
-import { verifyGmailHostedRevocationProof } from './gmail-hosted-revocation-proof.js';
+import { verifyGmailHostedConsentProof } from './gmail-hosted-revocation-proof.js';
+import { readRoutineProofProxyBody } from './routine-proof-proxy-body.js';
 import type { ClerkAuth } from './clerk-auth.js';
 import { APP_SESSION_COOKIE, readCookie } from './session-cookies.js';
 import { isUserSessionProvenance, verifySyncJwt } from './sync-jwt.js';
@@ -151,24 +153,41 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
       return c.json({ error: 'Forbidden' }, 403);
     return consentLimit(c, async () => {
       c.header('Cache-Control', 'no-store');
-      const proof = c.req.header(GMAIL_HOSTED_REVOCATION_PROOF_HEADER);
-      if (proof) {
-        const accountId = gmailConsentRevocationAccount(c.req.method, c.req.path, `/internal/containers/${handle}/integrations`);
-        const receipt = accountId && !new URL(c.req.url).search && c.get('internalSignedOwnerDelegation') === true
-          ? verifyGmailHostedRevocationProof(proof, { handle, ownerId, accountId }, platformSecret) : null;
+      const revocation = c.req.header(GMAIL_HOSTED_REVOCATION_PROOF_HEADER);
+      const grant = c.req.header(GMAIL_HOSTED_GRANT_PROOF_HEADER);
+      const chatApproval = c.req.header('x-matrix-custom-mcp-approval-proof');
+      // A subsequent bodyLimit middleware still needs the original request stream.
+      const signedBody = c.req.method === 'POST' && (grant || chatApproval)
+        ? await readRoutineProofProxyBody(c.req.raw, 4096) : null;
+      if (signedBody && typeof signedBody === 'object') {
+        c.res = c.json({ error: 'Gmail consent request unavailable' }, signedBody.status);
+        return;
+      }
+      if (revocation || grant) {
+        const prefix = `/internal/containers/${handle}/integrations`;
+        if (new URL(c.req.url).search || c.get('internalSignedOwnerDelegation') !== true || (revocation && grant)) {
+          c.res = c.json({ error: 'Forbidden' }, 403);
+          return;
+        }
+        const accountId = gmailConsentRevocationAccount(c.req.method, c.req.path, prefix);
+        const receipt = revocation && accountId
+          ? verifyGmailHostedConsentProof(revocation, { handle, ownerId, accountId }, platformSecret)
+          : grant && typeof signedBody === 'string' && isGmailConsentGrant(c.req.method, c.req.path, prefix)
+            ? verifyGmailHostedConsentProof(grant, { handle, ownerId, grantBody: signedBody }, platformSecret)
+            : null;
         if (!receipt) {
           c.res = c.json({ error: 'Forbidden' }, 403);
           return;
         }
-        c.set('gmailHostedRevocationReceipt', receipt);
+        if (revocation) c.set('gmailHostedRevocationReceipt', receipt);
         await next();
         return;
       }
       const session = await options.verifyGmailOwnerSession?.({ handle, ownerId,
         authorization: c.req.header('x-matrix-google-owner-authorization'), cookie: c.req.header('cookie') });
-      if (session || (c.req.method === 'POST' && verifyGmailOwnerApprovalProof(
-        c.req.header('x-matrix-custom-mcp-approval-proof'),
-        { handle, actorId: ownerId, consentBody: await c.req.text(), secret: platformSecret },
+      if (session || (typeof signedBody === 'string' && verifyGmailOwnerApprovalProof(
+        chatApproval,
+        { handle, actorId: ownerId, consentBody: signedBody, secret: platformSecret },
       ))) await next();
       else c.res = c.json({ error: 'Forbidden' }, 403);
     });

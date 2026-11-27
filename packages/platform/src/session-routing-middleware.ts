@@ -10,7 +10,7 @@ import {
 } from "./preview-terminal-access.js";
 import { randomBytes } from 'node:crypto';
 import { authenticatedApprovalProxyProofs } from './owner-approval-proofs.js';
-import { setGmailHostedRevocationProof } from './gmail-hosted-revocation-proof.js';
+import { setGmailHostedConsentProof } from './gmail-hosted-revocation-proof.js';
 import type { BrowserApprovalMachineLookup } from './browser-approval-machine-lookup.js';
 import type { BrowserApprovalPolicy } from './browser-dev-approval-policy.js';
 export { authenticatedApprovalProxyProof } from './canonical-owner-approval-proxy.js';
@@ -836,8 +836,9 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         method: c.req.method, path: explicitVmRoute.upstreamPath, machine, identity, platformSecret });
       if (turnProof && typeof turnProof === 'object') return c.json({ error: 'Turn request unavailable' }, turnProof.status);
       const headers = buildForwardedProxyHeaders(c.req.header());
-      setGmailHostedRevocationProof(headers, { request: c.req.raw, path: explicitVmRoute.upstreamPath,
-        target: machine, identity, secret: platformSecret });
+      const consentError = await setGmailHostedConsentProof(headers, { request: c.req.raw, path: explicitVmRoute.upstreamPath,
+        forwardedQuery: qs, target: machine, identity, secret: platformSecret });
+      if (consentError) return c.json({ error: 'Gmail consent request unavailable' }, consentError.status);
       for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
       if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
       const rawCookie = c.req.header('cookie');

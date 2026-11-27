@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { z } from 'zod/v4';
-import { GMAIL_HOSTED_REVOCATION_PROOF_HEADER } from '@matrix-os/contracts';
+import { GMAIL_HOSTED_GRANT_PROOF_HEADER, GMAIL_HOSTED_REVOCATION_PROOF_HEADER } from '@matrix-os/contracts';
 import {
   NATIVE_APP_SESSION_PROXY_HEADER,
   PLATFORM_SESSION_PROXY_HEADER,
@@ -31,6 +31,7 @@ const SENSITIVE_PROXY_HEADERS = new Set([
   'x-matrix-preview-drive-turn-proof',
   'x-matrix-google-owner-authorization',
   GMAIL_HOSTED_REVOCATION_PROOF_HEADER,
+  GMAIL_HOSTED_GRANT_PROOF_HEADER,
 ]);
 
 export function applyCookieRoutedShellAssetCacheHeaders(headers: Headers): void {

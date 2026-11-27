@@ -8,7 +8,8 @@ import { requireRequestPrincipal } from "../request-principal.js";
 import { authorizeChatIntegrationRequest, MATRIX_PREVIEW_DRIVE_ACTION_GRANT_KEY } from "./chat-action-guard.js";
 import type { PreviewDrivePlatformClient } from "../chat/preview-drive-platform-client.js";
 import { namesConsentPath } from "../google-data/consent-route-guard.js";
-import { GMAIL_HOSTED_REVOCATION_PROOF_HEADER, gmailConsentRevocationAccount, previewDriveActionCanonical } from "@matrix-os/contracts";
+import { GMAIL_HOSTED_GRANT_PROOF_HEADER, GMAIL_HOSTED_REVOCATION_PROOF_HEADER, gmailConsentRevocationAccount,
+  isGmailConsentGrant, previewDriveActionCanonical } from "@matrix-os/contracts";
 
 function buildIntegrationProxyUrl(c: Context, targetBase: string, routePrefix: string): string {
   const targetUrl = new URL(targetBase);
@@ -86,11 +87,13 @@ export async function proxyIntegrationRequest(
       for (const [key, value] of Object.entries(delegatedIntegrationHeaders(principal.userId, options.machineToken))) {
         headers.set(key, value);
       }
-      const revocationProof = c.req.header(GMAIL_HOSTED_REVOCATION_PROOF_HEADER);
+      const proofHeader = gmailConsentRevocationAccount(c.req.method, c.req.path, routePrefix)
+        ? GMAIL_HOSTED_REVOCATION_PROOF_HEADER : isGmailConsentGrant(c.req.method, c.req.path, routePrefix)
+          ? GMAIL_HOSTED_GRANT_PROOF_HEADER : null;
+      const proof = proofHeader && c.req.header(proofHeader);
       const session = c.req.header("authorization");
-      if (revocationProof && principal.source === "platform-verified"
-        && gmailConsentRevocationAccount(c.req.method, c.req.path, routePrefix)) {
-        headers.set(GMAIL_HOSTED_REVOCATION_PROOF_HEADER, revocationProof);
+      if (proofHeader && proof && principal.source === "platform-verified") {
+        headers.set(proofHeader, proof);
       } else if (session && c.req.method !== "GET" && c.req.method !== "HEAD" && namesConsentPath(c)) {
         headers.set("x-matrix-google-owner-authorization", session);
       }
