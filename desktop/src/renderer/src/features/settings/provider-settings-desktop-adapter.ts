@@ -8,6 +8,8 @@ import {
   TerminalWorkspaceIdSchema,
   FUNDED_AI_READINESS_TIMEOUTS,
   FUNDED_AI_CHECKOUT_TIMEOUT_MS,
+  FreeAiCreditUnavailableError,
+  MATRIX_FREE_AI_CREDIT_UNAVAILABLE,
   type ProviderSettingsMutation,
   type ProviderSettingsMutationResponse,
   type ProviderSettingsSnapshot,
@@ -242,6 +244,7 @@ export async function openAiCreditCheckout(input: {
   signal?: AbortSignal;
   isIdentityCurrent?: () => boolean;
 }): Promise<boolean> {
+  // Resolves false for any failure except a free owner's refusal, which rejects with FreeAiCreditUnavailableError.
   const timeout = AbortSignal.timeout(FUNDED_AI_CHECKOUT_TIMEOUT_MS);
   const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
   try {
@@ -260,6 +263,10 @@ export async function openAiCreditCheckout(input: {
     await openExternal(url);
     return true;
   } catch (error) {
+    // A free owner's refusal is a typed error the shared panel shows with fixed copy.
+    if (error instanceof AppError && error.httpStatus === 409 && error.detail === MATRIX_FREE_AI_CREDIT_UNAVAILABLE.code) {
+      throw new FreeAiCreditUnavailableError();
+    }
     console.warn("[ai-credit] Checkout unavailable:", error instanceof Error ? error.name : typeof error);
     return false;
   }

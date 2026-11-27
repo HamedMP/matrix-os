@@ -1,4 +1,4 @@
-import { MATRIX_FREE_UPGRADE_UNAVAILABLE } from '@matrix-os/contracts';
+import { MATRIX_FREE_AI_CREDIT_UNAVAILABLE, MATRIX_FREE_UPGRADE_UNAVAILABLE } from '@matrix-os/contracts';
 import type { PlatformDB } from '../db.js';
 import { FREE_RUNTIME_SLOT } from './free-entitlement.js';
 
@@ -13,6 +13,12 @@ import { FREE_RUNTIME_SLOT } from './free-entitlement.js';
 export const FREE_UPGRADE_UNAVAILABLE_RESPONSE = {
   code: MATRIX_FREE_UPGRADE_UNAVAILABLE.code,
   error: MATRIX_FREE_UPGRADE_UNAVAILABLE.message,
+} as const;
+
+/** AI credit purchases are closed to free owners too, with credit-specific copy. */
+export const FREE_AI_CREDIT_UNAVAILABLE_RESPONSE = {
+  code: MATRIX_FREE_AI_CREDIT_UNAVAILABLE.code,
+  error: MATRIX_FREE_AI_CREDIT_UNAVAILABLE.message,
 } as const;
 
 export class FreeUpgradeUnavailableError extends Error {

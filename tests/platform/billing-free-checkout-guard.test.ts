@@ -16,6 +16,7 @@ import {
   FREE_UPGRADE_UNAVAILABLE_RESPONSE,
   FreeUpgradeUnavailableError,
 } from '../../packages/platform/src/free-tier/free-checkout-guard.js';
+import { prepareAiCreditCheckoutClaim } from '../../packages/platform/src/ai-credit-checkout-store.js';
 import { createMetalHostsRepository } from '../../packages/platform/src/substrates/metal-hosts-repository.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
 
@@ -249,6 +250,56 @@ describe('POST /billing/checkout for free plan owners', () => {
         if (!claimWon) expect(claim.status === 'rejected' && claim.reason).toBeInstanceOf(FreeUpgradeUnavailableError);
         if (!free) expect(joined.status === 'fulfilled' && joined.value.kind).toBe('checkout_pending');
       }
+    });
+  });
+
+  describe('POST /billing/ai-credit/checkout', () => {
+    // Hamed, 2026-11-27: no AI credit purchases for free owners until purchased
+    // credit is verified on the free funding path.
+    const creditEnv = {
+      MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: 'true', STRIPE_SECRET_KEY: 'configured',
+      STRIPE_PRICE_AI_CREDIT_USD_5: 'price_ai_5', STRIPE_PRICE_AI_CREDIT_USD_10: 'price_ai_10',
+      STRIPE_PRICE_AI_CREDIT_USD_25: 'price_ai_25',
+    };
+    const fundedAiRepository = new Proxy({}, {
+      get: (_target, key) => () => { throw new Error(`unexpected funded repository ${String(key)}`); },
+    }) as never;
+
+    function buyCredit() {
+      const routes = new Hono();
+      routes.route('/billing', createBillingRoutes({
+        db, stripe, env: creditEnv, resolveClerkUserId: async () => OWNER, now: () => NOW, fundedAiRepository,
+      }));
+      return routes.request('/billing/ai-credit/checkout', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ packageId: 'usd_5', runtimeSlot: 'primary', requestId: crypto.randomUUID() }),
+      });
+    }
+    async function creditClaims() {
+      return (await db.executor.selectFrom('ai_credit_checkout_claims').select('request_id').execute()).length;
+    }
+
+    it('refuses a free owner before any Stripe call or claim write, with a generic body', async () => {
+      await freeOwnerWithRunningMetal();
+      await db.executor.updateTable('user_machines').set({ activation_state: 'authorized' }).execute();
+      const response = await buyCredit();
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        code: 'free_upgrade_unavailable', error: 'AI credit for free computers is coming soon.',
+      });
+      expect(stripeCalls).toEqual([]);
+      expect(await creditClaims()).toBe(0);
+    });
+
+    it('refuses the claim under the owner lock when the owner became free after the route check', async () => {
+      await freeOwnerWithRunningMetal();
+      await db.executor.updateTable('user_machines').set({ activation_state: 'authorized' }).execute();
+      await expect(prepareAiCreditCheckoutClaim(db, {
+        requestId: crypto.randomUUID(), ownerId: OWNER, machineId: 'metal-1', runtimeSlot: 'primary',
+        packageId: 'usd_5', priceId: 'price_ai_5', amountMicrousd: 5_000_000, amountCents: 500, currency: 'usd',
+        automaticTax: false, idempotencyKey: 'matrix-ai-credit:test',
+      }, NOW)).rejects.toBeInstanceOf(FreeUpgradeUnavailableError);
+      expect(await creditClaims()).toBe(0);
     });
   });
 });

@@ -8,6 +8,11 @@ import { isAiCreditCheckoutRouteHealthy } from "../ai-credit-checkout-readiness.
 import type { AiFundedPolicyRepository } from "../ai-funded-policy-repository.js";
 import type { FundedModelProbeService } from "../ai-funded-model-probes.js";
 import { resolveBillingReturnUrl } from "./checkout-support.js";
+import {
+  FREE_AI_CREDIT_UNAVAILABLE_RESPONSE,
+  FreeUpgradeUnavailableError,
+  ownerOnFreePlan,
+} from "../free-tier/free-checkout-guard.js";
 import { MAX_STRIPE_API_TIMEOUT_MS, type StripeBillingClient } from "./stripe-client.js";
 
 /** Registration supplies the same owner/auth/config dependencies as billing. */
@@ -35,6 +40,14 @@ export function createAiCreditCheckoutHandler(options: {
     }
     const parsed = AiCreditCheckoutRequestSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "Invalid request" }, 400);
+    // ENG-520 launch guard: no AI credit purchases for free owners yet. Checked
+    // again under the owner lock when the claim is prepared.
+    try {
+      if (await ownerOnFreePlan(options.db, clerkUserId)) return c.json(FREE_AI_CREDIT_UNAVAILABLE_RESPONSE, 409);
+    } catch (err: unknown) {
+      console.error("[billing] AI credit free plan check failed:", err instanceof Error ? err.name : typeof err);
+      return c.json(options.unavailableResponse, 503);
+    }
     try {
       if (options.stripe.apiTimeoutMs > MAX_STRIPE_API_TIMEOUT_MS) {
         throw new Error("stripe_timeout_exceeds_budget");
@@ -89,6 +102,7 @@ export function createAiCreditCheckoutHandler(options: {
       );
       return c.json({ url: finalized.checkout_url }, 200);
     } catch (err: unknown) {
+      if (err instanceof FreeUpgradeUnavailableError) return c.json(FREE_AI_CREDIT_UNAVAILABLE_RESPONSE, 409);
       if (err instanceof AiCreditCheckoutStoreError) {
         if (err.code === "rate_limited") return c.json({ error: "Too many requests" }, 429);
         if (err.code === "conflict") return c.json({ error: "Checkout already active" }, 409);

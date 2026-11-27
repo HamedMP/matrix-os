@@ -11,8 +11,11 @@ import type {
   ProviderSettingsSnapshot,
   SpeechCapabilitiesResponse,
 } from "@matrix-os/contracts";
+import { FreeAiCreditUnavailableError, MATRIX_FREE_AI_CREDIT_UNAVAILABLE } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 import { gatewayChatAvailableMicrousd, gatewayCreditLines, gatewayCreditStaleAfter, gatewayPolicyAllowsModel, localDateTimeWithZone, money, shortDate, titleCase } from "./utils.js";
+
+const CREDIT_CHECKOUT_FAILED_MESSAGE = "Checkout could not be opened. Try again.";
 
 const capabilityLabels = {
   tools: "Tools",
@@ -139,14 +142,14 @@ export function GatewayPanel({
     "usd_5" | "usd_10" | "usd_25"
   >("usd_5");
   const [creditBusy, setCreditBusy] = useState(false);
-  const [creditError, setCreditError] = useState(false);
+  const [creditError, setCreditError] = useState<string | null>(null);
   const [creditRequestId, setCreditRequestId] = useState("");
   // Scope identity prevents an old machine's checkout from settling a new dialog.
   const checkoutScope = useRef<{ sourceId: string | undefined; submit: typeof onAddCredit } | null>(null);
   useLayoutEffect(() => {
     // Suspended replacement renders must not invalidate the committed checkout.
     checkoutScope.current = { sourceId: source?.id, submit: onAddCredit };
-    setCreditDialogOpen(false); setCreditBusy(false); setCreditError(false); setCreditRequestId("");
+    setCreditDialogOpen(false); setCreditBusy(false); setCreditError(null); setCreditRequestId("");
     return () => { checkoutScope.current = null; };
   }, [onAddCredit, source?.id]);
   useEffect(() => {
@@ -210,7 +213,7 @@ export function GatewayPanel({
     const requestScope = checkoutScope.current;
     if (!requestScope) return;
     setCreditBusy(true);
-    setCreditError(false);
+    setCreditError(null);
     try {
       await onAddCredit(source.id, creditPackage, creditRequestId);
       if (checkoutScope.current === requestScope) setCreditDialogOpen(false);
@@ -219,7 +222,11 @@ export function GatewayPanel({
         "[provider-settings] Credit checkout failed:",
         error instanceof Error ? error.name : typeof error,
       );
-      if (checkoutScope.current === requestScope) setCreditError(true);
+      if (checkoutScope.current === requestScope) {
+        setCreditError(error instanceof FreeAiCreditUnavailableError
+          ? MATRIX_FREE_AI_CREDIT_UNAVAILABLE.message
+          : CREDIT_CHECKOUT_FAILED_MESSAGE);
+      }
     } finally {
       if (checkoutScope.current === requestScope) setCreditBusy(false);
     }
@@ -286,7 +293,7 @@ export function GatewayPanel({
               type="button"
               className="matrix-ap-button matrix-ap-button-primary"
               onClick={() => {
-                setCreditError(false);
+                setCreditError(null);
                 setCreditRequestId(randomUUID());
                 setCreditDialogOpen(true);
               }}
@@ -572,7 +579,7 @@ export function GatewayPanel({
             ) : null}
             {creditError ? (
               <p className="matrix-ap-credit-error" role="alert">
-                Checkout could not be opened. Try again.
+                {creditError}
               </p>
             ) : null}
             </div>
