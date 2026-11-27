@@ -32,6 +32,8 @@ import {
   safeResponseHeaders,
 } from "../collaboration/scope-runtime-broker.js";
 import { isManagedPiBinding, type PiRuntimeBinding } from "./runtime-registry.js";
+import { authorizeGoogleInference, googleInferenceHeadersAllowed, googleInferenceIdentity, GoogleInferencePolicyError,
+  prepareGoogleInferenceBody, type GoogleDataInferenceAuthority, type GoogleInferenceIdentity } from "../google-data/runtime/inference-policy.js";
 
 const INFERENCE_TIMEOUT_MS = 30_000;
 /** Funded relay generation may buffer the full reply; the worker bridge and
@@ -77,6 +79,8 @@ const BotInferenceBodySchema = z.object({
 }).passthrough();
 
 export interface BotInferenceDependencies {
+  /** Server-owned provenance/profile authority. Never populated from model input. */
+  googleData?: GoogleDataInferenceAuthority;
   isolatedChat?: import("../chat/isolated-chat-envelope.js").IsolatedChatAuthority;
   homePath: string;
   chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
@@ -213,15 +217,44 @@ export async function forwardBotInference(
   if (authorization.accessSourceId === "matrix_chatgpt_plan") {
     if (!deps.chatgptPlan) return failure(request.requestId, "provider_unavailable");
     const authority = deps.chatgptPlan;
-    return forwardChatGptPlanInference(request, binding, { authority: {
+    let delegatedDispatched = false;
+    const planPolicy = async (phase: "dispatch" | "release") => await waitForInferenceAuthority(() =>
+      authorizeGoogleInference(deps.googleData, { phase, binding, identity: null, signal: lifecycle }), lifecycle) ?? { allowed: false as const };
+    const planLive = async () => {
+      try {
+        if (lifecycle.aborted || deps.revalidateBinding && !await deps.revalidateBinding(binding)) return false;
+        const current = await readAuthorization();
+        return !lifecycle.aborted && current?.allowed === true && current.accessSourceId === "matrix_chatgpt_plan" && current.allowedModelIds.includes(modelId);
+      } catch (error: unknown) {
+        console.warn("[google-data] Delegated inference authority unavailable:", error instanceof Error ? error.name : "UnknownError");
+        return false;
+      }
+    };
+    // This delegated transport does not expose an actual endpoint/credential
+    // here. A configured Google policy must fail closed, never infer proof.
+    if (deps.googleData && (!(await planPolicy("dispatch")).allowed || !await planLive())) return failure(request.requestId, "action_denied");
+    const result = await forwardChatGptPlanInference(request, binding, { authority: {
       ...authority,
-      infer: (candidate, body, signal) => authority.infer(candidate, body, signal),
-      ...(authority.inferStream ? { inferStream: (candidate: PiRuntimeBinding, body: string, signal: AbortSignal) => authority.inferStream!(candidate, body, signal) } : {}),
+      infer: async (candidate, body, signal) => {
+        if (deps.googleData && (!(await planPolicy("dispatch")).allowed || !await planLive())) throw new GoogleInferencePolicyError();
+        const result = await authority.infer(candidate, body, signal);
+        delegatedDispatched = true;
+        return result;
+      },
+      ...(authority.inferStream ? { inferStream: async (candidate: PiRuntimeBinding, body: string, signal: AbortSignal) => {
+        if (deps.googleData && (!(await planPolicy("dispatch")).allowed || !await planLive())) throw new GoogleInferencePolicyError();
+        const result = await authority.inferStream!(candidate, body, signal);
+        delegatedDispatched = true;
+        return result;
+      } } : {}),
       revalidate: async (candidate, signal) => await waitForInferenceAuthority(async () =>
         (!deps.revalidateBinding || await deps.revalidateBinding(candidate))
           && !signal.aborted && await authority.revalidate(candidate, signal), signal) === true,
     }, signal: lifecycle,
-      stillAuthorized: async () => { const current = await readAuthorization(); return !lifecycle.aborted && current?.allowed === true && current.accessSourceId === "matrix_chatgpt_plan" && current.allowedModelIds.includes(modelId); } });
+      stillAuthorized: async () => { const current = await readAuthorization(); return !lifecycle.aborted && current?.allowed === true && current.accessSourceId === "matrix_chatgpt_plan" && current.allowedModelIds.includes(modelId)
+        && (!deps.googleData || (await planPolicy(delegatedDispatched ? "release" : "dispatch")).allowed && await planLive()); } });
+    if (deps.googleData && (!(await planPolicy("release")).allowed || !await planLive())) return failure(request.requestId, "action_denied");
+    return result;
   }
   // Borrowed native profiles remain task-executor-only; never substitute them for the explicit paired-device source.
   if (authorization.accessSourceId === "owner_openai_profile" || authorization.accessSourceId === "owner_anthropic_profile"
@@ -265,6 +298,11 @@ export async function forwardBotInference(
     const authToken = env?.ANTHROPIC_AUTH_TOKEN;
     if ((!apiKey && !authToken) || (apiKey && authToken)) return failure(request.requestId, "provider_unavailable");
     const baseUrl = env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
+    let identity: GoogleInferenceIdentity | null = null;
+    if (deps.googleData) {
+      try { identity = googleInferenceIdentity(binding, `${baseUrl}${request.path}`, { kind: apiKey ? "api_key" : "auth_token", value: (apiKey ?? authToken)! }); }
+      catch (error: unknown) { if (!(error instanceof GoogleInferencePolicyError) && !(error instanceof TypeError)) throw error; }
+    }
     const headers = new Headers({ accept: "text/event-stream", "content-type": "application/json" });
     if (apiKey) headers.set("x-api-key", apiKey);
     if (authToken) headers.set("authorization", `Bearer ${authToken}`);
@@ -274,14 +312,32 @@ export async function forwardBotInference(
       }
     }
     if (accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
+    const liveAfterPolicy = async () => {
+      if (binding.anthropicApi && await anthropicValid() !== true) return false;
+      if (await bindingValid() !== true) return false;
+      return !lifecycle.aborted && stillAuthorized();
+    };
+    let googleOrigin = false;
     // Returns "denied" instead of sending when the run lost its authorization.
     let responseSignal = lifecycle;
     const send = async (): Promise<Response | "denied"> => {
+      let body = inferenceBody;
       const permitted = await stage(async signal => {
         if (binding.anthropicApi && await anthropicValid(signal) !== true) return false;
         if (await bindingValid() !== true) return false;
         if (signal.aborted || !await stillAuthorized()) return false;
         if (isolated && (!await deps.isolatedChat!.consume(binding) || signal.aborted || !await stillAuthorized())) return false;
+      if (deps.googleData) {
+        const policy = await waitForInferenceAuthority(() => authorizeGoogleInference(deps.googleData, { phase: "dispatch", binding, identity, signal }), signal);
+        if (!policy?.allowed || googleOrigin && !policy.googleOrigin) return false;
+        googleOrigin ||= policy.googleOrigin;
+        if (policy.googleOrigin) {
+          if (modelId !== binding.route.modelId || !googleInferenceHeadersAllowed(request.headers)) return false;
+          try { body = prepareGoogleInferenceBody(binding.route.api, inferenceBody); }
+          catch (error: unknown) { if (error instanceof GoogleInferencePolicyError) return false; throw error; }
+        }
+        if (!await liveAfterPolicy()) return false;
+      }
         return true;
       });
       if (!permitted) return "denied";
@@ -297,7 +353,7 @@ export async function forwardBotInference(
       )]);
       try {
         const pending = fetchImpl(`${baseUrl}${request.path}`, {
-          method: "POST", headers, body: inferenceBody, redirect: "error", signal: responseSignal,
+          method: "POST", headers, body, redirect: "error", signal: responseSignal,
         });
         return ownerStream ? await awaitOwnerStreamResult(pending, responseSignal, discard) : await pending;
       } finally { if (headersTimer !== undefined) clearTimeout(headersTimer); }
@@ -325,8 +381,14 @@ export async function forwardBotInference(
       await discard(response);
       return failure(request.requestId, "provider_unavailable");
     }
+    const googleReleaseAllowed = async () => {
+      if (!deps.googleData) return true;
+      const policy = await waitForInferenceAuthority(() => authorizeGoogleInference(deps.googleData,
+        { phase: "release", binding, identity, signal: responseSignal }), responseSignal);
+      return policy?.allowed === true && (!googleOrigin || policy.googleOrigin) && await liveAfterPolicy();
+    };
     if (request.responseMode === 'stream') {
-      const authorized = () => stage(async signal => !signal.aborted && await stillAuthorized()
+      const authorized = () => stage(async signal => !signal.aborted && await googleReleaseAllowed() && await stillAuthorized()
         && (!binding.anthropicApi || await anthropicValid(signal) === true)
         && (await bindingValid() === true) && !signal.aborted && await stillAuthorized(), responseSignal);
       let permitted: boolean;
@@ -349,6 +411,7 @@ export async function forwardBotInference(
         }) };
     }
     const body = await readBoundedBody(response, INFERENCE_RESPONSE_BODY_MAX_BYTES);
+    if (!await googleReleaseAllowed()) return failure(request.requestId, "action_denied");
     if (binding.anthropicApi && (lifecycle.aborted || await anthropicValid() !== true
       || await bindingValid() !== true || !await stillAuthorized())) return failure(request.requestId, "action_denied");
     const result = ScopeRuntimeBrokerResponseSchema.parse({

@@ -10,6 +10,7 @@ export function integrationProxyHeaders(context: Context, routePrefix: string): 
     if (normalized !== "host" && normalized !== "authorization"
       && normalized !== "x-matrix-mcp-run-id"
       && normalized !== "x-matrix-integration-approval"
+      && !normalized.startsWith("x-matrix-google-processing")
       && normalized !== INTEGRATION_READ_SCOPE_HEADER
       && normalized !== "x-matrix-custom-mcp-approval-proof" && value) headers.set(key, value);
   }
