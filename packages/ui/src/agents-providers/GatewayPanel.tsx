@@ -419,7 +419,10 @@ export function GatewayPanel({
                     variant="ghost"
                     aria-pressed={selected}
                     disabled={disabled || !canSetUpstream}
-                    style={selected ? { background: "var(--matrix-ap-overlay)", color: "var(--matrix-ap-text)" } : undefined}
+                    style={{
+                      outline: undefined, // Keep the panel's :focus-visible outline.
+                      ...(selected ? { background: "var(--matrix-ap-overlay)", color: "var(--matrix-ap-text)" } : {}),
+                    }}
                     onClick={() => {
                       if (!selected) onMutate({ type: "set_gateway_upstream",
                         expectedUpstreamRevision: upstreamPreference.revision, selectedUpstream: value });

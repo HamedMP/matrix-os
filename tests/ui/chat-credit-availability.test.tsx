@@ -65,13 +65,19 @@ it("shows and mutates the platform-projected upstream preference only when suppl
     upstreamPreference={preference} onMutate={onMutate} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
   const upstream = screen.getByRole("group", { name: "Matrix AI upstream" });
   expect(upstream).toHaveAccessibleDescription("Developer access");
-  expect(within(upstream).getByRole("button", { name: "Cloudflare", pressed: true })).toBeVisible();
+  const cloudflare = within(upstream).getByRole<HTMLButtonElement>("button", { name: "Cloudflare", pressed: true });
+  const bedrock = within(upstream).getByRole<HTMLButtonElement>("button", { name: "AWS Bedrock", pressed: false });
+  expect(cloudflare).toBeVisible();
+  for (const button of [cloudflare, bedrock]) {
+    // An inline outline overrides the panel's keyboard focus ring.
+    expect(button.style.outline).toBe("");
+  }
   expect(screen.queryByText("Choose where Matrix AI sends requests for eligible models.")).toBeNull();
-  fireEvent.click(within(upstream).getByRole("button", { name: "AWS Bedrock", pressed: false }));
+  fireEvent.click(bedrock);
   expect(onMutate).toHaveBeenCalledWith({ type: "set_gateway_upstream", expectedUpstreamRevision: 2,
     selectedUpstream: "aws_bedrock" });
   onMutate.mockClear();
-  fireEvent.click(within(upstream).getByRole("button", { name: "Cloudflare", pressed: true }));
+  fireEvent.click(cloudflare);
   expect(onMutate).not.toHaveBeenCalled();
   view.unmount();
   render(<GatewayPanel source={matrixSource} policy={policy} provider={provider} disabled={false}
