@@ -4,7 +4,7 @@ import { AccountDeletionAdmissionError } from './account-deletion/admission.js';
 import { CustomerVpsError } from './customer-vps-errors.js';
 import { getActiveUserMachineByClerkId, type PlatformDB } from './db.js';
 import { FREE_RUNTIME_SLOT } from './free-tier/free-entitlement.js';
-import type { FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
+import type { FreeTierRuntime } from './free-tier/provision-free-runtime.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 
 /**
@@ -25,7 +25,7 @@ export interface JourneyProvisionerDeps {
   db: PlatformDB;
   appEnv: NodeJS.ProcessEnv;
   customerVpsService?: CustomerVpsService;
-  freeRuntimeProvisioner?: FreeRuntimeProvisioner;
+  freeTier?: FreeTierRuntime;
   matrixProvisioner?: MatrixProvisioner;
   stripeBillingEntitlementsEnabled: (env: NodeJS.ProcessEnv) => boolean;
   resolveEffectiveBillingEntitlement: (
@@ -42,7 +42,7 @@ const billingRequired = () => new CustomerVpsError(402, 'billing_required', 'Bil
 export function createJourneyProvisioner(
   deps: JourneyProvisionerDeps,
 ): ((clerkUserId: string, runtimeSlot: string) => Promise<void>) | undefined {
-  if (!deps.customerVpsService && !deps.freeRuntimeProvisioner) return undefined;
+  if (!deps.customerVpsService && !deps.freeTier?.provisioner) return undefined;
   const { db, appEnv } = deps;
 
   async function provisionMatrixAccounts(handle: string): Promise<void> {
@@ -59,8 +59,9 @@ export function createJourneyProvisioner(
 
   /** The free metal path; `null` means the owner is not on the free plan. */
   async function provisionFree(clerkUserId: string, runtimeSlot: string): Promise<true | null> {
-    const free = deps.freeRuntimeProvisioner;
-    if (!free || runtimeSlot !== FREE_RUNTIME_SLOT) return null;
+    if (!deps.freeTier || runtimeSlot !== FREE_RUNTIME_SLOT) return null;
+    const free = deps.freeTier.provisioner;
+    if (!free) throw new CustomerVpsError(503, 'provider_unavailable', 'Provisioning unavailable');
     const identity = await deps.selectProvisionIdentityForClerkUser(db, clerkUserId, appEnv);
     if (!identity) return null;
     const outcome = await free.provision({ clerkUserId, handle: identity.handle });
@@ -92,7 +93,7 @@ export function createJourneyProvisioner(
   }
 
   return async function provisionRuntimeForJourney(clerkUserId: string, runtimeSlot: string): Promise<void> {
-    if (deps.stripeBillingEntitlementsEnabled(appEnv) || deps.freeRuntimeProvisioner) {
+    if (deps.stripeBillingEntitlementsEnabled(appEnv) || deps.freeTier) {
       const checkedAt = new Date();
       const entitlement = await deps.resolveEffectiveBillingEntitlement(db, clerkUserId, checkedAt, runtimeSlot, appEnv);
       if (!getRuntimeAccessDecision(entitlement, checkedAt).runtimeProxyAllowed) {

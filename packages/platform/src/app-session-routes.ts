@@ -26,7 +26,7 @@ import {
   resolveProvisioningDeveloperTools,
 } from './developer-tools.js';
 import { getActivePrebillingIntent } from './prebilling-provisioning-store.js';
-import type { FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
+import type { FreeTierRuntime } from './free-tier/provision-free-runtime.js';
 import { provisionFreeRuntimeForRequest } from './free-tier/provision-free-route.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import {
@@ -129,8 +129,8 @@ export function createAppSessionRoutes(opts: {
     runtimeSlot: string;
   }) => Promise<AppDomainIdentity | null>;
   getGatewayUrlForHandle: (handle: string) => string;
-  /** Free plan on metal (spec 2691); absent when the free tier or metal is not configured. */
-  freeRuntimeProvisioner?: FreeRuntimeProvisioner;
+  /** Free-tier configuration remains present when its metal provisioner is unavailable. */
+  freeTier?: FreeTierRuntime;
 }) {
   const routes = new Hono();
 
@@ -175,7 +175,7 @@ export function createAppSessionRoutes(opts: {
       opts.applyNoStoreHeaders(c);
       return c.json({ error: 'Unauthorized' }, 401);
     }
-    if (!opts.customerVpsService && !opts.freeRuntimeProvisioner) {
+    if (!opts.customerVpsService && !opts.freeTier?.provisioner) {
       opts.applyNoStoreHeaders(c);
       return c.json({ error: 'Provisioning unavailable', code: 'provisioning_unavailable' }, 503);
     }
@@ -211,7 +211,7 @@ export function createAppSessionRoutes(opts: {
     const freeDeps = {
       db: opts.db,
       appEnv: opts.appEnv,
-      provisioner: opts.freeRuntimeProvisioner,
+      freeTier: opts.freeTier,
       selectProvisionIdentityForClerkUser: opts.selectProvisionIdentityForClerkUser,
       ensureProvisionedPlatformUser: opts.ensureProvisionedPlatformUser,
     };
@@ -226,9 +226,8 @@ export function createAppSessionRoutes(opts: {
     }
 
     try {
-      // Free enrollment uses the same entitlement and admission checks even
-      // when the deployment does not have Stripe configured.
-      if (opts.stripeBillingEntitlementsEnabled(opts.appEnv) || opts.freeRuntimeProvisioner) {
+      // Keep admission in force when the configured free provisioner is unavailable.
+      if (opts.stripeBillingEntitlementsEnabled(opts.appEnv) || opts.freeTier) {
         const now = new Date();
         const entitlement = await opts.resolveEffectiveBillingEntitlement(
           opts.db,

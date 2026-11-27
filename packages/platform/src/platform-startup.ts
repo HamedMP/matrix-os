@@ -57,8 +57,8 @@ import { shutdownPlatformApp } from './shutdown-platform-app.js';
 import { createPlatformSubstrateRegistry } from './substrates/platform-substrates.js';
 import type { SubstrateRegistry } from './substrates/registry.js';
 import { createConfiguredMetalRuntime } from './substrates/metal-runtime.js';
-import { loadConfiguredFreeTier, type FreeTierConfig } from './free-tier/config.js';
-import { createFreeTierRuntime, type FreeRuntimeProvisioner } from './free-tier/provision-free-runtime.js';
+import { loadConfiguredFreeTier } from './free-tier/config.js';
+import { createFreeTierRuntime, type FreeTierRuntime } from './free-tier/provision-free-runtime.js';
 import { closeUpstreamDispatchers } from './substrates/upstream-transport.js';
 import {
   PlatformStartupConfigError,
@@ -297,7 +297,7 @@ type CreatePlatformApp = (deps: {
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   substrateRegistry?: SubstrateRegistry;
-  freeTier?: { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner };
+  freeTier?: FreeTierRuntime;
   env?: NodeJS.ProcessEnv;
 }) => PlatformApp;
 
