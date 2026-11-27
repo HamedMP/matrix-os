@@ -1,9 +1,18 @@
-import { sql, type Kysely, type Transaction } from "kysely";
+import { sql, type Kysely, type QueryExecutorProvider, type Transaction } from "kysely";
 import { boundedProvenanceTransaction } from "../provenance/transaction.js";
 
 export async function lockGoogleContexts<DB>(tx: Transaction<DB>) {
   await sql`SELECT pg_advisory_xact_lock(551035504)`.execute(tx);
 }
+// A host without this schema has never stored Google context markers.
+export async function hasGoogleContextMarker(db: QueryExecutorProvider, ownerId: string, chatId: string): Promise<boolean> {
+  const schema = (await sql<{ installed: boolean }>`SELECT to_regclass('google_context_markers') IS NOT NULL AS installed`.execute(db)).rows[0];
+  if (schema?.installed === false) return false;
+  const row = (await sql<{ present: boolean }>`SELECT EXISTS (SELECT 1 FROM google_context_markers
+    WHERE owner_id=${ownerId} AND chat_id=${chatId}) AS present`.execute(db)).rows[0];
+  return row?.present !== false;
+}
+
 export async function migrateGoogleContexts<DB>(db: Kysely<DB>) {
   await boundedProvenanceTransaction(db, async tx => {
     await lockGoogleContexts(tx);

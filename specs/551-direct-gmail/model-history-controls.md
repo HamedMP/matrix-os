@@ -95,3 +95,5 @@ install a reader globally; controlled startup composition must supply the same
 reader to wrappers and orchestrator. Provider/profile consent remains separate.
 Callbacks are trusted finite database reads; precompiled queries, plugin removal,
 streams and arbitrary external callback work are outside this admission contract.
+
+The canonical gateway refuses Chat references from Gmail-marked sources until it can install model-history inheritance and qualify the destination adapter. A reference snapshot checks the marker and reads under one context lock. Saved references are checked again before dispatch. Private owner inspection continues using the authenticated read path.

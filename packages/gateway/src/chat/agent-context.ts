@@ -80,6 +80,7 @@ export class ChatAgentContext {
     drives?: { authorize(owner: ChatOwner, chatId: string, references: OrganizationDriveContextReference[]): Promise<void> };
     assertChatReferenceAllowed?: (owner: ChatOwner, chatId: string) => Promise<void>;
     modelHistory?: GoogleModelHistoryReader;
+    readOrdinaryReference?: <T>(owner: ChatOwner, chatId: string, read: (repository: ChatRepository) => Promise<T>) => Promise<T>;
     admitJevWorkflow?: (owner: ChatOwner, agent: ChatAgent) => Promise<void>;
     botChats?: BotChatLookup;
   }) {}
@@ -87,11 +88,15 @@ export class ChatAgentContext {
   private async snapshot(owner: ChatOwner, chatId: string, limit: number, targetChatId?: string): Promise<ChatContextSnapshot> {
     // Keep non-database authorization outside the transaction-scoped read callback.
     await this.options.assertChatReferenceAllowed?.(owner, chatId);
-    if (targetChatId && this.options.modelHistory) {
-      return this.options.modelHistory.read({ owner, chatId, targetChatId,
-        read: repository => this.readSnapshot(repository, owner, chatId, limit) });
-    }
-    return this.readSnapshot(this.options.repository, owner, chatId, limit);
+    const read = (repository: Pick<ChatRepository, "getDetailPage">) => this.readSnapshot(repository, owner, chatId, limit);
+    return targetChatId ? this.readModelReference(owner, chatId, targetChatId, read) : read(this.options.repository);
+  }
+
+  private async readModelReference<T>(owner: ChatOwner, chatId: string, targetChatId: string,
+    read: (repository: Pick<ChatRepository, "get" | "getDetailPage">) => Promise<T>): Promise<T> {
+    if (this.options.modelHistory) return this.options.modelHistory.read({ owner, chatId, targetChatId, read });
+    if (this.options.readOrdinaryReference) return this.options.readOrdinaryReference(owner, chatId, read);
+    return read(this.options.repository);
   }
 
   private async readSnapshot(repository: Pick<ChatRepository, "getDetailPage">, owner: ChatOwner, chatId: string, limit: number): Promise<ChatContextSnapshot> {
@@ -276,10 +281,7 @@ export class ChatAgentContext {
     for (const source of context.chats) {
       await this.options.assertChatReferenceAllowed?.(owner, source.chatId);
       if (source.chatId === chatId || isRoutineDirectChatId(source.chatId)) throw new ChatAgentContextError("context_unavailable");
-      const current = this.options.modelHistory
-        ? await this.options.modelHistory.read({ owner, chatId: source.chatId, targetChatId: chatId,
-          read: repository => repository.get(owner, source.chatId) })
-        : await this.options.repository.get(owner, source.chatId);
+      const current = await this.readModelReference(owner, source.chatId, chatId, repository => repository.get(owner, source.chatId));
       if (!current || current.chat.lifecycle !== "active" || current.chat.collaboration) {
         throw new ChatAgentContextError("context_unavailable");
       }
