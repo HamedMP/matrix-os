@@ -2,28 +2,15 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
-import { createCanonicalChatWorkspaceClient, canonicalChatRecord } from "./canonical-chat-workspace-test-utils";
+import { createCanonicalChatWorkspaceClient, canonicalChatRecord, snapshot } from "./canonical-chat-workspace-test-utils";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { AppError } from "@desktop/shared/app-error";
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-
-function runningDetail() {
-  const { snapshot } = createCanonicalChatFixture("running");
-  const chatId = canonicalChatRecord.chat.id;
-  return {
-    record: { ...canonicalChatRecord, activeRun: snapshot.chat.activeRun },
-    messages: snapshot.messages.map(message => ({ ...message, chatId })),
-    turns: snapshot.turns.map(turn => ({ ...turn, chatId })),
-    runs: snapshot.runs.map(run => ({ ...run, chatId })),
-    activities: snapshot.activities.map(activity => ({ ...activity, chatId })),
-  };
-}
-
 it.each(["edit", "queue"].flatMap((mode) => ["before_rejection", "during_refresh"].map((timing) => ({ mode, timing }))))("keeps an internal Chat switch isolated from $mode recovery ($timing)", async ({ mode, timing }) => {
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const client = createCanonicalChatWorkspaceClient();
   const second = { record: { ...canonicalChatRecord, chat: { ...canonicalChatRecord.chat, id: "chat_second" } }, messages: [], turns: [], runs: [], activities: [] };
-  const first = runningDetail();
+  const first = { record: { ...canonicalChatRecord, activeRun: createCanonicalChatFixture("running").snapshot.chat.activeRun }, messages: snapshot.messages, turns: snapshot.turns, runs: [], activities: [] };
   let finishRefresh!: (value: typeof first) => void;
   let deferRefresh = false;
   vi.mocked(client.getDetail).mockImplementation(async (id) => {
@@ -59,7 +46,7 @@ it.each(["edit", "queue"].flatMap((mode) => ["before_rejection", "during_refresh
 
 it.each(["send", "queue", "edit"] as const)("does not publish late successful %s admission after an internal Chat switch", async (mode) => {
   const client = createCanonicalChatWorkspaceClient();
-  const first = runningDetail();
+  const first = { record: { ...canonicalChatRecord, activeRun: createCanonicalChatFixture("running").snapshot.chat.activeRun }, messages: snapshot.messages, turns: snapshot.turns, runs: [], activities: [] };
   const second = { record: { ...canonicalChatRecord, chat: { ...canonicalChatRecord.chat, id: "chat_second" } }, messages: [], turns: [], runs: [], activities: [] };
   vi.mocked(client.getDetail).mockImplementation(async (id) => id === "chat_second" ? second : first);
   let finish!: (value: never) => void;
@@ -75,7 +62,7 @@ it.each(["send", "queue", "edit"] as const)("does not publish late successful %s
   act(() => { request = mode === "send" ? hook.result.current.submitTurn(input, "Title", null, onAccepted) : mode === "queue" ? hook.result.current.queueTurn(input, onAccepted) : hook.result.current.updateQueuedTurn("queued_test", input.parts, onAccepted); });
   act(() => hook.result.current.selectChat("chat_second"));
   await waitFor(() => expect(hook.result.current.detail?.record.chat.id).toBe("chat_second"));
-  const response = mode === "send" ? { record: first.record, message: first.messages[0], turn: first.turns[0], run: first.runs[0], admission: "accepted" }
+  const response = mode === "send" ? { record: first.record, message: snapshot.messages[0], turn: snapshot.turns[0], run: snapshot.runs[0], admission: "accepted" }
     : { queuedTurn: { id: "queued_test", updatedAt: "2026-09-01T00:00:00.000Z" }, queueDepth: 1 };
   await act(async () => { finish(response as never); await request; });
   expect(hook.result.current.activeChatId).toBe("chat_second");
@@ -86,7 +73,7 @@ it.each(["send", "queue", "edit"] as const)("does not publish late successful %s
 
 it("does not acknowledge an already-claimed queue after its success refresh crosses Chat scope", async () => {
   const client = createCanonicalChatWorkspaceClient();
-  const first = runningDetail();
+  const first = { record: { ...canonicalChatRecord, activeRun: createCanonicalChatFixture("running").snapshot.chat.activeRun }, messages: snapshot.messages, turns: snapshot.turns, runs: [], activities: [] };
   const second = { record: { ...canonicalChatRecord, chat: { ...canonicalChatRecord.chat, id: "chat_second" } }, messages: [], turns: [], runs: [], activities: [] };
   let finishRefresh!: (value: typeof first) => void;
   let refreshing = false;

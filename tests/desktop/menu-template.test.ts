@@ -51,62 +51,15 @@ function accelerators(template: MenuItemConstructorOptions[], platform: Platform
 }
 
 describe("createAppMenuTemplate", () => {
-  it("opens Mac pairing directly in installed and development Matrix clients", () => {
-    const openMacPairing = vi.fn();
-    const send = vi.fn();
-    function pairingItem(opts: Parameters<typeof createAppMenuTemplate>[0]) {
-      return find(submenu(createAppMenuTemplate(opts), "Matrix OS"), "Mac Pairing…");
-    }
-    for (const isPackaged of [true, false]) {
-      click(pairingItem(options({ isPackaged, send, openMacPairing })));
-    }
-    expect(openMacPairing).toHaveBeenCalledTimes(2);
-    expect(send).not.toHaveBeenCalled();
-    expect(pairingItem(options())).toBeUndefined();
-    expect(pairingItem(options({ platform: "linux", openMacPairing }))).toBeUndefined();
-  });
-
-  it("opens Mac Verification setup in the installed macOS client", () => {
-    const openMacVerification = vi.fn();
-    const macOptions = options({ platform: "darwin", isPackaged: true, openMacVerification });
-    const macMenu = createAppMenuTemplate(macOptions);
-    click(find(submenu(macMenu, macOptions.appName), "Mac Verification…"));
-    expect(openMacVerification).toHaveBeenCalledOnce();
-    expect(macOptions.send).not.toHaveBeenCalled();
-
-    const windowsMenu = createAppMenuTemplate(options({ platform: "win32", isPackaged: true, openMacVerification }));
-    expect(JSON.stringify(windowsMenu)).not.toContain("Mac Verification");
-  });
-
-  it("opens local Mac activity history from the native menu without a renderer action", () => {
-    const openMacActivity = vi.fn();
-    const menuOptions = options({ isPackaged: false, openMacActivity });
-    function historyItem(opts: Parameters<typeof createAppMenuTemplate>[0]) {
-      return find(submenu(createAppMenuTemplate(opts), "Matrix OS"), "Recent Mac Activity…");
-    }
-    click(historyItem(menuOptions));
-    expect(openMacActivity).toHaveBeenCalledOnce();
-    expect(menuOptions.send).not.toHaveBeenCalled();
-    expect(historyItem(options({ isPackaged: false }))).toBeUndefined();
-    expect(historyItem(options({ isPackaged: false, platform: "linux", openMacActivity }))).toBeUndefined();
-  });
-
-  it("offers a native stop control for enabled Mac background checks independent of the renderer", () => {
-    const stopBackgroundMacChecks = vi.fn();
-    const menuOptions = options({ isPackaged: false, stopBackgroundMacChecks });
-    function stopItem(template: ReturnType<typeof createAppMenuTemplate>) {
-      const appMenu = template.find(item => item.label === "Matrix OS");
-      return Array.isArray(appMenu?.submenu)
-        ? appMenu.submenu.find(item => item.id === "stop-background-mac-checks")
-        : undefined;
-    }
-    const item = stopItem(createAppMenuTemplate(menuOptions));
-    expect(item).toMatchObject({ label: "Stop Background Mac Terminal Checks", visible: false });
-    if (!item?.click) throw new Error("missing native stop callback");
-    item.click({} as never, {} as never, {} as never);
-    expect(stopBackgroundMacChecks).toHaveBeenCalledOnce();
-    expect(menuOptions.send).not.toHaveBeenCalled();
-    expect(stopItem(createAppMenuTemplate({ ...menuOptions, stopBackgroundMacChecks: undefined }))).toBeUndefined();
+  it.each(["darwin", "linux", "win32"] as const)("can manage pairing and stop all linked computers on %s", (platform) => {
+    const openDevicePairing = vi.fn();
+    const stopDesktopLink = vi.fn();
+    const items = submenu(createAppMenuTemplate(options({ platform, openDevicePairing, stopDesktopLink })), platform === "darwin" ? "Matrix OS" : "File");
+    click(find(items, "Device Pairing…"));
+    click(find(items, "Stop Computers Using This Device"));
+    expect(openDevicePairing).toHaveBeenCalledOnce();
+    expect(stopDesktopLink).toHaveBeenCalledOnce();
+    expect(items.map(item => item.label)).not.toContain("Mac Verification…");
   });
 
   it("preserves Electron's standard non-terminal Edit menu roles", () => {

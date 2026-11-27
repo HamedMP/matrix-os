@@ -5,7 +5,7 @@
 // starts a shell, attaches and ends terminals, and does nothing else to it.
 import { describeError } from "#describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcHello, type HcSocket } from "#client";
-import { createHcSessions, type AttachmentSlots, type HcSessionSink } from "#sessions";
+import { createHcSessions, discoverHerdrMachines, type AttachmentSlots, type HcSessionSink } from "#sessions";
 
 /** The only methods ever sent to a core the app does not own (FR-014). */
 export const HERDR_SESSION_METHODS = ["terminal.list", "terminal.run", "terminal.attach", "terminal.kill"] as const;
@@ -53,6 +53,9 @@ export type HerdrSessionHostStatus = "ready" | "unsupported" | HerdrTransportFai
 // app, so these wait for an explicit retry instead of a timer.
 const WAITS_FOR_RETRY: ReadonlySet<HerdrSessionHostStatus> = new Set(["not-installed", "unsupported", "not-enabled"]);
 
+/** What to start instead of the computer's own shell at home. */
+export interface HerdrLaunch { argv?: string[]; line?: string; cwd?: string; name?: string }
+
 export interface HerdrSessionHostOptions {
   /** A byte stream to `herdr-core connect` on the computer. Rejects with HerdrTransportError when it can say why. */
   open(): Promise<HcSocket>;
@@ -61,6 +64,11 @@ export interface HerdrSessionHostOptions {
   idleMs?: number;
   now?: () => number;
   random?: () => number;
+  /**
+   * How long one core call may take. A desktop link (spec 2716) waits for the
+   * owner's approval on the desktop, so it allows longer than a local core.
+   */
+  callTimeoutMs?: number;
 }
 
 export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: HcSessionSink) {
@@ -75,7 +83,10 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
   let waitsForRetry = false;
   let blockedUntil = 0;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  // Calls the core has not answered yet: a connection waiting on one is never idle.
+  let pending = 0;
   let connectedAt = 0;
+  let generation = 0;
   // Ends a stream that is still waiting for its handshake; set only while one is.
   let abandonPending: (() => void) | null = null;
 
@@ -89,10 +100,10 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
     });
     try {
       const opened = await Promise.race([
-        connectHc({ open: () => socket, accepts: acceptsRemoteCore, timeoutMs: CALL_TIMEOUT_MS }),
+        connectHc({ open: () => socket, accepts: acceptsRemoteCore, timeoutMs: options.callTimeoutMs ?? CALL_TIMEOUT_MS }),
         abandoned,
       ]);
-      return restrictHcConnection(opened, ALLOWED_METHODS);
+      return counted(restrictHcConnection(opened, ALLOWED_METHODS));
     } finally {
       abandonPending = null;
     }
@@ -122,13 +133,32 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
     if (!connection || disposed) return;
     idleTimer = setTimeout(() => {
       idleTimer = null;
-      if (sessions.attached() > 0) { touch(); return; }
+      if (sessions.attached() > 0 || pending > 0) { touch(); return; }
       const idle = connection;
       connection = null;
       connectionEnded();
       idle?.close();
     }, idleMs);
     idleTimer.unref?.();
+  }
+
+  /** Counts calls in flight, so a slow answer (one waiting for an owner's approval) keeps the connection. */
+  function counted(connection: HcConnection): HcConnection {
+    return {
+      get version() { return connection.version; },
+      call: async (method, params, timeoutMs) => {
+        pending += 1;
+        try {
+          return await connection.call(method, params, timeoutMs);
+        } finally {
+          pending -= 1;
+          touch();
+        }
+      },
+      attach: (params, handlers) => connection.attach(params, handlers),
+      onDisconnect: (listener) => connection.onDisconnect(listener),
+      close: () => connection.close(),
+    };
   }
 
   function ensure(): Promise<HcConnection> {
@@ -141,6 +171,7 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
       .then((opened) => {
         if (disposed) { opened.close(); throw shutDown(); }
         connection = opened;
+        generation += 1;
         status = "ready";
         connectedAt = now();
         opened.onDisconnect(() => {
@@ -173,10 +204,34 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
   return {
     status: (): HerdrSessionHostStatus => status,
     list: sessions.list,
+    async discoverTerminals() {
+      const core = await ensure();
+      const reply = await core.call("terminal.list", {});
+      if (disposed || connection !== core) throw shutDown();
+      return discoverHerdrMachines(reply);
+    },
+    /** Inspect through the restricted, current connection. Never rebind a process to another core. */
+    async listProcesses() {
+      const core = await ensure();
+      const terminals = await sessions.listProcesses(core);
+      if (disposed || connection !== core) throw shutDown();
+      return { terminals, generation };
+    },
+    isCurrentGeneration: (expected: number) => !disposed && connection !== null && generation === expected,
 
-    /** Starts that computer's own shell in its home directory. Returns null when too many were started just now. */
-    create(size: { cols: number; rows: number }): Promise<string | null> {
-      return sessions.run({ size, env: { TERM: "xterm-256color", COLORTERM: "truecolor" }, no_parent: true, no_notify: true, wait: false });
+    /**
+     * Starts that computer's own shell in its home directory, or (`launch`) a
+     * program or shell line in a folder there. Returns null when too many were
+     * started just now. Callers validate `launch`; the far end checks it again.
+     */
+    create(size: { cols: number; rows: number }, launch: HerdrLaunch = {}): Promise<string | null> {
+      return sessions.run({
+        ...(launch.argv ? { argv: launch.argv } : {}),
+        ...(launch.line ? { line: launch.line } : {}),
+        ...(launch.cwd ? { cwd: launch.cwd } : {}),
+        ...(launch.name ? { name: launch.name } : {}),
+        size, env: { TERM: "xterm-256color", COLORTERM: "truecolor" }, no_parent: true, no_notify: true, wait: false,
+      }, { deadlineMs: options.callTimeoutMs ?? CALL_TIMEOUT_MS });
     },
 
     kill: sessions.kill,

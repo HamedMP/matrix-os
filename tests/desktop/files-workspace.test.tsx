@@ -508,6 +508,35 @@ describe("Files workspace", () => {
     expect(screen.getByRole("button", { name: "workspaces" })).not.toBeNull();
   });
 
+  it("updates a retained tab and clears its preview when another tab trashes the file", async () => {
+    const listFiles = api.get.getMockImplementation()!;
+    let trashed = false;
+    api.get.mockImplementation(async (path) => (trashed && path === "/api/files/list?path=workspaces"
+      ? { entries: LIST[path].entries.filter((entry) => entry.name !== "app.ts") }
+      : listFiles(path)));
+    api.post.mockImplementation(async () => { trashed = true; return { ok: true }; });
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+
+    fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open app.ts" }));
+    expect(await screen.findByText(/A remote home you can inspect/)).toBeTruthy();
+    act(() => { useFilesNavigation.getState().navigate("workspaces/matrix-os"); });
+    await screen.findByRole("button", { name: "Open package.json" });
+    fireEvent.click(screen.getByRole("button", { name: "workspaces", exact: true }));
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "Open app.ts" }));
+    fireEvent.click(await screen.findByText("Move to Trash"));
+    const confirm = screen.getByRole("alertdialog", { name: "Move to Trash" });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Move to Trash" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open app.ts" })).toBeNull());
+
+    const retained = screen.getAllByRole("tab", { name: "workspaces" })
+      .find((tab) => tab.getAttribute("aria-selected") === "false");
+    expect(retained).toBeTruthy();
+    fireEvent.click(retained!);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open app.ts" })).toBeNull());
+    expect(screen.queryByText(/A remote home you can inspect/)).toBeNull();
+  });
+
   it("previews bounded code as selectable text", async () => {
     render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
     fireEvent.doubleClick(await screen.findByRole("button", { name: "Open workspaces" }));

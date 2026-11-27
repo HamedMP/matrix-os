@@ -1,3 +1,5 @@
+import { nativeCodexMcpExecution } from "../chat/codex-mcp-run-scope.js";
+import { prepareCodexTerminalMcp } from "./codex-terminal-mcp-client.js";
 import { nativeCodexRoutineAdmission } from "../chat/codex-routine-source.js";
 import { recordChatSendStage, startChatSendStage, timeChatSendStage } from "../chat/send-timing.js";
 import { prepareCodexBrowser } from "./codex-browser-bootstrap-client.js";
@@ -270,6 +272,8 @@ export function createWorkspaceCodingAgentProvider(
       }
       const sessionId = sessionIdForThread(thread.id);
       const start = async (scope?: SessionStartScope<Parameters<WorkspaceRuntime["startSession"]>[0], Awaited<ReturnType<WorkspaceRuntime["startSession"]>>>) => {
+        const matrixMcp = agent === "codex" ? nativeCodexMcpExecution(principal.userId) : undefined;
+        if (matrixMcp && !options.codexControl?.prepareMatrixMcp) throw new Error("Herdr tools unavailable");
         const browser = agent === "codex" ? nativeBrowserExecution(principal.userId) : undefined;
         if (agent === "codex") nativeCodexRoutineAdmission(principal.userId)?.prepare(sessionId);
         if (browser && !options.codexControl?.prepareBrowser) throw new Error("Browser startup unavailable");
@@ -296,7 +300,7 @@ export function createWorkspaceCodingAgentProvider(
             : options.codexAdmission?.validate(principal.userId, nativeAccountBinding, sessionId));
           // Keep physical startup and MCP binding tracked without marking
           // manager-proved predispatch failures as uncertain processes.
-          startup = browser ? beginNativeBrowserBootstrap(principal.userId) : undefined;
+          startup = browser || matrixMcp ? beginNativeBrowserBootstrap(principal.userId) : undefined;
           runtimeInvoked = true;
           const sessionStartedAt = startChatSendStage();
           try {
@@ -322,16 +326,20 @@ export function createWorkspaceCodingAgentProvider(
               },
             });
           } catch (error: unknown) {
-            if (browser) markNativeBrowserCleanupUnconfirmed(principal.userId);
+            if (browser || matrixMcp) markNativeBrowserCleanupUnconfirmed(principal.userId);
             throw error;
           } finally { recordChatSendStage("session_start", sessionStartedAt); }
           if (!result.ok) {
-            if (browser && result.error.code === "runtime_ownership_retained") markNativeBrowserCleanupUnconfirmed(principal.userId);
+            if ((browser || matrixMcp) && result.error.code === "runtime_ownership_retained") markNativeBrowserCleanupUnconfirmed(principal.userId);
             if (agent === "codex") await options.codexAdmission?.releaseFailedStart(principal.userId, sessionId, nativeAccountBinding, result);
             throw new Error("Workspace provider start failed");
           }
-          if (browser) await timeChatSendStage("browser_prepare", () => prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser,
-            control: options.codexControl!, runtime: options.runtime, signal: signal ?? new AbortController().signal }));
+          await Promise.all([
+            browser && timeChatSendStage("browser_prepare", () => prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser,
+              control: options.codexControl!, runtime: options.runtime, signal: signal ?? new AbortController().signal })),
+            matrixMcp && prepareCodexTerminalMcp({ ownerId: principal.userId, sessionId, lease: matrixMcp, control: options.codexControl!,
+              runtime: options.runtime, signal: signal ?? new AbortController().signal }),
+          ]);
         } catch (error: unknown) {
           options.codexEvents?.unwatch(sessionId);
           // Only the manager-owned reservation can prove a settled predispatch
@@ -412,14 +420,16 @@ export function createWorkspaceCodingAgentProvider(
         }));
         const prompt = workspaceTurnPrompt(turn.message, turn.attachments);
         const browser = nativeBrowserExecution(principal.userId);
+        const matrixMcp = nativeCodexMcpExecution(principal.userId);
         try {
           await timeChatSendStage("codex_admission_validate", async () => receipt && options.codexAdmission?.confirm
             ? options.codexAdmission.confirm(principal.userId, receipt, sessionId)
             : options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId));
           const submitStartedAt = startChatSendStage();
-          const privateTurn = await nativeCodexRoutineAdmission(principal.userId)?.queued(sessionId, { prompt, ...(turn.model ? { model: turn.model } : {}), modelOptions: turn.modelOptions ?? [],
+          const privateTurn = await nativeCodexRoutineAdmission(principal.userId)?.queued(sessionId, { prompt, ...(matrixMcp ? { matrixMcp } : {}), ...(turn.model ? { model: turn.model } : {}), modelOptions: turn.modelOptions ?? [],
             ...(browser ? { browser: { attemptId: browser.attemptId, token: browser.token, gatewayPort: Number(browser.mcpServer.env.MATRIX_SHARED_BROWSER_GATEWAY_PORT) } } : {}) }, `req_${turn.turnId.slice("turn_".length)}`);
           if (!privateTurn) await options.codexControl.submitTurn({
+            ...(matrixMcp ? { matrixMcp } : {}),
             sessionId,
             turnId: turn.turnId,
             prompt,
@@ -439,16 +449,17 @@ export function createWorkspaceCodingAgentProvider(
             "[coding-agents] Codex turn control failed; restarting session",
             { errorName: safeRecoveryErrorName(error) },
           );
-          const recovery = browser ? beginNativeBrowserBootstrap(principal.userId) : undefined;
+          const recovery = browser || matrixMcp ? beginNativeBrowserBootstrap(principal.userId) : undefined;
           const recoverySignal = recovery ? AbortSignal.any([signal, recovery.signal]) : signal;
           try {
             if (browser && !options.codexControl.prepareBrowser) throw new Error("Browser startup unavailable");
             await options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId);
             const session = await recoverCodexWorkspace(options.runtime, { ...context, signal: recoverySignal }, sessionId, prompt,
-              browser ? () => markNativeBrowserCleanupUnconfirmed(principal.userId) : undefined);
-            if (browser) {
-              await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control: options.codexControl, runtime: options.runtime, signal: recoverySignal });
-            }
+              browser || matrixMcp ? () => markNativeBrowserCleanupUnconfirmed(principal.userId) : undefined);
+            await Promise.all([
+              ...(browser ? [prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control: options.codexControl, runtime: options.runtime, signal: recoverySignal })] : []),
+              ...(matrixMcp ? [prepareCodexTerminalMcp({ ownerId: principal.userId, sessionId, lease: matrixMcp, control: options.codexControl, runtime: options.runtime, signal: recoverySignal })] : []),
+            ]);
             const terminalRef = terminalRefFor(session);
             return { events: terminalRef ? [AgentThreadEventSchema.parse({
               type: "terminal.bound", eventId: nextEventId(), threadId: thread.id,

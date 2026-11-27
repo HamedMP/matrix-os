@@ -1,14 +1,15 @@
-import { createHash, createPublicKey, randomBytes, verify } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
-  DesktopPairingActionProofSchema, DesktopPairingChallengeRequestSchema, DesktopPairingChallengeSchema, DesktopPairingCompleteSchema,
+  DesktopPairingChallengeRequestSchema, DesktopPairingChallengeSchema, DesktopPairingCompleteSchema,
   DesktopPairingDeviceIdSchema, DesktopPairingRevokeSchema, DesktopPairingStateSchema,
-  desktopPairingActionProofMessage, desktopPairingProofMessage, desktopPairingRevisionTag,
+  desktopPairingProofMessage, desktopPairingRevisionTag,
 } from "@matrix-os/contracts";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Kysely } from "kysely";
 import { z } from "zod/v4";
 import { DesktopPairingRepository, type DesktopPairingDatabase } from "./database.js";
+import { verifyDeviceProof } from "./proof.js";
 import { getOptionalRequestPrincipal, hasVerifiedRuntimeBearer, SAFE_PRINCIPAL_USER_ID } from "../request-principal.js";
 
 const CHALLENGE_TTL_MS = 60_000;
@@ -57,25 +58,15 @@ async function parseBody<T>(c: Context, schema: z.ZodType<T>): Promise<T | undef
   }
 }
 
-function verifyDeviceProof(deviceId: string, encodedPublicKey: string, encodedSignature: string, message: string): boolean {
-  const publicKey = Buffer.from(encodedPublicKey, "base64url");
-  const signature = Buffer.from(encodedSignature, "base64url");
-  if (publicKey.toString("base64url") !== encodedPublicKey || signature.toString("base64url") !== encodedSignature
-      || createHash("sha256").update(publicKey).digest("hex") !== deviceId) return false;
-  try {
-    const key = createPublicKey({ key: publicKey, type: "spki", format: "der" });
-    return key.asymmetricKeyType === "ed25519" && verify(null, Buffer.from(message), key, signature);
-  } catch (error: unknown) {
-    if (error instanceof Error && "code" in error && typeof error.code === "string"
-        && error.code.startsWith("ERR_OSSL_")) return false;
-    throw error;
-  }
-}
-
 export async function createRuntimeDesktopPairingRoutes(options: {
   ownerDatabase: Kysely<DesktopPairingDatabase> | null;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
+  /**
+   * Told after a pair or disconnect commits, so live desktop links (spec 2716)
+   * end at once when the pairing they were admitted under changes.
+   */
+  onPairingChanged?: (state: z.infer<typeof DesktopPairingStateSchema>) => void;
 }): Promise<Hono> {
   const app = new Hono();
   const env = options.env ?? process.env;
@@ -116,8 +107,15 @@ export async function createRuntimeDesktopPairingRoutes(options: {
   }
 
   const now = options.now ?? Date.now;
+  const changed = (state: z.infer<typeof DesktopPairingStateSchema>) => {
+    try {
+      options.onPairingChanged?.(state);
+    } catch (error: unknown) {
+      // The pairing is committed either way; links also re-check it before each use.
+      console.warn("[desktop-pairing] change notice failed:", error instanceof Error ? error.name : "UnknownError");
+    }
+  };
   const enrollmentChallenges = createChallengeStore(machineId, now);
-  const actionChallenges = createChallengeStore(machineId, now);
   const invalid = (c: Context) => c.json({ error: "invalid_request" }, 400);
   const conflict = (c: Context) => c.json({ error: "pairing_conflict" }, 409);
 
@@ -136,25 +134,9 @@ export async function createRuntimeDesktopPairingRoutes(options: {
     if (!challenge || !verifyDeviceProof(challenge.deviceId, proof.publicKey, proof.signature,
       desktopPairingProofMessage({ ...challenge, ownerId }))) return conflict(c);
     const state = await repository.pair(challenge.deviceId, proof.publicKey, challenge.revision);
-    return state ? c.json(DesktopPairingStateSchema.parse(state)) : conflict(c);
-  });
-  app.post("/action-challenge", mutationLimit, async c => {
-    const request = await parseBody(c, DesktopPairingChallengeRequestSchema);
-    if (!request) return invalid(c);
-    const state = await repository.read();
-    if (state.deviceId !== request.deviceId || state.revision !== request.revision) return conflict(c);
-    return c.json(actionChallenges.issue(request));
-  });
-  app.post("/verify-action", mutationLimit, async c => {
-    const proof = await parseBody(c, DesktopPairingActionProofSchema);
-    if (!proof) return invalid(c);
-    const challenge = actionChallenges.consume(proof.nonce);
-    if (!challenge) return conflict(c);
-    const { deviceId, revision } = challenge;
-    const publicKey = await repository.readRegisteredKey(deviceId, revision);
-    if (!publicKey || challenge.expiresAt <= now() || !verifyDeviceProof(deviceId, publicKey, proof.signature,
-      desktopPairingActionProofMessage({ ...challenge, ownerId }))) return conflict(c);
-    return c.json(DesktopPairingStateSchema.parse({ machineId, deviceId, revision }));
+    if (!state) return conflict(c);
+    changed(state);
+    return c.json(DesktopPairingStateSchema.parse(state));
   });
   app.delete("/:deviceId", mutationLimit, async c => {
     const device = DesktopPairingDeviceIdSchema.safeParse(c.req.param("deviceId"));
@@ -163,7 +145,9 @@ export async function createRuntimeDesktopPairingRoutes(options: {
     const expectedTag = desktopPairingRevisionTag({ machineId, deviceId: device.data, revision: input.revision });
     if (c.req.header("If-Match") !== expectedTag) return c.json({ error: "pairing_precondition_failed" }, 412);
     const state = await repository.revoke(device.data, input.revision);
-    return state ? c.json(DesktopPairingStateSchema.parse(state)) : conflict(c);
+    if (!state) return conflict(c);
+    changed(state);
+    return c.json(DesktopPairingStateSchema.parse(state));
   });
   return app;
 }

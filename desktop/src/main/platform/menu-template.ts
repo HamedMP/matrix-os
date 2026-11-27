@@ -58,9 +58,6 @@ function createAppsMenu(item: ShortcutItemFactory): MenuItemConstructorOptions {
   };
 }
 
-export const STOP_BACKGROUND_MAC_CHECKS_MENU_ID = "stop-background-mac-checks";
-export const RECENT_MAC_ACTIVITY_MENU_ID = "recent-mac-activity";
-
 interface AppMenuTemplateOptions {
   appName: string;
   isPackaged: boolean;
@@ -73,10 +70,8 @@ interface AppMenuTemplateOptions {
   reloadWindow?(): void;
   /** Opens or focuses the native Terminal window (macOS and Linux only). */
   openTerminalWindow?(): void;
-  stopBackgroundMacChecks?(): void;
-  openMacActivity?(): void;
-  openMacPairing?(): void;
-  openMacVerification?(): void;
+  openDevicePairing?(): void;
+  stopDesktopLink?(): void;
   /** Opens the licence texts of bundled third-party components, when this build ships any. */
   openThirdPartyNotices?(): void;
   /** Each registry action shows its first binding as its accelerator. */
@@ -101,11 +96,9 @@ export function createAppMenuTemplate({
   quitApp,
   reloadWindow,
   openTerminalWindow,
-  stopBackgroundMacChecks,
-  openMacActivity,
-  openMacPairing,
-  openMacVerification,
   openThirdPartyNotices,
+  openDevicePairing,
+  stopDesktopLink,
   shortcuts,
   runShortcut,
   terminalWindow,
@@ -172,6 +165,10 @@ export function createAppMenuTemplate({
     (terminalWindow !== undefined || !id.startsWith("terminal-window.")) && bindings?.includes(quitKey));
   const quitAccelerator = quitKeyFree ? { accelerator: quitKey } : {};
   const settingsItems = item("nav.settings", "Settings…");
+  const linkItems: MenuItemConstructorOptions[] = [
+    ...(openDevicePairing ? [{ label: "Device Pairing…", click: openDevicePairing }] : []),
+    ...(stopDesktopLink ? [{ label: "Stop Computers Using This Device", click: stopDesktopLink }] : []),
+  ];
   const closeAppItems = item("app.close", "Close Selected App");
   const newItems: MenuItemConstructorOptions[] = terminalWindow
     ? terminalWindowMenuItems(shortcuts, terminalWindow.command, terminalWindow.close, isMac)
@@ -193,17 +190,7 @@ export function createAppMenuTemplate({
             updateItem,
             { type: "separator" },
             ...settingsItems,
-            ...(openMacPairing ? [{ label: "Mac Pairing…", click: openMacPairing }] : []),
-            ...(openMacVerification ? [{ label: "Mac Verification…", click: openMacVerification }] : []),
-            ...(openMacActivity ? [{
-              id: RECENT_MAC_ACTIVITY_MENU_ID, label: "Recent Mac Activity…", enabled: false, click: openMacActivity,
-            }] : []),
-            ...(stopBackgroundMacChecks ? [{
-              id: STOP_BACKGROUND_MAC_CHECKS_MENU_ID,
-              label: "Stop Background Mac Terminal Checks",
-              visible: false,
-              click: stopBackgroundMacChecks,
-            }] : []),
+            ...linkItems,
             { type: "separator" },
             { role: "services" },
             { type: "separator" },
@@ -224,6 +211,7 @@ export function createAppMenuTemplate({
             ...newItems,
             { type: "separator" },
             ...settingsItems,
+            ...linkItems,
             updateItem,
             { type: "separator" },
             ...closeAppItems,

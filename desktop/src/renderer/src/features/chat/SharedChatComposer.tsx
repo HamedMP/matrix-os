@@ -1,3 +1,4 @@
+import { ComposerMentionActions, type ComposerMentionAction } from "./ComposerMentionActions";
 import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
 import { chatResourceKey, canAddChatMention, isChatMention, orderChatResources, chatSlashStatusMessage, filterCanonicalSlashEntries, matchChatSlashToken, ProjectSkillDraftChips, useProjectChatSlashSkills, useProjectSkillDraft, type ProjectChatSlashScope } from "@matrix-os/ui";
 import type {
@@ -13,7 +14,6 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type Reac
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { ResourceRows } from "./ComposerResourceRows";
-import { ComposerMentionActions, type ComposerMentionAction } from "./ComposerMentionActions";
 import {
   listCanonicalSlashEntries,
   updateCanonicalComposerOption,
@@ -106,7 +106,7 @@ export function SharedChatComposer({
   referenceTokens = [],
   onReferenceTokensChange,
   onAgentMention,
-  mentionActions,
+  mentionActions = [],
   onSubmit,
   onAbort,
   busy,
@@ -148,8 +148,8 @@ export function SharedChatComposer({
   setupAnswer?: boolean;
   referenceTokens?: ComposerReferenceToken[];
   onReferenceTokensChange?: (tokens: ComposerReferenceToken[]) => void;
-  onAgentMention?: (resource: CanonicalChatResourceReference, text: string, insertLegacy: () => void) => boolean;
   mentionActions?: readonly ComposerMentionAction[];
+  onAgentMention?: (resource: CanonicalChatResourceReference, text: string, insertLegacy: () => void) => boolean;
   onSubmit: (submission: SharedChatComposerSubmission) => void;
   onAbort?: () => void;
   busy: boolean;
@@ -254,15 +254,12 @@ export function SharedChatComposer({
     .filter((resource) => !isChatMention(resource) || canAddChatMention(referenceTokens.flatMap((token) => token.type === "resource" ? [token.resource] : []), resource));
   const filteredResources = resourceQuery === null ? [] : availableResources
     .filter((resource) => resource.label.toLocaleLowerCase().includes(resourceQuery));
-  const queryToken = resourceQuery === null ? null : `@${resourceMatch?.[1] ?? ""}`;
-  const canUseMacActions = !referenceTokens.length && !disabled && !busy && !speechActive && !projectSkillDraft.paths.length;
-  const filteredMentionActions = resourceQuery !== null && canUseMacActions
-    ? (mentionActions ?? []).filter(action => (action.consumeTrigger || value.trim() === queryToken)
-      && `${action.label} ${action.keywords}`.toLowerCase().includes(resourceQuery))
-    : [];
-  const filteredNativeSkills = slashQuery !== null && canUseMacActions
-    ? (mentionActions ?? []).filter(action => action.slashCommand?.includes(slashQuery))
-    : [];
+  const canSelectTerminal = !disabled && !busy && !speechActive && !setupAnswer && !referenceTokens.length && !projectSkillDraft.paths.length;
+  const queryToken = resourceMatch ? `@${resourceMatch[1]}` : null;
+  const filteredMentionActions = canSelectTerminal && resourceQuery !== null
+    ? mentionActions.filter(action => `${action.label} ${action.keywords}`.toLowerCase().includes(resourceQuery)) : [];
+  const filteredNativeSkills = canSelectTerminal && slashQuery !== null
+    ? mentionActions.filter(action => action.slashCommand.includes(slashQuery)) : [];
   const suggestionCount = slashMenuOpen
     ? filteredNativeSkills.length + filteredSlashEntries.length
     : resourceMenuOpen
@@ -285,19 +282,12 @@ export function SharedChatComposer({
     };
   };
   const applyNativeAction = (action: ComposerMentionAction, trigger: string | null, end: number) => {
-    const current = editorRef.current?.readValue();
-    if (!current || current.value !== value || current.tokens.length) return;
+    const editor = editorRef.current;
+    const current = editor?.readValue();
+    if (!editor || !trigger || !current || current.value !== value || current.tokens.length) return;
     setDismissedSuggestionKey(suggestionKey);
-    if (action.consumeTrigger && trigger) {
-      editorRef.current?.removeTrigger(trigger, end);
-      const remaining = editorRef.current?.readValue().value;
-      if (remaining !== undefined && remaining !== current.value) {
-        if (!remaining.trim() && action.defaultDraft) onChange(action.defaultDraft);
-        action.select(current.value, remaining);
-      }
-    } else {
-      action.select(current.value);
-    }
+    editor.removeTrigger(trigger, end);
+    if (editor.readValue().value !== current.value) action.select();
   };
   const applySuggestion = (index: number) => {
     if (slashQuery !== null) {

@@ -23,6 +23,10 @@ describe("Terminal WebSocket protocol", () => {
     expect(terminalWebSocketPathForSession(null)).toBe("/ws/terminal/tab");
   });
 
+  it("attaches terminals on a linked desktop through the desktop socket (spec 2716)", () => {
+    expect(terminalWebSocketPathForSession(`tws_000000000064736b${"0123456789abcdef"}:tt_${"c".repeat(32)}`)).toBe("/ws/desktop-link/terminal");
+  });
+
   it("attaches Herdr terminals through the Herdr socket", () => {
     expect(terminalWebSocketPathForSession(`tws_00000000000000000000006865726472:tt_${"c".repeat(32)}`)).toBe("/ws/terminal/herdr");
     expect(terminalWebSocketPathForSession(`tws_${"a".repeat(32)}:tt_${"c".repeat(32)}`)).toBe("/ws/terminal/tab");

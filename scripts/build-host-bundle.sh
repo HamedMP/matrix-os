@@ -146,6 +146,12 @@ test "$(timeout --kill-after=5 15 "$STAGE_DIR/bin/matrix-codex" --version)" = "c
 # Without the sidecar, --version passes but every chat shell tool call fails to launch.
 timeout --kill-after=5 15 "$STAGE_DIR/bin/codex-code-mode-host" --help > /dev/null
 rm -f -- "$DIST_DIR/$CODEX_ARCHIVE" "$DIST_DIR/$CODEX_CODE_MODE_HOST_ARCHIVE"
+# The same PR bundle can serve shared and owner-only Previews. Only a verified
+# private instance may activate its Core. Regular release bundles do not ship it.
+if [[ "${HOST_BUNDLE_CHANNEL:-}" == "none" ]]; then
+  node "$ROOT_DIR/scripts/release/fetch-herdr-core.mjs" --platform linux --arch x64 --out "$STAGE_DIR/app/vendor/herdr"
+  "$STAGE_DIR/app/vendor/herdr/hc" --version
+fi
 chmod 0644 "$STAGE_DIR/bin/matrix-claude-native-recovery.py"
 # Native Browser services live outside app/. Stage separate guarded Preview and
 # customer lifecycle payloads; customer setup is scheduled after core readiness.

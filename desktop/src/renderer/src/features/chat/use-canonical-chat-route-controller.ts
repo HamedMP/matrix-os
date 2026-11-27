@@ -6,10 +6,8 @@ import { canonicalChatApprovals, canonicalChatDisplayedIncomingSeq, type Canonic
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
   CanonicalChatDetailResponse,
-  CanonicalChatExecutionRootRef,
   CanonicalChatApprovalDecision,
   CanonicalChatRecord,
-  CanonicalChatTurnAdmissionResponse,
   CanonicalCreateChatTurnRequest,
   CanonicalQueueChatTurnRequest,
   CanonicalSteerChatRunRequest,
@@ -465,26 +463,22 @@ export function useCanonicalChatRouteController({
     }
   }, [client, detail, loadDetail, updateDetail]);
 
-  const pendingDraft = (draftKey: string) => {
-    const chatId = activeChatIdRef.current;
-    return chatId ? admissions.pendingDraft(admissionIdentity, chatId, draftKey) : null;
-  };
-
-  const canOfferProjectCheckout = (
-    input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
-    worktree: Extract<CanonicalChatExecutionRootRef, { kind: "worktree" }>,
+  const canUseProjectCheckout = (
+    worktree: Extract<NonNullable<CanonicalCreateChatTurnRequest["executionRoot"]>, { kind: "worktree" }>,
     revision: number,
+    retry?: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">,
   ) => {
     const current = detailRef.current;
     const chatId = activeChatIdRef.current;
     const authority = admissionAuthority.current;
     if (!authority.valid || authority.client !== client || authority.identity !== admissionIdentity
-      || !routeScopeRef.current?.active || !current || !chatId || current.record.chat.id !== chatId || current.record.activeRun
-      || current.record.chat.revision !== revision) return false;
-    const inherited = withChatContinuationRoot(input, current, chatId);
-    const root = inherited.executionRoot;
-    return !input.executionRoot && root?.kind === "worktree" && root.projectId === worktree.projectId
-      && root.worktreeId === worktree.worktreeId && !admissions.hasUnresolved(admissionIdentity, chatId, input);
+      || !routeScopeRef.current?.active || !current || !chatId || current.record.chat.id !== chatId
+      || current.record.activeRun || current.record.chat.revision !== revision) return false;
+    const { executionRoot } = withChatContinuationRoot<Pick<CanonicalCreateChatTurnRequest, "executionRoot">>({}, current, chatId);
+    return executionRoot?.kind === "worktree" && executionRoot.projectId === worktree.projectId
+      && executionRoot.worktreeId === worktree.worktreeId
+      && (!admissions.hasUnresolved(admissionIdentity, chatId)
+        || (retry !== undefined && admissions.hasUnresolved(admissionIdentity, chatId, retry)));
   };
 
   const submitTurn = useCallback(async (
@@ -493,11 +487,6 @@ export function useCanonicalChatRouteController({
     initialProjectId: string | null = projectId,
     onAccepted?: () => void,
     onRejected?: () => void,
-    options?: {
-      draftKey?: string;
-      confirmed?: (receipt: CanonicalChatTurnAdmissionResponse) => void;
-      unconfirmed?: () => void;
-    },
     /** The pending message shows; the composer lets its draft go. */
     onShown?: () => void,
   ) => {
@@ -510,14 +499,12 @@ export function useCanonicalChatRouteController({
       && activeChatIdRef.current === selectedChatId && authority.valid && admissionAuthority.current === authority);
     if (!isCurrentScope()) return null;
     let pendingRequestId: string | undefined;
-    let admissionConfirmed = false;
     const pendingToken = {};
     const sendDraftSession = selectionEpoch.current;
     try {
       const current = detailRef.current;
       const admitted: CanonicalChatClientAdmission | null = await admitDesktopChatTurn({ client, tracker: admissions, identity: admissionIdentity,
-        scope: selectedChatId ?? `new:${initialProjectId ?? "global"}:${selectionEpoch.current}`,
-        input, title, projectId: initialProjectId, detail: current, selectedChatId, draftKey: options?.draftKey,
+        scope: selectedChatId ?? `new:${initialProjectId ?? "global"}:${selectionEpoch.current}`, input, title, projectId: initialProjectId, selectedChatId, detail: current,
         current: () => detailRef.current,
         isCurrent: () => admissionAuthority.current.valid && admissionAuthority.current.mounted
           && admissionAuthority.current.client === client && admissionAuthority.current.identity === admissionIdentity,
@@ -533,14 +520,11 @@ export function useCanonicalChatRouteController({
           if ((selectedChatId ?? undefined) !== undefined || !sessionEnded()) onShown?.();
         },
         onAccepted: () => onAccepted?.(), onRejected,
-        onConfirmed: (id, receipt) => {
+        onConfirmed: id => {
           const current = admissionAuthority.current;
           if (!current.valid || !current.mounted || current.client !== client || current.identity !== admissionIdentity
             || activeChatIdRef.current !== selectedChatId) return;
-          if (latestAdmissionId.current !== id) return;
-          admissionConfirmed = true;
-          setError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
-          if (isCurrentScope() && receipt.turn.clientRequestId === id) options?.confirmed?.(receipt);
+          if (latestAdmissionId.current === id) setError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
         },
         onSnapshot: fresh => {
           if (!isCurrentScope() || admissionSequence.current !== sequence) return;
@@ -564,8 +548,7 @@ export function useCanonicalChatRouteController({
       return admitted;
     } catch (error: unknown) {
       console.warn("[canonical-chat] submit failed:", diagnosticErrorKind(error instanceof ChatAdmissionUnconfirmed ? error.cause : error));
-      if (!isCurrentScope() || admissionSequence.current !== sequence || admissionConfirmed) return null;
-      if (pendingRequestId && error instanceof ChatAdmissionUnconfirmed) options?.unconfirmed?.();
+      if (!isCurrentScope() || admissionSequence.current !== sequence) return null;
       setError(error instanceof ChatAdmissionUnconfirmed ? CHAT_ADMISSION_UNCONFIRMED : canonicalChatSubmitFailureMessage(error));
       return null;
     } finally {
@@ -653,8 +636,8 @@ export function useCanonicalChatRouteController({
     const routeScope = routeScopeRef.current;
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
       && activeChatIdRef.current === current.record.chat.id);
-    if (!isCurrentScope()) return null;
     try {
+      if (!isCurrentScope()) return null;
       const response = await client.queueTurn(current.record.chat.id, {
         ...withChatContinuationRoot(input, current, activeChatIdRef.current),
         clientRequestId: input.clientRequestId ?? canonicalChatRequestId(),
@@ -1023,8 +1006,7 @@ export function useCanonicalChatRouteController({
     refresh: load,
     moveProject,
     submitTurn,
-    canOfferProjectCheckout,
-    pendingDraft,
+    canUseProjectCheckout,
     cancelActiveRun,
     steerActiveRun,
     queueTurn,

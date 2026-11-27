@@ -30,6 +30,8 @@ import { useTerminalPreviews } from "./use-terminal-previews";
 import { defaultSpaceColor, spaceId } from "./SidebarSpaces";
 import { createFailureText } from "./computer-terminals";
 import { terminalRefKey } from "../../lib/terminal-workspaces";
+import { DesktopLinkPanel } from "./DesktopLinkPanel";
+import { useDesktopLink } from "./use-desktop-link";
 import type { PaneTab } from "@matrix-os/ui/terminal-pane-tree";
 import type { TerminalPaneAction } from "@matrix-os/contracts";
 
@@ -363,6 +365,7 @@ export default function TerminalWindowApp() {
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const machines = useMemo(() => sidebarMachines(view, setRemoving), [view]);
+  const desktopLink = useDesktopLink();
   const rowsByKey = useMemo(() => new Map(view.status.rows.map((row) => [row.key, row])), [view.status.rows]);
   const { prefs } = view.sidebar;
   const overviewRows = useMemo(() => filterRows(view.status.rows, prefs.filter), [prefs.filter, view.status.rows]);
@@ -434,7 +437,7 @@ export default function TerminalWindowApp() {
           onToggleRail={view.sidebar.toggleRail}
           width={prefs.width}
           onResize={view.sidebar.setWidth}
-          notices={notice}
+          notices={<>{notice}<DesktopLinkPanel link={desktopLink} /></>}
           onAddMachine={view.local.state.status === "ready" ? () => setAdding(true) : undefined}
         />
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">

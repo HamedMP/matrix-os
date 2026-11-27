@@ -43,7 +43,7 @@ const CONNECTION_LOST_CLOSE = 1012;
 // shell's terminal pane does for every tab.
 const QuerySchema = z.object({
   id: HerdrSessionIdSchema.optional(),
-  workspaceId: z.literal(HERDR_TERMINAL_WORKSPACE_ID).optional(),
+  workspaceId: z.string().regex(/^tws_[0-9a-f]{32}$/).optional(),
   tabId: z.string().regex(/^tt_[0-9a-f]{32}$/).optional(),
   client: z.enum(["browser", "canvas", "desktop", "electron", "mobile", "cli", "hard"]).default("browser"),
   cols: z.string().regex(/^\d{1,3}$/).transform(Number).pipe(z.number().int().min(20).max(500)).default(120),
@@ -76,6 +76,14 @@ export function registerHerdrTerminalWebSocket(options: {
   app: Hono;
   upgradeWebSocket: UpgradeWebSocket;
   adapter: HerdrAdapter | null;
+  /**
+   * Another socket serving Herdr terminals from several cores (the Desktop link,
+   * spec 2716): its path, and for each request the workspace it names, the
+   * adapter that reaches that core, and a scope that keeps terminal ids from
+   * different cores apart in caps, sizes and leases. Null refuses the viewer.
+   */
+  path?: string;
+  workspace?(workspaceId: string | undefined): { workspaceId: string; adapter: HerdrAdapter; scope: string } | null;
   getPrincipal(context: Context): RequestPrincipal;
   terminalOwnerIds: readonly string[];
   terminalLiveOwnership: TerminalLiveOwnership;
@@ -116,7 +124,11 @@ export function registerHerdrTerminalWebSocket(options: {
     for (const viewer of viewers.values()) if (viewer.sessionId === sessionId) viewer.sized(size);
   }
 
-  options.app.get(HERDR_TERMINAL_WS_PATH, options.upgradeWebSocket((c) => {
+  options.app.get(options.path ?? HERDR_TERMINAL_WS_PATH, options.upgradeWebSocket((c) => {
+    // This socket's own workspace (the desktop a viewer names), or Herdr's.
+    const mount = options.workspace ? options.workspace(c.req.query("workspaceId")) : null;
+    const workspaceId = mount?.workspaceId ?? HERDR_TERMINAL_WORKSPACE_ID;
+    const scope = mount?.scope ?? "";
     const query = QuerySchema.safeParse({
       id: c.req.query("id"),
       workspaceId: c.req.query("workspaceId"),
@@ -130,6 +142,9 @@ export function registerHerdrTerminalWebSocket(options: {
     const viewerId = randomUUID();
     let ref: TerminalRef | null = null;
     let sessionId: string | null = null;
+    // The terminal's id on its own core, and the adapter that reaches that core.
+    let coreId: string | null = null;
+    let served: HerdrAdapter | null = null;
     let ownershipKey: string | null = null;
     let attachment: HerdrAttachment | null = null;
     let attached = false;
@@ -156,7 +171,7 @@ export function registerHerdrTerminalWebSocket(options: {
     // The terminal the client named, known before the core answers: a client
     // sends its real size right after opening, often before the attach is done.
     const namedRef: TerminalRef | null = !query.success ? null
-      : query.data.id !== undefined ? herdrTerminalRef(query.data.id)
+      : query.data.id !== undefined ? { ...herdrTerminalRef(query.data.id), workspaceId }
         : { workspaceId: query.data.workspaceId!, tabId: query.data.tabId! };
     // The latest size a client asked for before the attachment existed.
     let earlySize: { cols: number; rows: number } | null = null;
@@ -244,7 +259,14 @@ export function registerHerdrTerminalWebSocket(options: {
         }
         const access = herdrOwnerAccess(principal, options.terminalOwnerIds);
         if (access !== "allowed") { fail(access === "unavailable" ? "unavailable" : "not_found", "Terminal unavailable"); return; }
-        const adapter = options.adapter;
+        // A named workspace must be this socket's: Herdr's, or the desktop it resolved to.
+        if (query.data.workspaceId !== undefined && query.data.workspaceId !== workspaceId) {
+          // On Herdr's own socket any other workspace is a malformed request; on a desktop socket it is an unknown desktop.
+          if (options.workspace) fail("not_found", "Terminal unavailable");
+          else fail("invalid_request", "Invalid request");
+          return;
+        }
+        const adapter = options.workspace ? mount?.adapter ?? null : options.adapter;
         if (!adapter) { fail("unavailable", "Terminal unavailable"); return; }
         const { cols, rows, lease } = query.data;
         const named = query.data;
@@ -257,13 +279,17 @@ export function registerHerdrTerminalWebSocket(options: {
           if (!session) throw new HerdrAdapterError("not_found");
           if (closed) return;
           const id = session.id;
-          sessionId = id;
-          const sessionViewers = [...viewers.values()].filter((viewer) => viewer.sessionId === id).length;
+          // Caps, writer sizes and leases are per terminal of one core.
+          const scoped = scope ? `${scope}/${id}` : id;
+          sessionId = scoped;
+          coreId = id;
+          served = adapter;
+          const sessionViewers = [...viewers.values()].filter((viewer) => viewer.sessionId === scoped).length;
           if (sessionViewers >= maxPerSession || viewers.size >= maxViewers) throw new HerdrAdapterError("capacity");
-          viewers.set(viewerId, { sessionId: id, lastTouched: now(), close: (code, reason) => { closed = true; release(); ws.close(code, reason); }, sized });
-          ref = herdrTerminalRef(id);
+          viewers.set(viewerId, { sessionId: scoped, lastTouched: now(), close: (code, reason) => { closed = true; release(); ws.close(code, reason); }, sized });
+          ref = { ...herdrTerminalRef(id), workspaceId };
           const terminalRef = ref;
-          ownershipKey = `${principal.userId}:herdr:${id}`;
+          ownershipKey = `${principal.userId}:herdr:${scoped}`;
           const key = ownershipKey;
           options.terminalLiveOwnership.attach({
             key, viewerId, exclusive: lease === "exclusive", observe: lease !== "exclusive",
@@ -296,13 +322,13 @@ export function registerHerdrTerminalWebSocket(options: {
           // the size a Matrix writer holds, or its own request when none does.
           const size = role === "writer"
             ? earlySize ?? { cols, rows }
-            : writerSizes.get(id)?.size ?? { cols, rows };
+            : writerSizes.get(scoped)?.size ?? { cols, rows };
           earlySize = null;
           if (role === "writer") {
             if (size.cols !== cols || size.rows !== rows) opened.resize(size.cols, size.rows);
             adapter.rememberSize(id, size);
             // A writer's attach sizes the terminal too; the other Matrix viewers redraw at it.
-            announceSize(id, viewerId, size);
+            announceSize(scoped, viewerId, size);
           }
           send({
             type: "attached", terminalRef, revision: 0, canonicalSize: size, nextSeq: seq, ownership: role,
@@ -365,8 +391,8 @@ export function registerHerdrTerminalWebSocket(options: {
             // Only the person who took control sets the size; observers never resize.
             if (attachment && options.terminalLiveOwnership.role(ownershipKey, viewerId) === "writer") {
               const applied = attachment.resize(frame.size.cols, frame.size.rows);
-              if (applied && sessionId) {
-                options.adapter?.rememberSize(sessionId, frame.size);
+              if (applied && sessionId && coreId) {
+                served?.rememberSize(coreId, frame.size);
                 announceSize(sessionId, viewerId, frame.size);
               }
             }

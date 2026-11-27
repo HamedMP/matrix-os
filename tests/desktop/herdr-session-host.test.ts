@@ -272,6 +272,23 @@ describe("herdr session host against a scripted core", () => {
     expect(busy.cores[0]!.socket.destroyed).toBe(false);
   });
 
+  // Fault detected (review, ENG-574): a start waiting 75 s for a desktop owner's approval
+  // had its connection closed by the 60 s idle timer, so an approved start failed.
+  it("keeps a connection whose call the core has not answered yet", async () => {
+    vi.useFakeTimers();
+    let answer: () => void = () => {};
+    const slow = start((core, call) => {
+      if (call.method === "terminal.run") answer = () => core.reply(call.id, { result: { address: "t7" } });
+    }, { idleMs: 60_000, callTimeoutMs: 75_000 });
+    const started = slow.host.create({ cols: 80, rows: 24 });
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect(slow.cores[0]!.socket.destroyed).toBe(false);
+    answer();
+    await expect(started).resolves.toBe("t7");
+    await vi.advanceTimersByTimeAsync(60_001);
+    expect(slow.cores[0]!.socket.destroyed).toBe(true);
+  });
+
   it("shares one attachment budget and one id space between computers", async () => {
     const slots = createAttachmentSlots(3);
     const one = start(script(), { slots });

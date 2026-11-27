@@ -2,6 +2,11 @@ import { z } from "zod/v4";
 
 export const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 
+export const MatrixComputerHandleSchema = z.string()
+  .min(2)
+  .max(63)
+  .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, "Invalid Matrix computer handle");
+
 /** Canonical Matrix runtime slot, including private Preview handles. */
 export const MatrixComputerRuntimeSlotSchema = z.string().min(1).max(32)
   .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, "Invalid Matrix computer runtime slot");

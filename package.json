@@ -78,8 +78,7 @@
     "preview:pair:qualify": "bun scripts/preview-pair/qualify.ts",
     "preview:pair:open": "bun scripts/preview-pair/launch.ts",
     "preview:pair:report": "bun scripts/preview-pair/control.ts report",
-    "preview:pair:stop": "bun scripts/preview-pair/control.ts stop",
-    "prepare:mac-verification-support": "node scripts/release/prepare-mac-verification-support.mjs"
+    "preview:pair:stop": "bun scripts/preview-pair/control.ts stop"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

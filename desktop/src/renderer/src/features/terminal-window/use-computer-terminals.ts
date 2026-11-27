@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createApiClient, type ApiClient } from "../../lib/api";
 import { resetAttachManager } from "../terminal/terminal-runtime";
+import { useThisDevice } from "../terminal/ElectronDesktopMachines";
 import { onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import {
@@ -20,6 +21,8 @@ export interface ActiveTerminal { slot: string; refKey: string }
  * changes with the signed-in session, which drops every listing and detaches.
  */
 export function useComputerTerminals(platformHost: string | null, sessionKey: string) {
+  // This device's own link, left out of the computer's desktops (it shows as This Computer).
+  const thisDevice = useThisDevice();
   // Keyed by inventory slot (at most 20 computers).
   const [terminals, setTerminals] = useState<Record<string, ComputerTerminalsState>>({});
   const [active, setActive] = useState<ActiveTerminal | null>(null);
@@ -69,7 +72,7 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
     generations.current[slot] = generation;
     setTerminals((current) => (current[slot]?.status === "ready" ? current : { ...current, [slot]: { status: "loading" } }));
     try {
-      const tabs = await listComputerTabs(client.forRuntime(slot));
+      const tabs = await listComputerTabs(client.forRuntime(slot), thisDevice);
       if (generations.current[slot] !== generation) return;
       setTerminals((current) => ({ ...current, [slot]: { status: "ready", tabs } }));
     } catch (error: unknown) {
@@ -77,7 +80,7 @@ export function useComputerTerminals(platformHost: string | null, sessionKey: st
       console.warn("[terminal-window] tabs unavailable:", error instanceof Error ? error.name : "UnknownError");
       setTerminals((current) => ({ ...current, [slot]: { status: "failed", reason: terminalsFailure(error) } }));
     }
-  }, [client]);
+  }, [client, thisDevice]);
 
   // Tabs are also created and closed from other windows and devices. The
   // listings already on screen are refreshed when this window regains focus;

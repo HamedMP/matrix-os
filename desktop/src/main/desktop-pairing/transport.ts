@@ -1,5 +1,4 @@
 import {
-  type DesktopPairingActionProofSchema,
   DesktopPairingChallengeSchema,
   DesktopPairingStateSchema,
   desktopPairingRevisionTag,
@@ -14,8 +13,6 @@ const MAX_REPLY_CHUNKS = 256;
 
 export type PairingAuth = Pick<AuthService, "getStatus" | "getToken" | "getGatewayOrigin">;
 export type PairingState = z.infer<typeof DesktopPairingStateSchema>;
-
-export class PairingBadGatewayError extends Error {}
 
 export function matchingPairingState(a: PairingState, b: PairingState): boolean {
   return a.machineId === b.machineId && a.deviceId === b.deviceId && a.revision === b.revision;
@@ -114,10 +111,6 @@ export function createPairingTransport(auth: PairingAuth, fetchFn: typeof fetch,
       await response.body?.cancel();
       throw error;
     }
-    if (path === PAIRING_PATH && method === "GET" && response.status === 502) {
-      await response.body?.cancel();
-      throw new PairingBadGatewayError("Pairing response unavailable");
-    }
     const result = await readPairingReply(response, requestSignal);
     assertCurrent();
     return result;
@@ -135,14 +128,6 @@ export function createPairingTransport(auth: PairingAuth, fetchFn: typeof fetch,
     },
     async pair(proof: { nonce: string; publicKey: string; signature: string }) {
       return DesktopPairingStateSchema.parse(await request(`${PAIRING_PATH}/pair`, "POST", { body: proof }));
-    },
-    async actionChallenge(deviceId: string, revision: number, signal?: AbortSignal) {
-      return DesktopPairingChallengeSchema.parse(await request(
-        `${PAIRING_PATH}/action-challenge`, "POST", { body: { deviceId, revision }, signal },
-      ));
-    },
-    async verifyAction(proof: z.infer<typeof DesktopPairingActionProofSchema>, signal?: AbortSignal) {
-      return DesktopPairingStateSchema.parse(await request(`${PAIRING_PATH}/verify-action`, "POST", { body: proof, signal }));
     },
     async revoke(state: { machineId: string; deviceId: string; revision: number }) {
       return DesktopPairingStateSchema.parse(await request(

@@ -32,8 +32,6 @@ mac:
   extraResources:
     - from: build/herdr
       to: herdr
-    - from: build/mac-verification-support
-      to: mac-verification-support
 dmg:
   title: Matrix OS
   background: build/dmg-background.png

@@ -1,3 +1,4 @@
+import type { HerdrDispatchRun } from "./codex-mcp-run-scope.js";
 import { assertRoutineDirectAdmission, ROUTINE_DIRECT_DISPATCH } from "./routine-direct-admission.js";
 import { isRoutineDirectChatId } from "../bots/routine-direct-chat-identity.js";
 import { admitNativeScheduledPhase, parseNativeScheduledPhaseRequest, type NativeScheduledPhaseRequest } from "./native-scheduled-admission.js";
@@ -438,7 +439,7 @@ export class CanonicalChatOrchestrator {
   private startDispatch(
     owner: ChatOwner,
     message: CanonicalChatMessage,
-    run: CanonicalChatRun,
+    run: HerdrDispatchRun,
     adapter: CanonicalChatProviderAdapter,
     resolvedRoot?: ResolvedChatExecutionRoot,
     resumeState?: unknown,
@@ -584,7 +585,7 @@ export class CanonicalChatOrchestrator {
   private dispatch(
     owner: ChatOwner,
     message: CanonicalChatMessage,
-    run: CanonicalChatRun,
+    run: HerdrDispatchRun,
     adapter: CanonicalChatProviderAdapter,
     controller: AbortController,
     resolvedRoot?: ResolvedChatExecutionRoot,
@@ -603,7 +604,7 @@ export class CanonicalChatOrchestrator {
   private async dispatchRun(
     owner: ChatOwner,
     message: CanonicalChatMessage,
-    run: CanonicalChatRun,
+    run: HerdrDispatchRun,
     adapter: CanonicalChatProviderAdapter,
     controller: AbortController,
     resolvedRoot?: ResolvedChatExecutionRoot,
@@ -650,6 +651,8 @@ export class CanonicalChatOrchestrator {
           deferIntegrationGuidance: run.driverKind === "claude_code",
         }),
         parts: message.parts,
+        ...(run.ownerSubmittedHerdrTurn ? { ownerSubmittedHerdrTurn: true as const } : {}),
+        ...(run.ownerSubmittedHerdrDiscovery ? { ownerSubmittedHerdrDiscovery: true as const } : {}),
         selection: run.selection,
         interactionMode: run.interactionMode,
         permissionMode: run.permissionMode,

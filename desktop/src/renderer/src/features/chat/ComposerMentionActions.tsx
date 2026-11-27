@@ -1,13 +1,10 @@
-import { Monitor, SquareTerminal } from "@renderer/lib/hugeicons";
+import { SquareTerminal } from "@renderer/lib/hugeicons";
 
 export interface ComposerMentionAction {
   label: string;
-  kind: "preview" | "terminal";
   keywords: string;
-  consumeTrigger?: true;
-  defaultDraft?: string;
-  slashCommand?: string;
-  select: (queryDraft: string, remainingDraft?: string) => void;
+  slashCommand: string;
+  select(): void;
 }
 
 export function ComposerMentionActions({ actions, selectedIndex, onSelect }: {
@@ -19,10 +16,9 @@ export function ComposerMentionActions({ actions, selectedIndex, onSelect }: {
   return (
     <>
       <p className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>
-        This Mac
+        Computer actions
       </p>
-      {actions.map(({ label, kind }, index) => {
-        const Icon = kind === "preview" ? Monitor : SquareTerminal;
+      {actions.map(({ label }, index) => {
         return (
           <button
             key={label}
@@ -33,7 +29,7 @@ export function ComposerMentionActions({ actions, selectedIndex, onSelect }: {
             style={{ color: "var(--text-primary)" }}
             onClick={() => onSelect(index)}
           >
-            <Icon className="shrink-0" size={15} aria-hidden style={{ color: "var(--text-tertiary)" }} />
+            <SquareTerminal className="shrink-0" size={15} aria-hidden style={{ color: "var(--text-tertiary)" }} />
             <span>{label}</span>
           </button>
         );

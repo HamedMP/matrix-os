@@ -14,21 +14,18 @@ import { findTailscale, tailscalePeers, type TailscalePeersResult } from "./tail
 import { createMachineCore, type MachineCoreResult, type MachineCoreRunner } from "./machine-core";
 import type { WithUpdateConnection } from "./machine-update-connection";
 import { addMachine, listMachines, type AddMachineResult } from "./hc-machines";
-import type { MacTerminalProbeAction } from "../../shared/mac-terminal-probe";
 import { installLocalStatusReporter } from "./status-reporter";
 import { describeError } from "./describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcSocket } from "./hc-client";
-import { createAttachmentSlots, createHcSessions, TERMINAL_TITLE_LABEL, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
+import { createHcSessions, TERMINAL_TITLE_LABEL, type AttachmentSlots, type HcSessionSink } from "./hc-sessions";
 import {
   createLocalTerminalEvents, FINISHED_SEEN_LABEL, HERDR_SEEN_LABEL,
   type LocalTerminalEvents, type LocalTerminalEventsOptions,
 } from "./hc-events";
-import { prepareChatTerminalProbe } from "./chat-terminal-probe";
-import { openExistingTerminalReader } from "./existing-terminal";
+import { LOCAL_TERMINAL_SESSION, localTerminalCoreSocket } from "./runtime";
 
-const SESSION = "mx";
 // The longest socket herdr-core creates is `<session>.holder.<8 hex>.sock`.
-const LONGEST_SOCKET_NAME = `${SESSION}.holder.00000000.sock`;
+const LONGEST_SOCKET_NAME = `${LOCAL_TERMINAL_SESSION}.holder.00000000.sock`;
 const SOCKET_PATH_LIMIT = 100;
 const START_TIMEOUT_MS = 5_000;
 const RESTART_WINDOW_MS = 5 * 60_000;
@@ -130,7 +127,7 @@ export class MachineQueueFullError extends Error {
 
 export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink: LocalTerminalHostSink) {
   const now = options.now ?? Date.now;
-  const socketPath = join(options.runtimeDir, "herdr-core", `${SESSION}.sock`);
+  const socketPath = localTerminalCoreSocket(options.runtimeDir);
   const starts: number[] = [];
   let connection: HcConnection | null = null;
   let connecting: Promise<HcConnection> | null = null;
@@ -140,7 +137,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   function coreEnv(): Record<string, string> {
     return {
       ...localShellEnv(options.env),
-      HC_SESSION: SESSION,
+      HC_SESSION: LOCAL_TERMINAL_SESSION,
       XDG_STATE_HOME: join(options.dataDir, "state"),
       XDG_CONFIG_HOME: join(options.dataDir, "config"),
       XDG_RUNTIME_DIR: options.runtimeDir,
@@ -219,8 +216,7 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     return connecting;
   }
 
-  const slots = options.slots ?? createAttachmentSlots();
-  const sessions = createHcSessions({ ensure, slots, now }, sink);
+  const sessions = createHcSessions({ ensure, slots: options.slots, now }, sink);
   const machineSsh = createMachineSshStore(options.dataDir);
   // The app's own core on added machines, through the bundled core's CLI.
   const machineCore = createMachineCore({
@@ -349,6 +345,17 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
   return {
     status: (): LocalTerminalHostStatus => status,
     list: sessions.list,
+
+    /**
+     * A new raw byte stream to this app's private core, started if needed, for
+     * the Desktop link (spec 2716). The caller speaks the handshake itself; every
+     * byte it writes has already passed the Desktop link guard.
+     */
+    async openStream(): Promise<HcSocket> {
+      await ensure();
+      if (disposed) throw new Error("local terminals are shut down");
+      return options.openSocket(socketPath);
+    },
 
     /**
      * Starts the user's login shell, or one of the known agents in it, at home or
@@ -510,16 +517,6 @@ export function createLocalTerminalHost(options: LocalTerminalHostOptions, sink:
     async remove(id: string): Promise<void> {
       const core = await ensure();
       await core.call("terminal.rm", { terminal: id });
-    },
-
-    // Main-process only. Do not expose this method as renderer terminal IPC.
-    prepareChatTerminalProbe: (action: MacTerminalProbeAction = "uname") => prepareChatTerminalProbe({
-      action, cwd: options.home, ensure, isCurrent: (core) => connection === core, run: sessions.run, slots,
-    }),
-
-    async openExistingTerminalReader() {
-      const core = await ensure();
-      return openExistingTerminalReader(core, () => connection === core);
     },
 
     kill: sessions.kill,

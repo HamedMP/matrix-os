@@ -146,6 +146,9 @@ export interface CanonicalProviderRunInput<State = unknown> {
   interactionMode: string;
   permissionMode: string;
   executionRoot?: string;
+  /** Gateway-verified fresh owner selection for this direct, first-attempt private turn. */
+  ownerSubmittedHerdrTurn?: true;
+  ownerSubmittedHerdrDiscovery?: true;
   /** Persisted collaboration admission, never inferred from model text. */
   sharedScopeId?: string;
   projectSlug?: string;

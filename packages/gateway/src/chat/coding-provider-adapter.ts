@@ -1,3 +1,5 @@
+import { createCodexMcpRunScope, withoutNativeCodexMcpExecution } from "./codex-mcp-run-scope.js";
+import type { MatrixMcpCapabilityIssuer } from "./matrix-mcp-launch.js";
 import { codexChatRunnerModelOptions } from "./codex-chat-speed.js";
 import { createCodexRoutineSources } from "./codex-routine-source.js";
 import { createPiRoutineSources } from "./pi-routine-source.js";
@@ -445,6 +447,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
   sharedBrowser?: SharedBrowserBroker;
   gatewayPort?: number;
   routineCli?: NativeRoutineCliPort;
+  matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
 }): CanonicalChatProviderAdapter<CodingState> {
   const kind = driverKind(options.providerId);
   const routineSources = options.providerId === "opencode"
@@ -452,6 +455,8 @@ export function createCanonicalCodingChatProviderAdapter(options: {
     : options.providerId === "pi" ? createPiRoutineSources(options.routineCli, options.homePath ?? "/home/matrix/home")
     : createCodexRoutineSources(options.providerId === "codex" ? options.routineCli : undefined, options.homePath ?? "/home/matrix/home");
   const browsers = createCodexBrowserRunScope(options.providerId === "codex" && options.sharedBrowser ? { broker: options.sharedBrowser, gatewayPort: options.gatewayPort ?? 4000 } : undefined);
+  const matrixMcp = createCodexMcpRunScope(options.providerId === "codex" && options.matrixMcpCapabilityIssuer
+    ? { issuer: options.matrixMcpCapabilityIssuer, gatewayPort: options.gatewayPort ?? 4000 } : undefined);
   const activeSteerRuns = new Map<string, {
     ownerId: string;
     chatId: string;
@@ -542,9 +547,14 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let releaseSteerRun: (() => void) | undefined;
       const browserAttempt = browsers.open(input);
       const { routine, endRoutineSource } = openRoutineSource(input, inbox);
-      const withSource = <T>(work: () => T) => routine ? routine.withContext(() => browserAttempt.withContext(work)) : browserAttempt.withContext(work);
+      let mcpAttempt: ReturnType<typeof matrixMcp.open>;
+      const withSource = <T>(work: () => T) => {
+        const scoped = () => mcpAttempt ? mcpAttempt.withContext(work) : withoutNativeCodexMcpExecution(work);
+        return routine ? routine.withContext(() => browserAttempt.withContext(scoped)) : browserAttempt.withContext(scoped);
+      };
       let sink: { dispose(): void } | undefined;
       try {
+        mcpAttempt = matrixMcp.open(input);
         sink = options.threads.registerEventSink((published) => {
           if (published.ownerId !== input.owner.ownerId) return;
           if (targetThreadId === undefined) {
@@ -604,6 +614,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           yield event;
         }
       } finally {
+        mcpAttempt?.close();
         releaseSteerRun?.();
         sink?.dispose();
         // for-await consumer failures call return(), not throw(). Settle the
@@ -626,9 +637,14 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       let restartFresh = false;
       const browserAttempt = browsers.open(input);
       const { routine, endRoutineSource } = openRoutineSource(input, inbox);
-      const withSource = <T>(work: () => T) => routine ? routine.withContext(() => browserAttempt.withContext(work)) : browserAttempt.withContext(work);
+      let mcpAttempt: ReturnType<typeof matrixMcp.open>;
+      const withSource = <T>(work: () => T) => {
+        const scoped = () => mcpAttempt ? mcpAttempt.withContext(work) : withoutNativeCodexMcpExecution(work);
+        return routine ? routine.withContext(() => browserAttempt.withContext(scoped)) : browserAttempt.withContext(scoped);
+      };
       let sink: { dispose(): void } | undefined;
       try {
+        mcpAttempt = matrixMcp.open(input);
         sink = options.threads.registerEventSink((published) => {
           if (published.ownerId === input.owner.ownerId && published.threadId === targetThreadId) {
             inbox.push(published.events, published.tokenUsage);
@@ -683,6 +699,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
           throw error;
         }
       } finally {
+        mcpAttempt?.close();
         releaseSteerRun?.();
         sink?.dispose();
         try {
@@ -709,6 +726,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
       );
     },
     async cancel(input) {
+      matrixMcp.cancel({ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId});
       const browserCancellation = browsers.cancel({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId });
       if (!input.state) return await browserCancellation;
       const state = CodingChatStateSchema.parse(input.state);

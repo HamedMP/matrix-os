@@ -10,8 +10,6 @@ import { NAVIGATION_CACHE_INVOKE } from "./navigation-cache-ipc";
 import { CHATGPT_PLAN_INVOKE } from "./chatgpt-plan-ipc";
 import {AI_USAGE_INVOKE} from "./ai-usage-ipc";
 import { LOCAL_CHAT_IMPORT_INVOKE, LOCAL_CHAT_IMPORT_EVENTS } from "./local-chat-import-ipc";
-import { CHAT_ELECTRON_PREVIEW_INVOKE } from "./chat-electron-preview-ipc";
-import { MAC_TERMINAL_PROBE_INVOKE } from "./mac-terminal-probe-ipc";
 import { NativeAppOpenEventSchema } from "./native-app-open";
 import { SHARED_APP_DEEP_LINK_EVENTS, SHARED_APP_DEEP_LINK_INVOKE } from "./shared-app-deep-link-ipc";
 import { NativeAppChatCancellationSchema, NativeAppChatCompletionSchema, NativeAppOpenChatEventSchema } from "./native-app-chat";
@@ -73,6 +71,7 @@ import { DesktopAnalyticsDetailSchema } from "./desktop-analytics";
 import { TerminalClipboardResultSchema } from "./terminal-clipboard";
 import { TERMINAL_WINDOW_EVENTS, TERMINAL_WINDOW_INVOKE } from "./terminal-window";
 import { LOCAL_TERMINAL_EVENTS, LOCAL_TERMINAL_INVOKE } from "./local-terminals";
+import { DESKTOP_LINK_EVENTS, DESKTOP_LINK_INVOKE } from "./desktop-link";
 import { SHORTCUT_EVENTS, SHORTCUT_INVOKE } from "./shortcuts-ipc";
 
 const Empty = z.object({}).strict();
@@ -168,11 +167,10 @@ export const INVOKE_CHANNELS = {
   ...TERMINAL_WINDOW_INVOKE,
   ...SHARED_APP_DEEP_LINK_INVOKE,
   ...LOCAL_TERMINAL_INVOKE,
+  ...DESKTOP_LINK_INVOKE,
   ...CHATGPT_PLAN_INVOKE,
   ...NAVIGATION_CACHE_INVOKE,
   ...LOCAL_CHAT_IMPORT_INVOKE,
-  ...CHAT_ELECTRON_PREVIEW_INVOKE,
-  ...MAC_TERMINAL_PROBE_INVOKE,
   ...AI_USAGE_INVOKE,
   ...SHORTCUT_INVOKE,
   "terminal:read-clipboard-files": { request: Empty, response: TerminalClipboardResultSchema },
@@ -551,6 +549,7 @@ export const INVOKE_CHANNELS = {
 
 export const EVENT_CHANNELS = {
   ...LOCAL_TERMINAL_EVENTS,
+  ...DESKTOP_LINK_EVENTS,
   ...TERMINAL_WINDOW_EVENTS,
   ...SHARED_APP_DEEP_LINK_EVENTS,
   ...LOCAL_CHAT_IMPORT_EVENTS,

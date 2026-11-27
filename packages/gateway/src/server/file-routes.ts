@@ -49,14 +49,8 @@ const ProjectConfigTouchSchema = z.strictObject({
   ? Buffer.byteLength(content, "utf8") <= PROJECT_SKILL_FILE_MAX_BYTES
   : content.length <= 8192, { path: ["content"] });
 
-const TrashMoveSchema = z.object({
-  path: z.string().min(1).max(4096).refine((path) => !path.includes("\0")),
-  withUndo: z.boolean().optional(),
-});
-const TrashRestoreSchema = z.object({
-  trashPath: z.string().min(1).max(4096).refine((path) => !path.includes("\0")),
-  entryId: z.uuid().optional(),
-});
+const TrashMoveSchema = z.object({ path: z.string().min(1).max(4096).refine((path) => !path.includes("\0")) });
+const TrashRestoreSchema = z.object({ trashPath: z.string().min(1).max(4096).refine((path) => !path.includes("\0")) });
 
 export interface FileRouteDeps {
   homePath: string;
@@ -269,9 +263,9 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
   app.post("/api/files/delete", fileBodyLimit, async (c) => {
     const body = TrashMoveSchema.safeParse(await parseJson(c));
     if (!body.success) return c.json({ error: "Invalid path" }, 400);
-    const { path, withUndo } = body.data;
+    const { path } = body.data;
     return withProjectFileAdmission(c, [path], async () => {
-      const result = await fileDelete(homePath, path, { withUndo: withUndo === true });
+      const result = await fileDelete(homePath, path);
       return c.json(result, { status: toStatusCode(result.ok ? 200 : (result.status ?? 400)) });
     });
   });
@@ -286,7 +280,7 @@ export function registerFileRoutes(app: Hono, deps: FileRouteDeps): void {
       const entry = result.entries.find((candidate) => candidate.trashPath === trashPath);
       if (!entry) return c.json({ error: "Not found in trash" }, 404);
       return withProjectFileAdmission(c, [entry.originalPath], async () => {
-        const restored = await trashRestore(homePath, trashPath, body.data.entryId);
+        const restored = await trashRestore(homePath, trashPath);
         return c.json(restored, { status: toStatusCode(restored.ok ? 200 : (restored.status ?? 400)) });
       }, true);
     });
