@@ -141,6 +141,13 @@ describe("desktop link consent", () => {
     expect(desktopLinkApproval("box\nApple Security", { kind: "screenshot" }, "darwin").message)
       .toBe("Your Matrix computer “box⟨U+000A⟩Apple Security” wants to take a screenshot of this Mac");
     expect(desktopLinkApproval("x".repeat(200), { kind: "screenshot" }, "darwin").message).toBe("Your Matrix computer wants to take a screenshot of this Mac");
+    const remote = desktopLinkApproval("matrix-demo", {
+      kind: "remote-terminal", machine: "build-box", terminal: "build-box/t3", title: "Build",
+      program: "bash", cwd: "/worktree",
+    }, "darwin");
+    expect(remote.message).toBe("Your Matrix computer “matrix-demo” wants to use a terminal on “build-box”");
+    expect(remote.detail).toContain("Terminal: build-box/t3");
+    expect(remote.detail).toContain("this Chat request");
   });
 
   // Fault detected (review, P1): the pause applied only when another request already

@@ -227,16 +227,25 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
     stream.queue = options.openCore().then((core) => {
       if (stream.ended || link.stream !== stream || !link.socket) { core.destroy(); return; }
       stream.core = core;
-      // The guard alone writes to the core: its own handshake first, then only what it rebuilt.
-      stream.guard.connect((bytes) => { if (!stream.ended && link.stream === stream) core.write(bytes); });
-      core.on("data", (chunk: Buffer) => {
-        if (link.stream !== stream || !link.socket) return;
-        if (link.socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+      const writable = () => {
+        const socket = link.socket;
+        if (stream.ended || link.stream !== stream || !socket) return null;
+        if (socket.bufferedAmount > MAX_BUFFERED_BYTES) {
           log("link fell behind; closing it");
           hangUp(link, DESKTOP_LINK_CLOSE.policy);
           scheduleRetry(link);
-          return;
+          return null;
         }
+        return socket;
+      };
+      const deliver = (frames: Buffer[]) => {
+        const socket = writable();
+        if (socket) for (const bytes of frames) socket.send(bytes);
+      };
+      // The guard alone writes to the core: its own handshake first, then only what it rebuilt.
+      stream.guard.connect((bytes) => { if (!stream.ended && link.stream === stream) core.write(bytes); }, deliver);
+      core.on("data", (chunk: Buffer) => {
+        if (!writable()) return;
         let out: Buffer[];
         try {
           out = stream.guard.fromCore(chunk);
@@ -246,7 +255,7 @@ export function createDesktopLinkService(options: DesktopLinkServiceOptions) {
           endStream(link, true);
           return;
         }
-        for (const bytes of out) link.socket.send(bytes);
+        deliver(out);
       });
       const ended = () => { if (link.stream === stream) endStream(link, true); };
       core.on("close", ended);

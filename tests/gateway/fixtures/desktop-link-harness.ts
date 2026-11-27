@@ -188,6 +188,7 @@ export function dialMac(base: string, mac: ReturnType<typeof testMac>, options: 
         app: { version: "0.9.0", os: "macOS 26.1" },
       }));
     } else if (frame.t === "open" && options.core) {
+      stream?.guard?.close();
       stream?.pipe.destroy();
       const id = frame.stream as number;
       const pipe = options.core.connect();
@@ -195,12 +196,17 @@ export function dialMac(base: string, mac: ReturnType<typeof testMac>, options: 
       const guard = options.guardHome ? createDesktopLinkGuard({
         home: options.guardHome, computerName: "matrix-demo", selectionKey, ...(options.consent ? { consent: options.consent } : {}),
       }) : null;
-      guard?.connect((bytes) => pipe.write(bytes));
+      const deliver = (frames: Buffer[]) => {
+        if (stream?.id === id && socket.readyState === WebSocket.OPEN) {
+          for (const out of frames) socket.send(out);
+        }
+      };
+      guard?.connect((bytes) => pipe.write(bytes), deliver);
       pipe.on("data", (chunk: Buffer) => {
         if (stream?.id !== id) return;
-        for (const out of guard ? guard.fromCore(chunk) : [chunk]) socket.send(out);
+        deliver(guard ? guard.fromCore(chunk) : [chunk]);
       });
-      pipe.on("close", () => { if (stream?.id === id) { stream = null; socket.send(JSON.stringify({ t: "end", stream: id })); } });
+      pipe.on("close", () => { guard?.close(); if (stream?.id === id) { stream = null; socket.send(JSON.stringify({ t: "end", stream: id })); } });
       // Late bytes from an older stream, as a slow reply would arrive: the gateway must drop them.
       if (options.staleBytes) socket.send(Buffer.from("stale reply from an older stream\n"));
       socket.send(JSON.stringify({ t: "opened", stream: id }));
@@ -210,6 +216,7 @@ export function dialMac(base: string, mac: ReturnType<typeof testMac>, options: 
     } else if (frame.t === "close" && stream?.id === frame.stream) {
       const ending = stream;
       stream = null;
+      ending.guard?.close();
       ending.pipe.destroy();
     }
   });

@@ -8,6 +8,35 @@ afterEach(cleanup);
 const tabId = "tt_" + "1".repeat(32);
 const revision = "a".repeat(64);
 
+it.each([false, true])("selects only the named enrolled machine on a paired computer (pasted: %s)", async pasted => {
+  const { desktopLinkWorkspaceId } = await import("@matrix-os/contracts/desktop-link");
+  const id = "d".repeat(64);
+  const ws = desktopLinkWorkspaceId(id);
+  const address = `desktop:${id}/machine:devstack-hel1/t1`;
+  const remoteTab = "tt_" + "2".repeat(32);
+  const request = async (url: string) => {
+    if (url === "/api/desktop-link/machines") return Response.json({
+      machineId: "aabbccdd-1111-4111-8111-112233445566",
+      machines: [{ deviceId: id, name: "Studio", revision: 1, state: "online", lastSeenAt: null }],
+    });
+    if (url.startsWith("/api/desktop-link/machines/")) return Response.json({ deviceId: id, workspaceId: ws, sessions: [
+      { id: "t1", title: "Build", tabId, revision, status: "idle" },
+      { id: "t1", title: "Build", machine: "devstack-hel1", tabId: remoteTab, revision, status: "idle" },
+    ] });
+    return Response.json({ available: true, status: "ready", sessions: [] });
+  };
+  const choose = vi.fn();
+  render(<HerdrControlPicker request={request} requestedTarget={pasted ? address : undefined}
+    onSelect={choose} onCancel={vi.fn()} />);
+  if (!pasted) {
+    fireEvent.click(await screen.findByRole("button", { name: "Studio" }));
+    fireEvent.click(await screen.findByRole("button", { name: "devstack-hel1" }));
+  }
+  expect(choose).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole("button", { name: pasted ? "Use Build (devstack-hel1/t1)" : "Build (t1)" }));
+  expect(choose).toHaveBeenCalledWith(expect.objectContaining({ id: ws + ":" + remoteTab, revision }), address);
+});
+
 it("requires the owner to choose a versioned session before granting control for this message", async () => {
   const pick = vi.fn();
   const request = vi.fn(async () => new Response(JSON.stringify({ available: true, status: "ready", sessions: [

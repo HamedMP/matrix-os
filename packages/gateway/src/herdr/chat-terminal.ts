@@ -88,7 +88,8 @@ export async function bindHerdrChatTerminal(
   }
 
   function current() {
-    return !signal.aborted && (desktop ? desktop.current() : source.current(initial.generation));
+    return !signal.aborted && (!desktop || desktop.current())
+      && (desktop && !source.qualifiedRemote ? true : source.current(initial.generation));
   }
   if (!await matches(selected) || !current()) return null;
 
@@ -99,7 +100,7 @@ export async function bindHerdrChatTerminal(
     fence();
     const list = await source.inspect();
     const process = findProcess(list);
-    if (!process || (!desktop && list.generation !== initial.generation) || !await matches(process)) {
+    if (!process || ((!desktop || source.qualifiedRemote) && list.generation !== initial.generation) || !await matches(process)) {
       controller.abort();
       throw new TerminalAgentVerbError("not_found");
     }

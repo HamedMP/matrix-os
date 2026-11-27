@@ -24,6 +24,8 @@ const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_IN_FLIGHT = 256;
 /** Bytes held for the core while its handshake is still open; more end the stream. */
 const MAX_HELD_BYTES = 1024 * 1024;
+/** Initial output held while a routed attach's machine identity is checked. */
+const MAX_UNVERIFIED_BYTES = 1024 * 1024;
 /** Attach channels open at once on one stream; the core's own cap is lower. */
 const MAX_CHANNELS = 256;
 /** How long the guard waits for the core to answer a question of its own. */
@@ -67,6 +69,7 @@ const CHANNEL_KINDS: ReadonlySet<number> = new Set([HC_FRAME.DATA, HC_FRAME.CRED
 
 /** A terminal the owner's consent can name: herdr-core's own address on this device, never a name or label. */
 const TerminalAddress = z.string().regex(/^t[0-9]{1,9}[a-z]{0,2}$/);
+const EnrolledAddress = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,31}\/t[0-9]{1,6}[a-z]{0,2}$/);
 const CallId = z.union([z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), z.string().min(1).max(64)]);
 const Cells = z.number().int().min(1).max(1000);
 // Terminal and locale settings only, with plain values: nothing a program could read as more.
@@ -87,13 +90,15 @@ const RunParams = z.strictObject({
   wait: z.literal(false).optional(),
 }).refine((params) => !(params.argv && params.line), { message: "one program" });
 const ListParams = z.strictObject({});
+const EnrolledListParams = z.strictObject({ enrolled: z.literal(true) });
 const AttachParams = z.strictObject({
-  terminal: TerminalAddress,
+  terminal: z.union([TerminalAddress, EnrolledAddress]),
   cols: Cells,
   rows: Cells,
   history: z.number().int().min(0).max(100_000).optional(),
   observe: z.boolean().optional(),
   selection_revision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  remote_scope: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 });
 const KillParams = z.strictObject({ terminal: TerminalAddress });
 /** The computer's handshake: exactly what its Herdr client sends. */
@@ -111,6 +116,7 @@ const CoreTerminal = z.object({
   state: z.string().max(32),
   // Required by herdr-core; without it a terminal cannot be told from a later one at its address.
   created_ms: z.number().int().optional().catch(undefined),
+  pid: z.int().positive().optional().catch(undefined),
   cwd: z.string().max(4 * 1024).optional().catch(undefined),
   title: z.string().nullable().optional().catch(null),
   name: z.string().nullable().optional().catch(null),
@@ -120,6 +126,10 @@ const CoreTerminal = z.object({
 });
 type CoreTerminal = z.infer<typeof CoreTerminal>;
 const CoreList = z.object({ terminals: z.array(z.unknown()).max(10_000) });
+const EnrolledMachines = z.object({ machines: z.array(z.unknown()).max(256) });
+const EnrolledMachine = z.object({
+  name: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,31}$/), id: z.string().regex(/^[a-f0-9]{32}$/), state: z.literal("connected"),
+});
 const CoreTemplates = z.object({ templates: z.array(z.looseObject({ name: z.string().max(256) })).max(1024) });
 const CoreReply = z.object({
   id: z.union([z.number(), z.string(), z.null()]),
@@ -181,7 +191,7 @@ export interface DesktopLinkGuardOptions {
 }
 
 type Pending =
-  | { kind: "list" | "run" | "attach" | "kill"; callerId: string | number; timer: ReturnType<typeof setTimeout>; expect?: string | null; terminal?: string }
+  | { kind: "list" | "run" | "attach" | "kill"; callerId: string | number; timer: ReturnType<typeof setTimeout>; expect?: string | null; terminal?: string; machineId?: string }
   | { kind: "internal"; settle(reply: CoreReply | null): void };
 
 function frame(payload: unknown): Buffer {
@@ -225,9 +235,16 @@ function shown(terminal: CoreTerminal) {
 
 export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
   const selectionKey = options.selectionKey ?? randomBytes(32);
+  const enrolledStreamId = randomBytes(16).toString("hex");
   function selectionRevision(terminal: CoreTerminal) {
     if (terminal.created_ms === undefined) return undefined;
     return createHmac("sha256", selectionKey).update(JSON.stringify([terminal.address, terminal.created_ms])).digest("hex");
+  }
+  function enrolledRevision(terminal: CoreTerminal, machineId: string) {
+    if (terminal.state !== "live" || terminal.pid === undefined || terminal.created_ms === undefined || !terminal.cwd) return undefined;
+    return createHmac("sha256", selectionKey).update(JSON.stringify([
+      "enrolled", machineId, terminal.address, terminal.pid, terminal.created_ms, terminal.cwd,
+    ])).digest("hex");
   }
   const pathApi = options.pathApi ?? nodePath;
   const resolveFolder = options.resolveFolder ?? (async (path: string) => {
@@ -247,6 +264,7 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
   let helloAnswered = false;
   // The core's side: the guard's own handshake, then frames.
   let writeCore: ((bytes: Buffer) => void) | null = null;
+  let deliver: ((frames: Buffer[]) => void) | null = null;
   let coreHello: CoreHello | null = null;
   let corePending: Buffer = Buffer.alloc(0);
   let held: Buffer[] = [];
@@ -257,6 +275,8 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
   let nextId = GUARD_HELLO_ID + 1;
   // Channels the core opened for attaches this guard forwarded: the only ones data may use.
   const channels = new Set<number>();
+  const unverified = new Map<number, { frames: Buffer[]; bytes: number; callerId: string | number }>();
+  let unverifiedBytes = 0;
   // Channels the core closed: a credit or keystroke the computer sent before it heard is dropped.
   const closing = new Set<number>();
   const abandoned = new Set<number>();
@@ -314,7 +334,7 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
   }
 
   /** Asks the core something for the guard's own decision; the answer never reaches the computer. Null: no answer. */
-  function ask(method: "terminal.list" | "templates.list"): Promise<CoreReply | null> {
+  function ask(method: "terminal.list" | "templates.list" | "machine.list"): Promise<CoreReply | null> {
     if (!writeCore) return Promise.resolve(null);
     return new Promise((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -337,6 +357,46 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
     return null;
   }
 
+  function connectedRoutes(machines: CoreReply | null) {
+    const routes = EnrolledMachines.safeParse(machines?.result);
+    const connected = new Map<string, string>();
+    if (!routes.success) return connected;
+    const duplicates = new Set<string>();
+    for (const raw of routes.data.machines) {
+      const route = EnrolledMachine.safeParse(raw);
+      if (!route.success) continue;
+      if (connected.has(route.data.name)) duplicates.add(route.data.name);
+      connected.set(route.data.name, route.data.id);
+    }
+    for (const alias of duplicates) connected.delete(alias);
+    return connected;
+  }
+
+  async function getEnrolledTargets() {
+    const [terminals, machines] = await Promise.all([ask("terminal.list"), ask("machine.list")]);
+    const rows = CoreList.safeParse(terminals?.result);
+    if (!rows.success) return [];
+    const connected = connectedRoutes(machines);
+    return rows.data.terminals.flatMap((raw) => {
+      const parsed = CoreTerminal.safeParse(raw);
+      if (!parsed.success || !EnrolledAddress.safeParse(parsed.data.address).success) return [];
+      const terminal = parsed.data;
+      const machine = terminal.address.slice(0, terminal.address.indexOf("/"));
+      const machineId = connected.get(machine);
+      if (!machineId) return [];
+      const revision = enrolledRevision(terminal, machineId);
+      return revision ? [{ terminal, machine, machineId, revision }] : [];
+    });
+  }
+
+  async function enrolledList(callerId: string | number): Promise<Decided> {
+    if (!options.consent) return refused(callerId);
+    const terminals = (await getEnrolledTargets()).slice(0, 500).map(({ terminal, revision }) => ({
+      ...shown(terminal), selection_revision: revision,
+    }));
+    return { forwarded: [], toComputer: [frame({ jsonrpc: "2.0", id: callerId, result: { terminals } })] };
+  }
+
   /**
    * Whether `argv[0]` is a plain program. herdr-core starts a template's own
    * command when argv[0] names one, so a start that could is refused: the owner
@@ -355,7 +415,7 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
     return templates.success && !templates.data.templates.some((entry) => templateKey(entry.name) === wanted);
   }
 
-  function forward(kind: "list" | "run" | "attach" | "kill", callerId: string | number, params: Record<string, unknown>, expect?: string | null): Decided {
+  function forward(kind: "list" | "run" | "attach" | "kill", callerId: string | number, params: Record<string, unknown>, expect?: string | null, machineId?: string): Decided {
     if (ended.signal.aborted) return { forwarded: [], toComputer: [] };
     const timer = setTimeout(() => {
       if (id === null || !inFlight.delete(id) || kind !== "attach") return;
@@ -364,7 +424,7 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
     }, FORWARDED_CALL_MS);
     timer.unref?.();
     const terminal = typeof params.terminal === "string" ? params.terminal : undefined;
-    const id = track({ kind, callerId, timer, ...(expect === undefined ? {} : { expect }), ...(terminal ? { terminal } : {}) });
+    const id = track({ kind, callerId, timer, ...(expect === undefined ? {} : { expect }), ...(terminal ? { terminal } : {}), ...(machineId ? { machineId } : {}) });
     if (id === null) { clearTimeout(timer); return { forwarded: [], toComputer: [denial(callerId)] }; }
     const bytes = frame({ jsonrpc: "2.0", id, method: `terminal.${kind}`, params });
     toCore(bytes);
@@ -397,6 +457,28 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
   }
 
   const instanceOf = (terminal: CoreTerminal) => (terminal.created_ms === undefined ? null : `${terminal.address}@${terminal.created_ms}`);
+
+  async function openEnrolled(callerId: string | number, params: z.infer<typeof AttachParams>): Promise<Decided> {
+    const { selection_revision: selected, remote_scope: scope, ...coreParams } = params;
+    if (!selected || !scope || !options.consent) return refused(callerId);
+    const currentTarget = async () => {
+      const matches = (await getEnrolledTargets()).filter(row => row.terminal.address === params.terminal);
+      return matches.length === 1 && matches[0]!.revision === selected ? matches[0] : undefined;
+    };
+    const target = await currentTarget();
+    if (!target) return refused(callerId);
+    const { terminal, machine } = target;
+    const cwd = terminal.cwd && renderVisible(terminal.cwd);
+    if (!cwd) return refused(callerId);
+    const allowed = await options.consent.remoteTerminal(enrolledStreamId + ":" + scope + ":" + selected, {
+      machine, terminal: terminal.address,
+      title: renderVisible(shown(terminal).title, MAX_SHOWN_TITLE_CHARS) ?? "(a title too long to show)",
+      program: (terminal.argv?.length ? describeRun({ argv: terminal.argv }, options.platform) : null) ?? "a program it does not name",
+      cwd,
+    }, ended.signal);
+    if (!allowed || !await currentTarget()) return refused(callerId);
+    return forward("attach", callerId, coreParams, selected, target.machineId);
+  }
 
   async function onTerminal(kind: "attach" | "kill", callerId: string | number, params: Record<string, unknown> & { terminal: string }): Promise<Decided> {
     let expect: string | null = null;
@@ -452,8 +534,43 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
     for (const bytes of release) writeCore!(bytes);
   }
 
+  function releaseUnverified(channel: number) {
+    const pending = unverified.get(channel);
+    if (!pending) return undefined;
+    unverified.delete(channel);
+    unverifiedBytes -= pending.bytes;
+    return pending;
+  }
+
+  function rejectUnverified(channel: number, coreClosed = false) {
+    const pending = releaseUnverified(channel);
+    if (!pending) return undefined;
+    if (!coreClosed) toCore(encodeFrame(channel, HC_FRAME.CLOSE, Buffer.alloc(0)));
+    return failure(pending.callerId);
+  }
+
+  function verifyEnrolledAttach(channel: number, callerId: string | number, terminal: string, machineId: string, response: Buffer) {
+    // The reply identifies the PTY but doesn't identify the machine behind its alias.
+    // Hold initial output and deny input until a fresh route lookup confirms that machine.
+    const pending = { frames: [] as Buffer[], bytes: 0, callerId };
+    unverified.set(channel, pending);
+    const alias = terminal.slice(0, terminal.indexOf("/"));
+    void ask("machine.list").then((reply) => {
+      if (ended.signal.aborted || unverified.get(channel) !== pending) return;
+      if (connectedRoutes(reply).get(alias) !== machineId || !deliver) {
+        const refused = rejectUnverified(channel);
+        if (refused) deliver?.([refused]);
+        return;
+      }
+      releaseUnverified(channel);
+      channels.add(channel);
+      closing.delete(channel);
+      deliver([response, ...pending.frames]);
+    });
+  }
+
   /** The core's answer to one of the computer's calls, carrying only what the computer needs. */
-  function answer(entry: Extract<Pending, { callerId: string | number }>, reply: CoreReply): Buffer {
+  function answer(entry: Extract<Pending, { callerId: string | number }>, reply: CoreReply): Buffer | undefined {
     const id = entry.callerId;
     if (reply.error) {
       const data = reply.error.data;
@@ -485,22 +602,31 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
         if (typeof channel !== "number" || !Number.isInteger(channel) || channel < 1 || channel > 0xffff_ffff) return failure(id);
         // The terminal the core attached must be the one the owner approved, when one was.
         const record = CoreTerminal.safeParse(attached.terminal);
-        const wrongTerminal = entry.expect !== undefined && entry.expect !== null
+        const wrongTerminal = entry.machineId
+          ? !record.success || enrolledRevision(record.data, entry.machineId) !== entry.expect
+          : entry.expect !== undefined && entry.expect !== null
           ? !record.success || instanceOf(record.data) !== entry.expect
           // Under consent the attached terminal must be named; without (tests only) it is compared when given.
           : options.consent ? !record.success || record.data.address !== entry.terminal : record.success && record.data.address !== entry.terminal;
-        if (wrongTerminal || channels.has(channel) || channels.size >= MAX_CHANNELS) {
+        if (wrongTerminal || channels.has(channel) || unverified.has(channel) || channels.size + unverified.size >= MAX_CHANNELS) {
           // Turned down after the core opened a viewer: close it there.
-          if (!channels.has(channel)) toCore(encodeFrame(channel, HC_FRAME.CLOSE, Buffer.alloc(0)));
+          const refused = rejectUnverified(channel);
+          if (refused) deliver?.([refused]);
+          else if (!channels.has(channel)) toCore(encodeFrame(channel, HC_FRAME.CLOSE, Buffer.alloc(0)));
           return failure(id);
         }
-        channels.add(channel);
-        closing.delete(channel);
-        return frame({ jsonrpc: "2.0", id, result: {
+        const response = frame({ jsonrpc: "2.0", id, result: {
           channel,
           resize_notifications: attached.resize_notifications === true,
           automatic_input: attached.automatic_input === true,
         } });
+        if (entry.machineId && record.success) {
+          verifyEnrolledAttach(channel, id, record.data.address, entry.machineId, response);
+          return undefined;
+        }
+        channels.add(channel);
+        closing.delete(channel);
+        return response;
       }
       case "kill": {
         const terminal = CoreTerminal.safeParse(result);
@@ -535,6 +661,8 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
       ended.abort();
       for (const entry of inFlight.values()) if (entry.kind === "internal") entry.settle(null); else clearTimeout(entry.timer);
       inFlight.clear();
+      unverified.clear();
+      unverifiedBytes = 0;
       held = [];
     },
 
@@ -542,9 +670,10 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
      * The guard's own connection to the core is open: it sends the fixed
      * handshake now, and every later byte for the core goes through `write`.
      */
-    connect(write: (bytes: Buffer) => void): void {
+    connect(write: (bytes: Buffer) => void, deliverVerified?: (frames: Buffer[]) => void): void {
       if (writeCore) return;
       writeCore = write;
+      deliver = deliverVerified ?? null;
       write(GUARD_HELLO);
     },
 
@@ -613,7 +742,8 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
         const { id, method, params } = request.data;
         switch (method) {
           case "terminal.list":
-            add(ListParams.safeParse(params ?? {}).success ? forward("list", id, {}) : refused(id));
+            if (EnrolledListParams.safeParse(params).success) defer(id, () => enrolledList(id));
+            else add(ListParams.safeParse(params ?? {}).success ? forward("list", id, {}) : refused(id));
             break;
           case "terminal.run": {
             const checked = RunParams.safeParse(params ?? {});
@@ -625,6 +755,8 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
           case "terminal.attach": {
             const checked = AttachParams.safeParse(params);
             if (!checked.success) { add(refused(id)); break; }
+            if (EnrolledAddress.safeParse(checked.data.terminal).success) { defer(id, () => openEnrolled(id, checked.data)); break; }
+            if (checked.data.remote_scope !== undefined) { add(refused(id)); break; }
             const { terminal, cols, rows, history, observe, selection_revision } = checked.data;
             const rebuilt = { terminal, cols, rows, ...(selection_revision ? { selection_revision } : {}), ...(history === undefined ? {} : { history }), ...(observe === undefined ? {} : { observe }) };
             if (options.consent) defer(id, () => onTerminal("attach", id, rebuilt));
@@ -678,6 +810,20 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
       }
       for (const incoming of frames) {
         if (incoming.channel !== 0) {
+          const pending = unverified.get(incoming.channel);
+          if (pending) {
+            const coreClosed = incoming.kind === HC_FRAME.CLOSE;
+            const bytes = encodeFrame(incoming.channel, incoming.kind, incoming.payload);
+            if (coreClosed || unverifiedBytes + bytes.length > MAX_UNVERIFIED_BYTES) {
+              const refused = rejectUnverified(incoming.channel, coreClosed);
+              if (refused) out.push(refused);
+            } else {
+              unverifiedBytes += bytes.length;
+              pending.bytes += bytes.length;
+              pending.frames.push(bytes);
+            }
+            continue;
+          }
           // A channel's bytes, only once its attach answer went to the computer.
           if (!channels.has(incoming.channel)) continue;
           out.push(encodeFrame(incoming.channel, incoming.kind, incoming.payload));
@@ -706,7 +852,8 @@ export function createDesktopLinkGuard(options: DesktopLinkGuardOptions) {
         inFlight.delete(reply.data.id);
         if (entry.kind === "internal") { entry.settle(reply.data); continue; }
         clearTimeout(entry.timer);
-        out.push(answer(entry, reply.data));
+        const response = answer(entry, reply.data);
+        if (response) out.push(response);
       }
       return out;
     },

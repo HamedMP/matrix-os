@@ -67,6 +67,11 @@ export function desktopLinkApproval(computerName: string, request: DesktopLinkCo
         detail: `Program: ${request.program}\nFolder: ${request.cwd}\nTitle (set by the program): ${request.title}\n\n${
           request.action === "end" ? "Its program stops, and anything unsaved in it is lost." : "It could read what is on its screen, type into it and end it."} ${legend} ${tip}`,
       };
+    case "remote-terminal":
+      return {
+        message: `${who} wants to use a terminal on “${request.machine}”`,
+        detail: `Terminal: ${request.terminal}\nProgram: ${request.program}\nFolder: ${request.cwd}\nTitle (set by the program): ${request.title}\n\nAllow this Chat request to read, type into, and interrupt this remote terminal through this ${noun}. ${legend}`,
+      };
     case "screenshot":
       return { message: `${who} wants to take a screenshot of this ${noun}`, detail: `It sees everything on your screen right now. ${tip}` };
   }

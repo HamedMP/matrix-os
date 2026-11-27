@@ -12,6 +12,7 @@ import { DESKTOP_LINK_APPROVAL_TIMEOUT_MS } from "@matrix-os/contracts/desktop-l
 export type DesktopLinkConsentRequest =
   | { kind: "run"; command: string; cwd: string }
   | { kind: "terminal"; action: "open" | "end"; terminal: string; title: string; program: string; cwd: string }
+  | { kind: "remote-terminal"; machine: string; terminal: string; title: string; program: string; cwd: string }
   | { kind: "screenshot" };
 
 export interface DesktopLinkConsentOptions {
@@ -114,6 +115,8 @@ export function createDesktopLinkConsent(options: DesktopLinkConsentOptions) {
   // Terminal instances (`address@created_ms`), insertion-ordered so the oldest is forgotten
   // first. An address the core gives a new terminal (after a restart, say) is a new instance.
   const terminals = new Set<string>();
+  // Separate from local terminal grants. A reply permits one selected remote process for one Chat run.
+  const remoteTerminals = new Map<string, Promise<boolean>>();
   let lifetime = new AbortController();
   let queue: Promise<unknown> = Promise.resolve();
   let waiting = 0;
@@ -227,6 +230,21 @@ export function createDesktopLinkConsent(options: DesktopLinkConsentOptions) {
       if (allowed && instance !== null && request.action === "open") remember(instance);
       return allowed;
     },
+    async remoteTerminal(
+      instance: string,
+      request: Omit<Extract<DesktopLinkConsentRequest, { kind: "remote-terminal" }>, "kind">,
+      ended: AbortSignal,
+    ): Promise<boolean> {
+      const stopped = lifetime.signal;
+      if (stopped.aborted || ended.aborted) return false;
+      let answer = remoteTerminals.get(instance);
+      if (!answer) {
+        answer = approve({ kind: "remote-terminal", ...request }, ended, stopped);
+        remoteTerminals.set(instance, answer);
+        if (remoteTerminals.size > MAX_TERMINALS) remoteTerminals.delete(remoteTerminals.keys().next().value!);
+      }
+      return await answer && !stopped.aborted && !ended.aborted;
+    },
     async screenshot(ended?: AbortSignal): Promise<boolean> {
       const stopped = lifetime.signal;
       return (await fullAccess()) || approve({ kind: "screenshot" }, ended, stopped);
@@ -236,6 +254,7 @@ export function createDesktopLinkConsent(options: DesktopLinkConsentOptions) {
       lifetime.abort();
       lifetime = new AbortController();
       terminals.clear();
+      remoteTerminals.clear();
       // A new start: no quiet spell carries over.
       refusals = 0;
       quietUntil = 0;

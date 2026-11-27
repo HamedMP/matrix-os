@@ -28,6 +28,34 @@ function page<T>(rows: T[], offset: number) {
 }
 const empty = (): Inventory => ({ machines: [] });
 
+function viaDesktop(deviceId: string, machine: string) {
+  return "desktop:" + deviceId + "/machine:" + machine;
+}
+
+async function enrolledInventory(desktop: Desktop, input: Query, ref: { id: string; name: string }): Promise<Machine[]> {
+  if (input.machine && !input.machine.startsWith(ref.id + "/machine:")) return [];
+  const machineQuery = input.machineQuery?.toLowerCase();
+  try {
+    const listed = await desktop.adapter.listForLinkedChatControl();
+    const groups = new Map<string, Machine>();
+    for (const row of listed.sessions) {
+      const alias = row.machine;
+      if (!alias || !row.revision || (machineQuery && !alias.includes(machineQuery))) continue;
+      let machine = groups.get(alias);
+      if (!machine) {
+        machine = { id: viaDesktop(desktop.deviceId, alias), name: alias, online: true,
+          state: "connected", source: "herdr", core: "private", via: ref, terminals: [] };
+        groups.set(alias, machine);
+      }
+      machine.terminals.push({ id: row.id, title: row.title, status: row.status });
+    }
+    return [...groups.values()];
+  } catch (error: unknown) {
+    console.warn("[terminal-control] Enrolled routes unavailable", error instanceof Error ? error.name : "unknown_error");
+    return [];
+  }
+}
+
 async function desktopInventory(registry: DesktopLinkRegistry, desktop: Desktop, input: Query): Promise<() => Inventory> {
   const id = "desktop:" + desktop.deviceId;
   const lease = await registry.chatLease(desktop.deviceId);
@@ -44,16 +72,20 @@ async function desktopInventory(registry: DesktopLinkRegistry, desktop: Desktop,
       machine.terminalInventory = "unavailable";
     }
   }
+  const enrolled = await enrolledInventory(desktop, input, { id, name: lease.name });
+  if (enrolled.length > 0 && !await lease.validate()) return empty;
+  const enrolledAliases = new Set(enrolled.map(remote => remote.name));
   // Read the snapshot at response time. Replacement, expiry and revocation during
   // another source's lookup must not leak the old connection's inventory.
   return () => {
     if (!lease.current()) return empty();
     const snapshot = lease.herdrMachines();
-    const machines: Machine[] = [machine];
+    const machines: Machine[] = [machine, ...enrolled];
     for (const row of snapshot ?? []) {
       const source = row.source ?? "herdr";
       const slot = row.source === "matrix" ? row.runtimeSlot : undefined;
       const privateCore = row.source !== "matrix" && row.core === "private";
+      if (privateCore && enrolledAliases.has(row.name)) continue;
       machines.push({
         ...(privateCore ? { core: "private" as const } : {}),
         id: "via:" + desktop.deviceId + ":" + (privateCore ? "private-herdr" : source) + ":" + row.name + (slot ? ":" + slot : ""), name: row.name,
@@ -90,7 +122,9 @@ export async function discoverChatTerminals(
   }
   if (desktops) {
     for (const device of desktops.linked()) {
-      if (input.machine && input.machine !== "desktop:" + device.deviceId && !input.machine.startsWith("via:" + device.deviceId + ":")) continue;
+      const id = "desktop:" + device.deviceId;
+      if (input.machine && input.machine !== id && !input.machine.startsWith(id + "/machine:")
+        && !input.machine.startsWith("via:" + device.deviceId + ":")) continue;
       sources.push(desktopInventory(desktops, device, input));
     }
     if (!input.machine || input.machine.startsWith("desktop:")) {

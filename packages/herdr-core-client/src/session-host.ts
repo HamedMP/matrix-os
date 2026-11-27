@@ -222,9 +222,16 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
     },
     async listRemoteProcesses() {
       const core = await ensure();
-      const [terminals, routes] = await Promise.all([sessions.listProcesses(core, true), core.call("machine.list", {})]);
+      const [terminals, routes] = await Promise.all([sessions.listProcesses(core, "remote"), core.call("machine.list", {})]);
       if (disposed || connection !== core) throw shutDown();
       return { terminals, machines: parseRegisteredMachines(routes), generation };
+    },
+    /** A paired Desktop Link guard reports only its private Core's enrolled machines. */
+    async listEnrolledProcesses() {
+      const core = await ensure();
+      const terminals = await sessions.listProcesses(core, "enrolled");
+      if (disposed || connection !== core) throw shutDown();
+      return { terminals, generation };
     },
     isCurrentGeneration: (expected: number) => !disposed && connection !== null && generation === expected,
 

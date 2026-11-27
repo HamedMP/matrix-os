@@ -567,6 +567,31 @@ the desktop without SSH or Tailscale.
 - **Target resolution.** Carry the machine-qualified tab and revision through
   admission. Looking up the bare terminal ID can select an unrelated terminal.
 
+### SSH machines enrolled on a paired desktop
+
+An SSH machine the owner added in the Matrix Terminal window can supply
+terminal choices through that desktop's existing link. From Terminal Control,
+select the desktop, then its enrolled machine and a live terminal. A qualified
+discovery address has the form `desktop:<device-id>/machine:<alias>/tN`.
+This route uses the desktop's private terminal Core and its existing SSH
+configuration. A Main Computer with its own direct route can continue using
+the separate `machine:<alias>/tN` selection.
+
+The normal Desktop Link terminal list continues to report the desktop's own
+terminals. Its Chat-control view can add enrolled-machine rows with a
+`machine` name and a revision for that route and process. The device must be
+online and the remote Core route registered and connected. Broad Desktop Link
+Full Access covers the desktop itself. Remote terminal operations additionally
+require the owner's native approval for the selected Chat run, on the machine
+that holds the SSH connection. The dialog names the remote machine, terminal,
+program, and folder.
+
+Admission and the attachment check must distinguish a desktop's local `t1`
+from each enrolled machine's `t1`. Fail closed if the route or process changes
+during approval or execution. Revocation, Stop and disconnect invalidate the
+active authorization. Owner terminal inventory and run-scoped tools are the
+entry points for this route.
+
 - **Terminal pipeline.** Each linked desktop is one more workspace in 2692's
   terminal pipeline (`desktop-link/verb-runtime.ts`), under its desktop workspace id.
   `terminal_list` shows it with `machine: <name>`; `terminal_read`, `_send`,
