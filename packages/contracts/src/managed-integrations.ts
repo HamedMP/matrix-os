@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { POSTHOG_MCP_READ_SCOPES } from "#remote-mcp-catalog";
 
 const id = z.string().trim().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
 const team = { teamId: id.optional() };
@@ -24,7 +25,7 @@ export const MANAGED_INTEGRATIONS: Readonly<Record<string, ManagedIntegration>> 
   posthog_oauth: { id: "posthog_oauth", name: "PostHog", category: "analytics",
     // Server-side filtering keeps the discovered catalog within the MCP client cap.
     url: "https://mcp.posthog.com/mcp?tools=projects-get,project-get,insights-list,insight-get,insight-update",
-    scopes: ["project:read", "organization:read", "insight:read"], writeScopes: ["insight:write"],
+    scopes: POSTHOG_MCP_READ_SCOPES, writeScopes: ["insight:write"],
     actions: {
       // Exact flat id/name/description contract: official generated/product_analytics.ts.
       update_insight_metadata: { description: "Update a saved insight's name or description after approval", risk: "write", requiredScopes: ["insight:write"], tools: ["insight-update"],

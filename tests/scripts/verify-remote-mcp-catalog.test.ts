@@ -52,6 +52,13 @@ describe("remote MCP catalog verifier", () => {
     await expect(evaluateRegistration(github, 401, undefined, withDcr)).resolves.toMatchObject({ kind: "failed", reason: "dcr_now_available" });
   });
 
+  it("reports Figma as unverified even when it advertises a registration endpoint", async () => {
+    const figma = remoteMcpCatalogEntry("figma")!;
+    const getJson = async () => ({ registration_endpoint: "https://api.figma.com/v1/oauth/mcp/register" });
+    await expect(evaluateRegistration(figma, 401, undefined, getJson))
+      .resolves.toMatchObject({ kind: "unverified", reason: "oauth_client_approval_required" });
+  });
+
   // Fault: a vendor moves its token endpoint and the pinned Matrix app silently breaks.
   it("fails a registered-client entry whose live endpoints differ from the pinned ones", async () => {
     const pinned = github.registeredOAuth!;

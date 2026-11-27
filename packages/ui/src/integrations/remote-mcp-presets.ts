@@ -61,6 +61,7 @@ export function filterRemoteMcpPresets(
 /** Allowlisted copy for Custom MCP route failures; server text is never shown. */
 export function customMcpErrorMessage(status: number, body: unknown): string {
   const code = body && typeof body === "object" ? (body as { code?: unknown }).code : undefined;
+  if (status === 409 && code === "oauth_client_approval_required") return "The provider needs to approve Matrix OS before you can sign in.";
   if (status === 409 && code === "oauth_client_setup_required") return "This service needs administrator setup before you can sign in.";
   if (status === 409) return "This connection changed elsewhere. Refresh and try again.";
   if (status === 429) return "Too many requests. Wait a moment and try again.";

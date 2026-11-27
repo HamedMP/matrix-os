@@ -19,8 +19,7 @@ export const REMOTE_MCP_DEPARTMENTS = [
 export type RemoteMcpDepartment = typeof REMOTE_MCP_DEPARTMENTS[number];
 
 /**
- * - `oauth_dcr`: the vendor supports OAuth Dynamic Client Registration, so any
- *   Matrix instance can connect without vendor-side setup.
+ * - `oauth_dcr`: the vendor advertises OAuth Dynamic Client Registration.
  * - `oauth_registered_client`: the vendor requires a pre-registered OAuth app
  *   (Matrix-owned or organization-provided client id/secret).
  * - `none`: no authentication is required; an optional API key may raise limits.
@@ -58,6 +57,10 @@ export interface RemoteMcpCatalogEntry {
   notes?: string;
   /** Required for connectable `oauth_registered_client` entries; absent otherwise. */
   registeredOAuth?: RemoteMcpRegisteredOAuth;
+  /** Explicit scopes to request on the generic OAuth path for this endpoint. */
+  oauthScopes?: readonly string[];
+  /** The provider advertises DCR but has yet to approve Matrix as an MCP client. */
+  oauthClientApprovalRequired?: true;
   /** Kept in the contract but hidden from the connect flow (spec 2691: Google Workspace). */
   deferred?: true;
 }
@@ -83,14 +86,17 @@ export const RemoteMcpCatalogEntrySchema = z.strictObject({
     scopes: z.array(z.string().regex(/^[\x21-\x7e]{1,128}$/)).max(20),
     tokenEndpointAuthMethod: z.enum(["client_secret_basic", "client_secret_post"]),
   }).optional(),
+  oauthScopes: z.array(z.string().regex(/^[\x21-\x7e]{1,128}$/)).min(1).max(20).optional(),
+  oauthClientApprovalRequired: z.literal(true).optional(),
   deferred: z.literal(true).optional(),
 });
 
 const VERIFIED = "2026-11-11";
+export const POSTHOG_MCP_READ_SCOPES = Object.freeze(["project:read", "organization:read", "insight:read"] as const);
 
 const entries: RemoteMcpCatalogEntry[] = [
   // Top 20, ordered by search demand.
-  { id: "figma", name: "Figma", description: "Read design files, components, and variables", category: "design", departments: ["design", "engineering", "product"], url: "https://mcp.figma.com/mcp", auth: "oauth_dcr", demandRank: 1, verifiedAt: VERIFIED },
+  { id: "figma", name: "Figma", description: "Read design files, components, and variables", category: "design", departments: ["design", "engineering", "product"], url: "https://mcp.figma.com/mcp", auth: "oauth_dcr", demandRank: 1, verifiedAt: VERIFIED, oauthClientApprovalRequired: true },
   { id: "github", name: "GitHub", description: "Manage repos, issues, pull requests, and Actions", category: "developer", departments: ["engineering"], url: "https://api.githubcopilot.com/mcp/", auth: "oauth_registered_client", demandRank: 2, verifiedAt: VERIFIED, notes: "GitHub OAuth has no dynamic client registration; uses the Matrix-owned GitHub OAuth app.", registeredOAuth: { authorizationEndpoint: "https://github.com/login/oauth/authorize", tokenEndpoint: "https://github.com/login/oauth/access_token", resource: "https://api.githubcopilot.com/mcp/", scopes: ["repo", "read:org", "read:user"], tokenEndpointAuthMethod: "client_secret_post" } },
   { id: "atlassian", name: "Atlassian (Jira, Confluence)", description: "Search and update Jira issues and Confluence pages", category: "project_management", departments: ["engineering", "product", "operations"], url: "https://mcp.atlassian.com/v1/mcp", auth: "oauth_dcr", demandRank: 3, verifiedAt: VERIFIED },
   { id: "context7", name: "Context7", description: "Look up current library and API documentation", category: "developer", departments: ["engineering"], url: "https://mcp.context7.com/mcp", auth: "none", demandRank: 4, verifiedAt: VERIFIED, notes: "An optional API key header raises rate limits." },
@@ -113,7 +119,7 @@ const entries: RemoteMcpCatalogEntry[] = [
 
   // Extended tier: requested by the team, already used by Matrix, or strong department fit.
   { id: "lemlist", name: "lemlist", description: "Manage outreach campaigns, leads, and performance", category: "sales", departments: ["sales", "marketing"], url: "https://app.lemlist.com/mcp", auth: "oauth_dcr", verifiedAt: VERIFIED },
-  { id: "posthog", name: "PostHog", description: "Explore product analytics, insights, and flags", category: "analytics", departments: ["product", "engineering", "marketing"], url: "https://mcp.posthog.com/mcp", auth: "oauth_dcr", verifiedAt: VERIFIED },
+  { id: "posthog", name: "PostHog", description: "Explore product analytics and insights", category: "analytics", departments: ["product", "engineering", "marketing"], url: "https://mcp.posthog.com/mcp", auth: "oauth_dcr", verifiedAt: VERIFIED, oauthScopes: POSTHOG_MCP_READ_SCOPES },
   { id: "granola", name: "Granola", description: "Read meeting notes and transcripts", category: "productivity", departments: ["sales", "product", "operations"], url: "https://mcp.granola.ai/mcp", auth: "oauth_dcr", verifiedAt: VERIFIED },
   { id: "intercom", name: "Intercom", description: "Read conversations, contacts, and help articles", category: "support", departments: ["support", "sales"], url: "https://mcp.intercom.com/mcp", auth: "oauth_dcr", verifiedAt: VERIFIED },
   { id: "apollo", name: "Apollo.io", description: "Search prospects and enrich contacts and companies", category: "sales", departments: ["sales", "marketing"], url: "https://mcp.apollo.io/mcp", auth: "oauth_dcr", verifiedAt: VERIFIED },
@@ -131,6 +137,7 @@ export const REMOTE_MCP_CATALOG: readonly Readonly<RemoteMcpCatalogEntry>[] = Ob
   entries.map(entry => Object.freeze({
     ...entry,
     departments: Object.freeze([...entry.departments]),
+    ...(entry.oauthScopes ? { oauthScopes: Object.freeze([...entry.oauthScopes]) } : {}),
     ...(entry.registeredOAuth ? { registeredOAuth: Object.freeze({ ...entry.registeredOAuth, scopes: Object.freeze([...entry.registeredOAuth.scopes]) }) } : {}),
   })),
 );
@@ -163,14 +170,14 @@ export function remoteMcpCatalogEntryForUrl(url: string): Readonly<RemoteMcpCata
 }
 
 /**
- * Whether the connect flow may offer an entry: deferred entries never, and a
- * registered-client entry only when its Matrix-owned OAuth app is configured.
+ * Hide entries pending a provider approval and registered clients without a
+ * configured Matrix-owned OAuth app.
  */
 export function isRemoteMcpCatalogEntryConnectable(
-  entry: Pick<RemoteMcpCatalogEntry, "id" | "auth" | "deferred" | "registeredOAuth">,
+  entry: Pick<RemoteMcpCatalogEntry, "id" | "auth" | "deferred" | "registeredOAuth" | "oauthClientApprovalRequired">,
   hasRegisteredClient: (id: string) => boolean,
 ): boolean {
-  if (entry.deferred) return false;
+  if (entry.deferred || entry.oauthClientApprovalRequired) return false;
   if (entry.auth !== "oauth_registered_client") return true;
   return entry.registeredOAuth !== undefined && hasRegisteredClient(entry.id);
 }

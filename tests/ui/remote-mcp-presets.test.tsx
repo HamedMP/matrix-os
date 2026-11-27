@@ -36,6 +36,8 @@ describe("remote MCP preset derivations", () => {
 
   // Fault: provider names, paths, or database text from a server error reach the UI.
   it("maps server errors to allowlisted copy only", () => {
+    expect(customMcpErrorMessage(409, { code: "oauth_client_approval_required", error: "secret upstream detail" }))
+      .toBe("The provider needs to approve Matrix OS before you can sign in.");
     expect(customMcpErrorMessage(409, { code: "oauth_client_setup_required", error: "secret upstream detail" }))
       .toBe("This service needs administrator setup before you can sign in.");
     expect(customMcpErrorMessage(409, { error: "Revision conflict" })).toBe("This connection changed elsewhere. Refresh and try again.");

@@ -82,7 +82,8 @@ export interface PatchCustomMcpInput {
 
 export class CustomMcpBrokerError extends Error {
   constructor(
-    readonly code: "not_found" | "conflict" | "invalid" | "forbidden" | "upstream" | "action_required" | "oauth_client_setup_required",
+    readonly code: "not_found" | "conflict" | "invalid" | "forbidden" | "upstream" | "action_required"
+      | "oauth_client_setup_required" | "oauth_client_approval_required",
     message = "Custom MCP operation failed",
   ) {
     super(message);
