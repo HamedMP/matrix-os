@@ -9,6 +9,8 @@ import { createMetalVmDeletionDrainer } from './metal-vm-deletions.js';
 import { createLifecycleReader } from './metal-lifecycle-reader.js';
 import { createMetalSleeper, startMetalSleeperWorker, type MetalSleeperWorker } from './metal-sleeper.js';
 import { METAL_MAINTENANCE_LOCK_KEY, METAL_SCHEDULED_WAKE_LOCK_KEY, METAL_SLEEPER_LOCK_KEY, runAsSingleton } from './metal-singleton.js';
+import { PLATFORM_FEATURE_FLAGS, type ServerFeatureFlags } from '../feature-flags/server-flags.js';
+import { createFreeTierSleepSwitch } from '../free-tier/switches.js';
 import type { SubstrateRegistry } from './registry.js';
 import type { OnDemandRuntimeSubstrate } from './types.js';
 
@@ -23,7 +25,12 @@ import type { OnDemandRuntimeSubstrate } from './types.js';
 export const METAL_MAINTENANCE_INTERVAL_MS = 60_000;
 const MIN_PLATFORM_SECRET_LENGTH = 32;
 
-/** The idle sleeper (spec 2691, Task P6) is off unless `MATRIX_FREE_TIER_SLEEP_ENABLED` is `1` or `true`. */
+/**
+ * The idle sleeper (spec 2691, Task P6) is installed only when
+ * `MATRIX_FREE_TIER_SLEEP_ENABLED` is `1` or `true`. That is the capability
+ * gate; the `free-tier-sleep` PostHog flag (ENG-608) then switches suspends on
+ * and off at runtime, while scheduled wakes keep running.
+ */
 export function isFreeTierSleepEnabled(env: NodeJS.ProcessEnv): boolean {
   const flag = env.MATRIX_FREE_TIER_SLEEP_ENABLED?.trim().toLowerCase();
   return flag === '1' || flag === 'true';
@@ -121,6 +128,8 @@ export function createConfiguredMetalRuntime(input: {
   substrates?: SubstrateRegistry;
   /** Signs the platform runtime credential the sleeper reads the gateway lifecycle with. */
   platformSecret?: string;
+  /** Server-side PostHog flags (ENG-608) for the `free-tier-sleep` switch; absent keeps env behavior. */
+  flags?: ServerFeatureFlags;
   log?: Log;
 }): MetalRuntime | undefined {
   const log = input.log ?? defaultLog;
@@ -162,7 +171,7 @@ export function createConfiguredMetalRuntime(input: {
     })
     : undefined;
   const sleeper = input.backgroundWorkersEnabled && isFreeTierSleepEnabled(input.env)
-    ? startConfiguredSleeper(input.db, input.substrates, input.platformSecret, log)
+    ? startConfiguredSleeper(input.db, input.substrates, input.platformSecret, log, input.flags)
     : undefined;
   let closing: Promise<void> | undefined;
   return {
@@ -187,6 +196,7 @@ function startConfiguredSleeper(
   substrates: SubstrateRegistry | undefined,
   platformSecret: string | undefined,
   log: Log,
+  flags: ServerFeatureFlags | undefined,
 ): MetalSleeperWorker | undefined {
   const lookup = substrates?.get('metal');
   const metal = lookup?.ok ? lookup.substrate : undefined;
@@ -202,10 +212,29 @@ function startConfiguredSleeper(
     db,
     substrate: metal as OnDemandRuntimeSubstrate,
     readLifecycle: createLifecycleReader({ substrates, platformSecret }),
+    sleepAllowed: createFreeTierSleepSwitch(flags),
   });
-  return startMetalSleeperWorker({
+  const worker = startMetalSleeperWorker({
     sleeper: { tick: sleeper.sleepTick },
     singleton: (run) => runAsSingleton(db, METAL_SLEEPER_LOCK_KEY, run),
     scheduledWake: { tick: sleeper.wakeTick, singleton: (run) => runAsSingleton(db, METAL_SCHEDULED_WAKE_LOCK_KEY, run) },
   });
+  return connectSleepFlag(flags, worker);
+}
+
+/**
+ * Runs a sleep pass as soon as new definitions change `free-tier-sleep`, so a
+ * flag turned on takes effect within one poll plus the pass in flight instead
+ * of waiting for the next 60 s interval. Unchanged polls trigger nothing.
+ */
+export function connectSleepFlag(flags: ServerFeatureFlags | undefined, worker: MetalSleeperWorker): MetalSleeperWorker {
+  const unsubscribe = flags?.onFlagChange(PLATFORM_FEATURE_FLAGS.freeTierSleep, () => worker.requestSleepPass());
+  return {
+    stop() {
+      unsubscribe?.();
+      worker.stop();
+    },
+    drain: () => worker.drain(),
+    requestSleepPass: () => worker.requestSleepPass(),
+  };
 }

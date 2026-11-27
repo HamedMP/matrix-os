@@ -7,6 +7,7 @@ import {
 import { abandonExpiredUnattachedCheckout, unattachedCheckoutExpiryCutoff } from '../database/checkout-attempts.js';
 import { getActivePrebillingIntent } from '../prebilling-provisioning-store.js';
 import type { MetalProvisioner } from '../substrates/metal-provisioner.js';
+import type { ServerFeatureFlags } from '../feature-flags/server-flags.js';
 import type { FreeTierConfig } from './config.js';
 import { buildFreeEntitlement, FREE_RUNTIME_SLOT } from './free-entitlement.js';
 import {
@@ -17,6 +18,7 @@ import {
   writeFreeEntitlement,
 } from './former-paid-owner.js';
 import { countFreeOwners, getFreeTierInvite, redeemFreeTierInvite } from './invites.js';
+import { createFreeTierSwitches, type FreeTierSwitches } from './switches.js';
 
 /**
  * Admits an owner to the free plan and provisions their free metal runtime
@@ -68,6 +70,8 @@ export interface FreeRuntimeProvisionerDeps {
   db: PlatformDB;
   config: FreeTierConfig;
   metal: Pick<MetalProvisioner, 'provision'> & Partial<Pick<MetalProvisioner, 'failExpiredProvisioning'>>;
+  /** PostHog runtime switches (ENG-608); without them, admission follows the env config alone. */
+  switches?: FreeTierSwitches;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
 }
@@ -114,8 +118,13 @@ function toRecord(machine: { machineId: string; handle: string; runtimeSlot: str
 export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
   const { db, config } = deps;
   const now = deps.now ?? (() => new Date());
+  const switches = deps.switches ?? createFreeTierSwitches(undefined, config);
 
   async function admit(clerkUserId: string): Promise<Admission> {
+    // Local flag evaluation, read before the locks; an admitted owner is not affected by either.
+    const [admissionOpen, inviteRequired] = await Promise.all([
+      switches.admissionOpen(clerkUserId), switches.inviteRequired(clerkUserId),
+    ]);
     return withAccountDeletionOwnerLock(db, clerkUserId, async (trx, admission): Promise<Admission> => {
       if (!admission.newWorkAllowed) return { kind: 'deletion_pending' };
       const current = await getActiveUserMachineByClerkId(trx, clerkUserId, FREE_RUNTIME_SLOT);
@@ -140,14 +149,16 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       if (await paidCheckoutPending(trx, clerkUserId, at)) return { kind: 'checkout_pending' };
       // Already admitted: the invite was redeemed and the owner is counted.
       if (free) return { kind: 'admitted' };
-      if (config.inviteRequired) {
+      // `free-tier-enabled` off: no new admissions; the caller answers as it does for any non-free owner.
+      if (!admissionOpen) return { kind: 'plan_unavailable' };
+      if (inviteRequired) {
         const invite = await getFreeTierInvite(trx, clerkUserId);
         if (!invite || invite.consumedAt) return { kind: 'waitlisted' };
       }
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${CAPACITY_LOCK_KEY}, 0))`.execute(trx.executor);
       if (await countFreeOwners(trx) >= config.maxRuntimes) return { kind: 'busy' };
       // Redemption is the last check: every return above leaves the invite unconsumed.
-      if (config.inviteRequired && await redeemFreeTierInvite(trx, clerkUserId) !== 'redeemed') {
+      if (inviteRequired && await redeemFreeTierInvite(trx, clerkUserId) !== 'redeemed') {
         return { kind: 'waitlisted' };
       }
       // Inserts, or replaces an ended paid row; a row that stopped being replaceable throws and rolls back.
@@ -200,7 +211,9 @@ export function createFreeRuntimeProvisioner(deps: FreeRuntimeProvisionerDeps) {
       if (!await paidRightsEnded(db, clerkUserId, atIso)) return false;
       if (await paidCheckoutPending(db, clerkUserId, at)) return false;
       if (free) return true;
-      if (!config.inviteRequired) return true;
+      // The Free offer is shown only while new admissions are open.
+      if (!await switches.admissionOpen(clerkUserId)) return false;
+      if (!await switches.inviteRequired(clerkUserId)) return true;
       const invite = await getFreeTierInvite(db, clerkUserId);
       return Boolean(invite && !invite.consumedAt);
     },
@@ -249,6 +262,8 @@ export function createFreeTierRuntime(input: {
   db: PlatformDB;
   config: FreeTierConfig | undefined;
   metal: (Pick<MetalProvisioner, 'provision'> & Partial<Pick<MetalProvisioner, 'failExpiredProvisioning'>>) | undefined;
+  /** Server-side PostHog flags (ENG-608); unconfigured or absent keeps the env behavior. */
+  flags?: ServerFeatureFlags;
   env?: NodeJS.ProcessEnv;
   log?: (message: string) => void;
 }): { config: FreeTierConfig; provisioner?: FreeRuntimeProvisioner } | undefined {
@@ -261,7 +276,8 @@ export function createFreeTierRuntime(input: {
   return {
     config: input.config,
     provisioner: createFreeRuntimeProvisioner({
-      db: input.db, config: input.config, metal: input.metal, ...(input.env ? { env: input.env } : {}),
+      db: input.db, config: input.config, metal: input.metal,
+      switches: createFreeTierSwitches(input.flags, input.config), ...(input.env ? { env: input.env } : {}),
     }),
   };
 }

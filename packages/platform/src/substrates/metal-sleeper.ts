@@ -96,6 +96,11 @@ export interface MetalSleeperDeps {
   env?: NodeJS.ProcessEnv;
   /** Overrides SUSPEND_WAIT_MS (tests). */
   suspendWaitMs?: number;
+  /**
+   * The `free-tier-sleep` PostHog switch (ENG-608) per owner. False skips the
+   * suspend; scheduled wakes and resuming still run. Absent means sleep is on.
+   */
+  sleepAllowed?: (clerkUserId: string) => Promise<boolean>;
 }
 
 export interface MetalSleeper {
@@ -522,6 +527,8 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
     const idleBefore = new Date(nowMs - IDLE_SLEEP_AFTER_MS);
     const settledBefore = new Date(nowMs - WAKE_SETTLE_MS);
     const recheckBefore = new Date(nowMs - SLEEP_RECHECK_AFTER_MS);
+    // Due again on any later pass, including one triggered by a flag change; it still sorts by stamp, so it rotates.
+    const flagRecheckStamp = new Date(nowMs - SLEEP_RECHECK_AFTER_MS);
     const rows = await db.executor.selectFrom('user_machines as m').selectAll('m')
       .where('m.substrate', '=', 'metal')
       .where('m.status', '=', 'running')
@@ -546,8 +553,12 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
       }
       const machine = mapUserMachine(row);
       try {
+        const sleepAllowed = !deps.sleepAllowed || await deps.sleepAllowed(machine.clerkUserId);
         // Stamped before the check, so a runtime that fails or is skipped rotates behind the others.
-        const stamped = await db.executor.updateTable('user_machines').set({ sleep_checked_at: now })
+        // A runtime skipped only because `free-tier-sleep` is off is due again on the next pass,
+        // so turning the flag on takes effect promptly while the scan still rotates.
+        const stamped = await db.executor.updateTable('user_machines')
+          .set({ sleep_checked_at: sleepAllowed ? now : flagRecheckStamp })
           .where('machine_id', '=', machine.machineId)
           .where('generation', '=', machine.generation)
           .where('status', '=', 'running')
@@ -555,6 +566,10 @@ export function createMetalSleeper(deps: MetalSleeperDeps): MetalSleeper {
           .returning('machine_id')
           .executeTakeFirst();
         if (!stamped) continue;
+        if (!sleepAllowed) {
+          log('sleep_skipped_flag', { machineId: machine.machineId });
+          continue;
+        }
         await sleepOne(machine, now, clock, signal);
       } catch (error: unknown) {
         if (signal.aborted) return;
@@ -602,6 +617,11 @@ export interface MetalSleeperWorker {
   stop(): void;
   /** Resolves when the tick in flight (if any) settles. */
   drain(): Promise<void>;
+  /**
+   * Runs a sleep pass now, or once more right after the one in flight
+   * (single-flight, through the same singleton). Repeated requests coalesce.
+   */
+  requestSleepPass(): void;
 }
 
 /** Ticks now and every `intervalMs`; a busy lane skips its next tick independently. */
@@ -619,17 +639,32 @@ export function startMetalSleeperWorker(input: {
   const controller = new AbortController();
   function lane(runTick: MetalSleeper['tick'], singleton?: (run: () => Promise<void>) => Promise<unknown>) {
     let inFlight: Promise<void> | undefined;
+    let rerun = false;
+    function tick(): void {
+      if (controller.signal.aborted || inFlight) return;
+      const run = () => runTick(now(), controller.signal);
+      inFlight = (singleton ? singleton(run).then(() => undefined) : run())
+        .catch((error: unknown) => {
+          if (!controller.signal.aborted) log('sleeper_tick_failed', { code: errorCode(error) });
+        })
+        .finally(() => {
+          inFlight = undefined;
+          if (!rerun) return;
+          rerun = false;
+          tick();
+        });
+    }
     return {
-      tick(): void {
-        if (controller.signal.aborted || inFlight) return;
-        const run = () => runTick(now(), controller.signal);
-        inFlight = (singleton ? singleton(run).then(() => undefined) : run())
-          .catch((error: unknown) => {
-            if (!controller.signal.aborted) log('sleeper_tick_failed', { code: errorCode(error) });
-          })
-          .finally(() => { inFlight = undefined; });
+      tick,
+      /** At most one pass in flight plus one queued behind it. */
+      request(): void {
+        if (inFlight) rerun = true;
+        else tick();
       },
-      drain: () => inFlight,
+      drain: async () => {
+        // A queued rerun starts in the settle handler; wait for it as well.
+        while (inFlight) await inFlight;
+      },
     };
   }
 
@@ -652,5 +687,6 @@ export function startMetalSleeperWorker(input: {
     async drain() {
       await Promise.all([wake?.drain(), sleep.drain()]);
     },
+    requestSleepPass: () => sleep.request(),
   };
 }

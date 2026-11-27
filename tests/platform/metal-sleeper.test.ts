@@ -14,6 +14,7 @@ import {
   type UserMachineRecord,
 } from '../../packages/platform/src/db.js';
 import { buildFreeEntitlement } from '../../packages/platform/src/free-tier/free-entitlement.js';
+import { createFreeTierSleepSwitch } from '../../packages/platform/src/free-tier/switches.js';
 import { buildPlatformVerificationToken } from '../../packages/platform/src/platform-token.js';
 import { createMetalHostsRepository } from '../../packages/platform/src/substrates/metal-hosts-repository.js';
 import {
@@ -25,6 +26,7 @@ import {
   SCHEDULED_WAKE_LEAD_MS,
   SLEEP_PASS_BUDGET_MS,
   SLEEP_RECHECK_AFTER_MS,
+  SLEEP_CANDIDATES_PER_TICK,
   WAKE_PASS_BUDGET_MS,
   WAKE_RETRY_MAX_MS,
   createMetalSleeper,
@@ -277,6 +279,67 @@ describe('metal idle sleeper', () => {
 
     expect(ensureRunning).not.toHaveBeenCalled();
     expect((await machine(id)).status).toBe('suspended');
+  });
+
+  it('free-tier-sleep off skips suspends but scheduled wakes still run (ENG-608)', async () => {
+    const idle = await seedMachine();
+    const asleep = await seedMachine({ overrides: { status: 'suspended', nextWakeAt: ago(MINUTE) } });
+    const evaluate = vi.fn(async () => false);
+    const flags = { configured: true, evaluate, onFlagChange: () => () => undefined, shutdown: async () => undefined };
+    const { sleeper: s, stop, ensureRunning, readLifecycle } = sleeper({ sleepAllowed: createFreeTierSleepSwitch(flags) });
+
+    await s.tick(NOW);
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(readLifecycle).not.toHaveBeenCalled();
+    expect(await machine(idle)).toMatchObject({ status: 'running' });
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    expect(ensureRunning.mock.calls[0]?.[0]).toMatchObject({ machineId: asleep });
+    expect(evaluate).toHaveBeenCalledWith('free-tier-sleep', { distinctId: (await machine(idle)).clerkUserId });
+    expect(logs).toContainEqual({ event: 'sleep_skipped_flag', fields: { machineId: idle } });
+
+    // Cold start (definitions not loaded) also keeps runtimes awake; turning the flag on resumes sleeping.
+    evaluate.mockResolvedValue(undefined as never);
+    await s.tick(new Date(NOW.getTime() + SLEEP_RECHECK_AFTER_MS));
+    expect(stop).not.toHaveBeenCalled();
+    evaluate.mockResolvedValue(true);
+    await s.tick(new Date(NOW.getTime() + 2 * SLEEP_RECHECK_AFTER_MS));
+    expect(stop.mock.calls.map(([ref]) => (ref as { machineId: string }).machineId)).toContain(idle);
+    expect(await machine(idle)).toMatchObject({ status: 'suspended' });
+  });
+
+  it('free-tier-sleep turned on suspends an idle VM on the next pass, even one triggered seconds later', async () => {
+    const idle = await seedMachine();
+    let allowed = false;
+    const { sleeper: s, stop } = sleeper({ sleepAllowed: async () => allowed });
+
+    await s.tick(NOW);
+    expect(stop).not.toHaveBeenCalled();
+
+    // The flag-change pass (connectSleepFlag) can run well before the next 60 s interval.
+    allowed = true;
+    await s.tick(new Date(NOW.getTime() + 1_000));
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(await machine(idle)).toMatchObject({ status: 'suspended' });
+  });
+
+  it('VMs skipped by free-tier-sleep rotate behind others instead of filling every batch', async () => {
+    // A full batch of owners with sleep off, all idler than the one owner rolled in.
+    for (let i = 0; i <= SLEEP_CANDIDATES_PER_TICK; i += 1) {
+      await seedMachine({ overrides: { lastActivityAt: ago(3 * HOUR) } });
+    }
+    const target = await seedMachine();
+    const targetOwner = (await machine(target)).clerkUserId;
+    const sleepAllowed = vi.fn(async (owner: string) => owner === targetOwner);
+    const { sleeper: s, stop } = sleeper({ sleepAllowed });
+
+    await s.tick(NOW);
+    expect(stop).not.toHaveBeenCalled();
+    await s.tick(new Date(NOW.getTime() + METAL_SLEEP_INTERVAL_MS));
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(stop.mock.calls[0]?.[0]).toMatchObject({ machineId: target });
+    // Each tick stays bounded while the flag is off.
+    expect(sleepAllowed.mock.calls.length).toBeLessThanOrEqual(2 * SLEEP_CANDIDATES_PER_TICK);
   });
 
   it('never sleeps paid VMs', async () => {

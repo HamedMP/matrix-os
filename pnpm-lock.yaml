@@ -1137,6 +1137,9 @@ importers:
       postal-mime:
         specifier: 2.6.0
         version: 2.6.0
+      posthog-node:
+        specifier: 5.28.4
+        version: 5.28.4
       prom-client:
         specifier: ^15.1.3
         version: 15.1.3
@@ -25580,7 +25583,7 @@ snapshots:
       react-refresh: 0.14.2
     optionalDependencies:
       '@babel/runtime': 7.29.2
-      expo: 58.0.23(794e4542f44dec5bbd1ef265eb1cc16c)
+      expo: 58.0.23(1b97d579faa71dfb1a075b0653902b84)
     transitivePeerDependencies:
       - '@babel/core'
       - supports-color
