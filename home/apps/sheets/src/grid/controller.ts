@@ -306,6 +306,11 @@ export class SheetGridController {
     filterByActiveValue(this.context);
   }
 
+  /** Applies the active filter again, for a change that moved records between rows. */
+  refreshFilter(): void {
+    refreshFilter(this.context);
+  }
+
   get isFiltered(): boolean {
     return this.context.view.filter !== null;
   }

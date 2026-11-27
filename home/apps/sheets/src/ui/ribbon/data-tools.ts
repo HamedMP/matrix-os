@@ -60,6 +60,8 @@ export function removeDuplicateRows(controller: SheetGridController): DataResult
     tx.workbook.clearRange(sheet, { start: { row: start.row + kept.length, col: start.col }, end }, "contents");
   });
   if (!result.ok) return result;
+  // Records moved up: the filter hides again the rows that now hold what it rejects.
+  controller.refreshFilter();
   return { ok: true, message: `Removed ${removed} duplicate ${removed === 1 ? "row" : "rows"}. ${kept.length} unique ${kept.length === 1 ? "row remains" : "rows remain"}.` };
 }
 

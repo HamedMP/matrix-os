@@ -63,7 +63,7 @@
  * - Structure: `insertRows(where?)`, `deleteRows()`, `insertColumns(where?)`,
  *   `deleteColumns()`, `toggleMerge()`, `toggleFreeze()`.
  * - Sort and filter: `sort(descending?)`, `sortRange(range, keys, hasHeader?)`,
- *   `filter(spec | null)`, `filterByValue()`, `isFiltered`. A filter hides
+ *   `filter(spec | null)`, `filterByValue()`, `refreshFilter()`, `isFiltered`. A filter hides
  *   rows in this view only; nothing in the file changes.
  * - Decorations, for change review, formula tracing and search:
  *   `decorate(layer, decorations)` replaces one named layer and

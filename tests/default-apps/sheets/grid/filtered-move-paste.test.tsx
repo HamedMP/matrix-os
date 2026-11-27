@@ -2,6 +2,7 @@
 import { act, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Workbook } from "../../../../home/apps/_shared/office-engine/index";
+import { removeDuplicateRows } from "../../../../home/apps/sheets/src/ui/ribbon/data-tools";
 import { type GridHarness, editor, press, renderGrid } from "./harness";
 
 afterEach(cleanup);
@@ -156,6 +157,27 @@ describe("sorting a filtered range", () => {
     act(() => h.controller.select({ row: 0, col: 0 }));
     act(() => h.controller.insertColumns("before"));
     expect(h.controller.isFiltered).toBe(false);
+    h.unmount();
+  });
+});
+
+// Outcome: after Remove duplicates the filter still shows exactly the records it matches. Fault: the
+// records move up but the hidden row numbers stay, so a rejected record shows.
+describe("removing duplicates in a filtered range", () => {
+  it("hides the rows the filter rejects after the records move up", async () => {
+    const h = await renderGrid((workbook: Workbook, sheet: string) => {
+      workbook.setRange(sheet, { row: 0, col: 0 }, [["Region", "Amount"], ["East", 1], ["West", 2], ["East", 1], ["West", 3]]);
+    });
+    act(() => h.controller.filter({ range: { start: { row: 0, col: 0 }, end: { row: 4, col: 1 } }, criteria: [{ col: 0, values: ["East"] }] }));
+    act(() => h.controller.select({ start: { row: 0, col: 0 }, end: { row: 4, col: 1 } }));
+    let result: ReturnType<typeof removeDuplicateRows> | null = null;
+    act(() => {
+      result = removeDuplicateRows(h.controller);
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect([1, 2, 3].map((row) => value(h, row, 0))).toEqual(["East", "West", "West"]);
+    const hidden = new Set(h.controller.context.view.filter?.hidden ?? []);
+    expect([1, 2, 3].filter((row) => !hidden.has(row)).map((row) => value(h, row, 0))).toEqual(["East"]);
     h.unmount();
   });
 });
