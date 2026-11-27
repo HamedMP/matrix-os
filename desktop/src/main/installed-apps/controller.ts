@@ -18,9 +18,12 @@ export interface InstalledAppWindowLike {
 
 export type InstalledAppOpenResult = "opened" | "focused" | "not-installed" | "limit" | "unavailable";
 
+/** A macOS app shim the window is created in; it cannot change after creation. */
+export interface InstalledAppOpenContext { appShim?: unknown }
+
 export interface InstalledAppWindowControllerOptions<W extends InstalledAppWindowLike> {
   getRecord(installId: string): Promise<InstalledAppRecord | null>;
-  create(record: InstalledAppRecord, bounds: FittedWindowBounds): W;
+  create(record: InstalledAppRecord, bounds: FittedWindowBounds, context: InstalledAppOpenContext): W;
   loadBounds(installId: string): Promise<Required<WindowBounds> | null>;
   saveBounds(installId: string, bounds: Required<WindowBounds>): Promise<void>;
   fitBounds(bounds: WindowBounds): FittedWindowBounds;
@@ -39,8 +42,9 @@ export function createInstalledAppWindowController<W extends InstalledAppWindowL
   options: InstalledAppWindowControllerOptions<W>,
 ) {
   const maxWindows = Math.max(1, Math.min(options.maxWindows ?? MAX_INSTALLED_APP_WINDOWS, MAX_INSTALLED_APP_WINDOWS));
-  // Both maps are bounded by maxWindows: entries are admitted only below the cap.
+  // These maps are bounded by maxWindows: entries are admitted only below the cap.
   const open = new Map<string, W>();
+  const shims = new Map<string, unknown>();
   const pending = new Map<string, Promise<InstalledAppOpenResult>>();
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const saves = new Set<Promise<void>>();
@@ -80,7 +84,16 @@ export function createInstalledAppWindowController<W extends InstalledAppWindowL
     }, STATE_SAVE_DELAY_MS));
   };
 
-  async function create(installId: string): Promise<InstalledAppOpenResult> {
+  /** Takes a window out of the controller (its state saved now), then closes it. */
+  const retire = (installId: string, win: W) => {
+    clearTimer(installId);
+    save(installId, win);
+    open.delete(installId);
+    shims.delete(installId);
+    win.close();
+  };
+
+  async function create(installId: string, context: InstalledAppOpenContext): Promise<InstalledAppOpenResult> {
     let record: InstalledAppRecord | null;
     try {
       record = await options.getRecord(installId);
@@ -96,8 +109,19 @@ export function createInstalledAppWindowController<W extends InstalledAppWindowL
       logFailure("could not read window state", error);
     }
     if (disposed) return "unavailable";
-    const win = options.create(record, options.fitBounds(saved ?? DEFAULT_BOUNDS));
+    // A plain window opened meanwhile (deep link) is replaced by the shim's.
+    const previous = live(installId);
+    if (previous && context.appShim !== undefined) retire(installId, previous);
+    let win: W;
+    try {
+      win = options.create(record, options.fitBounds(saved ?? DEFAULT_BOUNDS), context);
+    } catch (error: unknown) {
+      logFailure("could not create app window", error);
+      return "unavailable";
+    }
     open.set(installId, win);
+    if (context.appShim === undefined) shims.delete(installId);
+    else shims.set(installId, context.appShim);
     win.on("resize", () => scheduleSave(installId, win));
     win.on("move", () => scheduleSave(installId, win));
     // Bounds are still readable on "close": save once, replacing any debounced save.
@@ -110,6 +134,7 @@ export function createInstalledAppWindowController<W extends InstalledAppWindowL
       if (open.get(installId) !== win) return;
       clearTimer(installId);
       open.delete(installId);
+      shims.delete(installId);
     });
     return "opened";
   }
@@ -131,21 +156,39 @@ export function createInstalledAppWindowController<W extends InstalledAppWindowL
       return [...open.keys()].filter((installId) => live(installId));
     },
 
-    /** Opens the install's window, or focuses it. Concurrent calls for one install share a creation. */
-    openOrFocus(installId: string): Promise<InstalledAppOpenResult> {
+    /** The app shim of the install's open window, if it has one. */
+    shimOf(installId: string): unknown {
+      return live(installId) ? shims.get(installId) : undefined;
+    },
+
+    /**
+     * Opens the install's window, or focuses it. Concurrent calls for one
+     * install share a creation. With `appShim`, a window outside that shim is
+     * replaced by one inside it; a plain open focuses a shim's window.
+     */
+    openOrFocus(installId: string, context: InstalledAppOpenContext = {}): Promise<InstalledAppOpenResult> {
       if (disposed) return Promise.resolve("unavailable");
       if (!InstallIdSchema.safeParse(installId).success) return Promise.resolve("not-installed");
       const existing = live(installId);
-      if (existing) {
+      const inPlace = context.appShim === undefined || shims.get(installId) === context.appShim;
+      if (existing && inPlace) {
         focus(existing);
         return Promise.resolve("focused");
       }
       const inFlight = pending.get(installId);
-      if (inFlight) return inFlight;
-      if (this.openCount() + pending.size >= maxWindows) return Promise.resolve("limit");
-      const creation = create(installId).finally(() => { pending.delete(installId); });
+      if (inFlight) return context.appShim === undefined ? inFlight : inFlight.then(() => this.openOrFocus(installId, context));
+      if (!existing && this.openCount() + pending.size >= maxWindows) return Promise.resolve("limit");
+      const creation = create(installId, context).finally(() => { pending.delete(installId); });
       pending.set(installId, creation);
       return creation;
+    },
+
+    /** Writes the window's current state now, replacing any debounced save. */
+    saveNow(installId: string): void {
+      const win = live(installId);
+      if (!win) return;
+      clearTimer(installId);
+      save(installId, win);
     },
 
     closeWhere(select: (installId: string, win: W) => boolean): void {

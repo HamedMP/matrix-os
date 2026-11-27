@@ -1014,6 +1014,7 @@ if (!gotLock) {
       installedApps = installInstalledApps({
         userData, store, auth, appBridge: nativeAppBridge, preloadPath: join(__dirname, "../preload/index.cjs"),
         focusMain: () => restoreMainWindowForDeepLink?.(), deepLinks: deepLinks.installedApps,
+        openUrl: (url) => deepLinks.route(url), channel: channelIdentity.channel, previewHandle: previewContext?.handle,
       });
       if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,

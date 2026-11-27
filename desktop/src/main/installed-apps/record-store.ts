@@ -36,7 +36,8 @@ function errorName(error: unknown): string {
 export interface InstalledAppStore {
   list(): Promise<InstalledAppRecord[]>;
   get(installId: string): Promise<InstalledAppRecord | null>;
-  create(input: NewInstalledApp): Promise<InstalledAppRecord>;
+  /** `installId` lets an installer name its bundle before the record exists; it must be unused. */
+  create(input: NewInstalledApp, options?: { installId?: string }): Promise<InstalledAppRecord>;
   remove(installId: string): Promise<boolean>;
 }
 
@@ -102,8 +103,9 @@ export function createInstalledAppStore(options: {
       return (await read()).records.find((record) => record.installId === installId) ?? null;
     },
 
-    async create(input) {
+    async create(input, createOptions) {
       const parsed = NewInstalledAppSchema.parse(input);
+      const installId = createOptions?.installId === undefined ? randomUUID() : InstallIdSchema.parse(createOptions.installId);
       return serialize(async () => {
         const current = await read();
         if (current.status === "corrupt") {
@@ -112,9 +114,10 @@ export function createInstalledAppStore(options: {
           console.warn("[installed-apps] moved corrupt install records aside");
         }
         if (current.records.length >= MAX_INSTALLED_APPS) throw new InstalledAppLimitError();
+        if (current.records.some((record) => record.installId === installId)) throw new Error("Install id is in use");
         const record: InstalledAppRecord = {
           ...parsed,
-          installId: randomUUID(),
+          installId,
           createdAt: new Date(now()).toISOString(),
         };
         await write([...current.records, record]);

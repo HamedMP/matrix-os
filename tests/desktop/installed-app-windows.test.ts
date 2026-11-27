@@ -51,16 +51,18 @@ describe("installed app window controller", () => {
     loadBounds?: (id: string) => Promise<unknown>;
     saveBounds?: (id: string, bounds: unknown) => Promise<void>;
     maxWindows?: number;
+    createFails?: boolean;
   } = {}) {
     const records = new Map((options.records ?? []).map((item) => [item.installId, item]));
     const windows: Array<ReturnType<typeof fakeWindow>> = [];
-    const created: Array<{ record: InstalledAppRecord; bounds: unknown }> = [];
+    const created: Array<{ record: InstalledAppRecord; bounds: unknown; context: { appShim?: unknown } }> = [];
     const getRecord = vi.fn(options.getRecord ?? (async (id: string) => records.get(id) ?? null));
     const saveBounds = vi.fn(options.saveBounds ?? (async () => undefined));
     const controller = createInstalledAppWindowController({
       getRecord,
-      create: (item, bounds) => {
-        created.push({ record: item, bounds });
+      create: (item, bounds, context) => {
+        if (options.createFails) throw new Error("shim disconnected");
+        created.push({ record: item, bounds, context });
         const win = fakeWindow();
         windows.push(win);
         return win;
@@ -225,5 +227,74 @@ describe("installed app window controller", () => {
     expect(windows[0]!.close).toHaveBeenCalledOnce();
     expect(windows[1]!.close).not.toHaveBeenCalled();
     expect(controller.openCount()).toBe(1);
+  });
+
+  describe("app shims", () => {
+    const shim = { id: "shim-a" };
+
+    it("creates the window inside the shim that asked for it, and focuses it there afterwards", async () => {
+      const item = record();
+      const { controller, created } = setup({ records: [item] });
+      expect(await controller.openOrFocus(item.installId, { appShim: shim })).toBe("opened");
+      expect(created[0]!.context.appShim).toBe(shim);
+      expect(controller.shimOf(item.installId)).toBe(shim);
+      expect(await controller.openOrFocus(item.installId, { appShim: shim })).toBe("focused");
+      expect(created).toHaveLength(1);
+    });
+
+    it("moves a plain window into a shim: its state is saved, it closes, and the shim gets a new one", async () => {
+      const item = record();
+      const { controller, windows, created, saveBounds } = setup({ records: [item] });
+      await controller.openOrFocus(item.installId);
+      windows[0]!.moveTo(300, 200);
+      expect(await controller.openOrFocus(item.installId, { appShim: shim })).toBe("opened");
+      expect(windows[0]!.close).toHaveBeenCalledOnce();
+      expect(saveBounds).toHaveBeenCalledWith(item.installId, { x: 300, y: 200, width: 900, height: 600 });
+      expect(created[1]!.context.appShim).toBe(shim);
+      expect(controller.openCount()).toBe(1);
+      expect(controller.current(item.installId)).toBe(windows[1]);
+      vi.advanceTimersByTime(1000);
+      expect(saveBounds).toHaveBeenCalledTimes(1);
+    });
+
+    it("focuses a shim's window for a plain open instead of taking it out of the shim", async () => {
+      const item = record();
+      const { controller, created, windows } = setup({ records: [item] });
+      await controller.openOrFocus(item.installId, { appShim: shim });
+      expect(await controller.openOrFocus(item.installId)).toBe("focused");
+      expect(created).toHaveLength(1);
+      expect(windows[0]!.focus).toHaveBeenCalled();
+    });
+
+    it("lets a plain creation in flight finish, then moves it into the shim", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const item = record();
+      const { controller, created } = setup({ getRecord: async () => { await gate; return item; } });
+      const plain = controller.openOrFocus(item.installId);
+      const inShim = controller.openOrFocus(item.installId, { appShim: shim });
+      release();
+      expect(await plain).toBe("opened");
+      expect(await inShim).toBe("opened");
+      expect(created.map((entry) => entry.context.appShim)).toEqual([undefined, shim]);
+    });
+
+    it("reports unavailable when the window cannot be created", async () => {
+      const item = record();
+      const { controller } = setup({ records: [item], createFails: true });
+      expect(await controller.openOrFocus(item.installId, { appShim: shim })).toBe("unavailable");
+      expect(controller.openCount()).toBe(0);
+    });
+
+    it("saves a window's state at once, for a shim that quits without close events", async () => {
+      const item = record();
+      const { controller, windows, saveBounds } = setup({ records: [item] });
+      await controller.openOrFocus(item.installId, { appShim: shim });
+      windows[0]!.moveTo(40, 50);
+      controller.saveNow(item.installId);
+      expect(saveBounds).toHaveBeenCalledWith(item.installId, { x: 40, y: 50, width: 900, height: 600 });
+      vi.advanceTimersByTime(1000);
+      expect(saveBounds).toHaveBeenCalledTimes(1);
+    });
   });
 });
