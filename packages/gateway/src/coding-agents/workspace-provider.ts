@@ -273,7 +273,7 @@ export function createWorkspaceCodingAgentProvider(
       const sessionId = sessionIdForThread(thread.id);
       const start = async (scope?: SessionStartScope<Parameters<WorkspaceRuntime["startSession"]>[0], Awaited<ReturnType<WorkspaceRuntime["startSession"]>>>) => {
         const matrixMcp = agent === "codex" ? nativeCodexMcpExecution(principal.userId) : undefined;
-        if (matrixMcp && !options.codexControl?.prepareMatrixMcp) throw new Error("Herdr tools unavailable");
+        if (matrixMcp && !options.codexControl?.prepareMatrixMcp) throw new Error("Terminal Control tools unavailable");
         const browser = agent === "codex" ? nativeBrowserExecution(principal.userId) : undefined;
         if (agent === "codex") nativeCodexRoutineAdmission(principal.userId)?.prepare(sessionId);
         if (browser && !options.codexControl?.prepareBrowser) throw new Error("Browser startup unavailable");

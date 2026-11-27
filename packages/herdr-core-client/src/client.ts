@@ -40,7 +40,7 @@ export class HcVersionMismatchError extends Error {
 export class HcProtocolError extends Error {
   constructor() { super("local terminal runtime protocol error"); this.name = "HcProtocolError"; }
 }
-const AttachedSchema = z.object({ channel: z.number().int().min(1).max(0xffff_ffff) });
+const AttachedSchema = z.object({ channel: z.number().int().min(1).max(0xffff_ffff), terminal: z.unknown().optional() });
 export class HcCallError extends Error {
   constructor(readonly kind: string) { super("local terminal call failed"); this.name = "HcCallError"; }
 }
@@ -71,6 +71,8 @@ export interface HcStreamHandlers {
    */
   onData(chunk: Buffer, consumed: () => void): void;
   onClose(): void;
+  /** A scoped caller can pin the specific process this channel reported at attachment time. */
+  acceptTerminal?(terminal: unknown): boolean;
 }
 
 interface PendingCall {
@@ -170,6 +172,10 @@ export function connectHc(options: { open(): HcSocket; timeoutMs?: number } & Hc
           const attached = AttachedSchema.parse(reply);
           // A channel that is still open here was reused: trust neither stream.
           if (streams.has(attached.channel)) throw new HcProtocolError();
+          if (handlers.acceptTerminal && !handlers.acceptTerminal(attached.terminal)) {
+            socket.write(encodeFrame(attached.channel, HC_FRAME.CLOSE, Buffer.alloc(0)));
+            throw new HcCallError("not_found");
+          }
           streams.set(attached.channel, handlers);
         });
         const { channel } = AttachedSchema.parse(result);

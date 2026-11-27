@@ -19,6 +19,7 @@ export interface ChatDesktopLease {
 
 export interface ChatTerminalSelection {
   desktop?: ChatDesktopLease;
+  worktreeId?: string;
   revision: string;
   signal: AbortSignal;
   inputActivity: TerminalInputActivity;
@@ -34,6 +35,8 @@ export function herdrProcessRevision(salt: string, generation: number, process: 
 type ListedProcesses = { generation: number; terminals: HcListedProcess[] };
 interface ChatTerminalSource {
   salt: string;
+  /** Remote inspection issues a revision only while the configured worktree and machine remain current. */
+  qualifiedRemote?: true;
   inspect(): Promise<ListedProcesses>;
   current(generation: number): boolean;
   workspace(): Promise<TerminalWorkspace | null>;
@@ -72,6 +75,10 @@ export async function bindHerdrChatTerminal(
   const expectedDirectory = desktop ? null : await herdrDirectoryIdentity(root);
   async function matches(process: HcListedProcess) {
     if (desktop) return process.selectionRevision === revision && await desktop.validate();
+    if (source.qualifiedRemote) {
+      return Boolean(expectedDirectory && process.selectionRevision === revision
+        && await herdrDirectoryIdentity(root) === expectedDirectory);
+    }
     if (!expectedDirectory || !process.identity) return false;
     const [rootNow, directory] = await Promise.all([
       herdrDirectoryIdentity(root), herdrDirectoryIdentity(process.identity.cwd),
@@ -117,6 +124,7 @@ export async function bindHerdrChatTerminal(
         return screen;
       },
       async writeInput(_ref, data) {
+        if (source.qualifiedRemote) await check();
         // Pin the attachment first. A changing process or connection cannot
         // redirect these bytes to a new session between the check and the write.
         const writer = await source.writer(id);

@@ -1,7 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CanonicalChatResourceReference } from "@matrix-os/contracts";
+import { LEGACY_TERMINAL_CONTROL_COMMAND, TERMINAL_CONTROL_COMMAND } from "@matrix-os/contracts/herdr-terminals";
 import { Button } from "@matrix-os/ui";
-import { HerdrControlPicker, herdrControlCommand } from "@matrix-os/ui/herdr-sessions";
+import { HerdrControlPicker } from "@matrix-os/ui/herdr-sessions";
 import type { ApiClient } from "../../lib/api";
 import { herdrSessionsRequest } from "../terminal/herdr-desktop-session";
 import type { ComposerMentionAction } from "./ComposerMentionActions";
@@ -28,6 +29,8 @@ export function requestedHerdrTerminal(text: string): string | undefined {
   // A pasted address also works without an English command or a display-name guess.
   const desktop = /^(?:(?:please\s+)?(?:use\s+|select\s+)|(?:请)?(?:使用|用)\s*)?`?(desktop:[a-f0-9]{64}\/t[0-9]{1,6}[a-z]{0,2})`?(?=$|[\s,.:，。、：])/iu.exec(draft);
   if (desktop) return desktop[1]!.toLowerCase();
+  const machine = /^(?:(?:please\s+)?(?:use\s+|select\s+)|(?:请)?(?:使用|用)\s*)?`?((?:machine:|herdr:)[a-z0-9][a-z0-9._-]{0,31}\/t[0-9]{1,6}[a-z]{0,2})`?(?=$|[\s,.:，。、：])/iu.exec(draft);
+  if (machine) return machine[1]!.toLowerCase();
   const explicit = /^(?:please\s+)?(?:use\s+|select\s+|(?:请)?(?:使用|用)\s*)`?gateway\/([\p{L}\p{N}_-]{1,64})`?(?=$|[\s,.:，。、：])/iu.exec(draft);
   if (explicit) return explicit[1];
   // Match a short, explicit selection on *this* computer. Other phrasing is
@@ -66,8 +69,9 @@ export function HerdrChatControlAction({ control, children }: {
     return () => { current.current = null; };
   }, [target]);
   const action: ComposerMentionAction = {
-    label: "Control a Herdr terminal", keywords: "herdr terminal control",
-    slashCommand: herdrControlCommand.descriptorId,
+    label: "Terminal Control", keywords: "control terminal computer",
+    slashCommand: TERMINAL_CONTROL_COMMAND.descriptorId,
+    legacySlashCommand: LEGACY_TERMINAL_CONTROL_COMMAND.descriptorId,
     select: () => { if (identity) setChoice({ identity, target: null, requestedTarget }); },
   };
   const choosing = Boolean(identity && (currentChoice || requestedTarget) && !target && !currentChoice?.dismissed);

@@ -160,7 +160,8 @@ describe("native Codex Terminal MCP capability", () => {
     } as const;
     const config = codexTerminalMcpThreadConfig(lease);
     expect(JSON.stringify(config)).not.toContain(lease.token);
-    expect(config["mcp_servers.matrix-herdr"]).toMatchObject({
+    expect(config["mcp_servers.matrix-herdr"]).toMatchObject({ enabled: false });
+    expect(config["mcp_servers.matrix-terminal"]).toMatchObject({
       args: ["--require-scoped-capability", "--tool-surface=chat-herdr", "--harness=codex"],
       enabled_tools: ["terminal_list", "terminal_read", "terminal_send", "terminal_interrupt"],
       env_vars: ["MATRIX_HERDR_RUN_TOKEN", "GATEWAY_URL"],
@@ -173,6 +174,29 @@ describe("native Codex Terminal MCP capability", () => {
       MATRIX_HERDR_RUN_TOKEN: lease.token,
       GATEWAY_URL: "http://127.0.0.1:4250",
     });
+  });
+
+  it("admits the new structured Terminal Control command and still accepts the stored legacy command", () => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: "owner" });
+    const scope = createCodexMcpRunScope({ issuer: registry, gatewayPort: 4000 });
+    const base = input(new AbortController().signal);
+    try {
+      const old = scope.open(base);
+      expect(old).toBeDefined();
+      old?.close();
+      const parts = base.parts.map(part => part.type === "invocation_reference"
+        ? { ...part, invocation: { ...part.invocation, descriptorId: "terminal-control", invocation: "/terminal-control" } }
+        : part);
+      const current = scope.open({ ...base, parts });
+      expect(current).toBeDefined();
+      current?.close();
+      const mismatched = parts.map(part => part.type === "invocation_reference"
+        ? { ...part, invocation: { ...part.invocation, invocation: "/herdr-terminal-control" } }
+        : part);
+      expect(scope.open({ ...base, parts: mismatched })).toBeUndefined();
+    } finally {
+      registry.close();
+    }
   });
 
   it("a terminal reference or slash text alone cannot authorize a terminal, and recovery cannot inherit consent", () => {

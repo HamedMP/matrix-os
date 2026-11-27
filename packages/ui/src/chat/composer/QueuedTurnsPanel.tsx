@@ -1,3 +1,4 @@
+import { displayTerminalControlInvocation } from "@matrix-os/contracts/herdr-terminals";
 import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { GripVerticalIcon, MoreHorizontal, PencilIcon, Trash2 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -12,7 +13,7 @@ function queuedTurnLabel(turn: CanonicalChatQueuedTurn): string {
     if (part.type === "text" && part.text.trim()) return part.text.trim();
     if (part.type === "attachment_reference") return part.label;
     if (part.type === "resource_reference") return part.resource.label;
-    if (part.type === "invocation_reference") return part.invocation.invocation;
+    if (part.type === "invocation_reference") return displayTerminalControlInvocation(part.invocation);
   }
   return "Queued message";
 }

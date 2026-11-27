@@ -4,10 +4,21 @@ import { describe, expect, it } from "vitest";
 import { HERDR_TERMINAL_WORKSPACE_ID } from "@matrix-os/contracts/herdr-terminals";
 import { createHerdrAdapter } from "../../packages/gateway/src/herdr/adapter.js";
 import { herdrTabId } from "../../packages/gateway/src/herdr/refs.js";
-import { createHerdrSessionsFromEnv, herdrTerminalLookup } from "../../packages/gateway/src/herdr/register.js";
+import { createHerdrSessionsFromEnv, herdrTerminalLookup, herdrTransportOptions } from "../../packages/gateway/src/herdr/register.js";
 import { createFakeHerdrCore } from "./fixtures/fake-herdr-core-server.js";
 
 describe("Herdr sessions gateway switch", () => {
+  it("opens the configured user Core without passing Gateway secrets to its shells", () => {
+    expect(herdrTransportOptions({
+      MATRIX_HERDR: "on", MATRIX_HERDR_CORE_BIN: "/home/matrix/bin/hc",
+      HOME: "/home/matrix", PATH: "/usr/bin:/bin", HC_SESSION: "eng495", XDG_RUNTIME_DIR: "/run/user/1000",
+      SSH_AUTH_SOCK: "/run/user/1000/ssh.sock", DATABASE_URL: "fixture secret", MATRIX_AUTH_TOKEN: "fixture token",
+    })).toEqual({
+      bin: "/home/matrix/bin/hc",
+      env: { HOME: "/home/matrix", PATH: "/usr/bin:/bin", HC_SESSION: "eng495", XDG_RUNTIME_DIR: "/run/user/1000",
+        SSH_AUTH_SOCK: "/run/user/1000/ssh.sock" },
+    });
+  });
   it("stays off unless MATRIX_HERDR=on", () => {
     expect(createHerdrSessionsFromEnv({})).toBeNull();
     expect(createHerdrSessionsFromEnv({ MATRIX_HERDR: "off" })).toBeNull();

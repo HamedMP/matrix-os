@@ -15,7 +15,7 @@ export type HerdrSessionsRequest = (path: string, init: { method: "GET" | "DELET
 export const HIDDEN_HERDR_SESSIONS: HerdrSessionList = { available: false, status: "unavailable", sessions: [] };
 
 export class HerdrSessionsRequestError extends Error {
-  constructor() { super("Herdr sessions are unavailable"); this.name = "HerdrSessionsRequestError"; }
+  constructor() { super("Terminal sessions are unavailable"); this.name = "HerdrSessionsRequestError"; }
 }
 
 /** The current list, or the hidden list when the gateway cannot say (no Herdr UI then). */

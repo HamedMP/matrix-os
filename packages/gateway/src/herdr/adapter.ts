@@ -12,10 +12,11 @@ import {
 } from "@matrix-os/contracts/herdr-terminals";
 import { HcCallError, HcProtocolError, type HcSocket } from "@matrix-os/herdr-core-client/client";
 import { ZodError } from "zod/v4";
-import { createAttachmentSlots } from "@matrix-os/herdr-core-client/sessions";
+import { createAttachmentSlots, type HcAttachOptions, type HcListedProcess } from "@matrix-os/herdr-core-client/sessions";
 import { createHerdrSessionHost, type HerdrLaunch, type HerdrSessionHostStatus } from "@matrix-os/herdr-core-client/session-host";
 import type { TerminalAgentStatusEntry } from "@matrix-os/terminal-runtime";
 import { bindHerdrChatTerminal, herdrDirectoryIdentity, herdrProcessRevision, type ChatTerminalSelection } from "./chat-terminal.js";
+import { acceptRemoteAttachment, remoteTerminalRevision, type HerdrChatRemoteWorktree } from "./chat-remote.js";
 import { createHerdrRefMap, herdrTerminalRef } from "./refs.js";
 
 const { Terminal: HeadlessTerminal } = headless;
@@ -112,12 +113,16 @@ export function createHerdrAdapter(options: {
   captureMaxMs?: number;
   /** One core call's deadline; see `HerdrSessionHostOptions.callTimeoutMs`. */
   callTimeoutMs?: number;
+  remoteWorktrees?: readonly HerdrChatRemoteWorktree[];
 }) {
   const now = options.now ?? Date.now;
   const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
   const captureQuietMs = options.captureQuietMs ?? DEFAULT_CAPTURE_QUIET_MS;
   const captureMaxMs = options.captureMaxMs ?? DEFAULT_CAPTURE_MAX_MS;
   const refs = createHerdrRefMap();
+  // A remotely selectable tab must not become reachable through the generic local workspace API.
+  const remoteChatRefs = createHerdrRefMap();
+  const remoteWorktrees = options.remoteWorktrees ?? [];
   const processSalt = randomUUID();
   // Bounded by the attachment slots; entries leave on detach and close.
   const viewers = new Map<number, HerdrAttachmentHandlers>();
@@ -163,6 +168,7 @@ export function createHerdrAdapter(options: {
   }
 
   const host = createHerdrSessionHost({
+    allowMachineInventory: remoteWorktrees.length > 0,
     open,
     slots: createAttachmentSlots(HERDR_MAX_ATTACHMENTS),
     now,
@@ -241,6 +247,13 @@ export function createHerdrAdapter(options: {
           const directoryId = await identity;
           if (directoryId) sessions[i]!.revision = herdrProcessRevision(processSalt, generation, process, directoryId);
         }));
+        if (remoteWorktrees.length > 0 && sessions.length < HERDR_SESSION_LIST_MAX) {
+          try {
+            sessions.push(...await listRemoteChatSessions(HERDR_SESSION_LIST_MAX - sessions.length));
+          } catch (error: unknown) {
+            console.warn("[terminal-control] Remote listing unavailable", listingFailureKind(error));
+          }
+        }
       }
       return { available: true, status: "ready", sessions };
     } catch (error: unknown) {
@@ -252,6 +265,44 @@ export function createHerdrAdapter(options: {
       }
       return unavailable(coarse(host.status()));
     }
+  }
+
+  async function listRemoteChatSessions(limit: number, remember = true): Promise<HerdrSession[]> {
+    const snapshot = await host.listRemoteProcesses();
+    const sessions: HerdrSession[] = [];
+    for (const route of remoteWorktrees) {
+      const directory = await herdrDirectoryIdentity(route.localRoot);
+      for (const process of snapshot.terminals) {
+        if (sessions.length >= limit) return sessions;
+        const revision = remoteTerminalRevision(processSalt, snapshot, process, route, directory);
+        if (!revision) continue;
+        const terminal = process.terminal;
+        const ref = remember ? remoteChatRefs.remember(terminal.id) : herdrTerminalRef(terminal.id);
+        sessions.push({ id: terminal.id.slice(route.machine.length + 1), machine: route.machine,
+          tabId: ref.tabId, title: terminal.title, status: terminal.status, revision });
+      }
+    }
+    return sessions;
+  }
+
+  async function discoverTerminals() {
+    const snapshot = await host.discoverTerminals();
+    if (!snapshot.machines.some(machine => machine.state === "connected")) return snapshot;
+    let candidates: HerdrSession[] = [];
+    if (remoteWorktrees.length > 0) {
+      try {
+        candidates = await listRemoteChatSessions(HERDR_SESSION_LIST_MAX, false);
+      } catch (error: unknown) {
+        console.warn("[terminal-control] Remote inventory unavailable", listingFailureKind(error));
+      }
+    }
+    return {
+      machines: snapshot.machines.map(machine => {
+        if (machine.state !== "connected") return machine;
+        const terminals = candidates.filter(session => session.machine === machine.name);
+        return { ...machine, terminals, ...(terminals.length ? {} : { inventoryOnly: true as const }) };
+      }),
+    };
   }
 
   function noteEnded(sessions: HerdrSession[]): void {
@@ -306,7 +357,7 @@ export function createHerdrAdapter(options: {
 
   async function attach(
     id: string, size: { cols: number; rows: number }, handlers: HerdrAttachmentHandlers,
-    stream: { history?: number; observe?: boolean; selectionRevision?: string } = {},
+    stream: HcAttachOptions = {},
   ): Promise<HerdrAttachment> {
     if (closed) throw new HerdrAdapterError("unavailable");
     let attachId: number;
@@ -350,7 +401,7 @@ export function createHerdrAdapter(options: {
     };
   }
 
-  async function render(id: string, lines: number, selectionRevision?: string): Promise<HerdrScreen> {
+  async function render(id: string, lines: number, stream?: HcAttachOptions): Promise<HerdrScreen> {
     const chunks: string[] = [];
     let total = 0;
     let lastOutputAt = 0;
@@ -364,7 +415,7 @@ export function createHerdrAdapter(options: {
       },
       closed: () => { ended = true; },
     // Watch only: the core never sizes the program to a read's grid.
-    }, { history: lines, observe: true, selectionRevision });
+    }, { ...stream, history: lines, observe: true });
     const started = Date.now();
     try {
       // The paint arrives in a burst; it is complete once the stream goes quiet.
@@ -395,6 +446,16 @@ export function createHerdrAdapter(options: {
     if (!listed.available) return null;
     const finished = [...ended.values()].filter((entry) => now() - entry.at < ENDED_TTL_MS);
     if (listed.sessions.length === 0 && finished.length === 0) return null;
+    return workspaceWithTabs(listed.sessions.map((session, order) => liveTab(session.tabId, session.title, order))
+      .concat(finished.map((entry, index): TerminalWorkspace["tabs"][number] => ({
+        ...liveTab(entry.tabId, entry.title, listed.sessions.length + index),
+        // herdr-core's listing gives no exit code for a terminal that is gone.
+        status: "exited",
+        exitCode: null,
+      }))));
+  }
+
+  function workspaceWithTabs(tabs: TerminalWorkspace["tabs"]): TerminalWorkspace {
     return {
       id: HERDR_TERMINAL_WORKSPACE_ID,
       scope: "main",
@@ -403,37 +464,63 @@ export function createHerdrAdapter(options: {
       revision: 0,
       createdAt: WORKSPACE_CREATED_AT,
       updatedAt: WORKSPACE_CREATED_AT,
-      tabs: listed.sessions.map((session, order): TerminalWorkspace["tabs"][number] => ({
-        id: session.tabId,
-        workspaceId: HERDR_TERMINAL_WORKSPACE_ID,
-        name: displayName(session.title),
-        cwd: "",
-        status: "running",
-        revision: 0,
-        order,
-        accessScope: "owner",
-        createdAt: WORKSPACE_CREATED_AT,
-        updatedAt: WORKSPACE_CREATED_AT,
-      })).concat(finished.map((entry, index): TerminalWorkspace["tabs"][number] => ({
-        id: entry.tabId,
-        workspaceId: HERDR_TERMINAL_WORKSPACE_ID,
-        name: displayName(entry.title),
-        cwd: "",
-        // herdr-core's listing gives no exit code for a terminal that is gone.
-        status: "exited",
-        exitCode: null,
-        revision: 0,
-        order: listed.sessions.length + index,
-        accessScope: "owner",
-        createdAt: WORKSPACE_CREATED_AT,
-        updatedAt: WORKSPACE_CREATED_AT,
-      }))),
+      tabs,
     };
+  }
+
+  function liveTab(tabId: string, title: string, order: number): TerminalWorkspace["tabs"][number] {
+    return {
+      id: tabId, workspaceId: HERDR_TERMINAL_WORKSPACE_ID, name: displayName(title),
+      cwd: "", status: "running", revision: 0, order, accessScope: "owner",
+      createdAt: WORKSPACE_CREATED_AT, updatedAt: WORKSPACE_CREATED_AT,
+    };
+  }
+
+  const currentChatGeneration = (generation: number) =>
+    !closed && !connectionDown && host.isCurrentGeneration(generation);
+
+  const discardOutput: HerdrAttachmentHandlers = {
+    output: (_data, consumed) => consumed(), closed: () => undefined,
+  };
+
+  async function bindRemoteChatTerminal(ref: TerminalRef, root: string, selection: ChatTerminalSelection) {
+    const id = remoteChatRefs.resolve(ref);
+    if (!id || selection.signal.aborted) return null;
+    const [machine] = id.split("/");
+    const worktree = remoteWorktrees.find(row => row.machine === machine && row.worktreeId === selection.worktreeId && row.localRoot === root);
+    if (!worktree) return null;
+    const inspect = async () => {
+      const snapshot = await host.listRemoteProcesses();
+      const directory = await herdrDirectoryIdentity(root);
+      const terminals = snapshot.terminals.filter(process => process.terminal.id === id).flatMap(process => {
+        const revision = remoteTerminalRevision(processSalt, snapshot, process, worktree, directory);
+        return revision ? [{ ...process, selectionRevision: revision }] : [];
+      });
+      return { generation: snapshot.generation, terminals };
+    };
+    const initial = await inspect();
+    const [process] = initial.terminals;
+    if (initial.terminals.length !== 1 || !process || process.selectionRevision !== selection.revision) return null;
+    let attachmentCurrent = true;
+    const matchesAttachment = acceptRemoteAttachment(process);
+    const stream = { acceptTerminal: (terminal: unknown) => {
+      attachmentCurrent &&= matchesAttachment(terminal);
+      return attachmentCurrent;
+    } };
+    return bindHerdrChatTerminal({
+      salt: processSalt,
+      qualifiedRemote: true,
+      inspect,
+      current: generation => attachmentCurrent && generation === initial.generation && currentChatGeneration(generation),
+      workspace: async () => workspaceWithTabs([liveTab(ref.tabId, process.terminal.title, 0)]),
+      screen: (terminalId, lines) => render(terminalId, lines, stream),
+      writer: terminalId => attach(terminalId, sizes.get(terminalId) ?? DEFAULT_INPUT_SIZE, discardOutput, stream),
+    }, id, ref, root, selection);
   }
 
   return {
     list,
-    discoverTerminals: host.discoverTerminals,
+    discoverTerminals,
     listForChatControl: () => load("gateway"),
     listForLinkedChatControl: () => load("desktop"),
     refresh,
@@ -455,21 +542,19 @@ export function createHerdrAdapter(options: {
     async bindChatTerminal(ref: TerminalRef, executionRoot: string, selection: ChatTerminalSelection) {
       const localRef = selection.desktop ? { ...ref, workspaceId: HERDR_TERMINAL_WORKSPACE_ID } : ref;
       const id = refs.resolve(localRef);
-      if (!id) return null;
-      const selectionRevision = selection.desktop ? selection.revision : undefined;
+      if (!id) return selection.desktop ? null : bindRemoteChatTerminal(ref, executionRoot, selection);
+      const stream = { selectionRevision: selection.desktop ? selection.revision : undefined };
       return bindHerdrChatTerminal({
         salt: processSalt,
         inspect: () => host.listProcesses(),
-        current: generation => !closed && !connectionDown && host.isCurrentGeneration(generation),
+        current: currentChatGeneration,
         workspace: async () => {
           const source = await workspace();
           if (!source || !selection.desktop) return source;
           return { ...source, id: ref.workspaceId, tabs: source.tabs.map(tab => ({ ...tab, workspaceId: ref.workspaceId })) };
         },
-        screen: (terminalId, lines) => render(terminalId, lines, selectionRevision),
-        writer: terminalId => attach(terminalId, sizes.get(terminalId) ?? DEFAULT_INPUT_SIZE, {
-          output: (_data, consumed) => consumed(), closed: () => undefined,
-        }, { selectionRevision }),
+        screen: (terminalId, lines) => render(terminalId, lines, stream),
+        writer: terminalId => attach(terminalId, sizes.get(terminalId) ?? DEFAULT_INPUT_SIZE, discardOutput, stream),
       }, id, ref, executionRoot, selection);
     },
 

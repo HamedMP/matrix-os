@@ -249,9 +249,9 @@ function EndedHerdrSessionPane() {
   return (
     <div className="flex h-full w-full items-center justify-center bg-background p-6 text-foreground">
       <div className="flex max-w-sm flex-col items-center gap-3 text-center">
-        <div className="text-sm font-semibold">This Herdr session has ended</div>
+        <div className="text-sm font-semibold">This terminal session has ended</div>
         <p className="m-0 text-xs text-muted-foreground">
-          Close this pane, or open another session from Herdr sessions in the sidebar.
+          Close this pane or open another session from the sidebar.
         </p>
       </div>
     </div>

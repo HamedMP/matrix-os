@@ -4,6 +4,7 @@ export interface ComposerMentionAction {
   label: string;
   keywords: string;
   slashCommand: string;
+  legacySlashCommand?: string;
   select(): void;
 }
 

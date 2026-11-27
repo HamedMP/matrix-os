@@ -407,6 +407,33 @@ describe("canonical Chat presentation adapter", () => {
     });
   });
 
+  it("shows the current Terminal Control label on older selected-terminal messages", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const old = {
+      ...snapshot.messages[0]!,
+      parts: [
+        { type: "text" as const, text: "Inspect the terminal" },
+        {
+          type: "invocation_reference" as const,
+          invocation: { kind: "command" as const, descriptorId: "herdr-terminal-control", invocation: "/herdr-terminal-control" },
+        },
+      ],
+    };
+    const [presented] = canonicalChatPresentation({
+      messages: [old, ...snapshot.messages.slice(1)],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: snapshot.activities,
+    });
+    expect(presented?.user?.references).toContainEqual({
+      id: "herdr-terminal-control", kind: "invocation", label: "/terminal-control",
+    });
+    expect(presented?.user?.content).toContainEqual({
+      id: "herdr-terminal-control", kind: "reference", referenceKind: "invocation", label: "/terminal-control",
+    });
+    expect(old.parts[1]?.invocation?.invocation).toBe("/herdr-terminal-control");
+  });
+
   it("keeps message references, tools, requests, and status separate from assistant text", () => {
     const { snapshot } = createCanonicalChatFixture("completed");
     const user = {

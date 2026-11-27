@@ -532,6 +532,41 @@ details go to server-side logs with the device ID, never the bearer.
 A fresh agent on the computer, asked "do you see my desktop?", must find and use
 the desktop without SSH or Tailscale.
 
+### Terminal Control in private Chat
+
+- **Scope.** The owner of a Main Computer may select a live terminal on that
+  computer, a paired desktop, or an explicitly configured machine the Main
+  Computer reaches through its own terminal Core. For the third case the
+  Main Computer holds the connection and the desktop can be offline.
+- **Entry points.** The composer offers `/terminal-control` and the
+  `matrix-terminal` tools. Older command references remain valid. An
+  owner-authenticated `GET /api/terminal/herdr?view=chat-control` can return a
+  session with a `machine` name, a topology-specific tab ID and an opaque
+  revision. Read-only discovery returns qualified addresses such as
+  `machine:build-host/t2`.
+- **Configuration.** On a non-Preview Gateway, the operator can set
+  `MATRIX_HERDR_CHAT_REMOTE_WORKTREES` to a bounded JSON array whose entries
+  contain `machine`, `machineId` (the Core's registered machine ID),
+  `worktreeId` (the canonical Chat worktree), and absolute `localRoot` and
+  `remoteRoot` checkout paths. Gateway launch passes the Core its user
+  environment and omits service credentials.
+- **Authorization.** Require an explicit selection in a personal Codex
+  run with Full Access. Check the run's worktree, local checkout identity,
+  remote Core ID, remote directory and live process incarnation. Verify the
+  attached channel belongs to the selected process before it can carry input
+  or output. An absent or revoked grant returns 403. A stale target returns
+  409. The remote process retains its operating-system permissions.
+- **Cases.** Without a binding, discovery may report the machine's
+  connectivity. With a binding, the matching terminal can be selected.
+  Duplicate machine or worktree bindings, offline machines and stale terminal
+  revisions cannot grant control. Ordinary terminal lists remain local.
+- **Verification.** Exercise a local and remote terminal with the same
+  numerical ID, discovery without a grant, a stale attachment and revocation.
+  Qualify direct access with a command observed from the target terminal and
+  the same run's reply.
+- **Target resolution.** Carry the machine-qualified tab and revision through
+  admission. Looking up the bare terminal ID can select an unrelated terminal.
+
 - **Terminal pipeline.** Each linked desktop is one more workspace in 2692's
   terminal pipeline (`desktop-link/verb-runtime.ts`), under its desktop workspace id.
   `terminal_list` shows it with `machine: <name>`; `terminal_read`, `_send`,

@@ -6,14 +6,26 @@ import type { RequestPrincipal } from "../request-principal.js";
 import type { TerminalInputActivity } from "../terminal-agent/input-activity.js";
 import type { TerminalLiveOwnership } from "../terminal-live-ownership.js";
 import { createHerdrAdapter, type HerdrAdapter } from "./adapter.js";
+import { readHerdrChatRemoteWorktrees } from "./chat-remote.js";
 import { isHerdrPreviewRuntime, privatePreviewHerdrOwner } from "./private-preview.js";
 import { createHerdrRoutes } from "./routes.js";
 import { createHerdrCoreTransport } from "./transport.js";
 import { registerHerdrTerminalWebSocket } from "./ws.js";
 
+const CORE_USER_ENV = [
+  "HOME", "PATH", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR",
+  "XDG_RUNTIME_DIR", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "SSH_AUTH_SOCK", "HC_SESSION",
+] as const;
+
 export function herdrTransportOptions(env: NodeJS.ProcessEnv, uid = process.getuid?.()) {
   if (!isHerdrPreviewRuntime(env)) {
-    return env.MATRIX_HERDR?.trim().toLowerCase() === "on" ? { env } : null;
+    if (env.MATRIX_HERDR?.trim().toLowerCase() !== "on") return null;
+    // An on-demand Core can start interactive shells. Forward user/session
+    // settings without exporting server configuration to those processes.
+    return {
+      bin: env.MATRIX_HERDR_CORE_BIN?.trim() || undefined,
+      env: Object.fromEntries(CORE_USER_ENV.flatMap(key => env[key] === undefined ? [] : [[key, env[key]]])),
+    };
   }
   if (!privatePreviewHerdrOwner(env) || !uid) return null;
   // The managed terminal and Gateway run as the same matrix user. connect may
@@ -38,6 +50,7 @@ export function createHerdrSessionsFromEnv(env: NodeJS.ProcessEnv = process.env)
   process.once("exit", onExit);
   return createHerdrAdapter({
     open: () => transport.open(),
+    remoteWorktrees: isHerdrPreviewRuntime(env) ? [] : readHerdrChatRemoteWorktrees(env.MATRIX_HERDR_CHAT_REMOTE_WORKTREES),
     closeTransport: () => {
       process.off("exit", onExit);
       transport.close();

@@ -638,7 +638,7 @@ function CanonicalChatWorkspaceContent({
       if (herdr) {
         if (!isCurrentSubmission() || !herdr.isCurrent() || !herdrControl || !chatWorktree
           || submission.projectSkill || submission.invocations.length || submission.resources.length) {
-          setSubmissionError("Select the Herdr terminal again in this worktree before sending.");
+          setSubmissionError("Select the terminal again in this worktree before sending.");
           return;
         }
         parts.push(...herdrControlParts(herdr.target));

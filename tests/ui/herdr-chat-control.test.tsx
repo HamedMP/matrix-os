@@ -21,7 +21,7 @@ it("requires the owner to choose a versioned session before granting control for
   expect(pick).not.toHaveBeenCalled();
   fireEvent.click(row);
   expect(herdrControlParts(pick.mock.calls[0]![0])).toEqual([
-    { type: "invocation_reference", invocation: { kind: "command", descriptorId: "herdr-terminal-control", invocation: "/herdr-terminal-control" } },
+    { type: "invocation_reference", invocation: { kind: "command", descriptorId: "terminal-control", invocation: "/terminal-control" } },
     { type: "resource_reference", resource: { kind: "terminal_session", id: HERDR_TERMINAL_WORKSPACE_ID + ":" + tabId, revision, label: "Local tests" } },
   ]);
 });
@@ -103,4 +103,64 @@ it.each(["workspace", "device"])("refuses a qualified desktop selection with a m
   await screen.findByText("Studio/t1 is unavailable. Ask Chat to list terminals again.");
   expect(request.mock.calls.map(([path]) => path)).toEqual(["/api/desktop-link/machines", `/api/desktop-link/machines/${device}/terminals?view=chat-control`]);
   expect(pick).not.toHaveBeenCalled();
+});
+
+const directTabId = "tt_" + "3".repeat(32);
+const pairedTabId = "tt_" + "4".repeat(32);
+const directTestResponse = async (url: string) => {
+  if (url === "/api/desktop-link/machines") return Response.json({
+    machineId: "aabbccdd-1111-4111-8111-112233445566", machines: [],
+  });
+  return Response.json({ available: true, status: "ready", sessions: [
+    { id: "t1", tabId, revision, title: "Build", status: "idle" },
+    { id: "t1", tabId: directTabId, revision, title: "Build", status: "idle", machine: "devstack-hel1" },
+    { id: "t1", tabId: pairedTabId, revision, title: "Build", status: "idle", machine: "other" },
+    { id: "t2", tabId: "tt_" + "5".repeat(32), title: "Unselectable", status: "idle", machine: "unavailable" },
+  ] });
+};
+
+it("selects a direct SSH terminal by machine and name without a paired desktop", async () => {
+  const pick = vi.fn();
+  render(<HerdrControlPicker request={directTestResponse} computerName="Main Computer" onSelect={pick} onCancel={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "devstack-hel1", exact: true }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Find terminal" }), { target: { value: "build" } });
+  expect(screen.queryByRole("button", { name: "unavailable" })).toBeNull();
+  expect(pick).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole("button", { name: "Build (t1)" }));
+  expect(pick).toHaveBeenCalledWith({ id: HERDR_TERMINAL_WORKSPACE_ID + ":" + directTabId,
+    kind: "terminal_session", label: "Build", revision }, "machine:devstack-hel1/t1");
+});
+
+it("keeps a pasted direct terminal address scoped to its machine", async () => {
+  const pick = vi.fn();
+  render(<HerdrControlPicker request={directTestResponse} requestedTarget="machine:devstack-hel1/t1"
+    onSelect={pick} onCancel={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Use Build (devstack-hel1/t1)" }));
+  expect(pick).toHaveBeenCalledWith(expect.objectContaining({ id: HERDR_TERMINAL_WORKSPACE_ID + ":" + directTabId }),
+    "machine:devstack-hel1/t1");
+});
+
+it("identifies connection sources when a paired desktop and direct connection have the same name", async () => {
+  const { desktopLinkWorkspaceId } = await import("@matrix-os/contracts/desktop-link");
+  const deviceId = "c".repeat(64);
+  const workspaceId = desktopLinkWorkspaceId(deviceId);
+  const pick = vi.fn();
+  const request = async (url: string) => {
+    if (url === "/api/desktop-link/machines") return Response.json({
+      machineId: "aabbccdd-1111-4111-8111-112233445566",
+      machines: [{ deviceId, name: "devstack-hel1", revision: 1, state: "online", lastSeenAt: null }],
+    });
+    if (url === `/api/desktop-link/machines/${deviceId}/terminals?view=chat-control`) return Response.json({
+      deviceId, workspaceId, sessions: [{ id: "t1", tabId: pairedTabId, revision, title: "Build", status: "idle" }],
+    });
+    return directTestResponse(url);
+  };
+  render(<HerdrControlPicker request={request} onSelect={pick} onCancel={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: "devstack-hel1 · Paired desktop" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Build (t1)" }));
+  expect(pick.mock.calls[0]?.[0]).toMatchObject({ id: workspaceId + ":" + pairedTabId });
+  fireEvent.click(screen.getByRole("button", { name: "devstack-hel1 · Direct connection" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Build (t1)" }));
+  expect(pick).toHaveBeenLastCalledWith(expect.objectContaining({ id: HERDR_TERMINAL_WORKSPACE_ID + ":" + directTabId }),
+    "machine:devstack-hel1/t1");
 });

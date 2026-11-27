@@ -1,3 +1,4 @@
+import { displayTerminalControlInvocation } from "@matrix-os/contracts/herdr-terminals";
 import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatContextReceipt, hasChatMentionParts } from "@matrix-os/ui";
 
@@ -5,7 +6,7 @@ import { ChatContextReceipt, hasChatMentionParts } from "@matrix-os/ui";
 export function QueuedTurnEditContext({ turn }: { turn: CanonicalChatQueuedTurn }) {
   const references = turn.parts.flatMap((part) => {
     if (part.type === "resource_reference") return [{ key: `${part.type}:${part.resource.kind}:${part.resource.id}`, label: part.resource.label }];
-    if (part.type === "invocation_reference") return [{ key: `${part.type}:${part.invocation.descriptorId}`, label: part.invocation.invocation }];
+    if (part.type === "invocation_reference") return [{ key: `${part.type}:${part.invocation.descriptorId}`, label: displayTerminalControlInvocation(part.invocation) }];
     if (part.type === "attachment_reference") return [{ key: `${part.type}:${part.attachmentId}`, label: part.label }];
     return [];
   });

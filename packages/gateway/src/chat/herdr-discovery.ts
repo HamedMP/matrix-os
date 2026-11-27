@@ -74,13 +74,18 @@ export async function discoverChatTerminals(
   adapter: Pick<HerdrAdapter, "discoverTerminals"> | null, input: Query, desktops?: DesktopLinkRegistry | null,
 ) {
   const sources: Array<Promise<() => Inventory>> = [];
-  const needGateway = !input.machine || input.machine === "gateway" || input.machine.startsWith("herdr:");
+  const requestedMachine = input.machine?.replace(/^herdr:/, "machine:");
+  const needGateway = !requestedMachine || requestedMachine === "gateway" || requestedMachine.startsWith("machine:");
   if (adapter && needGateway) {
     sources.push(adapter.discoverTerminals().then(({ machines }) => () => ({
-      machines: machines.map(machine => machine.state ? {
-        ...machine, online: machine.state === "connected" ? true : null,
-        source: "herdr" as const, via: { id: "gateway", name: "Current Matrix computer" },
-      } : machine),
+      machines: machines.map(machine => ({
+        ...machine,
+        id: machine.id.replace(/^herdr:/, "machine:"),
+        ...(machine.state ? {
+          online: machine.state === "connected" ? true : null,
+          source: "herdr" as const, via: { id: "gateway", name: "Current Matrix computer" },
+        } : {}),
+      })),
     })));
   }
   if (desktops) {
@@ -128,7 +133,7 @@ export async function discoverChatTerminals(
       Number(b.online) - Number(a.online) || a.id.localeCompare(b.id));
     const result = page(filtered, offset);
     return {
-      ...completeness, source: "Current Matrix computer and computers reported by its Herdr or paired desktops",
+      ...completeness, source: "Current Matrix computer and computers reported by it or its paired desktops",
       total: result.total, nextOffset: result.nextOffset,
       machines: result.items.map(machine => ({
         id: machine.id, name: nameOf(machine), online: machine.online,
@@ -143,7 +148,7 @@ export async function discoverChatTerminals(
       })),
     };
   }
-  const selected = input.machine ? filtered.find(m => m.id === input.machine) : undefined;
+  const selected = requestedMachine ? filtered.find(m => m.id === requestedMachine) : undefined;
   if (input.machine && !selected) return { ...completeness, machine: input.machine, status: "not_listed" };
   if (selected?.inventoryOnly) return { machine: selected.id, name: selected.name, status: "inventory_only", state: selected.state, via: selected.via, source: selected.source, core: selected.core, runtimeSlot: selected.runtimeSlot };
   if (selected?.terminalInventory === "unavailable") return { machine: selected.id, status: "terminal_inventory_unavailable" };

@@ -1,3 +1,4 @@
+import { displayTerminalControlInvocation } from "@matrix-os/contracts/herdr-terminals";
 import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { importedChatAssetContentPath, type CanonicalChatMessage } from "@matrix-os/contracts";
 import { filePreviewContentUrl } from "@matrix-os/ui";
@@ -45,7 +46,7 @@ export function messagePresentation(
     } else if (part.type === "resource_reference") {
       references.push({ id: part.resource.id, kind: "resource", label: part.resource.label });
     } else if (part.type === "invocation_reference") {
-      references.push({ id: part.invocation.descriptorId, kind: "invocation", label: part.invocation.invocation });
+      references.push({ id: part.invocation.descriptorId, kind: "invocation", label: displayTerminalControlInvocation(part.invocation) });
     }
   }
   const content = messageContent(message, markdown);
@@ -90,7 +91,7 @@ function messageContent(
         kind: "reference" as const,
         id: part.invocation.descriptorId,
         referenceKind: "invocation" as const,
-        label: token,
+        label: displayTerminalControlInvocation(part.invocation),
       };
       if (start >= 0) matches.push({ start, end: start + token.length, segment });
       else unmatched.push(segment);

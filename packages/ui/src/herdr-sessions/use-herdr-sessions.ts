@@ -5,7 +5,7 @@ import {
 } from "./herdr-sessions-client.js";
 
 const DEFAULT_INTERVAL_MS = 5_000;
-export const HERDR_CLOSE_FAILED_MESSAGE = "Could not close the Herdr session. Try again.";
+export const HERDR_CLOSE_FAILED_MESSAGE = "Could not close the terminal session. Try again.";
 
 /**
  * The owner's Herdr sessions, refreshed every few seconds while mounted. A
