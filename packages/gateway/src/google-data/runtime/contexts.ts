@@ -120,12 +120,14 @@ export function createGoogleContextStore<DB>(db: Kysely<DB>, options: GoogleCont
       contextOpaque.parse(ownerId); contextOpaque.parse(chatId);
       return boundedProvenanceTransaction(db, async tx => { const row = await read(tx, ownerId, chatId); return row ? project(row) : null; });
     },
-    async mark(value: GoogleContextMark): Promise<GoogleContext> {
+    async mark(value: GoogleContextMark, admit?: (tx: Transaction<DB>, ownerId: string, chatId: string) => Promise<void>): Promise<GoogleContext> {
       const input = contextMarkSchema.parse(value);
       if (!validDeadline(input.expiresAt) || !validDeadline(input.retentionDeadline)
         || new Date(input.retentionDeadline).getTime() > now().getTime() + 30 * 86_400_000) contextDeny();
       return boundedProvenanceTransaction(db, async tx => {
         await lockGoogleContexts(tx);
+        // Admission and the first marker share the fence and the commit boundary.
+        await admit?.(tx, input.ownerId, input.chatId);
         if (!validDeadline(input.expiresAt) || !validDeadline(input.retentionDeadline)) contextDeny();
         const originId = googleContextOriginId(input.ownerId, input.googleAccountId, input.consentId);
         const existing = (await sql<{ profile_id: string; profile_revision: number; purpose_id: string; state: string }>`SELECT profile_id,profile_revision,purpose_id,state

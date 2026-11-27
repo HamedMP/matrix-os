@@ -4,7 +4,7 @@ import { sql, type Kysely } from 'kysely';
 import type { ChatDatabase } from '../chat/database.js';
 import type { ChatRepository } from '../chat/repository.js';
 import { toOutbox } from '../chat/records.js';
-import type { ManagedPiStoppedRunReceipt, ManagedPiStopInput } from '../chat/managed-pi-quiescence.js';
+import { ManagedPiStopUnavailable, type ManagedPiStoppedRunReceipt, type ManagedPiStopInput } from '../chat/managed-pi-quiescence.js';
 import type { BotRuntimeRegistry } from '../bots/runtime-registry.js';
 import type { ExecutionAdmissionFence } from '../execution-admission-fence.js';
 import type { GooglePilotStorage } from './google-pilot-storage.js';
@@ -261,16 +261,26 @@ export async function createGooglePilotCopyLifecycle(options: {
                 deny();
             for (const row of affected.rows)
                 await quiesceChat(row.chat_id);
+            // At most 500 selected copies. A missing proof withholds only that copy.
+            const unverified = new Set<string>();
             for (const copy of rows.rows) {
-                if (copy.kind === 'derived' && copy.entity_ref.startsWith('gae_'))
-                    await options.storage.activity.quiesceCopy(options.ownerId, copy.entity_ref, closing.signal);
-                if (copy.kind === 'derived' && /^(grc_|gqc_)/.test(copy.entity_ref))
-                    await options.storage.context.quiesceCopy(options.ownerId, copy.entity_ref, closing.signal);
+                if (copy.kind !== 'derived') continue;
+                try {
+                    if (copy.entity_ref.startsWith('gae_'))
+                        await options.storage.activity.quiesceCopy(options.ownerId, copy.entity_ref, operationSignal);
+                    if (/^(grc_|gqc_)/.test(copy.entity_ref))
+                        await options.storage.context.quiesceCopy(options.ownerId, copy.entity_ref, operationSignal);
+                } catch (error: unknown) {
+                    admitted();
+                    if (!(error instanceof GoogleProvenanceUnavailable) && !(error instanceof ManagedPiStopUnavailable)) throw error;
+                    unverified.add(copy.entity_ref);
+                }
                 admitted();
             }
             const handlerWork = new Set<Promise<unknown>>();
             function track(handler: NonNullable<PurgeHandlers['derived']>): NonNullable<PurgeHandlers['derived']> { return input => { admitted(); const work = handler({ ...input, signal: AbortSignal.any([input.signal, operationSignal!]) }); handlerWork.add(work); void work.then(() => { handlerWork.delete(work); }, (error: unknown) => { handlerWork.delete(work); console.warn('[google-data] Copy handler failed', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' }); }); return work; }; }
-            const handlers: PurgeHandlers = { session: track(sessions), derived: track(input => input.entityRef.startsWith('cm_') ? canonical(input) : input.entityRef.startsWith('gae_') ? options.storage.activity.delete(input) : /^(grc_|gqc_)/.test(input.entityRef) ? options.storage.context.delete(input) : Promise.resolve({ status: 'unavailable' })) };
+            const handlers: PurgeHandlers = { session: track(sessions), derived: track(input => unverified.has(input.entityRef) ? Promise.resolve({ status: 'unavailable' })
+                : input.entityRef.startsWith('cm_') ? canonical(input) : input.entityRef.startsWith('gae_') ? options.storage.activity.delete(input) : /^(grc_|gqc_)/.test(input.entityRef) ? options.storage.context.delete(input) : Promise.resolve({ status: 'unavailable' })) };
             try {
                 for (let i = 0; i < rows.rows.length; i++) {
                     admitted();

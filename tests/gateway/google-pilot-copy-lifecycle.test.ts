@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sql } from 'kysely';
+import type { ChatRunContext } from '@matrix-os/contracts';
 import { createAuthorityFixture } from './google-data/fixture-db.js';
 import { ChatRepository } from '../../packages/gateway/src/chat/repository.js';
 import { createOwnerChatHistoryRepository } from '../../packages/gateway/src/startup/chat-history.js';
@@ -7,6 +8,7 @@ import { createGooglePilotCopyLifecycle } from '../../packages/gateway/src/start
 import { createGoogleContextStore } from '../../packages/gateway/src/google-data/runtime/contexts.js';
 import { createExecutionAdmissionFence } from '../../packages/gateway/src/execution-admission-fence.js';
 import { bootstrapCollaborationDatabase } from '../../packages/gateway/src/collaboration/database.js';
+import { ManagedPiStopUnavailable } from '../../packages/gateway/src/chat/managed-pi-quiescence.js';
 import { BotRuntimeRegistry } from '../../packages/gateway/src/bots/runtime-registry.js';
 const owner = { type: 'personal' as const, ownerId: 'owner-one' };
 const account = '123e4567-e89b-42d3-a456-426614174000';
@@ -15,7 +17,7 @@ let db: Awaited<ReturnType<typeof createAuthorityFixture>>['db'] | undefined;
 let lifecycle: Awaited<ReturnType<typeof createGooglePilotCopyLifecycle>> | undefined;
 let registry: BotRuntimeRegistry | undefined;
 afterEach(async () => { await lifecycle?.close(); lifecycle = undefined; registry?.shutdown(); await db?.destroy(); db = undefined; });
-async function admit(repo: ChatRepository, suffix = 'one', subject = { type: 'personal' as const, ownerId: 'owner-one' }) {
+async function admit(repo: ChatRepository, suffix = 'one', subject = { type: 'personal' as const, ownerId: 'owner-one' }, context?: ChatRunContext) {
     const chatId = `chat_${suffix}`;
     const created = await repo.create(subject, { id: chatId, clientRequestId: `req_create_${suffix}`, title: 'Synthetic' });
     const at = new Date().toISOString();
@@ -25,7 +27,7 @@ async function admit(repo: ChatRepository, suffix = 'one', subject = { type: 'pe
         inputMessageId: message.id, status: 'accepted' as const, createdAt: at, updatedAt: at };
     const run = { id: `run_${suffix}`, chatId, turnId: turn.id, attempt: 1, driverKind: 'codex' as const,
         instanceId: 'codex_default', selection: { instanceId: 'codex_default', model: 'synthetic' },
-        interactionMode: 'default' as const, permissionMode: 'supervised' as const, status: 'accepted' as const, historyBoundarySeq: 0,
+        interactionMode: 'default' as const, permissionMode: 'supervised' as const, status: 'accepted' as const, historyBoundarySeq: 0, ...(context ? { context } : {}),
         capabilitySnapshot: { revision: 'catalog_1', rootChat: true, attachments: ['file' as const], resources: ['file' as const],
             tools: ['read'], approvals: true, userInput: true, resume: true, cancellation: true, steering: 'same_run' as const,
             worktrees: 'optional' as const, interactionModes: ['default' as const], permissionModes: ['supervised' as const] }, createdAt: at, updatedAt: at };
@@ -132,6 +134,36 @@ describe('durable exact-owner pilot copy cleanup', () => {
         await expect(lifecycle!.purgeAccount(command)).rejects.toThrow();
         expect(JSON.stringify((await f.repository.kysely.selectFrom('chat_run_events').select('event').where('chat_id','=','chat_two').execute()))).toContain('synthetic retained activity');
         expect(f.stop.mock.calls.some(([input])=>input.runId==='run_two')).toBe(false);
+    });
+    it.each(['activity', 'snapshot'] as const)('erases verified copies when a finished run has no stop proof for its %s', async kind => {
+        const f = await fixture(true);
+        await f.repository.create(owner, { id: 'chat_two', clientRequestId: 'req_create_two', title: 'Synthetic' });
+        const source = (await f.contexts.sourcesForAccount(owner.ownerId, account))[0]!;
+        await f.contexts.mark({ ownerId: owner.ownerId, chatId: 'chat_two', googleAccountId: account,
+            consentId: source.consentId, profileId: source.profileId, profileRevision: source.profileRevision,
+            purposeId: source.purposeId, expiresAt: source.expiresAt, retentionDeadline: source.expiresAt });
+        const retained = 'retained copy without stop proof';
+        const context = kind === 'snapshot' ? { version: 1 as const, requestHash: 'a'.repeat(64),
+            chats: [{ chatId: 'chat_two', title: 'Synthetic', throughSeq: 1, text: retained, truncated: false }] } : undefined;
+        await admit(f.repository, 'two', owner, context);
+        if (kind === 'activity') await f.repository.appendRunActivities(owner, 'chat_two', 'run_two', [{
+            id: 'event:pilot.unverified', chatId: 'chat_two', runId: 'run_two', occurredAt: new Date().toISOString(),
+            type: 'agent.activity', activityId: 'tool_unverified', kind: 'command', label: 'Synthetic',
+            status: 'running', summary: retained,
+        }]);
+        await f.repository.finishRun(owner, { chatId: 'chat_two', runId: 'run_two', outcome: 'completed', completedAt: new Date().toISOString() });
+        const stop = f.stop.getMockImplementation()!;
+        f.stop.mockImplementation(async input => {
+            if (input.runId === 'run_two') throw new ManagedPiStopUnavailable();
+            return stop(input);
+        });
+
+        expect(await lifecycle!.purgeAccount(command)).toMatchObject({ complete: false, pending: 0, unresolved: 1 });
+        expect(JSON.stringify(await f.repository.getDetailPage(owner, 'chat_one', { limit: 20 }))).not.toContain('synthetic Google-derived result');
+        const copy = kind === 'activity'
+            ? await f.repository.kysely.selectFrom('chat_run_events').select('event').where('chat_id', '=', 'chat_two').execute()
+            : await f.repository.kysely.selectFrom('chat_runs').select('context_snapshot').where('id', '=', 'run_two').execute();
+        expect(JSON.stringify(copy)).toContain(retained);
     });
     it('does not let finished nonmanaged runtime history block registered-copy purge', async () => {
         const f = await fixture(true);

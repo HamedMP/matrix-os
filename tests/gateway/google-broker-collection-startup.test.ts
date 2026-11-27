@@ -3,6 +3,10 @@ import { Hono } from 'hono';
 import { sql } from 'kysely';
 import { BotRuntimeRegistry, type ManagedPiRuntimeBinding } from '../../packages/gateway/src/bots/runtime-registry.js';
 import type { BotIntegrationTransport } from '../../packages/gateway/src/bots/integration-client.js';
+import { ChatRepository } from '../../packages/gateway/src/chat/repository.js';
+import { bootstrapCollaborationDatabase } from '../../packages/gateway/src/collaboration/database.js';
+import { createOwnerChatHistoryRepository } from '../../packages/gateway/src/startup/chat-history.js';
+import { createGoogleContextAdmission } from '../../packages/gateway/src/startup/google-context-admission.js';
 import { createGoogleBrokerRuntime } from '../../packages/gateway/src/startup/google-data.js';
 import { googleInferenceIdentity } from '../../packages/gateway/src/google-data/runtime/inference-policy.js';
 import { GOOGLE_POLICY_HARNESS_ID } from '../../packages/gateway/src/google-data/runtime/profile-resolution.js';
@@ -28,7 +32,7 @@ let runtime: Awaited<ReturnType<typeof createGoogleBrokerRuntime>>;
 let registry: BotRuntimeRegistry;
 beforeEach(async () => { ({ db } = await createAuthorityFixture()); registry = new BotRuntimeRegistry(); registry.bind(binding); });
 afterEach(async () => { registry.shutdown(); await runtime?.close(); await repository?.close(); await db.destroy(); vi.restoreAllMocks(); });
-async function fixture(options: { credentials?: boolean; transport?: boolean; attachments?: boolean } = {}) {
+async function fixture(options: { credentials?: boolean; transport?: boolean; attachments?: boolean; legacyPilotChat?: boolean } = {}) {
   const now = () => new Date(); repository = createGoogleDataRepository(db.sql, { now });
   const input = profileInput({ credentialKind: 'byo', credentialGeneration: generation, credentialFingerprint: identity.credential.fingerprint,
     endpoint: identity.endpoint, harnessId: GOOGLE_POLICY_HARNESS_ID[identity.api], harnessRevision: identity.harnessVersion,
@@ -45,7 +49,19 @@ async function fixture(options: { credentials?: boolean; transport?: boolean; at
   const transport: BotIntegrationTransport = vi.fn(async (_owner, request) => app.request(request.path, { method: request.method,
     headers: { 'content-type': 'application/json' }, ...(request.body ? { body: JSON.stringify(request.body) } : {}), signal: request.signal }));
   const credentials = { revalidate: vi.fn(async () => true), credential: vi.fn(async () => key) };
+  const pilotAdmission = { enabled: true as const, ownerId: binding.ownerId };
+  const history = options.legacyPilotChat ? createOwnerChatHistoryRepository(db.sql, { pilot: pilotAdmission }) : undefined;
+  if (history) {
+    await history.bootstrap();
+    await bootstrapCollaborationDatabase(history.repository.kysely as never);
+    const legacy = new ChatRepository(history.repository.kysely);
+    await legacy.create({ type: 'personal', ownerId: binding.ownerId }, {
+      id: binding.chatId, clientRequestId: 'req_legacy_chat', title: 'Legacy Chat',
+    });
+  }
+  const admitContext = history ? createGoogleContextAdmission({ registry, repository: history.repository, adapter: history.googleCopies!.context }) : undefined;
   runtime = await createGoogleBrokerRuntime({ database: db.sql, registry,
+    ...(admitContext ? { pilotAdmission, admitContext } : {}),
     ...(options.credentials === false ? {} : { credentials }), ...(options.transport === false ? {} : { transport }) });
   const requestConsent = vi.fn<GoogleCollectionClientDependencies['requestConsent']>(async () => true);
   const observe = (observed = identity, candidate = binding) => runtime.inference.authorize({ phase: 'dispatch', binding: candidate,
@@ -54,6 +70,16 @@ async function fixture(options: { credentials?: boolean; transport?: boolean; at
   return { transport, credentials, requestConsent, observe, prepare, profile };
 }
 describe('live broker collection composition', () => {
+  it('keeps a legacy Chat usable when Gmail collection cannot certify its history', async () => {
+    const f = await fixture({ legacyPilotChat: true });
+    expect(await f.observe()).toEqual({ allowed: true, googleOrigin: false });
+
+    await expect(f.prepare()).rejects.toThrow('Google data processing unavailable');
+
+    expect(await runtime.contexts.inspect(binding.ownerId, binding.chatId)).toBeNull();
+    expect(await runtime.contexts.sourcesForAccount(binding.ownerId, accountId)).toEqual([]);
+    expect(await f.observe()).toEqual({ allowed: true, googleOrigin: false });
+  });
   it('reaches real owner interaction for the attachment-free text action under a three-kind profile', async () => {
     const f = await fixture({ attachments: false }); await f.observe();
     const claim = await runtime.prepareCollection(binding, accountId, new AbortController().signal, f.requestConsent, 'get_message_text');
