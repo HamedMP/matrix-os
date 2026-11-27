@@ -15,6 +15,8 @@ export interface ComputerPhotoRequest {
   label: string;
   /** The size and corners the photo is drawn with. */
   style: StyleProp<ImageStyle>;
+  /** `contain` shows the whole picture, `cover` fills its place. */
+  fit: "cover" | "contain";
 }
 
 export interface MessageAttachmentsProps {
@@ -25,18 +27,24 @@ export interface MessageAttachmentsProps {
    * it such a photo is named instead.
    */
   renderComputerPhoto?: (photo: ComputerPhotoRequest) => ReactNode;
+  /**
+   * `sent` is a person's own: thumbnails against the right edge. `reply` is
+   * what an agent made: shown whole across the reply's width.
+   */
+  variant?: "sent" | "reply";
 }
 
 /** What was sent with a message: photos as pictures, anything else by name. */
-export function MessageAttachments({ attachments, renderComputerPhoto }: MessageAttachmentsProps) {
+export function MessageAttachments({ attachments, renderComputerPhoto, variant = "sent" }: MessageAttachmentsProps) {
   // A photo alone is shown larger than photos side by side.
   const alone = attachments.length === 1;
+  const reply = variant === "reply";
 
   return (
-    <View testID="message-attachments" style={styles.attachments}>
+    <View testID="message-attachments" style={[styles.attachments, reply && styles.replyAttachments]}>
       {attachments.map((attachment) => (
         attachment.kind === "image"
-          ? <Photo key={attachment.id} attachment={attachment} alone={alone} renderComputerPhoto={renderComputerPhoto} />
+          ? <Photo key={attachment.id} attachment={attachment} alone={alone} reply={reply} renderComputerPhoto={renderComputerPhoto} />
           : <AttachmentFileChip key={attachment.id} label={attachment.label} />
       ))}
     </View>
@@ -46,23 +54,25 @@ export function MessageAttachments({ attachments, renderComputerPhoto }: Message
 interface PhotoProps extends Pick<MessageAttachmentsProps, "renderComputerPhoto"> {
   attachment: TranscriptAttachment;
   alone: boolean;
+  reply: boolean;
 }
 
 /**
  * A photo from the phone's own copy when it was sent from here, and from the
  * computer otherwise. One that cannot be shown is named instead.
  */
-function Photo({ attachment, alone, renderComputerPhoto }: PhotoProps) {
+function Photo({ attachment, alone, reply, renderComputerPhoto }: PhotoProps) {
   // The phone's copy is in a folder the system may empty.
   const [localFailed, setLocalFailed] = useState(false);
-  const style = [styles.photo, alone ? styles.photoAlone : styles.photoAmongOthers];
+  const style = [styles.photo, reply ? styles.photoInReply : alone ? styles.photoAlone : styles.photoAmongOthers];
+  const fit = reply ? "contain" : "cover";
 
   if (attachment.localUri && !localFailed) {
     return (
       <Image
         accessibilityLabel={attachment.label}
         source={{ uri: attachment.localUri }}
-        resizeMode="cover"
+        resizeMode={fit}
         onError={() => setLocalFailed(true)}
         style={style}
       />
@@ -71,7 +81,7 @@ function Photo({ attachment, alone, renderComputerPhoto }: PhotoProps) {
   // By the ending of its name, as the computer serves it and the preview reads
   // it. A picture sent from this app always has one (`attachmentName`).
   if (renderComputerPhoto && attachment.path && isImagePath(attachment.path)) {
-    return renderComputerPhoto({ path: attachment.path, label: attachment.label, style });
+    return renderComputerPhoto({ path: attachment.path, label: attachment.label, style, fit });
   }
   return <AttachmentFileChip label={attachment.label} />;
 }
@@ -95,6 +105,10 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "flex-end",
     gap: theme.v2.space[6],
   },
+  replyAttachments: {
+    maxWidth: "100%",
+    justifyContent: "flex-start",
+  },
   photo: {
     borderRadius: theme.v2.radius.field,
     backgroundColor: theme.v2.colors.card,
@@ -102,6 +116,10 @@ const styles = StyleSheet.create((theme) => ({
   photoAlone: {
     width: 200,
     height: 200,
+  },
+  photoInReply: {
+    width: "100%",
+    aspectRatio: 1,
   },
   photoAmongOthers: {
     width: 120,

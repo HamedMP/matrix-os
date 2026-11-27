@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -267,6 +267,72 @@ describe("Codex app-server control runtime", () => {
         toolCallId: generationStarted.toolCallId,
         outcome: "success",
       }));
+    } finally {
+      child.kill("SIGTERM");
+      await rm(homePath, { recursive: true, force: true });
+    }
+  });
+
+  // Codex always saves generated images under its own home, never in the
+  // run's working folder. Without this, no generated image reaches Chat.
+  it.each([
+    { name: "CODEX_HOME", codexHomeEnv: true },
+    { name: "the default HOME/.codex", codexHomeEnv: false },
+  ])("captures images Codex saves under $name/generated_images and nothing else there", async ({ codexHomeEnv }) => {
+    const homePath = await mkdtemp(join("/tmp", "codex-gen-"));
+    const workspacePath = join(homePath, "workspace");
+    const codexHome = join(homePath, ".codex");
+    const generatedPath = join(codexHome, "generated_images", "thread-1", "exec-1.png");
+    const privatePath = join(codexHome, "auth.png");
+    const fakeCodexPath = join(homePath, "fake-codex-generated.mjs");
+    const eventPath = codexProviderEventPath(homePath, "sess_generated_1");
+    await mkdir(join(codexHome, "generated_images", "thread-1"), { recursive: true });
+    await mkdir(workspacePath, { recursive: true });
+    await writeFile(generatedPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    await writeFile(privatePath, Buffer.from("private"));
+    await writeFile(fakeCodexPath, [
+      "#!/usr/bin/env node",
+      "import { createInterface } from 'node:readline';",
+      "const input = createInterface({ input: process.stdin, crlfDelay: Infinity });",
+      "for await (const line of input) {",
+      "  const message = JSON.parse(line);",
+      "  if (message.method === 'initialize') console.log(JSON.stringify({ id: message.id, result: { userAgent: 'fake', platformFamily: 'unix', platformOs: 'linux', codexHome: '/private/codex' } }));",
+      "  else if (message.method === 'thread/start') console.log(JSON.stringify({ id: message.id, result: { thread: { id: 'native-thread-generated' }, modelProvider: 'openai', cwd: '/private/project', approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: {} } }));",
+      "  else if (message.method === 'turn/start') {",
+      "    const turnId = 'native-turn-generated';",
+      "    console.log(JSON.stringify({ id: message.id, result: { turn: { id: turnId } } }));",
+      `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId, item: { id: 'generated-image', type: 'imageGeneration', status: 'completed', result: '', savedPath: ${JSON.stringify(generatedPath)} } } }));`,
+      `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId, item: { id: 'viewed-image', type: 'imageView', path: ${JSON.stringify(generatedPath)} } } }));`,
+      `    console.log(JSON.stringify({ method: 'item/completed', params: { turnId, item: { id: 'viewed-private', type: 'imageView', path: ${JSON.stringify(privatePath)} } } }));`,
+      "    console.log(JSON.stringify({ method: 'turn/completed', params: { turn: { id: turnId, status: 'completed', items: [] } } }));",
+      "    process.exit(0);",
+      "  }",
+      "}",
+    ].join("\n"), "utf8");
+    await chmod(fakeCodexPath, 0o700);
+    const runnerPath = join(process.cwd(), "packages/gateway/src/coding-agents/codex-app-server-runner.mjs");
+    const config = Buffer.from(JSON.stringify({
+      prompt: "Generate an image.",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      writableRoots: [workspacePath],
+    }), "utf8").toString("base64");
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: homePath };
+    if (codexHomeEnv) env.CODEX_HOME = codexHome;
+    else delete env.CODEX_HOME;
+    const child = spawn(process.execPath, [
+      runnerPath, eventPath, process.version.slice(1), process.execPath, fakeCodexPath, config,
+    ], { cwd: workspacePath, env, stdio: ["ignore", "pipe", "pipe"] });
+
+    try {
+      await expect(waitForExit(child)).resolves.toBe(0);
+      const transcript = await readFile(eventPath, "utf8");
+      const artifacts = transcript.trim().split("\n").map((line) => JSON.parse(line))
+        .filter((entry) => entry.type === "matrix.codex.artifact.available");
+      expect(artifacts.map((entry) => entry.providerItemId)).toEqual(["generated-image", "viewed-image"]);
+      expect(artifacts[0]).toMatchObject({ label: "exec-1.png", mimeType: "image/png", sizeBytes: 8 });
+      expect(await readFile(join(homePath, artifacts[0].ownerReference)))
+        .toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     } finally {
       child.kill("SIGTERM");
       await rm(homePath, { recursive: true, force: true });

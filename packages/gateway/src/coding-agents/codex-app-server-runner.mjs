@@ -8,6 +8,7 @@ import { createNativeCodexExecutionProof, assertNativeCodexThreadProvider, verif
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
+import { createCodexArtifactRoots } from "./codex-artifact-roots.mjs";
 import { codexCommandPreview } from "./codex-command-preview.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
@@ -140,14 +141,7 @@ const artifactStorageDirectory = join(artifactHomePath, "data", "chat-artifacts"
 const artifactSessionId = basename(eventPath, extname(eventPath));
 const sendTiming = createCodexSendTiming(artifactSessionId, undefined, process.env.MATRIX_CODEX_SEND_TIMINGS === "1");
 sendTiming.runnerBoot();
-const artifactRoots = await Promise.all([process.cwd(), ...config.writableRoots].map((root) => realpath(root)));
-
-function withinArtifactRoot(path) {
-  return artifactRoots.some((root) => {
-    const child = relative(root, path);
-    return child === "" || (child !== ".." && !child.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(child));
-  });
-}
+const artifactRoots = await createCodexArtifactRoots({ runRoots: [process.cwd(), ...config.writableRoots], environment: process.env });
 
 const controlPath = eventPath.replace(/\.jsonl$/, ".sock");
 await mkdir(dirname(eventPath), { recursive: true });
@@ -582,7 +576,7 @@ async function handleInput(raw) {
   return true;
 }
 
-async function stageArtifactCandidate(candidate) {
+async function stageArtifactCandidate(candidate, rootOptions) {
   let bytes;
   if (candidate.source.type === "inline_bytes") {
     bytes = Buffer.from(candidate.source.base64, "base64");
@@ -590,7 +584,7 @@ async function stageArtifactCandidate(candidate) {
     let source;
     try {
       const resolved = await realpath(candidate.source.path);
-      if (!withinArtifactRoot(resolved)) throw new Error("Codex artifact file is outside the run roots");
+      if (!await artifactRoots.contains(resolved, rootOptions)) throw new Error("Codex artifact file is outside the run roots");
       source = await open(candidate.source.path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       const before = await source.stat({ bigint: true });
       if (!before.isFile() || before.size <= 0n || before.size > BigInt(MAX_CAPTURED_ARTIFACT_BYTES)) {
@@ -600,7 +594,7 @@ async function stageArtifactCandidate(candidate) {
       // realpath, so bind the opened descriptor to the checked path identity.
       const openedPath = await realpath(candidate.source.path);
       const current = await lstat(openedPath, { bigint: true });
-      if (!withinArtifactRoot(openedPath) || before.dev !== current.dev || before.ino !== current.ino) {
+      if (!await artifactRoots.contains(openedPath, rootOptions) || before.dev !== current.dev || before.ino !== current.ino) {
         throw new Error("Codex artifact file changed while being opened");
       }
       bytes = await source.readFile();
@@ -687,10 +681,11 @@ async function handleItemLifecycle(raw) {
     return true;
   }
   if (parsed.data.method === "item/completed") {
+    const rootOptions = { generatedImages: item.type === "imageGeneration" || item.type === "imageView" };
     for (const candidate of extractCodexArtifactRecords(item)) {
       let artifact;
       try {
-        artifact = await stageArtifactCandidate(candidate);
+        artifact = await stageArtifactCandidate(candidate, rootOptions);
       } catch (error) {
         console.warn("[codex] artifact unavailable:", error instanceof Error ? error.name : "UnknownError");
         continue;
