@@ -1,0 +1,45 @@
+{
+  "name": "Docs",
+  "description": "Edit .docx documents with tracked changes, comments and agent edits you accept or reject",
+  "category": "productivity",
+  "icon": "v3-docs",
+  "author": "system",
+  "version": "0.1.0",
+  "slug": "docs",
+  "runtime": "vite",
+  "runtimeVersion": "^1.0.0",
+  "scope": "personal",
+  "permissions": [
+    "files"
+  ],
+  "build": {
+    "install": "pnpm install --ignore-workspace --prefer-offline",
+    "command": "pnpm build",
+    "output": "dist",
+    "timeout": 180,
+    "sourceGlobs": [
+      "src/**",
+      "../_shared/**",
+      "../../system/icons/v3-*.png",
+      "index.html",
+      "matrix.json",
+      "package.json",
+      "tsconfig.json",
+      "vite.config.ts"
+    ]
+  },
+  "listingTrust": "first_party",
+  "storage": {
+    "tables": {
+      "recent_documents": {
+        "columns": {
+          "slot": "text",
+          "payload": "jsonb"
+        },
+        "uniqueIndexes": [
+          "slot"
+        ]
+      }
+    }
+  }
+}

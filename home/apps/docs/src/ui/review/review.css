@@ -1,0 +1,428 @@
+/* Docs review panel, comments panel, hover card, and the review highlight
+   layers painted in the editor. Colours come from the shared --app-* tokens
+   and the editor's --doc-author-N slots. */
+
+/* ---------------------------------------------------------------- shared */
+
+.docs-review,
+.docs-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 10px;
+  color: var(--app-fg);
+  font: inherit;
+}
+
+.docs-review__swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--doc-author, var(--app-muted-fg));
+}
+
+.docs-review__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--app-danger) 45%, transparent);
+  border-radius: var(--app-radius, 8px);
+  background: color-mix(in srgb, var(--app-danger) 10%, transparent);
+  font-size: 13px;
+}
+
+.docs-review__note,
+.docs-review__keys {
+  margin: 0;
+  color: var(--app-muted-fg);
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- filters and bulk actions */
+
+.docs-review__filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: end;
+}
+
+.docs-review__segments {
+  grid-column: 1 / -1;
+  display: flex;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius, 8px);
+  overflow: hidden;
+}
+
+.docs-review__segment {
+  flex: 1;
+  padding: 5px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--app-fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.docs-review__segment + .docs-review__segment {
+  border-left: 1px solid var(--app-border);
+}
+
+.docs-review__segment.is-selected {
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 16%, transparent);
+  font-weight: 600;
+}
+
+.docs-review__segment:focus-visible {
+  outline: 2px solid var(--oui-accent-ink, var(--app-primary));
+  outline-offset: -2px;
+}
+
+.docs-review__clear {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.docs-review__bulk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+/* ---------------------------------------------------------------- revision list */
+
+.docs-review__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.docs-review__group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-bottom: 4px;
+}
+
+.docs-review__author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.docs-review__counts {
+  color: var(--app-muted-fg);
+  font-size: 12px;
+}
+
+.docs-review__group-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.docs-review__items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.docs-review__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  border-left: 3px solid var(--doc-author, var(--app-border));
+  border-radius: 4px;
+  background: transparent;
+}
+
+.docs-review__item.is-current {
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 12%, transparent);
+}
+
+.docs-review__item-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.docs-review__item-main:focus-visible {
+  outline: 2px solid var(--oui-accent-ink, var(--app-primary));
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.docs-review__item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.docs-review__item-location,
+.docs-review__item-date {
+  color: var(--app-muted-fg);
+  font-size: 11px;
+}
+
+.docs-review__item-text {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.docs-review__item-text--insert,
+.docs-review__item-text--moveTo {
+  text-decoration: underline;
+  text-decoration-color: var(--doc-author, currentColor);
+}
+
+.docs-review__item-text--delete,
+.docs-review__item-text--moveFrom {
+  text-decoration: line-through;
+  text-decoration-color: var(--doc-author, currentColor);
+}
+
+.docs-review__item-actions {
+  display: flex;
+  gap: 2px;
+  padding: 4px 4px 0 0;
+}
+
+/* ---------------------------------------------------------------- comments */
+
+.docs-comments__composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.docs-comments__composer .oui-field {
+  align-self: stretch;
+}
+
+.docs-comments__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.docs-comments__count {
+  color: var(--app-muted-fg);
+  font-size: 12px;
+}
+
+.docs-comments__threads {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.docs-comments__thread {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius, 8px);
+  background: var(--app-card, transparent);
+}
+
+.docs-comments__thread.is-active {
+  border-color: var(--app-warning);
+  box-shadow: 0 0 0 1px var(--app-warning);
+}
+
+.docs-comments__anchor {
+  padding: 0 0 0 8px;
+  border: 0;
+  border-left: 3px solid var(--app-warning);
+  background: transparent;
+  color: var(--app-muted-fg);
+  font: inherit;
+  font-size: 12px;
+  font-style: italic;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.docs-comments__anchor:disabled {
+  cursor: default;
+  border-left-color: var(--app-border);
+}
+
+.docs-comments__anchor:focus-visible {
+  outline: 2px solid var(--oui-accent-ink, var(--app-primary));
+  outline-offset: 2px;
+}
+
+.docs-comments__comment {
+  display: flex;
+  gap: 8px;
+}
+
+.docs-comments__comment-main {
+  min-width: 0;
+}
+
+.docs-comments__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.docs-comments__author {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.docs-comments__date {
+  color: var(--app-muted-fg);
+  font-size: 11px;
+}
+
+.docs-comments__text {
+  margin: 2px 0 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.docs-comments__reply {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.docs-comments__actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+/* ---------------------------------------------------------------- hover card */
+
+.docs-hovercard {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(300px, calc(100vw - 12px));
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius, 8px);
+  background: var(--app-card, var(--app-bg));
+  color: var(--app-fg);
+  box-shadow: 0 8px 24px color-mix(in srgb, #000 18%, transparent);
+  font-size: 13px;
+}
+
+/* Hidden until it has been measured and placed. */
+.docs-hovercard:not([data-placed]) {
+  visibility: hidden;
+  left: 0;
+  top: 0;
+}
+
+.docs-hovercard__item + .docs-hovercard__item {
+  padding-top: 10px;
+  border-top: 1px solid var(--app-border);
+}
+
+.docs-hovercard__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.docs-hovercard__author {
+  font-weight: 600;
+}
+
+.docs-hovercard__date {
+  margin-left: auto;
+  color: var(--app-muted-fg);
+  font-size: 11px;
+}
+
+.docs-hovercard__kind {
+  margin-top: 4px;
+  color: var(--app-muted-fg);
+  font-size: 12px;
+}
+
+.docs-hovercard__text {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.docs-hovercard__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+/* ---------------------------------------------------------------- highlight layers in the editor */
+
+/* The current revision (layer `review`). */
+.doc-hl-review {
+  outline: 2px solid color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 70%, transparent);
+  outline-offset: 1px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--oui-accent-ink, var(--app-primary)) 12%, transparent);
+}
+
+/* A paragraph with an open comment thread (layer `comment-mark`) shows a mark in its right margin. */
+.doc-content [data-block-type="paragraph"]:has(.doc-hl-comment-mark) {
+  position: relative;
+}
+
+.doc-content [data-block-type="paragraph"]:has(.doc-hl-comment-mark)::after {
+  content: "";
+  position: absolute;
+  top: 0.35em;
+  right: -16pt;
+  width: 9px;
+  height: 9px;
+  border-radius: 50% 50% 50% 0;
+  background: var(--app-warning);
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .doc-content [data-block-type="paragraph"]:has(.doc-hl-comment-mark)::after {
+    right: -10pt;
+  }
+}
