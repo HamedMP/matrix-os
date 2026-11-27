@@ -73,6 +73,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     codingAgentTurnLifecycle: service("turns"), codexEventBridge: null, codingAgentThreadStream: null,
     closeChannels: channels.closeChannels, codingAgentSessionStopReconciler: service("reconciler"),
     drainReconnectableAbortEntries: vi.fn(), reconnectableAbortControllers: new Map(), canvasCleanupTimer: null, canvasSubscriptionHub: null,
+    ownerDatabaseServices: { backgroundRepairs: service("background repairs") },
     systemActivityCandidates: new Set(), channelManager: channels.channelManager, customMcp: service("custom MCP"),
     processManager: service("processes"), forwardTunnelHub: service("tunnels"), watcher: service("watcher"),
     homeMirrorLifecycle: { mirror: null, startup: null }, syncR2: null,
@@ -108,6 +109,9 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
     "app database.destroy", "platform database.destroy", "telemetry.shutdown", "browser lab.close", "shared browser.close", "browser approvals.close", "HTTP.close",
   ]));
   expect(shutdown.calls.indexOf("browser approvals.close")).toBeLessThan(shutdown.calls.indexOf("platform database.destroy"));
+  // A background repair writes through the Chat repository; it stops first.
+  expect(shutdown.calls.indexOf("background repairs.stop")).toBeGreaterThanOrEqual(0);
+  expect(shutdown.calls.indexOf("background repairs.stop")).toBeLessThan(shutdown.calls.indexOf("Chat database.release"));
   expect(shutdown.calls.indexOf("chats.close")).toBeLessThan(shutdown.calls.indexOf("native Claude.close"));
   expect(shutdown.calls.indexOf("native Claude.close")).toBeLessThan(shutdown.calls.indexOf("terminal launch.close"));
   expect(shutdown.calls).toContain("private network.close");
