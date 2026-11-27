@@ -81,6 +81,7 @@ is a symlink to it, so the rules have one source of truth.
 - **Conventional Commits and PR Titles**: commits and PR titles use semantic Conventional Commit style such as `feat(canvas): add workspace canvas`; never prefix PR titles with agent/tool tags like `[codex]`.
 - **Specs go in `specs/`**: NEVER `docs/plans/`. Format: `specs/{NNN}-{feature-name}/`
 - **Kysely/Postgres only**: never add alternative embedded databases or ORMs for new persistence
+- **Runtime switches use PostHog feature flags**: a new feature that can be turned on/off or rolled out uses a PostHog flag through the shared helpers (server: `resolveRuntimeSwitch` in `packages/platform/src/feature-flags/server-flags.ts`; client: `useFeatureFlag` in `packages/ui/src/feature-flags.ts`). Env vars and Secret Manager hold only secrets, infrastructure config, capacity numbers, and installed-capability gates; the effective state is env capability AND flag. Fail closed on cold start, never put secrets, limits, or PII in flags or flag calls, and migrate existing env toggles over time using the inventory in `docs/dev/feature-flags.md`.
 - **Landing-adjacent UI uses `@matrix-os/brand`**: auth, onboarding, billing, provisioning, and related shell surfaces should consume tokens/primitives from `packages/brand/` instead of ad-hoc hex values or forked brand helpers. The public site lives in the private `FinnaAI/matrix-os-site` repository.
 - **Kernel prompt**: keep under 7K tokens
 - **Spike before spec**: test undocumented SDK behavior with throwaway code first
