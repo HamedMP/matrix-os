@@ -16,7 +16,7 @@
  */
 
 import { applyInputs } from "../session/edits";
-import type { CellAddress, CellRange, RawCell, SheetId } from "../session/engine";
+import { type CellRange, MAX_COLS, MAX_ROWS, type RawCell, type SheetId } from "../session/engine";
 import { MAX_ACTION_CELLS, createCellWriter, report } from "./actions-data";
 import { type ClipboardCell, type ParsedTable, clipMarkOf, newClipMark, readClipboard, serializeHtmlTable, serializeTsv } from "./clipboard";
 import { cellLook } from "./cell-look";
@@ -53,6 +53,8 @@ export function isPasting(ctx: GridContext): boolean {
 const TOO_MANY = "That is too many cells for one step. Select a smaller area.";
 const CUT_FILTERED = "Cut does not work across rows a filter hides. Copy the cells instead, or clear the filter first.";
 const MOVE_TOO_LARGE = "This workbook is too large to move cells and update the formulas that use them. Copy the cells instead.";
+const PAST_LAST_COLUMN = "The paste would go past the last column of the sheet. Select a cell further left, then paste.";
+const PAST_LAST_ROW = "The paste would go past the last row of the sheet. Select a cell further up, then paste.";
 
 function normalize(text: string): string {
   return text.replace(/\r\n?/g, "\n").replace(/\n$/, "");
@@ -184,8 +186,33 @@ function overlap(a: CellRange, b: CellRange): number {
   return rows > 0 && cols > 0 ? rows * cols : 0;
 }
 
-function tooMany(tiles: readonly Tile[] | null, height: number, width: number): boolean {
-  return tiles === null || tiles.length * height * width > MAX_ACTION_CELLS || tiles.some((tile) => tile.rows.length < height);
+
+/**
+ * Why a block of `height` by `width` cells does not fit at every tile, or
+ * null when it does. Checked before anything is written: the whole paste is
+ * refused rather than losing the cells past the edge of the sheet.
+ */
+function pastEdge(tiles: readonly Tile[], height: number, width: number): string | null {
+  for (const tile of tiles) {
+    // Rows run out at the last row of the sheet, so a block that does not fit gets fewer rows than it has.
+    const last = tile.rows[tile.rows.length - 1];
+    if (tile.rows.length < height || last === undefined || last >= MAX_ROWS) return PAST_LAST_ROW;
+    if (tile.col + width > MAX_COLS) return PAST_LAST_COLUMN;
+  }
+  return null;
+}
+
+/** Where a paste goes, or null, after a notice, when it is too large or would go past the edge of the sheet. */
+function pasteTiles(ctx: GridContext, height: number, width: number): Tile[] | null {
+  const tiles = targets(ctx, height, width);
+  if (tiles === null || tiles.length * height * width > MAX_ACTION_CELLS) {
+    ctx.notice(TOO_MANY);
+    return null;
+  }
+  const edge = pastEdge(tiles, height, width);
+  if (edge === null) return tiles;
+  ctx.notice(edge);
+  return null;
 }
 
 function pasteCopy(ctx: GridContext, clip: InternalClip): boolean {
@@ -193,12 +220,8 @@ function pasteCopy(ctx: GridContext, clip: InternalClip): boolean {
   const sheet = ctx.sheet;
   const height = clip.rows.length;
   const width = rangeCols(clip.range);
-  const tiles = targets(ctx, height, width);
-  if (tooMany(tiles, height, width)) {
-    ctx.notice(TOO_MANY);
-    return false;
-  }
-  const placed = tiles as Tile[];
+  const placed = pasteTiles(ctx, height, width);
+  if (placed === null) return false;
   // Read the source first: the target may overlap it.
   const source: RawCell[][] = clip.rows.map((row) => {
     const cells: RawCell[] = [];
@@ -236,8 +259,9 @@ function pasteMove(ctx: GridContext, clip: InternalClip): boolean {
   const width = rangeCols(clip.range);
   const origin = activeRange(ctx.selection).start;
   const rows = visibleRowsFrom(origin.row, height, hiddenRows(ctx));
-  if (rows.length < height) {
-    ctx.notice(TOO_MANY);
+  const edge = pastEdge([{ rows, col: origin.col }], height, width);
+  if (edge !== null) {
+    ctx.notice(edge);
     return false;
   }
   if (!contiguous(rows)) {
@@ -299,12 +323,9 @@ function pasteExternal(ctx: GridContext, table: ParsedTable): boolean {
   const height = table.rows.length;
   const width = table.rows.reduce((max, row) => Math.max(max, row.length), 0);
   if (height === 0 || width === 0) return false;
-  const tiles = targets(ctx, height, width);
-  if (tooMany(tiles, height, width)) {
-    ctx.notice(TOO_MANY);
-    return false;
-  }
-  const placed = tiles as Tile[];
+  // Every field must land on the sheet: applyInputs would leave out the ones past its edge without a word.
+  const placed = pasteTiles(ctx, height, width);
+  if (placed === null) return false;
   const ok = report(
     ctx,
     ctx.session.transact("Paste", (tx) => {
