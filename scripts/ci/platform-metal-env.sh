@@ -5,13 +5,9 @@ set -euo pipefail
 
 mode="${1:-validate}"
 metal="${METAL_HOSTS_ENABLED:-0}"
-ca_enabled="${METAL_HOSTD_CA_PEM_ENABLED:-true}"
 golden="${METAL_GOLDEN_VERSION:-}"
-pool_data="${METAL_POOL_MAX_DATA_PERCENT:-}"
-pool_metadata="${METAL_POOL_MAX_METADATA_PERCENT:-}"
 free="${MATRIX_FREE_TIER_ENABLED:-0}"
 max_runtimes="${MATRIX_FREE_TIER_MAX_RUNTIMES:-}"
-invite="${MATRIX_FREE_TIER_INVITE_REQUIRED:-true}"
 daily_spend="${MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD:-}"
 sleep_enabled="${MATRIX_FREE_TIER_SLEEP_ENABLED:-0}"
 
@@ -24,18 +20,11 @@ if [ "$metal" = "0" ] && { [ "$free" = "1" ] || [ "$sleep_enabled" = "1" ]; }; t
 fi
 # Every value below is spliced into a '|'-delimited gcloud list, so each one is a strict pattern.
 if [ "$metal" = "1" ]; then
-  case "$ca_enabled" in true|false) ;; *) fail "METAL_HOSTD_CA_PEM_ENABLED must be true or false." ;; esac
   # Same rule as the platform's metal config and hostd's create contract.
   [[ "$golden" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] ||
     fail "METAL_GOLDEN_VERSION must be a golden disk version ([A-Za-z0-9][A-Za-z0-9._-]{0,63})."
-  for name in METAL_POOL_MAX_DATA_PERCENT METAL_POOL_MAX_METADATA_PERCENT; do
-    if [ -n "${!name:-}" ] && ! [[ "${!name}" =~ ^([1-9]|[1-9][0-9]|100)$ ]]; then
-      fail "$name must be an integer from 1 to 100 when set."
-    fi
-  done
 fi
 if [ "$free" = "1" ]; then
-  case "$invite" in true|false) ;; *) fail "MATRIX_FREE_TIER_INVITE_REQUIRED must be true or false." ;; esac
   [[ "$max_runtimes" =~ ^[1-9][0-9]{0,5}$ ]] || fail "MATRIX_FREE_TIER_MAX_RUNTIMES must be an integer from 1 to 999999."
   if [ -n "$daily_spend" ] && ! [[ "$daily_spend" =~ ^[1-9][0-9]{0,14}$ ]]; then
     fail "MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD must be a positive integer of at most 15 digits (micro-USD)."
@@ -48,29 +37,22 @@ expected=()
 add_plain() { if [ -n "$2" ]; then expected+=("$1=plain:$2"); else expected+=("$1=absent"); fi; }
 if [ "$metal" = "1" ]; then
   expected+=("METAL_HOSTS_ENABLED=plain:1" "METAL_GOLDEN_VERSION=plain:${golden}")
-  add_plain METAL_POOL_MAX_DATA_PERCENT "$pool_data"
-  add_plain METAL_POOL_MAX_METADATA_PERCENT "$pool_metadata"
+  # The hostd CA is always required: the platform pins hostd TLS to it.
   expected+=(
     METAL_HOSTD_API_TOKEN=secret:metal-hostd-api-token:latest
     METAL_HOSTD_INGRESS_TOKEN=secret:metal-hostd-ingress-token:latest
+    METAL_HOSTD_CA_PEM=secret:metal-hostd-ca-pem:latest
   )
-  if [ "$ca_enabled" = "true" ]; then
-    expected+=(METAL_HOSTD_CA_PEM=secret:metal-hostd-ca-pem:latest)
-  else
-    expected+=(METAL_HOSTD_CA_PEM=absent)
-  fi
 else
-  expected+=(METAL_HOSTS_ENABLED=absent METAL_GOLDEN_VERSION=absent METAL_POOL_MAX_DATA_PERCENT=absent
-    METAL_POOL_MAX_METADATA_PERCENT=absent METAL_HOSTD_API_TOKEN=absent METAL_HOSTD_INGRESS_TOKEN=absent
+  expected+=(METAL_HOSTS_ENABLED=absent METAL_GOLDEN_VERSION=absent METAL_HOSTD_API_TOKEN=absent METAL_HOSTD_INGRESS_TOKEN=absent
     METAL_HOSTD_CA_PEM=absent)
 fi
 if [ "$free" = "1" ]; then
-  expected+=("MATRIX_FREE_TIER_ENABLED=plain:1" "MATRIX_FREE_TIER_MAX_RUNTIMES=plain:${max_runtimes}"
-    "MATRIX_FREE_TIER_INVITE_REQUIRED=plain:${invite}")
+  expected+=("MATRIX_FREE_TIER_ENABLED=plain:1" "MATRIX_FREE_TIER_MAX_RUNTIMES=plain:${max_runtimes}")
   add_plain MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD "$daily_spend"
 else
   expected+=(MATRIX_FREE_TIER_ENABLED=absent MATRIX_FREE_TIER_MAX_RUNTIMES=absent
-    MATRIX_FREE_TIER_INVITE_REQUIRED=absent MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD=absent)
+    MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD=absent)
 fi
 if [ "$sleep_enabled" = "1" ]; then
   expected+=(MATRIX_FREE_TIER_SLEEP_ENABLED=plain:1)
@@ -137,7 +119,7 @@ case "$mode" in
       fi
       if ! has_unconditional_accessor "$project_policy"; then fail "Metal host runtime secret access is unavailable for $name."; fi
     done
-    node - "$secret_dir" "$ca_enabled" <<'NODE'
+    node - "$secret_dir" <<'NODE'
 const fs = require('node:fs');
 const path = require('node:path');
 const { X509Certificate } = require('node:crypto');
@@ -149,11 +131,9 @@ try {
     if (!/^[\x21-\x7e]{32,512}$/.test(read(name))) throw new MetalConfigurationError();
   }
   if (read('METAL_HOSTD_API_TOKEN') === read('METAL_HOSTD_INGRESS_TOKEN')) throw new MetalConfigurationError();
-  if (process.argv[3] === 'true') {
-    const pem = read('METAL_HOSTD_CA_PEM').trim().replace(/\\n/g, '\n');
-    if (!pem.includes('-----BEGIN CERTIFICATE-----')) throw new MetalConfigurationError();
-    try { new X509Certificate(pem); } catch (error) { if (error instanceof Error) throw new MetalConfigurationError(); throw error; }
-  }
+  const pem = read('METAL_HOSTD_CA_PEM').trim().replace(/\\n/g, '\n');
+  if (!pem.includes('-----BEGIN CERTIFICATE-----')) throw new MetalConfigurationError();
+  try { new X509Certificate(pem); } catch (error) { if (error instanceof Error) throw new MetalConfigurationError(); throw error; }
 } catch (error) {
   const type = error instanceof MetalConfigurationError ? 'invalid_configuration'
     : error instanceof Error && 'code' in error ? 'file_unavailable'

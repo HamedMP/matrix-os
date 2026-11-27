@@ -23,7 +23,7 @@ function selfSignedPem(): string {
 
 const enabled: NodeJS.ProcessEnv = {
   METAL_HOSTS_ENABLED: "1", METAL_GOLDEN_VERSION: "0.1.32",
-  MATRIX_FREE_TIER_ENABLED: "1", MATRIX_FREE_TIER_MAX_RUNTIMES: "50", MATRIX_FREE_TIER_INVITE_REQUIRED: "true",
+  MATRIX_FREE_TIER_ENABLED: "1", MATRIX_FREE_TIER_MAX_RUNTIMES: "50",
   MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD: "20000000", MATRIX_FREE_TIER_SLEEP_ENABLED: "1",
 };
 const accessor = "roles/secretmanager.secretAccessor";
@@ -69,7 +69,6 @@ const secretEnv = [
 const plainEnv = [
   { name: "METAL_HOSTS_ENABLED", value: "1" }, { name: "METAL_GOLDEN_VERSION", value: "0.1.32" },
   { name: "MATRIX_FREE_TIER_ENABLED", value: "1" }, { name: "MATRIX_FREE_TIER_MAX_RUNTIMES", value: "50" },
-  { name: "MATRIX_FREE_TIER_INVITE_REQUIRED", value: "true" },
   { name: "MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD", value: "20000000" },
   { name: "MATRIX_FREE_TIER_SLEEP_ENABLED", value: "1" },
 ];
@@ -83,7 +82,7 @@ describe("production metal and free-tier deployment contract", () => {
     }
     expect(run("verify-revision", {}, [{ name: "PLATFORM_PORT", value: "8080" }]).status).toBe(0);
     // Settings that only matter once enabled are not checked while off.
-    const ignored = { METAL_HOSTD_CA_PEM_ENABLED: "fixture", MATRIX_FREE_TIER_INVITE_REQUIRED: "fixture", METAL_GOLDEN_VERSION: "a|b" };
+    const ignored = { METAL_GOLDEN_VERSION: "a|b", MATRIX_FREE_TIER_MAX_RUNTIMES: "fixture" };
     expect(run("env-bindings", ignored).stdout).toBe("");
     expect(run("validate", ignored).status).toBe(0);
   });
@@ -92,15 +91,17 @@ describe("production metal and free-tier deployment contract", () => {
     const env = run("env-bindings", enabled);
     expect(env.status, env.stderr).toBe(0);
     expect(env.stdout).toBe("|METAL_HOSTS_ENABLED=1|METAL_GOLDEN_VERSION=0.1.32|MATRIX_FREE_TIER_ENABLED=1"
-      + "|MATRIX_FREE_TIER_MAX_RUNTIMES=50|MATRIX_FREE_TIER_INVITE_REQUIRED=true"
+      + "|MATRIX_FREE_TIER_MAX_RUNTIMES=50"
       + "|MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD=20000000|MATRIX_FREE_TIER_SLEEP_ENABLED=1");
     expect(env.stdout).not.toContain("TOKEN");
     const secrets = run("secret-bindings", enabled);
     expect(secrets.stdout).toBe(",METAL_HOSTD_API_TOKEN=metal-hostd-api-token:latest"
       + ",METAL_HOSTD_INGRESS_TOKEN=metal-hostd-ingress-token:latest,METAL_HOSTD_CA_PEM=metal-hostd-ca-pem:latest");
-    expect(run("secret-bindings", { ...enabled, METAL_HOSTD_CA_PEM_ENABLED: "false" }).stdout).not.toContain("CA_PEM");
-    const pool = run("env-bindings", { ...enabled, METAL_POOL_MAX_DATA_PERCENT: "85", METAL_POOL_MAX_METADATA_PERCENT: "80" });
-    expect(pool.stdout).toContain("|METAL_POOL_MAX_DATA_PERCENT=85|METAL_POOL_MAX_METADATA_PERCENT=80");
+    // The CA is required whenever metal is on; pool limits and invite policy are not deploy settings.
+    expect(run("secret-bindings", { ...enabled, METAL_HOSTD_CA_PEM_ENABLED: "false" }).stdout).toBe(secrets.stdout);
+    const ignoredSettings = run("env-bindings", { ...enabled, METAL_POOL_MAX_DATA_PERCENT: "85",
+      METAL_POOL_MAX_METADATA_PERCENT: "80", MATRIX_FREE_TIER_INVITE_REQUIRED: "false" });
+    expect(ignoredSettings.stdout).toBe(env.stdout);
   });
 
   it("enables metal alone without the free tier", () => {
@@ -112,14 +113,11 @@ describe("production metal and free-tier deployment contract", () => {
     [{ METAL_HOSTS_ENABLED: "yes" }],
     [{ METAL_HOSTS_ENABLED: "1" }],
     [{ METAL_HOSTS_ENABLED: "1", METAL_GOLDEN_VERSION: "0.1|INJECTED=1" }],
-    [{ ...enabled, METAL_POOL_MAX_DATA_PERCENT: "101" }],
     [{ MATRIX_FREE_TIER_ENABLED: "1", MATRIX_FREE_TIER_MAX_RUNTIMES: "10" }],
     [{ MATRIX_FREE_TIER_SLEEP_ENABLED: "1" }],
     [{ ...enabled, MATRIX_FREE_TIER_MAX_RUNTIMES: "" }],
     [{ ...enabled, MATRIX_FREE_TIER_MAX_RUNTIMES: "0" }],
-    [{ ...enabled, MATRIX_FREE_TIER_INVITE_REQUIRED: "1" }],
     [{ ...enabled, MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD: "-5" }],
-    [{ ...enabled, METAL_HOSTD_CA_PEM_ENABLED: "no" }],
   ])("fails closed on invalid settings %j", (settings) => {
     for (const mode of ["validate", "env-bindings"]) {
       const result = run(mode, settings);
@@ -145,7 +143,7 @@ describe("production metal and free-tier deployment contract", () => {
         "metal-hostd-ca-pem": pem }),
     });
     expect(trailingNewline.status).not.toBe(0);
-    expect(run("preflight-secrets", { ...enabled, METAL_HOSTD_CA_PEM_ENABLED: "false" }).status).toBe(0);
+    expect(run("preflight-secrets", enabled).status).not.toBe(0);
   });
 
   it("accepts a direct or unconditional project grant and rejects conditional or missing access", () => {
@@ -183,7 +181,6 @@ describe("production metal and free-tier deployment contract", () => {
       "METAL_HOSTS_ENABLED: ${{ vars.METAL_HOSTS_ENABLED || '0' }}",
       "MATRIX_FREE_TIER_ENABLED: ${{ vars.MATRIX_FREE_TIER_ENABLED || '0' }}",
       "MATRIX_FREE_TIER_SLEEP_ENABLED: ${{ vars.MATRIX_FREE_TIER_SLEEP_ENABLED || '0' }}",
-      "MATRIX_FREE_TIER_INVITE_REQUIRED: ${{ vars.MATRIX_FREE_TIER_INVITE_REQUIRED || 'true' }}",
       "scripts/ci/platform-metal-env.sh validate",
       "scripts/ci/platform-metal-env.sh preflight-secrets",
       'metal_env_bindings="$(scripts/ci/platform-metal-env.sh env-bindings)"',
@@ -192,6 +189,9 @@ describe("production metal and free-tier deployment contract", () => {
       "${sites_secret_bindings}${metal_secret_bindings}\"",
       "- \"scripts/ci/platform-metal-env.sh\"",
     ]) expect(workflow).toContain(line);
+    for (const removed of ["MATRIX_FREE_TIER_INVITE_REQUIRED", "METAL_POOL_MAX_", "METAL_HOSTD_CA_PEM_ENABLED"]) {
+      expect(workflow).not.toContain(removed);
+    }
     for (const revision of ["CANDIDATE_REVISION", "PRODUCTION_REVISION", "worker_revision"]) {
       expect(workflow).toContain(`scripts/ci/platform-metal-env.sh verify-revision "$${revision}"`);
     }

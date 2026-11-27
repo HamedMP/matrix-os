@@ -176,22 +176,26 @@ GitHub environment variables (`production`):
 | --- | --- | --- |
 | `METAL_HOSTS_ENABLED` | `0` or `1` | `0` |
 | `METAL_GOLDEN_VERSION` | `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, required when metal is on | none |
-| `METAL_HOSTD_CA_PEM_ENABLED` | `true` (bind the hostd CA) or `false` (publicly trusted hostd certificate) | `true` |
-| `METAL_POOL_MAX_DATA_PERCENT`, `METAL_POOL_MAX_METADATA_PERCENT` | integer 1-100, optional | provisioner defaults 85 / 80 |
 | `MATRIX_FREE_TIER_ENABLED` | `0` or `1`; needs metal on | `0` |
 | `MATRIX_FREE_TIER_MAX_RUNTIMES` | integer 1-999999, required when the free tier is on | none |
-| `MATRIX_FREE_TIER_INVITE_REQUIRED` | `true` or `false` | `true` |
 | `MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD` | positive integer, micro-USD; unset means no free funded AI | none |
 | `MATRIX_FREE_TIER_SLEEP_ENABLED` | `0` or `1`; needs metal on | `0` |
 
-Secret Manager secrets in the platform GCP project, bound as `latest`. The
-Cloud Run service account needs `roles/secretmanager.secretAccessor` on each:
+hostd enforces the thin-pool limits (85% data, 80% metadata), so they are
+not deploy settings. Invite policy comes from the server-side PostHog flag
+`free-tier-invite-required` (`docs/dev/feature-flags.md`); while it is
+unconfigured the platform requires invites.
+
+Secret Manager secrets in the platform GCP project, bound as `latest`. All
+three are required whenever `METAL_HOSTS_ENABLED=1`. The Cloud Run service
+account needs `roles/secretmanager.secretAccessor`, either on each secret or
+as an unconditional project-level grant:
 
 | Env name | Secret | Format |
 | --- | --- | --- |
 | `METAL_HOSTD_API_TOKEN` | `metal-hostd-api-token` | 32-512 printable ASCII, no whitespace or trailing newline; hostd's API token |
 | `METAL_HOSTD_INGRESS_TOKEN` | `metal-hostd-ingress-token` | same format, a different value; hostd's ingress token |
-| `METAL_HOSTD_CA_PEM` | `metal-hostd-ca-pem` | PEM CA certificate for the hostd TLS certificate (only when `METAL_HOSTD_CA_PEM_ENABLED=true`) |
+| `METAL_HOSTD_CA_PEM` | `metal-hostd-ca-pem` | PEM CA certificate for the hostd TLS certificate |
 
 Enable order:
 
@@ -201,9 +205,17 @@ Enable order:
 4. Set `MATRIX_FREE_TIER_ENABLED=1`, `MATRIX_FREE_TIER_MAX_RUNTIMES`, the
    optional spend cap and `MATRIX_FREE_TIER_SLEEP_ENABLED=1`, then deploy again.
 
-To turn it off, set the flags back to `0` and deploy. The full deploy
-replaces the service environment, and verification fails if any metal or
-free-tier setting remains.
+To pause the free tier, turn off the server-side PostHog flag
+`free-tier-enabled` (evaluated per Clerk user id) instead of changing
+GitHub variables. That stops new free enrollment only. Metal routing, hostd
+credentials, invites and entitlements stay in place, so existing owners keep
+their runtimes and can retry a failed provisioning.
+
+Never set `METAL_HOSTS_ENABLED=0` to pause: it removes the metal substrate
+and hostd credentials from the platform, so every existing metal VM becomes
+unreachable. Turn metal off only after no metal runtimes remain. The full
+deploy replaces the service environment, and verification fails if any
+metal or free-tier setting remains on a revision that should have none.
 
 
 ## Recovery

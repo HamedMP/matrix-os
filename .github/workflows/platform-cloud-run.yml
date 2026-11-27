@@ -175,12 +175,8 @@ jobs:
       # hostd credentials are Secret Manager bindings; see docs/dev/metal-hosts.md.
       METAL_HOSTS_ENABLED: ${{ vars.METAL_HOSTS_ENABLED || '0' }}
       METAL_GOLDEN_VERSION: ${{ vars.METAL_GOLDEN_VERSION }}
-      METAL_HOSTD_CA_PEM_ENABLED: ${{ vars.METAL_HOSTD_CA_PEM_ENABLED || 'true' }}
-      METAL_POOL_MAX_DATA_PERCENT: ${{ vars.METAL_POOL_MAX_DATA_PERCENT }}
-      METAL_POOL_MAX_METADATA_PERCENT: ${{ vars.METAL_POOL_MAX_METADATA_PERCENT }}
       MATRIX_FREE_TIER_ENABLED: ${{ vars.MATRIX_FREE_TIER_ENABLED || '0' }}
       MATRIX_FREE_TIER_MAX_RUNTIMES: ${{ vars.MATRIX_FREE_TIER_MAX_RUNTIMES }}
-      MATRIX_FREE_TIER_INVITE_REQUIRED: ${{ vars.MATRIX_FREE_TIER_INVITE_REQUIRED || 'true' }}
       MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD: ${{ vars.MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD }}
       MATRIX_FREE_TIER_SLEEP_ENABLED: ${{ vars.MATRIX_FREE_TIER_SLEEP_ENABLED || '0' }}
       DEPLOY_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
