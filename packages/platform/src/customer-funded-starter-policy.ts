@@ -6,10 +6,14 @@ import { AccountDeletionAdmissionError, withAccountDeletionOwnerLock } from './a
 import { createAiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { parseModels } from './ai-funded-metering-helpers.js';
 import { freeRuntimeModelIds, ordinaryCustomerModelIds } from './customer-ordinary-model-policy.js';
-import { FREE_MONTHLY_ALLOWANCE_MICROUSD } from './free-tier/funded-policy.js';
+import { FREE_MONTHLY_ALLOWANCE_CAP_MICROUSD } from './free-tier/funded-policy.js';
 import { isFreeMetalRuntime } from './free-tier/free-runtime.js';
 
 const STARTER_MICROUSD = 5_000_000;
+// A free owner's month may spend up to the $20 cap on daily allowances on top of any starter credit left.
+const FREE_MONTHLY_BUDGET_MICROUSD = STARTER_MICROUSD + FREE_MONTHLY_ALLOWANCE_CAP_MICROUSD;
+// Defaults earlier free runtimes kept: the $5 starter budget, then the starter plus a $5 monthly allowance.
+const EARLIER_FREE_BUDGET_DEFAULTS = [STARTER_MICROUSD, STARTER_MICROUSD + 5_000_000];
 const STARTER_SOURCE = 'matrix-ai-lifetime-starter';
 // Compatibility with the permanent starter entitlement issued before onboarding
 // was integrated. These source identifiers contain no customer identity.
@@ -71,21 +75,20 @@ export async function initializeCustomerFundedStarterPolicy(
     }
     if (existing && (!existing.enabled || (existing.expires_at !== null && !(Date.parse(existing.expires_at) > atMs))
       || !models.some(model => parseModels(existing.allowed_model_ids).includes(model)))) return false;
-    // A free runtime registered before the monthly allowance kept the $5 starter budget; raise exactly
-    // that default to the allowance budget, never a budget an operator set.
+    // A free runtime registered earlier kept an earlier default budget; raise exactly those defaults
+    // to the daily-allowance budget, never a budget an operator set.
     const upgraded = existing !== undefined && free
-      && Number(existing.monthly_budget_microusd) === STARTER_MICROUSD
+      && EARLIER_FREE_BUDGET_DEFAULTS.includes(Number(existing.monthly_budget_microusd))
       && Boolean(await trx.executor.updateTable('ai_funded_runtime_policies').set({
-        monthly_budget_microusd: STARTER_MICROUSD + FREE_MONTHLY_ALLOWANCE_MICROUSD,
+        monthly_budget_microusd: FREE_MONTHLY_BUDGET_MICROUSD,
         revision: sql<number>`revision + 1`, updated_at: at,
-      }).where('machine_id', '=', machineId).where('monthly_budget_microusd', '=', STARTER_MICROUSD)
+      }).where('machine_id', '=', machineId).where('monthly_budget_microusd', '=', Number(existing.monthly_budget_microusd))
         .returning('machine_id').executeTakeFirst());
     const inserted = existing ? undefined : await trx.executor.insertInto('ai_funded_runtime_policies').values({
       machine_id: machineId, owner_id: machine.clerk_user_id, runtime_slot: 'primary', enabled: true,
       allowed_model_ids: JSON.stringify(models),
       uses_free_model_default: free,
-      // A free owner's month may spend the new allowance on top of any starter credit left.
-      monthly_budget_microusd: free ? STARTER_MICROUSD + FREE_MONTHLY_ALLOWANCE_MICROUSD : STARTER_MICROUSD,
+      monthly_budget_microusd: free ? FREE_MONTHLY_BUDGET_MICROUSD : STARTER_MICROUSD,
       expires_at: null, revision: 1, next_issue_at: '1970-01-01T00:00:00.000Z', created_at: at, updated_at: at,
     }).onConflict(conflict => conflict.column('machine_id').doNothing()).returning('machine_id').executeTakeFirst();
     const month = new Date(Date.UTC(new Date(at).getUTCFullYear(), new Date(at).getUTCMonth(), 1)).toISOString();

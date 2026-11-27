@@ -37,7 +37,7 @@ import { loadLockedFundingSources, reconcileExpiredPromotionalCredit } from "./a
 import { previewRuntimeOperationBusy } from "./preview-runtime-admission.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 import {
-  admitFreeDailySpend, assertFreeModel, grantFreeMonthlyAllowance, type FreeAllowanceGrant, type FreeFundingConfig,
+  admitFreeDailySpend, assertFreeModel, grantFreeDailyAllowance, utcDayStart, type FreeAllowanceGrant, type FreeFundingConfig,
 } from "./free-tier/funded-policy.js";
 import { freeMetalMachine, isFreeMetalRuntime } from "./free-tier/free-runtime.js";
 
@@ -80,7 +80,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         || credential.audience !== FUNDED_AI_AUDIENCE || credential.scope !== FUNDED_AI_SCOPE) {
         throw new AiFundedPolicyError("unauthorized");
       }
-      // A free metal runtime (ENG-520 P7) may be granted its monthly allowance below, and the grant
+      // A free metal runtime (ENG-520 P7) may be granted its daily allowance below, and the grant
       // takes the exclusive deletion fence. Take it first here so the fence is never upgraded from
       // shared under the billing owner lock, which could deadlock two admissions for one owner.
       const freeBeforeLock = await isFreeMetalRuntime(trx.executor, credential.machine_id);
@@ -139,7 +139,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         runtimeSlot: credential.runtime_slot,
       };
       await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
-      if (free) await grantFreeMonthlyAllowance(trx, identity, checked, deps.grantCreditInTransaction);
+      if (free) await grantFreeDailyAllowance(trx, identity, checked, deps.grantCreditInTransaction);
       const balance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         ...advanceMonthWindow(utcMonthStart(checked)),
         updated_at: checkedAt,
@@ -241,9 +241,12 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       const reservedAt = free
         ? await admitFreeDailySpend(trx.executor, deps.freeFunding, request.maxCostMicrousd, deps.now)
         : checked;
-      // Retry if the free spend lock wait crossed the funding window.
-      // Paid reservations use the window returned by the balance update.
-      if (free && utcMonthStart(reservedAt) !== periodStart) throw new AiFundedPolicyError("busy");
+      // Retry if the free spend lock wait crossed midnight: the hold would draw on the day's
+      // allowance that just expired, and the month window may have moved too. Paid reservations
+      // use the window returned by the balance update.
+      if (free && (utcDayStart(reservedAt) !== utcDayStart(checked) || utcMonthStart(reservedAt) !== periodStart)) {
+        throw new AiFundedPolicyError("busy");
+      }
       const reservedAtIso = reservedAt.toISOString();
       const reserved = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         reserved_microusd: sql<number>`reserved_microusd + ${holdMicrousd}`,

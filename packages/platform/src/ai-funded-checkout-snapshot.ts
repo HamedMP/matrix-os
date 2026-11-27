@@ -106,7 +106,7 @@ export async function readCheckoutFundingSnapshot(input: {
         }
       : undefined;
     // A free metal runtime reads under its admission's model rule. This read-only snapshot never grants
-    // its monthly allowance; the first runtime funding read or admission of the month does.
+    // its daily allowance; the first runtime funding read or admission of the day does.
     const free = row.free_runtime === true;
     if (row.machine_provisioning_class !== "customer" && !preview) {
       throw new AiFundedPolicyError("access_disabled");
