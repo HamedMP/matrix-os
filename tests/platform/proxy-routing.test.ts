@@ -2956,8 +2956,8 @@ describe("platform proxy routing", () => {
     expect(html).toContain("sidebar.className = 'settings-sidebar';");
     expect(html).toContain("activeItem.textContent = 'Default installs';");
     expect(html).toContain("billingItem.textContent = 'Billing';");
-    expect(html).toContain("billingStatus.textContent = 'Completed';");
-    expect(html).toContain("unavailableStatus.textContent = 'Unavailable until your VPS is ready';");
+    expect(html).toContain("billingStatus.textContent = freePlan ? 'Free plan' : 'Completed';");
+    expect(html).toContain("var unavailableUntilReady = freePlan ? 'Unavailable until your computer is ready' : 'Unavailable until your VPS is ready';");
     expect(html).toContain("accountFooter.className = 'settings-account-footer';");
     expect(html).toContain("setDefaultInstallsCard(true);");
     expect(html).toContain("content.className = 'default-installs-state';");
@@ -2971,7 +2971,7 @@ describe("platform proxy routing", () => {
     expect(html).toContain("<title id=\"opencode-title\">OpenCode</title>");
     expect(html).toContain("<title>Pi</title>");
     expect(html).toContain("logo.innerHTML = developerToolLogos[tool] || '';");
-    expect(html).toContain("footerText.textContent = 'CLI login happens after the VPS is ready. Tool authentication is completed inside each CLI.';");
+    expect(html).toContain("footerText.textContent = freePlan ? freePlanCopy.sleep : 'CLI login happens after the VPS is ready. Tool authentication is completed inside each CLI.';");
     expect(html).toContain("matrix.billing.checkoutAttemptAt");
     expect(html).toContain("hasTrustedCheckoutReturn()");
     expect(html).toContain("stripCheckoutReturnParams()");
@@ -3017,7 +3017,7 @@ describe("platform proxy routing", () => {
     expect(html).toContain("if (err && (err.name === 'AbortError' || err.name === 'TimeoutError')) {");
     expect(html).toContain("billingConfirmationPolls = 0;\n            continueWithClerkSession(true);\n            return;");
     expect(html).toContain("setProvisionControls(true, null);");
-    expect(html).toContain("setProvisionControls(false, provisioningRetryError);");
+    expect(html).toContain("setProvisionControls(false, typeof message === 'string' ? message : provisioningRetryError);");
     expect(html).not.toContain("ask the operator to provision this account");
     expect(html).not.toContain("You are already signed in");
   });

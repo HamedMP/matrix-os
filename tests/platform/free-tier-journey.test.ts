@@ -134,7 +134,7 @@ describe('onboarding journey on the free plan', () => {
   });
   afterEach(async () => { await destroyTestPlatformDb(db); });
 
-  function journeyApp(options: { resolveEntitlement?: () => Promise<BillingEntitlement | null>; stripeEnabled?: boolean } = {}) {
+  function journeyApp(options: { resolveEntitlement?: () => Promise<BillingEntitlement | null>; stripeEnabled?: boolean; maxRuntimes?: number } = {}) {
     const unused = async () => { throw new Error('unexpected hostd call'); };
     const client = {
       capacity, createVm, listVms: async () => [], destroy, getVm: unused,
@@ -152,7 +152,7 @@ describe('onboarding journey on the free plan', () => {
       tokenFactory: () => ({ token: 'registration-token', hash: hashRegistrationToken('registration-token'), expiresAt: '2026-11-21T13:00:00.000Z' }),
       postgresPasswordFactory: () => 'postgres-secret', log: () => {},
     });
-    const freeTier = createFreeTierRuntime({ db, config: { maxRuntimes: 10, inviteRequired: true }, metal, env: {} });
+    const freeTier = createFreeTierRuntime({ db, config: { maxRuntimes: options.maxRuntimes ?? 10, inviteRequired: true }, metal, env: {} });
     const provision = vi.fn<CustomerVpsService['provision']>(async () => ({
       machineId: 'vps-machine', status: 'provisioning',
     }) as unknown as Awaited<ReturnType<CustomerVpsService['provision']>>);
@@ -219,6 +219,19 @@ describe('onboarding journey on the free plan', () => {
     // The guest registers: the journey moves on to the normal first-run state.
     await db.executor.updateTable('user_machines').set({ status: 'running' }).where('clerk_user_id', '=', OWNER).execute();
     expect((await journey(app)).phase).toBe('first_run');
+  });
+
+  it('answers a full free plan with the capacity code so clients can say so (ENG-520)', async () => {
+    await addFreeTierInvite(db, { clerkUserId: 'user_someoneelse', invitedBy: 'ops' });
+    await upsertBillingEntitlement(db, { ...buildFreeEntitlement('user_someoneelse', NOW) });
+    await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+    const { app } = journeyApp({ maxRuntimes: 1 });
+
+    const result = await retry(app);
+    expect(result.status).toBe(503);
+    expect(result.headers.get('retry-after')).toBe('60');
+    expect(await result.json()).toEqual({ error: 'busy' });
+    expect(createVm).not.toHaveBeenCalled();
   });
 
   it('a first build whose guest never registers turns retryable on the journey, with no maintenance worker', async () => {

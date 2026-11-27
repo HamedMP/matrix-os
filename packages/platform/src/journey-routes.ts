@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
+import { FREE_CAPACITY_FULL_CODE } from '@matrix-os/contracts/free-plan-copy';
 import {
   getActiveUserMachineByClerkId,
   upsertOnboardingFirstRun,
@@ -13,6 +14,7 @@ import { AccountDeletionAdmissionError } from './account-deletion/admission.js';
 import { RuntimeSlotSchema } from './customer-vps-schema.js';
 import { verifySyncJwt } from './sync-jwt.js';
 import { neverRegistered } from './substrates/metal-registration-window.js';
+import { FREE_CAPACITY_RETRY_AFTER_SECONDS } from './free-tier/provision-free-route.js';
 
 export interface JourneyClerkAuth {
   extractToken: (authorization?: string, cookie?: string) => string | null;
@@ -266,6 +268,11 @@ export function createJourneyRoutes(options: JourneyRoutesOptions): Hono {
         if (err.code === 'retry_exhausted') return c.json({ error: 'retry_exhausted' }, 409);
         if (err.code === 'support_required') return c.json({ error: 'support_required' }, 409);
         if (err.code === 'retry_throttled') return c.json({ error: 'retry_throttled' }, 429);
+        if (err.code === 'free_capacity_full') {
+          // Same code as POST /api/auth/provision-runtime, so every client shows the capacity message.
+          c.header('Retry-After', FREE_CAPACITY_RETRY_AFTER_SECONDS);
+          return c.json({ error: FREE_CAPACITY_FULL_CODE }, 503);
+        }
       }
       console.error('[journey] retry-provision failed:', err instanceof Error ? err.message : String(err));
       return c.json({ error: 'provisioning_unavailable' }, 503);

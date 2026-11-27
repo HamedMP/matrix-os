@@ -1,3 +1,4 @@
+import { FREE_CAPACITY_FULL_CODE } from '@matrix-os/contracts/free-plan-copy';
 import { METAL_PROVISION_MIN_INTERVAL_MS } from '../substrates/metal-provisioner.js';
 import type { Context } from 'hono';
 import type { PlatformDB } from '../db.js';
@@ -8,7 +9,8 @@ import type { FreeProvisionOutcome, FreeRuntimeProvisioner } from './provision-f
  * ported from PR #3414 with the runtime reported as `metal`).
  */
 
-const BUSY_RETRY_AFTER_SECONDS = '60';
+/** Retry-After for a full free plan; the journey retry route answers the same. */
+export const FREE_CAPACITY_RETRY_AFTER_SECONDS = '60';
 const SETUP_RETRY_AFTER_SECONDS = '30';
 
 interface ProvisionIdentity {
@@ -39,8 +41,8 @@ function respond(c: Context, clerkUserId: string, outcome: FreeProvisionOutcome)
     case 'waitlisted':
       return c.json({ error: 'Free plan is invite only', code: 'waitlisted' }, 403);
     case 'busy':
-      c.header('Retry-After', BUSY_RETRY_AFTER_SECONDS);
-      return c.json({ error: 'Free capacity is full', code: 'busy' }, 503);
+      c.header('Retry-After', FREE_CAPACITY_RETRY_AFTER_SECONDS);
+      return c.json({ error: 'Free capacity is full', code: FREE_CAPACITY_FULL_CODE }, 503);
     case 'runtime_exists':
       return c.json({ error: 'Runtime already exists', code: 'runtime_exists' }, 409);
     case 'plan_unavailable':

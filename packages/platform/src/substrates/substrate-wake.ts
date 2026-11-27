@@ -305,7 +305,7 @@ export function wakeRefusalResponse(
   applyNoStoreHeaders(c);
   if (refusal.retryAfter) c.header('Retry-After', refusal.retryAfter);
   if (decision.kind === 'not_ready' && !respondWithJson) {
-    return c.html(getVpsBootPage({ status: decision.state === 'waking' ? 'starting' : decision.state }), 503);
+    return c.html(getVpsBootPage({ status: decision.state }), 503);
   }
   return c.json(refusal.body, 503);
 }

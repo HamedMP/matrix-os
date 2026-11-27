@@ -725,6 +725,7 @@ export function createApp(deps: {
     platformSecret,
     platformJwtSecret,
     legacyContainerRoutingEnabled,
+    freePlanAvailable: Boolean(deps.freeTier?.provisioner),
     proxyTimeoutMs: PROXY_TIMEOUT_MS,
     authShellProxyTimeoutMs: AUTH_SHELL_PROXY_TIMEOUT_MS,
     codeServerPort: CODE_SERVER_PORT,
