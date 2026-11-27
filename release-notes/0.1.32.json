@@ -1,12 +1,30 @@
 {
   "version": "0.1.32",
   "channel": "stable",
-  "date": "2026-11-26",
+  "date": "2026-11-27",
   "locale": "en",
-  "title": "Your Mac, right in Chat",
-  "shortTitle": "Mac from Chat",
-  "summary": "Pair your Mac once, verify supported work from a private Chat, and get results back in the same conversation. Terminals are faster, and Connect Apps is easier to navigate.",
+  "title": "Set up projects in Chat",
+  "shortTitle": "Projects in Chat",
+  "summary": "Your selected agent can now guide a project from its first questions to reviewed setup files, all inside Chat. Mac verification, clearer connections, and faster, steadier chats and terminals round out the release.",
   "highlights": [
+    {
+      "tag": "New",
+      "title": "Project setup, guided by your agent",
+      "body": "Start in Project Chat, answer focused questions, add Skills or connections, review the generated guidance, and save only when you are ready.",
+      "surfaces": [
+        "web-desktop",
+        "web-canvas",
+        "electron-desktop"
+      ],
+      "art": "agents",
+      "tone": "lime",
+      "prs": [
+        3572,
+        3573,
+        3644,
+        3653
+      ]
+    },
     {
       "tag": "New",
       "title": "Verify work on your Mac from Chat",
@@ -43,24 +61,29 @@
         3704,
         3705
       ]
-    },
-    {
-      "tag": "Improved",
-      "title": "Terminals that keep up",
-      "body": "Terminal windows switch and stream faster. Slow or unreadable workspace recovery no longer holds up your other terminals.",
-      "surfaces": [
-        "web-desktop",
-        "electron-desktop"
-      ],
-      "art": "terminal",
-      "tone": "ink",
-      "prs": [
-        3536,
-        3663
-      ]
     }
   ],
   "items": [
+    {
+      "kind": "improved",
+      "text": "Sent Chat messages appear immediately, and the first reply stays visible when a new Chat opens."
+    },
+    {
+      "kind": "fixed",
+      "text": "Terminal commands keep their final output after they exit."
+    },
+    {
+      "kind": "improved",
+      "text": "Terminal windows switch and stream faster, while slow workspace recovery no longer holds up the rest."
+    },
+    {
+      "kind": "fixed",
+      "text": "Default Matrix apps no longer offer new sharing, and Web shows one clear Share entry for apps you create."
+    },
+    {
+      "kind": "fixed",
+      "text": "Apps you have not checked for collaboration now show as not checked instead of unavailable."
+    },
     {
       "kind": "fixed",
       "text": "Managed Codex sessions can use code mode reliably."
@@ -102,6 +125,25 @@
     3711,
     3519,
     3687,
-    3699
+    3699,
+    3520,
+    3659,
+    3743,
+    3734,
+    3680,
+    3681,
+    3682,
+    3683,
+    3690,
+    3691,
+    3692,
+    3693,
+    3694,
+    3702,
+    3754,
+    3720,
+    3761,
+    3765,
+    3703
   ]
 }
