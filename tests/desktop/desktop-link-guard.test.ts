@@ -675,13 +675,22 @@ describe("Desktop link guard: the owner's consent", () => {
 
   // Fault detected (review): waiting for the owner held every later call on the stream.
   it("keeps the rest of the stream moving while a call waits for the owner", async () => {
-    let allow: ((answer: boolean) => void) | undefined;
-    const c = createDesktopLinkConsent({ ask: () => new Promise<boolean>((resolve) => { allow = resolve; }), fullAccess: async () => false, dialogGapMs: 0, log: () => {} });
+    const shown = Promise.withResolvers<void>();
+    const answer = Promise.withResolvers<boolean>();
+    const c = createDesktopLinkConsent({
+      ask: () => {
+        shown.resolve();
+        return answer.promise;
+      },
+      fullAccess: async () => false,
+      dialogGapMs: 0,
+      log: () => {},
+    });
     const { g } = await wired({ consent: c, script: noTemplates });
     const result = await g.push(Buffer.concat([call(2, "terminal.run", { argv: ["claude"] }), call(4, "terminal.list")]));
     expect(decode(result.forwarded).map((frame) => (frame.body as { method: string }).method)).toEqual(["terminal.list"]);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    allow!(true);
+    await shown.promise;
+    answer.resolve(true);
     expect(decode((await result.deferred![0]!).forwarded).map((frame) => (frame.body as { method: string }).method)).toEqual(["terminal.run"]);
   });
 
