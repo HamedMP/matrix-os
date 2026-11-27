@@ -50,7 +50,8 @@ export interface ReviewState {
 }
 
 export type ReviewTarget = readonly string[] | "all" | "selection" | "current";
-export type ReviewActionResult = { ok: true; resolved: number } | { ok: false; message: string };
+/** `editing` marks a refusal the cell editor already shows, so callers need not show it again. */
+export type ReviewActionResult = { ok: true; resolved: number } | { ok: false; message: string; editing?: true };
 
 const STALE_NOTICE = "Some changes stay pending because their cells were edited since they were proposed. Accept them to keep the current content.";
 const GONE_NOTICE = "That change is no longer pending. The list has been refreshed.";
@@ -230,22 +231,30 @@ export class SheetReviewController {
     return target;
   }
 
-  /** Resolving changes cells: the text still in the cell editor goes in first, and a refused one stops it. */
+  /**
+   * Resolving changes cells: the text still in the cell editor goes in first, and a refused one stops it.
+   * The changes are chosen before that text goes in: storing it can resolve the current change and move
+   * on, and the owner meant the change they were looking at, not the one after it.
+   */
   private resolve(target: ReviewTarget, accept: boolean): ReviewActionResult {
+    const ids = this.idsFor(target);
+    const pendingBefore = new Set(this.state.items.map((item) => item.id));
     const grid = this.grid;
-    if (grid === null || grid.afterEdit === undefined) return this.resolveNow(target, accept);
-    let outcome: ReviewActionResult = { ok: false, message: EDITING_NOTICE };
+    if (grid === null || grid.afterEdit === undefined) return this.resolveNow(ids, accept, target === "selection", pendingBefore);
+    let outcome: ReviewActionResult = { ok: false, message: EDITING_NOTICE, editing: true };
     grid.afterEdit(() => {
-      outcome = this.resolveNow(target, accept);
+      outcome = this.resolveNow(ids, accept, target === "selection", pendingBefore);
     });
     return outcome;
   }
 
-  private resolveNow(target: ReviewTarget, accept: boolean): ReviewActionResult {
+  private resolveNow(chosen: readonly string[] | "all", accept: boolean, fromSelection: boolean, pendingBefore: ReadonlySet<string>): ReviewActionResult {
     if (this.disposed) return { ok: false, message: FAILED_NOTICE };
-    const ids = this.idsFor(target);
+    // A change the stored text already resolved is skipped, not swapped for another one.
+    const pendingNow = new Set(reviewOrder(buildReviewGroups(this.session.workbook)).map((item) => item.id));
+    const ids = chosen === "all" ? chosen : chosen.filter((id) => !pendingBefore.has(id) || pendingNow.has(id));
     if (ids !== "all" && ids.length === 0) return { ok: true, resolved: 0 };
-    if (ids === "all" && this.state.items.length === 0) return { ok: true, resolved: 0 };
+    if (ids === "all" && pendingNow.size === 0) return { ok: true, resolved: 0 };
     let result: ResolveChangesResult;
     try {
       result = accept ? this.session.acceptChanges(ids) : this.session.rejectChanges(ids);
@@ -261,7 +270,7 @@ export class SheetReviewController {
     const notice = result.stale.length > 0 ? STALE_NOTICE : null;
     const s = this.state;
     this.state = this.build(s.currentId, s.selectedIds.filter((id) => !resolved.has(id)), notice, s.index);
-    if (target === "selection") this.state = { ...this.state, selectedIds: [] };
+    if (fromSelection) this.state = { ...this.state, selectedIds: [] };
     this.paintMarkup();
     this.emit();
     return { ok: true, resolved: resolved.size };

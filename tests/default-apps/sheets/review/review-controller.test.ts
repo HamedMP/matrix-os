@@ -151,4 +151,45 @@ describe("SheetReviewController", () => {
     review.dispose();
     grid.dispose();
   });
+
+  // Outcome: Accept or Reject acts on the change the owner was looking at. Fault: storing the typed
+  // text resolves the current change and moves on, and the next change is resolved instead.
+  it.each([
+    ["rejects", (review: SheetReviewController) => review.rejectCurrent()],
+    ["accepts", (review: SheetReviewController) => review.acceptCurrent()],
+  ])("%s the current change, not the next one, when the owner typed over its cell", async (_name, act) => {
+    const model = await openModel();
+    const { session, sheets } = model;
+    proposeOnModel(model);
+    const grid = createSheetGridController(session);
+    const review = new SheetReviewController(session, grid);
+    const [growth, total, costs] = review.getState().items;
+    review.goTo(growth!.id);
+    grid.startEdit("0.07");
+    expect(act(review).ok).toBe(true);
+    expect(session.cell(sheets.assumptions, 2, 1).value).toBe(0.07);
+    expect(review.getState().items.map((item) => item.id)).toEqual([total!.id, costs!.id]);
+    expect(session.cell(sheets.summary, B2.row, B2.col).formula).toBe("Projection!N4");
+    review.dispose();
+    grid.dispose();
+  });
+
+  it("resolves the selected changes that were pending when the owner clicked, skipping one the typed text resolved", async () => {
+    const model = await openModel();
+    const { session, sheets } = model;
+    proposeOnModel(model);
+    const grid = createSheetGridController(session);
+    const review = new SheetReviewController(session, grid);
+    const [growth, total, costs] = review.getState().items;
+    review.setSelected([growth!.id, costs!.id]);
+    session.setActiveSheet(sheets.assumptions);
+    grid.select({ row: 2, col: 1 });
+    grid.startEdit("0.07");
+    expect(review.reject("selection")).toEqual({ ok: true, resolved: 1 });
+    expect(session.cell(sheets.assumptions, 2, 1).value).toBe(0.07);
+    expect(session.cell(sheets.assumptions, 4, 1).value).not.toBe(20000);
+    expect(review.getState().items.map((item) => item.id)).toEqual([total!.id]);
+    review.dispose();
+    grid.dispose();
+  });
 });

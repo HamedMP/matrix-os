@@ -67,14 +67,15 @@ function setup() {
     for (const method of ["decorate", "clearDecorations", "select"] as const) {
       vi.spyOn(controller, method).mockImplementation(() => void calls.push(method));
     }
-    for (const method of ["acceptCurrent", "rejectCurrent", "accept", "reject"] as const) {
-      vi.spyOn(review, method).mockImplementation(() => {
+    // Review commands store the editor text themselves: watch the changes they would resolve.
+    for (const method of ["acceptChanges", "rejectChanges"] as const) {
+      vi.spyOn(session, method).mockImplementation(() => {
         calls.push(method);
-        return { ok: true } as never;
+        return { resolvedIds: [], stale: [] } as never;
       });
     }
   };
-  return { session, sheet, controller, commands, calls, watch };
+  return { session, sheet, controller, review, commands, calls, watch };
 }
 
 describe("Sheets ribbon commands with text in the cell editor", () => {
@@ -120,5 +121,29 @@ describe("Sheets ribbon commands with text in the cell editor", () => {
     expect(session.cell(sheet, 1, 0).value).toBe(nowInA2);
     controller.undo();
     expect(session.cell(sheet, 1, 0).value).toBe("typed");
+  });
+
+  // Outcome: Accept change and Reject change act on the change the owner was looking at. Fault: the
+  // ribbon stores the typed text first, which resolves that change and moves on, and the command then
+  // resolves the next change.
+  it.each([["change-reject"], ["change-accept"]] as const)("%s resolves the current change, not the next one, after the owner typed over its cell", (id) => {
+    const { session, sheet, controller, review, commands } = setup();
+    session.mutate((workbook) => {
+      workbook.beginProposal({ author: "Alex", date: "2026-11-20T10:00:00.000Z", label: "Raise" });
+      workbook.setCell(sheet, { row: 1, col: 1 }, 20);
+      workbook.setCell(sheet, { row: 2, col: 1 }, 30);
+      workbook.endProposal();
+    });
+    review.next();
+    const [, next] = review.getState().items;
+    expect(review.getState().current?.location).toBe("Sheet1!B2");
+    controller.startEdit("7");
+
+    commands[id](undefined);
+
+    expect(controller.isEditing).toBe(false);
+    expect(session.cell(sheet, 1, 1).value).toBe(7);
+    expect(session.workbook.listChanges().map((change) => change.id)).toEqual([next!.id]);
+    expect(session.cell(sheet, 2, 1).value).toBe(30);
   });
 });

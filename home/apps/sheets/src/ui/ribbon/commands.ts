@@ -9,7 +9,7 @@
  */
 import type { SheetsAssistant } from "../../agent";
 import type { SheetGridController } from "../../grid";
-import type { SheetReviewController } from "../../review";
+import type { ReviewActionResult, SheetReviewController } from "../../review";
 import type { CellStyle } from "../../session/engine";
 import type { EditResult } from "../../session/types";
 import { selectionFromGrid } from "../agent";
@@ -98,6 +98,15 @@ const LEAVES_EDITOR: ReadonlySet<SheetCommandId> = new Set<SheetCommandId>([
 ]);
 
 /**
+ * Commands that store the text in the cell editor themselves, after choosing
+ * what they act on: the review controller picks the current change before that
+ * text goes in, because storing it can resolve the current change and move on.
+ */
+const STORES_EDIT_ITSELF: ReadonlySet<SheetCommandId> = new Set<SheetCommandId>([
+  "change-accept", "change-reject", "change-accept-all", "change-reject-all",
+]);
+
+/**
  * The handlers of every command. A command that changes cells or the sheet
  * first stores the text still in the cell editor and does nothing when the
  * editor refuses it: run with the editor open, a row deletion would move
@@ -109,7 +118,7 @@ export function createSheetCommands(ctx: SheetCommandContext): SheetCommands {
   const commands = {} as SheetCommands;
   for (const id of SHEET_COMMAND_IDS) {
     const handler = handlers[id];
-    commands[id] = LEAVES_EDITOR.has(id) ? handler : (arg) => void ctx.controller.afterEdit(() => handler(arg));
+    commands[id] = LEAVES_EDITOR.has(id) || STORES_EDIT_ITSELF.has(id) ? handler : (arg) => void ctx.controller.afterEdit(() => handler(arg));
   }
   return commands;
 }
@@ -147,9 +156,10 @@ function sheetCommandHandlers(ctx: SheetCommandContext): SheetCommands {
     ctx.openPanel("assistant");
     action(selection);
   };
-  const reviewAction = (action: () => { ok: true } | { ok: false; message: string }) => () => {
+  const reviewAction = (action: () => ReviewActionResult) => () => {
     const result = action();
-    if (!result.ok) notify(result.message, "warning");
+    // The cell editor shows why it refused its text.
+    if (!result.ok && result.editing !== true) notify(result.message, "warning");
   };
 
   return {
