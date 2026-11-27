@@ -139,8 +139,13 @@ export function createCronService(config: CronServiceConfig): CronService {
       }
 
       if (!due && !missedOccurrence(job, now)) continue;
-      // Replace a timer already due so its queued callback cannot dispatch the same run.
-      if (due) scheduleJob(job);
+      if (job.schedule.type === "interval") {
+        // The catch-up replaces the missed run and starts a new interval.
+        scheduleJob(job, now + job.schedule.intervalMs);
+      } else if (due) {
+        // Drop a queued cron callback that would dispatch the same run.
+        scheduleJob(job);
+      }
       runJob(job);
     }
   }

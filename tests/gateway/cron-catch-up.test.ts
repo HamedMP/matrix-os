@@ -201,6 +201,34 @@ describe("cron catch-up of missed runs", () => {
     expect(onTrigger).toHaveBeenCalledTimes(2);
   });
 
+  it("waits a full interval after catching up when channels become ready shortly before an existing timer", async () => {
+    vi.setSystemTime(new Date("2026-11-21T12:30:00.000Z"));
+    store = createCronStore(storePath);
+    store.save([makeJob({
+      schedule: { type: "interval", intervalMs: 60_000 },
+      lastRunAt: "2026-11-21T12:00:00.000Z",
+    })]);
+    const recordRun = vi.spyOn(store, "recordRun");
+    const channelsReady = Promise.withResolvers<void>();
+    service = createCronService({ store, onTrigger, catchUpAfter: channelsReady.promise });
+    try {
+      service.start();
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(onTrigger).not.toHaveBeenCalled();
+      channelsReady.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onTrigger).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(onTrigger).toHaveBeenCalledTimes(1);
+      expect(service.nextRunAt()?.toISOString()).toBe("2026-11-21T12:31:59.000Z");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onTrigger).toHaveBeenCalledTimes(2);
+    } finally {
+      service.stop();
+      await Promise.all(recordRun.mock.results.map((result) => result.value));
+    }
+  });
+
   it("a newly created job does not run on start", () => {
     vi.setSystemTime(new Date("2026-11-21T12:30:00.000Z"));
     startWith([
