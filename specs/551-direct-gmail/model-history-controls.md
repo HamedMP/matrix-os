@@ -46,6 +46,10 @@ The live runtime checks the parent under the context fence before assembling
 same-chat Agent history and before dispatching a saved Agent run. Gmail-marked
 parents stay outside this Agent path while guarded adapter installation is pending.
 
+The first Gmail marker records the last ordinary Side Chat answer sequence under
+the same fence as answer writes. Purge preserves answers through that recorded
+sequence. Earlier markers have no cutoff evidence and stay conservative.
+
 ## Evidence and remaining work
 
 The existing 1,199-line orchestrator is refactor debt. New policy belongs in the

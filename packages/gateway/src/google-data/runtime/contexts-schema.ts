@@ -26,6 +26,8 @@ export async function migrateGoogleContexts<DB>(db: Kysely<DB>) {
       id UUID PRIMARY KEY, owner_id TEXT NOT NULL, chat_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0),
       retention_deadline TIMESTAMPTZ NOT NULL, state TEXT NOT NULL CHECK(state IN ('active','purging','deleted')),
       UNIQUE(owner_id,chat_id))`.execute(tx);
+    await sql`ALTER TABLE google_context_markers ADD COLUMN IF NOT EXISTS
+      ordinary_side_answer_seq BIGINT NOT NULL DEFAULT 0`.execute(tx);
     await sql`CREATE TABLE IF NOT EXISTS google_context_origins (
       context_id UUID NOT NULL REFERENCES google_context_markers(id), origin_id TEXT NOT NULL REFERENCES google_context_sources(origin_id),
       PRIMARY KEY(context_id,origin_id))`.execute(tx);

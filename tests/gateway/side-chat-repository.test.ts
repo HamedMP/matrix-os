@@ -52,7 +52,7 @@ it("keeps newest main context when the side transcript is long", async () => {
   expect(generate.mock.calls[0]?.[0]).toContain("RECENT_MAIN_CONTEXT");
 });
 
-it("withholds Side Chat on Gmail-marked parents and erases old answers without erasing owner questions", async () => {
+it("preserves answers committed before Gmail marking and erases later unverified answers", async () => {
   const { chat } = await chats.create(owner, { id: "chat_side_gmail", clientRequestId: "req_side_gmail", title: "Main" });
   const { chat: ordinary } = await chats.create(owner, { id: "chat_side_ordinary", clientRequestId: "req_side_ordinary", title: "Other" });
   const generate = vi.fn(async () => ({ text: "Synthetic Side Chat answer" }));
@@ -64,9 +64,17 @@ it("withholds Side Chat on Gmail-marked parents and erases old answers without e
   await contexts.migrate();
   const account = "10000000-0000-4000-8000-000000000001";
   const deadline = new Date(Date.now() + 60_000).toISOString();
-  await contexts.mark({ ownerId: owner.ownerId, chatId: chat.id, googleAccountId: account,
+  const mark = { ownerId: owner.ownerId, chatId: chat.id, googleAccountId: account,
     consentId: "consent_side", profileId: "profile_side", profileRevision: 1, purposeId: "assistant",
-    expiresAt: deadline, retentionDeadline: deadline });
+    expiresAt: deadline, retentionDeadline: deadline };
+  await contexts.mark(mark);
+  const thread = await chats.kysely.selectFrom("chat_side_threads").select("id").where("chat_id", "=", chat.id).executeTakeFirstOrThrow();
+  // An older writer could persist an unverified answer after the marker was committed.
+  await chats.kysely.insertInto("chat_side_messages").values({
+    thread_id: thread.id, seq: 3, role: "assistant", content: "Unverified legacy answer",
+    client_request_id: "req_unverified_answer", created_at: new Date(),
+  }).execute();
+  await contexts.mark({ ...mark, expectedRevision: 1 });
 
   await expect(side.read(owner, chat.id)).rejects.toThrow();
   await expect(side.ask(owner, chat.id, { clientRequestId: "req_new_answer", text: "Question" }, generate)).rejects.toThrow();
@@ -74,8 +82,11 @@ it("withholds Side Chat on Gmail-marked parents and erases old answers without e
   await contexts.beginPurge(owner.ownerId, account);
 
   const rows = await chats.kysely.selectFrom("chat_side_messages as m")
-    .innerJoin("chat_side_threads as t", "t.id", "m.thread_id").select("m.role")
-    .where("t.chat_id", "=", chat.id).execute();
-  expect(rows).toEqual([{ role: "user" }]);
+    .innerJoin("chat_side_threads as t", "t.id", "m.thread_id").select(["m.role", "m.content"])
+    .where("t.chat_id", "=", chat.id).orderBy("m.seq").execute();
+  expect(rows).toEqual([
+    { role: "user", content: "Owner question" },
+    { role: "assistant", content: "Synthetic Side Chat answer" },
+  ]);
   expect((await side.read(owner, ordinary.id)).messages).toHaveLength(2);
 });
