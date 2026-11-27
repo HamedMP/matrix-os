@@ -46,6 +46,27 @@ describe("canonical Chat content reducer", () => {
     expect(next.activities.at(-1)?.id).toBe("activity_next");
     expect(full.messages[0]?.seq).toBe(1);
   });
+  it("retains turn identity for an older input still visible in a live transcript", () => {
+    const inputs: CanonicalChatMessage[] = Array.from({ length: 100 }, (_, index) => ({
+      ...message, id: `msg_input_${index}`, turnId: `cturn_input_${index}`, seq: index + 1,
+      role: "user", purpose: "ai_request", state: "committed",
+    }));
+    const turn = createCanonicalChatFixture("running").snapshot.turns[0]!;
+    const turns = inputs.map((input, index) => ({ ...turn, chatId: input.chatId, id: input.turnId!,
+      inputMessageId: input.id, clientRequestId: index === 0 ? `req_slack_summary_${"a".repeat(40)}` : `req_input_${index}`,
+      createdAt: new Date(Date.parse(input.createdAt) + index * 1000).toISOString(),
+    }));
+    const newTurn = { ...turns.at(-1)!, id: "cturn_input_next", inputMessageId: "msg_input_next",
+      clientRequestId: "req_input_next", createdAt: "2026-09-06T00:02:00.000Z" };
+    const { messageDelta: _messageDelta, ...record } = frame(2, 0, "next").content;
+    const next = applyCanonicalChatContent({ ...initial, messages: inputs, turns }, {
+      ...frame(2, 0, "next"), content: { ...record, turns: [newTurn],
+        messages: [{ ...inputs.at(-1)!, id: newTurn.inputMessageId, turnId: newTurn.id, seq: 101 }],
+      },
+    });
+    expect(next?.messages[0]?.id).toBe(inputs[0]?.id);
+    expect(next?.turns.find(({ inputMessageId }) => inputMessageId === inputs[0]?.id)?.clientRequestId).toBe(turns[0]?.clientRequestId);
+  });
   it("removes activities whose last associated message leaves the visible window", () => {
     const full = { ...initial,
       runs: ["run_old", "run_test"].map((id) => ({ ...createCanonicalChatFixture("running").snapshot.runs[0]!, id, chatId: "chat_content" })),

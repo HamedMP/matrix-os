@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import {afterEach, beforeEach, expect, it, vi} from "vitest";
-import {cleanup, render, screen, within} from "@testing-library/react";
+import {cleanup, render, screen, waitFor, within} from "@testing-library/react";
 import {BotChatPanel} from "../../../packages/ui/src/chat-agents/bots/BotChatPanel.js";
 import {createBotRoutineClient} from "../../../packages/ui/src/chat-agents/bots/routine-client.js";
 import {ConversationTranscript} from "../../../desktop/src/renderer/src/components/conversation/transcript";
@@ -15,6 +15,8 @@ function fixture({admitted=true, otherChat=false, live=true, requestId=`req_rout
   const {snapshot}=createCanonicalChatFixture("completed");
   snapshot.turns[0]!.clientRequestId=requestId;
   snapshot.messages[0]!.parts=[{type:"text",text:"Return READY."}];
+  snapshot.messages.push({...snapshot.messages[0]!,id:"msg_routine_reply",seq:2,role:"assistant",runId:snapshot.runs[0]!.id,
+    parts:[{type:"text",text:"The scheduled result."}]});
   const fire={fireId,taskId:"task_scheduled_01",scheduledFor:"2026-08-24T23:59:00.000Z",status:admitted?"completed":"failed",attempts:admitted?1:0,failureCode:admitted?null:"background_not_authorized",updatedAt:"2026-08-25T00:00:00.000Z"};
   const row={routineId,botId:saved.id,chatId:otherChat?"chat_other_owner":snapshot.chat.id,
     proposal:{name:"Private schedule",prompt:"Return READY.",schedule:{kind:"cron",expr:"* * * * *",tz:"Asia/Shanghai"},selection:{instanceId:"matrix_chatgpt_plan",model:"gpt-6-luna"},authorizedEffects:["read"]},
@@ -34,13 +36,13 @@ function fixture({admitted=true, otherChat=false, live=true, requestId=`req_rout
 beforeEach(()=>{globalThis.ResizeObserver=class{observe(){} unobserve(){} disconnect(){}} as typeof ResizeObserver;});
 afterEach(cleanup);
 
-it.each([true,false])("labels the exact scheduled input with live Bot=%s, without a top panel or duplicate prompt",async live=>{
+it.each([true,false])("hides the linked saved routine prompt with live Bot=%s",async live=>{
   const f=fixture({live});
   render(<BotChatPanel client={f.client} chatId={f.chatId} directBotId={saved.id}><ConversationTranscript turns={f.turns} callbacks={{copyText:vi.fn()}}/></BotChatPanel>);
-  const marker=await screen.findByText("Sent by scheduled task");
-  const message=screen.getByText("Return READY.").closest('[data-message-id]')!;
-  expect(within(message as HTMLElement).getByText("Sent by scheduled task")).toBe(marker);
-  expect(screen.getAllByText("Return READY.")).toHaveLength(1);
+  await waitFor(()=>expect(f.request.mock.calls.some(([path])=>path===`/api/bot-routines/${routineId}`)).toBe(true));
+  await waitFor(()=>expect(screen.queryByText("Return READY.")).toBeNull());
+  expect(screen.getByText("The scheduled result.")).toBeTruthy();
+  expect(screen.queryByText("Sent by scheduled task")).toBeNull();
   expect(screen.queryByText("Scheduled task history")).toBeNull();
   expect(screen.queryByText(/View history/)).toBeNull();
   expect(f.request.mock.calls.every(([,method])=>method==="GET")).toBe(true);
@@ -66,20 +68,30 @@ it("does not label a manual message merely because its text matches a routine pr
   expect(within(bubble as HTMLElement).queryByText("Sent by scheduled task")).toBeNull();
   view.unmount();
 });
-it("keeps a neutral occurrence when a retained turn no longer includes its input bubble",async()=>{
-  const f=fixture();f.turns[0]!.user=undefined;
+it("keeps an unmatched failure when a retained turn no longer includes its input bubble",async()=>{
+  const f=fixture();f.turns[0]!.user=undefined;f.fire.status="failed";
   render(<BotChatPanel client={f.client} chatId={f.chatId} directBotId={saved.id}><ConversationTranscript turns={f.turns} callbacks={{copyText:vi.fn()}}/></BotChatPanel>);
-  expect(await screen.findByText("Scheduled task completed")).toBeTruthy();
+  expect(await screen.findByText("Scheduled task failed")).toBeTruthy();
   expect(screen.queryByText("Sent by scheduled task")).toBeNull();
 });
 it.each([0,5])("places an occurrence after the original input even when the latest attempt starts %s minutes later",async startMinute=>{
   const f=fixture({requestId:"req_manual_long"});
   f.fire.scheduledFor="2026-08-25T00:02:00.000Z";
+  f.fire.status="failed";
   f.turns[0]!.startedAt=Date.parse(`2026-08-25T00:0${startMinute}:00Z`);
   f.turns[0]!.endedAt=Date.parse("2026-08-25T00:06:00Z");
   f.turns[0]!.final={kind:"message",id:"msg_late_reply",role:"assistant",phase:"final",markdown:"Later manual reply",copyText:"Later manual reply",timestamp:f.turns[0]!.endedAt};
   render(<BotChatPanel client={f.client} chatId={f.chatId} directBotId={saved.id}><ConversationTranscript turns={f.turns} callbacks={{copyText:vi.fn()}}/></BotChatPanel>);
-  const status=await screen.findByText(/^Scheduled task completed/);
+  const status=await screen.findByText(/^Scheduled task failed/);
   expect(screen.getByText("Return READY.").compareDocumentPosition(status)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(status.compareDocumentPosition(screen.getByText("Later manual reply"))&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+it("does not add a status bubble when the completed occurrence's turn is outside the current page",async()=>{
+  const f=fixture();
+  f.turns[0]!.user=undefined;
+  render(<BotChatPanel client={f.client} chatId={f.chatId} directBotId={saved.id}><ConversationTranscript turns={f.turns} callbacks={{copyText:vi.fn()}}/></BotChatPanel>);
+  await waitFor(()=>expect(f.request.mock.calls.some(([path])=>path===`/api/bot-routines/${routineId}`)).toBe(true));
+  expect(screen.getByText("The scheduled result.")).toBeTruthy();
+  expect(screen.queryByText("Scheduled task completed")).toBeNull();
 });
