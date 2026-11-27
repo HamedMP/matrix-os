@@ -1,3 +1,4 @@
+import "./install-stdio-guard";
 import { claimPreviewProfile } from "./preview-pair-profile-lease";
 import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack";
 import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
