@@ -11,8 +11,8 @@ export class NewChatDeliveryUnconfirmedError extends Error {
 
 /**
  * A dropped request can still be committing on the computer. Check immediately,
- * then four more times a second apart. Each HTTP attempt has a two-second
- * timeout, with the shared wake policy bounding any wake wait.
+ * then four more times a second apart. Each read has a two-second deadline,
+ * including any wake wait, to keep recovery within fourteen seconds.
  * Reads never resubmit the prompt; a later retry keeps its original request IDs.
  */
 export async function recoverNewChatAdmission({ gatewayUrl, chatId, turnRequestId, getToken }: {

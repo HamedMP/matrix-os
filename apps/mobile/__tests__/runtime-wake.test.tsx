@@ -6,6 +6,7 @@ import * as Notifications from "expo-notifications";
 import { NotificationRouter } from "../components/NotificationRouter";
 import { ToastHost } from "../components/ui/Toast";
 import { GatewayClient, type RuntimeWakeEvent } from "../lib/gateway-client";
+import { NewChatDeliveryUnconfirmedError, recoverNewChatAdmission } from "../lib/queries/new-chat-admission-recovery";
 import { useArchiveAgent } from "../lib/queries/use-agents";
 import { useBotChat } from "../lib/queries/use-bot-chat";
 import { useBotRecipes } from "../lib/queries/use-bot-recipes";
@@ -53,6 +54,7 @@ jest.mock("@/lib/requests", () => ({
   ...jest.requireActual("@/lib/requests/integrations"),
   ...jest.requireActual("@/lib/requests/projects"),
   ...jest.requireActual("@/lib/requests/bots"),
+  fetchChatDetail: jest.requireActual("@/lib/requests/canonical-chat").fetchChatDetail,
 }));
 jest.mock("@/lib/storage", () => ({ HOSTED_GATEWAY_URL: "https://app.matrix-os.com" }));
 
@@ -669,6 +671,28 @@ describe("runtime wake review fixes", () => {
     global.fetch = originalFetch;
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  it("bounds lost Chat admission recovery to five two-second reads during wake", async () => {
+    jest.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), ms);
+      return controller.signal;
+    });
+    fetchMock.mockImplementation(async () => waking());
+    const failed = jest.fn();
+    void recoverNewChatAdmission({
+      gatewayUrl: "https://app.matrix-os.com/vm/alice",
+      chatId: "chat_new",
+      turnRequestId: "request_original",
+      getToken: async () => "clerk-token",
+    }).catch(failed);
+    await jest.advanceTimersByTimeAsync(13_999);
+    expect(failed).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1);
+    expect(failed).toHaveBeenCalledWith(new NewChatDeliveryUnconfirmedError());
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock.mock.calls.every(([, init]) => !init.method || init.method === "GET")).toBe(true);
   });
 
   it("Chat requests wait for a waking computer and show the shared notice", async () => {

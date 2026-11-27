@@ -31,7 +31,7 @@ import {
 } from "@matrix-os/contracts";
 
 import { gatewayRequestUrl } from "./answers";
-import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse, type RequestToken } from "./http";
+import { buildGatewayRequestUrl, createRequestTimeout, fetchAuthenticatedJson, fetchAuthenticatedResponse, type RequestToken } from "./http";
 
 const CHATS_UNAVAILABLE_ERROR = "Chats unavailable. Try again.";
 const CHAT_CREATE_ERROR = "Could not start a new chat. Try again.";
@@ -312,13 +312,16 @@ export function fetchChatDetail(
   } catch {
     return Promise.reject(new Error(CHAT_DETAIL_ERROR));
   }
-  return fetchAuthenticatedJson({
+  // Recovery reads supply a deadline that covers every wake attempt.
+  const deadline = timeoutMs === undefined ? undefined : createRequestTimeout(timeoutMs);
+  return fetchAuthenticatedResponse({
     url: url + "&routineReceiptVersion=1",
     token: clerkToken,
-    schema: CanonicalChatDetailResponseSchema,
     errorMessage: CHAT_DETAIL_ERROR,
     timeoutMs,
-  });
+    signal: deadline?.signal,
+  }, async (response) => CanonicalChatDetailResponseSchema.parse(await response.json()))
+    .finally(() => deadline?.cancel());
 }
 
 /**
