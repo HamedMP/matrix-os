@@ -509,7 +509,7 @@ describe("chat screen: open chat", () => {
     openChat();
     render(<ChatScreen />);
 
-    expect(mockMarkChatRead).toHaveBeenLastCalledWith(mockDetail);
+    expect(mockMarkChatRead).toHaveBeenLastCalledWith(mockDetail, mockActiveChatId);
   });
 
   it("takes the title from the chat list while the chat itself is still loading", () => {

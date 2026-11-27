@@ -49,7 +49,7 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
   } = composer;
   const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
   // A chat read here stops showing as Completed in the chat lists, as on Desktop.
-  useMarkChatRead(detail);
+  useMarkChatRead(chatReadFailed ? null : detail, activeChatId);
 
   const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
     chatId: activeChatId,

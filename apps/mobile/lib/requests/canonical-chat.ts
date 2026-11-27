@@ -30,8 +30,8 @@ import {
   type CanonicalUpdateChatReadStateRequest,
 } from "@matrix-os/contracts";
 
-import { gatewayRequestUrl } from "@/lib/requests/answers";
-import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse } from "@/lib/requests/http";
+import { gatewayRequestUrl } from "./answers";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse } from "./http";
 
 const CHATS_UNAVAILABLE_ERROR = "Chats unavailable. Try again.";
 const CHAT_CREATE_ERROR = "Could not start a new chat. Try again.";

@@ -10,12 +10,15 @@ import { disposeTestQueryClient } from "./query-test-cleanup";
 
 const mockFetchActiveComputer = jest.fn();
 const mockUpdateChatReadState = jest.fn();
+const mockGetToken = jest.fn(async () => "session-token");
 let mockFocused = true;
+let mockDrawerStatus = "closed";
 
 jest.mock("@clerk/clerk-expo", () => ({
-  useAuth: () => ({ isLoaded: true, isSignedIn: true, userId: "user_a", getToken: async () => "session-token" }),
+  useAuth: () => ({ isLoaded: true, isSignedIn: true, userId: "user_a", getToken: mockGetToken }),
 }));
 jest.mock("expo-router", () => ({ useIsFocused: () => mockFocused }));
+jest.mock("expo-router/drawer", () => ({ useDrawerStatus: () => mockDrawerStatus }));
 jest.mock("@/lib/storage", () => ({ HOSTED_GATEWAY_URL: "https://app.matrix-os.com" }));
 jest.mock("@/lib/requests", () => ({
   mobileQueryKeys: jest.requireActual("@/lib/requests/query-keys").mobileQueryKeys,
@@ -64,9 +67,9 @@ function setAppState(state: AppStateStatus) {
   Object.defineProperty(AppState, "currentState", { value: state, configurable: true, writable: true });
 }
 
-function renderMarkRead(initial: CanonicalChatDetailResponse | null) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
-  clients.push(client);
+function renderMarkRead(initial: CanonicalChatDetailResponse | null, sharedClient?: QueryClient) {
+  const client = sharedClient ?? new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+  if (!sharedClient) clients.push(client);
   if (initial) client.setQueryData(detailKey, initial);
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -104,12 +107,29 @@ describe("chatReadAcknowledgement", () => {
     // Marked unread before this visit: opening it reads it.
     expect(chatReadAcknowledgement(detail(markedNow), 4)).toEqual({ type: "mark_read", throughSeq: 4, baseVersion: 4 });
   });
+
+  it("does not acknowledge an unloaded reply beyond the committed messages delivered to this view", () => {
+    expect(chatReadAcknowledgement(detail({ ...unread, readThroughSeq: 2 }, [message(1, "user"), message(2, "assistant")]), 2)).toBeNull();
+  });
 });
+
+async function advance(ms = 2_000) {
+  await act(async () => { jest.advanceTimersByTime(ms); });
+}
+
+async function ready() {
+  // Resolve the real active-computer query before measuring the debounce.
+  await act(async () => {});
+  await advance(0);
+}
 
 describe("useMarkChatRead", () => {
   beforeEach(() => {
     jest.resetAllMocks();
+    jest.useFakeTimers();
+    mockGetToken.mockResolvedValue("session-token");
     mockFocused = true;
+    mockDrawerStatus = "closed";
     appStateListener = null;
     setAppState("active");
     jest.spyOn(AppState, "addEventListener").mockImplementation((_type, listener) => {
@@ -126,15 +146,20 @@ describe("useMarkChatRead", () => {
     await Promise.all(clients.splice(0).map(disposeTestQueryClient));
     jest.restoreAllMocks();
     Object.defineProperty(AppState, "currentState", originalAppState);
+    jest.useRealTimers();
   });
 
   it("marks the open chat read, keeps the read state in the chat's cache and reads the chat list again", async () => {
     readChats.mockResolvedValueOnce("Completed").mockResolvedValue("read");
     const { result, client } = renderMarkRead(detail(unread));
-
-    await waitFor(() => expect(mockUpdateChatReadState).toHaveBeenCalledWith(
+    await ready();
+    expect(mockUpdateChatReadState).not.toHaveBeenCalled();
+    await advance(1_999);
+    expect(mockUpdateChatReadState).not.toHaveBeenCalled();
+    await advance(1);
+    expect(mockUpdateChatReadState).toHaveBeenCalledWith(
       "session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 },
-    ));
+    );
     await waitFor(() => expect(result.current.chats).toBe("read"));
     expect(readChats).toHaveBeenCalledTimes(2);
     expect(client.getQueryData<CanonicalChatDetailResponse>(detailKey)?.record.readState).toEqual(read);
@@ -156,8 +181,21 @@ describe("useMarkChatRead", () => {
 
     mockFocused = true;
     rerender({ shown: detail(unread) });
-
+    await advance();
     await waitFor(() => expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1));
+  });
+
+  it("waits while the chat is covered by the side panel, without starting another visit", async () => {
+    mockDrawerStatus = "open";
+    const { rerender } = renderMarkRead(detail(unread));
+    await ready();
+    await advance();
+    expect(mockUpdateChatReadState).not.toHaveBeenCalled();
+    rerender({ shown: detail({ ...unread, markedUnread: true, version: 4 }) });
+    mockDrawerStatus = "closed";
+    rerender({ shown: detail({ ...unread, markedUnread: true, version: 4 }) });
+    await advance();
+    expect(mockUpdateChatReadState).not.toHaveBeenCalled();
   });
 
   it("waits while the app is in the background and acknowledges when it comes back", async () => {
@@ -167,7 +205,7 @@ describe("useMarkChatRead", () => {
     expect(mockUpdateChatReadState).not.toHaveBeenCalled();
 
     act(() => appStateListener?.("active"));
-
+    await advance();
     await waitFor(() => expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1));
   });
 
@@ -175,6 +213,8 @@ describe("useMarkChatRead", () => {
     jest.spyOn(console, "warn").mockImplementation(() => {});
     mockUpdateChatReadState.mockRejectedValue(new Error("Could not update the chat."));
     const { rerender } = renderMarkRead(detail(unread));
+    await ready();
+    await advance();
     await waitFor(() => expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(console.warn).toHaveBeenCalledWith("[chat] Read state update failed:", "Error"));
 
@@ -185,6 +225,165 @@ describe("useMarkChatRead", () => {
     // A newer reply, read again from the server, is a new acknowledgement.
     mockUpdateChatReadState.mockResolvedValue({ ...detail(read).record });
     rerender({ shown: detail({ ...unread, version: 3 }) });
+    await advance();
     await waitFor(() => expect(mockUpdateChatReadState).toHaveBeenCalledTimes(2));
+  });
+
+  it("coalesces committed replies without postponing the first read indefinitely", async () => {
+    const { rerender } = renderMarkRead(detail(unread));
+    await ready();
+    await advance(1_000);
+    rerender({ shown: detail({ ...unread, latestIncomingSeq: 6 }, [message(4, "assistant"), message(6, "assistant"), message(7, "assistant", "pending")]) });
+    await advance(1_000);
+    expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1);
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 2 });
+  });
+
+  it("cancels a queued read on background or blur; foreground alone never overrides a new manual unread mark", async () => {
+    const { rerender } = renderMarkRead(detail(unread));
+    await ready();
+    await advance(1_000);
+    act(() => appStateListener?.("background"));
+    await advance();
+    expect(mockUpdateChatReadState).not.toHaveBeenCalled();
+    rerender({ shown: detail({ ...unread, markedUnread: true, version: 4 }) });
+    act(() => appStateListener?.("active"));
+    await advance();
+    expect(mockUpdateChatReadState).not.toHaveBeenCalled();
+    // Leaving and reopening is deliberate reading of that reminder.
+    mockFocused = false;
+    rerender({ shown: detail({ ...unread, markedUnread: true, version: 4 }) });
+    mockFocused = true;
+    rerender({ shown: detail({ ...unread, markedUnread: true, version: 4 }) });
+    await advance();
+    expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not send an acknowledgement after token lookup outlives the visible visit", async () => {
+    const { rerender, client } = renderMarkRead(detail(unread));
+    await ready();
+    let finishToken!: (token: string) => void;
+    mockGetToken.mockReturnValueOnce(new Promise<string>((resolve) => { finishToken = resolve; }));
+    await advance();
+    mockFocused = false;
+    rerender({ shown: detail(unread) });
+    await act(async () => finishToken("late-token"));
+    expect(mockUpdateChatReadState).not.toHaveBeenCalled();
+    expect(client.getQueryData<CanonicalChatDetailResponse>(detailKey)?.record.readState).toEqual(unread);
+  });
+
+  it("uses the newest committed reply when streaming updates arrive during token lookup", async () => {
+    const { rerender } = renderMarkRead(detail(unread));
+    await ready();
+    let finishToken!: (token: string) => void;
+    mockGetToken.mockReturnValueOnce(new Promise<string>((resolve) => { finishToken = resolve; }));
+    await advance();
+    rerender({ shown: detail({ ...unread, version: 3, latestIncomingSeq: 6 }, [message(6, "assistant"), message(7, "assistant", "pending")]) });
+    await act(async () => finishToken("fresh-token"));
+    expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1);
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("fresh-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
+  });
+
+  it("cancels a token lookup across background/foreground even if the same chat becomes visible again", async () => {
+    renderMarkRead(detail(unread));
+    await ready();
+    let finishToken!: (token: string) => void;
+    mockGetToken.mockReturnValueOnce(new Promise<string>((resolve) => { finishToken = resolve; }));
+    await advance();
+    act(() => appStateListener?.("background"));
+    act(() => appStateListener?.("active"));
+    await act(async () => finishToken("obsolete-token"));
+    expect(mockUpdateChatReadState).not.toHaveBeenCalled();
+    await advance();
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 2 });
+  });
+
+  it("keeps one read in flight while newer committed replies arrive, then acknowledges the latest snapshot", async () => {
+    let finish!: (record: CanonicalChatRecord) => void;
+    mockUpdateChatReadState.mockReturnValueOnce(new Promise<CanonicalChatRecord>((resolve) => { finish = resolve; }));
+    const { rerender } = renderMarkRead(detail(unread));
+    await ready();
+    await advance();
+    const newer = detail({ ...unread, version: 3, latestIncomingSeq: 6 }, [message(6, "assistant")]);
+    rerender({ shown: newer });
+    await advance(4_000);
+    expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1);
+    await act(async () => finish(detail(read).record));
+    await advance();
+    expect(mockUpdateChatReadState).toHaveBeenCalledTimes(2);
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
+  });
+
+  it.each(["token", "HTTP"])("acknowledges a newer reply after an older %s operation fails", async (stage) => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    let fail!: (error: Error) => void;
+    const { rerender } = renderMarkRead(detail(unread));
+    await ready();
+    const pending = new Promise<never>((_resolve, reject) => { fail = reject; });
+    if (stage === "token") mockGetToken.mockReturnValueOnce(pending);
+    else mockUpdateChatReadState.mockReturnValueOnce(pending);
+    await advance();
+    rerender({ shown: detail({ ...unread, version: 3, latestIncomingSeq: 6 }, [message(6, "assistant")]) });
+    await act(async () => fail(new Error("Unavailable")));
+    await advance();
+    expect(mockUpdateChatReadState).toHaveBeenCalledTimes(stage === "token" ? 1 : 2);
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 3 });
+  });
+
+  it.each([false, true])("serializes reads across another view of the same chat (previous view unmounted: %s)", async (unmount) => {
+    let finish!: (record: CanonicalChatRecord) => void;
+    mockUpdateChatReadState.mockReturnValueOnce(new Promise<CanonicalChatRecord>((resolve) => { finish = resolve; }));
+    const first = renderMarkRead(detail(unread));
+    await ready();
+    await advance();
+    // A project/agent route can mount while the previous view's request settles.
+    if (unmount) first.unmount();
+    renderMarkRead(detail(unread), first.client);
+    await ready();
+    await advance();
+    expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1);
+    await act(async () => finish(detail(read).record));
+    await advance();
+    expect(mockUpdateChatReadState).toHaveBeenCalledTimes(2);
+  });
+
+  it("resumes automatic reading after the owner explicitly clears a manual reminder elsewhere", async () => {
+    const { rerender } = renderMarkRead(detail(read));
+    await ready();
+    rerender({ shown: detail({ ...unread, markedUnread: true, version: 4 }) });
+    await advance();
+    expect(mockUpdateChatReadState).not.toHaveBeenCalled();
+    rerender({ shown: detail({ ...read, version: 5 }) });
+    rerender({ shown: detail({ ...read, version: 5, unread: true, latestIncomingSeq: 6 }, [message(6, "assistant")]) });
+    await advance();
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", gatewayUrl, "chat_one", { type: "mark_read", throughSeq: 6, baseVersion: 5 });
+  });
+
+  it("does not spend an attempt when no session is available, and retries on the next visit", async () => {
+    const { rerender } = renderMarkRead(detail(unread));
+    await ready();
+    mockGetToken.mockResolvedValueOnce("");
+    await advance();
+    expect(mockUpdateChatReadState).not.toHaveBeenCalled();
+    mockFocused = false;
+    rerender({ shown: detail(unread) });
+    mockFocused = true;
+    rerender({ shown: detail(unread) });
+    await advance();
+    expect(mockUpdateChatReadState).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets visit identity on a computer switch and discards the previous computer's late result", async () => {
+    let finish!: (record: CanonicalChatRecord) => void;
+    mockUpdateChatReadState.mockReturnValueOnce(new Promise<CanonicalChatRecord>((resolve) => { finish = resolve; }));
+    const { client, rerender } = renderMarkRead(detail(unread));
+    await ready();
+    await advance();
+    act(() => client.setQueryData(mobileQueryKeys.activeComputer("user_a"), { handle: "bob", runtimeSlot: "primary", gatewayPath: "/vm/bob" }));
+    rerender({ shown: detail({ ...unread, markedUnread: true, version: 8 }) });
+    await act(async () => finish(detail(read).record));
+    expect(client.getQueryData<CanonicalChatDetailResponse>(detailKey)?.record.readState).toEqual(unread);
+    await advance();
+    expect(mockUpdateChatReadState).toHaveBeenLastCalledWith("session-token", "https://app.matrix-os.com/vm/bob", "chat_one", { type: "mark_read", throughSeq: 4, baseVersion: 8 });
   });
 });
