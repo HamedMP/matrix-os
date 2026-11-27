@@ -48,37 +48,45 @@ describe("recovering Codex images that earlier runs did not keep", () => {
     await rm(homePath, { recursive: true, force: true });
   });
 
-  async function finishedCodexRun() {
-    const created = await repository.create(owner, { id: chatId, clientRequestId: "req_create_backfill", title: "Speaker concepts" });
+  async function finishedCodexRun(input: { n?: number; from?: Date; to?: Date } = {}) {
+    const n = input.n ?? 1;
+    const from = input.from ?? started;
+    const to = input.to ?? finished;
+    const id = n === 1 ? runId : `run_backfill_${n}`;
+    const turnId = `cturn_backfill_${n}`;
+    const existing = n === 1 ? null : await repository.get(owner, chatId);
+    const created = existing ?? (await repository.create(owner, { id: chatId, clientRequestId: "req_create_backfill", title: "Speaker concepts" }));
+    const seq = existing ? (await repository.getMessages(owner, chatId, { afterSeq: 0, limit: 50 })).length + 1 : 1;
     const message: CanonicalChatMessage = {
-      id: "msg_backfill_input", chatId, seq: 1, role: "user", state: "committed", purpose: "ai_request",
-      turnId: "cturn_backfill_1", parts: [{ type: "text", text: "Generate an image" }], createdAt: started.toISOString(),
+      id: `msg_backfill_input_${n}`, chatId, seq, role: "user", state: "committed", purpose: "ai_request",
+      turnId, parts: [{ type: "text", text: "Generate an image" }], createdAt: from.toISOString(),
     };
     const turn: CanonicalChatTurn = {
-      id: "cturn_backfill_1", chatId, clientRequestId: "req_turn_backfill", baseMessageSeq: 0,
-      inputMessageId: message.id, status: "accepted", createdAt: started.toISOString(), updatedAt: started.toISOString(),
+      id: turnId, chatId, clientRequestId: `req_turn_backfill_${n}`, baseMessageSeq: seq - 1,
+      inputMessageId: message.id, status: "accepted", createdAt: from.toISOString(), updatedAt: from.toISOString(),
     };
     const run: CanonicalChatRun = {
-      id: runId, chatId, turnId: turn.id, attempt: 1, driverKind: "codex", instanceId: "codex_default",
+      id, chatId, turnId: turn.id, attempt: 1, driverKind: "codex", instanceId: "codex_default",
       selection: { instanceId: "codex_default", model: "gpt-6.2-sol" }, interactionMode: "default",
-      permissionMode: "supervised", status: "accepted", historyBoundarySeq: 0,
+      permissionMode: "supervised", status: "accepted", historyBoundarySeq: seq - 1,
       capabilitySnapshot: {
         revision: "catalog_backfill", rootChat: true, attachments: ["file"], resources: ["file"], tools: ["read"],
         approvals: true, userInput: true, resume: true, cancellation: true, steering: "same_run",
         worktrees: "optional", interactionModes: ["default"], permissionModes: ["supervised"],
       },
-      createdAt: started.toISOString(), updatedAt: started.toISOString(),
+      createdAt: from.toISOString(), updatedAt: from.toISOString(),
     };
     await repository.admitTurn(owner, { chatId, baseRevision: created.chat.revision, message, turn, run });
-    await repository.markRunRunning(owner, { chatId, runId, startedAt: started.toISOString() });
+    await repository.markRunRunning(owner, { chatId, runId: id, startedAt: from.toISOString() });
     await repository.updateAdapterState(owner, {
-      chatId, runId, driverKind: "codex", instanceId: "codex_default", schemaVersion: 1,
-      state: { runId, conversationId: `thread_${conversation}` },
+      chatId, runId: id, driverKind: "codex", instanceId: "codex_default", schemaVersion: 1,
+      state: { runId: id, conversationId: `thread_${conversation}` },
     });
-    for (const [messageId, delta] of [["msg_backfill_a", "I’ll make a concept board."], ["msg_backfill_b", "Here are six designs."]]) {
-      await repository.appendAssistantDelta(owner, { chatId, runId, messageId, delta, createdAt: started.toISOString() });
+    for (const [messageId, delta] of [[`msg_backfill_${n}_a`, "I’ll make a concept board."], [`msg_backfill_${n}_b`, "Here are six designs."]]) {
+      await repository.appendAssistantDelta(owner, { chatId, runId: id, messageId, delta, createdAt: from.toISOString() });
     }
-    await repository.finishRun(owner, { chatId, runId, outcome: "completed", completedAt: finished.toISOString() });
+    await repository.finishRun(owner, { chatId, runId: id, outcome: "completed", completedAt: to.toISOString() });
+    return id;
   }
 
   async function image(name: string, writtenAt: Date, bytes = png) {
@@ -88,10 +96,12 @@ describe("recovering Codex images that earlier runs did not keep", () => {
     return path;
   }
 
-  async function replies() {
-    const messages = await repository.getMessages(owner, chatId, { afterSeq: 0, limit: 20 });
-    return messages.filter((message) => message.role === "assistant");
+  async function replies(run = runId) {
+    const messages = await repository.getMessages(owner, chatId, { afterSeq: 0, limit: 50 });
+    return messages.filter((message) => message.role === "assistant" && message.runId === run);
   }
+
+  const attachmentsOf = (message: CanonicalChatMessage) => message.parts.filter((part) => part.type === "attachment_reference");
 
   it("puts an image made during a run on that run's final reply, stored in the owner's home", async () => {
     await image("exec-a680a236.png", new Date("2026-11-26T21:56:40.000Z"));
@@ -149,5 +159,55 @@ describe("recovering Codex images that earlier runs did not keep", () => {
     controller.abort();
     await expect(backfillCodexGeneratedImages({ repository, homePath, codexHome, signal: controller.signal }))
       .resolves.toEqual({ status: "aborted", attached: 0 });
+  });
+  it("gives an image made in a quick follow-up to that run, not the one that just finished", async () => {
+    // Run 1 finished at 21:57:02; run 2 starts 10 s later and writes its image
+    // inside run 1's grace period. Run 2's own window must win.
+    const followUp = await finishedCodexRun({
+      n: 2, from: new Date("2026-11-26T21:57:12.000Z"), to: new Date("2026-11-26T21:58:30.000Z"),
+    });
+    await image("exec-follow-up.png", new Date("2026-11-26T21:57:20.000Z"));
+
+    await expect(backfillCodexGeneratedImages({ repository, homePath, codexHome }))
+      .resolves.toEqual({ status: "completed", attached: 1 });
+    expect(attachmentsOf((await replies(runId)).at(-1)!)).toHaveLength(0);
+    expect(attachmentsOf((await replies(followUp)).at(-1)!)).toEqual([expect.objectContaining({ label: "exec-follow-up.png" })]);
+  });
+
+  it("tells open clients which run's reply changed, so the image appears without a reload", async () => {
+    await image("exec-a680a236.png", new Date("2026-11-26T21:56:40.000Z"));
+    await backfillCodexGeneratedImages({ repository, homePath, codexHome });
+
+    const events = await repository.replayOutbox(owner, { afterCursor: 0, limit: 200 });
+    const repair = events.filter((event) => event.eventType === "chat.updated").at(-1)!;
+    expect(repair.payload).toMatchObject({ runId, messageId: (await replies()).at(-1)!.id });
+  });
+
+  it("does not add an image the reply already shows under another attachment ID", async () => {
+    const path = await image("exec-a680a236.png", new Date("2026-11-26T21:56:40.000Z"));
+    // As live capture stores it: same content-addressed file, ID from the Codex item.
+    await backfillCodexGeneratedImages({ repository, homePath, codexHome });
+    const [stored] = attachmentsOf((await replies()).at(-1)!) as Array<{ ownerReference: string }>;
+    await rm(join(homePath, "system", "chat-repairs"), { recursive: true });
+    await rm(path);
+    await image("exec-renamed-copy.png", new Date("2026-11-26T21:56:41.000Z"));
+
+    await expect(backfillCodexGeneratedImages({ repository, homePath, codexHome }))
+      .resolves.toEqual({ status: "completed", attached: 0 });
+    expect(attachmentsOf((await replies()).at(-1)!)).toEqual([expect.objectContaining({ ownerReference: stored.ownerReference })]);
+  });
+
+  it("leaves the marker unwritten when a scan limit cuts work off, so the next start finishes it", async () => {
+    await image("exec-1.png", new Date("2026-11-26T21:56:10.000Z"));
+    await image("exec-2.png", new Date("2026-11-26T21:56:20.000Z"), Buffer.concat([png, Buffer.from([4])]));
+
+    // The earliest image is still recovered; attaching is idempotent.
+    await expect(backfillCodexGeneratedImages({ repository, homePath, codexHome, limits: { imagesPerThread: 1 } }))
+      .resolves.toEqual({ status: "incomplete", attached: 1 });
+    await expect(backfillCodexGeneratedImages({ repository, homePath, codexHome, limits: { runs: 0 } }))
+      .resolves.toEqual({ status: "incomplete", attached: 0 });
+    await expect(backfillCodexGeneratedImages({ repository, homePath, codexHome }))
+      .resolves.toEqual({ status: "completed", attached: 1 });
+    expect(attachmentsOf((await replies()).at(-1)!)).toHaveLength(2);
   });
 });

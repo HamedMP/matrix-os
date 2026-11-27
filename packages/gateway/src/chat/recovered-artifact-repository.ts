@@ -100,7 +100,8 @@ export class ChatRecoveredArtifactRepository {
     const chatId = CanonicalChatIdSchema.parse(input.chatId);
     const runId = SAFE_REF.parse(input.runId);
     const attachment = AgentAttachmentSchema.parse(input.attachment);
-    if (!attachment.path) throw new TypeError("Recovered artifact needs an owner reference");
+    const ownerReference = attachment.path;
+    if (!ownerReference) throw new TypeError("Recovered artifact needs an owner reference");
     const part = CanonicalChatMessagePartSchema.parse({
       type: "attachment_reference",
       attachmentId: attachment.id,
@@ -125,7 +126,18 @@ export class ChatRecoveredArtifactRepository {
       if (!row) return "no_reply";
       const current = toMessage(row);
       const existing = current.parts.filter((candidate) => candidate.type === "attachment_reference");
-      if (existing.some((candidate) => candidate.attachmentId === attachment.id)) return "already_attached";
+      if (existing.some((candidate) => candidate.attachmentId === attachment.id
+        || candidate.ownerReference === ownerReference)) return "already_attached";
+      // Live capture may have put the same stored file on an earlier reply of
+      // this run, under an ID made from the Codex item rather than the file.
+      const capturedInRun = await trx.selectFrom("chat_attachments")
+        .innerJoin("chat_messages", "chat_messages.id", "chat_attachments.message_id")
+        .select("chat_attachments.id")
+        .where("chat_attachments.chat_id", "=", chatId)
+        .where("chat_attachments.owner_reference", "=", ownerReference)
+        .where("chat_messages.run_id", "=", runId)
+        .executeTakeFirst();
+      if (capturedInRun) return "already_attached";
       if (existing.length >= MAX_MESSAGE_ATTACHMENTS) return "reply_full";
       const next = CanonicalChatMessageSchema.parse({ ...current, parts: [...current.parts, part] });
       const byteCount = encoded.encode(JSON.stringify(next)).byteLength;
@@ -151,7 +163,9 @@ export class ChatRecoveredArtifactRepository {
       if (!inserted) throw new RecoveredArtifactConflict();
       const revision = Number(chat.revision) + 1;
       await trx.updateTable("chats").set({ revision, updated_at: recoveredAt }).where("id", "=", chatId).execute();
-      await this.appendOutbox(trx, owner, chatId, revision, "chat.updated", { messageId: next.id, seq: next.seq });
+      await this.appendOutbox(trx, owner, chatId, revision, "chat.updated", {
+        runId, messageId: next.id, seq: next.seq,
+      });
       return "attached";
     }).catch((error: unknown) => {
       if (error instanceof RecoveredArtifactConflict) return "already_attached";

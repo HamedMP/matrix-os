@@ -24,6 +24,7 @@ const PAGE_SIZE = 200;
 const MAX_RUNS = 20_000;
 const MAX_THREADS_PER_SESSION = 16;
 const MAX_IMAGES_PER_THREAD = 200;
+const MAX_DIRECTORY_ENTRIES = 2_000;
 const MAX_JOURNAL_BYTES = 64 * 1024 * 1024;
 // Codex writes the file before the run is marked finished; allow for clock
 // granularity and the gap until the final event is persisted.
@@ -107,16 +108,17 @@ interface GeneratedImage {
   writtenAt: number;
 }
 
-async function generatedImages(directory: string): Promise<GeneratedImage[]> {
+/** The earliest `limit` images; `truncated` when the folder holds more. */
+async function generatedImages(directory: string, limit: number): Promise<{ images: GeneratedImage[]; truncated: boolean }> {
   let entries;
   try {
     entries = await readdir(directory, { withFileTypes: true });
   } catch (error: unknown) {
-    if (errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR") return [];
+    if (errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR") return { images: [], truncated: false };
     throw error;
   }
   const images: GeneratedImage[] = [];
-  for (const entry of entries.slice(0, MAX_IMAGES_PER_THREAD)) {
+  for (const entry of entries.slice(0, MAX_DIRECTORY_ENTRIES)) {
     const mimeType = IMAGE_MIME[extname(entry.name).toLowerCase()];
     // Symlinks are never followed; readCodexArtifactFile also refuses them.
     if (!entry.isFile() || !mimeType) continue;
@@ -124,8 +126,26 @@ async function generatedImages(directory: string): Promise<GeneratedImage[]> {
     const info = await lstat(path);
     images.push({ path, name: entry.name, mimeType, writtenAt: info.mtimeMs });
   }
-  // A reply keeps at most eight; keep the first ones made, not directory order.
-  return images.sort((left, right) => left.writtenAt - right.writtenAt);
+  // Order first, so a bounded pass takes the earliest images, not directory order.
+  images.sort((left, right) => left.writtenAt - right.writtenAt);
+  return {
+    images: images.slice(0, limit),
+    truncated: images.length > limit || entries.length > MAX_DIRECTORY_ENTRIES,
+  };
+}
+
+/**
+ * The run that made an image: the one whose own start and finish contain its
+ * write time. Only when none does, the run that finished most recently before
+ * it, within the grace period for a late final event.
+ */
+function runForImage(runs: readonly RecoverableCodexRun[], writtenAt: number): RecoverableCodexRun | undefined {
+  const within = runs.filter((run) => writtenAt >= run.startedAt.getTime() && writtenAt <= run.completedAt.getTime());
+  if (within.length > 0) return within.reduce((latest, run) => run.startedAt > latest.startedAt ? run : latest);
+  const justFinished = runs.filter((run) => writtenAt > run.completedAt.getTime()
+    && writtenAt <= run.completedAt.getTime() + COMPLETION_GRACE_MS);
+  return justFinished.reduce<RecoverableCodexRun | undefined>(
+    (latest, run) => !latest || run.completedAt > latest.completedAt ? run : latest, undefined);
 }
 
 async function recoverRun(input: {
@@ -167,7 +187,11 @@ export async function backfillCodexGeneratedImages(options: {
   codexHome: string;
   signal?: AbortSignal;
   now?: () => Date;
+  /** Bounds for one pass; a pass they cut short leaves the marker unwritten. */
+  limits?: { runs?: number; imagesPerThread?: number };
 }): Promise<CodexImageBackfillResult> {
+  const maxRuns = options.limits?.runs ?? MAX_RUNS;
+  const imagesPerThread = options.limits?.imagesPerThread ?? MAX_IMAGES_PER_THREAD;
   const markerPath = join(options.homePath, ...MARKER_PATH);
   if (await exists(markerPath)) return { status: "already_done", attached: 0 };
   const now = options.now ?? (() => new Date());
@@ -181,11 +205,13 @@ export async function backfillCodexGeneratedImages(options: {
 
   let attached = 0;
   let skipped = 0;
+  let truncated = false;
   if (generatedRoot) {
     // Runs of one Codex session, gathered across pages before matching images.
     const runsBySession = new Map<string, RecoverableCodexRun[]>();
     let cursor: string | undefined;
-    for (let read = 0; read < MAX_RUNS;) {
+    let readAll = false;
+    for (let read = 0; read < maxRuns;) {
       if (options.signal?.aborted) return { status: "aborted", attached };
       const page = await options.repository.listFinishedCodexRuns({ afterRunId: cursor, limit: PAGE_SIZE });
       for (const run of page.runs) {
@@ -197,16 +223,21 @@ export async function backfillCodexGeneratedImages(options: {
         runsBySession.set(sessionId, runs);
       }
       read += PAGE_SIZE;
-      if (!page.nextCursor) break;
+      if (!page.nextCursor) {
+        readAll = true;
+        break;
+      }
       cursor = page.nextCursor;
     }
+    if (!readAll) truncated = true;
 
     for (const [sessionId, runs] of runsBySession) {
       for (const threadId of await nativeThreadIds(codexProviderEventPath(options.homePath, sessionId))) {
-        for (const image of await generatedImages(join(generatedRoot, threadId))) {
+        const scan = await generatedImages(join(generatedRoot, threadId), imagesPerThread);
+        if (scan.truncated) truncated = true;
+        for (const image of scan.images) {
           if (options.signal?.aborted) return { status: "aborted", attached };
-          const run = runs.find((candidate) => image.writtenAt >= candidate.startedAt.getTime()
-            && image.writtenAt <= candidate.completedAt.getTime() + COMPLETION_GRACE_MS);
+          const run = runForImage(runs, image.writtenAt);
           if (!run) continue;
           try {
             const outcome = await recoverRun({
@@ -225,7 +256,7 @@ export async function backfillCodexGeneratedImages(options: {
   }
 
   if (options.signal?.aborted) return { status: "aborted", attached };
-  if (skipped > 0) return { status: "incomplete", attached };
+  if (skipped > 0 || truncated) return { status: "incomplete", attached };
   await mkdir(join(options.homePath, ...MARKER_PATH.slice(0, -1)), { recursive: true, mode: 0o700 });
   try {
     await writeFile(markerPath, `${now().toISOString()}\n`, { flag: "wx", mode: 0o600 });
@@ -238,16 +269,21 @@ export async function backfillCodexGeneratedImages(options: {
 /**
  * Starts the one-time backfill in the background so startup never waits on
  * it. Codex's home follows the native profile rule: CODEX_HOME, else
- * <home>/.codex. Returns the controller shutdown aborts.
+ * <home>/.codex. Shutdown and failed-startup teardown call `stop()`, which
+ * aborts the pass and resolves once it has stopped using the repository.
  */
+export interface BackgroundRepairHandle {
+  stop(): Promise<void>;
+}
+
 export function startCodexImageBackfill(
   repository: CodexImageBackfillRepository,
   homePath: string,
   environment: NodeJS.ProcessEnv = process.env,
-): AbortController {
+): BackgroundRepairHandle {
   const controller = new AbortController();
   const codexHome = environment.CODEX_HOME || join(homePath, ".codex");
-  void backfillCodexGeneratedImages({ repository, homePath, codexHome, signal: controller.signal })
+  const done = backfillCodexGeneratedImages({ repository, homePath, codexHome, signal: controller.signal })
     .then((result) => {
       if (result.attached > 0 || result.status === "incomplete") {
         console.log(`[chat/codex-image-backfill] ${result.status}: recovered ${result.attached} image(s)`);
@@ -258,5 +294,10 @@ export function startCodexImageBackfill(
       console.warn("[chat/codex-image-backfill] Backfill failed; it retries on the next start:",
         error instanceof Error ? error.name : "UnknownError");
     });
-  return controller;
+  return {
+    stop: async () => {
+      controller.abort();
+      await done;
+    },
+  };
 }

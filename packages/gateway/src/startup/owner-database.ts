@@ -39,7 +39,7 @@ import { OsViewStateRepository } from "../os-view-state/repository.js";
 import type { createProjectManager } from "../project-manager.js";
 import type { createWorktreeManager } from "../worktree-manager.js";
 import { constructOwnerCollaboration } from "./collaboration.js";
-import { startCodexImageBackfill } from "../chat/codex-image-backfill.js";
+import { startCodexImageBackfill, type BackgroundRepairHandle } from "../chat/codex-image-backfill.js";
 
 export interface OwnerDatabaseBootstrapOptions {
   databaseUrl?: string;
@@ -92,7 +92,7 @@ export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
   messagingRepository: MessagingKyselyRepository | null;
   pushTokens: PushTokenStore | null;
   /** Aborts one-time background repairs, such as recovering Codex images, on shutdown. */
-  backgroundRepairs: AbortController | null;
+  backgroundRepairs: BackgroundRepairHandle | null;
 }
 
 export interface InitializeOwnerDatabaseOptions {

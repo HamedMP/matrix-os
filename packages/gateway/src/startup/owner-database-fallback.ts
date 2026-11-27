@@ -13,6 +13,7 @@
  */
 export interface OwnerDatabaseFallbackServices {
   collaboration?: { shutdown(): Promise<void>; fence?(): void } | null;
+  backgroundRepairs?: { stop(): Promise<void> } | null;
   chatEventStream?: { shutdown(): void } | null;
   chatRepository?: { release(): Promise<void> } | null;
   canvasRepository?: { destroy(): Promise<void> } | null;
@@ -24,6 +25,7 @@ export interface OwnerDatabaseFallbackServices {
 export type OwnerDatabaseFallbackStep =
   | "collaboration"
   | "collaborationFenced"
+  | "backgroundRepairs"
   | "chatEventStream"
   | "chatRepository"
   | "canvasCleanupTimer"
@@ -54,6 +56,17 @@ export async function teardownOwnerDatabaseServices(
     completed.push(drained ? "collaboration" : "collaborationFenced");
   } else {
     completed.push("collaboration");
+  }
+
+  // A background repair reads and writes through the Chat repository; wait for
+  // it to stop before that repository and its pool are released.
+  if (services.backgroundRepairs) {
+    try {
+      await services.backgroundRepairs.stop();
+      completed.push("backgroundRepairs");
+    } catch (error: unknown) {
+      warn("backgroundRepairs", error);
+    }
   }
 
   // A partially started canvas may still have a recurring cleanup timer and
