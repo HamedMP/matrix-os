@@ -175,17 +175,23 @@ export async function grantFreeDailyAllowance(
 /**
  * A free runtime registered earlier kept an earlier default monthly budget: the $5 starter budget,
  * then the starter plus a $5 monthly allowance. Raise exactly those defaults to the starter plus the
- * $20 cap, never a budget an operator set. Called for a free metal runtime under the owner locks on
- * its funding paths (registration, funding read, admission); the update is compare-and-set on the
- * old value, so it is idempotent. Returns the budget and revision now stored.
+ * $20 cap, never a budget an operator set. A policy is still the system default only while
+ * `uses_free_model_default` is true: the free starter initializer sets it, and every operator save
+ * (setRuntimePolicy) and the paid-upgrade restore clear it, so an operator limit equal to an old
+ * default is never raised. Called for a free metal runtime under the owner locks on its funding
+ * paths (registration, funding read, admission); the update is compare-and-set on the old value and
+ * the flag, so it is idempotent. Returns the budget and revision now stored.
  */
 export async function raiseEarlierFreeBudgetDefault(
-  executor: Executor, machineId: string, current: { budgetMicrousd: number; revision: number }, at: string,
+  executor: Executor, machineId: string,
+  current: { budgetMicrousd: number; revision: number; systemDefault: boolean }, at: string,
 ): Promise<{ budgetMicrousd: number; revision: number }> {
-  if (!EARLIER_FREE_BUDGET_DEFAULTS.includes(current.budgetMicrousd)) return current;
+  const stored = { budgetMicrousd: current.budgetMicrousd, revision: current.revision };
+  if (!current.systemDefault || !EARLIER_FREE_BUDGET_DEFAULTS.includes(current.budgetMicrousd)) return stored;
   const raised = await executor.updateTable('ai_funded_runtime_policies').set({
     monthly_budget_microusd: FREE_MONTHLY_BUDGET_MICROUSD, revision: sql<number>`revision + 1`, updated_at: at,
   }).where('machine_id', '=', machineId).where('monthly_budget_microusd', '=', current.budgetMicrousd)
+    .where('uses_free_model_default', '=', true)
     .returning(['monthly_budget_microusd', 'revision']).executeTakeFirst()
     // A concurrent policy write won: use what it stored.
     ?? await executor.selectFrom('ai_funded_runtime_policies').select(['monthly_budget_microusd', 'revision'])

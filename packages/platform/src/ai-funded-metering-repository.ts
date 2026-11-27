@@ -161,7 +161,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .select([
           "owner_id", "runtime_slot", "enabled", "allowed_model_ids", "monthly_budget_microusd",
-          "expires_at", "revision",
+          "expires_at", "revision", "uses_free_model_default",
         ])
         .where("machine_id", "=", identity.machineId).executeTakeFirst();
       const global = await trx.executor.selectFrom("ai_funded_global_policy")
@@ -198,7 +198,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       // Runtimes registered before the daily allowance may still hold an earlier default budget.
       const runtimeBudget = free
         ? await raiseEarlierFreeBudgetDefault(trx.executor, identity.machineId,
-          { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision }, checkedAt)
+          { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision,
+            systemDefault: runtime.uses_free_model_default }, checkedAt)
         : { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision };
       const monthlyBudgetMicrousd = runtimeBudget.budgetMicrousd;
       const allowedModelIds = enabled

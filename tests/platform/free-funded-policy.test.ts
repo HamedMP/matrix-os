@@ -376,6 +376,39 @@ describe('free funded policy', () => {
     expect(await budget()).toBe(after);
   });
 
+  it('never raises a limit an operator saved, even one equal to an earlier default', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    const budget = () => db.executor.selectFrom('ai_funded_runtime_policies').select(['monthly_budget_microusd', 'revision'])
+      .where('machine_id', '=', identity.machineId).executeTakeFirstOrThrow()
+      .then((row) => ({ budget: Number(row.monthly_budget_microusd), revision: row.revision }));
+    const save = async (monthlyBudgetMicrousd: number) => free.repo.setRuntimePolicy({
+      identity, expectedRevision: (await budget()).revision, enabled: true, expiresAt: null,
+      allowedModelIds: [FREE_MANAGED_MODEL_ID], monthlyBudgetMicrousd,
+    });
+    // An operator saves $10 after the rollout: funding reads, admission and re-registration keep it.
+    await save(10 * USD);
+    expect((await free.repo.getRuntimeFundingSummary(identity)).policy.monthlyBudgetMicrousd).toBe(10 * USD);
+    await expect(free.authorize(await free.credential(identity), USD)).resolves.toMatchObject({ policy: { monthlyBudgetMicrousd: 10 * USD } });
+    await db.transaction((trx) => initializeCustomerFundedStarterPolicy(trx, identity.machineId, { now: NOV.toISOString(), env: ENV }));
+    expect((await budget()).budget).toBe(10 * USD);
+  });
+
+  it('respects an operator change made after a default budget was raised', async () => {
+    const free = harness(db, 100 * USD, clock);
+    const identity = await addRuntime(db, 1, 'free', NOV);
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ monthly_budget_microusd: 10 * USD })
+      .where('machine_id', '=', identity.machineId).execute();
+    const raised = await free.repo.getRuntimeFundingSummary(identity);
+    expect(raised.policy.monthlyBudgetMicrousd).toBe(25 * USD);
+    await free.repo.setRuntimePolicy({
+      identity, expectedRevision: raised.policy.runtimeRevision, enabled: true, expiresAt: null,
+      allowedModelIds: [FREE_MANAGED_MODEL_ID], monthlyBudgetMicrousd: 5 * USD,
+    });
+    expect((await free.repo.getRuntimeFundingSummary(identity)).policy.monthlyBudgetMicrousd).toBe(5 * USD);
+    await expect(free.authorize(await free.credential(identity), USD)).resolves.toMatchObject({ policy: { monthlyBudgetMicrousd: 5 * USD } });
+  });
+
   it('keeps a paid runtime\'s budget even when it equals an earlier free default', async () => {
     const free = harness(db, 100 * USD, clock);
     const paid = await addRuntime(db, 1, 'customer', NOV);

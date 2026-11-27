@@ -142,7 +142,8 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       // Runtimes registered before the daily allowance may still hold an earlier default budget.
       const runtimeBudget = free
         ? await raiseEarlierFreeBudgetDefault(trx.executor, identity.machineId,
-          { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision }, checkedAt)
+          { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision,
+            systemDefault: runtime.uses_free_model_default }, checkedAt)
         : { budgetMicrousd: exactInteger(runtime.monthly_budget_microusd), revision: runtime.revision };
       if (free) await grantFreeDailyAllowance(trx, identity, checked, deps.grantCreditInTransaction);
       const balance = await trx.executor.updateTable("ai_funded_runtime_balances").set({

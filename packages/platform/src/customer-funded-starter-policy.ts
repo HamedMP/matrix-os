@@ -74,7 +74,8 @@ export async function initializeCustomerFundedStarterPolicy(
     // A free runtime registered earlier kept an earlier default budget; raise exactly those defaults.
     const upgraded = existing !== undefined && free
       && (await raiseEarlierFreeBudgetDefault(trx.executor, machineId,
-        { budgetMicrousd: Number(existing.monthly_budget_microusd), revision: existing.revision }, at)).revision !== existing.revision;
+        { budgetMicrousd: Number(existing.monthly_budget_microusd), revision: existing.revision,
+          systemDefault: existing.uses_free_model_default }, at)).revision !== existing.revision;
     const inserted = existing ? undefined : await trx.executor.insertInto('ai_funded_runtime_policies').values({
       machine_id: machineId, owner_id: machine.clerk_user_id, runtime_slot: 'primary', enabled: true,
       allowed_model_ids: JSON.stringify(models),
