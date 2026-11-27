@@ -1,3 +1,4 @@
+import { isOutlookOAuthCallback } from './outlook-integration.js';
 import { registerFundedHostConfigRoutes } from "./funded-host-config-registration.js";
 import { registerBrowserChatApprovalRoutes } from "./browser-chat-approval-registration.js";
 import type { BrowserApprovalMachineLookup } from "./browser-approval-machine-lookup.js";
@@ -741,7 +742,7 @@ export function createApp(deps: {
 
   const integrationDeletionGuard=createAccountDeletionMutationGuard({db,env:appEnv,resolveOwner:c=>c.get('platformUserId') as string|undefined});
   app.use('/api/integrations/*',(c,next)=>c.req.path==='/api/integrations/webhook/connected'
-    || (c.req.method==='GET' && c.req.path==='/api/integrations/available') ? next() : integrationDeletionGuard(c,next));
+    || isOutlookOAuthCallback(c.req.method, c.req.path) || (c.req.method==='GET' && c.req.path==='/api/integrations/available') ? next() : integrationDeletionGuard(c,next));
   app.route('/api/integrations', deps.integrationRoutes ?? createUnavailableIntegrationRoutes());
   app.route('/internal/containers/:handle/preview-drive', createPreviewDriveRoutes({
     db, platformSecret, integration: deps.previewDriveIntegration, env: appEnv,

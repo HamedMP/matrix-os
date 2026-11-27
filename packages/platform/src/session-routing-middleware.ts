@@ -1,3 +1,4 @@
+import { isOutlookOAuthCallback, outlookOAuthSignInReturn } from './outlook-integration.js';
 import { isSharedAppOpenPath } from "@matrix-os/contracts";
 import { readAuthShellRequestBody, resolveAuthShellBrowserHost } from "./auth-shell-request.js";
 import { whatsappPrimaryHandoffResponse } from "./whatsapp/primary-handoff.js";
@@ -499,7 +500,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     }
     const isPublicIntegrationPath =
       reqPath === '/api/integrations/available' ||
-      reqPath.startsWith('/api/integrations/webhook/');
+      reqPath.startsWith('/api/integrations/webhook/') || isOutlookOAuthCallback(c.req.method, reqPath);
     const isIntegrationPath =
       reqPath === '/api/integrations' || reqPath.startsWith('/api/integrations/');
     const isCustomMcpPath =
@@ -689,6 +690,12 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     // No session/JWT -- serve Clerk auth directly from the platform.
     if (!identity) {
       console.log(`[${isCodeDomain ? 'code' : 'app'}] no token path=${path}`);
+      const outlookTarget = isAppDomain ? outlookOAuthSignInReturn(c.req.method, c.req.url) : null;
+      if (outlookTarget && publishableKey && clerkAuth) {
+        const scriptNonce = randomBytes(16).toString('base64');
+        applyAuthPageHeaders(c, scriptNonce, applyNoStoreHeaders);
+        return c.html(getAuthPage(publishableKey, authMode, scriptNonce, outlookTarget, appOrigin(appEnv)));
+      }
       const routineChatTarget = isAppDomain && (c.req.method === 'GET' || c.req.method === 'HEAD')
         ? routineChatAuthReturnPath(c.req.url) : null;
       if (isAppDomain && allowAuthShellUnroutedIdentity && !routineChatTarget) {

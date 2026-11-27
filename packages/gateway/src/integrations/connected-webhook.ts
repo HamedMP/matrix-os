@@ -21,6 +21,7 @@ const bodySchema=z.object({external_user_id:z.string().min(1).max(256),account_i
 export function registerConnectedIntegrationWebhook(app:Hono,options:{
   db:PlatformDb;pipedream:PipedreamConnectClient;webhookSecret:string;emit:IntegrationBroadcast;
   verifiedConnectedWebhook?:VerifiedConnectedWebhookAdmission;
+  ignoreService?: (service: string) => boolean;
   consumePendingLabel(key:string):string|undefined;
   resolveAccountEmail(externalUserId:string,accountId:string,service:string):Promise<string|undefined>;
   applyExplicitReconnectLabel(row:Awaited<ReturnType<PlatformDb['connectService']>>,label:string|undefined):Promise<void>;
@@ -42,6 +43,7 @@ export function registerConnectedIntegrationWebhook(app:Hono,options:{
     const {external_user_id,account_id,app:appName,label,email,scopes}=parsed.data;
     const service = getServiceByPipedreamApp(appName);
     if(!service)return c.json({error:'Unsupported app'},400);
+    if(options.ignoreService?.(service.id))return c.json({ok:true});
     try {
       const user=await options.db.getUserByPipedreamExternalId(external_user_id);
       if(!user && !options.verifiedConnectedWebhook)return c.json({error:'Unknown user'},400);

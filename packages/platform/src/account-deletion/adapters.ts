@@ -249,12 +249,23 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
       const servicesPresent=await hasTable(db,'connected_services');
       if(!servicesPresent && users.some((user)=>user.pipedream_external_id)) throw new Error('Integration inventory unavailable');
       if (servicesPresent) {
+        const nativeOutlookPresent = await hasTable(db, 'matrix_outlook_grants');
         for (const user of users) {
+          if (nativeOutlookPresent) {
+            await db.transaction(async trx => {
+              await sql`UPDATE connected_services SET status = 'revoked'
+                WHERE user_id = ${user.id} AND status <> 'revoked'
+                AND service IN ('microsoft_outlook', 'microsoft_outlook_calendar')
+                AND pipedream_account_id = 'matrix_outlook_' || id::text`.execute(trx.executor);
+              await sql`DELETE FROM matrix_outlook_grants WHERE user_id = ${user.id}`.execute(trx.executor);
+              await sql`DELETE FROM matrix_outlook_attempts WHERE user_id = ${user.id}`.execute(trx.executor);
+            });
+          }
           const services = await sql<{ pipedream_account_id: string }>`SELECT pipedream_account_id FROM connected_services
             WHERE user_id = ${user.id} AND status <> 'revoked' LIMIT 1001`.execute(db.executor);
           if (services.rows.length > 1000) throw new Error('Integration cleanup capacity exceeded');
           if ((services.rows.length || user.pipedream_external_id) && !options.pipedream) throw new Error('Integration cleanup configuration unavailable');
-          if (options.pipedream) {
+          if (options.pipedream && (services.rows.length || user.pipedream_external_id)) {
             const accounts = await options.pipedream.listAccounts(user.pipedream_external_id ?? user.id);
             if (accounts.length > 1000) throw new Error('Integration cleanup capacity exceeded');
             const ids = [...new Set(accounts.map((account) => account.id))];

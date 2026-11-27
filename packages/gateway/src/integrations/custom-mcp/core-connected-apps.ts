@@ -1,3 +1,4 @@
+import { isOutlookService } from "../outlook/oauth.js";
 import type { OutlookGraph } from "../outlook/graph.js";
 import { selectedOutlookCall } from "../outlook/selected-call.js";
 /**
@@ -128,6 +129,7 @@ export function createCoreConnectedApps(options: {
   pipedream: PipedreamConnectClient;
   execute?: typeof executeIntegrationAction;
   outlookGraph?: OutlookGraph;
+  outlookLegacyRetired?: boolean;
 }): CoreConnectedAppSource {
   const execute = options.execute ?? executeIntegrationAction;
   return {
@@ -163,6 +165,7 @@ export function createCoreConnectedApps(options: {
       const native = selectedOutlookCall({ outlook: options.outlookGraph, userId: input.userId, connection,
         action: input.action, params: input.arguments, signal: actionDef.risk === "read" ? input.signal : undefined });
       const running = native ?? (async () => {
+        if (options.outlookLegacyRetired && isOutlookService(def.id)) throw new CoreConnectedAppError("unavailable");
         const user = await options.db.getUserById(input.userId);
         if (!user?.pipedream_external_id) throw new CoreConnectedAppError("unavailable");
         return execute({

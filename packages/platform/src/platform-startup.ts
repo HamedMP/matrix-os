@@ -1,3 +1,4 @@
+import { outlookCallbackAdmission, resolveOutlookIntegrationConfig, type GatewayOutlookRuntimeModule, type PlatformOutlookRuntime } from './outlook-integration.js';
 import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
 import { z } from 'zod/v4';
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
@@ -226,6 +227,7 @@ interface GatewayPipedreamConfig {
 
 interface GatewayPipedreamModule {
   createPipedreamClient(config: GatewayPipedreamConfig): Promise<NonNullable<AccountDeletionAdapterOptions['pipedream']>>;
+  createUnavailablePipedreamClient(): NonNullable<AccountDeletionAdapterOptions['pipedream']>;
 }
 
 interface GatewayIntegrationRoutesModule {
@@ -234,6 +236,9 @@ interface GatewayIntegrationRoutesModule {
     db: GatewayPlatformDb;
     pipedream: unknown;
     webhookSecret: string;
+    outlook?: PlatformOutlookRuntime;
+    outlookGraph?: unknown;
+    pipedreamAvailable?: boolean;
     resolveUserId: (c: Context) => Promise<string | null>;
     authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
     mcpPresetBroker?: unknown;
@@ -601,7 +606,8 @@ async function startPlatformServerWithCleanup(
   let internalCustomMcpApprovalRoutes: Hono | undefined;
   let externalCoreMcp: ExternalCoreMcp | undefined;
   // Spec 2691: Connect Apps reach Matrix Core through the same platform-owned Pipedream client.
-  let coreConnectedAppDeps: { db: unknown; pipedream: unknown } | undefined;
+  let closeIntegrationDb: (() => Promise<void>) | undefined;
+  let coreConnectedAppDeps: { db: unknown; pipedream: unknown; outlookGraph?: unknown; outlookLegacyRetired?: boolean } | undefined;
   let customMcpSweepInterval: NodeJS.Timeout | undefined;
   let customMcpShutdown: (() => Promise<void>) | undefined;
   let managedMcpPresetBroker: ManagedMcpPresetBroker | undefined;
@@ -622,10 +628,11 @@ async function startPlatformServerWithCleanup(
     disconnect: (userId: string, connectionId: string) => managedMcpPresetBroker?.disconnect(userId, connectionId) ?? Promise.resolve(false),
   };
   const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
-  if (integrationConfig) {
+  const outlookConfig = resolveOutlookIntegrationConfig(process.env);
+  if (integrationConfig || outlookConfig) {
     const [
       { createIntegrationRoutes, executeIntegrationAction, authorizeInternalJevLabels },
-      { createPipedreamClient },
+      { createPipedreamClient, createUnavailablePipedreamClient },
       { createPlatformDb: createGatewayPlatformDb },
       { getService, getAction },
     ] = await Promise.all([
@@ -635,19 +642,36 @@ async function startPlatformServerWithCleanup(
       importRuntimeModule<GatewayIntegrationRegistryModule>('../../gateway/dist/integrations/registry.js'),
     ]);
 
-    const trustedPlatformDb = createGatewayPlatformDb(integrationConfig.platformDatabaseUrl);
+    const trustedPlatformDb = createGatewayPlatformDb(runtimeConfig.platformDatabaseUrl);
+    let outlook: PlatformOutlookRuntime | undefined;
+    let closing: Promise<void> | undefined;
+    closeIntegrationDb = () => closing ??= (async () => {
+      try { await outlook?.close(); } finally { await trustedPlatformDb.destroy(); }
+    })();
+    registerCustomMcpStartupCleanup(closeIntegrationDb);
     await trustedPlatformDb.migrate();
-    const pipedream = await createPipedreamClient({
+    const pipedream = integrationConfig ? await createPipedreamClient({
       clientId: integrationConfig.pipedreamClientId,
       clientSecret: integrationConfig.pipedreamClientSecret,
       projectId: integrationConfig.pipedreamProjectId,
       environment: integrationConfig.pipedreamEnvironment,
-    });
-    deletionPipedream = pipedream;
-    coreConnectedAppDeps = { db: trustedPlatformDb, pipedream };
-    const verifiedConnectedWebhook=process.env.ACCOUNT_DELETION_SECRET===undefined?undefined:
-      createAccountDeletionIntegrationWebhookAdmission({db,pipedream,env:process.env});
-    const webhookSecret = integrationConfig.pipedreamWebhookSecret;
+    }) : createUnavailablePipedreamClient();
+    deletionPipedream = integrationConfig ? pipedream : undefined;
+    if (outlookConfig) {
+      const outlookModule = await importRuntimeModule<GatewayOutlookRuntimeModule>('../../gateway/dist/integrations/outlook/runtime.js');
+      outlook = await outlookModule.createOutlookRuntime({
+        ...outlookConfig,
+        db: trustedPlatformDb,
+        pipedream: deletionPipedream,
+        maintenance: backgroundWorkersEnabled,
+        admit: outlookCallbackAdmission({ db, users: trustedPlatformDb, env: process.env }),
+      });
+    }
+    const integrationProviders = { outlook, outlookGraph: outlook?.graph, pipedreamAvailable: Boolean(integrationConfig) };
+    coreConnectedAppDeps = { db: trustedPlatformDb, pipedream, outlookGraph: outlook?.graph, outlookLegacyRetired: outlook?.legacyRetired };
+    const verifiedConnectedWebhook = deletionPipedream && process.env.ACCOUNT_DELETION_SECRET !== undefined
+      ? createAccountDeletionIntegrationWebhookAdmission({ db, pipedream: deletionPipedream, env: process.env }) : undefined;
+    const webhookSecret = integrationConfig?.pipedreamWebhookSecret ?? '';
     const resolveIntegrationUserId = async (clerkUserId: string | undefined, handle: string | undefined) => {
       if (!clerkUserId) return null;
       const existing = await trustedPlatformDb!.getUserByClerkId(clerkUserId);
@@ -675,6 +699,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       webhookSecret,
+      ...integrationProviders,
       verifiedConnectedWebhook,
       resolveUserId: async (c) => {
         const clerkUserId = c.get('platformUserId') as string | undefined;
@@ -687,6 +712,7 @@ async function startPlatformServerWithCleanup(
       db: trustedPlatformDb,
       pipedream,
       webhookSecret,
+      ...integrationProviders,
       verifiedConnectedWebhook,
       authorizeJevLabelCall: authorizeInternalJevLabels,
       resolveUserId: async (c) => {
@@ -696,7 +722,7 @@ async function startPlatformServerWithCleanup(
       },
       ...(process.env.CUSTOM_MCP_ENABLED === 'true' ? { mcpPresetBroker: managedMcpPresetProxy } : {}),
     });
-    previewDriveIntegration = createPreviewDriveIntegration({
+    if (integrationConfig) previewDriveIntegration = createPreviewDriveIntegration({
       db: trustedPlatformDb, pipedream,
       resolveUserId: actorId => resolveIntegrationUserId(actorId, undefined),
       getService, getAction, executeAction: executeIntegrationAction,
@@ -1352,7 +1378,7 @@ async function startPlatformServerWithCleanup(
         await shutdownPlatformApp(app);
         await processPosthogErrorTracker.shutdown();
         sitesObjectStore?.destroy();
-        await Promise.all([closePrimaryDb(), atsDb?.destroy()]);
+        await Promise.all([closeIntegrationDb?.(), closePrimaryDb(), atsDb?.destroy()]);
       })()
         .catch((destroyErr: unknown) => {
           exitCode = 1;
