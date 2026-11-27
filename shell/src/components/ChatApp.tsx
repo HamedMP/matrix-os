@@ -30,7 +30,7 @@ import { WebChatProjectPicker } from "./chat/WebChatProjectPicker";
 import { WebChatComposerControls } from "./chat/WebChatComposerControls";
 import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
-import { ChatInput } from "./chat/ChatInput";
+import { ManagedTerminalChatInput } from "./chat/ManagedTerminalChatInput";
 import { useChatComposerDraft, type PreparedChatSubmission, type WebChatSubmitOptions } from "./chat/useChatComposerDraft";
 import { appendSideChatAnswer } from "./chat/useWebChatHistory";
 import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, createAgentProviderCatalogSource, useChatAgentsNavigation, useCloseAgentsOnDraftRequest, type ChatAgentClient } from "@matrix-os/ui";
@@ -450,6 +450,12 @@ function ChatAppContent({
   const attachmentPolicy = shellChatAttachmentPolicy(providerState.catalog, directBotId ? botExecution.agent?.selection : providerState.selected ? { instanceId: providerState.selected.instanceId, model: providerState.selected.modelId, options: providerState.selected.selectedOptions } : undefined, botPresentation?.kind === "recipe");
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
   const slashInstance = !botIdentityUnknown && !directBotId ? providerState.activeInstance ?? undefined : undefined;
+  const managedTerminalScope = sessionId && activeFileProjectId && activeFileWorktreeId && !collaborationView
+    && botBinding.status === "ordinary" && !botIdentityUnknown && routineOriginChat?.id === sessionId
+    && routineOriginChat.ownerScope.type === "personal" && routineOriginChat.lifecycle === "active"
+    && providerState.selectionAvailable && providerState.selected?.driverKind === "codex"
+    && providerState.selected.interactionMode === "default" && providerState.selected.permissionMode === "full_access"
+    ? { chatId: sessionId, projectId: activeFileProjectId, worktreeId: activeFileWorktreeId } : undefined;
   const slashCatalogLoading = botBinding.loading || providerState.loading;
   const projectSlash: ProjectChatSlashScope | undefined = !mobile && chatProjectId ? {
     projectId: chatProjectId,
@@ -515,6 +521,7 @@ function ChatAppContent({
       ...(mentionOptions?.onAdmissionUnconfirmed ? { onAdmissionUnconfirmed: mentionOptions.onAdmissionUnconfirmed } : {}),
     };
     if (mentionOptions?.retrySubmission) {
+      if (mentionOptions.retrySubmission.managedTerminalControl) return Promise.resolve(false);
       return onSubmit(text, files, { ...mentionOptions.retrySubmission, ...callbacks });
     }
     const submit = (submission: PreparedChatSubmission) => {
@@ -529,6 +536,9 @@ function ChatAppContent({
       });
     }
     if (!providerState.selected || !providerState.selectionAvailable) return Promise.resolve(false);
+    const managed = mentionOptions?.managedTerminalControl;
+    if (managed && (!managedTerminalScope || managed.chatId !== managedTerminalScope.chatId || managed.projectId !== managedTerminalScope.projectId
+      || managed.worktreeId !== managedTerminalScope.worktreeId)) return Promise.resolve(false);
     const usesChannels = providerState.selected.driverKind === "hermes";
     const promptText = usesChannels ? createChannelConfiguredPrompt(text, selectedChannels) : text;
     return submit({
@@ -540,6 +550,7 @@ function ChatAppContent({
       permissionMode: mentionOptions?.permissionMode ?? providerState.selected.permissionMode,
       ...(mentionOptions?.resources?.length ? { resources: mentionOptions.resources } : {}),
       ...(mentionOptions?.projectSkillProjectId ? { projectSkillProjectId: mentionOptions.projectSkillProjectId } : {}),
+      ...(managed ? { managedTerminalControl: managed } : {}),
       ...(mentionOptions?.clientRequestId ? { clientRequestId: mentionOptions.clientRequestId } : {}),
       modelOptions: providerState.selected.selectedOptions,
     });
@@ -1013,7 +1024,8 @@ function ChatAppContent({
                   onReview={() => document.getElementById(`tool-approval-${waitingTool.id}`)?.scrollIntoView({ block: "center" })}
                 />
               ) : null}
-              <ChatInput
+              <ManagedTerminalChatInput
+                managedTerminalScope={managedTerminalScope}
                 leadingControls={projectControl}
                 toolbarControls={composerToolbar}
                 queue={queuePanel}

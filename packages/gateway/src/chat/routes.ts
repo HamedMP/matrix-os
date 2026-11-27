@@ -1,4 +1,8 @@
 import { hasDirectHerdrOwner } from "./herdr-owner-ingress.js";
+import {
+  isManagedTerminalRef, MANAGED_TERMINAL_OWNER_GRANT_HEADER, ManagedTerminalTurnAuthoritySchema,
+} from "@matrix-os/contracts/managed-terminal-control";
+import { managedTerminalBodyDigest } from "@matrix-os/contracts/managed-terminal-proof";
 import { selectedHerdrTerminal } from "./codex-mcp-run-scope.js";
 import { ROUTINE_CREATION_PROOF_HEADER, ROUTINE_FULL_ACCESS_PROOF_HEADER } from "@matrix-os/contracts";
 import { isRoutineDirectResourcePath } from "./routine-direct-visibility.js";
@@ -671,10 +675,18 @@ export function createCanonicalChatRoutes(options: {
       const parsed = CanonicalCreateChatTurnRequestSchema.safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
       const principal = options.getPrincipal(context);
-      const herdrSelected = Boolean(selectedHerdrTerminal(parsed.data.parts));
+      const herdrSelected = selectedHerdrTerminal(parsed.data.parts);
       const directOwner = hasDirectHerdrOwner(context, principal);
       if (herdrSelected && !directOwner) {
         return context.json({ error: { code: "authorization_failed", safeMessage: "Terminal control requires a verified owner request.", retryable: false } }, 403);
+      }
+      const managed = herdrSelected && isManagedTerminalRef(herdrSelected.ref);
+      const authority = managed ? ManagedTerminalTurnAuthoritySchema.safeParse({
+        proof: context.req.header(MANAGED_TERMINAL_OWNER_GRANT_HEADER), clientRequestId: parsed.data.clientRequestId,
+        bodyDigest: managedTerminalBodyDigest(JSON.stringify(parsed.data)),
+      }) : undefined;
+      if (authority && !authority.success) {
+        return context.json({ error: { code: "authorization_failed", safeMessage: "Select the terminal in a signed-in Matrix session.", retryable: false } }, 403);
       }
       const result = await options.service.admitTurn(
         principal,
@@ -682,6 +694,7 @@ export function createCanonicalChatRoutes(options: {
         chatId,
         parsed.data,
         { ...(directOwner ? { directOwnerTurn: true as const } : {}),
+          ...(authority?.success ? { managedTerminalAuthority: authority.data } : {}),
           routineCreationProof: context.req.header(ROUTINE_CREATION_PROOF_HEADER),
           previewTurnProof: context.req.header("x-matrix-preview-drive-turn-proof"),
           routineFullAccessProof: context.req.header(ROUTINE_FULL_ACCESS_PROOF_HEADER) },

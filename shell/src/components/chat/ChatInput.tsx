@@ -61,6 +61,8 @@ export function ChatInput({
   setupAnswer = false,
   leadingControls,
   toolbarControls,
+  terminalControlPending,
+  onChooseManagedTerminal,
   queue,
 }: {
   composer: ChatComposerDraft;
@@ -97,6 +99,8 @@ export function ChatInput({
   leadingControls?: React.ReactNode;
   /** Model, effort and access pickers, rendered before Send/Stop like Electron Desktop. */
   toolbarControls?: React.ReactNode;
+  terminalControlPending?: boolean;
+  onChooseManagedTerminal?: () => void;
   /** Queued turns, attached above the prompt card. */
   queue?: React.ReactNode;
 }) {
@@ -163,8 +167,8 @@ export function ChatInput({
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
   const contextEnabled = driveContextEnabled && !botContext;
   const blockedDriveContext = !setupAnswer && resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
-  const canSend = (setupAnswer || !failedSend) && (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: setupAnswer ? 0 : referenceCount, text: input, attachments: setupAnswer ? 0 : attachments.length });
-  const canRetry = !setupAnswer && failedSend && !speechBusy && !matrixAttachment.pending
+  const canSend = (setupAnswer || !failedSend) && !terminalControlPending && (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && !matrixAttachment.pending && canSendChatInput({ connected, sending, busy, references: setupAnswer ? 0 : referenceCount, text: input, attachments: setupAnswer ? 0 : attachments.length });
+  const canRetry = !setupAnswer && failedSend && !failedSend.submission?.managedTerminalControl && !speechBusy && !matrixAttachment.pending
     && permissionMode === failedSend.permissionMode
     && (attachmentsEnabled || !failedSend.files.length)
     && (contextEnabled || !failedSend.options.resources.some(resource => resource.kind === "organization_drive"))
@@ -399,6 +403,12 @@ export function ChatInput({
         }} /> : null}
       <div ref={slashAnchorRef} className="relative flex flex-col">
         <ChatSlashPicker instance={slashInstance} loading={slashCatalogLoading} query={slashQuery} projectSlash={projectSlash} listRef={slashListRef} anchorRef={slashAnchorRef} inputRef={textareaRef}
+          onChooseManagedTerminal={onChooseManagedTerminal && slashToken ? () => {
+            const suffixLength = input.slice(slashToken.end).match(/^[a-z0-9_.-]*/i)?.[0].length ?? 0;
+            setInput(input.slice(0, slashToken.start) + input.slice(slashToken.end + suffixLength));
+            setSlashDismissal(slashKey);
+            onChooseManagedTerminal();
+          } : undefined}
           onOutsideDismiss={()=>setSlashDismissal(slashKey)}
           onDismiss={()=>{setSlashDismissal(slashKey);textareaRef.current?.focus();}} onSelect={entry=>{
             if (!slashToken) return;

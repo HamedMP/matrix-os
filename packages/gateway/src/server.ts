@@ -268,6 +268,7 @@ import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js
 import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.js";
 import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation.js";
 import { createHerdrChatTerminalRoute } from "./chat/herdr-terminal-route.js";
+import { createManagedTerminalPickerRoutes, managedTerminalBrokerFromEnv } from "./chat/managed-terminal-source.js";
 import { createManagedTerminalTargetRoutes } from "./herdr/managed-terminal-target.js";
 import { MANAGED_TERMINAL_TARGET_PATH } from "@matrix-os/contracts/managed-terminal-control";
 import { HERDR_CHAT_ROUTE } from "./chat/herdr-chat-target.js";
@@ -1262,7 +1263,11 @@ export async function createGateway(config: GatewayConfig) {
       localTerminalAgentToken: () => localTerminalAgentToken?.token,
     },
   });
-  app.route(HERDR_CHAT_ROUTE, createHerdrChatTerminalRoute(herdrSessions, terminalAgents.inputActivity, desktopLinks));
+  const managedTerminalBroker = managedTerminalBrokerFromEnv();
+  app.route(HERDR_CHAT_ROUTE, createHerdrChatTerminalRoute(herdrSessions, terminalAgents.inputActivity, desktopLinks, managedTerminalBroker));
+  app.route("/api/terminal/herdr/managed", createManagedTerminalPickerRoutes({
+    broker: managedTerminalBroker, principal: getOptionalRequestPrincipal, ownerIds: terminalRuntimeOwnerIds,
+  }));
   app.route(MANAGED_TERMINAL_TARGET_PATH, createManagedTerminalTargetRoutes({
     adapter: herdrSessions, inputActivity: terminalAgents.inputActivity, homePath, worktrees: codingAgentWorktreeManager,
   }));

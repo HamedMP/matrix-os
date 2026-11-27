@@ -193,3 +193,68 @@ it("identifies connection sources when a paired desktop and direct connection ha
   expect(pick).toHaveBeenLastCalledWith(expect.objectContaining({ id: HERDR_TERMINAL_WORKSPACE_ID + ":" + directTabId }),
     "machine:devstack-hel1/t1");
 });
+
+const managedWorkspace = "tws_6d6774" + "0".repeat(26);
+const managedTabId = "tt_" + "7".repeat(32);
+const managedRows = Array.from({ length: 6 }, (_, index) => ({
+  machineId: "machine_" + index,
+  workspaceId: index === 5 ? managedWorkspace : "tws_6d6774" + String(index + 1).repeat(26),
+  runtimeSlot: "pr-" + (100 + index),
+  name: index >= 4 ? "Build Studio" : "Preview " + index,
+}));
+const managedList = { available: true, status: "ready", sessions: [
+  { id: "t1", title: "Build", tabId: managedTabId, revision, status: "idle" },
+  { id: "t2", title: "Elsewhere", tabId, revision, status: "idle", machine: "not-the-target" },
+] };
+
+function managedRequests(url: string) {
+  if (url === "/api/desktop-link/machines") return Response.json({ machines: [] });
+  if (url === "/api/terminal/herdr/managed") return Response.json({ computers: managedRows, partial: false });
+  if (url === "/api/terminal/herdr/managed?machine=machine_5") return Response.json(managedList);
+  return Response.json({ available: true, status: "ready", sessions: [
+    { id: "t1", title: "Build", tabId, revision, status: "idle" },
+  ] });
+}
+
+it("filters named managed Computers and attaches only the explicitly chosen machine-qualified terminal", async () => {
+  const pick = vi.fn();
+  const request = vi.fn(async (url: string) => managedRequests(url));
+  render(<HerdrControlPicker managedOnly request={request} computerName="Main Computer" onSelect={pick} onCancel={vi.fn()} />);
+  const filter = await screen.findByRole("textbox", { name: "Find computer" });
+  fireEvent.change(filter, { target: { value: "build studio" } });
+  await screen.findByRole("button", { name: "Build Studio · pr-104" });
+  fireEvent.click(await screen.findByRole("button", { name: "Build Studio · pr-105" }));
+  const row = await screen.findByRole("button", { name: "Build (t1)" });
+  expect(screen.queryByRole("button", { name: "Elsewhere (t2)" })).toBeNull();
+  expect(pick).not.toHaveBeenCalled();
+  expect(request).toHaveBeenCalledWith("/api/terminal/herdr/managed?machine=machine_5",
+    expect.objectContaining({ method: "GET" }));
+  fireEvent.click(row);
+  expect(pick).toHaveBeenCalledWith({ id: managedWorkspace + ":" + managedTabId,
+    kind: "terminal_session", label: "Build", revision }, "matrix:machine_5/t1");
+});
+
+it("requires a fresh owner choice when a discovered managed address is pasted", async () => {
+  const pick = vi.fn();
+  const request = vi.fn(async (url: string) => managedRequests(url));
+  render(<HerdrControlPicker managedOnly request={request} requestedTarget="matrix:machine_5/t1"
+    onSelect={pick} onCancel={vi.fn()} />);
+  const row = await screen.findByRole("button", { name: "Use Build (Build Studio · pr-105/t1)" });
+  expect(pick).not.toHaveBeenCalled();
+  expect(request.mock.calls.map(([path]) => path)).toEqual([
+    "/api/terminal/herdr/managed", "/api/terminal/herdr/managed?machine=machine_5",
+  ]);
+  fireEvent.click(row);
+  expect(pick).toHaveBeenCalledWith(expect.objectContaining({ id: managedWorkspace + ":" + managedTabId }),
+    "matrix:machine_5/t1");
+});
+
+it("does not reinterpret a missing managed Computer address as a local terminal", async () => {
+  const request = vi.fn(async (url: string) => managedRequests(url));
+  const pick = vi.fn();
+  render(<HerdrControlPicker managedOnly request={request} requestedTarget="matrix:removed/t1" onSelect={pick} onCancel={vi.fn()} />);
+  await screen.findByText("Computer unavailable.");
+  expect(screen.queryByRole("button", { name: /Use Build/ })).toBeNull();
+  expect(request.mock.calls.map(([path]) => path)).toEqual(["/api/terminal/herdr/managed"]);
+  expect(pick).not.toHaveBeenCalled();
+});

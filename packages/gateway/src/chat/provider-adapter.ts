@@ -149,6 +149,7 @@ export interface CanonicalProviderRunInput<State = unknown> {
   /** Gateway-verified fresh owner selection for this direct, first-attempt private turn. */
   ownerSubmittedHerdrTurn?: true;
   ownerSubmittedHerdrDiscovery?: true;
+  managedTerminalAuthority?: import("@matrix-os/contracts/managed-terminal-control").ManagedTerminalTurnAuthority;
   /** Persisted collaboration admission, never inferred from model text. */
   sharedScopeId?: string;
   projectSlug?: string;

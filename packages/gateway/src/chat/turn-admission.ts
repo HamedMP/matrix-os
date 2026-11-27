@@ -1,4 +1,5 @@
 import { withOwnerHerdrAdmission } from "./codex-mcp-run-scope.js";
+import type { ManagedTerminalTurnAuthority } from "@matrix-os/contracts/managed-terminal-control";
 import { ROUTINE_DIRECT_DISPATCH, type RoutineDirectDispatch } from "./routine-direct-admission.js";
 import { routineCreationContext } from "./routine-creation-policy.js";
 import { prepareChatSessionContext } from "./session-history.js";
@@ -58,6 +59,7 @@ export interface CanonicalTurnProvenance {
   };
   [ROUTINE_DIRECT_DISPATCH]?: RoutineDirectDispatch;
   directOwnerTurn?: true;
+  managedTerminalAuthority?: ManagedTerminalTurnAuthority;
   routineCreationProof?: string;
   previewTurnProof?: string;
   routineFullAccessProof?: string;
@@ -388,7 +390,7 @@ async function admitTimedTurn(
         const completion = deps.startDispatch(
           owner,
           admitted.message,
-          withOwnerHerdrAdmission(admitted.run, admitted.message, owner, provenance?.directOwnerTurn),
+          withOwnerHerdrAdmission(admitted.run, admitted.message, owner, provenance?.directOwnerTurn, provenance?.managedTerminalAuthority),
           adapter,
           resolvedRoot,
           resumeState,
