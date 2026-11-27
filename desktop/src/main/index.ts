@@ -106,7 +106,7 @@ import { isDesktopDeepLink, resolveDesktopChannelIdentity } from "../shared/chan
 import { createDesktopDeepLinkHandler, createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
 import { createInstalledAppDeepLinks } from "./installed-apps/deep-link";
 import { installInstalledApps } from "./installed-apps/wiring";
-import { createMainWindowActionGate, registerMainWindowActionsReadyIpc } from "./installed-apps/main-window-actions";
+import { createMainWindowActionGate } from "./installed-apps/main-window-actions";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
@@ -189,6 +189,7 @@ let organizationDriveTransfers: ReturnType<typeof createOrganizationDriveTransfe
 let downloadsDrained = false;
 let drainingDownloads = false;
 let installedApps: ReturnType<typeof installInstalledApps> | null = null;
+let disposeMainWindowActions: (() => void) | null = null;
 let installedAppsDrained = false;
 let drainingInstalledApps = false;
 let closeCodingAgentThreadEvents: (() => void) | null = null;
@@ -532,7 +533,9 @@ if (!gotLock) {
         hasMainWindow: () => Boolean(mainWindow && !mainWindow.isDestroyed()),
         isSignedIn: () => auth.getStatus().signedIn,
         reopenMainWindow: () => reopenMainWindow?.() ?? Promise.reject(new Error("main window unavailable")),
+        showMainWindow: () => restoreMainWindowForDeepLink?.(),
       });
+      disposeMainWindowActions = mainWindowActions.dispose;
       const nativeAppBridge = new NativeAppBridge({
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
@@ -843,9 +846,6 @@ if (!gotLock) {
         clipboard,
         isTrustedSender: (event) => senderRole(windowSenders, event) !== null,
       });
-      registerMainWindowActionsReadyIpc(ipcMain, {
-        isMainWindowSender: (event) => senderRole(windowSenders, event) === "main", ready: mainWindowActions.rendererReady,
-      });
       registerSharedAppDeepLinkIpc(ipcMain, {
         isMainWindowSender: (event) => senderRole(windowSenders, event) === "main",
         take: () => sharedAppDeepLinks.take(),
@@ -907,6 +907,7 @@ if (!gotLock) {
         },
         getUpdateSnapshot: () => updater.snapshot(),
         installUpdate: () => updater.install(),
+        nativeActionsReady: () => mainWindowActions.rendererReady(),
         toggleWindowMaximize: () => {
           if (!mainWindow || mainWindow.isDestroyed()) return;
           if (mainWindow.isMaximized()) mainWindow.unmaximize();
@@ -1173,6 +1174,7 @@ if (!gotLock) {
     closeCodingAgentThreadEvents?.();
     closeCodingAgentThreadEvents = null;
     terminalWindows?.dispose();
+    disposeMainWindowActions?.();
     terminalWindows = null;
     shortcutWiring?.dispose();
     shortcutWiring = null;

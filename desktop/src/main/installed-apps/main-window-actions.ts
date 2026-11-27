@@ -2,17 +2,17 @@
 // actions (open an app, open Chat, start an app task) are carried out by the
 // main renderer. When it is closed, reopen it through the app's single-flight
 // path and wait, bounded, until its renderer says it can take those actions.
-import { z } from "zod/v4";
-
 export const MAIN_WINDOW_ACTIONS_READY_TIMEOUT_MS = 15_000;
-export const MAIN_WINDOW_ACTIONS_READY_CHANNEL = "window:native-actions-ready";
-const MAX_WAITERS = 32;
+// Bridge rate limits already cap these actions; past this, the oldest waiter fails first.
+const MAX_WAITERS = 8;
 
 export function createMainWindowActionGate(options: {
   hasMainWindow(): boolean;
   isSignedIn(): boolean;
   /** The app's single-flight create-or-focus path for the main window. */
   reopenMainWindow(): Promise<void>;
+  /** Brings the main window forward (reopening it if needed) so the owner can sign in. */
+  showMainWindow(): void;
   timeoutMs?: number;
 }) {
   const timeoutMs = options.timeoutMs ?? MAIN_WINDOW_ACTIONS_READY_TIMEOUT_MS;
@@ -20,7 +20,8 @@ export function createMainWindowActionGate(options: {
   // Set while a window this gate reopened has not yet reported ready.
   let awaitingRenderer = false;
   let reopening: Promise<void> | null = null;
-  const waiters = new Set<() => void>();
+  // Insertion order is age; each waiter resolves true (ready) or false (timeout, evicted, quit).
+  const waiters = new Map<symbol, (value: boolean) => void>();
 
   const reopen = (): Promise<void> => {
     awaitingRenderer = true;
@@ -28,18 +29,26 @@ export function createMainWindowActionGate(options: {
     return reopening;
   };
 
+  const settleAll = (value: boolean) => {
+    for (const settle of [...waiters.values()]) settle(value);
+  };
+
   const waitForRenderer = (): Promise<boolean> => {
     if (ready) return Promise.resolve(true);
-    if (waiters.size >= MAX_WAITERS) return Promise.resolve(false);
+    while (waiters.size >= MAX_WAITERS) {
+      const oldest = waiters.values().next().value;
+      if (!oldest) break;
+      oldest(false);
+    }
     return new Promise((resolve) => {
-      const done = (value: boolean) => {
+      const key = Symbol("waiter");
+      const timer = setTimeout(() => settle(false), timeoutMs);
+      const settle = (value: boolean) => {
         clearTimeout(timer);
-        waiters.delete(onReady);
+        waiters.delete(key);
         resolve(value);
       };
-      const onReady = () => done(true);
-      const timer = setTimeout(() => done(false), timeoutMs);
-      waiters.add(onReady);
+      waiters.set(key, settle);
     });
   };
 
@@ -49,7 +58,11 @@ export function createMainWindowActionGate(options: {
      * caller's generic message when signed out, on reopen failure or timeout.
      */
     async ensure(failureMessage: string): Promise<void> {
-      if (!options.isSignedIn()) throw new Error(failureMessage);
+      if (!options.isSignedIn()) {
+        // The renderer only reports ready after sign-in: never wait for it while signed out.
+        options.showMainWindow();
+        throw new Error(failureMessage);
+      }
       if (options.hasMainWindow() && !awaitingRenderer) return;
       if (!options.hasMainWindow() || reopening) {
         try {
@@ -69,26 +82,19 @@ export function createMainWindowActionGate(options: {
     rendererReady(): void {
       ready = true;
       awaitingRenderer = false;
-      for (const waiter of [...waiters]) waiter();
+      settleAll(true);
     },
+
+    isReady: (): boolean => ready,
 
     /** The main renderer reloaded, crashed or closed. */
     rendererReset(): void {
       ready = false;
     },
+
+    /** Quit: fail every waiting action and clear its timer. */
+    dispose(): void {
+      settleAll(false);
+    },
   };
-}
-
-const ReadyRequestSchema = z.strictObject({});
-
-export function registerMainWindowActionsReadyIpc(ipc: {
-  handle(channel: string, listener: (event: unknown, payload: unknown) => Promise<unknown>): void;
-}, options: { isMainWindowSender(event: unknown): boolean; ready(): void }): void {
-  ipc.handle(MAIN_WINDOW_ACTIONS_READY_CHANNEL, async (event, payload) => {
-    if (!ReadyRequestSchema.safeParse(payload ?? {}).success || !options.isMainWindowSender(event)) {
-      throw new Error("invalid request");
-    }
-    options.ready();
-    return { ok: true };
-  });
 }
