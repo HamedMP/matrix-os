@@ -3,6 +3,7 @@
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runProposal } from "../../../../home/apps/sheets/src/agent";
+import { MAX_COLS } from "../../../../home/apps/sheets/src/session/engine";
 import { flush, pick, renderWithWorkbook } from "./harness";
 
 afterEach(cleanup);
@@ -136,6 +137,22 @@ describe("Data tab", () => {
     await flush();
     expect(session.cell(sheet, 0, 6).value).toBe("taken");
     expect(toastText()).toContain("not empty");
+  });
+
+  // Outcome: splitting text in the last column tells the owner why nothing happened.
+  // Fault: the cells to the right were read before the split was checked to fit, which threw past the last column and the ribbon failed silently.
+  it("says the split does not fit when the parts would go past the last column", async () => {
+    const app = await renderWithWorkbook("Budget.xlsx", (workbook, sheet) => {
+      workbook.setCell(sheet, { row: 0, col: MAX_COLS - 1 }, "a,b");
+    });
+    const session = app.session();
+    const sheet = session.getState().activeSheetId;
+    goTo("XFD1");
+    openTab("Data");
+    await pick("Text to columns", "Split at comma");
+    await flush();
+    expect(session.cell(sheet, 0, MAX_COLS - 1).value).toBe("a,b");
+    expect(toastText()).toContain("past the last column");
   });
 });
 

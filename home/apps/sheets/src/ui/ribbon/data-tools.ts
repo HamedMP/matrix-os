@@ -4,7 +4,7 @@
  * undo step and refuses, with a reason, what it cannot do safely.
  */
 import type { SheetGridController } from "../../grid";
-import type { CellValue } from "../../session/engine";
+import { type CellValue, MAX_COLS } from "../../session/engine";
 
 export type DataResult = { ok: true; message: string } | { ok: false; message: string };
 
@@ -66,7 +66,7 @@ export function removeDuplicateRows(controller: SheetGridController): DataResult
 /**
  * Splits the text of the selected column at a delimiter into the columns to
  * its right. Refused when those cells are not empty, so nothing is written
- * over. Formulas and numbers stay as they are.
+ * over, or when the parts would not fit before the last column. Formulas and numbers stay as they are.
  */
 export function splitTextToColumns(controller: SheetGridController, delimiterId: SplitDelimiterId): DataResult {
   const session = controller.session;
@@ -85,6 +85,8 @@ export function splitTextToColumns(controller: SheetGridController, delimiterId:
       rows.push([]);
       continue;
     }
+    // Checked before the cells to the right are read: past the last column there are none.
+    if (start.col + parts.length > MAX_COLS) return { ok: false, message: "The split would go past the last column of the sheet. Move the text further left, then split." };
     for (let offset = 1; offset < parts.length; offset++) {
       if (!session.isBlank(sheet, row, start.col + offset)) return { ok: false, message: "The cells to the right are not empty. Insert columns first, then split." };
     }
