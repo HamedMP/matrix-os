@@ -38,7 +38,7 @@ describe("Outlook lifecycle through the existing integration routes", () => {
     });
     const pipedream = createUnavailablePipedreamClient();
     const app = createIntegrationRoutes({
-      db, pipedream, webhookSecret: "", outlook, outlookGraph: outlook.graph,
+      db, pipedream, webhookSecret: "", outlook, outlookGraph: outlook.graph, pipedreamAvailable: false,
       resolveUserId: async context => context.req.header("x-test-owner") === "owner" ? ownerId : null,
     });
     const req = (path: string, method = "GET", body?: unknown) => app.request(path, {
@@ -63,7 +63,7 @@ describe("Outlook lifecycle through the existing integration routes", () => {
     expect(complete.status).toBe(303);
     expect(complete.headers.get("location")).toBe("matrixos://integrations");
     const [connection] = await (await req("/")).json();
-    expect(connection).toMatchObject({ service, account_label: "Work", account_email: "outlook@example.com" });
+    expect(connection).toMatchObject({ service, account_label: "Work", account_email: "outlook@example.com", outlook_connection: "matrix" });
     expect(connection).not.toHaveProperty("pipedream_account_id");
     const binding = { connectionId: connection.id, service, accountLabel: "Work", expectedEmail: "outlook@example.com" };
     const read = await req("/read-call", "POST", { service, action: "list_messages", label: "Work", accountBinding: binding });

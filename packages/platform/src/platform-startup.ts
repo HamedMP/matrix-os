@@ -663,7 +663,7 @@ async function startPlatformServerWithCleanup(
         ...outlookConfig,
         db: trustedPlatformDb,
         pipedream: deletionPipedream,
-        maintenance: backgroundWorkersEnabled,
+        maintenance: true,
         admit: outlookCallbackAdmission({ db, users: trustedPlatformDb, env: process.env }),
       });
     }

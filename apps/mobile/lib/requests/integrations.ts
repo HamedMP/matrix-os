@@ -1,3 +1,4 @@
+import { isMatrixOutlookConsentUrl } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
 import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "@/lib/requests/http";
@@ -36,6 +37,7 @@ const ConnectedIntegrationWireSchema = z.object({
   status: z.string().min(1).max(32),
   connected_at: z.string().min(1).max(64),
   last_used_at: z.string().max(64).nullable().optional(),
+  outlook_connection: z.enum(["matrix", "legacy"]).optional(),
 }).transform((value) => ({
   id: value.id,
   service: value.service,
@@ -44,6 +46,7 @@ const ConnectedIntegrationWireSchema = z.object({
   status: value.status,
   connectedAt: value.connected_at,
   lastUsedAt: value.last_used_at ?? null,
+  ...(value.outlook_connection ? { outlookConnection: value.outlook_connection } : {}),
 }));
 
 const ConnectedIntegrationsSchema = z.union([
@@ -60,7 +63,7 @@ const RefreshConnectionResponseSchema = z.object({
 
 const DeleteConnectionResponseSchema = z.object({ ok: z.literal(true) });
 const ConnectIntegrationResponseSchema = z.object({
-  url: z.string().url().refine(isTrustedPipedreamConnectUrl),
+  url: z.string().url(),
   service: z.string().regex(SERVICE_ID),
 });
 
@@ -145,8 +148,9 @@ export async function createIntegrationConnectUrl(
   clerkToken: string,
   computerGatewayUrl: string,
   serviceId: string,
+  connectionId?: string,
 ): Promise<string> {
-  if (!SERVICE_ID.test(serviceId)) throw new Error(INTEGRATION_CONNECT_ERROR);
+  if (!SERVICE_ID.test(serviceId) || (connectionId && !CONNECTION_ID.test(connectionId))) throw new Error(INTEGRATION_CONNECT_ERROR);
   const response = await fetchAuthenticatedJson({
     url: integrationUrl(computerGatewayUrl, "/api/integrations/connect"),
     token: clerkToken,
@@ -157,8 +161,13 @@ export async function createIntegrationConnectUrl(
     body: JSON.stringify({
       service: serviceId,
       redirectUri: MOBILE_INTEGRATIONS_REDIRECT_URI,
+      ...(connectionId ? { connectionId } : {}),
     }),
   });
+  if (response.service !== serviceId
+    || (!isMatrixOutlookConsentUrl(serviceId, response.url) && (connectionId || !isTrustedPipedreamConnectUrl(response.url)))) {
+    throw new Error(INTEGRATION_CONNECT_ERROR);
+  }
   return response.url;
 }
 

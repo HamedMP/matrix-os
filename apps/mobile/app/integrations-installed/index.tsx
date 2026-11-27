@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ActivityIndicator, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import CheckmarkCircle02Icon from "@hugeicons/core-free-icons/CheckmarkCircle02Icon";
 import Delete02Icon from "@hugeicons/core-free-icons/Delete02Icon";
@@ -28,6 +28,8 @@ export default function InstalledIntegrationsScreen() {
     isPending,
     isError,
     refreshConnection,
+    startConnection,
+    connectingServiceId,
     deleteConnection,
     isMutating = false,
     refreshingConnectionId = null,
@@ -43,6 +45,18 @@ export default function InstalledIntegrationsScreen() {
       return true;
     } catch {
       setActionError("Could not refresh connection. Try again.");
+      return false;
+    }
+  };
+
+  const reconnect = async (connection: ConnectedIntegration) => {
+    setActionError(null);
+    try {
+      await Linking.openURL(await startConnection(connection.service, connection.id));
+      return true;
+    } catch (error: unknown) {
+      console.warn("[integrations] Reconnect failed", error instanceof Error ? error.name : "UnknownError");
+      setActionError("Could not start connection. Try again.");
       return false;
     }
   };
@@ -89,10 +103,10 @@ export default function InstalledIntegrationsScreen() {
                   <SwipeableConnectionRow
                     connection={connection}
                     service={service}
-                    disabled={Boolean(refreshingConnectionId || deletingConnectionId)}
+                    disabled={Boolean(refreshingConnectionId || deletingConnectionId || connectingServiceId)}
                     refreshing={refreshingConnectionId === connection.id}
                     deleting={deletingConnectionId === connection.id}
-                    onRefresh={() => refresh(connection)}
+                    onRefresh={() => connection.outlookConnection ? reconnect(connection) : refresh(connection)}
                     onDelete={(resetSwipe) => {
                       setActionError(null);
                       pendingDeleteSwipeRef.current = resetSwipe;
@@ -152,7 +166,7 @@ function SwipeableConnectionRow({
         <View style={styles.swipeActions}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Refresh ${connection.accountLabel} ${service.name} connection`}
+            accessibilityLabel={`${connection.outlookConnection ? "Reconnect" : "Refresh"} ${connection.accountLabel} ${service.name} connection`}
             accessibilityState={{ disabled }}
             disabled={disabled}
             onPress={() => void refreshAndClose()}

@@ -73,13 +73,14 @@ export function useComputerIntegrations() {
     },
   });
   const startConnectionMutation = useMutation({
-    mutationFn: async (serviceId: string) => {
+    mutationFn: async ({ serviceId, connectionId }: { serviceId: string; connectionId?: string }) => {
       const token = await getToken();
       if (!token || !computer) throw new Error("Could not start connection. Try again.");
       return createIntegrationConnectUrl(
         token,
         `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
         serviceId,
+        connectionId,
       );
     },
   });
@@ -108,13 +109,14 @@ export function useComputerIntegrations() {
     isError: activeComputer.isError || integrations.isError,
     refreshConnection: (connectionId: string) => refreshMutation.mutateAsync(connectionId),
     deleteConnection: (connectionId: string) => deleteMutation.mutateAsync(connectionId),
-    startConnection: (serviceId: string) => startConnectionMutation.mutateAsync(serviceId),
+    startConnection: (serviceId: string, connectionId?: string) => startConnectionMutation.mutateAsync({ serviceId, connectionId }),
+    refreshConnectedInventory: async () => { await integrations.refetch(); },
     syncConnections: () => syncMutation.mutateAsync(),
     isMutating: refreshMutation.isPending || deleteMutation.isPending,
     refreshingConnectionId: refreshMutation.isPending ? refreshMutation.variables : null,
     deletingConnectionId: deleteMutation.isPending ? deleteMutation.variables : null,
     connectingServiceId: startConnectionMutation.isPending
-      ? startConnectionMutation.variables
+      ? startConnectionMutation.variables?.serviceId
       : null,
     isSyncing: syncMutation.isPending,
     refresh: async () => {
