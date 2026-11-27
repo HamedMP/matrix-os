@@ -255,6 +255,9 @@ export function createManagedPiRuntime(deps: {
         run.releaseFailure = new ManagedPiStopUnavailable();
         throw error;
       });
+      // Observe early release rejection while local cleanup is still pending.
+      // The original promise is still awaited by receipt settlement.
+      void Promise.allSettled([run.cleanup]);
       // A user-visible Stop is immediate; deletion still awaits the separate
       // verified cleanup promise through quiescence before receiving a receipt.
       await awaitManagedPiCleanup(() => run.stopping && run.worker ? localCleanup : run.cleanup!);

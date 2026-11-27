@@ -94,6 +94,26 @@ it('shutdown cannot report success after an uncertain worker release', async()=>
   await expect(pending).rejects.toThrow('Run stop unavailable');
   await expect(f.runtime.close()).rejects.toThrow('Run stop unavailable');
 });
+it('handles an early release rejection while tool cleanup is still pending and withholds stop proof', async () => {
+  const cleanup = deferred<void>();
+  const closeRun = vi.fn(() => cleanup.promise);
+  const onStopped = vi.fn();
+  const f = await setup({ onStopped }, { open: async () => undefined, closeRun } as unknown as Parameters<typeof fixture>[1]);
+  await f.start();
+  f.stopReply(requestId => ({ version: 1, type: 'runtime.result', requestId, ok: false, error: 'runtime_unavailable' }));
+  const work = vi.fn();
+  const stopped = expect(f.runtime.withStoppedRun(f.identity, work)).rejects.toThrow('Run stop unavailable');
+  try {
+    f.complete();
+    await vi.waitFor(() => expect(closeRun).toHaveBeenCalledTimes(2));
+    await stopped;
+    await flush();
+    expect(onStopped).not.toHaveBeenCalled();
+    expect(work).not.toHaveBeenCalled();
+  } finally {
+    cleanup.resolve();
+  }
+});
 it('shutdown waits for admission in flight and stops the runtime created after cancellation',async()=>{
  const f=await setup();const gate=deferred<void>();f.admissionGate(gate.promise);
  const starting=f.iterator.next();await vi.waitFor(()=>expect(f.admitted).toHaveBeenCalledOnce());
