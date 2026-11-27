@@ -58,8 +58,8 @@ export function freePlanSignUpStory(mode: 'sign-in' | 'sign-up', options: AuthPa
 
 /**
  * Inline script: `freePlanAvailable`, `freePlanCopy`, `freePlanToolIds`,
- * `resolveFreePlanSetup()` (resolves true only for a journey offering
- * `start_provision`), and `freeProvisionFailureMessage(res)`.
+ * `resolveFreePlanSetup()` (resolves true only for the primary slot and a
+ * journey offering `start_provision`; reads `requestedRuntime` from the page), and `freeProvisionFailureMessage(res)`.
  */
 export function freePlanAuthScript(options: AuthPageFreePlanOptions): string {
   return `
@@ -69,6 +69,8 @@ export function freePlanAuthScript(options: AuthPageFreePlanOptions): string {
     var freeCapacityFullCode = ${inlineScriptJson(FREE_CAPACITY_FULL_CODE)};
     var freePlanToolIds = ['claude-code', 'codex'];
     function resolveFreePlanSetup() {
+      // The Free plan only occupies the primary slot, and the journey read below is the primary one.
+      if (requestedRuntime && requestedRuntime !== 'primary') return Promise.resolve(false);
       if (!freePlanAvailable || !window.Clerk.session) return Promise.resolve(false);
       return window.Clerk.session.getToken()
         .then(function(token) {

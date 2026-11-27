@@ -29,13 +29,15 @@ function openAuthPage(options: {
   appSessionStatus?: 404 | 402;
   /** Page URL; the billing setup URL makes a billing redirect observable as a counted reload. */
   url?: string;
+  /** Post-auth target; `?runtime=` selects the computer slot. */
+  redirectTarget?: string;
 }) {
   const requests: Recorded[] = [];
   const html = getAuthPage(
     'pk_test_matrix',
     options.mode ?? 'sign-up',
     'test-nonce',
-    '/',
+    options.redirectTarget ?? '/',
     'https://app.matrix-os.com',
     options.freePlanAvailable === undefined ? undefined : { freePlanAvailable: options.freePlanAvailable },
   );
@@ -191,6 +193,36 @@ describe('platform pre-VPS page on the Free plan', () => {
     await waitForCondition(() => Boolean(button(dom, FREE_PLAN_COPY.setupLabel)));
     expect(billingRedirects(dom)).toBe(0);
     expect(requests.some((request) => request.url === '/api/journey')).toBe(true);
+  });
+
+  // The Free plan only ever occupies the primary slot; the journey check reads the primary journey.
+  it('keeps the billing redirect for a non-primary computer even when the primary journey offers Free', async () => {
+    const { dom, requests } = openAuthPage({
+      freePlanAvailable: true, journey: freeJourney, appSessionStatus: 402, url: BILLING_SETUP_URL, redirectTarget: '/?runtime=test',
+    });
+    openDoms.push(dom);
+
+    await waitForCondition(() => billingRedirects(dom) === 1);
+    expect(button(dom, FREE_PLAN_COPY.setupLabel)).toBeUndefined();
+    expect(requests.some((request) => request.url === '/api/journey')).toBe(false);
+  });
+
+  it('keeps the paid step for a non-primary computer with no runtime even when the primary journey offers Free', async () => {
+    const { dom } = openAuthPage({ freePlanAvailable: true, journey: freeJourney, redirectTarget: '/?runtime=test' });
+    openDoms.push(dom);
+
+    await waitForCondition(() => Boolean(button(dom, 'Build VPS')));
+    expect(button(dom, FREE_PLAN_COPY.setupLabel)).toBeUndefined();
+  });
+
+  it('offers free setup on 402 for an explicit primary computer', async () => {
+    const { dom } = openAuthPage({
+      freePlanAvailable: true, journey: freeJourney, appSessionStatus: 402, url: BILLING_SETUP_URL, redirectTarget: '/?runtime=primary',
+    });
+    openDoms.push(dom);
+
+    await waitForCondition(() => Boolean(button(dom, FREE_PLAN_COPY.setupLabel)));
+    expect(billingRedirects(dom)).toBe(0);
   });
 
   it.each([
