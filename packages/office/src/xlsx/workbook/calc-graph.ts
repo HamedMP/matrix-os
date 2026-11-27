@@ -81,6 +81,8 @@ export interface CalcGraph {
   dynamic: CalcNode[];
   /** Nodes with their precedents first; null until computed. */
   order: CalcNode[] | null;
+  /** How deep the walk that found {@link order} went: the order holds for a depth bound at least this deep. */
+  orderDepth: number;
 }
 
 /** Functions whose result depends on cells their arguments do not name. */
@@ -343,7 +345,7 @@ export function collectDeps(state: WorkbookState, ast: FormulaAst, sheet: SheetM
 export function buildGraph(state: WorkbookState): CalcGraph {
   const nodes: CalcNode[] = [];
   const functions = functionsOf(state);
-  if (functions === null) return { nodes, columns: new Map(), spills: [], dynamic: [], order: null };
+  if (functions === null) return { nodes, columns: new Map(), spills: [], dynamic: [], order: null, orderDepth: 0 };
   const columns = new Map<SheetModel, Map<number, CalcNode[]>>();
   const spills: CalcNode[] = [];
   const dynamic: CalcNode[] = [];
@@ -396,5 +398,5 @@ export function buildGraph(state: WorkbookState): CalcGraph {
     for (const list of byColumn.values()) list.sort((a, b) => a.row - b.row);
     if (byColumn.size > 0) columns.set(sheet, byColumn);
   }
-  return { nodes, columns, spills, dynamic, order: null };
+  return { nodes, columns, spills, dynamic, order: null, orderDepth: 0 };
 }

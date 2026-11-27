@@ -252,6 +252,27 @@ describe("the bounds of a run", () => {
     expect(valueAt(workbook, "S", "A1")).toBe(60);
   });
 
+  // Fault detected: an unbounded run kept its order for later runs, and a later run with a lower depth bound reused
+  // it, so the bound was not applied and the run reported itself complete.
+  it("apply the depth bound to a run after an unbounded one", () => {
+    const workbook = createXlsx({ sheetNames: ["S"] });
+    const sheet = workbook.listSheets()[0]!.id;
+    workbook.setFormula(sheet, parseA1("A1"), "A2+1");
+    workbook.setFormula(sheet, parseA1("A2"), "A3+1");
+    workbook.setFormula(sheet, parseA1("A3"), "A4+1");
+    workbook.setCell(sheet, parseA1("A4"), 1);
+    expect(workbook.recalc().complete).toBe(true);
+    expect(valueAt(workbook, "S", "A1")).toBe(4);
+    workbook.setCell(sheet, parseA1("A4"), 10);
+    const shallow = workbook.recalc({ maxDepth: 1 });
+    expect(shallow.complete).toBe(false);
+    expect([valueAt(workbook, "S", "A3"), valueAt(workbook, "S", "A1")]).toEqual([11, 4]);
+    // A bound the chain fits in takes the kept order and finishes.
+    workbook.setCell(sheet, parseA1("A4"), 20);
+    expect(workbook.recalc({ maxDepth: 3 }).complete).toBe(true);
+    expect(valueAt(workbook, "S", "A1")).toBe(23);
+  });
+
   it("continue where the last run stopped", async () => {
     const workbook = createXlsx({ sheetNames: ["S"] });
     const sheet = workbook.listSheets()[0]!.id;

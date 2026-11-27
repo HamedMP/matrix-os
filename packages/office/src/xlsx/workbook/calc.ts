@@ -59,11 +59,14 @@ export function recalc(state: WorkbookState, options: RecalcOptions | undefined,
   const graph = graphOf(state);
   let order = graph.order;
   let blocked: CalcNode[] = [];
-  if (order === null) {
+  // A kept order came from a walk that went `orderDepth` deep; a lower bound must walk again to stop where it says.
+  if (order === null || maxDepth < graph.orderDepth) {
     const ordered = orderGraph(graph, maxDepth);
     order = ordered.order;
     blocked = ordered.blocked;
-    if (blocked.length === 0) graph.order = order;
+    // The walk set the flags of every node, so an order kept from an earlier walk no longer matches them.
+    graph.order = blocked.length === 0 ? order : null;
+    graph.orderDepth = ordered.depth;
   }
   if (calc.onLoad) {
     calc.onLoad = false;

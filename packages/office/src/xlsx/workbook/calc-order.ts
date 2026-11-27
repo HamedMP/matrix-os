@@ -107,8 +107,11 @@ class Precedents {
  * A node at the end of a chain deeper than `maxDepth`, and every node that
  * reads one, is left out of the order and returned in `blocked`; the walk
  * goes on with the other nodes.
+ *
+ * `depth` is the deepest the walk went. The walk is the same for every bound
+ * at least that deep, so the order also holds for those bounds.
  */
-export function orderGraph(graph: CalcGraph, maxDepth: number): { order: CalcNode[]; blocked: CalcNode[] } {
+export function orderGraph(graph: CalcGraph, maxDepth: number): { order: CalcNode[]; blocked: CalcNode[]; depth: number } {
   for (const node of graph.nodes) {
     node.index = -1;
     node.onStack = false;
@@ -121,6 +124,7 @@ export function orderGraph(graph: CalcGraph, maxDepth: number): { order: CalcNod
   const walkers: Precedents[] = [];
   const component: CalcNode[] = [];
   let counter = 0;
+  let depth = 0;
   const enter = (node: CalcNode): void => {
     node.index = counter;
     node.low = counter++;
@@ -128,6 +132,7 @@ export function orderGraph(graph: CalcGraph, maxDepth: number): { order: CalcNod
     component.push(node);
     stack.push(node);
     walkers.push(new Precedents(graph, node.deps));
+    if (stack.length > depth) depth = stack.length;
   };
   const walk = (root: CalcNode): void => {
     enter(root);
@@ -165,5 +170,5 @@ export function orderGraph(graph: CalcGraph, maxDepth: number): { order: CalcNod
   };
   for (const root of graph.nodes) if (root.index === -1 && !root.dynamic) walk(root);
   for (const root of graph.nodes) if (root.index === -1) walk(root);
-  return { order, blocked };
+  return { order, blocked, depth };
 }
