@@ -10,7 +10,7 @@ export class ChatAdmissionUnconfirmed extends Error {
 type Input = Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision">;
 const InputSchema = CanonicalCreateChatTurnRequestSchema.omit({ clientRequestId: true, baseRevision: true });
 export interface ChatAdmissionAttempt {
-  identity: unknown; scope: string; payload: string; seed?: string; id: string;
+  identity: unknown; scope: string; payload: string; sourcePayload?: string; seed?: string; id: string;
   record?: CanonicalChatRecord; request?: CanonicalCreateChatTurnRequest;
   accepted?: CanonicalChatTurnAdmissionResponse;
   uncertain?: boolean;
@@ -82,16 +82,20 @@ export function createCanonicalChatAdmissionTracker() {
     return attempt.reading;
   };
   return {
-    prepare(identity: unknown, scope: string, value: Input, seed?: string): ChatAdmissionAttempt {
+    prepare(identity: unknown, scope: string, value: Input, seed?: string, resolveInput?: (input: Input) => Input): ChatAdmissionAttempt {
       const input = InputSchema.parse(value);
       if (seed !== undefined) CanonicalCreateChatTurnRequestSchema.shape.clientRequestId.parse(seed);
-      const payload = JSON.stringify(input);
-      const previous = attempts.find(item => item.identity === identity && item.scope === scope && item.payload === payload && item.seed === seed);
+      const sourcePayload = JSON.stringify(input);
+      const previous = attempts.find(item => item.identity === identity && item.scope === scope
+        && (item.sourcePayload ?? item.payload) === sourcePayload && item.seed === seed);
       if (previous) return previous;
       if (attempts.length >= 100) throw new ChatAdmissionUnconfirmed();
+      // An uncertain admission retries the same request even if Chat state has changed.
+      const payload = resolveInput ? JSON.stringify(resolveInput(input)) : sourcePayload;
       let resolve!: ChatAdmissionAttempt["resolve"];
       const promise = new Promise<CanonicalChatTurnAdmissionResponse>(value => { resolve = value; });
       const attempt: ChatAdmissionAttempt = { identity, scope, payload, seed,
+        ...(payload === sourcePayload ? {} : { sourcePayload }),
         id: seed && !attempts.some(item => item.identity === identity && item.scope === scope && item.id === seed)
           ? seed : `req_${randomUUID().replaceAll("-", "")}`, resolve, receipt: promise, lastRead: 0 };
       attempts.push(attempt);

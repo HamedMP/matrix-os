@@ -27,7 +27,7 @@ import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
 import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
 import { useCanonicalPendingSend } from "./use-canonical-pending-send";
-import { admitDesktopChatTurn, resolveDesktopAdmittedDetail } from "./canonical-chat-turn-admission";
+import { admitDesktopChatTurn, resolveDesktopAdmittedDetail, withChatContinuationRoot } from "./canonical-chat-turn-admission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
 const INITIAL_DETAIL_RETRY_MS = 200;
@@ -492,7 +492,7 @@ export function useCanonicalChatRouteController({
     try {
       const current = detailRef.current;
       const admitted: CanonicalChatClientAdmission | null = await admitDesktopChatTurn({ client, tracker: admissions, identity: admissionIdentity,
-        scope: selectedChatId ?? `new:${initialProjectId ?? "global"}:${selectionEpoch.current}`, input, title, projectId: initialProjectId, detail: current,
+        scope: selectedChatId ?? `new:${initialProjectId ?? "global"}:${selectionEpoch.current}`, input, title, projectId: initialProjectId, selectedChatId, detail: current,
         current: () => detailRef.current,
         isCurrent: () => admissionAuthority.current.valid && admissionAuthority.current.mounted
           && admissionAuthority.current.client === client && admissionAuthority.current.identity === admissionIdentity,
@@ -629,8 +629,9 @@ export function useCanonicalChatRouteController({
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
       && activeChatIdRef.current === current.record.chat.id);
     try {
+      if (!isCurrentScope()) return null;
       const response = await client.queueTurn(current.record.chat.id, {
-        ...input,
+        ...withChatContinuationRoot(input, current, activeChatIdRef.current),
         clientRequestId: input.clientRequestId ?? canonicalChatRequestId(),
         baseRevision: current.record.chat.revision,
       });

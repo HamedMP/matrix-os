@@ -6,7 +6,7 @@ import { AppError } from "../../../../shared/app-error";
 export async function admitDesktopChatTurn(options: {
   client: CanonicalChatClient; tracker: ReturnType<typeof createCanonicalChatAdmissionTracker>;
   identity: unknown; scope: string; input: Omit<CanonicalCreateChatTurnRequest, "clientRequestId" | "baseRevision"> & { clientRequestId?: string };
-  title: string; projectId: string | null; detail: CanonicalChatDetailResponse | null;
+  title: string; projectId: string | null; selectedChatId: string | null; detail: CanonicalChatDetailResponse | null;
   current: () => CanonicalChatDetailResponse | null;
   onSnapshot: (detail: CanonicalChatDetailResponse) => void;
   isCurrent: () => boolean; mayDispatch: () => boolean; onAccepted: () => void;
@@ -14,7 +14,8 @@ export async function admitDesktopChatTurn(options: {
   canAcknowledge: () => boolean; onRejected?: () => void;
 }) {
   const { clientRequestId: seed, ...input } = options.input;
-  const attempt = options.tracker.prepare(options.identity, options.scope, input, seed);
+  const attempt = options.tracker.prepare(options.identity, options.scope, input, seed,
+    value => withChatContinuationRoot(value, options.detail, options.selectedChatId));
   options.onPrepared(attempt.id);
   const record = attempt.record ?? options.detail?.record ?? await options.client.create({
     clientRequestId: `${attempt.id}_chat`, title: options.title,
@@ -57,4 +58,37 @@ export function resolveDesktopAdmittedDetail(
     turns: upsertAdmissionRow(latest?.turns, admitted.turn),
     runs: upsertAdmissionRow(latest?.runs, admitted.run),
   };
+}
+
+export function withChatContinuationRoot<T extends Pick<CanonicalCreateChatTurnRequest, "executionRoot">>(
+  input: T,
+  detail: CanonicalChatDetailResponse | null,
+  selectedChatId: string | null,
+): T {
+  if (selectedChatId === null) return input;
+  if (!detail || detail.record.chat.id !== selectedChatId) throw new AppError("server");
+  const { record } = detail;
+  // Shared and Bot Chats keep their existing admission rules.
+  if (record.chat.ownerScope.type !== "personal" || record.chat.collaboration?.mode === "shared") return input;
+  if (input.executionRoot) {
+    if (input.executionRoot.kind === "worktree" && input.executionRoot.projectId !== record.projectId) {
+      throw new AppError("server");
+    }
+    return input;
+  }
+  const active = record.activeRun;
+  const run = active ? detail.runs.find(candidate => candidate.id === active.runId) : detail.runs.at(-1);
+  if ((active && (!run || run.turnId !== active.turnId)) || (run && run.chatId !== selectedChatId)) {
+    throw new AppError("server");
+  }
+  const root = run?.executionRoot;
+  if (root?.kind !== "worktree") return input;
+  if (root.projectId !== record.projectId) {
+    if (active) throw new AppError("server");
+    // An idle Chat can retain run history after a project move. Let the
+    // gateway resolve an ordinary reply from the Chat's current assignment.
+    return input;
+  }
+  // The gateway revalidates current ownership, existence and worktree availability.
+  return { ...input, executionRoot: root };
 }

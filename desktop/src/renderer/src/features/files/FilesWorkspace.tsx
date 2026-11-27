@@ -160,6 +160,30 @@ export default function FilesWorkspace() {
     setNewItemRequest((current) => current?.tabId === tabId ? null : current);
   }, [activeTabId, tabs]);
 
+  const handleFileTrashed = (path: string, sourceTabId: string) => {
+    const parentPath = path.split("/").slice(0, -1).join("/");
+    const isTrashed = (candidate: string) => candidate === path || candidate.startsWith(`${path}/`);
+    const computerTabs = tabs.filter(tab => !tab.project && tab.id !== sourceTabId);
+
+    setRefreshes((current) => {
+      const next = { ...current };
+      for (const tab of computerTabs) {
+        if (tab.path === parentPath || isTrashed(tab.path)) {
+          next[tab.id] = (current[tab.id] ?? 0) + 1;
+        }
+      }
+      return next;
+    });
+    setSelections((current) => {
+      const next = { ...current };
+      for (const tab of computerTabs) {
+        const selection = current[tab.id];
+        if (selection && isTrashed(selection.path)) next[tab.id] = null;
+      }
+      return next;
+    });
+  };
+
   const requestNewItem = useCallback((kind: NewItemKind, tabId: string, parentPath: string) => {
     if (pendingCreation.current) return;
     setNewItemRequest({ kind, parentPath, tabId, runtimeSlot, authGeneration, generation: captureRuntimeGeneration() });
@@ -277,6 +301,7 @@ export default function FilesWorkspace() {
                   onOpenFolderInNewTab={openFolderTab}
                   onRequestCreateFolder={(parentPath) => requestNewItem("folder", tab.id, parentPath)}
                   onRequestCreateFile={(parentPath) => requestNewItem("file", tab.id, parentPath)}
+                  onFileTrashed={(path) => handleFileTrashed(path, tab.id)}
                   refreshRevision={refreshes[tab.id] ?? 0}
                   framed={false}
                 />}

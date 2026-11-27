@@ -84,6 +84,7 @@ export default function ComputerFileBrowser({
   onRequestCreateFolder,
   onRequestCreateFile,
   refreshRevision = 0,
+  onFileTrashed,
   allowTrash = false,
 }: {
   compact?: boolean;
@@ -110,6 +111,7 @@ export default function ComputerFileBrowser({
   onRequestCreateFolder?: (parentPath: string) => void;
   onRequestCreateFile?: (parentPath: string) => void;
   refreshRevision?: number;
+  onFileTrashed?: (path: string) => void;
   allowTrash?: boolean;
 }) {
   const api = useConnection((state) => state.api);
@@ -215,6 +217,7 @@ export default function ComputerFileBrowser({
       setSelectedPath(null);
       onSelectionChange?.(null);
     }
+    if (movedPath) onFileTrashed?.(movedPath);
     void load(viewCurrentPath);
   });
 
