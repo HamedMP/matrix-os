@@ -5,6 +5,7 @@ import { ArrowUpRightIcon, ExternalLinkIcon, Loader2Icon, PlusIcon, ReceiptTextI
 import { MATRIX_BILLING_SERVER_PROFILES } from "@/lib/billing";
 import type { BillingEntitlementSummary } from "@/hooks/useMatrixBillingAccess";
 import { capturePostHogLog } from "@/lib/posthog-client";
+import { FreePlanBillingPanel } from "./FreePlanBillingPanel";
 
 const BILLING_CHECKOUT_TIMEOUT_MS = 10_000;
 const billingDateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -122,6 +123,7 @@ export function ActiveBillingPanel({
   entitlement: BillingEntitlementSummary | null;
   accessReason: string | null;
 }) {
+  if (entitlement?.source === "free") return <FreePlanBillingPanel />;
   const planName = entitlement ? billingPlanNames[entitlement.planSlug] ?? entitlement.planSlug : "Active";
   const status = entitlement?.status ? formatStatus(entitlement.status) : accessReason === "legacy_clerk_plan" ? "Legacy plan" : "Active";
   const allowedProfiles = MATRIX_BILLING_SERVER_PROFILES.filter((profile) =>

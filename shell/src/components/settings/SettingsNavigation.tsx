@@ -6,6 +6,7 @@ export function SettingsNavigation({
   onSelect,
   mobile,
   onboarding,
+  freePlan = false,
   lockedSection,
 }: {
   sections: readonly {
@@ -17,6 +18,8 @@ export function SettingsNavigation({
   onSelect: (id: string) => void;
   mobile: boolean;
   onboarding: boolean;
+  /** Onboarding a free computer (spec 2691): no VPS and no payment step. */
+  freePlan?: boolean;
   lockedSection?: string;
 }) {
   return (
@@ -36,9 +39,9 @@ export function SettingsNavigation({
         const locked =
           unavailable || Boolean(lockedSection && section.id !== lockedSection);
         const label = completed
-          ? `${section.label} Completed`
+          ? `${section.label} ${freePlan ? "Free plan" : "Completed"}`
           : unavailable
-            ? `${section.label} Unavailable until your VPS is ready`
+            ? `${section.label} Unavailable until your ${freePlan ? "computer" : "VPS"} is ready`
             : locked
               ? `${section.label} Locked until billing is active`
               : section.label;

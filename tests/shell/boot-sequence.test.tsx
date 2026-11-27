@@ -309,6 +309,50 @@ describe("BootSequence", () => {
     expect(JSON.parse(String(provision?.[1]?.body))).toEqual({});
   });
 
+  it("tells a free owner their computer sleeps when idle (ENG-520)", async () => {
+    mockJourney({
+      phase: "install_choices_required",
+      detail: "Set up your free Matrix computer.",
+      nextAction: { kind: "start_provision" },
+    });
+    const { FREE_PLAN_COPY } = await import("../../packages/contracts/src/free-plan-copy.js");
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+
+    fireEvent.click(await screen.findByRole("radio", { name: "TikTok" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await screen.findByRole("button", { name: "Set up" });
+    expect(screen.getByText(FREE_PLAN_COPY.sleep)).toBeTruthy();
+  });
+
+  it.each([
+    ["a full free plan", () => Response.json({ error: "Free capacity is full", code: "busy" }, { status: 503 }), "capacityFull"],
+    ["another refusal", () => new Response("upstream provider secret", { status: 503 }), "setupRetry"],
+  ] as const)("explains %s to a free owner without calling it a VPS (ENG-520)", async (_label, provision, message) => {
+    const journeyState: JourneyState = {
+      phase: "install_choices_required",
+      detail: "Set up your free Matrix computer.",
+      nextAction: { kind: "start_provision" },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/journey")) {
+        return new Response(JSON.stringify(journeyState), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url === "/api/auth/provision-runtime") return provision();
+      return new Response("{}", { status: 500 });
+    }));
+    const { FREE_PLAN_COPY } = await import("../../packages/contracts/src/free-plan-copy.js");
+
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    fireEvent.click(await screen.findByRole("radio", { name: "TikTok" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Set up" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(FREE_PLAN_COPY[message]);
+    expect(screen.queryByText(/VPS|upstream provider secret/)).toBeNull();
+  });
+
   it("keeps the paid VPS wording on the web install step", async () => {
     mockJourney({
       phase: "install_choices_required",
