@@ -40,31 +40,12 @@ function StopPrivateSharing({ share }: { share: ShareController }) {
 }
 
 function InvitePeople({ share, ownerInitial, appUrl, draft, setDraft }: { share: ShareController; ownerInitial: string; appUrl: string | null; draft: string; setDraft: (value: string) => void }) {
-  const inputId = useId();
   const available = share.emailInvitesAvailable;
   const canInvite = share.allowNewSharing;
-  const valid = isInviteEmail(draft);
-  const inviting = share.operation === "invite";
   const busy = share.operation !== null;
-  const submit = async () => {
-    if (!canInvite || !available || !valid || busy) return;
-    const done = await share.request({ to: "private_email", email: draft.trim() });
-    // A pending mode-switch confirm keeps the draft until the owner decides.
-    if (done) setDraft("");
-  };
   const people = share.pageMode === "private_email" ? share.invitations : [];
   return <>
-    {canInvite ? <><div className="flex gap-2">
-      <label htmlFor={inputId} className="sr-only">Email address</label>
-      <ShareInput id={inputId} type="email" autoComplete="off" maxLength={254} className="ph-no-capture" data-ph-mask="true" placeholder="Add people by email" value={draft}
-        disabled={!available || share.loading || share.loadFailed}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void submit(); } }} />
-      <ShareButton variant="primary" disabled={!available || !valid || busy || share.loading || share.loadFailed} onClick={() => void submit()}>
-        {inviting ? <Spinner /> : null}Add
-      </ShareButton>
-    </div>
-    <p className="m-0 -mt-1 text-xs text-[var(--share-subtle-fg)]">{available ? "We don’t send email. Copy the link and send it yourself. Only these people can open it after signing in." : "Private sharing isn’t available right now."}</p></> : null}
+    {canInvite ? <AddPeople share={share} draft={draft} setDraft={setDraft} /> : null}
     {share.error?.operation === "invite" || share.error?.operation === "invite_change" ? <InlineError>{share.error.message}</InlineError> : null}
     {share.inviteOutcome ? <p role="status" className="m-0 text-xs text-[var(--share-muted-fg)]">{share.inviteOutcome === "queued" ? "Added. Copy the link and send it to them." : "This address is already on the list."}</p> : null}
     <ul aria-label="People with access" className="ph-no-capture m-0 flex list-none flex-col p-0" data-ph-mask="true">
@@ -80,6 +61,34 @@ function InvitePeople({ share, ownerInitial, appUrl, draft, setDraft }: { share:
 }
 
 /** A stop-only app (canRenew false) keeps Remove but offers no Renew. */
+/** Only offered when the app may start new sharing (not a stop-only default app). */
+function AddPeople({ share, draft, setDraft }: { share: ShareController; draft: string; setDraft: (value: string) => void }) {
+  const inputId = useId();
+  const available = share.emailInvitesAvailable;
+  const valid = isInviteEmail(draft);
+  const busy = share.operation !== null;
+  const blocked = !available || share.loading || share.loadFailed;
+  const submit = async () => {
+    if (!available || !valid || busy) return;
+    const done = await share.request({ to: "private_email", email: draft.trim() });
+    // A pending mode-switch confirm keeps the draft until the owner decides.
+    if (done) setDraft("");
+  };
+  return <>
+    <div className="flex gap-2">
+      <label htmlFor={inputId} className="sr-only">Email address</label>
+      <ShareInput id={inputId} type="email" autoComplete="off" maxLength={254} className="ph-no-capture" data-ph-mask="true" placeholder="Add people by email" value={draft}
+        disabled={blocked}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void submit(); } }} />
+      <ShareButton variant="primary" disabled={blocked || !valid || busy} onClick={() => void submit()}>
+        {share.operation === "invite" ? <Spinner /> : null}Add
+      </ShareButton>
+    </div>
+    <p className="m-0 -mt-1 text-xs text-[var(--share-subtle-fg)]">{available ? "We don’t send email. Copy the link and send it yourself. Only these people can open it after signing in." : "Private sharing isn’t available right now."}</p>
+  </>;
+}
+
 function PersonRow({ person, share, canRenew, disabled }: { person: EmailInvitationSummary; share: ShareController; canRenew: boolean; disabled: boolean }) {
   const removable = person.state === "pending" || person.state === "accepted";
   return <li className="flex min-h-10 items-center gap-2.5 py-1">
