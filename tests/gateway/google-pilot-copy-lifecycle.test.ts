@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sql } from 'kysely';
 import type { ChatRunContext } from '@matrix-os/contracts';
 import { createAuthorityFixture } from './google-data/fixture-db.js';
+import { bootstrapChatSharing } from '../../packages/gateway/src/chat/sharing.js';
 import { ChatRepository } from '../../packages/gateway/src/chat/repository.js';
 import { createOwnerChatHistoryRepository } from '../../packages/gateway/src/startup/chat-history.js';
 import { createGooglePilotCopyLifecycle } from '../../packages/gateway/src/startup/google-pilot-copy-lifecycle.js';
@@ -72,6 +73,51 @@ describe('durable exact-owner pilot copy cleanup', () => {
         expect(await lifecycle!.purgeAccount(command)).toEqual(result);
         expect(f.stop).toHaveBeenCalledTimes(calls);
         expect((await sql `SELECT * FROM google_pilot_purge_commands`.execute(f.repository.kysely)).rows).toHaveLength(1);
+    });
+    it.each(['closed', 'expired'] as const)('sweeps legacy Side Chat answers and public snapshots after a marker is %s', async state => {
+        const f = await fixture(true);
+        const legacyChat = state === 'closed' ? 'chat_one' : 'chat_legacy';
+        await bootstrapChatSharing(f.repository.kysely);
+        if (state === 'closed') {
+            expect((await lifecycle!.purgeAccount(command)).complete).toBe(true);
+            expect((await f.contexts.inspect(owner.ownerId, legacyChat))?.availability).toBe('deleted');
+        } else {
+            await f.repository.create(owner, { id: legacyChat, clientRequestId: 'req_create_legacy', title: 'Synthetic' });
+            const legacyAccount = '123e4567-e89b-42d3-a456-426614174099';
+            const future = new Date(Date.now() + 60_000).toISOString();
+            await f.contexts.mark({ ownerId: owner.ownerId, chatId: legacyChat, googleAccountId: legacyAccount,
+                consentId: 'consent_legacy', profileId: 'profile_one', profileRevision: 1, purposeId: 'assistant',
+                expiresAt: future, retentionDeadline: future });
+            await sql`UPDATE google_context_sources SET expires_at=now()-interval '1 second'
+                WHERE google_account_id=${legacyAccount}::uuid`.execute(f.repository.kysely);
+        }
+        await f.repository.create(owner, { id: 'chat_ordinary', clientRequestId: 'req_create_ordinary', title: 'Ordinary' });
+        // Fixture for rows written by builds that did not classify these derived surfaces.
+        await f.repository.kysely.transaction().execute(async tx => {
+            for (const chat of [legacyChat, 'chat_ordinary']) {
+                const threadId = `side_${chat}`;
+                await sql`INSERT INTO chat_side_threads (id,chat_id,owner_type,owner_id)
+                    VALUES(${threadId},${chat},'personal',${owner.ownerId})`.execute(tx);
+                await sql`INSERT INTO chat_side_messages (thread_id,seq,role,content,client_request_id)
+                    VALUES(${threadId},1,'user','Owner question','req_question'),
+                          (${threadId},2,'assistant','Synthetic retained answer','req_question')`.execute(tx);
+                await sql`INSERT INTO chat_shares (id,chat_id,token_hash,snapshot,expires_at)
+                    VALUES(${`share_${chat}`},${chat},${`hash_${chat}`},
+                        '{"title":"Synthetic","messages":[{"role":"assistant","text":"Retained snapshot"}]}',now()+interval '1 day')`.execute(tx);
+            }
+        });
+        lifecycle!.start();
+        await vi.waitFor(async () => {
+            expect((await f.repository.kysely.selectFrom('chat_shares').select('chat_id').execute()).map(row => row.chat_id))
+                .toEqual(['chat_ordinary']);
+            expect((await f.repository.kysely.selectFrom('chat_side_messages').select(['thread_id', 'role'])
+                .where('thread_id', '=', `side_${legacyChat}`).execute()).map(row => row.role)).toEqual(['user']);
+            expect((await f.contexts.inspect(owner.ownerId, legacyChat))?.availability).toBe('deleted');
+        }, { timeout: 4000, interval: 50 });
+        expect((await f.repository.kysely.selectFrom('chat_side_messages').select('role')
+            .where('thread_id', '=', 'side_chat_ordinary').orderBy('seq').execute()).map(row => row.role)).toEqual(['user', 'assistant']);
+        expect((await sql`SELECT complete FROM google_pilot_purge_commands`.execute(f.repository.kysely)).rows)
+            .toEqual([{ complete: true }]);
     });
     it('withholds completion on missing runtime proof and preserves copied data; persisted proofs support a later pass', async () => {
         const f = await fixture(false);

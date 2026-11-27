@@ -380,6 +380,11 @@ export async function createGooglePilotCopyLifecycle(options: {
               WHERE s.owner_id=${options.ownerId} AND EXISTS(SELECT 1 FROM google_copy_registry c
                 WHERE c.owner_id=s.owner_id AND c.state<>'deleted' AND c.origins @> jsonb_build_array(jsonb_build_object('connectionId',s.origin_id))
                 AND (s.expires_at<=clock_timestamp() OR c.retention_deadline<=clock_timestamp()))
+              UNION SELECT s.google_account_id::text FROM google_context_sources s
+                JOIN google_context_origins o ON o.origin_id=s.origin_id
+                JOIN google_context_markers m ON m.id=o.context_id AND m.owner_id=s.owner_id
+                WHERE s.owner_id=${options.ownerId} AND m.state='active'
+                  AND (s.expires_at<=clock_timestamp() OR m.retention_deadline<=clock_timestamp())
               UNION SELECT p.account_id::text FROM google_pilot_purge_commands p WHERE ${latestIncomplete}
             ) due ORDER BY (account_id>${expiryCursor}) DESC, account_id LIMIT 10`.execute(tx));
             for (const { account_id } of accounts.rows) {
@@ -400,6 +405,10 @@ export async function createGooglePilotCopyLifecycle(options: {
         } finally {
             // Independent bounded maintenance still runs after account or lookup failures. A closed
             // lifecycle starts no new work; close drains any maintenance already in progress.
+            if (!closed) {
+                try { await contexts.cleanupClosedDerivedSurfaces(options.ownerId); }
+                catch (error: unknown) { console.warn('[google-data] Legacy derived surface cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' }); }
+            }
             if (!closed) {
                 try { await options.storage.provenance.cleanupDeleted(100); }
                 catch (error: unknown) { console.warn('[google-data] Deleted copy cleanup unavailable', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' }); }
