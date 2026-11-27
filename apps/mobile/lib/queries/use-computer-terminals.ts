@@ -46,18 +46,16 @@ export function useComputerTerminals() {
     enabled: authEnabled && Boolean(computer),
     refetchInterval: 5_000,
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Terminals unavailable.");
-      return fetchTerminalSessions(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
+      if (!computer) throw new Error("Terminals unavailable.");
+      return fetchTerminalSessions(getToken, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`);
     },
   });
   const terminalQueryKey = mobileQueryKeys.terminals(userId ?? "signed-out", computerKey);
   const createMutation = useMutation({
     mutationFn: async () => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Could not create terminal. Try again.");
+      if (!computer) throw new Error("Could not create terminal. Try again.");
       return requestTerminalSessionCreation(
-        token,
+        getToken,
         `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
         nextTerminalSessionName(terminals.data ?? []),
       );
@@ -68,10 +66,9 @@ export function useComputerTerminals() {
   });
   const renameMutation = useMutation({
     mutationFn: async ({ session, nextName }: { session: TerminalSession; nextName: string }) => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Could not rename terminal. Try again.");
+      if (!computer) throw new Error("Could not rename terminal. Try again.");
       await renameTerminalSession(
-        token,
+        getToken,
         `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
         session,
         nextName,
@@ -85,9 +82,8 @@ export function useComputerTerminals() {
   });
   const deleteMutation = useMutation({
     mutationFn: async (session: TerminalSession) => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Could not delete terminal. Try again.");
-      await deleteTerminalSession(token, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, session);
+      if (!computer) throw new Error("Could not delete terminal. Try again.");
+      await deleteTerminalSession(getToken, `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`, session);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: terminalQueryKey });

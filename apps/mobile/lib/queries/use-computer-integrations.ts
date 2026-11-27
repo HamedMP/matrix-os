@@ -33,12 +33,11 @@ export function useComputerIntegrations() {
     enabled: authEnabled && Boolean(computer),
     refetchInterval: 10_000,
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Integrations unavailable. Try again.");
+      if (!computer) throw new Error("Integrations unavailable. Try again.");
       const gatewayUrl = `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`;
       const [available, connected] = await Promise.all([
-        fetchAvailableIntegrations(token, gatewayUrl),
-        fetchConnectedIntegrations(token, gatewayUrl),
+        fetchAvailableIntegrations(getToken, gatewayUrl),
+        fetchConnectedIntegrations(getToken, gatewayUrl),
       ]);
       return { available, connected };
     },
@@ -46,10 +45,9 @@ export function useComputerIntegrations() {
   const integrationQueryKey = mobileQueryKeys.integrations(userId ?? "signed-out", computerKey);
   const refreshMutation = useMutation({
     mutationFn: async (connectionId: string) => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Could not refresh connection. Try again.");
+      if (!computer) throw new Error("Could not refresh connection. Try again.");
       await refreshIntegrationConnection(
-        token,
+        getToken,
         `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
         connectionId,
       );
@@ -60,10 +58,9 @@ export function useComputerIntegrations() {
   });
   const deleteMutation = useMutation({
     mutationFn: async (connectionId: string) => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Could not delete connection. Try again.");
+      if (!computer) throw new Error("Could not delete connection. Try again.");
       await deleteIntegrationConnection(
-        token,
+        getToken,
         `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
         connectionId,
       );
@@ -74,10 +71,9 @@ export function useComputerIntegrations() {
   });
   const startConnectionMutation = useMutation({
     mutationFn: async (serviceId: string) => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Could not start connection. Try again.");
+      if (!computer) throw new Error("Could not start connection. Try again.");
       return createIntegrationConnectUrl(
-        token,
+        getToken,
         `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
         serviceId,
       );
@@ -85,10 +81,9 @@ export function useComputerIntegrations() {
   });
   const syncMutation = useMutation({
     mutationFn: async () => {
-      const token = await getToken();
-      if (!token || !computer) throw new Error("Could not sync connections. Try again.");
+      if (!computer) throw new Error("Could not sync connections. Try again.");
       await syncIntegrationConnections(
-        token,
+        getToken,
         `${HOSTED_GATEWAY_URL}${computer.gatewayPath}`,
       );
     },

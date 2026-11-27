@@ -88,10 +88,10 @@ describe("useAgentStatuses", () => {
     working = [];
     waiting = [];
     mockFetchActiveComputer.mockResolvedValue({ handle: "alice", runtimeSlot: "primary", gatewayPath: "/vm/alice" });
-    mockFetchAgentDirectChat.mockImplementation(async (_token: string, _url: string, agentId: string) => chatOf(agentId));
-    mockFetchAgentTasks.mockImplementation(async (_token: string, _url: string, chatId: string) =>
+    mockFetchAgentDirectChat.mockImplementation(async (_token: () => Promise<string | null>, _url: string, agentId: string) => chatOf(agentId));
+    mockFetchAgentTasks.mockImplementation(async (_token: () => Promise<string | null>, _url: string, chatId: string) =>
       working.includes(chatId) ? [runningTask(chatId)] : []);
-    mockFetchAgentInteractions.mockImplementation(async (_token: string, _url: string, chatId: string) =>
+    mockFetchAgentInteractions.mockImplementation(async (_token: () => Promise<string | null>, _url: string, chatId: string) =>
       waiting.includes(chatId) ? [pendingApproval(chatId)] : []);
   });
 
@@ -117,14 +117,14 @@ describe("useAgentStatuses", () => {
     });
     expect(result.current.waitingCount).toBe(1);
     expect(result.current.isPending).toBe(false);
-    expect(mockFetchAgentDirectChat).toHaveBeenCalledWith("session-token", gatewayUrl, "bot_working1");
-    expect(mockFetchAgentTasks).toHaveBeenCalledWith("session-token", gatewayUrl, "chat_working1");
-    expect(mockFetchAgentInteractions).toHaveBeenCalledWith("session-token", gatewayUrl, "chat_working1");
+    expect(mockFetchAgentDirectChat).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "bot_working1");
+    expect(mockFetchAgentTasks).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "chat_working1");
+    expect(mockFetchAgentInteractions).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "chat_working1");
   });
 
   it("counts every agent that needs the person", async () => {
     waiting = ["chat_waiting1", "chat_waiting2"];
-    mockFetchAgentTasks.mockImplementation(async (_token: string, _url: string, chatId: string) =>
+    mockFetchAgentTasks.mockImplementation(async (_token: () => Promise<string | null>, _url: string, chatId: string) =>
       chatId === "chat_failed01" ? [{ ...runningTask(chatId), status: "blocked", blockedReason: "funds_unavailable" }] : []);
     const { result } = renderStatuses([
       agent("bot_waiting1"), agent("bot_waiting2"), agent("bot_failed01"), agent("bot_resting1"),
@@ -135,7 +135,7 @@ describe("useAgentStatuses", () => {
   });
 
   it("marks an agent unavailable when its reads fail instead of failing the whole list", async () => {
-    mockFetchAgentTasks.mockImplementation(async (_token: string, _url: string, chatId: string) => {
+    mockFetchAgentTasks.mockImplementation(async (_token: () => Promise<string | null>, _url: string, chatId: string) => {
       if (chatId === "chat_broken01") throw new Error("Agent status unavailable. Try again.");
       return [];
     });
@@ -154,7 +154,7 @@ describe("useAgentStatuses", () => {
     await waitFor(() => expect(result.current.statuses.bot_resting1).toMatchObject({ state: "idle" }));
     expect(result.current.statuses.bot_custom01).toMatchObject({ state: "unavailable" });
     expect(mockFetchAgentDirectChat).toHaveBeenCalledTimes(1);
-    expect(mockFetchAgentDirectChat).not.toHaveBeenCalledWith("session-token", gatewayUrl, "bot_custom01");
+    expect(mockFetchAgentDirectChat).not.toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "bot_custom01");
   });
 
   it("never has more than four requests in flight", async () => {
@@ -167,7 +167,7 @@ describe("useAgentStatuses", () => {
       inFlight -= 1;
       return value;
     };
-    mockFetchAgentDirectChat.mockImplementation((_token: string, _url: string, agentId: string) => slow(chatOf(agentId)));
+    mockFetchAgentDirectChat.mockImplementation((_token: () => Promise<string | null>, _url: string, agentId: string) => slow(chatOf(agentId)));
     mockFetchAgentTasks.mockImplementation(() => slow([]));
     mockFetchAgentInteractions.mockImplementation(() => slow([]));
     const agents = Array.from({ length: 12 }, (_unused, index) => agent(`bot_agent${String(index).padStart(3, "0")}`));
@@ -200,12 +200,12 @@ describe("useAgentStatuses", () => {
     let answerNewAgent!: (value: unknown) => void;
     const { result, rerender } = renderStatuses([agent("bot_working1")]);
     await waitFor(() => expect(result.current.statuses.bot_working1).toMatchObject({ state: "working" }));
-    mockFetchAgentDirectChat.mockImplementation((_token: string, _url: string, agentId: string) =>
+    mockFetchAgentDirectChat.mockImplementation((_token: () => Promise<string | null>, _url: string, agentId: string) =>
       agentId === "bot_newcomer" ? new Promise((resolve) => { answerNewAgent = resolve; }) : Promise.resolve(chatOf(agentId)));
 
     rerender({ agents: [agent("bot_working1"), agent("bot_newcomer")] });
 
-    await waitFor(() => expect(mockFetchAgentDirectChat).toHaveBeenCalledWith("session-token", gatewayUrl, "bot_newcomer"));
+    await waitFor(() => expect(mockFetchAgentDirectChat).toHaveBeenCalledWith(expect.any(Function), gatewayUrl, "bot_newcomer"));
     expect(result.current.statuses.bot_working1).toMatchObject({ state: "working" });
     expect(result.current.statuses.bot_newcomer).toMatchObject({ state: "loading" });
 

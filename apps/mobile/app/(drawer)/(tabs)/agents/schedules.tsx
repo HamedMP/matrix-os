@@ -24,6 +24,6 @@ export default function SchedulesRoute() {
     resolve={async (interaction, input) => {
       const auth = await gateway.session();
       if (!auth) throw new Error("Schedule response could not be saved.");
-      return resolveNativeBotInteraction(auth.token, auth.gatewayUrl, interaction.chatId, interaction.interactionId, input);
+      return resolveNativeBotInteraction(auth.getToken ?? auth.token, auth.gatewayUrl, interaction.chatId, interaction.interactionId, input);
     }} />;
 }

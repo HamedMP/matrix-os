@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/clerk-expo";
 import { useQuery } from "@tanstack/react-query";
+import { readRuntimeWakeSignal, retryWithRuntimeWake } from "@matrix-os/contracts/runtime-lifecycle";
 import { fetch as streamingFetch } from "expo/fetch";
 
 import type { MobileAppBridgeRequest } from "@/lib/app-capability-bridge";
@@ -12,6 +13,7 @@ import {
   fetchInstalledApps,
   mobileQueryKeys,
 } from "@/lib/requests";
+import { trackRuntimeWake } from "@/lib/requests/http";
 import { HOSTED_GATEWAY_URL, resolveMobileAppSessionLaunchUrl } from "@/lib/storage";
 
 export function useComputerApps() {
@@ -35,9 +37,8 @@ export function useComputerApps() {
     enabled: authEnabled && Boolean(gatewayUrl),
     refetchInterval: 10_000,
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !gatewayUrl) throw new Error("Apps unavailable. Try again.");
-      return fetchInstalledApps(token, gatewayUrl);
+      if (!gatewayUrl) throw new Error("Apps unavailable. Try again.");
+      return fetchInstalledApps(getToken, gatewayUrl);
     },
   });
 
@@ -98,25 +99,47 @@ export function useComputerAppSession(slug: string, runtimeSlugHint?: string) {
     retry: false,
     refetchOnMount: "always",
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !gatewayUrl) throw new Error("App session unavailable. Try again.");
+      if (!gatewayUrl) throw new Error("App session unavailable. Try again.");
       // Route/deep-link parameters are hints, never authority for app grants.
-      const installed = await fetchInstalledApps(token, gatewayUrl);
+      const installed = await fetchInstalledApps(getToken, gatewayUrl);
       const matches = installed.filter(app => getAppIdentity(app) === slug
         && (runtimeSlugHint === undefined || getAppSlug(app) === runtimeSlugHint));
       if (matches.length !== 1) throw new Error("App session unavailable. Try again.");
       const runtimeSlug = getAppSlug(matches[0]);
       if (installed.filter(app => getAppSlug(app) === runtimeSlug).length !== 1) throw new Error("App session unavailable. Try again.");
-      const session = await createAppSession(token, gatewayUrl, runtimeSlug);
+      const session = await createAppSession(getToken, gatewayUrl, runtimeSlug);
       return { ...session, appIdentity: getAppIdentity(matches[0]), runtimeSlug };
     },
   });
 
   const requestAppBridge = useCallback<MobileAppBridgeRequest>(async (path, init) => {
-    if (!authEnabled || !gatewayUrl || !init.signal || !/^\/api\/bridge\/(?:capabilities|query|ai|ai\/routes)(?:\?|$)/.test(path)) throw new Error("App request unavailable");
-    const token = await getToken();
-    if (!token) throw new Error("App request unavailable");
-    return streamingFetch(`${gatewayUrl}${path}`, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, signal: init.signal, redirect: "error" });
+    const { signal } = init;
+    if (!authEnabled || !gatewayUrl || !signal || !/^\/api\/bridge\/(?:capabilities|query|ai|ai\/routes)(?:\?|$)/.test(path)) throw new Error("App request unavailable");
+    // The broker's signal covers the retry wait, the fetch, and the streamed reply.
+    return trackRuntimeWake((onWaiting) => retryWithRuntimeWake(
+      async () => {
+        const token = await getToken();
+        if (!token || signal.aborted) throw new Error("App request unavailable");
+        return streamingFetch(`${gatewayUrl}${path}`, {
+          ...init,
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          signal,
+          redirect: "error",
+        });
+      },
+      async (response) => {
+        const wake = await readRuntimeWakeSignal(response);
+        return wake?.notForwarded ? wake : null;
+      },
+      { method: init.method, signal, onWaiting },
+      async (response) => {
+        try {
+          await response.body?.cancel();
+        } catch (error) {
+          console.warn("[mobile-app-bridge] wake response cancellation failed", error instanceof Error ? error.name : "UnknownError");
+        }
+      },
+    ));
   }, [authEnabled, gatewayUrl, getToken, userId]);
 
   return {

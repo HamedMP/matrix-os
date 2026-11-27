@@ -5,7 +5,7 @@ import {
 } from "@matrix-os/contracts";
 
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
-import { buildGatewayRequestUrl, fetchAuthenticatedJson } from "./http";
+import { buildGatewayRequestUrl, fetchAuthenticatedJson, type RequestToken } from "./http";
 
 export const MobileSystemInfoSchema = z.looseObject({
   version: z.string(),
@@ -25,7 +25,7 @@ export type MobileSystemInfo = z.infer<typeof MobileSystemInfoSchema>;
 export type MobileBillingStatus = MatrixBillingStatus;
 
 export function fetchMobileSystemInfo(
-  clerkToken: string,
+  clerkToken: RequestToken,
   gatewayUrl: string,
 ): Promise<MobileSystemInfo> {
   return fetchAuthenticatedJson({
@@ -65,7 +65,7 @@ export async function createMobileBillingPortal(clerkToken: string): Promise<str
 }
 
 export async function updatePushRegistration(input: {
-  clerkToken: string;
+  clerkToken: RequestToken;
   gatewayUrl: string;
   expoPushToken: string;
   platform: string;
@@ -88,7 +88,7 @@ export async function updatePushRegistration(input: {
 
 /** Conditional refresh cannot grant consent after an explicit opt-out. */
 export async function refreshPushRegistration(input: {
-  clerkToken: string; gatewayUrl: string; expoPushToken: string; platform: string; identity: string;
+  clerkToken: RequestToken; gatewayUrl: string; expoPushToken: string; platform: string; identity: string;
 }): Promise<boolean> {
   const response = await fetchAuthenticatedJson({
     url: buildGatewayRequestUrl(input.gatewayUrl, "/api/push/register"), token: input.clerkToken,
@@ -100,7 +100,7 @@ export async function refreshPushRegistration(input: {
 }
 
 export async function fetchPushRegistrationStatus(input: {
-  clerkToken: string;
+  clerkToken: RequestToken;
   gatewayUrl: string;
   expoPushToken: string;
 }): Promise<boolean | null> {

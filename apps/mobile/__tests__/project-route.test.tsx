@@ -517,7 +517,8 @@ describe("project route", () => {
       fireEvent.changeText(input(), "Draft the case study");
       fireEvent.press(sendButton());
 
-      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledWith(TOKEN, GATEWAY_URL, "chat_new", { timeoutMs: 2_000 }));
+      await waitFor(() => expect(requests.fetchChatDetail).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL, "chat_new", { timeoutMs: 2_000 }));
+      await expect(requests.fetchChatDetail.mock.calls[0]![0]()).resolves.toBe(TOKEN);
       await waitFor(() => expect(screen.getByRole("alert").props.children).toBe("Could not confirm delivery. Retry to check again."), { timeout: 8_000 });
       expect(requests.fetchChatDetail).toHaveBeenCalledTimes(5);
       expect(input().props.value).toBe("Draft the case study");

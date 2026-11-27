@@ -11,6 +11,7 @@ import {
   type AgentStatusEntry,
 } from "@/lib/agent-status";
 import { useActiveGateway } from "@/lib/queries/use-active-gateway";
+import type { RequestToken } from "@/lib/requests/http";
 import {
   fetchAgentDirectChat,
   fetchAgentInteractions,
@@ -44,11 +45,11 @@ export function useAgentStatuses(agents: readonly ChatAgent[]) {
     queryKey: mobileQueryKeys.agentStatuses(gateway.userId, gateway.computerKey, agentIds),
     enabled,
     queryFn: ({ signal }) => {
-      // A token is asked for per read: reading a long list outlasts one token.
-      const authorized = async <T,>(read: (token: string, gatewayUrl: string) => Promise<T>): Promise<T> => {
+      // Each read resolves a token again if it waits for a wake.
+      const authorized = async <T,>(read: (token: RequestToken, gatewayUrl: string) => Promise<T>): Promise<T> => {
         const current = await session();
         if (!current) throw new Error(STATUS_UNAVAILABLE_ERROR);
-        return read(current.token, current.gatewayUrl);
+        return read(current.getToken ?? current.token, current.gatewayUrl);
       };
       return readAgentStatuses(agents, {
         directChat: (agentId) => authorized((token, gatewayUrl) => fetchAgentDirectChat(token, gatewayUrl, agentId)),

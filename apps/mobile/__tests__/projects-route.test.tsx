@@ -140,7 +140,8 @@ describe("projects route", () => {
     it("lists the computer's projects in the server's order", async () => {
       await renderList();
 
-      expect(requests.fetchProjects).toHaveBeenCalledWith(TOKEN, GATEWAY_URL);
+      expect(requests.fetchProjects).toHaveBeenCalledWith(expect.any(Function), GATEWAY_URL);
+      await expect(requests.fetchProjects.mock.calls[0]![0]()).resolves.toBe(TOKEN);
       expect(rowNames()).toEqual(["Portfolio", "Matrix", "Admin"]);
     });
 

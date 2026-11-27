@@ -44,7 +44,7 @@ const ProjectListResponseSchema = z.object({
 });
 
 export function fetchProjects(
-  clerkToken: string,
+  clerkToken: RequestToken,
   computerGatewayUrl: string,
 ): Promise<ProjectSummary[]> {
   let url: string;

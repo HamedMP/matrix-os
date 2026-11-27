@@ -9,9 +9,8 @@ export function useBotRecipes(gatewayUrl: string | null, visible: boolean) {
     queryKey: ["native-bot-recipes", userId ?? "signed-out", gatewayUrl ?? "none"],
     enabled: Boolean(visible && gatewayUrl && isLoaded && isSignedIn && userId),
     queryFn: async () => {
-      const token = await getToken();
-      if (!token || !gatewayUrl) throw new Error("Bot recipes could not be loaded.");
-      return fetchNativeBotRecipes(token, gatewayUrl);
+      if (!gatewayUrl) throw new Error("Bot recipes could not be loaded.");
+      return fetchNativeBotRecipes(getToken, gatewayUrl);
     },
   });
   return {
@@ -30,10 +29,9 @@ export function useBotRecipes(gatewayUrl: string | null, visible: boolean) {
       selection?: CanonicalChatModelSelection,
       name?: string,
     ): Promise<{ agentId: string; chatId: string }> => {
-      const token = await getToken();
-      if (!token || !gatewayUrl) throw new Error("Bot could not be created.");
+      if (!gatewayUrl || !isLoaded || !isSignedIn || !userId) throw new Error("Bot could not be created.");
       const chosenName = name?.trim();
-      const created = await instantiateNativeBot(token, gatewayUrl, {
+      const created = await instantiateNativeBot(getToken, gatewayUrl, {
         recipe, clientRequestId, ...(selection ? { selection } : {}), ...(chosenName ? { name: chosenName } : {}),
       });
       return { agentId: created.agent.id, chatId: created.chatId };

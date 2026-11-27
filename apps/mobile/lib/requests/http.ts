@@ -12,6 +12,7 @@ interface ResponseSchema<T> {
 export type RequestToken = string | (() => Promise<string | null>);
 
 interface AuthenticatedJsonRequest<T> {
+  signal?: AbortSignal;
   url: string;
   token: RequestToken;
   schema: ResponseSchema<T>;
@@ -71,9 +72,10 @@ export async function fetchAuthenticatedJson<T>({
   method,
   headers,
   body,
+  signal,
 }: AuthenticatedJsonRequest<T>): Promise<T> {
   return fetchAuthenticatedResponse(
-    { url, token, errorMessage, timeoutMs, method, headers, body },
+    { url, token, errorMessage, timeoutMs, method, headers, body, signal },
     async (response) => schema.parse(await response.json()),
   );
 }
