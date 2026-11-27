@@ -4,7 +4,7 @@
  */
 
 import type { PartName } from "../../api/opc.js";
-import type { XmlElement } from "../../api/xml.js";
+import type { XmlChildNode, XmlElement } from "../../api/xml.js";
 import { type DocxIndex, type InlineAtom, OBJECT_CHAR, attr, rowCells, tableRows } from "../internal.js";
 import { type MediaTable, mediaKey } from "./media.js";
 import type { BlockNode, CellNode, ParaNode, RowNode, TableNode } from "./types.js";
@@ -17,11 +17,15 @@ export const TABLE_KEY = "";
 const FIRST_OBJECT = 0xe000;
 const LAST_OBJECT = 0xf8fd;
 const PICTURES: ReadonlySet<string> = new Set(["w:drawing", "w:pict", "w:object", "mc:AlternateContent"]);
+const MATH: ReadonlySet<string> = new Set(["m:oMath", "m:oMathPara"]);
+/** Nodes of one equation read for its signature; past this, two equations that agree so far count as equal. */
+const MAX_SIGNATURE_NODES = 2000;
 
 /**
  * One character per kind of inline object, shared by both documents: two
  * objects compare equal when they are the same kind of thing (and, for
- * pictures, the same image at the same size).
+ * pictures, the same image at the same size; for symbols, the same character
+ * in the same font; for equations, the same content).
  */
 export class ObjectAlphabet {
   private readonly characters = new Map<string, string>();
@@ -60,9 +64,36 @@ function pictureSignature(node: XmlElement, context: ExtractContext): string {
   return parts.sort().join(",");
 }
 
+/**
+ * The content of an equation: its elements, attributes and text in document
+ * order, so an edited equation compares unequal. Namespace declarations are
+ * left out, since they do not change what the equation says.
+ */
+function contentSignature(node: XmlElement): string {
+  const parts: string[] = [];
+  const stack: XmlChildNode[] = [node];
+  for (let visited = 0; stack.length > 0 && visited < MAX_SIGNATURE_NODES; visited++) {
+    const current = stack.pop() as XmlChildNode;
+    if (current.kind === "text" || current.kind === "cdata") {
+      parts.push(JSON.stringify(current.value));
+      continue;
+    }
+    if (current.kind !== "element") continue;
+    let open = `<${current.name}`;
+    for (const entry of current.attrs) {
+      if (entry.name !== "xmlns" && !entry.name.startsWith("xmlns:")) open += ` ${entry.name}=${JSON.stringify(entry.value)}`;
+    }
+    parts.push(`${open}>`);
+    for (let index = current.children.length - 1; index >= 0; index--) stack.push(current.children[index] as XmlChildNode);
+  }
+  return parts.join("");
+}
+
 function objectSignature(atom: InlineAtom, context: ExtractContext): string {
   const node = atom.node;
   if (node.name === "w:br") return `w:br:${attr(node, "w:type") ?? ""}`;
+  if (node.name === "w:sym") return `w:sym:${attr(node, "w:font") ?? ""}:${(attr(node, "w:char") ?? "").toUpperCase()}`;
+  if (MATH.has(node.name)) return `${node.name}:${contentSignature(node)}`;
   if (PICTURES.has(node.name)) return `${node.name}:${pictureSignature(node, context)}`;
   return node.name;
 }
