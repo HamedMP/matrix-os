@@ -136,13 +136,16 @@ export function useProjectCheckoutRecovery(
   const [offer, setOffer] = useState<{
     client: CanonicalChatClient;
     key: string;
+    revision: number;
     selected: boolean;
   } | null>(null);
   const latestRun = detail?.runs.at(-1);
   const worktree = latestRun?.executionRoot;
   const revision = detail?.record.chat.revision;
-  const key = JSON.stringify([draftScope, revision, worktree]);
-  const current = offer?.client === client && offer.key === key ? offer : null;
+  const key = JSON.stringify([draftScope, worktree]);
+  // A title change may bump the revision while the same draft is still being admitted.
+  const current = offer?.client === client && offer.key === key
+    && (offer.selected || offer.revision === revision) ? offer : null;
 
   return {
     offered: current !== null,
@@ -168,7 +171,7 @@ export function useProjectCheckoutRecovery(
       const missing = await isHistoricalWorktreeMissing(options.api, project.slug, worktree, isCurrent);
       if (!isCurrent()) return null;
       if (!missing) return undefined;
-      setOffer({ client, key, selected: false });
+      setOffer({ client, key, revision, selected: false });
       return null;
     },
   };

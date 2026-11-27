@@ -5,11 +5,12 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApiClient } from "@desktop/renderer/src/lib/api";
+import type { CanonicalChatEventSource, CanonicalChatInvalidation } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { AppError } from "@desktop/shared/app-error";
 import { createChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root";
 import { createProjectManager } from "../../packages/gateway/src/project-manager";
 import { createWorktreeManager } from "../../packages/gateway/src/worktree-manager";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalChatDetailResponse } from "@matrix-os/contracts";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
@@ -152,9 +153,16 @@ describe("native Chat worktree continuation", () => {
         await resolver.resolve(owner, input.executionRoot);
         return admit(chatId, input, options);
       });
+      const listeners = new Set<(event: CanonicalChatInvalidation) => void>();
+      const eventSource: Pick<CanonicalChatEventSource, "subscribe"> = {
+        subscribe(listener) {
+          listeners.add(listener);
+          return { dispose: () => { listeners.delete(listener); } };
+        },
+      };
       render(<CanonicalChatWorkspace client={client} api={{ get } as unknown as ApiClient}
         projectId={project.id} initialChatId={detail.record.chat.id} initialView="conversation"
-        active catalog={fixture.providerCatalog} />);
+        active catalog={fixture.providerCatalog} eventSource={eventSource} />);
       const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
       await setSharedComposerText(editor, "Continue after removing the worktree.");
       fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -169,6 +177,14 @@ describe("native Chat worktree continuation", () => {
         expect.objectContaining({ executionRoot: projectRoot,
           parts: [{ type: "text", text: "Continue after removing the worktree." }] }), { chatScope: "project" });
       const request = vi.mocked(client.admitTurn).mock.calls[0]![1];
+      const renamed = { ...detail.record, chat: {
+        ...detail.record.chat, title: "Renamed while confirming the send", revision: detail.record.chat.revision + 1,
+      } };
+      const priorReads = vi.mocked(client.getDetail).mock.calls.length;
+      vi.mocked(client.list).mockResolvedValue({ items: [renamed] });
+      vi.mocked(client.getDetail).mockResolvedValue({ ...detail, record: renamed });
+      await act(async () => listeners.forEach(listener => listener({ type: "chat.full_refresh", cursor: 2 })));
+      await waitFor(() => expect(vi.mocked(client.getDetail).mock.calls.length).toBeGreaterThan(priorReads));
       fireEvent.click(screen.getByRole("button", { name: "Send" }));
       await waitFor(() => expect(client.admitTurn).toHaveBeenCalledTimes(2));
       expect(vi.mocked(client.admitTurn).mock.calls[1]![1]).toEqual(request);
