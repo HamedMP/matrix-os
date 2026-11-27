@@ -42,8 +42,8 @@ export interface CalcNode {
   /** Calls a function that picks its cells at run time (OFFSET, INDIRECT). */
   dynamic: boolean;
   /**
-   * For a dynamic node: the rectangles its last calculation read, or null
-   * before the first one. At most `MAX_READS`; beyond that {@link readsAll} is set.
+   * The rectangles its last calculation read, or null before the first one. Noted for every node while
+   * the workbook has a dynamic one. At most `MAX_READS`; beyond that {@link readsAll} is set.
    */
   reads: Dep[] | null;
   /** The last calculation read more rectangles than are kept: any change may concern it. */

@@ -8,7 +8,9 @@
  * cell it actually read was stored after it, and the new value is carried on
  * to its dependants, until nothing moves. Formulas that still move after
  * many rounds read one another in a circle; once nothing moves, the circles
- * whose values agree are found from what was read (`calc-circles.ts`).
+ * whose values agree are found from what was read (`calc-circles.ts`). For
+ * that, while some formula picks its cells at run time, every calculation
+ * notes what it read.
  *
  * A bound that stops a run leaves the formulas it did not reach marked as
  * pending; the next run starts with those and does not redo the others.
@@ -226,11 +228,11 @@ export class Run {
     this.evaluated += spill === null ? 1 : (spill.end.row - spill.start.row + 1) * (spill.end.col - spill.start.col + 1);
     const formula = this.state.formula;
     const log = this.log;
-    if (node.dynamic) {
+    if (this.marks !== null) {
       log.reads = [];
       log.overflow = false;
-      this.ran.add(node);
     }
+    if (node.dynamic) this.ran.add(node);
     // A formula without a value has nothing to keep: TODAY and NOW give #N/A in it.
     const keeps = this.clockless !== null && node.cell.value !== null;
     let value: CellValue;
@@ -260,10 +262,12 @@ export class Run {
       value = errorValue("#VALUE!");
       result = value;
     }
-    if (node.dynamic) {
+    if (this.marks !== null) {
       node.reads = log.reads;
       node.readsAll = log.overflow;
       log.reads = null;
+    }
+    if (node.dynamic) {
       // Reading its own cell is a circle even when the value it reads back does not change.
       if (readsItself(node)) {
         this.putCircular(node);
@@ -281,7 +285,7 @@ export class Run {
    */
   private keep(node: CalcNode): void {
     const log = this.log;
-    if (node.dynamic) {
+    if (this.marks !== null) {
       node.reads = log.reads;
       node.readsAll = log.overflow;
       log.reads = null;
@@ -415,7 +419,12 @@ export class Run {
       this.sink = new Map();
       if (stale.length === 0) {
         // Nothing moves, which a circle whose values agree also gives: look for circles in what was read.
-        if (!this.closeCircles()) return true;
+        const closed = this.closeCircles();
+        if (closed === null) {
+          this.defer(0, false);
+          return false;
+        }
+        if (!closed) return true;
       } else if (round === MAX_ROUNDS) {
         // Still moving after this many rounds: these formulas read one another in a circle.
         const moving = new Set(stale);
@@ -439,14 +448,24 @@ export class Run {
     return true;
   }
 
-  /** Marks as circular the formulas that read one another in a circle at run time and were not yet. False when there are none. */
-  private closeCircles(): boolean {
+  /**
+   * Marks as circular the formulas that read one another in a circle at run time and were not yet, and calculates
+   * the formulas without reads that may close one, so the next look knows what they read. False when there was
+   * nothing to do, null when the bound stopped it.
+   */
+  private closeCircles(): boolean | null {
     let any = false;
-    for (const node of findRunCircles(this.graph, this.ran)) {
+    const { circles, unread } = findRunCircles(this.graph, this.ran);
+    for (const node of circles) {
       if (this.closed.has(node)) continue;
       any = true;
       this.closed.add(node);
       this.putCircular(node);
+    }
+    for (const node of unread) {
+      if (node.reads !== null) continue;
+      if (!this.evaluate(node)) return null;
+      any = true;
     }
     return any;
   }

@@ -283,8 +283,26 @@ describe("formulas that pick their cells at run time", () => {
     workbook.setFormula(sheet, parseA1("B1"), 'INDIRECT("A1")');
     workbook.recalc();
     const graph = stateOf(workbook).calc.graph as CalcGraph;
-    expect(findRunCircles(graph, graph.dynamic).length).toBe(2);
-    expect(findRunCircles(graph, graph.dynamic, 2)).toEqual([]);
+    expect(findRunCircles(graph, graph.dynamic).circles.length).toBe(2);
+    expect(findRunCircles(graph, graph.dynamic, 2).circles).toEqual([]);
+  });
+
+  // Fault detected: the walk followed what a formula names as well as what it read, so a branch IF never took
+  // closed a circle on paper: both cells became #REF! although B1 gives 7 and never reads A1.
+  it("follows only what formulas read, not a branch they did not take", () => {
+    const workbook = createXlsx({ sheetNames: ["S"] });
+    const sheet = workbook.listSheets()[0]!.id;
+    workbook.setFormula(sheet, parseA1("A1"), 'INDIRECT("B1")');
+    workbook.setFormula(sheet, parseA1("B1"), "IF(TRUE,7,A1)");
+    const result = workbook.recalc();
+    expect(result.complete).toBe(true);
+    expect(result.circular).toEqual([]);
+    expect(["A1", "B1"].map((a) => valueAt(workbook, "S", a))).toEqual([7, 7]);
+    // An unrelated edit rebuilds the formulas without calculating B1 again; it is still no circle.
+    workbook.setFormula(sheet, parseA1("D1"), "1+1");
+    const after = workbook.recalc();
+    expect(after.circular).toEqual([]);
+    expect(["A1", "B1", "D1"].map((a) => valueAt(workbook, "S", a))).toEqual([7, 7, 2]);
   });
 });
 
