@@ -9,7 +9,7 @@ Use pnpm 10.33.4 and the existing seven-day minimum release age. Update only the
 
 | Family | Target | npm published (UTC) |
 | --- | --- | --- |
-| Next / eslint-config-next | 16.4.1 | 2026-10-14 17:43:55.246 / 17:31:42.399 |
+| eslint-config-next | 16.4.1 | 2026-10-14 17:31:42.399 |
 | Clerk shared 3.x | 3.47.7 | 2026-05-27 |
 | form-data 2.x / 4.x | 2.5.6 / 4.0.6 | 2026-06-12 |
 | proxy-addr 2.x | 2.0.8 | 2026-09-15 |
@@ -19,7 +19,7 @@ Use pnpm 10.33.4 and the existing seven-day minimum release age. Update only the
 | Vitest / coverage-v8 / mocker | 4.1.12 | 2026-10-15 14:51:24.991 |
 | DOMPurify 3.x | 3.4.17 | 2026-10-12 12:41:28.880 |
 
-Use major-scoped overrides for transitive patches. Next and its ESLint configuration remain aligned, including the existing package extension needed for dependency resolution. These targets cover additional known advisories that the earliest critical-only fixes leave unresolved.
+Use major-scoped overrides for transitive patches. The shell retains Next 16.4.6 from the base branch. This layer selects eslint-config-next 16.4.1 and preserves its package extension for dependency resolution. These targets cover additional known advisories that the earliest critical-only fixes leave unresolved.
 
 ## Verification
 
@@ -29,13 +29,15 @@ Use major-scoped overrides for transitive patches. Next and its ESLint configura
 - Reconcile dependency alerts only after the reviewed commit is analyzed. Nested shell/mobile lockfiles are separate stale-artifact cleanup; do not silently regenerate them here.
 - The ENG-355 public privacy/help documentation deliverable remains owned by the main feature work. This dependency-only change introduces no product UI or disclosure wording.
 
+## October validation checkpoint
+
+The Vitest seven-day gate opened at **2026-10-22 14:51:24.991 UTC**. That candidate aligned Vitest, coverage-v8 and mocker at 4.1.12, Next and eslint-config-next at 16.4.1, shell-quote at 1.11.0 and DOMPurify 3.x at 3.4.17 without changing pnpm 10.33.4 or the 10,080-minute age gate. Installed-library regressions reproduced manual-mock code injection, shell-comment line-terminator injection and the DOMPurify shadow-root template bypass before patches; all nine family regressions pass afterward without executing injected commands/scripts. Next fixes were verified by installed-version/advisory reconciliation and build checks, not an exploit simulation.
+
+The updated runner passed 342 focused tests across17 suites, workspace and bot-runtime typechecks, and a temporary isolated V8 coverage-provider compatibility fixture (100%, removed afterward). The recorded canonical production build used Next 16.4.1 and the public CI publishable-key fixture in `.github/workflows/ci.yml`. The current lockfile selects Next 16.4.6 and requires its own build result. This fixture verifies build compatibility, not deployed auth/provider behavior, and is not five-surface evidence.
+
 ## Remaining work
 
-The Vitest seven-day gate opened at **2026-10-22 14:51:24.991 UTC**. The followup aligns Vitest, coverage-v8 and mocker at 4.1.12, Next/ESLint at 16.4.1, shell-quote at 1.11.0 and DOMPurify 3.x at 3.4.17 without changing pnpm10.33.4 or minimumReleaseAge10080. Installed-library regressions reproduced manual-mock code injection, shell-comment line-terminator injection and the DOMPurify shadow-root template bypass before patches; all nine family regressions pass afterward without executing injected commands/scripts. Next fixes were verified by installed-version/advisory reconciliation and build checks, not an exploit simulation.
-
-The updated runner passed 342 focused tests across17 suites, workspace and bot-runtime typechecks, and a temporary isolated V8 coverage-provider compatibility fixture (100%, removed afterward). The canonical Next16.4.1 production build passes with the checked public CI publishable-key fixture in `.github/workflows/ci.yml`; the absent real account environment first failed prerender. This fixture verifies build compatibility, not deployed auth/provider behavior, and is not five-surface evidence.
-
-Current registry audit still reports other families, including eligible production high advisories. A separate bounded followup will reconcile compatible fixes; source package resolution is not live artifact qualification or full scanner clearance. Development dependency classification does not prove exclusion from host bundles, whose builder copies node_modules.
+The October registry audit identified additional families with eligible production high advisories. A separate bounded followup will reconcile compatible fixes; source package resolution is not live artifact qualification or full scanner clearance. Development dependency classification does not prove exclusion from host bundles, whose builder copies node_modules.
 
 ## Primary sources
 
