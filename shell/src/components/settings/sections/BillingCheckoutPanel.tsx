@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MATRIX_HOSTED_TRIAL_RETENTION_NOTICE } from "@matrix-os/contracts";
+import { MATRIX_FREE_UPGRADE_UNAVAILABLE, MATRIX_HOSTED_TRIAL_RETENTION_NOTICE } from "@matrix-os/contracts";
 import { desktopPalette } from "@matrix-os/brand/tokens";
 import {
   CreditCardIcon,
@@ -183,6 +183,10 @@ export function BillingCheckoutPanel({
             "runtime_already_subscribed",
             "Billing is already active for this computer. Refresh to continue.",
           );
+          return;
+        }
+        if (response.status === 409 && body?.code === MATRIX_FREE_UPGRADE_UNAVAILABLE.code) {
+          reportCheckoutError(MATRIX_FREE_UPGRADE_UNAVAILABLE.code, MATRIX_FREE_UPGRADE_UNAVAILABLE.message);
           return;
         }
         reportCheckoutError(`http_${response.status}`);

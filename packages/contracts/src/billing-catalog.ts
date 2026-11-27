@@ -72,6 +72,16 @@ export const MATRIX_FREE_PLAN = {
   substrate: "metal",
 } as const;
 
+/**
+ * Paid checkout refusal for a free plan owner until free to paid upgrade
+ * ships (ENG-520 launch guard; upgrade is ENG-606). Clients match the code and
+ * show this fixed message; they never display the server's error string.
+ */
+export const MATRIX_FREE_UPGRADE_UNAVAILABLE = {
+  code: "free_upgrade_unavailable",
+  message: "Upgrades for free computers are coming soon.",
+} as const;
+
 export const MATRIX_HOSTED_BILLING_REGIONS: readonly MatrixHostedBillingRegion[] = [
   {
     slug: "region_fsn1",
