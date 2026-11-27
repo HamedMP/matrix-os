@@ -10,7 +10,10 @@
     "./opc": "./src/opc/index.ts",
     "./xml": "./src/xml/index.ts",
     "./docx": "./src/docx/index.ts",
-    "./redline": "./src/redline/index.ts"
+    "./xlsx": "./src/xlsx/index.ts",
+    "./formula": "./src/xlsx/formula/index.ts",
+    "./redline": "./src/redline/index.ts",
+    "./agent": "./src/agent/index.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

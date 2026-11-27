@@ -177,7 +177,10 @@ export interface Workbook {
   /** The formula cells that read a cell directly. */
   dependents(sheet: SheetId, address: CellAddress): SheetCellRef[];
 
-  /** Starts recording edits as proposed changes. Throws `invalid_operation` when a proposal is already open. Returns the proposal id. */
+  /**
+   * Starts recording edits as proposed changes. Throws `invalid_operation` when a proposal is already open. Returns the proposal id.
+   * An edit the journal could not keep in a saved file throws `limit_exceeded` and is not applied.
+   */
   beginProposal(options: ProposalOptions): string;
   /** Stops recording. Later edits apply directly. A no-op when no proposal is open. */
   endProposal(): void;
@@ -194,7 +197,11 @@ export interface Workbook {
    */
   rejectChanges(ids: readonly string[] | "all"): ResolveChangesResult;
 
-  /** Serialises the workbook, with its change journal. The handle stays usable. */
+  /**
+   * Serialises the workbook, with its change journal. The handle stays usable.
+   * Throws `limit_exceeded`, and writes nothing, when the pending changes are
+   * more than the next open could read back; accepting or rejecting some lets it save.
+   */
   save(): Promise<Uint8Array>;
 }
 
