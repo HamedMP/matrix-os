@@ -9,7 +9,7 @@ import type {
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { keyFailureMessage } from "./key-format.js";
 import { hasConfiguredConnection, hasStaleHermesConnection } from "./harness-connection.js";
-import { isHermesTerminalOption, isCodexNativeLoginOption, managedConnectionCapability } from "./managed-connection-capability.js";
+import { isHermesTerminalOption, isCodexExistingAccountOption, isCodexNativeLoginOption, managedConnectionCapability } from "./managed-connection-capability.js";
 import { useWorkflowPolling } from "./use-workflow-polling.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability, ProviderWorkflowUIOperation } from "./types.js";
@@ -76,7 +76,16 @@ export function useHarnessWorkflowController({
   const capability = harness.harness === "hermes" && !terminalAvailable ? {...managedCapability,
     loginMethods: [], connectionOptions: managedCapability.connectionOptions?.filter(option=>option.method !== "terminal"),
   } : managedCapability;
-  const [operation, setOperation] = useState<ProviderWorkflowUIOperation | null>(null);
+  const [operation, setCurrentOperation] = useState<ProviderWorkflowUIOperation | null>(null);
+  const [existingCodexVerificationFailed, setExistingCodexVerificationFailed] = useState(false);
+  const setOperation = (next: ProviderWorkflowUIOperation | null) => {
+    setCurrentOperation(next);
+    // Capability refresh can keep reporting the same local login after verification fails.
+    if (harness.harness === "codex" && next?.kind === "login"
+      && (next.state === "failed" || next.state === "expired") && isCodexExistingAccountOption(next.connectionOption)) {
+      setExistingCodexVerificationFailed(true);
+    }
+  };
   const [selectedOption, setSelectedOption] = useState<ProviderWorkflowConnectionOption | null>(null);
   const [method, setMethod] = useState<"key" | "account" | null>(null);
   const [providerId, setProviderId] = useState(
@@ -179,6 +188,7 @@ export function useHarnessWorkflowController({
     setCodeSubmitted(false);
     setMethod(null);
     setOperation(null);
+    setExistingCodexVerificationFailed(false);
     setPending(false);
     setStartingLogin(false);
     setReconciling(false);
@@ -252,6 +262,9 @@ export function useHarnessWorkflowController({
       if (live(controller) && (context === "status" || context === "start")) setTerminalReadBlocked(false);
     } catch (caught) {
       if (live(controller)) {
+        if (context === "start" && harness.harness === "codex" && pendingStart.current?.method === "existing_codex") {
+          setExistingCodexVerificationFailed(true);
+        }
         if (context === "status" && !(caught instanceof ProviderWorkflowClientError && caught.reason === "unavailable")) setTerminalReadBlocked(true);
         console.warn(
           "[provider-settings] Workflow action failed:",
@@ -286,14 +299,21 @@ export function useHarnessWorkflowController({
   };
   const start = (kind: "login" | "install" | "uninstall", terminal = false, option?: ProviderWorkflowConnectionOption) => {
     const startOperation = async (signal: AbortSignal) => {
+      const exactOption = option ?? (kind === "login" ? selectedOption ?? operation?.connectionOption ?? undefined : undefined);
       if (kind === "login") {
+        // A replacement request may fail before returning a receipt. Keep the
+        // old settled ID from putting the chooser back into receipt restoration.
+        if (harness.harness === "codex" && isCodexNativeLoginOption(exactOption)
+          && operation?.id === operationId && (operation.state === "failed" || operation.state === "expired")) {
+          onOperationId?.(null);
+        }
         setStartingLogin(true);
         setMethod("account");
         setOperation(null);
         setAuthorizationCode("");
         setCodeSubmitted(false);
+        if (harness.harness === "codex" && exactOption) setSelectedOption(exactOption);
       }
-      const exactOption = option ?? (kind === "login" ? selectedOption ?? operation?.connectionOption ?? undefined : undefined);
       if (kind === "login" && harness.harness !== "claude" && !(harness.harness === "codex" && isCodexNativeLoginOption(exactOption))
         && !(harness.harness === "hermes" && isHermesTerminalOption(exactOption))) throw new Error("connection unavailable");
       if (kind === "login" && capability.connectionOptions && (!exactOption || !client.startConnection
@@ -342,7 +362,7 @@ export function useHarnessWorkflowController({
         }
         if (
           result.terminalSessionId &&
-          (kind !== "login" || loginMethod === "terminal")
+          (kind !== "login" || (loginMethod === "terminal" && harness.harness !== "codex"))
         )
           onOpenTerminal(result.terminalSessionId);
       }
@@ -355,6 +375,7 @@ export function useHarnessWorkflowController({
     // reconcile a newly confirmed connection; replacement errors on an
     // already connected account and unrelated action errors remain visible.
     if (pending || active(operation)) return;
+    if (connected && !previousConnection.current) setExistingCodexVerificationFailed(false);
     if (connected && !previousConnection.current && operation?.kind === "login"
       && (operation.state === "failed" || operation.state === "expired"
         || (operation.state === "succeeded" && failure === completionRefreshFailure))) {
@@ -437,6 +458,6 @@ export function useHarnessWorkflowController({
     setOperation(null);
   };
 
-  return { canContinueInTerminal, selectedOption, setSelectedOption, harness, source, capability, client, disabled, onRefresh, onOpenTerminal, onOpenAuthorizationUrl, onConnectSaved, connectSavedDisabled, onDisconnect, onStateChange, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, connectRequest, operation, setOperation, method, setMethod, providerId, setProviderId, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, apiKey, setApiKey, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, disconnectOpen, setDisconnectOpen, uninstall, setUninstall, copied, setCopied, connectionPanel, pendingStart, dialog, run, start, stopPolling, restartPolling, failed, seconds, connecting, reuseCodex, browserLogin, inlineLogin, hasSubscription, subscriptionName, back };
+  return { canContinueInTerminal, selectedOption, setSelectedOption, harness, source, capability, client, disabled, onRefresh, onOpenTerminal, onOpenAuthorizationUrl, onConnectSaved, connectSavedDisabled, onDisconnect, onStateChange, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, connectRequest, operation, setOperation, method, setMethod, providerId, setProviderId, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, apiKey, setApiKey, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, disconnectOpen, setDisconnectOpen, uninstall, setUninstall, copied, setCopied, connectionPanel, pendingStart, dialog, run, start, stopPolling, restartPolling, failed, seconds, connecting, reuseCodex, existingCodexVerificationFailed, browserLogin, inlineLogin, hasSubscription, subscriptionName, back };
 }
 export type HarnessWorkflowController = ReturnType<typeof useHarnessWorkflowController>;

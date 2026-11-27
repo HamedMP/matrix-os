@@ -615,3 +615,30 @@ it("refreshes capabilities after a native observation discovers an owner configu
   expect(controller.getState().capabilityRefreshRevision).toBe(2);
   controller.dispose();
 });
+
+it("reloads Settings connection choices when a local Codex sign-in appears or disappears", async () => {
+  const initial = snapshot(1);
+  initial.modelProviders.push({ id: "openai", displayName: "OpenAI", models: [] });
+  initial.accounts.push({ id: "owner_codex", providerId: "openai", displayName: "Codex", accessSourceId: "owner_openai_profile",
+    authMethod: "terminal", authState: "unknown", lastCheckedAt: null, dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 0 } });
+  initial.accessSources.push({ ...initial.accessSources[0]!, id: "owner_openai_profile", kind: "provider_account", fundingKind: "owner_account",
+    providerId: "openai", accountId: "owner_codex", eligibleModelIds: [] });
+  const detected = structuredClone(initial);
+  detected.accessSources[1]!.localObservation = { state: "present_unverified", checkedAt, staleAfter: "2026-08-30T10:00:30.000Z" };
+  const renewed = structuredClone(detected);
+  renewed.refreshedAt = "2026-08-30T10:00:10.000Z";
+  renewed.accessSources[1]!.localObservation = { ...detected.accessSources[1]!.localObservation!, staleAfter: "2026-08-30T10:00:40.000Z" };
+  const expired = { ...renewed, refreshedAt: "2026-08-30T10:00:41.000Z" };
+  const onCatalogChanged = vi.fn();
+  const gateway = transport();
+  gateway.getSnapshot.mockResolvedValueOnce(initial).mockResolvedValueOnce(detected).mockResolvedValueOnce(renewed).mockResolvedValueOnce(expired);
+  const controller = new ProviderSettingsController({ identityKey: "owner:primary", transport: gateway, onCatalogChanged });
+  await controller.refresh({ refresh: false });
+  expect(controller.getState().capabilityRefreshRevision).toBe(1);
+  for (const revision of [2, 2, 3]) {
+    await controller.refreshNativeAuthentication(new AbortController().signal);
+    expect(controller.getState().capabilityRefreshRevision).toBe(revision);
+  }
+  expect(onCatalogChanged).not.toHaveBeenCalled();
+  controller.dispose();
+});

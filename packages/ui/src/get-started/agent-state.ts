@@ -14,11 +14,12 @@ export type GetStartedAgentCapabilities = Partial<Record<GetStartedAgentKind, Pr
 type Harness = ProviderSettingsSnapshot["harnesses"][number];
 
 /** The wizard cannot show Terminal, so only browser, device-code and API-key sign-ins are offered. */
-function withoutTerminal(capability: ProviderWorkflowUICapability): ProviderWorkflowUICapability {
+function setupLoginCapability(capability: ProviderWorkflowUICapability): ProviderWorkflowUICapability {
+  const supportsWizard = (method?: ProviderWorkflowUICapability["loginMethods"][number]) => method !== "terminal" && method !== "existing_codex";
   return {
     ...capability,
-    loginMethods: capability.loginMethods.filter((method) => method !== "terminal"),
-    ...(capability.connectionOptions ? { connectionOptions: capability.connectionOptions.filter((option) => option.method !== "terminal") } : {}),
+    loginMethods: capability.loginMethods.filter(supportsWizard),
+    ...(capability.connectionOptions ? { connectionOptions: capability.connectionOptions.filter(option => supportsWizard(option.method)) } : {}),
   };
 }
 
@@ -58,7 +59,7 @@ export function useAgentCapabilities(client: ProviderWorkflowClient, snapshot: P
     const controller = new AbortController();
     client.capabilities(controller.signal).then((items) => {
       if (controller.signal.aborted) return;
-      setAll(items.filter((item) => isGetStartedAgent(item.harness)).map((item) => withoutTerminal(managedConnectionCapability(item))));
+      setAll(items.filter((item) => isGetStartedAgent(item.harness)).map((item) => setupLoginCapability(managedConnectionCapability(item))));
     }, (error: unknown) => {
       if (controller.signal.aborted) return;
       console.warn("[get-started] Agent sign-in unavailable:", error instanceof Error ? error.name : typeof error);

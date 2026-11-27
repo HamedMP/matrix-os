@@ -13,7 +13,7 @@ import {
 } from "@matrix-os/contracts";
 import { ManagedCreditRefresh } from "./managed-credit-refresh.js";
 import { useNativeAuthRefresh } from "./use-native-auth-refresh.js";
-import { nativeAuthenticationFingerprint } from "./native-auth-refresh.js";
+import { nativeAuthenticationFingerprint, observedCodexSignIn } from "./native-auth-refresh.js";
 import { useManagedCreditRefresh } from "./use-managed-credit-refresh.js";
 import type { ProviderSettingsMutationIntent } from "./types.js";
 
@@ -456,10 +456,12 @@ export class ProviderSettingsController {
       && isConnectionAttemptActive(candidateAttempt, snapshot)
       ? candidateAttempt
       : null;
-    const nativeAuthChanged = this.state.snapshot !== null
-      && nativeAuthenticationFingerprint(this.state.snapshot) !== nativeAuthenticationFingerprint(snapshot);
+    const previousSnapshot = this.state.snapshot;
+    const connectionChoicesChanged = previousSnapshot !== null
+      && (nativeAuthenticationFingerprint(previousSnapshot) !== nativeAuthenticationFingerprint(snapshot)
+        || observedCodexSignIn(previousSnapshot) !== observedCodexSignIn(snapshot));
     const capabilityRefreshRevision = this.state.capabilityRefreshRevision
-      + (options.refreshCapabilities || nativeAuthChanged ? 1 : 0);
+      + (options.refreshCapabilities || connectionChoicesChanged ? 1 : 0);
     this.update({ snapshot, selectedHarnessId, connectionAttempt, capabilityRefreshRevision, error: null, snapshotFromCache: false });
     this.options.snapshotCache?.set(this.options.identityKey, snapshot);
     return true;

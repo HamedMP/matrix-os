@@ -1,4 +1,6 @@
+import type { ProviderWorkflowConnectionOption } from "@matrix-os/contracts";
 import { ConnectionMethodCard } from "./ConnectionMethodCard.js";
+import { isCodexExistingAccountOption } from "./managed-connection-capability.js";
 import type { HarnessWorkflowController } from "./use-harness-workflow-controller.js";
 const providerNames = {openai: "ChatGPT", anthropic: "Claude", openrouter: "OpenRouter"};
 const keyNames = {openai: "OpenAI", anthropic: "Anthropic", openrouter: "OpenRouter"};
@@ -6,21 +8,40 @@ const methodNames = {device_code: "Sign in with a code", browser: "Sign in in br
 const unavailable = {not_installed: "Install this agent on this computer to connect.", unsupported_runtime: "This connection requires a supported agent version.", provider_access_required: "This connection requires provider access for this deployment."};
 
 /** Only exact, qualified server options can start a provider-aware connection. */
-export function WorkflowConnectionChooser({state}: {state: HarnessWorkflowController}) {
+export function WorkflowConnectionChooser({state, codexFallbackOptions}: {
+ state: HarnessWorkflowController;
+ codexFallbackOptions: readonly ProviderWorkflowConnectionOption[] | undefined;
+}) {
  const {capability, harness, disabled, pending, startingLogin, connecting, selectedOption, setSelectedOption,
-   setMethod, setProviderId, setApiKey, setOperation, setFailure, pendingStart: pendingStartRef, start} = state;
- if (!capability.connectionOptions?.length) return <p className="matrix-ap-help" role="status">Connection in Settings is unavailable for this agent on this computer.</p>;
- return <>
+   operationId, operation, setMethod, setProviderId, setApiKey, setOperation, setFailure, pendingStart: pendingStartRef, start} = state;
+ const { connectionOptions } = capability;
+ if (!connectionOptions?.length) return <p className="matrix-ap-help" role="status">Connection in Settings is unavailable for this agent on this computer.</p>;
+ const codex = harness.harness === "codex";
+ const useExistingCodexAccount = codex && connectionOptions.some(isCodexExistingAccountOption);
+ const options = connectionOptions.filter(option => {
+   const reuseOrKey = option.authKind === "api_key" || isCodexExistingAccountOption(option);
+   if (codexFallbackOptions) return codexFallbackOptions.includes(option) || (!state.onConnectSaved && reuseOrKey);
+   return !useExistingCodexAccount || reuseOrKey;
+ });
+ if (!options.length) return null;
+ const restoringCodex = codex && operationId !== null && operation?.id !== operationId;
+ return <div className="matrix-ap-login-choices">
    <h3>Connect {harness.displayName} with</h3>
    <div className="matrix-ap-connection-options">
-     {capability.connectionOptions?.map(option => {
+     {options.map(option => {
        const key = option.authKind === "api_key";
        const available = option.availability === "available" && (key ? !!state.client.submitConnectionKey : !!state.client.startConnection);
+       const existingCodexAccount = codex && isCodexExistingAccountOption(option);
+       const methodName = codex && option.method === "terminal"
+         ? "Sign in with Codex CLI"
+         : option.method ? methodNames[option.method] : "Sign in";
+       const title = key ? `${keyNames[option.providerId]} API key`
+         : existingCodexAccount ? methodNames.existing_codex : `${providerNames[option.providerId]} account · ${methodName}`;
        return <div key={option.id}>
          <ConnectionMethodCard method={key ? "key" : "account"}
-           title={key ? `${keyNames[option.providerId]} API key` : `${providerNames[option.providerId]} account · ${option.method ? methodNames[option.method] : "Sign in"}`}
-           description={key ? "Billed per request by your provider" : harness.harness === "hermes" ? "Sign in with your account in Terminal" : "Uses your subscription for this agent on this computer"}
-           selected={selectedOption?.id === option.id} loading={startingLogin && selectedOption?.id === option.id} disabled={disabled || pending || connecting || state.reconciling || !available}
+           title={title}
+           description={key ? "Billed per request by your provider" : existingCodexAccount ? "Connect the ChatGPT account already signed in to Codex on this computer" : harness.harness === "hermes" ? "Sign in with your account in Terminal" : "Uses your subscription for this agent on this computer"}
+           selected={selectedOption?.id === option.id} loading={startingLogin && selectedOption?.id === option.id} disabled={disabled || pending || connecting || restoringCodex || state.reconciling || !available}
            onClick={() => {
              pendingStartRef.current = null; setSelectedOption(option); setProviderId(option.providerId);
              setApiKey(""); setOperation(null); setFailure(null); setMethod(key ? "key" : "account");
@@ -30,5 +51,5 @@ export function WorkflowConnectionChooser({state}: {state: HarnessWorkflowContro
        </div>;
      })}
    </div>
- </>;
+ </div>;
 }

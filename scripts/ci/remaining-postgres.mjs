@@ -193,8 +193,9 @@ export function runRemainingPostgres(root = process.cwd(), env = process.env, ex
   let failed = false, assertions = 0;
   const batches = [];
   // Hosted batch 2 exceeded 60s while all assertions seen before the timeout passed.
-  // Keep a bounded per-batch cap and enough total margin for all batches.
-  const deadline = now() + 240000;
+  // Keep a bounded per-batch cap, and a total that grows with the batch count:
+  // hosted batches take 30-60s, and a fixed 240s ran out once the list reached 8 batches.
+  const deadline = now() + Math.ceil(files.length / 4) * 60000;
   for (let offset = 0; offset < files.length; offset += 4) {
     const selected = files.slice(offset, offset + 4), report = path.join(output, `batch-${1 + offset / 4}.json`);
     if (existsSync(report)) throw Error('Remaining PostgreSQL report already exists');
