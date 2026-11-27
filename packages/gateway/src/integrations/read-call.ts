@@ -1,3 +1,5 @@
+import type { OutlookGraph } from "./outlook/graph.js";
+import { selectedOutlookCall } from "./outlook/selected-call.js";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -35,6 +37,7 @@ const ReadCallBodySchema = z.strictObject({
 export function createIntegrationReadCallRoutes(options: {
   db: PlatformDb;
   pipedream: PipedreamConnectClient;
+  outlookGraph?: OutlookGraph;
   resolveUserId: (c: Context) => Promise<string | null>;
   presetBroker?: {
     listConnections(userId: string): Promise<Array<{ id: string; service: string; account_label: string; status: string }>>;
@@ -98,9 +101,15 @@ export function createIntegrationReadCallRoutes(options: {
       selected.connection.account_email !== accountBinding.expectedEmail
     )) return c.json({ error: "Integration account changed. Select the account again." }, 403);
     if (connectionId && selected.connection.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
-    const user = await options.db.getUserById(uid);
-    if (!user?.pipedream_external_id) return c.json({ error: "Integration unavailable" }, 503);
     try {
+      const native = selectedOutlookCall({ outlook: options.outlookGraph, userId: uid,
+        connection: selected.connection, action, params, signal: c.req.raw.signal });
+      if (native) {
+        const { data } = await native;
+        return integrationActionSuccess(c, { db: options.db, connectionId: selected.connection.id, service, action, data });
+      }
+      const user = await options.db.getUserById(uid);
+      if (!user?.pipedream_external_id) return c.json({ error: "Integration unavailable" }, 503);
       if (binding) {
         const data = await executeJevBoundRead({ ownerId: uid, externalUserId: user.pipedream_external_id,
           connection: selected.connection, binding, action, params, pipedream: options.pipedream, signal: c.req.raw.signal });

@@ -129,7 +129,7 @@ export function createOutlookStore(db: Kysely<PlatformDatabase>) {
         const providerRef = `${ID_PREFIX}${id}`;
         const next = {
           pipedream_account_id: providerRef,
-          account_email: account.email,
+          account_email: row ? row.account_email : account.email,
           account_label: input.label ?? row?.account_label ?? account.email ?? service,
           scopes: [...input.scopes],
           status: "active" as const,

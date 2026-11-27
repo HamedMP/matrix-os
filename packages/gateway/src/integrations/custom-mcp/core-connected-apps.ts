@@ -1,3 +1,5 @@
+import type { OutlookGraph } from "../outlook/graph.js";
+import { selectedOutlookCall } from "../outlook/selected-call.js";
 /**
  * Connect Apps adapter for Matrix Core MCP (spec 2691, "Connect Apps adapter").
  *
@@ -125,6 +127,7 @@ export function createCoreConnectedApps(options: {
   db: ConnectionStore;
   pipedream: PipedreamConnectClient;
   execute?: typeof executeIntegrationAction;
+  outlookGraph?: OutlookGraph;
 }): CoreConnectedAppSource {
   const execute = options.execute ?? executeIntegrationAction;
   return {
@@ -156,13 +159,17 @@ export function createCoreConnectedApps(options: {
       const actionDef = def && Object.hasOwn(def.actions, input.action) ? def.actions[input.action] : undefined;
       if (!connection || !def || !actionDef) throw new CoreConnectedAppError("forbidden");
       if (!validateActionParams(actionDef, input.arguments).valid) throw new CoreConnectedAppError("invalid");
-      const user = await options.db.getUserById(input.userId);
-      if (!user?.pipedream_external_id) throw new CoreConnectedAppError("unavailable");
       input.signal.throwIfAborted();
-      const running = execute({
-        pipedream: options.pipedream, externalUserId: user.pipedream_external_id, connection, def, actionDef,
-        serviceId: def.id, actionId: input.action, params: input.arguments ?? {},
-      });
+      const native = selectedOutlookCall({ outlook: options.outlookGraph, userId: input.userId, connection,
+        action: input.action, params: input.arguments, signal: actionDef.risk === "read" ? input.signal : undefined });
+      const running = native ?? (async () => {
+        const user = await options.db.getUserById(input.userId);
+        if (!user?.pipedream_external_id) throw new CoreConnectedAppError("unavailable");
+        return execute({
+          pipedream: options.pipedream, externalUserId: user.pipedream_external_id, connection, def, actionDef,
+          serviceId: def.id, actionId: input.action, params: input.arguments ?? {},
+        });
+      })();
       // A dispatched write is never abandoned: the provider helpers take no signal, so a
       // cancelled caller would otherwise be told "cancelled" while the write still lands.
       // It runs to its own provider timeouts and reports the real outcome. Reads may be abandoned.

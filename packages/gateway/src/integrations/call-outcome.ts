@@ -1,3 +1,4 @@
+import { OutlookError } from "./outlook/http.js";
 import type { Context } from "hono";
 import type { PlatformDb } from "../platform-db.js";
 import { IntegrationActionNotImplementedError } from "./action-execution.js";
@@ -62,6 +63,14 @@ export async function integrationActionSuccess(c: Context, input: {
 
 /** Preserve general call's safe provider failure mapping for scoped reads. */
 export function integrationActionFailure(c: Context, err: unknown, service: string, action: string): Response {
+  if (err instanceof OutlookError) {
+    if (err.code === "throttled") {
+      const retry = err.retryAfter ?? 60;
+      return c.json({ error: err.message, retry_after: retry }, { status: 429, headers: { "Retry-After": String(retry) } });
+    }
+    const status = err.code === "unavailable" ? 503 : 409;
+    return c.json({ error: err.message, code: err.code }, status);
+  }
   if (err instanceof DriveContentError) {
     const messages = {
       unsupported_file_type: "This file type cannot be read as text. Choose a text file or a supported document export.",
