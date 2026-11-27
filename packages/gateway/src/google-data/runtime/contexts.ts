@@ -26,7 +26,7 @@ async function hasSideChat<DB>(tx: Transaction<DB>) {
 async function eraseSideChatAnswers<DB>(tx: Transaction<DB>, ownerId: string, chatIds?: readonly string[]) {
   if (chatIds?.length === 0 || !await hasSideChat(tx)) return;
   const eligible = chatIds === undefined
-    ? sql`m.state='deleted' AND EXISTS (
+    ? sql`m.state IN ('purging','deleted') AND EXISTS (
         SELECT 1 FROM chat_side_threads t JOIN chat_side_messages a ON a.thread_id=t.id
         WHERE t.chat_id=m.chat_id AND t.owner_type='personal' AND t.owner_id=m.owner_id
           AND a.role='assistant' AND a.seq>m.ordinary_side_answer_seq)`
@@ -38,6 +38,23 @@ async function eraseSideChatAnswers<DB>(tx: Transaction<DB>, ownerId: string, ch
     DELETE FROM chat_side_messages a USING chat_side_threads t,affected m
     WHERE a.thread_id=t.id AND a.role='assistant' AND t.owner_type='personal' AND t.owner_id=${ownerId}
       AND t.chat_id=m.chat_id AND a.seq>m.ordinary_side_answer_seq`.execute(tx);
+}
+
+/** Public snapshots are immutable and predate per-message Gmail provenance. */
+async function erasePublicChatSnapshots<DB>(tx: Transaction<DB>, ownerId: string, chatIds?: readonly string[]) {
+  if (chatIds?.length === 0) return;
+  const schema = await sql<{ installed: boolean }>`SELECT to_regclass('chat_shares') IS NOT NULL AS installed`.execute(tx);
+  if (schema.rows[0]?.installed === false) return;
+  const eligible = chatIds === undefined
+    ? sql`SELECT m.chat_id FROM google_context_markers m
+        WHERE m.owner_id=${ownerId} AND m.state IN ('purging','deleted') AND EXISTS (
+          SELECT 1 FROM chat_shares s JOIN chats c ON c.id=s.chat_id
+          WHERE c.id=m.chat_id AND c.owner_type='personal' AND c.owner_id=m.owner_id
+        ) ORDER BY m.chat_id LIMIT 100`
+    : sql`SELECT unnest(${chatIds}::text[])`;
+  await sql`DELETE FROM chat_shares s USING chats c
+    WHERE c.id=s.chat_id AND c.owner_type='personal' AND c.owner_id=${ownerId}
+      AND c.id IN (${eligible})`.execute(tx);
 }
 
 /** Trusted metadata composition only: marking is classification, never P1 approval.
@@ -169,19 +186,22 @@ export function createGoogleContextStore<DB>(db: Kysely<DB>, options: GoogleCont
             SELECT 1 FROM google_context_origins o JOIN google_context_sources s ON s.origin_id=o.origin_id
             WHERE o.context_id=m.id AND s.owner_id=${ownerId} AND s.google_account_id=${account})
           RETURNING chat_id,revision`.execute(tx)).rows;
-        await eraseSideChatAnswers(tx, ownerId, contexts.map(context => context.chat_id));
+        const chatIds = contexts.map(context => context.chat_id);
+        await eraseSideChatAnswers(tx, ownerId, chatIds);
+        await erasePublicChatSnapshots(tx, ownerId, chatIds);
         const revisions: Record<string, number> = Object.create(null);
         for (const context of contexts) revisions[context.chat_id] = context.revision;
-        return { originIds: origins.map(row => row.origin_id), chatIds: contexts.map(row => row.chat_id), revisions,
+        return { originIds: origins.map(row => row.origin_id), chatIds, revisions,
           coverage: "registered-contexts-only" as const };
       });
     },
-    /** Repair closed markers left by older builds after their account links were removed. */
+    /** Repair legacy copies whose markers already entered purge, including closed markers with no account links. */
     async cleanupClosedDerivedSurfaces(ownerId: string) {
       contextOpaque.parse(ownerId);
       await boundedProvenanceTransaction(db, async tx => {
         await lockGoogleContexts(tx);
         await eraseSideChatAnswers(tx, ownerId);
+        await erasePublicChatSnapshots(tx, ownerId);
       });
     },
     /** Full owner-account lifecycle only, after host revocation/quiescence and actual content deletion.

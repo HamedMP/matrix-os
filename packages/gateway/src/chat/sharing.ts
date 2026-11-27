@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 import type { ChatDatabase } from "./database.js";
 import { type ChatOwner, visibleChatMessagePredicate } from "./records.js";
 import { redactAssistantParts, redactSharedAssistantText } from "./safe-activity-projection.js";
+import { hasGoogleContextMarker, lockGoogleContexts } from "../google-data/runtime/contexts-schema.js";
 import { hasCompanyDriveMaterial } from "./drive-sharing-guard.js";
 
 export { ShareSnapshotSchema, ShareTokenSchema } from "@matrix-os/contracts";
@@ -33,9 +34,14 @@ function tokenHash(token: string) {
 }
 
 
-async function readSnapshot(trx: Kysely<ChatDatabase>, chatId: string, title: string) {
-  // Callers hold the Chat lock also used by admission and sharing transitions.
-  if (await hasCompanyDriveMaterial(trx, chatId)) throw new ChatSharingError("conflict");
+async function hasRestrictedMaterial(trx: Kysely<ChatDatabase>, owner: ChatOwner, chatId: string) {
+  return (owner.type === "personal" && await hasGoogleContextMarker(trx, owner.ownerId, chatId))
+    || await hasCompanyDriveMaterial(trx, chatId);
+}
+
+async function readSnapshot(trx: Kysely<ChatDatabase>, owner: ChatOwner, chatId: string, title: string) {
+  // Callers hold the context fence before the Chat lock used by admission.
+  if (await hasRestrictedMaterial(trx, owner, chatId)) throw new ChatSharingError("conflict");
   const rows = await trx.selectFrom("chat_messages").select(["role", "parts"])
     .where("chat_id", "=", chatId).where("state", "=", "committed").where("role", "in", ["user", "assistant"])
     .where(visibleChatMessagePredicate()).orderBy("seq").limit(201).execute();
@@ -63,6 +69,7 @@ export class ChatSharing {
     return this.db.transaction().execute(async (trx) => {
       await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
       await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
+      await lockGoogleContexts(trx);
       const chat = await trx.selectFrom("chats").selectAll().where("id", "=", chatId)
         .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId).forUpdate().executeTakeFirst();
       if (!chat) throw new ChatSharingError("not_found");
@@ -70,7 +77,7 @@ export class ChatSharing {
       await trx.deleteFrom("chat_shares").where("chat_id", "=", chatId).where("expires_at", "<=", new Date()).execute();
       const existing = await trx.selectFrom("chat_shares").select("id").where("chat_id", "=", chatId).limit(MAX_SHARES_PER_CHAT).execute();
       if (existing.length >= MAX_SHARES_PER_CHAT) throw new ChatSharingError("limit");
-      const snapshot = await readSnapshot(trx, chatId, chat.title);
+      const snapshot = await readSnapshot(trx, owner, chatId, chat.title);
       if (fingerprint && tokenHash(JSON.stringify(snapshot)) !== fingerprint) throw new ChatSharingError("conflict");
       const id = randomUUID();
       const token = randomBytes(32).toString("hex");
@@ -84,11 +91,12 @@ export class ChatSharing {
     return this.db.transaction().execute(async (trx) => {
       await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
       await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
+      await lockGoogleContexts(trx);
       const chat = await trx.selectFrom("chats").select(["title", "revision"])
         .where("id", "=", chatId).where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
         .forShare().executeTakeFirst();
       if (!chat) throw new ChatSharingError("not_found");
-      const snapshot = await readSnapshot(trx, chatId, chat.title);
+      const snapshot = await readSnapshot(trx, owner, chatId, chat.title);
       return { ...snapshot, revision: Number(chat.revision), fingerprint: tokenHash(JSON.stringify(snapshot)) };
     });
   }
@@ -111,13 +119,16 @@ export class ChatSharing {
     return this.db.transaction().execute(async (trx) => {
       await sql`SET LOCAL statement_timeout = '5s'`.execute(trx);
       await sql`SET LOCAL lock_timeout = '5s'`.execute(trx);
+      await lockGoogleContexts(trx);
       const row = await trx.selectFrom("chat_shares").innerJoin("chats", "chats.id", "chat_shares.chat_id")
-        .select(["chat_shares.snapshot", "chat_shares.chat_id"])
+        .select(["chat_shares.id", "chat_shares.chat_id", "chats.owner_type", "chats.owner_id"])
         .where("token_hash", "=", tokenHash(token)).where("expires_at", ">", new Date())
         .forShare("chats").executeTakeFirst();
-      // Old immutable snapshots also fail closed once their source becomes drive-backed.
-      if (!row || await hasCompanyDriveMaterial(trx, row.chat_id)) return null;
-      const snapshot = ShareSnapshotSchema.parse(row.snapshot);
+      if (!row || await hasRestrictedMaterial(trx, { type: row.owner_type, ownerId: row.owner_id }, row.chat_id)) return null;
+      const stored = await trx.selectFrom("chat_shares").select("snapshot")
+        .where("id", "=", row.id).where("expires_at", ">", new Date()).executeTakeFirst();
+      if (!stored) return null;
+      const snapshot = ShareSnapshotSchema.parse(stored.snapshot);
       return { ...snapshot, messages: snapshot.messages.map((message) => message.role === "assistant"
         ? { ...message, text: redactSharedAssistantText(message.text) }
         : message) };
