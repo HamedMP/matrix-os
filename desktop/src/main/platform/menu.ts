@@ -33,6 +33,7 @@ export function installAppMenu(options: {
   restoreMain(): void;
   checkForUpdates(): void;
   openTerminalWindow(): void;
+  openDevicePairing?(): void;
   /** The bundled notices file, or null when this build ships no third-party binary. */
   thirdPartyNoticesPath: string | null;
   shortcuts: Pick<ShortcutService, "snapshot" | "onChange">;
@@ -72,6 +73,7 @@ export function installAppMenu(options: {
     quitApp: () => app.quit(),
     reloadWindow: router.reload,
     openTerminalWindow: options.openTerminalWindow,
+    openDevicePairing: options.openDevicePairing,
     shortcuts,
     runShortcut: run,
     ...(options.thirdPartyNoticesPath ? {

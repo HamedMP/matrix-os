@@ -1,3 +1,4 @@
+import { createDesktopPairing } from "./desktop-pairing";
 import { claimPreviewProfile } from "./preview-pair-profile-lease";
 import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack";
 import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
@@ -145,6 +146,7 @@ const bindPreviewStartupAcknowledgement = createPreviewStartupAcknowledgement(pr
   });
 
 let mainWindow: BrowserWindow | null = null;
+let desktopPairing: ReturnType<typeof createDesktopPairing> | undefined;
 let terminalWindows: ReturnType<typeof createTerminalWindowController<BrowserWindow>> | null = null;
 // Swaps in the Terminal window's shortcuts while it has focus (spec 2706).
 let terminalMenu: ReturnType<typeof installAppMenu> | null = null;
@@ -391,6 +393,7 @@ if (!gotLock) {
         saveProfile: (profile) => store.set("profile", profile),
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
+          desktopPairing?.cancel();
           invalidateAppCapabilities?.();
           nativeAppChatNavigation?.cancelAll();
           navigationCache?.observe(status);
@@ -410,6 +413,7 @@ if (!gotLock) {
         },
       });
       await auth.init();
+      desktopPairing = createDesktopPairing({ auth, safeStorage, userData, window: () => mainWindow });
       navigationCache = createNavigationCache({ dir: userData, getStatus: () => auth.getStatus() });
       registerNavigationCacheIpc(ipcMain, navigationCache, rawEvent => {
         const event = rawEvent as IpcMainInvokeEvent;
@@ -765,6 +769,7 @@ if (!gotLock) {
           notification.show();
         },
         onRuntimeChanged: (slot) => {
+          desktopPairing?.cancel();
           navigationCache?.observe(auth.getStatus());
           chatgptPlan?.cancelAll();
           chatgptPlan?.resume();
@@ -910,6 +915,7 @@ if (!gotLock) {
         current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
       });
       terminalMenu = installAppMenu({
+        openDevicePairing: () => { void desktopPairing?.open().catch((error: unknown) => logMainError("device pairing unavailable", error)); },
         sendTerminalCommand: (command) => sendTerminalWindowEvent("terminal-window:command", command),
         mainWindow: () => mainWindow,
         terminalWindow: () => terminalWindowController.current(),
@@ -998,6 +1004,8 @@ if (!gotLock) {
   });
 
   app.on("will-quit", () => {
+    desktopPairing?.dispose();
+    desktopPairing = undefined;
     if (updateCheckTimer) {
       clearInterval(updateCheckTimer);
       updateCheckTimer = null;
