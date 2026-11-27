@@ -189,12 +189,6 @@ export function createOutlookStore(db: Kysely<PlatformDatabase>) {
       });
     },
 
-    async hasRetiredLegacyAccount(userId: string, providerAccountId: string) {
-      const result = await sql`SELECT 1 FROM matrix_outlook_retired_accounts
-        WHERE user_id = ${userId} AND provider_account_id = ${providerAccountId}`.execute(db);
-      return result.rows.length === 1;
-    },
-
     async claimPendingLegacyCleanup(now: Date) {
       const retryAt = new Date(now.getTime() + 60_000);
       const result = await sql<{ userId: string; providerAccountId: string }>`
