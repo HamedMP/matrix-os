@@ -1,3 +1,5 @@
+import type { OutlookGraph } from "./outlook/graph.js";
+import { selectedOutlookCall } from "./outlook/selected-call.js";
 import { executeIntegrationAction } from "./action-execution.js";
 import { getErrorStatusCode, integrationActionFailure, integrationActionSuccess } from "./call-outcome.js";
 import { formatActionParamValidationError, validateActionParams } from "./parameter-validation.js";
@@ -132,6 +134,7 @@ export interface IntegrationRoutesOpts {
   db: PlatformDb;
   pipedream: PipedreamConnectClient;
   webhookSecret: string;
+  outlookGraph?: OutlookGraph;
   resolveUserId: (c: Context) => Promise<string | null>;
   authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
   broadcast?: IntegrationBroadcast;
@@ -242,7 +245,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
   const emit = broadcast ?? (() => {});
   const app = new Hono();
-  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker }));
+  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker, outlookGraph: opts.outlookGraph }));
   app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 
   const { enqueuePendingLabel, consumePendingLabel } = createPendingLabelQueue();
@@ -726,19 +729,19 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }, 404);
     }
 
-    const externalId = await getOrCreateExternalId(uid);
-
     try {
-      const { data, summary } = await executeIntegrationAction({
+      const native = selectedOutlookCall({ outlook: opts.outlookGraph, userId: uid, connection, action, params,
+        signal: actionDef.risk === "read" ? c.req.raw.signal : undefined });
+      const { data, summary } = await (native ?? executeIntegrationAction({
         pipedream,
-        externalUserId: externalId,
+        externalUserId: await getOrCreateExternalId(uid),
         connection,
         def,
         actionDef,
         serviceId: service,
         actionId: action,
         params,
-      });
+      }));
 
       return integrationActionSuccess(c, { db, connectionId: connection.id, service, action, data, summary });
     } catch (err: unknown) {
