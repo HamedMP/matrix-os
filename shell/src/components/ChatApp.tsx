@@ -458,10 +458,13 @@ function ChatAppContent({
       : null,
   } : undefined;
   const setupProject = focusedProject && (!chatProjectId || chatProjectId === focusedProject.id) ? focusedProject : webProjects.projects.find(project => project.id === chatProjectId);
-  const setupSelection = providerState.selected ? { instanceId: providerState.selected.instanceId, model: providerState.selected.modelId, ...(providerSelection?.options ? { options: providerSelection.options } : {}) } : undefined;
+  const setupSelection = providerState.selectionAvailable && providerState.selected
+    ? { instanceId: providerState.selected.instanceId, model: providerState.selected.modelId, options: providerState.selected.selectedOptions }
+    : undefined;
   const projectSetup = useWebProjectSetup({ project: setupProject, chatId: sessionId, scope: webProjects.identity,
     gatewayUrl: projectGatewayUrl, eligible: Boolean(visible && !mobile && !collaborationView && !directBotId && setupProject && projectSkillRootAvailable !== false),
-    selection: setupSelection, isCurrentAuthority, openChat: onSwitchConversation, messages });
+    selection: setupSelection, isCurrentAuthority, openChat: onSwitchConversation,
+    leaveSetup: setupProject ? () => openProjectHome(setupProject) : undefined, messages });
   const providerReady = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : Boolean(!providerState.loading && providerState.selectionAvailable));
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
@@ -502,6 +505,7 @@ function ChatAppContent({
       return Promise.resolve(false);
     }
     if (projectSetup.active) return projectSetup.answer(text);
+    if (projectSetup.introduction) return Promise.resolve(false);
     if (botIdentityUnknown) return Promise.resolve(false);
     if (directBotId && !botPresentation?.available) return Promise.resolve(false);
     const callbacks = {
@@ -871,7 +875,7 @@ function ChatAppContent({
             composerProps={{ leadingControls: projectControl, toolbarControls: composerToolbar, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, matrixGatewayUrl, slashInstance, slashCatalogLoading, projectSlash, isCurrentAuthority, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             composerKey={composerKey}
             onSubmit={submitWithHermesSetup}
-            connected={connected}
+            connected={connected && !projectSetup.introduction && (!projectSetup.active || projectSetup.canAnswer)}
             mobile={mobile}
             composerDraftRequest={activeDraftRequest}
             onComposerDraftConsumed={consumeDraftRequest}
@@ -882,7 +886,8 @@ function ChatAppContent({
             projectHome={projectSetup.introductionContent ?? (projectHome ? <WebProjectHome project={projectHome} identity={webProjects.identity}
               gatewayUrl={projectGatewayUrl} isCurrentAuthority={isCurrentAuthority}
               conversations={projectChats(ordinaryConversations, projectHome)} historyIncomplete={navigationTruncated === true} historyRefreshKey={chatChangeRevision} historyRunStatusChange={chatRunStatusChange} knownChatIds={listedChatIds} botClient={summaryClient}
-              onStartSetup={() => { void projectSetup.start(); }} setupPending={projectSetup.pending} setupError={projectSetup.error}
+              onStartSetup={providerState.loading ? undefined : () => { void projectSetup.start(); }}
+              setupPending={projectSetup.pending} setupError={projectSetup.error}
               onSelectChat={onSwitchConversation} active={active !== false} /> : undefined)}
           /></>
         ) : (
@@ -901,6 +906,8 @@ function ChatAppContent({
                     return <div key={`tg-${id}`}><ToolCallGroup tools={group.messages} /><BotTranscriptRunState placement={botTranscript} index={groupIndex}/>{review}</div>;
                   }
                   const msg = group.message;
+                  const setupControls = msg.id === projectSetup.messageId ? projectSetup.controls : null;
+                  const setupReply = setupControls && projectSetup.active && projectSetup.draft?.interview && msg.role === "assistant";
                   return (
                     <div key={msg.id}>
                       {msg.id === projectSetup.messageId ? projectSetup.note : null}
@@ -941,7 +948,7 @@ function ChatAppContent({
                             return onSubmitApproval(runId, approvalId, decision, browserChoice).then(done => { if (!done) throw new Error("ApprovalUnavailable"); }).finally(() => setSubmittingApprovalId(null));
                           } : undefined}
                         />
-                      ) : (
+                      ) : setupReply ? null : (
                     <AssistantBubble
                       content={msg.content}
                       attachments={msg.attachments}
@@ -951,7 +958,7 @@ function ChatAppContent({
                       onAction={submitWithHermesSetup}
                     />
                       )}
-                    {msg.id === projectSetup.messageId && projectSetup.controls ? <div className="mt-2.5">{projectSetup.controls}</div> : null}
+                    {setupControls ? <div className={setupReply ? undefined : "mt-2.5"}>{setupControls(setupReply ? msg.content : undefined)}</div> : null}
                     <ChatContextReceipt context={ChatRunContextSchema.safeParse(msg.metadata?.chatRunContext).data} />
                     <BotTranscriptRunState placement={botTranscript} index={groupIndex}/>
                     {review}
@@ -980,7 +987,7 @@ function ChatAppContent({
 
             {/* Suggestions + Input */}
             <div className={`mx-auto w-full shrink-0 pt-2 ${projectSetup.draft ? "max-w-[768px]" : "max-w-[808px]"} ${mobile ? "px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]" : "px-6 pb-5"}`}>
-              {mobile && !busy && suggestions.length > 0 && (
+              {mobile && !projectSetup.active && !busy && suggestions.length > 0 && (
                 <div className="pb-3">
                   <SuggestionChips
                     suggestions={suggestions}
@@ -1010,7 +1017,7 @@ function ChatAppContent({
                 driveContextEnabled={!botIdentityUnknown && !directBotId && providerState.selected?.supportsCompanyDriveContext === true}
                 onOpenBotMention={botDraftNavigation.openBotMention}
                 key={composerKey} composer={composer} agentClient={agentClient} scope={composerScope} botConsentResources={botExecution.consentResources} botRequiresFullAccess={botPresentation?.requiresFullAccess} permissionMode={directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised"}
-                connected={connected && !projectSetup.mcpHandoff && (providerReady || projectSetup.active)}
+                connected={connected && (projectSetup.active ? projectSetup.canAnswer : providerReady)}
                 busy={busy || projectSetup.pending}
                 activeRunId={activeRunId}
                 onAbortCurrent={onAbortCurrent}

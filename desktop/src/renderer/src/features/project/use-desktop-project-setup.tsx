@@ -25,6 +25,7 @@ import { useBoard } from "../../stores/board";
 import { useUi } from "../../stores/ui";
 import { useTabs } from "../../stores/tabs";
 import { openFileInDesktopEditor } from "../editor/desktop-editor-store";
+import { openWorkProject } from "../work/work-navigation";
 
 export function useDesktopProjectSetup({
   api,
@@ -33,6 +34,7 @@ export function useDesktopProjectSetup({
   eligible,
   live,
   selection,
+  selectionLoading = false,
   openChat,
   refresh,
 }: {
@@ -42,6 +44,7 @@ export function useDesktopProjectSetup({
   eligible: boolean;
   live: boolean;
   selection?: CanonicalChatModelSelection | null;
+  selectionLoading?: boolean;
   openChat: (id: string) => void;
   refresh: () => void;
 }) {
@@ -125,10 +128,14 @@ export function useDesktopProjectSetup({
   const seenRequest = useRef(0);
   const startSetup = useEffectEvent(() => setup.start());
   useEffect(() => {
-    if (!setupEligible || !launch?.requested || launch.sequence === seenRequest.current) return;
-    seenRequest.current = launch.sequence;
-    void startSetup();
-  }, [launch?.requested, launch?.sequence, setupEligible, transport]);
+    if (!transport || !setupEligible || selectionLoading || !launch?.requested || launch.sequence === seenRequest.current) return;
+    // Let the ordinary composer apply its restored model choice before admission.
+    const frame = requestAnimationFrame(() => {
+      seenRequest.current = launch.sequence;
+      void startSetup();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [launch?.requested, launch?.sequence, selectionLoading, setupEligible, transport]);
   const view = {
     ...setup,
     dismiss: () => {
@@ -188,27 +195,33 @@ export function useDesktopProjectSetup({
       return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await blob.arrayBuffer());
     },
   };
+  const leaveSetup = project ? () => openWorkProject(project) : undefined;
   const introductionVisible = setup.introduction || Boolean(launch?.requested && !setup.draft);
   const projectName = project?.name ?? "this project";
+  const renderControls = setupEligible ? (replyText?: string) => (
+    <ProjectSetupControls
+      setup={view}
+      transport={transport}
+      selection={selection}
+      onOpenMcpSettings={openMcpSettings}
+      replyText={replyText}
+      mcpSettingsOpen={mcpSettingsOpen}
+      markdownEdits={markdownEdits}
+      onOpenFile={openFile}
+      {...sources}
+    />
+  ) : null;
   return {
     ...view,
     introductionVisible,
-    placeholder: projectSetupAnswerPlaceholder(introductionVisible, setup.draft?.step, setup.mcpHandoff),
+    placeholder: projectSetupAnswerPlaceholder(introductionVisible, setup.draft?.step, setup.mcpHandoff, Boolean(setup.draft?.interview)),
     note: setup.draft ? <ProjectSetupAcceptedNote draft={setup.draft} /> : null,
-    header: setup.draft ? <ProjectSetupProgress projectName={projectName} draft={setup.draft} /> : null,
-    controls: setupEligible ? (
-      <ProjectSetupControls
-        setup={view}
-        transport={transport}
-        selection={selection}
-        onOpenMcpSettings={openMcpSettings}
-        mcpSettingsOpen={mcpSettingsOpen}
-        markdownEdits={markdownEdits}
-        onOpenFile={openFile}
-        {...sources}
-      />
-    ) : null,
+    header: setup.draft ? <ProjectSetupProgress projectName={projectName} draft={setup.draft} onLeaveSetup={leaveSetup} /> : null,
+    controls: renderControls?.() ?? null,
+    renderControls,
     introductionContent:
-      introductionVisible ? <ProjectSetupIntroduction projectName={projectName} setup={view} /> : null,
+      introductionVisible ? (
+        <ProjectSetupIntroduction projectName={projectName} setup={{ ...view, pending: setup.pending || selectionLoading }} />
+      ) : null,
   };
 }

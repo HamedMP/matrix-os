@@ -5,7 +5,7 @@ import type { ChatDatabase } from "./database.js";
 import { jsonb, messageSearchText, toTurn, type ChatOwner } from "./records.js";
 import { ProjectSetupError } from "./project-setup-state.js";
 
-export interface SetupTranscriptMessage { role: "user" | "assistant"; text: string; id?: string }
+export interface SetupTranscriptMessage { role: "user" | "assistant"; text: string; id?: string; anchorMessageId?: string }
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
 
 /** Internal server-generated transition messages use the existing canonical transcript. */
@@ -22,12 +22,17 @@ export async function appendProjectSetupTranscript(db: Executor, owner: ChatOwne
   const messages: CanonicalChatMessage[] = [];
   const turns: CanonicalChatTurn[] = [];
   const now = new Date().toISOString();
-  const turnId = `cturn_${randomUUID().replaceAll("-", "")}`;
   const user = entries.find(entry => entry.role === "user");
-  if (!user) throw new ProjectSetupError("invalid");
-  const userId = user.id ?? `msg_${randomUUID().replaceAll("-", "")}`;
+  const anchorId = entries[0]?.anchorMessageId;
+  const anchor = user || !anchorId ? undefined : await db.selectFrom("chat_messages as messages")
+    .innerJoin("chat_turns as turns", "turns.id", "messages.turn_id")
+    .leftJoin("chat_runs as runs", "runs.turn_id", "turns.id")
+    .select("turns.id").where("messages.chat_id", "=", chatId).where("turns.chat_id", "=", chatId)
+    .where("messages.id", "=", anchorId).where("runs.id", "is", null).executeTakeFirst();
+  if (user ? entries[0] !== user : !anchor || entries.length !== 1) throw new ProjectSetupError("invalid");
+  const turnId = anchor?.id ?? `cturn_${randomUUID().replaceAll("-", "")}`;
+  const userId = user?.id ?? `msg_${randomUUID().replaceAll("-", "")}`;
   const baseSequence = sequence;
-  if (entries[0] !== user) throw new ProjectSetupError("invalid");
   for (const entry of entries) {
     const message = CanonicalChatMessageSchema.parse({ id: entry === user ? userId : entry.id ?? `msg_${randomUUID().replaceAll("-", "")}`, chatId,
       seq: ++sequence, role: entry.role, purpose: entry.role === "user" ? "discussion" : "assistant", state: "committed",

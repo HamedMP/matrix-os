@@ -27,6 +27,13 @@ import type {
 import { supervisedToolApproval, type SupervisedToolApproval } from "@matrix-os/contracts";
 import { offeredApprovalAction, offeredBrowserApprovalAction } from "./approval-actions";
 
+type ProjectSetupTranscript = {
+  messageId?: string | null;
+  note: ReactNode;
+  controls: ((replyText?: string) => ReactNode) | null;
+  compactReply: boolean;
+};
+
 function formatTurnDuration(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -307,7 +314,7 @@ function ConversationTurn({
   onToggle: () => void;
   scheduled?: RoutineOccurrence;
   scheduledEvents?:RoutineOccurrence[];
-  projectSetup?: { messageId?: string | null; note: ReactNode; controls: ReactNode };
+  projectSetup?: ProjectSetupTranscript;
 }) {
   const rootKind = turn.executionRoot?.kind;
   const rootProjectId = turn.executionRoot && turn.executionRoot.kind !== "bot_workspace" ? turn.executionRoot.projectId : undefined;
@@ -332,7 +339,12 @@ function ConversationTurn({
   if(turn.routineReceipt)return <RoutineReceipt {...turn.routineReceipt} sourceChatId={callbacks.browserChatId} onOpenChat={callbacks.openChat}/>;
   const hasWork = turn.work.length > 0;
   const timeline = turn.timeline;
-  const setupReply = projectSetup?.messageId && projectSetup.messageId === turn.final?.id ? projectSetup : undefined;
+  const setupReply = projectSetup?.messageId
+    && (projectSetup.messageId === turn.final?.id || projectSetup.messageId === turn.user?.id)
+    ? projectSetup : undefined;
+  const compactReply = setupReply?.controls && setupReply.compactReply && !scheduledEvents.length
+    && turn.final?.kind === "message" && turn.final.role === "assistant" && turn.final.id === setupReply.messageId
+    ? turn.final.markdown : undefined;
   return (
     <>
       {turn.user ? <UserMessage message={turn.user} callbacks={scopedCallbacks} scheduled={scheduled}/> : null}
@@ -369,7 +381,7 @@ function ConversationTurn({
         <UserMessage key={message.id} message={message} callbacks={scopedCallbacks} />
       )) : null}
       {setupReply?.note}
-      {turn.final ? (
+      {turn.final && compactReply === undefined ? (
         <PresentationItem
           item={turn.final}
           callbacks={scopedCallbacks}
@@ -382,7 +394,7 @@ function ConversationTurn({
         />
       ) : null}</>}
       {setupReply?.controls ? (
-        <div className="mt-2.5">{setupReply.controls}</div>
+        <div className={compactReply === undefined ? "mt-2.5" : undefined}>{setupReply.controls(compactReply)}</div>
       ) : null}
       <BotRunMessageBody runIds={turn.runIds ?? []} requestIds={pendingRequestIds}/>
       </div>
@@ -419,7 +431,7 @@ export function ConversationTranscript({
   beforeTurns?: ReactNode;
   renderAfterTurn?: (turnId: string) => ReactNode;
   afterTurns?: ReactNode;
-  projectSetup?: { header: ReactNode; note: ReactNode; messageId?: string | null; controls: ReactNode };
+  projectSetup?: ProjectSetupTranscript & { header: ReactNode };
 }) {
   const routines=useRoutineMessageState();
   const [initialFinalIds] = useState(() => new Set(
@@ -469,7 +481,7 @@ export function ConversationTranscript({
         <BotUnassignedMessageBody runIds={turns.flatMap(turn => turn.runIds ?? [])}
           requestIds={visibleTurns.flatMap(({ visibility }) => visibility.pendingRequestIds)}/>
         <RoutineMessageReadNotice/>
-        {projectSetup?.controls && !turns.some(turn => turn.final?.id === projectSetup.messageId) ? (
+        {projectSetup?.controls && !turns.some(turn => turn.final?.id === projectSetup.messageId || turn.user?.id === projectSetup.messageId) ? (
           <p role="status" className="text-xs text-[var(--text-secondary)]">Updating project setup…</p>
         ) : null}
         {afterTurns}

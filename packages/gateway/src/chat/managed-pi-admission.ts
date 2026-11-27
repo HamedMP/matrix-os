@@ -44,7 +44,9 @@ export function createManagedPiAdmission(deps: {
   }
   async function setupAuthority(row: Awaited<ReturnType<typeof authority>>, input: { ownerId: string; chatId: string; runId: string }, root: { path: string; fingerprint: string }) {
     if (!row.setupDraft) return undefined;
+    const interview = row.setupDraft.mode === "interview";
     if (!row.project_id || !row.execution_root || !["supervised", "full_access"].includes(row.permission_mode)) throw new BotAdmissionError("not_found");
+    if (interview && row.permission_mode !== "supervised") throw new BotAdmissionError("not_found");
     const ref = CanonicalChatExecutionRootRefSchema.parse(typeof row.execution_root === "string" ? JSON.parse(row.execution_root) : row.execution_root);
     if (ref.kind !== "project" || ref.projectId !== row.project_id || root.fingerprint !== row.execution_root_fingerprint) throw new BotAdmissionError("root_changed");
     const setup = await deps.db.selectFrom("chat_project_setups").select(["root_fingerprint", "revision", "draft"])
@@ -52,7 +54,8 @@ export function createManagedPiAdmission(deps: {
     const parsed = setup ? ProjectSetupDraftSchema.safeParse(typeof setup.draft === "string" ? JSON.parse(setup.draft) : setup.draft) : undefined;
     if (!setup || !parsed?.success) throw new BotAdmissionError("not_found");
     const draft = parsed.data;
-    if (draft.chatId !== input.chatId || draft.projectId !== row.project_id || draft.step !== "review" || draft.revision !== Number(setup.revision)
+    if (draft.chatId !== input.chatId || draft.projectId !== row.project_id || Boolean(draft.interview) !== interview
+      || (!interview && draft.step !== "review") || draft.revision !== Number(setup.revision)
       || (draft.generation?.status !== "pending" && draft.generation?.status !== "running")) throw new BotAdmissionError("not_found");
     if (draft.generation.status === "pending" ? draft.revision !== row.setupDraft.revision
       : draft.generation.runId !== input.runId || draft.generation.sourceRevision !== row.setupDraft.revision) throw new BotAdmissionError("not_found");
@@ -60,7 +63,7 @@ export function createManagedPiAdmission(deps: {
     if (!identity.isDirectory() || identity.isSymbolicLink()) throw new BotAdmissionError("root_changed");
     const fingerprint = projectSetupWorkspaceFingerprint(root.fingerprint, identity);
     if (setup.root_fingerprint !== fingerprint) throw new BotAdmissionError("root_changed");
-    return { revision: row.setupDraft.revision, fingerprint };
+    return { revision: row.setupDraft.revision, fingerprint, ...(interview ? { mode: "interview" as const } : {}) };
   }
   async function assertSource(row: Awaited<ReturnType<typeof authority>>, ownerId: string, resolved: ResolvedBotRoute) {
     const selection = CanonicalChatModelSelectionSchema.parse(typeof row.selection === "string" ? JSON.parse(row.selection) : row.selection);

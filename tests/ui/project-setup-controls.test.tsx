@@ -8,7 +8,7 @@ import {
   projectSetupGenerationResultId,
 } from "../../packages/ui/src/chat/project-setup-presentation";
 import { ProjectSetupAcceptedNote } from "../../packages/ui/src/chat/ProjectSetupProgress";
-import type { ProjectSetupController } from "../../packages/ui/src/chat/use-project-setup";
+import { useProjectSetup, type ProjectSetupController, type ProjectSetupTransport } from "../../packages/ui/src/chat/use-project-setup";
 import type { ProjectSetupDraft } from "@matrix-os/contracts";
 
 afterEach(cleanup);
@@ -31,6 +31,9 @@ function controller(dispatch = vi.fn(async () => true), value = draft): ProjectS
     eligible: true,
     introduction: false,
     active: true,
+    canAnswer: true,
+    replyPollingExhausted: false,
+    retryInterview: vi.fn(async () => true),
     pending: false,
     error: null,
     dispatch,
@@ -52,14 +55,142 @@ it("allows skipping the setup offer without starting Chat", () => {
   expect(start).toHaveBeenCalledOnce();
 });
 
-it("shows the first question as part of the project setup conversation", () => {
+it("shows start progress without injecting a scripted question or suggestions", () => {
   const setup = controller();
-  render(<ProjectSetupIntroduction projectName="Portfolio" setup={{ ...setup, draft: null, introduction: true }} />);
-  expect(screen.getByRole("navigation", { name: "Project setup progress" })).toBeTruthy();
-  expect(screen.getByText("Guidance").closest("li")?.getAttribute("aria-current")).toBe("step");
+  render(<ProjectSetupIntroduction projectName="Portfolio" setup={{ ...setup, draft: null, introduction: true, pending: true }} />);
   expect(screen.getByText("Project setup")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "A portfolio site" }));
-  expect(setup.answer).toHaveBeenCalledWith("A portfolio site");
+  expect(screen.getByRole("status").textContent).toContain("Starting project setup");
+  expect(screen.queryByRole("button", { name: "A portfolio site" })).toBeNull();
+});
+
+it("renders only the Agent's suggestions through the same answer action", () => {
+  const setup = controller(undefined, {
+    ...draft, step: "guidance", proposals: [],
+    interview: { focus: "intent", suggestions: ["Draft customer release notes", "Run a changelog review"] },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Draft customer release notes" }));
+  expect(setup.answer).toHaveBeenCalledExactlyOnceWith("Draft customer release notes");
+  expect(screen.queryByRole("button", { name: "Keep changes small" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Connect Linear" })).toBeNull();
+});
+
+it("shows one active question and short answers without extra disclosures", () => {
+  const longAnswer = "Collect review feedback from the entire on-call rotation before changing the release process.";
+  const replyText = "Let's set up your research project. I’ll help with release guidance and make it clear what you can leave to a later conversation.\n\nWhat should get reviewed? Who should sign off?";
+  const setup = controller(undefined, {
+    ...draft, step: "guidance", proposals: [],
+    interview: { focus: "guidance", suggestions: [longAnswer, "Release notes", "Support docs"] },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} replyText={replyText} />);
+  expect(screen.getByText("What should get reviewed?").closest("details")).toBeNull();
+  expect(screen.queryByText(/Who should sign off/)).toBeNull();
+  expect(screen.queryByText(/let.s set up your research project/i)).toBeNull();
+  expect(screen.queryByText(longAnswer)).toBeNull();
+  expect(screen.queryByText("More answers")).toBeNull();
+  expect(screen.queryByText("More details")).toBeNull();
+  expect(screen.getByRole("button", { name: "Support docs" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Release notes" }));
+  expect(setup.answer).toHaveBeenCalledExactlyOnceWith("Release notes");
+});
+
+it("reserves space for MCP actions and omits the excess short suggestions", () => {
+  const setup = controller(undefined, {
+    ...draft, step: "mcp", proposals: [],
+    interview: { focus: "mcp", suggestions: ["Track releases", "Track reviews", "Track issues"], recommendedService: "GitHub" },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} onOpenMcpSettings={vi.fn()} />);
+  expect(screen.getAllByRole("button").map(button => button.textContent)).toEqual(["Track releases", "Connect GitHub", "Skip for now"]);
+  expect(screen.queryByText("Track reviews")).toBeNull();
+  expect(screen.queryByText("Track issues")).toBeNull();
+});
+
+it("omits an oversized localized answer but keeps a long service name actionable", () => {
+  const service = "Atlassian (Jira, Confluence)";
+  const answer = "发布时必须征求市场和合规团队的批准";
+  const setup = controller(undefined, {
+    ...draft, step: "mcp", proposals: [],
+    interview: { focus: "mcp", suggestions: [answer], recommendedService: service },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} onOpenMcpSettings={vi.fn()} />);
+  const serviceChoice = screen.getByText(`Connect ${service}`).closest("button")!;
+  expect(serviceChoice.closest("details")?.open).toBe(false);
+  expect(screen.queryByText(answer)).toBeNull();
+  serviceChoice.closest("details")!.open = true;
+  fireEvent.click(serviceChoice);
+  expect(setup.dispatch).toHaveBeenCalledExactlyOnceWith({ type: "choose_mcp", choice: "connect", service });
+});
+
+it("keeps meaningful Review context readable beside explicit Save", () => {
+  const setup = controller(undefined, {
+    ...draft, interview: { focus: "review", suggestions: [] },
+  });
+  const reviewContext = "The existing AGENTS.md stays in place.";
+  render(<ProjectSetupControls setup={setup} transport={null} replyText={`Review the project setup.\n\n${reviewContext}`} />);
+  expect(screen.getByText(reviewContext).closest("details")).toBeNull();
+  expect(screen.getByRole("button", { name: "Save project setup" })).toBeTruthy();
+});
+
+const oversizedQuestion = "How should the release checklist handle overlapping requests from different teams when an approval arrives just before a deadline?";
+it.each([
+  [oversizedQuestion, oversizedQuestion],
+  [`A quick note.\n\n${oversizedQuestion}`, oversizedQuestion],
+  ["A quick note.\n\nWho owns the **final review**?", "Who owns the final review?"],
+])("keeps an outlier question intact with an explicit read-and-reply fallback (%s)", (replyText, question) => {
+  const setup = controller(undefined, {
+    ...draft, step: "guidance", proposals: [],
+    interview: { focus: "guidance", suggestions: [] },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} replyText={replyText} />);
+  const details = screen.getByText("Read the agent’s question").closest("details")!;
+  expect(details.open).toBe(false);
+  expect(details.textContent).toContain(question);
+});
+
+it("reuses the confirmed MCP Settings flow only for the Agent's scoped recommendation", () => {
+  const open = vi.fn();
+  const dispatch = vi.fn(async () => true);
+  render(<ProjectSetupControls setup={controller(dispatch, {
+    ...draft, step: "review", interview: { focus: "review", suggestions: [], recommendedService: "GitHub" },
+  })} transport={null} onOpenMcpSettings={open} />);
+  fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
+  expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type: "choose_mcp", choice: "connect", service: "GitHub" });
+  expect(open).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Connect Linear" })).toBeNull();
+});
+
+it("keeps Save behind the review handoff and records an explicit MCP skip", () => {
+  const open = vi.fn();
+  const setup = controller(undefined, {
+    ...draft,
+    interview: { focus: "review", suggestions: [], recommendedService: "GitHub", mcpHandoff: true },
+    mcp: { state: "pending", service: "GitHub" },
+  });
+  render(<ProjectSetupControls setup={setup} transport={null} onOpenMcpSettings={open} />);
+  expect(screen.queryByRole("button", { name: "Save project setup" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Open MCP Settings" }));
+  expect(open).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole("button", { name: "Continue without connecting" }));
+  expect(setup.dispatch).toHaveBeenCalledExactlyOnceWith({ type: "choose_mcp", choice: "skip" });
+  expect(setup.answer).not.toHaveBeenCalled();
+});
+
+it("finishes an approved tools-only setup without proposing files", () => {
+  const dispatch = vi.fn(async () => true);
+  render(<ProjectSetupControls setup={controller(dispatch, {
+    ...draft, proposals: [], interview: { focus: "review", suggestions: [] },
+  })} transport={null} />);
+  expect(screen.queryByRole("button", { name: "Edit Markdown" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Finish setup" }));
+  expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type: "save" });
+});
+
+it("keeps editing and save controls unavailable while the Agent is resolving a revision", () => {
+  render(<ProjectSetupControls setup={controller(undefined, {
+    ...draft, interview: { focus: "review", suggestions: [] }, generation: { status: "running" },
+  })} transport={null} />);
+  expect(screen.getByRole("status").textContent).toContain("Preparing the next reply");
+  expect(screen.queryByRole("button", { name: "Save project setup" })).toBeNull();
 });
 
 it("asks for an explicit Settings handoff after choosing Linear", async () => {
@@ -94,19 +225,33 @@ it("says the skill description is accepted without claiming that a skill file ex
   expect(screen.queryByText(/skill ready/i)).toBeNull();
 });
 
-it("can recover a generation that completes after polling stops without starting another run", () => {
+it.each(["legacy", "interview"] as const)("recovers %s generation after polling stops without starting another run", async (mode) => {
   vi.useFakeTimers();
   try {
-    const dispatch = vi.fn(async () => true);
-    const running = { ...draft, generation: { runId: "run_draft", status: "running" as const } };
-    const { rerender } = render(<ProjectSetupControls setup={controller(dispatch, running)} transport={null} />);
-    act(() => vi.advanceTimersByTime(125_000));
-    expect(dispatch).toHaveBeenCalledTimes(60);
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "Check draft status" }));
-    expect(dispatch).toHaveBeenCalledTimes(61);
-    expect(dispatch).toHaveBeenLastCalledWith({ type: "sync_generation" });
-    rerender(<ProjectSetupControls setup={controller(dispatch)} transport={null} />);
+    const completed: ProjectSetupDraft = mode === "interview" ? { ...draft, interview: { focus: "review", suggestions: [] } } : draft;
+    const running = { ...completed, generation: { runId: "run_draft", status: "running" as const } };
+    const button = mode === "interview" ? "Check reply status" : "Check draft status";
+    const client = {
+      get: vi.fn(async () => ({ draft: running })),
+      post: vi.fn(async () => ({ draft: running })),
+      patch: vi.fn<ProjectSetupTransport["patch"]>(async () => ({ draft: running })),
+    } satisfies ProjectSetupTransport;
+    function Review() {
+      const setup = useProjectSetup({ client, scope: "owner:computer", projectId: draft.projectId, chatId: draft.chatId, eligible: true });
+      return <ProjectSetupControls setup={setup} transport={client} />;
+    }
+    render(<Review />);
+    await act(async () => {});
+    if (mode === "interview") expect(screen.queryByRole("button", { name: button })).toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(125_000); });
+    expect(client.patch).toHaveBeenCalledTimes(60);
+    expect(screen.queryByRole<HTMLButtonElement>("button", { name: "Save project setup" })?.disabled ?? true).toBe(true);
+    client.patch.mockResolvedValueOnce({ draft: completed });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: button })); });
+    expect(client.patch).toHaveBeenCalledTimes(61);
+    expect(client.patch.mock.calls.map(([, body]) => body)).toEqual(
+      Array.from({ length: 61 }, () => expect.objectContaining({ action: { type: "sync_generation" } })),
+    );
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Save project setup" }).disabled).toBe(false);
   } finally {
     vi.useRealTimers();
@@ -174,6 +319,24 @@ it("does not report a same-named noncatalog Linear server as connected", async (
   );
   await waitFor(() => expect(get).toHaveBeenCalledOnce());
   expect(screen.queryByText("Linear is connected on this computer.")).toBeNull();
+});
+
+it("checks the full selected custom MCP name even when another service shares its prefix", async () => {
+  const prefix = "Release engineering checklist ".padEnd(99, "x");
+  const service = `${prefix}A`;
+  const other = { id: "mcp_other", name: `${prefix}B`, status: "ready", enabled: true };
+  const get = vi.fn(async () => [other]);
+  render(<ProjectSetupControls
+    setup={controller(undefined, { ...draft, mcp: { state: "pending", service } })}
+    transport={{ get, post: vi.fn(), patch: vi.fn() }}
+    onOpenMcpSettings={vi.fn()}
+  />);
+  await waitFor(() => expect(get).toHaveBeenCalledOnce());
+  const connected = `${service} is connected on this computer.`;
+  expect(screen.queryByText(connected)).toBeNull();
+  get.mockResolvedValue([other, { id: "mcp_selected", name: service, status: "ready", enabled: true }]);
+  fireEvent.click(screen.getByRole("button", { name: "Check connection" }));
+  expect(await screen.findByText(connected)).toBeTruthy();
 });
 
 it("projects only the exact setup generation run into a normal assistant reply", () => {

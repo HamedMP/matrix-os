@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative } from "node:path";
 import { pinDirectory, isFsError, type PinnedDirectory } from "../app-gallery/pinned-directory.js";
-import { createProjectAgentConfigFile } from "../project-agent-context.js";
+import { createProjectAgentConfigFile, readProjectAgentContext } from "../project-agent-context.js";
 import type { ChatExecutionRootResolver } from "./execution-root.js";
+import { projectSetupInterviewInventory, type LoadProjectSetupMcpServices, type ProjectSetupInterviewContext } from "./project-setup-interview-context.js";
 import type { ChatOwner } from "./records.js";
 import { ProjectSetupError } from "./project-setup-state.js";
 
@@ -11,6 +12,7 @@ export interface ProjectSetupWorkspace {
   fingerprint: string;
   executionRootFingerprint: string;
   projectSlug: string;
+  interviewContext?(): Promise<ProjectSetupInterviewContext>;
   read(path: string): Promise<string | null>;
   create(path: string, content: string): Promise<void>;
   revalidate(): Promise<void>;
@@ -35,7 +37,8 @@ export function projectSetupWorkspaceFingerprint(rootFingerprint: string, identi
   return createHash("sha256").update(`${rootFingerprint}:${identity.dev}:${identity.ino}`).digest("hex");
 }
 
-export async function openProjectSetupWorkspace(roots: ChatExecutionRootResolver, homePath: string, owner: ChatOwner, projectId: string): Promise<ProjectSetupWorkspace> {
+export async function openProjectSetupWorkspace(roots: ChatExecutionRootResolver, homePath: string, owner: ChatOwner,
+  projectId: string, listMcpServices?: LoadProjectSetupMcpServices): Promise<ProjectSetupWorkspace> {
   if (owner.type !== "personal") throw new ProjectSetupError("not_found");
   const resolved = await roots.resolve(owner, { kind: "project", projectId });
   const homeRelative = relative(await realpath(homePath), resolved.primaryWorkspaceRoot);
@@ -44,13 +47,23 @@ export async function openProjectSetupWorkspace(roots: ChatExecutionRootResolver
   try {
     const identity = await directory.identity();
     const fingerprint = projectSetupWorkspaceFingerprint(resolved.fingerprint, identity);
-    const revalidate = async () => {
+    const currentRoot = async () => {
       const current = await roots.revalidate(owner, resolved);
       const stat = await lstat(current.primaryWorkspaceRoot);
       if (current.primaryWorkspaceRoot !== resolved.primaryWorkspaceRoot || !stat.isDirectory() || stat.dev !== identity.dev || stat.ino !== identity.ino) throw new ProjectSetupError("not_found");
+      return current;
     };
+    const revalidate = async () => { await currentRoot(); };
     await revalidate();
     return { fingerprint, executionRootFingerprint: resolved.fingerprint, projectSlug: resolved.projectSlug, revalidate, close: () => directory.close(),
+      interviewContext: async () => {
+        await revalidate();
+        const [inventory, mcpServices] = await Promise.all([
+          readProjectAgentContext(directory, { includeConfig: false }), listMcpServices?.(owner) ?? [],
+        ]);
+        const current = await currentRoot();
+        return projectSetupInterviewInventory(current.projectSetupInterview ?? { name: resolved.projectSlug! }, inventory, mcpServices);
+      },
       read: path => readManifest(directory, path),
       create: async (path, content) => { await revalidate(); await createProjectAgentConfigFile(directory, path, content); await revalidate(); } };
   } catch (error: unknown) {

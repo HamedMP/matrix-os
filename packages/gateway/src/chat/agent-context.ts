@@ -6,7 +6,7 @@ import { BotRouteError } from "../bots/route-resolver.js";
 import { createHash } from "node:crypto";
 import {
   CanonicalChatIdSchema, CanonicalCreateChatTurnRequestSchema, ChatRunContextSchema, canonicalChatTurnRequestIdentity,
-  type CanonicalChatMessage, type CanonicalCreateChatTurnRequest,
+  type CanonicalChatMessage, type CanonicalChatRun, type CanonicalCreateChatTurnRequest,
   type ChatContextSnapshot, type ChatRunContext,
   type ChatAgent, type OrganizationDriveContextReference,
 } from "@matrix-os/contracts";
@@ -61,6 +61,15 @@ export function transcript(messages: CanonicalChatMessage[], limit: number): { t
   };
 }
 
+/** Only validated setup replies may appear in ordinary Chat context. */
+export function chatContextMessages(messages: CanonicalChatMessage[], runs: CanonicalChatRun[]): CanonicalChatMessage[] {
+  const interviews = runs.filter(run => run.context?.projectSetupDraft?.mode === "interview");
+  if (!interviews.length) return messages;
+  const turnIds = new Set(interviews.map(run => run.turnId));
+  const runIds = new Set(interviews.map(run => run.id));
+  return messages.filter(message => !(message.turnId && turnIds.has(message.turnId)) && !(message.runId && runIds.has(message.runId)));
+}
+
 export class ChatAgentContext {
   constructor(private readonly options: {
     repository: Pick<ChatRepository, "get" | "getDetailPage">;
@@ -81,7 +90,7 @@ export class ChatAgentContext {
       throw new ChatAgentContextError("context_unavailable");
     }
     await this.options.assertChatReferenceAllowed?.(owner, chatId);
-    const text = transcript(detail.messages, limit);
+    const text = transcript(chatContextMessages(detail.messages, detail.runs), limit);
     return {
       chatId, title: detail.record.chat.title,
       throughSeq: detail.messages.at(-1)?.seq ?? detail.record.chat.messageCount,
@@ -171,7 +180,7 @@ export class ChatAgentContext {
     if (driveReferences.length) await this.authorizeDrives(owner, chatId, driveReferences);
     // A normal harness checkpoint cannot know about an intervening Bot session.
     const needsHistory = Boolean(agent || current.runs.at(-1)?.context?.agent || current.runs.at(-1)?.context?.history);
-    const historyText = needsHistory ? transcript(current.messages, 12_000) : undefined;
+    const historyText = needsHistory ? transcript(chatContextMessages(current.messages, current.runs), 12_000) : undefined;
     const chats: ChatContextSnapshot[] = [];
     for (const reference of chatReferences) chats.push(await this.snapshot(owner, reference.id, 8_000));
     const context: ChatRunContext | undefined = agent || chats.length || needsHistory || driveReferences.length

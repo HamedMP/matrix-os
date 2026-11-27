@@ -10,12 +10,17 @@ import {
   type CanonicalOwnerScope,
 } from "@matrix-os/contracts";
 import { PROJECT_SLUG_REGEX } from "../project-registry.js";
+import { projectSetupInterviewProject, type ProjectSetupInterviewProject } from "./project-setup-interview-context.js";
 import type { OwnerScope } from "../state-ops.js";
 
 export interface ChatExecutionRootProject {
   id: string;
   slug: string;
   localPath: string;
+  name?: string;
+  description?: string;
+  kind?: string;
+  github?: { owner: string; repo: string };
 }
 
 export interface ChatExecutionRootWorktree {
@@ -57,6 +62,7 @@ export interface ResolvedChatExecutionRoot extends ChatExecutionRootProvenance {
   primaryWorkspaceRoot: string;
   /** Gateway-only legacy workspace Provider key derived from ProjectConfig; absent for bot workspaces. */
   projectSlug?: string;
+  projectSetupInterview?: ProjectSetupInterviewProject;
 }
 
 export interface ChatExecutionRootResolver {
@@ -301,6 +307,7 @@ export function createChatExecutionRootResolver<
         ref,
         primaryWorkspaceRoot: projectRoot,
         projectSlug: currentProject.slug,
+        ...(currentProject.name ? { projectSetupInterview: projectSetupInterviewProject(currentProject) } : {}),
         fingerprint: fingerprint({ owner, ref, project: currentProject, projectRoot }),
       };
     }

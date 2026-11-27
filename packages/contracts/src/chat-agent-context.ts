@@ -16,12 +16,20 @@ export const ChatContextSnapshotSchema = z.object({
   truncated: z.boolean(),
 }).strict();
 
+const ProjectSetupMarkdownKindSchema = z.enum(["guidance", "skill"]);
+export type ProjectSetupMarkdownKind = z.infer<typeof ProjectSetupMarkdownKindSchema>;
+
 /** Written only by the gateway after owner-scoped resolution, never accepted from a client. */
 export const ChatRunContextSchema = z.object({
   version: z.literal(1),
   requestHash: z.string().regex(/^[a-f0-9]{64}$/),
   routineCreation: z.literal("matrix").optional(),
-  projectSetupDraft: z.object({ revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }).strict().optional(),
+  projectSetupDraft: z.object({
+    revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    mode: z.literal("interview").optional(),
+    // An empty list means the admitted turn received all eligible Markdown.
+    withheldMarkdown: z.array(ProjectSetupMarkdownKindSchema).max(2).optional(),
+  }).strict().refine(setup => setup.mode === "interview" || setup.withheldMarkdown === undefined).optional(),
   agent: z.object({
     id: ChatAgentIdSchema,
     revision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),

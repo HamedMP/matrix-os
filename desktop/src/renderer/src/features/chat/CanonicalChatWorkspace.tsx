@@ -9,6 +9,7 @@ import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@mat
 import { canonicalChatExecutionControls } from "@matrix-os/contracts";
 import { chatAttachmentComposerPolicy } from "@matrix-os/ui";
 import { openChatProviderSettings } from "./open-chat-provider-settings";
+import { useProviderPreferences } from "../settings/provider-preferences";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { projectContext } from "./canonical-project-context";
 import { useBotDraftNavigation } from "./use-bot-draft-navigation";
@@ -341,6 +342,7 @@ function CanonicalChatWorkspaceContent({
       && isMacVerificationReceiptRun(controller.detail, executionControls.runId) ? executionControls.runId : undefined,
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
+  const providerPreferencesHydrated = useProviderPreferences(state => state.hydrated);
   const botBinding = useDirectBotBinding(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
   const directBotId = botBinding.agentId;
   useEffect(() => {
@@ -468,7 +470,9 @@ function CanonicalChatWorkspaceContent({
   const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
   const projectSetup = useDesktopProjectSetup({ api, projectId: slashProjectId ?? null, chatId: routedComposerChatId,
     live, eligible: Boolean(slashProjectId && !directBotId && !explicitSharedRoute && !projectedSharedChat && (!slashRun?.executionRoot || slashRun.executionRoot.kind === "project")),
-    selection, openChat: id => selectChat(id), refresh: () => { void controller.refresh(); } });
+    selection: selectionAvailable ? selection : null,
+    selectionLoading: providerCatalogLoading || (!routedComposerChatId && !providerSelection && !providerPreferencesHydrated),
+    openChat: id => selectChat(id), refresh: () => { void controller.refresh(); } });
   const nativeChatChecksActive = active && !inspectorExclusive && !projectSetup.active && !botIdentityUnknown && !directBotId
     && authStatus === "signed-in" && routedComposerChatId === controller.detail?.record.chat.id;
   const activeRunRecord = activeRun
@@ -1070,8 +1074,8 @@ function CanonicalChatWorkspaceContent({
         onAbort={activeRun ? () => void controller.cancelActiveRun() : undefined}
         busy={Boolean(activeRun) || uploadingAttachments}
         submitWhileBusy={Boolean(activeRun)}
-        disabled={controller.status === "loading" || uploadingAttachments || projectSetup.pending || projectSetup.mcpHandoff || (projectSetup.introductionVisible && !projectSetup.active)}
-        canSubmit={projectSetup.active ? Boolean(draft.trim() && !projectSetup.pending) : Boolean(selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && composerHasInput)}
+        disabled={controller.status === "loading" || uploadingAttachments || projectSetup.introductionVisible}
+        canSubmit={projectSetup.active ? Boolean(draft.trim() && projectSetup.canAnswer) : Boolean(selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && composerHasInput)}
         catalog={providerCatalog}
         attachmentsEnabled={attachmentPolicy.enabled && !projectSetup.active}
         automaticRouting={botPresentation?.kind === "recipe"}
@@ -1285,7 +1289,7 @@ function CanonicalChatWorkspaceContent({
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <SourceChatRoutines client={client.agents} chat={controller.detail.record.chat}
-              projectSetup={projectSetup.draft ? { header: projectSetup.header, note: projectSetup.note, controls: projectSetup.controls, messageId: setupMessageId } : undefined}
+              projectSetup={projectSetup.draft ? { header: projectSetup.header, note: projectSetup.note, controls: projectSetup.renderControls, messageId: setupMessageId, compactReply: projectSetup.active && Boolean(projectSetup.draft.interview) } : undefined}
               ordinary={!directBotId && !botIdentityUnknown && !explicitSharedRoute && controller.detail.record.chat.id === routedComposerChatId}
               identity={admissionIdentity} revision={botEventRevision} turns={transcript} callbacks={{
               openChat: selectChat,

@@ -11,7 +11,7 @@ import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js
 import { ProjectSetupRepository } from "../../../packages/gateway/src/chat/project-setup-repository.js";
 import { transitionProjectSetup } from "../../../packages/gateway/src/chat/project-setup-state.js";
 import { projectSetupWorkspaceFingerprint } from "../../../packages/gateway/src/chat/project-setup-workspace.js";
-import { generateProjectSetup, syncProjectSetupGeneration } from "../../../packages/gateway/src/chat/project-setup-generation.js";
+import { generateProjectSetup, syncProjectSetupGeneration, syncProjectSetupResult } from "../../../packages/gateway/src/chat/project-setup-generation.js";
 import { createManagedPiAdmission } from "../../../packages/gateway/src/chat/managed-pi-admission.js";
 import { createManagedPiRuntime } from "../../../packages/gateway/src/chat/managed-pi-runtime.js";
 import { createManagedPiSessionsRepository } from "../../../packages/gateway/src/chat/managed-pi-sessions.js";
@@ -32,10 +32,13 @@ import type { Kysely } from "kysely";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
 
-it("runs Matrix AI setup with zero tools, fresh ephemeral session, RO root and unchanged ordinary policy", async () => {
+it.each(["draft", "interview"] as const)("runs Matrix AI setup %s with zero tools, fresh ephemeral session, RO root and unchanged ordinary policy", async mode => {
   const { db, destroy } = await createBotStateDatabase(); cleanup.push(destroy);
   const home = await mkdtemp(join(tmpdir(), "matrix-pi-setup-")); cleanup.push(() => rm(home, { recursive: true, force: true }));
   const root = join(home, "project"); await mkdir(root); await writeFile(join(root, "owner.txt"), "OWNER_CONTENT");
+  const personality = { homePath: home, runtimeOwnerId: OWNER };
+  await mkdir(join(home, "system"));
+  await writeFile(join(home, "system/soul.md"), "PRIVATE_PERSONALITY_CANARY");
   const owner = { type: "personal" as const, ownerId: OWNER }, principal = { userId: OWNER, source: "jwt" as const };
   const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
   const ref = { kind: "project" as const, projectId: "project_setup" };
@@ -43,12 +46,17 @@ it("runs Matrix AI setup with zero tools, fresh ephemeral session, RO root and u
   const roots = { resolve: async () => resolved, revalidate: async () => resolved };
   const fingerprint = projectSetupWorkspaceFingerprint(resolved.fingerprint, await lstat(root));
   const setup = new ProjectSetupRepository(repository); let serial = 0;
-  let current = await setup.start(owner, ref.projectId, fingerprint, { clientRequestId: "req_start", answer: "Portfolio" });
+  const interview = mode === "interview";
+  const interviewContext = { project: { name: "Scoped interview" }, instructionFiles: ["AGENTS.md"], skills: [], mcpServices: [] };
+  let current = await setup.start(owner, ref.projectId, fingerprint, interview
+    ? { clientRequestId: "req_start", mode: "interview" } : { clientRequestId: "req_start", answer: "Portfolio" });
   const advance = (result: ProjectSetupResponse, action: ProjectSetupAction) => setup.mutate(owner, result.draft!.chatId, fingerprint,
     { clientRequestId: `req_step_${++serial}`, baseRevision: result.draft!.revision, action }, draft => transitionProjectSetup(draft, action));
-  current = await advance(current, { type: "answer", text: "Run relevant checks" });
-  current = await advance(current, { type: "choose_skill", choice: "skip" });
-  current = await advance(current, { type: "choose_mcp", choice: "skip" });
+  if (!interview) {
+    current = await advance(current, { type: "answer", text: "Run relevant checks" });
+    current = await advance(current, { type: "choose_skill", choice: "skip" });
+    current = await advance(current, { type: "choose_mcp", choice: "skip" });
+  }
   const snapshot = makeAiProviderSnapshot(), selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
   const sessions = createManagedPiSessionsRepository(db);
   await sessions.save({ ownerId: OWNER, chatId: current.draft!.chatId, baseRevision: 0,
@@ -58,7 +66,9 @@ it("runs Matrix AI setup with zero tools, fresh ephemeral session, RO root and u
   const handle = fauxProvider({ models: [{ id: selection.model, input: ["text"], contextWindow: 128000, maxTokens: 8192 }] });
   const contexts: Array<{ tools?: unknown[]; messages: unknown[] }> = [];
   handle.setResponses([
-    fauxAssistantMessage(fauxText(JSON.stringify({ guidance: "# Guidance\n\nRun relevant checks." }))),
+    fauxAssistantMessage(fauxText(JSON.stringify(interview
+      ? { reply: "What should we build with this project?", focus: "intent", suggestions: ["A release checklist"] }
+      : { guidance: "# Guidance\n\nRun relevant checks." }))),
     fauxAssistantMessage(fauxText("An ordinary follow-up.")),
   ].map(message => context => { contexts.push(structuredClone(context) as never); return message; }));
   const specs: BotRunSpec[] = [], forged: unknown[] = [];
@@ -98,7 +108,7 @@ it("runs Matrix AI setup with zero tools, fresh ephemeral session, RO root and u
   const admission = createManagedPiAdmission({ db, homePath: home, host, registry, roots, toolCapabilities: ["routine.cli", "browser.action", "integration.call"] });
   const ownerTools = { open: vi.fn(async () => undefined), closeRun: vi.fn(async () => undefined), submit: vi.fn() };
   const inputHistory = vi.fn(async () => ({ references: [], assertCurrent: async () => undefined }));
-  const runtime = createManagedPiRuntime({ homePath: home, expectedOwnerId: OWNER, admission, host, ownerTools: ownerTools as never, inputHistory,
+  const runtime = createManagedPiRuntime({ homePath: home, expectedOwnerId: OWNER, admission, host, ownerTools: ownerTools as never, inputHistory, personality,
     providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal,
     forgetRun: id => actions.forgetRun(id), cancelInference: binding => registry.cancelInference(binding) });
   actions = createBotBrokerActions({ db, registry, sessions: createBotSessionsRepository(db), managedSessions: sessions,
@@ -109,11 +119,24 @@ it("runs Matrix AI setup with zero tools, fresh ephemeral session, RO root and u
     instances: managedPiChatInstances(snapshot).map(instance => ({ ...instance, catalogRevision: "setup_test" })) }) };
   const orchestrator = new CanonicalChatOrchestrator({ repository, catalog, adapters: new CanonicalChatProviderRegistry([runtime.adapter]), executionRoots: roots });
   cleanup.push(async () => { await orchestrator.close(); await runtime.close(); });
-  current = await advance(current, { type: "generate", selection });
-  const generation = await generateProjectSetup({ repository, orchestrator, catalog }, principal, owner, current.draft!, selection, "req_generate", resolved.fingerprint);
+  if (!interview) current = await advance(current, { type: "generate", selection });
+  const generation = await generateProjectSetup({ repository, orchestrator, catalog }, principal, owner, current.draft!, selection, "req_generate",
+    resolved.fingerprint, interview ? interviewContext : undefined);
   expect(generation.status).toBe("running"); await orchestrator.drain();
-  const generated = await syncProjectSetupGeneration(repository, owner, { ...current.draft!, generation }, resolved.fingerprint);
-  expect(generated.generation?.status).toBe("completed"); expect(generated.proposals[0]?.content).toContain("relevant checks");
+  const pending = { ...current.draft!, generation };
+  if (interview) {
+    const result = await syncProjectSetupResult(repository, owner, pending, resolved.fingerprint, { runId: generation.runId!, context: interviewContext });
+    expect(result.draft.generation?.status).toBe("completed");
+    expect(result.draft.interview?.suggestions).toEqual(["A release checklist"]);
+    expect(result.assistantText).toBe("What should we build with this project?");
+    expect(specs[0]?.systemPrompt).not.toContain("PRIVATE_PERSONALITY_CANARY");
+    expect(specs[0]?.limits.maxInferenceCalls).toBe(1);
+    expect(JSON.stringify(contexts[0])).toContain("Scoped interview");
+  } else {
+    const generated = await syncProjectSetupGeneration(repository, owner, pending, resolved.fingerprint);
+    expect(generated.generation?.status).toBe("completed");
+    expect(generated.proposals[0]?.content).toContain("relevant checks");
+  }
   expect(specs[0]?.capabilities).toEqual([]); expect(contexts[0]?.tools ?? []).toEqual([]);
   expect(JSON.stringify(contexts[0])).not.toContain("PRIVATE_BROADER_SESSION_CANARY");
   expect(ownerTools.open).not.toHaveBeenCalled(); expect(inputHistory).not.toHaveBeenCalled();
@@ -125,7 +148,7 @@ it("runs Matrix AI setup with zero tools, fresh ephemeral session, RO root and u
   expect(toolPrepare).not.toHaveBeenCalled(); expect(toolDispatch).not.toHaveBeenCalled();
   expect(await db.selectFrom("managed_pi_tool_checkpoints").selectAll().execute()).toHaveLength(0);
   expect(await readFile(join(root, "owner.txt"), "utf8")).toBe("OWNER_CONTENT");
-  expect(createRuntime.mock.calls[0]?.[0]).toMatchObject({ sandbox: { worktree: { mode: "ro" } } });
+  expect(createRuntime.mock.calls[0]?.[0]).toMatchObject({ sandbox: { network: "broker_only", worktree: { mode: "ro" } } });
   const record = await repository.get(owner, current.draft!.chatId);
   await orchestrator.admitTurn(principal, owner, current.draft!.chatId, { clientRequestId: "req_followup", baseRevision: record!.chat.revision,
     parts: [{ type: "text", text: "An ordinary follow-up" }], selection, interactionMode: "default", permissionMode: "full_access" });
@@ -133,5 +156,6 @@ it("runs Matrix AI setup with zero tools, fresh ephemeral session, RO root and u
   expect(specs[1]?.capabilities).toContain("artifact.write"); expect(ownerTools.open).toHaveBeenCalledTimes(1);
   expect(sessionLoad).toHaveBeenCalledTimes(1); expect(sessionSave).toHaveBeenCalledTimes(1);
   expect(JSON.stringify(contexts[1])).toContain("PRIVATE_BROADER_SESSION_CANARY");
+  expect(specs[1]?.systemPrompt).toContain("PRIVATE_PERSONALITY_CANARY");
   expect(createRuntime.mock.calls[1]?.[0]).toMatchObject({ sandbox: { worktree: { mode: "rw" } } });
 });

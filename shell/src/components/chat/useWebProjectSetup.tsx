@@ -40,6 +40,7 @@ export function useWebProjectSetup({
   selection,
   isCurrentAuthority,
   openChat,
+  leaveSetup,
   messages,
 }: {
   project?: WebProject;
@@ -50,6 +51,7 @@ export function useWebProjectSetup({
   selection?: CanonicalChatModelSelection;
   isCurrentAuthority?: () => boolean;
   openChat: (id: string) => void;
+  leaveSetup?: () => void;
   messages: readonly { id: string; role: string; requestId?: string; tool?: string }[];
 }) {
   const navigation = useContext(WebProjectAgentContextNavigation);
@@ -67,7 +69,7 @@ export function useWebProjectSetup({
         redirect: "error",
         ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
       });
-      if (response.status === 404 && path.endsWith("/project-setup")) return { draft: null };
+      if (response.status === 404 && method === "GET" && path.endsWith("/project-setup")) return { draft: null };
       if (!response.ok) throw new Error("Project setup request failed");
       const result = await readWebProjectJson(response, 512 * 1024);
       if (!current()) throw new Error("Project setup changed");
@@ -147,10 +149,10 @@ export function useWebProjectSetup({
     ...setup,
     messageId,
     awaitingMessage: Boolean(messageId && !messages.some(message => message.id === messageId)),
-    placeholder: projectSetupAnswerPlaceholder(setup.introduction, draft?.step, setup.mcpHandoff),
+    placeholder: projectSetupAnswerPlaceholder(setup.introduction, draft?.step, setup.mcpHandoff, Boolean(draft?.interview)),
     note: draft ? <ProjectSetupAcceptedNote draft={draft} /> : null,
-    header: draft ? <ProjectSetupProgress projectName={projectName} draft={draft} /> : null,
-    controls: eligible ? (
+    header: draft ? <ProjectSetupProgress projectName={projectName} draft={draft} onLeaveSetup={leaveSetup} /> : null,
+    controls: eligible ? (replyText?: string) => (
       <ShellFileAuthority>
         {(authority) => (
           <ProjectSetupControls
@@ -160,6 +162,7 @@ export function useWebProjectSetup({
             selection={selection}
             markdownEdits={markdownEdits}
             onOpenMcpSettings={navigation?.openMcpSettings}
+            replyText={replyText}
             mcpSettingsOpen={navigation?.mcpSettingsOpen}
             onOpenFile={(path) => openFile(path, authority)}
             {...sources}

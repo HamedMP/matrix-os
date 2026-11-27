@@ -24,9 +24,7 @@ import {
 } from "@matrix-os/contracts";
 import {
   initialProjectSetup,
-  transitionProjectSetup,
   applyProjectSetupGeneration,
-  PROJECT_SETUP_QUESTIONS,
 } from "../../../packages/gateway/src/chat/project-setup-state";
 import { createCanonicalChatFixture } from "../../contracts/fixtures/canonical-chat";
 import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
@@ -40,6 +38,19 @@ if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !built)
   throw new Error("Required Electron Desktop build is missing");
 const evidence = process.env.MATRIX_PROJECT_SETUP_EVIDENCE_DIR ?? join(root, "output/project-chat-setup-fixture");
 const project = { id: "proj_setup_atlas", slug: "atlas", name: "Atlas setup fixture", kind: "scratch" };
+const openingQuestion = "What should readers be able to find in the Atlas illustration archive?";
+const openingDetail = "We can choose publishing rules after we decide what the archive is for.";
+const longOpeningChoice = "Publish the full archive only after checking licensing with its contributors.";
+const purpose = "Build a public illustration archive. Keep changes small, ask before publishing, and use Linear for releases.";
+const skillQuestion = "What should the release checklist verify before an illustration goes public?";
+const skillSuggestion = "Run release checks";
+const toolQuestion = "Would you like to connect Linear?";
+const reviewReply = "Review the setup before saving.";
+const correction = "Make the archive private to the design team.";
+const correctedReply = "Review the private archive setup.";
+const internalPrompt = "Project setup interview.";
+const internalReply = '{"reply":"Unprojected proposal","focus":"review","suggestions":[]}';
+const savedReply = "Your project setup files are saved.";
 const chatId = "chat_project_setup_fixture";
 const now = "2026-11-22T12:00:00.000Z";
 const fixture = createCanonicalChatFixture("idle");
@@ -107,7 +118,7 @@ function setupFixture() {
         id: `msg_setup_${messages.length + 1}`,
         chatId,
         turnId,
-        ...(runId ? { runId } : {}),
+        ...(role === "assistant" && runId ? { runId } : {}),
         seq: messages.length + 1,
         role,
         purpose: role === "user" ? "discussion" : "assistant",
@@ -116,8 +127,16 @@ function setupFixture() {
         createdAt: now,
       });
     }
-    if (runId)
-      runs.push({ ...completed, id: runId, chatId, turnId, executionRoot: { kind: "project", projectId: project.id } });
+    if (runId) {
+      runs.push({
+        ...completed, id: runId, chatId, turnId,
+        context: {
+          version: 1, requestHash: "a".repeat(64), chats: [],
+          projectSetupDraft: { mode: "interview", revision: draft!.revision },
+        },
+        executionRoot: { kind: "project", projectId: project.id },
+      });
+    }
     chatRevision++;
     return messages.at(-1)!.id;
   };
@@ -173,19 +192,41 @@ function setupFixture() {
     },
     start(input: unknown) {
       const body = ProjectSetupStartRequestSchema.parse(input);
-      const messageId = append(body.answer, PROJECT_SETUP_QUESTIONS.guidance);
-      draft = initialProjectSetup(chatId, project.id, body.answer, messageId);
+      if (!("mode" in body) || body.mode !== "interview") throw new Error("Expected an explicit Agent setup start");
+      const messageId = append("Set up this project with Chat.", `${openingQuestion}\n\n${openingDetail}`);
+      draft = {
+        ...initialProjectSetup(chatId, project.id, project.name, messageId),
+        answers: { purpose: "" },
+        interview: { focus: "intent", suggestions: ["Publish an illustration archive", "Share works in progress", longOpeningChoice] },
+        generation: { status: "completed" },
+      };
       return ProjectSetupResponseSchema.parse({ draft, record: record() });
     },
     update(input: unknown) {
       const body = ProjectSetupUpdateRequestSchema.parse(input);
       if (!draft || draft.revision !== body.baseRevision) throw new Error("Fixture revision conflict");
-      actions.push(body.action.type);
-      const transition = transitionProjectSetup(draft, body.action);
-      let next = transition.draft;
-      if (body.action.type === "generate") {
+      const { action } = body;
+      actions.push(action.type);
+      let next = structuredClone(draft);
+      if (action.type === "interview_answer" && next.interview?.focus === "intent") {
+        expect(action.text).toBe(purpose);
+        next.answers = { purpose, guidance: "Keep changes small and ask before publishing." };
+        next.interview = { focus: "skill", suggestions: [skillSuggestion] };
+        next.step = "skill";
+        next.currentQuestionMessageId = append(action.text, skillQuestion);
+      } else if (action.type === "interview_answer" && next.interview?.focus === "skill") {
+        expect(action.text).toBe(skillSuggestion);
+        next.answers.skillInstructions = action.text;
+        next.interview = { focus: "mcp", suggestions: [], recommendedService: "Linear" };
+        next.step = "mcp";
+        next.currentQuestionMessageId = append(action.text, `I can use Linear to look up approved release work. ${toolQuestion}`);
+      } else if (action.type === "choose_mcp" && action.choice === "connect" && next.interview) {
+        expect(action.service).toBe("Linear");
+        next.mcp = { state: "pending", service: action.service };
+        next.interview.mcpHandoff = true;
+      } else if (action.type === "interview_answer" && next.interview?.focus === "mcp") {
         const generated = JSON.stringify({
-          guidance: "# Atlas project\n\nKeep changes small and run the relevant tests.\n",
+          guidance: "# Atlas illustration archive\n\nKeep changes small and ask before publishing.\n",
           skill: {
             name: "release-check",
             description: "Check a release before publishing",
@@ -193,23 +234,26 @@ function setupFixture() {
           },
         });
         next = applyProjectSetupGeneration(
-          { ...next, generation: { runId: "run_setup_generation", status: "running" } },
+          { ...next, step: "review", interview: { focus: "review", suggestions: [] } },
           generated,
         );
-        next.currentQuestionMessageId = append(
-          "Draft the project files for review.",
-          generated,
-          "run_setup_generation",
-        );
-      } else if (body.action.type === "save") {
+        append(internalPrompt, internalReply, "run_setup_interview");
+        next.currentQuestionMessageId = append(action.text, reviewReply);
+      } else if (action.type === "interview_answer" && next.interview?.focus === "review") {
+        expect(action.text).toBe(correction);
+        next.answers.purpose = correction;
+        next.proposals = next.proposals.map(file => file.path === "AGENTS.md"
+          ? { ...file, content: `${file.content}\n\n${correction}\n` } : file);
+        next.currentQuestionMessageId = append(action.text, correctedReply);
+      } else if (action.type === "save") {
         for (const file of next.proposals) {
           files.set(file.path, file.content);
           file.status = "saved";
         }
         next.step = "saved";
-        next.currentQuestionMessageId = append("Save project setup.", PROJECT_SETUP_QUESTIONS.saved);
-      } else if (transition.userText && transition.assistantText) {
-        next.currentQuestionMessageId = append(transition.userText, transition.assistantText);
+        next.currentQuestionMessageId = append("Save this project setup.", savedReply);
+      } else if (action.type !== "sync_generation") {
+        throw new Error("Unexpected project setup action");
       }
       draft = { ...next, revision: draft.revision + 1, updatedAt: now };
       return ProjectSetupResponseSchema.parse({ draft, record: record() });
@@ -239,7 +283,9 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
       res.end(JSON.stringify(body));
     };
-    if (req.method !== "GET") state.mutations.push(`${req.method} ${path}`);
+    if (req.method !== "GET" && (path.endsWith("/setup") || path.endsWith("/project-setup") || path.endsWith("/turns") || path === "/api/chats")) {
+      state.mutations.push(`${req.method} ${path}`);
+    }
     if (path === "/api/chats/events") {
       if (state.streams.size >= 4) {
         res.writeHead(503).end();
@@ -347,7 +393,7 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     if (profile) await rm(profile, { recursive: true, force: true });
   });
 
-  it("skips cleanly, then uses custom Chat answers and explicitly reviews the MCP and file changes", async () => {
+  it("skips cleanly and renders Agent suggestions, MCP Settings and explicit review in one project Chat", async () => {
     onTestFailed(async () => {
       if (!page?.isClosed()) {
         console.error((await page.locator("body").ariaSnapshot({ timeout: 2_000 })).slice(0, 5000));
@@ -355,40 +401,37 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
       }
     });
     await openProject();
-    const beforeSkip = [...state.mutations];
+    await page.getByRole("dialog", { name: "Chat window", exact: true })
+      .getByRole("button", { name: "Maximize", exact: true }).click();
     await page.getByRole("button", { name: "Skip for now", exact: true }).click();
-    expect(state.mutations).toEqual(beforeSkip);
+    expect(state.mutations).toEqual([]);
     expect(state.draft).toBeNull();
     await page.getByRole("button", { name: "Set up with Chat", exact: true }).click();
-    await page.getByText(`What are you using ${project.name} for?`, { exact: true }).waitFor();
-    expect(state.draft).toBeNull();
+    await page.getByText(openingQuestion, { exact: true }).waitFor({ timeout: 8_000 });
+    expect(state.draft?.chatId).toBe(chatId);
+    await page.getByRole("button", { name: "Publish an illustration archive", exact: true }).waitFor();
+    expect(await page.getByRole("button", { name: longOpeningChoice, exact: true }).count()).toBe(0);
+    expect(await page.getByText("More answers", { exact: true }).count()).toBe(0);
+    expect(await page.getByText("More details", { exact: true }).count()).toBe(0);
+    expect(await page.getByText(openingDetail, { exact: true }).count()).toBe(0);
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-custom-answer.png") });
     const composer = page.locator('[contenteditable="true"]').last();
     const messages = page.getByRole("region", { name: "Messages", exact: true });
-    const purpose = "A public archive for my illustration portfolio.";
     await composer.fill(purpose);
     await composer.press("Enter");
     await messages.getByText(purpose, { exact: true }).waitFor();
-    await page.getByText(PROJECT_SETUP_QUESTIONS.guidance.split("\n\n")[0]!, { exact: true }).waitFor();
     expect(state.draft).toMatchObject({ chatId, answers: { purpose } });
     expect(await page.getByText("Worked for 0s", { exact: true }).count()).toBe(0);
-    const guidanceQuestion = page.getByText(PROJECT_SETUP_QUESTIONS.guidance.split("\n\n").at(-1)!, { exact: true });
-    const guidanceChoice = page.getByRole("button", { name: "Keep changes small", exact: true });
-    await guidanceChoice.waitFor();
-    const questionBox = await guidanceQuestion.boundingBox();
-    const choiceBox = await guidanceChoice.boundingBox();
+    const question = messages.getByText(skillQuestion, { exact: true });
+    const suggestion = page.getByRole("button", { name: skillSuggestion, exact: true });
+    await suggestion.waitFor();
+    const questionBox = await question.boundingBox();
+    const choiceBox = await suggestion.boundingBox();
     expect(choiceBox!.y - (questionBox!.y + questionBox!.height)).toBeLessThan(22);
-    await composer.fill("Keep changes small, run the checks, and ask before publishing.");
-    await composer.press("Enter");
-    await page.getByText(PROJECT_SETUP_QUESTIONS.skill.split("\n\n")[0]!, { exact: true }).waitFor();
-    await page.getByRole("button", { name: "Create a skill", exact: true }).click();
-    await page.getByText(PROJECT_SETUP_QUESTIONS.skill_instructions.split("\n\n")[0]!, { exact: true }).waitFor();
-    const skill = "Review the diff and list the checks for every release.";
-    await composer.fill(skill);
-    await composer.press("Enter");
-    await messages.getByText(skill, { exact: true }).waitFor();
-    await page.getByText(PROJECT_SETUP_QUESTIONS.mcp.split("\n\n")[0]!, { exact: true }).waitFor();
-    expect(state.draft?.answers.skillInstructions).toBe(skill);
+    await suggestion.click();
+    await messages.getByText(skillSuggestion, { exact: true }).waitFor();
+    await messages.getByText(toolQuestion, { exact: true }).waitFor();
+    expect(state.draft?.answers.skillInstructions).toBe(skillSuggestion);
     await page.getByRole("button", { name: "Connect Linear", exact: true }).click();
     await page.getByRole("button", { name: "Open MCP Settings", exact: true }).click();
     const settings = page.getByRole("dialog", { name: "Settings window", exact: true });
@@ -399,22 +442,28 @@ describe.skipIf(!built)("Electron Desktop guided project setup contract fixture"
     if (await focusChat.isVisible()) await focusChat.click();
     await page.getByText("Awaiting MCP authorization", { exact: true }).waitFor();
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-mcp-authorization.png") });
-    await page.getByRole("button", { name: "Continue to review", exact: true }).click();
+    await page.getByRole("button", { name: "Continue setup", exact: true }).click();
+    await messages.getByText(reviewReply, { exact: true }).waitFor();
+    expect(await messages.getByText(internalPrompt, { exact: true }).count()).toBe(0);
+    expect(await messages.getByText(internalReply, { exact: true }).count()).toBe(0);
     await page.getByRole("region", { name: "Review AGENTS.md", exact: true }).waitFor();
     expect(state.files.size).toBe(0);
-    await page.getByRole("button", { name: /^(Draft project files|Regenerate drafts)$/ }).click();
-    await page
-      .getByText("I drafted your project guidance and skill. Review the Markdown below before saving.", { exact: true })
-      .waitFor();
     await page.getByRole("region", { name: "Review .agents/skills/release-check/SKILL.md", exact: true }).waitFor();
     expect(state.draft?.mcp.state).toBe("pending");
     expect(await page.getByRole("button", { name: "Open MCP Settings", exact: true }).count()).toBe(0);
     expect(state.files.size).toBe(0);
+    await composer.fill(correction);
+    await composer.press("Enter");
+    await messages.getByText(correctedReply, { exact: true }).waitFor();
+    expect(state.draft?.answers.purpose).toBe(correction);
+    await page.getByRole("region", { name: "Review AGENTS.md", exact: true }).getByText(correction, { exact: true }).waitFor();
+    expect(state.files.size).toBe(0);
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-review.png") });
     await page.getByRole("button", { name: "Save project setup", exact: true }).click();
-    await page.getByText(PROJECT_SETUP_QUESTIONS.saved, { exact: true }).waitFor();
+    await page.getByText(savedReply, { exact: true }).waitFor();
     expect([...state.files.keys()].sort()).toEqual([".agents/skills/release-check/SKILL.md", "AGENTS.md", "CLAUDE.md"]);
     expect(state.actions).toContain("save");
+    expect(state.files.get("AGENTS.md")).toContain(correction);
     await page.screenshot({ path: join(evidence, "electron-setup-fixture-saved.png") });
     await openProject();
     await page.getByRole("button", { name: "Agent configuration", exact: true }).click();

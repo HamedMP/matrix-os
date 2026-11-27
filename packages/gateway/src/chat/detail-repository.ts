@@ -15,6 +15,7 @@ import {
   toMessage,
   toRun,
   toTurn,
+  visibleChatMessagePredicate,
   type ChatOwner,
   type ChatRecord,
 } from "./records.js";
@@ -51,6 +52,9 @@ export class ChatDetailRepository {
     const messageRows = await this.kysely.selectFrom("chat_messages").selectAll()
       .where("chat_id", "=", parsedChatId)
       .where("seq", "<", beforeSeq)
+      // Apply the private-run boundary before pagination, even if the matching
+      // Run would fall outside this page's bounded run projection.
+      .where(visibleChatMessagePredicate())
       .orderBy("seq", "desc")
       .limit(limit + 1)
       .execute();
