@@ -76,7 +76,13 @@ export function useInstalledApps(): InstalledAppsList | undefined {
   useEffect(() => {
     // Without the preload bridge (a browser preview) there is nothing to install.
     if (!window.operator) return undefined;
-    return onEvent("installed-apps:changed", () => { void refreshInstalledApps(); });
+    const offChanged = onEvent("installed-apps:changed", () => { void refreshInstalledApps(); });
+    // Availability can settle after the first read (macOS shim startup); focusing the window re-reads it too.
+    const offFocus = onEvent("window:focus-changed", ({ focused }) => { if (focused) void refreshInstalledApps(); });
+    return () => {
+      offChanged();
+      offFocus();
+    };
   }, []);
   return useQuery({
     queryKey: installedAppsQueryKey,

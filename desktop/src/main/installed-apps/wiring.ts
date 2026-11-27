@@ -18,9 +18,8 @@ import { createMacInstalledApps } from "./mac-wiring";
 import { createInstalledAppStore } from "./record-store";
 import { createInstalledAppReopen, reopenEach } from "./reopen";
 import { createInstalledAppsService } from "./service";
-import { InstalledAppsUnavailableError, type InstalledAppsControl } from "./install-ipc";
-import { createPlatformLaunchers } from "./launcher-wiring";
-import type { NativeAppOpenRequest } from "../../shared/native-app-open";
+import { createInstallControl } from "./install-control";
+import { createPlatformLaunchers, type PlatformLaunchers } from "./launcher-wiring";
 
 export interface InstalledAppsWiringOptions {
   userData: string;
@@ -55,9 +54,8 @@ export function installInstalledApps(options: InstalledAppsWiringOptions) {
   const records = createInstalledAppStore({ dir: options.userData });
   const resolveApp = createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() });
   const forgetWindowState = (installId: string) => options.store.setInstalledAppWindowBounds(installId, null);
-  const launchers = createPlatformLaunchers({
-    platform: process.platform, userData: options.userData, records, scheme: options.scheme, auth, forgetWindowState,
-  });
+  // Resolved during startup (the launcher command may need a file check).
+  let launchers: PlatformLaunchers | null = null;
 
   const service = createInstalledAppsService({
     records,
@@ -124,43 +122,27 @@ export function installInstalledApps(options: InstalledAppsWiringOptions) {
   }
 
   /** What the Install and Uninstall UI may do (spec 2711, layer 4). */
-  const control: InstalledAppsControl = {
-    platform: () => (mac ? (mac.available() ? "mac" : null) : launchers?.platform ?? null),
-    list: () => records.list(),
-    async install(request: NativeAppOpenRequest) {
-      const status = auth.getStatus();
-      const target = await resolveApp(request);
-      const input = { appIdentity: target.appIdentity, slug: target.slug, runtimeSlot: status.runtimeSlot, name: target.name };
-      const record = mac ? await mac.install(input) : launchers ? await launchers.installer.install(input) : null;
-      if (!record) throw new InstalledAppsUnavailableError();
-      options.onChanged();
-      void launch(record.installId).catch((error: unknown) => logFailure("could not open the new app", error));
-      return record;
-    },
-    async uninstall(installId: string) {
-      if (mac) return mac.uninstall(installId);
-      if (!launchers) throw new InstalledAppsUnavailableError();
-      service.close(installId);
-      const removed = await launchers.installer.uninstall(installId);
-      if (removed) options.onChanged();
-      return removed;
-    },
-    open: (installId: string) => launch(installId),
-    async show(installId: string) {
-      const path = (await records.get(installId))?.bundlePath;
-      if (!path) return false;
-      shell.showItemInFolder(path);
-      return true;
-    },
-  };
+  const { control, runStartup } = createInstallControl({
+    mac,
+    launchers: () => launchers,
+    records,
+    resolveApp,
+    runtimeSlot: () => auth.getStatus().runtimeSlot,
+    closeWindow: (installId) => service.close(installId),
+    launch: (installId) => launch(installId),
+    reveal: (path) => shell.showItemInFolder(path),
+    onChanged: options.onChanged,
+  });
 
   const started = (async () => {
-    await mac?.start().catch((error: unknown) => logFailure("app shims unavailable", error));
-    const pruned = await launchers?.installer.prune().catch((error: unknown) => {
-      logFailure("install prune failed", error);
-      return [];
+    // Whatever happens here, the renderer is told to re-read availability afterwards.
+    await runStartup(async () => {
+      await mac?.start().catch((error: unknown) => logFailure("app shims unavailable", error));
+      launchers = await createPlatformLaunchers({
+        platform: process.platform, userData: options.userData, records, scheme: options.scheme, auth, forgetWindowState,
+      });
+      await launchers?.installer.prune().catch((error: unknown) => logFailure("install prune failed", error));
     });
-    if (pruned?.length) options.onChanged();
     options.deepLinks.ready((installId) => { void launch(installId); });
     await reopenEach(await reopen.take(), (installId) => launch(installId, { background: true }));
   })();

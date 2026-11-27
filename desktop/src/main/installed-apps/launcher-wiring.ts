@@ -6,6 +6,7 @@ import { app, shell } from "electron";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { fetchGatewayIcon } from "./mac-icon";
+import { resolveLauncherCommand } from "./launcher-command";
 import { createLauncherInstaller, type LauncherPlatform } from "./launcher-installer";
 import { createLinuxLauncher } from "./linux-launcher";
 import type { InstalledAppStore } from "./record-store";
@@ -22,20 +23,28 @@ export interface LauncherWiringOptions {
   forgetWindowState(installId: string): Promise<void>;
 }
 
-/** The Matrix command a launcher runs: the executable, plus the app path when unpackaged. */
-function matrixCommand(): { exePath: string; baseArgs: string[] } {
-  return { exePath: process.execPath, baseArgs: app.isPackaged ? [] : [app.getAppPath()] };
-}
-
 function linuxApplicationsDir(): string {
   const dataHome = process.env.XDG_DATA_HOME;
   return join(dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), ".local", "share"), "applications");
 }
 
-/** Null on platforms without launchers (macOS uses app shims). */
-export function createPlatformLaunchers(options: LauncherWiringOptions) {
+/**
+ * Null on platforms without launchers (macOS uses app shims), and when no
+ * launcher could start Matrix again (packaged Linux without its AppImage).
+ */
+export async function createPlatformLaunchers(options: LauncherWiringOptions) {
   if (options.platform !== "win32" && options.platform !== "linux") return null;
-  const command = matrixCommand();
+  const command = await resolveLauncherCommand({
+    platform: options.platform,
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+    appPath: app.getAppPath(),
+    appImage: process.env.APPIMAGE,
+  });
+  if (!command) {
+    console.warn("[installed-apps] no relaunchable Matrix command; installing apps is unavailable");
+    return null;
+  }
   const launcher: LauncherPlatform = options.platform === "win32"
     ? createWindowsLauncher({
       programsDir: join(app.getPath("appData"), "Microsoft", "Windows", "Start Menu", "Programs"),
@@ -74,3 +83,5 @@ export function createPlatformLaunchers(options: LauncherWiringOptions) {
     },
   };
 }
+
+export type PlatformLaunchers = NonNullable<Awaited<ReturnType<typeof createPlatformLaunchers>>>;

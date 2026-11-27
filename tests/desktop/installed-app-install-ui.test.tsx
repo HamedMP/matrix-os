@@ -229,4 +229,14 @@ describe("Installed apps settings", () => {
     act(() => listeners.get("installed-apps:changed")?.({}));
     expect(await screen.findByText("Notes", { selector: "li span" })).toBeTruthy();
   });
+
+  it("re-reads availability when the window regains focus", async () => {
+    list = { available: false };
+    render(<SettingsSidebar section="appearance" onSectionChange={vi.fn()} />);
+    await listSettled();
+    expect(screen.queryByRole("button", { name: "Installed apps" })).toBeNull();
+    list = { available: true, platform: "mac", apps: [] };
+    act(() => listeners.get("window:focus-changed")?.({ focused: true }));
+    expect(await screen.findByRole("button", { name: "Installed apps" })).toBeTruthy();
+  });
 });
