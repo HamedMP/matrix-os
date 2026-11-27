@@ -4,6 +4,7 @@
  * undo step and refuses, with a reason, what it cannot do safely.
  */
 import type { SheetGridController } from "../../grid";
+import { MAX_ACTION_CELLS } from "../../grid/actions-data";
 import { MERGED_CELLS, coveredIn, crossesMerge } from "../../grid/merge-guard";
 import { type CellValue, MAX_COLS } from "../../session/engine";
 
@@ -68,6 +69,22 @@ export function removeDuplicateRows(controller: SheetGridController): DataResult
   return { ok: true, message: `Removed ${removed} duplicate ${removed === 1 ? "row" : "rows"}. ${kept.length} unique ${kept.length === 1 ? "row remains" : "rows remain"}.` };
 }
 
+/** The parts of `text` between delimiters, stopping once there are more than `most`: the caller refuses those. */
+function splitAtMost(text: string, delimiter: string, most: number): string[] {
+  const parts: string[] = [];
+  let from = 0;
+  while (parts.length <= most) {
+    const at = text.indexOf(delimiter, from);
+    if (at < 0) {
+      parts.push(text.slice(from));
+      break;
+    }
+    parts.push(text.slice(from, at));
+    from = at + delimiter.length;
+  }
+  return parts;
+}
+
 /**
  * Splits the text of the selected column at a delimiter into the columns to
  * its right. Refused when those cells are not empty, so nothing is written
@@ -84,16 +101,22 @@ export function splitTextToColumns(controller: SheetGridController, delimiterId:
   // A part written under a merged cell would be stored but never shown.
   const covered = coveredIn(session.workbook.getSheet(sheet).mergedRanges, { start, end: { row: end.row, col: MAX_COLS - 1 } });
   const rows: string[][] = [];
+  const fit = MAX_COLS - start.col;
   let split = 0;
+  let cells = 0;
   for (let row = start.row; row <= end.row; row++) {
     const raw = session.raw(sheet, row, start.col);
-    const parts = raw.formula === null && typeof raw.value === "string" ? raw.value.split(delimiter.text) : [];
+    // Splitting stops once the parts pass the last column or the cells one step can write: those are refused.
+    const most = Math.min(fit, MAX_ACTION_CELLS - cells);
+    const parts = raw.formula === null && typeof raw.value === "string" ? splitAtMost(raw.value, delimiter.text, most) : [];
     if (parts.length < 2) {
       rows.push([]);
       continue;
     }
     // Checked before the cells to the right are read: past the last column there are none.
-    if (start.col + parts.length > MAX_COLS) return { ok: false, message: "The split would go past the last column of the sheet. Move the text further left, then split." };
+    if (parts.length > fit) return { ok: false, message: "The split would go past the last column of the sheet. Move the text further left, then split." };
+    if (parts.length > most) return { ok: false, message: "The split would make too many cells for one step. Select fewer rows." };
+    cells += parts.length;
     for (let offset = 1; offset < parts.length; offset++) {
       if (!session.isBlank(sheet, row, start.col + offset)) return { ok: false, message: "The cells to the right are not empty. Insert columns first, then split." };
       if (covered(row, start.col + offset)) return { ok: false, message: MERGED_CELLS };
