@@ -1,6 +1,7 @@
 import { withinIntegrationDeadline } from "../bounded-proxy-transport.js";
 
 const MESSAGES = {
+  account_mismatch: "Choose the same Microsoft account to reconnect Outlook",
   consent_required: "Reconnect Outlook to continue",
   throttled: "Outlook is busy. Try again later",
   unavailable: "Outlook is unavailable",
