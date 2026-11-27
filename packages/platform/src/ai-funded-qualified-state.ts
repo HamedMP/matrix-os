@@ -42,10 +42,10 @@ function models(raw: string): string[] {
     throw new QualifiedFundedError();
   }
 }
-/** Machine lock must already precede runtime/global locks. Returned rows remain locked through caller commit. */
+/** Machine lock must already be held. Match publication's global-before-runtime lock order. */
 export async function qualifiedPolicy(db: PlatformDB, identity: FundedAiIdentity, model: string, at: Date) {
-  const runtime = await db.executor.selectFrom('ai_funded_runtime_policies').selectAll().where('machine_id', '=', identity.machineId).forUpdate().executeTakeFirst();
   const global = await db.executor.selectFrom('ai_funded_global_policy').selectAll().where('policy_id', '=', 'default').forShare().executeTakeFirst();
+  const runtime = await db.executor.selectFrom('ai_funded_runtime_policies').selectAll().where('machine_id', '=', identity.machineId).forUpdate().executeTakeFirst();
   const restriction = await db.executor.selectFrom('ai_funded_credit_restrictions').selectAll().where('machine_id', '=', identity.machineId).forShare().executeTakeFirst();
   if (!runtime || !global || runtime.owner_id !== identity.ownerId || runtime.runtime_slot !== identity.runtimeSlot || !runtime.enabled || !global.enabled
     || (runtime.expires_at !== null && Date.parse(runtime.expires_at) <= at.getTime()) || restriction?.frozen || BigInt(restriction?.debt_microusd ?? 0) > 0n) deny();

@@ -3,7 +3,7 @@ import { sql } from 'kysely';
 import { Hono } from 'hono';
 import { createServer, type Socket } from 'node:net';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
-import { qualifiedTokenHash } from '../../packages/platform/src/ai-funded-qualified-state.js';
+import { qualifiedPolicy, qualifiedTokenHash } from '../../packages/platform/src/ai-funded-qualified-state.js';
 import { createQualifiedFundedRuntimeRoutes, createQualifiedFundedRelayRoutes } from '../../packages/platform/src/ai-funded-qualified-routes.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { type PlatformDB, insertUserMachine } from '../../packages/platform/src/db.js';
@@ -44,6 +44,30 @@ describe.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL)('qualified ru
     expect(issued.lease.credential.token).toMatch(/^sk-matrix-google-funded-/); expect(await counts()).toEqual({ tokens: 1, routes: 1 });
     expect(await service.check({ ...request(), credential: issued.lease.credential.token }, new AbortController().signal)).toMatchObject({ binding: issued.binding, authorization: { identity: { tokenId: issued.lease.credential.tokenId } } });
     await expect(service.check({ ...request(), credential: issued.lease.credential.token.slice(0, -1) + (issued.lease.credential.token.endsWith('x') ? 'y' : 'x') }, new AbortController().signal)).rejects.toThrow('Qualified AI unavailable');
+  });
+  it('lets a global policy update lock the runtime while qualified policy waits for the global policy', async () => {
+    let policy: Promise<unknown> | undefined;
+    try {
+      await db.transaction(async admin => {
+        await admin.executor.selectFrom('ai_funded_global_policy').select('policy_id')
+          .where('policy_id', '=', 'default').forUpdate().executeTakeFirstOrThrow();
+        policy = runner.run(new AbortController().signal, Date.now() + 4000,
+          issuer => qualifiedPolicy(issuer, identity, model, now));
+        void Promise.allSettled([policy]);
+        await vi.waitFor(async () => {
+          await sql`SELECT pg_stat_clear_snapshot()`.execute(admin.executor);
+          const waiting = await sql`SELECT 1 FROM pg_stat_activity
+            WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock'
+              AND query LIKE '%ai_funded_global_policy%'`.execute(admin.executor);
+          expect(waiting.rows).toHaveLength(1);
+        }, { timeout: 1500 });
+        await admin.executor.selectFrom('ai_funded_runtime_policies').select('machine_id')
+          .where('machine_id', '=', identity.machineId).forUpdate().noWait().executeTakeFirstOrThrow();
+      });
+      await expect(policy).resolves.toMatchObject({ policy: { enabled: true } });
+    } finally {
+      if (policy) await Promise.allSettled([policy]);
+    }
   });
   it('rolls back token AND cooldown when child insertion fails', async () => {
     await sql`alter table ai_runtime_credential_routes add constraint synthetic_failure check (false) not valid`.execute(db.executor);
