@@ -7,7 +7,7 @@ import { AdmissionLeaseSchema, ChatAnalyticsTagsSchema, ChatAnalyticsUnavailable
   GenerationBindingSchema, GenerationFactsSchema, OwnerPolicySchema, type AdmissionLease, type CompletedGeneration,
   type GenerationBinding } from "./contracts.js";
 import { migrateChatAnalytics } from "./migration.js";
-import { aggregateChatAnalytics, ordinaryGenerationFilter } from "./aggregation.js";
+import { aggregateChatAnalytics, ordinaryGenerationFilter, withoutCrossChatContext } from "./aggregation.js";
 
 interface GenerationRow {
   generation_id: string; owner_id: string; chat_id: string; run_id: string; runtime_handle: string;
@@ -31,7 +31,7 @@ export function createChatAnalyticsStore<DB>(db: Kysely<DB>, options: { now?: ()
       WHERE c.id=${binding.chatId} AND c.owner_type='personal' AND c.owner_id=${binding.ownerId}
         AND c.lifecycle='active' AND c.collaboration IS NULL AND r.id=${binding.runId}
         AND r.status IN ('accepted','running','waiting_for_approval','waiting_for_input','completed')
-        AND (r.outcome IS NULL OR r.outcome='completed')`.execute(tx)).rows.length === 1;
+        AND (r.outcome IS NULL OR r.outcome='completed') AND ${withoutCrossChatContext()}`.execute(tx)).rows.length === 1;
     return owned && (await createGoogleModelHistoryStore(tx, { now }).inspect({ type: "personal", ownerId: binding.ownerId }, binding.chatId)).classification === "ordinary";
   }
   async function currentLease(tx: Kysely<DB>, binding: GenerationBinding): Promise<AdmissionLease | null> {

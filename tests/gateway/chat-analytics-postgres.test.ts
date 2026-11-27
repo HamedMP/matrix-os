@@ -61,6 +61,25 @@ describe("owner PostgreSQL Chat analytics", () => {
     await sql`DELETE FROM google_model_history_births WHERE chat_id='chat_one'`.execute(repository.kysely);
     expect(await store.inspectAdmission(binding)).toBeNull();
   });
+  it.each(["current", "earlier"] as const)("denies classification when the %s run includes an unverified chat reference", async (when) => {
+    const completed = await record();
+    expect(await store.recordCompleted(completed)).toBe(true);
+    const context = { version: 1, requestHash: "1".repeat(64), chats: [
+      { chatId: "chat_imported", title: "Imported fixture", throughSeq: 1, text: "reference fixture", truncated: false },
+    ] };
+    if (when === "current") {
+      await sql`UPDATE chat_runs SET context_snapshot=${JSON.stringify(context)}::jsonb WHERE id=${binding.runId}`.execute(repository.kysely);
+    } else {
+      await sql`INSERT INTO chat_runs(id,chat_id,turn_id,client_request_id,attempt,driver_kind,instance_id,selection,
+        interaction_mode,permission_mode,status,history_boundary_seq,context_snapshot,capability_snapshot,created_at,updated_at)
+        VALUES('run_earlier','chat_one','turn_one','req_earlier',2,'matrix_pi','matrix_pi_default','{}'::jsonb,
+          'chat','default','completed',0,${JSON.stringify(context)}::jsonb,'{}'::jsonb,${now},${now})`.execute(repository.kysely);
+    }
+    expect(await store.inspectAdmission(binding)).toBeNull();
+    expect(await store.revalidateGeneration(completed)).toBe(false);
+    expect(await store.commitTags(completed, tags)).toBe(false);
+    expect(await store.aggregate(range())).toEqual([]);
+  });
   it("persists only measured metadata and fixed tags, with idempotent correlation", async () => {
     const completed = await record();
     expect(await store.recordCompleted(completed)).toBe(true);

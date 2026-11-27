@@ -1,6 +1,15 @@
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import { AggregateInputSchema, ChatAnalyticsUnavailable } from "./contracts.js";
 
+/** A resumed run can carry text or replies from earlier cross-Chat snapshots.
+ * A destination birth cannot attest that reference chain. Keep those runs
+ * outside text classification and reporting. The current run is included. */
+export const withoutCrossChatContext = () => sql<boolean>`NOT EXISTS (
+  SELECT 1 FROM chat_runs source_run
+  WHERE source_run.chat_id=r.chat_id AND source_run.history_boundary_seq<=r.history_boundary_seq
+    AND source_run.context_snapshot IS NOT NULL
+    AND source_run.context_snapshot->'chats' IS DISTINCT FROM '[]'::jsonb)`;
+
 /** Same positive saved-history boundary, expressed as a bounded relational filter. */
 export const ordinaryGenerationFilter = () => sql<boolean>`EXISTS (SELECT 1 FROM chats c
   JOIN google_model_history_births b ON b.chat_id=c.id AND b.owner_id=c.owner_id AND b.owner_type=c.owner_type
@@ -8,6 +17,7 @@ export const ordinaryGenerationFilter = () => sql<boolean>`EXISTS (SELECT 1 FROM
   WHERE c.id=g.chat_id AND c.owner_id=g.owner_id AND c.owner_type='personal' AND c.lifecycle='active'
     AND c.collaboration IS NULL AND r.status IN ('accepted','running','waiting_for_approval','waiting_for_input','completed')
     AND (r.outcome IS NULL OR r.outcome='completed')
+    AND ${withoutCrossChatContext()}
     AND NOT EXISTS(SELECT 1 FROM google_context_markers m WHERE m.owner_id=c.owner_id AND m.chat_id=c.id))`;
 
 const dimensions: Record<string, RawBuilder<unknown>> = {
