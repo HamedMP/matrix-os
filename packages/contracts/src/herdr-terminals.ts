@@ -7,6 +7,7 @@
 import type { CanonicalChatInvocation } from "@matrix-os/contracts";
 import { desktopLinkDevicePrefix } from "@matrix-os/contracts/desktop-link";
 import { z } from "zod/v4";
+import { isManagedTerminalRef } from "@matrix-os/contracts/managed-terminal-control";
 
 /**
  * The workspace every Herdr terminal reports under in Matrix terminal refs, so
@@ -80,12 +81,12 @@ export function shouldShowHerdrSessions(list: HerdrSessionList | null | undefine
 
 /** A qualified Chat selection may also name one of the computer's linked desktops. */
 export function isHerdrChatTerminalRef(ref: { workspaceId: string } | null | undefined): boolean {
-  return isHerdrTerminalRef(ref) || desktopLinkDevicePrefix(ref?.workspaceId) !== null;
+  return isHerdrTerminalRef(ref) || desktopLinkDevicePrefix(ref?.workspaceId) !== null || Boolean(ref && isManagedTerminalRef(ref));
 }
 
 /** Read-only owner Chat discovery; a machine ID is never permission to execute. */
 export const HerdrDiscoveryQuerySchema = z.strictObject({
-  machine: z.string().regex(/^(?:gateway|(?:herdr|machine):[a-z0-9_.-]{1,32}|desktop:[0-9a-f]{64}(?:\/machine:[a-z0-9][a-z0-9._-]{0,31})?|via:[0-9a-f]{64}:(?:(?:private-herdr|herdr):[a-z0-9][a-z0-9._-]{0,31}|matrix:[a-z0-9][a-z0-9-]{1,62}:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?))$/).optional(),
+  machine: z.string().regex(/^(?:gateway|matrix:[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}|(?:herdr|machine):[a-z0-9_.-]{1,32}|desktop:[0-9a-f]{64}(?:\/machine:[a-z0-9][a-z0-9._-]{0,31})?|via:[0-9a-f]{64}:(?:(?:private-herdr|herdr):[a-z0-9][a-z0-9._-]{0,31}|matrix:[a-z0-9][a-z0-9-]{1,62}:[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?))$/).optional(),
   machineQuery: z.string().trim().min(1).max(100).optional(),
   onlineOnly: z.boolean().optional(),
   query: z.string().trim().min(1).max(100).optional(),

@@ -23,6 +23,7 @@ export interface ChatTerminalSelection {
   revision: string;
   signal: AbortSignal;
   inputActivity: TerminalInputActivity;
+  validateRoot?: (root: string) => Promise<boolean>;
 }
 
 export function herdrProcessRevision(salt: string, generation: number, process: HcListedProcess, directoryId: string) {
@@ -74,6 +75,7 @@ export async function bindHerdrChatTerminal(
   const desktop = selection.desktop;
   const expectedDirectory = desktop ? null : await herdrDirectoryIdentity(root);
   async function matches(process: HcListedProcess) {
+    if (selection.validateRoot && !await selection.validateRoot(root)) return false;
     if (desktop) return process.selectionRevision === revision && await desktop.validate();
     if (source.qualifiedRemote) {
       return Boolean(expectedDirectory && process.selectionRevision === revision

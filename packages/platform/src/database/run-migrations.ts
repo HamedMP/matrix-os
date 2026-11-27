@@ -15,6 +15,7 @@ import { migrateAiFundedPricing } from './funded-pricing-review-migration.js';
 import { FUNDED_PRICING_REVIEW_REVISION } from './funded-pricing-review-revision.js';
 import { migrateWhatsApp } from './migrations/whatsapp.js';
 import { WHATSAPP_SCHEMA_REVISION } from './whatsapp-migration-revision.js';
+import { migrateManagedTerminalGrants, MANAGED_TERMINAL_GRANT_REVISION } from './managed-terminal-grant-migration.js';
 
 export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>): Promise<void> {
   await runPlatformMigration(db, migratePlatformSchema, {
@@ -42,5 +43,8 @@ export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>)
   // Keep its core marker intact while independently ensuring our channel schema.
   await runPlatformMigration(db, migrateWhatsApp, {
     scope: 'whatsapp', revision: WHATSAPP_SCHEMA_REVISION, deadlockAttempts: 12,
+  });
+  await runPlatformMigration(db, migrateManagedTerminalGrants, {
+    scope: 'managed-terminal-grants', revision: MANAGED_TERMINAL_GRANT_REVISION, deadlockAttempts: 12,
   });
 }

@@ -1,4 +1,5 @@
 import { isSharedAppOpenPath } from "@matrix-os/contracts";
+import { MANAGED_TERMINAL_OWNER_GRANT_HEADER } from "@matrix-os/contracts/managed-terminal-control";
 import { readAuthShellRequestBody, resolveAuthShellBrowserHost } from "./auth-shell-request.js";
 import { whatsappPrimaryHandoffResponse } from "./whatsapp/primary-handoff.js";
 import {
@@ -13,6 +14,7 @@ export { authenticatedApprovalProxyProof } from './canonical-owner-approval-prox
 import { browserApprovalProofHeader } from './browser-chat-approval-proof.js';
 import { authenticatedPreviewDriveProxyProof } from './preview-drive-proxy-proof.js';
 import { PREVIEW_DRIVE_TURN_PROOF_HEADER } from './preview-drive-turn-proof.js';
+import { createManagedTerminalOwnerProxy } from './managed-terminal-owner-proxy.js';
 import { parseChatShareRoute, proxyChatShare } from './chat-share-proxy.js';
 import { fetchRuntimeProxy, shouldReleaseRuntimeProxyTimeout } from "./runtime-proxy-fetch.js";
 export { fetchRuntimeProxy } from "./runtime-proxy-fetch.js";
@@ -267,6 +269,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     logRouteError,
     substrates,
   } = opts;
+  const managedTerminalOwner = createManagedTerminalOwnerProxy({ db, env: appEnv, platformSecret });
   const browserProofOptions = {
     browserApprovalsEnabled: browserApprovals.policy.kind === 'global',
     browserApprovalDevScope: browserApprovals.policy.kind === 'scoped' ? browserApprovals.policy.scope : undefined,
@@ -290,7 +293,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const headers = new Headers();
     for (const [key, value] of Object.entries(c.req.header())) {
       const lowerKey = key.toLowerCase();
-      if (lowerKey !== 'host' && value) {
+      if (lowerKey !== 'host' && lowerKey !== MANAGED_TERMINAL_OWNER_GRANT_HEADER && value) {
         headers.set(key, value);
       }
     }
@@ -814,9 +817,14 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, machine, identity, platformSecret });
       if (turnProof && typeof turnProof === 'object') return c.json({ error: 'Turn request unavailable' }, turnProof.status);
+      const managedGrant = await managedTerminalOwner({
+        request: c.req.raw, method: c.req.method, path: explicitVmRoute.upstreamPath, machine, identity,
+      });
+      if (managedGrant && typeof managedGrant === 'object') return c.json({ error: 'Turn request unavailable' }, managedGrant.status);
       const headers = buildForwardedProxyHeaders(c.req.header());
       for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
       if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
+      if (typeof managedGrant === 'string') headers.set(MANAGED_TERMINAL_OWNER_GRANT_HEADER, managedGrant);
       const rawCookie = c.req.header('cookie');
       if (rawCookie) {
         const forwarded = rawCookie
@@ -996,6 +1004,10 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path, machine: runningMachine, identity, platformSecret });
       if (turnProof && typeof turnProof === 'object') return c.json({ error: 'Turn request unavailable' }, turnProof.status);
+      const managedGrant = isCodeDomain ? null : await managedTerminalOwner({
+        request: c.req.raw, method: c.req.method, path, machine: runningMachine, identity,
+      });
+      if (managedGrant && typeof managedGrant === 'object') return c.json({ error: 'Turn request unavailable' }, managedGrant.status);
       const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
       const headers = isCodeDomain
         ? buildCodeDomainProxyHeaders(
@@ -1007,6 +1019,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       if (!isCodeDomain) {
         for (const proof of approvalProof) headers.set(browserApprovalProofHeader(proof), proof);
         if (typeof turnProof === 'string') headers.set(PREVIEW_DRIVE_TURN_PROOF_HEADER, turnProof);
+        if (typeof managedGrant === 'string') headers.set(MANAGED_TERMINAL_OWNER_GRANT_HEADER, managedGrant);
         const rawCookie = c.req.header('cookie');
         if (rawCookie) {
           const forwarded = rawCookie

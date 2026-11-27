@@ -268,6 +268,8 @@ import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js
 import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.js";
 import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation.js";
 import { createHerdrChatTerminalRoute } from "./chat/herdr-terminal-route.js";
+import { createManagedTerminalTargetRoutes } from "./herdr/managed-terminal-target.js";
+import { MANAGED_TERMINAL_TARGET_PATH } from "@matrix-os/contracts/managed-terminal-control";
 import { HERDR_CHAT_ROUTE } from "./chat/herdr-chat-target.js";
 import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
 import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
@@ -1261,6 +1263,9 @@ export async function createGateway(config: GatewayConfig) {
     },
   });
   app.route(HERDR_CHAT_ROUTE, createHerdrChatTerminalRoute(herdrSessions, terminalAgents.inputActivity, desktopLinks));
+  app.route(MANAGED_TERMINAL_TARGET_PATH, createManagedTerminalTargetRoutes({
+    adapter: herdrSessions, inputActivity: terminalAgents.inputActivity, homePath, worktrees: codingAgentWorktreeManager,
+  }));
   app.route("/api/desktop-pairing", await createRuntimeDesktopPairingRoutes({ ownerDatabase: kyselyInstance, onPairingChanged: (state) => herdrViewers?.desktopLinks?.pairingChanged(state) }));
   app.route("/api/system/private-network", privateNetwork.routes);
   app.route("/api/speech", speechRuntime.routes);

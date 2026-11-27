@@ -1,0 +1,19 @@
+# Terminal Control on another Matrix Computer
+
+An owner can select a terminal on another Matrix Computer in a private Codex Chat in the Web app. Matrix Platform routes signed requests directly between the two Gateways. Each action uses the destination's own local Core. The path does not require a paired desktop or SSH.
+
+| Route | Caller and authorization |
+| --- | --- |
+| GET /api/terminal/herdr/managed | Existing direct runtime owner principal. Lists matching computers or eligible terminal revisions for one named machine. |
+| POST /api/chats/:chatId/turns | Existing authenticated human browser and canonical direct owner turn. Platform mints the scoped selection proof and injects it after stripping any client-supplied proof. |
+| POST /internal/terminal-control | Source Gateway on an enabled managed runtime. Purpose-signed with that runtime's Matrix proof. Platform resolves current machine records, checks owner, entitlement, lifecycle, and enrollment class. |
+| POST /api/internal/terminal-control | Platform. Fresh purpose-signed payload for the destination's active proof and exact identity. Validates the destination's local terminal and registered checkout again before acting. |
+| Existing run-scoped Terminal Control route | Existing private owner-submitted run authorization. A scoped action can use only the single selected reference and revision. Discovery does not authorize execution. |
+
+The browser and model receive no runtime or selection proof. A verified human browser request in the private Chat authorizes the exact selected terminal. Platform signs this selection with its service key, independently of the per-runtime proof. The source Gateway keeps the selection proof in the first-attempt Full Access run's memory. Platform checks source machine and epoch, owner, Chat, canonical turn digest, browser request, source worktree, target workspace, tab and revision. Its database admits one run for the browser turn, with a short initial activation deadline and a lease of at most 15 minutes. Stopping the run disables further calls. Both runtimes must have the same owner and provisioning class. Shared or delegated runtime access is excluded. Preview eligibility uses the existing private Preview lifecycle. Customer and Preview routes stay isolated. Desktop and CLI session credentials do not issue the initial grant.
+
+An action binds the source machine and run, exact target machine, terminal ref, and process revision. The destination validates the live process and its own admitted checkout without accepting a caller-supplied path. Direction, timestamp, nonce and body are authenticated jointly. Platform seals destination payloads and authenticates the sealed replies, including on IP-based VPS transport. Mutable requests are bounded, deadlines are short, and a replay is rejected while still actionable. Action fetches are never retried automatically. Stopping the source run removes its capability and aborts in-flight fetches. Input already accepted by the terminal cannot be unsent. No offline queue, generic forwarding, terminal creation, or reconnect retry is part of the contract.
+
+The target terminal starts at the root of an existing Matrix-registered personal worktree. The destination checks its project registry and validates the checkout's current path against its registered home layout. Changing directories, replacing the process, or archiving the project invalidates the selected incarnation. Commands retain the ordinary OS permissions of that terminal process.
+
+Enable separately on the Platform and qualifying Gateways. Qualification requires an owner-authenticated Preview Chat, a second same-owner qualified Preview, the desktop disconnected, an explicit named terminal selection, and output with a command exit-code marker in the same Chat. Keep stable rollout separate. Public docs follow in the Matrix site repo once the live behavior is qualified.
