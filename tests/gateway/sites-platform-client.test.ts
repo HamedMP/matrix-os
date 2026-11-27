@@ -99,32 +99,3 @@ it('uses the machine-bound readiness endpoint and rejects a malformed capability
  await expect(api.emailInvitationCapabilities!('event')).rejects.toMatchObject({status:503});
 });
 
-// Fault detected: a Gateway that sends v4 on every Sites call breaks publishing against
-// a Platform that still knows only v2/v3 (rollout or Platform rollback). Only the owner
-// readiness read may ask for allowlist mode.
-describe('Sites contract across mixed Gateway/Platform versions',()=>{
- const record=(accessMode:'public'|'private_email')=>({id:randomUUID(),appSlug:'event',title:'Launch',description:'',slug:null,
-  url:'https://matrix.page/test',revision:2,status:'published',accessMode,activeVersion:randomUUID(),versions:[],config:{data:{},forms:[]}});
- // The access-mode rule of the Platform before allowlist mode (v2/v3 only).
- function previousPlatform(){
-  return vi.fn(async(_url:unknown,init:RequestInit)=>{
-   const version=(init.headers as Record<string,string>)['x-matrix-sites-contract-version'];
-   const negotiated=version==='2'||version==='3';
-   const body=init.body?JSON.parse(String(init.body)) as Record<string,unknown>:{};
-   if(!negotiated&&Object.hasOwn(body,'accessMode'))return new Response('{}',{status:400});
-   const site=record('private_email');
-   if(String(_url).includes('/email-invitation-capabilities'))return new Response(JSON.stringify({privateEmailInvitations:false}));
-   if(negotiated)return new Response(JSON.stringify(site));
-   const {accessMode:_mode,...legacy}=site;return new Response(JSON.stringify(legacy));
-  });
- }
- it('keeps publish, metadata edits and reads working against the previous Platform',async()=>{
-  const fetch=previousPlatform();vi.stubGlobal('fetch',fetch);
-  const api=client();
-  await expect(api.request('event','POST',{accessMode:'private_email',title:'Launch'})).resolves.toMatchObject({accessMode:'private_email'});
-  await expect(api.request('event','PATCH',{accessMode:'private_email',baseRevision:2})).resolves.toMatchObject({accessMode:'private_email'});
-  await expect(api.request('event','GET')).resolves.toMatchObject({accessMode:'private_email'});
-  await expect(api.emailInvitationCapabilities!('event')).resolves.toEqual({privateEmailInvitations:false});
-  expect(fetch.mock.calls.slice(0,3).map(([,init])=>(init.headers as Record<string,string>)['x-matrix-sites-contract-version'])).toEqual(['3','3','3']);
- });
-});

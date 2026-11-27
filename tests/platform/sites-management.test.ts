@@ -7,6 +7,7 @@ import { createSitesService } from '../../packages/platform/src/sites/service.js
 import { createSiteManagementRoutes } from '../../packages/platform/src/sites/management-routes.js';
 import { registerSiteRoutes } from '../../packages/platform/src/sites/registration.js';
 import { randomUUID } from 'node:crypto';
+import { createSitePlatformClient } from '../../packages/gateway/src/sites/platform-client.js';
 import { SITE_ALLOWLIST_READINESS_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION, SITE_MANAGEMENT_CONTRACT_VERSION_HEADER } from '@matrix-os/contracts';
 import { seedLegacyAccessLink } from './site-legacy-access-links.js';
 let db: PlatformDB;
@@ -218,8 +219,25 @@ it('keeps allowlist readiness off for gateways that cannot show allowlist copy',
   expect(await response.json(),version).toEqual({privateEmailInvitations:false});
  }
 });
-it('keeps ordinary Sites operations on contract 3 so previous Platforms keep publishing', () => {
- // A v4 header on publish/edit would be rejected by a Platform that predates allowlist mode.
+// Fault detected: a Gateway sending v4 on every Sites call made a Platform that knows only
+// v2/v3 reject explicit access modes on publish/edit and drop them from reads. Ordinary calls
+// must use contract 3 (what that Platform accepted); only the readiness read may use 4.
+it('round-trips ordinary Sites calls from the real Gateway client on contract 3 and readiness on 4', async () => {
  expect(SITE_MANAGEMENT_CONTRACT_VERSION).toBe('3');
- expect(SITE_ALLOWLIST_READINESS_VERSION).toBe('4');
+ await db.executor.insertInto('public_sites').values({id:randomUUID(),owner_id:'user_launch',machine_id:identity.machineId,app_slug:'mixed-contract',title:'Mixed',description:'',slug:null,revision:1,status:'published',access_mode:'public',active_version:null,created_at:new Date().toISOString()}).execute();
+ const platform=new Hono().route('/internal/containers/:handle/sites',createSiteManagementRoutes({db,platformSecret:secret,service:createSitesService({db}),emailEnabled:async()=>true}));
+ const sent:string[]=[];
+ vi.stubGlobal('fetch',async(input:URL|string,init:RequestInit)=>{
+  sent.push(String((init.headers as Record<string,string>)[SITE_MANAGEMENT_CONTRACT_VERSION_HEADER]));
+  const url=new URL(String(input));
+  return platform.request(url.pathname+url.search,init);
+ });
+ try{
+  const gateway=createSitePlatformClient({url:'https://platform.example',token,handle:'launch',runtimeSlot:'primary'});
+  await expect(gateway.request('mixed-contract','PATCH',{title:'Edited',accessMode:'public',baseRevision:1}))
+   .resolves.toMatchObject({title:'Edited',accessMode:'public',revision:2});
+  await expect(gateway.request('mixed-contract','GET')).resolves.toMatchObject({accessMode:'public',revision:2});
+  await expect(gateway.emailInvitationCapabilities!('mixed-contract')).resolves.toEqual({privateEmailInvitations:true,emailDelivery:'none'});
+  expect(sent).toEqual(['3','3',SITE_ALLOWLIST_READINESS_VERSION]);
+ }finally{vi.unstubAllGlobals();}
 });
