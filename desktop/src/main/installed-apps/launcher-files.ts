@@ -34,8 +34,18 @@ export async function removeTemp(tempPath: string): Promise<void> {
   });
 }
 
-/** Deletes `path` only when it is a regular file directly in `dir` whose name `ownName` accepts. Gone is fine. */
-export async function removeOwnedFile(dir: string, path: string, ownName: (name: string) => boolean): Promise<void> {
+/**
+ * Deletes `path` only when it is a regular file directly in `dir` whose name
+ * `ownName` accepts and whose content `isOurs` confirms. True when it was
+ * deleted; false when it was already gone or is not ours (then it is kept).
+ * A path outside the folder, a symlink or a non-file throws.
+ */
+export async function removeOwnedFile(
+  dir: string,
+  path: string,
+  ownName: (name: string) => boolean,
+  isOurs: (path: string) => Promise<boolean>,
+): Promise<boolean> {
   const target = resolve(path);
   if (dirname(target) !== resolve(dir) || !ownName(basename(target))) {
     throw new LauncherPathError("Launcher is outside its folder");
@@ -43,8 +53,14 @@ export async function removeOwnedFile(dir: string, path: string, ownName: (name:
   try {
     const info = await lstat(target);
     if (info.isSymbolicLink() || !info.isFile()) throw new LauncherPathError("Launcher is not a file");
+    if (!(await isOurs(target))) {
+      console.warn("[installed-apps] launcher at the recorded path belongs to something else; keeping it");
+      return false;
+    }
     await unlink(target);
+    return true;
   } catch (error: unknown) {
-    if (errorCode(error) !== "ENOENT") throw error;
+    if (errorCode(error) === "ENOENT") return false;
+    throw error;
   }
 }

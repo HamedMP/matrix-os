@@ -37,8 +37,12 @@ describe("installed app launcher installer (Windows and Linux)", () => {
         await writeFile(path, JSON.stringify({ name, iconPath }), { flag: "wx" });
         return path;
       },
-      async remove(path) {
-        await rm(path, { force: true });
+      async remove(path, installId) {
+        // Like the real launchers: delete only an entry that names this install.
+        const text = await readFile(path, "utf8").catch(() => null);
+        if (text === null || !path.endsWith(`${installId}.launcher`)) return false;
+        await rm(path);
+        return true;
       },
       ...overrides,
     };
@@ -129,5 +133,13 @@ describe("installed app launcher installer (Windows and Linux)", () => {
     expect(await records.list()).toEqual([kept]);
     expect(await readdir(icons)).toEqual([`${kept.installId}.ico`]);
     expect(forget).toHaveBeenCalledWith(gone.installId);
+  });
+
+  it("drops the stale record but keeps a launcher that is not this install's", async () => {
+    const { records, installer } = setup(fakeLauncher({ remove: async () => false }));
+    const record = await installer.install(REQUEST);
+    expect(await installer.uninstall(record.installId)).toBe(true);
+    expect(await records.list()).toEqual([]);
+    expect(await readdir(launchers)).toEqual([`${record.installId}.launcher`]);
   });
 });

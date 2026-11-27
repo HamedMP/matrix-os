@@ -12,6 +12,7 @@ import {
 } from "../../desktop/src/main/installed-apps/linux-launcher";
 
 const ID = "6f1c2a4e-2b7d-4c1a-9f3e-1a2b3c4d5e6f";
+const OTHER = "0b6f7c8d-1e2f-4a3b-8c4d-5e6f7a8b9c0d";
 
 describe("Linux desktop entry", () => {
   it("names the file and the window class after the install id only", () => {
@@ -100,14 +101,29 @@ describe("Linux launcher files", () => {
     const path = await launcher().write({ installId: ID, name: "Notes", iconPath: null });
     const outside = join(root, "elsewhere.desktop");
     await writeFile(outside, "keep");
-    await expect(launcher().remove(outside)).rejects.toThrow();
-    await expect(launcher().remove(join(applications, "firefox.desktop"))).rejects.toThrow();
-    await expect(launcher().remove(join(applications, "..", "applications", "..", "x", desktopEntryFileName(ID)))).rejects.toThrow();
-    await launcher().remove(path);
+    await expect(launcher().remove(outside, ID)).rejects.toThrow();
+    await expect(launcher().remove(join(applications, "firefox.desktop"), ID)).rejects.toThrow();
+    await expect(launcher().remove(join(applications, "..", "applications", "..", "x", desktopEntryFileName(ID)), ID)).rejects.toThrow();
+    await expect(launcher().remove(path, ID)).resolves.toBe(true);
     await expect(lstat(path)).rejects.toThrow();
     expect(await readFile(outside, "utf8")).toBe("keep");
     // Already gone is fine.
-    await launcher().remove(path);
+    await expect(launcher().remove(path, ID)).resolves.toBe(false);
+  });
+
+  it("keeps an entry at the recorded path that belongs to another install", async () => {
+    const path = await launcher().write({ installId: OTHER, name: "Other", iconPath: null });
+    // A record that (wrongly) points at another install's entry must not delete it.
+    await expect(launcher().remove(path, ID)).resolves.toBe(false);
+    expect(await readFile(path, "utf8")).toContain(`X-Matrix-Install-Id=${OTHER}`);
+  });
+
+  it("keeps an entry the owner replaced with their own", async () => {
+    const path = await launcher().write({ installId: ID, name: "Notes", iconPath: null });
+    await rm(path);
+    await writeFile(path, "[Desktop Entry]\nName=Mine\nExec=/usr/bin/mine\n");
+    await expect(launcher().remove(path, ID)).resolves.toBe(false);
+    expect(await readFile(path, "utf8")).toContain("Name=Mine");
   });
 
   it("does not follow a symlink planted at the entry path", async () => {
@@ -116,7 +132,7 @@ describe("Linux launcher files", () => {
     await writeFile(target, "keep");
     const path = join(applications, desktopEntryFileName(ID));
     await symlink(target, path);
-    await expect(launcher().remove(path)).rejects.toThrow();
+    await expect(launcher().remove(path, ID)).rejects.toThrow();
     expect(await readFile(target, "utf8")).toBe("keep");
   });
 });

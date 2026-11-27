@@ -96,6 +96,8 @@ export interface WindowsLauncherOptions {
   scheme: string;
   /** `shell.writeShortcutLink`. */
   writeShortcutLink(path: string, operation: "create", details: Electron.ShortcutDetails): boolean;
+  /** `shell.readShortcutLink`; throws when the file is not a readable shortcut. */
+  readShortcutLink(path: string): Electron.ShortcutDetails;
 }
 
 export function createWindowsLauncher(options: WindowsLauncherOptions) {
@@ -128,8 +130,25 @@ export function createWindowsLauncher(options: WindowsLauncherOptions) {
       }
     },
 
-    remove(path: string): Promise<void> {
-      return removeOwnedFile(folder, path, (name) => name.endsWith(".lnk") && !name.startsWith("."));
+    /**
+     * Deletes the shortcut only when it opens this install: Matrix with this
+     * install's link, or this install's AppUserModelID. The owner may have
+     * deleted ours and a later install (or the owner) reused the name.
+     */
+    remove(path: string, installId: string): Promise<boolean> {
+      const aumid = windowsAppUserModelId(installId);
+      const args = launchArgs({ ...options, installId });
+      return removeOwnedFile(folder, path, (name) => name.endsWith(".lnk") && !name.startsWith("."), async (target) => {
+        let details: Electron.ShortcutDetails;
+        try {
+          details = options.readShortcutLink(target);
+        } catch (error: unknown) {
+          console.warn("[installed-apps] shortcut unreadable; keeping it:", error instanceof Error ? error.name : "UnknownError");
+          return false;
+        }
+        const sameTarget = typeof details.target === "string" && details.target.toLowerCase() === options.exePath.toLowerCase();
+        return (sameTarget && details.args === args) || details.appUserModelId === aumid;
+      });
     },
   };
 }

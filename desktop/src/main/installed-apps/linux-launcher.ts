@@ -8,7 +8,7 @@
 // app so the entry never claims Matrix's own windows, and StartupNotify is off
 // so no launch spinner waits for a class that never maps.
 import { randomBytes } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { linkExclusive, removeOwnedFile, removeTemp } from "./launcher-files";
 import { InstallIdSchema } from "./record";
@@ -18,6 +18,7 @@ const ENTRY_NAME = /^matrix-app-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-
 const EXEC_RESERVED = /[\s"'\\><~|&;$*?#()`]/;
 // eslint-disable-next-line no-control-regex -- control characters are exactly what is rejected
 const CONTROL = /[\u0000-\u001f\u007f]/;
+const MAX_ENTRY_BYTES = 64 * 1024;
 
 export function desktopEntryFileName(installId: string): string {
   return `matrix-app-${InstallIdSchema.parse(installId)}.desktop`;
@@ -72,6 +73,25 @@ export function buildDesktopEntry(input: DesktopEntryInput): string {
   ].join("\n");
 }
 
+/** True when an entry's text opens exactly this install: its own id key and an Exec ending in its link. */
+export function desktopEntryOpensInstall(text: string, installId: string): boolean {
+  const id = InstallIdSchema.parse(installId);
+  const lines = text.split(/\r?\n/);
+  const exec = lines.find((line) => line.startsWith("Exec="));
+  return lines.includes(`X-Matrix-Install-Id=${id}`) && exec !== undefined && exec.endsWith(`://app/${id}`);
+}
+
+async function readEntry(path: string): Promise<string> {
+  const handle = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(MAX_ENTRY_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, MAX_ENTRY_BYTES, 0);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 export interface LinuxLauncherOptions {
   /** `$XDG_DATA_HOME/applications`, normally `~/.local/share/applications`. */
   applicationsDir: string;
@@ -107,8 +127,10 @@ export function createLinuxLauncher(options: LinuxLauncherOptions) {
       }
     },
 
-    remove(path: string): Promise<void> {
-      return removeOwnedFile(dir, path, (name) => ENTRY_NAME.test(name));
+    /** Deletes the entry only when it still opens this install; true when deleted. */
+    remove(path: string, installId: string): Promise<boolean> {
+      return removeOwnedFile(dir, path, (name) => ENTRY_NAME.test(name),
+        async (target) => desktopEntryOpensInstall(await readEntry(target), installId));
     },
   };
 }

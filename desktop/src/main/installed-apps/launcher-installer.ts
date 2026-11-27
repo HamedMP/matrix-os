@@ -18,8 +18,12 @@ export interface LauncherPlatform {
   encodeIcon(png: Uint8Array): Uint8Array;
   /** Writes the launcher and returns its path; never overwrites. */
   write(input: { installId: string; name: string; iconPath: string | null }): Promise<string>;
-  /** Removes a launcher this platform wrote; refuses any other path. */
-  remove(path: string): Promise<void>;
+  /**
+   * Removes the launcher at `path` when it still opens `installId`; true when
+   * deleted. A launcher that is not this install's is kept (false). A path
+   * outside the launcher folder throws.
+   */
+  remove(path: string, installId: string): Promise<boolean>;
 }
 
 export interface LauncherInstallerOptions {
@@ -74,7 +78,7 @@ export function createLauncherInstaller(options: LauncherInstallerOptions) {
         }, { installId });
       } catch (error: unknown) {
         const written = launcherPath;
-        if (written) await cleanup("launcher rollback failed", () => launcher.remove(written));
+        if (written) await cleanup("launcher rollback failed", () => launcher.remove(written, installId));
         if (iconPath) await cleanup("icon rollback failed", () => removeIcon(installId));
         throw error;
       }
@@ -83,7 +87,8 @@ export function createLauncherInstaller(options: LauncherInstallerOptions) {
     async uninstall(installId: string): Promise<boolean> {
       const record = await records.get(installId);
       if (!record) return false;
-      if (record.bundlePath) await launcher.remove(record.bundlePath);
+      // Not ours any more (false): keep the file, drop only the stale record.
+      if (record.bundlePath) await launcher.remove(record.bundlePath, record.installId);
       await cleanup("icon cleanup failed", () => removeIcon(record.installId));
       const removed = await records.remove(record.installId);
       await options.forgetWindowState(record.installId);

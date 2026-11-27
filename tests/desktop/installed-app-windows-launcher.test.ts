@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import {
 } from "../../desktop/src/main/installed-apps/windows-launcher";
 
 const ID = "6f1c2a4e-2b7d-4c1a-9f3e-1a2b3c4d5e6f";
+const OTHER = "0b6f7c8d-1e2f-4a3b-8c4d-5e6f7a8b9c0d";
 
 function png(width: number, height: number): Uint8Array {
   const bytes = new Uint8Array(33);
@@ -100,12 +101,15 @@ describe("Windows Start Menu shortcuts", () => {
     writeFileSync(path, JSON.stringify(details), { flag: "wx" });
     return true;
   });
-  const launcher = (write: typeof writeShortcutLink = writeShortcutLink) => createWindowsLauncher({
+  // Stands in for shell.readShortcutLink: reads back what the fake writer stored.
+  const readShortcutLink = (path: string) => JSON.parse(readFileSync(path, "utf8")) as Electron.ShortcutDetails;
+  const launcher = (write: typeof writeShortcutLink = writeShortcutLink, read: (path: string) => Electron.ShortcutDetails = readShortcutLink) => createWindowsLauncher({
     programsDir: programs,
     exePath: "C:\\Matrix\\Matrix OS.exe",
     baseArgs: [],
     scheme: "matrixos",
     writeShortcutLink: write,
+    readShortcutLink: read,
   });
 
   it("writes a shortcut in the Matrix Apps folder that opens the install", async () => {
@@ -142,10 +146,31 @@ describe("Windows Start Menu shortcuts", () => {
   it("removes only shortcuts directly in the Matrix Apps folder", async () => {
     const path = await launcher().write({ installId: ID, name: "Notes", iconPath: null });
     await writeFile(join(programs, "Other.lnk"), "keep");
-    await expect(launcher().remove(join(programs, "Other.lnk"))).rejects.toThrow();
-    await expect(launcher().remove(join(folder, "notes.txt"))).rejects.toThrow();
-    await launcher().remove(path);
+    await expect(launcher().remove(join(programs, "Other.lnk"), ID)).rejects.toThrow();
+    await expect(launcher().remove(join(folder, "notes.txt"), ID)).rejects.toThrow();
+    await expect(launcher().remove(path, ID)).resolves.toBe(true);
     await expect(lstat(path)).rejects.toThrow();
     expect(await readFile(join(programs, "Other.lnk"), "utf8")).toBe("keep");
+  });
+
+  it("keeps a shortcut at the recorded path that opens another install", async () => {
+    const path = await launcher().write({ installId: OTHER, name: "Notes", iconPath: null });
+    await expect(launcher().remove(path, ID)).resolves.toBe(false);
+    expect(JSON.parse(await readFile(path, "utf8")).appUserModelId).toBe(`com.matrix-os.app.${OTHER}`);
+  });
+
+  it("keeps a shortcut the owner made, or one that cannot be read", async () => {
+    await mkdir(folder, { recursive: true });
+    const mine = join(folder, "Notes.lnk");
+    await writeFile(mine, JSON.stringify({ target: "C:\\Windows\\notepad.exe", args: "" }));
+    await expect(launcher().remove(mine, ID)).resolves.toBe(false);
+    await expect(launcher(writeShortcutLink, () => { throw new Error("not a shortcut"); }).remove(mine, ID)).resolves.toBe(false);
+    expect(await readFile(mine, "utf8")).toContain("notepad");
+  });
+
+  it("recognizes its own shortcut by target and arguments, ignoring path case", async () => {
+    const path = await launcher().write({ installId: ID, name: "Notes", iconPath: null });
+    const read = () => ({ target: "c:\\matrix\\MATRIX OS.EXE", args: `matrixos://app/${ID}` });
+    await expect(launcher(writeShortcutLink, read).remove(path, ID)).resolves.toBe(true);
   });
 });

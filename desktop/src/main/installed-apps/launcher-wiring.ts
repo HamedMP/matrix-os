@@ -42,6 +42,7 @@ export function createPlatformLaunchers(options: LauncherWiringOptions) {
       ...command,
       scheme: options.scheme,
       writeShortcutLink: (path, operation, details) => shell.writeShortcutLink(path, operation, details),
+      readShortcutLink: (path) => shell.readShortcutLink(path),
     })
     : createLinuxLauncher({ applicationsDir: linuxApplicationsDir(), exec: [command.exePath, ...command.baseArgs], scheme: options.scheme });
   const installer = createLauncherInstaller({
