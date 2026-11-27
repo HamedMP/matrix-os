@@ -129,6 +129,26 @@ describe("integration requests", () => {
     );
   });
 
+  it("accepts Matrix Outlook consent for the selected service and includes the reconnect account", async () => {
+    const connectionId = "8c463220-041b-4e5e-a86c-075b07a3ff3a";
+    const state = "s".repeat(43);
+    const url = `https://app.matrix-os.com/api/integrations/outlook/oauth/authorize?state=${state}`;
+    const connect = () => createIntegrationConnectUrl("clerk-token", "https://app.matrix-os.com/vm/owner", "microsoft_outlook", connectionId);
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ url, service: "microsoft_outlook" }),
+    } as unknown as Response);
+    await expect(connect()).resolves.toBe(url);
+    expect(fetchMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      body: JSON.stringify({ service: "microsoft_outlook", redirectUri: "matrixos://integrations", connectionId }),
+    }));
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ url: url.replace("app.matrix-os.com", "app.matrix-os.com.invalid"), service: "microsoft_outlook" }),
+    } as unknown as Response);
+    await expect(connect()).rejects.toThrow();
+  });
+
   it("syncs Pipedream accounts after the app returns", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,

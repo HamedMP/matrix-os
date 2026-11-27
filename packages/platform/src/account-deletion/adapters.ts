@@ -265,7 +265,7 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
             WHERE user_id = ${user.id} AND status <> 'revoked' LIMIT 1001`.execute(db.executor);
           if (services.rows.length > 1000) throw new Error('Integration cleanup capacity exceeded');
           if ((services.rows.length || user.pipedream_external_id) && !options.pipedream) throw new Error('Integration cleanup configuration unavailable');
-          if (options.pipedream && (services.rows.length || user.pipedream_external_id)) {
+          if (options.pipedream) {
             const accounts = await options.pipedream.listAccounts(user.pipedream_external_id ?? user.id);
             if (accounts.length > 1000) throw new Error('Integration cleanup capacity exceeded');
             const ids = [...new Set(accounts.map((account) => account.id))];

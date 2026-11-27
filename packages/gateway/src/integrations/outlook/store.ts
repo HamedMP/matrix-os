@@ -71,10 +71,13 @@ export function createOutlookStore(db: Kysely<PlatformDatabase>) {
           provider_account_id TEXT NOT NULL,
           retired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           cleaned_at TIMESTAMPTZ,
+          retry_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           PRIMARY KEY (user_id, provider_account_id)
         )`.execute(tx);
-        await sql`CREATE INDEX IF NOT EXISTS idx_matrix_outlook_cleanup
-          ON matrix_outlook_retired_accounts(retired_at) WHERE cleaned_at IS NULL`.execute(tx);
+        await sql`ALTER TABLE matrix_outlook_retired_accounts ADD COLUMN IF NOT EXISTS
+          retry_at TIMESTAMPTZ NOT NULL DEFAULT now()`.execute(tx);
+        await sql`CREATE INDEX IF NOT EXISTS idx_matrix_outlook_cleanup_retry
+          ON matrix_outlook_retired_accounts(retry_at, retired_at) WHERE cleaned_at IS NULL`.execute(tx);
       });
     },
 
@@ -133,11 +136,12 @@ export function createOutlookStore(db: Kysely<PlatformDatabase>) {
           account_label: input.label ?? row?.account_label ?? account.email ?? service,
           scopes: [...input.scopes],
           status: "active" as const,
+          connected_at: sql<Date>`now()`,
         };
         const connection = row
           ? await tx.updateTable("connected_services").set(next).where("id", "=", id).returningAll().executeTakeFirstOrThrow()
           : await tx.insertInto("connected_services").values({
-            ...next, id, user_id: userId, service, connected_at: sql`now()`, last_used_at: null,
+            ...next, id, user_id: userId, service, last_used_at: null,
           }).returningAll().executeTakeFirstOrThrow();
 
         const encrypted = input.encrypt(id);
@@ -185,16 +189,18 @@ export function createOutlookStore(db: Kysely<PlatformDatabase>) {
       });
     },
 
-    async hasRetiredLegacyAccount(userId: string, providerAccountId: string) {
-      const result = await sql`SELECT 1 FROM matrix_outlook_retired_accounts
-        WHERE user_id = ${userId} AND provider_account_id = ${providerAccountId}`.execute(db);
-      return result.rows.length === 1;
-    },
-
-    async listPendingLegacyCleanup() {
-      const result = await sql<{ userId: string; providerAccountId: string }>`SELECT user_id AS "userId",
-        provider_account_id AS "providerAccountId" FROM matrix_outlook_retired_accounts
-        WHERE cleaned_at IS NULL ORDER BY retired_at LIMIT 50`.execute(db);
+    async claimPendingLegacyCleanup(now: Date) {
+      const retryAt = new Date(now.getTime() + 60_000);
+      const result = await sql<{ userId: string; providerAccountId: string }>`
+        WITH candidates AS (
+          SELECT user_id, provider_account_id FROM matrix_outlook_retired_accounts
+          WHERE cleaned_at IS NULL AND retry_at <= ${now} ORDER BY retry_at, retired_at
+          LIMIT 5 FOR UPDATE SKIP LOCKED
+        )
+        UPDATE matrix_outlook_retired_accounts AS retired SET retry_at = ${retryAt}
+        FROM candidates
+        WHERE retired.user_id = candidates.user_id AND retired.provider_account_id = candidates.provider_account_id
+        RETURNING retired.user_id AS "userId", retired.provider_account_id AS "providerAccountId"`.execute(db);
       return result.rows;
     },
 

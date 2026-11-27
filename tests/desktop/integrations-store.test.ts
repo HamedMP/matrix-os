@@ -391,6 +391,30 @@ describe("useIntegrations store", () => {
     expect(api.post).toHaveBeenCalledWith("/api/integrations/connect", { service: "gmail" });
   });
 
+  it("validates Outlook reconnect against the configured Matrix browser origin", async () => {
+    const service = "microsoft_outlook";
+    const authorize = "/api/integrations/outlook/oauth/authorize?state=" + "a".repeat(43);
+    const browserOrigin = "https://matrix.example.com";
+    const apiOrigin = "https://api.example.com";
+    const reconnect = (origin: string) => {
+      const api = { ...makeApi({ post: async () => ({ url: origin + authorize, service }) }), baseUrl: apiOrigin };
+      return useIntegrations.getState().startConnect(service, api, CONNECTIONS[0].id);
+    };
+
+    vi.stubEnv("VITE_MATRIX_APP_ORIGIN", "");
+    try {
+      await expect(reconnect(browserOrigin)).resolves.toBeNull();
+      await expect(reconnect("https://app.matrix-os.com")).resolves.toBe("https://app.matrix-os.com" + authorize);
+
+      vi.stubEnv("VITE_MATRIX_APP_ORIGIN", browserOrigin);
+      await expect(reconnect(browserOrigin)).resolves.toBe(browserOrigin + authorize);
+      await expect(reconnect(apiOrigin)).resolves.toBeNull();
+      await expect(reconnect("https://app.matrix-os.com")).resolves.toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("startConnect() drops a consent URL minted for a superseded runtime", async () => {
     let release!: () => void;
     const api = makeApi({

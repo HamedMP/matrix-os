@@ -33,6 +33,7 @@ export interface ConnectedIntegration {
   accountEmail: string | null;
   status: string;
   connectedAt: string;
+  outlookConnection?: "matrix" | "legacy";
 }
 
 // Service ids are registry slugs (e.g. "gmail", "google_calendar"). Validated
@@ -126,7 +127,10 @@ export function parseConnectedIntegrations(value: unknown): ConnectedIntegration
     const accountEmail = asTrimmedString(record.account_email, 256);
     const status = asTrimmedString(record.status, 32) ?? "active";
     const connectedAt = asTrimmedString(record.connected_at, 64) ?? "";
-    out.push({ id, service, accountLabel, accountEmail, status, connectedAt });
+    const outlookConnection = record.outlook_connection;
+    out.push({ id, service, accountLabel, accountEmail, status, connectedAt,
+      ...(outlookConnection === "matrix" || outlookConnection === "legacy" ? { outlookConnection } : {}),
+    });
   }
   return out;
 }
@@ -139,4 +143,18 @@ export function parseConnectUrl(value: unknown): string | null {
   const url = asTrimmedString(record.url, 2048);
   if (!url || !URL.canParse(url)) return null;
   return new URL(url).protocol === "https:" ? url : null;
+}
+
+export function isMatrixOutlookConsentUrl(service: string, rawUrl: string, appUrl?: string): boolean {
+  if (service !== "microsoft_outlook" && service !== "microsoft_outlook_calendar") return false;
+  try {
+    const url = new URL(rawUrl);
+    const states = url.searchParams.getAll("state");
+    const app = new URL(appUrl || "https://app.matrix-os.com");
+    return app.protocol === "https:" && url.origin === app.origin && url.pathname === "/api/integrations/outlook/oauth/authorize"
+      && !url.username && !url.password && !url.hash && states.length === 1 && /^[A-Za-z0-9_-]{43}$/.test(states[0] ?? "");
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return false;
+    throw error;
+  }
 }

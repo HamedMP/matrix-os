@@ -5,6 +5,7 @@ export interface ConnectedService {
   account_email: string | null;
   status: string;
   connected_at: string;
+  outlook_connection?: "matrix" | "legacy";
 }
 
 /** Only fixed backend contracts get an explanatory partial-service notice. */

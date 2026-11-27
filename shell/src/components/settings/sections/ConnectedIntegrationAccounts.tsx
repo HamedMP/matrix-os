@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import type { ConnectedService } from "./integrations-helpers";
 import type { IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
 
@@ -70,9 +71,10 @@ function groupByService(connections: ConnectedService[]): Map<string, ConnectedS
 }
 
 
-export function ConnectedIntegrationAccounts({ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect }: {
+export function ConnectedIntegrationAccounts({ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect, onReconnect, connecting }: {
  connected: ConnectedService[]; available: IntegrationCatalogItem[]; renamingId: string | null; renameDraft: string; savingRename: string | null; checkingStatus: string | null; confirmDisconnect: string | null; disconnecting: string | null;
  setRenameDraft: (value: string) => void; setRenamingId: (value: string | null) => void; setConfirmDisconnect: (value: string | null) => void;
+ onReconnect: (connection: ConnectedService) => void; connecting: string | null;
  handleRename: (id: string) => Promise<void>; handleCheckStatus: (id: string) => Promise<void>; handleDisconnect: (id: string) => Promise<void>;
 }) { return <>
       {/* Connected Services -- grouped by service */}
@@ -185,6 +187,12 @@ export function ConnectedIntegrationAccounts({ connected, available, renamingId,
                               Rename
                             </button>
                           )}
+                          {conn.outlook_connection ? (
+                            <Button type="button" variant="outline" size="sm" disabled={Boolean(connecting)}
+                              onClick={() => onReconnect(conn)} aria-label={`Reconnect ${conn.account_label}`}>
+                              Reconnect
+                            </Button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => handleCheckStatus(conn.id)}

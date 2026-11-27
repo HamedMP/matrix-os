@@ -3,6 +3,7 @@ import {
   parseAvailableIntegrations,
   parseConnectedIntegrations,
   parseConnectUrl,
+  isMatrixOutlookConsentUrl,
   type AvailableIntegration,
   type ConnectedIntegration,
   type OnboardingWidgetEvent,
@@ -232,7 +233,10 @@ export function useShellOnboardingIntegrations(
         ...(optionsRef.current.pollIntervals ? { intervals: optionsRef.current.pollIntervals } : {}),
         tick: async () => {
           if (!isCurrent()) return;
-          const synced = parseConnectedIntegrations(await readJson(fetchFn, `${gatewayUrl}/api/integrations/sync`, { method: "POST" }));
+          const matrixConsent = isMatrixOutlookConsentUrl(serviceId, url, process.env.NEXT_PUBLIC_MATRIX_APP_URL);
+          const synced = parseConnectedIntegrations(await readJson(
+            fetchFn, `${gatewayUrl}/api/integrations${matrixConsent ? "" : "/sync"}`, { method: matrixConsent ? "GET" : "POST" },
+          ));
           if (!isCurrent()) return;
           applyConnections(synced);
           // A closed window ends the attempt unless this last sync found the connection;

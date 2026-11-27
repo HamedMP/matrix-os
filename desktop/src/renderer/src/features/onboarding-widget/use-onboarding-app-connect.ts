@@ -1,4 +1,4 @@
-import type { OnboardingWidgetEvent } from "@matrix-os/contracts";
+import { isMatrixOutlookConsentUrl, type OnboardingWidgetEvent } from "@matrix-os/contracts";
 import { activeConnectionIds, hasNewActiveConnection, startConnectPoll, type OnboardingAppConnect } from "@matrix-os/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
@@ -46,13 +46,14 @@ export function useOnboardingAppConnect(api: ApiClient | null, dispatch: (event:
       const url = await useIntegrations.getState().startConnect(serviceId, api);
       if (!isCurrent()) return;
       if (!url) { fail(); return; }
+      const matrixConsent = isMatrixOutlookConsentUrl(serviceId, url, import.meta.env.VITE_MATRIX_APP_ORIGIN);
       await invoke("shell:open-external", { url });
       if (!isCurrent()) return;
       // Each attempt stops only its own poll: a newer attempt owns cancelPollRef by then.
       const cancelPoll = startConnectPoll({
         tick: async () => {
           if (!isCurrent()) { cancelPoll(); return; }
-          const result = await useIntegrations.getState().syncNow(api);
+          const result = await useIntegrations.getState().syncNow(api, matrixConsent);
           if (!isCurrent() || result === "superseded") cancelPoll();
         },
         isDone: () => hasNewActiveConnection(useIntegrations.getState().connections, serviceId, previouslyActive),

@@ -1,3 +1,4 @@
+import { isMatrixOutlookConsentUrl } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -48,6 +49,7 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
     isError,
     startConnection,
     syncConnections,
+    refreshConnectedInventory,
     connectingServiceId: startingServiceId,
     refresh,
   } = useComputerIntegrations();
@@ -56,9 +58,14 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const previousConnectionIds = useRef(new Set<string>());
   const syncConnectionsRef = useRef(syncConnections);
+  const matrixConsent = useRef(false);
+  const refreshInventoryRef = useRef(refreshConnectedInventory);
   const syncInFlight = useRef(false);
   const connectInFlight = useRef(false);
-  syncConnectionsRef.current = syncConnections;
+  useEffect(() => {
+    syncConnectionsRef.current = syncConnections;
+    refreshInventoryRef.current = refreshConnectedInventory;
+  }, [refreshConnectedInventory, syncConnections]);
   const servicesById = new Map(available.map((service) => [service.id, service]));
   const catalogSections = buildIntegrationSections(available, { query, oauthOnly, connectedOnly, connectedIds: connected.map(c => c.service) });
   const connectedLabel = isPending
@@ -72,6 +79,7 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
     previousConnectionIds.current = new Set(connected.map((connection) => connection.id));
     try {
       const url = await startConnection(service.id);
+      matrixConsent.current = isMatrixOutlookConsentUrl(service.id, url);
       setConnectingServiceId(service.id);
       noteConnectAppsSignIn(openedFrom);
       await Linking.openURL(url);
@@ -85,7 +93,7 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
 
   useFocusEffect(
     useCallback(() => {
-      void Promise.resolve().then(() => syncConnectionsRef.current()).catch((error: unknown) => {
+      void Promise.resolve().then(() => matrixConsent.current ? refreshInventoryRef.current() : syncConnectionsRef.current()).catch((error: unknown) => {
         // Best-effort reconciliation also covers a remount caused by the deep link.
         console.warn("[mobile] integrations focus sync failed", error instanceof Error ? error.name : "unknown");
       });
@@ -110,7 +118,7 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
       if (cancelled || syncInFlight.current || AppState.currentState !== "active") return;
       syncInFlight.current = true;
       try {
-        await syncConnectionsRef.current();
+        await (matrixConsent.current ? refreshInventoryRef.current() : syncConnectionsRef.current());
       } catch (error: unknown) {
         // The next poll retries; a delayed provider account is expected during OAuth.
         console.warn("[mobile] integrations poll sync failed", error instanceof Error ? error.name : "unknown");

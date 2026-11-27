@@ -78,8 +78,14 @@ describe("Matrix Outlook persistence", () => {
     expect(linked.id).toBe(old.id);
     expect(linked.account_label).toBe("Work inbox");
     expect(linked.pipedream_account_id).toBe(`matrix_outlook_${old.id}`);
-    await expect(db.outlook.hasRetiredLegacyAccount(ownerId, "ap_legacy")).resolves.toBe(true);
-    await expect(db.outlook.hasRetiredLegacyAccount(randomUUID(), "ap_legacy")).resolves.toBe(false);
+    const sweepTime = new Date(Date.now() + 1000);
+    const claims = await Promise.all([
+      db.outlook.claimPendingLegacyCleanup(sweepTime),
+      db.outlook.claimPendingLegacyCleanup(sweepTime),
+    ]);
+    expect(claims.flat()).toEqual([{ userId: ownerId, providerAccountId: "ap_legacy" }]);
+    await db.outlook.markLegacyCleaned(ownerId, "ap_legacy");
+    await expect(db.outlook.claimPendingLegacyCleanup(new Date(sweepTime.getTime() + 120_000))).resolves.toEqual([]);
   });
 
   it("fences refresh from concurrent reconnect and disconnect and deletes the credential on disconnect", async () => {

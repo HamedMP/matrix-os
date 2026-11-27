@@ -1,4 +1,5 @@
 "use client";
+import { isMatrixOutlookConsentUrl } from "@matrix-os/contracts";
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
@@ -193,7 +194,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
     };
   }, [loadData]);
 
-  const handleConnect = async (serviceId: string, label?: string) => {
+  const handleConnect = async (serviceId: string, label?: string, connectionId?: string) => {
     if (connecting || connectInFlight.current) return;
     connectInFlight.current = true;
     let popup: Window | null = null;
@@ -204,6 +205,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
       if (!popup) throw new Error("Consent window blocked");
       const payload: Record<string, string> = { service: serviceId };
       if (label?.trim()) payload.label = label.trim();
+      if (connectionId) payload.connectionId = connectionId;
       const res = await fetch(`${GATEWAY}/api/integrations/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -219,7 +221,8 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
       }
       const { url } = await res.json();
       const consentUrl = new URL(url);
-      if (consentUrl.protocol !== "https:") throw new Error("Invalid consent URL");
+      const matrixConsent = isMatrixOutlookConsentUrl(serviceId, consentUrl.href, process.env.NEXT_PUBLIC_MATRIX_APP_URL);
+      if (consentUrl.protocol !== "https:" || (connectionId && !matrixConsent)) throw new Error("Invalid consent URL");
       if (!popup) throw new Error("Consent window blocked");
       popup.opener = null;
       popup.location.href = consentUrl.href;
@@ -233,18 +236,21 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
         clearTimeout(pollTimeoutRef.current);
         pollTimeoutRef.current = null;
       }
-      // Poll by syncing from Pipedream every 2s
+      const previousAccount = connected.find(connection => connection.id === connectionId);
       const previousIds = new Set(connected.map((c) => c.id));
       pollRef.current = setInterval(async () => {
         try {
-          const syncRes = await fetch(`${GATEWAY}/api/integrations/sync`, {
-            method: "POST",
+          const syncRes = await fetch(`${GATEWAY}/api/integrations${matrixConsent ? "" : "/sync"}`, {
+            method: matrixConsent ? "GET" : "POST",
             signal: AbortSignal.timeout(10_000),
           });
           if (syncRes.ok) {
             const data = await syncRes.json();
-            const list: ConnectedService[] = data.services ?? [];
-            const hasNew = hasNewConnectionForService(previousIds, serviceId, list);
+            const list: ConnectedService[] = Array.isArray(data) ? data : data.services ?? [];
+            const hasNew = connectionId
+              ? list.some(connection => connection.id === connectionId && connection.outlook_connection === "matrix"
+                && (previousAccount?.outlook_connection !== "matrix" || previousAccount.connected_at !== connection.connected_at))
+              : hasNewConnectionForService(previousIds, serviceId, list);
             if (hasNew) {
               setConnected(list);
               setConnecting(null);
@@ -417,7 +423,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
           type="button"
           onClick={handleRefresh}
           disabled={refreshing}
-          title="Pull latest state from Pipedream. Useful if you just finished OAuth in another tab and don't see the connection yet."
+          title="Refresh connected accounts"
           className="shrink-0 rounded-md border border-border/60 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors disabled:opacity-50"
         >
           {refreshing ? "Refreshing..." : "Refresh"}
@@ -443,7 +449,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
                 </p>
               ) : null}
 
-              {!loading ? <ConnectedIntegrationAccounts {...{ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect }} /> : null}
+              {!loading ? <ConnectedIntegrationAccounts {...{ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect, connecting }} onReconnect={connection => void handleConnect(connection.service, undefined, connection.id)} /> : null}
               <IntegrationMarketplace services={services} connectedIds={connectedIds} connectingId={connecting}
                 rowPresentation={service => service.id === GITHUB_DEVELOPER_SERVICE_ID ? developer : undefined}
                 onConnect={id => { if (id !== GITHUB_DEVELOPER_SERVICE_ID) void handleConnect(id); }} />

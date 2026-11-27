@@ -1,3 +1,4 @@
+import { isMatrixOutlookConsentUrl } from "@matrix-os/contracts";
 // Integrations store: catalog + connected accounts from the gateway proxy
 // routes /api/integrations*. Bounded, serializable state only (arrays, caps
 // enforced by the parsers). All user-facing error strings go through the
@@ -42,10 +43,10 @@ interface IntegrationsState {
   // Pulls the authoritative account list (POST /sync). "superseded" means the
   // account/computer changed mid-flight -- not a failure, and callers must not
   // show an error for it. Failures leave errorMessage alone; callers decide.
-  syncNow: (apiOverride?: ApiClient | null) => Promise<"ok" | "failed" | "superseded">;
+  syncNow: (apiOverride?: ApiClient | null, matrixConsent?: boolean) => Promise<"ok" | "failed" | "superseded">;
   // Starts the OAuth flow: returns the HTTPS consent URL to open externally,
   // or null after setting a generic errorMessage.
-  startConnect: (serviceId: string, apiOverride?: ApiClient | null) => Promise<string | null>;
+  startConnect: (serviceId: string, apiOverride?: ApiClient | null, connectionId?: string) => Promise<string | null>;
   // Disconnects one account. On failure the connection stays in the list and
   // errorMessage holds generic copy (partial-failure safe).
   disconnect: (connectionId: string, apiOverride?: ApiClient | null) => Promise<boolean>;
@@ -123,7 +124,7 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     });
   },
 
-  syncNow: async (apiOverride) => {
+  syncNow: async (apiOverride, matrixConsent) => {
     const api = resolveApi(apiOverride);
     if (!api) return "failed";
     // The connect poll holds one ApiClient for ~108s, so identity and ordering
@@ -134,7 +135,7 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     const superseded = (): boolean =>
       !isCurrentRuntimeGeneration(runtimeGeneration) || refreshSequence !== sequence;
     try {
-      const raw = await api.post<unknown>(SYNC_PATH, {});
+      const raw = matrixConsent ? await api.get<unknown>(BASE_PATH) : await api.post<unknown>(SYNC_PATH, {});
       if (superseded()) return "superseded";
       // Owns the terminal status when it supersedes an in-flight catalog load:
       // that load returns without writing one, so leaving status untouched
@@ -152,9 +153,9 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     }
   },
 
-  startConnect: async (serviceId, apiOverride) => {
+  startConnect: async (serviceId, apiOverride, connectionId) => {
     const api = resolveApi(apiOverride);
-    if (!isValidServiceId(serviceId)) {
+    if (!isValidServiceId(serviceId) || (connectionId && !isValidConnectionId(connectionId))) {
       set({ errorMessage: categoryMessage("server") });
       return null;
     }
@@ -167,10 +168,10 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     // through linking a third-party account to a runtime they have left.
     const runtimeGeneration = captureRuntimeGeneration();
     try {
-      const raw = await api.post<unknown>(CONNECT_PATH, { service: serviceId });
+      const raw = await api.post<unknown>(CONNECT_PATH, { service: serviceId, ...(connectionId ? { connectionId } : {}) });
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
       const url = parseConnectUrl(raw);
-      if (!url) {
+      if (!url || (connectionId && !isMatrixOutlookConsentUrl(serviceId, url, import.meta.env.VITE_MATRIX_APP_ORIGIN))) {
         logWarn("connect returned no usable https url", new Error("invalid_connect_url"));
         set({ errorMessage: categoryMessage("server") });
         return null;

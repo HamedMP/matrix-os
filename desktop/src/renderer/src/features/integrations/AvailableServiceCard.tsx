@@ -19,6 +19,7 @@ export function AvailableServiceCard({
   connections = connection ? [connection] : [],
   onConnect,
   onDisconnect,
+  onReconnect,
   presentation,
 }: {
   service: AvailableIntegration;
@@ -29,6 +30,7 @@ export function AvailableServiceCard({
   connection?: ConnectedIntegration;
   connections?: ConnectedIntegration[];
   onConnect: () => void;
+  onReconnect?: (connection: ConnectedIntegration) => void;
   onDisconnect?: (connection: ConnectedIntegration) => void;
   presentation?: IntegrationRowPresentation;
 }) {
@@ -78,6 +80,12 @@ export function AvailableServiceCard({
                 <span className="font-medium">{displayIntegrationName(account.accountLabel)}</span>
                 {account.accountEmail ? <span className="truncate">{account.accountEmail}</span> : null}
                 <span className="capitalize" style={{ color: "var(--surface-success-emphasis, #288A5B)" }}>{account.status}</span>
+                {account.outlookConnection && onReconnect ? (
+                  <Button type="button" variant="subtle" disabled={disabled}
+                    aria-label={`Reconnect ${account.accountLabel}`} onClick={() => onReconnect(account)}>
+                    Reconnect
+                  </Button>
+                ) : null}
                 {onDisconnect ? (
                   <AccountDisconnectButton
                     testId={`integration-disconnect-${account.id}`}

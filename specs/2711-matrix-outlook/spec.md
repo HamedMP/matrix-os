@@ -27,7 +27,7 @@ Request delegated Microsoft scopes for the chosen service. Mail uses Mail.ReadWr
 | --- | --- |
 | Start consent | Authenticated Matrix owner, registered Outlook service, bounded label, optional owned connection ID, and allowlisted completion target |
 | Complete consent | Public callback with single-use expiring state, browser binding, and PKCE. Use the stored owner and service. Verify Microsoft's account identity and granted scopes before persistence. Recheck account deletion admission before committing. |
-| Read or refresh | Existing Matrix principal and exact owner/service/connection binding. The platform resolves the current grant and drives pagination with an account-bound cursor. |
+| Read or refresh | Existing Matrix principal and exact owner/service/connection binding. The platform resolves the current grant and accepts only the pagination fields defined by the action schema. |
 | Write | Existing action schema, owner, selected connection, required Microsoft scope, and the relevant Matrix approval. |
 | Disconnect | Owner of the selected connection. Block execution and erase the Matrix token material. Handle legacy provider cleanup separately. |
 | Account deletion | Existing deletion authority. Include Matrix-held Outlook tokens, consent attempts, and outstanding legacy cleanup in the deletion lifecycle. |
@@ -36,7 +36,7 @@ Platform Postgres is the source of truth for connection metadata and encrypted g
 
 The gateway keeps forwarding authenticated requests to the platform through the existing integration API. Platform registers the Outlook lifecycle and direct executor independently of Pipedream configuration. Resolve the connection backend when selecting the account and verify the binding again at execution. Keep production Microsoft credentials on the platform.
 
-Bound callback query and request bodies, token responses, Graph page size and response bytes, and pending attempts per owner. Expire and sweep pending attempts. Use bounded HTTPS requests to fixed Microsoft hosts, reject redirects, and keep provider bodies and tokens out of errors and logs. Respect Graph throttling responses without automatically retrying ambiguous writes. Bind opaque Graph pagination links to the operation and account, and check origin and resource before following a link.
+Bound callback query and request bodies, token responses, Graph page size and response bytes, and pending attempts per owner. Expire and sweep pending attempts. Use bounded HTTPS requests to fixed Microsoft hosts, reject redirects, and keep provider bodies and tokens out of errors and logs. Respect Graph throttling responses without automatically retrying ambiguous writes. Use the existing bounded read and refresh pagination contracts, with the owner and account checked on every page. The direct connector builds requests from its action catalog.
 
 ## Acceptance
 
@@ -46,12 +46,19 @@ Bound callback query and request bodies, token responses, Graph page size and re
 - Matrix completes native Outlook connect, list, call, refresh, and disconnect with Pipedream unavailable. Once all legacy Outlook connections have been handled, remove Outlook imports, execution, and logo requests through Pipedream.
 - Attach live captures for the affected surfaces and link the separate public documentation PR in FinnaAI/matrix-os-site.
 
+## Rollout
+
+1. Register a Matrix-owned Entra web application for organizational and personal Microsoft accounts. Register the exact platform callback URI and configure its client ID and pinned Secret Manager versions for the client secret and dedicated encryption key.
+2. Release the compatible browser and native clients, then set `MATRIX_OUTLOOK_ENABLED=true` in a reviewed environment. The web and Electron builds trust their configured Matrix browser origin (`NEXT_PUBLIC_MATRIX_APP_URL` and `VITE_MATRIX_APP_ORIGIN`, respectively), which must match the callback origin. Both default to `https://app.matrix-os.com`. Verify onboarding and Settings sign-in for both Microsoft account types, including managed-tenant consent, scoped reads, approved writes, disconnect and legacy reconnect.
+3. Keep eligible legacy connections available while owners reconnect. Use the same-account check for each in-place cutover. Watch for outstanding provider cleanup before moving to retirement.
+4. Set `MATRIX_OUTLOOK_LEGACY_RETIRED=true` after migration. New Outlook authorization, reads, writes and refresh then use Matrix grants. Previously linked legacy accounts can still be disconnected or reauthorized. Monitor auth failures and keep the migration journal until outstanding cleanup completes.
+
 ## GitHub Stack Plan
 
 1. Specify the migration and implement the Entra OAuth transport and credential lifecycle.
 2. Add durable Outlook connection storage and platform routes, including reconnect and deletion.
 3. Route Outlook reads and approved writes through Graph for existing integration consumers.
-4. Finish consent and reconnect across clients, add provider-independent status refresh, and verify the rollout.
-5. Retire the Outlook-specific Pipedream paths once the legacy migration is complete.
+4. Wire first-party consent, cleanup, and legacy retirement into the platform.
+5. Finish consent and reconnect across clients and wire deployment settings for the cutover.
 
 Review of the reconnect and enterprise consent journey by the integration owner and representative Outlook users is recommended before rollout.

@@ -52,7 +52,7 @@ export async function createOutlookRuntime(options: {
   const sweep = async () => {
     await db.outlook.sweepAttempts(new Date());
     if (!pipedream) return;
-    const accounts = (await db.outlook.listPendingLegacyCleanup()).slice(0, 5);
+    const accounts = await db.outlook.claimPendingLegacyCleanup(new Date());
     await Promise.all(accounts.map(async ({ userId, providerAccountId }) => {
       try { await pipedream.revokeAccount(providerAccountId); }
       catch (error: unknown) {

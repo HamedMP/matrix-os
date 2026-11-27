@@ -1,3 +1,4 @@
+import { isMatrixOutlookConsentUrl } from "@matrix-os/contracts";
 // Self-contained desktop settings section for third-party integrations.
 // Data flows through the gateway proxy routes /api/integrations* (see
 // features/integrations/integrations-store.ts). Connect opens the OAuth
@@ -44,7 +45,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const cancelPollRef = useRef<(() => void) | null>(null);
-  const previousIdsRef = useRef<Set<string> | null>(null);
+  const consentRef = useRef<{ matrixOwned: boolean; isLanded: () => boolean } | null>(null);
   const connectAttemptRef = useRef(0);
   const disconnectAttemptRef = useRef(0);
 
@@ -55,7 +56,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
     disconnectAttemptRef.current += 1;
     cancelPollRef.current?.();
     cancelPollRef.current = null;
-    previousIdsRef.current = null;
+    consentRef.current = null;
     setConnectingService(null);
     setManualBusy(false);
     setManualNote(null);
@@ -81,7 +82,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
     void useIntegrations.getState().refresh(api);
   };
 
-  const handleConnect = async (serviceId: string): Promise<void> => {
+  const handleConnect = async (serviceId: string, connectionId?: string): Promise<void> => {
     if (!api || connectingService) return;
     const attempt = ++connectAttemptRef.current;
     const runtimeGeneration = captureRuntimeGeneration();
@@ -89,10 +90,11 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
       connectAttemptRef.current === attempt && isCurrentRuntimeGeneration(runtimeGeneration);
     setManualNote(null);
     setConnectingService(serviceId);
-    const previousIds = new Set(useIntegrations.getState().connections.map((conn) => conn.id));
-    previousIdsRef.current = previousIds;
+    const previous = useIntegrations.getState().connections;
+    const previousAccount = previous.find(connection => connection.id === connectionId);
+    const previousIds = new Set(previous.map(connection => connection.id));
 
-    const url = await useIntegrations.getState().startConnect(serviceId, api);
+    const url = await useIntegrations.getState().startConnect(serviceId, api, connectionId);
     if (!isCurrentAttempt()) return;
     if (!url) {
       setConnectingService(null);
@@ -109,10 +111,12 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
     }
     if (!isCurrentAttempt()) return;
 
-    const isLanded = () =>
-      useIntegrations
-        .getState()
-        .connections.some((conn) => conn.service === serviceId && !previousIds.has(conn.id));
+    const matrixOwned = isMatrixOutlookConsentUrl(serviceId, url, import.meta.env.VITE_MATRIX_APP_ORIGIN);
+    const isLanded = () => useIntegrations.getState().connections.some(connection => connection.service === serviceId
+      && (connectionId ? connection.id === connectionId && connection.outlookConnection === "matrix"
+        && (previousAccount?.outlookConnection !== "matrix" || previousAccount.connectedAt !== connection.connectedAt)
+        : !previousIds.has(connection.id)));
+    consentRef.current = { matrixOwned, isLanded };
 
     cancelConnectPoll();
     cancelPollRef.current = startConnectPoll({
@@ -122,7 +126,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
           cancelConnectPoll();
           return;
         }
-        const result = await useIntegrations.getState().syncNow(api);
+        const result = await useIntegrations.getState().syncNow(api, matrixOwned);
         // A superseded tick means the user changed account/computer; stop
         // polling rather than keep asking on behalf of the previous one.
         if (result === "superseded") cancelConnectPoll();
@@ -149,11 +153,11 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
     setManualBusy(true);
     setManualNote(null);
     try {
-      const result = await useIntegrations.getState().syncNow(api);
+      const consent = consentRef.current;
+      if (!consent) return;
+      const result = await useIntegrations.getState().syncNow(api, consent.matrixOwned);
       if (!isCurrentAttempt()) return;
-      const landed = useIntegrations
-        .getState()
-        .connections.some((conn) => conn.service === connectingService && !previousIdsRef.current?.has(conn.id));
+      const landed = consent.isLanded();
       if (landed) {
         cancelConnectPoll();
         setConnectingService(null);
@@ -236,6 +240,7 @@ export function IntegrationsSettingsSection({ pollIntervals, active = true }: In
               disabled={connectingService !== null}
               connectDisabled={connectingService !== null || !available.some(app => app.id === service.id)}
               onConnect={() => { if (!isDeveloper) void handleConnect(service.id); }}
+              onReconnect={target => void handleConnect(target.service, target.id)}
               onDisconnect={target => setConfirmId(target.id)}
               presentation={isDeveloper ? developer : undefined} />
           );

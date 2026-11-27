@@ -1,6 +1,6 @@
 import { createOutlookStore, type OutlookStore } from "./integrations/outlook/store.js";
 import { observePostgresPoolErrors } from "@matrix-os/observability/postgres";
-import { Kysely, PostgresDialect, sql, type InsertObject } from "kysely";
+import { CompiledQuery, Kysely, PostgresDialect, sql, type InsertObject } from "kysely";
 import pg from "pg";
 import { createCustomMcpCredentialMutations } from "./integrations/custom-mcp/credential-mutations.js";
 import { randomUUID } from "node:crypto";
@@ -258,10 +258,9 @@ export interface PlatformDb extends CustomMcpApprovalStore, CustomMcpExternalApp
 
 export function createPlatformDb(opts: string | { dialect: any; now?: () => Date }): PlatformDb & { outlook: OutlookStore } {
   let kysely: Kysely<PlatformDatabase>;
-  let pool: pg.Pool | null = null;
 
   if (typeof opts === "string") {
-    pool = new pg.Pool({ connectionString: opts, max: 10,
+    const pool = new pg.Pool({ connectionString: opts, max: 10,
       connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
     observePostgresPoolErrors(pool, (err) => {
       console.error("[platform-db] Postgres connection error:", err.message);
@@ -903,32 +902,14 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
     },
 
     async raw(query: string, params: readonly unknown[]): Promise<{ rows: Record<string, unknown>[] }> {
-      if (pool) {
-        // pg driver: parameterized query -- $1/$2/... are bound via the
-        // second argument, the query string itself is expected to be a
-        // developer-authored template, never user input.
-        const result = await pool.query(query, params as unknown[]);
-        return { rows: result.rows };
-      }
-      // Test path: Kysely dialect (e.g. KyselyPGlite). Split the query on
-      // $N placeholders and rebuild as a tagged-template call so Kysely
-      // parameterizes correctly. Empty params still go through this path
-      // (strings.length === 1, no interpolations); the `sql.raw` no-params
-      // fallback was removed because it's a silent injection sink any
-      // caller could trip by passing user input as `query`.
-      const parts = query.split(/\$\d+/);
-      const strings = Object.assign([...parts], { raw: [...parts] }) as unknown as TemplateStringsArray;
-      const compiled = sql(strings, ...params);
-      const result = await compiled.execute(kysely);
-      return { rows: (result.rows ?? []) as Record<string, unknown>[] };
+      // The SQL comes from repository code. Kysely passes caller values separately to its driver.
+      const result = await kysely.executeQuery<Record<string, unknown>>(CompiledQuery.raw(query, [...params]));
+      return { rows: result.rows };
     },
 
     async destroy(): Promise<void> {
+      // PostgresDialect owns its pool and closes it when Kysely destroys the driver.
       await kysely.destroy();
-      if (pool) {
-        await pool.end();
-        pool = null;
-      }
     },
   };
 

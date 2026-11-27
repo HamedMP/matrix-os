@@ -410,6 +410,11 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   // GET / -- list user's connected services
   // -----------------------------------------------------------------------
 
+  function outlookConnectionMode(connection: { id: string; service: string; pipedream_account_id?: string }) {
+    if (!outlook || !isOutlookService(connection.service) || !connection.pipedream_account_id) return undefined;
+    return isNativeOutlookConnection({ ...connection, pipedream_account_id: connection.pipedream_account_id }) ? "matrix" : "legacy";
+  }
+
   app.get("/", async (c) => {
     const uid = await requireUser(c);
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
@@ -417,9 +422,13 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       ...await db.listConnectedServices(uid),
       ...(mcpPresetBroker ? await mcpPresetBroker.listConnections(uid) : []),
     ];
-    return c.json(services.map(({ id, service, account_label, account_email, scopes, status, connected_at, last_used_at }) => ({
-      id, service, account_label, account_email, scopes, status, connected_at, last_used_at,
-    })));
+    return c.json(services.map(connection => {
+      const { id, service, account_label, account_email, scopes, status, connected_at, last_used_at } = connection;
+      const mode = outlookConnectionMode(connection);
+      return { id, service, account_label, account_email, scopes, status, connected_at, last_used_at,
+        ...(mode ? { outlook_connection: mode } : {}),
+      };
+    }));
   });
 
   // -----------------------------------------------------------------------
@@ -499,7 +508,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         ...await db.listConnectedServices(uid),
         ...(mcpPresetBroker ? await mcpPresetBroker.listConnections(uid) : []),
       ];
-      return c.json({ synced, services });
+      return c.json({ synced, services: services.map(connection => {
+        const mode = outlookConnectionMode(connection);
+        return mode ? { ...connection, outlook_connection: mode } : connection;
+      }) });
     } catch (err) {
       console.error("[integrations] Sync failed:", err instanceof Error ? err.message : err);
       return c.json({ error: "Failed to sync accounts" }, 502);

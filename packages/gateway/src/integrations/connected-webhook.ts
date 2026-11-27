@@ -43,11 +43,11 @@ export function registerConnectedIntegrationWebhook(app:Hono,options:{
     const {external_user_id,account_id,app:appName,label,email,scopes}=parsed.data;
     const service = getServiceByPipedreamApp(appName);
     if(!service)return c.json({error:'Unsupported app'},400);
-    if(options.ignoreService?.(service.id))return c.json({ok:true});
     try {
       const user=await options.db.getUserByPipedreamExternalId(external_user_id);
       if(!user && !options.verifiedConnectedWebhook)return c.json({error:'Unknown user'},400);
       const persist=async()=>{
+        if(options.ignoreService?.(service.id))return;
         if(!user)throw Error('Integration owner unavailable');
         const explicitLabel=options.consumePendingLabel(`${external_user_id}:${appName}`);
         const resolvedLabel=explicitLabel??label??service.id;
