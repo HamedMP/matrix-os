@@ -39,7 +39,7 @@ export function createGoogleCollectionAdmission(deps: GoogleCollectionAdmissionD
   const now = deps.now ?? (() => new Date());
   return {
     admit(input: { context: Context; ownerId: string; googleAccountId: string;
-      path: '/call' | '/read-call'; body: string }): Promise<{ release(): Promise<void> }> {
+      path: '/call' | '/read-call'; body: string }): Promise<{ beforeSend(signal: AbortSignal): Promise<void>; release(): Promise<void> }> {
       return guarded(async () => {
         const { context, ownerId, googleAccountId, path, body } = input;
         const signal = context.req.raw.signal;
@@ -47,16 +47,16 @@ export function createGoogleCollectionAdmission(deps: GoogleCollectionAdmissionD
         if (!key.success || googleAccountId !== googleAccountId.toLowerCase()) deny();
         let envelope: GoogleProcessingEnvelope | undefined;
         let stamp: GoogleDataStamp | undefined;
-        function current() {
+        function current(sendSignal?: AbortSignal) {
           const at = now().getTime();
-          if (signal.aborted || !Number.isSafeInteger(at) || at < 0 || envelope && (envelope.expiresAt <= at
+          if (signal.aborted || sendSignal?.aborted || !Number.isSafeInteger(at) || at < 0 || envelope && (envelope.expiresAt <= at
             || Date.parse(envelope.policyExpiresAt) <= at) || stamp && Date.parse(stamp.expiresAt) <= at) deny();
           return at;
         }
-        async function activeAccount() {
-          current();
+        async function activeAccount(sendSignal?: AbortSignal) {
+          current(sendSignal);
           const active = await deps.ownsGmailAccount(ownerId, googleAccountId);
-          current();
+          current(sendSignal);
           if (active !== true) deny();
         }
         current();
@@ -77,8 +77,8 @@ export function createGoogleCollectionAdmission(deps: GoogleCollectionAdmissionD
           .filter(route => routeDigest(route) === envelope!.routeDigest);
         if (routes.length !== 1) deny();
         const route: ResolvedGoogleRoute = routes[0]!;
-        function matchesClaim(value: GoogleDataStamp) {
-          current();
+        function matchesClaim(value: GoogleDataStamp, sendSignal?: AbortSignal) {
+          current(sendSignal);
           if (value.ownerId !== ownerId || value.googleAccountId !== googleAccountId || value.purposeId !== envelope!.purposeId
             || value.profileId !== envelope!.profileId || value.profileRevision !== envelope!.profileRevision
             || value.consentId !== envelope!.consentId || value.consentRevision !== envelope!.consentRevision
@@ -88,10 +88,10 @@ export function createGoogleCollectionAdmission(deps: GoogleCollectionAdmissionD
           profileId: profile.id, dataKinds: profile.input.dataKinds, resolvedRoute: route }));
         await activeAccount(); matchesClaim(stamp);
         const original: GoogleDataStamp = stamp;
-        async function revalidate() {
-          await activeAccount();
+        async function revalidate(sendSignal?: AbortSignal) {
+          await activeAccount(sendSignal);
           const checked = GoogleDataStampSchema.parse(await deps.authority.revalidate(original, route));
-          await activeAccount(); matchesClaim(checked);
+          await activeAccount(sendSignal); matchesClaim(checked, sendSignal);
           if (JSON.stringify(checked) !== JSON.stringify(original)) deny();
         }
         // One-use consumption follows current authority. A refusal after commit
@@ -99,7 +99,7 @@ export function createGoogleCollectionAdmission(deps: GoogleCollectionAdmissionD
         await deps.ledger.consume(envelope);
         await activeAccount();
         await revalidate();
-        return { release: () => guarded(revalidate) };
+        return { beforeSend: signal => guarded(() => revalidate(signal)), release: () => guarded(revalidate) };
       });
     },
   };

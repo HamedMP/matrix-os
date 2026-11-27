@@ -607,7 +607,7 @@ describe("E2E: Actions API (connect -> discover -> call action)", () => {
       externalUserId: "pd_ext_actions_e2e",
       accountId: "pd_acc_actions_e2e",
       url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-    }));
+    }), undefined, expect.any(AbortSignal));
     expect(pipedream.runAction).not.toHaveBeenCalled();
 
     // Step 4: Verify last_used_at was updated

@@ -166,7 +166,9 @@ export default defineConfig({
     // tests/e2e is owned by vitest.e2e.config.ts (bun run test:e2e); the
     // desktop suites there launch Electron, which fails on headless unit
     // runners when the unit glob accidentally collects them.
-    exclude: ["tests/**/*.integration.ts", "tests/e2e/**", "node_modules", "dist", ".next"],
+    exclude: [
+      // Independent-connection lifetime assertions execute in the mandatory native PostgreSQL step.
+      ...(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL ? ['tests/gateway/google-broker-collection-startup.test.ts'] : []),"tests/**/*.integration.ts", "tests/e2e/**", "node_modules", "dist", ".next"],
     coverage: {
       provider: "v8",
       include: [

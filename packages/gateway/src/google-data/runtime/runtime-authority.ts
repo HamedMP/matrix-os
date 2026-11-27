@@ -6,7 +6,7 @@ import type { GoogleContext, GoogleContextStore } from './contexts.js';
 import { GoogleDataStampSchema, type GoogleDataStamp } from '../profiles.js';
 import { GoogleInferenceIdentitySchema } from './profile-resolution.js';
 import { GooglePlatformPolicyError, type createGooglePlatformPolicyClient } from './platform-client.js';
-import type { GoogleDataInferenceAuthority } from './inference-policy.js';
+import type { GoogleDataInferenceAuthority, GoogleInferenceIdentity } from './inference-policy.js';
 import { GoogleRunPinError, type GoogleRunPinKey, type GoogleRunPinStore } from './run-pins.js';
 
 interface Dependencies {
@@ -21,6 +21,8 @@ function deny(): never { throw new RuntimePolicyUnavailable(); }
 const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value !== null && typeof value === 'object'
   ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, canonical(entry)])) : value;
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+/** Shared with explicit collection admission; never exposes the observed identity. */
+export const googleRuntimeIdentityDigest = (value: { binding: PiRuntimeBinding; identity: GoogleInferenceIdentity }) => digest(value);
 const sourceIds = (context: GoogleContext) => context.sources.map(source => source.originId).sort();
 
 /** Broker-only composition. A null marker preserves ordinary runs but DOES NOT qualify unknown saved
@@ -68,7 +70,7 @@ export function createGoogleRuntimeInferenceAuthority(deps: Dependencies): Googl
         if (!observed) deny();
         const identity = GoogleInferenceIdentitySchema.parse(observed);
         if (identity.api !== binding.route.api || identity.modelId !== binding.route.modelId) deny();
-        const identityDigest = digest({ binding, identity }); const origins = sourceIds(context);
+        const identityDigest = googleRuntimeIdentityDigest({ binding, identity }); const origins = sourceIds(context);
         const pairs = [...new Map(context.sources.map(source => [JSON.stringify([source.googleAccountId, source.purposeId]),
           { googleAccountId: source.googleAccountId, purposeId: source.purposeId }])).entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, pair]) => pair);
         if (pairs.length < 1 || pairs.length > 32 || context.sources.some(s => s.state !== 'active' || Date.parse(s.expiresAt) <= now().getTime())) deny();

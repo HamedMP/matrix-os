@@ -1,5 +1,7 @@
 /** Gateway-only owner tools. No recipe identity or bearer reaches the Pi worker. */
 import { randomUUID } from "node:crypto";
+import type { GoogleCollectionClientDependencies } from "../google-data/runtime/collection-client.js";
+import type { GoogleProcessingClaim } from "../google-data/runtime/envelope.js";
 import { SharedBrowserError, type SharedBrowserBroker, type SharedBrowserBinding } from "../shared-browser/broker.js";
 import { sharedBrowserFailureResult } from "../shared-browser/action-failure.js";
 import type { BotToolCapability, BotToolRequest, BotToolResult, CanonicalChatApprovalDecision, CanonicalOwnerScope } from "@matrix-os/contracts";
@@ -53,6 +55,9 @@ export function createManagedPiOwnerTools(deps: {
   approvals?: CustomMcpApprovalClient;
   sharedBrowser?: SharedBrowserBroker;
   githubDeveloper?: boolean;
+  authorizeExternalEgress?(binding: ManagedPiRuntimeBinding, signal: AbortSignal): Promise<void>;
+  googleCollection?: { prepare(binding: ManagedPiRuntimeBinding, accountId: string, signal: AbortSignal,
+    requestConsent: GoogleCollectionClientDependencies['requestConsent']): Promise<GoogleProcessingClaim> };
 }) {
   const runs = new Map<string, Run>(); // capacity64, close on terminal/cancel; run deadline bounds lifetime.
   const capabilities: BotToolCapability[] = [
@@ -117,7 +122,9 @@ export function createManagedPiOwnerTools(deps: {
     return reviewed;
   }
   async function ask(run: Run, request: BotToolRequest, selected: Pick<BotIntegrationConnection, "label" | "connectionId">, signal: AbortSignal, title = "Allow this connected service action?"): Promise<void> {
-    const description = `Account ${selected.label} (${selected.connectionId})\n${JSON.stringify(request.args)}`;
+    await askOwner(run, title, `Account ${selected.label} (${selected.connectionId})\n${JSON.stringify(request.args)}`, signal);
+  }
+  async function askOwner(run: Run, title: string, description: string, signal: AbortSignal): Promise<void> {
     if (description.length > 4000 || run.pending) throw new BotBrokerActionError("invalid_arguments");
     const id = randomUUID();
     await new Promise<void>((resolve, reject) => {
@@ -149,10 +156,13 @@ export function createManagedPiOwnerTools(deps: {
       const action = await actionFor(binding, request.args, permissionMode, signal);
       if (action.risk !== "read" && permissionMode !== "full_access") throw new BotBrokerActionError("denied");
       prepared.account = await account(binding, request.args, signal);
-      if (action.risk !== "read") await ask(run, request, prepared.account, signal);
+      if (action.risk !== "read") await askOwner(run, "Allow this connected service action?", `Account ${prepared.account.label} (${prepared.account.connectionId})\n${JSON.stringify(request.args)}`, signal);
     } else if (request.capability === "mcp.call") {
       if (permissionMode !== "full_access" || !deps.approvals) throw new BotBrokerActionError("denied");
+      // Approval preparation itself forwards tool arguments to the control plane.
+      await deps.authorizeExternalEgress?.(binding, signal);
       const control = await initializeMcp(run);
+      await deps.authorizeExternalEgress?.(binding, signal);
       prepared.receipt = await new Promise<string | undefined>((resolve, reject) => {
         const abort = () => { signal.removeEventListener("abort", abort); control.onToolPermissionCancel(request.toolCallId); reject(new BotBrokerActionError("denied")); };
         signal.addEventListener("abort", abort, { once: true });
@@ -222,7 +232,7 @@ export function createManagedPiOwnerTools(deps: {
       if (request.capability === "browser.action") {
         if (permissionMode !== run.browserPermissionMode || !run.browserRegistered || !deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
         const sharedBinding = browserBinding(binding);
-        try { return text(await deps.sharedBrowser.execute(sharedBinding, request.args, signal)); }
+        try { await deps.authorizeExternalEgress?.(binding, signal); return text(await deps.sharedBrowser.execute(sharedBinding, request.args, signal)); }
         catch (error: unknown) {
           const failure = sharedBrowserFailureResult(error, sharedBinding, deps.sharedBrowser, { includeUnavailable: true });
           if (failure) {
@@ -249,8 +259,37 @@ export function createManagedPiOwnerTools(deps: {
         if (!prepared.account || selected.connectionId !== prepared.account.connectionId || selected.label !== prepared.account.label) throw new BotBrokerActionError("not_granted");
         const action = await actionFor(binding, request.args, permissionMode, signal);
         await live(binding, signal);
+        let processingClaim: GoogleProcessingClaim | undefined;
+        if (selected.service === "gmail") {
+          if (!deps.googleCollection) throw new BotBrokerActionError("unavailable");
+          processingClaim = await deps.googleCollection.prepare(binding, selected.connectionId, signal, async (notice, consentSignal) => {
+            const { disclosure, expiresAt } = notice;
+            const kinds = { 'gmail-metadata': 'Email details', 'gmail-content': 'Email contents',
+              'gmail-attachments': 'Attachments', 'google-derived-context': 'Saved email context' };
+            const seconds = disclosure.retention.maxAgeSeconds;
+            const unit = seconds % 86400 === 0 ? [seconds / 86400, "day"] as const
+              : seconds % 3600 === 0 ? [seconds / 3600, "hour"] as const
+                : seconds % 60 === 0 ? [seconds / 60, "minute"] as const : [seconds, "second"] as const;
+            const duration = `${unit[0]} ${unit[1]}${unit[0] === 1 ? "" : "s"}`;
+            const description = [`Account: ${selected.label}`, `Purpose: ${disclosure.purpose}`,
+              `Recipients: ${disclosure.recipients.map(recipient => `${recipient.name} (${recipient.role})`).join(", ")}`,
+              `Data: ${disclosure.dataKinds.map(kind => kinds[kind]).join(", ")}`,
+              `Retention: up to ${duration}`, `Permission expires: ${expiresAt}`,
+              'This permission is separate from connecting Gmail.'].join("\n");
+            await askOwner(run, "Allow this AI to use Gmail data?", description, consentSignal);
+            return true;
+          });
+          const afterConsent = await live(binding, signal);
+          await actionFor(binding, request.args, afterConsent.permissionMode, signal);
+          const afterAccount = await account(binding, request.args, signal);
+          if (afterAccount.connectionId !== selected.connectionId || afterAccount.label !== selected.label) throw new BotBrokerActionError("not_granted");
+          const finalAuthority = await live(binding, signal);
+          if (action.risk !== "read" && finalAuthority.permissionMode !== "full_access") throw new BotBrokerActionError("denied");
+        }
+        if (selected.service !== "gmail") await deps.authorizeExternalEgress?.(binding, signal);
         return text(await deps.integrations!.call(binding.ownerId, { service: request.args.service, action: request.args.action,
-          label: selected.label, params: request.args.params, read: action.risk === "read" }, signal));
+          label: selected.label, connectionId: selected.connectionId, params: request.args.params, read: action.risk === "read",
+          ...(processingClaim ? { processingClaim } : {}) }, signal));
       }
       if (request.capability === "mcp.inventory") return text(await deps.mcp!.inventory(binding.ownerId, signal));
       if (request.capability === "mcp.describe") return text(await deps.mcp!.describe(binding.ownerId, request.args.serverId, signal));
@@ -268,6 +307,7 @@ export function createManagedPiOwnerTools(deps: {
           for (const event of mapBotEvent({ type: "tool_progress", toolCallId: request.toolCallId, capability: request.capability,
             phase: "updated", display: { ...evidence.display, ...output } }, { toolOutputKey: deps.toolOutputKey })) run.emit(event);
         } : undefined;
+        await deps.authorizeExternalEgress?.(binding, signal);
         return text(await deps.mcp!.call(binding.ownerId, { ...request.args, runId: binding.runId,
           ...(prepared.receipt ? { approvalReceipt: prepared.receipt } : {}) }, signal, ...(onProgress ? [onProgress] as const : [] as const)));
       }

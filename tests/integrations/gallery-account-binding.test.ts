@@ -36,7 +36,7 @@ describe("gallery immutable account snapshots", () => {
   it("reads only the selected account through the independent binding", async () => {
     const { call, proxyGet } = fixture();
     expect((await call()).status).toBe(200);
-    expect(proxyGet).toHaveBeenCalledWith(expect.objectContaining({ accountId: "provider_selected" }));
+    expect(proxyGet).toHaveBeenCalledWith(expect.objectContaining({ accountId: "provider_selected" }), undefined, expect.any(AbortSignal));
   });
   it.each([
     { id: "replacement_connection" }, { account_email: "replacement@example.test" },

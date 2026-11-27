@@ -1,5 +1,6 @@
 import { JevInboxTriageBindingSchema, JevInboxGmailIdSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import type { BeforeGmailSend } from "./gmail-send-admission.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 
 export const JevReadBindingSchema = JevInboxTriageBindingSchema.omit({ version: true, ownerId: true });
@@ -24,6 +25,7 @@ export interface JevBoundReadInput {
   params?: Record<string, unknown>;
   pipedream: PipedreamConnectClient;
   signal: AbortSignal;
+  beforeSend?: BeforeGmailSend;
 }
 /** Reusable pure preflight before any collection admission or provider lookup. */
 export function validateJevBoundRead(options: JevBoundReadInput) {
@@ -43,12 +45,13 @@ export async function executeJevBoundRead(options: JevBoundReadInput): Promise<u
   const read = validateJevBoundRead(options);
   const get = options.pipedream.boundedGmailGet;
   if (!get) throw new JevBoundReadError("unavailable");
+  const control: [AbortSignal, BeforeGmailSend?] = options.beforeSend ? [options.signal, options.beforeSend] : [options.signal];
   const identity = { externalUserId: options.externalUserId, accountId: connection.pipedream_account_id };
-  const rawProfile = await get({ ...identity, kind: "profile" }, options.signal);
+  const rawProfile = await get({ ...identity, kind: "profile" }, ...control);
   const profile = Profile.safeParse(rawProfile);
   if (!profile.success || profile.data.emailAddress !== binding.expectedEmail) throw new JevBoundReadError("denied");
   if (read.action === "get_profile") return profile.data;
-  if (read.action === "list_threads") return get({ ...identity, kind: "threads", ...(read.params?.pageToken ? { pageToken: read.params.pageToken } : {}) }, options.signal);
-  if (read.action === "get_thread_ids") return get({ ...identity, kind: "thread-ids", id: read.params.threadId }, options.signal);
-  return get({ ...identity, kind: "message", id: read.params.messageId }, options.signal);
+  if (read.action === "list_threads") return get({ ...identity, kind: "threads", ...(read.params?.pageToken ? { pageToken: read.params.pageToken } : {}) }, ...control);
+  if (read.action === "get_thread_ids") return get({ ...identity, kind: "thread-ids", id: read.params.threadId }, ...control);
+  return get({ ...identity, kind: "message", id: read.params.messageId }, ...control);
 }

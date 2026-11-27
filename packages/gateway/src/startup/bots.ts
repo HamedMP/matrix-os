@@ -378,6 +378,7 @@ export async function startBots(options: {
       platform: options.routineActionPlatform, now: options.now }) : undefined;
   recoveryRegistry = registry;
   const googleData = await createGoogleBrokerRuntime({ database: options.repository.kysely, registry,
+    ...(options.matrixAnthropic ? { credentials: options.matrixAnthropic } : {}),
     ...(options.integrations ? { transport: options.integrations } : {}) });
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const jevTools = options.jev ? createBotJevTools({ agents: options.agents, recipes, workflow: options.jev,
@@ -398,7 +399,7 @@ export async function startBots(options: {
   const managedAdmission = createManagedPiAdmission({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots,
     supervisedBrowser: identity => typeof options.sharedBrowser?.authorizeAction === "function" && options.sharedBrowser.allowsSupervisedRun(identity),
     toolCapabilities: managedCapabilities });
-  const ownerTools = createManagedPiOwnerTools({ githubDeveloper: true, toolOutputKey: options.toolOutputKey, authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
+  const ownerTools = createManagedPiOwnerTools({ authorizeExternalEgress: googleData.assertToolEgressAllowed, googleCollection: { prepare: googleData.prepareCollection }, githubDeveloper: true, toolOutputKey: options.toolOutputKey, authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
     ...(options.sharedBrowser ? { sharedBrowser: options.sharedBrowser } : {}),
     ...(integrationClient ? { integrations: integrationClient } : {}),
     ...(options.managedMcp ? { mcp: options.managedMcp.client, approvals: options.managedMcp.approvals } : {}) });

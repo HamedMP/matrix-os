@@ -57,7 +57,7 @@ describe("owner-bound integration read-call authority", () => {
 
     const read = await readCall({ service: "gmail", action: "list_labels", label: "Work", params: {} });
     expect(read.status).toBe(200);
-    expect(proxyGet).toHaveBeenCalledWith(expect.objectContaining({ accountId: "pd_work" }));
+    expect(proxyGet).toHaveBeenCalledWith(expect.objectContaining({ accountId: "pd_work" }), undefined, expect.any(AbortSignal));
     expect(proxyGet).toHaveBeenCalledTimes(1);
 
     const write = await readCall({ service: "gmail", action: "send_email", label: "Work",
