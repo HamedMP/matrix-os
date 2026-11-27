@@ -1,3 +1,4 @@
+import { displayTerminalControlInvocation } from "@matrix-os/contracts/herdr-terminals";
 import React from "react";
 import type { CanonicalChatMessagePart } from "@matrix-os/contracts";
 import ReactMarkdown from "react-markdown";
@@ -22,7 +23,7 @@ export function CanonicalPartView({ part, human = false }: { part: CanonicalChat
   if (part.type === "approval_request") return <MessageDetail label={part.title} detail={`${part.description} · ${part.risk} risk`} />;
   if (part.type === "approval_result") return <MessageDetail label="Approval updated" detail={part.decision.replaceAll("_", " ")} />;
   if (part.type === "status") return <MessageDetail label={part.label} detail={part.detail} tone={part.tone} />;
-  if (part.type === "invocation_reference") return <MessageDetail label={part.invocation.invocation} detail={part.invocation.arguments} />;
+  if (part.type === "invocation_reference") return <MessageDetail label={displayTerminalControlInvocation(part.invocation)} detail={part.invocation.arguments} />;
   if (part.type === "resource_reference") return <MessageDetail label={part.resource.label} detail={part.resource.path ?? part.resource.kind} />;
   if (part.type === "import_reference") return <MessageDetail label={part.label} detail="Full content is available in the owner's private Chat." />;
   // Provenance is source metadata, never a participant message.

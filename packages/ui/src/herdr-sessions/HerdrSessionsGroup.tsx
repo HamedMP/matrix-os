@@ -12,7 +12,7 @@ const selectedBackground = "var(--terminal-drawer-card-selected-bg, var(--bg-hov
 const selectedAccent = "var(--terminal-drawer-fg, var(--text-primary, currentColor))";
 
 /**
- * "Herdr sessions" (spec 2701): the owner's existing Herdr terminals, shown
+ * "Terminal sessions" (spec 2701): the owner's existing Herdr terminals, shown
  * after the project workspaces in every Terminal view. Rendered only for a
  * reachable core with at least one terminal; there is no create action, since
  * new terminals are Matrix terminals.
@@ -32,9 +32,9 @@ export function HerdrSessionsGroup({ list, selectedRefKey, closingIds = [], erro
   if (!shouldShowHerdrSessions(list) || !list) return null;
   const closingSet = new Set(closingIds);
   return (
-    <section data-testid="herdr-sessions" aria-label="Herdr sessions" style={{ borderTop: `1px solid ${border}`, paddingTop: 8, ...style }}>
+    <section data-testid="herdr-sessions" aria-label="Terminal sessions" style={{ borderTop: `1px solid ${border}`, paddingTop: 8, ...style }}>
       <h3 style={{ color: muted, fontSize: 11, fontWeight: 600, letterSpacing: 0.4, margin: "0 0 4px", padding: "0 12px", textTransform: "uppercase" }}>
-        Herdr sessions
+        Terminal sessions
       </h3>
       {error ? <p role="alert" style={{ color: muted, fontSize: 12, margin: "0 12px 6px" }}>{error}</p> : null}
       <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
@@ -79,7 +79,7 @@ export function HerdrSessionsGroup({ list, selectedRefKey, closingIds = [], erro
               {confirming ? (
                 <div role="group" aria-label={`Confirm closing ${session.title}`}
                   style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: 8, padding: "0 8px 8px 12px" }}>
-                  <span style={{ color: muted, flex: "1 1 100%", fontSize: 12 }}>Close this session? Its program ends in Herdr too.</span>
+                  <span style={{ color: muted, flex: "1 1 100%", fontSize: 12 }}>Close this session and stop its program?</span>
                   <Button variant="secondary" size="sm" onClick={() => setConfirmingId(null)}>Cancel</Button>
                   <Button variant="destructive" size="sm" disabled={closing}
                     onClick={() => {

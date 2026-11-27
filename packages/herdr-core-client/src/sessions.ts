@@ -25,6 +25,12 @@ const ProcessIdentitySchema = z.object({
   cwd: z.string().min(1).max(4096), pid: z.int().positive(), created_ms: z.int().nonnegative(),
 });
 export type HcListedProcess = { terminal: LocalTerminal; identity?: z.infer<typeof ProcessIdentitySchema>; selectionRevision?: string };
+export interface HcAttachOptions {
+  history?: number;
+  observe?: boolean;
+  selectionRevision?: string;
+  acceptTerminal?(terminal: unknown): boolean;
+}
 
 const ListedTerminalSchema = z.object({
   address: z.string().regex(LOCAL_TERMINAL_ID_PATTERN),
@@ -44,6 +50,13 @@ const DiscoveryTerminalSchema = ListedTerminalSchema.extend({ address: z.string(
 const MachinePresenceSchema = z.object({
   name: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,31}$/), state: z.string().max(32),
 });
+const ConnectedMachinesSchema = z.object({
+  machines: z.array(MachinePresenceSchema.extend({ id: z.string().regex(/^[0-9a-f]{32}$/).optional().catch(undefined) })).max(1_000),
+});
+
+export function parseRegisteredMachines(reply: unknown) {
+  return ConnectedMachinesSchema.parse(reply).machines;
+}
 export interface DiscoveredMachine {
   id: string;
   name: string;
@@ -206,12 +219,13 @@ export function createHcSessions(options: {
   }
 
   /** Process metadata is internal. Never return it as the renderer's terminal listing. */
-  async function listProcesses(core: HcConnection): Promise<HcListedProcess[]> {
+  async function listProcesses(core: HcConnection, remote = false): Promise<HcListedProcess[]> {
     const listed = ListedSchema.parse(await core.call("terminal.list", {}));
     const terminals: HcListedProcess[] = [];
     for (const entry of listed.terminals) {
-      const terminal = ListedTerminalSchema.safeParse(entry);
+      const terminal = (remote ? DiscoveryTerminalSchema : ListedTerminalSchema).safeParse(entry);
       if (!terminal.success || terminal.data.state !== "live") continue;
+      if (remote && !terminal.data.address.includes("/")) continue;
       const state = LocalTerminalStatusSchema.safeParse(terminal.data.status?.state);
       const identity = ProcessIdentitySchema.safeParse(entry);
       terminals.push({ terminal: {
@@ -266,7 +280,7 @@ export function createHcSessions(options: {
      * `stream.history`: scrollback lines the core replays first (2,000 when omitted).
      * `stream.observe`: watch only; the core never takes this viewer's typing or size.
      */
-    async attach(id: string, size: { cols: number; rows: number }, stream: { history?: number; observe?: boolean; selectionRevision?: string } = {}): Promise<number> {
+    async attach(id: string, size: { cols: number; rows: number }, stream: HcAttachOptions = {}): Promise<number> {
       const startedIn = releaseEpoch;
       const core = await options.ensure();
       if (releaseEpoch !== startedIn) throw new Error("terminal attachment ended");
@@ -285,6 +299,7 @@ export function createHcSessions(options: {
           ...(stream.observe ? { observe: true } : {}),
           ...(stream.selectionRevision ? { selection_revision: stream.selectionRevision } : {}),
         }, {
+          acceptTerminal: stream.acceptTerminal,
           onData: (chunk, consumed) => {
             if (sink.outputBytes) {
               attachment.unacknowledged.push(consumed);

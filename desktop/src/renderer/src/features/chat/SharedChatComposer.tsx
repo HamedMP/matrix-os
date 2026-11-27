@@ -259,7 +259,7 @@ export function SharedChatComposer({
   const filteredMentionActions = canSelectTerminal && resourceQuery !== null
     ? mentionActions.filter(action => `${action.label} ${action.keywords}`.toLowerCase().includes(resourceQuery)) : [];
   const filteredNativeSkills = canSelectTerminal && slashQuery !== null
-    ? mentionActions.filter(action => action.slashCommand.includes(slashQuery)) : [];
+    ? mentionActions.filter(action => action.slashCommand.includes(slashQuery) || action.legacySlashCommand?.includes(slashQuery)) : [];
   const suggestionCount = slashMenuOpen
     ? filteredNativeSkills.length + filteredSlashEntries.length
     : resourceMenuOpen

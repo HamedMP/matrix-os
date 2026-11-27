@@ -32,7 +32,7 @@ describe("Herdr sessions group", () => {
   it("shows each session with its status and opens it", () => {
     const onOpen = vi.fn();
     render(<HerdrSessionsGroup list={list} selectedRefKey={herdrSessionRefKey(list.sessions[1]!)} onOpen={onOpen} onClose={vi.fn()} />);
-    expect(screen.getByRole("region", { name: "Herdr sessions" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Terminal sessions" })).toBeTruthy();
     expect(screen.getByText("Allow edit?")).toBeTruthy();
     expect(screen.getByTestId("herdr-session-status-t1").getAttribute("data-agent-status")).toBe("waiting");
     expect(screen.queryByTestId("herdr-session-status-t2")).toBeNull();

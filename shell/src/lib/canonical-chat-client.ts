@@ -1,3 +1,4 @@
+import { displayTerminalControlInvocation } from "@matrix-os/contracts/herdr-terminals";
 import { randomUUID } from "@matrix-os/ui/random-uuid";
 import { isRoutineOriginPath, createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import type { CanonicalSubmitChatApprovalRequest } from "@matrix-os/contracts";
@@ -513,7 +514,7 @@ function partText(part: CanonicalChatMessage["parts"][number]): string | null {
   if (part.type === "approval_result") return `Approval ${part.decision.replaceAll("_", " ")}`;
   if (part.type === "attachment_reference") return null;
   if (part.type === "resource_reference") return `Referenced ${part.resource.label}`;
-  if (part.type === "invocation_reference") return part.invocation.invocation;
+  if (part.type === "invocation_reference") return displayTerminalControlInvocation(part.invocation);
   return null;
 }
 

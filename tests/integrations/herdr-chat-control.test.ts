@@ -34,6 +34,7 @@ it("exposes only the selected terminal through the real MCP and authenticated Ga
   const [left, right] = InMemoryTransport.createLinkedPair();
   try {
     await Promise.all([server.connect(left), client.connect(right)]);
+    expect(client.getServerVersion()?.name).toBe("matrix-terminal");
     const names = (await client.listTools()).tools.map(tool => tool.name);
     expect(names).toEqual(["terminal_list", "terminal_read", "terminal_send", "terminal_interrupt"]);
     const invoke = (name: string, args = {}) => client.callTool({ name, arguments: args });
@@ -70,6 +71,7 @@ it("only publishes the read-only inventory tool to an unselected private Chat, u
   const [left, right] = InMemoryTransport.createLinkedPair();
   try {
     await Promise.all([server.connect(left), client.connect(right)]);
+    expect(client.getServerVersion()?.name).toBe("matrix-terminal");
     expect((await client.listTools()).tools.map(t => t.name)).toEqual(["terminal_discover"]);
     const invoke = (args: Record<string, unknown>) => client.callTool({ name: "terminal_discover", arguments: args });
     const text = (result: Awaited<ReturnType<typeof invoke>>) => JSON.stringify(result.content);

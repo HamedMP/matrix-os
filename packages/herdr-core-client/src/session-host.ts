@@ -5,11 +5,12 @@
 // starts a shell, attaches and ends terminals, and does nothing else to it.
 import { describeError } from "#describe-error";
 import { connectHc, HcVersionMismatchError, type HcConnection, type HcHello, type HcSocket } from "#client";
-import { createHcSessions, discoverHerdrMachines, type AttachmentSlots, type HcSessionSink } from "#sessions";
+import { createHcSessions, discoverHerdrMachines, parseRegisteredMachines, type AttachmentSlots, type HcSessionSink } from "#sessions";
 
 /** The only methods ever sent to a core the app does not own (FR-014). */
 export const HERDR_SESSION_METHODS = ["terminal.list", "terminal.run", "terminal.attach", "terminal.kill"] as const;
 const ALLOWED_METHODS: ReadonlySet<string> = new Set(HERDR_SESSION_METHODS);
+const TRUSTED_LOCAL_METHODS: ReadonlySet<string> = new Set([...HERDR_SESSION_METHODS, "machine.list"]);
 const REQUIRED_FEATURES = ["framed", "attach", "shell"];
 const OLDEST_PATCH = 14;
 // A round trip to the computer, not to a local socket.
@@ -59,6 +60,8 @@ export interface HerdrLaunch { argv?: string[]; line?: string; cwd?: string; nam
 export interface HerdrSessionHostOptions {
   /** A byte stream to `herdr-core connect` on the computer. Rejects with HerdrTransportError when it can say why. */
   open(): Promise<HcSocket>;
+  /** Gateway's own core can identify the SSH machines explicitly configured for Chat. */
+  allowMachineInventory?: boolean;
   /** Shared with the window's other hosts, so the attachment budget holds across them. */
   slots?: AttachmentSlots;
   idleMs?: number;
@@ -103,7 +106,7 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
         connectHc({ open: () => socket, accepts: acceptsRemoteCore, timeoutMs: options.callTimeoutMs ?? CALL_TIMEOUT_MS }),
         abandoned,
       ]);
-      return counted(restrictHcConnection(opened, ALLOWED_METHODS));
+      return counted(restrictHcConnection(opened, options.allowMachineInventory ? TRUSTED_LOCAL_METHODS : ALLOWED_METHODS));
     } finally {
       abandonPending = null;
     }
@@ -216,6 +219,12 @@ export function createHerdrSessionHost(options: HerdrSessionHostOptions, sink: H
       const terminals = await sessions.listProcesses(core);
       if (disposed || connection !== core) throw shutDown();
       return { terminals, generation };
+    },
+    async listRemoteProcesses() {
+      const core = await ensure();
+      const [terminals, routes] = await Promise.all([sessions.listProcesses(core, true), core.call("machine.list", {})]);
+      if (disposed || connection !== core) throw shutDown();
+      return { terminals, machines: parseRegisteredMachines(routes), generation };
     },
     isCurrentGeneration: (expected: number) => !disposed && connection !== null && generation === expected,
 

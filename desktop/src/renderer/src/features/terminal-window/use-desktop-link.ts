@@ -8,6 +8,8 @@ import { invoke, onEvent } from "../../lib/operator";
 
 export type DesktopLinkEnableFailure = "denied" | "not_paired" | "unavailable";
 
+type LinkFailure = { reason: DesktopLinkEnableFailure; target?: Pick<DesktopLinkStatusEntry, "slot" | "computerName"> };
+
 export const DESKTOP_LINK_ENABLE_FAILURE: Record<DesktopLinkEnableFailure, string> = {
   denied: "Only your primary computer can use this device.",
   not_paired: "This device isn't paired with your computer any more. Pair it again.",
@@ -17,7 +19,16 @@ export const DESKTOP_LINK_ENABLE_FAILURE: Record<DesktopLinkEnableFailure, strin
 export function useDesktopLink() {
   const [computers, setComputers] = useState<readonly DesktopLinkStatusEntry[]>([]);
   const [busySlot, setBusySlot] = useState<string | null>(null);
-  const [failure, setFailure] = useState<DesktopLinkEnableFailure | null>(null);
+  const [failure, setFailure] = useState<LinkFailure | null>(null);
+
+  // A fresh native pairing (including outside this panel) supersedes an earlier failed Turn on.
+  // Reconcile here as the failed IPC reply may also arrive after the "on" event.
+  const target = failure?.target;
+  const reported = target && computers.find(entry => entry.slot === target.slot);
+  const outdated = reported && (reported.computerName !== target.computerName || reported.state === "on");
+  useEffect(() => {
+    if (outdated) setFailure(null);
+  }, [outdated]);
 
   useEffect(() => {
     let live = true;
@@ -25,7 +36,13 @@ export function useDesktopLink() {
       (status) => {
         // Main validates the answer; a reply of any other shape shows no computers.
         const parsed = z.strictObject({ computers: z.array(DesktopLinkStatusSchema).max(20) }).safeParse(status);
-        if (live) setComputers(parsed.success ? parsed.data.computers : []);
+        if (live && parsed.success) {
+          // Status changes received during the initial read are newer than its snapshot.
+          setComputers(current => [
+            ...parsed.data.computers.filter(row => !current.some(entry => entry.slot === row.slot)),
+            ...current,
+          ].sort((left, right) => left.computerName.localeCompare(right.computerName)));
+        }
       },
       (error: unknown) => { console.warn("[desktop-link] status failed", error instanceof Error ? error.name : "unknown_error"); },
     );
@@ -46,11 +63,11 @@ export function useDesktopLink() {
     setFailure(null);
     try {
       const result = await invoke("desktop-link:enable", { slot, computerName });
-      if (!result.ok) setFailure(result.reason);
+      if (!result.ok) setFailure({ reason: result.reason, target: { slot, computerName } });
       return result.ok;
     } catch (error: unknown) {
       console.warn("[desktop-link] enable failed", error instanceof Error ? error.name : "unknown_error");
-      setFailure("unavailable");
+      setFailure({ reason: "unavailable", target: { slot, computerName } });
       return false;
     } finally {
       setBusySlot(null);
@@ -78,13 +95,13 @@ export function useDesktopLink() {
       await invoke("desktop-link:pair", {});
     } catch (error: unknown) {
       console.warn("[desktop-link] pairing failed", error instanceof Error ? error.name : "unknown_error");
-      setFailure("unavailable");
+      setFailure({ reason: "unavailable" });
     } finally {
       setPairing(false);
     }
   }, []);
 
-  return { computers, busySlot, failure, pairing, clearFailure: () => setFailure(null), enable, disable, pair };
+  return { computers, busySlot, failure: outdated ? null : failure?.reason ?? null, pairing, clearFailure: () => setFailure(null), enable, disable, pair };
 }
 
 export type DesktopLinkView = ReturnType<typeof useDesktopLink>;

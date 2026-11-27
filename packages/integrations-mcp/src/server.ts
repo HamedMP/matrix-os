@@ -1,3 +1,4 @@
+import { TERMINAL_CONTROL_MCP_SERVER_NAME } from "@matrix-os/contracts/herdr-terminals";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerHerdrTerminalTools, HERDR_TOOL_INSTRUCTIONS } from "./herdr-terminal.js";
 import { registerIntegrationReadTools, INTEGRATION_READ_INSTRUCTIONS } from "./integration-read.js";
@@ -53,7 +54,7 @@ export function createIntegrationsMcpServer(
   const surface = IntegrationsMcpToolSurfaceSchema.parse(options.toolSurface ?? "full");
   if (surface === "chat-herdr" || surface === "chat-herdr-discovery") {
     const discoveryOnly = surface === "chat-herdr-discovery";
-    const server = new McpServer({ name: "matrix-herdr", version: "1.0.0" }, { instructions: discoveryOnly ? "Use terminal_discover for computer and terminal questions. Summarize counts; expand only as requested." : HERDR_TOOL_INSTRUCTIONS });
+    const server = new McpServer({ name: TERMINAL_CONTROL_MCP_SERVER_NAME, version: "1.0.0" }, { instructions: discoveryOnly ? "Use terminal_discover for computer and terminal questions. Summarize counts; expand only as requested." : HERDR_TOOL_INSTRUCTIONS });
     registerHerdrTerminalTools(server, fetcher, discoveryOnly);
     return server;
   }

@@ -8,7 +8,7 @@ import {
   type CanonicalChatRun,
   type CanonicalOwnerScope,
 } from "@matrix-os/contracts";
-import { isHerdrChatTerminalRef } from "@matrix-os/contracts/herdr-terminals";
+import { isHerdrChatTerminalRef, isTerminalControlCommand } from "@matrix-os/contracts/herdr-terminals";
 import { MATRIX_MCP_LAUNCHER, type MatrixMcpCapabilityIssuer } from "./matrix-mcp-launch.js";
 import { CodexTerminalMcpLeaseSchema } from "../coding-agents/codex-terminal-mcp.mjs";
 
@@ -17,13 +17,7 @@ export type CodexTerminalMcpLease = z.infer<typeof CodexTerminalMcpLeaseSchema>;
 export function selectedHerdrTerminal(parts: CanonicalProviderRunInput["parts"]) {
   const invocations = parts.filter((part) => part.type === "invocation_reference");
   const command = invocations.length === 1 ? invocations[0]?.invocation : undefined;
-  if (
-    command?.kind !== "command" ||
-    command.descriptorId !== "herdr-terminal-control" ||
-    command.invocation !== "/herdr-terminal-control" ||
-    command.arguments !== undefined
-  )
-    return undefined;
+  if (!isTerminalControlCommand(command)) return undefined;
   const resources = parts.flatMap((part) =>
     part.type === "resource_reference" && part.resource.kind === "terminal_session" ? [part.resource] : [],
   );

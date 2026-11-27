@@ -60,7 +60,7 @@ const reply=(id,result)=>process.stdout.write(JSON.stringify({id,result})+'\n');
 for await(const line of createInterface({input:process.stdin})){const m=JSON.parse(line);
 if(m.method==='initialize')reply(m.id,{userAgent:'synthetic',platformFamily:'unix',platformOs:'linux',codexHome:'synthetic'});
 else if(m.method==='thread/start'||m.method==='thread/resume'){await log({event:m.method,pid:process.pid,params:m.params});reply(m.id,{thread:{id:'native-terminal-thread'}});}
-else if(m.method==='mcpServerStatus/list'){await log({event:'catalog',pid:process.pid});reply(m.id,{data:[m.params.serverName==='matrix_shared_browser'?{name:'matrix_shared_browser',runtimeStatus:'connected',tools:{shared_browser:{}}}:{name:'matrix-herdr',runtimeStatus:process.env.SYNTHETIC_BAD?'failed':'connected',tools:Object.fromEntries(['terminal_list','terminal_read','terminal_send','terminal_interrupt',...(process.env.SYNTHETIC_EXTRA?['call_service']:[])].map(t=>[t,{}]))}]});}
+else if(m.method==='mcpServerStatus/list'){await log({event:'catalog',pid:process.pid});reply(m.id,{data:[m.params.serverName==='matrix_shared_browser'?{name:'matrix_shared_browser',runtimeStatus:'connected',tools:{shared_browser:{}}}:{name:'matrix-terminal',runtimeStatus:process.env.SYNTHETIC_BAD?'failed':'connected',tools:Object.fromEntries(['terminal_list','terminal_read','terminal_send','terminal_interrupt',...(process.env.SYNTHETIC_EXTRA?['call_service']:[])].map(t=>[t,{}]))}]});}
 else if(m.method==='turn/start'){await log({event:'turn',pid:process.pid});reply(m.id,{turn:{id:'native-turn-'+process.pid}});process.stdout.write(JSON.stringify({method:'turn/completed',params:{turn:{id:'native-turn-'+process.pid,status:'completed',items:[]}}})+'\n');}}
 `,
     );
@@ -170,9 +170,10 @@ else if(m.method==='turn/start'){await log({event:'turn',pid:process.pid});reply
       expect(threads.map((row) => row.event)).toEqual(["thread/start", "thread/resume", "thread/resume"]);
       expect(threads[1].params!.threadId).toBe("native-terminal-thread");
       for (const thread of threads.slice(0, 2)) {
-        expect(thread.params!.config["mcp_servers.matrix-herdr"].enabled_tools).toEqual(discovery ? ["terminal_discover"] : tools);
+        expect(thread.params!.config["mcp_servers.matrix-terminal"].enabled_tools).toEqual(discovery ? ["terminal_discover"] : tools);
       }
-      expect(threads[2].params!.config["mcp_servers.matrix-herdr"].enabled).toBe(false);
+      expect(threads[2].params!.config["mcp_servers.matrix-terminal"].enabled).toBe(false);
+      expect(threads.every(thread => thread.params!.config["mcp_servers.matrix-herdr"].enabled === false)).toBe(true);
       expect(records.filter((row) => row.event === "catalog" || row.event === "turn").map((row) => row.event)).toEqual(
         combined
           ? ["catalog", "catalog", "turn", "catalog", "turn", "turn"]

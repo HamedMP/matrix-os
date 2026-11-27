@@ -55,6 +55,24 @@ describe("Desktop link panel", () => {
     await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledWith("desktop-link:enable", { slot: "primary", computerName: "matrix-demo" }));
   });
 
+  it("keeps a new pairing shown when the initial status or an older rejection arrives late", async () => {
+    let resolveStatus!: (value: unknown) => void;
+    let resolveEnable!: (value: unknown) => void;
+    replies["desktop-link:status"] = new Promise(resolve => { resolveStatus = resolve; });
+    replies["desktop-link:enable"] = new Promise(resolve => { resolveEnable = resolve; });
+    render(<Harness />);
+    const target = { slot: "primary", computerName: "my-computer" };
+    emit("desktop-link:changed", { ...target, state: "off" });
+    fireEvent.click(screen.getByRole("button", { name: "Let my-computer use this device" }));
+    emit("desktop-link:changed", { ...target, state: "on" });
+    await act(async () => {
+      resolveStatus({ computers: [{ ...target, state: "off" }] });
+      resolveEnable({ ok: false, reason: "not_paired" });
+    });
+    expect(screen.getByRole("status").textContent).toBe("my-computer can use this device");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("offers pairing again once the computer removed this device, and ignores malformed reports", async () => {
     replies["desktop-link:enable"] = { ok: false, reason: "not_paired" };
     render(<Harness />);
@@ -67,5 +85,12 @@ describe("Desktop link panel", () => {
     emit("desktop-link:changed", { slot: "primary", computerName: "matrix-demo", state: "off" });
     fireEvent.click(screen.getByRole("button", { name: "Let matrix-demo use this device" }));
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "This device isn't paired with your computer any more. Pair it again.");
+    emit("desktop-link:changed", { slot: "dev", computerName: "matrix-dev", state: "on" });
+    expect(screen.getByRole("alert")).toBeTruthy();
+    emit("desktop-link:changed", { slot: "primary", computerName: "matrix-demo", state: "on" });
+    expect(screen.getByRole("status").textContent).toBe("matrix-demo can use this device");
+    expect(screen.queryByRole("alert")).toBeNull();
+    emit("desktop-link:changed", { slot: "primary", computerName: "matrix-demo", state: "off" });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

@@ -67,7 +67,7 @@ describe("PaneGrid missing session recovery", () => {
     />);
 
     expect(screen.queryByText("Live terminal")).toBeNull();
-    expect(screen.getByText("This Herdr session has ended")).toBeTruthy();
+    expect(screen.getByText("This terminal session has ended")).toBeTruthy();
     expect(screen.queryByText("Session is unavailable")).toBeNull();
     expect(screen.queryByRole("button", { name: /Recover/ })).toBeNull();
     expect(onRecoverSession).not.toHaveBeenCalled();

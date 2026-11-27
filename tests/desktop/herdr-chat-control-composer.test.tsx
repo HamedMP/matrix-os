@@ -60,8 +60,8 @@ function workspace(mode = "full_access", variant: "private" | "shared" | "busy" 
 it("admits only the owner's selected tab from the current Computer, bound to this message and worktree", async () => {
   const { client, fetchFn } = workspace();
   const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-  await setSharedComposerText(editor, "Check the build @herdr");
-  fireEvent.click(await screen.findByRole("option", { name: "Control a Herdr terminal" }));
+  await setSharedComposerText(editor, "Check the build @terminal");
+  fireEvent.click(await screen.findByRole("option", { name: "Terminal Control" }));
   fireEvent.click(await screen.findByRole("button", { name: "Build (t7)" }));
   expect(fetchFn.mock.calls.map(([url]) => url).filter(url => new URL(url).pathname === "/api/terminal/herdr")).toEqual([
     "https://example.test/api/terminal/herdr?view=chat-control&runtime=pr-55",
@@ -73,7 +73,7 @@ it("admits only the owner's selected tab from the current Computer, bound to thi
   await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith(snapshot.chat.id, expect.objectContaining({
     executionRoot: root, permissionMode: "full_access", parts: [
       { type: "text", text: "Check the build" },
-      { type: "invocation_reference", invocation: { kind: "command", descriptorId: "herdr-terminal-control", invocation: "/herdr-terminal-control" } },
+      { type: "invocation_reference", invocation: { kind: "command", descriptorId: "terminal-control", invocation: "/terminal-control" } },
       { type: "resource_reference", resource: { kind: "terminal_session", id: HERDR_TERMINAL_WORKSPACE_ID + ":" + tabId, label: "Build", revision } },
     ],
   }), { chatScope: "project" }));
@@ -84,16 +84,16 @@ it("admits only the owner's selected tab from the current Computer, bound to thi
 it("keeps control and its session inventory out of a supervised Chat", async () => {
   const { fetchFn } = workspace("supervised");
   const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-  await setSharedComposerText(editor, "@herdr");
-  expect(screen.queryByRole("option", { name: "Control a Herdr terminal" })).toBeNull();
+  await setSharedComposerText(editor, "@terminal");
+  expect(screen.queryByRole("option", { name: "Terminal Control" })).toBeNull();
   expect(fetchFn.mock.calls.some(([url]) => new URL(url).pathname === "/api/terminal/herdr")).toBe(false);
 });
 
 it("drops the selected tab when the signed-in owner changes, even if the previous owner returns", async () => {
   const { client } = workspace();
   const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-  await setSharedComposerText(editor, "Inspect output @herdr");
-  fireEvent.click(await screen.findByRole("option", { name: "Control a Herdr terminal" }));
+  await setSharedComposerText(editor, "Inspect output @terminal");
+  fireEvent.click(await screen.findByRole("option", { name: "Terminal Control" }));
   fireEvent.click(await screen.findByRole("button", { name: "Build (t7)" }));
   expect(screen.getByText(/Terminal control for this message/)).toBeTruthy();
   await act(async () => useConnection.setState({ userId: "other_owner" }));
@@ -105,9 +105,17 @@ it("drops the selected tab when the signed-in owner changes, even if the previou
     expect.objectContaining({ parts: [{ type: "text", text: "Ordinary reply" }] }), { chatScope: "project" }));
 });
 
-it("a clipboard or saved draft with copied references cannot grant terminal control", () => {
+it.each(['/terminal-control', '/herdr-terminal-control'])("offers Terminal Control for %s", async shortcut => {
+  workspace();
+  const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(editor, shortcut);
+  fireEvent.click(await screen.findByRole("option", { name: "Terminal Control" }));
+  await screen.findByRole("region", { name: "Choose a terminal" });
+});
+
+it.each(['terminal-control', 'herdr-terminal-control'])("a clipboard or saved draft with %s references cannot grant terminal control", descriptorId => {
   const ref = { kind: "terminal_session", id: HERDR_TERMINAL_WORKSPACE_ID + ":" + tabId, label: "Build", revision } as const;
-  const command = { kind: "command", descriptorId: "herdr-terminal-control", invocation: "/herdr-terminal-control" } as const;
+  const command = { kind: "command", descriptorId, invocation: `/${descriptorId}` } as const;
   const parts = canonicalChatInputParts({ text: "Read this", agentPrompt: "Read this", invocations: [command], resources: [ref] });
   expect(parts).toEqual([{ type: "text", text: "Read this" }, { type: "resource_reference", resource: ref }]);
 });
@@ -118,9 +126,9 @@ it.each(["shared", "busy", "new"] as const)("does not offer control for a %s Cha
     await screen.findByText(/Shared Chat is unavailable/);
   } else {
     const editor = await screen.findByRole("textbox", { name: variant === "new" ? "Start a chat" : "Reply to chat" });
-    await setSharedComposerText(editor, "@herdr");
+    await setSharedComposerText(editor, "@terminal");
   }
-  expect(screen.queryByRole("option", { name: "Control a Herdr terminal" })).toBeNull();
+  expect(screen.queryByRole("option", { name: "Terminal Control" })).toBeNull();
   expect(fetchFn.mock.calls.some(([url]) => new URL(url).pathname === "/api/terminal/herdr")).toBe(false);
   expect(client.queueTurn).not.toHaveBeenCalled();
 });
@@ -161,7 +169,7 @@ it("never suggests the current Gateway for a request naming the Mac or quoting i
   const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
   for (const text of ["Use the build terminal on my Mac to run tests.", "请用我的 Mac 上的 build 终端跑测试。", "The log says: Use gateway/t7 to run tests."]) {
     await setSharedComposerText(editor, text);
-    expect(screen.queryByRole("region", { name: "Choose a Herdr terminal" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Choose a terminal" })).toBeNull();
   }
   expect(fetchFn.mock.calls.some(([url]) => new URL(url).pathname === "/api/terminal/herdr")).toBe(false);
   expect(client.admitTurn).not.toHaveBeenCalled();

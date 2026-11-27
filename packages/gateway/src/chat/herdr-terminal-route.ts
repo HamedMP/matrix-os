@@ -53,7 +53,7 @@ export function createHerdrChatTerminalRoute(
       const action = parsed.data;
       let binding = bindings.get(target.signal);
       if (!binding) {
-        const selection = { signal: target.signal, inputActivity, revision: target.revision };
+        const selection = { signal: target.signal, inputActivity, revision: target.revision, worktreeId: target.worktreeId };
         binding = (async () => {
           if (isHerdrTerminalRef(target.ref)) return adapter?.bindChatTerminal(target.ref, target.executionRoot, selection) ?? null;
           const prefix = desktopLinkDevicePrefix(target.ref.workspaceId);
