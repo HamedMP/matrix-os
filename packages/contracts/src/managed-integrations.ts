@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { POSTHOG_MCP_READ_SCOPES } from "#remote-mcp-catalog";
 
 const id = z.string().trim().min(1).max(256).regex(/^[A-Za-z0-9_-]+$/);
 const team = { teamId: id.optional() };
@@ -20,8 +21,6 @@ export interface ManagedIntegration {
   actions: Record<string, ManagedAction>;
 }
 const none = z.strictObject({});
-export const POSTHOG_MCP_READ_SCOPES = ["project:read", "organization:read", "insight:read"] as const;
-
 export const MANAGED_INTEGRATIONS: Readonly<Record<string, ManagedIntegration>> = {
   posthog_oauth: { id: "posthog_oauth", name: "PostHog", category: "analytics",
     // Server-side filtering keeps the discovered catalog within the MCP client cap.

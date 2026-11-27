@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { MANAGED_INTEGRATIONS } from "@matrix-os/contracts/managed-integrations";
 import {
@@ -15,6 +16,21 @@ import { GRANOLA_PRESET } from "../../packages/platform/src/granola-integration.
 const resolvePublic = async () => [{ address: "93.184.216.34", family: 4 as const }];
 
 describe("remote MCP catalog", () => {
+  it("loads the catalog and managed integration exports in the Gateway's native Node runtime", () => {
+    const output = execFileSync(process.execPath, ["--input-type=module", "--eval", `
+      import { remoteMcpCatalogEntry } from "@matrix-os/contracts/remote-mcp-catalog";
+      import { MANAGED_INTEGRATIONS } from "@matrix-os/contracts/managed-integrations";
+      console.log(JSON.stringify([
+        remoteMcpCatalogEntry("posthog").oauthScopes,
+        MANAGED_INTEGRATIONS.posthog_oauth.scopes,
+      ]));
+    `], { cwd: new URL("../../packages/gateway/", import.meta.url), encoding: "utf8", stdio: "pipe", timeout: 10_000 });
+    expect(JSON.parse(output)).toEqual([
+      ["project:read", "organization:read", "insight:read"],
+      ["project:read", "organization:read", "insight:read"],
+    ]);
+  });
+
   // Fault: a catalog URL the broker rejects would show a Connect button that always fails.
   it("only lists URLs the Custom MCP broker accepts", async () => {
     for (const entry of REMOTE_MCP_CATALOG) {

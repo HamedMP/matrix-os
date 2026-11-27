@@ -1,5 +1,4 @@
 import { z } from "zod/v4";
-import { POSTHOG_MCP_READ_SCOPES } from "./managed-integrations.js";
 
 /**
  * Curated vendor-hosted remote MCP servers that a user can connect to Matrix in
@@ -93,6 +92,7 @@ export const RemoteMcpCatalogEntrySchema = z.strictObject({
 });
 
 const VERIFIED = "2026-11-11";
+export const POSTHOG_MCP_READ_SCOPES = Object.freeze(["project:read", "organization:read", "insight:read"] as const);
 
 const entries: RemoteMcpCatalogEntry[] = [
   // Top 20, ordered by search demand.
