@@ -25,6 +25,10 @@ function openAuthPage(options: {
   provision?: () => Response;
   mode?: 'sign-in' | 'sign-up';
   signedIn?: boolean;
+  /** app-session status for a signed-in owner with no computer: 404, or 402 when Stripe billing is on. */
+  appSessionStatus?: 404 | 402;
+  /** Page URL; the billing setup URL makes a billing redirect observable as a counted reload. */
+  url?: string;
 }) {
   const requests: Recorded[] = [];
   const html = getAuthPage(
@@ -36,7 +40,7 @@ function openAuthPage(options: {
     options.freePlanAvailable === undefined ? undefined : { freePlanAvailable: options.freePlanAvailable },
   );
   const dom = new JSDOM(html, {
-    url: 'https://app.matrix-os.com/',
+    url: options.url ?? 'https://app.matrix-os.com/',
     runScripts: 'dangerously',
     beforeParse(window) {
       Object.assign(window, {
@@ -57,7 +61,11 @@ function openAuthPage(options: {
         fetch: async (input: string | URL | Request, init?: RequestInit) => {
           const url = String(input);
           requests.push({ url, init });
-          if (url === '/api/auth/app-session') return Response.json({ code: 'no_runtime' }, { status: 404 });
+          if (url === '/api/auth/app-session') {
+            return options.appSessionStatus === 402
+              ? Response.json({ error: 'Billing upgrade required', code: 'billing_required' }, { status: 402 })
+              : Response.json({ code: 'no_runtime' }, { status: 404 });
+          }
           if (url === '/api/journey' && options.journey) return options.journey();
           if (url === '/api/auth/provision-runtime' && options.provision) return options.provision();
           return Response.json({}, { status: 503 });
@@ -168,6 +176,39 @@ describe('platform pre-VPS page on the Free plan', () => {
     openDoms.push(dom);
 
     await waitForCondition(() => Boolean(button(dom, 'Build VPS')));
+    expect(requests.some((request) => request.url === '/api/journey')).toBe(false);
+  });
+
+  // With Stripe billing on, app-session answers 402 for a new owner with no
+  // computer and no entitlement yet, Free-eligible or not (Nima's P1 on #3811).
+  const BILLING_SETUP_URL = 'https://app.matrix-os.com/?billing=setup';
+  const billingRedirects = (dom: JSDOM) => Number(dom.window.sessionStorage.getItem('matrix.billing.setupRetryCount') ?? '0');
+
+  it('shows free setup, not a billing redirect, when app-session asks for billing but the journey offers Free', async () => {
+    const { dom, requests } = openAuthPage({ freePlanAvailable: true, journey: freeJourney, appSessionStatus: 402, url: BILLING_SETUP_URL });
+    openDoms.push(dom);
+
+    await waitForCondition(() => Boolean(button(dom, FREE_PLAN_COPY.setupLabel)));
+    expect(billingRedirects(dom)).toBe(0);
+    expect(requests.some((request) => request.url === '/api/journey')).toBe(true);
+  });
+
+  it.each([
+    ['requires payment', () => Response.json({ phase: 'plan_required', detail: 'Choose a plan.', nextAction: { kind: 'open_plans' } })],
+    ['is unavailable', () => Response.json({ error: 'journey_unavailable' }, { status: 503 })],
+  ])('keeps the billing redirect on 402 when the journey %s', async (_label, journey) => {
+    const { dom } = openAuthPage({ freePlanAvailable: true, journey, appSessionStatus: 402, url: BILLING_SETUP_URL });
+    openDoms.push(dom);
+
+    await waitForCondition(() => billingRedirects(dom) === 1);
+    expect(button(dom, FREE_PLAN_COPY.setupLabel)).toBeUndefined();
+  });
+
+  it('keeps the billing redirect on 402 without asking the journey while the Free plan is off', async () => {
+    const { dom, requests } = openAuthPage({ journey: freeJourney, appSessionStatus: 402, url: BILLING_SETUP_URL });
+    openDoms.push(dom);
+
+    await waitForCondition(() => billingRedirects(dom) === 1);
     expect(requests.some((request) => request.url === '/api/journey')).toBe(false);
   });
 

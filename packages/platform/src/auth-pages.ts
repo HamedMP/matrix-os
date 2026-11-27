@@ -743,6 +743,19 @@ export function getAuthPage(
       showLoadingState('Loading...');
       resolveFreePlanSetup().then(function(freePlan) { showDefaultInstallsState(freePlan); });
     }
+    // With Stripe billing on, a Free-eligible owner with no computer yet gets 402
+    // from app-session too: the journey decides between free setup and billing.
+    function showFreeSetupOrBilling() {
+      if (!freePlanAvailable) {
+        openBillingSettingsFromClerkSession();
+        return;
+      }
+      showLoadingState('Loading...');
+      resolveFreePlanSetup().then(function(freePlan) {
+        if (freePlan) showDefaultInstallsState(true);
+        else openBillingSettingsFromClerkSession();
+      });
+    }
     function showDefaultInstallsState(freePlan) {
       var el = document.getElementById('auth');
       setDefaultInstallsCard(true);
@@ -1206,7 +1219,7 @@ export function getAuthPage(
           }
           if (res.status === 402) {
             if (passiveCheckoutContinuation) waitForAppSession(provisioningAccepted);
-            else openBillingSettingsFromClerkSession();
+            else showFreeSetupOrBilling();
             return null;
           }
           if (passiveRuntimeContinuation && isRetryableAppSessionStatus(res.status)) waitForAppSession(provisioningAccepted);

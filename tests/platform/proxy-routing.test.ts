@@ -3040,7 +3040,9 @@ describe("platform proxy routing", () => {
 
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("if (res.status === 402) {\n            if (passiveCheckoutContinuation) waitForAppSession(provisioningAccepted);\n            else openBillingSettingsFromClerkSession();");
+    expect(html).toContain("if (res.status === 402) {\n            if (passiveCheckoutContinuation) waitForAppSession(provisioningAccepted);\n            else showFreeSetupOrBilling();");
+    // With the Free plan off the 402 path goes straight to billing settings.
+    expect(html).toContain("if (!freePlanAvailable) {\n        openBillingSettingsFromClerkSession();");
     expect(html).toContain("var passiveCheckoutContinuation = provisioningAccepted || checkoutJustCompleted;");
     expect(html).toContain("Opening Billing settings");
     expect(html).toContain("matrix.billing.setupRetryCount");
