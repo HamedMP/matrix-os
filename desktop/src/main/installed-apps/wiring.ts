@@ -18,7 +18,7 @@ import { createMacInstalledApps } from "./mac-wiring";
 import { createInstalledAppStore } from "./record-store";
 import { createInstalledAppReopen, reopenEach } from "./reopen";
 import { createInstalledAppsService } from "./service";
-import { createInstallControl } from "./install-control";
+import type { InstallControl } from "./install-control";
 import { createPlatformLaunchers, type PlatformLaunchers } from "./launcher-wiring";
 
 export interface InstalledAppsWiringOptions {
@@ -43,6 +43,8 @@ export interface InstalledAppsWiringOptions {
   previewHandle?: string;
   /** Installs changed; the main window refreshes its list. */
   onChanged(): void;
+  /** The control the installed-apps IPC was registered with; wired here, once. */
+  installs: InstallControl;
 }
 
 function logFailure(label: string, error: unknown): void {
@@ -122,12 +124,16 @@ export function installInstalledApps(options: InstalledAppsWiringOptions) {
   }
 
   /** What the Install and Uninstall UI may do (spec 2711, layer 4). */
-  const { control, runStartup } = createInstallControl({
+  const { runStartup } = options.installs;
+  options.installs.bind({
     mac,
     launchers: () => launchers,
     records,
     resolveApp,
-    runtimeSlot: () => auth.getStatus().runtimeSlot,
+    session: () => {
+      const { signedIn, runtimeSlot, authGeneration } = auth.getStatus();
+      return { signedIn, runtimeSlot, authGeneration };
+    },
     closeWindow: (installId) => service.close(installId),
     launch: (installId) => launch(installId),
     reveal: (path) => shell.showItemInFolder(path),
@@ -151,8 +157,6 @@ export function installInstalledApps(options: InstalledAppsWiringOptions) {
     open: (installId: string) => service.open(installId),
     /** Resolves once records, shims, the held link and reopening are handled. */
     started,
-    /** The Install and Uninstall UI's IPC surface. */
-    control,
     authChanged: (status: InstalledAppAuthSnapshot) => service.authChanged(status),
     /** Quit: remember open apps, stop taking links and shims, close app windows, and wait for their window state. */
     async dispose(): Promise<void> {

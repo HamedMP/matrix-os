@@ -19,6 +19,7 @@ const RECORD: InstalledAppRecord = {
 const MAIN = { sender: "main" };
 const OTHER = { sender: "app-view" };
 
+/** `null` stands for a control that is not available yet. */
 function harness(control: Partial<InstalledAppsControl> | null = {}) {
   const handlers = new Map<string, (event: unknown, payload: unknown) => Promise<unknown>>();
   const full: InstalledAppsControl = {
@@ -28,11 +29,11 @@ function harness(control: Partial<InstalledAppsControl> | null = {}) {
     uninstall: async () => true,
     open: async () => undefined,
     show: async () => true,
-    ...control,
+    ...(control ?? { platform: () => null }),
   };
   registerInstalledAppsIpc({ handle: (channel, listener) => { handlers.set(channel, listener); } }, {
     isMainWindowSender: (event) => event === MAIN,
-    control: () => (control === null ? null : full),
+    control: full,
   });
   const call = (channel: string, payload: unknown, event: unknown = MAIN) => handlers.get(channel)!(event, payload);
   return { handlers, call, control: full };
@@ -42,6 +43,21 @@ describe("installed apps IPC", () => {
   it("registers every installed-apps channel of the contract", () => {
     const { handlers } = harness();
     expect([...handlers.keys()].sort()).toEqual(Object.keys(INVOKE_CHANNELS).filter((channel) => channel.startsWith("installed-apps:")).sort());
+  });
+
+  it("refuses to register without its control object", () => {
+    const ipc = { handle: vi.fn() };
+    for (const control of [undefined, null, {}, { platform: () => null }]) {
+      expect(() => registerInstalledAppsIpc(ipc, { isMainWindowSender: () => true, control: control as never })).toThrow();
+    }
+    expect(ipc.handle).not.toHaveBeenCalled();
+  });
+
+  it("uses the control object it was registered with", async () => {
+    const list = vi.fn(async () => [RECORD]);
+    const { call } = harness({ list });
+    await call("installed-apps:list", {});
+    expect(list).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the channels away from the Terminal window", () => {

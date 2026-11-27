@@ -16,6 +16,14 @@ export class InstalledAppsUnavailableError extends Error {
   }
 }
 
+/** The computer or sign-in changed while an install was resolving; nothing was saved. */
+export class InstalledAppSessionChangedError extends Error {
+  constructor() {
+    super("Session changed during install");
+    this.name = "InstalledAppSessionChangedError";
+  }
+}
+
 export interface InstalledAppsControl {
   /** The platform installs run on; null when installing is unavailable here. */
   platform(): InstalledAppPlatform | null;
@@ -51,10 +59,13 @@ function logFailure(label: string, error: unknown): void {
 
 export function registerInstalledAppsIpc(ipc: IpcLike, options: {
   isMainWindowSender(event: unknown): boolean;
-  /** Null until installed apps are wired (or on a platform without them). */
-  control(): InstalledAppsControl | null;
+  /** Resolved at registration; it reports "unavailable" itself until installed apps start. */
+  control: InstalledAppsControl;
 }): void {
-  if (typeof options.isMainWindowSender !== "function" || typeof options.control !== "function") {
+  const control = options.control;
+  const methods = ["platform", "list", "install", "uninstall", "open", "show"] as const;
+  if (typeof options.isMainWindowSender !== "function" || !control
+    || methods.some((method) => typeof control[method] !== "function")) {
     throw new Error("installed apps IPC unavailable");
   }
 
@@ -62,10 +73,9 @@ export function registerInstalledAppsIpc(ipc: IpcLike, options: {
     ipc.handle(channel, async (event, payload) => {
       const request = INVOKE_CHANNELS[channel].request.safeParse(payload ?? {});
       if (!request.success || !options.isMainWindowSender(event)) throw new Error("invalid request");
-      const control = options.control();
       let result: unknown;
       try {
-        result = await handler(request.data as never, control?.platform() ? control : null);
+        result = await handler(request.data as never, control.platform() ? control : null);
       } catch (error: unknown) {
         logFailure(`${channel} failed`, error);
         throw new Error("internal error");
