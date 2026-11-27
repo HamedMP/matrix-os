@@ -106,9 +106,10 @@ message when an existing connection would need to register a new client. A
 usable saved client can still reconnect. PostHog preset connections request the
 same bounded read scopes as managed PostHog. Explicit managed scopes continue
 to apply when the user opts in to managed writes. These rules run in the owner
-OAuth flow used by Web Canvas, Web Desktop, and Electron Desktop. Verify that
-the PostHog preset reaches consent and that Figma's saved connection explains the
-approval requirement. Track launch validation in [ENG-91](https://linear.app/matrix-os/issue/ENG-91/validate-launch-integrations-end-to-end).
+OAuth flow used by Web Canvas, Web Desktop, Electron Desktop, and Web Mobile.
+Verify that the PostHog preset reaches consent and that Figma's saved connection
+explains the approval requirement. Track launch validation in
+[ENG-91](https://linear.app/matrix-os/issue/ENG-91/validate-launch-integrations-end-to-end).
 
 **Drift.** `bun run mcp-catalog:verify [id ...]` probes every endpoint and
 compares its live registration mode to the catalog. Its first run corrected
