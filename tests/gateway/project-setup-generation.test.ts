@@ -14,6 +14,7 @@ import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat
 import { appendProjectSetupTranscript } from "../../packages/gateway/src/chat/project-setup-transcript.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { SideChatRepository } from "../../packages/gateway/src/chat/side-chat-repository.js";
+import { prepareChatSessionContext } from "../../packages/gateway/src/chat/session-history.js";
 import { bootstrapChatSharing, ChatSharing } from "../../packages/gateway/src/chat/sharing.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry, type CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
@@ -122,6 +123,29 @@ it("clears a previously generated Skill when the owner corrects the proposal", (
   }), context).draft;
   expect(revised.skill).toBeUndefined();
   expect(revised.proposals).toEqual([]);
+});
+
+it("keeps an explicit Skill skip through the next reply and clears it when the owner stages a Skill", () => {
+  const context = { project: { name: "Operations" }, skills: [], instructionFiles: [], mcpServices: [] };
+  const initial = beginProjectSetupInterview(initialProjectSetup("chat_skip", "project_ops", "Store operations", "msg_setup"));
+  const prompted = applyProjectSetupInterview(initial, JSON.stringify({
+    reply: "Would a handoff Skill help?", focus: "skill", suggestions: [],
+  }), context).draft;
+  const skipped = transitionProjectSetupInterview(prompted, { type: "choose_skill", choice: "skip" });
+  expect(skipped.userText).toBe("Continue without a skill.");
+  const mcp = applyProjectSetupInterview(skipped.draft, JSON.stringify({
+    reply: "Do you need connected tools?", focus: "mcp", suggestions: [],
+  }), context).draft;
+  expect(mcp.interview).toMatchObject({ focus: "mcp", skillSkipped: true });
+  expect(mcp.skill).toBeUndefined();
+  const revisited = applyProjectSetupInterview(mcp, JSON.stringify({
+    reply: "Which Skill would you like to use?", focus: "skill", suggestions: [],
+  }), context).draft;
+  const selected = transitionProjectSetupInterview(revisited, {
+    type: "stage_skill", content: "---\nname: shift-handoff\ndescription: Check shift handoff\n---\nConfirm break coverage.",
+  }).draft;
+  expect(selected.interview?.skillSkipped).toBeUndefined();
+  expect(selected.skill).toMatchObject({ name: "shift-handoff", source: "user" });
 });
 
 it.each(["pending", "failed", "conflict"] as const)("supplies complete %s drafts and the latest correction to the interview", status => {
@@ -639,6 +663,11 @@ describe("admitted project setup generation", () => {
     expect(incoming?.readState).toMatchObject({ unread: true, latestIncomingSeq: 4 });
     const read = await repository.updateReadState(owner, chatId, { type: "mark_read", throughSeq: 4, baseVersion: 0 });
     expect(read.readState).toMatchObject({ unread: false, latestIncomingSeq: 4 });
+    const ordinaryHistory = await prepareChatSessionContext({
+      repository, owner, chatId, instanceId: selection.instanceId, throughSeq: 4,
+      requestHash: "a".repeat(64), resumeState: undefined,
+    });
+    expect.soft(ordinaryHistory?.history?.text).toBe(`User: ${ownerText}\n\nAssistant: Who reviews the changelog?`);
 
     const sideChats = new SideChatRepository(repository.kysely);
     await sideChats.create(owner, chatId);

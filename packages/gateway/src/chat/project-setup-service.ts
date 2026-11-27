@@ -101,7 +101,8 @@ export class ProjectSetupService {
         : await mutate();
       const action = input.action;
       const admits = action.type === "generate" || action.type === "interview_answer" || action.type === "interview_retry"
-        || (result.draft?.interview && (action.type === "stage_skill" || (action.type === "choose_mcp" && action.choice === "skip")));
+        || (result.draft?.interview && (action.type === "stage_skill"
+          || ((action.type === "choose_mcp" || action.type === "choose_skill") && action.choice === "skip")));
       if (!admits || !result.draft || result.draft.generation?.status !== "pending") return result;
       return this.admit(workspace, principal, owner, result.draft, action.selection, input.clientRequestId);
     });

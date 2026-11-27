@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { BrandLogo } from "../../design/BrandPanel";
 import { cn } from "../../lib/cn";
-import { ChatNewChatContent } from "@matrix-os/ui";
+import { ChatNewChatContent, PROJECT_SETUP_COLUMN_CLASS, PROJECT_SETUP_COMPOSER_CLASS } from "@matrix-os/ui";
 import { ChatProviderOnboarding } from "./ChatProviderOnboarding";
 import { PROJECT_LANDING_CONTENT_CLASS } from "../project/ProjectLanding";
 import { ConversationTranscript } from "../../components/conversation/transcript";
@@ -22,8 +22,10 @@ export function CanonicalNewChatContent({ projectId, showWelcome = projectId ===
   pending?: { turns: ConversationTurnPresentation[]; copyText: (text: string) => Promise<void> };
 }) {
   if (introduction) return <div className="flex min-h-0 flex-1 flex-col">
-    <div className="min-h-0 flex-1 overflow-y-auto">{introduction}</div>
-    <div className={cn("mx-auto w-full shrink-0 px-6 pb-5", PROJECT_LANDING_CONTENT_CLASS)}>{composer}</div>
+    <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]">
+      <div className={cn(PROJECT_SETUP_COLUMN_CLASS, "py-4")}>{introduction}</div>
+    </div>
+    <div className={PROJECT_SETUP_COMPOSER_CLASS}>{composer}</div>
   </div>;
   // The pending transcript replaces only the area above the composer, so the
   // composer keeps its draft state (selected skills) if the send fails.

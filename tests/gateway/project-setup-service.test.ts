@@ -173,4 +173,37 @@ describe("project setup service integration", () => {
     expect(current.draft?.generation?.status).toBe("unavailable"); expect(current.draft?.mcp.state).toBe("pending");
     expect(await repository.kysely.selectFrom("chat_runs").select("id").execute()).toHaveLength(0); expect(create).not.toHaveBeenCalled();
   });
+  it("preserves a legacy draft on passive reads and moves it to the interview only when the owner resumes", async () => {
+    let current = await service.start(owner, "project_a", { clientRequestId: "req_legacy", answer: "Release notes" });
+    current = await next(current, { type: "answer", text: "Ask me before publishing" });
+    expect((await service.getProject(owner, "project_a")).draft).toEqual(current.draft);
+    const start = { mode: "interview", clientRequestId: "req_resume" } as const;
+    const resumed = await service.start(owner, "project_a", start, principal);
+    expect(resumed.draft).toMatchObject({ chatId: current.draft?.chatId, interview: { focus: "guidance" },
+      answers: { purpose: "Release notes", guidance: "Ask me before publishing" }, generation: { status: "unavailable" } });
+    expect((await service.start(owner, "project_a", start, principal)).draft).toEqual(resumed.draft);
+    await expect(service.start(owner, "project_a", { clientRequestId: "req_old_client", answer: "Old request" })).rejects.toMatchObject({ kind: "conflict" });
+    await expect(next(resumed, { type: "answer", text: "Old client answer" })).rejects.toMatchObject({ kind: "conflict" });
+    expect(create).not.toHaveBeenCalled();
+  });
+  it("retains an answer once even when its provider is unavailable and the owner retries", async () => {
+    const text = "Use release notes, and ask before publishing.";
+    const opened = await service.start(owner, "project_a", { mode: "interview", clientRequestId: "req_interview" }, principal);
+    const chatId = opened.draft!.chatId;
+    const answer = { baseRevision: opened.draft!.revision, clientRequestId: "req_interview_reply", action: { type: "interview_answer", text } } as const;
+    const accepted = await service.update(principal, owner, chatId, answer);
+    expect(accepted.draft?.generation?.status).toBe("unavailable");
+    expect((await service.update(principal, owner, chatId, answer)).draft).toEqual(accepted.draft);
+    await expect(service.update(principal, owner, chatId, { ...answer, clientRequestId: "req_stale" })).rejects.toMatchObject({ kind: "conflict" });
+    const retried = await next(accepted, { type: "interview_retry", selection: { instanceId: "pi_default", model: "gpt-5.6-sol" } });
+    expect(retried.draft?.generation?.status).toBe("unavailable");
+    expect(retried.draft?.currentQuestionMessageId).toBe(accepted.draft?.currentQuestionMessageId);
+    expect((await repository.getDetailPage(owner, chatId, { limit: 30 }))?.messages.map(message => message.parts[0])).toEqual([
+      { type: "text", text: "Set up this project with Chat." }, { type: "text", text },
+    ]);
+    expect((await service.getProject(owner, "project_b")).draft).toBeNull();
+    await expect(service.getChat({ type: "personal", ownerId: "user_b" }, chatId)).rejects.toMatchObject({ kind: "not_found" });
+    generation = 2;
+    await expect(service.getChat(owner, chatId)).rejects.toMatchObject({ kind: "not_found" });
+  });
 });

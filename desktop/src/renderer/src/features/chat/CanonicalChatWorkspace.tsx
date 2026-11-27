@@ -1,4 +1,4 @@
-import { projectSetupDetailPresentation, projectSetupControlsMessageId } from "@matrix-os/ui";
+import { PROJECT_SETUP_COMPOSER_CLASS, projectSetupDetailPresentation, projectSetupControlsMessageId } from "@matrix-os/ui";
 import { useDesktopProjectSetup } from "../project/use-desktop-project-setup";
 import { useDesktopProjectSlashScope } from "../project/desktop-project-slash-scope";
 import { SourceChatRoutines } from "./SourceChatRoutines";
@@ -472,8 +472,9 @@ function CanonicalChatWorkspaceContent({
     live, eligible: Boolean(slashProjectId && !directBotId && !explicitSharedRoute && !projectedSharedChat && (!slashRun?.executionRoot || slashRun.executionRoot.kind === "project")),
     selection: selectionAvailable ? selection : null,
     selectionLoading: providerCatalogLoading || (!routedComposerChatId && !providerSelection && !providerPreferencesHydrated),
-    openChat: id => selectChat(id), refresh: () => { void controller.refresh(); } });
-  const nativeChatChecksActive = active && !inspectorExclusive && !projectSetup.active && !botIdentityUnknown && !directBotId
+    openChat: (id, title) => selectChat(id, title), refresh: () => { void controller.refresh(); } });
+  const nativeChatChecksActive = active && !inspectorExclusive && !projectSetup.active && !projectSetup.introductionVisible
+    && !botIdentityUnknown && !directBotId
     && authStatus === "signed-in" && routedComposerChatId === controller.detail?.record.chat.id;
   const activeRunRecord = activeRun
     ? controller.detail?.runs.find((run) => run.id === activeRun.runId)
@@ -991,14 +992,14 @@ function CanonicalChatWorkspaceContent({
     setLocalComposerFocusRequestId((requestId) => requestId + 1);
   };
 
-  const selectChat = (chatId: string) => {
+  const selectChat = (chatId: string, fallbackTitle?: string) => {
     setEditingQueuedTurn(null);
     setOptimisticQueuedTurns(null);
     setSubmissionError(null);
     controller.selectChat(chatId);
     const selected = controller.items.find((item) => item.chat.id === chatId);
     reportedChatId.current = chatId;
-    onActiveChatChanged?.(chatId, selected?.chat.title);
+    onActiveChatChanged?.(chatId, selected?.chat.title ?? fallbackTitle);
     setGlobalView("conversation");
   };
 
@@ -1055,7 +1056,7 @@ function CanonicalChatWorkspaceContent({
         draftScopeKey={draftScope}
         projectSlashScope={projectSlashScope}
         projectSkillSubmitEnabled={selectionAvailable && !uploadingAttachments}
-        setupAnswer={projectSetup.active}
+        setupAnswer={projectSetup.active || projectSetup.introductionVisible}
         referenceTokens={referenceTokens}
         onReferenceTokensChange={setReferenceTokens}
         onAgentMention={botMention.select}
@@ -1077,7 +1078,7 @@ function CanonicalChatWorkspaceContent({
         disabled={controller.status === "loading" || uploadingAttachments || projectSetup.introductionVisible}
         canSubmit={projectSetup.active ? Boolean(draft.trim() && projectSetup.canAnswer) : Boolean(selectionAvailable && !uploadingAttachments && !matrixAttachments.pending && composerHasInput)}
         catalog={providerCatalog}
-        attachmentsEnabled={attachmentPolicy.enabled && !projectSetup.active}
+        attachmentsEnabled={attachmentPolicy.enabled && !projectSetup.active && !projectSetup.introductionVisible}
         automaticRouting={botPresentation?.kind === "recipe"}
         botControls={directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={client.agents} catalog={providerCatalog} catalogLoading={providerCatalogLoading} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} zIndex={DESKTOP_Z_INDEX.popover} disabled={uploadingAttachments} refreshKey={botEventRevision} onChanged={() => setBotEventRevision(value => value + 1)}/> : undefined}
         providerCatalogLoading={!directBotId && providerCatalogLoading}
@@ -1279,6 +1280,7 @@ function CanonicalChatWorkspaceContent({
             {submissionError ?? controller.error}
           </div>
         ) : null}
+        {projectSetup.header}
         {controller.detail && globalView === "conversation" ? (
           <>
             {!directBotId ? chatSharingAction : null}
@@ -1289,7 +1291,7 @@ function CanonicalChatWorkspaceContent({
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <SourceChatRoutines client={client.agents} chat={controller.detail.record.chat}
-              projectSetup={projectSetup.draft ? { header: projectSetup.header, note: projectSetup.note, controls: projectSetup.renderControls, messageId: setupMessageId, compactReply: projectSetup.active && Boolean(projectSetup.draft.interview) } : undefined}
+              projectSetup={projectSetup.draft ? { note: projectSetup.note, controls: projectSetup.renderControls, messageId: setupMessageId, compactReply: projectSetup.active && Boolean(projectSetup.draft.interview) } : undefined}
               ordinary={!directBotId && !botIdentityUnknown && !explicitSharedRoute && controller.detail.record.chat.id === routedComposerChatId}
               identity={admissionIdentity} revision={botEventRevision} turns={transcript} callbacks={{
               openChat: selectChat,
@@ -1333,7 +1335,7 @@ function CanonicalChatWorkspaceContent({
             }} />
             </div>
             </ChatContextMenu>
-            <div className={cn("mx-auto w-full shrink-0 px-6 pb-5", projectSetup.draft ? "max-w-[768px]" : "max-w-[808px]")}>
+            <div className={projectSetup.draft ? PROJECT_SETUP_COMPOSER_CLASS : "mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5"}>
               <ChatWorktreeActions
                 key={JSON.stringify([admissionIdentity, controller.detail.record.chat.id])}
                 active={nativeChatChecksActive}
@@ -1359,6 +1361,9 @@ function CanonicalChatWorkspaceContent({
             </div>
             </BotChatPanel>
           </>
+        ) : projectSetup.header ? (
+          <CanonicalNewChatContent introduction={projectSetup.introductionContent} projectId={projectId}
+            workspaceLayout={workspaceLayout} composer={renderComposer()} onSelect={setDraft} />
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (
           <div
             role="status"
@@ -1369,7 +1374,7 @@ function CanonicalChatWorkspaceContent({
             Loading chat…
           </div>
         ) : (
-          <CanonicalNewChatContent introduction={projectSetup.introductionContent} projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={renderComposer()} onSelect={setDraft}
+          <CanonicalNewChatContent projectId={projectId} showWelcome={projectId === null || globalView === "draft"} workspaceLayout={workspaceLayout} composer={renderComposer()} onSelect={setDraft}
             pending={shownTranscript?.kind === "draft" ? { turns: transcript, copyText } : undefined} />
         )}
         </>}

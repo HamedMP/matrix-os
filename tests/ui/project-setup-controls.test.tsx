@@ -7,7 +7,7 @@ import {
   projectSetupGenerationText,
   projectSetupGenerationResultId,
 } from "../../packages/ui/src/chat/project-setup-presentation";
-import { ProjectSetupAcceptedNote } from "../../packages/ui/src/chat/ProjectSetupProgress";
+import { ProjectSetupAcceptedNote, ProjectSetupProgress } from "../../packages/ui/src/chat/ProjectSetupProgress";
 import { useProjectSetup, type ProjectSetupController, type ProjectSetupTransport } from "../../packages/ui/src/chat/use-project-setup";
 import type { ProjectSetupDraft } from "@matrix-os/contracts";
 
@@ -57,10 +57,71 @@ it("allows skipping the setup offer without starting Chat", () => {
 
 it("shows start progress without injecting a scripted question or suggestions", () => {
   const setup = controller();
-  render(<ProjectSetupIntroduction projectName="Portfolio" setup={{ ...setup, draft: null, introduction: true, pending: true }} />);
+  render(<>
+    <ProjectSetupProgress projectName="Portfolio" />
+    <ProjectSetupIntroduction setup={{ ...setup, draft: null, introduction: true, pending: true }} />
+  </>);
   expect(screen.getByText("Project setup")).toBeTruthy();
-  expect(screen.getByRole("status").textContent).toContain("Starting project setup");
+  expect(screen.getByRole("status").textContent).toContain("Preparing the first question");
+  expect(screen.getByRole("navigation", { name: "Project setup progress" }).querySelector('[aria-current="step"]')?.textContent).toContain("Guidance");
   expect(screen.queryByRole("button", { name: "A portfolio site" })).toBeNull();
+});
+
+it("tracks the adaptive focus without marking untouched phases complete", () => {
+  const progress = (next: ProjectSetupDraft) => <ProjectSetupProgress projectName="Portfolio" draft={next} />;
+  const intent: ProjectSetupDraft = {
+    ...draft, step: "guidance", answers: { purpose: "" }, proposals: [], mcp: { state: "not_requested" },
+    interview: { focus: "intent", suggestions: [] },
+  };
+  const { rerender } = render(progress(intent));
+  const steps = () => screen.getAllByRole("listitem");
+  const states = () => steps().map(step => step.dataset.state);
+  expect(states()).toEqual(["current", "incomplete", "incomplete"]);
+  expect(steps()[0]?.getAttribute("aria-current")).toBe("step");
+
+  const skills: ProjectSetupDraft = { ...intent, step: "skill", interview: { focus: "skill", suggestions: [] } };
+  rerender(progress(skills));
+  expect(states()).toEqual(["incomplete", "current", "incomplete"]);
+  expect(steps()[1]?.getAttribute("aria-current")).toBe("step");
+
+  const mcp: ProjectSetupDraft = {
+    ...intent, answers: draft.answers, step: "mcp",
+    interview: { focus: "mcp", suggestions: [], mcpHandoff: true }, mcp: { state: "pending", service: "Linear" },
+  };
+  rerender(progress(mcp));
+  expect(states()).toEqual(["complete", "incomplete", "current"]);
+
+  const review: ProjectSetupDraft = { ...mcp, step: "review", interview: { focus: "review", suggestions: [] } };
+  rerender(progress(review));
+  expect(states()).toEqual(["complete", "incomplete", "pending"]);
+  expect(steps().some(step => step.hasAttribute("aria-current"))).toBe(false);
+  rerender(progress({ ...review, mcp: { state: "skipped" } }));
+  expect(states()).toEqual(["complete", "incomplete", "skipped"]);
+});
+
+it("keeps a skipped legacy Skill marked skipped after advancing to MCP and review", () => {
+  const { rerender } = render(<ProjectSetupProgress projectName="Portfolio" draft={{
+    ...draft, step: "mcp", mcp: { state: "not_requested" }, proposals: [],
+  }} />);
+  const skill = () => screen.getByText("Skills").closest("li");
+  expect(skill()?.dataset.state).toBe("skipped");
+  expect(skill()?.textContent).toContain("skipped");
+  expect(skill()?.querySelector("svg.lucide-minus[aria-hidden='true']")).toBeTruthy();
+
+  rerender(<ProjectSetupProgress projectName="Portfolio" draft={draft} />);
+  expect(skill()?.dataset.state).toBe("skipped");
+});
+
+it("submits a Skill skip choice and shows it after the interview advances", () => {
+  const interview = { focus: "skill" as const, suggestions: [] };
+  const setup = controller(undefined, { ...draft, step: "skill", interview });
+  const { rerender } = render(<ProjectSetupControls setup={setup} transport={null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Skip skill" }));
+  expect(setup.dispatch).toHaveBeenCalledWith({ type: "choose_skill", choice: "skip" });
+  rerender(<ProjectSetupProgress projectName="Portfolio" draft={{
+    ...draft, step: "mcp", interview: { ...interview, focus: "mcp", skillSkipped: true },
+  }} />);
+  expect(screen.getByText("Skills").closest("li")?.dataset.state).toBe("skipped");
 });
 
 it("renders only the Agent's suggestions through the same answer action", () => {

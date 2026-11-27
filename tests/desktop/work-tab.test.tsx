@@ -1171,8 +1171,8 @@ describe("WorkTab rail integration", () => {
     expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
   });
 
-  it("renames the active Chat from a single click on the center header", async () => {
-    function HostedWork() {
+  it("renames the active Chat and shows the next Chat title when switching", async () => {
+    function HostedWork({ chatId = "chat_global", title = "Global chat" }: { chatId?: string; title?: string }) {
       const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
       const host = React.useMemo(() => ({ setChrome }), []);
       return (
@@ -1182,15 +1182,15 @@ describe("WorkTab rail integration", () => {
             tabId="work-chat"
             route="chat"
             active
-            initialChatId="chat_global"
-            initialChatTitle="Global chat"
+            initialChatId={chatId}
+            initialChatTitle={title}
             initialChatView="conversation"
           />
         </SurfaceChromeContext.Provider>
       );
     }
 
-    render(<HostedWork />);
+    const { rerender } = render(<HostedWork />);
     const trigger = await screen.findByRole("button", { name: "Rename Global chat" });
     fireEvent.click(trigger);
     const input = screen.getByRole("textbox", { name: "Rename Global chat" });
@@ -1207,6 +1207,9 @@ describe("WorkTab rail integration", () => {
       { expectedTitleVersion: 0, title: "Release plan" },
     ));
     expect(await screen.findByRole("button", { name: "Rename Release plan" })).toBeTruthy();
+
+    rerender(<HostedWork chatId="chat_next" title="Project setup" />);
+    expect(screen.getByRole("button", { name: "Rename Project setup" })).toBeTruthy();
   });
 
   it("cancels a header rename with Escape without dismissing the medium inspector", async () => {

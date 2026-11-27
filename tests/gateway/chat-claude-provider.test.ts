@@ -1,5 +1,6 @@
 import { ownerSdkAdapterFixture } from "./owner-sdk-home-test-support.js";
 import { EventEmitter } from "node:events";
+import { existsSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
 import { createMatrixMcpCapabilityRegistry } from "../../packages/gateway/src/chat/matrix-mcp-launch.js";
@@ -50,6 +51,44 @@ const baseInput = {
 };
 
 describe("Claude canonical Chat Provider adapter", () => {
+  it("runs a setup interview without shell, project files, MCP, browser, or a reusable session", async () => {
+    const issue = vi.fn();
+    const browser = vi.fn();
+    const runTurn = vi.fn();
+    const spawnFn = vi.fn<CanonicalCliSpawn>(() => child([
+      JSON.stringify({ type: "result", subtype: "success", result: "Tell me about this project.", session_id: "setup_ephemeral" }),
+    ]));
+    const adapter = createClaudeChatProviderAdapter({
+      homePath: "/home/matrix/home",
+      spawnFn,
+      resolveCredentialEnv: async () => ({ MATRIX_AUTH_TOKEN: "secret", MATRIX_AGENT_INTEGRATIONS_TOKEN: "old-token" }),
+      matrixMcpCapabilityIssuer: { issue } as never,
+      nativeSessions: { runTurn } as never,
+      sharedBrowser: { openRun: browser } as never,
+    });
+    const events = [];
+    for await (const event of adapter.start({ ...baseInput, interactionMode: "review", permissionMode: "supervised",
+      context: { version: 1, requestHash: "a".repeat(64), chats: [], projectSetupDraft: { revision: 1, mode: "interview" } },
+    })) events.push(event);
+    expect(spawnFn).toHaveBeenCalledOnce();
+    expect(issue).not.toHaveBeenCalled();
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(browser).not.toHaveBeenCalled();
+    const [, args, options] = spawnFn.mock.calls[0]!;
+    expect(args).toEqual(expect.arrayContaining(["--restricted", "--safe-mode", "--strict-mcp-config", "--no-chrome", "--disable-slash-commands", "--no-session-persistence"]));
+    expect(args[args.indexOf("--tools") + 1]).toBe("");
+    expect(args[args.indexOf("--disallowedTools") + 1]).toBe("*");
+    expect(args[args.indexOf("--mcp-config") + 1]).toBe('{"mcpServers":{}}');
+    expect(args[args.indexOf("--permission-prompts") + 1]).toBe("none");
+    expect(args).not.toContain("--resume");
+    expect(options.cwd).not.toBe(baseInput.executionRoot);
+    expect(existsSync(options.cwd)).toBe(false);
+    expect(options.env).not.toHaveProperty("MATRIX_AUTH_TOKEN");
+    expect(options.env).not.toHaveProperty("MATRIX_AGENT_INTEGRATIONS_TOKEN");
+    expect(events.some(event => event.type === "state.updated")).toBe(false);
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+  });
+
   it("does not fail a progressing owner Run after four hours", async () => {
     vi.useFakeTimers();
     try {

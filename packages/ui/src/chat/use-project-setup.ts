@@ -19,6 +19,8 @@ interface Options {
   projectId?: string | null;
   chatId?: string | null;
   eligible: boolean;
+  /** A partial Chat projection can leave the active checkout temporarily unverified. */
+  allowActions?: boolean;
   selection?: CanonicalChatModelSelection | null;
   onOpenChat?: (chatId: string) => void;
   onChanged?: () => void;
@@ -43,41 +45,52 @@ function setupReplyFailed(draft: ProjectSetupDraft | null) {
 }
 
 /** Chat owns accepted setup state. This hook holds only the currently scoped view. */
+type SetupOpening = { identity: string; client: ProjectSetupTransport; draft: ProjectSetupDraft };
+
+const emptySetupState = (identity: string, opening?: SetupOpening) => ({
+  identity,
+  draft: opening?.draft ?? null,
+  introduction: false,
+  pending: Boolean(opening),
+  error: null as string | null,
+  opening: undefined as SetupOpening | undefined,
+});
+
 export function useProjectSetup(options: Options) {
-  const { client, scope, projectId, chatId, eligible, selection } = options;
+  const { client, scope, projectId, chatId, eligible, allowActions = true, selection } = options;
   const identity = JSON.stringify([scope, projectId, chatId ?? "new"]);
-  const [state, setState] = useState<{
-    identity: string;
-    draft: ProjectSetupDraft | null;
-    introduction: boolean;
-    pending: boolean;
-    error: string | null;
-  }>({ identity, draft: null, introduction: false, pending: false, error: null });
+  const [state, setState] = useState(() => emptySetupState(identity));
   const [reviewMcpKey, setReviewMcpKey] = useState<string | null>(null);
   const lifetime = useRef<{ identity: string; controller: AbortController } | null>(null);
   const request = useRef<AbortController | null>(null);
   const attempt = useRef<{ identity: string; key: string; requestId: string } | null>(null);
-  const currentState =
-    state.identity === identity
-      ? state
-      : { identity, draft: null, introduction: false, pending: false, error: null };
+  const actionsAllowed = useRef(eligible && allowActions);
+  const matchingOpening = useCallback((opening?: SetupOpening) =>
+    eligible && opening?.identity === identity && opening.client === client ? opening : undefined,
+  [eligible, identity, client]);
+  const currentState = state.identity === identity ? state : emptySetupState(identity, matchingOpening(state.opening));
   const stateRef = useRef(currentState);
   stateRef.current = currentState;
   const openChat = useEffectEvent((id: string) => options.onOpenChat?.(id));
   const changed = useEffectEvent(() => options.onChanged?.());
 
   useLayoutEffect(() => {
+    actionsAllowed.current = eligible && allowActions;
+  }, [eligible, allowActions]);
+
+  useLayoutEffect(() => {
     const controller = new AbortController();
     lifetime.current = { identity, controller };
     attempt.current = null;
-    setState({ identity, draft: null, introduction: false, pending: false, error: null });
+    // Carry the scoped start response for display while the destination Chat loads.
+    setState(previous => emptySetupState(identity, matchingOpening(previous.opening)));
     return () => {
       controller.abort();
       request.current?.abort();
       request.current = null;
       lifetime.current = null;
     };
-  }, [identity, client, eligible]);
+  }, [identity, matchingOpening]);
 
   const run = useCallback(
     async (operation: (signal: AbortSignal) => Promise<unknown>, navigate = false): Promise<boolean> => {
@@ -95,16 +108,20 @@ export function useProjectSetup(options: Options) {
         if (result.draft && (result.draft.projectId !== projectId || (chatId && result.draft.chatId !== chatId)))
           throw new Error("Setup scope mismatch");
         if (navigate && !result.draft) throw new Error("Setup draft unavailable");
+        const opening = navigate && result.draft && result.draft.chatId !== chatId
+          ? { identity: JSON.stringify([scope, projectId, result.draft.chatId]), client, draft: result.draft }
+          : undefined;
         const next = {
           identity,
           draft: result.draft,
           introduction: false,
-          pending: false,
+          pending: Boolean(opening),
           error: null,
+          opening,
         };
         stateRef.current = next;
         setState(next);
-        if (navigate && result.draft && result.draft.chatId !== chatId) openChat(result.draft.chatId);
+        if (opening) openChat(opening.draft.chatId);
         changed();
         return true;
       } catch (error: unknown) {
@@ -120,16 +137,17 @@ export function useProjectSetup(options: Options) {
         if (request.current === controller) request.current = null;
       }
     },
-    [chatId, client, eligible, identity, projectId],
+    [chatId, client, eligible, identity, projectId, scope],
   );
 
   const reload = useCallback(() => {
-    if (!client || !chatId) return Promise.resolve(false);
+    if (!actionsAllowed.current || !client || !chatId) return Promise.resolve(false);
     return run((signal) => client.get(`/api/chats/${encodeURIComponent(chatId)}/project-setup`, signal));
   }, [chatId, client, run]);
   useEffect(() => {
-    if (chatId && eligible) void reload();
-  }, [chatId, eligible, reload]);
+    const { draft, pending } = stateRef.current;
+    if (chatId && eligible && allowActions && (!draft || pending)) void reload();
+  }, [chatId, eligible, allowActions, reload]);
 
   const requestId = (key: string) => {
     if (attempt.current?.identity !== identity || attempt.current.key !== key) {
@@ -139,7 +157,7 @@ export function useProjectSetup(options: Options) {
   };
   const strictSelection = selection ? canonicalSetupSelection(selection) : undefined;
   const start = async () => {
-    if (!client || !projectId) return false;
+    if (!actionsAllowed.current || !client || !projectId) return false;
     const payload = {
       mode: "interview",
       ...(strictSelection ? { currentSelection: strictSelection } : {}),
@@ -149,8 +167,9 @@ export function useProjectSetup(options: Options) {
   };
   const dispatch = async (action: ProjectSetupAction): Promise<boolean> => {
     const draft = stateRef.current.draft;
-    if (!client || !draft || draft.projectId !== projectId) return false;
-    const followUp = action.type === "stage_skill" || (action.type === "choose_mcp" && action.choice === "skip");
+    if (!actionsAllowed.current || !client || !draft || draft.projectId !== projectId) return false;
+    const followUp = action.type === "stage_skill"
+      || ((action.type === "choose_mcp" || action.type === "choose_skill") && action.choice === "skip");
     const canonicalAction = followUp && draft.interview && strictSelection
       ? { ...action, selection: strictSelection }
       : "selection" in action && action.selection
@@ -181,10 +200,10 @@ export function useProjectSetup(options: Options) {
   const active = Boolean(draft && draft.step !== "saved");
   const waiting = waitingForSetupReply(draft);
   const [exhaustedGeneration, setExhaustedGeneration] = useState<string | null>(null);
-  const pollingGeneration = eligible && waiting
+  const pollingGeneration = eligible && allowActions && waiting
     ? JSON.stringify([identity, draft?.revision, draft?.generation?.runId])
     : null;
-  const canAnswer = active && !currentState.pending && !waiting
+  const canAnswer = active && allowActions && !currentState.pending && !waiting
     && (!mcpHandoff || Boolean(draft?.interview));
   const retryInterview = () =>
     strictSelection && setupReplyFailed(stateRef.current.draft)
@@ -221,10 +240,14 @@ export function useProjectSetup(options: Options) {
   const dismiss = () => {
     request.current?.abort();
     request.current = null;
-    setState((previous) => ({ ...previous, identity, introduction: false, pending: false, error: null }));
+    setState((previous) => ({ ...previous, identity, introduction: false, pending: false, error: null, opening: undefined }));
   };
   return {
-    ...currentState,
+    identity: currentState.identity,
+    draft: currentState.draft,
+    introduction: currentState.introduction,
+    error: currentState.error,
+    pending: currentState.pending || !allowActions,
     eligible,
     start,
     dismiss,

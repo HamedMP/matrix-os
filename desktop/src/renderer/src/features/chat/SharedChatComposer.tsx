@@ -454,7 +454,7 @@ export function SharedChatComposer({
     };
   }, [searchingWithoutMenu]);
   const composer = (
-    <Popover.Anchor ref={anchorRef} className="matrix-chat-composer relative @container/chat-composer" data-slot="shared-chat-composer">
+    <Popover.Anchor ref={anchorRef} className="matrix-chat-composer relative @container/chat-composer" data-slot="shared-chat-composer" data-project-setup-answer={setupAnswer || undefined}>
       {slashMenuOpen ? (
         <SuggestionMenu label="Skills and commands" menuSide={menuSide} anchorRef={anchorRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>

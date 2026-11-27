@@ -37,6 +37,7 @@ export function useWebProjectSetup({
   scope,
   gatewayUrl,
   eligible,
+  rootPending,
   selection,
   isCurrentAuthority,
   openChat,
@@ -48,6 +49,7 @@ export function useWebProjectSetup({
   scope: string;
   gatewayUrl: string;
   eligible: boolean;
+  rootPending: boolean;
   selection?: CanonicalChatModelSelection;
   isCurrentAuthority?: () => boolean;
   openChat: (id: string) => void;
@@ -89,11 +91,12 @@ export function useWebProjectSetup({
     projectId: project?.id,
     chatId,
     eligible,
+    allowActions: !rootPending,
     selection,
     onOpenChat: openChat,
   });
   const markdownEdits = useProjectSetupMarkdownEdits(setup.identity, setup.draft?.proposals);
-  const sources = {
+  const sources = rootPending ? {} : {
     loadInstalledSkills: async (signal: AbortSignal) =>
       parseProjectInstalledSkills(await transport.get(PROJECT_INSTALLED_SKILLS_PATH, signal)),
     readInstalledSkill: async (file: string, signal: AbortSignal) => {
@@ -116,7 +119,7 @@ export function useWebProjectSetup({
     [scope, project?.id, chatId],
   );
   const openFile = async (path: string, authority: string): Promise<boolean> => {
-    if (!project || !navigation?.openPreview || fileRequest.current) return false;
+    if (rootPending || !project || !navigation?.openPreview || fileRequest.current) return false;
     const controller = new AbortController();
     fileRequest.current = controller;
     try {
@@ -151,7 +154,9 @@ export function useWebProjectSetup({
     awaitingMessage: Boolean(messageId && !messages.some(message => message.id === messageId)),
     placeholder: projectSetupAnswerPlaceholder(setup.introduction, draft?.step, setup.mcpHandoff, Boolean(draft?.interview)),
     note: draft ? <ProjectSetupAcceptedNote draft={draft} /> : null,
-    header: draft ? <ProjectSetupProgress projectName={projectName} draft={draft} onLeaveSetup={leaveSetup} /> : null,
+    header: setup.introduction || draft ? (
+      <ProjectSetupProgress projectName={projectName} draft={draft} onLeaveSetup={setup.introduction ? setup.dismiss : leaveSetup} />
+    ) : null,
     controls: eligible ? (replyText?: string) => (
       <ShellFileAuthority>
         {(authority) => (
@@ -171,7 +176,7 @@ export function useWebProjectSetup({
       </ShellFileAuthority>
     ) : null,
     introductionContent: setup.introduction ? (
-      <ProjectSetupIntroduction projectName={projectName} setup={setup} />
+      <ProjectSetupIntroduction setup={setup} />
     ) : null,
   };
 }

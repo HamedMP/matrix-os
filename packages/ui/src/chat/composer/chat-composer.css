@@ -42,6 +42,14 @@
 .matrix-chat-composer [data-slot="prompt-input-send"]:disabled { background: transparent !important; }
 .matrix-chat-composer .prompt-card[data-layout="narrow"] { min-height: 114px; }
 
+/* Setup answers share the Chat composer with less vertical chrome. Keep room
+   for multiline drafts and let the existing control rows wrap on narrow panes. */
+.matrix-chat-composer[data-project-setup-answer] .prompt-card { min-height: 0; }
+.matrix-chat-composer[data-project-setup-answer] [data-slot="prompt-input-content"] { min-height: 42px; padding-top: 9px; padding-bottom: 7px; }
+.matrix-chat-composer[data-project-setup-answer] [data-slot="prompt-input-content"] textarea { min-height: 24px; }
+.matrix-chat-composer[data-project-setup-answer] [data-slot="prompt-input-placeholder"] { top: 9px; }
+.matrix-chat-composer[data-project-setup-answer] [data-slot="prompt-input-toolbar"] { min-height: 38px; padding-bottom: 8px; }
+
 /* Touch screens (Web Mobile) get 44px targets; desktop pointers keep the compact Figma toolbar. */
 @media (pointer: coarse) {
   .matrix-chat-composer [data-slot="prompt-input-toolbar"] button,
