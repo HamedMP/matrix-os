@@ -145,7 +145,8 @@ export function parseConnectUrl(value: unknown): string | null {
   return new URL(url).protocol === "https:" ? url : null;
 }
 
-const ISOLATED_PREVIEW_ORIGIN = /^https:\/\/pr-[1-9][0-9]{0,8}---matrix-platform-preview-[a-z0-9-]+\.a\.run\.app$/;
+const PREVIEW_BROWSER_ORIGIN = "https://preview.matrix-os.com";
+const TAGGED_PREVIEW_API_ORIGIN = /^https:\/\/pr-[1-9][0-9]{0,8}---matrix-platform-preview-[a-z0-9-]+\.a\.run\.app$/;
 
 export function isMatrixOutlookConsentUrl(service: string, rawUrl: string, matrixUrl?: string): boolean {
   if (service !== "microsoft_outlook" && service !== "microsoft_outlook_calendar") return false;
@@ -153,7 +154,8 @@ export function isMatrixOutlookConsentUrl(service: string, rawUrl: string, matri
     const url = new URL(rawUrl);
     const states = url.searchParams.getAll("state");
     const configuredOrigin = matrixUrl ? new URL(matrixUrl).origin : "";
-    const trustedOrigin = ISOLATED_PREVIEW_ORIGIN.test(configuredOrigin) ? configuredOrigin : "https://app.matrix-os.com";
+    const isPreview = configuredOrigin === PREVIEW_BROWSER_ORIGIN || TAGGED_PREVIEW_API_ORIGIN.test(configuredOrigin);
+    const trustedOrigin = isPreview ? PREVIEW_BROWSER_ORIGIN : "https://app.matrix-os.com";
     return url.origin === trustedOrigin && url.pathname === "/api/integrations/outlook/oauth/authorize"
       && !url.username && !url.password && !url.hash && states.length === 1 && /^[A-Za-z0-9_-]{43}$/.test(states[0] ?? "");
   } catch (error: unknown) {

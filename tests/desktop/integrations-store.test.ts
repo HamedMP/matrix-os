@@ -391,15 +391,21 @@ describe("useIntegrations store", () => {
     expect(api.post).toHaveBeenCalledWith("/api/integrations/connect", { service: "gmail" });
   });
 
-  it("opens a reconnect from the exact configured preview platform", async () => {
+  it("opens Outlook reconnect on the Preview browser origin from a tagged Preview API", async () => {
     const baseUrl = "https://pr-3801---matrix-platform-preview-example-ey.a.run.app";
     const id = CONNECTIONS[0].id;
     const service = "microsoft_outlook";
     const authorize = "/api/integrations/outlook/oauth/authorize?state=" + "a".repeat(43);
-    const api = { ...makeApi({ post: async () => ({ url: baseUrl + authorize, service }) }), baseUrl };
-    await expect(useIntegrations.getState().startConnect(service, api, id)).resolves.toBe(baseUrl + authorize);
-    const wrong = { ...makeApi({ post: async () => ({ url: baseUrl.replace("3801", "3800") + authorize, service }) }), baseUrl };
-    await expect(useIntegrations.getState().startConnect(service, wrong, id)).resolves.toBeNull();
+    const previewConsent = "https://preview.matrix-os.com" + authorize;
+    const api = { ...makeApi({ post: async () => ({ url: previewConsent, service }) }), baseUrl };
+    await expect(useIntegrations.getState().startConnect(service, api, id)).resolves.toBe(previewConsent);
+
+    for (const origin of ["https://app.matrix-os.com", baseUrl, baseUrl.replace("3801", "3800")]) {
+      const wrong = { ...makeApi({ post: async () => ({ url: origin + authorize, service }) }), baseUrl };
+      await expect(useIntegrations.getState().startConnect(service, wrong, id)).resolves.toBeNull();
+    }
+    const production = { ...api, baseUrl: "https://api.matrix-os.com" };
+    await expect(useIntegrations.getState().startConnect(service, production, id)).resolves.toBeNull();
   });
 
   it("startConnect() drops a consent URL minted for a superseded runtime", async () => {

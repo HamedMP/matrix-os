@@ -56,7 +56,7 @@ on:
         default: false
 
       outlook_preview:
-        description: "Enable Outlook for the approved isolated PR using Preview-only credentials"
+        description: "Enable Outlook for the selected PR using Preview Outlook credentials"
         type: boolean
         default: false
 
@@ -110,7 +110,6 @@ jobs:
       PREVIEW_OUTLOOK_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.outlook_preview && 'true' || 'false' }}
       OUTLOOK_PREVIEW_PR_NUMBER: ${{ vars.OUTLOOK_PREVIEW_PR_NUMBER }}
       OUTLOOK_PREVIEW_CLIENT_ID: ${{ vars.OUTLOOK_PREVIEW_CLIENT_ID }}
-      OUTLOOK_PREVIEW_CLERK_PUBLISHABLE_KEY: ${{ vars.OUTLOOK_PREVIEW_CLERK_PUBLISHABLE_KEY }}
       SLACK_PILOT_PR_NUMBER: ${{ vars.SLACK_PILOT_PR_NUMBER }}
       SLACK_PILOT_APP_ID: ${{ vars.SLACK_PILOT_APP_ID }}
       SLACK_PILOT_CLIENT_ID: ${{ vars.SLACK_PILOT_CLIENT_ID }}
@@ -327,26 +326,24 @@ jobs:
           fi
           if [ "$PREVIEW_OUTLOOK_REQUESTED" != "true" ] ||
              [ "$PR_NUMBER" != "$OUTLOOK_PREVIEW_PR_NUMBER" ] ||
-             [ "$ISOLATED_PREVIEW_ORIGIN" != "true" ] ||
+             [ "$ISOLATED_PREVIEW_ORIGIN" != "false" ] ||
+             [ "$REQUIRE_EXISTING_SERVICE" != "true" ] ||
              [ "$CLOUD_RUN_PREVIEW_SERVICE" != "matrix-platform-preview" ] ||
              ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]] ||
-             ! [[ "$PREVIEW_PUBLIC_URL" =~ ^https://pr-${PR_NUMBER}---matrix-platform-preview-[a-z0-9-]+\.a\.run\.app$ ]] ||
-             ! [[ "$OUTLOOK_PREVIEW_CLIENT_ID" =~ ^[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}$ ]] ||
-             ! [[ "$OUTLOOK_PREVIEW_CLERK_PUBLISHABLE_KEY" =~ ^pk_test_[A-Za-z0-9_+/=-]{16,512}$ ]]; then
-            echo "Outlook requires the approved isolated PR, a test Entra app and test Clerk configuration." >&2
+             [ "$PREVIEW_PUBLIC_URL" != "https://preview.matrix-os.com" ] ||
+             ! [[ "$OUTLOOK_PREVIEW_CLIENT_ID" =~ ^[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}$ ]]; then
+            echo "Outlook requires the selected PR, the existing Preview service and browser origin, and a test Entra app." >&2
             exit 1
           fi
           printf '%s\n' \
-            "OUTLOOK_PREVIEW_ENV_BINDINGS=|MATRIX_OUTLOOK_ENABLED=true|MATRIX_OUTLOOK_LEGACY_RETIRED=false|MATRIX_OUTLOOK_CLIENT_ID=${OUTLOOK_PREVIEW_CLIENT_ID}|MATRIX_OUTLOOK_REDIRECT_URI=${PREVIEW_PUBLIC_URL}/api/integrations/outlook/oauth/callback|NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${OUTLOOK_PREVIEW_CLERK_PUBLISHABLE_KEY}" \
-            "OUTLOOK_PREVIEW_SECRET_BINDINGS=,MATRIX_OUTLOOK_CLIENT_SECRET=matrix-outlook-client-secret-preview:1,MATRIX_OUTLOOK_CREDENTIAL_KEY=matrix-outlook-credential-key-preview:1" \
-            "PREVIEW_CLERK_SECRET_BINDING=matrix-outlook-clerk-secret-key-preview:1" \
-            "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${OUTLOOK_PREVIEW_CLERK_PUBLISHABLE_KEY}" >> "$GITHUB_ENV"
+            "OUTLOOK_PREVIEW_ENV_BINDINGS=|MATRIX_OUTLOOK_ENABLED=true|MATRIX_OUTLOOK_LEGACY_RETIRED=false|MATRIX_OUTLOOK_CLIENT_ID=${OUTLOOK_PREVIEW_CLIENT_ID}|MATRIX_OUTLOOK_REDIRECT_URI=${PREVIEW_PUBLIC_URL}/api/integrations/outlook/oauth/callback" \
+            "OUTLOOK_PREVIEW_SECRET_BINDINGS=,MATRIX_OUTLOOK_CLIENT_SECRET=matrix-outlook-client-secret-preview:1,MATRIX_OUTLOOK_CREDENTIAL_KEY=matrix-outlook-credential-key-preview:1" >> "$GITHUB_ENV"
 
       - name: Verify Outlook Preview credentials
         if: steps.config.outputs.configured == 'true' && env.PREVIEW_OUTLOOK_REQUESTED == 'true'
         run: |
           set -euo pipefail
-          for secret_name in matrix-outlook-client-secret-preview matrix-outlook-credential-key-preview matrix-outlook-clerk-secret-key-preview; do
+          for secret_name in matrix-outlook-client-secret-preview matrix-outlook-credential-key-preview; do
             secret_state="$(gcloud secrets versions describe 1 --secret "$secret_name" \
               --project "$GCP_PROJECT_ID" --format='value(state)')"
             if [ "$secret_state" != "ENABLED" ]; then
@@ -601,9 +598,6 @@ jobs:
               collaboration_env_bindings="|MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}|MATRIX_COLLABORATION_ALLOWED_ORIGINS=${collaboration_allowed_origins}|MATRIX_COLLABORATION_RELAY_ORIGIN=${collaboration_origin}"
             fi
             local clerk_secret_bindings="CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest"
-            if [ -n "${PREVIEW_CLERK_SECRET_BINDING:-}" ]; then
-              clerk_secret_bindings="CLERK_SECRET_KEY=${PREVIEW_CLERK_SECRET_BINDING}"
-            fi
             local custom_mcp_secret_bindings=""
             if [ "$CUSTOM_MCP_ENABLED" = "true" ]; then
               custom_mcp_secret_bindings=",MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key-preview:1"

@@ -18,12 +18,12 @@ function resolve(overrides: Record<string, string> = {}) {
       timeout: 5000,
       env: {
         PATH: process.env.PATH, GITHUB_ENV: output,
-        PREVIEW_OUTLOOK_REQUESTED: "true", ISOLATED_PREVIEW_ORIGIN: "true",
+        PREVIEW_OUTLOOK_REQUESTED: "true", ISOLATED_PREVIEW_ORIGIN: "false",
+        REQUIRE_EXISTING_SERVICE: "true",
         PR_NUMBER: "3801", OUTLOOK_PREVIEW_PR_NUMBER: "3801",
         OUTLOOK_PREVIEW_CLIENT_ID: "99c876a4-a5bd-4ad4-82ab-80a7d58ca7ad",
-        OUTLOOK_PREVIEW_CLERK_PUBLISHABLE_KEY: "pk_test_" + "a".repeat(30),
         CLOUD_RUN_PREVIEW_SERVICE: "matrix-platform-preview",
-        PREVIEW_PUBLIC_URL: "https://pr-3801---matrix-platform-preview-example-ey.a.run.app",
+        PREVIEW_PUBLIC_URL: "https://preview.matrix-os.com",
         ...overrides,
       },
     });
@@ -32,20 +32,24 @@ function resolve(overrides: Record<string, string> = {}) {
 }
 
 describe("Outlook preview deployment", () => {
-  it("binds a test app and the exact isolated Preview callback", () => {
+  it("binds a test app and reuses standard Clerk on the Preview browser origin", () => {
     const result = resolve();
     expect(result.status).toBe(0);
     expect(result.env).toContain("|MATRIX_OUTLOOK_ENABLED=true|MATRIX_OUTLOOK_LEGACY_RETIRED=false|");
-    expect(result.env).toContain("MATRIX_OUTLOOK_REDIRECT_URI=https://pr-3801---matrix-platform-preview-example-ey.a.run.app/api/integrations/outlook/oauth/callback");
+    expect(result.env).toContain("MATRIX_OUTLOOK_REDIRECT_URI=https://preview.matrix-os.com/api/integrations/outlook/oauth/callback");
+    expect(result.env).not.toContain("CLERK");
     expect(result.env).toContain("matrix-outlook-client-secret-preview:1");
     expect(result.env).toContain("matrix-outlook-credential-key-preview:1");
     const validation = workflow.jobs.preview.steps.find((step: { name?: string }) => step.name === "Verify Outlook Preview credentials");
     expect(validation.if).toContain("env.PREVIEW_OUTLOOK_REQUESTED == 'true'");
     expect(validation.run).toContain("gcloud secrets versions describe 1");
     expect(validation.run).not.toContain("secrets versions access");
+    expect(validation.run).not.toContain("clerk");
     const deploy = steps.find(step => step.name === "Deploy zero-traffic tagged revision to preview service")?.run;
     expect(deploy).toContain("${OUTLOOK_PREVIEW_ENV_BINDINGS:-}");
     expect(deploy).toContain("${OUTLOOK_PREVIEW_SECRET_BINDINGS:-}");
+    expect(deploy).toContain("CLERK_SECRET_KEY=clerk-secret-key:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest");
+    expect(deploy).toContain("--no-traffic");
   });
 
   it("keeps ordinary previews independent of Outlook credentials", () => {
@@ -54,12 +58,12 @@ describe("Outlook preview deployment", () => {
 
   it.each([
     { OUTLOOK_PREVIEW_PR_NUMBER: "3802" },
-    { ISOLATED_PREVIEW_ORIGIN: "false" },
+    { ISOLATED_PREVIEW_ORIGIN: "true" },
+    { REQUIRE_EXISTING_SERVICE: "false" },
     { CLOUD_RUN_PREVIEW_SERVICE: "matrix-platform" },
     { PREVIEW_PUBLIC_URL: "https://app.matrix-os.com" },
-    { PREVIEW_PUBLIC_URL: "https://pr-3802---matrix-platform-preview-example-ey.a.run.app" },
+    { PREVIEW_PUBLIC_URL: "https://pr-3801---matrix-platform-preview-example-ey.a.run.app" },
     { OUTLOOK_PREVIEW_CLIENT_ID: "" },
-    { OUTLOOK_PREVIEW_CLERK_PUBLISHABLE_KEY: "pk_live_example" },
   ])("rejects a production, unconfigured, or mismatched Preview %j", overrides => {
     expect(resolve(overrides).status).not.toBe(0);
   });
