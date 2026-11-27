@@ -102,11 +102,13 @@ it('handles an early release rejection while tool cleanup is still pending and w
   await f.start();
   f.stopReply(requestId => ({ version: 1, type: 'runtime.result', requestId, ok: false, error: 'runtime_unavailable' }));
   const work = vi.fn();
-  const stopped = expect(f.runtime.withStoppedRun(f.identity, work)).rejects.toThrow('Run stop unavailable');
+  const stopped = f.runtime.withStoppedRun(f.identity, work);
   try {
     f.complete();
-    await vi.waitFor(() => expect(closeRun).toHaveBeenCalledTimes(2));
-    await stopped;
+    await Promise.all([
+      expect(stopped).rejects.toThrow('Run stop unavailable'),
+      vi.waitFor(() => expect(closeRun).toHaveBeenCalledTimes(2)),
+    ]);
     await flush();
     expect(onStopped).not.toHaveBeenCalled();
     expect(work).not.toHaveBeenCalled();

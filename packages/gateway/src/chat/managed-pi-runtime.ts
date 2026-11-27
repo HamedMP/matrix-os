@@ -242,7 +242,8 @@ export function createManagedPiRuntime(deps: {
       // Prompt cancellation stays bounded; quiescence separately awaits actual cleanup.
       const localCleanup = Promise.all([
         run.routineSource?.close(),
-        run.toolClose ?? (run.setupDraft ? undefined : deps.ownerTools?.closeRun(input.runId)),
+        run.toolClose,
+        run.setupDraft ? undefined : deps.ownerTools?.closeRun(input.runId),
       ]);
       run.cleanup = Promise.all([
         localCleanup,
