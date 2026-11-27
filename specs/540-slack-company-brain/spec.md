@@ -209,4 +209,6 @@ The dedicated callback reads `SLACK_DEV_AGENT_CHANNELS`. A channel configured wi
 
 Each accepted event supplies an isolated input to a private Run. Capture two real events on the same build, reopen both Chats, then pause the pilot rule, withdraw the test route and inspect the job queue. Record the installed build and distinguish a live GitHub CLI preflight from a provider invocation under the Agent's saved grant. The following capabilities remain follow-ups. They include continuing an existing Slack thread session, multiple Agents in one channel with an explicit selector, separate visible Slack identities and Slack thread write-back.
 
+Web and Electron Chats show the Agent's result without showing the internal Slack trigger instruction as a user message, during live updates and after reopening. The composer queue also hides that instruction. The persisted turn remains available for the Run and its audit trail. A message the user sends with the same wording stays visible.
+
 [Claude Tag documents its app identity, channel access and per-thread sessions.](https://claude.com/docs/claude-tag/concepts/agent-identity)
