@@ -4,7 +4,6 @@ import React, { useLayoutEffect, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
-import { useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
 import type {
   CanonicalChatEventSource,
   CanonicalChatInvalidation,
@@ -20,7 +19,7 @@ import {
   providerCatalog,
   snapshot,
 } from "./canonical-chat-workspace-test-utils";
-import { mockSharedComposerPopoverLayout, setSharedComposerText } from "./shared-chat-composer-test-utils";
+import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const resizeObserverCallbacks: ResizeObserverCallback[] = [];
@@ -49,27 +48,21 @@ function resizeChatWorkspace(width: number) {
 }
 
 describe("CanonicalChatWorkspace", () => {
-  let restoreComposerLayout: () => void;
   beforeAll(() => {
     globalThis.ResizeObserver = WorkspaceResizeObserver;
   });
 
   beforeEach(() => {
-    restoreComposerLayout = mockSharedComposerPopoverLayout();
     resizeObserverCallbacks.length = 0;
     useBoard.setState(useBoard.getInitialState(), true);
     useConnection.setState(useConnection.getInitialState(), true);
-    useRetainedComposerDrafts.setState(useRetainedComposerDrafts.getInitialState(), true);
     window.operator = {
       invoke: vi.fn(async () => ({ ok: true })),
       on: vi.fn(() => () => undefined),
     };
   });
 
-  afterEach(() => {
-    cleanup();
-    restoreComposerLayout();
-  });
+  afterEach(cleanup);
 
   it.each([
     ["global", null, undefined],
@@ -133,164 +126,6 @@ describe("CanonicalChatWorkspace", () => {
     expect(screen.getByRole("button", { name: "Review code and suggest changes" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Fix issues and failures" })).toBeTruthy();
     expect(screen.getByRole("button", { name: snapshot.chat.title })).toBeTruthy();
-  });
-
-  it.each(["foreground", "background", "edited background"] as const)(
-    "checks the %s Electron preview draft against its isolated worktree", async (mode) => {
-    useConnection.setState({ status: "signed-in", userId: snapshot.chat.ownerScope.ownerId });
-    const background = mode !== "foreground";
-    const targetId = "32f5b7fd-1d7d-4672-9636-f0033c5e1a68";
-    const ipc = vi.fn(async (channel: string) => {
-      if (channel === "chat:electron-preview-available" || channel === "chat:mac-terminal-available") return { available: true };
-      if (channel === "chat:mac-terminal-background-status") return background
-        ? { active: true, targetId, expiresAt: Date.now() + 60_000, remaining: 2, phase: "waiting" }
-        : { active: false };
-      return { ok: true };
-    });
-    window.operator = { ...window.operator, invoke: ipc };
-    const routeClient = client();
-    const worktree = { kind: "worktree", projectId: "matrix-os", worktreeId: "wt_preview" } as const;
-    const run = { ...snapshot.runs[0]!, executionRoot: worktree };
-    vi.mocked(routeClient.getDetail).mockResolvedValue({
-      record, messages: snapshot.messages, turns: snapshot.turns, runs: [run], activities: snapshot.activities,
-    });
-    vi.mocked(routeClient.admitTurn).mockResolvedValue({
-      record, message: snapshot.messages[0]!, turn: snapshot.turns[0]!, run, admission: "accepted",
-    });
-
-    render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialChatId={snapshot.chat.id}
-      initialView="conversation" active catalog={providerCatalog} />);
-
-    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-    const name = background ? "Draft background Electron preview" : "Request Electron preview";
-    await setSharedComposerText(editor, "Keep this draft @electron");
-    expect(screen.queryByRole("option", { name })).toBeNull();
-    expect(editor.textContent).toBe("Keep this draft @electron");
-    await setSharedComposerText(editor, "@electron");
-    const option = await screen.findByRole("option", { name });
-    expect(screen.queryByRole("button", { name })).toBeNull();
-    if (background) fireEvent.click(option);
-    else {
-      expect(option.getAttribute("aria-selected")).toBe("true");
-      fireEvent.keyDown(editor, { key: "Enter" });
-    }
-    await waitFor(() => expect(editor.textContent).toContain("MATRIX_ELECTRON_PREVIEW_V1"));
-    expect(routeClient.admitTurn).not.toHaveBeenCalled();
-    if (mode === "edited background") {
-      await setSharedComposerText(editor, "MATRIX_ELECTRON_PREVIEW_V1 " + JSON.stringify({
-        operation: "verify-sign-in-recovery", backgroundTargetId: targetId,
-      }));
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      expect(await screen.findByText(/The worktree selection changed/)).toBeTruthy();
-      expect(routeClient.admitTurn).not.toHaveBeenCalled();
-      return;
-    }
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
-      expect.objectContaining({ executionRoot: worktree }), { chatScope: "project" }));
-    expect(ipc.mock.calls.some(([channel]) => channel === "chat:electron-preview-run")).toBe(false);
-  });
-
-  it.each([
-    ["one-time", "original"],
-    ["one-time", "altered"],
-    ["background", "original"],
-    ["background", "revoked"],
-    ["background", "revoked with user edits"],
-    ["background", "revoked elsewhere"],
-    ["one-time", "edited before approval"],
-  ] as const)("checks the %s Mac terminal draft against its approved worktree (%s)", async (mode, draftKind) => {
-    useConnection.setState({ status: "signed-in", userId: snapshot.chat.ownerScope.ownerId });
-    const targetId = "32f5b7fd-1d7d-4672-9636-f0033c5e1a68";
-    const expiresAt = Date.now() + 60_000;
-    let backgroundActive = false;
-    let finishApproval: ((reply: { status: "ready"; targetId: string; terminalId: string; expiresAt: number }) => void) | undefined;
-    const ipc = vi.fn(async (channel: string, _args: unknown) => {
-      if (channel === "chat:mac-terminal-available") return { available: true };
-      if (channel === "chat:mac-terminal-background-status") return backgroundActive
-        ? { active: true, targetId, expiresAt, remaining: 3, phase: "waiting" }
-        : { active: false };
-      if (channel === "chat:mac-terminal-background-start") {
-        backgroundActive = true;
-        return { status: "ready", targetId, expiresAt, remaining: 3 };
-      }
-      if (channel === "chat:mac-terminal-cancel") backgroundActive = false;
-      if (channel === "chat:mac-terminal-prepare") {
-        if (draftKind === "edited before approval") {
-          return new Promise(resolve => { finishApproval = resolve; });
-        }
-        return { status: "ready", targetId, terminalId: "t7", expiresAt };
-      }
-      return { ok: true };
-    });
-    window.operator = { ...window.operator, invoke: ipc };
-    const routeClient = client();
-    const worktree = { kind: "worktree", projectId: "matrix-os", worktreeId: "wt_00000000000a" } as const;
-    const run = { ...snapshot.runs[0]!, executionRoot: worktree };
-    vi.mocked(routeClient.getDetail).mockResolvedValue({
-      record, messages: snapshot.messages, turns: snapshot.turns, runs: [run], activities: snapshot.activities,
-    });
-    vi.mocked(routeClient.admitTurn).mockResolvedValue({
-      record, message: snapshot.messages[0]!, turn: snapshot.turns[0]!, run, admission: "accepted",
-    });
-
-    render(<CanonicalChatWorkspace client={routeClient} projectId="matrix-os" initialChatId={snapshot.chat.id}
-      initialView="conversation" active catalog={providerCatalog} />);
-
-    const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
-    const name = mode === "background" ? "Allow background Mac checks" : "Request Mac terminal check";
-    await setSharedComposerText(editor, "@mac");
-    const option = await screen.findByRole("option", { name });
-    expect(screen.queryByRole("button", { name })).toBeNull();
-    expect(ipc).not.toHaveBeenCalledWith("chat:mac-terminal-prepare", expect.anything());
-    expect(ipc).not.toHaveBeenCalledWith("chat:mac-terminal-background-start", expect.anything());
-    fireEvent.click(option);
-    if (draftKind === "edited before approval") {
-      await waitFor(() => expect(finishApproval).toBeTypeOf("function"));
-      await setSharedComposerText(editor, "Keep these changes");
-      await act(async () => { finishApproval?.({ status: "ready", targetId, terminalId: "t7", expiresAt }); });
-      await waitFor(() => expect(ipc).toHaveBeenCalledWith("chat:mac-terminal-cancel", { chatId: snapshot.chat.id }));
-      expect(editor.textContent).toBe("Keep these changes");
-      expect(routeClient.admitTurn).not.toHaveBeenCalled();
-      return;
-    }
-    const marker = "MATRIX_MAC_TERMINAL_V1 " + JSON.stringify({
-      targetId,
-      action: mode === "background" ? "system-checks" : "uname",
-    });
-    await waitFor(() => expect(editor.textContent).toContain(marker));
-    expect(ipc).toHaveBeenCalledWith(
-      mode === "background" ? "chat:mac-terminal-background-start" : "chat:mac-terminal-prepare",
-      { chatId: snapshot.chat.id, worktreeId: worktree.worktreeId },
-    );
-    expect(routeClient.admitTurn).not.toHaveBeenCalled();
-    if (draftKind === "altered") {
-      await setSharedComposerText(editor, marker.replace(targetId, "530f8f66-bcb7-4549-ae29-aebb4543fd60"));
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      expect(await screen.findByText(/The Mac terminal draft or approval changed/)).toBeTruthy();
-      expect(routeClient.admitTurn).not.toHaveBeenCalled();
-      return;
-    }
-    if (draftKind === "revoked elsewhere") {
-      backgroundActive = false;
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      expect(await screen.findByText(/The background Mac check approval changed/)).toBeTruthy();
-      expect(routeClient.admitTurn).not.toHaveBeenCalled();
-      return;
-    }
-    if (draftKind === "revoked" || draftKind === "revoked with user edits") {
-      const edited = draftKind === "revoked with user edits";
-      if (edited) await setSharedComposerText(editor, "My own draft");
-      fireEvent.click(await screen.findByRole("button", { name: "Stop background Mac checks" }));
-      await waitFor(() => expect(ipc).toHaveBeenCalledWith("chat:mac-terminal-cancel", { chatId: snapshot.chat.id }));
-      await waitFor(() => expect(editor.textContent?.trim()).toBe(edited ? "My own draft" : ""));
-      expect(routeClient.admitTurn).not.toHaveBeenCalled();
-      return;
-    }
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(routeClient.admitTurn).toHaveBeenCalledWith(snapshot.chat.id,
-      expect.objectContaining({ executionRoot: worktree }), { chatScope: "project" }));
-    expect(ipc.mock.calls.some(([channel]) => channel === "chat:mac-terminal-run")).toBe(false);
   });
 
   it("submits live approval actions from the canonical transcript", async () => {

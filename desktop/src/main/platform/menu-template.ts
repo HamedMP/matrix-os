@@ -58,8 +58,6 @@ function createAppsMenu(item: ShortcutItemFactory): MenuItemConstructorOptions {
   };
 }
 
-export const STOP_BACKGROUND_MAC_CHECKS_MENU_ID = "stop-background-mac-checks";
-
 interface AppMenuTemplateOptions {
   appName: string;
   isPackaged: boolean;
@@ -72,7 +70,6 @@ interface AppMenuTemplateOptions {
   reloadWindow?(): void;
   /** Opens or focuses the native Terminal window (macOS and Linux only). */
   openTerminalWindow?(): void;
-  stopBackgroundMacChecks?(): void;
   /** Opens the licence texts of bundled third-party components, when this build ships any. */
   openThirdPartyNotices?(): void;
   /** Each registry action shows its first binding as its accelerator. */
@@ -97,7 +94,6 @@ export function createAppMenuTemplate({
   quitApp,
   reloadWindow,
   openTerminalWindow,
-  stopBackgroundMacChecks,
   openThirdPartyNotices,
   shortcuts,
   runShortcut,
@@ -186,12 +182,6 @@ export function createAppMenuTemplate({
             updateItem,
             { type: "separator" },
             ...settingsItems,
-            ...(stopBackgroundMacChecks ? [{
-              id: STOP_BACKGROUND_MAC_CHECKS_MENU_ID,
-              label: "Stop Background Mac Terminal Checks",
-              visible: false,
-              click: stopBackgroundMacChecks,
-            }] : []),
             { type: "separator" },
             { role: "services" },
             { type: "separator" },
