@@ -1,7 +1,7 @@
 import type { CanonicalChatNavigationPageQuery } from "@matrix-os/contracts";
 import type { CanonicalChatClient } from "../../../lib/canonical-chat-client";
 import { AppError } from "../../../../../shared/app-error";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import type { Project } from "../../../stores/board";
 import { useConnection } from "../../../stores/connection";
@@ -71,63 +71,123 @@ function readPreference(scope: string | null): RailOrderPreference {
   }
 }
 
-type WorkRailPageState = { key: string; rows: ChatNavigationRecord[]; count: number; cursor?: string; loading: boolean; error: boolean };
+type WorkRailPageState = {
+  rows: ChatNavigationRecord[];
+  count: number;
+  cursor?: string;
+  loading: boolean;
+  error: boolean;
+};
+type PageController = { refresh: (version: number) => void; loadMore: () => void };
+const EMPTY_PAGE: WorkRailPageState = { rows: [], count: 0, loading: false, error: false };
 
-/** An independent cursor and retained rows for one rail placement. */
+function appendDistinctRows(rows: ChatNavigationRecord[], items: readonly ChatNavigationRecord[]) {
+  for (const item of items) {
+    if (!rows.some(row => row.chat.id === item.chat.id)) rows.push(item);
+  }
+}
+
+/** Each rail placement has its own cursor. Clicks take priority over queued refreshes. */
 export function useWorkRailPage(client: CanonicalChatClient | null, query: Pick<CanonicalChatNavigationPageQuery, "group" | "projectId">,
   scopeKey: string, version: number, initialSize: number) {
-  const key = JSON.stringify([scopeKey, query.group, query.projectId]);
-  const generation = useRef(0);
-  const [state, setState] = useState<WorkRailPageState>({ key: "", rows: [], count: 0, loading: false, error: false });
+  const { group, projectId } = query;
+  const key = JSON.stringify([scopeKey, group, projectId, initialSize]);
+  const controller = useRef<PageController | null>(null);
+  const [snapshot, setSnapshot] = useState<{ key: string; client: CanonicalChatClient; page: WorkRailPageState } | null>(null);
+
   useEffect(() => {
     if (!client?.navigationPage) {
-      generation.current++;
-      setState(previous => previous.rows.length || previous.count || previous.cursor || previous.loading || previous.error
-        ? { key: "", rows: [], count: 0, loading: false, error: false } : previous);
+      setSnapshot(null);
       return;
     }
-    const current = ++generation.current;
-    const targetCount = state.key === key ? Math.max(initialSize, state.rows.length) : initialSize;
-    setState(previous => previous.key === key ? { ...previous, loading: true, error: false }
-      : { key, rows: [], count: 0, loading: true, error: false });
-    void (async () => {
-      const rows: ChatNavigationRecord[] = [];
-      let cursor: string | undefined;
-      let count = 0;
-      do {
-        const page = await client.navigationPage!({ ...query, limit: cursor ? 20 : initialSize, ...(cursor ? { cursor } : {}) });
-        if (generation.current !== current) return;
-        rows.push(...page.items.filter(item => !rows.some(row => row.chat.id === item.chat.id)));
-        count = page.totalCount;
-        cursor = page.nextCursor;
-      } while (cursor && rows.length < targetCount);
-      if (generation.current !== current) return;
-      setState({ key, rows, count, cursor, loading: false, error: false });
-    })().catch((cause: unknown) => {
-      if (generation.current !== current) return;
-      console.warn("[work-rail] Navigation page unavailable:", cause instanceof Error ? cause.name : "UnknownError");
-      setState(previous => cause instanceof AppError && cause.category === "unauthorized"
-        ? { key, rows: [], count: 0, loading: false, error: true }
-        : { ...previous, loading: false, error: true });
-    });
-    return () => { generation.current++; };
-  }, [client, key, query.group, query.projectId, version, initialSize]);
-  const loadMore = useCallback(() => {
-    if (!client?.navigationPage || state.key !== key || !state.cursor || state.loading) return;
-    const current = generation.current;
-    setState(previous => ({ ...previous, loading: true, error: false }));
-    void client.navigationPage({ ...query, limit: 20, cursor: state.cursor }).then(page => {
-      if (generation.current !== current) return;
-      setState(previous => ({ ...previous, rows: [...previous.rows, ...page.items.filter(item => !previous.rows.some(row => row.chat.id === item.chat.id))],
-        count: page.totalCount, cursor: page.nextCursor, loading: false }));
-    }).catch((cause: unknown) => {
-      if (generation.current !== current) return;
-      console.warn("[work-rail] More chats unavailable:", cause instanceof Error ? cause.name : "UnknownError");
-      setState(previous => cause instanceof AppError && cause.category === "unauthorized"
-        ? { key, rows: [], count: 0, loading: false, error: true }
-        : { ...previous, loading: false, error: true });
-    });
-  }, [client, key, query.group, query.projectId, state]);
-  return client?.navigationPage && state.key === key ? { ...state, loadMore }
-    : { key, rows: [], count: 0, loading: Boolean(client?.navigationPage), error: false, loadMore };
+
+    const pageClient = client;
+    let page = EMPTY_PAGE;
+    let closed = false;
+    let inFlight = false;
+    let queuedMore = false;
+    let requestedVersion: number | undefined;
+    let startedVersion: number | undefined;
+
+    function publish() {
+      setSnapshot({ key, client: pageClient, page });
+    }
+
+    async function runNext() {
+      if (closed || inFlight) return;
+      const cursor = queuedMore ? page.cursor : undefined;
+      queuedMore = false;
+      if (!cursor && startedVersion === requestedVersion) {
+        if (page.loading) {
+          page = { ...page, loading: false };
+          publish();
+        }
+        return;
+      }
+
+      const initial = startedVersion === undefined;
+      if (!cursor) startedVersion = requestedVersion;
+      inFlight = true;
+      if (initial || cursor) {
+        page = { ...page, loading: true, error: false };
+        publish();
+      }
+
+      try {
+        const targetCount = Math.max(initialSize, page.rows.length);
+        const rows = cursor ? [...page.rows] : [];
+        let nextCursor = cursor;
+        let count: number;
+        do {
+          const response = await pageClient.navigationPage({
+            group, ...(projectId ? { projectId } : {}), limit: nextCursor ? 20 : initialSize, ...(nextCursor ? { cursor: nextCursor } : {}),
+          });
+          if (closed) return;
+          if (nextCursor && response.nextCursor === nextCursor) throw new Error("Navigation cursor did not advance");
+          appendDistinctRows(rows, response.items);
+          count = response.totalCount;
+          nextCursor = response.nextCursor;
+        } while (!cursor && nextCursor && rows.length < targetCount);
+
+        page = { rows, count, cursor: nextCursor, loading: queuedMore && Boolean(nextCursor), error: false };
+        publish();
+      } catch (cause: unknown) {
+        if (closed) return;
+        console.warn("[work-rail] Navigation page unavailable:", cause instanceof Error ? cause.name : "UnknownError");
+        if (cause instanceof AppError && cause.category === "unauthorized") {
+          page = { ...EMPTY_PAGE, error: true };
+          queuedMore = false;
+        } else {
+          page = { ...page, loading: queuedMore, error: true };
+        }
+        publish();
+      } finally {
+        inFlight = false;
+        void runNext();
+      }
+    }
+
+    controller.current = {
+      refresh(nextVersion) {
+        requestedVersion = nextVersion;
+        void runNext();
+      },
+      loadMore() {
+        if (!page.cursor || page.loading) return;
+        queuedMore = true;
+        page = { ...page, loading: true, error: false };
+        publish();
+        void runNext();
+      },
+    };
+    return () => {
+      closed = true;
+      controller.current = null;
+    };
+  }, [client, key, group, projectId, initialSize]);
+
+  useEffect(() => { controller.current?.refresh(version); }, [client, key, version]);
+  const page = snapshot && snapshot.key === key && snapshot.client === client
+    ? snapshot.page : { ...EMPTY_PAGE, loading: Boolean(client?.navigationPage) };
+  return { ...page, loadMore: () => controller.current?.loadMore() };
 }

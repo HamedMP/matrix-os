@@ -76,3 +76,45 @@ it("clears already loaded titles when a later page is forbidden", async () => {
   await waitFor(() => expect(result.current.error).toBe(true));
   expect(result.current.rows).toEqual([]);
 });
+
+it.each(["before", "during"])("honors one Show more action %s an overlapping refresh", async timing => {
+  const record = (index: number) => ({ chat: { id: `chat_${index}` } });
+  const first = { items: Array.from({ length: 10 }, (_, index) => record(index)), totalCount: 11, nextCursor: "next" };
+  const older = { items: [record(10)], totalCount: 11 };
+  let finishRefresh!: (value: typeof first) => void;
+  let finishNext!: (value: typeof older) => void;
+  const refresh = new Promise<typeof first>(resolve => { finishRefresh = resolve; });
+  const next = new Promise<typeof older>(resolve => { finishNext = resolve; });
+  const navigationPage = vi.fn(async (query: { cursor?: string }) => {
+    if (query.cursor) return next;
+    return navigationPage.mock.calls.length === 1 ? first : refresh;
+  });
+  const client = { navigationPage } as never;
+  const { result, rerender } = renderHook(({ version }) => useWorkRailPage(client, { group: "done" }, "owner/main", version, 10), { initialProps: { version: 0 } });
+  await waitFor(() => expect(result.current.rows).toEqual(first.items));
+  if (timing === "during") {
+    rerender({ version: 1 });
+    expect(result.current.loading).toBe(false);
+  }
+  act(() => {
+    result.current.loadMore();
+    result.current.loadMore();
+  });
+  if (timing === "before") rerender({ version: 1 });
+
+  expect(result.current.loading).toBe(true);
+  expect(result.current.rows).toEqual(first.items);
+  if (timing === "during") {
+    await act(async () => finishRefresh(first));
+  }
+  await act(async () => finishNext(older));
+  expect(result.current.rows).toEqual([...first.items, ...older.items]);
+
+  await act(async () => finishRefresh(first));
+  expect(result.current.rows).toEqual([...first.items, ...older.items]);
+  expect(result.current.cursor).toBeUndefined();
+  expect(result.current.loading).toBe(false);
+  const nextRequests = navigationPage.mock.calls.filter(([query]) => query.cursor === "next");
+  // Refreshing a larger visible group may fetch the same cursor once more.
+  expect(nextRequests).toHaveLength(timing === "before" ? 2 : 1);
+});

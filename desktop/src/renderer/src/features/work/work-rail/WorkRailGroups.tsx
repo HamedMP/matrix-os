@@ -57,7 +57,7 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
         const limits = current.scopeKey === scopeKey ? current.limits : INITIAL_FALLBACK_LIMITS;
         return { scopeKey, limits: { ...limits, [group]: Math.min(limits[group] + 20, fallbackCount) } };
       });
-    }}>Show more</button> : null;
+    }}>{page.loading && usesServer(page) ? "Loading…" : "Show more"}</button> : null;
   return <>
 
         {pinned.length + model.pinnedProjects.length > 0 || pinnedPage.cursor ? <WorkRailSection
