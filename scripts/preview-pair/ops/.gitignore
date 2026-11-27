@@ -1,0 +1,4 @@
+# Operator copies write private metadata beside the tools. Never stage those files.
+*.json
+__pycache__/
+*.pyc
