@@ -701,7 +701,7 @@ export function createClaudeChatProviderAdapter(options: {
         });
         return await options.nativeSessions!.runTurn({ ...transport, command: protocol.command, ...remainingLifetime(),
           input, creationPolicy, sourceFingerprint: source.fingerprint, schedulingAllowed: source.schedulingAllowed,
-          legacySourceFingerprint: source.legacy?.fingerprint,
+          legacySourceFingerprints: source.legacy?.map(candidate => candidate.fingerprint),
           requireProtectedSession: resumeState?.canonicalHistoryRequired,
           onProtectedSession(sessionId) { protectedSessionId = sessionId; observeSessionState(sessionId); },
         });

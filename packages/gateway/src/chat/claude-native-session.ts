@@ -14,8 +14,8 @@ export type ClaudeNativeSessionTurnOptions = Parameters<typeof runCanonicalCli>[
   input: CanonicalProviderRunInput;
   /** Current account/source/root/model/permission fingerprint; never a scoped Run token. */
   sourceFingerprint: string;
-  /** Verified compatibility for a protected child restored from the previous Chat prompt. */
-  legacySourceFingerprint?: string;
+  /** Verified compatibility for a protected child launched with an earlier Chat prompt. */
+  legacySourceFingerprints?: readonly string[];
   schedulingAllowed?: boolean;
   requireProtectedSession?: boolean;
   onProtectedSession?: (sessionId: string) => void;
@@ -501,7 +501,7 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
       const resume = nativeRecord(turn.input.resumeState)?.sessionId;
       const protectedResume = typeof resume === "string" && session?.hasProtectedSession(resume) === true;
       const sourceMatches = session && (session.fingerprint === turn.sourceFingerprint
-        || (protectedResume && turn.schedulingAllowed === true && session.fingerprint === turn.legacySourceFingerprint));
+        || (protectedResume && turn.schedulingAllowed === true && turn.legacySourceFingerprints?.includes(session.fingerprint)));
       if (turn.requireProtectedSession) {
         if (!session || !protectedResume) throw new Error("Native protected session unavailable");
         if (!sourceMatches) {

@@ -10,7 +10,17 @@ it("feature-created native thread resumes after actual child renewal with its or
     rig.send({ type: "host.turn", admissionId: restorationId(2), first: false, clientRequestId: "req_renewal_second", turn: { prompt: "Continue original history", modelOptions: [], browser: { attemptId: restorationId(3), token: "a".repeat(43), gatewayPort: 18765 } } });
     await rig.waitFrame(frame => frame.type === "shim.bound" && frame.admissionId === restorationId(2)); await rig.completed(2);
     const frames = await rig.frames(), starts = frames.filter(frame => frame.method === "thread/start"), resumes = frames.filter(frame => frame.method === "thread/resume");
-    expect(starts).toHaveLength(1); expect(starts[0].params!.dynamicTools).toEqual([expect.objectContaining({ name: "matrix_routines" })]);
+    expect(starts).toHaveLength(1);
+    expect(starts[0].params!.dynamicTools).toEqual([expect.objectContaining({
+      name: "matrix_routines", deferLoading: false, inputSchema: expect.objectContaining({ required: ["args"] }),
+    })]);
+    const [tool] = starts[0].params!.dynamicTools as { description: string }[];
+    expect(Buffer.byteLength(tool.description)).toBeLessThan(250);
+    expect(tool.description).toMatch(/schedule.*propose/i);
+    expect(tool.description).toMatch(/pending this turn or unknown.*request original UUID/i);
+    expect(tool.description).toMatch(/new mutation UUID.*current control revision/i);
+    expect(tool.description).toMatch(/never auto-retry/i);
+    expect(tool.description).toMatch(/owner approves activation and background separately/i);
     expect(resumes).toHaveLength(1); expect(resumes[0].params).toMatchObject({ threadId: "fixture_native_thread", excludeTurns: true }); expect(resumes[0].params).not.toHaveProperty("dynamicTools");
     expect(frames.filter(frame => frame.method === "thread/fork")).toHaveLength(0);
     const processes = frames.filter(frame => frame.fixtureEvent === "native.start"); expect(processes).toHaveLength(2); expect(processes[0].pid).not.toBe(processes[1].pid);
