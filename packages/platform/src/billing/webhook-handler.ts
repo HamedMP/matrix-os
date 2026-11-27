@@ -47,9 +47,11 @@ import {
 } from '../billing/stripe-webhook-projection.js';
 
 import type { createBillingRoutes } from '../billing-routes.js';
-import { ownerOnFreePlan } from '../free-tier/free-checkout-guard.js';
 import {
   enqueueFreeOwnerCompensation,
+  freeOwnerSince,
+  readInvoiceSubscriptionId,
+  rearmFreeOwnerCompensation,
   FREE_OWNER_CHARGE_COMPENSATION_EVENT,
   retireFreeOwnerCheckoutAttempt,
 } from '../free-tier/free-owner-billing.js';
@@ -75,15 +77,19 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
   const persistEntitlement = options.upsertEntitlement ?? upsertBillingEntitlement;
 
   /**
-   * ENG-520 launch guard, layer 3: a paid subscription for an owner who is on
-   * the free plan right now is never projected (the free metal VM would keep
-   * free limits under a paid plan). It is queued for cancel and refund by the
-   * free owner billing sweep, outside this transaction. Idempotent: the queue
-   * is keyed by subscription and webhook events are deduplicated.
+   * ENG-520 launch guard, layer 3: a paid subscription CREATED while the owner
+   * is on the free plan is never projected (the free metal VM would keep free
+   * limits under a paid plan). It is queued for cancel and refund of payments
+   * made since free admission, by the free owner billing sweep, outside this
+   * transaction. A former paid owner's older subscription never comes here.
+   * Idempotent: the queue is keyed by subscription, events are deduplicated,
+   * and a later event re-arms the queued row.
    */
   async function compensateFreeOwner(trx: Parameters<typeof enqueueFreeOwnerCompensation>[0], clerkUserId: string,
-    stripeSubscriptionId: string | null, at: string, eventType: string): Promise<void> {
-    const queued = stripeSubscriptionId ? await enqueueFreeOwnerCompensation(trx, stripeSubscriptionId, at) : false;
+    stripeSubscriptionId: string | null, freeSince: Date, at: string, eventType: string): Promise<void> {
+    const queued = stripeSubscriptionId
+      ? await enqueueFreeOwnerCompensation(trx, stripeSubscriptionId, freeSince, at)
+      : false;
     if (queued) {
       console.error('[billing] ALERT free owner paid checkout; subscription queued for cancel and refund');
       emitTelemetry(FREE_OWNER_CHARGE_COMPENSATION_EVENT, {
@@ -157,7 +163,9 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
           const sessionOwner = event.type === 'checkout.session.completed'
             ? readClerkUserIdFromCheckoutSession(event.data.object)
             : null;
-          if (sessionId && sessionOwner && await ownerOnFreePlan(trx, sessionOwner)) {
+          const sessionFreeSince = sessionId && sessionOwner ? await freeOwnerSince(trx, sessionOwner) : null;
+          // Only a checkout completed while the owner was already free.
+          if (sessionId && sessionOwner && sessionFreeSince && event.created * 1000 >= sessionFreeSince.getTime()) {
             const subscription = (event.data.object as { subscription?: unknown }).subscription;
             const subscriptionId = typeof subscription === 'string'
               ? subscription
@@ -166,7 +174,7 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
             // The paid attempt is void: it must not hold the owner's free plan as a pending checkout.
             await retireFreeOwnerCheckoutAttempt(trx, sessionId, 'abandoned', at, true);
             await options.prebilling?.expireCheckout(trx, { stripeSessionId: sessionId, clerkUserId: sessionOwner, now: at });
-            await compensateFreeOwner(trx, sessionOwner, subscriptionId, at, event.type);
+            await compensateFreeOwner(trx, sessionOwner, subscriptionId, sessionFreeSince, at, event.type);
             return { received: true, processed: true };
           }
           if (sessionId) {
@@ -201,6 +209,15 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
             },
           );
           return { received: true, processed: true };
+        }
+
+        if (event.type === 'invoice.paid' || event.type === 'invoice.payment_succeeded') {
+          // A payment on a subscription being compensated re-arms it so the sweep refunds it.
+          const compensatedSubscription = readInvoiceSubscriptionId(event.data.object);
+          if (compensatedSubscription
+            && await rearmFreeOwnerCompensation(trx, compensatedSubscription, webhookProcessedAt.toISOString())) {
+            return { received: true, processed: true };
+          }
         }
 
         if (!isSubscriptionEvent(event.type)) {
@@ -303,10 +320,17 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
 
         const projection = await projectSubscription(trx, event.data.object, webhookProcessedAt);
         if (!projection) return { received: true, ignored: true };
-        if (await ownerOnFreePlan(trx, projection.clerkUserId)) {
-          await compensateFreeOwner(trx, projection.clerkUserId, projection.stripeSubscriptionId,
-            webhookProcessedAt.toISOString(), event.type);
-          return { received: true, processed: true };
+        const freeSince = await freeOwnerSince(trx, projection.clerkUserId);
+        if (freeSince) {
+          const subscriptionCreated = (event.data.object as { created?: unknown }).created;
+          const recorded = await getBillingSubscriptionByStripeId(trx, projection.stripeSubscriptionId);
+          // A subscription recorded here, or created before free admission, is a
+          // former paid owner's real subscription: it flows through unchanged.
+          if (!recorded && typeof subscriptionCreated === 'number' && subscriptionCreated * 1000 >= freeSince.getTime()) {
+            await compensateFreeOwner(trx, projection.clerkUserId, projection.stripeSubscriptionId, freeSince,
+              webhookProcessedAt.toISOString(), event.type);
+            return { received: true, processed: true };
+          }
         }
 
         const priceCatalog = loadStripePriceCatalog(env);

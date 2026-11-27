@@ -81,10 +81,12 @@ export interface StripeBillingClient {
   expireCheckoutSession?(id: string): Promise<StripeCheckoutSessionProjection>;
   /**
    * ENG-520 launch guard compensation: cancel the subscription now (no
-   * proration, no final invoice) and refund every paid invoice payment on it.
-   * Idempotent: already canceled subscriptions and refunded payments are done.
+   * proration, no final invoice), void its open invoices, and refund the
+   * payments of invoices paid at or after `refundPaidSince` (free admission).
+   * `settled` is false while an invoice could still be paid, so the caller
+   * rechecks. Idempotent: canceled subscriptions and refunded charges are done.
    */
-  cancelAndRefundSubscription?(subscriptionId: string): Promise<void>;
+  cancelAndRefundSubscription?(subscriptionId: string, options: { refundPaidSince: Date }): Promise<{ settled: boolean }>;
   retrieveTrackingCheckout?(id: string): Promise<unknown>;
   retrieveTrackingInvoice?(id: string): Promise<unknown>;
   retrieveCheckoutSession(id: string): Promise<StripeCheckoutSessionProjection>;

@@ -41,13 +41,20 @@ const env = {
   STRIPE_WEBHOOK_SECRET: 'whsec_test',
 };
 
-function subscriptionEvent(id: string, owner: string, overrides: { type?: string; status?: string; subscriptionId?: string } = {}): StripeWebhookEvent {
+const SECONDS = (at: Date) => Math.floor(at.getTime() / 1000);
+/** Free admission happens at NOW (buildFreeEntitlement); a subscription created while free comes a minute later. */
+const WHILE_FREE = new Date(NOW.getTime() + 60_000);
+
+function subscriptionEvent(id: string, owner: string, overrides: {
+  type?: string; status?: string; subscriptionId?: string; subscriptionCreated?: Date; eventCreated?: Date;
+} = {}): StripeWebhookEvent {
   return {
     id,
     type: overrides.type ?? 'customer.subscription.created',
-    created: Math.floor(NOW.getTime() / 1000),
+    created: SECONDS(overrides.eventCreated ?? WHILE_FREE),
     data: { object: {
       id: overrides.subscriptionId ?? 'sub_free', customer: `cus_${owner}`, status: overrides.status ?? 'active',
+      created: SECONDS(overrides.subscriptionCreated ?? WHILE_FREE),
       current_period_end: Math.floor(NOW.getTime() / 1000) + 30 * 86_400,
       metadata: { clerk_user_id: owner, matrix_region_slug: 'region_fsn1', matrix_runtime_slot: 'primary' },
       items: { data: [{ price: { id: 'price_max_monthly', unit_amount: 20000, currency: 'usd', recurring: { interval: 'month', interval_count: 1 } }, quantity: 1 }] },
@@ -57,8 +64,18 @@ function subscriptionEvent(id: string, owner: string, overrides: { type?: string
 
 function completedEvent(id: string, owner: string, sessionId: string): StripeWebhookEvent {
   return {
-    id, type: 'checkout.session.completed', created: Math.floor(NOW.getTime() / 1000),
-    data: { object: { id: sessionId, client_reference_id: owner, subscription: 'sub_free', metadata: { clerk_user_id: owner } } },
+    id, type: 'checkout.session.completed', created: SECONDS(WHILE_FREE),
+    data: { object: { id: sessionId, created: SECONDS(NOW) - 60, client_reference_id: owner, subscription: 'sub_free', metadata: { clerk_user_id: owner } } },
+  };
+}
+
+function invoicePaidEvent(id: string, subscriptionId: string, type = 'invoice.paid'): StripeWebhookEvent {
+  return {
+    id, type, created: SECONDS(new Date(NOW.getTime() + 3_600_000)),
+    data: { object: {
+      id: `in_${id}`, created: SECONDS(NOW), billing_reason: 'subscription_create', amount_due: 20000, amount_paid: 20000,
+      currency: 'usd', parent: { subscription_details: { subscription: subscriptionId } },
+    } },
   };
 }
 
@@ -76,7 +93,7 @@ describe('free owner paid checkout compensation', () => {
       status: 'active', memoryCapacityMib: 131072, admissionCeilingMib: 114688,
     });
     expireCheckoutSession = vi.fn(async (_id: string) => ({ status: 'expired', url: null, clerkUserId: FREE, priceId: null, regionSlug: null }));
-    cancelAndRefundSubscription = vi.fn(async () => undefined);
+    cancelAndRefundSubscription = vi.fn(async () => ({ settled: true }));
     stripe = {
       apiTimeoutMs: 10_000,
       createCheckoutSession: vi.fn(async () => { throw new Error('unexpected checkout'); }),
@@ -227,7 +244,8 @@ describe('free owner paid checkout compensation', () => {
       await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
       await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
       expect(cancelAndRefundSubscription).toHaveBeenCalledTimes(1);
-      expect(cancelAndRefundSubscription).toHaveBeenCalledWith('sub_free');
+      // Only invoices paid at or after free admission are refunded.
+      expect(cancelAndRefundSubscription).toHaveBeenCalledWith('sub_free', { refundPaidSince: NOW });
       expect(await compensations()).toMatchObject([{ stripe_subscription_id: 'sub_free', status: 'done' }]);
     });
 
@@ -240,6 +258,77 @@ describe('free owner paid checkout compensation', () => {
       await runFreeOwnerBillingSweep({ db, stripe, now: () => new Date(NOW.getTime() + 10 * 60_000) });
       expect(await compensations()).toMatchObject([{ status: 'done' }]);
       expect(cancelAndRefundSubscription).toHaveBeenCalledTimes(2);
+    });
+
+    it('never compensates a former paid owner\'s old subscription that updates after they joined free', async () => {
+      const yearAgo = new Date(NOW.getTime() - 365 * 86_400_000);
+      // The old subscription was recorded while they paid; it ended, then they joined free at NOW.
+      expect(await deliver(subscriptionEvent('evt_old1', FREE, {
+        subscriptionId: 'sub_old', subscriptionCreated: yearAgo, eventCreated: yearAgo,
+      }))).toEqual({ received: true, processed: true });
+      await makeFree();
+      await deliver(subscriptionEvent('evt_old2', FREE, {
+        type: 'customer.subscription.updated', subscriptionId: 'sub_old', status: 'canceled', subscriptionCreated: yearAgo,
+      }));
+      expect(await compensations()).toEqual([]);
+      expect(await db.executor.selectFrom('billing_subscriptions').select(['stripe_subscription_id', 'status']).execute())
+        .toEqual([{ stripe_subscription_id: 'sub_old', status: 'canceled' }]);
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      expect(cancelAndRefundSubscription).not.toHaveBeenCalled();
+    });
+
+    it('never compensates a subscription created before free admission, even if it was never recorded here', async () => {
+      await makeFree();
+      await deliver(subscriptionEvent('evt_old', FREE, {
+        type: 'customer.subscription.updated', subscriptionId: 'sub_unrecorded', status: 'canceled',
+        subscriptionCreated: new Date(NOW.getTime() - 30 * 86_400_000),
+      }));
+      expect(await compensations()).toEqual([]);
+    });
+
+    it('never compensates from a checkout that completed before free admission', async () => {
+      await makeFree();
+      const early = completedEvent('evt_early', FREE, 'cs_early');
+      early.created = SECONDS(NOW) - 3_600;
+      await deliver(early);
+      expect(await compensations()).toEqual([]);
+    });
+
+    it('keeps rechecking until the subscription\'s invoices are final, then finishes', async () => {
+      await makeFree();
+      await deliver(subscriptionEvent('evt_s1', FREE));
+      cancelAndRefundSubscription.mockResolvedValueOnce({ settled: false });
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      expect(await compensations()).toMatchObject([{ status: 'awaiting_settlement' }]);
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      expect(cancelAndRefundSubscription).toHaveBeenCalledTimes(1);
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => new Date(NOW.getTime() + 31 * 60_000) });
+      expect(cancelAndRefundSubscription).toHaveBeenCalledTimes(2);
+      expect(await compensations()).toMatchObject([{ status: 'done' }]);
+    });
+
+    it.each(['invoice.paid', 'invoice.payment_succeeded'])('re-arms a finished compensation when %s arrives late', async (type) => {
+      await makeFree();
+      await deliver(subscriptionEvent('evt_s1', FREE));
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      expect(await compensations()).toMatchObject([{ status: 'done' }]);
+      expect(await deliver(invoicePaidEvent('evt_inv1', 'sub_free', type))).toEqual({ received: true, processed: true });
+      expect(await deliver(invoicePaidEvent('evt_inv1', 'sub_free', type))).toEqual({ received: true, duplicate: true });
+      expect(await compensations()).toMatchObject([{ status: 'pending' }]);
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      expect(cancelAndRefundSubscription).toHaveBeenCalledTimes(2);
+      expect(await compensations()).toMatchObject([{ status: 'done' }]);
+    });
+
+    it('does not lose a re-arm that lands while a sweep holds the row', async () => {
+      await makeFree();
+      await deliver(subscriptionEvent('evt_s1', FREE));
+      cancelAndRefundSubscription.mockImplementationOnce(async () => {
+        await deliver(invoicePaidEvent('evt_inv_race', 'sub_free'));
+        return { settled: true };
+      });
+      await runFreeOwnerBillingSweep({ db, stripe, now: () => NOW });
+      expect(await compensations()).toMatchObject([{ status: 'pending' }]);
     });
 
     it('leaves a paid owner\'s subscription projection unchanged', async () => {

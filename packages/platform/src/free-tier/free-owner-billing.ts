@@ -3,6 +3,7 @@ import type { PlatformDB } from '../db.js';
 import type { StripeBillingClient } from '../billing/stripe-client.js';
 import { createStripeBillingClient } from '../stripe-billing.js';
 import { freeOwnerPredicate, ownerOnFreePlan } from './free-checkout-guard.js';
+import { FREE_RUNTIME_SLOT } from './free-entitlement.js';
 
 /**
  * ENG-520 launch guard, layers 2 and 3 (review P1). Free to paid upgrade
@@ -19,7 +20,9 @@ import { freeOwnerPredicate, ownerOnFreePlan } from './free-checkout-guard.js';
 
 export interface FreeOwnerCompensationsTable {
   stripe_subscription_id: string;
-  status: 'pending' | 'done';
+  status: 'pending' | 'awaiting_settlement' | 'done';
+  refund_paid_since: ColumnType<Date, Date | string, Date | string>;
+  generation: ColumnType<number, number | undefined, number>;
   attempts: ColumnType<number, number | undefined, number>;
   lease_until: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   created_at: ColumnType<Date, Date | string, never>;
@@ -34,6 +37,7 @@ const SESSIONS_PER_OWNER = 20;
 const COMPENSATION_LEASE_MS = 5 * 60_000;
 const MAX_RETRY_DELAY_MS = 60 * 60_000;
 const SWEEP_INTERVAL_MS = 5 * 60_000;
+const SETTLEMENT_RECHECK_MS = 30 * 60_000;
 const SUBSCRIPTION_ID = /^sub_[A-Za-z0-9]{1,255}$/;
 
 export interface FreeOwnerBillingDeps {
@@ -114,25 +118,82 @@ export async function expireOpenCheckoutsForFreeOwner(deps: FreeOwnerBillingDeps
   return pending;
 }
 
-/** Queues a subscription for cancel and refund. Inside the caller's transaction; true when newly queued. */
-export async function enqueueFreeOwnerCompensation(db: PlatformDB, stripeSubscriptionId: string, at: string): Promise<boolean> {
+/**
+ * When the owner joined the free plan, or null when they are not on it. Only
+ * a subscription created at or after this time is compensated, and only
+ * payments made since then are refunded: anything earlier was real paid
+ * service of a former paid owner.
+ */
+export async function freeOwnerSince(db: PlatformDB, clerkUserId: string): Promise<Date | null> {
+  const entitlement = await db.executor.selectFrom('billing_entitlements').select(['source', 'effective_from'])
+    .where('clerk_user_id', '=', clerkUserId).executeTakeFirst();
+  if (entitlement?.source === 'free') return new Date(entitlement.effective_from);
+  const machine = await db.executor.selectFrom('user_machines').select('provisioned_at')
+    .where('clerk_user_id', '=', clerkUserId)
+    .where('deleted_at', 'is', null)
+    .where('substrate', '=', 'metal')
+    .where('runtime_slot', '=', FREE_RUNTIME_SLOT)
+    .orderBy('provisioned_at')
+    .executeTakeFirst();
+  return machine ? new Date(machine.provisioned_at) : null;
+}
+
+/**
+ * Queues (or re-arms) a subscription for cancel and refund, inside the
+ * caller's transaction. A later event for a queued subscription re-arms it
+ * rather than being swallowed. True when newly queued.
+ */
+export async function enqueueFreeOwnerCompensation(
+  db: PlatformDB, stripeSubscriptionId: string, refundPaidSince: Date, at: string,
+): Promise<boolean> {
   if (!SUBSCRIPTION_ID.test(stripeSubscriptionId)) {
     console.error('[billing] ALERT free owner paid checkout with an unrecognized subscription id; needs operator review');
     return false;
   }
-  const inserted = await db.executor.insertInto('billing_free_owner_compensations')
-    .values({ stripe_subscription_id: stripeSubscriptionId, status: 'pending', created_at: at, updated_at: at })
-    .onConflict((oc) => oc.column('stripe_subscription_id').doNothing())
+  const row = await db.executor.insertInto('billing_free_owner_compensations')
+    .values({
+      stripe_subscription_id: stripeSubscriptionId, status: 'pending', refund_paid_since: refundPaidSince.toISOString(),
+      created_at: at, updated_at: at,
+    })
+    .onConflict((oc) => oc.column('stripe_subscription_id').doUpdateSet({
+      status: 'pending',
+      lease_until: null,
+      generation: sql<number>`billing_free_owner_compensations.generation + 1`,
+      refund_paid_since: sql<string>`LEAST(billing_free_owner_compensations.refund_paid_since, excluded.refund_paid_since)`,
+      updated_at: at,
+    }))
+    .returning(sql<boolean>`(xmax = 0)`.as('inserted'))
+    .executeTakeFirst();
+  return row?.inserted === true;
+}
+
+/** Re-arms an already queued subscription (a late invoice payment). True when the subscription is queued. */
+export async function rearmFreeOwnerCompensation(db: PlatformDB, stripeSubscriptionId: string, at: string): Promise<boolean> {
+  const row = await db.executor.updateTable('billing_free_owner_compensations')
+    .set({
+      status: 'pending', lease_until: null, updated_at: at,
+      generation: sql<number>`billing_free_owner_compensations.generation + 1`,
+    })
+    .where('stripe_subscription_id', '=', stripeSubscriptionId)
     .returning('stripe_subscription_id')
     .executeTakeFirst();
-  return Boolean(inserted);
+  return Boolean(row);
+}
+
+/** The subscription id on a Stripe invoice object (current or legacy shape). */
+export function readInvoiceSubscriptionId(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const invoice = value as { subscription?: unknown; parent?: { subscription_details?: { subscription?: unknown } } };
+  const ref = invoice.parent?.subscription_details?.subscription ?? invoice.subscription;
+  const id = typeof ref === 'string' ? ref : ref && typeof ref === 'object' ? (ref as { id?: unknown }).id : null;
+  return typeof id === 'string' && SUBSCRIPTION_ID.test(id) ? id : null;
 }
 
 async function claimCompensations(db: PlatformDB, at: Date) {
   const leaseUntil = new Date(at.getTime() + COMPENSATION_LEASE_MS).toISOString();
   return db.transaction(async (trx) => {
     const due = await trx.executor.selectFrom('billing_free_owner_compensations').select('stripe_subscription_id')
-      .where('status', '=', 'pending')
+      .where('status', 'in', ['pending', 'awaiting_settlement'])
       .where((eb) => eb.or([eb('lease_until', 'is', null), eb('lease_until', '<=', at)]))
       .orderBy('created_at')
       .limit(SWEEP_BATCH)
@@ -142,7 +203,7 @@ async function claimCompensations(db: PlatformDB, at: Date) {
     return trx.executor.updateTable('billing_free_owner_compensations')
       .set({ lease_until: leaseUntil, updated_at: at.toISOString() })
       .where('stripe_subscription_id', 'in', due.map((row) => row.stripe_subscription_id))
-      .returning(['stripe_subscription_id', 'attempts'])
+      .returning(['stripe_subscription_id', 'attempts', 'generation', 'refund_paid_since'])
       .execute();
   });
 }
@@ -152,19 +213,26 @@ async function compensate(deps: FreeOwnerBillingDeps, at: Date): Promise<void> {
   if (!cancelAndRefund) return;
   for (const row of await claimCompensations(deps.db, at)) {
     const attempts = row.attempts + 1;
-    try {
-      await cancelAndRefund(row.stripe_subscription_id);
-      await deps.db.executor.updateTable('billing_free_owner_compensations')
-        .set({ status: 'done', attempts, lease_until: null, completed_at: at.toISOString(), updated_at: at.toISOString() })
+    // Writes only land if no event re-armed the row meanwhile; a re-armed row is
+    // pending with no lease, so the next sweep handles it.
+    const update = (values: { status?: 'awaiting_settlement' | 'done'; lease_until: string | null; completed_at?: string }) =>
+      deps.db.executor.updateTable('billing_free_owner_compensations')
+        .set({ ...values, attempts, updated_at: at.toISOString() })
         .where('stripe_subscription_id', '=', row.stripe_subscription_id)
+        .where('generation', '=', row.generation)
         .execute();
+    try {
+      const result = await cancelAndRefund(row.stripe_subscription_id, { refundPaidSince: new Date(row.refund_paid_since) });
+      if (result.settled) {
+        await update({ status: 'done', lease_until: null, completed_at: at.toISOString() });
+      } else {
+        // An invoice could still be paid: recheck later instead of finishing.
+        await update({ status: 'awaiting_settlement', lease_until: new Date(at.getTime() + SETTLEMENT_RECHECK_MS).toISOString() });
+      }
     } catch (error: unknown) {
       const retryAt = new Date(at.getTime() + Math.min(2 ** attempts * 60_000, MAX_RETRY_DELAY_MS));
       console.error('[billing] ALERT free owner charge compensation failed; retrying:', errorKind(error));
-      await deps.db.executor.updateTable('billing_free_owner_compensations')
-        .set({ attempts, lease_until: retryAt.toISOString(), updated_at: at.toISOString() })
-        .where('stripe_subscription_id', '=', row.stripe_subscription_id)
-        .execute();
+      await update({ lease_until: retryAt.toISOString() });
     }
   }
 }

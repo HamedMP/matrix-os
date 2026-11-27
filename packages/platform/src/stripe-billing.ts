@@ -168,16 +168,37 @@ export function createStripeBillingClient(options: {
       return { url: session.url, id: session.id };
     },
 
-    async cancelAndRefundSubscription(subscriptionId) {
+    async cancelAndRefundSubscription(subscriptionId, { refundPaidSince }) {
       // The SDK client carries the bounded request timeout (MATRIX_STRIPE_API_TIMEOUT_MS).
       const subscription = await stripe.subscriptions.retrieve(subscriptionId);
       if (subscription.status !== 'canceled' && subscription.status !== 'incomplete_expired') {
         await stripe.subscriptions.cancel(subscriptionId, { invoice_now: false, prorate: false },
           { idempotencyKey: `matrix-free-owner-cancel:${subscriptionId}` });
       }
-      const invoices = await stripe.invoices.list({ subscription: subscriptionId, status: 'paid', limit: 20 });
+      const since = Math.floor(refundPaidSince.getTime() / 1000);
+      let settled = true;
+      const invoices = await stripe.invoices.list({ subscription: subscriptionId, limit: 20 });
+      if (invoices.has_more) settled = false;
       for (const invoice of invoices.data) {
         if (!invoice.id) continue;
+        if (invoice.status === 'draft') {
+          settled = false;
+          continue;
+        }
+        if (invoice.status === 'open') {
+          // An open invoice could still be paid; voiding it makes it final.
+          try {
+            await stripe.invoices.voidInvoice(invoice.id, {}, { idempotencyKey: `matrix-free-owner-void:${invoice.id}` });
+          } catch (error: unknown) {
+            console.warn('[billing] free owner invoice void failed:', error instanceof Error ? error.name : typeof error);
+            settled = false;
+          }
+          continue;
+        }
+        if (invoice.status !== 'paid') continue;
+        // Only payments for service taken while free; earlier invoices were real paid service.
+        const paidAt = invoice.status_transitions?.paid_at;
+        if (typeof paidAt !== 'number' || paidAt < since) continue;
         const payments = await stripe.invoicePayments.list({ invoice: invoice.id, status: 'paid', limit: 10 });
         for (const payment of payments.data) {
           const intent = payment.payment.payment_intent;
@@ -192,6 +213,7 @@ export function createStripeBillingClient(options: {
           }
         }
       }
+      return { settled };
     },
 
     async expireCheckoutSession(id) {
