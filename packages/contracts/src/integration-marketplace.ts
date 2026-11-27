@@ -1,4 +1,8 @@
 export type IntegrationAuthType = "oauth" | "keys";
+export const PREVIEW_INTEGRATIONS_UNAVAILABLE_CODE = "preview_integrations_unavailable";
+export const PREVIEW_INTEGRATIONS_UNAVAILABLE = "App connections are unavailable on this preview computer.";
+export const POSTHOG_OAUTH_SERVICE_ID = "posthog_oauth";
+
 export interface IntegrationCatalogItem {
   id: string;
   name: string;
@@ -69,6 +73,23 @@ export function integrationCategory(service: IntegrationCatalogItem): string {
   };
   return categories[service.category] ?? "Other apps";
 }
+
+/** Render the two PostHog connection methods as one app when both are offered. */
+export function groupPostHogMarketplaceEntries<T extends IntegrationCatalogItem>(
+  services: readonly T[],
+  connectedIds: readonly string[],
+) {
+  const apiKey = services.some(service => service.id === POSTHOG_OAUTH_SERVICE_ID)
+    ? services.find(service => service.id === "posthog")
+    : undefined;
+  if (!apiKey) return { services, connectedIds, postHogApiKey: undefined };
+  return {
+    services: services.filter(service => service.id !== apiKey.id),
+    connectedIds: connectedIds.map(id => id === apiKey.id ? POSTHOG_OAUTH_SERVICE_ID : id),
+    postHogApiKey: apiKey,
+  };
+}
+
 export function buildIntegrationSections<T extends IntegrationCatalogItem>(services: readonly T[], options: {
   query?: string; oauthOnly?: boolean; connectedOnly?: boolean; connectedIds?: readonly string[];
   /** An optional first section of chosen apps, in this order, left out of their category sections. */

@@ -82,4 +82,21 @@ describe("integration marketplace", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search integrations" }), { target: { value: "missing" } });
     expect(screen.getByText("No integrations found")).toBeTruthy();
   });
+  it("shows one PostHog entry with OAuth first and the existing API-key connection under advanced options", () => {
+    const posthog = [
+      { id: "posthog", name: "PostHog (API key)", category: "analytics" },
+      { id: "posthog_oauth", name: "PostHog", category: "analytics" },
+    ];
+    const onConnect = vi.fn();
+    render(<IntegrationMarketplace services={posthog} connectedIds={["posthog"]} onConnect={onConnect} />);
+    fireEvent.click(screen.getByRole("button", { name: "Connected (1)" }));
+    expect(screen.queryByText("PostHog (API key)")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Connect PostHog", exact: true }));
+    expect(onConnect).toHaveBeenLastCalledWith("posthog_oauth");
+    fireEvent.click(screen.getByRole("button", { name: "Advanced options for PostHog" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add another PostHog (API key) account" }));
+    expect(onConnect).toHaveBeenLastCalledWith("posthog");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Sign in without API keys" }));
+    expect(screen.queryByRole("button", { name: "Advanced options for PostHog" })).toBeNull();
+  });
 });

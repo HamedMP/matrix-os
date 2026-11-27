@@ -2,6 +2,7 @@
 // "unavailable on this runtime" empty state, the generic offline/error
 // state with retry, and the empty-catalog state.
 import { Plug } from "@renderer/lib/hugeicons";
+import { PREVIEW_INTEGRATIONS_UNAVAILABLE } from "@matrix-os/contracts/integration-marketplace";
 import { Button } from "../../design/primitives";
 
 export function LoadingSkeleton() {
@@ -14,7 +15,7 @@ export function LoadingSkeleton() {
   );
 }
 
-export function UnavailableState() {
+export function UnavailableState({ preview = false }: { preview?: boolean }) {
   return (
     <div
       data-testid="integrations-unavailable"
@@ -23,10 +24,10 @@ export function UnavailableState() {
     >
       <Plug size={20} style={{ color: "var(--text-tertiary)" }} />
       <p className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-        Integrations are unavailable on this runtime.
+        {preview ? PREVIEW_INTEGRATIONS_UNAVAILABLE : "Integrations are unavailable on this runtime."}
       </p>
       <p className="text-xs" style={{ color: "var(--text-tertiary)" }}>
-        This computer's gateway does not expose the integrations API.
+        {preview ? "Switch to your personal computer to connect an app." : "This computer's gateway does not expose the integrations API."}
       </p>
     </div>
   );

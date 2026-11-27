@@ -112,6 +112,20 @@ describe("desktop integrations settings section", () => {
     vi.restoreAllMocks();
   });
 
+  it("explains the shared-preview restriction without sending the user to sign in again", async () => {
+    const api = makeApi({
+      getError: path => path === "/api/integrations"
+        ? new AppError("unauthorized", { httpStatus: 403, detail: "preview_integrations_unavailable" })
+        : null,
+    });
+    useConnection.setState({ api });
+    render(<IntegrationsSettingsSection />);
+
+    expect(await screen.findByText("App connections are unavailable on this preview computer.")).toBeTruthy();
+    expect(screen.queryByText("Your session has expired. Please sign in again.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Connect GitHub", exact: true })).toBeNull();
+  });
+
   it("keeps the catalog entry usable when legacy GitHub is unavailable and scopes setup to the selected computer", async () => {
     HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
     HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };

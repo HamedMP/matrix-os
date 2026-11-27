@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import { buildIntegrationSections, integrationAuthType, integrationDescription, type IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
+import { Fragment, useState, type ReactNode } from "react";
+import * as Collapsible from "@radix-ui/react-collapsible";
+import { buildIntegrationSections, groupPostHogMarketplaceEntries, integrationAuthType, integrationDescription, POSTHOG_OAUTH_SERVICE_ID, type IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
 
 const muted = { color: "var(--text-tertiary, var(--muted-foreground))" };
 const pill = { background: "var(--bg-surface-hover, var(--muted))" };
@@ -23,7 +24,7 @@ export interface IntegrationRowPresentation {
 
 
 export function IntegrationMarketplace<T extends IntegrationCatalogItem>({
-  services, connectedIds, connectingId, onConnect, renderService, rowPresentation, leadingSection, failedIds, lockWhileConnecting = true, addAccounts = true,
+  services, connectedIds, connectingId, onConnect, renderService, rowPresentation, leadingSection, failedIds, lockWhileConnecting = true, addAccounts = true, connectDisabled = false,
 }: {
   services: readonly T[];
   connectedIds: readonly string[];
@@ -42,14 +43,26 @@ export function IntegrationMarketplace<T extends IntegrationCatalogItem>({
   lockWhileConnecting?: boolean;
   /** Settings lets a connected app add another account; Get started only shows that it is connected. */
   addAccounts?: boolean;
+  /** Applies to managed catalog actions. Custom row presentations own their actions. */
+  connectDisabled?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [connectedOnly, setConnectedOnly] = useState(false);
   const [oauthOnly, setOauthOnly] = useState(false);
   const [expanded, setExpanded] = useState<string[]>([]);
   const failed = new Set(failedIds);
-  const sections = buildIntegrationSections(services, { query, oauthOnly, connectedOnly, connectedIds, ...(leadingSection ? { leading: leadingSection } : {}) });
-  const connectedCount = services.filter(service => connectedIds.includes(service.id)).length;
+  const catalog = groupPostHogMarketplaceEntries(services, connectedIds);
+  const sections = buildIntegrationSections(catalog.services, {
+    query, oauthOnly, connectedOnly, connectedIds: oauthOnly ? connectedIds : catalog.connectedIds,
+    ...(leadingSection ? { leading: leadingSection } : {}),
+  });
+  const connectedCount = catalog.services.filter(service => catalog.connectedIds.includes(service.id)).length;
+  const renderRow = (service: T) => renderService ? <div className="min-w-0">{renderService(service)}</div> : (
+    <MarketplaceRow service={service} connected={connectedIds.includes(service.id)} connecting={connectingId === service.id}
+      presentation={rowPresentation?.(service)} failed={failed.has(service.id)}
+      disabled={connectDisabled || (lockWhileConnecting && Boolean(connectingId))}
+      addAccount={addAccounts} onConnect={() => onConnect(service.id)} />
+  );
 
   return (
     <div className="space-y-8" data-testid="integrations-grid">
@@ -84,10 +97,22 @@ export function IntegrationMarketplace<T extends IntegrationCatalogItem>({
               ) : null}
             </div>
             <div className="grid grid-cols-1 gap-x-8 gap-y-2 sm:grid-cols-2">
-              {visible.map(service => renderService ? <div key={service.id}>{renderService(service)}</div> : (
-                <MarketplaceRow key={service.id} service={service} connected={connectedIds.includes(service.id)} connecting={connectingId === service.id}
-                  presentation={rowPresentation?.(service)} failed={failed.has(service.id)} disabled={lockWhileConnecting && Boolean(connectingId)} addAccount={addAccounts} onConnect={() => onConnect(service.id)} />
-              ))}
+              {visible.map(service => {
+                const apiKey = service.id === POSTHOG_OAUTH_SERVICE_ID && !oauthOnly ? catalog.postHogApiKey : undefined;
+                if (!apiKey) return <Fragment key={service.id}>{renderRow(service)}</Fragment>;
+                return (
+                  <Collapsible.Root key={service.id} className="min-w-0" defaultOpen={connectingId === apiKey.id || failed.has(apiKey.id)}>
+                    {renderRow(service)}
+                    <Collapsible.Trigger aria-label="Advanced options for PostHog"
+                      className="ml-15 -mt-2 flex text-xs underline underline-offset-4 focus-visible:outline-2" style={muted}>
+                      {connectedIds.includes(apiKey.id) ? "Advanced options · API key connected" : "Advanced options"}
+                    </Collapsible.Trigger>
+                    <Collapsible.Content className="ml-4 mt-2 border-l border-border/60 pl-3">
+                      {renderRow(apiKey)}
+                    </Collapsible.Content>
+                  </Collapsible.Root>
+                );
+              })}
             </div>
           </section>
         );

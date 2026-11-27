@@ -185,6 +185,37 @@ describe("Connect Apps consent window", () => {
     vi.stubGlobal("fetch", fetchMock);
     return { fetchMock, connectResponse };
   }
+  it("does not start sign-in on a shared preview even when the catalog loads", async () => {
+    buildAuthenticatedWebSocketUrl.mockReturnValue(new Promise(() => {}));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/available")) return Response.json([{ id: "posthog_oauth", name: "PostHog", category: "analytics" }]);
+      if (url.endsWith("/api/integrations")) return Response.json({ code: "preview_integrations_unavailable" }, { status: 403 });
+      if (url.endsWith("/api/mcp-servers/catalog")) return Response.json({ presets: [{ id: "context7", name: "Context7", url: "https://mcp.context7.com/mcp", auth: "none", category: "developer", departments: ["engineering"], description: "Library documentation" }] });
+      return Response.json([]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    render(<IntegrationsSection />);
+    const button = await screen.findByRole("button", { name: "Connect PostHog" });
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(await screen.findByText(/App connections are unavailable on this preview computer/)).toBeTruthy();
+    fireEvent.click(button);
+    expect(open).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/integrations/connect"))).toBe(false);
+    expect((await screen.findByRole("button", { name: "Connect Context7" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+  it("shows the preview restriction if it changes after the catalog loads", async () => {
+    const { connectResponse } = prepare();
+    const popup = { close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    render(<IntegrationsSection />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connect Asana" }));
+    connectResponse.resolve(Response.json({ code: "preview_integrations_unavailable" }, { status: 403 }));
+    expect(await screen.findByText(/App connections are unavailable on this preview computer/)).toBeTruthy();
+    expect(popup.close).toHaveBeenCalledOnce();
+    expect((screen.getByRole("button", { name: "Connect Asana" }) as HTMLButtonElement).disabled).toBe(true);
+  });
   it("opens consent synchronously and navigates it after the authenticated request", async () => {
     const { connectResponse } = prepare();
     const popup = { location: { href: "about:blank" }, opener: {}, close: vi.fn() };

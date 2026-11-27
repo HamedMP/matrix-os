@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { POSTHOG_OAUTH_SERVICE_ID } from "@matrix-os/contracts/integration-marketplace";
 
 import { buildGatewayRequestUrl, fetchAuthenticatedJson, type RequestToken } from "@/lib/requests/http";
 
@@ -60,18 +61,17 @@ const RefreshConnectionResponseSchema = z.object({
 
 const DeleteConnectionResponseSchema = z.object({ ok: z.literal(true) });
 const ConnectIntegrationResponseSchema = z.object({
-  url: z.string().url().refine(isTrustedPipedreamConnectUrl),
+  url: z.string().url(),
   service: z.string().regex(SERVICE_ID),
 });
 
-function isTrustedPipedreamConnectUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:"
-      && (url.hostname === "pipedream.com" || url.hostname.endsWith(".pipedream.com"));
-  } catch {
-    return false;
+function isTrustedConnectUrl(value: string, serviceId: string): boolean {
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.username || url.password) return false;
+  if (serviceId === POSTHOG_OAUTH_SERVICE_ID) {
+    return url.origin === "https://oauth.posthog.com" && url.pathname === "/oauth/authorize/";
   }
+  return url.hostname === "pipedream.com" || url.hostname.endsWith(".pipedream.com");
 }
 const SyncIntegrationsResponseSchema = z.object({
   synced: z.number().int().min(0).max(MAX_INTEGRATIONS),
@@ -150,7 +150,8 @@ export async function createIntegrationConnectUrl(
   const response = await fetchAuthenticatedJson({
     url: integrationUrl(computerGatewayUrl, "/api/integrations/connect"),
     token: clerkToken,
-    schema: ConnectIntegrationResponseSchema,
+    schema: ConnectIntegrationResponseSchema.refine(response =>
+      response.service === serviceId && isTrustedConnectUrl(response.url, serviceId)),
     errorMessage: INTEGRATION_CONNECT_ERROR,
     method: "POST",
     headers: { "Content-Type": "application/json" },
