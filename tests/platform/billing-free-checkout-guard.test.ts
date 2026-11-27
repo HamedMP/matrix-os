@@ -10,6 +10,8 @@ import {
   type PlatformDB,
 } from '../../packages/platform/src/db.js';
 import { buildFreeEntitlement } from '../../packages/platform/src/free-tier/free-entitlement.js';
+import { addFreeTierInvite } from '../../packages/platform/src/free-tier/invites.js';
+import { createFreeRuntimeProvisioner } from '../../packages/platform/src/free-tier/provision-free-runtime.js';
 import {
   FREE_UPGRADE_UNAVAILABLE_RESPONSE,
   FreeUpgradeUnavailableError,
@@ -190,5 +192,63 @@ describe('POST /billing/checkout for free plan owners', () => {
     const response = await checkout();
     expect(response.status).toBe(200);
     expect(createCheckoutSession).toHaveBeenCalledTimes(1);
+  });
+
+  describe('joining the free plan with a paid checkout in another slot', () => {
+    // Free admission must see a pending paid checkout in any slot, not only the
+    // free slot: otherwise a 'studio' checkout claimed first survives the owner
+    // joining free and Stripe charges a free owner.
+    const studioClaim = {
+      id: 'att-studio', clerkUserId: OWNER, runtimeSlot: 'studio', planSlug: 'matrix_builder' as const,
+      billingInterval: 'monthly' as const, regionSlug: 'region_nbg1',
+    };
+    function provisioner() {
+      return createFreeRuntimeProvisioner({
+        db, config: { maxRuntimes: 10, inviteRequired: true }, env: {}, now: () => new Date(),
+        metal: { provision: async () => ({ error: 'unavailable' as const }) } as never,
+      });
+    }
+    async function storedSource() {
+      return (await db.executor.selectFrom('billing_entitlements').select('source')
+        .where('clerk_user_id', '=', OWNER).executeTakeFirst())?.source ?? null;
+    }
+
+    beforeEach(async () => { await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' }); });
+
+    it('refuses to join while a second-slot paid checkout is being created or open', async () => {
+      const claimed = await claimCheckoutAttempt(db, { ...studioClaim, createdAt: new Date().toISOString() });
+      expect(claimed.claimed).toBe(true);
+      expect((await provisioner().provision({ clerkUserId: OWNER, handle: 'freeowner' })).kind).toBe('checkout_pending');
+      expect(await provisioner().isEligible(OWNER)).toBe(false);
+      expect(await storedSource()).toBeNull();
+    });
+
+    it('refuses the second-slot claim once the owner has joined', async () => {
+      await provisioner().provision({ clerkUserId: OWNER, handle: 'freeowner' });
+      expect(await storedSource()).toBe('free');
+      await expect(claimCheckoutAttempt(db, { ...studioClaim, createdAt: new Date().toISOString() }))
+        .rejects.toBeInstanceOf(FreeUpgradeUnavailableError);
+      expect(await checkoutWrites()).toMatchObject({ attempts: 0 });
+    });
+
+    it('never lets both a concurrent join and a second-slot claim win', async () => {
+      for (let round = 0; round < 5; round += 1) {
+        await db.executor.deleteFrom('billing_checkout_attempts').execute();
+        await db.executor.deleteFrom('user_machines').execute();
+        await db.executor.deleteFrom('billing_entitlements').execute();
+        await db.executor.deleteFrom('free_tier_invites').execute();
+        await addFreeTierInvite(db, { clerkUserId: OWNER, invitedBy: 'ops' });
+        const [joined, claim] = await Promise.allSettled([
+          provisioner().provision({ clerkUserId: OWNER, handle: 'freeowner' }),
+          claimCheckoutAttempt(db, { ...studioClaim, id: `att-${round}`, createdAt: new Date().toISOString() }),
+        ]);
+        const free = (await storedSource()) === 'free';
+        const claimWon = claim.status === 'fulfilled' && claim.value.claimed;
+        expect(free && claimWon).toBe(false);
+        expect(free || claimWon).toBe(true);
+        if (!claimWon) expect(claim.status === 'rejected' && claim.reason).toBeInstanceOf(FreeUpgradeUnavailableError);
+        if (!free) expect(joined.status === 'fulfilled' && joined.value.kind).toBe('checkout_pending');
+      }
+    });
   });
 });

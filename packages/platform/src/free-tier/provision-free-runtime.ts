@@ -82,10 +82,13 @@ type Admission =
 /**
  * Check creating claims that can still yield a session, all open attempts,
  * paid attempts without a later subscription event, and prebilling intents.
+ * Attempts count in every slot: a paid checkout for a second computer that
+ * survived the owner joining free would charge a free owner (ENG-520 launch
+ * guard). Prebilling intents exist only for the free slot.
  */
 async function paidCheckoutPending(db: PlatformDB, clerkUserId: string, at: Date): Promise<boolean> {
   const attempt = await db.executor.selectFrom('billing_checkout_attempts as a').select('a.id')
-    .where('a.clerk_user_id', '=', clerkUserId).where('a.runtime_slot', '=', FREE_RUNTIME_SLOT)
+    .where('a.clerk_user_id', '=', clerkUserId)
     .where((eb) => eb.or([
       eb('a.status', '=', 'open'),
       eb.and([
