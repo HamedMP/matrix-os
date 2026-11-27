@@ -163,6 +163,8 @@ describe('platform pre-VPS page on the Free plan', () => {
     expect(open).toContain(FREE_PLAN_COPY.signUpLead);
     expect(open).toContain(FREE_PLAN_COPY.summary);
     expect(open).not.toContain('trial');
+    // No upgrade prompt while self-serve free-to-paid upgrade does not exist.
+    expect(open).not.toMatch(/upgrade|always-on|pricing/i);
 
     const closed = getAuthPage('pk_test_matrix', 'sign-up', 'nonce', '/', 'https://app.matrix-os.com');
     expect(closed).not.toContain(FREE_PLAN_COPY.signUpLead);

@@ -6,7 +6,7 @@
 Visit `https://app.matrix-os.com` and sign in. Matrix uses your session to route you to your own Matrix computer; there is no separate user host to remember.
 
 **Is there a free plan?**
-Yes. The Free plan is a full Matrix computer with no card: 2 GB of memory that grows to 8 GB, 40 GB of disk, Claude Code and Codex preinstalled, and $5 of Matrix AI every day (up to $20 a month). Free capacity is limited; if it is full, setup says so and you can try again shortly. Upgrade to a paid plan for an always-on computer with more resources.
+Yes. The Free plan is a full Matrix computer with no card: 2 GB of memory that grows to 8 GB, 40 GB of disk, Claude Code and Codex preinstalled, and $5 of Matrix AI every day (up to $20 a month). Free capacity is limited; if it is full, setup says so and you can try again shortly. More plans for free computers are coming soon.
 
 **What happens when I'm not using it?**
 On the Free plan, your computer sleeps after 60 minutes without use and wakes in a few seconds when you open it or when a scheduled job is due; your files, apps, and data stay as you left them. On a paid plan, Matrix OS keeps running on your own customer VPS. Platform routing sends your signed-in browser session from `app.matrix-os.com` to that machine. Your files, apps, and database state are preserved on the VPS and backed up through Matrix OS recovery flows.

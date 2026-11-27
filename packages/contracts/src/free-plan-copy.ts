@@ -14,7 +14,11 @@ export const FREE_PLAN_COPY = {
     "Claude Code and Codex come preinstalled on your free computer. You can install OpenCode or Pi later from the Terminal’s + menu.",
   sleep:
     "Your free computer sleeps after 60 minutes without use and wakes in a few seconds when you open it. Scheduled jobs wake it on time.",
-  upgrade: "Upgrade to a paid plan for an always-on computer with more resources.",
+  /**
+   * Neutral note where a plan section would otherwise look empty. Self-serve
+   * free-to-paid upgrade does not exist yet, so free owners see no upgrade action.
+   */
+  morePlans: "More plans for free computers are coming soon.",
   /** Shown when the free plan has no room for another computer. */
   capacityFull: "Free computers are at capacity right now. Try again in a few minutes.",
   /** A free setup start the platform did not accept for another reason. */
@@ -22,11 +26,8 @@ export const FREE_PLAN_COPY = {
   setupLabel: "Set up",
   settingUpLabel: "Setting up…",
   /** Sign-up page lead when the Free plan is open. */
-  signUpLead: "Start on the Free plan. No card needed. Upgrade any time for an always-on computer with more resources.",
+  signUpLead: "Start on the Free plan. No card needed.",
 } as const;
 
 /** The provisioning response code for "free capacity is full" (`POST /api/auth/provision-runtime`, `POST /api/journey/retry-provision`). */
 export const FREE_CAPACITY_FULL_CODE = "busy" as const;
-
-/** Public pricing page, the upgrade path for a free owner until in-app upgrade ships. */
-export const MATRIX_PRICING_URL = "https://matrix-os.com/pricing" as const;

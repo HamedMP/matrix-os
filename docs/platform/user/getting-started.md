@@ -14,7 +14,7 @@ Your Matrix OS instance is automatically provisioned. This takes about 30 second
 ## Plans
 
 - **Free**: a full Matrix computer with no card. It starts with 2 GB of memory that grows to 8 GB as you work, 40 GB of disk, Claude Code and Codex preinstalled, and $5 of Matrix AI every day (up to $20 a month). Free capacity is limited; when it is full, setup tells you so and you can try again a few minutes later.
-- **Paid plans** (Starter, Builder, Max): an always-on computer with more resources, chosen in Settings > Billing.
+- **Paid plans** (Starter, Builder, Max): an always-on computer with more resources, for accounts that choose one at signup. More plans for free computers are coming soon.
 
 ## Access Your Instance
 

@@ -1,4 +1,4 @@
-import { FREE_PLAN_COPY, MATRIX_PRICING_URL } from "@matrix-os/contracts/free-plan-copy";
+import { FREE_PLAN_COPY } from "@matrix-os/contracts/free-plan-copy";
 import { ActivityIndicator, Alert, Linking } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
 import ArrowUpRight01Icon from "@hugeicons/core-free-icons/ArrowUpRight01Icon";
@@ -8,7 +8,7 @@ import { Icon } from "@/components/ui";
 import { useSettingsBilling } from "@/lib/queries/use-settings-billing";
 import { allowsExternalPurchaseLinks } from "@/lib/store-policy";
 
-const PRICING_URL = MATRIX_PRICING_URL;
+const PRICING_URL = "https://matrix-os.com/pricing";
 const PLAN_NAMES: Record<string, string> = {
   matrix_free: FREE_PLAN_COPY.planName,
   matrix_starter: "Starter",
@@ -33,13 +33,11 @@ export default function BillingSettingsScreen() {
     <SettingsPage>
       <SettingsCardStack>
         <SettingsRow card title="Current plan" detail={planDetail} />
-        {/* Free plan (spec 2691): the sleep rule; the upgrade line only where purchase links are allowed. */}
+        {/* Free plan (spec 2691): the sleep rule and a neutral note; self-serve upgrade does not exist yet, so no plan action. */}
         {freePlan ? <SettingsRow card title="Sleep and wake" detail={FREE_PLAN_COPY.sleep} /> : null}
-        {freePlan && allowsExternalPurchaseLinks()
-          ? <SettingsRow card title="Paid plans" detail={FREE_PLAN_COPY.upgrade} />
-          : null}
+        {freePlan ? <SettingsRow card title="More plans" detail={FREE_PLAN_COPY.morePlans} /> : null}
         {/* Store builds stay read-only: no pricing page or billing portal link. */}
-        {allowsExternalPurchaseLinks() ? (
+        {allowsExternalPurchaseLinks() && !freePlan ? (
           <SettingsRow
             card
             title="Change plan"
@@ -56,7 +54,7 @@ export default function BillingSettingsScreen() {
   );
 
   async function openChangePlan() {
-    if (isOpeningPortal || !allowsExternalPurchaseLinks()) return;
+    if (isOpeningPortal || freePlan || !allowsExternalPurchaseLinks()) return;
     if (entitlement?.portalAvailable !== true) {
       await Linking.openURL(PRICING_URL);
       return;

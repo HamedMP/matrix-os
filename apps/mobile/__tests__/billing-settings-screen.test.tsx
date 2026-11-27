@@ -89,16 +89,14 @@ describe("billing settings", () => {
       expect(screen.queryByText(/browser|pricing|upgrade|buy|purchase|paid/i)).toBeNull();
     });
 
-    it("offers paid plans in the web build", async () => {
+    it("shows no upgrade action even in the web build, where paid owners get Change plan", () => {
       jest.replaceProperty(Platform, "OS", "web");
-      const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined);
       mockUseSettingsBilling.mockReturnValue(freeBillingState());
       render(<BillingSettingsScreen />);
 
-      expect(screen.getByText(FREE_PLAN_COPY.upgrade)).toBeTruthy();
-      fireEvent.press(screen.getByLabelText("Change plan"));
-      await waitFor(() => expect(openUrl).toHaveBeenCalledWith(PRICING_URL));
-      expect(mockOpenPortal).not.toHaveBeenCalled();
+      expect(screen.getByText(FREE_PLAN_COPY.morePlans)).toBeTruthy();
+      expect(screen.queryByLabelText("Change plan")).toBeNull();
+      expect(screen.queryByText(/upgrade|change plan|always.on|pricing|paid plan/i)).toBeNull();
     });
   });
 

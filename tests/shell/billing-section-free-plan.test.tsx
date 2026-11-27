@@ -50,7 +50,7 @@ describe("Settings > Billing on the Free plan", () => {
         },
       }), { status: 200, headers: { "content-type": "application/json" } }),
     );
-    const { FREE_PLAN_COPY, MATRIX_PRICING_URL } = await import("../../packages/contracts/src/free-plan-copy.js");
+    const { FREE_PLAN_COPY } = await import("../../packages/contracts/src/free-plan-copy.js");
     const { BillingSection } = await loadBillingSection();
 
     render(<BillingSection />);
@@ -58,8 +58,11 @@ describe("Settings > Billing on the Free plan", () => {
     expect(await screen.findByRole("heading", { name: "Free" })).toBeTruthy();
     expect(screen.getByText(FREE_PLAN_COPY.summary)).toBeTruthy();
     expect(screen.getByText(FREE_PLAN_COPY.sleep)).toBeTruthy();
-    expect(screen.getByText(FREE_PLAN_COPY.upgrade)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "See paid plans" }).getAttribute("href")).toBe(MATRIX_PRICING_URL);
+    expect(screen.getByText(FREE_PLAN_COPY.morePlans)).toBeTruthy();
+    // No self-serve free-to-paid upgrade exists yet, so a free owner sees no upgrade action (ENG-520).
+    expect(screen.queryAllByRole("link")).toHaveLength(0);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.queryByText(/upgrade|change plan|always.on|pricing|paid plan/i)).toBeNull();
     for (const paidOnly of [/matrix_free/, /Managed subscription/, /Canceling/, /billing portal/i, /if you have paid/]) {
       expect(screen.queryByText(paidOnly)).toBeNull();
     }
