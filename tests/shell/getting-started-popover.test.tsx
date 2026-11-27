@@ -9,6 +9,7 @@ const connections = vi.hoisted(() => ({
   connectingService: null as string | null,
   failedServices: new Set<string>() as ReadonlySet<string>,
   appsUnavailable: false,
+  gmailChoice: { open: false, options: null, loading: false, error: false, cancel: vi.fn(), retry: vi.fn(), choose: vi.fn(), request: vi.fn() },
   onChanged: null as (() => void) | null,
 }));
 vi.mock("../../shell/src/components/onboarding/use-getting-started-connections.js", () => ({

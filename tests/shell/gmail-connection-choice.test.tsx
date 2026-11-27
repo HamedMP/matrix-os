@@ -5,27 +5,52 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/gateway", () => ({ getGatewayUrl: () => "https://gateway.test", getGatewayWs: () => "wss://gateway.test/ws" }));
 vi.mock("@/lib/websocket-auth", () => ({ buildAuthenticatedWebSocketUrl: () => new Promise(() => {}) }));
 import { IntegrationsSection } from "../../shell/src/components/settings/sections/IntegrationsSection.js";
+import { ShellGetStartedConnector } from "../../shell/src/components/get-started/ShellGetStartedConnector.js";
+import { GettingStartedPopover } from "../../shell/src/components/onboarding/GettingStartedPopover.js";
+import { GettingStartedVisibilityProvider } from "../../packages/ui/src/getting-started-visibility.js";
 import { SHELL_Z_INDEX } from "../../shell/src/lib/shell-layering.js";
 beforeEach(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
   HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false; });
 });
 const gmail = { id: "gmail", name: "Gmail", category: "google", authType: "oauth" };
-function prepare(options: unknown, status = 200) {
+function prepare(options: unknown, status = 200, surface?: React.ReactNode, connections: unknown[] = []) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/connection-options")) return { ok: status === 200, status, json: async () => options };
+    if (url.endsWith("/api/integrations")) return { ok: true, json: async () => connections };
     if (url.endsWith("/available")) return { ok: true, json: async () => [gmail] };
     if (url.endsWith("/connect")) return { ok: true, json: async () => ({ url: "https://pipedream.com/connect/test" }) };
+    if (url.endsWith("/api/agents/credentials/status")) return { ok: true, json: async () => ({ agents: [] }) };
+    if (url.endsWith("/api/workspace/projects")) return { ok: true, json: async () => ({ projects: [] }) };
+    if (url.endsWith("/api/chats?limit=1")) return { ok: true, json: async () => ({ items: [] }) };
+    if (url.includes("/billing/status")) return { ok: true, json: async () => ({ access: { runtimeProxyAllowed: true } }) };
+    if (url.endsWith("/api/github/status")) return { ok: true, json: async () => ({ ready: false }) };
     return { ok: true, json: async () => [] };
   });
   vi.stubGlobal("fetch", fetchMock);
   vi.spyOn(window, "open").mockReturnValue({ location: { href: "about:blank" }, close: vi.fn() } as unknown as Window);
-  render(<div style={{ position: "fixed", zIndex: SHELL_Z_INDEX.settings }}><IntegrationsSection /></div>);
+  render(surface ?? <div style={{ position: "fixed", zIndex: SHELL_Z_INDEX.settings }}><IntegrationsSection /></div>);
   return fetchMock;
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe("Gmail connection choices in shared OS views", () => {
+  it.each(["wizard", "checklist"])("lets the %s choose the Gmail connection method", async entry => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    window.localStorage.clear();
+    const surface = entry === "wizard"
+      ? <ShellGetStartedConnector>{connect => <button onClick={() => connect.connect("gmail")}>Connect Gmail</button>}</ShellGetStartedConnector>
+      : <GettingStartedVisibilityProvider scope="gmail-test"><GettingStartedPopover onOpenSettings={vi.fn()} onOpenFirstWork={vi.fn()} /></GettingStartedVisibilityProvider>;
+    const calendar = { id: "33333333-3333-4333-8333-333333333333", service: "google_calendar", account_label: "Calendar", status: "active" };
+    const fetchMock = prepare({ methods: ["matrix", "pipedream"], defaultMethod: "matrix" }, 200, surface, entry === "checklist" ? [calendar] : []);
+    fireEvent.click(await screen.findByRole("button", { name: /^Connect Gmail/ }));
+    expect(await screen.findByRole("dialog", { name: "Connect Gmail" })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Connect with Pipedream" }));
+    await waitFor(() => {
+      const request = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/connect"));
+      expect(request?.[1]?.body).toEqual(JSON.stringify({ service: "gmail", connectionMethod: "pipedream" }));
+    });
+  });
   it("opens in the browser modal layer above Web Settings and dismisses with Escape", async () => {
     prepare({ methods: ["matrix", "pipedream"], defaultMethod: "matrix" });
     fireEvent.click(await screen.findByRole("button", { name: "Connect Gmail" }));
