@@ -297,13 +297,14 @@ export function useChatProviderState(
       && canonicalChatSubscriptionSelectionMatches(instance, choice.selectedOptions))) return;
     const preserveControls = selected?.instanceId === choice.instanceId;
     const key = choiceKey(choice);
+    const options = preserveControls && (!accountBound || (openAiAccount
+      && canonicalChatSubscriptionSelectionMatches(instance, selected.selectedOptions)))
+      ? selected.selectedOptions : choice.selectedOptions;
     save({
       key,
       interactionMode: preserveControls ? selected.interactionMode : choice.interactionMode,
       permissionMode: preserveControls ? selected.permissionMode : choice.permissionMode,
-      options: preserveControls && (!accountBound || openAiAccount
-        && canonicalChatSubscriptionSelectionMatches(instance, selected.selectedOptions))
-        ? selected.selectedOptions : choice.selectedOptions,
+      options,
     });
     if (currentSelection) {
       // An explicit model pick also sets the next draft's model. Keep the
@@ -312,7 +313,7 @@ export function useChatProviderState(
       savePreference({
         ...previousPreference,
         key,
-        options: accountBound ? choice.selectedOptions : previousPreference?.options,
+        options: accountBound ? options : previousPreference?.options,
       });
     }
   };
