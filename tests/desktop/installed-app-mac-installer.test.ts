@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,10 @@ import { createMacInstaller } from "@desktop/main/installed-apps/mac-installer";
 import { createInstalledAppStore, MAX_INSTALLED_APPS } from "@desktop/main/installed-apps/record-store";
 
 const CDHASH = "70319dee84e8125748db84fee5a36fceda50e82b";
+// A stand-in for codesign's per-bundle hash: unique to the bundle that was signed.
+const cdHashOf = (path: string) => createHash("sha1").update(path).digest("hex");
+
+interface SignCall { args: string[]; files: string[]; entitlements: string | null; appsDirEntries: string[] }
 const ICON = new Uint8Array(Buffer.from("icns-bytes"));
 const app = (name = "Notes") => ({ appIdentity: "notes", slug: "notes", runtimeSlot: "primary", name });
 
@@ -16,14 +21,16 @@ describe("macOS installed-app installer", () => {
   let loaderPath: string;
   let records: ReturnType<typeof createInstalledAppStore>;
   let forgetWindowState: ReturnType<typeof vi.fn>;
-  let readCdHashes: ReturnType<typeof vi.fn>;
+  let codesign: ReturnType<typeof vi.fn>;
+  let signCalls: SignCall[];
+  let fail: { sign?: boolean; verify?: boolean; noHash?: boolean };
 
   const installer = () => createMacInstaller({
     appsDir,
     records,
     host: { appPath: "/Applications/Matrix OS.app", bundleId: "com.matrix-os.operator", serverName: "matrix-stable", hostArguments: [], loaderPath },
     makeIcon: async () => ICON,
-    readCdHashes,
+    codesign: codesign as never,
     forgetWindowState,
   });
 
@@ -36,7 +43,24 @@ describe("macOS installed-app installer", () => {
     await writeFile(loaderPath, "loader-bytes", { mode: 0o755 });
     records = createInstalledAppStore({ dir: join(root, "userData") });
     forgetWindowState = vi.fn(async () => undefined);
-    readCdHashes = vi.fn(async () => [CDHASH]);
+    signCalls = [];
+    fail = {};
+    codesign = vi.fn(async (file: string, args: string[], options: { signal: AbortSignal }) => {
+      expect(file).toBe("/usr/bin/codesign");
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+      const target = args.at(-1)!;
+      const entitlementsAt = args.indexOf("--entitlements");
+      signCalls.push({
+        args,
+        files: existsSync(target) ? await readdir(join(target, "Contents"), { recursive: true }) as string[] : [],
+        entitlements: entitlementsAt >= 0 ? await readFile(args[entitlementsAt + 1]!, "utf8") : null,
+        appsDirEntries: await readdir(appsDir),
+      });
+      if (args[0] === "--force" && fail.sign) throw new Error("codesign failed");
+      if (args[0] === "--verify" && fail.verify) throw new Error("invalid signature");
+      if (args[0] === "-dvvv") return { stdout: "", stderr: fail.noHash ? "code object is not signed at all" : `Identifier=x\nCDHash=${cdHashOf(target)}\n` };
+      return { stdout: "", stderr: "" };
+    });
   });
   afterEach(async () => {
     vi.restoreAllMocks();
@@ -46,7 +70,7 @@ describe("macOS installed-app installer", () => {
   it("writes the whole bundle before moving it into place and records its path and cdhash", async () => {
     const record = await installer().install(app());
     const bundle = join(appsDir, "Notes.app");
-    expect(record).toMatchObject({ name: "Notes", slug: "notes", bundlePath: bundle, cdHashes: [CDHASH],
+    expect(record).toMatchObject({ name: "Notes", slug: "notes", bundlePath: bundle, cdHashes: [cdHashOf(signCalls[0]!.args.at(-1)!)],
       iconSha256: createHash("sha256").update(ICON).digest("hex") });
     expect(await records.get(record.installId)).toEqual(record);
     const plist = await readFile(join(bundle, "Contents/Info.plist"), "utf8");
@@ -55,10 +79,43 @@ describe("macOS installed-app installer", () => {
     expect(await readFile(join(bundle, "Contents/MacOS/app-shim"), "utf8")).toBe("loader-bytes");
     expect((await stat(join(bundle, "Contents/MacOS/app-shim"))).mode & 0o777).toBe(0o755);
     expect(await readFile(join(bundle, "Contents/Resources/app.icns"))).toEqual(Buffer.from(ICON));
-    // The hash is read from the executable before the move, while the bundle is still private.
-    expect(String(readCdHashes.mock.calls[0]![0])).toContain(".matrix-app-tmp-");
     expect(await readdir(appsDir)).toEqual(["Notes.app"]);
   });
+
+  it("signs the complete private bundle ad hoc with the hardened runtime, verifies it, then reads its hash, all before the move", async () => {
+    const record = await installer().install(app());
+    expect(signCalls.map((call) => call.args[0])).toEqual(["--force", "--verify", "-dvvv"]);
+    const [sign, verify, describe] = signCalls;
+    const temp = sign!.args.at(-1)!;
+    expect(temp).toMatch(/\/\.matrix-app-tmp-[^/]+\/Shim\.app$/);
+    expect(sign!.args.slice(0, 5)).toEqual(["--force", "--sign", "-", "--options", "runtime"]);
+    // Only the entitlement that lets an ad-hoc shim load Matrix's team-signed framework.
+    expect(sign!.entitlements).toContain("<key>com.apple.security.cs.disable-library-validation</key>");
+    expect(sign!.entitlements!.match(/<key>/g)).toHaveLength(1);
+    expect(sign!.files).toEqual(expect.arrayContaining(["Info.plist", "PkgInfo", "MacOS/app-shim", "Resources/app.icns"]));
+    expect(verify!.args).toEqual(["--verify", "--strict", temp]);
+    expect(describe!.args).toEqual(["-dvvv", temp]);
+    // Nothing was in place, and nothing is signed after the move (macOS forbids edits after first launch).
+    for (const call of signCalls) expect(call.appsDirEntries.every((name) => name.startsWith(".matrix-app-tmp-"))).toBe(true);
+    expect(codesign).toHaveBeenCalledTimes(3);
+    expect(signCalls.some((call) => call.args.includes(record.bundlePath!))).toBe(false);
+  });
+
+  it("records each bundle's own cdhash", async () => {
+    const first = await installer().install(app());
+    const second = await installer().install(app());
+    expect(first.cdHashes).toHaveLength(1);
+    expect(second.cdHashes).toHaveLength(1);
+    expect(first.cdHashes[0]).not.toBe(second.cdHashes[0]);
+  });
+
+  it.each([["signing", "sign"], ["verification", "verify"]] as const)(
+    "aborts the install and leaves nothing behind when %s fails", async (_label, step) => {
+      fail[step] = true;
+      await expect(installer().install(app())).rejects.toThrow();
+      expect(await readdir(appsDir)).toEqual([]);
+      expect(await records.list()).toEqual([]);
+    });
 
   it("never overwrites an existing path: it numbers the next bundle instead", async () => {
     await mkdir(appsDir, { recursive: true });
@@ -77,7 +134,7 @@ describe("macOS installed-app installer", () => {
   });
 
   it("refuses an install whose shim has no signature to pin, and leaves nothing behind", async () => {
-    readCdHashes.mockResolvedValue([]);
+    fail.noHash = true;
     await expect(installer().install(app())).rejects.toThrow();
     expect(await readdir(appsDir)).toEqual([]);
     expect(await records.list()).toEqual([]);

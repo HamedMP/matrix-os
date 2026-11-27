@@ -1,8 +1,9 @@
 // Writes and removes installed-app shim bundles in `~/Applications/Matrix Apps/`
 // (spec 2711, layer 3). A bundle is written in full in a private temp
-// directory, its cdhash is read, and only then is it moved into a freshly
-// reserved name: macOS App Management denies edits after a bundle's first
-// launch, and an existing path is never overwritten. Every path it deletes is
+// directory, signed ad hoc there (which seals its Info.plist and gives it its
+// own cdhash), verified, and its cdhash read; only then is it moved into a
+// freshly reserved name: macOS App Management denies edits after a bundle's
+// first launch, and an existing path is never overwritten. Every path it deletes is
 // resolved strictly inside the Matrix Apps folder, and symlinks are never followed.
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
@@ -11,15 +12,19 @@ import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
   BUNDLE_TEMP_PREFIX,
-  SHIM_EXECUTABLE,
+  SHIM_ENTITLEMENTS,
   bundleDisplayName,
   bundleFileName,
+  parseCdHashes,
   shimBundleFiles,
 } from "./mac-bundle";
+import type { RunTool } from "./mac-host";
 import { InstalledAppLimitError, MAX_INSTALLED_APPS, type InstalledAppStore } from "./record-store";
 import { NewInstalledAppSchema, type InstalledAppRecord } from "./record";
 
 const MAX_NAME_ATTEMPTS = 50;
+const CODESIGN = "/usr/bin/codesign";
+const SIGN_TIMEOUT_MS = 30_000;
 
 export const MacInstallRequestSchema = NewInstalledAppSchema.pick({ appIdentity: true, slug: true, runtimeSlot: true, name: true });
 export type MacInstallRequest = z.infer<typeof MacInstallRequestSchema>;
@@ -38,8 +43,8 @@ export interface MacInstallerOptions {
   host: { appPath: string; bundleId: string; serverName: string; hostArguments: readonly string[]; loaderPath: string };
   /** `.icns` bytes for the app (falls back to the Matrix icon itself). */
   makeIcon(slug: string): Promise<Uint8Array>;
-  /** `codesign -dvvv` CDHash values of an executable. */
-  readCdHashes(executablePath: string): Promise<string[]>;
+  /** Runs `/usr/bin/codesign` (execFile, no shell). */
+  codesign: RunTool;
   forgetWindowState(installId: string): Promise<void>;
 }
 
@@ -115,6 +120,30 @@ export function createMacInstaller(options: MacInstallerOptions) {
     throw new InstalledAppBundleError("No free bundle name");
   }
 
+  /**
+   * Signs the complete, never-launched bundle ad hoc with the hardened runtime
+   * and only the library-validation entitlement, verifies it, and returns its
+   * own cdhash. Any failure aborts the install.
+   */
+  async function signBundle(temp: string, bundle: string): Promise<string[]> {
+    const entitlements = join(temp, "entitlements.plist");
+    const run = (args: string[]) => options.codesign(CODESIGN, args, { signal: AbortSignal.timeout(SIGN_TIMEOUT_MS) });
+    try {
+      await writeFile(entitlements, SHIM_ENTITLEMENTS, { flag: "wx", mode: 0o644 });
+      await run(["--force", "--sign", "-", "--options", "runtime", "--entitlements", entitlements, bundle]);
+      await run(["--verify", "--strict", bundle]);
+      const { stdout, stderr } = await run(["-dvvv", bundle]);
+      const cdHashes = parseCdHashes(`${stdout}\n${stderr}`);
+      if (cdHashes.length > 0) return cdHashes;
+      throw new InstalledAppBundleError("Shim has no code signature to pin");
+    } catch (error: unknown) {
+      logFailure("shim signing failed", error);
+      throw new InstalledAppBundleError("Shim could not be signed");
+    } finally {
+      await cleanup("entitlements cleanup failed", () => rm(entitlements, { force: true }));
+    }
+  }
+
   async function cleanup(label: string, task: () => Promise<unknown>): Promise<void> {
     await task().catch((error: unknown) => logFailure(label, error));
   }
@@ -132,9 +161,9 @@ export function createMacInstaller(options: MacInstallerOptions) {
       let record: InstalledAppRecord | null = null;
       try {
         const icon = await options.makeIcon(input.slug);
-        await writeBundle(temp, installId, displayName, icon);
-        const cdHashes = await options.readCdHashes(join(temp, "Contents/MacOS", SHIM_EXECUTABLE));
-        if (cdHashes.length === 0) throw new InstalledAppBundleError("Shim has no code signature to pin");
+        const bundle = join(temp, "Shim.app");
+        await writeBundle(bundle, installId, displayName, icon);
+        const cdHashes = await signBundle(temp, bundle);
         reserved = await reserveBundlePath(root, displayName);
         record = await options.records.create({
           ...input,
@@ -142,7 +171,8 @@ export function createMacInstaller(options: MacInstallerOptions) {
           bundlePath: reserved,
           cdHashes,
         }, { installId });
-        await rename(temp, reserved);
+        await rename(bundle, reserved);
+        await cleanup("temp folder cleanup failed", () => rm(temp, { recursive: true, force: true }));
         return record;
       } catch (error: unknown) {
         await cleanup("temp bundle cleanup failed", () => rm(temp, { recursive: true, force: true }));

@@ -32,7 +32,7 @@ describe("app shim host", () => {
   beforeEach(() => { vi.spyOn(console, "warn").mockImplementation(() => undefined); });
   afterEach(() => { vi.restoreAllMocks(); });
 
-  function setup(options: { platform?: NodeJS.Platform; teamId?: string | null; records?: () => Promise<InstalledAppRecord[]>;
+  function setup(options: { platform?: NodeJS.Platform; records?: () => Promise<InstalledAppRecord[]>;
     openResult?: string; noServerApi?: boolean; startThrows?: boolean; restart?: boolean } = {}) {
     const app = Object.assign(new EventEmitter(), {
       startAppShimServer: options.noServerApi ? undefined : vi.fn(() => { if (options.startThrows) throw new Error("name in use"); }),
@@ -59,7 +59,6 @@ describe("app shim host", () => {
       platform: options.platform ?? "darwin",
       serverName: "matrix-stable",
       records: { list: options.records ?? (async () => [record]) },
-      teamId: options.teamId ?? null,
       service,
       buildMenu,
       openUrl,
@@ -119,14 +118,16 @@ describe("app shim host", () => {
     expect(service.open).not.toHaveBeenCalled();
   });
 
-  it("pins the team as well as the cdhash when Matrix is team-signed", async () => {
-    const { host, service, connect } = setup({ teamId: "ABCDE12345" });
+  it("rejects a shim signed as another install's bundle", async () => {
+    const other = "0123456789abcdef0123456789abcdef01234567";
+    const { host, service, connect } = setup();
     host.start();
-    const shim = new FakeShim();
+    // Running code that only matches a different bundle's cdhash.
+    const shim = new FakeShim(BUNDLE, `com.matrix-os.app.${ID}`, (requirement) => requirement.includes(other));
     await connect(shim);
-    expect(shim.satisfiesCodeRequirement).toHaveBeenCalledWith(
-      `anchor apple generic and certificate leaf[subject.OU] = "ABCDE12345" and cdhash H"${CDHASH}"`);
-    expect(service.open).toHaveBeenCalledWith(ID, { appShim: shim });
+    expect(shim.satisfiesCodeRequirement).toHaveBeenCalledWith(`cdhash H"${CDHASH}"`);
+    expect(shim.quit).toHaveBeenCalledOnce();
+    expect(service.open).not.toHaveBeenCalled();
   });
 
   it("creates the window inside an accepted shim only after the check, and gives the shim its menu", async () => {

@@ -5,7 +5,7 @@ import { app, dialog, Menu, shell, type BrowserWindow } from "electron";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appShimServerName, MATRIX_APPS_FOLDER } from "./mac-bundle";
-import { detectMacShimHost, readCdHashes, runTool } from "./mac-host";
+import { detectMacShimHost, runTool } from "./mac-host";
 import { buildShimIcon, fetchGatewayIcon } from "./mac-icon";
 import { createMacInstaller, type MacInstaller, type MacInstallRequest } from "./mac-installer";
 import type { InstalledAppStore } from "./record-store";
@@ -110,7 +110,7 @@ export function createMacInstalledApps(options: MacInstalledAppsOptions) {
           execFile: runTool,
           tmpDir: join(tmpdir(), "matrix-app-icons"),
         }),
-        readCdHashes: (path) => readCdHashes(runTool, path),
+        codesign: runTool,
         forgetWindowState: options.forgetWindowState,
       });
       await installer.sweep().catch((error: unknown) => logFailure("bundle sweep failed", error));
@@ -120,7 +120,6 @@ export function createMacInstalledApps(options: MacInstalledAppsOptions) {
         platform: process.platform,
         serverName,
         records: options.records,
-        teamId: host.teamId,
         service,
         buildMenu,
         openUrl: options.openUrl,

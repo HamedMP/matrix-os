@@ -7,9 +7,9 @@ import {
   hostAppBundlePath,
   looksLikeProtectedName,
   parseCdHashes,
-  parseTeamId,
   sanitizeBundleName,
   shimBundleFiles,
+  SHIM_ENTITLEMENTS,
   shimCodeRequirement,
   shimInfoPlist,
 } from "@desktop/main/installed-apps/mac-bundle";
@@ -156,28 +156,26 @@ describe("code signatures", () => {
     "Executable=/x/app-shim",
     "CandidateCDHash sha256=1111111111111111111111111111111111111111",
     `CDHash=${CDHASH.toUpperCase()}`,
-    "TeamIdentifier=ABCDE12345",
+    "TeamIdentifier=not set",
   ].join("\n");
 
-  it("parses the code-directory hash and team", () => {
+  it("parses the code-directory hash", () => {
     expect(parseCdHashes(output)).toEqual([CDHASH]);
-    expect(parseTeamId(output)).toBe("ABCDE12345");
-  });
-
-  it("treats an unsigned or ad-hoc signature as having no team", () => {
-    expect(parseTeamId("TeamIdentifier=not set")).toBeNull();
     expect(parseCdHashes("code object is not signed at all")).toEqual([]);
     expect(parseCdHashes("CDHash=zz")).toEqual([]);
   });
 
-  it("requires the recorded cdhash, plus the team anchor when the host is team-signed", () => {
-    expect(shimCodeRequirement(CDHASH, null)).toBe(`cdhash H"${CDHASH}"`);
-    expect(shimCodeRequirement(CDHASH, "ABCDE12345"))
-      .toBe(`anchor apple generic and certificate leaf[subject.OU] = "ABCDE12345" and cdhash H"${CDHASH}"`);
+  it("requires exactly the bundle's recorded cdhash, with no team anchor (an ad-hoc shim has no team)", () => {
+    expect(shimCodeRequirement(CDHASH)).toBe(`cdhash H"${CDHASH}"`);
   });
 
-  it("refuses values that would change the requirement", () => {
-    expect(() => shimCodeRequirement(`${CDHASH}" or true`, null)).toThrow();
-    expect(() => shimCodeRequirement(CDHASH, `X" or anchor apple`)).toThrow();
+  it("refuses a value that would change the requirement", () => {
+    expect(() => shimCodeRequirement(`${CDHASH}" or true`)).toThrow();
+  });
+
+  it("grants the signed shim only the entitlement to load Matrix's framework", () => {
+    expect(SHIM_ENTITLEMENTS).toContain("<key>com.apple.security.cs.disable-library-validation</key>\n\t<true/>");
+    expect(SHIM_ENTITLEMENTS.match(/<key>/g)).toHaveLength(1);
+    expect(SHIM_ENTITLEMENTS.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true);
   });
 });

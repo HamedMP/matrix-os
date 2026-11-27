@@ -16,7 +16,6 @@ const FALLBACK_NAME = "Untitled App";
 const MAX_BUNDLE_NAME_BYTES = 180;
 const SERVER_NAME = /^[A-Za-z0-9._-]{1,128}$/;
 const CDHASH = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-const TEAM_ID = /^[A-Z0-9]{10}$/;
 
 /** Folder-safe display name: no separators, controls, leading dots or `.app`; at most 64 characters. */
 export function sanitizeBundleName(raw: string): string {
@@ -145,8 +144,8 @@ export type ShimBundleFile =
 
 /**
  * Every file of a shim bundle, relative to `<Name>.app/`. The executable is a
- * byte copy of Electron's `app_shim_loader`: it is never re-signed, because
- * its own signature has no Info.plist binding.
+ * byte copy of Electron's `app_shim_loader`; the installer then signs the
+ * whole bundle ad hoc, which binds this Info.plist and gives it its own cdhash.
  */
 export function shimBundleFiles(input: ShimInfoPlistInput & { loaderPath: string; icon: Uint8Array }): ShimBundleFile[] {
   return [
@@ -177,16 +176,20 @@ export function parseCdHashes(output: string): string[] {
   return [...new Set(hashes.filter((hash) => CDHASH.test(hash)))];
 }
 
-/** The signing team from `codesign -dv` output; null for ad-hoc or unsigned code. */
-export function parseTeamId(output: string): string | null {
-  const team = /^TeamIdentifier=(\S+)$/m.exec(output)?.[1];
-  return team && TEAM_ID.test(team) ? team : null;
-}
+/**
+ * The shim's only entitlement: an ad-hoc signed, hardened shim may load
+ * Matrix's Electron Framework, which another (or no) team signed.
+ */
+export const SHIM_ENTITLEMENTS = '<?xml version="1.0" encoding="UTF-8"?>\n'
+  + '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+  + '<plist version="1.0">\n<dict>\n\t<key>com.apple.security.cs.disable-library-validation</key>\n\t<true/>\n</dict>\n</plist>\n';
 
-/** The code requirement a connecting shim must satisfy (spec 2711 "Trust check"). */
-export function shimCodeRequirement(cdHash: string, teamId: string | null): string {
+/**
+ * The code requirement a connecting shim must satisfy (spec 2711 "Trust
+ * check"): exactly its bundle's recorded cdhash. Shims are signed ad hoc, so
+ * they have no team to anchor.
+ */
+export function shimCodeRequirement(cdHash: string): string {
   if (!CDHASH.test(cdHash)) throw new RangeError("invalid cdhash");
-  if (teamId !== null && !TEAM_ID.test(teamId)) throw new RangeError("invalid team id");
-  const pin = `cdhash H"${cdHash}"`;
-  return teamId ? `anchor apple generic and certificate leaf[subject.OU] = "${teamId}" and ${pin}` : pin;
+  return `cdhash H"${cdHash}"`;
 }

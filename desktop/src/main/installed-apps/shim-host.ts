@@ -1,9 +1,9 @@
 // The one adapter over Electron 45's experimental app-shim API (spec 2711,
 // "Risks"). It starts this channel's shim server on macOS, verifies every
 // connecting shim before any window exists (its bundle must be a recorded
-// install and its running code must match the recorded cdhash, plus Matrix's
-// team when Matrix is team-signed), then binds the shim to that install's
-// window. Electron is injected, so this is unit-tested on every platform.
+// install and its running code must match that bundle's own recorded cdhash,
+// which the ad-hoc signature at install made unique), then binds the shim to
+// that install's window. Electron is injected, so this is unit-tested on every platform.
 import { posix } from "node:path";
 import { shimBundleIdentifier, shimCodeRequirement } from "./mac-bundle";
 import type { InstalledAppOpenContext, InstalledAppOpenResult } from "./controller";
@@ -34,8 +34,6 @@ export interface AppShimHostOptions {
   platform: NodeJS.Platform;
   serverName: string;
   records: { list(): Promise<InstalledAppRecord[]> };
-  /** Matrix's own signing team; null for ad-hoc or unsigned (dev) builds. */
-  teamId: string | null;
   service: {
     open(installId: string, context: InstalledAppOpenContext): Promise<InstalledAppOpenResult>;
     window(installId: string): { on(event: "closed", listener: () => void): unknown } | null;
@@ -59,14 +57,14 @@ function normalizeBundlePath(path: string): string {
 type Verdict = { record: InstalledAppRecord } | { reason: string };
 
 /** The trust check: which install a shim is, or why it is refused. */
-export function verifyAppShim(shim: AppShimLike, records: readonly InstalledAppRecord[], teamId: string | null): Verdict {
+export function verifyAppShim(shim: AppShimLike, records: readonly InstalledAppRecord[]): Verdict {
   const path = normalizeBundlePath(shim.bundlePath);
   const record = records.find((candidate) => candidate.bundlePath && normalizeBundlePath(candidate.bundlePath) === path);
   if (!record) return { reason: "unknown bundle" };
   if (shim.bundleId !== shimBundleIdentifier(record.installId)) return { reason: "bundle identifier mismatch" };
   for (const cdHash of record.cdHashes) {
     try {
-      if (shim.satisfiesCodeRequirement(shimCodeRequirement(cdHash, teamId))) return { record };
+      if (shim.satisfiesCodeRequirement(shimCodeRequirement(cdHash))) return { record };
     } catch (error: unknown) {
       logFailure("code requirement check failed", error);
     }
@@ -130,7 +128,7 @@ export function createAppShimHost(options: AppShimHostOptions) {
       shim.quit();
       return;
     }
-    const verdict = verifyAppShim(shim, records, options.teamId);
+    const verdict = verifyAppShim(shim, records);
     if ("reason" in verdict) { reject(shim, verdict.reason); return; }
     if (!shim.isConnected()) return;
     const existing = connected.get(verdict.record.installId);

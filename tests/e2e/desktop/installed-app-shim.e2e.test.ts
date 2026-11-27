@@ -12,7 +12,7 @@ import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication } from "playwright";
 import { appShimServerName, shimBundleFiles } from "../../../desktop/src/main/installed-apps/mac-bundle";
-import { detectMacShimHost, readCdHashes, runTool, type MacShimHost } from "../../../desktop/src/main/installed-apps/mac-host";
+import { detectMacShimHost, runTool, type MacShimHost } from "../../../desktop/src/main/installed-apps/mac-host";
 import { buildShimIcon } from "../../../desktop/src/main/installed-apps/mac-icon";
 import { createMacInstaller } from "../../../desktop/src/main/installed-apps/mac-installer";
 import { createInstalledAppStore } from "../../../desktop/src/main/installed-apps/record-store";
@@ -60,7 +60,7 @@ suite("Electron Desktop installed app shims (macOS)", () => {
       png: new Uint8Array(readFileSync(join(root, "desktop/build/icon.png"))),
       fallbackIcnsPath: host.fallbackIcnsPath, execFile: runTool, tmpDir: join(work, "icons"),
     }),
-    readCdHashes: (path) => readCdHashes(runTool, path),
+    codesign: runTool,
     forgetWindowState: async () => undefined,
   });
 
@@ -102,6 +102,13 @@ suite("Electron Desktop installed app shims (macOS)", () => {
   it("opens an installed app in its shim, under the app's own Dock name", async () => {
     record = await installer().install({ appIdentity: "notes", slug: "notes", runtimeSlot: "primary", name: "Notes" });
     expect(record.cdHashes.length).toBeGreaterThan(0);
+    // Signed ad hoc with the hardened runtime: Info.plist bound, resources sealed, its own cdhash.
+    const { stderr: signature } = await run("/usr/bin/codesign", ["-dvvv", record.bundlePath!]);
+    expect(signature).toMatch(/flags=0x[0-9a-f]+\(adhoc,runtime\)/);
+    expect(signature).toMatch(/Info\.plist entries=\d+/);
+    expect(signature).toMatch(/Sealed Resources version=2/);
+    expect(signature).toContain(`CDHash=${record.cdHashes[0]}`);
+    await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", record.bundlePath!]);
     await run("/usr/bin/open", [record.bundlePath!]);
     const titles = await until(appWindowTitles, (found) => found.includes("Notes"));
     expect(titles.filter((title) => title === "Notes")).toHaveLength(1);

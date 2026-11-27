@@ -1,11 +1,11 @@
 // What a shim bundle needs to know about the running Matrix app on macOS: its
-// `.app`, bundle id, signing team, `app_shim_loader` and fallback icon. Uses
-// the system `plutil` and `codesign` through execFile (no shell, timed out).
+// `.app`, bundle id, `app_shim_loader` and fallback icon. Uses
+// the system `plutil` through execFile (no shell, timed out).
 // Electron-free, so the Mac end-to-end test can drive the installer directly.
 import { execFile } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { appShimLoaderPath, hostAppBundlePath, parseCdHashes, parseTeamId } from "./mac-bundle";
+import { appShimLoaderPath, hostAppBundlePath } from "./mac-bundle";
 
 const TOOL_TIMEOUT_MS = 10_000;
 const BUNDLE_ID = /^[A-Za-z0-9.-]{1,255}$/;
@@ -24,8 +24,6 @@ export const runTool: RunTool = (file, args, options) => new Promise((resolve, r
 export interface MacShimHost {
   appPath: string;
   bundleId: string;
-  /** Null for ad-hoc or unsigned builds: the trust check then pins the cdhash only. */
-  teamId: string | null;
   loaderPath: string;
   fallbackIcnsPath: string;
   hostArguments: string[];
@@ -38,23 +36,6 @@ function logFailure(label: string, error: unknown): void {
 async function plistValue(run: RunTool, plist: string, key: string): Promise<string> {
   const { stdout } = await run("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", plist], { signal: AbortSignal.timeout(TOOL_TIMEOUT_MS) });
   return stdout.trim();
-}
-
-/** `codesign -dvvv` writes its details to stderr. */
-export async function readCdHashes(run: RunTool, path: string): Promise<string[]> {
-  const { stdout, stderr } = await run("/usr/bin/codesign", ["-dvvv", path], { signal: AbortSignal.timeout(TOOL_TIMEOUT_MS) });
-  return parseCdHashes(`${stdout}\n${stderr}`);
-}
-
-async function readTeamId(run: RunTool, appPath: string): Promise<string | null> {
-  try {
-    const { stdout, stderr } = await run("/usr/bin/codesign", ["-dv", appPath], { signal: AbortSignal.timeout(TOOL_TIMEOUT_MS) });
-    return parseTeamId(`${stdout}\n${stderr}`);
-  } catch (error: unknown) {
-    // Unsigned code makes codesign exit non-zero; the cdhash pin still applies.
-    logFailure("could not read Matrix's signing team", error);
-    return null;
-  }
 }
 
 /** Null when Matrix is not running from an app bundle that ships the shim loader. */
@@ -83,7 +64,6 @@ export async function detectMacShimHost(options: {
     return {
       appPath: hostApp,
       bundleId,
-      teamId: await readTeamId(run, hostApp),
       loaderPath,
       fallbackIcnsPath,
       // An unpacked Electron needs the app directory to start Matrix rather than its default app.
