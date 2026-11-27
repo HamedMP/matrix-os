@@ -46,6 +46,7 @@ function rewriteOldFormulas(ctx: JournalContext, rewrite: (text: string, sheet: 
         if (text !== cell.raw.formula) cell.raw = { ...cell.raw, formula: text };
       }
       if (entry.features !== null) entry.features = ctx.internals.rewriteSheetFeatures(entry.features, (text) => rewrite(text, entry.sheet));
+      entry.linked = entry.linked.map((linked) => ctx.internals.rewriteLinkedFeatures(linked, (text) => rewrite(text, linked.sheet)));
     }
   }
 }
@@ -110,6 +111,8 @@ function proposeAxis(ctx: JournalContext, sheet: SheetId, axis: Axis, index: num
   ctx.store.requireRoom();
   const snapshot = sign < 0 ? captureBand(ctx, info, axis, index, count) : null;
   const features = sign < 0 ? ctx.internals.captureSheetFeatures(sheet, axis, index, count) : null;
+  // A deletion turns references from other sheets' links, formats and validations into #REF! as well.
+  const linked = sign < 0 ? ctx.internals.captureLinkedFeatures(sheet, axis, index, count) : [];
   const namesBefore = workbook.listDefinedNames();
   const kind = AXIS_KIND[axis][sign > 0 ? 0 : 1];
   // What is kept from before the edit is checked before anything changes; the edit keeps the number of
@@ -127,6 +130,7 @@ function proposeAxis(ctx: JournalContext, sheet: SheetId, axis: Axis, index: num
     names: [],
     merges: null,
     features,
+    linked,
   };
   if (info.mergedRanges.length > MAX_KEPT_MERGES || namesBefore.length > MAX_KEPT_NAMES || !readableEntry(entryJson(before))) {
     throw unkeepable();
@@ -160,6 +164,7 @@ function proposeAxis(ctx: JournalContext, sheet: SheetId, axis: Axis, index: num
     names: nameRewrites(namesBefore, workbook.listDefinedNames()),
     merges: sameRanges(info.mergedRanges, mergesAfter) ? null : { before: info.mergedRanges, after: mergesAfter },
     features,
+    linked,
   };
   ctx.store.add(entry);
   // Rewritten formulas and names can come out longer than a journal holds: the edit is then taken back.

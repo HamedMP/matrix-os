@@ -9,6 +9,7 @@
 
 import type { CellChange, CellRange, ResolveChangesResult, SheetId } from "../../api/xlsx.js";
 import type { SheetFeatureState } from "../workbook/features.js";
+import type { LinkedFeatures } from "../workbook/linked-features.js";
 import type { RawCell } from "../workbook/internals.js";
 
 /** Where the journal is stored in the package. */
@@ -163,6 +164,8 @@ export interface AxisEntry extends EntryBase {
    * none of it.
    */
   features: SheetFeatureState | null;
+  /** For a deletion: the feature markup of other sheets it rewrote, before and after. Empty for an insertion. */
+  linked: LinkedFeatures[];
 }
 
 export interface AddSheetEntry extends EntryBase {

@@ -2,6 +2,7 @@
 
 import { MAX_COLS, MAX_ROWS } from "../workbook/a1.js";
 import { MAX_FEATURE_ITEMS, MAX_FEATURE_TEXT, type SheetFeatureState } from "../workbook/features.js";
+import { type LinkedFeatures, MAX_LINKED_SHEETS } from "../workbook/linked-features.js";
 import { MAX_NOTE_PARTS } from "../workbook/notes.js";
 import { MAX_TABLES_PER_SHEET } from "../workbook/tables.js";
 import { fail, int, list, obj, text } from "./parse-util.js";
@@ -78,4 +79,19 @@ export function features(value: unknown): SheetFeatureState | null {
             return { min, max: int(c.max, min, MAX_COLS - 1), width: width as number | null, hidden: c.hidden, other: attrs(c.other) };
           }),
   };
+}
+
+/** The feature markup of other sheets a deletion kept: every field of the right type, all markup within one budget. */
+export function linkedFeatures(value: unknown, sheetId: (value: unknown) => string): LinkedFeatures[] {
+  let budget = MAX_FEATURE_TEXT;
+  const markup = (item: unknown): string => {
+    const s = text(item, MAX_FEATURE_TEXT);
+    budget -= s.length;
+    if (budget < 0) fail();
+    return s;
+  };
+  return list(value, MAX_LINKED_SHEETS).map((item) => {
+    const o = obj(item);
+    return { sheet: sheetId(o.sheet), ns: attrs(o.ns), before: list(o.before, MAX_ELEMENTS).map(markup), after: list(o.after, MAX_ELEMENTS).map(markup) };
+  });
 }

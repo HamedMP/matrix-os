@@ -23,6 +23,7 @@ import type {
 import type { XmlDocument } from "../../api/xml.js";
 import { OfficeError } from "../../errors.js";
 import type { SheetFeatureState } from "./features.js";
+import type { LinkedFeatures } from "./linked-features.js";
 
 /** The content of a cell that an edit can change. */
 export interface RawCell {
@@ -146,6 +147,19 @@ export interface WorkbookInternals {
   restoreSheetFeatures(sheet: SheetId, features: SheetFeatureState): void;
   /** Applies a formula rewrite (a rename, a removed sheet, moved rows) to the formulas inside a captured state. */
   rewriteSheetFeatures(features: SheetFeatureState, rewrite: (text: string) => string): SheetFeatureState;
+  /**
+   * The feature markup of every other sheet that deleting `count` rows or columns from `index` would rewrite,
+   * before and after. Changes nothing. Throws `limit_exceeded` when there is too much to keep.
+   */
+  captureLinkedFeatures(sheet: SheetId, axis: "row" | "col", index: number, count: number): LinkedFeatures[];
+  /** True when the sheet still holds the markup the deletion left. */
+  holdsLinkedFeatures(linked: LinkedFeatures): boolean;
+  /** False when kept markup read from a file cannot be used. */
+  readableLinkedFeatures(linked: LinkedFeatures): boolean;
+  /** Puts back the markup from before the deletion. */
+  restoreLinkedFeatures(linked: LinkedFeatures): void;
+  /** Applies a formula rewrite to the kept markup, before and after alike. */
+  rewriteLinkedFeatures(linked: LinkedFeatures, rewrite: (text: string) => string): LinkedFeatures;
 
   /** Attaches the journal that serves the proposal methods of the workbook. */
   setJournal(journal: WorkbookJournal | null): void;

@@ -58,6 +58,7 @@ export function entryJson(entry: JournalEntry): Record<string, unknown> {
         names: entry.names,
         merges: entry.merges,
         features: entry.features,
+        ...(entry.linked.length === 0 ? {} : { linked: entry.linked }),
       };
   }
 }

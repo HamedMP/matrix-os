@@ -10,7 +10,7 @@ import type { FormulaErrorCode } from "../../api/formula.js";
 import type { CellRange, CellValue } from "../../api/xlsx.js";
 import { MAX_COLS, MAX_ROWS } from "../workbook/a1.js";
 import type { RawCell } from "../workbook/internals.js";
-import { features } from "./parse-features.js";
+import { features, linkedFeatures } from "./parse-features.js";
 import { FormatError, fail, int, list, obj, text } from "./parse-util.js";
 import {
   type AxisEntry,
@@ -132,7 +132,7 @@ function names(value: unknown): NameRewrite[] {
   });
 }
 
-function axisEntry(o: Record<string, unknown>, base: Omit<AxisEntry, "kind" | "index" | "count" | "snapshot" | "rewrites" | "names" | "merges" | "features">, kind: AxisEntry["kind"]): AxisEntry {
+function axisEntry(o: Record<string, unknown>, base: Omit<AxisEntry, "kind" | "index" | "count" | "snapshot" | "rewrites" | "names" | "merges" | "features" | "linked">, kind: AxisEntry["kind"]): AxisEntry {
   const limit = kind === "insertRows" || kind === "deleteRows" ? MAX_ROWS : MAX_COLS;
   const index = int(o.index, 0, limit - 1);
   const count = int(o.count, 1, limit - index);
@@ -146,7 +146,9 @@ function axisEntry(o: Record<string, unknown>, base: Omit<AxisEntry, "kind" | "i
   }
   // A journal written before deletions kept the features of the sheet has no such field.
   const kept = o.features === undefined || !isDelete ? null : features(o.features);
-  return { ...base, kind, index, count, snapshot: shot, rewrites: rewrites(o.rewrites), names: names(o.names), merges, features: kept };
+  // Written only when a deletion rewrote other sheets' features.
+  const linked = o.linked === undefined || !isDelete ? [] : linkedFeatures(o.linked, sheetId);
+  return { ...base, kind, index, count, snapshot: shot, rewrites: rewrites(o.rewrites), names: names(o.names), merges, features: kept, linked };
 }
 
 function entry(value: unknown): JournalEntry {

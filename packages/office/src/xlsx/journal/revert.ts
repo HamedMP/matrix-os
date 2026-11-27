@@ -121,6 +121,9 @@ function revertAxis(ctx: JournalContext, entry: AxisEntry, restored: SheetCellRe
   // A state that came from a damaged file cannot be put back; the deletion then stays pending.
   const features = entry.features;
   if (features !== null && !internals.readableSheetFeatures(features)) return false;
+  if (!entry.linked.every((linked) => internals.readableLinkedFeatures(linked))) return false;
+  // Other sheets' features are put back only where they still hold what the deletion left.
+  const linked = entry.linked.filter((record) => internals.holdsLinkedFeatures(record));
   const ok = attempt(ctx, entry, () => applyAxis(ctx, entry.sheet, axis, entry.index, insert ? -entry.count : entry.count));
   if (!ok) return false;
   if (merges !== null) {
@@ -146,6 +149,7 @@ function revertAxis(ctx: JournalContext, entry: AxisEntry, restored: SheetCellRe
   }
   // Last, so that array formulas find their cells and rows their restored content.
   if (features !== null) internals.restoreSheetFeatures(entry.sheet, features);
+  for (const record of linked) internals.restoreLinkedFeatures(record);
   return true;
 }
 

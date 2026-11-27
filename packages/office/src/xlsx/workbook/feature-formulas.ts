@@ -94,10 +94,15 @@ export function rewriteFeatureFormulasIn(root: XmlElement, rewrite: Rewrite): bo
  * not written.
  */
 export function rewriteFeatureFormulas(sheet: SheetModel, rewrite: Rewrite): void {
-  if (plain.has(sheet)) return;
+  if (mayHoldFeatureFormulas(sheet) && rewriteFeatureFormulasIn(attachSheet(sheet).doc.root, rewrite)) sheet.dirty = true;
+}
+
+/** False for a sheet known to hold none of the features; such a sheet is not parsed to find out. */
+export function mayHoldFeatureFormulas(sheet: SheetModel): boolean {
+  if (plain.has(sheet)) return false;
   if (sheet.doc === null && sheet.sourceText !== null && !FEATURE_WORDS.test(sheet.sourceText)) {
     plain.add(sheet);
-    return;
+    return false;
   }
-  if (rewriteFeatureFormulasIn(attachSheet(sheet).doc.root, rewrite)) sheet.dirty = true;
+  return true;
 }

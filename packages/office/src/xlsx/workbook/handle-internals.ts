@@ -9,6 +9,7 @@ import { requireAddress } from "./a1.js";
 import { applyCellMarkup, parseCellMarkup } from "./cell-markup.js";
 import { checkValue, findCell, readRaw, writeCell } from "./cells.js";
 import { captureSheetFeatures, readableSheetFeatures, restoreSheetFeatures, rewriteSheetFeatures } from "./features.js";
+import { captureLinkedFeatures, holdsLinkedFeatures, readableLinkedFeatures, restoreLinkedFeatures, rewriteLinkedFeatures } from "./linked-features.js";
 import type { CellMutationListener, RawCell, WorkbookInternals, WorkbookJournal } from "./internals.js";
 import type { SheetModel, WorkbookState } from "./model.js";
 import { flushNames } from "./names.js";
@@ -87,6 +88,11 @@ export function makeInternals(workbook: Workbook, state: WorkbookState): Workboo
     readableSheetFeatures,
     restoreSheetFeatures: (sheet, features) => restoreSheetFeatures(state, sheetOf(state, sheet), features),
     rewriteSheetFeatures,
+    captureLinkedFeatures: (sheet, axis, index, count) => captureLinkedFeatures(state, sheetOf(state, sheet), { axis, index, count: -count }),
+    holdsLinkedFeatures: (linked) => holdsLinkedFeatures(state, linked),
+    readableLinkedFeatures,
+    restoreLinkedFeatures: (linked) => restoreLinkedFeatures(state, linked),
+    rewriteLinkedFeatures,
     setJournal(journal: WorkbookJournal | null): void {
       state.journal = journal;
     },

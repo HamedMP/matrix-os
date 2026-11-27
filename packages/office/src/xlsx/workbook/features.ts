@@ -62,7 +62,7 @@ export const MAX_FEATURE_TEXT = 4 * 1024 * 1024;
 /** Array formulas and rows one state may list. */
 export const MAX_FEATURE_ITEMS = 100_000;
 
-function featureElements(root: XmlElement): XmlElement[] {
+export function featureElements(root: XmlElement): XmlElement[] {
   const found: XmlElement[] = [];
   for (const node of root.children) if (node.kind === "element" && FEATURE_ELEMENTS.has(localOf(node.name))) found.push(node);
   return found;
