@@ -60,6 +60,11 @@ export interface CalcNode {
   doneAt: number;
   /** How often the run calculated this node again because a cell it read was stored after it. */
   turns: number;
+  /**
+   * For a formula that picks its cells at run time: the `calc.calcs` of the workbook when it was last
+   * calculated, so circles it closes are looked for by every run of that calculation; -1 before that.
+   */
+  ranIn: number;
   /** Visit number of the ordering pass; -1 before the visit. */
   index: number;
   /** Lowest visit number reachable from this node (strongly connected components). */
@@ -389,6 +394,7 @@ export function buildGraph(state: WorkbookState): CalcGraph {
           evalAt: 0,
           doneAt: 0,
           turns: 0,
+          ranIn: -1,
           index: -1,
           low: -1,
           onStack: false,

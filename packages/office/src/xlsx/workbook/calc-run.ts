@@ -13,7 +13,12 @@
  * notes what it read.
  *
  * A bound that stops a run leaves the formulas it did not reach marked as
- * pending; the next run starts with those and does not redo the others.
+ * pending, with the formulas that pick their cells at run time whose reads
+ * were stored after them and the formulas a look for circles had still to
+ * calculate; the next run starts with those and does not redo the others.
+ * The runs that take up one calculation look for circles from every formula
+ * that picks its cells at run time any of them calculated, so a circle the
+ * bound split across runs is still found.
  *
  * Without a time, a formula whose calculation reaches TODAY or NOW keeps the
  * value it has and counts as unchanged (`calc-clock.ts`). Calculated again
@@ -102,8 +107,6 @@ export class Run {
   private readonly reported = new Set<CalcNode>();
   /** Formulas found to read one another in a circle at run time; they hold `#REF!` for the rest of the run. */
   private readonly closed = new Set<CalcNode>();
-  /** The formulas that pick their cells at run time calculated in this run: where circles they close are looked for. */
-  private readonly ran = new Set<CalcNode>();
   private evaluated = 0;
   /** Values stored so far. */
   private seq = 0;
@@ -232,7 +235,7 @@ export class Run {
       log.reads = [];
       log.overflow = false;
     }
-    if (node.dynamic) this.ran.add(node);
+    if (node.dynamic) node.ranIn = this.state.calc.calcs;
     // A formula without a value has nothing to keep: TODAY and NOW give #N/A in it.
     const keeps = this.clockless !== null && node.cell.value !== null;
     let value: CellValue;
@@ -361,19 +364,24 @@ export class Run {
   /**
    * Marks as pending every node from `from` on that the cells in the sink
    * may reach, taking each such node as changed. With `everything`, all of them.
+   * Before `from`, a formula that picks its cells at run time is marked when a
+   * cell it read was stored after it: the walk is past it, and the runs after
+   * do not know what this one stored.
    */
   private defer(from: number, everything: boolean): void {
     const pending = this.state.calc.pending;
     const sink = this.sink;
-    for (let i = from; i < this.order.length; i++) {
+    for (let i = 0; i < this.order.length; i++) {
       const node = this.order[i] as CalcNode;
       const key = cellKey(node.row, node.col);
       const due =
-        everything ||
-        node.circular ||
-        (this.held(node) ? node.dynamic && this.isStale(node) : node.dynamic || (this.forced && node.volatile)) ||
-        pending.get(node.sheet)?.has(key) === true ||
-        this.namedIn(node, sink, true);
+        i < from
+          ? node.dynamic && !this.closed.has(node) && this.isStale(node)
+          : everything ||
+            node.circular ||
+            (this.held(node) ? node.dynamic && this.isStale(node) : node.dynamic || (this.forced && node.volatile)) ||
+            pending.get(node.sheet)?.has(key) === true ||
+            this.namedIn(node, sink, true);
       if (!due) continue;
       addTo(pending, node.sheet, key);
       if (everything) continue;
@@ -451,21 +459,32 @@ export class Run {
   /**
    * Marks as circular the formulas that read one another in a circle at run time and were not yet, and calculates
    * the formulas without reads that may close one, so the next look knows what they read. False when there was
-   * nothing to do, null when the bound stopped it.
+   * nothing to do, null when the bound stopped it; the formulas it did not calculate are then left pending.
    */
   private closeCircles(): boolean | null {
     let any = false;
-    const { circles, unread } = findRunCircles(this.graph, this.ran);
+    const calcs = this.state.calc.calcs;
+    const ran = this.graph.dynamic.filter((node) => node.ranIn === calcs);
+    const { circles, unread } = findRunCircles(this.graph, ran);
     for (const node of circles) {
       if (this.closed.has(node)) continue;
       any = true;
       this.closed.add(node);
       this.putCircular(node);
     }
-    for (const node of unread) {
+    for (let i = 0; i < unread.length; i++) {
+      const node = unread[i] as CalcNode;
       if (node.reads !== null) continue;
-      if (!this.evaluate(node)) return null;
-      any = true;
+      if (this.evaluate(node)) {
+        any = true;
+        continue;
+      }
+      const pending = this.state.calc.pending;
+      for (let j = i; j < unread.length; j++) {
+        const left = unread[j] as CalcNode;
+        if (left.reads === null) addTo(pending, left.sheet, cellKey(left.row, left.col));
+      }
+      return null;
     }
     return any;
   }
