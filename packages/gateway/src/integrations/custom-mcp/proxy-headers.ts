@@ -12,6 +12,7 @@ export function integrationProxyHeaders(context: Context, routePrefix: string): 
       && normalized !== "x-matrix-integration-approval"
       && !normalized.startsWith("x-matrix-google-processing")
       && normalized !== INTEGRATION_READ_SCOPE_HEADER
+      && normalized !== "x-matrix-google-owner-authorization"
       && normalized !== "x-matrix-custom-mcp-approval-proof" && value) headers.set(key, value);
   }
   if (routePrefix === "/api/mcp-servers") {

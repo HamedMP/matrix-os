@@ -12,6 +12,13 @@ ENG-355; companion to provider-data-controls.md. All new handling remains disabl
 | `POST /gmail/processing/authorize` | Platform-verified machine bearer AND signed owner delegation; authoritative user mapping; exact active Gmail account | Resolve the exact observed transport against one reviewed profile; return current authority or safe consent-required disclosure; 16 KiB body |
 | `POST /gmail/processing/revalidate` | Same machine/owner/account boundary; exact original stamp and observed transport | Recheck durable authority without changing the original grant; 16 KiB body |
 
+For consent mutations on the internal mount, the Platform verifies an independent
+owner session. An in-chat grant can carry a Platform-signed approval that
+attests to verified owner session provenance and binds the exact consent body.
+The signed digest binds the account, profile, purpose, revisions, data kinds
+and expiry. The consent transaction's revision check prevents accepting the
+same decision again.
+
 These routes expose neither credentials, fingerprints, private endpoint/account mappings nor raw provider errors. Responses are not cached. The host must supply verified owner resolution and connection ownership; metadata permission does not imply collection, bot grants or write approval.
 
 The machine processing envelope binds owner, run/runtime generation, profile/consent revisions, exact Google account, purpose and route digest to exact method/path/body bytes. Its maximum lifetime is 30 seconds and never exceeds policy expiry. Signatures are domain-separated, compared in constant time and stripped from untrusted proxy requests. Verification alone is insufficient: composition must revalidate current policy/run authority and consume each request ID once before dispatch. No model receives signing keys or envelopes. This protocol is not yet active in a deployed runtime.

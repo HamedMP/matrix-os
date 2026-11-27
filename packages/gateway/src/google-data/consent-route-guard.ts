@@ -8,7 +8,7 @@ import {
 
 const CONSENT_PATH = /\/gmail\/+processing-consents(?:[/?#]|$)/i;
 
-function namesConsentPath(c: Context): boolean {
+export function namesConsentPath(c: Context): boolean {
   const raw = new URL(c.req.url).pathname;
   let decoded: string;
   try { decoded = decodeURIComponent(raw); }
@@ -24,8 +24,8 @@ function namesConsentPath(c: Context): boolean {
  * Gmail processing consent is the owner's own affirmative answer. Agent run
  * bearers (Hermes, Matrix MCP) and the owner machine bearer can read the
  * revisions it needs, so they must never record or revoke it over HTTP. The
- * managed Pi approval prompt records consent through its server-side
- * integration transport, not this public route. Call after auth and bodyLimit,
+ * managed Pi approval prompt supplies Platform-signed owner proof through
+ * its server-side integration transport. Call after auth and bodyLimit,
  * before local execution or Platform forwarding.
  */
 export function denyNonInteractiveGmailConsentMutation(c: Context): Response | null {

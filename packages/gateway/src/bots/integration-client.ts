@@ -54,6 +54,7 @@ export type BotIntegrationTransport = (ownerId: string, request: {
   readScope?: boolean;
   /** Trusted server value; never serialized into the body or accepted from tool JSON. */
   processingClaim?: GoogleProcessingClaim;
+  ownerConsentProof?: string;
   signal: AbortSignal;
 }) => Promise<Response>;
 
@@ -258,6 +259,10 @@ export function createPlatformIntegrationTransport(options: { baseUrl: string; m
         headers.set(GOOGLE_PROCESSING_HEADER, signGoogleProcessingEnvelope(request.processingClaim, {
           method: request.method, path: request.path, body: body!, machineToken: options.machineToken,
         }));
+      }
+      if (request.ownerConsentProof) {
+        if (request.method !== "POST" || request.path !== "/gmail/processing-consents") throw new BotIntegrationError("unavailable");
+        headers.set("x-matrix-custom-mcp-approval-proof", request.ownerConsentProof);
       }
       if (body) headers.set("content-type", "application/json");
       if (request.readScope) headers.set(INTEGRATION_READ_SCOPE_HEADER, "read");

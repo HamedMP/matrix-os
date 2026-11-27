@@ -18,6 +18,7 @@ import type { GoogleProcessingClaim } from '../../packages/gateway/src/google-da
 import { GOOGLE_PROCESSING_HEADER, verifyGoogleProcessingEnvelope } from '../../packages/gateway/src/google-data/runtime/envelope.js';
 import { createBotIntegrationClient, createPlatformIntegrationTransport } from '../../packages/gateway/src/bots/integration-client.js';
 import { createInternalIntegrationGuard } from '../../packages/platform/src/internal-integration-guard.js';
+import { mintCustomMcpApprovalProof, verifyCustomMcpApprovalProof } from '../../packages/platform/src/custom-mcp-approval-proof.js';
 import { Hono } from 'hono';
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
@@ -50,6 +51,9 @@ it.each(['approve', 'cancel', 'paced-approve'] as const)('keeps Gmail human %s o
   let accepted = false; const events: any[] = []; const call = vi.fn(async () => ({ data: { messages: [] } }));
   const guard = createInternalIntegrationGuard(); const starts: number[] = [];
   const service = getService('gmail')!; const token = 'synthetic-machine-token';
+  const approvalSecret = 'synthetic-platform-approval-secret';
+  const actionDigest = 'b'.repeat(64);
+  const clientRequestId = 'req_consent_approve';
   const app = new Hono();
   app.use('*', async (c, next) => { c.set('internalContainerHandle' as never, 'fixture' as never); await next(); });
   app.use('*', guard.middleware);
@@ -70,10 +74,18 @@ it.each(['approve', 'cancel', 'paced-approve'] as const)('keeps Gmail human %s o
       inventory: async () => [{ service: 'gmail', label: 'Synthetic Gmail', connectionId: account }],
       describe: async () => Object.entries(getService('gmail')!.actions).map(([id, a]) => ({ id, ...a })) },
     googleCollection: { prepare: async (_binding, _account, signal, consent) => {
-      if (!accepted) accepted = await consent({ expiresAt: expiry, disclosure: { profileId: claim.profileId, profileRevision: 1,
-        googleAccountId: account, purposeId: 'mail-assistance', evidenceRevision: 1, disclosureRevision: 1, retentionRevision: 1,
-        purpose: 'Synthetic selected email test', recipients: [{ recipientId: 'synthetic', name: 'Synthetic provider', role: 'Test only' }],
-        dataKinds: ['gmail-metadata', 'gmail-content', 'google-derived-context'], retention: { revision: 1, policyId: 'synthetic', mode: 'duration', maxAgeSeconds: 3600 }, expiresAt: expiry } }, signal);
+      if (!accepted) {
+        const approval = await consent({ actionDigest, expiresAt: expiry, disclosure: { profileId: claim.profileId, profileRevision: 1,
+          googleAccountId: account, purposeId: 'mail-assistance', evidenceRevision: 1, disclosureRevision: 1, retentionRevision: 1,
+          purpose: 'Synthetic selected email test', recipients: [{ recipientId: 'synthetic', name: 'Synthetic provider', role: 'Test only' }],
+          dataKinds: ['gmail-metadata', 'gmail-content', 'google-derived-context'], retention: { revision: 1, policyId: 'synthetic', mode: 'duration', maxAgeSeconds: 3600 }, expiresAt: expiry } }, signal);
+        const proof = typeof approval === 'object' && approval ? approval.platformApprovalProof : undefined;
+        accepted = verifyCustomMcpApprovalProof(proof, {
+          handle: 'fixture', actorId: owner.ownerId, chatId, runId: run.id, approvalId: events[0].approvalId,
+          decision: 'approve', clientRequestId, actionDigest, secret: approvalSecret,
+        });
+        if (!accepted) throw Error('Platform approval proof unavailable');
+      }
       return structuredClone(claim);
     } } });
   await ownerTools.open(binding, event => events.push(event)); cleanups.push(() => ownerTools.closeRun(binding.runId));
@@ -93,7 +105,16 @@ it.each(['approve', 'cancel', 'paced-approve'] as const)('keeps Gmail human %s o
   expect(call).not.toHaveBeenCalled();
   expect(await db.selectFrom('managed_pi_tool_checkpoints').selectAll().execute()).toEqual([]);
   if (decision === 'cancel') lifetime.abort();
-  else await ownerTools.submit({ owner, chatId, runId: run.id, approvalId: events[0].approvalId, decision, clientRequestId: 'req_consent_approve' });
+  else {
+    const { approvalId, actionDigest: requestedDigest } = events[0];
+    expect(requestedDigest).toBe(actionDigest);
+    const proof = mintCustomMcpApprovalProof({ method: 'POST', path: `/api/chats/${chatId}/runs/${run.id}/approvals/${approvalId}`,
+      identity: { handle: 'fixture', userId: owner.ownerId, source: 'auth', sessionProvenance: 'clerk-browser' },
+      body: JSON.stringify({ decision, clientRequestId, actionDigest: requestedDigest }), secret: approvalSecret });
+    expect(proof).toBeTruthy();
+    await ownerTools.submit({ owner, chatId, runId: run.id, approvalId, decision, clientRequestId,
+      actionDigest: requestedDigest, platformApprovalProof: proof! });
+  }
   const result = await pending;
   expect(result?.ok).toBe(decision === 'approve');
   expect(call).toHaveBeenCalledTimes(decision === 'approve' ? 1 : 0);

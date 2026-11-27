@@ -7,6 +7,7 @@ import { INTEGRATION_READ_SCOPE_HEADER, hasIntegrationReadScope } from "./scope-
 import { requireRequestPrincipal } from "../request-principal.js";
 import { authorizeChatIntegrationRequest, MATRIX_PREVIEW_DRIVE_ACTION_GRANT_KEY } from "./chat-action-guard.js";
 import type { PreviewDrivePlatformClient } from "../chat/preview-drive-platform-client.js";
+import { namesConsentPath } from "../google-data/consent-route-guard.js";
 import { previewDriveActionCanonical } from "@matrix-os/contracts";
 
 function buildIntegrationProxyUrl(c: Context, targetBase: string, routePrefix: string): string {
@@ -84,6 +85,10 @@ export async function proxyIntegrationRequest(
       const actorId = requireRequestPrincipal(c).userId;
       for (const [key, value] of Object.entries(delegatedIntegrationHeaders(actorId, options.machineToken))) {
         headers.set(key, value);
+      }
+      const session = c.req.header("authorization");
+      if (session && c.req.method !== "GET" && c.req.method !== "HEAD" && namesConsentPath(c)) {
+        headers.set("x-matrix-google-owner-authorization", session);
       }
       const runContext = c.get(MATRIX_MCP_RUN_CONTEXT_KEY as never) as MatrixMcpRunContext | undefined;
       if (hasIntegrationReadScope(runContext)) {

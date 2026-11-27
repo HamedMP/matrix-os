@@ -23,7 +23,7 @@ const MAX_RUNS = 64;
 const MAX_ACTIONS = 60;
 const MAX_RESULT_BYTES = 192 * 1024;
 const HUMAN_WAIT_MS = 10 * 60_000;
-type Submit = { owner: CanonicalOwnerScope; chatId: string; runId: string; approvalId: string; decision: CanonicalChatApprovalDecision; clientRequestId: string; platformApprovalProof?: string };
+type Submit = { owner: CanonicalOwnerScope; chatId: string; runId: string; approvalId: string; decision: CanonicalChatApprovalDecision; clientRequestId: string; platformApprovalProof?: string; actionDigest?: string };
 type McpControl = ReturnType<typeof createClaudeCustomMcpApprovalControl>;
 type Prepared = { args: string; account?: BotIntegrationConnection; receipt?: string; googleClaim?: GoogleProcessingClaim };
 interface Run {
@@ -32,7 +32,7 @@ interface Run {
   controller: AbortController;
   prepared: Map<string, Prepared>; // <=60 actions, erased on close.
   seen: Set<string>; // <=60 actions, erased on close.
-  pending?: { id: string; expiresAt: number; resolve(decision: CanonicalChatApprovalDecision): void };
+  pending?: { id: string; expiresAt: number; actionDigest?: string; resolve(decision: CanonicalChatApprovalDecision, proof?: string): void };
   mcp?: McpControl;
   mcpInitialization?: Promise<McpControl>;
   revoking?: Promise<boolean>;
@@ -125,24 +125,24 @@ export function createManagedPiOwnerTools(deps: {
   async function ask(run: Run, request: BotToolRequest, selected: Pick<BotIntegrationConnection, "label" | "connectionId">, signal: AbortSignal, title = "Allow this connected service action?"): Promise<void> {
     await askOwner(run, title, `Account ${selected.label} (${selected.connectionId})\n${JSON.stringify(request.args)}`, signal);
   }
-  async function askOwner(run: Run, title: string, description: string, signal: AbortSignal): Promise<void> {
+  async function askOwner(run: Run, title: string, description: string, signal: AbortSignal, actionDigest?: string): Promise<string | undefined> {
     if (description.length > 4000 || run.pending) throw new BotBrokerActionError("invalid_arguments");
     const id = randomUUID();
-    await new Promise<void>((resolve, reject) => {
-      const finish = (approved: boolean, decision: CanonicalChatApprovalDecision) => {
+    return new Promise<string | undefined>((resolve, reject) => {
+      const finish = (approved: boolean, decision: CanonicalChatApprovalDecision, proof?: string) => {
         if (run.pending?.id !== id) return;
         run.pending = undefined; clearTimeout(timer); signal.removeEventListener("abort", abort);
         run.emit(CanonicalProviderRunEventSchema.parse({ type: "approval.resolved", approvalId: id, decision }));
-        if (approved) resolve(); else reject(new BotBrokerActionError("denied"));
+        if (approved) resolve(proof); else reject(new BotBrokerActionError("denied"));
       };
       const abort = () => finish(false, "cancel");
       const expiresAt = Date.now() + HUMAN_WAIT_MS;
       const timer = setTimeout(abort, HUMAN_WAIT_MS); timer.unref?.();
-      run.pending = { id, expiresAt, resolve: decision => finish(decision === "approve", decision) };
+      run.pending = { id, expiresAt, actionDigest, resolve: (decision, proof) => finish(decision === "approve", decision, proof) };
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) { abort(); return; }
       run.emit(CanonicalProviderRunEventSchema.parse({ type: "approval.requested", approvalId: id,
-        title, safeDescription: description, risk: "high", allowedDecisions: ["approve", "decline", "cancel"] }));
+        title, safeDescription: description, risk: "high", ...(actionDigest ? { actionDigest } : {}), allowedDecisions: ["approve", "decline", "cancel"] }));
     });
   }
   async function prepareGoogleConsent(binding: ManagedPiRuntimeBinding, run: Run, selected: BotIntegrationConnection,
@@ -163,8 +163,9 @@ export function createManagedPiOwnerTools(deps: {
         `Data: ${disclosure.dataKinds.map(kind => kinds[kind]).join(", ")}`,
         `Retention: up to ${duration}`, `Permission expires: ${expiresAt}`,
         'This permission is separate from connecting Gmail.'].join("\n");
-      await askOwner(run, "Allow this AI to use Gmail data?", description, consentSignal);
-      return true;
+      const proof = await askOwner(run, "Allow this AI to use Gmail data?", description, consentSignal, notice.actionDigest);
+      if (!proof) throw new BotBrokerActionError("denied");
+      return { platformApprovalProof: proof };
     }, actionId);
   }
   async function prepare(binding: ManagedPiRuntimeBinding, request: BotToolRequest, callerSignal: AbortSignal): Promise<void> {
@@ -345,7 +346,10 @@ export function createManagedPiOwnerTools(deps: {
           run.pending.resolve("cancel");
           throw new BotBrokerActionError("denied");
         }
-        run.pending.resolve(input.decision); return;
+        if (run.pending.actionDigest && input.decision === "approve"
+          && (input.actionDigest !== run.pending.actionDigest || !input.platformApprovalProof))
+          throw new BotBrokerActionError("denied");
+        run.pending.resolve(input.decision, input.platformApprovalProof); return;
       }
       if (!run.mcp) throw new BotBrokerActionError("denied");
       await run.mcp.submit(input.approvalId, input.decision, { chatId: input.chatId, clientRequestId: input.clientRequestId, platformApprovalProof: input.platformApprovalProof });

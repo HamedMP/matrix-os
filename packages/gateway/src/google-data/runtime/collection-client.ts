@@ -5,7 +5,7 @@ import { GoogleDataKindsSchema, GoogleDataStampSchema, type GoogleDataStamp } fr
 import { googleContextOriginId, type GoogleContext, type GoogleContextStore } from './contexts.js';
 import type { GoogleProcessingClaim } from './envelope.js';
 import type { GoogleInferenceIdentity } from './inference-policy.js';
-import type { createGoogleOwnerConsentClient, GoogleOwnerProfileDisclosure } from './owner-consent-client.js';
+import { googleOwnerConsentDigest, type createGoogleOwnerConsentClient, type GoogleOwnerProfileDisclosure } from './owner-consent-client.js';
 import type { createGooglePlatformPolicyClient } from './platform-client.js';
 import { GoogleInferenceIdentitySchema, GooglePolicyDisclosureSchema } from './profile-resolution.js';
 import { googleRuntimeIdentityDigest } from './runtime-authority.js';
@@ -21,7 +21,8 @@ export interface GoogleCollectionClientDependencies {
   ownerConsentClient: Pick<ReturnType<typeof createGoogleOwnerConsentClient>, 'disclosures' | 'recordConsent'>;
   /** Must await affirmative interaction with the authenticated owner, including full-access chats.
    * Model/tool permission defaults cannot implement this callback. No private runtime facts are passed. */
-  requestConsent(notice: { disclosure: Disclosure; expiresAt: string }, signal: AbortSignal): Promise<boolean>;
+  requestConsent(notice: { disclosure: Disclosure; expiresAt: string; actionDigest: string }, signal: AbortSignal):
+    Promise<boolean | { platformApprovalProof: string }>;
   purposeId?: string;
   requiredDataKinds?: z.infer<typeof GoogleDataKindsSchema>;
   now?: () => Date;
@@ -116,19 +117,22 @@ export function createGoogleCollectionClient(deps: GoogleCollectionClientDepende
           if (pin || !isDeepStrictEqual(result.disclosure, disclosure) || result.consentRevision !== published.consentRevision) deny();
           const expiresAt = new Date(Math.min(now().getTime() + MAX_AGE, Date.parse(disclosure.expiresAt))).toISOString();
           const expectedConsentRevision = result.consentRevision;
-          const accepted = await checked(() => deps.requestConsent(structuredClone({ disclosure, expiresAt }), signal));
-          if (accepted !== true || Date.parse(expiresAt) <= now().getTime()) deny();
+          const consent = { connectionId: googleAccountId, accepted: true as const, expectedConsentRevision,
+            profileId: disclosure.profileId, profileRevision: disclosure.profileRevision, evidenceRevision: disclosure.evidenceRevision,
+            disclosureRevision: disclosure.disclosureRevision, retentionRevision: disclosure.retentionRevision,
+            purposeId, dataKinds: disclosure.dataKinds, expiresAt };
+          const actionDigest = googleOwnerConsentDigest(consent);
+          const accepted = await checked(() => deps.requestConsent(structuredClone({ disclosure, expiresAt, actionDigest }), signal));
+          const proof = accepted && typeof accepted === 'object' ? accepted.platformApprovalProof : undefined;
+          if ((accepted !== true && (typeof proof !== 'string' || !proof || proof.length > 1500))
+            || Date.parse(expiresAt) <= now().getTime()) deny();
           await freshIdentity();
-          // Recheck the exact notice and its CAS revision after UI; never submit a stale/new target implicitly.
           const current = await checked(() => deps.policyClient.authorize(binding.ownerId, request(disclosure.dataKinds), signal));
           if (current.status !== 'consent_required' || current.consentRevision !== expectedConsentRevision
             || !isDeepStrictEqual(current.disclosure, disclosure)) deny();
-          await checked(() => deps.ownerConsentClient.recordConsent(binding.ownerId, {
-            connectionId: googleAccountId, accepted: true, expectedConsentRevision, profileId: disclosure.profileId,
-            profileRevision: disclosure.profileRevision, evidenceRevision: disclosure.evidenceRevision,
-            disclosureRevision: disclosure.disclosureRevision, retentionRevision: disclosure.retentionRevision,
-            purposeId, dataKinds: disclosure.dataKinds, expiresAt,
-          }, signal));
+          await checked(() => proof
+            ? deps.ownerConsentClient.recordConsent(binding.ownerId, consent, signal, proof)
+            : deps.ownerConsentClient.recordConsent(binding.ownerId, consent, signal));
           result = await checked(() => deps.policyClient.authorize(binding.ownerId, request(disclosure.dataKinds), signal));
           if (result.status !== 'authorized' || result.stamp.consentRevision !== expectedConsentRevision + 1 || result.stamp.expiresAt !== expiresAt) deny();
         }
