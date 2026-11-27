@@ -12,7 +12,7 @@ import { MoonIcon } from "@/lib/hugeicons";
 export function FreePlanBillingPanel() {
   return (
     <div className="space-y-3">
-      <section className="rounded-[22px] border border-forest/15 bg-[#fbf7ed] p-4">
+      <section className="rounded-[22px] border border-forest/15 bg-cream/40 p-4">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-forest/55">Current plan</p>
         <h3 className="mt-2 text-2xl font-semibold tracking-tight text-deep">{FREE_PLAN_COPY.planName}</h3>
         <p className="mt-1 text-sm leading-6 text-forest/65">{FREE_PLAN_COPY.summary}</p>
