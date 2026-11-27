@@ -106,6 +106,41 @@ describe("Claude built-in integration authority", () => {
     expect(context.consumeIntegrationRequest!("POST", "/api/integrations/call", action)).toBe(false);
   });
 
+  it.each(["matrix", "pipedream"] as const)("approves and forwards the exact %s Gmail connection method", async method => {
+    const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId });
+    const supervised = registry.issue({ owner, runId: "run_gmail_approval", scope: "chat_call" })!;
+    const full = registry.issue({ owner, runId: "run_gmail_full", scope: "chat_call", fullAccess: true })!;
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ service: "gmail" }));
+    const app = new Hono();
+    app.use("*", authMiddleware("host-secret", { resolveMatrixMcpRunContext: registry.resolveRunContext }));
+    app.all("*", c => proxyIntegrationRequest(c, {
+      targetBase: "https://platform.test/internal/integrations", machineToken: "platform-token", fetcher,
+    }));
+    const selected = { service: "gmail", label: "Work", connectionMethod: method };
+    const request = (token: string, body: unknown, receipt?: string) => app.request("/api/integrations/connect", {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json",
+        ...(receipt ? { "x-matrix-integration-approval": receipt } : {}) }, body: JSON.stringify(body),
+    });
+    try {
+      const grant = supervised.grantIntegrationTool!("mcp__matrix-integrations__connect_service", selected);
+      expect(grant).not.toBeNull();
+      const otherMethod = method === "matrix" ? "pipedream" : "matrix";
+      expect((await request(supervised.token, { ...selected, connectionMethod: otherMethod }, grant!.receipt)).status).toBe(403);
+      expect(fetcher).not.toHaveBeenCalled();
+      expect((await request(supervised.token, selected, grant!.receipt)).status).toBe(200);
+      expect((await request(supervised.token, selected, grant!.receipt)).status).toBe(403);
+      expect((await request(full.token, { ...selected, service: "google_calendar" })).status).toBe(403);
+      expect((await request(full.token, selected)).status).toBe(200);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      for (const [, init] of fetcher.mock.calls) {
+        expect(JSON.parse(await (init!.body as Blob).text())).toEqual(selected);
+        expect(new Headers(init!.headers).has("x-matrix-integration-approval")).toBe(false);
+      }
+    } finally {
+      registry.close();
+    }
+  });
+
   it("expires action grants, bounds pending grants and isolates a new run", () => {
     let now = 0;
     const registry = createMatrixMcpCapabilityRegistry({ configuredOwnerId: owner.ownerId, now: () => now });

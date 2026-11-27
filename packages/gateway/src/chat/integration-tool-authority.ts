@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { GmailConnectionMethodSchema } from "@matrix-os/contracts/integration-marketplace";
 import { createHash, randomBytes } from "node:crypto";
 import { customMcpArgumentsDigest } from "../integrations/custom-mcp/approval-digest.js";
 
@@ -6,7 +7,8 @@ const service = z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/);
 const label = z.string().trim().min(1).max(100);
 const call = z.strictObject({ service, action: z.string().min(1).max(100).regex(/^[A-Za-z0-9_-]+$/),
   label, params: z.record(z.string(), z.unknown()).optional() });
-const connect = z.strictObject({ service, label: label.optional() });
+const connect = z.strictObject({ service, label: label.optional(), connectionMethod: GmailConnectionMethodSchema.optional() })
+  .refine(value => value.connectionMethod === undefined || value.service === "gmail");
 const disconnect = z.strictObject({ connection_id: z.uuid() });
 const empty = z.strictObject({});
 export const MATRIX_INTEGRATION_DISCOVERY_TOOLS = [
@@ -36,7 +38,7 @@ export function integrationToolRequest(tool: string, input: Record<string, unkno
   if (tool === MATRIX_INTEGRATION_ACTION_TOOLS[1]) {
     const value = connect.safeParse(input);
     return value.success ? { method: "POST", path: "/api/integrations/connect",
-      body: { service: value.data.service, ...(value.data.label ? { label: value.data.label } : {}) },
+      body: value.data,
       title: `Connect ${value.data.service}?` } : null;
   }
   if (tool === MATRIX_INTEGRATION_ACTION_TOOLS[2] && empty.safeParse(input).success) {

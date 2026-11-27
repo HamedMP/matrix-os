@@ -30,6 +30,38 @@ afterEach(() => {
 });
 
 describe("Matrix integrations MCP server", () => {
+  it.each(["matrix", "pipedream"])("forwards explicit Gmail %s consent and advertises options", async connectionMethod => {
+    const fetcher = vi.fn<GatewayFetcher>().mockResolvedValue(response(200, { url: "https://app.matrix-os.com/auth/gmail?state=opaque", service: "gmail" }));
+    const { client, server } = await connect(fetcher);
+    try {
+      expect((await client.listTools()).tools.map(tool => tool.name)).toContain("get_gmail_connection_options");
+      await client.callTool({ name: "connect_service", arguments: { service: "gmail", label: "Work", connectionMethod } });
+      expect(JSON.parse(fetcher.mock.calls[0][1].body as string)).toEqual({ service: "gmail", label: "Work", connectionMethod });
+      fetcher.mockClear();
+      expect((await client.callTool({ name: "connect_service", arguments: { service: "github", connectionMethod } })).isError).toBe(true);
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally { await client.close(); await server.close(); }
+  });
+  it("returns validated server capabilities through the full agent tool", async () => {
+    const options = { methods: ["pipedream"], defaultMethod: "pipedream" };
+    const fetcher = vi.fn<GatewayFetcher>().mockResolvedValue(response(200, options));
+    const { client, server } = await connect(fetcher);
+    try { const result = await client.callTool({ name: "get_gmail_connection_options", arguments: {} });
+      expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual(options);
+    } finally { await client.close(); await server.close(); }
+  });
+  it('reaches exact receipt metadata through the full owner tool', async () => {
+    const id = '123e4567-e89b-42d3-a456-426614174000';
+    const fetcher = vi.fn<GatewayFetcher>().mockResolvedValue(response(200, { status: 'expired', token: 'private' }));
+    const { client, server } = await connect(fetcher);
+    try {
+      const result = await client.callTool({ name: 'get_connection_attempt', arguments: { attempt_id: id } });
+      expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({ status: 'expired' });
+      expect(fetcher.mock.calls[0]![0]).toContain('/gmail/pipedream/attempts/' + id);
+    } finally { await client.close(); await server.close(); }
+  });
+
+
   it("exposes only bounded Drive discovery and one read action on shared Preview", async () => {
     const fetcher = vi.fn<GatewayFetcher>();
     const { client, server } = await connect(fetcher, "preview-drive-call");
@@ -124,6 +156,8 @@ describe("Matrix integrations MCP server", () => {
       "list_integration_inventory",
       "list_connected_services",
       "describe_service",
+      "get_gmail_connection_options",
+      "get_connection_attempt",
       "connect_service",
       "sync_services",
       "call_service",

@@ -140,3 +140,46 @@ export function parseConnectUrl(value: unknown): string | null {
   if (!url || !URL.canParse(url)) return null;
   return new URL(url).protocol === "https:" ? url : null;
 }
+
+export type IntegrationConnectionSnapshot = Pick<ConnectedIntegration, "id" | "service" | "status" | "connectedAt">;
+
+/** Compare the same account against its pre-consent snapshot; reauthorization keeps its ID. */
+export function hasCompletedIntegrationConnection(
+  previous: readonly IntegrationConnectionSnapshot[],
+  service: string,
+  current: readonly IntegrationConnectionSnapshot[],
+): boolean {
+  return current.some(connection => {
+    if (connection.service !== service || connection.status !== "active") return false;
+    const before = previous.find(item => item.id === connection.id);
+    if (!before) return true;
+    if (before.service !== service) return false;
+    if (before.status !== "active") return true;
+    const priorTime = Date.parse(before.connectedAt);
+    const currentTime = Date.parse(connection.connectedAt);
+    return Number.isFinite(priorTime) && Number.isFinite(currentTime) && currentTime > priorTime;
+  });
+}
+
+
+export interface IntegrationConnectResponse { url: string; attemptId?: string }
+export type IntegrationAttemptStatus = { status: "pending" | "failed" | "expired" } | { status: "succeeded"; accountId: string };
+
+/** A malformed supplied receipt must never silently become a legacy response. */
+export function parseIntegrationConnectResponse(value: unknown): IntegrationConnectResponse | null {
+  const record = asRecord(value);
+  const url = parseConnectUrl(value);
+  if (!record || !url || ("attemptId" in record && !isValidConnectionId(record.attemptId))) return null;
+  return { url, ...(typeof record.attemptId === "string" ? { attemptId: record.attemptId } : {}) };
+}
+
+export function parseIntegrationAttemptStatus(value: unknown): IntegrationAttemptStatus | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  if (record.status === "succeeded") return isValidConnectionId(record.accountId) ? { status: "succeeded", accountId: record.accountId } : null;
+  return record.status === "pending" || record.status === "failed" || record.status === "expired" ? { status: record.status } : null;
+}
+
+export function isCompletedIntegrationAttempt(receipt: IntegrationAttemptStatus, service: string, connections: readonly IntegrationConnectionSnapshot[]): boolean {
+  return receipt.status === "succeeded" && connections.some(connection => connection.id === receipt.accountId && connection.service === service && connection.status === "active");
+}

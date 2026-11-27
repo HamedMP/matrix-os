@@ -1,5 +1,9 @@
 import {
   connectServiceHandler,
+  getGmailConnectionOptionsHandler,
+  getConnectionAttemptHandler,
+  ConnectionAttemptInputSchema,
+  ConnectServiceInputSchema,
   describeServiceHandler,
   disconnectServiceHandler,
   gatewayAuthHeaders,
@@ -11,7 +15,7 @@ import {
 import { z } from "zod/v4";
 import { wrapExternalContent } from "../../kernel/dist/security/external-content.js";
 
-const usage = "Usage: matrix-integrations <inventory|list|describe|connect|sync|call|disconnect> [arguments]";
+const usage = "Usage: matrix-integrations <inventory|list|describe|gmail-options|attempt|connect|sync|call|disconnect> [arguments]";
 const serviceSchema = z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/);
 const catalogSchema = z.array(z.object({
   id: z.string(),
@@ -79,11 +83,17 @@ export async function runIntegrationsCommand(
       const service = serviceSchema.parse(rest[0]);
       return text(await describeServiceHandler({ service }, fetcher));
     }
+    case "gmail-options":
+      if (rest.length !== 0) throw new Error(usage);
+      return text(await getGmailConnectionOptionsHandler(fetcher));
+    case "attempt":
+      if (rest.length !== 1) throw new Error(usage);
+      return text(await getConnectionAttemptHandler(ConnectionAttemptInputSchema.parse({ attempt_id: rest[0] }), fetcher));
     case "connect": {
-      if (rest.length < 1 || rest.length > 2) throw new Error(usage);
-      const service = serviceSchema.parse(rest[0]);
-      const label = z.string().trim().min(1).max(100).optional().parse(rest[1]);
-      return text(await connectServiceHandler({ service, label }, fetcher));
+      if (rest.length < 1 || rest.length > 3) throw new Error(usage);
+      const input = ConnectServiceInputSchema.parse({ service: rest[0], label: rest[1], connectionMethod: rest[2] });
+      if (input.connectionMethod !== undefined && input.service !== "gmail") throw new Error(usage);
+      return text(await connectServiceHandler(input, fetcher));
     }
     case "sync":
       if (rest.length !== 0) throw new Error(usage);

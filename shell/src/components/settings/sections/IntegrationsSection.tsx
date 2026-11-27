@@ -1,20 +1,22 @@
 "use client";
 
+import { parseIntegrationConnectResponse, parseIntegrationAttemptStatus, isCompletedIntegrationAttempt } from "@matrix-os/contracts";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import {
-  hasNewConnectionForService,
+  hasCompletedConnectionForService,
   shouldLogIntegrationWarning,
   IntegrationsUnavailableError,
   INTEGRATIONS_UNAVAILABLE_NOTICE,
   PREVIEW_INTEGRATIONS_UNAVAILABLE_NOTICE,
   type ConnectedService,
 } from "./integrations-helpers";
-import { GITHUB_DEVELOPER_SERVICE_ID, IntegrationMarketplace, withGithubDeveloperCatalogEntry } from "@matrix-os/ui";
-import type { IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
+import { GITHUB_DEVELOPER_SERVICE_ID, GmailConnectionChoice, useGmailConnectionChoice, IntegrationMarketplace, withGithubDeveloperCatalogEntry } from "@matrix-os/ui";
+import type { GmailConnectionMethod, IntegrationCatalogItem } from "@matrix-os/contracts/integration-marketplace";
 import { ConnectedIntegrationAccounts } from "./ConnectedIntegrationAccounts";
 import { GithubDeveloperIntegration } from "./GithubDeveloperIntegration";
+import { fetchGmailConnectionOptions } from "./gmail-connection-request";
 import { CustomMcpServersPanel } from "./CustomMcpServersPanel";
 import { ShellExternalMcpApprovalsSection } from "@/components/ShellExternalMcpApprovalsPill";
 
@@ -40,7 +42,10 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState<string>("");
   const [savingRename, setSavingRename] = useState<string | null>(null);
+  const loadGmailOptions = useCallback(() => fetchGmailConnectionOptions(GATEWAY), []);
+  const gmailChoice = useGmailConnectionChoice(loadGmailOptions);
   const connectInFlight = useRef(false);
+  const connectGeneration = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -193,9 +198,24 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
     };
   }, [loadData]);
 
-  const handleConnect = async (serviceId: string, label?: string) => {
+  const handleConnect = async (serviceId: string, label?: string, connectionMethod?: GmailConnectionMethod) => {
     if (connecting || connectInFlight.current) return;
     connectInFlight.current = true;
+    const generation = ++connectGeneration.current;
+    const isCurrent = () => connectGeneration.current === generation;
+    const settleConnect = (message?: string, list?: ConnectedService[]) => {
+      if (!isCurrent()) return;
+      connectGeneration.current += 1;
+      connectInFlight.current = false;
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+      pollRef.current = null;
+      pollTimeoutRef.current = null;
+      if (list) setConnected(list);
+      if (message) setError(message);
+      setConnecting(null);
+    };
+    const previousConnections = connected.map(connection => ({ ...connection }));
     let popup: Window | null = null;
     setConnecting(serviceId);
     setError(null);
@@ -204,20 +224,25 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
       if (!popup) throw new Error("Consent window blocked");
       const payload: Record<string, string> = { service: serviceId };
       if (label?.trim()) payload.label = label.trim();
+      if (serviceId === "gmail" && connectionMethod) payload.connectionMethod = connectionMethod;
       const res = await fetch(`${GATEWAY}/api/integrations/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10_000),
       });
+      if (!isCurrent()) { popup?.close(); return; }
       if (!res.ok) {
-        setError("Could not start connection. Try again.");
-        setConnecting(null);
+        settleConnect("Could not start connection. Try again.");
         popup?.close();
-        connectInFlight.current = false;
         return;
       }
-      const { url } = await res.json();
+      const started = parseIntegrationConnectResponse(await res.json());
+      if (!isCurrent()) { popup?.close(); return; }
+      if (!started) {
+        popup?.close(); settleConnect("Could not start connection. Try again."); return;
+      }
+      const { url, attemptId } = started;
       const consentUrl = new URL(url);
       if (consentUrl.protocol !== "https:") throw new Error("Invalid consent URL");
       if (!popup) throw new Error("Consent window blocked");
@@ -234,29 +259,37 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
         pollTimeoutRef.current = null;
       }
       // Poll by syncing from Pipedream every 2s
-      const previousIds = new Set(connected.map((c) => c.id));
       pollRef.current = setInterval(async () => {
+        if (!isCurrent()) return;
         try {
+          if (attemptId) {
+            const receiptResponse = await fetch(`${GATEWAY}/api/integrations/gmail/pipedream/attempts/${attemptId}`, { signal: AbortSignal.timeout(10_000) });
+            const receipt = receiptResponse.ok ? parseIntegrationAttemptStatus(await receiptResponse.json()) : null;
+            if (!isCurrent()) return;
+            if (!receipt || receipt.status === "failed" || receipt.status === "expired") {
+              settleConnect("Could not confirm connection. Try connecting again.");
+              return;
+            }
+            if (receipt.status === "pending") return;
+            const response = await fetch(`${GATEWAY}/api/integrations`, { signal: AbortSignal.timeout(10_000) });
+            if (!response.ok) return;
+            const data = await response.json();
+            if (!isCurrent()) return;
+            const list: ConnectedService[] = data.connections ?? data;
+            if (!isCompletedIntegrationAttempt(receipt, serviceId, list.map(item => ({ id: item.id, service: item.service, status: item.status, connectedAt: item.connected_at })))) return;
+            settleConnect(undefined, list);
+            return;
+          }
           const syncRes = await fetch(`${GATEWAY}/api/integrations/sync`, {
             method: "POST",
             signal: AbortSignal.timeout(10_000),
           });
           if (syncRes.ok) {
             const data = await syncRes.json();
+            if (!isCurrent()) return;
             const list: ConnectedService[] = data.services ?? [];
-            const hasNew = hasNewConnectionForService(previousIds, serviceId, list);
-            if (hasNew) {
-              setConnected(list);
-              setConnecting(null);
-              if (pollRef.current) {
-                clearInterval(pollRef.current);
-                pollRef.current = null;
-              }
-              if (pollTimeoutRef.current) {
-                clearTimeout(pollTimeoutRef.current);
-                pollTimeoutRef.current = null;
-              }
-            }
+            const completed = hasCompletedConnectionForService(previousConnections, serviceId, list);
+            if (completed) settleConnect(undefined, list);
           }
         } catch (err) {
           if (shouldLogIntegrationWarning(err)) {
@@ -270,12 +303,7 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
 
       // Stop polling after 2 minutes
       pollTimeoutRef.current = setTimeout(() => {
-        if (pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-          setConnecting(null);
-        }
-        pollTimeoutRef.current = null;
+        settleConnect(attemptId ? "Could not confirm connection. Try connecting again." : undefined);
       }, 120_000);
     } catch (err) {
       if (shouldLogIntegrationWarning(err)) {
@@ -285,16 +313,17 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
         );
       }
       popup?.close();
-      setError("Could not open sign-in. Allow popups and try again.");
-      setConnecting(null);
+      if (!isCurrent()) return;
+      settleConnect("Could not open sign-in. Allow popups and try again.");
     } finally {
-      connectInFlight.current = false;
+      if (isCurrent()) connectInFlight.current = false;
     }
   };
 
   // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only teardown must clear whichever poll interval/timeout is live at cleanup time; pollRef/pollTimeoutRef are reassigned by handleConnect, so snapshotting them at mount would always capture the initial null and never clear an active poll.
   useEffect(() => {
     return () => {
+      connectGeneration.current += 1;
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
@@ -446,13 +475,14 @@ export function IntegrationsSection({ active = true, onOpenGithubDisconnectTermi
               {!loading ? <ConnectedIntegrationAccounts {...{ connected, available, renamingId, renameDraft, savingRename, checkingStatus, confirmDisconnect, disconnecting, setRenameDraft, setRenamingId, setConfirmDisconnect, handleRename, handleCheckStatus, handleDisconnect }} /> : null}
               <IntegrationMarketplace services={services} connectedIds={connectedIds} connectingId={connecting}
                 rowPresentation={service => service.id === GITHUB_DEVELOPER_SERVICE_ID ? developer : undefined}
-                onConnect={id => { if (id !== GITHUB_DEVELOPER_SERVICE_ID) void handleConnect(id); }} />
+                onConnect={id => { if (id === "gmail") gmailChoice.request(method => void handleConnect(id, undefined, method)); else if (id !== GITHUB_DEVELOPER_SERVICE_ID) void handleConnect(id); }} />
               {!loading ? <CustomMcpServersPanel connectedApps={connected} appNames={Object.fromEntries(available.map(service => [service.id, service.name]))} /> : null}
               {!loading ? <ShellExternalMcpApprovalsSection /> : null}
             </>
           );
         }}
       </GithubDeveloperIntegration>
+      <GmailConnectionChoice choice={gmailChoice} />
     </div>
   );
 }
