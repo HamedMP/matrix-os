@@ -1,8 +1,11 @@
-// Linux: installs an app from the Electron Desktop launcher, opens it through
-// the `.desktop` launcher it wrote (a second Matrix process hands the link to
-// the running one), and uninstalls it again (spec 2711, layer 4).
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+// Installs an app from the Electron Desktop launcher and uninstalls it again
+// (spec 2711, layer 4). Linux: checks the `.desktop` entry and opens the app
+// through it (a second Matrix process hands the link to the running one).
+// macOS: checks the shim bundle and its own Dock identity (`lsappinfo`). HOME is
+// a temp folder, so nothing lands in the owner's real Applications or menus.
+import { execFile, spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -16,7 +19,16 @@ const hasDesktopBuild = existsSync(join(root, "desktop/out/main/index.js"));
 if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasDesktopBuild) {
   throw new Error("Required Desktop E2E build is missing");
 }
-const suite = hasDesktopBuild && process.platform === "linux" ? describe : describe.skip;
+const linux = process.platform === "linux";
+const mac = process.platform === "darwin";
+const suite = hasDesktopBuild && (linux || mac) ? describe : describe.skip;
+const run = promisify(execFile);
+
+/** macOS: the app registered with the Dock under `bundleId`, if running (no Automation permission needed). */
+async function runningApp(bundleId: string): Promise<string | null> {
+  const { stdout } = await run("/usr/bin/lsappinfo", ["info", "-only", "name", "-app", bundleId]);
+  return /"LSDisplayName"="([^"]*)"/.exec(stdout)?.[1] ?? null;
+}
 const executablePath = createRequire(join(root, "desktop/package.json"))("electron") as string;
 
 /** Splits a Desktop Entry `Exec` value: string escapes first, then quoting (spec 1.5). */
@@ -105,6 +117,12 @@ suite("Electron Desktop installs an app on Linux", () => {
 
   afterAll(async () => {
     if (app) await closeElectronApp(app);
+    if (mac && home) {
+      await run("/usr/bin/pkill", ["-f", home]).catch((error: unknown) => {
+        // Exit 1 means no shim process was left running.
+        if ((error as { code?: number }).code !== 1) throw error;
+      });
+    }
     await gateway?.close();
     if (home) rmSync(home, { recursive: true, force: true });
   });
@@ -117,17 +135,25 @@ suite("Electron Desktop installs an app on Linux", () => {
     await main.getByText("Installed Team Tracker").waitFor({ timeout: 15_000 });
     const [record] = records();
     installId = record!.installId;
-    expect(record).toEqual(expect.objectContaining({ slug: "team-tracker", bundlePath: entryPath() }));
-    const entry = readFileSync(entryPath(), "utf8");
-    expect(entry).toContain("Name=Team Tracker\n");
-    expect(entry).toContain(`StartupWMClass=matrix-app-${installId}\n`);
-    expect(entry).toMatch(new RegExp(`^Exec=.* matrixos://app/${installId}$`, "m"));
+    if (linux) {
+      expect(record).toEqual(expect.objectContaining({ slug: "team-tracker", bundlePath: entryPath() }));
+      const entry = readFileSync(entryPath(), "utf8");
+      expect(entry).toContain("Name=Team Tracker\n");
+      expect(entry).toContain(`StartupWMClass=matrix-app-${installId}\n`);
+      expect(entry).toMatch(new RegExp(`^Exec=.* matrixos://app/${installId}$`, "m"));
+    } else {
+      expect(record!.bundlePath).toBe(join(realpathSync(home), "Applications", "Matrix Apps", "Team Tracker.app"));
+      expect(existsSync(join(record!.bundlePath!, "Contents", "Info.plist"))).toBe(true);
+      expect(await main.getByRole("button", { name: "Show in Finder" }).count()).toBe(1);
+      // The shim connected and runs under the app's own name, apart from Matrix.
+      expect(await until(() => runningApp(`com.matrix-os.app.${installId}`), (name) => name !== null, 30_000)).toBe("Team Tracker");
+    }
     // Installing opens the app in its own window.
     const windows = await until(appWindows, (found) => found.some((urls) => urls.some((url) => url.includes("/apps/team-tracker/"))));
     expect(windows).toHaveLength(1);
   }, 60_000);
 
-  it("opens the installed app through its desktop entry", async () => {
+  it.skipIf(!linux)("opens the installed app through its desktop entry", async () => {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((win) => win.getTitle() === "Team Tracker")?.close());
     await until(appWindows, (found) => found.length === 0);
     const exec = parseExec(/^Exec=(.*)$/m.exec(readFileSync(entryPath(), "utf8"))![1]!);
@@ -151,8 +177,9 @@ suite("Electron Desktop installs an app on Linux", () => {
     const confirm = main.getByRole("alertdialog", { name: "Uninstall Team Tracker?" });
     await confirm.getByRole("button", { name: "Uninstall", exact: true }).click();
     await main.getByText("Uninstalled Team Tracker").waitFor({ timeout: 15_000 });
-    expect(existsSync(entryPath())).toBe(false);
+    expect(existsSync(linux ? entryPath() : join(realpathSync(home), "Applications", "Matrix Apps", "Team Tracker.app"))).toBe(false);
     expect(records()).toEqual([]);
+    if (mac) expect(await until(() => runningApp(`com.matrix-os.app.${installId}`), (name) => name === null)).toBeNull();
     expect(await until(appWindows, (found) => found.length === 0)).toEqual([]);
     // The app itself is still in the catalog.
     await main.getByRole("button", { name: "Open App Launcher", exact: true }).click();
