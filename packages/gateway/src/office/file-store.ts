@@ -7,7 +7,7 @@ import { AppFileError } from "../app-files/errors.js";
 import { hasSymlinkComponent, lstatOrNull, resolveExistingAppFilePath, resolveWritableAppFilePath } from "../app-files/paths.js";
 import { unguardedProjectWrite, type ProjectWriteGuard } from "../app-files/project-write-fence.js";
 import { withOwnerFileMutation } from "../owner-file-mutations.js";
-import { isDeniedFileApiPath, isProtectedHomeSubpath, resolveWithinHome } from "../path-security.js";
+import { isLexicallyDeniedFileApiPath, isProtectedHomeSubpath, resolveWithinHome } from "../path-security.js";
 import type { OfficeDeadline } from "./deadline.js";
 import { OfficeDocumentError, errnoCode } from "./errors.js";
 
@@ -81,7 +81,7 @@ export class OfficeFileStore {
     const resolved = resolveWithinHome(homePath, path);
     if (!resolved) throw new OfficeDocumentError("invalid_request", "outside home");
     if (isProtectedHomeSubpath(homePath, resolved)) throw new OfficeDocumentError("forbidden", "protected path");
-    if (isDeniedFileApiPath(homePath, path)) throw new OfficeDocumentError("not_found", "denied path");
+    if (isLexicallyDeniedFileApiPath(homePath, path)) throw new OfficeDocumentError("not_found", "denied path");
   }
 
   async resolveExisting(path: string): Promise<string> {
