@@ -106,6 +106,7 @@ import { isDesktopDeepLink, resolveDesktopChannelIdentity } from "../shared/chan
 import { createDesktopDeepLinkHandler, createSharedAppDeepLinks, registerSharedAppDeepLinkIpc } from "./shared-app-deep-link";
 import { createInstalledAppDeepLinks } from "./installed-apps/deep-link";
 import { installInstalledApps } from "./installed-apps/wiring";
+import { createMainWindowActionGate, registerMainWindowActionsReadyIpc } from "./installed-apps/main-window-actions";
 import { createSenderPolicy, senderRole } from "./ipc/sender-policy";
 import { createTerminalWindowController } from "./terminal-window/controller";
 import { createTerminalBrowserWindow } from "./terminal-window/window";
@@ -526,15 +527,23 @@ if (!gotLock) {
       const nativeAppQuery = createNativeAppQueryRequester({
         getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken(),
       });
+      // Installed app windows can outlive the main window; reopen it before delivering their actions.
+      const mainWindowActions = createMainWindowActionGate({
+        hasMainWindow: () => Boolean(mainWindow && !mainWindow.isDestroyed()),
+        isSignedIn: () => auth.getStatus().signedIn,
+        reopenMainWindow: () => reopenMainWindow?.() ?? Promise.reject(new Error("main window unavailable")),
+      });
       const nativeAppBridge = new NativeAppBridge({
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
-        openApp: (app) => {
+        openApp: async (app) => {
+          await mainWindowActions.ensure("App launch is unavailable");
           const status = auth.getStatus();
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App launch is unavailable");
           sendEvent("app:open", { ...app, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
         },
         openChat: async (request, signal) => {
+          await mainWindowActions.ensure("Chat navigation is unavailable");
           const status = auth.getStatus();
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed() || !nativeAppChatNavigation) {
             throw new Error("Chat navigation is unavailable");
@@ -546,7 +555,8 @@ if (!gotLock) {
           }, signal);
         },
         authGeneration: () => auth.getStatus().authGeneration,
-        generate: (app, context) => {
+        generate: async (app, context) => {
+          await mainWindowActions.ensure("App task is unavailable");
           const status = auth.getStatus();
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App task is unavailable");
           sendEvent("app:generate", { app, context, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
@@ -833,6 +843,9 @@ if (!gotLock) {
         clipboard,
         isTrustedSender: (event) => senderRole(windowSenders, event) !== null,
       });
+      registerMainWindowActionsReadyIpc(ipcMain, {
+        isMainWindowSender: (event) => senderRole(windowSenders, event) === "main", ready: mainWindowActions.rendererReady,
+      });
       registerSharedAppDeepLinkIpc(ipcMain, {
         isMainWindowSender: (event) => senderRole(windowSenders, event) === "main",
         take: () => sharedAppDeepLinks.take(),
@@ -992,9 +1005,10 @@ if (!gotLock) {
         // A reloaded or crashed renderer must take held org links again before they are sent.
         const releaseRenderer = () => {
           sharedAppDeepLinks.rendererReset();
+          mainWindowActions.rendererReset();
           chatElectronPreview.clearFullAccessSelection();
         };
-        mainWindow.webContents.on("did-start-loading", () => sharedAppDeepLinks.rendererReset());
+        mainWindow.webContents.on("did-start-loading", () => { sharedAppDeepLinks.rendererReset(); mainWindowActions.rendererReset(); });
         mainWindow.webContents.on("did-start-navigation", (details) => {
           if (details.isMainFrame && !details.isSameDocument) chatElectronPreview.clearFullAccessSelection();
         });

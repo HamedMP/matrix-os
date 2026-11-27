@@ -252,6 +252,23 @@ describe("native installed-app opening", () => {
   });
 });
 
+describe("deferred app launch delivery", () => {
+  it("waits for the launch to reach the main window and reports its failure", async () => {
+    const f = fixture();
+    let release!: () => void;
+    f.openApp.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+    let settled = false;
+    const pending = f.bridge.openApp(sender, request).then(() => { settled = true; });
+    for (let index = 0; index < 5; index += 1) await Promise.resolve();
+    expect(f.openApp).toHaveBeenCalledWith(app);
+    expect(settled).toBe(false);
+    release();
+    await pending;
+    f.openApp.mockImplementationOnce(() => Promise.reject(new Error("App launch is unavailable")));
+    await expect(f.bridge.openApp(sender, request)).rejects.toThrow("App launch is unavailable");
+  });
+});
+
 describe("installed app catalog resolution", () => {
   it("matches exact installed roots and entries and never trusts the requested name", async () => {
     const fetchFn = vi.fn(async () => new Response(JSON.stringify([{ slug: "planner", name: "Planner", file: "planner/index.html", path: "/files/apps/planner/index.html" }])));

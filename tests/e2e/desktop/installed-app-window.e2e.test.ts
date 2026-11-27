@@ -147,6 +147,33 @@ suite("Electron Desktop installed app windows", () => {
     expect(windows[0]!.viewUrls).toEqual([]);
   });
 
+  it("reopens a closed main window to deliver an app's open request, exactly once", async () => {
+    await app.evaluate(({ app: electronApp }) => {
+      const sent: string[] = [];
+      (globalThis as { __mainSent?: string[] }).__mainSent = sent;
+      electronApp.once("browser-window-created", (_event, win) => {
+        const send = win.webContents.send.bind(win.webContents);
+        win.webContents.send = (channel: string, ...args: unknown[]) => { sent.push(channel); send(channel, ...args); };
+      });
+    });
+    await main.close();
+    expect(app.windows().some((page) => page.url().includes("/renderer/index.html"))).toBe(false);
+    const opened = await app.evaluate(async ({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows().find((candidate) => candidate.getTitle() === "Notes")!;
+      const view = win.contentView.children.find((child) => "webContents" in child) as Electron.WebContentsView;
+      return view.webContents.executeJavaScript(
+        "window.__matrixNativeBridge.openApp('Notes', 'matrix-app:notes'), true");
+    });
+    expect(opened).toBe(true);
+    const sent = await until(
+      () => app.evaluate(() => [...((globalThis as { __mainSent?: string[] }).__mainSent ?? [])]),
+      (channels) => channels.includes("app:open"), 30_000);
+    expect(sent.filter((channel) => channel === "app:open")).toHaveLength(1);
+    main = app.windows().find((page) => page.url().includes("/renderer/index.html"))!;
+    expect(main).toBeDefined();
+    expect((await snapshot()).filter((win) => win.pageUrl.includes("/renderer/index.html"))).toHaveLength(1);
+  }, 45_000);
+
   it("closes app windows on sign-out", async () => {
     await main.evaluate(() => window.operator.invoke("auth:sign-out", {}));
     const windows = await until(() => appWindows("Notes"), (found) => found.length === 0);
