@@ -42,6 +42,10 @@ all early returns, including cached context, existing resumes, empty histories a
 bot sessions. Their callbacks use the supplied transaction-bound repository.
 Ordinary authenticated owner preview/export bypasses these model-only hooks.
 
+The live runtime checks the parent under the context fence before assembling
+same-chat Agent history and before dispatching a saved Agent run. Gmail-marked
+parents stay outside this Agent path while guarded adapter installation is pending.
+
 ## Evidence and remaining work
 
 The existing 1,199-line orchestrator is refactor debt. New policy belongs in the

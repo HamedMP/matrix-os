@@ -695,6 +695,7 @@ export class CanonicalChatOrchestrator {
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       failureStage = "provider";
       if (!sharedScopeId) await this.options.modelHistory?.assertRun({ owner, chatId: run.chatId, adapter, signal: controller.signal });
+      if (run.context?.agent) await this.options.agentContext?.assertAgentHistoryAllowed(owner, run.chatId);
       sendTiming?.adapterStart();
       const events = resumeState !== undefined && adapter.resume
         ? adapter.resume({ ...input, resumeState })

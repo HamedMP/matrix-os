@@ -618,6 +618,31 @@ describe("Hermes Agent invocation through canonical Chat", () => {
     await expect(chatContext.revalidate(owner, "chat_parent", prepared.context)).rejects.toMatchObject({ code: "context_unavailable" });
   });
 
+  it.each(["admission", "dispatch"] as const)("withholds a Gmail-marked parent from the Agent at %s", async phase => {
+    await send("req_agent_parent_history", [{ type: "text", text: "Synthetic chat history" }]);
+    const contexts = createGoogleContextStore(repository.kysely);
+    await contexts.migrate();
+    const deadline = new Date(Date.now() + 60_000).toISOString();
+    const mark = () => contexts.mark({ ownerId: owner.ownerId, chatId: "chat_parent",
+      googleAccountId: "10000000-0000-4000-8000-000000000001", consentId: "consent_agent",
+      profileId: "profile_agent", profileRevision: 1, purposeId: "assistant", expiresAt: deadline, retentionDeadline: deadline });
+    const sendAgent = () => send("req_agent_parent_marked", [{ type: "text", text: "Summarize" }, mention("agent", agentId)]);
+    if (phase === "admission") {
+      await mark();
+      const read = vi.spyOn(repository, "getDetailPage");
+      await expect(sendAgent()).rejects.toMatchObject({ safeError: { code: "resource_unavailable" } });
+      expect(read).not.toHaveBeenCalled();
+    } else {
+      const persist = repository.markRunRunning.bind(repository);
+      vi.spyOn(repository, "markRunRunning").mockImplementationOnce(async (...args) => {
+        await mark();
+        return persist(...args);
+      });
+      await sendAgent();
+    }
+    expect(calls.map(call => call.driver)).toEqual(["codex"]);
+  });
+
   it("rechecks the switch before dispatching an already queued Agent", async () => {
     hold = new Promise<void>((resolve) => { release = resolve; });
     await orchestrator.admitTurn(principal, owner, "chat_parent", await input("req_hold", [{ type: "text", text: "Current work" }]));

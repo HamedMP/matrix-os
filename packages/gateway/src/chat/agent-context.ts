@@ -95,8 +95,18 @@ export class ChatAgentContext {
   private async readModelReference<T>(owner: ChatOwner, chatId: string, targetChatId: string,
     read: (repository: Pick<ChatRepository, "get" | "getDetailPage">) => Promise<T>): Promise<T> {
     if (this.options.modelHistory) return this.options.modelHistory.read({ owner, chatId, targetChatId, read });
-    if (this.options.readOrdinaryReference) return this.options.readOrdinaryReference(owner, chatId, read);
-    return read(this.options.repository);
+    return this.readOrdinaryHistory(owner, chatId, read);
+  }
+
+  private readOrdinaryHistory<T>(owner: ChatOwner, chatId: string,
+    read: (repository: Pick<ChatRepository, "get" | "getDetailPage">) => Promise<T>): Promise<T> {
+    return this.options.readOrdinaryReference
+      ? this.options.readOrdinaryReference(owner, chatId, read)
+      : read(this.options.repository);
+  }
+
+  async assertAgentHistoryAllowed(owner: ChatOwner, chatId: string): Promise<void> {
+    await this.readOrdinaryHistory(owner, chatId, async () => undefined);
   }
 
   private async readSnapshot(repository: Pick<ChatRepository, "getDetailPage">, owner: ChatOwner, chatId: string, limit: number): Promise<ChatContextSnapshot> {
@@ -190,7 +200,8 @@ export class ChatAgentContext {
       await this.options.admitJevWorkflow(owner, agent);
     }
     const recipe = agent ? await this.resolveRecipe(agent) : undefined;
-    const current = await this.options.repository.getDetailPage(owner, chatId, { limit: 40 });
+    const readCurrent = (repository: Pick<ChatRepository, "getDetailPage">) => repository.getDetailPage(owner, chatId, { limit: 40 });
+    const current = await (agent ? this.readOrdinaryHistory(owner, chatId, readCurrent) : readCurrent(this.options.repository));
     if (!current || current.record.chat.lifecycle !== "active" || current.record.chat.collaboration) {
       throw new ChatAgentContextError("context_unavailable");
     }
