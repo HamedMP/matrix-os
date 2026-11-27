@@ -161,6 +161,50 @@ Use the authenticated staging platform at
 through the public entry point. The disposable host-only smoke VM does not
 register with the platform.
 
+## Enable in production
+
+The `Platform Cloud Run` workflow turns metal hosts and the free tier on
+only from GitHub environment settings. With none set, both stay off and
+nothing new is required. `scripts/ci/platform-metal-env.sh` validates the
+settings, preflights the secrets, and verifies the candidate, production and
+worker revisions. The worker service copies the candidate revision's
+settings, so the sleeper and maintenance passes get the same values.
+
+GitHub environment variables (`production`):
+
+| Variable | Format | Default |
+| --- | --- | --- |
+| `METAL_HOSTS_ENABLED` | `0` or `1` | `0` |
+| `METAL_GOLDEN_VERSION` | `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, required when metal is on | none |
+| `METAL_HOSTD_CA_PEM_ENABLED` | `true` (bind the hostd CA) or `false` (publicly trusted hostd certificate) | `true` |
+| `METAL_POOL_MAX_DATA_PERCENT`, `METAL_POOL_MAX_METADATA_PERCENT` | integer 1-100, optional | provisioner defaults 85 / 80 |
+| `MATRIX_FREE_TIER_ENABLED` | `0` or `1`; needs metal on | `0` |
+| `MATRIX_FREE_TIER_MAX_RUNTIMES` | integer 1-999999, required when the free tier is on | none |
+| `MATRIX_FREE_TIER_INVITE_REQUIRED` | `true` or `false` | `true` |
+| `MATRIX_FREE_TIER_DAILY_FUNDED_SPEND_MICROUSD` | positive integer, micro-USD; unset means no free funded AI | none |
+| `MATRIX_FREE_TIER_SLEEP_ENABLED` | `0` or `1`; needs metal on | `0` |
+
+Secret Manager secrets in the platform GCP project, bound as `latest`. The
+Cloud Run service account needs `roles/secretmanager.secretAccessor` on each:
+
+| Env name | Secret | Format |
+| --- | --- | --- |
+| `METAL_HOSTD_API_TOKEN` | `metal-hostd-api-token` | 32-512 printable ASCII, no whitespace or trailing newline; hostd's API token |
+| `METAL_HOSTD_INGRESS_TOKEN` | `metal-hostd-ingress-token` | same format, a different value; hostd's ingress token |
+| `METAL_HOSTD_CA_PEM` | `metal-hostd-ca-pem` | PEM CA certificate for the hostd TLS certificate (only when `METAL_HOSTD_CA_PEM_ENABLED=true`) |
+
+Enable order:
+
+1. Provision the host, build the golden disk, and register its platform host row.
+2. Create the secrets and grant the runtime service account access.
+3. Set `METAL_HOSTS_ENABLED=1` and `METAL_GOLDEN_VERSION`, then deploy.
+4. Set `MATRIX_FREE_TIER_ENABLED=1`, `MATRIX_FREE_TIER_MAX_RUNTIMES`, the
+   optional spend cap and `MATRIX_FREE_TIER_SLEEP_ENABLED=1`, then deploy again.
+
+To turn it off, set the flags back to `0` and deploy. The full deploy
+replaces the service environment, and verification fails if any metal or
+free-tier setting remains.
+
 
 ## Recovery
 
