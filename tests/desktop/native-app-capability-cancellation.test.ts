@@ -33,18 +33,14 @@ function authHooks(cancelChatElectronPreview?: () => void, cancelChatMacTerminal
   expect(callback).not.toBe("");
   expect(binding).not.toBe("");
   const nativeAppChatNavigation = { cancelAll: vi.fn() };
-  const refreshMacActivity = vi.fn();
-  const cancelDesktopPairing = vi.fn();
   return new Function("navigationCache", "chatgptPlan", "fileDownloads", "organizationDriveTransfers", "localChatImports", "localUsage",
-    "nativeAppChatNavigation", "sendEvent", "cancelChatElectronPreview", "cancelChatMacTerminal", "refreshMacActivity", "cancelDesktopPairing", `
+    "nativeAppChatNavigation", "sendEvent", "cancelChatElectronPreview", "cancelChatMacTerminal", `
     let invalidateAppCapabilities;
     const onAuthChanged = ${callback};
-    return { nativeAppChatNavigation, refreshMacActivity, cancelDesktopPairing, onAuthChanged, bind(nativeAppBridge) { ${binding}; } };
+    return { nativeAppChatNavigation, onAuthChanged, bind(nativeAppBridge) { ${binding}; } };
   `)(undefined, undefined, undefined, undefined, undefined, undefined, nativeAppChatNavigation, vi.fn(),
-    cancelChatElectronPreview, cancelChatMacTerminal, refreshMacActivity, cancelDesktopPairing) as {
+    cancelChatElectronPreview, cancelChatMacTerminal) as {
     nativeAppChatNavigation: typeof nativeAppChatNavigation;
-    refreshMacActivity: typeof refreshMacActivity;
-    cancelDesktopPairing: typeof cancelDesktopPairing;
     onAuthChanged(status: { signedIn: boolean; handle?: string }): void;
     bind(bridge: NativeAppBridge): void;
   };
@@ -263,8 +259,6 @@ describe("Electron capability registration cancellation", () => {
     const hooks = authHooks();
     expect(() => hooks.onAuthChanged({ signedIn: false })).not.toThrow();
     expect(hooks.nativeAppChatNavigation.cancelAll).toHaveBeenCalledOnce();
-    expect(hooks.refreshMacActivity).toHaveBeenCalledOnce();
-    expect(hooks.cancelDesktopPairing).toHaveBeenCalledOnce();
     const f = fixture();
     hooks.bind(f.bridge);
     const pending = f.handlers.get(APP_CAPABILITY_CHANNEL)!(f.event(), { kind: "capabilities" }).catch(error => error);
