@@ -54,25 +54,44 @@ moves later, keep this locked SHA; do not silently expand the release.
 
 ## 2. Qualify the automatic dev artifact
 
-Find the automatic host workflow for the locked SHA and wait for its R2 publish
-job to succeed:
+Find the one successful automatic `push` workflow for the locked SHA, require
+its R2 publish job to have succeeded, and resolve the version from that run's
+own generated-version log:
 
 ```bash
-gh run list --repo HamedMP/matrix-os --commit "$SHA" \
+RUNS=$(gh run list --repo HamedMP/matrix-os --commit "$SHA" --event push \
   --workflow host-bundle-release.yml --limit 5 \
-  --json databaseId,event,headSha,status,conclusion,url,createdAt
+  --json databaseId,event,headSha,status,conclusion,url,createdAt)
+RUN_ID=$(printf '%s' "$RUNS" | jq -r --arg sha "$SHA" \
+  '[.[] | select(.event == "push" and .headSha == $sha and .status == "completed" and .conclusion == "success")] | if length == 1 then .[0].databaseId else empty end')
+test -n "$RUN_ID"
+RUN=$(gh run view "$RUN_ID" --repo HamedMP/matrix-os \
+  --json databaseId,event,headSha,status,conclusion,url,jobs)
+printf '%s' "$RUN" | jq -e --arg sha "$SHA" \
+  '.event == "push" and .headSha == $sha and .status == "completed" and .conclusion == "success" and any(.jobs[]; .name == "Publish to R2" and .conclusion == "success")'
+VERSION=$(gh run view "$RUN_ID" --repo HamedMP/matrix-os --log \
+  | sed -n 's/^.*Generated version: \(v[0-9][0-9.]*-[0-9][0-9]*\).*$/\1/p' \
+  | sort -u)
+test "$(printf '%s\n' "$VERSION" | grep -Ec '^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]+$')" -eq 1
+RELEASE=$(curl -fsS "https://app.matrix-os.com/system-bundles/releases/$VERSION.json")
+printf '%s' "$RELEASE" | jq -e --arg sha "$SHA" --arg version "$VERSION" \
+  '.version == $version and .gitCommit == $sha and (.sha256 | length == 64) and (.bundleKey | length > 0) and (.checksumKey | length > 0)'
+printf '%s' "$RELEASE" \
+  | jq '{version,gitCommit,gitRef,buildTime,channel,severity,updateType,sha256,size,bundleKey,checksumKey,incrementalManifestKey,incrementalManifestSha256}'
 DEV=$(curl -fsS https://app.matrix-os.com/system-bundles/channels/dev.json)
 echo "$DEV" | jq '{version,gitCommit,gitRef,buildTime,channel,severity,updateType,sha256,size}'
-VERSION=$(echo "$DEV" | jq -r .version)
-test "$(echo "$DEV" | jq -r .gitCommit)" = "$SHA"
-curl -fsS "https://app.matrix-os.com/system-bundles/releases/$VERSION.json" \
-  | jq '{version,gitCommit,gitRef,buildTime,channel,severity,updateType,sha256,size,bundleKey,checksumKey,incrementalManifestKey,incrementalManifestSha256}'
+if [ "$(printf '%s' "$DEV" | jq -r .gitCommit)" = "$SHA" ]; then
+  test "$(printf '%s' "$DEV" | jq -r .version)" = "$VERSION"
+else
+  echo "Current dev pointer advanced after the locked artifact was published; continuing with $VERSION from run $RUN_ID."
+fi
 ```
 
-Stop if the workflow `headSha`, dev `gitCommit`, immutable release
-`gitCommit`, version, checksum, or object keys disagree. If the automatic run
-is absent or failed, diagnose it and ask before retrying; do not replace it with
-a second release build.
+The current `dev` pointer may advance while release notes and approvals are in
+progress; that does not invalidate the locked artifact. Stop if the workflow
+`headSha`, generated version, immutable release `gitCommit`, checksum, or object
+keys disagree. If the automatic run is absent, ambiguous, or failed, diagnose
+it and ask before retrying; do not replace it with a second release build.
 
 ## 3. Write and approve the changelog
 

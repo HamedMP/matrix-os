@@ -42,6 +42,15 @@ describe('release skills', () => {
     expect(host).not.toMatch(/host-bundle canary|cut(?:ting)? the canary|deploying the canary/i);
   });
 
+  it('resolves the locked host version from its workflow after the dev pointer advances', () => {
+    const skill = read('.agents/skills/release-matrix-stable/SKILL.md');
+
+    expect(skill).toContain('gh run view "$RUN_ID" --repo HamedMP/matrix-os --log');
+    expect(skill).toMatch(/Generated version/);
+    expect(skill).toMatch(/current `dev` pointer may advance/i);
+    expect(skill).not.toContain('VERSION=$(echo "$DEV" | jq -r .version)');
+  });
+
   it('keeps automatic Desktop prereleases out of the release-modal history', () => {
     const skill = read('.agents/skills/release-notes/SKILL.md');
 
